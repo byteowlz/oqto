@@ -22,7 +22,7 @@ use futures::{SinkExt, StreamExt};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, info, warn};
 
 use chrono::Utc;
@@ -75,7 +75,9 @@ fn trim_messages_for_cache(messages: &Value) -> Value {
 }
 
 fn estimate_messages_size(messages: &Value) -> usize {
-    serde_json::to_string(messages).map(|s| s.len()).unwrap_or(0)
+    serde_json::to_string(messages)
+        .map(|s| s.len())
+        .unwrap_or(0)
 }
 
 async fn cache_pi_messages(user_id: &str, session_id: &str, messages: &Value) {
@@ -125,7 +127,10 @@ struct CachedPiMessagesSnapshot {
     age: Duration,
 }
 
-async fn get_cached_pi_messages(user_id: &str, session_id: &str) -> Option<CachedPiMessagesSnapshot> {
+async fn get_cached_pi_messages(
+    user_id: &str,
+    session_id: &str,
+) -> Option<CachedPiMessagesSnapshot> {
     let mut cache = PI_MESSAGES_CACHE.write().await;
     let user_cache = cache.get_mut(user_id)?;
     if let Some(entry) = user_cache.entries.get_mut(session_id) {
@@ -913,7 +918,30 @@ async fn handle_agent_command(
 
     match cmd.payload {
         CommandPayload::SessionCreate { config } => {
-            info!("agent session.create: user={}, session_id={}", user_id, session_id);
+            info!(
+                "agent session.create: user={}, session_id={}",
+                user_id, session_id
+            );
+
+            // If this connection already has an active subscription for
+            // this session, return success immediately. This handles the
+            // common case of React StrictMode double-invoke or reconnection
+            // re-sending session.create for a session that's already alive.
+            {
+                let state_guard = conn_state.lock().await;
+                if state_guard.pi_subscriptions.contains(&session_id) {
+                    debug!(
+                        "agent session.create: session {} already subscribed, returning success",
+                        session_id
+                    );
+                    return Some(agent_response(
+                        &session_id,
+                        id,
+                        "session.create",
+                        Ok(Some(serde_json::json!({ "session_id": session_id }))),
+                    ));
+                }
+            }
 
             let cwd = config
                 .cwd
@@ -947,8 +975,17 @@ async fn handle_agent_command(
             };
 
             match runner.pi_create_session(req).await {
-                Ok(_) => {
-                    // Auto-subscribe to events for the new session
+                Ok(_resp) => {
+                    // Session stored under the provisional ID. Pi may
+                    // assign a different real ID -- the runner re-keys
+                    // its map in the background, and the frontend learns
+                    // about it via the get_state response.
+
+                    // Auto-subscribe to events for the session.
+                    // We MUST wait for the subscription to be established
+                    // before returning the session.create response, otherwise
+                    // the frontend may send a prompt before events are being
+                    // forwarded, causing streaming to silently fail.
                     let mut state_guard = conn_state.lock().await;
                     if !state_guard.pi_subscriptions.contains(&session_id) {
                         state_guard.subscribed_sessions.insert(session_id.clone());
@@ -956,13 +993,39 @@ async fn handle_agent_command(
                         let event_tx = state_guard.event_tx.clone();
                         let runner = runner.clone();
                         let sid = session_id.clone();
+
+                        // Use a oneshot channel to wait for subscription confirmation
+                        let (sub_ready_tx, sub_ready_rx) = oneshot::channel::<()>();
                         tokio::spawn(async move {
-                            if let Err(e) = forward_pi_events(&runner, &sid, event_tx).await {
+                            if let Err(e) =
+                                forward_pi_events(&runner, &sid, event_tx, Some(sub_ready_tx)).await
+                            {
                                 error!("Event forwarding error for session {}: {:?}", sid, e);
                             }
                         });
+
+                        // Wait for the subscription to be confirmed (with timeout)
+                        drop(state_guard);
+                        match tokio::time::timeout(Duration::from_secs(5), sub_ready_rx).await {
+                            Ok(Ok(())) => {
+                                debug!("Event subscription established for session {}", session_id);
+                            }
+                            Ok(Err(_)) => {
+                                warn!(
+                                    "Event subscription sender dropped for session {} (forward_pi_events may have failed early)",
+                                    session_id
+                                );
+                            }
+                            Err(_) => {
+                                warn!(
+                                    "Timed out waiting for event subscription for session {}",
+                                    session_id
+                                );
+                            }
+                        }
+                    } else {
+                        drop(state_guard);
                     }
-                    drop(state_guard);
 
                     Some(agent_response(
                         &session_id,
@@ -981,7 +1044,10 @@ async fn handle_agent_command(
         }
 
         CommandPayload::SessionClose => {
-            info!("agent session.close: user={}, session_id={}", user_id, session_id);
+            info!(
+                "agent session.close: user={}, session_id={}",
+                user_id, session_id
+            );
 
             let mut state_guard = conn_state.lock().await;
             state_guard.subscribed_sessions.remove(&session_id);
@@ -989,12 +1055,7 @@ async fn handle_agent_command(
             drop(state_guard);
 
             match runner.pi_close_session(&session_id).await {
-                Ok(()) => Some(agent_response(
-                    &session_id,
-                    id,
-                    "session.close",
-                    Ok(None),
-                )),
+                Ok(()) => Some(agent_response(&session_id, id, "session.close", Ok(None))),
                 Err(e) => Some(agent_response(
                     &session_id,
                     id,
@@ -1005,8 +1066,14 @@ async fn handle_agent_command(
         }
 
         CommandPayload::SessionNew { parent_session } => {
-            debug!("agent session.new: user={}, session_id={}", user_id, session_id);
-            match runner.pi_new_session(&session_id, parent_session.as_deref()).await {
+            debug!(
+                "agent session.new: user={}, session_id={}",
+                user_id, session_id
+            );
+            match runner
+                .pi_new_session(&session_id, parent_session.as_deref())
+                .await
+            {
                 Ok(()) => Some(agent_response(
                     &session_id,
                     id,
@@ -1023,7 +1090,10 @@ async fn handle_agent_command(
         }
 
         CommandPayload::SessionSwitch { session_path } => {
-            debug!("agent session.switch: user={}, session_id={}, path={}", user_id, session_id, session_path);
+            debug!(
+                "agent session.switch: user={}, session_id={}, path={}",
+                user_id, session_id, session_path
+            );
             match runner.pi_switch_session(&session_id, &session_path).await {
                 Ok(()) => Some(agent_response(
                     &session_id,
@@ -1040,9 +1110,17 @@ async fn handle_agent_command(
             }
         }
 
-        CommandPayload::Prompt { message, .. } => {
-            info!("agent prompt: user={}, session_id={}, len={}", user_id, session_id, message.len());
-            match runner.pi_prompt(&session_id, &message).await {
+        CommandPayload::Prompt {
+            message, client_id, ..
+        } => {
+            info!(
+                "agent prompt: user={}, session_id={}, len={}, client_id={:?}",
+                user_id,
+                session_id,
+                message.len(),
+                client_id
+            );
+            match runner.pi_prompt(&session_id, &message, client_id).await {
                 Ok(()) => None, // Streaming events are the response
                 Err(e) => Some(agent_response(
                     &session_id,
@@ -1054,7 +1132,12 @@ async fn handle_agent_command(
         }
 
         CommandPayload::Steer { message } => {
-            info!("agent steer: user={}, session_id={}, len={}", user_id, session_id, message.len());
+            info!(
+                "agent steer: user={}, session_id={}, len={}",
+                user_id,
+                session_id,
+                message.len()
+            );
             match runner.pi_steer(&session_id, &message).await {
                 Ok(()) => None,
                 Err(e) => Some(agent_response(
@@ -1067,7 +1150,12 @@ async fn handle_agent_command(
         }
 
         CommandPayload::FollowUp { message } => {
-            info!("agent follow_up: user={}, session_id={}, len={}", user_id, session_id, message.len());
+            info!(
+                "agent follow_up: user={}, session_id={}, len={}",
+                user_id,
+                session_id,
+                message.len()
+            );
             match runner.pi_follow_up(&session_id, &message).await {
                 Ok(()) => None,
                 Err(e) => Some(agent_response(
@@ -1092,15 +1180,27 @@ async fn handle_agent_command(
             }
         }
 
-        CommandPayload::InputResponse { request_id, value, confirmed, cancelled } => {
-            debug!("agent input_response: user={}, session_id={}, req={}", user_id, session_id, request_id);
-            match runner.pi_extension_ui_response(&session_id, &request_id, value.as_deref(), confirmed, cancelled).await {
-                Ok(()) => Some(agent_response(
+        CommandPayload::InputResponse {
+            request_id,
+            value,
+            confirmed,
+            cancelled,
+        } => {
+            debug!(
+                "agent input_response: user={}, session_id={}, req={}",
+                user_id, session_id, request_id
+            );
+            match runner
+                .pi_extension_ui_response(
                     &session_id,
-                    id,
-                    "input_response",
-                    Ok(None),
-                )),
+                    &request_id,
+                    value.as_deref(),
+                    confirmed,
+                    cancelled,
+                )
+                .await
+            {
+                Ok(()) => Some(agent_response(&session_id, id, "input_response", Ok(None))),
                 Err(e) => Some(agent_response(
                     &session_id,
                     id,
@@ -1111,23 +1211,42 @@ async fn handle_agent_command(
         }
 
         CommandPayload::GetState => {
-            debug!("agent get_state: user={}, session_id={}", user_id, session_id);
+            debug!(
+                "agent get_state: user={}, session_id={}",
+                user_id, session_id
+            );
             match runner.pi_get_state(&session_id).await {
                 Ok(resp) => {
                     let state_value = serde_json::to_value(&resp.state).unwrap_or(Value::Null);
-                    Some(agent_response(&session_id, id, "get_state", Ok(Some(state_value))))
+                    Some(agent_response(
+                        &session_id,
+                        id,
+                        "get_state",
+                        Ok(Some(state_value)),
+                    ))
                 }
-                Err(e) => Some(agent_response(&session_id, id, "get_state", Err(e.to_string()))),
+                Err(e) => Some(agent_response(
+                    &session_id,
+                    id,
+                    "get_state",
+                    Err(e.to_string()),
+                )),
             }
         }
 
         CommandPayload::GetMessages => {
-            debug!("agent get_messages: user={}, session_id={}", user_id, session_id);
+            debug!(
+                "agent get_messages: user={}, session_id={}",
+                user_id, session_id
+            );
             handle_get_messages(id, &session_id, user_id, state, runner, conn_state).await
         }
 
         CommandPayload::GetStats => {
-            debug!("agent get_stats: user={}, session_id={}", user_id, session_id);
+            debug!(
+                "agent get_stats: user={}, session_id={}",
+                user_id, session_id
+            );
             match runner.pi_get_session_stats(&session_id).await {
                 Ok(resp) => Some(agent_response(
                     &session_id,
@@ -1135,12 +1254,20 @@ async fn handle_agent_command(
                     "get_stats",
                     Ok(Some(serde_json::to_value(&resp.stats).unwrap_or_default())),
                 )),
-                Err(e) => Some(agent_response(&session_id, id, "get_stats", Err(e.to_string()))),
+                Err(e) => Some(agent_response(
+                    &session_id,
+                    id,
+                    "get_stats",
+                    Err(e.to_string()),
+                )),
             }
         }
 
         CommandPayload::GetModels => {
-            debug!("agent get_models: user={}, session_id={}", user_id, session_id);
+            debug!(
+                "agent get_models: user={}, session_id={}",
+                user_id, session_id
+            );
             match runner.pi_get_available_models(&session_id).await {
                 Ok(resp) => Some(agent_response(
                     &session_id,
@@ -1148,21 +1275,33 @@ async fn handle_agent_command(
                     "get_models",
                     Ok(Some(serde_json::to_value(&resp.models).unwrap_or_default())),
                 )),
-                Err(e) => Some(agent_response(&session_id, id, "get_models", Err(e.to_string()))),
+                Err(e) => Some(agent_response(
+                    &session_id,
+                    id,
+                    "get_models",
+                    Err(e.to_string()),
+                )),
             }
         }
 
         CommandPayload::GetCommands => {
-            debug!("agent get_commands: user={}, session_id={}", user_id, session_id);
+            debug!(
+                "agent get_commands: user={}, session_id={}",
+                user_id, session_id
+            );
             match runner.pi_get_commands(&session_id).await {
                 Ok(resp) => {
-                    let commands: Vec<Value> = resp.commands.into_iter().map(|c| {
-                        serde_json::json!({
-                            "name": c.name,
-                            "description": c.description,
-                            "type": c.source,
+                    let commands: Vec<Value> = resp
+                        .commands
+                        .into_iter()
+                        .map(|c| {
+                            serde_json::json!({
+                                "name": c.name,
+                                "description": c.description,
+                                "type": c.source,
+                            })
                         })
-                    }).collect();
+                        .collect();
                     Some(agent_response(
                         &session_id,
                         id,
@@ -1170,21 +1309,33 @@ async fn handle_agent_command(
                         Ok(Some(Value::Array(commands))),
                     ))
                 }
-                Err(e) => Some(agent_response(&session_id, id, "get_commands", Err(e.to_string()))),
+                Err(e) => Some(agent_response(
+                    &session_id,
+                    id,
+                    "get_commands",
+                    Err(e.to_string()),
+                )),
             }
         }
 
         CommandPayload::GetForkPoints => {
-            debug!("agent get_fork_points: user={}, session_id={}", user_id, session_id);
+            debug!(
+                "agent get_fork_points: user={}, session_id={}",
+                user_id, session_id
+            );
             match runner.pi_get_fork_messages(&session_id).await {
                 Ok(resp) => {
-                    let messages: Vec<Value> = resp.messages.into_iter().map(|m| {
-                        serde_json::json!({
-                            "entry_id": m.entry_id,
-                            "role": "user",
-                            "preview": m.text,
+                    let messages: Vec<Value> = resp
+                        .messages
+                        .into_iter()
+                        .map(|m| {
+                            serde_json::json!({
+                                "entry_id": m.entry_id,
+                                "role": "user",
+                                "preview": m.text,
+                            })
                         })
-                    }).collect();
+                        .collect();
                     Some(agent_response(
                         &session_id,
                         id,
@@ -1192,44 +1343,100 @@ async fn handle_agent_command(
                         Ok(Some(Value::Array(messages))),
                     ))
                 }
-                Err(e) => Some(agent_response(&session_id, id, "get_fork_points", Err(e.to_string()))),
+                Err(e) => Some(agent_response(
+                    &session_id,
+                    id,
+                    "get_fork_points",
+                    Err(e.to_string()),
+                )),
             }
         }
 
         CommandPayload::SetModel { provider, model_id } => {
-            debug!("agent set_model: user={}, session_id={}, {}:{}", user_id, session_id, provider, model_id);
+            debug!(
+                "agent set_model: user={}, session_id={}, {}:{}",
+                user_id, session_id, provider, model_id
+            );
             match runner.pi_set_model(&session_id, &provider, &model_id).await {
-                Ok(resp) => Some(agent_response(
+                Ok(resp) => {
+                    // Emit ConfigModelChanged event so the frontend UI updates.
+                    let config_event = WsEvent::Agent(octo_protocol::events::Event {
+                        session_id: session_id.clone(),
+                        runner_id: "local".to_string(),
+                        ts: Utc::now().timestamp_millis(),
+                        payload: octo_protocol::events::EventPayload::ConfigModelChanged {
+                            provider: resp.model.provider.clone(),
+                            model_id: resp.model.id.clone(),
+                        },
+                    });
+                    let state_guard = conn_state.lock().await;
+                    let _ = state_guard.event_tx.send(config_event);
+                    drop(state_guard);
+
+                    Some(agent_response(
+                        &session_id,
+                        id,
+                        "set_model",
+                        Ok(Some(serde_json::json!({
+                            "provider": resp.model.provider,
+                            "model_id": resp.model.id,
+                        }))),
+                    ))
+                }
+                Err(e) => Some(agent_response(
                     &session_id,
                     id,
                     "set_model",
-                    Ok(Some(serde_json::json!({
-                        "provider": resp.model.provider,
-                        "model_id": resp.model.id,
-                    }))),
+                    Err(e.to_string()),
                 )),
-                Err(e) => Some(agent_response(&session_id, id, "set_model", Err(e.to_string()))),
             }
         }
 
         CommandPayload::CycleModel => {
-            debug!("agent cycle_model: user={}, session_id={}", user_id, session_id);
+            debug!(
+                "agent cycle_model: user={}, session_id={}",
+                user_id, session_id
+            );
             match runner.pi_cycle_model(&session_id).await {
-                Ok(resp) => Some(agent_response(
+                Ok(resp) => {
+                    // Emit ConfigModelChanged event so the frontend UI updates.
+                    let config_event = WsEvent::Agent(octo_protocol::events::Event {
+                        session_id: session_id.clone(),
+                        runner_id: "local".to_string(),
+                        ts: Utc::now().timestamp_millis(),
+                        payload: octo_protocol::events::EventPayload::ConfigModelChanged {
+                            provider: resp.model.provider.clone(),
+                            model_id: resp.model.id.clone(),
+                        },
+                    });
+                    let state_guard = conn_state.lock().await;
+                    let _ = state_guard.event_tx.send(config_event);
+                    drop(state_guard);
+
+                    Some(agent_response(
+                        &session_id,
+                        id,
+                        "cycle_model",
+                        Ok(Some(serde_json::json!({
+                            "provider": resp.model.provider,
+                            "model_id": resp.model.id,
+                        }))),
+                    ))
+                }
+                Err(e) => Some(agent_response(
                     &session_id,
                     id,
                     "cycle_model",
-                    Ok(Some(serde_json::json!({
-                        "provider": resp.model.provider,
-                        "model_id": resp.model.id,
-                    }))),
+                    Err(e.to_string()),
                 )),
-                Err(e) => Some(agent_response(&session_id, id, "cycle_model", Err(e.to_string()))),
             }
         }
 
         CommandPayload::SetThinkingLevel { level } => {
-            debug!("agent set_thinking_level: user={}, session_id={}, level={}", user_id, session_id, level);
+            debug!(
+                "agent set_thinking_level: user={}, session_id={}, level={}",
+                user_id, session_id, level
+            );
             match runner.pi_set_thinking_level(&session_id, &level).await {
                 Ok(resp) => Some(agent_response(
                     &session_id,
@@ -1237,12 +1444,20 @@ async fn handle_agent_command(
                     "set_thinking_level",
                     Ok(Some(serde_json::json!({ "level": resp.level }))),
                 )),
-                Err(e) => Some(agent_response(&session_id, id, "set_thinking_level", Err(e.to_string()))),
+                Err(e) => Some(agent_response(
+                    &session_id,
+                    id,
+                    "set_thinking_level",
+                    Err(e.to_string()),
+                )),
             }
         }
 
         CommandPayload::CycleThinkingLevel => {
-            debug!("agent cycle_thinking_level: user={}, session_id={}", user_id, session_id);
+            debug!(
+                "agent cycle_thinking_level: user={}, session_id={}",
+                user_id, session_id
+            );
             match runner.pi_cycle_thinking_level(&session_id).await {
                 Ok(resp) => Some(agent_response(
                     &session_id,
@@ -1250,29 +1465,58 @@ async fn handle_agent_command(
                     "cycle_thinking_level",
                     Ok(Some(serde_json::json!({ "level": resp.level }))),
                 )),
-                Err(e) => Some(agent_response(&session_id, id, "cycle_thinking_level", Err(e.to_string()))),
+                Err(e) => Some(agent_response(
+                    &session_id,
+                    id,
+                    "cycle_thinking_level",
+                    Err(e.to_string()),
+                )),
             }
         }
 
         CommandPayload::SetAutoCompaction { enabled } => {
-            debug!("agent set_auto_compaction: user={}, session_id={}, enabled={}", user_id, session_id, enabled);
+            debug!(
+                "agent set_auto_compaction: user={}, session_id={}, enabled={}",
+                user_id, session_id, enabled
+            );
             match runner.pi_set_auto_compaction(&session_id, enabled).await {
-                Ok(()) => Some(agent_response(&session_id, id, "set_auto_compaction", Ok(None))),
-                Err(e) => Some(agent_response(&session_id, id, "set_auto_compaction", Err(e.to_string()))),
+                Ok(()) => Some(agent_response(
+                    &session_id,
+                    id,
+                    "set_auto_compaction",
+                    Ok(None),
+                )),
+                Err(e) => Some(agent_response(
+                    &session_id,
+                    id,
+                    "set_auto_compaction",
+                    Err(e.to_string()),
+                )),
             }
         }
 
         CommandPayload::SetAutoRetry { enabled } => {
-            debug!("agent set_auto_retry: user={}, session_id={}, enabled={}", user_id, session_id, enabled);
+            debug!(
+                "agent set_auto_retry: user={}, session_id={}, enabled={}",
+                user_id, session_id, enabled
+            );
             match runner.pi_set_auto_retry(&session_id, enabled).await {
                 Ok(()) => Some(agent_response(&session_id, id, "set_auto_retry", Ok(None))),
-                Err(e) => Some(agent_response(&session_id, id, "set_auto_retry", Err(e.to_string()))),
+                Err(e) => Some(agent_response(
+                    &session_id,
+                    id,
+                    "set_auto_retry",
+                    Err(e.to_string()),
+                )),
             }
         }
 
         CommandPayload::Compact { instructions } => {
             info!("agent compact: user={}, session_id={}", user_id, session_id);
-            match runner.pi_compact(&session_id, instructions.as_deref()).await {
+            match runner
+                .pi_compact(&session_id, instructions.as_deref())
+                .await
+            {
                 Ok(()) => None, // Compaction events stream via subscription
                 Err(e) => Some(agent_response(
                     &session_id,
@@ -1284,23 +1528,47 @@ async fn handle_agent_command(
         }
 
         CommandPayload::AbortRetry => {
-            debug!("agent abort_retry: user={}, session_id={}", user_id, session_id);
+            debug!(
+                "agent abort_retry: user={}, session_id={}",
+                user_id, session_id
+            );
             match runner.pi_abort_retry(&session_id).await {
                 Ok(()) => Some(agent_response(&session_id, id, "abort_retry", Ok(None))),
-                Err(e) => Some(agent_response(&session_id, id, "abort_retry", Err(e.to_string()))),
+                Err(e) => Some(agent_response(
+                    &session_id,
+                    id,
+                    "abort_retry",
+                    Err(e.to_string()),
+                )),
             }
         }
 
         CommandPayload::SetSessionName { name } => {
-            debug!("agent set_session_name: user={}, session_id={}, name={}", user_id, session_id, name);
+            debug!(
+                "agent set_session_name: user={}, session_id={}, name={}",
+                user_id, session_id, name
+            );
             match runner.pi_set_session_name(&session_id, &name).await {
-                Ok(()) => Some(agent_response(&session_id, id, "set_session_name", Ok(None))),
-                Err(e) => Some(agent_response(&session_id, id, "set_session_name", Err(e.to_string()))),
+                Ok(()) => Some(agent_response(
+                    &session_id,
+                    id,
+                    "set_session_name",
+                    Ok(None),
+                )),
+                Err(e) => Some(agent_response(
+                    &session_id,
+                    id,
+                    "set_session_name",
+                    Err(e.to_string()),
+                )),
             }
         }
 
         CommandPayload::Fork { entry_id } => {
-            debug!("agent fork: user={}, session_id={}, entry_id={}", user_id, session_id, entry_id);
+            debug!(
+                "agent fork: user={}, session_id={}, entry_id={}",
+                user_id, session_id, entry_id
+            );
             match runner.pi_fork(&session_id, &entry_id).await {
                 Ok(resp) => Some(agent_response(
                     &session_id,
@@ -1360,74 +1628,6 @@ async fn handle_get_messages(
         }
     }
 
-    // Try workspace JSONL or main chat JSONL
-    if let Some(ref meta) = session_meta {
-        if meta.scope.as_deref() == Some("workspace") || meta.scope.as_deref() == Some("pi") {
-            if let (Some(work_dir), Some(workspace_pi)) =
-                (meta.cwd.as_ref(), state.workspace_pi.as_ref())
-            {
-                match workspace_pi.get_session_messages(user_id, work_dir, session_id) {
-                    Ok(messages) if !messages.is_empty() => {
-                        info!(
-                            "get_messages: loaded {} messages from workspace JSONL for {}",
-                            messages.len(), session_id
-                        );
-                        let messages_value = serde_json::to_value(&messages).unwrap_or_default();
-                        cache_pi_messages(user_id, session_id, &messages_value).await;
-                        return Some(agent_response(
-                            session_id,
-                            id,
-                            "get_messages",
-                            Ok(Some(serde_json::json!({ "messages": messages_value }))),
-                        ));
-                    }
-                    Ok(_) => {}
-                    Err(e) => {
-                        debug!("get_messages: workspace JSONL error for {}: {}", session_id, e);
-                    }
-                }
-            }
-        } else if let Some(ref pi_service) = state.main_chat_pi {
-            match pi_service.get_session_messages(user_id, session_id).await {
-                Ok(messages) if !messages.is_empty() => {
-                    info!(
-                        "get_messages: loaded {} messages from JSONL file for {}",
-                        messages.len(), session_id
-                    );
-                    let messages_value = serde_json::to_value(&messages).unwrap_or_default();
-                    cache_pi_messages(user_id, session_id, &messages_value).await;
-                    return Some(agent_response(
-                        session_id,
-                        id,
-                        "get_messages",
-                        Ok(Some(serde_json::json!({ "messages": messages_value }))),
-                    ));
-                }
-                Ok(_) => {}
-                Err(e) => {
-                    debug!("get_messages: JSONL file error for {}: {}", session_id, e);
-                }
-            }
-        }
-    } else if let Some(ref pi_service) = state.main_chat_pi {
-        match pi_service.get_session_messages(user_id, session_id).await {
-            Ok(messages) if !messages.is_empty() => {
-                let messages_value = serde_json::to_value(&messages).unwrap_or_default();
-                cache_pi_messages(user_id, session_id, &messages_value).await;
-                return Some(agent_response(
-                    session_id,
-                    id,
-                    "get_messages",
-                    Ok(Some(serde_json::json!({ "messages": messages_value }))),
-                ));
-            }
-            Ok(_) => {}
-            Err(e) => {
-                debug!("get_messages: JSONL file error for {}: {}", session_id, e);
-            }
-        }
-    }
-
     // Try hstry for historical messages
     let is_multi_user = state.linux_users.is_some();
 
@@ -1463,7 +1663,10 @@ async fn handle_get_messages(
                 }
                 Ok(_) => {}
                 Err(e) => {
-                    debug!("get_messages: hstry (workspace via runner) error for {}: {}", session_id, e);
+                    debug!(
+                        "get_messages: hstry (workspace via runner) error for {}: {}",
+                        session_id, e
+                    );
                 }
             }
         } else if let Some(hstry_client) = state.hstry.as_ref() {
@@ -1481,7 +1684,10 @@ async fn handle_get_messages(
                 }
                 Ok(_) => {}
                 Err(e) => {
-                    debug!("get_messages: hstry (workspace) error for {}: {}", session_id, e);
+                    debug!(
+                        "get_messages: hstry (workspace) error for {}: {}",
+                        session_id, e
+                    );
                 }
             }
         }
@@ -1506,7 +1712,10 @@ async fn handle_get_messages(
             }
             Ok(_) => {}
             Err(e) => {
-                debug!("get_messages: hstry (via runner) error for {}: {}", session_id, e);
+                debug!(
+                    "get_messages: hstry (via runner) error for {}: {}",
+                    session_id, e
+                );
             }
         }
     } else if let Some(hstry_client) = state.hstry.as_ref() {
@@ -1541,7 +1750,12 @@ async fn handle_get_messages(
                 Ok(Some(serde_json::json!({ "messages": messages_value }))),
             ))
         }
-        Err(e) => Some(agent_response(session_id, id, "get_messages", Err(e.to_string()))),
+        Err(e) => Some(agent_response(
+            session_id,
+            id,
+            "get_messages",
+            Err(e.to_string()),
+        )),
     }
 }
 
@@ -1549,12 +1763,30 @@ async fn handle_get_messages(
 ///
 /// The runner's PiTranslator has already converted native Pi events to
 /// canonical format. We just wrap them as `WsEvent::Agent` and send.
+///
+/// If `sub_ready_tx` is provided, signals it once the runner subscription
+/// is confirmed. This allows callers to wait for the subscription before
+/// sending prompts, preventing the race where events are missed.
 async fn forward_pi_events(
     runner: &RunnerClient,
     session_id: &str,
     event_tx: mpsc::UnboundedSender<WsEvent>,
+    sub_ready_tx: Option<oneshot::Sender<()>>,
 ) -> anyhow::Result<()> {
+    info!(
+        "forward_pi_events: connecting subscription for session {}",
+        session_id
+    );
     let mut subscription = runner.pi_subscribe(session_id).await?;
+    info!(
+        "forward_pi_events: subscription established for session {}",
+        session_id
+    );
+
+    // Signal that the subscription is ready
+    if let Some(tx) = sub_ready_tx {
+        let _ = tx.send(());
+    }
 
     loop {
         match subscription.next().await {
@@ -1670,13 +1902,17 @@ async fn handle_files_command(
         relative_path: &'a str,
         depth: usize,
         include_hidden: bool,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<FileTreeNode>, String>> + Send + 'a>> {
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<Vec<FileTreeNode>, String>> + Send + 'a>,
+    > {
         Box::pin(async move {
             let resolved = resolve_workspace_child(workspace_root, relative_path)?;
             let entries = user_plane
                 .list_directory(&resolved, include_hidden)
                 .await
-                .map_err(|e| format!("list_directory failed for {}: {:#}", resolved.display(), e))?;
+                .map_err(|e| {
+                    format!("list_directory failed for {}: {:#}", resolved.display(), e)
+                })?;
 
             let mut nodes = Vec::new();
             for entry in entries {
@@ -1716,10 +1952,7 @@ async fn handle_files_command(
                 return Err("source path does not exist".into());
             }
 
-            let dest_stat = user_plane
-                .stat(to_path)
-                .await
-                .map_err(|e| e.to_string())?;
+            let dest_stat = user_plane.stat(to_path).await.map_err(|e| e.to_string())?;
             if dest_stat.exists {
                 if !overwrite {
                     return Err("destination already exists".into());
@@ -1768,7 +2001,15 @@ async fn handle_files_command(
             ..
         } => {
             let max_depth = depth.unwrap_or(6).max(1);
-            match build_tree(&user_plane, &workspace_root, &path, max_depth, include_hidden).await {
+            match build_tree(
+                &user_plane,
+                &workspace_root,
+                &path,
+                max_depth,
+                include_hidden,
+            )
+            .await
+            {
                 Ok(entries) => Some(WsEvent::Files(FilesWsEvent::TreeResult {
                     id,
                     path,
@@ -1786,8 +2027,7 @@ async fn handle_files_command(
             };
             match user_plane.read_file(&resolved, None, None).await {
                 Ok(content) => {
-                    let encoded = base64::engine::general_purpose::STANDARD
-                        .encode(content.content);
+                    let encoded = base64::engine::general_purpose::STANDARD.encode(content.content);
                     Some(WsEvent::Files(FilesWsEvent::ReadResult {
                         id,
                         path,
@@ -1852,7 +2092,11 @@ async fn handle_files_command(
                 }
             };
             match user_plane.list_directory(&resolved, include_hidden).await {
-                Ok(entries) => Some(WsEvent::Files(FilesWsEvent::ListResult { id, path, entries })),
+                Ok(entries) => Some(WsEvent::Files(FilesWsEvent::ListResult {
+                    id,
+                    path,
+                    entries,
+                })),
                 Err(err) => Some(WsEvent::Files(FilesWsEvent::Error {
                     id,
                     error: err.to_string(),
@@ -1914,10 +2158,7 @@ async fn handle_files_command(
                     return Some(WsEvent::Files(FilesWsEvent::Error { id, error: err }));
                 }
             };
-            match user_plane
-                .create_directory(&resolved, create_parents)
-                .await
-            {
+            match user_plane.create_directory(&resolved, create_parents).await {
                 Ok(()) => Some(WsEvent::Files(FilesWsEvent::CreateDirectoryResult {
                     id,
                     path,
@@ -1929,12 +2170,7 @@ async fn handle_files_command(
                 })),
             }
         }
-        FilesWsCommand::Rename {
-            id,
-            from,
-            to,
-            ..
-        } => {
+        FilesWsCommand::Rename { id, from, to, .. } => {
             let from_resolved = match resolve_workspace_child(&workspace_root, &from) {
                 Ok(path) => path,
                 Err(err) => {
@@ -2013,7 +2249,8 @@ async fn handle_files_command(
                     return Some(WsEvent::Files(FilesWsEvent::Error { id, error: err }));
                 }
             };
-            let copy_result = copy_recursive(&user_plane, &from_resolved, &to_resolved, overwrite).await;
+            let copy_result =
+                copy_recursive(&user_plane, &from_resolved, &to_resolved, overwrite).await;
             let result = match copy_result {
                 Ok(()) => user_plane
                     .delete_path(&from_resolved, true)
@@ -2053,10 +2290,7 @@ async fn resolve_terminal_session(
             .map_err(|e| e.to_string())?
             .ok_or_else(|| "Session not found".to_string())?;
         let session = crate::api::proxy::builder::ensure_session_for_io_proxy(
-            state,
-            user_id,
-            session_id,
-            session,
+            state, user_id, session_id, session,
         )
         .await
         .map_err(|_| "Failed to resume session for terminal".to_string())?;
@@ -2083,9 +2317,7 @@ async fn resolve_terminal_session(
 }
 
 enum TtydConnection {
-    Unix(
-        tokio_tungstenite::WebSocketStream<tokio::net::UnixStream>,
-    ),
+    Unix(tokio_tungstenite::WebSocketStream<tokio::net::UnixStream>),
     Tcp(
         tokio_tungstenite::WebSocketStream<
             tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
@@ -2111,9 +2343,7 @@ enum TtydConnectionWrite {
 }
 
 enum TtydConnectionRead {
-    Unix(
-        futures::stream::SplitStream<tokio_tungstenite::WebSocketStream<tokio::net::UnixStream>>,
-    ),
+    Unix(futures::stream::SplitStream<tokio_tungstenite::WebSocketStream<tokio::net::UnixStream>>),
     Tcp(
         futures::stream::SplitStream<
             tokio_tungstenite::WebSocketStream<
@@ -2128,11 +2358,17 @@ impl TtydConnection {
         match self {
             TtydConnection::Unix(ws) => {
                 let (write, read) = ws.split();
-                (TtydConnectionWrite::Unix(write), TtydConnectionRead::Unix(read))
+                (
+                    TtydConnectionWrite::Unix(write),
+                    TtydConnectionRead::Unix(read),
+                )
             }
             TtydConnection::Tcp(ws) => {
                 let (write, read) = ws.split();
-                (TtydConnectionWrite::Tcp(write), TtydConnectionRead::Tcp(read))
+                (
+                    TtydConnectionWrite::Tcp(write),
+                    TtydConnectionRead::Tcp(read),
+                )
             }
         }
     }
@@ -2312,9 +2548,7 @@ async fn start_terminal_task(
             }
         }
 
-        let _ = event_tx.send(WsEvent::Terminal(TerminalWsEvent::Exit {
-            terminal_id,
-        }));
+        let _ = event_tx.send(WsEvent::Terminal(TerminalWsEvent::Exit { terminal_id }));
     });
 
     Ok((command_tx, task))
@@ -2364,7 +2598,10 @@ async fn handle_terminal_command(
             );
 
             if session.ttyd_port == 0 {
-                warn!("Terminal not available: ttyd_port=0 for session {}", session.id);
+                warn!(
+                    "Terminal not available: ttyd_port=0 for session {}",
+                    session.id
+                );
                 return Some(WsEvent::Terminal(TerminalWsEvent::Error {
                     id,
                     terminal_id,
@@ -2376,7 +2613,10 @@ async fn handle_terminal_command(
             let mut state_guard = conn_state.lock().await;
             if state_guard.terminal_sessions.contains_key(&terminal_id) {
                 info!("Terminal already exists: {}", terminal_id);
-                return Some(WsEvent::Terminal(TerminalWsEvent::Opened { id, terminal_id }));
+                return Some(WsEvent::Terminal(TerminalWsEvent::Opened {
+                    id,
+                    terminal_id,
+                }));
             }
 
             let event_tx = state_guard.event_tx.clone();
@@ -2409,17 +2649,20 @@ async fn handle_terminal_command(
             };
 
             let mut state_guard = conn_state.lock().await;
-            state_guard.terminal_sessions.insert(
-                terminal_id.clone(),
-                TerminalSession {
-                    command_tx,
-                    task,
-                },
-            );
+            state_guard
+                .terminal_sessions
+                .insert(terminal_id.clone(), TerminalSession { command_tx, task });
 
-            Some(WsEvent::Terminal(TerminalWsEvent::Opened { id, terminal_id }))
+            Some(WsEvent::Terminal(TerminalWsEvent::Opened {
+                id,
+                terminal_id,
+            }))
         }
-        TerminalWsCommand::Input { id, terminal_id, data } => {
+        TerminalWsCommand::Input {
+            id,
+            terminal_id,
+            data,
+        } => {
             let state_guard = conn_state.lock().await;
             if let Some(session) = state_guard.terminal_sessions.get(&terminal_id) {
                 let _ = session.command_tx.send(TerminalSessionCommand::Input(data));
@@ -2500,7 +2743,7 @@ async fn handle_hstry_command(cmd: HstryWsCommand, state: &AppState) -> Option<W
         match client.get_messages(&session_id, None, Some(limit)).await {
             Ok(messages) => {
                 let serializable = crate::hstry::proto_messages_to_serializable(messages);
-                let data = serde_json::to_value(serializable).unwrap_or(Value::Null);
+                let data = serde_json::to_value(&serializable).unwrap_or(Value::Null);
                 Some(WsEvent::Hstry(HstryWsEvent::Result { id, data }))
             }
             Err(err) => Some(WsEvent::Hstry(HstryWsEvent::Error {
@@ -2524,11 +2767,7 @@ async fn handle_hstry_command(cmd: HstryWsCommand, state: &AppState) -> Option<W
 }
 
 /// Handle TRX channel commands.
-async fn handle_trx_command(
-    cmd: TrxWsCommand,
-    user_id: &str,
-    state: &AppState,
-) -> Option<WsEvent> {
+async fn handle_trx_command(cmd: TrxWsCommand, user_id: &str, state: &AppState) -> Option<WsEvent> {
     let now = Utc::now().timestamp() + 3600;
     let user = CurrentUser {
         claims: Claims {
@@ -2668,7 +2907,10 @@ async fn handle_trx_command(
             {
                 Ok(axum::Json(resp)) => Some(WsEvent::Trx(TrxWsEvent::SyncResult {
                     id,
-                    success: resp.get("synced").and_then(|v| v.as_bool()).unwrap_or(false),
+                    success: resp
+                        .get("synced")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false),
                 })),
                 Err(err) => Some(WsEvent::Trx(TrxWsEvent::Error {
                     id,
@@ -2712,9 +2954,7 @@ fn extract_legacy_session_id(cmd: &LegacyWsCommand) -> Option<String> {
     }
 }
 
-fn resolve_workspace_root(
-    workspace_path: Option<&str>,
-) -> Result<std::path::PathBuf, String> {
+fn resolve_workspace_root(workspace_path: Option<&str>) -> Result<std::path::PathBuf, String> {
     let Some(workspace_path) = workspace_path else {
         return Err("workspace_path is required".into());
     };

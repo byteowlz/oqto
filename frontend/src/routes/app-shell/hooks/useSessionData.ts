@@ -167,7 +167,7 @@ export function useSessionData({
 			sessions = sessions.filter((session) => {
 				if (session.title?.toLowerCase().includes(searchLower)) return true;
 				const readableId = getReadableIdFromSession(session);
-				if (readableId && readableId.toLowerCase().includes(searchLower)) {
+				if (readableId?.toLowerCase().includes(searchLower)) {
 					return true;
 				}
 				if (session.updated_at) {

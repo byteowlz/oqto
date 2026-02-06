@@ -3,28 +3,29 @@
 /**
  * Full assistant info including metadata.
  */
-export type AssistantInfo = { 
-/**
- * Assistant name
- */
-name: string, 
-/**
- * User ID
- */
-user_id: string, 
-/**
- * Path to assistant directory
- */
-path: string, 
-/**
- * Number of sessions
- */
-session_count: bigint, 
-/**
- * Number of history entries
- */
-history_count: bigint, 
-/**
- * When the assistant was created
- */
-created_at: string | null, };
+export type AssistantInfo = {
+	/**
+	 * Assistant name
+	 */
+	name: string;
+	/**
+	 * User ID
+	 */
+	user_id: string;
+	/**
+	 * Path to assistant directory
+	 */
+	path: string;
+	/**
+	 * Number of sessions
+	 */
+	session_count: bigint;
+	/**
+	 * Number of history entries
+	 */
+	history_count: bigint;
+	/**
+	 * When the assistant was created
+	 */
+	created_at: string | null;
+};

@@ -3,13 +3,13 @@
  * Pi agent runtime for Default Chat, assistants, history, streaming
  */
 
+import { toAbsoluteWsUrl } from "@/lib/url";
 import {
 	authFetch,
 	controlPlaneApiUrl,
 	getAuthToken,
 	readApiError,
 } from "./client";
-import { toAbsoluteWsUrl } from "@/lib/url";
 
 const normalizeWorkspacePathValue = (path?: string | null): string | null => {
 	if (!path || path === "global" || path.startsWith("global/")) return null;
@@ -105,16 +105,25 @@ export type PiPromptCommandInfo = {
 	description: string;
 };
 
-/** Pi session state */
-export type PiState = {
+/** Agent session state returned by the `get_state` canonical command.
+ *
+ * Field names match the camelCase JSON wire format produced by the
+ * runner's serde serialization. This type is harness-agnostic -- the
+ * runner translates native harness state into this shape.
+ */
+export type AgentState = {
 	model: PiModelInfo | null;
-	thinking_level: string;
-	is_streaming: boolean;
-	is_compacting: boolean;
-	session_id: string | null;
-	session_name?: string | null;
-	message_count: number;
-	auto_compaction_enabled: boolean;
+	thinkingLevel: string;
+	isStreaming: boolean;
+	isCompacting: boolean;
+	steeringMode?: string;
+	followUpMode?: string;
+	sessionFile?: string | null;
+	sessionId: string | null;
+	sessionName?: string | null;
+	messageCount: number;
+	pendingMessageCount?: number;
+	autoCompactionEnabled: boolean;
 };
 
 /** Pi session stats */
@@ -364,7 +373,9 @@ export async function renamePiSession(
 }
 
 /** Delete a Pi session (soft delete) */
-export async function deleteDefaultChatPiSession(sessionId: string): Promise<void> {
+export async function deleteDefaultChatPiSession(
+	sessionId: string,
+): Promise<void> {
 	const res = await authFetch(
 		controlPlaneApiUrl(`/api/main/pi/sessions/${sessionId}`),
 		{
@@ -394,7 +405,7 @@ export async function searchDefaultChatPiSessions(
 }
 
 /** Start a brand new Pi session (creates new session file) */
-export async function newDefaultChatPiSessionFile(): Promise<PiState> {
+export async function newDefaultChatPiSessionFile(): Promise<AgentState> {
 	const res = await authFetch(controlPlaneApiUrl("/api/main/pi/sessions"), {
 		method: "POST",
 		credentials: "include",
@@ -420,7 +431,7 @@ export async function getDefaultChatPiSessionMessages(
 /** Resume/switch the active Pi session */
 export async function resumeDefaultChatPiSession(
 	sessionId: string,
-): Promise<PiState> {
+): Promise<AgentState> {
 	const res = await authFetch(
 		controlPlaneApiUrl(
 			`/api/main/pi/sessions/${encodeURIComponent(sessionId)}`,
@@ -503,7 +514,7 @@ export async function getDefaultChatPiStatus(): Promise<DefaultChatPiStatus> {
 }
 
 /** Start or get Pi session */
-export async function startDefaultChatPiSession(): Promise<PiState> {
+export async function startDefaultChatPiSession(): Promise<AgentState> {
 	const res = await authFetch(controlPlaneApiUrl("/api/main/pi/session"), {
 		method: "POST",
 		credentials: "include",
@@ -520,7 +531,9 @@ function mainPiUrl(path: string, sessionId: string): string {
 	return url.toString();
 }
 
-export async function getDefaultChatPiState(sessionId: string): Promise<PiState> {
+export async function getDefaultChatAgentState(
+	sessionId: string,
+): Promise<AgentState> {
 	const res = await authFetch(mainPiUrl("/api/main/pi/state", sessionId), {
 		credentials: "include",
 	});
@@ -583,7 +596,7 @@ export async function setDefaultChatPiModel(
 	sessionId: string,
 	provider: string,
 	modelId: string,
-): Promise<PiState> {
+): Promise<AgentState> {
 	const res = await authFetch(mainPiUrl("/api/main/pi/model", sessionId), {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
@@ -595,7 +608,9 @@ export async function setDefaultChatPiModel(
 }
 
 /** Get available Pi models */
-export async function getDefaultChatPiModels(sessionId: string): Promise<PiModelInfo[]> {
+export async function getDefaultChatPiModels(
+	sessionId: string,
+): Promise<PiModelInfo[]> {
 	const res = await authFetch(mainPiUrl("/api/main/pi/models", sessionId), {
 		credentials: "include",
 	});
@@ -617,7 +632,7 @@ export async function getDefaultChatPiCommands(
 }
 
 /** Start new Pi session (clear history) */
-export async function newDefaultChatPiSession(): Promise<PiState> {
+export async function newDefaultChatPiSession(): Promise<AgentState> {
 	const res = await authFetch(controlPlaneApiUrl("/api/main/pi/new"), {
 		method: "POST",
 		credentials: "include",
@@ -627,7 +642,9 @@ export async function newDefaultChatPiSession(): Promise<PiState> {
 }
 
 /** Reset Pi session - restarts the process to reload PERSONALITY.md and USER.md */
-export async function resetDefaultChatPiSession(sessionId: string): Promise<PiState> {
+export async function resetDefaultChatPiSession(
+	sessionId: string,
+): Promise<AgentState> {
 	const res = await authFetch(mainPiUrl("/api/main/pi/reset", sessionId), {
 		method: "POST",
 		credentials: "include",
@@ -637,7 +654,9 @@ export async function resetDefaultChatPiSession(sessionId: string): Promise<PiSt
 }
 
 /** Get Pi session stats */
-export async function getDefaultChatPiStats(sessionId: string): Promise<PiSessionStats> {
+export async function getDefaultChatPiStats(
+	sessionId: string,
+): Promise<PiSessionStats> {
 	const res = await authFetch(mainPiUrl("/api/main/pi/stats", sessionId), {
 		credentials: "include",
 	});
@@ -670,180 +689,5 @@ export async function getDefaultChatPiHistory(
 	return res.json();
 }
 
-// ============================================================================
-// Workspace Pi API
-// ============================================================================
-
-/** Set workspace Pi session model */
-export async function setWorkspacePiModel(
-	workspacePath: string,
-	sessionId: string,
-	provider: string,
-	modelId: string,
-): Promise<PiState> {
-	const url = new URL(
-		controlPlaneApiUrl("/api/pi/workspace/model"),
-		window.location.origin,
-	);
-	url.searchParams.set("workspace_path", workspacePath);
-	url.searchParams.set("session_id", sessionId);
-
-	const res = await authFetch(url.toString(), {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ provider, model_id: modelId }),
-		credentials: "include",
-	});
-	if (!res.ok) throw new Error(await readApiError(res));
-	return res.json();
-}
-
-/** Get available workspace Pi models */
-export async function getWorkspacePiModels(
-	workspacePath: string,
-	sessionId: string,
-): Promise<PiModelInfo[]> {
-	const url = new URL(
-		controlPlaneApiUrl("/api/pi/workspace/models"),
-		window.location.origin,
-	);
-	url.searchParams.set("workspace_path", workspacePath);
-	url.searchParams.set("session_id", sessionId);
-
-	const res = await authFetch(url.toString(), {
-		credentials: "include",
-	});
-	if (!res.ok) throw new Error(await readApiError(res));
-	const data = (await res.json()) as { models?: PiModelInfo[] };
-	return data.models ?? [];
-}
-
-/** Start a new workspace Pi session */
-export async function newWorkspacePiSession(
-	workspacePath: string,
-): Promise<PiState> {
-	const res = await authFetch(
-		controlPlaneApiUrl("/api/pi/workspace/sessions"),
-		{
-			method: "POST",
-			credentials: "include",
-			headers: {
-				"Content-Type": "application/json",
-			},
-			body: JSON.stringify({ workspace_path: workspacePath }),
-		},
-	);
-	if (!res.ok) throw new Error(await readApiError(res));
-	return res.json();
-}
-
-/** Resume a workspace Pi session */
-export async function resumeWorkspacePiSession(
-	workspacePath: string,
-	sessionId: string,
-): Promise<PiState> {
-	const url = new URL(
-		controlPlaneApiUrl(`/api/pi/workspace/sessions/${sessionId}/resume`),
-		window.location.origin,
-	);
-	url.searchParams.set("workspace_path", workspacePath);
-
-	const res = await authFetch(url.toString(), {
-		method: "POST",
-		credentials: "include",
-	});
-	if (!res.ok) throw new Error(await readApiError(res));
-	return res.json();
-}
-
-/** Get workspace Pi session state */
-export async function getWorkspacePiState(
-	workspacePath: string,
-	sessionId: string,
-): Promise<PiState> {
-	const url = new URL(
-		controlPlaneApiUrl("/api/pi/workspace/state"),
-		window.location.origin,
-	);
-	url.searchParams.set("workspace_path", workspacePath);
-	url.searchParams.set("session_id", sessionId);
-
-	const res = await authFetch(url.toString(), {
-		credentials: "include",
-	});
-	if (!res.ok) throw new Error(await readApiError(res));
-	return res.json();
-}
-
-/** Get messages from a workspace Pi session */
-export async function getWorkspacePiSessionMessages(
-	workspacePath: string,
-	sessionId: string,
-): Promise<PiSessionMessage[]> {
-	const url = new URL(
-		controlPlaneApiUrl(`/api/pi/workspace/sessions/${sessionId}/messages`),
-		window.location.origin,
-	);
-	url.searchParams.set("workspace_path", workspacePath);
-
-	const res = await authFetch(url.toString(), {
-		credentials: "include",
-	});
-	if (!res.ok) throw new Error(await readApiError(res));
-	return res.json();
-}
-
-/** Abort a workspace Pi session */
-export async function abortWorkspacePiSession(
-	workspacePath: string,
-	sessionId: string,
-): Promise<void> {
-	const url = new URL(
-		controlPlaneApiUrl(`/api/pi/workspace/sessions/${sessionId}/abort`),
-		window.location.origin,
-	);
-	url.searchParams.set("workspace_path", workspacePath);
-
-	const res = await authFetch(url.toString(), {
-		method: "POST",
-		credentials: "include",
-	});
-	if (!res.ok) throw new Error(await readApiError(res));
-}
-
-/** Delete a workspace Pi session (soft delete) */
-export async function deleteWorkspacePiSession(
-	workspacePath: string,
-	sessionId: string,
-): Promise<void> {
-	const url = new URL(
-		controlPlaneApiUrl(`/api/pi/workspace/sessions/${sessionId}`),
-		window.location.origin,
-	);
-	url.searchParams.set("workspace_path", workspacePath);
-
-	const res = await authFetch(url.toString(), {
-		method: "DELETE",
-		credentials: "include",
-	});
-	if (!res.ok) throw new Error(await readApiError(res));
-}
-
-/** Create WebSocket connection to a workspace Pi session for streaming events */
-export function createWorkspacePiWebSocket(
-	workspacePath: string,
-	sessionId: string,
-): WebSocket {
-	let wsUrl = toAbsoluteWsUrl(controlPlaneApiUrl("/api/pi/workspace/ws"));
-	const params = new URLSearchParams();
-	params.set("workspace_path", workspacePath);
-	params.set("session_id", sessionId);
-
-	// Add auth token as query parameter for WebSocket auth
-	const token = getAuthToken();
-	if (token) {
-		params.set("token", token);
-	}
-	wsUrl = `${wsUrl}?${params.toString()}`;
-	return new WebSocket(wsUrl);
-}
+// Workspace Pi REST API removed -- all workspace Pi operations now go through
+// the multiplexed WebSocket (WsConnectionManager) using agent channel commands.

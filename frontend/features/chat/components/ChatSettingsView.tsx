@@ -9,15 +9,10 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@/components/ui/select";
-import {
-	type PiModelInfo,
-	type PiState,
-	getWorkspacePiModels,
-	getWorkspacePiState,
-	setWorkspacePiModel,
-} from "@/features/chat/api";
+import type { AgentState, PiModelInfo } from "@/features/chat/api";
 import { fuzzyMatch } from "@/lib/slash-commands";
 import { cn } from "@/lib/utils";
+import { getWsManager } from "@/lib/ws-manager";
 import { Loader2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
@@ -39,29 +34,29 @@ export function ChatSettingsView({
 	const [isSwitchingModel, setIsSwitchingModel] = useState(false);
 	const [modelQuery, setModelQuery] = useState("");
 	const [loading, setLoading] = useState(true);
-	const [piState, setPiState] = useState<PiState | null>(null);
+	const [piState, setPiState] = useState<AgentState | null>(null);
 	const [loadingState, setLoadingState] = useState(false);
 
-	// Load available models
+	// Load available models via WS
 	useEffect(() => {
 		let active = true;
 		setLoading(true);
-		if (!sessionId || !workspacePath) {
+		if (!sessionId) {
 			setAvailableModels([]);
 			setLoading(false);
 			return () => {
 				active = false;
 			};
 		}
-		getWorkspacePiModels(workspacePath, sessionId)
-			.then((models) => {
-				if (active) {
-					setAvailableModels(models);
-					// Set initial selection to first model if not set
-					if (models.length > 0 && !selectedModelRef) {
-						const firstModel = models[0];
-						setSelectedModelRef(`${firstModel.provider}/${firstModel.id}`);
-					}
+		getWsManager()
+			.agentGetAvailableModels(sessionId)
+			.then((result) => {
+				if (!active) return;
+				const models = (result as PiModelInfo[]) ?? [];
+				setAvailableModels(models);
+				if (models.length > 0 && !selectedModelRef) {
+					const firstModel = models[0];
+					setSelectedModelRef(`${firstModel.provider}/${firstModel.id}`);
 				}
 			})
 			.catch(() => {
@@ -73,18 +68,20 @@ export function ChatSettingsView({
 		return () => {
 			active = false;
 		};
-	}, [piState?.session_id, selectedModelRef]);
+	}, [sessionId, selectedModelRef]);
 
 	useEffect(() => {
 		let active = true;
 		const fetchState = async () => {
 			if (!active) return;
 			try {
-				if (!sessionId || !workspacePath) {
+				if (!sessionId) {
 					setPiState(null);
 					return;
 				}
-				const nextState = await getWorkspacePiState(workspacePath, sessionId);
+				const nextState = (await getWsManager().agentGetStateWait(
+					sessionId,
+				)) as AgentState | null;
 				if (active) setPiState(nextState);
 			} catch {
 				if (active) setPiState(null);
@@ -97,7 +94,7 @@ export function ChatSettingsView({
 		return () => {
 			active = false;
 		};
-	}, [sessionId, workspacePath]);
+	}, [sessionId]);
 
 	useEffect(() => {
 		if (!piState?.model) return;
@@ -118,7 +115,7 @@ export function ChatSettingsView({
 		});
 	}, [availableModels, modelQuery]);
 
-	const isIdle = !(piState?.is_streaming || piState?.is_compacting);
+	const isIdle = !(piState?.isStreaming || piState?.isCompacting);
 
 	const handleModelChange = useCallback(
 		async (value: string) => {
@@ -130,17 +127,17 @@ export function ChatSettingsView({
 			setSelectedModelRef(value);
 			setIsSwitchingModel(true);
 			try {
-				if (!sessionId || !workspacePath) {
+				if (!sessionId) {
 					throw new Error("No active chat session");
 				}
-				await setWorkspacePiModel(workspacePath, sessionId, provider, modelId);
+				await getWsManager().agentSetModel(sessionId, provider, modelId);
 			} catch (err) {
 				console.error("Failed to switch model:", err);
 			} finally {
 				setIsSwitchingModel(false);
 			}
 		},
-		[isIdle, sessionId, workspacePath],
+		[isIdle, sessionId],
 	);
 
 	if (loading) {

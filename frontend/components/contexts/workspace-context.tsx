@@ -42,7 +42,9 @@ export interface WorkspaceContextValue {
 	setProjectDefaultAgents: Dispatch<SetStateAction<Record<string, string>>>;
 	refreshWorkspaceSessions: () => Promise<void>;
 	/** Ensure the workspace runner session exists (no opencode assumptions). */
-	ensureWorkspaceRunning: (workspacePath?: string) => Promise<WorkspaceSession | null>;
+	ensureWorkspaceRunning: (
+		workspacePath?: string,
+	) => Promise<WorkspaceSession | null>;
 	stopWorkspaceSession: (sessionId: string) => Promise<boolean>;
 	deleteWorkspaceSession: (sessionId: string) => Promise<boolean>;
 	upgradeWorkspaceSession: (sessionId: string) => Promise<boolean>;
@@ -311,7 +313,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 				return null;
 			}
 		},
-		[selectedWorkspaceSession, refreshWorkspaceSessions, setSelectedWorkspaceSessionId],
+		[selectedWorkspaceSession, refreshWorkspaceSessions],
 	);
 
 	// Initial load

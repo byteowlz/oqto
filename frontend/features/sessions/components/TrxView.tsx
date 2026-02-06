@@ -24,9 +24,9 @@ import {
 	TooltipContent,
 	TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
 import { getWsManager } from "@/lib/ws-manager";
 import type { TrxWsEvent } from "@/lib/ws-mux-types";
-import { cn } from "@/lib/utils";
 import {
 	AlertCircle,
 	ArrowDownAZ,
@@ -605,7 +605,9 @@ const AddIssueForm = memo(function AddIssueForm({
 }) {
 	// Keep input state local to this component to prevent parent re-renders
 	const [title, setTitle] = useState("");
-	const [issueType, setIssueType] = useState(filterType !== "all" ? filterType : "task");
+	const [issueType, setIssueType] = useState(
+		filterType !== "all" ? filterType : "task",
+	);
 	const [isCreating, setIsCreating] = useState(false);
 
 	const handleCreate = useCallback(async () => {
@@ -633,9 +635,7 @@ const AddIssueForm = memo(function AddIssueForm({
 			{parentId && (
 				<div className="flex items-center gap-2 text-[10px] text-muted-foreground">
 					<span>Adding child to:</span>
-					<span className="font-mono bg-muted px-1 rounded">
-						{parentId}
-					</span>
+					<span className="font-mono bg-muted px-1 rounded">{parentId}</span>
 					<button
 						type="button"
 						onClick={onClose}
@@ -648,9 +648,7 @@ const AddIssueForm = memo(function AddIssueForm({
 			<Input
 				value={title}
 				onChange={(e) => setTitle(e.target.value)}
-				placeholder={
-					parentId ? "Child issue title..." : "Issue title..."
-				}
+				placeholder={parentId ? "Child issue title..." : "Issue title..."}
 				className="h-7 text-xs shadow-none border-none bg-background"
 				onKeyDown={(e) => e.key === "Enter" && handleCreate()}
 				autoFocus
@@ -685,11 +683,7 @@ const AddIssueForm = memo(function AddIssueForm({
 					disabled={isCreating || !title.trim()}
 					className="h-6 px-2 text-xs"
 				>
-					{isCreating ? (
-						<Loader2 className="w-3 h-3 animate-spin" />
-					) : (
-						"Create"
-					)}
+					{isCreating ? <Loader2 className="w-3 h-3 animate-spin" /> : "Create"}
 				</Button>
 			</div>
 		</div>
@@ -984,13 +978,10 @@ export const TrxView = memo(function TrxView({
 		setError(err);
 	}, []);
 
-	const handleAddChild = useCallback(
-		(parentId: string) => {
-			setNewIssueParentId(parentId);
-			setShowAddForm(true);
-		},
-		[],
-	);
+	const handleAddChild = useCallback((parentId: string) => {
+		setNewIssueParentId(parentId);
+		setShowAddForm(true);
+	}, []);
 
 	const handleStartEdit = useCallback((issue: TrxIssue) => {
 		setEditingIssueId(issue.id);

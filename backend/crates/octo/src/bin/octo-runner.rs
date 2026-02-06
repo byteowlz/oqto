@@ -1700,7 +1700,7 @@ impl Runner {
             };
 
             messages.push(MainChatMessage {
-                id: idx.to_string(),
+                id: format!("msg_{}", idx),
                 role,
                 content,
                 timestamp: created_at * 1000,
@@ -2142,8 +2142,8 @@ impl Runner {
             .get_or_create_session(&req.session_id, pi_config)
             .await
         {
-            Ok(()) => RunnerResponse::PiSessionCreated(PiSessionCreatedResponse {
-                session_id: req.session_id,
+            Ok(real_session_id) => RunnerResponse::PiSessionCreated(PiSessionCreatedResponse {
+                session_id: real_session_id,
             }),
             Err(e) => error_response(
                 ErrorCode::Internal,
@@ -2155,12 +2155,17 @@ impl Runner {
     /// Send a prompt to a Pi session.
     async fn pi_prompt(&self, req: PiPromptRequest) -> RunnerResponse {
         debug!(
-            "pi_prompt: session_id={}, message_len={}",
+            "pi_prompt: session_id={}, message_len={}, client_id={:?}",
             req.session_id,
-            req.message.len()
+            req.message.len(),
+            req.client_id
         );
 
-        match self.pi_manager.prompt(&req.session_id, &req.message).await {
+        match self
+            .pi_manager
+            .prompt(&req.session_id, &req.message, req.client_id.clone())
+            .await
+        {
             Ok(()) => RunnerResponse::PiCommandAck {
                 session_id: req.session_id,
             },
@@ -2279,6 +2284,7 @@ impl Runner {
                     octo::runner::pi_manager::PiSessionState::Compacting => {
                         PiSessionState::Compacting
                     }
+                    octo::runner::pi_manager::PiSessionState::Aborting => PiSessionState::Aborting,
                     octo::runner::pi_manager::PiSessionState::Stopping => PiSessionState::Stopping,
                 },
                 last_activity: s.last_activity,
@@ -2434,6 +2440,40 @@ impl Runner {
     }
 
     /// Set the model for a Pi session.
+    /// Parse model info from a Pi command response.
+    ///
+    /// Pi's set_model/cycle_model responses contain `{ model: "<id>", provider: "<provider>", ... }`.
+    /// Falls back to the provided defaults if parsing fails.
+    fn parse_model_from_response(
+        response: &octo::pi::PiResponse,
+        fallback_provider: &str,
+        fallback_model_id: &str,
+    ) -> octo::pi::PiModel {
+        let data = response.data.as_ref();
+        let model_id = data
+            .and_then(|d| d.get("model"))
+            .and_then(|v| v.as_str())
+            .unwrap_or(fallback_model_id)
+            .to_string();
+        let provider = data
+            .and_then(|d| d.get("provider"))
+            .and_then(|v| v.as_str())
+            .unwrap_or(fallback_provider)
+            .to_string();
+        octo::pi::PiModel {
+            id: model_id.clone(),
+            name: model_id,
+            api: provider.clone(),
+            provider,
+            base_url: None,
+            reasoning: false,
+            input: vec!["text".to_string()],
+            context_window: 0,
+            max_tokens: 0,
+            cost: None,
+        }
+    }
+
     async fn pi_set_model(&self, req: PiSetModelRequest) -> RunnerResponse {
         debug!(
             "pi_set_model: session_id={}, provider={}, model_id={}",
@@ -2445,9 +2485,17 @@ impl Runner {
             .set_model(&req.session_id, &req.provider, &req.model_id)
             .await
         {
-            Ok(()) => RunnerResponse::PiCommandAck {
-                session_id: req.session_id,
-            },
+            Ok(response) => {
+                // Parse model info from Pi's response data.
+                // Pi returns { model: "<id>", provider: "<provider>", ... }
+                let model = Self::parse_model_from_response(&response, &req.provider, &req.model_id);
+                RunnerResponse::PiModelChanged(PiModelChangedResponse {
+                    session_id: req.session_id,
+                    model,
+                    thinking_level: String::new(),
+                    is_scoped: false,
+                })
+            }
             Err(e) => error_response(
                 ErrorCode::PiSessionNotFound,
                 format!("Failed to set model: {}", e),
@@ -2460,9 +2508,15 @@ impl Runner {
         debug!("pi_cycle_model: session_id={}", req.session_id);
 
         match self.pi_manager.cycle_model(&req.session_id).await {
-            Ok(()) => RunnerResponse::PiCommandAck {
-                session_id: req.session_id,
-            },
+            Ok(response) => {
+                let model = Self::parse_model_from_response(&response, "", "");
+                RunnerResponse::PiModelChanged(PiModelChangedResponse {
+                    session_id: req.session_id,
+                    model,
+                    thinking_level: String::new(),
+                    is_scoped: false,
+                })
+            }
             Err(e) => error_response(
                 ErrorCode::PiSessionNotFound,
                 format!("Failed to cycle model: {}", e),
@@ -2509,10 +2563,19 @@ impl Runner {
             .set_thinking_level(&req.session_id, &req.level)
             .await
         {
-            Ok(()) => RunnerResponse::PiThinkingLevelChanged(PiThinkingLevelChangedResponse {
-                session_id: req.session_id,
-                level: req.level,
-            }),
+            Ok(response) => {
+                let level = response
+                    .data
+                    .as_ref()
+                    .and_then(|d| d.get("level"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(&req.level)
+                    .to_string();
+                RunnerResponse::PiThinkingLevelChanged(PiThinkingLevelChangedResponse {
+                    session_id: req.session_id,
+                    level,
+                })
+            }
             Err(e) => error_response(
                 ErrorCode::PiSessionNotFound,
                 format!("Failed to set thinking level: {}", e),
@@ -2525,11 +2588,18 @@ impl Runner {
         debug!("pi_cycle_thinking_level: session_id={}", req.session_id);
 
         match self.pi_manager.cycle_thinking_level(&req.session_id).await {
-            Ok(()) => {
-                // The actual new level will come via an event; for now acknowledge
-                RunnerResponse::PiCommandAck {
+            Ok(response) => {
+                let level = response
+                    .data
+                    .as_ref()
+                    .and_then(|d| d.get("level"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("medium")
+                    .to_string();
+                RunnerResponse::PiThinkingLevelChanged(PiThinkingLevelChangedResponse {
                     session_id: req.session_id,
-                }
+                    level,
+                })
             }
             Err(e) => error_response(
                 ErrorCode::PiSessionNotFound,
@@ -2745,10 +2815,7 @@ impl Runner {
                     path,
                 })
             }
-            Err(e) => error_response(
-                ErrorCode::Internal,
-                format!("Failed to export HTML: {}", e),
-            ),
+            Err(e) => error_response(ErrorCode::Internal, format!("Failed to export HTML: {}", e)),
         }
     }
 
@@ -3314,8 +3381,50 @@ async fn main() -> Result<()> {
 
     info!("Pi session manager initialized");
 
+    // Auto-start hstry and mmry daemons for this user.
+    // The runner runs as the target Linux user, so `service start` operates
+    // on that user's data directory and config. Both commands are idempotent
+    // (return error if already running, which we ignore).
+    ensure_user_service("hstry").await;
+    ensure_user_service("mmry").await;
+
     let runner = Runner::new(sandbox_config, binaries, user_config, pi_manager);
     runner.run(&socket_path).await
+}
+
+/// Ensure a user-level service daemon (hstry, mmry) is running.
+///
+/// Shells out to `<binary> service start` which properly daemonizes.
+/// If already running, the command fails with "already running" which
+/// is treated as success.
+async fn ensure_user_service(name: &str) {
+    info!("Ensuring {} daemon is running...", name);
+    match tokio::process::Command::new(name)
+        .args(["service", "start"])
+        .output()
+        .await
+    {
+        Ok(out) => {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            if out.status.success() {
+                info!("{} daemon started: {}", name, stdout.trim());
+            } else {
+                let combined = format!("{}{}", stdout, stderr);
+                if combined.contains("already running") || combined.contains("Already running") {
+                    info!("{} daemon already running", name);
+                } else {
+                    warn!(
+                        "{} service start failed (exit {}): {}{}",
+                        name, out.status, stdout, stderr
+                    );
+                }
+            }
+        }
+        Err(e) => {
+            warn!("Failed to run `{} service start`: {}", name, e);
+        }
+    }
 }
 
 // =============================================================================

@@ -5,42 +5,62 @@ Octo is a self-hosted platform for managing AI coding agents. Supports local mod
 **New to Octo?** Start with the [SETUP.md](./SETUP.md) guide for installation and prerequisites.
 
 ---
+
 ## Debugging
 
 Tmux is always available, use it to debug the logs of the running backend and frontend.
 
 Use agent-browser + tmux for end-to-end testing
 
+---
+
 ## Architecture Overview
 
-Octo manages two types of AI agent sessions:
+```
+Frontend                          Backend                           Runner (per user)
+   |                                 |                                    |
+   |-- Single WebSocket ------------>|                                    |
+   |   (multiplexed channels)        |                                    |
+   |                                 |-- Unix/TCP socket ---------------->|
+   |                                 |   (runner protocol)                |
+   |                                 |                                    |
+   |   {channel:"agent", ...}        |   Canonical Commands              |-- Agent Process A
+   |   {channel:"files", ...}        |   Canonical Events                |-- Agent Process B
+   |   {channel:"terminal", ...}     |                                   |-- hstry (gRPC)
+```
 
-| Session Type | Agent Runtime | Purpose |
-|--------------|---------------|---------|
-| **Main Chat** | `pi` | Primary chat interface, streaming responses, compaction |
-| **OpenCode Sessions** | `opencode` | Per-workspace coding agent sessions |
+### Core Components
 
-### Agent Runtimes
+| Component | Purpose |
+|-----------|---------|
+| **Frontend** | React/TypeScript app speaking the canonical protocol via multiplexed WebSocket |
+| **Backend (octo)** | Stateless relay: routes commands to runners, forwards events to frontend |
+| **Runner (octo-runner)** | Per-user daemon: owns agent processes, translates native events to canonical format |
+| **hstry** | Chat history service (gRPC API, SQLite-backed). All reads/writes go through gRPC. |
 
-**pi** - Lightweight AI coding assistant CLI (`~/.bun/bin/pi`)
-- Source code: `../external-repos/pi-mono`
-- Used for Main Chat in the Octo UI
-- Supports multiple providers (anthropic, openai, google)
-- RPC mode for streaming via stdin/stdout JSON protocol
-- Tools: read, bash, edit, write, grep, find, ls
-- Extensions and skills system
-- Session management with compaction
+### The Canonical Protocol
 
-**opencode** - Full-featured coding agent
-- Source code: `../external-repos/opencode`
-- Used for workspace-specific sessions
-- HTTP server mode (`opencode serve`)
-- `x-opencode-directory` header switches working directory per request
-- Currently: one opencode server per user serves all workspaces
+The frontend speaks a **harness-agnostic canonical protocol**. Users can select which harness to use (Pi, opencode, future agents), but the message format and UI rendering is identical regardless of harness.
+
+- **Messages** are persistent (stored in hstry) with typed **Parts**: text, thinking, tool_call, tool_result, image, file_ref, etc.
+- **Events** are ephemeral UI signals: stream.text_delta, agent.working, tool.start, agent.idle, etc.
+- **Commands** flow from frontend to runner: prompt, abort, set_model, compact, fork, etc.
+
+See `docs/design/canonical-protocol.md` for the full specification.
+
+### Harnesses
+
+A **harness** is an agent runtime that the runner can spawn. The runner translates the harness's native protocol into canonical format.
+
+| Harness | Binary | Status |
+|---------|--------|--------|
+| **pi** | `~/.bun/bin/pi` | Primary harness |
+| **opencode** | TBD | Planned |
+| *(custom)* | Any RPC-compatible agent | Extensible |
+
+Each runner advertises which harnesses it supports. The frontend shows a harness picker when creating sessions.
 
 ### Runtime Modes
-
-Both `pi` and `opencode` can run in different isolation modes:
 
 | Mode | Description | Use Case |
 |------|-------------|----------|
@@ -54,14 +74,11 @@ Both `pi` and `opencode` can run in different isolation modes:
 |--------|---------|
 | `octo` | Main backend server |
 | `octoctl` | CLI for server management |
-| `octo-runner` | Multi-user process daemon (Linux only) |
+| `octo-runner` | Multi-user process daemon, manages agent harnesses |
 | `octo-sandbox` | Sandbox wrapper using bwrap/sandbox-exec |
 | `pi-bridge` | HTTP/WebSocket bridge for Pi in containers |
 | `octo-files` | File access server for workspaces |
-
-### External Dependencies
-
-fresh clones of dependencies like opencode or pi-mono can be found in ../external-repos
+| `hstry` | Chat history daemon (gRPC, SQLite-backed) |
 
 ### Process Sandboxing
 
@@ -80,32 +97,41 @@ Per-workspace overrides in `.octo/sandbox.toml` can only ADD restrictions, never
 
 ---
 
-## Recent Architecture Decisions
+## Event Flow
 
-- Hstry is the canonical chat history store. Single-user main chat reads via hstry ReadService; multi-user reads via octo-runner against per-user hstry.db.
-- Pi sessions rehydrate by rebuilding JSONL from hstry when the session file is missing.
-- Main chat Pi WS connections bind to a specific session_id; runner writer errors trigger a single restart + retry.
-- Provider storage: Pi JSONL stores provider in model_change entries and assistant message payloads; OpenCode stores provider per message as providerID in session message JSON.
-
-## Memory System (Critical)
-
-**ALWAYS search memories before starting work on unfamiliar areas.** Memories contain architecture decisions, API patterns, and debugging insights that save time.
-
-```bash
-# Search BEFORE implementing
-agntz memory search "sandbox"
-agntz memory search "pi runtime"
-agntz memory search "opencode session"
+```
+Agent Harness (e.g., Pi --mode rpc, stdin/stdout JSON)
+  -> Runner: stdout_reader_task()
+  -> Runner: translate(NativeEvent) -> CanonicalEvent
+  -> Runner: broadcast::Sender<CanonicalEvent>
+  -> Backend: Unix socket / TCP
+  -> Backend: WebSocket handler
+  -> Frontend: multiplexed WebSocket (agent, files, terminal channels)
 ```
 
-**Create memories when you discover reusable knowledge:**
-
-```bash
-agntz memory add "Pi uses RPC mode with JSON over stdin/stdout for Main Chat streaming" -c architecture -i 8
-agntz memory add "x-opencode-directory header switches workspace without restarting server" -c api -i 7
-```
+The runner maintains a state machine per session (idle, working, error) and emits canonical events. The frontend derives UI state directly from events without harness-specific logic.
 
 ---
+
+## Storage
+
+### hstry (Chat History)
+
+All chat history access goes through hstry's gRPC API - no raw SQLite access from `octo`.
+
+- **WriteService**: Persist messages after agent turns complete (via `HstryClient` gRPC)
+- **ReadService**: Query messages, sessions, search (via `HstryClient` gRPC)
+- Stores canonical `Message` format directly (no translation at read time)
+- **Runner exception**: `octo-runner` reads hstry SQLite directly for speed (runs as target user, same machine). This is intentional and secure.
+
+### Session Files (Pi-Owned)
+
+Pi writes its own JSONL session files -- **Octo must NEVER create or write JSONL session files**.
+
+- **Pi**: `~/.pi/agent/sessions/--{safe_cwd}--/{timestamp}_{session_id}.jsonl`
+- These are authoritative for harness-specific metadata (titles, fork points)
+- hstry is authoritative for structured message content
+- `pending-` prefixed IDs are internal runner/frontend placeholders for optimistic session matching; they must never leak into files or hstry
 
 ## Agent Tools
 
@@ -151,10 +177,10 @@ byt sync push                   # Sync memories to git
 Create a memory when you discover:
 
 - **Reusable patterns** - "Voice mode uses eaRS for STT and kokorox for TTS via WebSocket"
-- **Existing interfaces** - "OpenCode has PATCH /session/{id} for updating session title"
-- **Architecture decisions** - "Chat history sessions use JSON files, live sessions use opencode API"
+- **Existing interfaces** - "Pi PATCH /api/chat-history/{id} renames sessions via session_info JSONL entry"
+- **Architecture decisions** - "hstry is mandatory, writes go through gRPC WriteService not raw SQLite"
 - **Debugging insights** - "Port cleanup requires waiting for process exit to prevent zombies"
-- **Integration points** - "x-opencode-directory header switches working directory for any request"
+- **Integration points** - "PiTranslator converts PiEvent to Vec<EventPayload> for canonical broadcast"
 
 ### When NOT to Create Memories
 
@@ -173,7 +199,7 @@ agntz memory search "voice mode"
 agntz memory search "session rename"
 
 # Add after discovering something reusable
-agntz memory add "OpenCode PATCH /session/{id} accepts {title} to rename sessions" -c api -i 7
+agntz memory add "Chat sessions from disk need PATCH /api/chat-history/{id} since no Pi running" -c api -i 7
 agntz memory add "features.voice config gates dictation and voice mode buttons" -c frontend -i 6
 
 # Categories: api, frontend, backend, architecture, patterns, debugging
@@ -183,9 +209,9 @@ agntz memory add "features.voice config gates dictation and voice mode buttons" 
 ### Memory Examples (Good)
 
 ```bash
-agntz memory add "Chat sessions from disk need PATCH /api/chat-history/{id} since no opencode running" -c api -i 7
+agntz memory add "Chat sessions from disk need PATCH /api/chat-history/{id} since no Pi running" -c api -i 7
 agntz memory add "useDictation hook provides STT-only mode separate from full voice mode" -c frontend -i 6
-agntz memory add "SessionInfo stored in ~/.local/share/opencode/storage/session/{projectID}/ses_*.json" -c architecture -i 8
+agntz memory add "Pi session files stored at ~/.pi/agent/sessions/--{safe_cwd}--/{ts}_{id}.jsonl" -c architecture -i 8
 ```
 
 ### Memory Examples (Bad)

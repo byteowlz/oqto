@@ -13,7 +13,11 @@ import {
 } from "./components";
 import { useDashboardData } from "./hooks";
 import { getTranslations } from "./translations";
-import type { BuiltinCardDefinition, DashboardCardSpan, DashboardRegistryCard } from "./types";
+import type {
+	BuiltinCardDefinition,
+	DashboardCardSpan,
+	DashboardRegistryCard,
+} from "./types";
 
 function createId(): string {
 	if (typeof crypto !== "undefined" && crypto.randomUUID) {
@@ -32,10 +36,14 @@ export function DashboardApp() {
 	} = useApp();
 
 	const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(false);
-	const [sidebarSection, setSidebarSection] = useState<"cards" | "custom">("cards");
+	const [sidebarSection, setSidebarSection] = useState<"cards" | "custom">(
+		"cards",
+	);
 	const [layoutEditMode, setLayoutEditMode] = useState(false);
 	const isMobileLayout = useIsMobile();
-	const [mobileView, setMobileView] = useState<"dashboard" | "cards" | "custom">("dashboard");
+	const [mobileView, setMobileView] = useState<
+		"dashboard" | "cards" | "custom"
+	>("dashboard");
 
 	const workspacePath = selectedWorkspaceSession?.workspace_path ?? ".";
 	const t = useMemo(() => getTranslations(locale), [locale]);
@@ -72,7 +80,10 @@ export function DashboardApp() {
 	}, [busySessions, chatHistory]);
 
 	const cardMap = useMemo(() => {
-		const map = new Map<string, BuiltinCardDefinition | DashboardRegistryCard>();
+		const map = new Map<
+			string,
+			BuiltinCardDefinition | DashboardRegistryCard
+		>();
 		for (const card of builtinCards) map.set(card.id, card);
 		for (const card of data.registryCards) map.set(card.id, card);
 		return map;
@@ -82,19 +93,31 @@ export function DashboardApp() {
 		if (!data.layoutConfig) return [];
 		return data.layoutConfig.order
 			.map((id) => cardMap.get(id))
-			.filter(Boolean) as Array<BuiltinCardDefinition | DashboardRegistryCard>;
+			.filter(
+				(card): card is BuiltinCardDefinition | DashboardRegistryCard =>
+					card != null,
+			);
 	}, [cardMap, data.layoutConfig]);
 
 	const visibleCards = useMemo(() => {
 		if (!data.layoutConfig) return [];
-		return orderedCards.filter((c) => data.layoutConfig!.cards[c.id]?.visible !== false);
+		return orderedCards.filter(
+			(c) => data.layoutConfig?.cards[c.id]?.visible !== false,
+		);
 	}, [data.layoutConfig, orderedCards]);
 
 	const handleToggleCard = useCallback(
 		(id: string) => {
 			data.updateLayout((prev) => ({
 				...prev,
-				cards: { ...prev.cards, [id]: { ...prev.cards[id], visible: !prev.cards[id]?.visible, span: prev.cards[id]?.span ?? 6 } },
+				cards: {
+					...prev.cards,
+					[id]: {
+						...prev.cards[id],
+						visible: !prev.cards[id]?.visible,
+						span: prev.cards[id]?.span ?? 6,
+					},
+				},
 			}));
 		},
 		[data],
@@ -102,7 +125,10 @@ export function DashboardApp() {
 
 	const handleSpanChange = useCallback(
 		(id: string, span: DashboardCardSpan) => {
-			data.updateLayout((prev) => ({ ...prev, cards: { ...prev.cards, [id]: { ...prev.cards[id], span } } }));
+			data.updateLayout((prev) => ({
+				...prev,
+				cards: { ...prev.cards, [id]: { ...prev.cards[id], span } },
+			}));
 		},
 		[data],
 	);
@@ -141,14 +167,24 @@ export function DashboardApp() {
 	);
 
 	const handleAddCustomCard = useCallback(
-		(card: { title: string; description?: string; type: "markdown" | "query"; content?: string; url?: string; method?: string }) => {
+		(card: {
+			title: string;
+			description?: string;
+			type: "markdown" | "query";
+			content?: string;
+			url?: string;
+			method?: string;
+		}) => {
 			const id = `custom-${createId()}`;
 			const newCard: DashboardRegistryCard = {
 				id,
 				title: card.title,
 				description: card.description,
 				kind: card.type,
-				config: card.type === "markdown" ? { content: card.content } : { url: card.url, method: card.method },
+				config:
+					card.type === "markdown"
+						? { content: card.content }
+						: { url: card.url, method: card.method },
 			};
 			const nextRegistry = [...data.registryRef.current, newCard];
 			data.registryRef.current = nextRegistry;
@@ -172,7 +208,11 @@ export function DashboardApp() {
 			data.updateLayout((prev) => {
 				const nextCards = { ...prev.cards };
 				delete nextCards[id];
-				return { ...prev, order: prev.order.filter((e) => e !== id), cards: nextCards };
+				return {
+					...prev,
+					order: prev.order.filter((e) => e !== id),
+					cards: nextCards,
+				};
 			});
 		},
 		[data],
@@ -211,17 +251,44 @@ export function DashboardApp() {
 				onRefreshFeeds={data.handleRefreshFeeds}
 			/>
 		),
-		[locale, t, runningSessions, workspaceSessions, busyChatSessions, chatHistory.length, scheduleList, data, feedUrls, handleAddFeed, handleRemoveFeed],
+		[
+			locale,
+			t,
+			runningSessions,
+			workspaceSessions,
+			busyChatSessions,
+			chatHistory.length,
+			scheduleList,
+			data,
+			feedUrls,
+			handleAddFeed,
+			handleRemoveFeed,
+		],
 	);
 
 	const renderCustomCard = useCallback((card: DashboardRegistryCard) => {
 		if (card.kind === "markdown") {
-			return <CustomMarkdownCard title={card.title} description={card.description} content={card.config?.content || ""} />;
+			return (
+				<CustomMarkdownCard
+					title={card.title}
+					description={card.description}
+					content={card.config?.content || ""}
+				/>
+			);
 		}
-		return <QueryCard title={card.title} description={card.description} url={card.config?.url} method={card.config?.method} headers={card.config?.headers} />;
+		return (
+			<QueryCard
+				title={card.title}
+				description={card.description}
+				url={card.config?.url}
+				method={card.config?.method}
+				headers={card.config?.headers}
+			/>
+		);
 	}, []);
 
-	const activeSidebarSection = isMobileLayout && mobileView !== "dashboard" ? mobileView : sidebarSection;
+	const activeSidebarSection =
+		isMobileLayout && mobileView !== "dashboard" ? mobileView : sidebarSection;
 
 	return (
 		<div className="flex flex-col h-full min-h-0 p-1 sm:p-4 md:p-6 gap-1 sm:gap-4 overflow-hidden w-full">

@@ -646,18 +646,17 @@ impl SessionService {
         let workspace_root = self.workspace_root_for_user(user_id);
         roots.push(workspace_root.canonicalize().unwrap_or(workspace_root));
 
-        // Include this user's Main Chat data directory.
+        // Include this user's data directory (for per-user workspace data).
         //
         // IMPORTANT: do NOT allow the entire data directory; that would let users
         // reference other users' data by path. We only allow the per-user subtree.
-        let main_chat_users_root =
-            std::path::PathBuf::from(&self.config.user_data_path).join("users");
-        let main_chat_root = if self.config.single_user {
-            main_chat_users_root.join("main")
+        let users_data_root = std::path::PathBuf::from(&self.config.user_data_path).join("users");
+        let user_data_root = if self.config.single_user {
+            users_data_root.join("main")
         } else {
-            main_chat_users_root.join(user_id)
+            users_data_root.join(user_id)
         };
-        roots.push(main_chat_root.canonicalize().unwrap_or(main_chat_root));
+        roots.push(user_data_root.canonicalize().unwrap_or(user_data_root));
 
         roots
     }
@@ -702,11 +701,14 @@ impl SessionService {
             if let Some(parent) = resolved.parent()
                 && parent.exists()
             {
-                let canonical_parent = parent.canonicalize().with_context(|| {
-                    format!("resolving workspace parent {}", parent.display())
-                })?;
+                let canonical_parent = parent
+                    .canonicalize()
+                    .with_context(|| format!("resolving workspace parent {}", parent.display()))?;
                 let allowed_roots = self.allowed_workspace_roots(user_id);
-                if !allowed_roots.iter().any(|root| canonical_parent.starts_with(root)) {
+                if !allowed_roots
+                    .iter()
+                    .any(|root| canonical_parent.starts_with(root))
+                {
                     anyhow::bail!(
                         "workspace path {} is outside allowed roots",
                         resolved.display()

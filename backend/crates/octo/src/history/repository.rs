@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use once_cell::sync::Lazy;
+use serde_json;
 use sqlx::Row;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use tokio::sync::Mutex;
@@ -12,7 +13,7 @@ use tokio::sync::Mutex;
 use crate::{wordlist, workspace};
 
 use super::models::{
-    ChatMessage, ChatMessagePart, ChatSession, MessageInfo, PartInfo, SessionInfo,
+    ChatMessage, ChatMessagePart, ChatSession, ChatSessionStats, MessageInfo, PartInfo, SessionInfo,
 };
 
 /// Default OpenCode data directory.
@@ -131,6 +132,7 @@ pub async fn list_sessions_from_hstry(db_path: &Path) -> Result<Vec<ChatSession>
             version: None,
             is_child: false,
             source_path: None,
+            stats: None,
         });
     }
 
@@ -185,6 +187,7 @@ pub async fn get_session_from_hstry(
         version: None,
         is_child: false,
         source_path: None,
+        stats: None,
     }))
 }
 
@@ -267,9 +270,7 @@ fn hstry_parts_to_chat_parts(
     let mut parts = Vec::new();
 
     if let Some(parts_json) = parts_json {
-        if let Ok(canon_parts) =
-            serde_json::from_str::<Vec<crate::canon::CanonPart>>(parts_json)
-        {
+        if let Ok(canon_parts) = serde_json::from_str::<Vec<crate::canon::CanonPart>>(parts_json) {
             for (idx, part) in canon_parts.into_iter().enumerate() {
                 let id = format!("{message_id}-part-{idx}");
                 match part {
@@ -296,7 +297,10 @@ fn hstry_parts_to_chat_parts(
                         tool_title: None,
                     }),
                     crate::canon::CanonPart::ToolCall {
-                        name, input, status, ..
+                        name,
+                        input,
+                        status,
+                        ..
                     } => parts.push(ChatMessagePart {
                         id,
                         part_type: "tool_call".to_string(),
@@ -387,6 +391,131 @@ fn hstry_parts_to_chat_parts(
     }
 
     parts
+}
+
+// ============================================================================
+// gRPC-based repository functions (via HstryClient)
+// ============================================================================
+
+/// List all sessions from hstry via gRPC.
+pub async fn list_sessions_via_grpc(
+    client: &crate::hstry::HstryClient,
+) -> Result<Vec<ChatSession>> {
+    let summaries = client.list_conversations(None, None, None).await?;
+    let sessions = summaries
+        .into_iter()
+        .filter_map(|s| s.conversation.map(|c| conversation_proto_to_session(&c)))
+        .collect();
+    Ok(sessions)
+}
+
+/// Get a single session from hstry via gRPC.
+pub async fn get_session_via_grpc(
+    client: &crate::hstry::HstryClient,
+    session_id: &str,
+) -> Result<Option<ChatSession>> {
+    let conv = client.get_conversation(session_id, None).await?;
+    Ok(conv.map(|c| conversation_proto_to_session(&c)))
+}
+
+/// Get messages for a session from hstry via gRPC.
+pub async fn get_session_messages_via_grpc(
+    client: &crate::hstry::HstryClient,
+    session_id: &str,
+) -> Result<Vec<ChatMessage>> {
+    let proto_messages = client.get_messages(session_id, None, None).await?;
+    let messages = proto_messages
+        .iter()
+        .map(|m| message_proto_to_chat_message(m, session_id))
+        .collect();
+    Ok(messages)
+}
+
+/// Convert a proto Conversation to a ChatSession.
+fn conversation_proto_to_session(conv: &hstry_core::service::proto::Conversation) -> ChatSession {
+    let stats = parse_stats_from_metadata(&conv.metadata_json);
+    let workspace_path = conv
+        .workspace
+        .clone()
+        .unwrap_or_else(|| "global".to_string());
+    let project_name = project_name_from_path(&workspace_path);
+
+    ChatSession {
+        id: conv.external_id.clone(),
+        readable_id: String::new(),
+        title: conv.title.clone(),
+        parent_id: None,
+        workspace_path,
+        project_name,
+        created_at: conv.created_at_ms,
+        updated_at: conv.updated_at_ms.unwrap_or(conv.created_at_ms),
+        version: None,
+        is_child: false,
+        source_path: None,
+        stats,
+    }
+}
+
+fn parse_stats_from_metadata(metadata_json: &str) -> Option<ChatSessionStats> {
+    if metadata_json.trim().is_empty() {
+        return None;
+    }
+    let value: serde_json::Value = serde_json::from_str(metadata_json).ok()?;
+    let stats = value.get("stats")?.as_object()?;
+    Some(ChatSessionStats {
+        tokens_in: stats.get("tokens_in").and_then(|v| v.as_i64()).unwrap_or(0),
+        tokens_out: stats
+            .get("tokens_out")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0),
+        cache_read: stats
+            .get("cache_read")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0),
+        cache_write: stats
+            .get("cache_write")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0),
+        cost_usd: stats
+            .get("cost_usd")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0),
+    })
+}
+
+/// Convert a proto Message to a ChatMessage.
+fn message_proto_to_chat_message(
+    msg: &hstry_core::service::proto::Message,
+    session_id: &str,
+) -> ChatMessage {
+    let id = format!("{session_id}-msg-{}", msg.idx);
+    let parts = hstry_parts_to_chat_parts(
+        if msg.parts_json.is_empty() {
+            None
+        } else {
+            Some(msg.parts_json.as_str())
+        },
+        &msg.content,
+        &id,
+    );
+
+    ChatMessage {
+        id,
+        session_id: session_id.to_string(),
+        role: msg.role.clone(),
+        created_at: msg.created_at_ms.unwrap_or(0),
+        completed_at: None,
+        parent_id: None,
+        model_id: msg.model.clone(),
+        provider_id: msg.provider.clone(),
+        agent: None,
+        summary_title: None,
+        tokens_input: None,
+        tokens_output: msg.tokens,
+        tokens_reasoning: None,
+        cost: msg.cost_usd,
+        parts,
+    }
 }
 
 // ============================================================================
@@ -493,6 +622,7 @@ pub fn list_sessions_from_dir(opencode_dir: &Path) -> Result<Vec<ChatSession>> {
                 version: info.version,
                 is_child,
                 source_path: Some(session_path.to_string_lossy().to_string()),
+                stats: None,
             });
         }
     }
@@ -615,6 +745,7 @@ pub fn update_session_title_in_dir(
             version: info.version,
             is_child,
             source_path: Some(session_file.to_string_lossy().to_string()),
+            stats: None,
         });
     }
 

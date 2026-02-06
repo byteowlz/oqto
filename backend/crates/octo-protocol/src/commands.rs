@@ -64,6 +64,11 @@ pub enum CommandPayload {
         message: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         images: Option<Vec<ImageAttachment>>,
+        /// Client-generated ID for optimistic message matching.
+        /// The frontend creates an optimistic user message with this ID,
+        /// and expects it back in the persisted message so it can reconcile.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        client_id: Option<String>,
     },
 
     /// Steering message (interrupt mid-run).
@@ -198,6 +203,7 @@ mod tests {
             payload: CommandPayload::Prompt {
                 message: "Hello".to_string(),
                 images: None,
+                client_id: None,
             },
         };
 

@@ -30,7 +30,13 @@ export type WsCommandBase = {
 };
 
 /** Thinking level options */
-export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+export type ThinkingLevel =
+	| "off"
+	| "minimal"
+	| "low"
+	| "medium"
+	| "high"
+	| "xhigh";
 
 export type Attachment = {
 	type: string;
@@ -222,8 +228,16 @@ export type TrxWsCommand =
 /** Session channel commands (legacy session WS protocol over mux) */
 export type SessionWsCommand =
 	| ({ channel: "session"; type: "pong" } & WsCommandBase)
-	| ({ channel: "session"; type: "subscribe"; session_id: string } & WsCommandBase)
-	| ({ channel: "session"; type: "unsubscribe"; session_id: string } & WsCommandBase)
+	| ({
+			channel: "session";
+			type: "subscribe";
+			session_id: string;
+	  } & WsCommandBase)
+	| ({
+			channel: "session";
+			type: "unsubscribe";
+			session_id: string;
+	  } & WsCommandBase)
 	| ({
 			channel: "session";
 			type: "send_message";

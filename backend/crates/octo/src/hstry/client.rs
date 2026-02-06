@@ -8,9 +8,11 @@ use tokio::sync::RwLock;
 use tonic::transport::Channel;
 
 use hstry_core::service::proto::{
-    AppendMessagesRequest, AppendMessagesResponse, Conversation, GetConversationRequest,
-    GetMessagesRequest, ListConversationsRequest, Message, UploadAttachmentRequest,
-    UploadAttachmentResponse, WriteConversationRequest, WriteConversationResponse,
+    AppendMessagesRequest, AppendMessagesResponse, Conversation, DeleteConversationRequest,
+    DeleteConversationResponse, GetConversationRequest, GetMessagesRequest,
+    ListConversationsRequest, Message, UpdateConversationRequest, UpdateConversationResponse,
+    UploadAttachmentRequest, UploadAttachmentResponse, WriteConversationRequest,
+    WriteConversationResponse,
 };
 use hstry_core::service::{ReadServiceClient, WriteServiceClient};
 
@@ -99,6 +101,7 @@ impl HstryClient {
         messages: Vec<Message>,
         created_at_ms: i64,
         updated_at_ms: Option<i64>,
+        harness: Option<String>,
     ) -> Result<WriteConversationResponse> {
         let mut client = self.ensure_write_connected().await?;
 
@@ -116,6 +119,7 @@ impl HstryClient {
                 tokens_out: None,
                 cost_usd: None,
                 metadata_json: metadata_json.unwrap_or_default(),
+                harness,
             }),
             messages,
         };
@@ -124,6 +128,60 @@ impl HstryClient {
             .write_conversation(request)
             .await
             .context("Failed to write conversation to hstry")?;
+
+        Ok(response.into_inner())
+    }
+
+    /// Partial metadata update -- only set fields are applied, others preserved.
+    pub async fn update_conversation(
+        &self,
+        session_id: &str,
+        title: Option<String>,
+        workspace: Option<String>,
+        model: Option<String>,
+        provider: Option<String>,
+        metadata_json: Option<String>,
+        readable_id: Option<String>,
+        harness: Option<String>,
+    ) -> Result<UpdateConversationResponse> {
+        let mut client = self.ensure_write_connected().await?;
+
+        let request = UpdateConversationRequest {
+            source_id: PI_SOURCE_ID.to_string(),
+            external_id: session_id.to_string(),
+            title,
+            workspace,
+            model,
+            provider,
+            metadata_json,
+            readable_id,
+            harness,
+        };
+
+        let response = client
+            .update_conversation(request)
+            .await
+            .context("Failed to update conversation in hstry")?;
+
+        Ok(response.into_inner())
+    }
+
+    /// Delete a conversation and all its messages.
+    pub async fn delete_conversation(
+        &self,
+        session_id: &str,
+    ) -> Result<DeleteConversationResponse> {
+        let mut client = self.ensure_write_connected().await?;
+
+        let request = DeleteConversationRequest {
+            source_id: PI_SOURCE_ID.to_string(),
+            external_id: session_id.to_string(),
+        };
+
+        let response = client
+            .delete_conversation(request)
+            .await
+            .context("Failed to delete conversation from hstry")?;
 
         Ok(response.into_inner())
     }

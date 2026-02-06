@@ -14,13 +14,13 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use chrono::Utc;
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, Command};
 use tokio::sync::{RwLock, broadcast, mpsc, oneshot};
 
+use crate::hstry::HstryClient;
 use crate::local::SandboxConfig;
 use crate::pi::{AgentMessage, PiCommand, PiEvent, PiMessage, PiResponse, PiState, SessionStats};
 use crate::runner::pi_translator::PiTranslator;
@@ -121,6 +121,8 @@ pub enum PiSessionState {
     Streaming,
     /// Session is compacting conversation history.
     Compacting,
+    /// Session is aborting an active run.
+    Aborting,
     /// Session is shutting down.
     Stopping,
 }
@@ -132,6 +134,7 @@ impl std::fmt::Display for PiSessionState {
             Self::Idle => write!(f, "idle"),
             Self::Streaming => write!(f, "streaming"),
             Self::Compacting => write!(f, "compacting"),
+            Self::Aborting => write!(f, "aborting"),
             Self::Stopping => write!(f, "stopping"),
         }
     }
@@ -156,7 +159,7 @@ pub struct PiSessionInfo {
 
 /// Commands sent to a session's command loop.
 /// Commands sent to a Pi session's command loop.
-/// 
+///
 /// Note: Commands that need responses (GetState, GetMessages, etc.) don't include
 /// oneshot senders here. Instead, response coordination happens via the shared
 /// `pending_responses` map - the caller registers a waiter before sending the command,
@@ -166,8 +169,11 @@ pub enum PiSessionCommand {
     // ========================================================================
     // Prompting
     // ========================================================================
-    /// Send a user prompt.
-    Prompt(String),
+    /// Send a user prompt with optional client-generated ID for matching.
+    Prompt {
+        message: String,
+        client_id: Option<String>,
+    },
     /// Send a steering message (interrupt mid-run).
     Steer(String),
     /// Send a follow-up message (queue for after completion).
@@ -295,6 +301,11 @@ pub type PiEventWrapper = CanonicalEvent;
 /// Pending response waiters - maps request ID to oneshot sender.
 type PendingResponses = Arc<RwLock<HashMap<String, oneshot::Sender<PiResponse>>>>;
 
+/// Pending client_id for optimistic message matching.
+/// Set by command_processor_task when a Prompt is sent, consumed by stdout_reader_task
+/// when translating the agent_end messages.
+type PendingClientId = Arc<RwLock<Option<String>>>;
+
 /// Internal session state (held by the manager).
 struct PiSession {
     /// Session ID.
@@ -305,7 +316,7 @@ struct PiSession {
     /// Child process.
     process: Child,
     /// Current state.
-    state: PiSessionState,
+    state: Arc<RwLock<PiSessionState>>,
     /// Last activity timestamp.
     last_activity: Instant,
     /// Broadcast channel for events.
@@ -314,6 +325,8 @@ struct PiSession {
     cmd_tx: mpsc::Sender<PiSessionCommand>,
     /// Pending response waiters (shared with reader task).
     pending_responses: PendingResponses,
+    /// Pending client_id for the next prompt (shared between command and reader tasks).
+    pending_client_id: PendingClientId,
     /// Handle to the background reader task.
     _reader_handle: tokio::task::JoinHandle<()>,
     /// Handle to the command processor task.
@@ -346,100 +359,45 @@ pub struct PiSessionManager {
     config: PiManagerConfig,
     /// Shutdown signal sender.
     shutdown_tx: broadcast::Sender<()>,
+    /// hstry gRPC client for persisting chat history.
+    hstry_client: Option<HstryClient>,
+    /// Sessions currently being created (guards against concurrent creation).
+    /// Holds session IDs that are in the process of being spawned but not yet
+    /// inserted into the `sessions` map. Prevents the TOCTOU race in
+    /// `get_or_create_session` where two concurrent callers both pass the
+    /// `contains_key` check and each spawn a separate Pi process.
+    creating: tokio::sync::Mutex<std::collections::HashSet<String>>,
 }
 
 impl PiSessionManager {
     /// Create a new Pi session manager.
     pub fn new(config: PiManagerConfig) -> Arc<Self> {
         let (shutdown_tx, _) = broadcast::channel(1);
+
+        // Create hstry client if not explicitly disabled via hstry_db_path=None.
+        // The actual gRPC connection is established lazily on first use.
+        let hstry_client = config.hstry_db_path.as_ref().map(|_| HstryClient::new());
+
         Arc::new(Self {
             sessions: RwLock::new(HashMap::new()),
             config,
             shutdown_tx,
+            hstry_client,
+            creating: tokio::sync::Mutex::new(std::collections::HashSet::new()),
         })
     }
 
-    /// Resolve or create a session file for the given session_id and cwd.
-    ///
-    /// Looks in `~/.pi/agent/sessions/--{safe_cwd}--/` for an existing JSONL file
-    /// matching the session_id. If not found, creates a new one with a session header.
-    /// Returns `None` only if the home directory can't be determined.
-    fn resolve_session_file(&self, session_id: &str, cwd: &std::path::Path) -> Option<PathBuf> {
-        let home = std::env::var("HOME")
-            .ok()
-            .map(PathBuf::from)
-            .or_else(dirs::home_dir)?;
-
-        let safe_path = cwd
-            .to_string_lossy()
-            .trim_start_matches(&['/', '\\'][..])
-            .replace('/', "-")
-            .replace('\\', "-")
-            .replace(':', "-");
-        let sessions_dir = home
-            .join(".pi")
-            .join("agent")
-            .join("sessions")
-            .join(format!("--{}--", safe_path));
-
-        // Check for existing session file matching this session_id
-        if let Ok(entries) = std::fs::read_dir(&sessions_dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.extension().map(|e| e == "jsonl").unwrap_or(false)
-                    && path
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .map(|name| name.contains(session_id))
-                        .unwrap_or(false)
-                {
-                    return Some(path);
-                }
-            }
-        }
-
-        // Create new session file
-        if let Err(err) = std::fs::create_dir_all(&sessions_dir) {
-            error!(
-                "Failed to create Pi sessions dir {:?}: {}",
-                sessions_dir, err
-            );
-            return None;
-        }
-
-        let header = serde_json::json!({
-            "type": "session",
-            "version": 3,
-            "id": session_id,
-            "timestamp": chrono::Utc::now().to_rfc3339(),
-            "cwd": cwd.to_string_lossy(),
-        });
-        let content = format!(
-            "{}\n",
-            serde_json::to_string(&header).unwrap_or_else(|_| "{}".to_string())
-        );
-        let filename = format!(
-            "{}_{}.jsonl",
-            chrono::Utc::now().timestamp_millis(),
-            session_id
-        );
-        let path = sessions_dir.join(filename);
-
-        match std::fs::write(&path, content) {
-            Ok(()) => Some(path),
-            Err(err) => {
-                error!("Failed to seed Pi session file {:?}: {}", path, err);
-                None
-            }
-        }
-    }
-
     /// Create a new session.
+    ///
+    /// Returns the **real** session ID assigned by Pi (which may differ from
+    /// the provisional `session_id` passed by the caller). For resumed
+    /// sessions the IDs typically match; for brand-new sessions Pi generates
+    /// its own ID and the runner re-keys the session map.
     pub async fn create_session(
         self: &Arc<Self>,
         session_id: String,
         config: PiSessionConfig,
-    ) -> Result<()> {
+    ) -> Result<String> {
         // Check if session already exists
         {
             let sessions = self.sessions.read().await;
@@ -450,14 +408,16 @@ impl PiSessionManager {
 
         info!("Creating Pi session '{}' in {:?}", session_id, config.cwd);
 
-        // Resolve session file: use explicit path if provided, otherwise
-        // discover or create one based on session_id and cwd.
+        // Use explicit session file if provided (for resuming).
+        // For new sessions, do NOT pass --session: let Pi create its
+        // own session file and generate its own ID. The runner will
+        // learn Pi's real session ID via get_state after startup and
+        // re-key the session map accordingly.
         let session_file = config
             .session_file
             .as_ref()
             .or(config.continue_session.as_ref())
-            .cloned()
-            .or_else(|| self.resolve_session_file(&session_id, &config.cwd));
+            .cloned();
 
         // Build Pi arguments
         let mut pi_args: Vec<String> = vec!["--mode".to_string(), "rpc".to_string()];
@@ -573,6 +533,8 @@ impl PiSessionManager {
         let state = Arc::new(RwLock::new(PiSessionState::Starting));
         let last_activity = Arc::new(RwLock::new(Instant::now()));
         let pending_responses: PendingResponses = Arc::new(RwLock::new(HashMap::new()));
+        // Pending client_id for optimistic message matching (shared between command and reader tasks)
+        let pending_client_id: PendingClientId = Arc::new(RwLock::new(None));
 
         // Spawn stdout reader task
         let reader_handle = {
@@ -580,9 +542,10 @@ impl PiSessionManager {
             let event_tx = event_tx.clone();
             let state = Arc::clone(&state);
             let last_activity = Arc::clone(&last_activity);
-            let hstry_db_path = self.config.hstry_db_path.clone();
+            let hstry_client = self.hstry_client.clone();
             let work_dir = config.cwd.clone();
             let pending_responses = Arc::clone(&pending_responses);
+            let pending_client_id = Arc::clone(&pending_client_id);
 
             tokio::spawn(async move {
                 Self::stdout_reader_task(
@@ -592,9 +555,10 @@ impl PiSessionManager {
                     event_tx,
                     state,
                     last_activity,
-                    hstry_db_path,
+                    hstry_client,
                     work_dir,
                     pending_responses,
+                    pending_client_id,
                 )
                 .await;
             })
@@ -605,9 +569,18 @@ impl PiSessionManager {
             let session_id = session_id.clone();
             let state = Arc::clone(&state);
             let last_activity = Arc::clone(&last_activity);
+            let pending_client_id = Arc::clone(&pending_client_id);
 
             tokio::spawn(async move {
-                Self::command_processor_task(session_id, stdin, cmd_rx, state, last_activity).await;
+                Self::command_processor_task(
+                    session_id,
+                    stdin,
+                    cmd_rx,
+                    state,
+                    last_activity,
+                    pending_client_id,
+                )
+                .await;
             })
         };
 
@@ -616,60 +589,102 @@ impl PiSessionManager {
             id: session_id.clone(),
             config,
             process: child,
-            state: PiSessionState::Starting,
+            state: Arc::clone(&state),
             last_activity: Instant::now(),
             event_tx,
             cmd_tx,
             pending_responses,
+            pending_client_id,
             _reader_handle: reader_handle,
             _cmd_handle: cmd_handle,
         };
 
+        // Store under the caller-provided ID. This is the routing key
+        // used for all subsequent commands and event forwarding. Pi may
+        // internally use a different session ID (visible in get_state),
+        // but the runner's map always uses the caller's key. No re-keying.
         {
             let mut sessions = self.sessions.write().await;
             sessions.insert(session_id.clone(), session);
-        } // Write lock released here
-
-        // Update state to Idle after initial setup
-        let sessions = self.sessions.read().await;
-        if let Some(session) = sessions.get(&session_id) {
-            // Give Pi a moment to initialize before marking as Idle
-            tokio::spawn({
-                let session_id = session_id.clone();
-                let cmd_tx = session.cmd_tx.clone();
-                async move {
-                    tokio::time::sleep(Duration::from_millis(500)).await;
-                    // The state will be set to Idle by the reader when it receives events
-                    debug!("Session '{}' initialization complete", session_id);
-                    drop(cmd_tx);
-                }
-            });
         }
 
         info!("Session '{}' created successfully", session_id);
-        Ok(())
+        Ok(session_id)
     }
 
     /// Get or create a session.
+    ///
+    /// Returns the real session ID (may differ from `session_id` for new
+    /// sessions where Pi assigns its own ID).
+    ///
+    /// This method is safe against concurrent calls with the same session ID.
+    /// A creation-in-progress guard prevents the TOCTOU race where two callers
+    /// both see the session as absent and each spawn a separate Pi process.
     pub async fn get_or_create_session(
         self: &Arc<Self>,
         session_id: &str,
         config: PiSessionConfig,
-    ) -> Result<()> {
+    ) -> Result<String> {
+        // Fast path: session already exists.
         {
             let sessions = self.sessions.read().await;
             if sessions.contains_key(session_id) {
                 debug!("Session '{}' already exists", session_id);
-                return Ok(());
+                return Ok(session_id.to_string());
             }
         }
-        self.create_session(session_id.to_string(), config).await
+
+        // Acquire creation lock to prevent concurrent spawns for the same ID.
+        {
+            let mut creating = self.creating.lock().await;
+            // Re-check under lock: another caller may have finished creating
+            // between our read above and acquiring this lock.
+            {
+                let sessions = self.sessions.read().await;
+                if sessions.contains_key(session_id) {
+                    debug!("Session '{}' created by concurrent caller", session_id);
+                    return Ok(session_id.to_string());
+                }
+            }
+            if creating.contains(session_id) {
+                // Another task is currently creating this session. Return
+                // success -- the caller will find it in the map shortly.
+                info!(
+                    "Session '{}' creation already in progress, skipping duplicate spawn",
+                    session_id
+                );
+                return Ok(session_id.to_string());
+            }
+            creating.insert(session_id.to_string());
+        }
+
+        // Spawn the session (the creating guard is held in the set).
+        let result = self.create_session(session_id.to_string(), config).await;
+
+        // Remove from creation set regardless of success/failure.
+        {
+            let mut creating = self.creating.lock().await;
+            creating.remove(session_id);
+        }
+
+        result
     }
 
     /// Send a prompt to a session.
-    pub async fn prompt(&self, session_id: &str, message: &str) -> Result<()> {
-        self.send_command(session_id, PiSessionCommand::Prompt(message.to_string()))
-            .await
+    pub async fn prompt(
+        &self,
+        session_id: &str,
+        message: &str,
+        client_id: Option<String>,
+    ) -> Result<()> {
+        self.send_command(
+            session_id,
+            PiSessionCommand::Prompt {
+                message: message.to_string(),
+                client_id,
+            },
+        )
+        .await
     }
 
     /// Send a steering message to a session.
@@ -710,29 +725,49 @@ impl PiSessionManager {
 
     /// List all sessions.
     pub async fn list_sessions(&self) -> Vec<PiSessionInfo> {
-        let sessions = self.sessions.read().await;
-        sessions
-            .values()
-            .map(|s| PiSessionInfo {
-                session_id: s.id.clone(),
-                state: s.state,
-                last_activity: s.last_activity.elapsed().as_millis() as i64,
-                subscriber_count: s.subscriber_count(),
-            })
-            .collect()
+        let snapshots: Vec<(String, Arc<RwLock<PiSessionState>>, Instant, usize)> = {
+            let sessions = self.sessions.read().await;
+            sessions
+                .values()
+                .map(|s| {
+                    (
+                        s.id.clone(),
+                        Arc::clone(&s.state),
+                        s.last_activity,
+                        s.subscriber_count(),
+                    )
+                })
+                .collect()
+        };
+
+        let mut infos = Vec::with_capacity(snapshots.len());
+        for (id, state, last_activity, subscriber_count) in snapshots {
+            let current_state = *state.read().await;
+            infos.push(PiSessionInfo {
+                session_id: id,
+                state: current_state,
+                last_activity: last_activity.elapsed().as_millis() as i64,
+                subscriber_count,
+            });
+        }
+
+        infos
     }
 
     /// Get state of a specific session.
     pub async fn get_state(&self, session_id: &str) -> Result<PiState> {
         let request_id = "get_state".to_string();
-        
+
         // Get session and register response waiter
         let (pending_responses, cmd_tx) = {
             let sessions = self.sessions.read().await;
             let session = sessions
                 .get(session_id)
                 .ok_or_else(|| anyhow::anyhow!("Session '{}' not found", session_id))?;
-            (Arc::clone(&session.pending_responses), session.cmd_tx.clone())
+            (
+                Arc::clone(&session.pending_responses),
+                session.cmd_tx.clone(),
+            )
         };
 
         // Register waiter before sending command
@@ -757,7 +792,9 @@ impl PiSessionManager {
         if !response.success {
             anyhow::bail!(
                 "GetState failed: {}",
-                response.error.unwrap_or_else(|| "unknown error".to_string())
+                response
+                    .error
+                    .unwrap_or_else(|| "unknown error".to_string())
             );
         }
 
@@ -790,7 +827,10 @@ impl PiSessionManager {
             let session = sessions
                 .get(session_id)
                 .ok_or_else(|| anyhow::anyhow!("Session '{}' not found", session_id))?;
-            (Arc::clone(&session.pending_responses), session.cmd_tx.clone())
+            (
+                Arc::clone(&session.pending_responses),
+                session.cmd_tx.clone(),
+            )
         };
 
         // Register waiter before sending command
@@ -815,7 +855,9 @@ impl PiSessionManager {
         if !response.success {
             anyhow::bail!(
                 "GetMessages failed: {}",
-                response.error.unwrap_or_else(|| "unknown error".to_string())
+                response
+                    .error
+                    .unwrap_or_else(|| "unknown error".to_string())
             );
         }
 
@@ -825,15 +867,54 @@ impl PiSessionManager {
     }
 
     /// Set the model for a session.
-    pub async fn set_model(&self, session_id: &str, provider: &str, model_id: &str) -> Result<()> {
-        self.send_command(
-            session_id,
-            PiSessionCommand::SetModel {
+    pub async fn set_model(
+        &self,
+        session_id: &str,
+        provider: &str,
+        model_id: &str,
+    ) -> Result<PiResponse> {
+        let request_id = "set_model".to_string();
+
+        let (pending_responses, cmd_tx) = {
+            let sessions = self.sessions.read().await;
+            let session = sessions
+                .get(session_id)
+                .ok_or_else(|| anyhow::anyhow!("Session '{}' not found", session_id))?;
+            (
+                Arc::clone(&session.pending_responses),
+                session.cmd_tx.clone(),
+            )
+        };
+
+        let (tx, rx) = oneshot::channel();
+        {
+            let mut pending = pending_responses.write().await;
+            pending.insert(request_id.clone(), tx);
+        }
+
+        cmd_tx
+            .send(PiSessionCommand::SetModel {
                 provider: provider.to_string(),
                 model_id: model_id.to_string(),
-            },
-        )
-        .await
+            })
+            .await
+            .context("Failed to send SetModel command")?;
+
+        let response = tokio::time::timeout(Duration::from_secs(10), rx)
+            .await
+            .context("Timeout waiting for SetModel response")?
+            .context("Response channel closed")?;
+
+        if !response.success {
+            anyhow::bail!(
+                "SetModel failed: {}",
+                response
+                    .error
+                    .unwrap_or_else(|| "unknown error".to_string())
+            );
+        }
+
+        Ok(response)
     }
 
     /// Get available models.
@@ -846,7 +927,10 @@ impl PiSessionManager {
             let session = sessions
                 .get(session_id)
                 .ok_or_else(|| anyhow::anyhow!("Session '{}' not found", session_id))?;
-            (Arc::clone(&session.pending_responses), session.cmd_tx.clone())
+            (
+                Arc::clone(&session.pending_responses),
+                session.cmd_tx.clone(),
+            )
         };
 
         // Register waiter before sending command
@@ -871,7 +955,9 @@ impl PiSessionManager {
         if !response.success {
             anyhow::bail!(
                 "GetAvailableModels failed: {}",
-                response.error.unwrap_or_else(|| "unknown error".to_string())
+                response
+                    .error
+                    .unwrap_or_else(|| "unknown error".to_string())
             );
         }
 
@@ -890,7 +976,10 @@ impl PiSessionManager {
             let session = sessions
                 .get(session_id)
                 .ok_or_else(|| anyhow::anyhow!("Session '{}' not found", session_id))?;
-            (Arc::clone(&session.pending_responses), session.cmd_tx.clone())
+            (
+                Arc::clone(&session.pending_responses),
+                session.cmd_tx.clone(),
+            )
         };
 
         // Register waiter before sending command
@@ -915,7 +1004,9 @@ impl PiSessionManager {
         if !response.success {
             anyhow::bail!(
                 "GetSessionStats failed: {}",
-                response.error.unwrap_or_else(|| "unknown error".to_string())
+                response
+                    .error
+                    .unwrap_or_else(|| "unknown error".to_string())
             );
         }
 
@@ -959,7 +1050,10 @@ impl PiSessionManager {
             let session = sessions
                 .get(session_id)
                 .ok_or_else(|| anyhow::anyhow!("Session '{}' not found", session_id))?;
-            (Arc::clone(&session.pending_responses), session.cmd_tx.clone())
+            (
+                Arc::clone(&session.pending_responses),
+                session.cmd_tx.clone(),
+            )
         };
 
         let (tx, rx) = oneshot::channel();
@@ -981,7 +1075,9 @@ impl PiSessionManager {
         if !response.success {
             anyhow::bail!(
                 "ExportHtml failed: {}",
-                response.error.unwrap_or_else(|| "unknown error".to_string())
+                response
+                    .error
+                    .unwrap_or_else(|| "unknown error".to_string())
             );
         }
 
@@ -999,7 +1095,10 @@ impl PiSessionManager {
             let session = sessions
                 .get(session_id)
                 .ok_or_else(|| anyhow::anyhow!("Session '{}' not found", session_id))?;
-            (Arc::clone(&session.pending_responses), session.cmd_tx.clone())
+            (
+                Arc::clone(&session.pending_responses),
+                session.cmd_tx.clone(),
+            )
         };
 
         let (tx, rx) = oneshot::channel();
@@ -1021,7 +1120,9 @@ impl PiSessionManager {
         if !response.success {
             anyhow::bail!(
                 "GetLastAssistantText failed: {}",
-                response.error.unwrap_or_else(|| "unknown error".to_string())
+                response
+                    .error
+                    .unwrap_or_else(|| "unknown error".to_string())
             );
         }
 
@@ -1038,7 +1139,10 @@ impl PiSessionManager {
             let session = sessions
                 .get(session_id)
                 .ok_or_else(|| anyhow::anyhow!("Session '{}' not found", session_id))?;
-            (Arc::clone(&session.pending_responses), session.cmd_tx.clone())
+            (
+                Arc::clone(&session.pending_responses),
+                session.cmd_tx.clone(),
+            )
         };
 
         let (tx, rx) = oneshot::channel();
@@ -1060,7 +1164,9 @@ impl PiSessionManager {
         if !response.success {
             anyhow::bail!(
                 "GetCommands failed: {}",
-                response.error.unwrap_or_else(|| "unknown error".to_string())
+                response
+                    .error
+                    .unwrap_or_else(|| "unknown error".to_string())
             );
         }
 
@@ -1070,24 +1176,132 @@ impl PiSessionManager {
     }
 
     /// Cycle to the next model.
-    pub async fn cycle_model(&self, session_id: &str) -> Result<()> {
-        self.send_command(session_id, PiSessionCommand::CycleModel)
+    pub async fn cycle_model(&self, session_id: &str) -> Result<PiResponse> {
+        let request_id = "cycle_model".to_string();
+
+        let (pending_responses, cmd_tx) = {
+            let sessions = self.sessions.read().await;
+            let session = sessions
+                .get(session_id)
+                .ok_or_else(|| anyhow::anyhow!("Session '{}' not found", session_id))?;
+            (
+                Arc::clone(&session.pending_responses),
+                session.cmd_tx.clone(),
+            )
+        };
+
+        let (tx, rx) = oneshot::channel();
+        {
+            let mut pending = pending_responses.write().await;
+            pending.insert(request_id.clone(), tx);
+        }
+
+        cmd_tx
+            .send(PiSessionCommand::CycleModel)
             .await
+            .context("Failed to send CycleModel command")?;
+
+        let response = tokio::time::timeout(Duration::from_secs(10), rx)
+            .await
+            .context("Timeout waiting for CycleModel response")?
+            .context("Response channel closed")?;
+
+        if !response.success {
+            anyhow::bail!(
+                "CycleModel failed: {}",
+                response
+                    .error
+                    .unwrap_or_else(|| "unknown error".to_string())
+            );
+        }
+
+        Ok(response)
     }
 
     /// Set the thinking level.
-    pub async fn set_thinking_level(&self, session_id: &str, level: &str) -> Result<()> {
-        self.send_command(
-            session_id,
-            PiSessionCommand::SetThinkingLevel(level.to_string()),
-        )
-        .await
+    pub async fn set_thinking_level(&self, session_id: &str, level: &str) -> Result<PiResponse> {
+        let request_id = "set_thinking_level".to_string();
+
+        let (pending_responses, cmd_tx) = {
+            let sessions = self.sessions.read().await;
+            let session = sessions
+                .get(session_id)
+                .ok_or_else(|| anyhow::anyhow!("Session '{}' not found", session_id))?;
+            (
+                Arc::clone(&session.pending_responses),
+                session.cmd_tx.clone(),
+            )
+        };
+
+        let (tx, rx) = oneshot::channel();
+        {
+            let mut pending = pending_responses.write().await;
+            pending.insert(request_id.clone(), tx);
+        }
+
+        cmd_tx
+            .send(PiSessionCommand::SetThinkingLevel(level.to_string()))
+            .await
+            .context("Failed to send SetThinkingLevel command")?;
+
+        let response = tokio::time::timeout(Duration::from_secs(10), rx)
+            .await
+            .context("Timeout waiting for SetThinkingLevel response")?
+            .context("Response channel closed")?;
+
+        if !response.success {
+            anyhow::bail!(
+                "SetThinkingLevel failed: {}",
+                response
+                    .error
+                    .unwrap_or_else(|| "unknown error".to_string())
+            );
+        }
+
+        Ok(response)
     }
 
     /// Cycle through thinking levels.
-    pub async fn cycle_thinking_level(&self, session_id: &str) -> Result<()> {
-        self.send_command(session_id, PiSessionCommand::CycleThinkingLevel)
+    pub async fn cycle_thinking_level(&self, session_id: &str) -> Result<PiResponse> {
+        let request_id = "cycle_thinking_level".to_string();
+
+        let (pending_responses, cmd_tx) = {
+            let sessions = self.sessions.read().await;
+            let session = sessions
+                .get(session_id)
+                .ok_or_else(|| anyhow::anyhow!("Session '{}' not found", session_id))?;
+            (
+                Arc::clone(&session.pending_responses),
+                session.cmd_tx.clone(),
+            )
+        };
+
+        let (tx, rx) = oneshot::channel();
+        {
+            let mut pending = pending_responses.write().await;
+            pending.insert(request_id.clone(), tx);
+        }
+
+        cmd_tx
+            .send(PiSessionCommand::CycleThinkingLevel)
             .await
+            .context("Failed to send CycleThinkingLevel command")?;
+
+        let response = tokio::time::timeout(Duration::from_secs(10), rx)
+            .await
+            .context("Timeout waiting for CycleThinkingLevel response")?
+            .context("Response channel closed")?;
+
+        if !response.success {
+            anyhow::bail!(
+                "CycleThinkingLevel failed: {}",
+                response
+                    .error
+                    .unwrap_or_else(|| "unknown error".to_string())
+            );
+        }
+
+        Ok(response)
     }
 
     /// Set steering message delivery mode.
@@ -1135,7 +1349,10 @@ impl PiSessionManager {
             let session = sessions
                 .get(session_id)
                 .ok_or_else(|| anyhow::anyhow!("Session '{}' not found", session_id))?;
-            (Arc::clone(&session.pending_responses), session.cmd_tx.clone())
+            (
+                Arc::clone(&session.pending_responses),
+                session.cmd_tx.clone(),
+            )
         };
 
         let (tx, rx) = oneshot::channel();
@@ -1157,7 +1374,9 @@ impl PiSessionManager {
         if !response.success {
             anyhow::bail!(
                 "Fork failed: {}",
-                response.error.unwrap_or_else(|| "unknown error".to_string())
+                response
+                    .error
+                    .unwrap_or_else(|| "unknown error".to_string())
             );
         }
 
@@ -1175,7 +1394,10 @@ impl PiSessionManager {
             let session = sessions
                 .get(session_id)
                 .ok_or_else(|| anyhow::anyhow!("Session '{}' not found", session_id))?;
-            (Arc::clone(&session.pending_responses), session.cmd_tx.clone())
+            (
+                Arc::clone(&session.pending_responses),
+                session.cmd_tx.clone(),
+            )
         };
 
         let (tx, rx) = oneshot::channel();
@@ -1197,7 +1419,9 @@ impl PiSessionManager {
         if !response.success {
             anyhow::bail!(
                 "GetForkMessages failed: {}",
-                response.error.unwrap_or_else(|| "unknown error".to_string())
+                response
+                    .error
+                    .unwrap_or_else(|| "unknown error".to_string())
             );
         }
 
@@ -1215,7 +1439,10 @@ impl PiSessionManager {
             let session = sessions
                 .get(session_id)
                 .ok_or_else(|| anyhow::anyhow!("Session '{}' not found", session_id))?;
-            (Arc::clone(&session.pending_responses), session.cmd_tx.clone())
+            (
+                Arc::clone(&session.pending_responses),
+                session.cmd_tx.clone(),
+            )
         };
 
         let (tx, rx) = oneshot::channel();
@@ -1238,7 +1465,9 @@ impl PiSessionManager {
         if !response.success {
             anyhow::bail!(
                 "Bash failed: {}",
-                response.error.unwrap_or_else(|| "unknown error".to_string())
+                response
+                    .error
+                    .unwrap_or_else(|| "unknown error".to_string())
             );
         }
 
@@ -1343,16 +1572,74 @@ impl PiSessionManager {
 
     /// Send a command to a session.
     async fn send_command(&self, session_id: &str, cmd: PiSessionCommand) -> Result<()> {
-        let sessions = self.sessions.read().await;
-        let session = sessions
-            .get(session_id)
-            .ok_or_else(|| anyhow::anyhow!("Session '{}' not found", session_id))?;
+        let (cmd_tx, state) = {
+            let sessions = self.sessions.read().await;
+            let session = sessions
+                .get(session_id)
+                .ok_or_else(|| anyhow::anyhow!("Session '{}' not found", session_id))?;
+            (session.cmd_tx.clone(), Arc::clone(&session.state))
+        };
 
-        session
-            .cmd_tx
+        self.validate_command(session_id, &state, &cmd).await?;
+
+        cmd_tx
             .send(cmd)
             .await
             .context("Failed to send command to session")?;
+
+        Ok(())
+    }
+
+    async fn validate_command(
+        &self,
+        session_id: &str,
+        state: &Arc<RwLock<PiSessionState>>,
+        cmd: &PiSessionCommand,
+    ) -> Result<()> {
+        let current_state = *state.read().await;
+        let is_idle = current_state == PiSessionState::Idle;
+        let is_starting = current_state == PiSessionState::Starting;
+        let is_streaming = current_state == PiSessionState::Streaming;
+
+        match cmd {
+            PiSessionCommand::Prompt { .. } => {
+                if !(is_idle || is_starting) {
+                    anyhow::bail!(
+                        "Session '{}' not idle (state={})",
+                        session_id,
+                        current_state
+                    );
+                }
+            }
+            PiSessionCommand::FollowUp(_) | PiSessionCommand::Steer(_) => {
+                if !(is_idle || is_starting || is_streaming) {
+                    anyhow::bail!(
+                        "Session '{}' not ready for steer/follow_up (state={})",
+                        session_id,
+                        current_state
+                    );
+                }
+            }
+            PiSessionCommand::Compact(_) => {
+                if !is_idle {
+                    anyhow::bail!(
+                        "Session '{}' not idle for compaction (state={})",
+                        session_id,
+                        current_state
+                    );
+                }
+            }
+            PiSessionCommand::NewSession(_) | PiSessionCommand::SwitchSession(_) => {
+                if !is_idle {
+                    anyhow::bail!(
+                        "Session '{}' not idle for session switch (state={})",
+                        session_id,
+                        current_state
+                    );
+                }
+            }
+            _ => {}
+        }
 
         Ok(())
     }
@@ -1362,21 +1649,34 @@ impl PiSessionManager {
         let now = Instant::now();
         let mut to_close = Vec::new();
 
-        {
+        let snapshots: Vec<(String, Arc<RwLock<PiSessionState>>, Instant, usize)> = {
             let sessions = self.sessions.read().await;
-            for (id, session) in sessions.iter() {
-                let is_idle = session.state == PiSessionState::Idle;
-                let no_subscribers = session.subscriber_count() == 0;
-                let timed_out = now.duration_since(session.last_activity) > idle_timeout;
+            sessions
+                .iter()
+                .map(|(id, session)| {
+                    (
+                        id.clone(),
+                        Arc::clone(&session.state),
+                        session.last_activity,
+                        session.subscriber_count(),
+                    )
+                })
+                .collect()
+        };
 
-                if is_idle && no_subscribers && timed_out {
-                    info!(
-                        "Session '{}' idle for {:?} with no subscribers, marking for cleanup",
-                        id,
-                        now.duration_since(session.last_activity)
-                    );
-                    to_close.push(id.clone());
-                }
+        for (id, state, last_activity, subscriber_count) in snapshots {
+            let current_state = *state.read().await;
+            let is_idle = current_state == PiSessionState::Idle;
+            let no_subscribers = subscriber_count == 0;
+            let timed_out = now.duration_since(last_activity) > idle_timeout;
+
+            if is_idle && no_subscribers && timed_out {
+                info!(
+                    "Session '{}' idle for {:?} with no subscribers, marking for cleanup",
+                    id,
+                    now.duration_since(last_activity)
+                );
+                to_close.push(id);
             }
         }
 
@@ -1398,9 +1698,10 @@ impl PiSessionManager {
         event_tx: broadcast::Sender<PiEventWrapper>,
         state: Arc<RwLock<PiSessionState>>,
         last_activity: Arc<RwLock<Instant>>,
-        hstry_db_path: Option<PathBuf>,
+        hstry_client: Option<HstryClient>,
         work_dir: PathBuf,
         pending_responses: PendingResponses,
+        pending_client_id: PendingClientId,
     ) {
         // Read stderr in a separate task (for debugging)
         if let Some(stderr) = stderr {
@@ -1502,6 +1803,13 @@ impl PiSessionManager {
                 }
             }
 
+            // For AgentEnd, transfer the pending client_id to the translator before translating.
+            // This ensures the client_id is included in the user message for optimistic matching.
+            if matches!(pi_event, PiEvent::AgentEnd { .. }) {
+                let client_id = pending_client_id.write().await.take();
+                translator.set_pending_client_id(client_id);
+            }
+
             // Translate Pi event to canonical events and broadcast each one
             let canonical_payloads = translator.translate(&pi_event);
             let ts = chrono::Utc::now().timestamp_millis();
@@ -1517,10 +1825,14 @@ impl PiSessionManager {
 
             // Persist to hstry on AgentEnd
             if matches!(pi_event, PiEvent::AgentEnd { .. }) && !pending_messages.is_empty() {
-                if let Some(ref db_path) = hstry_db_path {
-                    if let Err(e) =
-                        Self::persist_to_hstry(&session_id, &pending_messages, db_path, &work_dir)
-                            .await
+                if let Some(ref client) = hstry_client {
+                    if let Err(e) = Self::persist_to_hstry_grpc(
+                        client,
+                        &session_id,
+                        &pending_messages,
+                        &work_dir,
+                    )
+                    .await
                     {
                         warn!("Pi[{}] failed to persist to hstry: {}", session_id, e);
                     } else {
@@ -1537,9 +1849,9 @@ impl PiSessionManager {
 
         // Process exited -- broadcast error event
         info!("Pi[{}] stdout reader finished (process exited)", session_id);
-        let exit_event = translator.state.on_process_exit(
-            "Agent process exited".to_string(),
-        );
+        let exit_event = translator
+            .state
+            .on_process_exit("Agent process exited".to_string());
         let canonical_event = CanonicalEvent {
             session_id: session_id.clone(),
             runner_id,
@@ -1557,13 +1869,18 @@ impl PiSessionManager {
         mut cmd_rx: mpsc::Receiver<PiSessionCommand>,
         state: Arc<RwLock<PiSessionState>>,
         last_activity: Arc<RwLock<Instant>>,
+        pending_client_id: PendingClientId,
     ) {
         while let Some(cmd) = cmd_rx.recv().await {
             let result = match cmd {
-                PiSessionCommand::Prompt(msg) => {
+                PiSessionCommand::Prompt { message, client_id } => {
+                    *state.write().await = PiSessionState::Streaming;
+                    // Store client_id in shared state for the reader task's translator
+                    // to include in the persisted messages when agent_end arrives.
+                    *pending_client_id.write().await = client_id;
                     let pi_cmd = PiCommand::Prompt {
                         id: None,
-                        message: msg,
+                        message,
                         images: None,
                         streaming_behavior: None,
                     };
@@ -1577,6 +1894,7 @@ impl PiSessionManager {
                     let current_state = *state.read().await;
                     let pi_cmd = if current_state == PiSessionState::Idle {
                         debug!("Session '{}' is idle, routing steer as prompt", session_id);
+                        *state.write().await = PiSessionState::Streaming;
                         PiCommand::Prompt {
                             id: None,
                             message: msg,
@@ -1598,7 +1916,11 @@ impl PiSessionManager {
                     // - Other states: send as follow_up and let Pi handle it
                     let current_state = *state.read().await;
                     let pi_cmd = if current_state == PiSessionState::Idle {
-                        debug!("Session '{}' is idle, routing follow_up as prompt", session_id);
+                        debug!(
+                            "Session '{}' is idle, routing follow_up as prompt",
+                            session_id
+                        );
+                        *state.write().await = PiSessionState::Streaming;
                         PiCommand::Prompt {
                             id: None,
                             message: msg,
@@ -1614,6 +1936,12 @@ impl PiSessionManager {
                     Self::write_command(&mut stdin, &pi_cmd).await
                 }
                 PiSessionCommand::Abort => {
+                    let current_state = *state.read().await;
+                    if current_state == PiSessionState::Streaming
+                        || current_state == PiSessionState::Compacting
+                    {
+                        *state.write().await = PiSessionState::Aborting;
+                    }
                     let pi_cmd = PiCommand::Abort { id: None };
                     Self::write_command(&mut stdin, &pi_cmd).await
                 }
@@ -1835,125 +2163,73 @@ impl PiSessionManager {
         Ok(())
     }
 
-    /// Persist messages to hstry database.
-    async fn persist_to_hstry(
+    /// Persist messages to hstry via gRPC.
+    async fn persist_to_hstry_grpc(
+        client: &HstryClient,
         session_id: &str,
         messages: &[AgentMessage],
-        db_path: &PathBuf,
         work_dir: &PathBuf,
     ) -> Result<()> {
-        use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+        use crate::hstry::agent_message_to_proto;
 
-        if !db_path.exists() {
-            debug!(
-                "hstry database not found at {:?}, skipping persistence",
-                db_path
-            );
-            return Ok(());
-        }
-
-        let options = SqliteConnectOptions::new()
-            .filename(db_path)
-            .create_if_missing(false);
-
-        let pool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect_with(options)
-            .await
-            .context("Failed to connect to hstry database")?;
-
-        // Get or create conversation
-        let source_id = "pi";
-        let external_id = session_id;
-        let now_secs = std::time::SystemTime::now()
+        let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
+            .map(|d| d.as_millis() as i64)
             .unwrap_or(0);
 
-        // Check if conversation exists
-        let existing: Option<(String,)> =
-            sqlx::query_as("SELECT id FROM conversations WHERE source_id = ? AND external_id = ?")
-                .bind(source_id)
-                .bind(external_id)
-                .fetch_optional(&pool)
-                .await?;
+        let stats_delta = compute_stats_delta(messages);
+        let metadata_json = build_metadata_json(client, session_id, work_dir, stats_delta).await?;
 
-        let metadata_json = serde_json::json!({
-            "canonical_id": session_id,
-            "readable_id": serde_json::Value::Null,
-            "workdir": work_dir.to_string_lossy(),
-        })
-        .to_string();
+        // Convert messages to proto format.
+        // Use AppendMessages if the conversation likely exists (most common case),
+        // falling back to WriteConversation if not found.
+        let proto_messages: Vec<_> = messages
+            .iter()
+            .enumerate()
+            .map(|(i, msg)| agent_message_to_proto(msg, i as i32))
+            .collect();
 
-        let conversation_id = if let Some((id,)) = existing {
-            // Update timestamp
-            sqlx::query("UPDATE conversations SET updated_at = ?, metadata_json = ? WHERE id = ?")
-                .bind(now_secs)
-                .bind(&metadata_json)
-                .bind(&id)
-                .execute(&pool)
-                .await?;
-            id
-        } else {
-            // Create new conversation
-            let id = uuid::Uuid::new_v4().to_string();
-            sqlx::query(
-                "INSERT INTO conversations (id, source_id, external_id, created_at, updated_at, metadata_json) VALUES (?, ?, ?, ?, ?, ?)",
-            )
-            .bind(&id)
-            .bind(source_id)
-            .bind(external_id)
-            .bind(now_secs)
-            .bind(now_secs)
-            .bind(&metadata_json)
-            .execute(&pool)
-            .await?;
-            id
-        };
+        // Try append first (fast path -- conversation already exists)
+        match client
+            .append_messages(session_id, proto_messages.clone(), Some(now_ms))
+            .await
+        {
+            Ok(_) => {}
+            Err(_) => {
+                // Conversation doesn't exist yet -- create it with WriteConversation
+                let model = messages.iter().rev().find_map(|m| m.model.clone());
+                let provider = messages.iter().rev().find_map(|m| m.provider.clone());
 
-        // Get current max index
-        let max_idx: Option<i32> =
-            sqlx::query_scalar("SELECT MAX(idx) FROM messages WHERE conversation_id = ?")
-                .bind(&conversation_id)
-                .fetch_one(&pool)
-                .await?;
+                client
+                    .write_conversation(
+                        session_id,
+                        None, // title comes from Pi auto-rename extension via JSONL
+                        Some(work_dir.to_string_lossy().to_string()),
+                        model,
+                        provider,
+                        Some(metadata_json.clone()),
+                        proto_messages,
+                        now_ms,
+                        Some(now_ms),
+                        Some("pi".to_string()),
+                    )
+                    .await?;
+            }
+        }
 
-        let mut idx = max_idx.unwrap_or(-1) + 1;
-
-        // Insert messages
-        for msg in messages {
-            let canon = crate::canon::pi_message_to_canon(msg, session_id);
-            let parts_json =
-                serde_json::to_string(&canon.parts).unwrap_or_else(|_| "[]".to_string());
-            let metadata_json = canon
-                .metadata
-                .as_ref()
-                .and_then(|m| serde_json::to_string(m).ok())
-                .unwrap_or_default();
-            let model = canon.model.as_ref().map(|m| m.full_id());
-            let tokens = canon.tokens.as_ref().map(|t| t.total());
-            let cost = canon.cost_usd;
-            let created_at = Some(canon.created_at / 1000);
-
-            let msg_id = uuid::Uuid::new_v4().to_string();
-            sqlx::query(
-                "INSERT INTO messages (id, conversation_id, idx, role, content, parts_json, model, tokens, cost_usd, created_at, metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            )
-            .bind(&msg_id)
-            .bind(&conversation_id)
-            .bind(idx)
-            .bind(canon.role.to_string())
-            .bind(&canon.content)
-            .bind(&parts_json)
-            .bind(&model)
-            .bind(tokens)
-            .bind(cost)
-            .bind(created_at)
-            .bind(&metadata_json)
-            .execute(&pool)
-            .await?;
-
-            idx += 1;
+        if stats_delta.is_some() {
+            let _ = client
+                .update_conversation(
+                    session_id,
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some(metadata_json),
+                    None,
+                    Some("pi".to_string()),
+                )
+                .await;
         }
 
         info!(
@@ -1966,6 +2242,110 @@ impl PiSessionManager {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+struct StatsDelta {
+    tokens_in: i64,
+    tokens_out: i64,
+    cache_read: i64,
+    cache_write: i64,
+    cost_usd: f64,
+}
+
+fn compute_stats_delta(messages: &[AgentMessage]) -> Option<StatsDelta> {
+    let mut delta = StatsDelta::default();
+    let mut saw_usage = false;
+
+    for msg in messages {
+        if let Some(usage) = msg.usage.as_ref() {
+            saw_usage = true;
+            delta.tokens_in += usage.input as i64;
+            delta.tokens_out += usage.output as i64;
+            delta.cache_read += usage.cache_read as i64;
+            delta.cache_write += usage.cache_write as i64;
+            if let Some(cost) = usage.cost.as_ref() {
+                delta.cost_usd += cost.total;
+            }
+        }
+    }
+
+    if saw_usage { Some(delta) } else { None }
+}
+
+async fn build_metadata_json(
+    client: &HstryClient,
+    session_id: &str,
+    work_dir: &PathBuf,
+    delta: Option<StatsDelta>,
+) -> Result<String> {
+    let mut metadata = serde_json::Map::new();
+
+    if let Ok(Some(conversation)) = client.get_conversation(session_id, None).await {
+        if !conversation.metadata_json.trim().is_empty() {
+            if let Ok(serde_json::Value::Object(existing)) =
+                serde_json::from_str::<serde_json::Value>(&conversation.metadata_json)
+            {
+                metadata = existing;
+            }
+        }
+    }
+
+    metadata.insert(
+        "canonical_id".to_string(),
+        serde_json::Value::String(session_id.to_string()),
+    );
+    metadata.insert(
+        "workdir".to_string(),
+        serde_json::Value::String(work_dir.to_string_lossy().to_string()),
+    );
+
+    if let Some(delta) = delta {
+        let existing = metadata
+            .get("stats")
+            .and_then(|v| v.as_object())
+            .cloned()
+            .unwrap_or_default();
+
+        let tokens_in = existing
+            .get("tokens_in")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0)
+            + delta.tokens_in;
+        let tokens_out = existing
+            .get("tokens_out")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0)
+            + delta.tokens_out;
+        let cache_read = existing
+            .get("cache_read")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0)
+            + delta.cache_read;
+        let cache_write = existing
+            .get("cache_write")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0)
+            + delta.cache_write;
+        let cost_usd = existing
+            .get("cost_usd")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0)
+            + delta.cost_usd;
+
+        metadata.insert(
+            "stats".to_string(),
+            serde_json::json!({
+                "tokens_in": tokens_in,
+                "tokens_out": tokens_out,
+                "cache_read": cache_read,
+                "cache_write": cache_write,
+                "cost_usd": cost_usd,
+            }),
+        );
+    }
+
+    Ok(serde_json::Value::Object(metadata).to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1976,6 +2356,7 @@ mod tests {
         assert_eq!(PiSessionState::Idle.to_string(), "idle");
         assert_eq!(PiSessionState::Streaming.to_string(), "streaming");
         assert_eq!(PiSessionState::Compacting.to_string(), "compacting");
+        assert_eq!(PiSessionState::Aborting.to_string(), "aborting");
         assert_eq!(PiSessionState::Stopping.to_string(), "stopping");
     }
 

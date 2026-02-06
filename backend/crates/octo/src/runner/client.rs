@@ -11,7 +11,6 @@ use tokio::net::UnixStream;
 
 use super::protocol::*;
 
-
 /// Default socket path pattern.
 /// Uses XDG_RUNTIME_DIR if available, otherwise falls back to /tmp.
 pub const DEFAULT_SOCKET_PATTERN: &str = "{runtime_dir}/octo-runner.sock";
@@ -662,10 +661,16 @@ impl RunnerClient {
     }
 
     /// Send a prompt to a Pi session.
-    pub async fn pi_prompt(&self, session_id: &str, message: &str) -> Result<()> {
+    pub async fn pi_prompt(
+        &self,
+        session_id: &str,
+        message: &str,
+        client_id: Option<String>,
+    ) -> Result<()> {
         let req = RunnerRequest::PiPrompt(PiPromptRequest {
             session_id: session_id.to_string(),
             message: message.to_string(),
+            client_id,
         });
 
         let resp = self.request(&req).await?;
@@ -828,7 +833,11 @@ impl RunnerClient {
     }
 
     /// Start a new session within existing Pi process.
-    pub async fn pi_new_session(&self, session_id: &str, parent_session: Option<&str>) -> Result<()> {
+    pub async fn pi_new_session(
+        &self,
+        session_id: &str,
+        parent_session: Option<&str>,
+    ) -> Result<()> {
         let req = RunnerRequest::PiNewSession(PiNewSessionRequest {
             session_id: session_id.to_string(),
             parent_session: parent_session.map(|s| s.to_string()),
@@ -882,7 +891,10 @@ impl RunnerClient {
     }
 
     /// Get the last assistant message text.
-    pub async fn pi_get_last_assistant_text(&self, session_id: &str) -> Result<PiLastAssistantTextResponse> {
+    pub async fn pi_get_last_assistant_text(
+        &self,
+        session_id: &str,
+    ) -> Result<PiLastAssistantTextResponse> {
         let req = RunnerRequest::PiGetLastAssistantText(PiGetLastAssistantTextRequest {
             session_id: session_id.to_string(),
         });
@@ -895,7 +907,12 @@ impl RunnerClient {
     }
 
     /// Set the model for a Pi session.
-    pub async fn pi_set_model(&self, session_id: &str, provider: &str, model_id: &str) -> Result<PiModelChangedResponse> {
+    pub async fn pi_set_model(
+        &self,
+        session_id: &str,
+        provider: &str,
+        model_id: &str,
+    ) -> Result<PiModelChangedResponse> {
         let req = RunnerRequest::PiSetModel(PiSetModelRequest {
             session_id: session_id.to_string(),
             provider: provider.to_string(),
@@ -923,7 +940,10 @@ impl RunnerClient {
     }
 
     /// Get list of available models.
-    pub async fn pi_get_available_models(&self, session_id: &str) -> Result<PiAvailableModelsResponse> {
+    pub async fn pi_get_available_models(
+        &self,
+        session_id: &str,
+    ) -> Result<PiAvailableModelsResponse> {
         let req = RunnerRequest::PiGetAvailableModels(PiGetAvailableModelsRequest {
             session_id: session_id.to_string(),
         });
@@ -936,7 +956,11 @@ impl RunnerClient {
     }
 
     /// Set the thinking/reasoning level.
-    pub async fn pi_set_thinking_level(&self, session_id: &str, level: &str) -> Result<PiThinkingLevelChangedResponse> {
+    pub async fn pi_set_thinking_level(
+        &self,
+        session_id: &str,
+        level: &str,
+    ) -> Result<PiThinkingLevelChangedResponse> {
         let req = RunnerRequest::PiSetThinkingLevel(PiSetThinkingLevelRequest {
             session_id: session_id.to_string(),
             level: level.to_string(),
@@ -950,7 +974,10 @@ impl RunnerClient {
     }
 
     /// Cycle through thinking levels.
-    pub async fn pi_cycle_thinking_level(&self, session_id: &str) -> Result<PiThinkingLevelChangedResponse> {
+    pub async fn pi_cycle_thinking_level(
+        &self,
+        session_id: &str,
+    ) -> Result<PiThinkingLevelChangedResponse> {
         let req = RunnerRequest::PiCycleThinkingLevel(PiCycleThinkingLevelRequest {
             session_id: session_id.to_string(),
         });
@@ -1073,7 +1100,11 @@ impl RunnerClient {
     }
 
     /// Export session to HTML.
-    pub async fn pi_export_html(&self, session_id: &str, output_path: Option<&str>) -> Result<PiExportHtmlResultResponse> {
+    pub async fn pi_export_html(
+        &self,
+        session_id: &str,
+        output_path: Option<&str>,
+    ) -> Result<PiExportHtmlResultResponse> {
         let req = RunnerRequest::PiExportHtml(PiExportHtmlRequest {
             session_id: session_id.to_string(),
             output_path: output_path.map(|s| s.to_string()),

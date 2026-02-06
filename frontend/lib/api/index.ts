@@ -85,32 +85,22 @@ export {
 export type {
 	PiSessionFile,
 	PiSessionMessage,
-	PiState,
+	AgentState,
 	PiModelInfo,
 	InSessionSearchResult,
 } from "./default-chat";
 export {
-	setWorkspacePiModel,
 	setDefaultChatPiModel,
 	getDefaultChatPiModels,
-	getDefaultChatPiState,
+	getDefaultChatAgentState,
 	startDefaultChatPiSession,
 	getDefaultChatAssistant,
 	listDefaultChatPiSessions,
 	listDefaultChatSessions,
 	registerDefaultChatSession,
-	getWorkspacePiModels,
-	newWorkspacePiSession,
-	resumeWorkspacePiSession,
-	getWorkspacePiState,
-	getWorkspacePiSessionMessages,
-	abortWorkspacePiSession,
-	deleteWorkspacePiSession,
-	createWorkspacePiWebSocket,
 	searchInPiSession,
 	renamePiSession,
 } from "./default-chat";
-
 
 // Projects
 export {

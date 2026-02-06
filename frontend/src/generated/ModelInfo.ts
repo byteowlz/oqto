@@ -3,12 +3,13 @@
 /**
  * Model identification.
  */
-export type ModelInfo = { 
-/**
- * Provider ID (e.g., "anthropic", "openai").
- */
-providerId: string, 
-/**
- * Model ID (e.g., "claude-3-5-sonnet-20241022").
- */
-modelId: string, };
+export type ModelInfo = {
+	/**
+	 * Provider ID (e.g., "anthropic", "openai").
+	 */
+	providerId: string;
+	/**
+	 * Model ID (e.g., "claude-3-5-sonnet-20241022").
+	 */
+	modelId: string;
+};

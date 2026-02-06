@@ -2,15 +2,12 @@
 
 import {
 	type ChatSession,
-	deleteWorkspacePiSession,
 	listChatHistory,
 	updateChatSession,
 } from "@/lib/api";
-import {
-	createPendingSessionId,
-	normalizeWorkspacePath,
-} from "@/lib/session-utils";
 import { getChatPrefetchLimit } from "@/lib/app-settings";
+import { createPiSessionId, normalizeWorkspacePath } from "@/lib/session-utils";
+import { getWsManager } from "@/lib/ws-manager";
 import {
 	type ReactNode,
 	createContext,
@@ -135,18 +132,16 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 
 	const [selectedChatSessionId, setSelectedChatSessionIdRaw] = useState<
 		string | null
-	>(
-		() => {
-			if (typeof window !== "undefined") {
-				try {
-					return localStorage.getItem("octo:lastChatSessionId") || null;
-				} catch {
-					return null;
-				}
+	>(() => {
+		if (typeof window !== "undefined") {
+			try {
+				return localStorage.getItem("octo:lastChatSessionId") || null;
+			} catch {
+				return null;
 			}
-			return null;
-		},
-	);
+		}
+		return null;
+	});
 
 	const setSelectedChatSessionId = useCallback(
 		(value: string | null | ((prev: string | null) => string | null)) => {
@@ -154,7 +149,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 				const newId = typeof value === "function" ? value(prev) : value;
 				if (typeof window !== "undefined") {
 					try {
-						if (newId && newId.trim()) {
+						if (newId?.trim()) {
 							localStorage.setItem("octo:lastChatSessionId", newId);
 						} else {
 							localStorage.removeItem("octo:lastChatSessionId");
@@ -187,20 +182,17 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 		return chatHistory.find((s) => s.id === selectedChatSessionId);
 	}, [chatHistory, selectedChatSessionId]);
 
-	const mergeOptimisticSessions = useCallback(
-		(history: ChatSession[]) => {
-			if (optimisticChatSessionsRef.current.size === 0) return history;
-			const optimistic = Array.from(optimisticChatSessionsRef.current.values());
-			const byId = new Map(history.map((s) => [s.id, s]));
-			for (const session of optimistic) {
-				if (!byId.has(session.id)) {
-					byId.set(session.id, session);
-				}
+	const mergeOptimisticSessions = useCallback((history: ChatSession[]) => {
+		if (optimisticChatSessionsRef.current.size === 0) return history;
+		const optimistic = Array.from(optimisticChatSessionsRef.current.values());
+		const byId = new Map(history.map((s) => [s.id, s]));
+		for (const session of optimistic) {
+			if (!byId.has(session.id)) {
+				byId.set(session.id, session);
 			}
-			return Array.from(byId.values());
-		},
-		[],
-	);
+		}
+		return Array.from(byId.values());
+	}, []);
 
 	const normalizeHistory = useCallback((history: ChatSession[]) => {
 		return history.map((session) => {
@@ -245,13 +237,22 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 				return optimisticId;
 			}
 			const resolvedPath = normalizeWorkspacePath(workspacePath);
+			// Derive a client-side project name from the workspace path
+			// (last path component), matching the backend's logic in
+			// project_name_from_path(). Without this, optimistic sessions
+			// have project_name=null and the sidebar falls back to
+			// "Workspace" as the group label.
+			const derivedProjectName = resolvedPath
+				? (resolvedPath.replace(/\\/g, "/").split("/").filter(Boolean).pop() ??
+					null)
+				: null;
 			const session: ChatSession = {
 				id: optimisticId,
 				readable_id: null,
 				title: locale === "de" ? "Neue Sitzung" : "New Session",
 				parent_id: null,
 				workspace_path: resolvedPath ?? null,
-				project_name: null,
+				project_name: derivedProjectName,
 				created_at: Date.now(),
 				updated_at: Date.now(),
 				version: 1,
@@ -311,7 +312,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 	const createNewChat = useCallback(
 		async (workspacePath?: string) => {
 			const resolvedPath = normalizeWorkspacePath(workspacePath) ?? null;
-			const sessionId = createPendingSessionId();
+			const sessionId = createPiSessionId();
 			createOptimisticChatSession(sessionId, resolvedPath);
 			setSelectedChatSessionId(sessionId);
 			void refreshChatHistory();
@@ -320,22 +321,26 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 		[createOptimisticChatSession, refreshChatHistory, setSelectedChatSessionId],
 	);
 
-	const deleteChatSession = useCallback(async (sessionId: string) => {
-		try {
-			const session = chatHistoryRef.current.find((s) => s.id === sessionId);
-			const resolvedPath = normalizeWorkspacePath(session?.workspace_path);
-			if (resolvedPath) {
-				await deleteWorkspacePiSession(resolvedPath, sessionId);
+	const deleteChatSession = useCallback(
+		async (sessionId: string) => {
+			try {
+				// Close the agent session via WS (if active)
+				try {
+					getWsManager().agentCloseSession(sessionId);
+				} catch {
+					// Session may not be active, that's fine
+				}
+				setChatHistory((prev) => prev.filter((s) => s.id !== sessionId));
+				if (selectedChatSessionId === sessionId) {
+					setSelectedChatSessionId(null);
+				}
+				return true;
+			} catch {
+				return false;
 			}
-			setChatHistory((prev) => prev.filter((s) => s.id !== sessionId));
-			if (selectedChatSessionId === sessionId) {
-				setSelectedChatSessionId(null);
-			}
-			return true;
-		} catch {
-			return false;
-		}
-	}, [selectedChatSessionId, setSelectedChatSessionId]);
+		},
+		[selectedChatSessionId, setSelectedChatSessionId],
+	);
 
 	const renameChatSession = useCallback(
 		async (sessionId: string, title: string): Promise<boolean> => {

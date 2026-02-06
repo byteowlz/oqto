@@ -14,7 +14,7 @@ use crate::markdown;
 use super::models::{ChatMessage, HstryJsonResponse, HstrySearchHit};
 use super::repository::{
     default_opencode_data_dir, get_session_messages_from_dir, get_session_messages_from_hstry,
-    get_session_messages_parallel, hstry_db_path,
+    get_session_messages_parallel, get_session_messages_via_grpc, hstry_db_path,
 };
 
 // Simple in-memory cache for session messages
@@ -176,6 +176,95 @@ pub async fn get_session_messages_rendered(session_id: &str) -> Result<Vec<ChatM
                     "Failed to render messages from hstry DB, falling back to disk"
                 );
             }
+        }
+    }
+    get_session_messages_rendered_from_dir(session_id, &default_opencode_data_dir()).await
+}
+
+/// Get all messages for a session via gRPC (async version with caching).
+pub async fn get_session_messages_via_grpc_cached(
+    client: &crate::hstry::HstryClient,
+    session_id: &str,
+) -> Result<Vec<ChatMessage>> {
+    // Check cache first
+    {
+        let cache = MESSAGE_CACHE.read().await;
+        if let Some((messages, timestamp)) = cache.get(session_id)
+            && timestamp.elapsed().as_secs() < CACHE_TTL_SECS
+        {
+            tracing::debug!("Cache hit for session {}", session_id);
+            return Ok(messages.clone());
+        }
+    }
+
+    // Cache miss - fetch via gRPC
+    match get_session_messages_via_grpc(client, session_id).await {
+        Ok(messages) if !messages.is_empty() => {
+            let mut cache = MESSAGE_CACHE.write().await;
+            cache.insert(
+                session_id.to_string(),
+                (messages.clone(), std::time::Instant::now()),
+            );
+            return Ok(messages);
+        }
+        Ok(_) => {}
+        Err(err) => {
+            tracing::warn!(
+                session_id = %session_id,
+                error = %err,
+                "Failed to load messages from hstry gRPC, falling back to disk"
+            );
+        }
+    }
+
+    // Fallback to disk
+    let opencode_dir = default_opencode_data_dir();
+    let messages = get_session_messages_parallel(session_id, &opencode_dir).await?;
+
+    // Update cache
+    {
+        let mut cache = MESSAGE_CACHE.write().await;
+        cache.insert(
+            session_id.to_string(),
+            (messages.clone(), std::time::Instant::now()),
+        );
+
+        // Prune old entries (keep max 50)
+        if cache.len() > 50 {
+            let mut entries: Vec<_> = cache.iter().map(|(k, (_, t))| (k.clone(), *t)).collect();
+            entries.sort_by(|a, b| b.1.cmp(&a.1));
+            for (key, _) in entries.into_iter().skip(50) {
+                cache.remove(&key);
+            }
+        }
+    }
+
+    Ok(messages)
+}
+
+/// Get all messages for a session via gRPC with pre-rendered markdown HTML.
+pub async fn get_session_messages_rendered_via_grpc(
+    client: &crate::hstry::HstryClient,
+    session_id: &str,
+) -> Result<Vec<ChatMessage>> {
+    match get_session_messages_via_grpc(client, session_id).await {
+        Ok(mut messages) if !messages.is_empty() => {
+            for message in &mut messages {
+                for part in &mut message.parts {
+                    if let Some(text) = &part.text {
+                        part.text_html = Some(markdown::render_markdown(text).await);
+                    }
+                }
+            }
+            return Ok(messages);
+        }
+        Ok(_) => {}
+        Err(err) => {
+            tracing::warn!(
+                session_id = %session_id,
+                error = %err,
+                "Failed to render messages from hstry gRPC, falling back to disk"
+            );
         }
     }
     get_session_messages_rendered_from_dir(session_id, &default_opencode_data_dir()).await

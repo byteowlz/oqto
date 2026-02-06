@@ -28,6 +28,16 @@ pub struct SessionTime {
     pub updated: i64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../../frontend/src/generated/")]
+pub struct ChatSessionStats {
+    pub tokens_in: i64,
+    pub tokens_out: i64,
+    pub cache_read: i64,
+    pub cache_write: i64,
+    pub cost_usd: f64,
+}
+
 /// A chat session with its project context.
 #[derive(Debug, Clone, Serialize, TS)]
 #[ts(export, export_to = "../../../../frontend/src/generated/")]
@@ -54,6 +64,9 @@ pub struct ChatSession {
     pub is_child: bool,
     /// Path to the session JSON file (for loading messages later)
     pub source_path: Option<String>,
+    /// Persisted stats from hstry metadata (when available)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stats: Option<ChatSessionStats>,
 }
 
 #[derive(Debug, Deserialize)]

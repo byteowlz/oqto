@@ -86,7 +86,9 @@ export const DashboardSidebar = memo(function DashboardSidebar({
 }: DashboardSidebarProps) {
 	const [customTitle, setCustomTitle] = useState("");
 	const [customDescription, setCustomDescription] = useState("");
-	const [customType, setCustomType] = useState<"markdown" | "query">("markdown");
+	const [customType, setCustomType] = useState<"markdown" | "query">(
+		"markdown",
+	);
 	const [customContent, setCustomContent] = useState("");
 	const [customUrl, setCustomUrl] = useState("");
 	const [customMethod, setCustomMethod] = useState("GET");

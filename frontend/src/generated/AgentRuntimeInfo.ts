@@ -3,4 +3,9 @@ import type { OpenCodeContextInfo } from "./OpenCodeContextInfo";
 import type { OpenCodeSessionInfo } from "./OpenCodeSessionInfo";
 import type { OpenCodeSessionStatus } from "./OpenCodeSessionStatus";
 
-export type AgentRuntimeInfo = { directory: string | null, sessions: Array<OpenCodeSessionInfo> | null, status_list: Array<OpenCodeSessionStatus> | null, context: OpenCodeContextInfo | null, };
+export type AgentRuntimeInfo = {
+	directory: string | null;
+	sessions: Array<OpenCodeSessionInfo> | null;
+	status_list: Array<OpenCodeSessionStatus> | null;
+	context: OpenCodeContextInfo | null;
+};

@@ -15,6 +15,7 @@
  * - Request/response correlation via optional IDs
  */
 
+import type { CommandResponse, SessionConfig } from "./canonical-types";
 import { controlPlaneApiUrl, getAuthToken } from "./control-plane-client";
 import { toAbsoluteWsUrl } from "./url";
 import type {
@@ -26,7 +27,6 @@ import type {
 	WsEventHandler,
 	WsMuxConnectionState,
 } from "./ws-mux-types";
-import type { CommandResponse, SessionConfig } from "./canonical-types";
 
 function isWsMuxDebugEnabled(): boolean {
 	if (!import.meta.env.DEV) return false;
@@ -38,6 +38,55 @@ function isWsMuxDebugEnabled(): boolean {
 		// ignore
 	}
 	return import.meta.env.VITE_DEBUG_WS_MUX === "1";
+}
+
+function isWsTraceEnabled(): boolean {
+	if (!import.meta.env.DEV) return false;
+	try {
+		if (typeof localStorage !== "undefined") {
+			return localStorage.getItem("debug:ws-trace") === "1";
+		}
+	} catch {
+		// ignore
+	}
+	return false;
+}
+
+type WsTraceEntry = {
+	ts: number;
+	dir: "send" | "recv" | "client";
+	channel?: string;
+	session_id?: string;
+	cmd?: string;
+	event?: string;
+	id?: string;
+	detail?: string;
+};
+
+const MAX_TRACE_ENTRIES = 2000;
+
+export function recordWsTrace(entry: WsTraceEntry): void {
+	if (!isWsTraceEnabled()) return;
+	const root = globalThis as unknown as {
+		__octoWsTrace?: WsTraceEntry[];
+		__octoWsTraceDump?: () => string;
+		__octoWsTraceClear?: () => void;
+	};
+	const trace = Array.isArray(root.__octoWsTrace) ? root.__octoWsTrace : [];
+	trace.push(entry);
+	if (trace.length > MAX_TRACE_ENTRIES) {
+		trace.splice(0, trace.length - MAX_TRACE_ENTRIES);
+	}
+	root.__octoWsTrace = trace;
+	if (!root.__octoWsTraceDump) {
+		root.__octoWsTraceDump = () =>
+			JSON.stringify(root.__octoWsTrace ?? [], null, 2);
+	}
+	if (!root.__octoWsTraceClear) {
+		root.__octoWsTraceClear = () => {
+			root.__octoWsTrace = [];
+		};
+	}
 }
 
 // ============================================================================
@@ -80,12 +129,23 @@ class WsConnectionManager {
 	// Pending messages to send once session is ready
 	private pendingMessages: Map<
 		string,
-		Array<{ cmd: "prompt" | "steer" | "follow_up"; message: string; id?: string }>
+		Array<{
+			cmd: "prompt" | "steer" | "follow_up";
+			message: string;
+			id?: string;
+			client_id?: string;
+		}>
 	> = new Map();
-	// Track which sessions we're subscribed to (with their configs for reconnection)
-	private subscribedSessions: Map<string, SessionConfig | undefined> = new Map();
-	// Pending subscriptions (to send after connect, with configs)
-	private pendingSubscriptions: Map<string, SessionConfig | undefined> = new Map();
+	// Track which sessions we're subscribed to (with configs and create intent)
+	private subscribedSessions: Map<
+		string,
+		{ config?: SessionConfig; create: boolean }
+	> = new Map();
+	// Pending subscriptions (to send after connect, with configs and create intent)
+	private pendingSubscriptions: Map<
+		string,
+		{ config?: SessionConfig; create: boolean }
+	> = new Map();
 
 	// Request ID counter for correlation
 	private requestIdCounter = 0;
@@ -99,6 +159,11 @@ class WsConnectionManager {
 	/** Get the current connection state */
 	get state(): WsMuxConnectionState {
 		return this.connectionState;
+	}
+
+	/** Check if a session is marked ready */
+	isSessionReady(sessionId: string): boolean {
+		return this.sessionReady.has(sessionId);
 	}
 
 	async agentGetCommands(sessionId: string): Promise<unknown[]> {
@@ -115,6 +180,19 @@ class WsConnectionManager {
 		throw new Error(resp?.error ?? "Unexpected response to get_commands");
 	}
 
+	async agentGetStateWait(sessionId: string): Promise<unknown> {
+		const event = await this.sendAndWait({
+			channel: "agent",
+			session_id: sessionId,
+			cmd: "get_state",
+		});
+		const resp = this.extractCommandResponse(event);
+		if (resp?.success) {
+			return resp.data ?? null;
+		}
+		throw new Error(resp?.error ?? "Unexpected response to get_state");
+	}
+
 	async agentGetSessionStats(sessionId: string): Promise<unknown> {
 		const event = await this.sendAndWait({
 			channel: "agent",
@@ -125,7 +203,14 @@ class WsConnectionManager {
 		if (resp?.success && resp.data) {
 			return resp.data;
 		}
-		throw new Error(resp?.error ?? "Unexpected response to get_stats");
+		const errMsg = resp?.error ?? "Unexpected response to get_stats";
+		if (
+			errMsg.includes("SessionNotFound") ||
+			errMsg.includes("PiSessionNotFound")
+		) {
+			return null;
+		}
+		throw new Error(errMsg);
 	}
 
 	/** Check if connected */
@@ -178,6 +263,14 @@ class WsConnectionManager {
 				command.id = this.nextRequestId();
 			}
 			const json = JSON.stringify(command);
+			recordWsTrace({
+				ts: Date.now(),
+				dir: "send",
+				channel: command.channel,
+				session_id: "session_id" in command ? command.session_id : undefined,
+				cmd: "cmd" in command ? command.cmd : undefined,
+				id: command.id as string | undefined,
+			});
 			console.log("[ws-mux] Sending:", json);
 			this.ws.send(json);
 		} catch (err) {
@@ -199,7 +292,12 @@ class WsConnectionManager {
 		const id = this.nextRequestId();
 		const commandWithId = { ...command, id } as WsCommand;
 
-		const label = "cmd" in command ? command.cmd : ("type" in command ? (command as { type?: string }).type : command.channel);
+		const label =
+			"cmd" in command
+				? command.cmd
+				: "type" in command
+					? (command as { type?: string }).type
+					: command.channel;
 
 		return new Promise<WsEvent>((resolve, reject) => {
 			const timeout = setTimeout(() => {
@@ -271,15 +369,25 @@ class WsConnectionManager {
 	 * @param sessionId The session ID to subscribe to
 	 * @param handler Handler for agent events for this session
 	 * @param config Optional session config (harness, cwd, provider, model)
+	 * @param options Optional controls for session creation
 	 * @returns Unsubscribe function
 	 */
 	subscribeAgentSession(
 		sessionId: string,
 		handler: WsEventHandler<AgentWsEvent>,
 		config?: SessionConfig,
+		options?: { create?: boolean },
 	): () => void {
-		console.log("[ws-mux] subscribeAgentSession:", sessionId, "config:", config, "isConnected:", this.isConnected);
-		
+		console.log(
+			"[ws-mux] subscribeAgentSession:",
+			sessionId,
+			"config:",
+			config,
+			"isConnected:",
+			this.isConnected,
+		);
+		const shouldCreate = options?.create !== false;
+
 		// Add handler locally
 		let handlers = this.agentSessionHandlers.get(sessionId);
 		if (!handlers) {
@@ -288,18 +396,34 @@ class WsConnectionManager {
 		}
 		handlers.add(handler);
 
-		// Track subscription (store config for reconnection).
+		if (!shouldCreate) {
+			// Track the subscription for reconnection, but do not send session.create.
+			this.subscribedSessions.set(sessionId, { config, create: false });
+			return () => {
+				handlers?.delete(handler);
+				if (handlers?.size === 0) {
+					this.agentSessionHandlers.delete(sessionId);
+				}
+			};
+		}
+
+		// Track subscription (store config and create intent for reconnection).
 		// If this session is already tracked AND ready, we skip sending another
 		// session.create — this handles React StrictMode double-invoke and HMR
 		// re-renders that unsubscribe + re-subscribe in quick succession.
-		const alreadyTracked = this.subscribedSessions.has(sessionId);
+		const existingEntry = this.subscribedSessions.get(sessionId);
+		const alreadyTracked = Boolean(existingEntry);
 		const alreadyReady = this.sessionReady.has(sessionId);
+		const wasCreate = existingEntry?.create ?? false;
 
-		this.subscribedSessions.set(sessionId, config);
+		this.subscribedSessions.set(sessionId, { config, create: shouldCreate });
 
-		if (alreadyTracked && alreadyReady) {
-			console.log("[ws-mux] Session already tracked and ready, skipping session.create:", sessionId);
-		} else if (!alreadyTracked) {
+		if (alreadyTracked && alreadyReady && wasCreate && shouldCreate) {
+			console.log(
+				"[ws-mux] Session already tracked and ready, skipping session.create:",
+				sessionId,
+			);
+		} else if (!alreadyTracked || shouldCreate) {
 			if (this.isConnected) {
 				console.log("[ws-mux] Sending session.create for:", sessionId);
 				// Create session (backend auto-subscribes to events)
@@ -311,9 +435,15 @@ class WsConnectionManager {
 					config: config ?? {},
 				});
 			} else {
-				console.log("[ws-mux] Not connected, queueing subscription for:", sessionId);
+				console.log(
+					"[ws-mux] Not connected, queueing subscription for:",
+					sessionId,
+				);
 				// Queue for after connect (with config)
-				this.pendingSubscriptions.set(sessionId, config);
+				this.pendingSubscriptions.set(sessionId, {
+					config,
+					create: shouldCreate,
+				});
 				// Auto-connect if not connected
 				if (this.connectionState === "disconnected") {
 					this.connect();
@@ -344,9 +474,18 @@ class WsConnectionManager {
 
 	/**
 	 * Send a prompt to an agent session.
+	 * @param sessionId - Target session ID
+	 * @param message - User message content
+	 * @param id - Command correlation ID (optional)
+	 * @param clientId - Client-generated ID for optimistic message matching (optional)
 	 */
-	agentPrompt(sessionId: string, message: string, id?: string): void {
-		this.enqueueOrSendAgentMessage(sessionId, "prompt", message, id);
+	agentPrompt(
+		sessionId: string,
+		message: string,
+		id?: string,
+		clientId?: string,
+	): void {
+		this.enqueueOrSendAgentMessage(sessionId, "prompt", message, id, clientId);
 	}
 
 	/**
@@ -396,7 +535,8 @@ class WsConnectionManager {
 		config?: SessionConfig,
 		id?: string,
 	): void {
-		const resolvedConfig = config ?? this.subscribedSessions.get(sessionId) ?? {};
+		const resolvedConfig =
+			config ?? this.subscribedSessions.get(sessionId)?.config ?? {};
 		this.send({
 			channel: "agent",
 			session_id: sessionId,
@@ -423,6 +563,44 @@ class WsConnectionManager {
 			cmd: "session.close",
 			id,
 		});
+	}
+
+	/**
+	 * Re-key a session from a provisional ID to Pi's real ID.
+	 * Migrates all internal maps (subscriptions, handlers, pending
+	 * messages, readiness state) so subsequent commands use the real ID.
+	 */
+	reKeySession(provisionalId: string, realId: string): void {
+		console.log(`[ws-mux] Re-keying session: ${provisionalId} -> ${realId}`);
+
+		const entry = this.subscribedSessions.get(provisionalId);
+		if (entry !== undefined) {
+			this.subscribedSessions.delete(provisionalId);
+			this.subscribedSessions.set(realId, entry);
+		}
+
+		const handlers = this.agentSessionHandlers.get(provisionalId);
+		if (handlers) {
+			this.agentSessionHandlers.delete(provisionalId);
+			this.agentSessionHandlers.set(realId, handlers);
+		}
+
+		if (this.sessionReady.has(provisionalId)) {
+			this.sessionReady.delete(provisionalId);
+			this.sessionReady.add(realId);
+		}
+
+		const pendingMsgs = this.pendingMessages.get(provisionalId);
+		if (pendingMsgs) {
+			this.pendingMessages.delete(provisionalId);
+			this.pendingMessages.set(realId, pendingMsgs);
+		}
+
+		const pendingSub = this.pendingSubscriptions.get(provisionalId);
+		if (pendingSub !== undefined) {
+			this.pendingSubscriptions.delete(provisionalId);
+			this.pendingSubscriptions.set(realId, pendingSub);
+		}
 	}
 
 	/**
@@ -457,13 +635,17 @@ class WsConnectionManager {
 		provider: string,
 		modelId: string,
 	): Promise<void> {
-		await this.sendAndWait({
+		const event = await this.sendAndWait({
 			channel: "agent",
 			session_id: sessionId,
 			cmd: "set_model",
 			provider,
 			model_id: modelId,
 		});
+		const resp = this.extractCommandResponse(event);
+		if (resp && !resp.success) {
+			throw new Error(resp.error ?? "Failed to set model");
+		}
 	}
 
 	/**
@@ -520,7 +702,10 @@ class WsConnectionManager {
 		return this.waitForConnected(timeoutMs);
 	}
 
-	async waitForSessionReady(sessionId: string, timeoutMs = 4000): Promise<void> {
+	async waitForSessionReady(
+		sessionId: string,
+		timeoutMs = 4000,
+	): Promise<void> {
 		if (this.sessionReady.has(sessionId)) return;
 		return new Promise<void>((resolve, reject) => {
 			let done = false;
@@ -589,33 +774,66 @@ class WsConnectionManager {
 			this.reconnectAttempt = 0;
 			this.setConnectionState("connected");
 			this.startPingInterval();
-			
-			console.log("[ws-mux] Processing pending subscriptions:", this.pendingSubscriptions.size);
-			console.log("[ws-mux] Processing subscribed sessions:", this.subscribedSessions.size);
+
+			console.log(
+				"[ws-mux] Processing pending subscriptions:",
+				this.pendingSubscriptions.size,
+			);
+			console.log(
+				"[ws-mux] Processing subscribed sessions:",
+				this.subscribedSessions.size,
+			);
+			console.log(
+				"[ws-mux] Active session handlers:",
+				this.agentSessionHandlers.size,
+			);
 
 			const pendingSessionIds = new Set(this.pendingSubscriptions.keys());
 			// Send pending subscriptions (session.create auto-subscribes)
-			for (const [sessionId, config] of this.pendingSubscriptions) {
+			for (const [sessionId, entry] of this.pendingSubscriptions) {
+				if (!entry.create) continue;
 				this.sessionReady.delete(sessionId);
 				this.send({
 					channel: "agent",
 					session_id: sessionId,
 					cmd: "session.create",
-					config: config ?? {},
+					config: entry.config ?? {},
 				});
 			}
 			this.pendingSubscriptions.clear();
 
-			// Re-subscribe to all tracked sessions (session.create for reconnect)
-			for (const [sessionId, config] of this.subscribedSessions) {
+			// Re-subscribe to tracked sessions that still have active
+			// handlers (i.e., a React component is currently subscribed).
+			// Sessions without handlers are stale leftovers from a previous
+			// page load (the singleton on globalThis survives but the React
+			// tree unmounted) and must NOT be re-created -- doing so spawns
+			// orphaned Pi processes on the runner.
+			for (const [sessionId, entry] of this.subscribedSessions) {
 				if (pendingSessionIds.has(sessionId)) continue;
+				if (!this.agentSessionHandlers.has(sessionId)) {
+					console.log(
+						"[ws-mux] Skipping stale session (no handlers):",
+						sessionId,
+					);
+					continue;
+				}
+				if (!entry.create) continue;
 				this.sessionReady.delete(sessionId);
 				this.send({
 					channel: "agent",
 					session_id: sessionId,
 					cmd: "session.create",
-					config: config ?? {},
+					config: entry.config ?? {},
 				});
+			}
+
+			// Prune stale sessions that have no handlers.
+			for (const sessionId of Array.from(this.subscribedSessions.keys())) {
+				if (!this.agentSessionHandlers.has(sessionId)) {
+					this.subscribedSessions.delete(sessionId);
+					this.sessionReady.delete(sessionId);
+					this.pendingMessages.delete(sessionId);
+				}
 			}
 
 			if (this.pendingMessages.size > 0 && isWsMuxDebugEnabled()) {
@@ -629,8 +847,30 @@ class WsConnectionManager {
 		this.ws.onmessage = (event) => {
 			try {
 				const data = JSON.parse(event.data) as WsEvent;
+				const recordEvent = (evt: WsEvent) => {
+					const base: WsTraceEntry = {
+						ts: Date.now(),
+						dir: "recv",
+						channel: "channel" in evt ? evt.channel : undefined,
+						session_id: "session_id" in evt ? evt.session_id : undefined,
+						id: "id" in evt ? (evt as { id?: string }).id : undefined,
+					};
+					if ("event" in evt && typeof evt.event === "string") {
+						base.event = evt.event;
+					}
+					if ("cmd" in evt && typeof evt.cmd === "string") {
+						base.cmd = evt.cmd;
+					}
+					recordWsTrace(base);
+				};
+				recordEvent(data);
 				if (isWsMuxDebugEnabled()) {
-					const eventType = "type" in data ? (data as { type?: string }).type : ("event" in data ? (data as { event?: string }).event : "");
+					const eventType =
+						"type" in data
+							? (data as { type?: string }).type
+							: "event" in data
+								? (data as { event?: string }).event
+								: "";
 					if (eventType !== "ping") {
 						console.debug("[ws-mux] Received:", data);
 					}
@@ -682,7 +922,9 @@ class WsConnectionManager {
 						this.sessionReadyWaiters.delete(sessionId);
 					}
 
-					// Request initial state (includes model info)
+					// Request initial state (includes model info and Pi's
+					// real session ID -- useChat detects ID mismatches and
+					// triggers re-keying from there).
 					this.send({
 						channel: "agent",
 						session_id: sessionId,
@@ -690,16 +932,26 @@ class WsConnectionManager {
 					});
 
 					const pending = this.pendingMessages.get(sessionId);
-					console.log("[ws-mux] Pending messages for session:", sessionId, pending?.length ?? 0);
+					console.log(
+						"[ws-mux] Pending messages for session:",
+						sessionId,
+						pending?.length ?? 0,
+					);
 					if (pending?.length) {
 						for (const entry of pending) {
-							console.log("[ws-mux] Flushing queued message:", entry.cmd, "for session:", sessionId);
+							console.log(
+								"[ws-mux] Flushing queued message:",
+								entry.cmd,
+								"for session:",
+								sessionId,
+							);
 							this.send({
 								channel: "agent",
 								session_id: sessionId,
 								cmd: entry.cmd,
 								message: entry.message,
 								id: entry.id,
+								client_id: entry.client_id,
 							});
 						}
 						this.pendingMessages.delete(sessionId);
@@ -791,17 +1043,18 @@ class WsConnectionManager {
 		cmd: "prompt" | "steer" | "follow_up",
 		message: string,
 		id?: string,
+		clientId?: string,
 	): void {
 		if (!this.isConnected) {
 			const pending = this.pendingMessages.get(sessionId) ?? [];
-			pending.push({ cmd, message, id });
+			pending.push({ cmd, message, id, client_id: clientId });
 			this.pendingMessages.set(sessionId, pending);
 			return;
 		}
 
 		if (!this.sessionReady.has(sessionId)) {
 			const pending = this.pendingMessages.get(sessionId) ?? [];
-			pending.push({ cmd, message, id });
+			pending.push({ cmd, message, id, client_id: clientId });
 			this.pendingMessages.set(sessionId, pending);
 			console.log(
 				"[ws-mux] Queued agent message until session is ready:",
@@ -819,6 +1072,7 @@ class WsConnectionManager {
 			cmd,
 			message,
 			id,
+			client_id: clientId,
 		});
 	}
 
@@ -907,7 +1161,10 @@ const WS_MANAGER_KEY = "__octo_ws_manager__" as const;
 
 /** Get the singleton WebSocket manager instance */
 export function getWsManager(): WsConnectionManager {
-	const g = globalThis as unknown as Record<string, WsConnectionManager | undefined>;
+	const g = globalThis as unknown as Record<
+		string,
+		WsConnectionManager | undefined
+	>;
 	if (!g[WS_MANAGER_KEY]) {
 		g[WS_MANAGER_KEY] = new WsConnectionManager();
 	}
@@ -916,7 +1173,10 @@ export function getWsManager(): WsConnectionManager {
 
 /** Destroy the singleton instance (for cleanup in tests) */
 export function destroyWsManager(): void {
-	const g = globalThis as unknown as Record<string, WsConnectionManager | undefined>;
+	const g = globalThis as unknown as Record<
+		string,
+		WsConnectionManager | undefined
+	>;
 	const instance = g[WS_MANAGER_KEY];
 	if (instance) {
 		instance.disconnect();

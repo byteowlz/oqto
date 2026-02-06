@@ -13,8 +13,8 @@ pub mod service;
 // Re-export commonly used types and functions for backwards compatibility
 #[allow(unused_imports)]
 pub use models::{
-    ChatMessage, ChatMessagePart, ChatSession, HstrySearchHit, MessageInfo, MessageSummary,
-    MessageTime, PartInfo, SessionInfo, SessionTime, TokenUsage, ToolState,
+    ChatMessage, ChatMessagePart, ChatSession, ChatSessionStats, HstrySearchHit, MessageInfo,
+    MessageSummary, MessageTime, PartInfo, SessionInfo, SessionTime, TokenUsage, ToolState,
 };
 
 #[allow(unused_imports)]
@@ -28,5 +28,6 @@ pub use repository::{
 #[allow(unused_imports)]
 pub use service::{
     get_session_messages_async, get_session_messages_rendered,
-    get_session_messages_rendered_from_dir, search_hstry,
+    get_session_messages_rendered_from_dir, get_session_messages_rendered_via_grpc,
+    get_session_messages_via_grpc_cached, search_hstry,
 };

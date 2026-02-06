@@ -13,6 +13,8 @@
  * - Single WebSocket connection shared across all agent sessions
  */
 
+import { useBusySessions } from "@/components/contexts";
+import type { CommandResponse, SessionConfig } from "@/lib/canonical-types";
 import {
 	createPiSessionId,
 	isPendingSessionId,
@@ -20,7 +22,6 @@ import {
 } from "@/lib/session-utils";
 import { getWsManager } from "@/lib/ws-manager";
 import type { AgentWsEvent, WsMuxConnectionState } from "@/lib/ws-mux-types";
-import type { CommandResponse, SessionConfig } from "@/lib/canonical-types";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
 	readCachedSessionMessages,
@@ -28,13 +29,19 @@ import {
 	transferCachedSessionMessages,
 	writeCachedSessionMessages,
 } from "./cache";
-import { getMaxPiMessageId, mergeServerMessages, normalizePiContentToParts, normalizePiMessages } from "./message-utils";
+import {
+	convertCanonicalMessageToDisplay,
+	getMaxPiMessageId,
+	mergeServerMessages,
+	normalizePiContentToParts,
+	normalizePiMessages,
+} from "./message-utils";
 import type {
+	AgentState,
 	PiDisplayMessage,
 	PiMessagePart,
 	PiSendMode,
 	PiSendOptions,
-	PiState,
 	UsePiChatOptions,
 	UsePiChatReturn,
 } from "./types";
@@ -81,7 +88,7 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 	const lastActiveSessionIdRef = useRef<string | null>(null);
 
 	// State
-	const [state, setState] = useState<PiState | null>(null);
+	const [state, setState] = useState<AgentState | null>(null);
 	const [messages, setMessages] = useState<PiDisplayMessage[]>(
 		activeSessionId
 			? readCachedSessionMessages(activeSessionId, resolvedStorageKeyPrefix)
@@ -91,6 +98,7 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 	const [isStreaming, setIsStreaming] = useState(false);
 	const [isAwaitingResponse, setIsAwaitingResponse] = useState(false);
 	const [error, setError] = useState<Error | null>(null);
+	const { setSessionBusy } = useBusySessions();
 
 	// Refs
 	const messageIdRef = useRef(getMaxPiMessageId(messages));
@@ -100,11 +108,14 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 	const messagesRef = useRef(messages);
 	const lastSessionRecoveryRef = useRef(0);
 	const isStreamingRef = useRef(false);
+	const sendInFlightRef = useRef(false);
 	// Deferred server messages received while streaming (applied on agent.idle)
 	const deferredServerMessagesRef = useRef<unknown[] | null>(null);
 	// Stable ref for the agent event handler so the subscription effect doesn't
 	// re-run when callback identity changes (which would reset streaming state).
-	const handleAgentEventRef = useRef<((event: AgentWsEvent) => void) | null>(null);
+	const handleAgentEventRef = useRef<((event: AgentWsEvent) => void) | null>(
+		null,
+	);
 
 	// Batched update state
 	const batchedUpdateRef = useRef({
@@ -118,6 +129,14 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 		messageIdRef.current += 1;
 		return `pi-msg-${messageIdRef.current}`;
 	}, []);
+
+	const setBusyForEvent = useCallback(
+		(sessionId: string | null | undefined, busy: boolean) => {
+			if (!sessionId) return;
+			setSessionBusy(sessionId, busy);
+		},
+		[setSessionBusy],
+	);
 
 	const appendLocalAssistantMessage = useCallback(
 		(content: string) => {
@@ -164,7 +183,7 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 			const lastId = lastAssistantMessageIdRef.current;
 			if (lastId) {
 				const existing = messagesRef.current.find((m) => m.id === lastId);
-				if (existing) {
+				if (existing && existing.role === "assistant") {
 					return existing;
 				}
 			}
@@ -249,10 +268,17 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 			}
 
 			// Extra logging for debugging streaming issues
-			const isStreaming = streamingMessageRef.current !== null || isStreamingRef.current;
+			const isStreaming =
+				streamingMessageRef.current !== null || isStreamingRef.current;
 			if (
-				["stream.message_start", "stream.text_delta", "stream.done",
-				"tool.start", "tool.end", "agent.working", "agent.idle",
+				[
+					"stream.message_start",
+					"stream.text_delta",
+					"stream.done",
+					"tool.start",
+					"tool.end",
+					"agent.working",
+					"agent.idle",
 				].includes(eventType)
 			) {
 				console.log(
@@ -263,6 +289,7 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 			switch (eventType) {
 				// -- Streaming lifecycle --
 				case "stream.message_start": {
+					setBusyForEvent(event.session_id ?? activeSessionIdRef.current, true);
 					if (!streamingMessageRef.current) {
 						const assistantMessage: PiDisplayMessage = {
 							id: nextMessageId(),
@@ -420,6 +447,10 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 
 				// -- Stream complete --
 				case "stream.done": {
+					setBusyForEvent(
+						event.session_id ?? activeSessionIdRef.current,
+						false,
+					);
 					// Cancel pending batched update
 					const batch = batchedUpdateRef.current;
 					if (batch.rafId !== null) {
@@ -438,9 +469,7 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 						};
 
 						setMessages((prev) => {
-							const idx = prev.findIndex(
-								(m) => m.id === completedMessage.id,
-							);
+							const idx = prev.findIndex((m) => m.id === completedMessage.id);
 							if (idx >= 0) {
 								const updated = [...prev];
 								updated[idx] = completedMessage;
@@ -452,13 +481,62 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 						onMessageComplete?.(completedMessage);
 						streamingMessageRef.current = null;
 					}
+					// Clear streaming state. The Messages event from agent.end
+					// now only contains assistant messages, so no deduplication
+					// issues with the optimistic user message.
+					isStreamingRef.current = false;
 					setIsStreaming(false);
 					setIsAwaitingResponse(false);
 					break;
 				}
 
+				// -- Message complete (canonical full message) --
+				case "stream.message_end": {
+					const fallbackId = streamingMessageRef.current?.id ?? nextMessageId();
+					const canonical = convertCanonicalMessageToDisplay(
+						event.message,
+						fallbackId,
+					);
+					if (!canonical) break;
+					const messageId = streamingMessageRef.current?.id ?? canonical.id;
+					const updated: PiDisplayMessage = {
+						...canonical,
+						role: "assistant",
+						id: messageId,
+						isStreaming: streamingMessageRef.current?.isStreaming ?? false,
+					};
+					if (streamingMessageRef.current) {
+						streamingMessageRef.current = updated;
+					}
+					lastAssistantMessageIdRef.current = updated.id;
+					setMessages((prev) => {
+						const idx = prev.findIndex((m) => m.id === updated.id);
+						if (idx >= 0) {
+							const next = [...prev];
+							next[idx] = updated;
+							return next;
+						}
+						return [...prev, updated];
+					});
+					// Clear in-flight state on message_end.
+					sendInFlightRef.current = false;
+					isStreamingRef.current = false;
+					setIsStreaming(false);
+					setIsAwaitingResponse(false);
+					setBusyForEvent(
+						event.session_id ?? activeSessionIdRef.current,
+						false,
+					);
+					break;
+				}
+
 				// -- Agent idle (streaming ended) --
 				case "agent.idle": {
+					sendInFlightRef.current = false;
+					setBusyForEvent(
+						event.session_id ?? activeSessionIdRef.current,
+						false,
+					);
 					setIsStreaming(false);
 					isStreamingRef.current = false;
 					setIsAwaitingResponse(false);
@@ -466,30 +544,22 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 						streamingMessageRef.current.isStreaming = false;
 						streamingMessageRef.current = null;
 					}
-					// Apply deferred server messages that arrived during streaming
-					const deferred = deferredServerMessagesRef.current;
-					if (deferred && Array.isArray(deferred)) {
-						deferredServerMessagesRef.current = null;
-						const displayMessages = normalizePiMessages(
-							deferred,
-							`server-${event.session_id}`,
-						);
-						if (displayMessages.length > 0) {
-							setMessages((prev) => mergeServerMessages(prev, displayMessages));
-							messageIdRef.current =
-								getMaxPiMessageId(displayMessages);
-							const lastAssistant = [...displayMessages]
-								.reverse()
-								.find((msg) => msg.role === "assistant");
-							lastAssistantMessageIdRef.current =
-								lastAssistant?.id ?? null;
-						}
-						if (isPiDebugEnabled()) {
-							console.debug(
-								"[useChat] Applied deferred messages on idle:",
-								event.session_id,
-								displayMessages.length,
-							);
+					// Discard any stale deferred messages -- they may be
+					// incomplete (fetched mid-stream before all messages
+					// were persisted).
+					deferredServerMessagesRef.current = null;
+					// Refresh session state (stats, model info, etc.) but
+					// do NOT re-fetch messages. Pi's get_messages RPC only
+					// returns the current context window (not the full
+					// history), so the response would clobber earlier turns
+					// that are already in local state from streaming.
+					{
+						const sessionId = activeSessionIdRef.current;
+						if (sessionId) {
+							setTimeout(() => {
+								const manager = getWsManager();
+								manager.agentGetState(sessionId);
+							}, 100);
 						}
 					}
 					break;
@@ -497,14 +567,31 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 
 				// -- Agent working (streaming started) --
 				case "agent.working": {
+					setBusyForEvent(event.session_id ?? activeSessionIdRef.current, true);
 					setIsAwaitingResponse(false);
 					break;
 				}
 
 				// -- Agent error --
 				case "agent.error": {
+					const wasInFlight = sendInFlightRef.current;
+					sendInFlightRef.current = false;
+					isStreamingRef.current = false;
+					setBusyForEvent(
+						event.session_id ?? activeSessionIdRef.current,
+						false,
+					);
 					const errMsg = (event.error as string) || "Unknown error";
 					const recoverable = event.recoverable as boolean;
+					const isSessionNotFound =
+						errMsg.includes("PiSessionNotFound") ||
+						errMsg.includes("SessionNotFound") ||
+						errMsg.includes("Response channel closed");
+					if (!wasInFlight && isSessionNotFound) {
+						// Background session lookup failure while idle (e.g. viewing history)
+						// should not surface as a user-visible error.
+						break;
+					}
 					const err = new Error(errMsg);
 					setError(err);
 					onError?.(err);
@@ -516,17 +603,13 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 					const now = Date.now();
 					const shouldRecover =
 						Boolean(sessionId) &&
+						wasInFlight &&
 						!recoverable &&
-						(errMsg.includes("PiSessionNotFound") ||
-							errMsg.includes("SessionNotFound") ||
-							errMsg.includes("Response channel closed"));
+						isSessionNotFound;
 					if (shouldRecover && now - lastSessionRecoveryRef.current > 5000) {
 						lastSessionRecoveryRef.current = now;
 						const manager = getWsManager();
-						manager.agentCreateSession(
-							sessionId as string,
-							getSessionConfig(),
-						);
+						manager.agentCreateSession(sessionId as string, getSessionConfig());
 						setTimeout(() => {
 							manager.agentGetState(sessionId as string);
 							manager.agentGetMessages(sessionId as string);
@@ -546,9 +629,7 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 							})),
 						};
 						setMessages((prev) => {
-							const idx = prev.findIndex(
-								(m) => m.id === completedMessage.id,
-							);
+							const idx = prev.findIndex((m) => m.id === completedMessage.id);
 							if (idx >= 0) {
 								const updated = [...prev];
 								updated[idx] = completedMessage;
@@ -591,8 +672,7 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 				case "compact.end": {
 					const success = event.success as boolean;
 					if (!success) {
-						const errText =
-							(event.error as string) || "Compaction failed";
+						const errText = (event.error as string) || "Compaction failed";
 						const currentMsg = ensureAssistantMessage(false);
 						const part: PiMessagePart = {
 							type: "error",
@@ -607,7 +687,7 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 					}
 					break;
 				}
- 
+
 				// -- Config changes --
 				case "config.model_changed": {
 					const sessionId = event.session_id;
@@ -667,52 +747,54 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 					break;
 				}
 
-			// -- Messages sync --
-			case "messages": {
-				// Defer if we're currently streaming — applying persisted
-				// messages would overwrite the live in-progress content.
-				// They will be applied when agent.idle fires.
-				if (streamingMessageRef.current || isStreamingRef.current) {
-					const msgs = event.messages;
-					if (Array.isArray(msgs) && msgs.length > 0) {
-						deferredServerMessagesRef.current = msgs;
+				// -- Messages sync --
+				case "messages": {
+					// Defer if we're currently streaming — applying persisted
+					// messages would overwrite the live in-progress content.
+					// They will be applied when agent.idle fires.
+					if (
+						streamingMessageRef.current ||
+						isStreamingRef.current ||
+						sendInFlightRef.current
+					) {
+						const msgs = event.messages;
+						if (Array.isArray(msgs) && msgs.length > 0) {
+							deferredServerMessagesRef.current = msgs;
+						}
+						if (isPiDebugEnabled()) {
+							console.debug(
+								"[useChat] Deferring messages sync during streaming:",
+								event.session_id,
+							);
+						}
+						break;
 					}
-					if (isPiDebugEnabled()) {
-						console.debug(
-							"[useChat] Deferring messages sync during streaming:",
-							event.session_id,
+					const msgs = event.messages;
+					if (Array.isArray(msgs)) {
+						const displayMessages = normalizePiMessages(
+							msgs,
+							`server-${event.session_id}`,
 						);
+
+						if (displayMessages.length > 0) {
+							setMessages((prev) => mergeServerMessages(prev, displayMessages));
+							messageIdRef.current = getMaxPiMessageId(displayMessages);
+							const lastAssistant = [...displayMessages]
+								.reverse()
+								.find((msg) => msg.role === "assistant");
+							lastAssistantMessageIdRef.current = lastAssistant?.id ?? null;
+						}
+
+						if (isPiDebugEnabled()) {
+							console.debug(
+								"[useChat] Loaded messages:",
+								event.session_id,
+								displayMessages.length,
+							);
+						}
 					}
 					break;
 				}
-				const msgs = event.messages;
-				if (Array.isArray(msgs)) {
-					const displayMessages = normalizePiMessages(
-						msgs,
-						`server-${event.session_id}`,
-					);
-
-					if (displayMessages.length > 0) {
-						setMessages((prev) => mergeServerMessages(prev, displayMessages));
-						messageIdRef.current =
-							getMaxPiMessageId(displayMessages);
-						const lastAssistant = [...displayMessages]
-							.reverse()
-							.find((msg) => msg.role === "assistant");
-						lastAssistantMessageIdRef.current =
-							lastAssistant?.id ?? null;
-					}
-
-					if (isPiDebugEnabled()) {
-						console.debug(
-							"[useChat] Loaded messages:",
-							event.session_id,
-							displayMessages.length,
-						);
-					}
-				}
-				break;
-			}
 
 				// -- Persisted --
 				case "persisted": {
@@ -747,21 +829,34 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 					}
 
 					switch (resp.cmd) {
-					case "session.create": {
-						if (resp.success) {
-							// Session created — load persisted messages only
-							// if we're not already streaming.
-							if (!streamingMessageRef.current && !isStreamingRef.current) {
-								const manager = getWsManager();
-								manager.agentGetMessages(event.session_id);
-								if (isPiDebugEnabled()) {
-									console.debug(
-										"[useChat] Session created, requesting messages:",
-										event.session_id,
-									);
+						case "session.create": {
+							if (resp.success) {
+								// Session created — load persisted messages only
+								// if we're not already streaming AND we don't
+								// have local optimistic messages. If the user
+								// just sent a message (via send()), messagesRef
+								// already contains the optimistic user message
+								// and isStreamingRef is true. Requesting
+								// get_messages now would return stale data from
+								// hstry (which doesn't have the user message
+								// yet) and overwrite the optimistic content.
+								const hasLocalMessages = messagesRef.current.length > 0;
+								if (
+									!streamingMessageRef.current &&
+									!isStreamingRef.current &&
+									!sendInFlightRef.current &&
+									!hasLocalMessages
+								) {
+									const manager = getWsManager();
+									manager.agentGetMessages(event.session_id);
+									if (isPiDebugEnabled()) {
+										console.debug(
+											"[useChat] Session created, requesting messages:",
+											event.session_id,
+										);
+									}
 								}
-							}
-						} else {
+							} else {
 								const errMsg = resp.error || "Failed to create session";
 								const err = new Error(errMsg);
 								setError(err);
@@ -772,9 +867,29 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 
 						case "get_state": {
 							if (resp.success && resp.data) {
-								const nextState = resp.data as PiState;
+								const nextState = resp.data as AgentState;
 								setState(nextState);
-								if (nextState?.is_streaming === false) {
+								const realSessionId = nextState.sessionId ?? null;
+								const requestedSessionId = event.session_id ?? null;
+								if (
+									realSessionId &&
+									requestedSessionId &&
+									realSessionId !== requestedSessionId
+								) {
+									// For Pi, the runner session is keyed by the requested session_id.
+									// The sessionId in get_state is Pi's internal ID and must NOT be
+									// used for future commands, otherwise the runner will report
+									// SessionNotFound and spawn duplicate sessions.
+									if (isPiDebugEnabled()) {
+										console.debug(
+											"[useChat] Ignoring Pi internal sessionId mismatch:",
+											requestedSessionId,
+											"->",
+											realSessionId,
+										);
+									}
+								}
+								if (nextState?.isStreaming === false) {
 									setIsStreaming(false);
 									setIsAwaitingResponse(false);
 									if (streamingMessageRef.current) {
@@ -786,55 +901,66 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 							break;
 						}
 
-					case "get_messages": {
-						// Defer if we're currently streaming — applying
-						// persisted messages would overwrite live content.
-						// They will be applied when agent.idle fires.
-						if (streamingMessageRef.current || isStreamingRef.current) {
+						case "get_messages": {
+							// Defer if we're currently streaming — applying
+							// persisted messages would overwrite live content.
+							// They will be applied when agent.idle fires.
+							if (
+								streamingMessageRef.current ||
+								isStreamingRef.current ||
+								sendInFlightRef.current
+							) {
+								if (resp.success && resp.data) {
+									const data = resp.data as { messages?: unknown[] };
+									const msgs = data.messages;
+									if (Array.isArray(msgs) && msgs.length > 0) {
+										deferredServerMessagesRef.current = msgs;
+									}
+								}
+								if (isPiDebugEnabled()) {
+									console.debug(
+										"[useChat] Deferring get_messages response during streaming:",
+										event.session_id,
+									);
+								}
+								break;
+							}
 							if (resp.success && resp.data) {
 								const data = resp.data as { messages?: unknown[] };
 								const msgs = data.messages;
-								if (Array.isArray(msgs) && msgs.length > 0) {
-									deferredServerMessagesRef.current = msgs;
+								if (Array.isArray(msgs)) {
+									const displayMessages = normalizePiMessages(
+										msgs,
+										`server-${event.session_id}`,
+									);
+									if (displayMessages.length > 0) {
+										setMessages((prev) =>
+											mergeServerMessages(prev, displayMessages),
+										);
+										messageIdRef.current = getMaxPiMessageId(displayMessages);
+										const lastAssistant = [...displayMessages]
+											.reverse()
+											.find((msg) => msg.role === "assistant");
+										lastAssistantMessageIdRef.current =
+											lastAssistant?.id ?? null;
+									}
+									if (isPiDebugEnabled()) {
+										console.debug(
+											"[useChat] Loaded messages:",
+											event.session_id,
+											displayMessages.length,
+										);
+									}
 								}
-							}
-							if (isPiDebugEnabled()) {
-								console.debug(
-									"[useChat] Deferring get_messages response during streaming:",
-									event.session_id,
-								);
 							}
 							break;
 						}
-						if (resp.success && resp.data) {
-							const data = resp.data as { messages?: unknown[] };
-							const msgs = data.messages;
-							if (Array.isArray(msgs)) {
-								const displayMessages = normalizePiMessages(
-									msgs,
-									`server-${event.session_id}`,
-								);
-							if (displayMessages.length > 0) {
-								setMessages((prev) => mergeServerMessages(prev, displayMessages));
-								messageIdRef.current =
-									getMaxPiMessageId(displayMessages);
-								const lastAssistant = [...displayMessages]
-									.reverse()
-									.find((msg) => msg.role === "assistant");
-								lastAssistantMessageIdRef.current =
-									lastAssistant?.id ?? null;
-							}
-							if (isPiDebugEnabled()) {
-								console.debug(
-									"[useChat] Loaded messages:",
-									event.session_id,
-									displayMessages.length,
-								);
-							}
-							}
+
+						case "get_stats": {
+							// Stats errors for sessions without active Pi
+							// processes (e.g. hstry-imported) are expected.
+							break;
 						}
-						break;
-					}
 
 						default: {
 							if (!resp.success && resp.error) {
@@ -852,7 +978,10 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 									(errMsg.includes("PiSessionNotFound") ||
 										errMsg.includes("SessionNotFound") ||
 										errMsg.includes("Response channel closed"));
-								if (shouldRecover && now - lastSessionRecoveryRef.current > 5000) {
+								if (
+									shouldRecover &&
+									now - lastSessionRecoveryRef.current > 5000
+								) {
 									lastSessionRecoveryRef.current = now;
 									const manager = getWsManager();
 									manager.agentCreateSession(
@@ -873,10 +1002,7 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 
 				default: {
 					if (isPiDebugEnabled()) {
-						console.debug(
-							"[useChat] Unhandled canonical event:",
-							eventType,
-						);
+						console.debug("[useChat] Unhandled canonical event:", eventType);
 					}
 				}
 			}
@@ -886,6 +1012,7 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 			ensureAssistantMessage,
 			nextMessageId,
 			scheduleStreamingUpdate,
+			setBusyForEvent,
 			onMessageComplete,
 			onError,
 			getSessionConfig,
@@ -951,24 +1078,52 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 			handleAgentEventRef.current?.(event);
 		};
 		unsubscribeRef.current?.();
+		// If the session is already ready, just attach without re-creating.
+		if (manager.isSessionReady(sessionId)) {
+			unsubscribeRef.current = manager.subscribeAgentSession(
+				sessionId,
+				stableHandler,
+				sessionConfig,
+				{ create: false },
+			);
+			return sessionId;
+		}
+
 		unsubscribeRef.current = manager.subscribeAgentSession(
 			sessionId,
 			stableHandler,
 			sessionConfig,
+			{ create: true },
 		);
 
 		await manager.ensureConnected(4000);
-		manager.agentCreateSession(sessionId, sessionConfig);
-		await manager.waitForSessionReady(sessionId, 4000);
+		try {
+			await manager.waitForSessionReady(sessionId, 1500);
+		} catch (err) {
+			// If session wasn't created by the client (e.g. from history),
+			// avoid spawning a duplicate. Verify existence with get_state.
+			try {
+				await manager.agentGetStateWait(sessionId);
+				manager.subscribeAgentSession(sessionId, stableHandler, sessionConfig, {
+					create: false,
+				});
+			} catch {
+				throw err;
+			}
+		}
 		return sessionId;
 	}, [getSessionConfig, onSelectedSessionIdChange]);
 
 	// Send message
 	const send = useCallback(
 		async (message: string, options?: PiSendOptions) => {
+			sendInFlightRef.current = true;
 			const mode: PiSendMode = options?.mode ?? "prompt";
 			let sessionId = options?.sessionId ?? activeSessionIdRef.current;
-			if (options?.sessionId && options.sessionId !== activeSessionIdRef.current) {
+			if (
+				options?.sessionId &&
+				options.sessionId !== activeSessionIdRef.current
+			) {
 				activeSessionIdRef.current = options.sessionId;
 				onSelectedSessionIdChange?.(options.sessionId);
 				const manager = getWsManager();
@@ -981,8 +1136,10 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 					options.sessionId,
 					stableHandler,
 					sessionConfig,
+					{ create: true },
 				);
 			}
+			// Ensure the session exists and is ready before sending.
 			if (!sessionId) {
 				// Clear local state for the new session.
 				setMessages([]);
@@ -991,7 +1148,12 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 				isStreamingRef.current = false;
 				setError(null);
 				messageIdRef.current = 0;
+			}
+			try {
 				sessionId = await ensureSession();
+			} catch (err) {
+				sendInFlightRef.current = false;
+				throw err;
 			}
 
 			// Mark as streaming IMMEDIATELY so that any server messages
@@ -1000,13 +1162,25 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 			// the optimistic user message.
 			isStreamingRef.current = true;
 
-			// Add user message to display
+			// Generate a client_id for optimistic message matching.
+			// This ID will be sent with the prompt and returned in the persisted message,
+			// allowing us to reconcile the optimistic message with the server version.
+			// Use fallback for non-secure contexts (HTTP) where crypto.randomUUID
+			// is unavailable.
+			const clientId =
+				typeof crypto !== "undefined" && "randomUUID" in crypto
+					? crypto.randomUUID()
+					: `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+			// Add user message to display with client_id for later matching
 			const userMessage: PiDisplayMessage = {
 				id: nextMessageId(),
 				role: "user",
 				parts: [{ type: "text", content: message }],
 				timestamp: Date.now(),
+				clientId,
 			};
+			lastAssistantMessageIdRef.current = null;
 			setMessages((prev) => [...prev, userMessage]);
 			setError(null);
 
@@ -1020,6 +1194,7 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 				const error =
 					err instanceof Error ? err : new Error("WebSocket not ready");
 				isStreamingRef.current = false;
+				sendInFlightRef.current = false;
 				setIsAwaitingResponse(false);
 				setError(error);
 				throw error;
@@ -1027,7 +1202,8 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 
 			switch (mode) {
 				case "prompt":
-					manager.agentPrompt(sessionId, message);
+					// Pass the clientId for optimistic message matching
+					manager.agentPrompt(sessionId, message, undefined, clientId);
 					break;
 				case "steer":
 					manager.agentSteer(sessionId, message);
@@ -1037,12 +1213,7 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 					break;
 			}
 		},
-		[
-			ensureSession,
-			getSessionConfig,
-			nextMessageId,
-			onSelectedSessionIdChange,
-		],
+		[ensureSession, getSessionConfig, nextMessageId, onSelectedSessionIdChange],
 	);
 
 	// Abort current stream
@@ -1218,12 +1389,39 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 			activeSessionId,
 			stableHandler,
 			sessionConfig,
+			{ create: false },
 		);
 
 		if (isPiDebugEnabled()) {
-			console.debug("[useChat] Subscribed to session:", activeSessionId, "workspacePath:", workspacePath);
+			console.debug("[useChat] Subscribed to session:", activeSessionId);
 		}
 		lastActiveSessionIdRef.current = activeSessionId;
+
+		// For existing sessions (create: false), still fetch state and messages.
+		// The session.create path handles this via the response handler, but
+		// when attaching to a history session without creating, we need to
+		// explicitly request state and messages.
+		//
+		// Only do this if the session is NOT already ready (i.e. was not
+		// created by this client) and we're not currently streaming. If the
+		// session IS ready, the session.create response handler already
+		// fetched state/messages. Fetching during streaming would race and
+		// overwrite in-progress messages with stale server data.
+		if (!manager.isSessionReady(activeSessionId) && !isStreamingRef.current) {
+			manager
+				.ensureConnected(4000)
+				.then(() => {
+					// Re-check streaming state after async wait — streaming may
+					// have started between the effect and the connection.
+					if (!isStreamingRef.current) {
+						manager.agentGetState(activeSessionId);
+						manager.agentGetMessages(activeSessionId);
+					}
+				})
+				.catch(() => {
+					// Connection failed, messages will load on reconnect
+				});
+		}
 
 		return () => {
 			if (unsubscribeRef.current) {
@@ -1245,9 +1443,14 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 		messagesRef.current = messages;
 	}, [messages]);
 
-	useEffect(() => {
-		isStreamingRef.current = isStreaming;
-	}, [isStreaming]);
+	// NOTE: We intentionally do NOT sync isStreaming state back to
+	// isStreamingRef. The ref is set manually in send() BEFORE the optimistic
+	// user message is added, and cleared on agent.idle/stream.done. Syncing
+	// from the React state would overwrite the ref with `false` on the next
+	// render (before stream events arrive), creating a window where incoming
+	// get_messages responses are not deferred and overwrite the optimistic
+	// user message. The ref is the source of truth for deferral logic; the
+	// React state is for rendering.
 
 	useEffect(() => {
 		if (!activeSessionId) return;

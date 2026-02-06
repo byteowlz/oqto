@@ -87,9 +87,7 @@ function canonicalPartsToPiParts(parts: unknown[]): PiMessagePart[] {
 					(typeof p.tool_call_id === "string" && p.tool_call_id) ||
 					(typeof p.id === "string" && p.id) ||
 					"";
-				const name =
-					(typeof p.name === "string" && p.name) ||
-					"unknown";
+				const name = (typeof p.name === "string" && p.name) || "unknown";
 				result.push({
 					type: "tool_use",
 					id,
@@ -113,25 +111,15 @@ function canonicalPartsToPiParts(parts: unknown[]): PiMessagePart[] {
 				break;
 			}
 			case "image": {
-				const id =
-					(typeof p.id === "string" && p.id) || `img_${result.length}`;
-				const source = p.source as
-					| Record<string, unknown>
-					| undefined;
+				const id = (typeof p.id === "string" && p.id) || `img_${result.length}`;
+				const source = p.source as Record<string, unknown> | undefined;
 				if (source && typeof source === "object") {
 					result.push({
 						type: "image",
 						id,
-						source:
-							typeof source.type === "string"
-								? source.type
-								: "base64",
-						data: typeof source.data === "string"
-							? source.data
-							: undefined,
-						url: typeof source.url === "string"
-							? source.url
-							: undefined,
+						source: typeof source.type === "string" ? source.type : "base64",
+						data: typeof source.data === "string" ? source.data : undefined,
+						url: typeof source.url === "string" ? source.url : undefined,
 						mimeType:
 							typeof source.media_type === "string"
 								? source.media_type
@@ -226,25 +214,15 @@ export function normalizePiContentToParts(content: unknown): PiMessagePart[] {
 				continue;
 			}
 			if (blockType === "image") {
-				const id =
-					(typeof b.id === "string" && b.id) || `img_${parts.length}`;
+				const id = (typeof b.id === "string" && b.id) || `img_${parts.length}`;
 				const source = b.source as Record<string, unknown> | undefined;
 				if (source && typeof source === "object") {
 					parts.push({
 						type: "image",
 						id,
-						source:
-							typeof source.type === "string"
-								? source.type
-								: "base64",
-						data:
-							typeof source.data === "string"
-								? source.data
-								: undefined,
-						url:
-							typeof source.url === "string"
-								? source.url
-								: undefined,
+						source: typeof source.type === "string" ? source.type : "base64",
+						data: typeof source.data === "string" ? source.data : undefined,
+						url: typeof source.url === "string" ? source.url : undefined,
 						mimeType:
 							typeof source.media_type === "string"
 								? source.media_type
@@ -273,6 +251,36 @@ export function normalizePiContentToParts(content: unknown): PiMessagePart[] {
 	}
 
 	return parts;
+}
+
+/** Convert a canonical Message (octo-protocol) into a display message. */
+export function convertCanonicalMessageToDisplay(
+	message: unknown,
+	fallbackId: string,
+): PiDisplayMessage | null {
+	if (!message || typeof message !== "object") return null;
+	const msg = message as Record<string, unknown>;
+	const roleValue = typeof msg.role === "string" ? msg.role : "assistant";
+	const role =
+		roleValue === "user" || roleValue === "assistant" || roleValue === "system"
+			? roleValue
+			: "assistant";
+	const parts = Array.isArray(msg.parts)
+		? canonicalPartsToPiParts(msg.parts)
+		: normalizePiContentToParts(msg.content);
+	const timestamp =
+		typeof msg.created_at === "number" && msg.created_at > 0
+			? msg.created_at
+			: Date.now();
+	const usage = msg.usage as PiAgentMessage["usage"] | undefined;
+
+	return {
+		id: typeof msg.id === "string" && msg.id ? msg.id : fallbackId,
+		role,
+		parts,
+		timestamp,
+		usage,
+	};
 }
 
 /** Normalize raw Pi messages to display messages */
@@ -329,7 +337,10 @@ export function normalizePiMessages(
 
 		if (role === "toolResult" || role === "tool") {
 			const toolCallId =
-				message.toolCallId || message.tool_call_id || message.id || `tool-result-${idx}`;
+				message.toolCallId ||
+				message.tool_call_id ||
+				message.id ||
+				`tool-result-${idx}`;
 			const toolResultPart: PiMessagePart = {
 				type: "tool_result",
 				id: toolCallId,
@@ -338,15 +349,16 @@ export function normalizePiMessages(
 				isError: message.isError ?? message.is_error,
 			};
 
-			const targetIndex = (message.toolCallId || message.tool_call_id)
-				? toolUseIndexById.get(toolCallId)
-				: resolvePendingByName(message.toolName ?? message.tool_name);
+			const targetIndex =
+				message.toolCallId || message.tool_call_id
+					? toolUseIndexById.get(toolCallId)
+					: resolvePendingByName(message.toolName ?? message.tool_name);
 
 			if (targetIndex !== undefined) {
 				display[targetIndex].parts.push(toolResultPart);
 			} else {
 				display.push({
-					id: `${idPrefix}-${idx}-${message.id ?? "tool-result"}`,
+					id: `${idPrefix}-${idx}`,
 					role: "assistant",
 					parts: [toolResultPart],
 					timestamp,
@@ -366,12 +378,15 @@ export function normalizePiMessages(
 		const parts = canonicalParts
 			? canonicalPartsToPiParts(canonicalParts)
 			: normalizePiContentToParts(content);
+		// Extract client_id for optimistic message matching (canonical protocol)
+		const clientId = message.client_id ?? message.clientId;
 		const displayMessage: PiDisplayMessage = {
-			id: `${idPrefix}-${idx}-${message.id ?? ""}`,
+			id: `${idPrefix}-${idx}`,
 			role: normalizedRole,
 			parts,
 			timestamp,
 			usage: message.usage,
+			clientId,
 		};
 
 		display.push(displayMessage);
@@ -492,12 +507,61 @@ function messageTextSignature(message: PiDisplayMessage): string {
 		.trim();
 }
 
-/** Merge server messages with local messages, preserving in-flight optimistic updates */
+/** Merge server messages with local messages, preserving in-flight optimistic updates.
+ *
+ * Matching strategy (in order of priority):
+ * 1. client_id match: If a server message has a client_id that matches a local
+ *    optimistic message, they represent the same message. The local message is
+ *    replaced by the server version (which has the real server-assigned ID).
+ * 2. id match: Direct ID match means the same message.
+ * 3. content/fingerprint match: Same text content around the same time = same message.
+ */
 export function mergeServerMessages(
 	previous: PiDisplayMessage[],
 	serverMessages: PiDisplayMessage[],
 ): PiDisplayMessage[] {
+	// If the server returned fewer messages than we already have locally,
+	// the server response is likely a partial view (Pi's get_messages RPC
+	// only returns the current context window, not full history). In this
+	// case, merge new server messages into local state without dropping
+	// existing messages.
+	if (serverMessages.length < previous.length && previous.length > 0) {
+		// Find server messages that replace local ones (by ID, client_id, or text match)
+		const result = [...previous];
+		for (const serverMsg of serverMessages) {
+			let matched = false;
+			for (let i = 0; i < result.length; i++) {
+				const local = result[i];
+				// Match by ID
+				if (local.id === serverMsg.id) {
+					result[i] = serverMsg;
+					matched = true;
+					break;
+				}
+				// Match by client_id
+				if (
+					local.clientId &&
+					serverMsg.clientId &&
+					local.clientId === serverMsg.clientId
+				) {
+					result[i] = serverMsg;
+					matched = true;
+					break;
+				}
+			}
+			if (!matched) {
+				// New message from server — append at the end
+				result.push(serverMsg);
+			}
+		}
+		return result;
+	}
+
 	const serverIds = new Set(serverMessages.map((m) => m.id));
+	// Build a set of client_ids from server messages for quick lookup
+	const serverClientIds = new Set(
+		serverMessages.filter((m) => m.clientId).map((m) => m.clientId),
+	);
 	const serverEntries = serverMessages.map((message) => ({
 		fingerprint: messageFingerprint(message),
 		timestamp: message.timestamp ?? 0,
@@ -511,32 +575,48 @@ export function mergeServerMessages(
 		if (!shouldPreserveLocalMessage(message)) return false;
 		if (serverIds.has(message.id)) return false;
 
-		// If the server has the same text content around the same time, drop the local
-		// message even if part segmentation differs (prevents duplicate bubbles).
+		// Priority 1: client_id match - if the local message has a clientId and
+		// a server message has the same clientId, they represent the same message.
+		// The server version replaces the local optimistic version.
+		if (message.clientId && serverClientIds.has(message.clientId)) {
+			return false; // Drop local, server version supersedes
+		}
+
+		// Priority 2: If the server has the same text content around the same time,
+		// drop the local message even if part segmentation differs (prevents duplicate bubbles).
 		const localText = messageTextSignature(message);
 		if (localText) {
 			for (const server of serverTextEntries) {
 				if (server.role !== message.role) continue;
 				if (!server.text) continue;
 				if (server.text !== localText) continue;
-				if (!server.timestamp || !message.timestamp) continue;
-				const diff = Math.abs(server.timestamp - message.timestamp);
-				if (diff <= MESSAGE_MATCH_WINDOW_MS) {
-					return false;
+				// Timestamps may be 0 (default when Pi JSONL lacks the field).
+				// Treat missing/zero timestamps as "unknown" -- if both are
+				// present and positive, require them to be within the window;
+				// otherwise assume they match (same content = same message).
+				const hasServerTs = server.timestamp != null && server.timestamp > 0;
+				const hasLocalTs = message.timestamp != null && message.timestamp > 0;
+				if (hasServerTs && hasLocalTs) {
+					const diff = Math.abs(server.timestamp - message.timestamp);
+					if (diff > MESSAGE_MATCH_WINDOW_MS) continue;
 				}
+				return false;
 			}
 		}
 
+		// Priority 3: Fingerprint match (content hash + role + timestamp window)
 		const localFingerprint = messageFingerprint(message);
 		for (const server of serverEntries) {
 			if (server.fingerprint !== localFingerprint) continue;
-			if (!server.timestamp || !message.timestamp) {
-				return false;
+			// Same timestamp handling as above -- treat 0/missing as "unknown"
+			// and assume matching fingerprint means same message.
+			const hasServerTs = server.timestamp != null && server.timestamp > 0;
+			const hasLocalTs = message.timestamp != null && message.timestamp > 0;
+			if (hasServerTs && hasLocalTs) {
+				const diff = Math.abs(server.timestamp - message.timestamp);
+				if (diff > MESSAGE_MATCH_WINDOW_MS) continue;
 			}
-			const diff = Math.abs(server.timestamp - message.timestamp);
-			if (diff <= MESSAGE_MATCH_WINDOW_MS) {
-				return false;
-			}
+			return false;
 		}
 		return true;
 	});

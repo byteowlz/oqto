@@ -46,7 +46,10 @@ export function ToolCallGroup({
 		setCanScrollRight(scrollLeft + clientWidth < scrollWidth - 1);
 	}, []);
 
+	const itemCount = items.length;
 	useEffect(() => {
+		// itemCount triggers re-evaluation when items change
+		void itemCount;
 		updateScrollState();
 		const el = scrollRef.current;
 		if (!el) return () => {};
@@ -58,7 +61,7 @@ export function ToolCallGroup({
 			el.removeEventListener("scroll", handleScroll);
 			resizeObserver.disconnect();
 		};
-	}, [items.length, updateScrollState]);
+	}, [itemCount, updateScrollState]);
 
 	const handleIconClick = useCallback(
 		(index: number) => {
@@ -113,7 +116,9 @@ export function ToolCallGroup({
 				className,
 			)}
 		>
-			<div className={cn("flex items-center gap-1", mode !== "bar" && "px-2 py-2")}>
+			<div
+				className={cn("flex items-center gap-1", mode !== "bar" && "px-2 py-2")}
+			>
 				{(canScrollLeft || canScrollRight) && (
 					<Button
 						type="button"

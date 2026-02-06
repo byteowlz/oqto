@@ -12,6 +12,7 @@ import {
 	SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { useIsMobile } from "@/hooks/use-mobile";
 import {
 	type SettingsValues,
 	getSettingsSchema,
@@ -29,7 +30,6 @@ import {
 	Save,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useIsMobile } from "@/hooks/use-mobile";
 
 interface SettingsEditorProps {
 	/** App to edit settings for (e.g., "octo", "mmry") */

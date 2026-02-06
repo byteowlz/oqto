@@ -15,12 +15,12 @@
 
 use serde_json::Value;
 
+use octo_protocol::Part;
 use octo_protocol::events::{
     AgentPhase, CommandResponse, CompactReason, EventPayload, InputRequest, NotifyLevel,
     ToolCallInfo,
 };
 use octo_protocol::messages::{Message, Role, StopReason, Usage};
-use octo_protocol::Part;
 
 use crate::pi::{
     AgentMessage, AssistantMessageEvent, ContentBlock, ExtensionUiRequest, ImageSource, PiEvent,
@@ -44,6 +44,17 @@ pub struct PiTranslator {
 
     /// Counter for generating deterministic message IDs within a session.
     message_counter: u64,
+
+    /// Client-generated ID for the pending user message.
+    /// Set by the runner before sending a prompt, consumed when translating
+    /// the user message in agent_end.
+    pending_client_id: Option<String>,
+
+    /// Whether any streaming occurred during the current agent turn.
+    /// Set true on MessageStart, cleared on AgentEnd. Used to suppress
+    /// the redundant `Messages` event from `agent_end` when the frontend
+    /// already received all content via streaming events.
+    streaming_occurred: bool,
 }
 
 impl PiTranslator {
@@ -52,7 +63,20 @@ impl PiTranslator {
             state: SessionState::default(),
             current_message_id: None,
             message_counter: 0,
+            pending_client_id: None,
+            streaming_occurred: false,
         }
+    }
+
+    /// Set the client ID for the next user message.
+    /// Called by the runner before sending a prompt command.
+    pub fn set_pending_client_id(&mut self, client_id: Option<String>) {
+        self.pending_client_id = client_id;
+    }
+
+    /// Take and clear the pending client ID.
+    fn take_pending_client_id(&mut self) -> Option<String> {
+        self.pending_client_id.take()
     }
 
     /// Get the current message ID, or generate one if not set.
@@ -134,12 +158,46 @@ impl PiTranslator {
     fn on_agent_end(&mut self, messages: &[AgentMessage]) -> Vec<EventPayload> {
         let mut events = Vec::new();
 
-        // Emit messages payload so frontend has the final message list.
-        if !messages.is_empty() {
+        // Take the pending client_id - it should be attached to the last user message
+        // in this turn (the one that triggered agent_start).
+        let pending_client_id = self.take_pending_client_id();
+
+        // Only emit the Messages payload when streaming did NOT occur.
+        //
+        // When streaming was active, the frontend already received all content
+        // via streaming events (text_delta, tool events, stream.message_end).
+        // Emitting a redundant Messages event here would cause the frontend's
+        // mergeServerMessages to append duplicate messages with different IDs
+        // (each call to pi_agent_message_to_canonical generates a new UUID).
+        // This manifests as the user's prompt text appearing inside the
+        // agent's response bubble.
+        //
+        // The Messages event is still emitted for non-streaming turns (e.g.
+        // reconnection, or turns where Pi completed without streaming events).
+        let had_streaming = self.streaming_occurred;
+        self.streaming_occurred = false;
+
+        if !had_streaming && !messages.is_empty() {
+            // Find the last user message index to attach client_id
+            let last_user_idx = messages
+                .iter()
+                .enumerate()
+                .rev()
+                .find(|(_, m)| m.role == "user" || m.role == "human")
+                .map(|(i, _)| i);
+
             let canonical_messages: Vec<Message> = messages
                 .iter()
                 .enumerate()
-                .map(|(i, m)| pi_agent_message_to_canonical(m, i as u32))
+                .map(|(i, m)| {
+                    // Attach client_id only to the last user message
+                    let client_id = if Some(i) == last_user_idx {
+                        pending_client_id.clone()
+                    } else {
+                        None
+                    };
+                    pi_agent_message_to_canonical(m, i as u32, client_id)
+                })
                 .collect();
             events.push(EventPayload::Messages {
                 messages: canonical_messages,
@@ -162,6 +220,7 @@ impl PiTranslator {
         self.message_counter += 1;
         let msg_id = format!("msg_{}", self.message_counter);
         self.current_message_id = Some(msg_id.clone());
+        self.streaming_occurred = true;
 
         vec![EventPayload::StreamMessageStart {
             message_id: msg_id,
@@ -262,7 +321,8 @@ impl PiTranslator {
 
     fn on_message_end(&mut self, message: &AgentMessage) -> Vec<EventPayload> {
         let idx = self.message_counter.saturating_sub(1) as u32;
-        let canonical = pi_agent_message_to_canonical(message, idx);
+        // message_end is for assistant messages during streaming - no client_id needed
+        let canonical = pi_agent_message_to_canonical(message, idx, None);
 
         // Clear current message tracking.
         self.current_message_id = None;
@@ -568,7 +628,16 @@ pub fn pi_response_to_canonical(
 // ============================================================================
 
 /// Convert a Pi `AgentMessage` to a canonical `Message`.
-pub fn pi_agent_message_to_canonical(msg: &AgentMessage, idx: u32) -> Message {
+///
+/// The `client_id` parameter is used for optimistic message matching. The frontend
+/// sends a client-generated ID with the prompt; this ID is included in the resulting
+/// user message so the frontend can correlate its optimistic message with the
+/// persisted version.
+pub fn pi_agent_message_to_canonical(
+    msg: &AgentMessage,
+    idx: u32,
+    client_id: Option<String>,
+) -> Message {
     let role = match msg.role.as_str() {
         "user" | "human" => Role::User,
         "assistant" | "agent" => Role::Assistant,
@@ -589,6 +658,7 @@ pub fn pi_agent_message_to_canonical(msg: &AgentMessage, idx: u32) -> Message {
         id,
         idx,
         role,
+        client_id,
         sender: None,
         parts,
         created_at: timestamp,
@@ -913,9 +983,11 @@ mod tests {
         let events = t.translate(&PiEvent::AutoCompactionStart {
             reason: "threshold".to_string(),
         });
-        assert!(events
-            .iter()
-            .any(|e| matches!(e, EventPayload::CompactStart { .. })));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, EventPayload::CompactStart { .. }))
+        );
         assert!(matches!(
             t.state,
             SessionState::Working {
@@ -935,9 +1007,11 @@ mod tests {
             aborted: false,
             will_retry: false,
         });
-        assert!(events
-            .iter()
-            .any(|e| matches!(e, EventPayload::CompactEnd { .. })));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, EventPayload::CompactEnd { .. }))
+        );
         // Should return to generating.
         assert!(matches!(
             t.state,
@@ -959,9 +1033,11 @@ mod tests {
             delay_ms: 1000,
             error_message: "rate limited".to_string(),
         });
-        assert!(events
-            .iter()
-            .any(|e| matches!(e, EventPayload::RetryStart { .. })));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, EventPayload::RetryStart { .. }))
+        );
         assert!(matches!(
             t.state,
             SessionState::Working {
@@ -975,9 +1051,11 @@ mod tests {
             attempt: 1,
             final_error: None,
         });
-        assert!(events
-            .iter()
-            .any(|e| matches!(e, EventPayload::RetryEnd { success: true, .. })));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, EventPayload::RetryEnd { success: true, .. }))
+        );
         assert!(matches!(
             t.state,
             SessionState::Working {
@@ -1029,7 +1107,7 @@ mod tests {
             extra: Default::default(),
         };
 
-        let canonical = pi_agent_message_to_canonical(&msg, 0);
+        let canonical = pi_agent_message_to_canonical(&msg, 0, None);
 
         assert_eq!(canonical.role, Role::Assistant);
         assert_eq!(canonical.idx, 0);
@@ -1065,7 +1143,7 @@ mod tests {
             extra: Default::default(),
         };
 
-        let canonical = pi_agent_message_to_canonical(&msg, 1);
+        let canonical = pi_agent_message_to_canonical(&msg, 1, None);
 
         assert_eq!(canonical.role, Role::Tool);
         assert_eq!(canonical.tool_call_id.as_deref(), Some("tc_123"));
@@ -1101,9 +1179,54 @@ mod tests {
         let events = t.translate(&PiEvent::AgentEnd { messages });
 
         // Should have Messages event + AgentIdle
-        assert!(events
-            .iter()
-            .any(|e| matches!(e, EventPayload::Messages { .. })));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, EventPayload::Messages { .. }))
+        );
+        assert!(events.iter().any(|e| matches!(e, EventPayload::AgentIdle)));
+    }
+
+    #[test]
+    fn test_agent_end_suppresses_messages_after_streaming() {
+        let mut t = PiTranslator::new();
+        t.translate(&PiEvent::AgentStart);
+
+        // Simulate streaming: MessageStart sets streaming_occurred = true
+        let msg = make_assistant_message();
+        t.translate(&PiEvent::MessageStart {
+            message: msg.clone(),
+        });
+
+        let messages = vec![
+            AgentMessage {
+                role: "user".to_string(),
+                content: Value::String("Hello".to_string()),
+                timestamp: Some(1700000000000),
+                tool_call_id: None,
+                tool_name: None,
+                is_error: None,
+                api: None,
+                provider: None,
+                model: None,
+                usage: None,
+                stop_reason: None,
+                extra: Default::default(),
+            },
+            make_assistant_message(),
+        ];
+
+        let events = t.translate(&PiEvent::AgentEnd { messages });
+
+        // Messages event should NOT be emitted after streaming (to avoid
+        // duplicate/echoed messages on the frontend).
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, EventPayload::Messages { .. })),
+            "Messages event should be suppressed when streaming occurred"
+        );
+        // AgentIdle should still be emitted.
         assert!(events.iter().any(|e| matches!(e, EventPayload::AgentIdle)));
     }
 

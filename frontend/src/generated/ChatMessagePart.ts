@@ -4,32 +4,35 @@ import type { JsonValue } from "../../../backend/crates/octo/bindings/serde_json
 /**
  * A single part of a chat message.
  */
-export type ChatMessagePart = { id: string, part_type: string, 
-/**
- * Text content (for text parts)
- */
-text: string | null, 
-/**
- * Pre-rendered HTML (for text parts, when render=true)
- */
-text_html: string | null, 
-/**
- * Tool name (for tool parts)
- */
-tool_name: string | null, 
-/**
- * Tool input (for tool parts)
- */
-tool_input: JsonValue | null, 
-/**
- * Tool output (for tool parts)
- */
-tool_output: string | null, 
-/**
- * Tool status (for tool parts)
- */
-tool_status: string | null, 
-/**
- * Tool title/summary (for tool parts)
- */
-tool_title: string | null, };
+export type ChatMessagePart = {
+	id: string;
+	part_type: string;
+	/**
+	 * Text content (for text parts)
+	 */
+	text: string | null;
+	/**
+	 * Pre-rendered HTML (for text parts, when render=true)
+	 */
+	text_html: string | null;
+	/**
+	 * Tool name (for tool parts)
+	 */
+	tool_name: string | null;
+	/**
+	 * Tool input (for tool parts)
+	 */
+	tool_input: JsonValue | null;
+	/**
+	 * Tool output (for tool parts)
+	 */
+	tool_output: string | null;
+	/**
+	 * Tool status (for tool parts)
+	 */
+	tool_status: string | null;
+	/**
+	 * Tool title/summary (for tool parts)
+	 */
+	tool_title: string | null;
+};
