@@ -10,7 +10,25 @@ Octo is a self-hosted platform for managing AI coding agents. Supports local mod
 
 Tmux is always available, use it to debug the logs of the running backend and frontend.
 
-Use agent-browser + tmux for end-to-end testing
+### agent-browser (headless browser testing)
+
+Requires `DISPLAY=:0` prefix on all commands (X server runs on :0).
+
+```bash
+DISPLAY=:0 agent-browser open http://localhost:3000      # Open page
+DISPLAY=:0 agent-browser snapshot -i                     # List interactive elements with refs
+DISPLAY=:0 agent-browser fill @e1 "text"                 # Fill input by ref
+DISPLAY=:0 agent-browser click @e2                       # Click by ref
+DISPLAY=:0 agent-browser press Enter                     # Press key
+DISPLAY=:0 agent-browser screenshot /tmp/shot.png        # Screenshot (view with Read tool)
+DISPLAY=:0 agent-browser console                         # Browser console logs
+DISPLAY=:0 agent-browser eval "JS expression"            # Run JS in page
+DISPLAY=:0 agent-browser wait 3000                       # Wait ms
+DISPLAY=:0 agent-browser scroll down 500                 # Scroll
+DISPLAY=:0 agent-browser close                           # Close browser
+```
+
+Enable frontend debug logging: `DISPLAY=:0 agent-browser eval "localStorage.setItem('debug:pi-v2', '1')"`
 
 ---
 
@@ -228,11 +246,32 @@ agntz memory add "Voice stuff is complicated"
 
 ## Build/Lint/Test Commands
 
+Use `just` (justfile) for all build/dev tasks:
+
+```bash
+just dev              # Start frontend dev server (Vite on :3000)
+just build            # Build all components
+just build-backend    # Build backend only
+just build-frontend   # Build frontend only
+just lint             # Run all linters
+just fmt              # Format all Rust code
+just check            # Check all Rust code compiles
+just gen-types        # Generate TypeScript types from Rust structs
+```
+
 | Component | Build | Lint | Test | Single Test |
 |-----------|-------|------|------|-------------|
 | **backend/** | `cargo build` | `cargo clippy && cargo fmt --check` | `cargo test` | `cargo test test_name` |
 | **fileserver/** | `cargo build` | `cargo clippy && cargo fmt --check` | `cargo test` | `cargo test test_name` |
 | **frontend/** | `bun run build` | `bun run lint` | `bun run test` | `bun run test -t "pattern"` |
+
+### Dev Workflow
+
+- **Frontend dev server**: Always use `just dev` (runs `cd frontend && bun dev`). The Vite dev server runs on port 3000.
+- **Restart frontend**: If Vite HMR gets stuck after major type changes, kill the dev server (Ctrl+C in its tmux pane) and run `just dev` again. May also need `rm -rf frontend/node_modules/.vite` to clear Vite cache.
+- **Backend is at** `archlinux:8080` (tmux pane `0:1.1`).
+- **Frontend dev server** runs in tmux pane `%5` (check with `tmux list-panes -a`).
+- **Rebuild backend**: `cd backend && cargo build --release` then restart the process in its tmux pane.
 
 ## Code Style
 
@@ -271,7 +310,39 @@ I've created these files:
 ```
 
 The UI will automatically render:
+
 - **Images** (png, jpg, gif, webp, svg) as inline previews with thumbnails
 - **Other files** as clickable links that open in the file viewer
 
 Use workspace-relative paths (e.g., `@src/file.ts`) or absolute paths (e.g., `@/home/user/file.png`).
+
+### Session Protocol
+
+**Before ending a session, run this checklist:**
+
+```bash
+git status              # Check what changed
+git add <files>         # Stage code changes
+git commit -m "..."     # Commit everything together
+git push                # Push to remote
+```
+
+### Best Practices
+
+- Check `trx ready` at session start to find available work
+- Update status as you work (in_progress -> closed)
+- Create new issues with `trx create` when you discover tasks
+- Use descriptive titles and set appropriate priority/type
+
+---
+
+Note regarding file edits you did not do:
+
+DO NOT STOP AND ASK ABOUT THESE CHANGES. Those are changes created by other agents working on the project at the same time as you. This is a common occurrence. DO NOT, stash, revert, overwrite, or otherwise disturb in ANY way the work of other agents. Just treat those changes identically to changes that you yourself made. Just assume that YOU made the changes and simply don't recall it for some reason. Should I ask you to commit, create sensible commit messages for these changes as well.
+
+---
+
+### Continuous Improvements for our own tools
+
+Many of the tools we are building like trx, agntz etc. live in ../
+If you run into any issues with these tools or find that the ergonomics could be improved, just file trx isuues in that repo so we can constantly improve our own tools. You can run ```byt catalog list``` to get an overview of all of our tools.

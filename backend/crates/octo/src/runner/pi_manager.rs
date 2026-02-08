@@ -367,6 +367,9 @@ pub struct PiSessionManager {
     /// `get_or_create_session` where two concurrent callers both pass the
     /// `contains_key` check and each spawn a separate Pi process.
     creating: tokio::sync::Mutex<std::collections::HashSet<String>>,
+    /// Cached model lists per workdir (populated when any session in that workdir fetches models).
+    /// Key: canonical workdir path, Value: list of available models as JSON.
+    model_cache: RwLock<HashMap<String, serde_json::Value>>,
 }
 
 impl PiSessionManager {
@@ -384,6 +387,7 @@ impl PiSessionManager {
             shutdown_tx,
             hstry_client,
             creating: tokio::sync::Mutex::new(std::collections::HashSet::new()),
+            model_cache: RwLock::new(HashMap::new()),
         })
     }
 
@@ -756,19 +760,20 @@ impl PiSessionManager {
 
     /// Get state of a specific session.
     pub async fn get_state(&self, session_id: &str) -> Result<PiState> {
-        let request_id = "get_state".to_string();
-
-        // Get session and register response waiter
-        let (pending_responses, cmd_tx) = {
+        let (runner_state, pending_responses, cmd_tx) = {
             let sessions = self.sessions.read().await;
             let session = sessions
                 .get(session_id)
                 .ok_or_else(|| anyhow::anyhow!("Session '{}' not found", session_id))?;
+            let current_state = *session.state.read().await;
             (
+                current_state,
                 Arc::clone(&session.pending_responses),
                 session.cmd_tx.clone(),
             )
         };
+
+        let request_id = "get_state".to_string();
 
         // Register waiter before sending command
         let (tx, rx) = oneshot::channel();
@@ -802,8 +807,13 @@ impl PiSessionManager {
         let data = response
             .data
             .ok_or_else(|| anyhow::anyhow!("GetState response missing data"))?;
-        let state: PiState =
+        let mut state: PiState =
             serde_json::from_value(data).context("Failed to parse PiState from response")?;
+
+        // Override streaming/compacting flags with runner's tracked state
+        // This fixes issues where Pi doesn't correctly clear its isStreaming flag
+        state.is_streaming = runner_state == PiSessionState::Streaming;
+        state.is_compacting = runner_state == PiSessionState::Compacting;
 
         Ok(state)
     }
@@ -921,49 +931,101 @@ impl PiSessionManager {
     pub async fn get_available_models(&self, session_id: &str) -> Result<serde_json::Value> {
         let request_id = "get_available_models".to_string();
 
-        // Get session and register response waiter
-        let (pending_responses, cmd_tx) = {
+        // Try to get the live session
+        let session_info = {
             let sessions = self.sessions.read().await;
-            let session = sessions
-                .get(session_id)
-                .ok_or_else(|| anyhow::anyhow!("Session '{}' not found", session_id))?;
-            (
-                Arc::clone(&session.pending_responses),
-                session.cmd_tx.clone(),
-            )
+            sessions.get(session_id).map(|s| {
+                (
+                    Arc::clone(&s.pending_responses),
+                    s.cmd_tx.clone(),
+                    s.config.cwd.to_string_lossy().to_string(),
+                )
+            })
         };
 
-        // Register waiter before sending command
-        let (tx, rx) = oneshot::channel();
-        {
-            let mut pending = pending_responses.write().await;
-            pending.insert(request_id.clone(), tx);
+        if let Some((pending_responses, cmd_tx, workdir)) = session_info {
+            // Live session exists — ask Pi directly
+            let (tx, rx) = oneshot::channel();
+            {
+                let mut pending = pending_responses.write().await;
+                pending.insert(request_id.clone(), tx);
+            }
+
+            cmd_tx
+                .send(PiSessionCommand::GetAvailableModels)
+                .await
+                .context("Failed to send GetAvailableModels command")?;
+
+            let response = tokio::time::timeout(Duration::from_secs(10), rx)
+                .await
+                .context("Timeout waiting for GetAvailableModels response")?
+                .context("Response channel closed")?;
+
+            if !response.success {
+                anyhow::bail!(
+                    "GetAvailableModels failed: {}",
+                    response
+                        .error
+                        .unwrap_or_else(|| "unknown error".to_string())
+                );
+            }
+
+            let data = response
+                .data
+                .ok_or_else(|| anyhow::anyhow!("GetAvailableModels response missing data"))?;
+
+            // Pi returns { "models": [...] }, extract the inner array
+            let models_array = if let Some(inner) = data.get("models") {
+                inner.clone()
+            } else if data.is_array() {
+                data.clone()
+            } else {
+                warn!(
+                    "GetAvailableModels: unexpected data shape, returning empty"
+                );
+                serde_json::Value::Array(vec![])
+            };
+
+            // Cache by workdir so dead sessions can still list models
+            if models_array.as_array().is_some_and(|a| !a.is_empty()) {
+                let mut cache = self.model_cache.write().await;
+                cache.insert(workdir, models_array.clone());
+            }
+
+            Ok(models_array)
+        } else {
+            // No live session — try workdir cache
+            self.get_cached_models_for_session(session_id).await
+        }
+    }
+
+    /// Look up cached models for a session by finding its workdir.
+    /// Falls back to returning the first available cache entry if we can't determine the workdir.
+    async fn get_cached_models_for_session(&self, session_id: &str) -> Result<serde_json::Value> {
+        // Try to determine workdir from hstry
+        if let Some(ref hstry) = self.hstry_client {
+            if let Ok(Some(session)) =
+                crate::history::repository::get_session_via_grpc(hstry, session_id).await
+            {
+                let workdir = session.workspace_path;
+                let cache = self.model_cache.read().await;
+                if let Some(models) = cache.get(&workdir) {
+                    return Ok(models.clone());
+                }
+            }
         }
 
-        // Send the command
-        cmd_tx
-            .send(PiSessionCommand::GetAvailableModels)
-            .await
-            .context("Failed to send GetAvailableModels command")?;
+        // Couldn't find a specific workdir match — return empty
+        Ok(serde_json::Value::Array(vec![]))
+    }
 
-        // Wait for response with timeout
-        let response = tokio::time::timeout(Duration::from_secs(10), rx)
-            .await
-            .context("Timeout waiting for GetAvailableModels response")?
-            .context("Response channel closed")?;
-
-        if !response.success {
-            anyhow::bail!(
-                "GetAvailableModels failed: {}",
-                response
-                    .error
-                    .unwrap_or_else(|| "unknown error".to_string())
-            );
-        }
-
-        response
-            .data
-            .ok_or_else(|| anyhow::anyhow!("GetAvailableModels response missing data"))
+    /// Get cached models for a specific workdir (called directly by runner for dead sessions).
+    pub async fn get_cached_models_for_workdir(
+        &self,
+        workdir: &str,
+    ) -> Option<serde_json::Value> {
+        let cache = self.model_cache.read().await;
+        cache.get(workdir).cloned()
     }
 
     /// Get session statistics.
@@ -1721,6 +1783,9 @@ impl PiSessionManager {
         let mut pending_messages: Vec<AgentMessage> = Vec::new();
         let mut translator = PiTranslator::new();
 
+        // Track the last session title synced to hstry to avoid redundant updates
+        let mut last_synced_title = String::new();
+
         // Mark as Idle after first successful read (Pi is ready)
         let mut first_event_seen = false;
 
@@ -1753,6 +1818,65 @@ impl PiSessionManager {
                 PiMessage::Event(e) => e,
                 PiMessage::Response(response) => {
                     debug!("Pi[{}] response: {:?}", session_id, response);
+
+                    // Intercept get_state responses to sync session title to hstry.
+                    // Pi's auto-rename extension sets sessionName to:
+                    //   "<workspace>: <title> [readable-id]"
+                    // We parse it to extract the clean title and persist it.
+                    if response.id.as_deref() == Some("get_state") {
+                        if let Some(ref client) = hstry_client {
+                            if let Some(ref data) = response.data {
+                                if let Some(raw_name) =
+                                    data.get("sessionName").and_then(|v| v.as_str())
+                                {
+                                    if !raw_name.is_empty() {
+                                        let parsed =
+                                            crate::pi::session_parser::ParsedTitle::parse(
+                                                raw_name,
+                                            );
+                                        let clean_title =
+                                            parsed.display_title().to_string();
+                                        if !clean_title.is_empty()
+                                            && last_synced_title != clean_title
+                                        {
+                                            last_synced_title = clean_title.clone();
+                                            let readable_id = parsed
+                                                .get_readable_id()
+                                                .map(String::from);
+                                            let client = client.clone();
+                                            let sid = session_id.clone();
+                                            tokio::spawn(async move {
+                                                if let Err(e) = client
+                                                    .update_conversation(
+                                                        &sid,
+                                                        Some(clean_title.clone()),
+                                                        None,
+                                                        None,
+                                                        None,
+                                                        None,
+                                                        readable_id,
+                                                        Some("pi".to_string()),
+                                                    )
+                                                    .await
+                                                {
+                                                    warn!(
+                                                        "Pi[{}] failed to sync title to hstry: {}",
+                                                        sid, e
+                                                    );
+                                                } else {
+                                                    debug!(
+                                                        "Pi[{}] synced title to hstry: '{}'",
+                                                        sid, clean_title
+                                                    );
+                                                }
+                                            });
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     // Route response to waiting caller if there's a matching ID
                     if let Some(ref id) = response.id {
                         let mut pending = pending_responses.write().await;

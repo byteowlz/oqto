@@ -1,5 +1,6 @@
 import { AppProvider, useOnboarding } from "@/components/app-context";
 import { CommandPalette } from "@/components/command-palette";
+import { useChatContext } from "@/components/contexts";
 import { StatusBar } from "@/components/status-bar";
 import { Button } from "@/components/ui/button";
 import { useApp } from "@/hooks/use-app";
@@ -61,6 +62,8 @@ const AppShell = memo(function AppShell() {
 		setProjectDefaultAgents,
 		setScrollToMessageId,
 	} = useApp();
+
+	const { chatHistoryError, refreshChatHistory } = useChatContext();
 
 	const location = useLocation();
 	const navigate = useNavigate();
@@ -615,6 +618,28 @@ const AppShell = memo(function AppShell() {
 					{sidebarState.sidebarCollapsed && (
 						<div className="w-full px-2">
 							<div className="h-px w-full bg-primary/50" />
+						</div>
+					)}
+
+					{!sidebarState.sidebarCollapsed && chatHistoryError && (
+						<div className="w-full px-3 mt-2">
+							<div className="bg-destructive/15 border border-destructive/30 rounded-md p-3 text-xs">
+								<div className="font-medium text-destructive mb-1">
+									{locale === "de"
+										? "Chat-Verlauf nicht erreichbar"
+										: "Chat history unavailable"}
+								</div>
+								<div className="text-muted-foreground mb-2 break-words">
+									{chatHistoryError}
+								</div>
+								<button
+									type="button"
+									onClick={() => refreshChatHistory()}
+									className="text-xs text-primary hover:underline"
+								>
+									{locale === "de" ? "Erneut versuchen" : "Retry"}
+								</button>
+							</div>
 						</div>
 					)}
 

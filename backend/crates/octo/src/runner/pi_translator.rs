@@ -217,6 +217,21 @@ impl PiTranslator {
     // -- Streaming events --
 
     fn on_message_start(&mut self, message: &AgentMessage) -> Vec<EventPayload> {
+        // Only emit streaming events for assistant messages. Pi sends
+        // message_start/end for every message including user echoes
+        // (steer) and tool-result messages (role "user"/"toolResult").
+        // Those are already represented by tool.start/tool.end events
+        // and the optimistic user message on the frontend. Forwarding
+        // them causes raw tool output to leak into the UI as text.
+        let is_assistant = message.role == "assistant" || message.role == "agent";
+        if !is_assistant {
+            // Still mark streaming as occurred (Pi did produce events),
+            // but don't track a message_id so on_message_end will also
+            // suppress the corresponding StreamMessageEnd.
+            self.streaming_occurred = true;
+            return vec![];
+        }
+
         self.message_counter += 1;
         let msg_id = format!("msg_{}", self.message_counter);
         self.current_message_id = Some(msg_id.clone());
@@ -320,6 +335,12 @@ impl PiTranslator {
     }
 
     fn on_message_end(&mut self, message: &AgentMessage) -> Vec<EventPayload> {
+        // If no current message is being tracked, this message_end is for a
+        // non-assistant message that was suppressed in on_message_start.
+        if self.current_message_id.is_none() {
+            return vec![];
+        }
+
         let idx = self.message_counter.saturating_sub(1) as u32;
         // message_end is for assistant messages during streaming - no client_id needed
         let canonical = pi_agent_message_to_canonical(message, idx, None);
@@ -1294,6 +1315,202 @@ mod tests {
         assert_eq!(pi_stop_reason("error"), StopReason::Error);
         assert_eq!(pi_stop_reason("aborted"), StopReason::Aborted);
         assert_eq!(pi_stop_reason("unknown"), StopReason::Stop);
+    }
+
+    #[test]
+    fn test_non_assistant_messages_suppressed() {
+        let mut t = PiTranslator::new();
+        t.translate(&PiEvent::AgentStart);
+
+        // User message (steer echo) should produce no streaming events
+        let user_msg = AgentMessage {
+            role: "user".to_string(),
+            content: Value::String("Hello".to_string()),
+            timestamp: Some(1700000000000),
+            tool_call_id: None,
+            tool_name: None,
+            is_error: None,
+            api: None,
+            provider: None,
+            model: None,
+            usage: None,
+            stop_reason: None,
+            extra: Default::default(),
+        };
+        let events = t.translate(&PiEvent::MessageStart {
+            message: user_msg.clone(),
+        });
+        assert!(events.is_empty(), "User message_start should be suppressed");
+
+        let events = t.translate(&PiEvent::MessageEnd {
+            message: user_msg,
+        });
+        assert!(events.is_empty(), "User message_end should be suppressed");
+
+        // Tool result message should also be suppressed
+        let tool_msg = AgentMessage {
+            role: "toolResult".to_string(),
+            content: serde_json::json!([{"type": "text", "text": "file contents"}]),
+            timestamp: Some(1700000000000),
+            tool_call_id: Some("tc_1".to_string()),
+            tool_name: Some("read".to_string()),
+            is_error: Some(false),
+            api: None,
+            provider: None,
+            model: None,
+            usage: None,
+            stop_reason: None,
+            extra: Default::default(),
+        };
+        let events = t.translate(&PiEvent::MessageStart {
+            message: tool_msg.clone(),
+        });
+        assert!(
+            events.is_empty(),
+            "Tool result message_start should be suppressed"
+        );
+
+        let events = t.translate(&PiEvent::MessageEnd {
+            message: tool_msg,
+        });
+        assert!(
+            events.is_empty(),
+            "Tool result message_end should be suppressed"
+        );
+
+        // Assistant message should still produce events
+        let assistant_msg = make_assistant_message();
+        let events = t.translate(&PiEvent::MessageStart {
+            message: assistant_msg.clone(),
+        });
+        assert_eq!(events.len(), 1);
+        assert!(matches!(events[0], EventPayload::StreamMessageStart { .. }));
+
+        let events = t.translate(&PiEvent::MessageEnd {
+            message: assistant_msg,
+        });
+        assert_eq!(events.len(), 1);
+        assert!(matches!(events[0], EventPayload::StreamMessageEnd { .. }));
+    }
+
+    #[test]
+    fn test_tool_use_flow_with_suppressed_messages() {
+        // Simulate a full tool-using conversation:
+        // 1. user echo (suppressed)
+        // 2. assistant thinking + tool_use
+        // 3. tool execution
+        // 4. tool result message (suppressed)
+        // 5. assistant text response
+        let mut t = PiTranslator::new();
+        t.translate(&PiEvent::AgentStart);
+
+        // 1. User echo
+        let user_msg = AgentMessage {
+            role: "user".to_string(),
+            content: Value::String("read README.md".to_string()),
+            ..make_empty_message()
+        };
+        assert!(
+            t.translate(&PiEvent::MessageStart {
+                message: user_msg.clone()
+            })
+            .is_empty()
+        );
+        assert!(
+            t.translate(&PiEvent::MessageEnd {
+                message: user_msg
+            })
+            .is_empty()
+        );
+
+        // 2. Assistant with tool_use
+        let asst_msg = make_assistant_message();
+        let events = t.translate(&PiEvent::MessageStart {
+            message: asst_msg.clone(),
+        });
+        assert_eq!(events.len(), 1);
+        assert!(matches!(events[0], EventPayload::StreamMessageStart { .. }));
+
+        let events = t.translate(&PiEvent::MessageEnd {
+            message: asst_msg,
+        });
+        assert_eq!(events.len(), 1);
+        assert!(matches!(events[0], EventPayload::StreamMessageEnd { .. }));
+
+        // 3. Tool execution
+        let events = t.translate(&PiEvent::ToolExecutionStart {
+            tool_call_id: "tc_1".to_string(),
+            tool_name: "read".to_string(),
+            args: serde_json::json!({"path": "README.md"}),
+        });
+        assert!(events.iter().any(|e| matches!(e, EventPayload::ToolStart { .. })));
+
+        let events = t.translate(&PiEvent::ToolExecutionEnd {
+            tool_call_id: "tc_1".to_string(),
+            tool_name: "read".to_string(),
+            result: crate::pi::ToolResult {
+                content: vec![],
+                details: None,
+            },
+            is_error: false,
+        });
+        assert!(events.iter().any(|e| matches!(e, EventPayload::ToolEnd { .. })));
+
+        // 4. Tool result message (suppressed)
+        let tool_msg = AgentMessage {
+            role: "toolResult".to_string(),
+            content: serde_json::json!("file contents here"),
+            tool_call_id: Some("tc_1".to_string()),
+            tool_name: Some("read".to_string()),
+            ..make_empty_message()
+        };
+        assert!(
+            t.translate(&PiEvent::MessageStart {
+                message: tool_msg.clone()
+            })
+            .is_empty()
+        );
+        assert!(
+            t.translate(&PiEvent::MessageEnd {
+                message: tool_msg
+            })
+            .is_empty()
+        );
+
+        // 5. Final assistant response
+        let final_msg = make_assistant_message();
+        let events = t.translate(&PiEvent::MessageStart {
+            message: final_msg.clone(),
+        });
+        assert_eq!(events.len(), 1);
+        assert!(matches!(events[0], EventPayload::StreamMessageStart { .. }));
+
+        let events = t.translate(&PiEvent::MessageEnd {
+            message: final_msg,
+        });
+        assert_eq!(events.len(), 1);
+        assert!(matches!(events[0], EventPayload::StreamMessageEnd { .. }));
+
+        // streaming_occurred should be true (assistant messages streamed)
+        assert!(t.streaming_occurred);
+    }
+
+    // Helper to create a minimal empty message for struct update syntax.
+    fn make_empty_message() -> AgentMessage {
+        AgentMessage {
+            role: String::new(),
+            content: Value::Null,
+            timestamp: None,
+            tool_call_id: None,
+            tool_name: None,
+            is_error: None,
+            api: None,
+            provider: None,
+            model: None,
+            usage: None,
+            stop_reason: None,
+            extra: Default::default(),
+        }
     }
 
     // Helper to create a minimal assistant message.

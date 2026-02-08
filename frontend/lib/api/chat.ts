@@ -43,6 +43,10 @@ export type ChatSession = {
 	is_child: boolean;
 	/** Path to the session JSON file (for loading messages) */
 	source_path: string | null;
+	/** Last used model ID (from hstry conversation) */
+	model?: string | null;
+	/** Last used provider ID (from hstry conversation) */
+	provider?: string | null;
 };
 
 /** Chat sessions grouped by workspace/project */

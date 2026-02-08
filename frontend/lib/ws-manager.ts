@@ -659,10 +659,29 @@ class WsConnectionManager {
 		});
 		const resp = this.extractCommandResponse(event);
 		if (resp?.success && resp.data) {
+			// Backend may send models as a direct array or wrapped in { models: [...] }
+			if (Array.isArray(resp.data)) return resp.data;
 			const data = resp.data as { models?: unknown[] };
-			return data.models;
+			if (Array.isArray(data.models)) return data.models;
+			return [];
 		}
 		throw new Error(resp?.error ?? "Unexpected response type");
+	}
+
+	/**
+	 * Cycle to next model in scoped models list.
+	 */
+	async agentCycleModel(sessionId: string): Promise<unknown> {
+		const event = await this.sendAndWait({
+			channel: "agent",
+			session_id: sessionId,
+			cmd: "cycle_model",
+		});
+		const resp = this.extractCommandResponse(event);
+		if (resp?.success && resp.data) {
+			return resp.data;
+		}
+		throw new Error(resp?.error ?? "Failed to cycle model");
 	}
 
 	// ========================================================================

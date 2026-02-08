@@ -1,10 +1,10 @@
 /**
- * Cache utilities for Pi chat hooks.
+ * Cache utilities for chat hooks.
  * Handles message caching, scroll position persistence, and WebSocket state.
  */
 
 import type {
-	PiDisplayMessage,
+	DisplayMessage,
 	ScrollCache,
 	SessionMessageCache,
 	SessionMessageCacheEntry,
@@ -59,7 +59,7 @@ function cacheKeyMessages(sessionId: string, storageKeyPrefix: string) {
 export function readCachedSessionMessages(
 	sessionId: string,
 	storageKeyPrefix: string,
-): PiDisplayMessage[] {
+): DisplayMessage[] {
 	const cacheKey = cacheEntryKey(sessionId, storageKeyPrefix);
 	const inMemory = sessionMessageCache.messagesBySession.get(cacheKey);
 	if (inMemory) {
@@ -112,7 +112,7 @@ export function readCachedSessionMessages(
 /** Write session messages to cache (throttled during streaming) */
 export function writeCachedSessionMessages(
 	sessionId: string,
-	messages: PiDisplayMessage[],
+	messages: DisplayMessage[],
 	storageKeyPrefix: string,
 	forceWrite = false,
 ) {

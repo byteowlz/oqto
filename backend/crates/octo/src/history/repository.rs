@@ -97,7 +97,7 @@ pub async fn list_sessions_from_hstry(db_path: &Path) -> Result<Vec<ChatSession>
     let pool = open_hstry_pool(db_path).await?;
     let rows = sqlx::query(
         r#"
-        SELECT id, external_id, readable_id, title, created_at, updated_at, workspace
+        SELECT id, external_id, readable_id, title, created_at, updated_at, workspace, model, provider
         FROM conversations
         ORDER BY created_at DESC
         "#,
@@ -114,6 +114,8 @@ pub async fn list_sessions_from_hstry(db_path: &Path) -> Result<Vec<ChatSession>
         let created_at: i64 = row.get("created_at");
         let updated_at: Option<i64> = row.get("updated_at");
         let workspace: Option<String> = row.get("workspace");
+        let model: Option<String> = row.get("model");
+        let provider: Option<String> = row.get("provider");
 
         let session_id = external_id.clone().unwrap_or_else(|| id.clone());
         let workspace_path = workspace.unwrap_or_else(|| "global".to_string());
@@ -133,6 +135,8 @@ pub async fn list_sessions_from_hstry(db_path: &Path) -> Result<Vec<ChatSession>
             is_child: false,
             source_path: None,
             stats: None,
+            model,
+            provider,
         });
     }
 
@@ -146,7 +150,7 @@ pub async fn get_session_from_hstry(
     let pool = open_hstry_pool(db_path).await?;
     let row = sqlx::query(
         r#"
-        SELECT id, external_id, readable_id, title, created_at, updated_at, workspace
+        SELECT id, external_id, readable_id, title, created_at, updated_at, workspace, model, provider
         FROM conversations
         WHERE external_id = ? OR readable_id = ? OR id = ?
         LIMIT 1
@@ -169,6 +173,8 @@ pub async fn get_session_from_hstry(
     let created_at: i64 = row.get("created_at");
     let updated_at: Option<i64> = row.get("updated_at");
     let workspace: Option<String> = row.get("workspace");
+    let model: Option<String> = row.get("model");
+    let provider: Option<String> = row.get("provider");
 
     let session_id = external_id.clone().unwrap_or_else(|| id.clone());
     let workspace_path = workspace.unwrap_or_else(|| "global".to_string());
@@ -188,6 +194,8 @@ pub async fn get_session_from_hstry(
         is_child: false,
         source_path: None,
         stats: None,
+        model,
+        provider,
     }))
 }
 
@@ -453,6 +461,8 @@ fn conversation_proto_to_session(conv: &hstry_core::service::proto::Conversation
         is_child: false,
         source_path: None,
         stats,
+        model: conv.model.clone(),
+        provider: conv.provider.clone(),
     }
 }
 
@@ -623,6 +633,8 @@ pub fn list_sessions_from_dir(opencode_dir: &Path) -> Result<Vec<ChatSession>> {
                 is_child,
                 source_path: Some(session_path.to_string_lossy().to_string()),
                 stats: None,
+                model: None,
+                provider: None,
             });
         }
     }
@@ -746,6 +758,8 @@ pub fn update_session_title_in_dir(
             is_child,
             source_path: Some(session_file.to_string_lossy().to_string()),
             stats: None,
+            model: None,
+            provider: None,
         });
     }
 

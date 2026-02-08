@@ -1,6 +1,8 @@
 "use client";
 
 import { ProviderIcon } from "@/components/data-display";
+import { ModelQuickSwitcher } from "@/components/model-quick-switcher";
+import { useSelectedChat } from "@/components/contexts";
 import { useApp } from "@/hooks/use-app";
 import { useCurrentUser } from "@/hooks/use-auth";
 import { controlPlaneApiUrl, getAuthHeaders } from "@/lib/control-plane-client";
@@ -81,6 +83,7 @@ function shortenModelRef(modelRef: string): string {
 export function StatusBar() {
 	const { data: user } = useCurrentUser();
 	const { workspaceSessions, selectedChatSessionId } = useApp();
+	const { selectedChatFromHistory } = useSelectedChat();
 
 	const isAdmin = user?.role === "admin";
 
@@ -94,6 +97,14 @@ export function StatusBar() {
 		return `octo:chatModel:${activeSessionId}`;
 	}, [selectedChatSessionId]);
 
+	// Fallback model from hstry session metadata
+	const hstryModelRef = useMemo(() => {
+		if (selectedChatFromHistory?.provider && selectedChatFromHistory?.model) {
+			return `${selectedChatFromHistory.provider}/${selectedChatFromHistory.model}`;
+		}
+		return null;
+	}, [selectedChatFromHistory?.provider, selectedChatFromHistory?.model]);
+
 	// Read model from localStorage and listen for changes
 	useEffect(() => {
 		if (!modelStorageKey) {
@@ -101,9 +112,9 @@ export function StatusBar() {
 			return;
 		}
 
-		// Initial read
+		// Initial read - localStorage takes priority, then hstry fallback
 		const stored = localStorage.getItem(modelStorageKey);
-		setSelectedModelRef(stored);
+		setSelectedModelRef(stored || hstryModelRef);
 
 		// Listen for storage changes from other tabs
 		const handleStorage = (e: StorageEvent) => {
@@ -114,7 +125,7 @@ export function StatusBar() {
 
 		// Poll for same-tab changes (localStorage events don't fire for same tab)
 		const interval = setInterval(() => {
-			const current = localStorage.getItem(modelStorageKey);
+			const current = localStorage.getItem(modelStorageKey) || hstryModelRef;
 			setSelectedModelRef((prev) => (current !== prev ? current : prev));
 		}, 1000);
 
@@ -123,7 +134,7 @@ export function StatusBar() {
 			window.removeEventListener("storage", handleStorage);
 			clearInterval(interval);
 		};
-	}, [modelStorageKey]);
+	}, [modelStorageKey, hstryModelRef]);
 
 	// Fetch version from health endpoint
 	const { data: health } = useQuery({
@@ -169,6 +180,15 @@ export function StatusBar() {
 		};
 	}, [selectedModelRef]);
 
+	// Get workspace path for model switcher
+	// Find the workspace session for the selected chat
+	const workspacePath = useMemo(() => {
+		if (!selectedChatSessionId) return null;
+		// Find in chat history or sessions
+		// For now, return null and let the switcher handle it internally
+		return null;
+	}, [selectedChatSessionId]);
+
 	return (
 		<div
 			className={cn(
@@ -188,19 +208,13 @@ export function StatusBar() {
 					<span className="font-mono">{runningSessionCount}</span>
 				</span>
 
-				{/* Current model */}
+				{/* Current model - clickable to open quick switcher */}
 				{selectedModelRef && provider && (
-					<span className="flex items-center gap-1" title={selectedModelRef}>
-						<ProviderIcon
-							provider={provider}
-							className="w-3 h-3 flex-shrink-0"
-						/>
-						{/* Full model on wide screens, shortened on narrow */}
-						<span className="font-mono hidden lg:inline">
-							{selectedModelRef}
-						</span>
-						<span className="font-mono lg:hidden">{shortModel}</span>
-					</span>
+					<ModelQuickSwitcherSafe
+						sessionId={selectedChatSessionId}
+						workspacePath={workspacePath}
+						className="text-[10px]"
+					/>
 				)}
 			</div>
 
@@ -238,5 +252,42 @@ export function StatusBar() {
 				)}
 			</div>
 		</div>
+	);
+}
+
+/** Error boundary wrapper so ModelQuickSwitcher crash doesn't take down the whole app. */
+import { Component, type ErrorInfo, type ReactNode } from "react";
+
+class ModelSwitcherErrorBoundary extends Component<
+	{ children: ReactNode },
+	{ error: Error | null }
+> {
+	state = { error: null as Error | null };
+
+	static getDerivedStateFromError(error: Error) {
+		return { error };
+	}
+
+	componentDidCatch(error: Error, info: ErrorInfo) {
+		console.error("ModelQuickSwitcher crashed:", error, info.componentStack);
+	}
+
+	render() {
+		if (this.state.error) {
+			return (
+				<span className="text-[10px] text-red-400" title={this.state.error.message}>
+					model switcher error
+				</span>
+			);
+		}
+		return this.props.children;
+	}
+}
+
+function ModelQuickSwitcherSafe(props: Parameters<typeof ModelQuickSwitcher>[0]) {
+	return (
+		<ModelSwitcherErrorBoundary>
+			<ModelQuickSwitcher {...props} />
+		</ModelSwitcherErrorBoundary>
 	);
 }

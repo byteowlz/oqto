@@ -815,6 +815,8 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [octo-78dz] Model switcher missing models: runner env file support (closed 2026-02-09)
+- [octo-sde4] Model switcher broken: empty model list + 1-second polling (closed 2026-02-09)
 - [octo-nsjj] Unable to switch models in chat session (closed 2026-02-07)
 - [octo-f6yn] User message echoed in agent's streaming response bubble (closed 2026-02-07)
 - [octo-xpb8] Remove legacy main_chat module - full removal from main.rs, state.rs, and handlers (closed 2026-02-07)
@@ -1392,9 +1394,9 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
 - [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (closed )
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
 - [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
-- [octo-k8z1.2] Backend: WebSocket proxy for screencast stream (closed )
 - [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [octo-k8z1.2] Backend: WebSocket proxy for screencast stream (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )

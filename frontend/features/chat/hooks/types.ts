@@ -1,103 +1,92 @@
 /**
- * Shared types for Pi chat hooks.
+ * Shared types for chat hooks.
+ *
+ * Display types are built on top of the canonical protocol types from
+ * `@/lib/canonical-types`. The canonical `Part` union covers persistent
+ * content; `DisplayPart` extends it with ephemeral display-only variants
+ * (compaction notices, inline errors). `DisplayMessage` wraps canonical
+ * parts with UI-specific metadata (streaming state, client correlation).
  */
 
-import type { AgentState, PiAgentMessage } from "@/lib/control-plane-client";
+import type { Part, ToolStatus, Usage } from "@/lib/canonical-types";
+import type { AgentState } from "@/lib/control-plane-client";
 
-/** Pi streaming event types */
-export type PiEventType =
-	| "connected"
-	| "state"
-	| "message_start"
-	| "message"
-	| "text"
-	| "thinking"
-	| "tool_use"
-	| "tool_start"
-	| "tool_result"
-	| "done"
-	| "error"
-	| "compaction";
+// ============================================================================
+// Display-only part variants (not persisted, frontend-only)
+// ============================================================================
 
-/** Pi streaming event */
-export type PiStreamEvent = {
-	type: PiEventType;
-	data?: unknown;
-	/** Session ID for validation - ensures messages belong to the active session */
-	session_id?: string | null;
-};
+/** Context-compaction notice shown inline in the chat. */
+export type CompactionPart = { type: "compaction"; id: string; text: string };
 
-/** Message part for display */
-export type PiMessagePart =
-	| { type: "text"; content: string }
-	| { type: "tool_use"; id: string; name: string; input: unknown }
-	| {
-			type: "tool_result";
-			id: string;
-			name?: string;
-			content: unknown;
-			isError?: boolean;
-	  }
-	| { type: "thinking"; content: string }
-	| { type: "compaction"; content: string }
-	| { type: "error"; content: string }
-	| {
-			type: "image";
-			id: string;
-			source: string;
-			data?: string;
-			url?: string;
-			mimeType?: string;
-	  };
+/** Inline error notice (e.g. stream failure). */
+export type ErrorPart = { type: "error"; id: string; text: string };
 
-/** Display message with parts */
-export type PiDisplayMessage = {
+/**
+ * A display part is either a canonical Part or a display-only variant.
+ *
+ * Renderers should handle all canonical `Part` types plus the two
+ * display-only extensions (`compaction`, `error`).
+ */
+export type DisplayPart = Part | CompactionPart | ErrorPart;
+
+// ============================================================================
+// Display message
+// ============================================================================
+
+/** A message ready for rendering in the chat UI. */
+export type DisplayMessage = {
 	id: string;
 	role: "user" | "assistant" | "system";
-	parts: PiMessagePart[];
+	parts: DisplayPart[];
 	timestamp: number;
+	/** True while the assistant is still streaming tokens for this message. */
 	isStreaming?: boolean;
-	usage?: PiAgentMessage["usage"];
+	/** Token usage / cost metadata. */
+	usage?: Usage;
 	/** Client-generated ID for optimistic message matching.
 	 * Used to correlate frontend optimistic messages with server-confirmed versions. */
 	clientId?: string;
+	/** Model ID used for this message (from hstry or streaming). */
+	model?: string | null;
+	/** Provider ID used for this message (from hstry or streaming). */
+	provider?: string | null;
 };
 
 /** Send mode for messages */
-export type PiSendMode = "prompt" | "steer" | "follow_up";
+export type SendMode = "prompt" | "steer" | "follow_up";
 
 /** Options for sending messages */
-export type PiSendOptions = {
-	mode?: PiSendMode;
+export type SendOptions = {
+	mode?: SendMode;
 	queueIfStreaming?: boolean;
 	/** Force a specific session id (used to bind a pending chat to a real session). */
 	sessionId?: string;
 };
 
 /** Hook options */
-export type UsePiChatOptions = {
+export type UseChatOptions = {
 	/** Auto-connect on mount */
 	autoConnect?: boolean;
 	/** Workspace path */
 	workspacePath?: string | null;
 	/** Storage key prefix for cached messages */
 	storageKeyPrefix?: string;
-	/** Selected Pi session ID (disk-backed Default Chat session) */
+	/** Selected session ID (disk-backed Default Chat session) */
 	selectedSessionId?: string | null;
 	/** Notify when a new session becomes active (e.g. /new) */
 	onSelectedSessionIdChange?: (id: string | null) => void;
 	/** Callback when message stream completes */
-	onMessageComplete?: (message: PiDisplayMessage) => void;
+	onMessageComplete?: (message: DisplayMessage) => void;
 	/** Callback on error */
 	onError?: (error: Error) => void;
 };
 
 /** Hook return type */
-export type UsePiChatReturn = {
-	/** Current Pi state */
+export type UseChatReturn = {
+	/** Current agent state */
 	state: AgentState | null;
 	/** Display messages */
-	messages: PiDisplayMessage[];
+	messages: DisplayMessage[];
 	/** Whether connected to WebSocket */
 	isConnected: boolean;
 	/** Whether currently streaming a response */
@@ -107,8 +96,8 @@ export type UsePiChatReturn = {
 	/** Current error if any */
 	error: Error | null;
 	/** Send a message */
-	send: (message: string, options?: PiSendOptions) => Promise<void>;
-	/** Append a local assistant message (no Pi call) */
+	send: (message: string, options?: SendOptions) => Promise<void>;
+	/** Append a local assistant message (no agent call) */
 	appendLocalAssistantMessage: (content: string) => void;
 	/** Abort current stream */
 	abort: () => Promise<void>;
@@ -116,7 +105,7 @@ export type UsePiChatReturn = {
 	compact: (customInstructions?: string) => Promise<void>;
 	/** Start new session (clear history) */
 	newSession: () => Promise<void>;
-	/** Reset session - restarts Pi process to reload PERSONALITY.md and USER.md */
+	/** Reset session - restarts agent process to reload PERSONALITY.md and USER.md */
 	resetSession: () => Promise<void>;
 	/** Reload messages from server */
 	refresh: () => Promise<void>;
@@ -126,8 +115,14 @@ export type UsePiChatReturn = {
 	disconnect: () => void;
 };
 
-/** Raw Pi message from backend */
-export type RawPiMessage = {
+/**
+ * Raw message from backend (hstry serializable, Pi JSONL, or canonical).
+ *
+ * The `usage` field accepts any shape because different sources use different
+ * field names (canonical: input_tokens/output_tokens, Pi: input/output).
+ * Display code normalizes at render time.
+ */
+export type RawMessage = {
 	id?: string;
 	role: string;
 	content: unknown;
@@ -139,7 +134,8 @@ export type RawPiMessage = {
 	createdAtMs?: number;
 	parts_json?: string;
 	partsJson?: string;
-	usage?: PiAgentMessage["usage"];
+	// biome-ignore lint/suspicious/noExplicitAny: usage comes from multiple sources with different shapes
+	usage?: any;
 	toolCallId?: string;
 	tool_call_id?: string;
 	toolName?: string;
@@ -149,6 +145,12 @@ export type RawPiMessage = {
 	/** Client-generated ID for optimistic message matching */
 	client_id?: string;
 	clientId?: string;
+	/** Model ID from hstry ChatMessage */
+	model_id?: string | null;
+	model?: string | null;
+	/** Provider ID from hstry ChatMessage */
+	provider_id?: string | null;
+	provider?: string | null;
 };
 
 /** Batched update state for token streaming - reduces per-token React updates */
@@ -160,7 +162,7 @@ export type BatchedUpdateState = {
 
 /** Session message cache entry */
 export type SessionMessageCacheEntry = {
-	messages: PiDisplayMessage[];
+	messages: DisplayMessage[];
 	timestamp: number;
 	version: number;
 };
