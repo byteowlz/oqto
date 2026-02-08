@@ -181,8 +181,18 @@ pub async fn list_chat_history(
     let source = "hstry";
 
     if let Some(hstry) = state.hstry.as_ref() {
-        if let Ok(found) = crate::history::repository::list_sessions_via_grpc(hstry).await {
-            sessions = found;
+        match crate::history::repository::list_sessions_via_grpc(hstry).await {
+            Ok(found) => {
+                sessions = found;
+            }
+            Err(e) => {
+                tracing::error!("Failed to list sessions via hstry gRPC: {}", e);
+                return Err(ApiError::service_unavailable(format!(
+                    "Chat history service (hstry) is not reachable: {}. \
+                     Try restarting it with: hstry service start",
+                    e
+                )));
+            }
         }
     }
 
@@ -238,6 +248,8 @@ pub async fn get_chat_session(
                         is_child: s.is_child,
                         source_path: None,
                         stats: None,
+                        model: s.model,
+                        provider: s.provider,
                     }));
                 }
             }
@@ -328,6 +340,8 @@ pub async fn update_chat_session(
                     is_child: response.session.is_child,
                     source_path: None,
                     stats: None,
+                    model: response.session.model,
+                    provider: response.session.provider,
                 };
 
                 if let Some(ref title) = request.title {
@@ -407,8 +421,18 @@ pub async fn list_chat_history_grouped(
 
     let mut hstry_sessions: Vec<ChatSession> = Vec::new();
     if !multi_user && let Some(hstry) = state.hstry.as_ref() {
-        if let Ok(found) = crate::history::repository::list_sessions_via_grpc(hstry).await {
-            hstry_sessions = found;
+        match crate::history::repository::list_sessions_via_grpc(hstry).await {
+            Ok(found) => {
+                hstry_sessions = found;
+            }
+            Err(e) => {
+                tracing::error!("Failed to list sessions via hstry gRPC (grouped): {}", e);
+                return Err(ApiError::service_unavailable(format!(
+                    "Chat history service (hstry) is not reachable: {}. \
+                     Try restarting it with: hstry service start",
+                    e
+                )));
+            }
         }
     }
 
@@ -524,48 +548,57 @@ pub async fn get_chat_messages(
             .await
         {
             Ok(response) => {
-                // Convert protocol types to history types
-                let messages: Vec<ChatMessage> = response
-                    .messages
-                    .into_iter()
-                    .map(|m| ChatMessage {
-                        id: m.id,
-                        session_id: m.session_id,
-                        role: m.role,
-                        created_at: m.created_at,
-                        completed_at: m.completed_at,
-                        parent_id: m.parent_id,
-                        model_id: m.model_id,
-                        provider_id: m.provider_id,
-                        agent: m.agent,
-                        summary_title: m.summary_title,
-                        tokens_input: m.tokens_input,
-                        tokens_output: m.tokens_output,
-                        tokens_reasoning: m.tokens_reasoning,
-                        cost: m.cost,
-                        parts: m
-                            .parts
-                            .into_iter()
-                            .map(|p| crate::history::ChatMessagePart {
-                                id: p.id,
-                                part_type: p.part_type,
-                                text: p.text,
-                                text_html: p.text_html,
-                                tool_name: p.tool_name,
-                                tool_input: p.tool_input,
-                                tool_output: p.tool_output,
-                                tool_status: p.tool_status,
-                                tool_title: p.tool_title,
-                            })
-                            .collect(),
-                    })
-                    .collect();
+                if !response.messages.is_empty() {
+                    // Convert protocol types to history types
+                    let messages: Vec<ChatMessage> = response
+                        .messages
+                        .into_iter()
+                        .map(|m| ChatMessage {
+                            id: m.id,
+                            session_id: m.session_id,
+                            role: m.role,
+                            created_at: m.created_at,
+                            completed_at: m.completed_at,
+                            parent_id: m.parent_id,
+                            model_id: m.model_id,
+                            provider_id: m.provider_id,
+                            agent: m.agent,
+                            summary_title: m.summary_title,
+                            tokens_input: m.tokens_input,
+                            tokens_output: m.tokens_output,
+                            tokens_reasoning: m.tokens_reasoning,
+                            cost: m.cost,
+                            parts: m
+                                .parts
+                                .into_iter()
+                                .map(|p| crate::history::ChatMessagePart {
+                                    id: p.id,
+                                    part_type: p.part_type,
+                                    text: p.text,
+                                    text_html: p.text_html,
+                                    tool_name: p.tool_name,
+                                    tool_input: p.tool_input,
+                                    tool_output: p.tool_output,
+                                    tool_status: p.tool_status,
+                                    tool_title: p.tool_title,
+                                })
+                                .collect(),
+                        })
+                        .collect();
 
-                info!(user_id = %user.id(), session_id = %session_id, count = messages.len(), render = query.render, "Listed chat messages via runner");
-                return Ok(Json(messages));
+                    info!(user_id = %user.id(), session_id = %session_id, count = messages.len(), render = query.render, "Listed chat messages via runner");
+                    return Ok(Json(messages));
+                }
+                // Runner returned 0 messages - session may be historical (not active
+                // in the runner). Fall through to hstry for historical session data.
+                info!(
+                    user_id = %user.id(),
+                    session_id = %session_id,
+                    "Runner returned 0 messages, falling through to hstry"
+                );
             }
             Err(e) => {
-                // SECURITY: In multi-user mode, do NOT fall back
+                // SECURITY: In multi-user mode, do NOT fall back on error
                 if multi_user {
                     tracing::error!(
                         user_id = %user.id(),

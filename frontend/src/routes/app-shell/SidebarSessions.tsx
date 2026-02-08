@@ -25,6 +25,7 @@ import type {
 } from "@/lib/control-plane-client";
 import {
 	formatSessionDate,
+	getDisplayPiTitle,
 	getReadableIdFromSession,
 } from "@/lib/session-utils";
 import { cn } from "@/lib/utils";
@@ -335,7 +336,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 	const handleDeleteSession = async (sessionId: string) => {
 		const session = filteredSessions.find((item) => item.id === sessionId);
 		setPendingDeleteId(sessionId);
-		setPendingDeleteTitle(session?.title ?? "");
+		setPendingDeleteTitle(session ? getDisplayPiTitle(session) : "");
 		setDeleteDialogOpen(true);
 	};
 
@@ -867,7 +868,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 																						sizeClasses.sessionText,
 																					)}
 																				>
-																					{session.title || "Untitled"}
+																					{getDisplayPiTitle(session)}
 																				</span>
 																				{hasChildren && (
 																					<span className="text-[10px] text-primary/70">
@@ -1000,7 +1001,10 @@ export const SidebarSessions = memo(function SidebarSessions({
 																									)}
 																								/>
 																								<span className="truncate font-medium">
-																									{child.title || "Subagent"}
+																									{getDisplayPiTitle(child) !==
+																									"Untitled"
+																										? getDisplayPiTitle(child)
+																										: "Subagent"}
 																								</span>
 																								{busySessions.has(child.id) && (
 																									<Loader2 className="w-3 h-3 flex-shrink-0 text-primary animate-spin" />

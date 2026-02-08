@@ -24,6 +24,8 @@ import { useLocale } from "./ui-context";
 export interface ChatContextValue {
 	/** Chat sessions from disk (no running opencode needed) */
 	chatHistory: ChatSession[];
+	/** Error message when chat history service is unavailable */
+	chatHistoryError: string | null;
 	selectedChatSessionId: string | null;
 	setSelectedChatSessionId: (id: string | null) => void;
 	/** Get the selected chat from history. */
@@ -46,7 +48,11 @@ export interface ChatContextValue {
 		sessionId: string,
 	) => void;
 	/** Update a chat session title locally without triggering backend rename. */
-	updateChatSessionTitleLocal: (sessionId: string, title: string) => void;
+	updateChatSessionTitleLocal: (
+		sessionId: string,
+		title: string,
+		readableId?: string | null,
+	) => void;
 	createNewChat: (
 		workspacePath?: string,
 		options?: { optimisticId?: string },
@@ -100,6 +106,7 @@ function writeCachedChatHistory(history: ChatSession[]) {
 
 const defaultChatContext: ChatContextValue = {
 	chatHistory: [],
+	chatHistoryError: null,
 	selectedChatSessionId: null,
 	setSelectedChatSessionId: noop,
 	selectedChatFromHistory: undefined,
@@ -123,6 +130,9 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 	const [chatHistory, setChatHistory] = useState<ChatSession[]>(() =>
 		readCachedChatHistory(),
 	);
+	const [chatHistoryError, setChatHistoryError] = useState<string | null>(null);
+	const chatHistoryErrorRef = useRef<string | null>(null);
+	chatHistoryErrorRef.current = chatHistoryError;
 	const chatHistoryRef = useRef<ChatSession[]>([]);
 	const optimisticChatSessionsRef = useRef<Map<string, ChatSession>>(new Map());
 	const optimisticSelectionRef = useRef<Map<string, string | null>>(new Map());
@@ -182,6 +192,26 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 		return chatHistory.find((s) => s.id === selectedChatSessionId);
 	}, [chatHistory, selectedChatSessionId]);
 
+	// Auto-select the most recently active session from hstry when
+	// nothing valid is selected (first load or stale localStorage value).
+	const autoSelectedRef = useRef(false);
+	useEffect(() => {
+		if (autoSelectedRef.current) return;
+		if (chatHistory.length === 0) return;
+		if (
+			selectedChatSessionId &&
+			chatHistory.some((s) => s.id === selectedChatSessionId)
+		)
+			return;
+		// Pick the session with the highest updated_at
+		let best = chatHistory[0];
+		for (let i = 1; i < chatHistory.length; i++) {
+			if (chatHistory[i].updated_at > best.updated_at) best = chatHistory[i];
+		}
+		autoSelectedRef.current = true;
+		setSelectedChatSessionId(best.id);
+	}, [chatHistory, selectedChatSessionId, setSelectedChatSessionId]);
+
 	const mergeOptimisticSessions = useCallback((history: ChatSession[]) => {
 		if (optimisticChatSessionsRef.current.size === 0) return history;
 		const optimistic = Array.from(optimisticChatSessionsRef.current.values());
@@ -208,7 +238,12 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 		const prefetchLimit = getChatPrefetchLimit();
 		const now = Date.now();
 		if (prefetchInFlightRef.current) return;
-		if (now - lastPrefetchRef.current < CHAT_HISTORY_PREFETCH_DEBOUNCE_MS) {
+		// Bypass debounce when there's an active error (user clicking Retry)
+		const hasError = chatHistoryErrorRef.current !== null;
+		if (
+			!hasError &&
+			now - lastPrefetchRef.current < CHAT_HISTORY_PREFETCH_DEBOUNCE_MS
+		) {
 			return;
 		}
 		prefetchInFlightRef.current = true;
@@ -219,8 +254,16 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 			const merged = mergeOptimisticSessions(normalized);
 			startTransition(() => {
 				setChatHistory(merged);
+				setChatHistoryError(null);
 			});
 			writeCachedChatHistory(merged);
+		} catch (err) {
+			const msg =
+				err instanceof Error ? err.message : "Failed to load chat history";
+			console.error("[chat-context] refreshChatHistory failed:", msg);
+			startTransition(() => {
+				setChatHistoryError(msg);
+			});
 		} finally {
 			prefetchInFlightRef.current = false;
 		}
@@ -293,7 +336,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 	);
 
 	const updateChatSessionTitleLocal = useCallback(
-		(sessionId: string, title: string) => {
+		(sessionId: string, title: string, readableId?: string | null) => {
 			if (!title.trim()) return;
 			setChatHistory((prev) =>
 				prev.map((s) =>
@@ -301,6 +344,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 						? {
 								...s,
 								title,
+								...(readableId != null ? { readable_id: readableId } : {}),
 							}
 						: s,
 				),
@@ -362,6 +406,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 	const value = useMemo<ChatContextValue>(
 		() => ({
 			chatHistory,
+			chatHistoryError,
 			selectedChatSessionId,
 			setSelectedChatSessionId,
 			selectedChatFromHistory,
@@ -378,6 +423,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 		}),
 		[
 			chatHistory,
+			chatHistoryError,
 			selectedChatSessionId,
 			setSelectedChatSessionId,
 			selectedChatFromHistory,

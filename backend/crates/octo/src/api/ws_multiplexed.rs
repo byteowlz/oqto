@@ -1373,6 +1373,31 @@ async fn handle_agent_command(
                     let _ = state_guard.event_tx.send(config_event);
                     drop(state_guard);
 
+                    // Update hstry conversation with new model/provider
+                    if let Some(hstry) = state.hstry.as_ref() {
+                        let model_id_clone = resp.model.id.clone();
+                        let provider_clone = resp.model.provider.clone();
+                        let sid = session_id.clone();
+                        let hstry = hstry.clone();
+                        tokio::spawn(async move {
+                            if let Err(e) = hstry
+                                .update_conversation(
+                                    &sid,
+                                    None,
+                                    None,
+                                    Some(model_id_clone),
+                                    Some(provider_clone),
+                                    None,
+                                    None,
+                                    None,
+                                )
+                                .await
+                            {
+                                debug!("Failed to update hstry model on set_model: {}", e);
+                            }
+                        });
+                    }
+
                     Some(agent_response(
                         &session_id,
                         id,

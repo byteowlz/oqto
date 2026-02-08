@@ -9,17 +9,14 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@/components/ui/select";
-import type { AgentState, PiModelInfo } from "@/features/chat/api";
-import { updateSettingsValues } from "@/lib/api/settings";
+import { useModelSelection } from "@/hooks/use-model-selection";
 import { type ChatVerbosity, useChatVerbosity } from "@/lib/chat-verbosity";
-import { normalizeWorkspacePath } from "@/lib/session-utils";
 import { fuzzyMatch } from "@/lib/slash-commands";
 import { cn } from "@/lib/utils";
-import { getWsManager } from "@/lib/ws-manager";
 import { Loader2 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 
-interface PiSettingsViewProps {
+export interface PiSettingsViewProps {
 	className?: string;
 	locale?: "en" | "de";
 	sessionId?: string | null;
@@ -33,102 +30,17 @@ export function PiSettingsView({
 	workspacePath,
 }: PiSettingsViewProps) {
 	const { verbosity, setVerbosity } = useChatVerbosity();
-	const [availableModels, setAvailableModels] = useState<PiModelInfo[]>([]);
-	const [selectedModelRef, setSelectedModelRef] = useState<string | null>(null);
-	const [isSwitchingModel, setIsSwitchingModel] = useState(false);
 	const [modelQuery, setModelQuery] = useState("");
-	const [loadingModels, setLoadingModels] = useState(false);
-	const [piState, setPiState] = useState<AgentState | null>(null);
-	const [loadingState, setLoadingState] = useState(false);
-	const [effectiveSessionId, setEffectiveSessionId] = useState<string | null>(
-		sessionId ?? null,
-	);
-	const normalizedWorkspacePath = useMemo(
-		() => normalizeWorkspacePath(workspacePath),
-		[workspacePath],
-	);
 
-	useEffect(() => {
-		setEffectiveSessionId(sessionId ?? null);
-	}, [sessionId]);
-
-	const modelStorageKey = useMemo(() => {
-		if (!effectiveSessionId) return null;
-		return `octo:chatModel:${effectiveSessionId}`;
-	}, [effectiveSessionId]);
-
-	useEffect(() => {
-		if (!modelStorageKey) {
-			setSelectedModelRef(null);
-			return;
-		}
-		try {
-			const stored = localStorage.getItem(modelStorageKey);
-			setSelectedModelRef(stored);
-		} catch {
-			setSelectedModelRef(null);
-		}
-	}, [modelStorageKey]);
-
-	useEffect(() => {
-		let active = true;
-		if (!effectiveSessionId) return undefined;
-		setLoadingModels(true);
-		getWsManager()
-			.agentGetAvailableModels(effectiveSessionId)
-			.then((result) => {
-				if (!active) return;
-				const models = (result as PiModelInfo[]) ?? [];
-				setAvailableModels(models);
-				if (!selectedModelRef && models.length > 0) {
-					const first = models[0];
-					setSelectedModelRef(`${first.provider}/${first.id}`);
-				}
-			})
-			.catch(() => {
-				if (active) setAvailableModels([]);
-			})
-			.finally(() => {
-				if (active) setLoadingModels(false);
-			});
-		return () => {
-			active = false;
-		};
-	}, [effectiveSessionId, selectedModelRef]);
-
-	useEffect(() => {
-		let active = true;
-		let intervalId: ReturnType<typeof setInterval> | null = null;
-		const fetchState = async () => {
-			if (!active) return;
-			try {
-				const nextState = effectiveSessionId
-					? ((await getWsManager().agentGetStateWait(
-							effectiveSessionId,
-						)) as AgentState | null)
-					: null;
-				if (active) {
-					setPiState(nextState);
-				}
-			} catch {
-				if (active) setPiState(null);
-			} finally {
-				if (active) setLoadingState(false);
-			}
-		};
-		if (effectiveSessionId) {
-			setLoadingState(true);
-			void fetchState();
-			intervalId = setInterval(fetchState, 2000);
-		} else {
-			setPiState(null);
-			setLoadingState(false);
-		}
-		return () => {
-			active = false;
-			if (intervalId) clearInterval(intervalId);
-		};
-	}, [effectiveSessionId]);
+	const {
+		availableModels,
+		selectedModelRef,
+		pendingModelRef,
+		isSwitching,
+		loading,
+		isIdle,
+		selectModel,
+	} = useModelSelection(sessionId, workspacePath, locale);
 
 	const filteredModels = useMemo(() => {
 		const query = modelQuery.trim();
@@ -144,8 +56,6 @@ export function PiSettingsView({
 		});
 	}, [availableModels, modelQuery]);
 
-	const isIdle = !(piState?.isStreaming || piState?.isCompacting);
-
 	const verbosityLabel = locale === "de" ? "Chat-Detailgrad" : "Chat verbosity";
 	const verbosityDescription =
 		locale === "de"
@@ -154,42 +64,14 @@ export function PiSettingsView({
 
 	const handleModelChange = useCallback(
 		async (value: string) => {
-			if (!isIdle) {
-				return;
-			}
 			if (!value) return;
-			const separatorIndex = value.indexOf("/");
-			if (separatorIndex <= 0 || separatorIndex === value.length - 1) return;
-			const provider = value.slice(0, separatorIndex);
-			const modelId = value.slice(separatorIndex + 1);
-			setSelectedModelRef(value);
-			setIsSwitchingModel(true);
-			try {
-				const sessionId = effectiveSessionId;
-				if (!sessionId) {
-					throw new Error("No active chat session -- send a message first");
-				}
-				await getWsManager().agentSetModel(sessionId, provider, modelId);
-				// Persist defaults once the user changes the model.
-				const settingsWorkspacePath = workspacePath ?? undefined;
-				await updateSettingsValues(
-					"pi-agent",
-					{
-						values: {
-							defaultProvider: provider,
-							defaultModel: modelId,
-						},
-					},
-					settingsWorkspacePath,
-				);
-			} catch (err) {
-				console.error("Failed to switch model:", err);
-			} finally {
-				setIsSwitchingModel(false);
-			}
+			await selectModel(value);
+			setModelQuery("");
 		},
-		[isIdle, effectiveSessionId, workspacePath],
+		[selectModel],
 	);
+
+	const effectiveModelRef = pendingModelRef ?? selectedModelRef;
 
 	return (
 		<div className={cn("flex flex-col h-full", className)}>
@@ -203,7 +85,7 @@ export function PiSettingsView({
 					<Label className="text-xs font-medium">
 						{locale === "de" ? "Modell" : "Model"}
 					</Label>
-					{loadingModels ? (
+					{loading ? (
 						<div className="flex items-center gap-2 text-xs text-muted-foreground">
 							<Loader2 className="h-4 w-4 animate-spin" />
 							{locale === "de" ? "Modelle laden..." : "Loading models..."}
@@ -216,14 +98,9 @@ export function PiSettingsView({
 						</p>
 					) : (
 						<Select
-							value={selectedModelRef ?? undefined}
+							value={effectiveModelRef ?? undefined}
 							onValueChange={handleModelChange}
-							disabled={
-								isSwitchingModel ||
-								availableModels.length === 0 ||
-								loadingState ||
-								!isIdle
-							}
+							disabled={isSwitching || availableModels.length === 0}
 							onOpenChange={(open) => {
 								if (open) setModelQuery("");
 							}}
@@ -231,7 +108,7 @@ export function PiSettingsView({
 							<SelectTrigger className="w-full">
 								<SelectValue
 									placeholder={
-										isSwitchingModel
+										isSwitching
 											? locale === "de"
 												? "Wechsle Modell..."
 												: "Switching model..."
@@ -271,9 +148,23 @@ export function PiSettingsView({
 								) : (
 									filteredModels.map((model) => {
 										const value = `${model.provider}/${model.id}`;
+										const isSelected = value === selectedModelRef;
+										const isPending = value === pendingModelRef;
+
 										return (
 											<SelectItem key={value} value={value}>
-												{model.name ? `${value} - ${model.name}` : value}
+												<div className="flex items-center gap-2">
+													<span className="flex-1">
+														{model.name ? `${value} - ${model.name}` : value}
+													</span>
+													{isPending && (
+														<span className="text-[10px] text-muted-foreground">
+															{locale === "de"
+																? "(Wird angewendet)"
+																: "(Pending)"}
+														</span>
+													)}
+												</div>
 											</SelectItem>
 										);
 									})
@@ -281,11 +172,11 @@ export function PiSettingsView({
 							</SelectContent>
 						</Select>
 					)}
-					{!isIdle && (
+					{pendingModelRef && (
 						<p className="text-[10px] text-muted-foreground">
 							{locale === "de"
-								? "Modellwechsel nur im Leerlauf möglich."
-								: "Model switching is only available when Pi is idle."}
+								? "Modellwechsel wird nach Abschluss angewendet."
+								: "Model change will apply after completion."}
 						</p>
 					)}
 				</div>

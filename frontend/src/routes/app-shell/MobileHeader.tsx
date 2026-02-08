@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import type { ChatSession } from "@/lib/control-plane-client";
 import {
 	formatSessionDate,
+	getDisplayPiTitle,
 	getReadableIdFromSession,
 } from "@/lib/session-utils";
 import { Menu, Plus } from "lucide-react";
@@ -54,12 +55,7 @@ export const MobileHeader = memo(function MobileHeader({
 				selectedChatFromHistory ? (
 					<div className="flex-1 min-w-0 px-3 text-center">
 						<div className="text-sm font-medium text-foreground truncate">
-							{selectedChatFromHistory.title
-								?.replace(
-									/\s*-\s*\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z?$/,
-									"",
-								)
-								.trim() || "Chat"}
+							{getDisplayPiTitle(selectedChatFromHistory)}
 						</div>
 						<div className="text-[10px] text-muted-foreground truncate">
 							{selectedChatFromHistory.workspace_path && (

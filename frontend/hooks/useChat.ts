@@ -15,12 +15,10 @@ export {
 
 // Types
 export type {
-	PiEventType,
-	PiStreamEvent,
-	PiMessagePart,
-	PiDisplayMessage,
-	PiSendMode,
-	PiSendOptions,
-	UsePiChatOptions,
-	UsePiChatReturn,
+	DisplayPart,
+	DisplayMessage,
+	SendMode,
+	SendOptions,
+	UseChatOptions,
+	UseChatReturn,
 } from "@/features/chat/hooks";

@@ -16,6 +16,7 @@ pub struct SerializableMessage {
     pub parts_json: String,
     pub created_at_ms: Option<i64>,
     pub model: Option<String>,
+    pub provider: Option<String>,
     pub tokens: Option<i64>,
     pub cost_usd: Option<f64>,
     pub metadata_json: String,
@@ -23,17 +24,38 @@ pub struct SerializableMessage {
 
 impl From<&ProtoMessage> for SerializableMessage {
     fn from(msg: &ProtoMessage) -> Self {
+        // model may be "provider/model" or just "model" — split if needed
+        let (provider, model) = split_model_ref(&msg.model, &msg.provider);
         Self {
             idx: msg.idx,
             role: msg.role.clone(),
             content: msg.content.clone(),
             parts_json: msg.parts_json.clone(),
             created_at_ms: msg.created_at_ms,
-            model: msg.model.clone(),
+            model,
+            provider,
             tokens: msg.tokens,
             cost_usd: msg.cost_usd,
             metadata_json: msg.metadata_json.clone(),
         }
+    }
+}
+
+/// Split a combined "provider/model" string into separate (provider, model).
+/// If the model field already contains a slash, split it.
+/// If provider is already set separately, use that.
+fn split_model_ref(
+    model: &Option<String>,
+    provider: &Option<String>,
+) -> (Option<String>, Option<String>) {
+    match (model, provider) {
+        (Some(m), Some(p)) if !p.is_empty() => (Some(p.clone()), Some(m.clone())),
+        (Some(m), _) if m.contains('/') => {
+            let idx = m.find('/').unwrap();
+            (Some(m[..idx].to_string()), Some(m[idx + 1..].to_string()))
+        }
+        (Some(m), _) => (None, Some(m.clone())),
+        (None, _) => (None, None),
     }
 }
 

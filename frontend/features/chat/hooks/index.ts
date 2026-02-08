@@ -26,17 +26,17 @@ export {
 	mergeServerMessages,
 } from "./message-utils";
 
-// Types
+// Types (canonical)
 export type {
-	PiEventType,
-	PiStreamEvent,
-	PiMessagePart,
-	PiDisplayMessage,
-	PiSendMode,
-	PiSendOptions,
-	UsePiChatOptions,
-	UsePiChatReturn,
-	RawPiMessage,
+	DisplayPart,
+	DisplayMessage,
+	CompactionPart,
+	ErrorPart,
+	SendMode,
+	SendOptions,
+	UseChatOptions,
+	UseChatReturn,
+	RawMessage,
 	BatchedUpdateState,
 	SessionMessageCacheEntry,
 	WsConnectionState,

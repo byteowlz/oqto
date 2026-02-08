@@ -1,52 +1,30 @@
 /**
- * Message normalization and conversion utilities for Pi chat hooks.
+ * Message normalization and conversion utilities for chat hooks.
+ *
+ * All output uses canonical Part types (from canonical-types.ts) extended
+ * with display-only variants (CompactionPart, ErrorPart). The normalizers
+ * accept messages from any source (hstry, Pi JSONL, canonical protocol)
+ * and produce a uniform DisplayMessage[] for rendering.
  */
 
+import type { Part, ToolStatus } from "@/lib/canonical-types";
 import type {
 	PiAgentMessage,
 	PiSessionMessage,
-} from "@/lib/control-plane-client";
-import type { PiDisplayMessage, PiMessagePart, RawPiMessage } from "./types";
+} from "@/lib/api/default-chat";
+import type { DisplayMessage, DisplayPart, RawMessage } from "./types";
 
-const PI_MESSAGE_ID_PATTERN = /^pi-msg-(\d+)$/;
+const MESSAGE_ID_PATTERN = /^pi-msg-(\d+)$/;
 const MESSAGE_MATCH_WINDOW_MS = 120_000;
 
-function coerceToolResultFromValue(value: unknown): PiMessagePart | null {
-	if (!value || typeof value !== "object") return null;
-	const obj = value as Record<string, unknown>;
-	const type = typeof obj.type === "string" ? obj.type : "";
-	const looksLikeToolResult =
-		type === "tool_result" ||
-		type === "toolResult" ||
-		"toolCallId" in obj ||
-		"tool_use_id" in obj ||
-		"toolName" in obj;
-	if (!looksLikeToolResult) return null;
+// ============================================================================
+// Internal helpers
+// ============================================================================
 
-	const id =
-		(typeof obj.tool_use_id === "string" && obj.tool_use_id) ||
-		(typeof obj.toolCallId === "string" && obj.toolCallId) ||
-		(typeof obj.id === "string" && obj.id) ||
-		"";
-	const name =
-		(typeof obj.name === "string" && obj.name) ||
-		(typeof obj.toolName === "string" && obj.toolName) ||
-		undefined;
-	const content =
-		"content" in obj
-			? obj.content
-			: typeof obj.text === "string"
-				? obj.text
-				: obj;
-	const isError = Boolean(obj.is_error ?? obj.isError);
-
-	return {
-		type: "tool_result",
-		id,
-		name,
-		content,
-		isError,
-	};
+let partIdCounter = 0;
+/** Generate a unique part ID for display parts. */
+export function nextPartId(): string {
+	return `dp-${++partIdCounter}`;
 }
 
 function parseJsonMaybe(value: string): unknown | null {
@@ -60,204 +38,266 @@ function parseJsonMaybe(value: string): unknown | null {
 	}
 }
 
-/**
- * Convert canonical Part objects (from octo-protocol Message.parts) to display parts.
- * Canonical parts have a `type` field with values like "text", "image", "thinking",
- * "tool_call", "tool_result".
- */
-function canonicalPartsToPiParts(parts: unknown[]): PiMessagePart[] {
-	const result: PiMessagePart[] = [];
-	for (const part of parts) {
-		if (!part || typeof part !== "object") continue;
-		const p = part as Record<string, unknown>;
-		const partType = typeof p.type === "string" ? p.type : "";
-		switch (partType) {
-			case "text":
-				if (typeof p.text === "string" && p.text.trim()) {
-					result.push({ type: "text", content: p.text });
-				}
-				break;
-			case "thinking":
-				if (typeof p.text === "string" && p.text.trim()) {
-					result.push({ type: "thinking", content: p.text });
-				}
-				break;
-			case "tool_call": {
-				const id =
-					(typeof p.tool_call_id === "string" && p.tool_call_id) ||
-					(typeof p.id === "string" && p.id) ||
-					"";
-				const name = (typeof p.name === "string" && p.name) || "unknown";
-				result.push({
-					type: "tool_use",
-					id,
-					name,
-					input: p.input ?? p.arguments,
-				});
-				break;
-			}
-			case "tool_result": {
-				const id =
-					(typeof p.tool_call_id === "string" && p.tool_call_id) ||
-					(typeof p.id === "string" && p.id) ||
-					"";
-				result.push({
-					type: "tool_result",
-					id,
-					name: typeof p.name === "string" ? p.name : undefined,
-					content: p.output ?? p.content ?? p.text,
-					isError: Boolean(p.is_error ?? p.isError),
-				});
-				break;
-			}
-			case "image": {
-				const id = (typeof p.id === "string" && p.id) || `img_${result.length}`;
-				const source = p.source as Record<string, unknown> | undefined;
-				if (source && typeof source === "object") {
-					result.push({
-						type: "image",
-						id,
-						source: typeof source.type === "string" ? source.type : "base64",
-						data: typeof source.data === "string" ? source.data : undefined,
-						url: typeof source.url === "string" ? source.url : undefined,
-						mimeType:
-							typeof source.media_type === "string"
-								? source.media_type
-								: typeof source.mediaType === "string"
-									? source.mediaType
-									: undefined,
-					});
-				}
-				break;
-			}
-			default:
-				// Unknown part type -- skip silently
-				break;
-		}
+/** Safely stringify a value for fingerprinting. */
+function safeStringify(value: unknown): string {
+	if (value === null || value === undefined) return "";
+	if (typeof value === "string") return value;
+	try {
+		return JSON.stringify(value);
+	} catch {
+		return String(value);
 	}
-	return result;
 }
 
-/** Normalize Pi content blocks to display parts */
-export function normalizePiContentToParts(content: unknown): PiMessagePart[] {
-	const parts: PiMessagePart[] = [];
+// ============================================================================
+// Coercion: untyped objects → canonical Part
+// ============================================================================
+
+/** Try to interpret a raw value as a tool_result Part. */
+function coerceToolResult(value: unknown): (Part & { type: "tool_result" }) | null {
+	if (!value || typeof value !== "object") return null;
+	const obj = value as Record<string, unknown>;
+	const type = typeof obj.type === "string" ? obj.type : "";
+	const looksLikeToolResult =
+		type === "tool_result" ||
+		type === "toolResult" ||
+		"toolCallId" in obj ||
+		"tool_use_id" in obj ||
+		"toolName" in obj;
+	if (!looksLikeToolResult) return null;
+
+	return {
+		type: "tool_result",
+		id: (typeof obj.id === "string" && obj.id) || nextPartId(),
+		toolCallId:
+			(typeof obj.tool_use_id === "string" && obj.tool_use_id) ||
+			(typeof obj.toolCallId === "string" && obj.toolCallId) ||
+			(typeof obj.tool_call_id === "string" && obj.tool_call_id) ||
+			"",
+		name:
+			(typeof obj.name === "string" && obj.name) ||
+			(typeof obj.toolName === "string" && obj.toolName) ||
+			undefined,
+		output:
+			"output" in obj
+				? obj.output
+				: "content" in obj
+					? obj.content
+					: typeof obj.text === "string"
+						? obj.text
+						: obj,
+		isError: Boolean(obj.is_error ?? obj.isError),
+	};
+}
+
+/**
+ * Normalize a raw block (from parts_json, Pi content array, or canonical Part)
+ * into a canonical DisplayPart. Returns null if unrecognized.
+ */
+function coerceBlockToPart(b: Record<string, unknown>): DisplayPart | null {
+	const blockType = typeof b.type === "string" ? b.type : "";
+
+	// --- text ---
+	if (blockType === "text") {
+		const text =
+			typeof b.text === "string"
+				? b.text
+				: typeof b.content === "string"
+					? b.content
+					: "";
+		if (text) {
+			return {
+				type: "text",
+				id: (typeof b.id === "string" && b.id) || nextPartId(),
+				text,
+			};
+		}
+		return null;
+	}
+
+	// --- thinking ---
+	if (blockType === "thinking") {
+		const text =
+			typeof b.thinking === "string"
+				? b.thinking
+				: typeof b.text === "string"
+					? b.text
+					: typeof b.content === "string"
+						? b.content
+						: "";
+		if (text.trim()) {
+			return {
+				type: "thinking",
+				id: (typeof b.id === "string" && b.id) || nextPartId(),
+				text,
+			};
+		}
+		return null;
+	}
+
+	// --- tool_call / tool_use / toolCall ---
+	if (
+		blockType === "tool_call" ||
+		blockType === "tool_use" ||
+		blockType === "toolCall"
+	) {
+		return {
+			type: "tool_call",
+			id: (typeof b.id === "string" && b.id) || nextPartId(),
+			toolCallId:
+				(typeof b.toolCallId === "string" && b.toolCallId) ||
+				(typeof b.tool_call_id === "string" && b.tool_call_id) ||
+				(typeof b.id === "string" && b.id) ||
+				"",
+			name: (typeof b.name === "string" && b.name) || "unknown",
+			input:
+				typeof b.arguments === "object" && b.arguments !== null
+					? b.arguments
+					: b.input,
+			status: (typeof b.status === "string" ? b.status : "success") as ToolStatus,
+		};
+	}
+
+	// --- tool_result / toolResult ---
+	if (blockType === "tool_result" || blockType === "toolResult") {
+		return {
+			type: "tool_result",
+			id: (typeof b.id === "string" && b.id) || nextPartId(),
+			toolCallId:
+				(typeof b.tool_use_id === "string" && b.tool_use_id) ||
+				(typeof b.toolCallId === "string" && b.toolCallId) ||
+				(typeof b.tool_call_id === "string" && b.tool_call_id) ||
+				(typeof b.id === "string" && b.id) ||
+				"",
+			name:
+				(typeof b.name === "string" && b.name) ||
+				(typeof b.toolName === "string" && b.toolName) ||
+				undefined,
+			output:
+				"output" in b
+					? b.output
+					: "content" in b
+						? b.content
+						: typeof b.text === "string"
+							? b.text
+							: b,
+			isError: Boolean(b.is_error ?? b.isError),
+		};
+	}
+
+	// --- image ---
+	if (blockType === "image") {
+		const id = (typeof b.id === "string" && b.id) || nextPartId();
+		// Canonical images use a MediaSource tagged union; legacy images have
+		// source/data/url/mimeType fields.
+		const source = b.source as string | Record<string, unknown> | undefined;
+		if (typeof source === "string") {
+			// Already canonical-ish (source is a discriminator like "base64", "url")
+			return {
+				type: "image",
+				id,
+				source: source as "base64",
+				data: typeof b.data === "string" ? b.data : "",
+				mimeType: typeof b.mimeType === "string" ? b.mimeType : "image/png",
+			};
+		}
+		if (source && typeof source === "object") {
+			const srcType =
+				typeof source.type === "string" ? source.type : "base64";
+			if (srcType === "url" && typeof source.url === "string") {
+				return {
+					type: "image",
+					id,
+					source: "url",
+					url: source.url,
+					mimeType:
+						(typeof source.media_type === "string" && source.media_type) ||
+						(typeof source.mediaType === "string" && source.mediaType) ||
+						undefined,
+				};
+			}
+			return {
+				type: "image",
+				id,
+				source: "base64",
+				data: typeof source.data === "string" ? source.data : "",
+				mimeType:
+					(typeof source.media_type === "string" && source.media_type) ||
+					(typeof source.mediaType === "string" && source.mediaType) ||
+					"image/png",
+			};
+		}
+		return null;
+	}
+
+	// --- file_ref ---
+	if (blockType === "file_ref" && typeof b.uri === "string") {
+		return {
+			type: "file_ref",
+			id: (typeof b.id === "string" && b.id) || nextPartId(),
+			uri: b.uri,
+			label: typeof b.label === "string" ? b.label : undefined,
+		};
+	}
+
+	return null;
+}
+
+// ============================================================================
+// Content normalization (any source → DisplayPart[])
+// ============================================================================
+
+/** Normalize mixed content (string, array of blocks, single object) into DisplayPart[]. */
+export function normalizeContentToParts(content: unknown): DisplayPart[] {
+	const parts: DisplayPart[] = [];
 
 	if (typeof content === "string") {
 		const parsed = parseJsonMaybe(content);
-		const toolResult = parsed ? coerceToolResultFromValue(parsed) : null;
+		const toolResult = parsed ? coerceToolResult(parsed) : null;
 		if (toolResult) {
 			parts.push(toolResult);
 			return parts;
 		}
-		parts.push({ type: "text", content });
+		parts.push({ type: "text", id: nextPartId(), text: content });
 		return parts;
 	}
 
 	if (Array.isArray(content)) {
 		for (const block of content) {
 			if (typeof block === "string") {
-				parts.push({ type: "text", content: block });
+				parts.push({ type: "text", id: nextPartId(), text: block });
 				continue;
 			}
 			if (!block || typeof block !== "object") continue;
-			const b = block as Record<string, unknown>;
-			const blockType = typeof b.type === "string" ? b.type : "";
-
-			if (blockType === "text" && typeof b.text === "string") {
-				parts.push({ type: "text", content: b.text });
-				continue;
-			}
-			if (blockType === "thinking") {
-				const thinkingText =
-					typeof b.thinking === "string"
-						? b.thinking
-						: typeof b.content === "string"
-							? b.content
-							: "";
-				if (thinkingText.trim()) {
-					parts.push({ type: "thinking", content: thinkingText });
-				}
-				continue;
-			}
-			if (blockType === "toolCall" || blockType === "tool_use") {
-				parts.push({
-					type: "tool_use",
-					id: typeof b.id === "string" ? b.id : "",
-					name: typeof b.name === "string" ? b.name : "unknown",
-					input:
-						typeof b.arguments === "object" && b.arguments !== null
-							? b.arguments
-							: b.input,
-				});
-				continue;
-			}
-			if (blockType === "tool_result" || blockType === "toolResult") {
-				parts.push({
-					type: "tool_result",
-					id:
-						(typeof b.tool_use_id === "string" && b.tool_use_id) ||
-						(typeof b.toolCallId === "string" && b.toolCallId) ||
-						(typeof b.id === "string" && b.id) ||
-						"",
-					name:
-						(typeof b.name === "string" && b.name) ||
-						(typeof b.toolName === "string" && b.toolName) ||
-						undefined,
-					content:
-						"content" in b
-							? b.content
-							: typeof b.text === "string"
-								? b.text
-								: b,
-					isError: Boolean(b.is_error ?? b.isError),
-				});
-				continue;
-			}
-			if (blockType === "image") {
-				const id = (typeof b.id === "string" && b.id) || `img_${parts.length}`;
-				const source = b.source as Record<string, unknown> | undefined;
-				if (source && typeof source === "object") {
-					parts.push({
-						type: "image",
-						id,
-						source: typeof source.type === "string" ? source.type : "base64",
-						data: typeof source.data === "string" ? source.data : undefined,
-						url: typeof source.url === "string" ? source.url : undefined,
-						mimeType:
-							typeof source.media_type === "string"
-								? source.media_type
-								: typeof source.mediaType === "string"
-									? source.mediaType
-									: undefined,
-					});
-				}
-			}
+			const part = coerceBlockToPart(block as Record<string, unknown>);
+			if (part) parts.push(part);
 		}
 		return parts;
 	}
 
 	if (content && typeof content === "object") {
 		const b = content as Record<string, unknown>;
-		if (b.type === "text" && typeof b.text === "string") {
-			parts.push({ type: "text", content: b.text });
-		} else if (b.type === "thinking" && typeof b.thinking === "string") {
-			parts.push({ type: "thinking", content: b.thinking });
+		const part = coerceBlockToPart(b);
+		if (part) {
+			parts.push(part);
 		} else {
-			const toolResult = coerceToolResultFromValue(b);
-			if (toolResult) {
-				parts.push(toolResult);
-			}
+			const toolResult = coerceToolResult(b);
+			if (toolResult) parts.push(toolResult);
 		}
 	}
 
 	return parts;
 }
 
-/** Convert a canonical Message (octo-protocol) into a display message. */
+// ============================================================================
+// Message-level normalization
+// ============================================================================
+
+/** Convert a canonical Message (octo-protocol) into a DisplayMessage. */
 export function convertCanonicalMessageToDisplay(
 	message: unknown,
 	fallbackId: string,
-): PiDisplayMessage | null {
+): DisplayMessage | null {
 	if (!message || typeof message !== "object") return null;
 	const msg = message as Record<string, unknown>;
 	const roleValue = typeof msg.role === "string" ? msg.role : "assistant";
@@ -265,14 +305,16 @@ export function convertCanonicalMessageToDisplay(
 		roleValue === "user" || roleValue === "assistant" || roleValue === "system"
 			? roleValue
 			: "assistant";
-	const parts = Array.isArray(msg.parts)
-		? canonicalPartsToPiParts(msg.parts)
-		: normalizePiContentToParts(msg.content);
+	const parts = normalizeContentToParts(
+		Array.isArray(msg.parts) && msg.parts.length > 0
+			? msg.parts
+			: msg.content,
+	);
 	const timestamp =
 		typeof msg.created_at === "number" && msg.created_at > 0
 			? msg.created_at
 			: Date.now();
-	const usage = msg.usage as PiAgentMessage["usage"] | undefined;
+	const usage = msg.usage as DisplayMessage["usage"] | undefined;
 
 	return {
 		id: typeof msg.id === "string" && msg.id ? msg.id : fallbackId,
@@ -283,26 +325,32 @@ export function convertCanonicalMessageToDisplay(
 	};
 }
 
-/** Normalize raw Pi messages to display messages */
-export function normalizePiMessages(
-	messages: RawPiMessage[],
+/**
+ * Normalize raw messages (from any source) into DisplayMessage[].
+ *
+ * Handles hstry SerializableMessage (with parts_json), Pi JSONL messages,
+ * and canonical Messages. Merges tool_result parts back into the assistant
+ * message that contains the matching tool_call.
+ */
+export function normalizeMessages(
+	messages: RawMessage[],
 	idPrefix: string,
-): PiDisplayMessage[] {
-	const display: PiDisplayMessage[] = [];
-	const toolUseIndexById = new Map<string, number>();
-	const pendingToolUseByName = new Map<string, number[]>();
+): DisplayMessage[] {
+	const display: DisplayMessage[] = [];
+	const toolCallIndexById = new Map<string, number>();
+	const pendingToolCallByName = new Map<string, number[]>();
 
 	const addPendingByName = (name: string, index: number) => {
-		const list = pendingToolUseByName.get(name) ?? [];
+		const list = pendingToolCallByName.get(name) ?? [];
 		list.push(index);
-		pendingToolUseByName.set(name, list);
+		pendingToolCallByName.set(name, list);
 	};
 
 	const resolvePendingByName = (
 		name: string | undefined,
 	): number | undefined => {
 		if (!name) return undefined;
-		const list = pendingToolUseByName.get(name);
+		const list = pendingToolCallByName.get(name);
 		if (!list || list.length === 0) return undefined;
 		return list[list.length - 1];
 	};
@@ -321,9 +369,9 @@ export function normalizePiMessages(
 				: typeof message.partsJson === "string"
 					? message.partsJson
 					: null;
-		const parsedParts = partsJson ? parseJsonMaybe(partsJson) : null;
-		// Canonical messages (from octo-protocol) use `parts` (array of Part objects),
-		// while legacy Pi messages use `content` or `parts_json`.
+		const parsedParts = partsJson
+			? (parseJsonMaybe(partsJson) as unknown[] | null)
+			: null;
 		const canonicalParts =
 			Array.isArray(message.parts) && message.parts.length > 0
 				? message.parts
@@ -335,24 +383,53 @@ export function normalizePiMessages(
 					? canonicalParts
 					: message.content;
 
+		// --- Tool result messages (role=tool/toolResult) ---
 		if (role === "toolResult" || role === "tool") {
+			// For hstry messages, toolCallId lives inside parts_json, not on the message.
+			let resolvedToolCallId = message.toolCallId || message.tool_call_id || "";
+			let resolvedToolName = message.toolName ?? message.tool_name;
+			let resolvedOutput: unknown = content;
+			let resolvedIsError = message.isError ?? message.is_error;
+
+			if (
+				!resolvedToolCallId &&
+				Array.isArray(parsedParts) &&
+				parsedParts.length > 0
+			) {
+				const firstResult = (
+					parsedParts as Record<string, unknown>[]
+				).find((p) => p.type === "tool_result");
+				if (firstResult) {
+					resolvedToolCallId =
+						(firstResult.toolCallId as string) ||
+						(firstResult.tool_call_id as string) ||
+						(firstResult.id as string) ||
+						"";
+					resolvedToolName =
+						resolvedToolName || (firstResult.name as string | undefined);
+					resolvedOutput =
+						firstResult.output ?? firstResult.content ?? content;
+					resolvedIsError =
+						resolvedIsError ??
+						(firstResult.is_error as boolean | undefined) ??
+						(firstResult.isError as boolean | undefined);
+				}
+			}
+
 			const toolCallId =
-				message.toolCallId ||
-				message.tool_call_id ||
-				message.id ||
-				`tool-result-${idx}`;
-			const toolResultPart: PiMessagePart = {
+				resolvedToolCallId || message.id || `tool-result-${idx}`;
+			const toolResultPart: DisplayPart = {
 				type: "tool_result",
-				id: toolCallId,
-				name: message.toolName ?? message.tool_name,
-				content,
-				isError: message.isError ?? message.is_error,
+				id: nextPartId(),
+				toolCallId,
+				name: resolvedToolName,
+				output: resolvedOutput,
+				isError: Boolean(resolvedIsError),
 			};
 
-			const targetIndex =
-				message.toolCallId || message.tool_call_id
-					? toolUseIndexById.get(toolCallId)
-					: resolvePendingByName(message.toolName ?? message.tool_name);
+			const targetIndex = resolvedToolCallId
+				? toolCallIndexById.get(toolCallId)
+				: resolvePendingByName(resolvedToolName);
 
 			if (targetIndex !== undefined) {
 				display[targetIndex].parts.push(toolResultPart);
@@ -367,39 +444,37 @@ export function normalizePiMessages(
 			continue;
 		}
 
+		// --- Regular messages (user, assistant, system) ---
 		const normalizedRole =
 			role === "user" || role === "assistant" || role === "system"
 				? role
-				: role === "tool"
-					? "assistant"
-					: "assistant";
-		// Use canonical parts directly when available, otherwise fall back
-		// to the legacy Pi content normalization.
-		const parts = canonicalParts
-			? canonicalPartsToPiParts(canonicalParts)
-			: normalizePiContentToParts(content);
-		// Extract client_id for optimistic message matching (canonical protocol)
+				: "assistant";
+		const parts = normalizeContentToParts(content);
 		const clientId = message.client_id ?? message.clientId;
-		const displayMessage: PiDisplayMessage = {
+		const msgModel = message.model_id ?? message.model ?? null;
+		const msgProvider = message.provider_id ?? message.provider ?? null;
+		const displayMessage: DisplayMessage = {
 			id: `${idPrefix}-${idx}`,
 			role: normalizedRole,
 			parts,
 			timestamp,
 			usage: message.usage,
 			clientId,
+			model: msgModel,
+			provider: msgProvider,
 		};
 
 		display.push(displayMessage);
 
 		if (normalizedRole === "assistant") {
 			for (const part of parts) {
-				if (part.type === "tool_use" && part.id) {
-					toolUseIndexById.set(part.id, display.length - 1);
+				if (part.type === "tool_call" && part.toolCallId) {
+					toolCallIndexById.set(part.toolCallId, display.length - 1);
 					addPendingByName(part.name, display.length - 1);
 				}
 				if (part.type === "tool_result") {
-					const id = part.id;
-					const indexById = id ? toolUseIndexById.get(id) : undefined;
+					const tcId = part.toolCallId;
+					const indexById = tcId ? toolCallIndexById.get(tcId) : undefined;
 					const indexByName = resolvePendingByName(part.name);
 					const targetIndex = indexById ?? indexByName;
 					if (targetIndex !== undefined && targetIndex !== display.length - 1) {
@@ -413,41 +488,59 @@ export function normalizePiMessages(
 	return display;
 }
 
-/** Convert Pi agent messages to display messages */
+// ============================================================================
+// Backward-compatible aliases (used by existing callers)
+// ============================================================================
+
+/** @deprecated Use normalizeMessages */
+export const normalizePiMessages = normalizeMessages;
+
+/** @deprecated Use normalizeContentToParts */
+export const normalizePiContentToParts = normalizeContentToParts;
+
+// ============================================================================
+// Converter functions for specific message sources
+// ============================================================================
+
+/** Convert Pi agent messages to display messages. */
 export function convertToDisplayMessages(
 	agentMessages: PiAgentMessage[],
-): PiDisplayMessage[] {
-	const rawMessages: RawPiMessage[] = agentMessages.map((msg) => ({
+): DisplayMessage[] {
+	const rawMessages: RawMessage[] = agentMessages.map((msg) => ({
 		role: msg.role,
 		content: msg.content,
 		timestamp: msg.timestamp,
 		usage: msg.usage,
 	}));
-	return normalizePiMessages(rawMessages, "pi-hist");
+	return normalizeMessages(rawMessages, "hist");
 }
 
-/** Convert session messages to display messages */
+/** Convert session messages to display messages. */
 export function convertSessionMessagesToDisplay(
 	sessionMessages: PiSessionMessage[],
-): PiDisplayMessage[] {
-	const rawMessages: RawPiMessage[] = sessionMessages.map((msg) => ({
+): DisplayMessage[] {
+	const rawMessages: RawMessage[] = sessionMessages.map((msg) => ({
 		id: msg.id,
 		role: msg.role,
 		content: msg.content,
 		timestamp: msg.timestamp || Date.now(),
-		usage: msg.usage as PiAgentMessage["usage"],
+		usage: msg.usage as DisplayMessage["usage"],
 		toolCallId: msg.toolCallId,
 		toolName: msg.toolName,
 		isError: msg.isError,
 	}));
-	return normalizePiMessages(rawMessages, "pi-session");
+	return normalizeMessages(rawMessages, "session");
 }
 
-/** Get the maximum message ID number from a list of messages */
-export function getMaxPiMessageId(messages: PiDisplayMessage[]): number {
+// ============================================================================
+// Message ID utilities
+// ============================================================================
+
+/** Get the maximum message ID number from a list of messages. */
+export function getMaxMessageId(messages: DisplayMessage[]): number {
 	let maxId = 0;
 	for (const message of messages) {
-		const match = PI_MESSAGE_ID_PATTERN.exec(message.id);
+		const match = MESSAGE_ID_PATTERN.exec(message.id);
 		if (!match) continue;
 		const value = Number.parseInt(match[1] ?? "0", 10);
 		if (!Number.isNaN(value) && value > maxId) {
@@ -457,38 +550,32 @@ export function getMaxPiMessageId(messages: PiDisplayMessage[]): number {
 	return maxId;
 }
 
-/** Check if a message should be preserved during server refresh */
-export function shouldPreserveLocalMessage(message: PiDisplayMessage): boolean {
-	// Local optimistic messages (not yet persisted) use pi-msg-* IDs.
-	// Keep them when server refreshes history to avoid clobbering in-flight streaming.
-	if (PI_MESSAGE_ID_PATTERN.test(message.id)) return true;
+/** @deprecated Use getMaxMessageId */
+export const getMaxPiMessageId = getMaxMessageId;
+
+/** Check if a message should be preserved during server refresh. */
+export function shouldPreserveLocalMessage(message: DisplayMessage): boolean {
+	if (MESSAGE_ID_PATTERN.test(message.id)) return true;
 	if (message.id.startsWith("compaction-")) return true;
 	return false;
 }
 
-/** Safely stringify a value for fingerprinting */
-function safeStringify(value: unknown): string {
-	if (value === null || value === undefined) return "";
-	if (typeof value === "string") return value;
-	try {
-		return JSON.stringify(value);
-	} catch {
-		return String(value);
-	}
-}
+// ============================================================================
+// Fingerprinting and merge
+// ============================================================================
 
-/** Create a fingerprint for a message (used for deduplication) */
-export function messageFingerprint(message: PiDisplayMessage): string {
+/** Create a fingerprint for a message (used for deduplication). */
+export function messageFingerprint(message: DisplayMessage): string {
 	const parts = message.parts.map((part) => {
 		switch (part.type) {
 			case "text":
-				return `text:${part.content}`;
+				return `text:${part.text}`;
 			case "thinking":
-				return `thinking:${part.content}`;
-			case "tool_use":
-				return `tool_use:${part.name}:${safeStringify(part.input)}`;
+				return `thinking:${part.text}`;
+			case "tool_call":
+				return `tool_call:${part.name}:${safeStringify(part.input)}`;
 			case "tool_result":
-				return `tool_result:${part.name ?? ""}:${safeStringify(part.content)}:${
+				return `tool_result:${part.name ?? ""}:${safeStringify(part.output)}:${
 					part.isError ? "1" : "0"
 				}`;
 			case "compaction":
@@ -500,45 +587,38 @@ export function messageFingerprint(message: PiDisplayMessage): string {
 	return `${message.role}|${parts.join("|")}`;
 }
 
-function messageTextSignature(message: PiDisplayMessage): string {
+function messageTextSignature(message: DisplayMessage): string {
 	return message.parts
-		.flatMap((p) => (p.type === "text" ? [p.content] : []))
+		.flatMap((p) => (p.type === "text" ? [p.text] : []))
 		.join("")
 		.trim();
 }
 
-/** Merge server messages with local messages, preserving in-flight optimistic updates.
+/**
+ * Merge server messages with local messages, preserving in-flight optimistic updates.
  *
  * Matching strategy (in order of priority):
  * 1. client_id match: If a server message has a client_id that matches a local
- *    optimistic message, they represent the same message. The local message is
- *    replaced by the server version (which has the real server-assigned ID).
+ *    optimistic message, they represent the same message.
  * 2. id match: Direct ID match means the same message.
  * 3. content/fingerprint match: Same text content around the same time = same message.
  */
 export function mergeServerMessages(
-	previous: PiDisplayMessage[],
-	serverMessages: PiDisplayMessage[],
-): PiDisplayMessage[] {
-	// If the server returned fewer messages than we already have locally,
-	// the server response is likely a partial view (Pi's get_messages RPC
-	// only returns the current context window, not full history). In this
-	// case, merge new server messages into local state without dropping
-	// existing messages.
+	previous: DisplayMessage[],
+	serverMessages: DisplayMessage[],
+): DisplayMessage[] {
+	// If the server returned fewer messages, merge incrementally.
 	if (serverMessages.length < previous.length && previous.length > 0) {
-		// Find server messages that replace local ones (by ID, client_id, or text match)
 		const result = [...previous];
 		for (const serverMsg of serverMessages) {
 			let matched = false;
 			for (let i = 0; i < result.length; i++) {
 				const local = result[i];
-				// Match by ID
 				if (local.id === serverMsg.id) {
 					result[i] = serverMsg;
 					matched = true;
 					break;
 				}
-				// Match by client_id
 				if (
 					local.clientId &&
 					serverMsg.clientId &&
@@ -550,7 +630,6 @@ export function mergeServerMessages(
 				}
 			}
 			if (!matched) {
-				// New message from server — append at the end
 				result.push(serverMsg);
 			}
 		}
@@ -558,7 +637,6 @@ export function mergeServerMessages(
 	}
 
 	const serverIds = new Set(serverMessages.map((m) => m.id));
-	// Build a set of client_ids from server messages for quick lookup
 	const serverClientIds = new Set(
 		serverMessages.filter((m) => m.clientId).map((m) => m.clientId),
 	);
@@ -575,25 +653,16 @@ export function mergeServerMessages(
 		if (!shouldPreserveLocalMessage(message)) return false;
 		if (serverIds.has(message.id)) return false;
 
-		// Priority 1: client_id match - if the local message has a clientId and
-		// a server message has the same clientId, they represent the same message.
-		// The server version replaces the local optimistic version.
 		if (message.clientId && serverClientIds.has(message.clientId)) {
-			return false; // Drop local, server version supersedes
+			return false;
 		}
 
-		// Priority 2: If the server has the same text content around the same time,
-		// drop the local message even if part segmentation differs (prevents duplicate bubbles).
 		const localText = messageTextSignature(message);
 		if (localText) {
 			for (const server of serverTextEntries) {
 				if (server.role !== message.role) continue;
 				if (!server.text) continue;
 				if (server.text !== localText) continue;
-				// Timestamps may be 0 (default when Pi JSONL lacks the field).
-				// Treat missing/zero timestamps as "unknown" -- if both are
-				// present and positive, require them to be within the window;
-				// otherwise assume they match (same content = same message).
 				const hasServerTs = server.timestamp != null && server.timestamp > 0;
 				const hasLocalTs = message.timestamp != null && message.timestamp > 0;
 				if (hasServerTs && hasLocalTs) {
@@ -604,12 +673,9 @@ export function mergeServerMessages(
 			}
 		}
 
-		// Priority 3: Fingerprint match (content hash + role + timestamp window)
 		const localFingerprint = messageFingerprint(message);
 		for (const server of serverEntries) {
 			if (server.fingerprint !== localFingerprint) continue;
-			// Same timestamp handling as above -- treat 0/missing as "unknown"
-			// and assume matching fingerprint means same message.
 			const hasServerTs = server.timestamp != null && server.timestamp > 0;
 			const hasLocalTs = message.timestamp != null && message.timestamp > 0;
 			if (hasServerTs && hasLocalTs) {

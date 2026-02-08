@@ -1,5 +1,5 @@
 import type { ChatSession } from "@/lib/control-plane-client";
-import { normalizeWorkspacePath } from "@/lib/session-utils";
+import { getDisplayPiTitle, normalizeWorkspacePath } from "@/lib/session-utils";
 import { useCallback, useState } from "react";
 
 export interface SessionDialogsState {
@@ -73,7 +73,7 @@ export function useSessionDialogs(): SessionDialogsState {
 		(sessionId: string, chatHistory: ChatSession[]) => {
 			const session = chatHistory.find((s) => s.id === sessionId);
 			setTargetSessionId(sessionId);
-			setRenameInitialValue(session?.title || "");
+			setRenameInitialValue(session ? getDisplayPiTitle(session) : "");
 			setRenameDialogOpen(true);
 		},
 		[],

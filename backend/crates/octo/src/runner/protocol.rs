@@ -1431,6 +1431,12 @@ pub struct OpencodeSessionInfo {
     pub version: Option<String>,
     /// Whether this session is a child session.
     pub is_child: bool,
+    /// Last used model ID (from hstry conversation).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// Last used provider ID (from hstry conversation).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
 }
 
 /// Response with list of OpenCode sessions.

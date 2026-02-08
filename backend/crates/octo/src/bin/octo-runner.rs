@@ -73,6 +73,7 @@ struct RunnerUserConfig {
     opencode_binary: String,
     fileserver_binary: String,
     ttyd_binary: String,
+    pi_binary: String,
     /// Data directories
     workspace_dir: PathBuf,
     pi_sessions_dir: PathBuf,
@@ -85,6 +86,21 @@ struct RunnerUserConfig {
 struct ConfigFile {
     local: LocalSection,
     runner: RunnerSection,
+    pi: PiSection,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+struct PiSection {
+    executable: String,
+}
+
+impl Default for PiSection {
+    fn default() -> Self {
+        Self {
+            executable: "pi".to_string(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -160,10 +176,42 @@ impl RunnerUserConfig {
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from(&home).join(".local").join("share"));
 
+        // Resolve pi binary: config value, then PATH lookup, then bun fallback
+        let pi_binary = {
+            let configured = &config_file.pi.executable;
+            if configured.contains('/') {
+                // Absolute or relative path - use as-is
+                configured.clone()
+            } else {
+                // Bare name - resolve via which/PATH
+                match std::process::Command::new("which")
+                    .arg(configured)
+                    .output()
+                {
+                    Ok(output) if output.status.success() => {
+                        String::from_utf8_lossy(&output.stdout).trim().to_string()
+                    }
+                    _ => {
+                        // Fallback to ~/.bun/bin/pi
+                        let fallback =
+                            PathBuf::from(&home).join(".bun/bin/pi");
+                        warn!(
+                            "Could not resolve '{}' in PATH, falling back to {}",
+                            configured,
+                            fallback.display()
+                        );
+                        fallback.to_string_lossy().to_string()
+                    }
+                }
+            }
+        };
+        info!("Pi binary: {}", pi_binary);
+
         Self {
             opencode_binary: config_file.local.opencode_binary,
             fileserver_binary: config_file.local.fileserver_binary,
             ttyd_binary: config_file.local.ttyd_binary,
+            pi_binary,
             workspace_dir: Self::expand_path(&config_file.local.workspace_dir, &home),
             pi_sessions_dir: config_file
                 .runner
@@ -1975,6 +2023,8 @@ impl Runner {
                         updated_at: s.updated_at,
                         version: s.version,
                         is_child: s.is_child,
+                        model: s.model,
+                        provider: s.provider,
                     })
                     .collect();
 
@@ -2003,6 +2053,8 @@ impl Runner {
                     updated_at: s.updated_at,
                     version: s.version,
                     is_child: s.is_child,
+                    model: s.model,
+                    provider: s.provider,
                 }),
             }),
             Ok(None) => RunnerResponse::OpencodeSession(OpencodeSessionResponse { session: None }),
@@ -2104,6 +2156,8 @@ impl Runner {
                         updated_at: s.updated_at,
                         version: s.version,
                         is_child: s.is_child,
+                        model: s.model,
+                        provider: s.provider,
                     },
                 }),
                 Err(e) => error_response(
@@ -2530,12 +2584,29 @@ impl Runner {
 
         match self.pi_manager.get_available_models(&req.session_id).await {
             Ok(models) => {
-                // Parse JSON response to typed PiModel vec
-                let models_vec: Vec<octo::pi::PiModel> = models
+                // pi_manager now returns a flat array, but handle object wrapper as fallback
+                let models_arr = if models.is_array() {
+                    &models
+                } else if let Some(inner) = models.get("models") {
+                    inner
+                } else {
+                    &models
+                };
+                let models_vec: Vec<octo::pi::PiModel> = models_arr
                     .as_array()
                     .map(|arr| {
                         arr.iter()
-                            .filter_map(|v| serde_json::from_value(v.clone()).ok())
+                            .filter_map(|v| {
+                                match serde_json::from_value::<octo::pi::PiModel>(v.clone()) {
+                                    Ok(m) => Some(m),
+                                    Err(e) => {
+                                        let provider = v.get("provider").and_then(|p| p.as_str()).unwrap_or("?");
+                                        let id = v.get("id").and_then(|i| i.as_str()).unwrap_or("?");
+                                        warn!("Failed to deserialize model {}/{}: {}", provider, id, e);
+                                        None
+                                    }
+                                }
+                            })
                             .collect()
                     })
                     .unwrap_or_default();
@@ -3334,6 +3405,12 @@ async fn main() -> Result<()> {
         warn!("Sandbox disabled - processes will run without isolation");
     }
 
+    // Load environment variables from ~/.config/octo/env
+    // This file uses KEY=VALUE format (one per line, # comments, no quoting needed).
+    // These are set as process-level env vars so all child processes (Pi, etc.) inherit them.
+    // Typical use: API keys that systemd services don't inherit from shell profiles.
+    load_env_file();
+
     // Load user config from ~/.config/octo/config.toml (or custom path)
     let user_config = args
         .config
@@ -3363,8 +3440,7 @@ async fn main() -> Result<()> {
 
     // Create PiSessionManager for managing Pi agent processes
     let pi_config = PiManagerConfig {
-        pi_binary: PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string()))
-            .join(".bun/bin/pi"),
+        pi_binary: PathBuf::from(&user_config.pi_binary),
         default_cwd: user_config.workspace_dir.clone(),
         idle_timeout_secs: 300, // 5 minutes
         cleanup_interval_secs: 60,
@@ -3423,6 +3499,52 @@ async fn ensure_user_service(name: &str) {
         }
         Err(e) => {
             warn!("Failed to run `{} service start`: {}", name, e);
+        }
+    }
+}
+
+/// Load environment variables from `~/.config/octo/env`.
+///
+/// Format: one `KEY=VALUE` per line. Lines starting with `#` are comments.
+/// Empty lines are skipped. Values are NOT shell-unquoted (quotes are literal).
+/// Variables are set into the process environment so all child processes inherit them.
+fn load_env_file() {
+    let env_path = std::env::var("XDG_CONFIG_HOME")
+        .unwrap_or_else(|_| {
+            let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+            format!("{}/.config", home)
+        })
+        + "/octo/env";
+
+    let path = std::path::Path::new(&env_path);
+    if !path.exists() {
+        debug!("No env file at {}, skipping", env_path);
+        return;
+    }
+
+    match std::fs::read_to_string(path) {
+        Ok(contents) => {
+            let mut count = 0;
+            for line in contents.lines() {
+                let trimmed = line.trim();
+                if trimmed.is_empty() || trimmed.starts_with('#') {
+                    continue;
+                }
+                if let Some((key, value)) = trimmed.split_once('=') {
+                    let key = key.trim();
+                    let value = value.trim();
+                    if !key.is_empty() {
+                        // SAFETY: This runs at startup before any threads are spawned
+                        // for child process management, so there are no data races.
+                        unsafe { std::env::set_var(key, value) };
+                        count += 1;
+                    }
+                }
+            }
+            info!("Loaded {} environment variables from {}", count, env_path);
+        }
+        Err(e) => {
+            warn!("Failed to read env file {}: {}", env_path, e);
         }
     }
 }

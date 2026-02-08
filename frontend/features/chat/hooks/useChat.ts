@@ -31,19 +31,21 @@ import {
 } from "./cache";
 import {
 	convertCanonicalMessageToDisplay,
-	getMaxPiMessageId,
+	getMaxMessageId,
 	mergeServerMessages,
-	normalizePiContentToParts,
-	normalizePiMessages,
+	nextPartId,
+	normalizeContentToParts,
+	normalizeMessages,
 } from "./message-utils";
 import type {
 	AgentState,
-	PiDisplayMessage,
-	PiMessagePart,
-	PiSendMode,
-	PiSendOptions,
-	UsePiChatOptions,
-	UsePiChatReturn,
+	DisplayMessage,
+	DisplayPart,
+	RawMessage,
+	SendMode,
+	SendOptions,
+	UseChatOptions,
+	UseChatReturn,
 } from "./types";
 
 const BATCH_FLUSH_INTERVAL_MS = 50;
@@ -64,7 +66,7 @@ function isPiDebugEnabled(): boolean {
  * Hook for managing Pi chat using the multiplexed WebSocket.
  * Provides the same API as the legacy hook for easy migration.
  */
-export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
+export function useChat(options: UseChatOptions = {}): UseChatReturn {
 	const {
 		autoConnect = true,
 		workspacePath = null,
@@ -89,7 +91,7 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 
 	// State
 	const [state, setState] = useState<AgentState | null>(null);
-	const [messages, setMessages] = useState<PiDisplayMessage[]>(
+	const [messages, setMessages] = useState<DisplayMessage[]>(
 		activeSessionId
 			? readCachedSessionMessages(activeSessionId, resolvedStorageKeyPrefix)
 			: [],
@@ -101,8 +103,8 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 	const { setSessionBusy } = useBusySessions();
 
 	// Refs
-	const messageIdRef = useRef(getMaxPiMessageId(messages));
-	const streamingMessageRef = useRef<PiDisplayMessage | null>(null);
+	const messageIdRef = useRef(getMaxMessageId(messages));
+	const streamingMessageRef = useRef<DisplayMessage | null>(null);
 	const lastAssistantMessageIdRef = useRef<string | null>(null);
 	const unsubscribeRef = useRef<(() => void) | null>(null);
 	const messagesRef = useRef(messages);
@@ -140,10 +142,10 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 
 	const appendLocalAssistantMessage = useCallback(
 		(content: string) => {
-			const assistantMessage: PiDisplayMessage = {
+			const assistantMessage: DisplayMessage = {
 				id: nextMessageId(),
 				role: "assistant",
-				parts: [{ type: "text", content }],
+				parts: [{ type: "text", id: nextPartId(), text: content }],
 				timestamp: Date.now(),
 			};
 			setMessages((prev) => [...prev, assistantMessage]);
@@ -161,7 +163,7 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 	}, [normalizedWorkspacePath]);
 
 	const appendPartToMessage = useCallback(
-		(messageId: string, part: PiMessagePart) => {
+		(messageId: string, part: DisplayPart) => {
 			setMessages((prev) => {
 				const idx = prev.findIndex((m) => m.id === messageId);
 				if (idx < 0) return prev;
@@ -187,7 +189,7 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 					return existing;
 				}
 			}
-			const assistantMessage: PiDisplayMessage = {
+			const assistantMessage: DisplayMessage = {
 				id: nextMessageId(),
 				role: "assistant",
 				parts: [],
@@ -290,8 +292,16 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 				// -- Streaming lifecycle --
 				case "stream.message_start": {
 					setBusyForEvent(event.session_id ?? activeSessionIdRef.current, true);
-					if (!streamingMessageRef.current) {
-						const assistantMessage: PiDisplayMessage = {
+					// Only create a display message for assistant-role messages.
+					// The backend sends message_start for every Pi message
+					// including user echoes (steer) and tool-result messages
+					// (role "user" or "tool"). Displaying those would duplicate
+					// the user prompt or show raw tool output as text.
+					const msgRole = event.role as string | undefined;
+					const isAssistant =
+						!msgRole || msgRole === "assistant" || msgRole === "agent";
+					if (isAssistant && !streamingMessageRef.current) {
+						const assistantMessage: DisplayMessage = {
 							id: nextMessageId(),
 							role: "assistant",
 							parts: [],
@@ -314,9 +324,9 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 					const currentMsg = ensureAssistantMessage(true);
 					const lastPart = currentMsg.parts[currentMsg.parts.length - 1];
 					if (lastPart?.type === "text") {
-						lastPart.content += delta;
+						(lastPart as { text: string }).text += delta;
 					} else {
-						currentMsg.parts.push({ type: "text", content: delta });
+						currentMsg.parts.push({ type: "text", id: nextPartId(), text: delta });
 					}
 					scheduleStreamingUpdate();
 					setIsAwaitingResponse(false);
@@ -330,9 +340,9 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 					const currentMsg = ensureAssistantMessage(true);
 					const lastPart = currentMsg.parts[currentMsg.parts.length - 1];
 					if (lastPart?.type === "thinking") {
-						lastPart.content += delta;
+						(lastPart as { text: string }).text += delta;
 					} else {
-						currentMsg.parts.push({ type: "thinking", content: delta });
+						currentMsg.parts.push({ type: "thinking", id: nextPartId(), text: delta });
 					}
 					scheduleStreamingUpdate();
 					setIsAwaitingResponse(false);
@@ -345,14 +355,16 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 					const name = event.name as string;
 					const targetMessage = ensureAssistantMessage(true);
 					const alreadyPresent = targetMessage.parts.some(
-						(p) => p.type === "tool_use" && p.id === toolCallId,
+						(p) => p.type === "tool_call" && p.toolCallId === toolCallId,
 					);
 					if (!alreadyPresent) {
-						const part: PiMessagePart = {
-							type: "tool_use",
-							id: toolCallId,
+						const part: DisplayPart = {
+							type: "tool_call",
+							id: nextPartId(),
+							toolCallId,
 							name,
 							input: undefined,
+							status: "running",
 						};
 						if (streamingMessageRef.current?.id === targetMessage.id) {
 							targetMessage.parts.push(part);
@@ -374,9 +386,9 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 					if (!toolCall) break;
 					const targetMessage = ensureAssistantMessage(true);
 					const existingPart = targetMessage.parts.find(
-						(p) => p.type === "tool_use" && p.id === toolCall.id,
+						(p) => p.type === "tool_call" && p.toolCallId === toolCall.id,
 					);
-					if (existingPart && existingPart.type === "tool_use") {
+					if (existingPart && existingPart.type === "tool_call") {
 						existingPart.input = toolCall.input;
 						scheduleStreamingUpdate();
 					}
@@ -388,18 +400,20 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 					const toolCallId = event.tool_call_id as string;
 					const name = event.name as string;
 					const input = event.input;
-					// Ensure there's a tool_use part for this tool (in case we missed
+					// Ensure there's a tool_call part for this tool (in case we missed
 					// stream.tool_call_start, e.g. on reconnect)
 					const targetMessage = ensureAssistantMessage(true);
 					const existing = targetMessage.parts.find(
-						(p) => p.type === "tool_use" && p.id === toolCallId,
+						(p) => p.type === "tool_call" && p.toolCallId === toolCallId,
 					);
 					if (!existing) {
-						const part: PiMessagePart = {
-							type: "tool_use",
-							id: toolCallId,
+						const part: DisplayPart = {
+							type: "tool_call",
+							id: nextPartId(),
+							toolCallId,
 							name,
 							input,
+							status: "running",
 						};
 						if (streamingMessageRef.current?.id === targetMessage.id) {
 							targetMessage.parts.push(part);
@@ -420,18 +434,22 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 					const output = event.output;
 					const isError = event.is_error as boolean;
 					const targetMessage = ensureAssistantMessage(false);
-					const matchingToolUse = targetMessage.parts.find(
-						(p) => p.type === "tool_use" && p.id === toolCallId,
+					const matchingToolCall = targetMessage.parts.find(
+						(p) => p.type === "tool_call" && p.toolCallId === toolCallId,
 					);
-					const part: PiMessagePart = {
+					if (matchingToolCall && matchingToolCall.type === "tool_call") {
+						matchingToolCall.status = isError ? "error" : "success";
+					}
+					const part: DisplayPart = {
 						type: "tool_result",
-						id: toolCallId,
+						id: nextPartId(),
+						toolCallId,
 						name:
 							name ||
-							(matchingToolUse?.type === "tool_use"
-								? matchingToolUse.name
+							(matchingToolCall?.type === "tool_call"
+								? matchingToolCall.name
 								: undefined),
-						content: output,
+						output,
 						isError,
 					};
 					if (streamingMessageRef.current?.id === targetMessage.id) {
@@ -492,22 +510,55 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 
 				// -- Message complete (canonical full message) --
 				case "stream.message_end": {
-					const fallbackId = streamingMessageRef.current?.id ?? nextMessageId();
+					// If no streaming message exists, this message_end is for a
+					// non-assistant message (user echo or tool result) that was
+					// already skipped in message_start. Nothing to finalize.
+					if (!streamingMessageRef.current) break;
+
+					const fallbackId = streamingMessageRef.current.id;
 					const canonical = convertCanonicalMessageToDisplay(
 						event.message,
 						fallbackId,
 					);
 					if (!canonical) break;
-					const messageId = streamingMessageRef.current?.id ?? canonical.id;
-					const updated: PiDisplayMessage = {
-						...canonical,
-						role: "assistant",
-						id: messageId,
-						isStreaming: streamingMessageRef.current?.isStreaming ?? false,
-					};
-					if (streamingMessageRef.current) {
-						streamingMessageRef.current = updated;
+
+					// Secondary guard: skip user messages (steer echo) that
+					// slipped through message_start (e.g. role field missing).
+					if (canonical.role === "user") {
+						if (streamingMessageRef.current.parts.length === 0) {
+							const emptyId = streamingMessageRef.current.id;
+							setMessages((prev) => prev.filter((m) => m.id !== emptyId));
+						}
+						streamingMessageRef.current = null;
+						break;
 					}
+
+					const messageId = streamingMessageRef.current.id;
+
+					// If we have a streaming message with accumulated parts from
+					// text_delta/thinking_delta/tool events, preserve those parts
+					// instead of replacing them with the canonical message's parts.
+					// The canonical message from stream.message_end contains the
+					// same content but in raw canonical format (raw tool_call JSON,
+					// etc.) which would overwrite the nicely streamed content.
+					// Only use the canonical message for metadata (usage, model).
+					const hasStreamedParts = streamingMessageRef.current.parts.length > 0;
+					const updated: DisplayMessage = hasStreamedParts
+						? {
+								...streamingMessageRef.current,
+								id: messageId,
+								role: "assistant",
+								isStreaming: false,
+								// Merge metadata from canonical message
+								usage: canonical.usage ?? streamingMessageRef.current.usage,
+							}
+						: {
+								...canonical,
+								role: "assistant",
+								id: messageId,
+								isStreaming: false,
+							};
+
 					lastAssistantMessageIdRef.current = updated.id;
 					setMessages((prev) => {
 						const idx = prev.findIndex((m) => m.id === updated.id);
@@ -518,15 +569,22 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 						}
 						return [...prev, updated];
 					});
-					// Clear in-flight state on message_end.
-					sendInFlightRef.current = false;
-					isStreamingRef.current = false;
-					setIsStreaming(false);
+
+					// Flush any pending batched update so it doesn't overwrite
+					// the finalized message.
+					const endBatch = batchedUpdateRef.current;
+					if (endBatch.rafId !== null) {
+						cancelAnimationFrame(endBatch.rafId);
+						endBatch.rafId = null;
+					}
+					endBatch.pendingUpdate = false;
+
+					// Finalize this message: call onMessageComplete and clear the
+					// streaming ref so the next stream.message_start (for a
+					// subsequent assistant turn) creates a new message.
+					onMessageComplete?.(updated);
+					streamingMessageRef.current = null;
 					setIsAwaitingResponse(false);
-					setBusyForEvent(
-						event.session_id ?? activeSessionIdRef.current,
-						false,
-					);
 					break;
 				}
 
@@ -620,7 +678,8 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 						streamingMessageRef.current.isStreaming = false;
 						streamingMessageRef.current.parts.push({
 							type: "error",
-							content: errMsg,
+							id: nextPartId(),
+							text: errMsg,
 						});
 						const completedMessage = {
 							...streamingMessageRef.current,
@@ -640,10 +699,10 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 						onMessageComplete?.(completedMessage);
 						streamingMessageRef.current = null;
 					} else {
-						const errorMessage: PiDisplayMessage = {
+						const errorMessage: DisplayMessage = {
 							id: nextMessageId(),
 							role: "assistant",
-							parts: [{ type: "error", content: errMsg }],
+							parts: [{ type: "error", id: nextPartId(), text: errMsg }],
 							timestamp: Date.now(),
 							isStreaming: false,
 						};
@@ -656,9 +715,10 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 				// -- Compaction --
 				case "compact.start": {
 					const currentMsg = ensureAssistantMessage(false);
-					const part: PiMessagePart = {
+					const part: DisplayPart = {
 						type: "compaction",
-						content: "Compacting context...",
+						id: nextPartId(),
+						text: "Compacting context...",
 					};
 					if (streamingMessageRef.current?.id === currentMsg.id) {
 						currentMsg.parts.push(part);
@@ -674,9 +734,10 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 					if (!success) {
 						const errText = (event.error as string) || "Compaction failed";
 						const currentMsg = ensureAssistantMessage(false);
-						const part: PiMessagePart = {
+						const part: DisplayPart = {
 							type: "error",
-							content: errText,
+							id: nextPartId(),
+							text: errText,
 						};
 						if (streamingMessageRef.current?.id === currentMsg.id) {
 							currentMsg.parts.push(part);
@@ -771,14 +832,14 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 					}
 					const msgs = event.messages;
 					if (Array.isArray(msgs)) {
-						const displayMessages = normalizePiMessages(
+						const displayMessages = normalizeMessages(
 							msgs,
 							`server-${event.session_id}`,
 						);
 
 						if (displayMessages.length > 0) {
 							setMessages((prev) => mergeServerMessages(prev, displayMessages));
-							messageIdRef.current = getMaxPiMessageId(displayMessages);
+							messageIdRef.current = getMaxMessageId(displayMessages);
 							const lastAssistant = [...displayMessages]
 								.reverse()
 								.find((msg) => msg.role === "assistant");
@@ -926,18 +987,18 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 								break;
 							}
 							if (resp.success && resp.data) {
-								const data = resp.data as { messages?: unknown[] };
+								const data = resp.data as { messages?: RawMessage[] };
 								const msgs = data.messages;
 								if (Array.isArray(msgs)) {
-									const displayMessages = normalizePiMessages(
-										msgs,
+									const displayMessages = normalizeMessages(
+										msgs as RawMessage[],
 										`server-${event.session_id}`,
 									);
 									if (displayMessages.length > 0) {
 										setMessages((prev) =>
 											mergeServerMessages(prev, displayMessages),
 										);
-										messageIdRef.current = getMaxPiMessageId(displayMessages);
+										messageIdRef.current = getMaxMessageId(displayMessages);
 										const lastAssistant = [...displayMessages]
 											.reverse()
 											.find((msg) => msg.role === "assistant");
@@ -1116,9 +1177,9 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 
 	// Send message
 	const send = useCallback(
-		async (message: string, options?: PiSendOptions) => {
+		async (message: string, options?: SendOptions) => {
 			sendInFlightRef.current = true;
-			const mode: PiSendMode = options?.mode ?? "prompt";
+			const mode: SendMode = options?.mode ?? "prompt";
 			let sessionId = options?.sessionId ?? activeSessionIdRef.current;
 			if (
 				options?.sessionId &&
@@ -1173,10 +1234,10 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 					: `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
 			// Add user message to display with client_id for later matching
-			const userMessage: PiDisplayMessage = {
+			const userMessage: DisplayMessage = {
 				id: nextMessageId(),
 				role: "user",
-				parts: [{ type: "text", content: message }],
+				parts: [{ type: "text", id: nextPartId(), text: message }],
 				timestamp: Date.now(),
 				clientId,
 			};
@@ -1358,7 +1419,7 @@ export function useChat(options: UsePiChatOptions = {}): UsePiChatReturn {
 				);
 				if (cached.length > 0) {
 					setMessages(cached);
-					messageIdRef.current = getMaxPiMessageId(cached);
+					messageIdRef.current = getMaxMessageId(cached);
 					const lastAssistant = [...cached]
 						.reverse()
 						.find((msg) => msg.role === "assistant");
