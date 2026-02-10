@@ -145,56 +145,12 @@ fn extract_text_content(content: &Value) -> String {
 /// Build parts JSON from Pi message content.
 fn build_parts_json(content: &Value, msg: &AgentMessage) -> String {
     let mut parts: Vec<Value> = Vec::new();
+    let is_tool_result = msg.role == "tool" || msg.role == "toolResult";
 
-    match content {
-        Value::String(text) => {
-            parts.push(serde_json::json!({
-                "type": "text",
-                "text": text
-            }));
-        }
-        Value::Array(blocks) => {
-            for block in blocks {
-                if let Some(obj) = block.as_object() {
-                    let block_type = obj.get("type").and_then(|t| t.as_str()).unwrap_or("");
-                    match block_type {
-                        "text" => {
-                            if let Some(text) = obj.get("text") {
-                                parts.push(serde_json::json!({
-                                    "type": "text",
-                                    "text": text
-                                }));
-                            }
-                        }
-                        "thinking" => {
-                            if let Some(text) = obj.get("thinking") {
-                                parts.push(serde_json::json!({
-                                    "type": "thinking",
-                                    "text": text
-                                }));
-                            }
-                        }
-                        "tool_use" => {
-                            parts.push(serde_json::json!({
-                                "type": "tool_call",
-                                "id": obj.get("id").cloned().unwrap_or(Value::Null),
-                                "name": obj.get("name").cloned().unwrap_or(Value::Null),
-                                "input": obj.get("input").or(obj.get("arguments")).cloned()
-                            }));
-                        }
-                        _ => {
-                            // Pass through unknown types
-                            parts.push(block.clone());
-                        }
-                    }
-                }
-            }
-        }
-        _ => {}
-    }
-
-    // Add tool_result part for tool role messages
-    if msg.role == "tool" || msg.role == "toolResult" {
+    // For tool result messages, only emit the tool_result part.
+    // Text content is redundant with the tool output and would leak into
+    // chat as visible text if included alongside the tool_result.
+    if is_tool_result {
         let tool_call_id = msg.tool_call_id.clone().unwrap_or_default();
         parts.push(serde_json::json!({
             "type": "tool_result",
@@ -203,6 +159,54 @@ fn build_parts_json(content: &Value, msg: &AgentMessage) -> String {
             "output": content,
             "is_error": msg.is_error.unwrap_or(false)
         }));
+    } else {
+        match content {
+            Value::String(text) => {
+                parts.push(serde_json::json!({
+                    "type": "text",
+                    "text": text
+                }));
+            }
+            Value::Array(blocks) => {
+                for block in blocks {
+                    if let Some(obj) = block.as_object() {
+                        let block_type =
+                            obj.get("type").and_then(|t| t.as_str()).unwrap_or("");
+                        match block_type {
+                            "text" => {
+                                if let Some(text) = obj.get("text") {
+                                    parts.push(serde_json::json!({
+                                        "type": "text",
+                                        "text": text
+                                    }));
+                                }
+                            }
+                            "thinking" => {
+                                if let Some(text) = obj.get("thinking") {
+                                    parts.push(serde_json::json!({
+                                        "type": "thinking",
+                                        "text": text
+                                    }));
+                                }
+                            }
+                            "tool_use" => {
+                                parts.push(serde_json::json!({
+                                    "type": "tool_call",
+                                    "id": obj.get("id").cloned().unwrap_or(Value::Null),
+                                    "name": obj.get("name").cloned().unwrap_or(Value::Null),
+                                    "input": obj.get("input").or(obj.get("arguments")).cloned()
+                                }));
+                            }
+                            _ => {
+                                // Pass through unknown types
+                                parts.push(block.clone());
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
     }
 
     serde_json::to_string(&parts).unwrap_or_else(|_| "[]".to_string())

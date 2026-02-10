@@ -2580,9 +2580,16 @@ impl Runner {
 
     /// Get available models.
     async fn pi_get_available_models(&self, req: PiGetAvailableModelsRequest) -> RunnerResponse {
-        debug!("pi_get_available_models: session_id={}", req.session_id);
+        debug!(
+            "pi_get_available_models: session_id={}, workdir={:?}",
+            req.session_id, req.workdir
+        );
 
-        match self.pi_manager.get_available_models(&req.session_id).await {
+        match self
+            .pi_manager
+            .get_available_models(&req.session_id, req.workdir.as_deref())
+            .await
+        {
             Ok(models) => {
                 // pi_manager now returns a flat array, but handle object wrapper as fallback
                 let models_arr = if models.is_array() {

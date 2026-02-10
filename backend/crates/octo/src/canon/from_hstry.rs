@@ -215,7 +215,19 @@ pub async fn get_messages_from_hstry(
         let parts_json: Option<String> = row.get("parts_json");
         let metadata_json: Option<String> = row.get("metadata");
 
-        let parts = parse_hstry_parts(parts_json.as_deref(), &content, &id);
+        let mut parts = parse_hstry_parts(parts_json.as_deref(), &content, &id);
+
+        // For tool result messages, strip text parts that duplicate the tool output.
+        // hstry may store both a text part and a tool_result part for the same content.
+        if role == "tool" || role == "toolResult" {
+            let has_tool_result = parts
+                .iter()
+                .any(|p| matches!(p, CanonPart::ToolResult { .. }));
+            if has_tool_result {
+                parts.retain(|p| !matches!(p, CanonPart::Text { .. }));
+            }
+        }
+
         let model_info = model.as_ref().map(|m| {
             // Try to parse "provider/model" format
             if let Some((provider, model_id)) = m.split_once('/') {

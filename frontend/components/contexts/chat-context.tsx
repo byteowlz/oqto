@@ -7,6 +7,7 @@ import {
 } from "@/lib/api";
 import { getChatPrefetchLimit } from "@/lib/app-settings";
 import { createPiSessionId, normalizeWorkspacePath } from "@/lib/session-utils";
+import type { WsMuxConnectionState } from "@/lib/ws-mux-types";
 import { getWsManager } from "@/lib/ws-manager";
 import {
 	type ReactNode,
@@ -34,6 +35,18 @@ export interface ChatContextValue {
 	busySessions: Set<string>;
 	/** Mark a session as busy or idle */
 	setSessionBusy: (sessionId: string, busy: boolean) => void;
+	/** Currently active Pi sessions reported by the runner */
+	runnerSessions: Array<{
+		session_id: string;
+		state: string;
+		cwd: string;
+		provider?: string;
+		model?: string;
+		last_activity: number;
+		subscriber_count: number;
+	}>;
+	/** Count of active Pi sessions on the runner */
+	runnerSessionCount: number;
 	refreshChatHistory: () => Promise<void>;
 	/** Create a placeholder chat session for instant UI feedback. */
 	createOptimisticChatSession: (
@@ -69,6 +82,7 @@ const asyncNoopBool = async () => false;
 const CHAT_HISTORY_CACHE_KEY = "octo:chatHistoryCache:v2";
 const CHAT_HISTORY_CACHE_MAX_CHARS = 2_000_000;
 const CHAT_HISTORY_PREFETCH_DEBOUNCE_MS = 2000;
+const RUNNER_SESSIONS_POLL_MS = 5000;
 
 function readCachedChatHistory(): ChatSession[] {
 	if (typeof window === "undefined") return [];
@@ -112,6 +126,8 @@ const defaultChatContext: ChatContextValue = {
 	selectedChatFromHistory: undefined,
 	busySessions: new Set(),
 	setSessionBusy: noop,
+	runnerSessions: [],
+	runnerSessionCount: 0,
 	refreshChatHistory: asyncNoopVoid,
 	createOptimisticChatSession: (_sessionId?: string) => "",
 	clearOptimisticChatSession: noop,
@@ -175,6 +191,19 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 	);
 
 	const [busySessions, setBusySessions] = useState<Set<string>>(new Set());
+	const [runnerSessions, setRunnerSessions] = useState<
+		Array<{
+			session_id: string;
+			state: string;
+			cwd: string;
+			provider?: string;
+			model?: string;
+			last_activity: number;
+			subscriber_count: number;
+		}>
+	>([]);
+	const runnerSessionsRef = useRef(runnerSessions);
+	runnerSessionsRef.current = runnerSessions;
 
 	const setSessionBusy = useCallback((sessionId: string, busy: boolean) => {
 		setBusySessions((prev) => {
@@ -194,7 +223,13 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 
 	// Auto-select the most recently active session from hstry when
 	// nothing valid is selected (first load or stale localStorage value).
+	// Prefer sessions that are currently active on the runner to enable
+	// automatic reattachment after a frontend reload.
 	const autoSelectedRef = useRef(false);
+	const runnerSessionsById = useMemo(
+		() => new Map(runnerSessions.map((s) => [s.session_id, s])),
+		[runnerSessions],
+	);
 	useEffect(() => {
 		if (autoSelectedRef.current) return;
 		if (chatHistory.length === 0) return;
@@ -203,14 +238,40 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 			chatHistory.some((s) => s.id === selectedChatSessionId)
 		)
 			return;
-		// Pick the session with the highest updated_at
+
+		// Prefer an active runner session if available
+		const activeCandidates = chatHistory.filter((s) =>
+			runnerSessionsById.has(s.id),
+		);
+		if (activeCandidates.length > 0) {
+			let best = activeCandidates[0];
+			let bestActivity = runnerSessionsById.get(best.id)?.last_activity ?? 0;
+			for (let i = 1; i < activeCandidates.length; i++) {
+				const current = activeCandidates[i];
+				const activity = runnerSessionsById.get(current.id)?.last_activity ?? 0;
+				if (activity > bestActivity) {
+					best = current;
+					bestActivity = activity;
+				}
+			}
+			autoSelectedRef.current = true;
+			setSelectedChatSessionId(best.id);
+			return;
+		}
+
+		// Fallback: pick the session with the highest updated_at
 		let best = chatHistory[0];
 		for (let i = 1; i < chatHistory.length; i++) {
 			if (chatHistory[i].updated_at > best.updated_at) best = chatHistory[i];
 		}
 		autoSelectedRef.current = true;
 		setSelectedChatSessionId(best.id);
-	}, [chatHistory, selectedChatSessionId, setSelectedChatSessionId]);
+	}, [
+		chatHistory,
+		selectedChatSessionId,
+		runnerSessionsById,
+		setSelectedChatSessionId,
+	]);
 
 	const mergeOptimisticSessions = useCallback((history: ChatSession[]) => {
 		if (optimisticChatSessionsRef.current.size === 0) return history;
@@ -272,6 +333,73 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 	useEffect(() => {
 		refreshChatHistory();
 	}, [refreshChatHistory]);
+
+	// Poll runner for active Pi sessions via the mux WebSocket.
+	// Keeps busy indicators accurate across reloads and backend restarts.
+	useEffect(() => {
+		const manager = getWsManager();
+		let pollTimer: ReturnType<typeof setInterval> | null = null;
+		let cancelled = false;
+
+		const busyStates = new Set([
+			"streaming",
+			"compacting",
+			"starting",
+			"aborting",
+		]);
+
+		const pollSessions = async () => {
+			try {
+				const sessions = await manager.agentListSessions();
+				if (cancelled) return;
+				setRunnerSessions(sessions);
+				const nextBusy = new Set<string>();
+				for (const s of sessions) {
+					if (busyStates.has(s.state)) {
+						nextBusy.add(s.session_id);
+					}
+				}
+				setBusySessions(nextBusy);
+				if (isPiDebugEnabled()) {
+					console.debug(
+						"[chat-context] Runner sessions:",
+						sessions.length,
+						"busy:",
+						nextBusy.size,
+					);
+				}
+			} catch (err) {
+				if (isPiDebugEnabled()) {
+					console.debug(
+						"[chat-context] Could not list active sessions:",
+						err,
+					);
+				}
+			}
+		};
+
+		const unsubscribe = manager.onConnectionState(
+			(state: WsMuxConnectionState) => {
+				if (state === "connected") {
+					pollSessions();
+					if (!pollTimer) {
+						pollTimer = setInterval(pollSessions, RUNNER_SESSIONS_POLL_MS);
+					}
+				} else if (pollTimer) {
+					clearInterval(pollTimer);
+					pollTimer = null;
+				}
+			},
+		);
+
+		return () => {
+			cancelled = true;
+			unsubscribe();
+			if (pollTimer) {
+				clearInterval(pollTimer);
+			}
+		};
+	}, []);
 
 	const createOptimisticChatSession = useCallback(
 		(sessionId: string, workspacePath?: string) => {
@@ -412,6 +540,8 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 			selectedChatFromHistory,
 			busySessions,
 			setSessionBusy,
+			runnerSessions,
+			runnerSessionCount: runnerSessions.length,
 			refreshChatHistory,
 			createOptimisticChatSession,
 			clearOptimisticChatSession,
@@ -429,6 +559,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 			selectedChatFromHistory,
 			busySessions,
 			setSessionBusy,
+			runnerSessions,
 			refreshChatHistory,
 			createOptimisticChatSession,
 			clearOptimisticChatSession,

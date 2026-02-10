@@ -81,6 +81,7 @@ export interface SidebarSessionsProps {
 	filteredSessions: ChatSession[];
 	selectedChatSessionId: string | null;
 	busySessions: Set<string>;
+	runnerSessionCount: number;
 	expandedSessions: Set<string>;
 	toggleSessionExpanded: (sessionId: string) => void;
 	expandedProjects: Set<string>;
@@ -119,6 +120,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 	filteredSessions,
 	selectedChatSessionId,
 	busySessions,
+	runnerSessionCount,
 	expandedSessions,
 	toggleSessionExpanded,
 	expandedProjects,
@@ -530,6 +532,16 @@ export const SidebarSessions = memo(function SidebarSessions({
 							({filteredSessions.length}
 							{deferredSearch ? `/${chatHistory.length}` : ""})
 						</span>
+						{runnerSessionCount > 0 && (
+							<span
+								className={cn(
+									"text-muted-foreground/70",
+									sizeClasses.sessionCount,
+								)}
+							>
+								• {runnerSessionCount} running
+							</span>
+						)}
 					</div>
 					<div className="flex items-center gap-1">
 						<button

@@ -775,7 +775,7 @@ async fn handle_multiplexed_ws(socket: WebSocket, state: AppState, user_id: Stri
                     Some(Ok(Message::Text(text))) => {
                         match serde_json::from_str::<WsCommand>(&text) {
                             Ok(cmd) => {
-                                info!("Received WS command: {:?}", cmd);
+                                debug!("Received WS command: {:?}", cmd);
 
                                 let response = handle_ws_command(
                                     cmd,
@@ -787,7 +787,7 @@ async fn handle_multiplexed_ws(socket: WebSocket, state: AppState, user_id: Stri
                                 .await;
 
                                 if let Some(event) = response {
-                                    info!("Sending WS event to client: {:?}", event);
+                                    debug!("Sending WS event to client: {:?}", event);
                                     let _ = event_tx.send(event);
                                 }
                             }
@@ -960,12 +960,34 @@ async fn handle_agent_command(
                 );
             }
 
+            // If no explicit continue_session was provided, try to find an
+            // existing Pi JSONL session file for this session ID. This enables
+            // resuming external sessions (started in Pi directly, not through
+            // Octo) so the agent has the full conversation context.
+            let continue_session = if config.continue_session.is_some() {
+                config.continue_session.map(std::path::PathBuf::from)
+            } else {
+                crate::pi::session_files::find_session_file_async(
+                    session_id.clone(),
+                    Some(cwd.clone()),
+                )
+                .await
+            };
+
+            if continue_session.is_some() {
+                debug!(
+                    "agent session.create: found session file for {}: {:?}",
+                    session_id,
+                    continue_session.as_ref().unwrap()
+                );
+            }
+
             let pi_config = RunnerPiSessionConfig {
                 cwd,
                 provider: config.provider,
                 model: config.model,
                 session_file: None,
-                continue_session: config.continue_session.map(std::path::PathBuf::from),
+                continue_session,
                 env: std::collections::HashMap::new(),
             };
 
@@ -1263,12 +1285,15 @@ async fn handle_agent_command(
             }
         }
 
-        CommandPayload::GetModels => {
+        CommandPayload::GetModels { workdir } => {
             debug!(
-                "agent get_models: user={}, session_id={}",
-                user_id, session_id
+                "agent get_models: user={}, session_id={}, workdir={:?}",
+                user_id, session_id, workdir
             );
-            match runner.pi_get_available_models(&session_id).await {
+            match runner
+                .pi_get_available_models(&session_id, workdir.as_deref())
+                .await
+            {
                 Ok(resp) => Some(agent_response(
                     &session_id,
                     id,
@@ -1309,12 +1334,23 @@ async fn handle_agent_command(
                         Ok(Some(Value::Array(commands))),
                     ))
                 }
-                Err(e) => Some(agent_response(
-                    &session_id,
-                    id,
-                    "get_commands",
-                    Err(e.to_string()),
-                )),
+                Err(e) => {
+                    let msg = e.to_string();
+                    if msg.contains("PiSessionNotFound") || msg.contains("SessionNotFound") {
+                        return Some(agent_response(
+                            &session_id,
+                            id,
+                            "get_commands",
+                            Ok(Some(Value::Array(Vec::new()))),
+                        ));
+                    }
+                    Some(agent_response(
+                        &session_id,
+                        id,
+                        "get_commands",
+                        Err(msg),
+                    ))
+                }
             }
         }
 
@@ -1605,6 +1641,40 @@ async fn handle_agent_command(
                     }))),
                 )),
                 Err(e) => Some(agent_response(&session_id, id, "fork", Err(e.to_string()))),
+            }
+        }
+
+        CommandPayload::ListSessions => {
+            debug!("agent list_sessions: user={}", user_id);
+            match runner.pi_list_sessions().await {
+                Ok(sessions) => {
+                    let sessions_json: Vec<Value> = sessions
+                        .iter()
+                        .map(|s| {
+                            serde_json::json!({
+                                "session_id": s.session_id,
+                                "state": s.state,
+                                "cwd": s.cwd,
+                                "provider": s.provider,
+                                "model": s.model,
+                                "last_activity": s.last_activity,
+                                "subscriber_count": s.subscriber_count,
+                            })
+                        })
+                        .collect();
+                    Some(agent_response(
+                        &session_id,
+                        id,
+                        "list_sessions",
+                        Ok(Some(serde_json::json!({ "sessions": sessions_json }))),
+                    ))
+                }
+                Err(e) => Some(agent_response(
+                    &session_id,
+                    id,
+                    "list_sessions",
+                    Err(e.to_string()),
+                )),
             }
         }
 

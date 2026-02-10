@@ -87,31 +87,16 @@ export function ModelQuickSwitcher({
 
 	const currentModelLabel = useMemo(() => {
 		if (pendingModelRef) {
-			const pendingModel = availableModels.find(
-				(m) => `${m.provider}/${m.id}` === pendingModelRef,
-			);
-			if (pendingModel) {
-				return pendingModel.name
-					? `${pendingModelRef} - ${pendingModel.name}`
-					: pendingModelRef;
-			}
+			return pendingModelRef;
 		}
 
 		if (!selectedModelRef) return null;
 
-		const selectedModel = availableModels.find(
-			(m) => `${m.provider}/${m.id}` === selectedModelRef,
-		);
-		if (selectedModel) {
-			return selectedModel.name
-				? `${selectedModelRef} - ${selectedModel.name}`
-				: selectedModelRef;
-		}
 		return selectedModelRef;
-	}, [selectedModelRef, pendingModelRef, availableModels]);
+	}, [selectedModelRef, pendingModelRef]);
 
 	// Provider from current selection
-	const provider = selectedModelRef?.split("/")[0] ?? null;
+	const provider = (pendingModelRef || selectedModelRef)?.split("/")[0] ?? null;
 
 	// Labels
 	const placeholder = locale === "de" ? "Modell suchen..." : "Search models...";

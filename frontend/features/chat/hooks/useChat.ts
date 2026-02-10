@@ -14,9 +14,11 @@
  */
 
 import { useBusySessions } from "@/components/contexts";
-import type { CommandResponse, SessionConfig } from "@/lib/canonical-types";
+import type { CommandResponse, Part, SessionConfig, ToolStatus } from "@/lib/canonical-types";
+import { getChatMessages, type ChatMessage, type ChatMessagePart } from "@/lib/api";
 import {
 	createPiSessionId,
+	getWorkspaceModelStorageKey,
 	isPendingSessionId,
 	normalizeWorkspacePath,
 } from "@/lib/session-utils";
@@ -60,6 +62,82 @@ function isPiDebugEnabled(): boolean {
 		// ignore
 	}
 	return import.meta.env.VITE_DEBUG_PI_V2 === "1";
+}
+
+function normalizeToolStatus(value?: string | null): ToolStatus {
+	switch (value?.toLowerCase()) {
+		case "pending":
+			return "pending";
+		case "running":
+			return "running";
+		case "error":
+			return "error";
+		case "success":
+		case "completed":
+			return "success";
+		default:
+			return "success";
+	}
+}
+
+function chatMessagePartToCanonicalParts(part: ChatMessagePart): Part[] {
+	const parts: Part[] = [];
+	if (part.part_type === "text" && part.text) {
+		parts.push({
+			type: "text",
+			id: part.id,
+			text: part.text,
+		});
+		return parts;
+	}
+
+	const hasToolData = Boolean(part.tool_name || part.tool_input || part.tool_output);
+	if (part.part_type === "tool" || hasToolData) {
+		const toolCallId = part.id;
+		const name = part.tool_name ?? "tool";
+		if (part.tool_input) {
+			parts.push({
+				type: "tool_call",
+				id: `${part.id}-call`,
+				toolCallId,
+				name,
+				input: part.tool_input,
+				status: normalizeToolStatus(part.tool_status),
+			});
+		}
+		if (part.tool_output || part.tool_title || part.tool_status) {
+			parts.push({
+				type: "tool_result",
+				id: `${part.id}-result`,
+				toolCallId,
+				name,
+				output: part.tool_output ?? part.tool_title ?? "",
+				isError: normalizeToolStatus(part.tool_status) === "error",
+			});
+		}
+		return parts;
+	}
+
+	if (part.text) {
+		parts.push({
+			type: "text",
+			id: part.id,
+			text: part.text,
+		});
+	}
+	return parts;
+}
+
+function chatMessageToRaw(message: ChatMessage): RawMessage {
+	const parts = message.parts.flatMap(chatMessagePartToCanonicalParts);
+	return {
+		id: message.id,
+		role: message.role,
+		created_at: message.created_at,
+		parts,
+		model_id: message.model_id ?? null,
+		provider_id: message.provider_id ?? null,
+	};
 }
 
 /**
@@ -113,6 +191,8 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 	const sendInFlightRef = useRef(false);
 	// Deferred server messages received while streaming (applied on agent.idle)
 	const deferredServerMessagesRef = useRef<unknown[] | null>(null);
+	// Force a full server sync after reattaching to an active runner session.
+	const forceMessageSyncRef = useRef<Set<string>>(new Set());
 	// Stable ref for the agent event handler so the subscription effect doesn't
 	// re-run when callback identity changes (which would reset streaming state).
 	const handleAgentEventRef = useRef<((event: AgentWsEvent) => void) | null>(
@@ -156,10 +236,27 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 	);
 
 	const getSessionConfig = useCallback((): SessionConfig | undefined => {
+		const config: SessionConfig = { harness: "pi" };
 		if (normalizedWorkspacePath) {
-			return { harness: "pi", cwd: normalizedWorkspacePath };
+			config.cwd = normalizedWorkspacePath;
 		}
-		return { harness: "pi" };
+		try {
+			const storageKey = getWorkspaceModelStorageKey(normalizedWorkspacePath);
+			const storedModelRef = localStorage.getItem(storageKey);
+			if (storedModelRef) {
+				const separatorIndex = storedModelRef.indexOf("/");
+				if (
+					separatorIndex > 0 &&
+					separatorIndex < storedModelRef.length - 1
+				) {
+					config.provider = storedModelRef.slice(0, separatorIndex);
+					config.model = storedModelRef.slice(separatorIndex + 1);
+				}
+			}
+		} catch {
+			// ignore localStorage errors
+		}
+		return config;
 	}, [normalizedWorkspacePath]);
 
 	const appendPartToMessage = useCallback(
@@ -607,8 +704,9 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 					// were persisted).
 					deferredServerMessagesRef.current = null;
 					// Refresh session state (stats, model info, etc.) but
-					// do NOT re-fetch messages. Pi's get_messages RPC only
-					// returns the current context window (not the full
+					// do NOT re-fetch messages unless we explicitly need
+					// to recover after a reattach. Pi's get_messages RPC
+					// only returns the current context window (not the full
 					// history), so the response would clobber earlier turns
 					// that are already in local state from streaming.
 					{
@@ -617,6 +715,10 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 							setTimeout(() => {
 								const manager = getWsManager();
 								manager.agentGetState(sessionId);
+								if (forceMessageSyncRef.current.has(sessionId)) {
+									forceMessageSyncRef.current.delete(sessionId);
+									void fetchHistoryMessages(sessionId);
+								}
 							}, 100);
 						}
 					}
@@ -670,7 +772,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 						manager.agentCreateSession(sessionId as string, getSessionConfig());
 						setTimeout(() => {
 							manager.agentGetState(sessionId as string);
-							manager.agentGetMessages(sessionId as string);
+							void fetchHistoryMessages(sessionId as string);
 						}, 250);
 					}
 
@@ -902,14 +1004,17 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 								// hstry (which doesn't have the user message
 								// yet) and overwrite the optimistic content.
 								const hasLocalMessages = messagesRef.current.length > 0;
+								const forceSync = forceMessageSyncRef.current.has(
+									event.session_id,
+								);
 								if (
 									!streamingMessageRef.current &&
 									!isStreamingRef.current &&
 									!sendInFlightRef.current &&
-									!hasLocalMessages
+									(!hasLocalMessages || forceSync)
 								) {
-									const manager = getWsManager();
-									manager.agentGetMessages(event.session_id);
+									forceMessageSyncRef.current.delete(event.session_id);
+									void fetchHistoryMessages(event.session_id);
 									if (isPiDebugEnabled()) {
 										console.debug(
 											"[useChat] Session created, requesting messages:",
@@ -950,7 +1055,20 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 										);
 									}
 								}
-								if (nextState?.isStreaming === false) {
+								if (nextState?.isStreaming === true) {
+									// Runner reports the session is actively streaming.
+									// Restore streaming/busy UI state so spinners show
+									// after page reload. The actual stream events will
+									// arrive via the event subscription.
+									if (!isStreamingRef.current) {
+										setIsStreaming(true);
+										isStreamingRef.current = true;
+										setBusyForEvent(
+											requestedSessionId ?? activeSessionIdRef.current,
+											true,
+										);
+									}
+								} else if (nextState?.isStreaming === false) {
 									setIsStreaming(false);
 									setIsAwaitingResponse(false);
 									if (streamingMessageRef.current) {
@@ -1051,7 +1169,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 									);
 									setTimeout(() => {
 										manager.agentGetState(sessionId as string);
-										manager.agentGetMessages(sessionId as string);
+										void fetchHistoryMessages(sessionId as string);
 									}, 250);
 								}
 							}
@@ -1071,6 +1189,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 		[
 			appendPartToMessage,
 			ensureAssistantMessage,
+			fetchHistoryMessages,
 			nextMessageId,
 			scheduleStreamingUpdate,
 			setBusyForEvent,
@@ -1174,6 +1293,38 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 		}
 		return sessionId;
 	}, [getSessionConfig, onSelectedSessionIdChange]);
+
+	const fetchHistoryMessages = useCallback(
+		async (sessionId: string) => {
+			try {
+				const history = await getChatMessages(sessionId);
+				if (history.length === 0) return;
+				const displayMessages = normalizeMessages(
+					history.map(chatMessageToRaw),
+					`history-${sessionId}`,
+				);
+				if (displayMessages.length === 0) return;
+				setMessages((prev) => mergeServerMessages(prev, displayMessages));
+				messageIdRef.current = getMaxMessageId(displayMessages);
+				const lastAssistant = [...displayMessages]
+					.reverse()
+					.find((msg) => msg.role === "assistant");
+				lastAssistantMessageIdRef.current = lastAssistant?.id ?? null;
+				if (isPiDebugEnabled()) {
+					console.debug(
+						"[useChat] Loaded history messages:",
+						sessionId,
+						displayMessages.length,
+					);
+				}
+			} catch (err) {
+				if (isPiDebugEnabled()) {
+					console.debug("[useChat] Failed to load history:", err);
+				}
+			}
+		},
+		[mergeServerMessages, normalizeMessages],
+	);
 
 	// Send message
 	const send = useCallback(
@@ -1345,12 +1496,12 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 
 		const manager = getWsManager();
 		manager.agentGetState(sessionId);
-		manager.agentGetMessages(sessionId);
+		void fetchHistoryMessages(sessionId);
 
 		if (isPiDebugEnabled()) {
 			console.debug("[useChat] refresh requested for:", sessionId);
 		}
-	}, []);
+	}, [fetchHistoryMessages]);
 
 	// Subscribe to connection state
 	useEffect(() => {
@@ -1458,25 +1609,76 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 		}
 		lastActiveSessionIdRef.current = activeSessionId;
 
-		// For existing sessions (create: false), still fetch state and messages.
-		// The session.create path handles this via the response handler, but
-		// when attaching to a history session without creating, we need to
-		// explicitly request state and messages.
+		// For existing sessions (create: false), we need to determine if the
+		// session is currently active on the runner. If it is, we send
+		// session.create (which is idempotent) to set up event forwarding
+		// so streaming events reach this WebSocket connection. Without this,
+		// a page reload during streaming would lose all events.
 		//
-		// Only do this if the session is NOT already ready (i.e. was not
-		// created by this client) and we're not currently streaming. If the
-		// session IS ready, the session.create response handler already
-		// fetched state/messages. Fetching during streaming would race and
-		// overwrite in-progress messages with stale server data.
+		// If the session is NOT on the runner (just a history entry), we
+		// fetch state and messages directly.
 		if (!manager.isSessionReady(activeSessionId) && !isStreamingRef.current) {
+			const sid = activeSessionId;
 			manager
 				.ensureConnected(4000)
-				.then(() => {
-					// Re-check streaming state after async wait — streaming may
-					// have started between the effect and the connection.
-					if (!isStreamingRef.current) {
-						manager.agentGetState(activeSessionId);
-						manager.agentGetMessages(activeSessionId);
+				.then(async () => {
+					// Re-check streaming state after async wait
+					if (isStreamingRef.current) return;
+
+					// Check if this session is active on the runner
+					try {
+						const activeSessions = await manager.agentListSessions();
+						const activeSession = activeSessions.find(
+							(s) => s.session_id === sid,
+						);
+						if (activeSession) {
+							// Session is alive on the runner -- send session.create
+							// to set up event forwarding (idempotent, won't spawn
+							// a duplicate Pi process).
+							console.log(
+								"[useChat] Reattaching to active session:",
+								sid,
+								"state:",
+								activeSession.state,
+							);
+
+							// Mark this session for a forced message sync once
+							// the reattach handshake completes.
+							forceMessageSyncRef.current.add(sid);
+
+							// Re-subscribe with create: true to trigger
+							// session.create on the backend, which sets up
+							// event forwarding from the runner.
+							unsubscribeRef.current?.();
+							unsubscribeRef.current = manager.subscribeAgentSession(
+								sid,
+								stableHandler,
+								sessionConfig,
+								{ create: true },
+							);
+
+							// If the session is actively working, mark it as
+							// streaming so the UI shows spinners immediately.
+							const busyStates = new Set([
+								"streaming",
+								"compacting",
+								"starting",
+							]);
+							if (busyStates.has(activeSession.state)) {
+								setIsStreaming(true);
+								isStreamingRef.current = true;
+								setBusyForEvent(sid, true);
+							}
+						} else {
+							// Session is not on the runner -- just fetch
+							// historical state and messages.
+							manager.agentGetState(sid);
+							void fetchHistoryMessages(sid);
+						}
+					} catch {
+						// list_sessions failed -- fall back to direct fetch
+						manager.agentGetState(sid);
+						void fetchHistoryMessages(sid);
 					}
 				})
 				.catch(() => {

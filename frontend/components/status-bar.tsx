@@ -82,10 +82,10 @@ function shortenModelRef(modelRef: string): string {
 
 export function StatusBar() {
 	const { data: user } = useCurrentUser();
-	const { workspaceSessions, selectedChatSessionId } = useApp();
+	const { workspaceSessions, selectedChatSessionId, runnerSessionCount } = useApp();
 	const { selectedChatFromHistory } = useSelectedChat();
 
-	const isAdmin = user?.role === "admin";
+	const isAdmin = (user?.role ?? "").toLowerCase() === "admin";
 
 	// Track selected model from localStorage (same key used by sessions app)
 	const [selectedModelRef, setSelectedModelRef] = useState<string | null>(null);
@@ -157,10 +157,10 @@ export function StatusBar() {
 	});
 
 	// Count running sessions for current user
-	const runningSessionCount = useMemo(
-		() => workspaceSessions.filter((s) => s.status === "running").length,
-		[workspaceSessions],
-	);
+	const runningSessionCount = useMemo(() => {
+		if (runnerSessionCount > 0) return runnerSessionCount;
+		return workspaceSessions.filter((s) => s.status === "running").length;
+	}, [runnerSessionCount, workspaceSessions]);
 
 	// Extract provider and model name from ref (format: "provider/model")
 	const { provider, modelName, shortModel } = useMemo(() => {
@@ -203,7 +203,10 @@ export function StatusBar() {
 			{/* Left side - user metrics */}
 			<div className="flex items-center gap-3">
 				{/* Running sessions for current user */}
-				<span className="flex items-center gap-1" title="Your running sessions">
+				<span
+					className="flex items-center gap-1"
+					title="Your running Pi sessions"
+				>
 					<Activity className="w-3 h-3" />
 					<span className="font-mono">{runningSessionCount}</span>
 				</span>

@@ -39,6 +39,20 @@ export type BuiltinCardRendererProps = {
 	workspaceSessions: WorkspaceSession[];
 	busyChatSessions: { id: string }[];
 	totalChatCount: number;
+	runnerSessionCount: number;
+	runnerSessions: Array<{
+		session_id: string;
+		state: string;
+		cwd: string;
+		provider?: string;
+		model?: string;
+		last_activity: number;
+		subscriber_count: number;
+	}>;
+	runnerSessionTitles: Map<
+		string,
+		{ title?: string | null; readableId?: string | null }
+	>;
 	// Scheduler data
 	scheduleList: ScheduleItem[];
 	scheduleStats: { total: number; enabled: number; disabled: number };
@@ -77,6 +91,9 @@ export const BuiltinCardRenderer = memo(function BuiltinCardRenderer({
 	workspaceSessions,
 	busyChatSessions,
 	totalChatCount,
+	runnerSessionCount,
+	runnerSessions,
+	runnerSessionTitles,
 	scheduleList,
 	scheduleStats,
 	schedulerError,
@@ -159,6 +176,9 @@ export const BuiltinCardRenderer = memo(function BuiltinCardRenderer({
 					runningSessions={runningSessions}
 					busyChatSessions={busyChatSessions}
 					agents={agents}
+					runnerSessionCount={runnerSessionCount}
+					runnerSessions={runnerSessions}
+					runnerSessionTitles={runnerSessionTitles}
 				/>
 			);
 		case "trx":

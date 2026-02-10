@@ -8,7 +8,7 @@ use axum::{
     extract::{Path, Query, State},
 };
 use serde::{Deserialize, Serialize};
-use tracing::{info, instrument};
+use tracing::{debug, info, instrument};
 
 use crate::auth::CurrentUser;
 use crate::history::{ChatMessage, ChatSession};
@@ -215,7 +215,7 @@ pub async fn list_chat_history(
         sessions.truncate(limit);
     }
 
-    info!(user_id = %user.id(), count = sessions.len(), source = source, "Listed chat history");
+    debug!(user_id = %user.id(), count = sessions.len(), source = source, "Listed chat history");
     Ok(Json(sessions))
 }
 
@@ -511,7 +511,7 @@ pub async fn list_chat_history_grouped(
         b_updated.cmp(&a_updated)
     });
 
-    info!(user_id = %user.id(), count = result.len(), source = source, "Listed grouped chat history");
+    debug!(user_id = %user.id(), count = result.len(), source = source, "Listed grouped chat history");
     Ok(Json(result))
 }
 

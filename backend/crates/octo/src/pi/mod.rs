@@ -16,6 +16,7 @@
 
 mod client;
 pub mod runtime;
+pub mod session_files;
 pub mod session_parser;
 mod types;
 

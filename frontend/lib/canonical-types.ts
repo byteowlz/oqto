@@ -219,6 +219,17 @@ export type CompactReason = "threshold" | "overflow";
 /** Notification severity level. */
 export type NotifyLevel = "info" | "warning" | "error";
 
+/** State of an active Pi session on the runner. */
+export type ActivePiSession = {
+	session_id: string;
+	state: "starting" | "idle" | "streaming" | "compacting" | "aborting" | "stopping";
+	cwd: string;
+	provider?: string;
+	model?: string;
+	last_activity: number;
+	subscriber_count: number;
+};
+
 /** Response to a command. */
 export type CommandResponse = {
 	id: string;
@@ -402,9 +413,10 @@ export type CommandPayload =
 	| { cmd: "get_state" }
 	| { cmd: "get_messages" }
 	| { cmd: "get_stats" }
-	| { cmd: "get_models" }
+	| { cmd: "get_models"; workdir?: string }
 	| { cmd: "get_commands" }
 	| { cmd: "get_fork_points" }
+	| { cmd: "list_sessions" }
 	// Configuration commands
 	| { cmd: "set_model"; provider: string; model_id: string }
 	| { cmd: "cycle_model" }

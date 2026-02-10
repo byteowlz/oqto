@@ -339,6 +339,9 @@ export function normalizeMessages(
 	const display: DisplayMessage[] = [];
 	const toolCallIndexById = new Map<string, number>();
 	const pendingToolCallByName = new Map<string, number[]>();
+	// Track which tool results have been added to each message to prevent duplicates
+	// Key is message index, value is Set of toolCallIds
+	const toolResultsByMessageIndex = new Map<number, Set<string>>();
 
 	const addPendingByName = (name: string, index: number) => {
 		const list = pendingToolCallByName.get(name) ?? [];
@@ -382,6 +385,8 @@ export function normalizeMessages(
 				: canonicalParts !== null
 					? canonicalParts
 					: message.content;
+
+		
 
 		// --- Tool result messages (role=tool/toolResult) ---
 		if (role === "toolResult" || role === "tool") {
@@ -432,7 +437,15 @@ export function normalizeMessages(
 				: resolvePendingByName(resolvedToolName);
 
 			if (targetIndex !== undefined) {
-				display[targetIndex].parts.push(toolResultPart);
+				// Check if this tool result has already been added to this message
+				const existingResults =
+					toolResultsByMessageIndex.get(targetIndex) ||
+					new Set<string>();
+				if (!existingResults.has(toolCallId)) {
+					display[targetIndex].parts.push(toolResultPart);
+					existingResults.add(toolCallId);
+					toolResultsByMessageIndex.set(targetIndex, existingResults);
+				}
 			} else {
 				display.push({
 					id: `${idPrefix}-${idx}`,
@@ -478,7 +491,15 @@ export function normalizeMessages(
 					const indexByName = resolvePendingByName(part.name);
 					const targetIndex = indexById ?? indexByName;
 					if (targetIndex !== undefined && targetIndex !== display.length - 1) {
-						display[targetIndex].parts.push(part);
+						// Check if this tool result has already been added to target message
+						const existingResults =
+							toolResultsByMessageIndex.get(targetIndex) ||
+							new Set<string>();
+						if (!existingResults.has(tcId)) {
+							display[targetIndex].parts.push(part);
+							existingResults.add(tcId);
+							toolResultsByMessageIndex.set(targetIndex, existingResults);
+						}
 					}
 				}
 			}

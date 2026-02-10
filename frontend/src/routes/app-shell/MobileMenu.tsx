@@ -43,6 +43,7 @@ export interface MobileMenuProps {
 	selectedChatSessionId: string | null;
 	selectedProjectKey: string | null;
 	busySessions: Set<string>;
+	runnerSessionCount: number;
 	expandedSessions: Set<string>;
 	toggleSessionExpanded: (sessionId: string) => void;
 	expandedProjects: Set<string>;
@@ -94,6 +95,7 @@ export const MobileMenu = memo(function MobileMenu({
 	selectedChatSessionId,
 	selectedProjectKey,
 	busySessions,
+	runnerSessionCount,
 	expandedSessions,
 	toggleSessionExpanded,
 	expandedProjects,
@@ -175,6 +177,7 @@ export const MobileMenu = memo(function MobileMenu({
 						filteredSessions={filteredSessions}
 						selectedChatSessionId={selectedChatSessionId}
 						busySessions={busySessions}
+						runnerSessionCount={runnerSessionCount}
 						expandedSessions={expandedSessions}
 						toggleSessionExpanded={toggleSessionExpanded}
 						expandedProjects={expandedProjects}

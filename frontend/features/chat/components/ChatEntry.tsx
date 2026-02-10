@@ -1080,7 +1080,7 @@ function SessionTimeline({
 									)}
 								>
 									{displayTitle}
-									<span className="ml-1 opacity-60">[{readableId}]</span>
+									{readableId && <span className="ml-1 opacity-60">[{readableId}]</span>}
 								</span>
 							</div>
 						</button>

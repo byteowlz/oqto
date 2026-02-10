@@ -943,9 +943,11 @@ impl RunnerClient {
     pub async fn pi_get_available_models(
         &self,
         session_id: &str,
+        workdir: Option<&str>,
     ) -> Result<PiAvailableModelsResponse> {
         let req = RunnerRequest::PiGetAvailableModels(PiGetAvailableModelsRequest {
             session_id: session_id.to_string(),
+            workdir: workdir.map(|value| value.to_string()),
         });
 
         let resp = self.request(&req).await?;

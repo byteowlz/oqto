@@ -33,9 +33,9 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
 
     // Tracing layer with request IDs and timing
     let trace_layer = TraceLayer::new_for_http()
-        .make_span_with(DefaultMakeSpan::new().level(Level::INFO))
-        .on_request(DefaultOnRequest::new().level(Level::INFO))
-        .on_response(DefaultOnResponse::new().level(Level::INFO));
+        .make_span_with(DefaultMakeSpan::new().level(Level::DEBUG))
+        .on_request(DefaultOnRequest::new().level(Level::DEBUG))
+        .on_response(DefaultOnResponse::new().level(Level::DEBUG));
 
     // Clone auth state for middleware
     let auth_state = state.auth.clone();

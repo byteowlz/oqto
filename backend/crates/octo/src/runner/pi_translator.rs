@@ -716,35 +716,12 @@ pub fn pi_agent_message_to_canonical(
 fn pi_content_to_parts(content: &Value, msg: &AgentMessage) -> Vec<Part> {
     let mut parts = Vec::new();
 
-    match content {
-        Value::String(text) => {
-            parts.push(Part::text(text));
-        }
-        Value::Array(blocks) => {
-            for block in blocks {
-                if let Ok(cb) = serde_json::from_value::<ContentBlock>(block.clone()) {
-                    match cb {
-                        ContentBlock::Text { text } => {
-                            parts.push(Part::text(&text));
-                        }
-                        ContentBlock::Thinking { thinking } => {
-                            parts.push(Part::thinking(&thinking));
-                        }
-                        ContentBlock::ToolCall(tc) => {
-                            parts.push(Part::tool_call(&tc.id, &tc.name, Some(tc.arguments)));
-                        }
-                        ContentBlock::Image { source } => {
-                            parts.push(pi_image_to_part(&source));
-                        }
-                    }
-                }
-            }
-        }
-        _ => {}
-    }
+    let is_tool_result = msg.role == "tool" || msg.role == "toolResult";
 
-    // For tool result messages, add a ToolResult part.
-    if msg.role == "tool" || msg.role == "toolResult" {
+    // For tool result messages, only emit a ToolResult part.
+    // The text content is redundant with the tool_result output and would
+    // leak into the chat as visible text if included.
+    if is_tool_result {
         let tool_call_id = msg
             .tool_call_id
             .clone()
@@ -754,6 +731,37 @@ fn pi_content_to_parts(content: &Value, msg: &AgentMessage) -> Vec<Part> {
             Some(content.clone()),
             msg.is_error.unwrap_or(false),
         ));
+    } else {
+        match content {
+            Value::String(text) => {
+                parts.push(Part::text(text));
+            }
+            Value::Array(blocks) => {
+                for block in blocks {
+                    if let Ok(cb) = serde_json::from_value::<ContentBlock>(block.clone()) {
+                        match cb {
+                            ContentBlock::Text { text } => {
+                                parts.push(Part::text(&text));
+                            }
+                            ContentBlock::Thinking { thinking } => {
+                                parts.push(Part::thinking(&thinking));
+                            }
+                            ContentBlock::ToolCall(tc) => {
+                                parts.push(Part::tool_call(
+                                    &tc.id,
+                                    &tc.name,
+                                    Some(tc.arguments),
+                                ));
+                            }
+                            ContentBlock::Image { source } => {
+                                parts.push(pi_image_to_part(&source));
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
     }
 
     parts

@@ -306,9 +306,16 @@ type PendingResponses = Arc<RwLock<HashMap<String, oneshot::Sender<PiResponse>>>
 /// when translating the agent_end messages.
 type PendingClientId = Arc<RwLock<Option<String>>>;
 
+/// The hstry external_id for a session.
+///
+/// Starts as the Octo UUID (for optimistic session creation), then gets
+/// updated to Pi's native session ID once `get_state` returns it. All hstry
+/// reads/writes should use this value, not the Octo session_id directly.
+type HstryExternalId = Arc<RwLock<String>>;
+
 /// Internal session state (held by the manager).
 struct PiSession {
-    /// Session ID.
+    /// Session ID (Octo UUID -- the routing key used by frontend/API).
     id: String,
     /// Session configuration.
     #[allow(dead_code)]
@@ -317,6 +324,9 @@ struct PiSession {
     process: Child,
     /// Current state.
     state: Arc<RwLock<PiSessionState>>,
+    /// The external_id used in hstry for this session. Initially the Octo UUID,
+    /// updated to Pi's native session ID once known via `get_state`.
+    hstry_external_id: HstryExternalId,
     /// Last activity timestamp.
     last_activity: Instant,
     /// Broadcast channel for events.
@@ -417,10 +427,33 @@ impl PiSessionManager {
         // own session file and generate its own ID. The runner will
         // learn Pi's real session ID via get_state after startup and
         // re-key the session map accordingly.
+        //
+        // If neither session_file nor continue_session is set, try to
+        // find an existing JSONL session file for this session ID. This
+        // enables resuming external sessions (started in Pi directly,
+        // not through Octo) so the agent has the full conversation context.
+        let continue_session = config
+            .continue_session
+            .clone()
+            .or_else(|| {
+                crate::pi::session_files::find_session_file(
+                    &session_id,
+                    Some(&config.cwd),
+                )
+            });
+
+        if continue_session.is_some() && config.continue_session.is_none() {
+            info!(
+                "Auto-discovered Pi session file for '{}': {:?}",
+                session_id,
+                continue_session.as_ref().unwrap()
+            );
+        }
+
         let session_file = config
             .session_file
             .as_ref()
-            .or(config.continue_session.as_ref())
+            .or(continue_session.as_ref())
             .cloned();
 
         // Build Pi arguments
@@ -539,6 +572,9 @@ impl PiSessionManager {
         let pending_responses: PendingResponses = Arc::new(RwLock::new(HashMap::new()));
         // Pending client_id for optimistic message matching (shared between command and reader tasks)
         let pending_client_id: PendingClientId = Arc::new(RwLock::new(None));
+        // hstry external_id -- starts as Octo UUID, updated to Pi native ID by reader task
+        let hstry_external_id: HstryExternalId =
+            Arc::new(RwLock::new(session_id.clone()));
 
         // Spawn stdout reader task
         let reader_handle = {
@@ -550,6 +586,8 @@ impl PiSessionManager {
             let work_dir = config.cwd.clone();
             let pending_responses = Arc::clone(&pending_responses);
             let pending_client_id = Arc::clone(&pending_client_id);
+            let cmd_tx_for_reader = cmd_tx.clone();
+            let hstry_eid = Arc::clone(&hstry_external_id);
 
             tokio::spawn(async move {
                 Self::stdout_reader_task(
@@ -563,6 +601,8 @@ impl PiSessionManager {
                     work_dir,
                     pending_responses,
                     pending_client_id,
+                    cmd_tx_for_reader,
+                    hstry_eid,
                 )
                 .await;
             })
@@ -594,6 +634,7 @@ impl PiSessionManager {
             config,
             process: child,
             state: Arc::clone(&state),
+            hstry_external_id,
             last_activity: Instant::now(),
             event_tx,
             cmd_tx,
@@ -756,6 +797,21 @@ impl PiSessionManager {
         }
 
         infos
+    }
+
+    /// Resolve the hstry external_id for a session.
+    ///
+    /// Returns Pi's native session ID if known, otherwise the Octo UUID.
+    /// This should be used for all hstry lookups instead of the raw session_id.
+    pub async fn hstry_external_id(&self, session_id: &str) -> String {
+        let sessions = self.sessions.read().await;
+        if let Some(session) = sessions.get(session_id) {
+            session.hstry_external_id.read().await.clone()
+        } else {
+            // Session not running -- fall back to session_id (Octo UUID).
+            // hstry will try matching against external_id, readable_id, and id.
+            session_id.to_string()
+        }
     }
 
     /// Get state of a specific session.
@@ -928,7 +984,11 @@ impl PiSessionManager {
     }
 
     /// Get available models.
-    pub async fn get_available_models(&self, session_id: &str) -> Result<serde_json::Value> {
+    pub async fn get_available_models(
+        &self,
+        session_id: &str,
+        workdir: Option<&str>,
+    ) -> Result<serde_json::Value> {
         let request_id = "get_available_models".to_string();
 
         // Try to get the live session
@@ -994,7 +1054,15 @@ impl PiSessionManager {
 
             Ok(models_array)
         } else {
-            // No live session — try workdir cache
+            // No live session — try workdir cache first, then hstry lookup
+            if let Some(workdir) = workdir.and_then(|value| {
+                let trimmed = value.trim();
+                (!trimmed.is_empty()).then_some(trimmed)
+            }) {
+                if let Some(models) = self.get_cached_models_for_workdir(workdir).await {
+                    return Ok(models);
+                }
+            }
             self.get_cached_models_for_session(session_id).await
         }
     }
@@ -1004,8 +1072,9 @@ impl PiSessionManager {
     async fn get_cached_models_for_session(&self, session_id: &str) -> Result<serde_json::Value> {
         // Try to determine workdir from hstry
         if let Some(ref hstry) = self.hstry_client {
+            let eid = self.hstry_external_id(session_id).await;
             if let Ok(Some(session)) =
-                crate::history::repository::get_session_via_grpc(hstry, session_id).await
+                crate::history::repository::get_session_via_grpc(hstry, &eid).await
             {
                 let workdir = session.workspace_path;
                 let cache = self.model_cache.read().await;
@@ -1764,6 +1833,8 @@ impl PiSessionManager {
         work_dir: PathBuf,
         pending_responses: PendingResponses,
         pending_client_id: PendingClientId,
+        cmd_tx: mpsc::Sender<PiSessionCommand>,
+        hstry_external_id: HstryExternalId,
     ) {
         // Read stderr in a separate task (for debugging)
         if let Some(stderr) = stderr {
@@ -1785,6 +1856,9 @@ impl PiSessionManager {
 
         // Track the last session title synced to hstry to avoid redundant updates
         let mut last_synced_title = String::new();
+
+        // Whether we've already resolved Pi's native session ID.
+        let mut pi_native_id_known = false;
 
         // Mark as Idle after first successful read (Pi is ready)
         let mut first_event_seen = false;
@@ -1819,13 +1893,62 @@ impl PiSessionManager {
                 PiMessage::Response(response) => {
                     debug!("Pi[{}] response: {:?}", session_id, response);
 
-                    // Intercept get_state responses to sync session title to hstry.
-                    // Pi's auto-rename extension sets sessionName to:
-                    //   "<workspace>: <title> [readable-id]"
-                    // We parse it to extract the clean title and persist it.
+                    // Intercept get_state responses to capture Pi's native session
+                    // ID and sync session title to hstry.
                     if response.id.as_deref() == Some("get_state") {
-                        if let Some(ref client) = hstry_client {
-                            if let Some(ref data) = response.data {
+                        if let Some(ref data) = response.data {
+                            // Capture Pi's native session ID from the JSONL header.
+                            // This is the authoritative external_id for hstry -- the
+                            // same ID that hstry's adapter sync will use when importing
+                            // the JSONL file, so using it here prevents duplicates.
+                            if let Some(pi_sid) =
+                                data.get("sessionId").and_then(|v| v.as_str())
+                            {
+                                if !pi_sid.is_empty() && !pi_native_id_known {
+                                    pi_native_id_known = true;
+                                    let old_eid = hstry_external_id.read().await.clone();
+                                    *hstry_external_id.write().await = pi_sid.to_string();
+                                    info!(
+                                        "Pi[{}] native session ID: {} (hstry external_id: {} -> {})",
+                                        session_id, pi_sid, old_eid, pi_sid
+                                    );
+
+                                    // If we already wrote to hstry under the old Octo UUID
+                                    // (AgentEnd fired before get_state -- unlikely due to
+                                    // proactive get_state but defensive), delete the stale
+                                    // record so the next persist creates it correctly.
+                                    if old_eid != pi_sid {
+                                        if let Some(ref client) = hstry_client {
+                                            let client = client.clone();
+                                            let old = old_eid.clone();
+                                            tokio::spawn(async move {
+                                                if let Ok(Some(_)) =
+                                                    client.get_conversation(&old, None).await
+                                                {
+                                                    if let Err(e) =
+                                                        client.delete_conversation(&old).await
+                                                    {
+                                                        warn!(
+                                                            "Failed to delete stale hstry record {}: {}",
+                                                            old, e
+                                                        );
+                                                    } else {
+                                                        info!(
+                                                            "Deleted stale hstry record under old external_id={}",
+                                                            old
+                                                        );
+                                                    }
+                                                }
+                                            });
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Pi's auto-rename extension sets sessionName to:
+                            //   "<workspace>: <title> [readable-id]"
+                            // We parse it to extract the clean title and persist it.
+                            if let Some(ref client) = hstry_client {
                                 if let Some(raw_name) =
                                     data.get("sessionName").and_then(|v| v.as_str())
                                 {
@@ -1844,11 +1967,11 @@ impl PiSessionManager {
                                                 .get_readable_id()
                                                 .map(String::from);
                                             let client = client.clone();
-                                            let sid = session_id.clone();
+                                            let eid = hstry_external_id.read().await.clone();
                                             tokio::spawn(async move {
                                                 if let Err(e) = client
                                                     .update_conversation(
-                                                        &sid,
+                                                        &eid,
                                                         Some(clean_title.clone()),
                                                         None,
                                                         None,
@@ -1861,12 +1984,12 @@ impl PiSessionManager {
                                                 {
                                                     warn!(
                                                         "Pi[{}] failed to sync title to hstry: {}",
-                                                        sid, e
+                                                        eid, e
                                                     );
                                                 } else {
                                                     debug!(
                                                         "Pi[{}] synced title to hstry: '{}'",
-                                                        sid, clean_title
+                                                        eid, clean_title
                                                     );
                                                 }
                                             });
@@ -1918,12 +2041,21 @@ impl PiSessionManager {
                 *state.write().await = new_state;
             }
 
-            // Mark as ready after first event
+            // Mark as ready after first event and proactively request get_state
+            // to learn Pi's native session ID before any AgentEnd fires.
             if !first_event_seen {
                 first_event_seen = true;
                 let current_state = *state.read().await;
                 if current_state == PiSessionState::Starting {
                     *state.write().await = PiSessionState::Idle;
+                }
+                // Send get_state immediately so we learn Pi's native session ID
+                // before the first AgentEnd triggers hstry persistence.
+                if let Err(e) = cmd_tx.send(PiSessionCommand::GetState).await {
+                    warn!(
+                        "Pi[{}] failed to send proactive get_state: {}",
+                        session_id, e
+                    );
                 }
             }
 
@@ -1950,8 +2082,10 @@ impl PiSessionManager {
             // Persist to hstry on AgentEnd
             if matches!(pi_event, PiEvent::AgentEnd { .. }) && !pending_messages.is_empty() {
                 if let Some(ref client) = hstry_client {
+                    let eid = hstry_external_id.read().await.clone();
                     if let Err(e) = Self::persist_to_hstry_grpc(
                         client,
+                        &eid,
                         &session_id,
                         &pending_messages,
                         &work_dir,
@@ -1961,9 +2095,10 @@ impl PiSessionManager {
                         warn!("Pi[{}] failed to persist to hstry: {}", session_id, e);
                     } else {
                         debug!(
-                            "Pi[{}] persisted {} messages to hstry",
+                            "Pi[{}] persisted {} messages to hstry (external_id={})",
                             session_id,
-                            pending_messages.len()
+                            pending_messages.len(),
+                            eid,
                         );
                     }
                 }
@@ -2288,9 +2423,14 @@ impl PiSessionManager {
     }
 
     /// Persist messages to hstry via gRPC.
+    ///
+    /// `hstry_external_id` is the key used in hstry (Pi's native session ID when
+    /// known, otherwise Octo's UUID as a fallback). `octo_session_id` is always
+    /// Octo's UUID, stored in metadata for reverse mapping.
     async fn persist_to_hstry_grpc(
         client: &HstryClient,
-        session_id: &str,
+        hstry_external_id: &str,
+        octo_session_id: &str,
         messages: &[AgentMessage],
         work_dir: &PathBuf,
     ) -> Result<()> {
@@ -2302,7 +2442,9 @@ impl PiSessionManager {
             .unwrap_or(0);
 
         let stats_delta = compute_stats_delta(messages);
-        let metadata_json = build_metadata_json(client, session_id, work_dir, stats_delta).await?;
+        let metadata_json =
+            build_metadata_json(client, hstry_external_id, octo_session_id, work_dir, stats_delta)
+                .await?;
 
         // Convert messages to proto format.
         // Use AppendMessages if the conversation likely exists (most common case),
@@ -2315,7 +2457,7 @@ impl PiSessionManager {
 
         // Try append first (fast path -- conversation already exists)
         match client
-            .append_messages(session_id, proto_messages.clone(), Some(now_ms))
+            .append_messages(hstry_external_id, proto_messages.clone(), Some(now_ms))
             .await
         {
             Ok(_) => {}
@@ -2324,9 +2466,18 @@ impl PiSessionManager {
                 let model = messages.iter().rev().find_map(|m| m.model.clone());
                 let provider = messages.iter().rev().find_map(|m| m.provider.clone());
 
+                // Use Octo UUID as readable_id so hstry lookups by Octo
+                // session_id still work (the query does external_id OR
+                // readable_id OR id matching).
+                let octo_readable_id = if octo_session_id != hstry_external_id {
+                    Some(octo_session_id.to_string())
+                } else {
+                    None
+                };
+
                 client
                     .write_conversation(
-                        session_id,
+                        hstry_external_id,
                         None, // title comes from Pi auto-rename extension via JSONL
                         Some(work_dir.to_string_lossy().to_string()),
                         model,
@@ -2336,6 +2487,7 @@ impl PiSessionManager {
                         now_ms,
                         Some(now_ms),
                         Some("pi".to_string()),
+                        octo_readable_id,
                     )
                     .await?;
             }
@@ -2344,7 +2496,7 @@ impl PiSessionManager {
         if stats_delta.is_some() {
             let _ = client
                 .update_conversation(
-                    session_id,
+                    hstry_external_id,
                     None,
                     None,
                     None,
@@ -2357,9 +2509,10 @@ impl PiSessionManager {
         }
 
         info!(
-            "Persisted {} messages for session '{}' to hstry",
+            "Persisted {} messages to hstry (external_id='{}', octo_session='{}')",
             messages.len(),
-            session_id
+            hstry_external_id,
+            octo_session_id,
         );
 
         Ok(())
@@ -2395,15 +2548,21 @@ fn compute_stats_delta(messages: &[AgentMessage]) -> Option<StatsDelta> {
     if saw_usage { Some(delta) } else { None }
 }
 
+/// Build metadata JSON for hstry conversation.
+///
+/// `hstry_external_id` is the key in hstry (Pi native ID or Octo UUID).
+/// `octo_session_id` is always Octo's UUID -- stored in metadata so we can
+/// always map between the two identifiers.
 async fn build_metadata_json(
     client: &HstryClient,
-    session_id: &str,
+    hstry_external_id: &str,
+    octo_session_id: &str,
     work_dir: &PathBuf,
     delta: Option<StatsDelta>,
 ) -> Result<String> {
     let mut metadata = serde_json::Map::new();
 
-    if let Ok(Some(conversation)) = client.get_conversation(session_id, None).await {
+    if let Ok(Some(conversation)) = client.get_conversation(hstry_external_id, None).await {
         if !conversation.metadata_json.trim().is_empty() {
             if let Ok(serde_json::Value::Object(existing)) =
                 serde_json::from_str::<serde_json::Value>(&conversation.metadata_json)
@@ -2413,9 +2572,10 @@ async fn build_metadata_json(
         }
     }
 
+    // Always store the Octo session ID so we can map back from Pi native ID
     metadata.insert(
-        "canonical_id".to_string(),
-        serde_json::Value::String(session_id.to_string()),
+        "octo_session_id".to_string(),
+        serde_json::Value::String(octo_session_id.to_string()),
     );
     metadata.insert(
         "workdir".to_string(),

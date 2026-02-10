@@ -102,13 +102,21 @@ pub enum CommandPayload {
     GetStats,
 
     /// Get available models.
-    GetModels,
+    GetModels {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        workdir: Option<String>,
+    },
 
     /// Get available commands (extensions, templates, skills).
     GetCommands,
 
     /// Get messages available for forking.
     GetForkPoints,
+
+    /// List all active Pi sessions on the runner.
+    /// Returns session IDs, states (idle/streaming/etc.), and working directories.
+    /// Used by the frontend on reconnect to discover running sessions.
+    ListSessions,
 
     // -- Configuration commands --
     /// Set model.

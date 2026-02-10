@@ -193,6 +193,43 @@ class WsConnectionManager {
 		throw new Error(resp?.error ?? "Unexpected response to get_state");
 	}
 
+	/**
+	 * List all active Pi sessions on the runner.
+	 * Returns session IDs, states, and working directories.
+	 * Used on reconnect to discover running sessions and restore busy state.
+	 */
+	async agentListSessions(): Promise<
+		Array<{
+			session_id: string;
+			state: string;
+			cwd: string;
+			provider?: string;
+			model?: string;
+			last_activity: number;
+			subscriber_count: number;
+		}>
+	> {
+		const event = await this.sendAndWait({
+			channel: "agent",
+			session_id: "_system",
+			cmd: "list_sessions",
+		});
+		const resp = this.extractCommandResponse(event);
+		if (resp?.success && resp.data) {
+			const data = resp.data as { sessions?: unknown[] };
+			return (data.sessions ?? []) as Array<{
+				session_id: string;
+				state: string;
+				cwd: string;
+				provider?: string;
+				model?: string;
+				last_activity: number;
+				subscriber_count: number;
+			}>;
+		}
+		throw new Error(resp?.error ?? "Unexpected response to list_sessions");
+	}
+
 	async agentGetSessionStats(sessionId: string): Promise<unknown> {
 		const event = await this.sendAndWait({
 			channel: "agent",
@@ -649,13 +686,17 @@ class WsConnectionManager {
 	}
 
 	/**
-	 * Get available models for an agent session.
+	 * Get available models for an agent session or cached workdir.
 	 */
-	async agentGetAvailableModels(sessionId: string): Promise<unknown> {
+	async agentGetAvailableModels(
+		sessionId: string,
+		workdir?: string,
+	): Promise<unknown> {
 		const event = await this.sendAndWait({
 			channel: "agent",
 			session_id: sessionId,
 			cmd: "get_models",
+			...(workdir ? { workdir } : {}),
 		});
 		const resp = this.extractCommandResponse(event);
 		if (resp?.success && resp.data) {
