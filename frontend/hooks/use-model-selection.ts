@@ -11,7 +11,10 @@
 import { useSelectedChat } from "@/components/contexts";
 import type { PiModelInfo } from "@/features/chat/api";
 import { updateSettingsValues } from "@/lib/api/settings";
-import { normalizeWorkspacePath } from "@/lib/session-utils";
+import {
+	getWorkspaceModelStorageKey,
+	normalizeWorkspacePath,
+} from "@/lib/session-utils";
 import { getWsManager } from "@/lib/ws-manager";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -67,36 +70,60 @@ export function useModelSelection(
 		return `octo:chatModel:${effectiveSessionId}`;
 	}, [effectiveSessionId]);
 
-	// Load selected model: localStorage > hstry session > null
+	const workspaceModelStorageKey = useMemo(
+		() => getWorkspaceModelStorageKey(_normalizedWorkspacePath),
+		[_normalizedWorkspacePath],
+	);
+
+	// Load selected model: session storage > workspace storage > hstry session > null
 	useEffect(() => {
-		if (!modelStorageKey) {
-			setSelectedModelRef(null);
+		const readStoredRef = (key: string | null) => {
+			if (!key) return null;
+			try {
+				const stored = localStorage.getItem(key);
+				return stored || null;
+			} catch {
+				return null;
+			}
+		};
+
+		const sessionStored = readStoredRef(modelStorageKey);
+		if (sessionStored) {
+			setSelectedModelRef(sessionStored);
 			return;
 		}
-		try {
-			const stored = localStorage.getItem(modelStorageKey);
-			if (stored) {
-				setSelectedModelRef(stored);
-				return;
-			}
-		} catch {
-			// ignore localStorage errors
+
+		const workspaceStored = readStoredRef(workspaceModelStorageKey);
+		if (workspaceStored) {
+			setSelectedModelRef(workspaceStored);
+			return;
 		}
+
 		// Fall back to model/provider from hstry ChatSession
 		if (selectedChatFromHistory?.provider && selectedChatFromHistory?.model) {
 			const ref = `${selectedChatFromHistory.provider}/${selectedChatFromHistory.model}`;
 			setSelectedModelRef(ref);
-		} else {
-			setSelectedModelRef(null);
+			return;
 		}
-	}, [modelStorageKey, selectedChatFromHistory?.provider, selectedChatFromHistory?.model]);
+
+		setSelectedModelRef(null);
+	}, [
+		modelStorageKey,
+		workspaceModelStorageKey,
+		selectedChatFromHistory?.provider,
+		selectedChatFromHistory?.model,
+	]);
 
 	// Load available models - fetches once per session, retries if Pi not ready yet
 	useEffect(() => {
 		let active = true;
 		let retryTimer: ReturnType<typeof setTimeout> | null = null;
 
-		if (!effectiveSessionId) {
+		const workdir = _normalizedWorkspacePath;
+		const hasSession = Boolean(effectiveSessionId);
+		const targetSessionId = effectiveSessionId ?? "_system";
+
+		if (!hasSession && !workdir) {
 			setAvailableModels([]);
 			setLoading(false);
 			return undefined;
@@ -107,11 +134,14 @@ export function useModelSelection(
 			if (attempt === 0) setLoading(true);
 
 			getWsManager()
-				.agentGetAvailableModels(effectiveSessionId)
+				.agentGetAvailableModels(
+					targetSessionId,
+					hasSession ? undefined : workdir ?? undefined,
+				)
 				.then((result) => {
 					if (!active) return;
 					const models = (result as PiModelInfo[]) ?? [];
-					if (models.length === 0 && attempt < 5) {
+					if (models.length === 0 && attempt < 5 && hasSession) {
 						// Pi process may still be initializing - retry with backoff
 						retryTimer = setTimeout(
 							() => fetchModels(attempt + 1),
@@ -131,7 +161,7 @@ export function useModelSelection(
 				})
 				.catch(() => {
 					if (!active) return;
-					if (attempt < 5) {
+					if (attempt < 5 && hasSession) {
 						retryTimer = setTimeout(
 							() => fetchModels(attempt + 1),
 							1000 * (attempt + 1),
@@ -149,7 +179,7 @@ export function useModelSelection(
 			active = false;
 			if (retryTimer) clearTimeout(retryTimer);
 		};
-	}, [effectiveSessionId]);
+	}, [effectiveSessionId, _normalizedWorkspacePath]);
 
 	// Derive idle/streaming state from agent events (no polling)
 	// Also handles applying pending model when agent goes idle
@@ -217,6 +247,27 @@ export function useModelSelection(
 			});
 	}, [effectiveSessionId]);
 
+	const persistModelSelection = useCallback(
+		(modelRef: string | null) => {
+			try {
+				if (modelRef) {
+					if (modelStorageKey) {
+						localStorage.setItem(modelStorageKey, modelRef);
+					}
+					localStorage.setItem(workspaceModelStorageKey, modelRef);
+				} else {
+					if (modelStorageKey) {
+						localStorage.removeItem(modelStorageKey);
+					}
+					localStorage.removeItem(workspaceModelStorageKey);
+				}
+			} catch {
+				// ignore localStorage errors
+			}
+		},
+		[modelStorageKey, workspaceModelStorageKey],
+	);
+
 	// Helper to apply a pending model switch
 	const applyPendingModel = async (
 		modelRef: string,
@@ -242,6 +293,7 @@ export function useModelSelection(
 				},
 				settingsWorkspacePath,
 			);
+			persistModelSelection(modelRef);
 		} catch (err) {
 			console.error("Failed to apply pending model:", err);
 		}
@@ -249,10 +301,34 @@ export function useModelSelection(
 
 	const selectModel = useCallback(
 		async (modelRef: string) => {
-			if (!modelRef || !effectiveSessionId) return;
+			if (!modelRef) return;
 
 			const separatorIndex = modelRef.indexOf("/");
 			if (separatorIndex <= 0 || separatorIndex === modelRef.length - 1) {
+				return;
+			}
+
+			const provider = modelRef.slice(0, separatorIndex);
+			const modelId = modelRef.slice(separatorIndex + 1);
+
+			if (!effectiveSessionId) {
+				setSelectedModelRef(modelRef);
+				persistModelSelection(modelRef);
+				try {
+					const settingsWorkspacePath = workspacePath ?? undefined;
+					await updateSettingsValues(
+						"pi-agent",
+						{
+							values: {
+								defaultProvider: provider,
+								defaultModel: modelId,
+							},
+						},
+						settingsWorkspacePath,
+					);
+				} catch (err) {
+					console.error("Failed to persist model selection:", err);
+				}
 				return;
 			}
 
@@ -260,8 +336,6 @@ export function useModelSelection(
 				// Apply immediately if idle
 				setSelectedModelRef(modelRef);
 				setIsSwitching(true);
-				const provider = modelRef.slice(0, separatorIndex);
-				const modelId = modelRef.slice(separatorIndex + 1);
 				try {
 					await getWsManager().agentSetModel(
 						effectiveSessionId,
@@ -279,6 +353,7 @@ export function useModelSelection(
 						},
 						settingsWorkspacePath,
 					);
+					persistModelSelection(modelRef);
 				} catch (err) {
 					console.error("Failed to switch model:", err);
 				} finally {
@@ -289,7 +364,12 @@ export function useModelSelection(
 				setPendingModelRef(modelRef);
 			}
 		},
-		[isIdle, effectiveSessionId, workspacePath],
+		[
+			isIdle,
+			effectiveSessionId,
+			workspacePath,
+			persistModelSelection,
+		],
 	);
 
 	const cycleModel = useCallback(async () => {

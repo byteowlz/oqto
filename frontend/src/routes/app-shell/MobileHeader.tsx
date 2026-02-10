@@ -58,22 +58,28 @@ export const MobileHeader = memo(function MobileHeader({
 							{getDisplayPiTitle(selectedChatFromHistory)}
 						</div>
 						<div className="text-[10px] text-muted-foreground truncate">
-							{selectedChatFromHistory.workspace_path && (
-								<span className="font-medium">
-									{selectedChatFromHistory.workspace_path
-										.split("/")
-										.filter(Boolean)
-										.pop()}
-									{" | "}
-								</span>
-							)}
-							{getReadableIdFromSession(selectedChatFromHistory)}
-							{selectedChatFromHistory.updated_at && (
-								<span className="opacity-60">
-									{" "}
-									| {formatSessionDate(selectedChatFromHistory.updated_at)}
-								</span>
-							)}
+							{(() => {
+								const workspace = selectedChatFromHistory.workspace_path
+									?.split("/")
+									.filter(Boolean)
+									.pop();
+								const readableId = getReadableIdFromSession(selectedChatFromHistory);
+								const date = selectedChatFromHistory.updated_at
+									? formatSessionDate(selectedChatFromHistory.updated_at)
+									: null;
+								const parts: Array<{ text: string; bold?: boolean; dim?: boolean }> = [];
+								if (workspace) parts.push({ text: workspace, bold: true });
+								if (readableId) parts.push({ text: readableId });
+								if (date) parts.push({ text: date, dim: true });
+								return parts.map((part, i) => (
+									<span key={part.text}>
+										{i > 0 && <span className="opacity-60"> | </span>}
+										<span className={part.bold ? "font-medium" : part.dim ? "opacity-60" : ""}>
+											{part.text}
+										</span>
+									</span>
+								));
+							})()}
 						</div>
 					</div>
 				) : (

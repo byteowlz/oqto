@@ -18,6 +18,7 @@ const PROVIDER_FOLDER_MAP: Record<string, string> = {
 	// Direct matches
 	anthropic: "anthropic",
 	openai: "openai",
+	"openai-codex": "openai",
 	google: "google",
 	mistral: "mistral",
 	cohere: "cohere",

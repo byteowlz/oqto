@@ -140,7 +140,7 @@ function TimelineDot({
 				>
 					<div className="font-medium">
 						{displayTitle}
-						<span className="opacity-60">[{readableId}]</span>
+						{readableId && <span className="opacity-60">[{readableId}]</span>}
 					</div>
 					<div className="text-muted-foreground">{formattedDate}</div>
 					{session.message_count > 0 && (

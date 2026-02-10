@@ -1665,6 +1665,7 @@ dependencies = [
 [[package]]
 name = "hstry-core"
 version = "0.4.2"
+source = "git+https://github.com/byteowlz/hstry?branch=main#e207d34818685895a5bc18b8059683ece1ef0482"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2629,7 +2630,7 @@ dependencies = [
 
 [[package]]
 name = "octo"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2693,7 +2694,7 @@ dependencies = [
 
 [[package]]
 name = "octo-browser"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -2704,7 +2705,7 @@ dependencies = [
 
 [[package]]
 name = "octo-files"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "axum 0.8.8",
  "bytes",
@@ -2730,7 +2731,7 @@ dependencies = [
 
 [[package]]
 name = "octo-protocol"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "hstry-core",
  "serde",
@@ -2739,7 +2740,7 @@ dependencies = [
 
 [[package]]
 name = "octo-scaffold"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "anyhow",
  "clap",

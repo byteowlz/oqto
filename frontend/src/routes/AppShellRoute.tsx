@@ -58,6 +58,7 @@ const AppShell = memo(function AppShell() {
 		deleteChatSession,
 		renameChatSession,
 		busySessions,
+		runnerSessionCount,
 		projectDefaultAgents,
 		setProjectDefaultAgents,
 		setScrollToMessageId,
@@ -78,7 +79,7 @@ const AppShell = memo(function AppShell() {
 
 	const { mutate: handleLogout } = useLogout();
 	const { data: currentUser } = useCurrentUser();
-	const isAdmin = currentUser?.role === "admin";
+	const isAdmin = (currentUser?.role ?? "").toLowerCase() === "admin";
 
 	// Use extracted hooks
 	const sidebarState = useSidebarState();
@@ -520,6 +521,7 @@ const AppShell = memo(function AppShell() {
 						selectedChatSessionId={selectedChatSessionId}
 						selectedProjectKey={selectedProjectKey}
 						busySessions={busySessions}
+						runnerSessionCount={runnerSessionCount}
 						expandedSessions={sidebarState.expandedSessions}
 						toggleSessionExpanded={sidebarState.toggleSessionExpanded}
 						expandedProjects={sidebarState.expandedProjects}
@@ -660,6 +662,7 @@ const AppShell = memo(function AppShell() {
 									filteredSessions={sessionData.filteredSessions}
 									selectedChatSessionId={selectedChatSessionId}
 									busySessions={busySessions}
+									runnerSessionCount={runnerSessionCount}
 									expandedSessions={sidebarState.expandedSessions}
 									toggleSessionExpanded={sidebarState.toggleSessionExpanded}
 									expandedProjects={sidebarState.expandedProjects}

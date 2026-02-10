@@ -82,7 +82,7 @@ export const DashboardGrid = memo(function DashboardGrid({
 
 	return (
 		<div
-			className="grid grid-cols-12 gap-4 auto-rows-fr overflow-y-auto pr-1"
+			className="grid grid-cols-12 gap-3 sm:gap-4 auto-rows-fr overflow-visible lg:overflow-y-auto pr-1"
 			style={{ gridAutoRows: `${GRID_ROW_HEIGHT_REM}rem` }}
 		>
 			{visibleCards.map((card) => {

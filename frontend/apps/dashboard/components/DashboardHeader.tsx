@@ -29,14 +29,15 @@ function MobileTabButton({
 			type="button"
 			onClick={onClick}
 			className={cn(
-				"flex-1 flex items-center justify-center px-1.5 py-1 relative transition-colors",
+				"flex-1 flex flex-col items-center justify-center gap-1 px-2 py-2 rounded-lg text-[11px] uppercase tracking-wide transition-colors",
 				active
-					? "bg-primary/15 text-foreground border border-primary"
-					: "text-muted-foreground border border-transparent hover:border-border hover:bg-muted/50",
+					? "bg-primary/15 text-foreground border border-primary/50"
+					: "text-muted-foreground border border-border/40 bg-muted/40 hover:border-border hover:bg-muted/60",
 			)}
 			title={label}
 		>
 			<Icon className="h-4 w-4" />
+			<span>{label}</span>
 		</button>
 	);
 }
@@ -77,8 +78,8 @@ export const DashboardHeader = memo(function DashboardHeader({
 	if (isMobile) {
 		return (
 			<>
-				<div className="sticky top-0 z-10 bg-card border border-border rounded-t-xl overflow-hidden">
-					<div className="flex gap-0.5 p-1 sm:p-2">
+				<div className="sticky top-0 z-10 bg-card/95 backdrop-blur border border-border/60 rounded-t-2xl overflow-hidden shadow-sm">
+					<div className="grid grid-cols-3 gap-1.5 p-2">
 						<MobileTabButton
 							active={mobileView === "dashboard"}
 							icon={Activity}
@@ -105,13 +106,19 @@ export const DashboardHeader = memo(function DashboardHeader({
 						/>
 					</div>
 				</div>
-				<div className="relative flex items-start justify-center gap-3">
-					<div className="text-center">
-						<h1 className="text-xl font-semibold tracking-tight">{title}</h1>
-						<p className="text-sm text-muted-foreground">{subtitle}</p>
+				<div className="flex items-center justify-between gap-3 px-1.5 pt-3">
+					<div className="min-w-0">
+						<p className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground truncate">
+							{subtitle}
+						</p>
+						<h1 className="text-lg font-semibold tracking-tight truncate">
+							{title}
+						</h1>
 					</div>
-					<div className="absolute right-0 top-0 flex items-center gap-2 text-xs text-muted-foreground">
-						{new Date().toLocaleDateString()}
+					<div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+						<span className="whitespace-nowrap">
+							{new Date().toLocaleDateString()}
+						</span>
 						<Button
 							variant={layoutEditMode ? "secondary" : "ghost"}
 							size="icon"

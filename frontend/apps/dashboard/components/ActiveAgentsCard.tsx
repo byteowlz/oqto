@@ -44,6 +44,20 @@ export type ActiveAgentsCardProps = {
 	runningSessions: WorkspaceSession[];
 	busyChatSessions: ChatSession[];
 	agents: OpenCodeAgent[];
+	runnerSessionCount: number;
+	runnerSessions: Array<{
+		session_id: string;
+		state: string;
+		cwd: string;
+		provider?: string;
+		model?: string;
+		last_activity: number;
+		subscriber_count: number;
+	}>;
+	runnerSessionTitles: Map<
+		string,
+		{ title?: string | null; readableId?: string | null }
+	>;
 };
 
 export const ActiveAgentsCard = memo(function ActiveAgentsCard({
@@ -52,14 +66,17 @@ export const ActiveAgentsCard = memo(function ActiveAgentsCard({
 	runningSessions,
 	busyChatSessions,
 	agents,
+	runnerSessionCount,
+	runnerSessions,
+	runnerSessionTitles,
 }: ActiveAgentsCardProps) {
 	return (
 		<Card className="border-border bg-muted/30 shadow-none h-full flex flex-col">
 			<CardHeader>
 				<CardTitle>{title}</CardTitle>
 				<CardDescription>
-					{runningSessions.length} running containers, {agents.length} agent
-					profiles
+					{runningSessions.length} running containers, {runnerSessionCount} Pi
+					sessions, {agents.length} agent profiles
 				</CardDescription>
 			</CardHeader>
 			<CardContent className="flex-1 min-h-0 overflow-auto space-y-4">
@@ -111,6 +128,53 @@ export const ActiveAgentsCard = memo(function ActiveAgentsCard({
 									{session.title || session.id}
 								</span>
 							))}
+						</div>
+					)}
+				</div>
+
+				<div>
+					<div className="flex items-center justify-between mb-2">
+						<p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+							Pi runner sessions
+						</p>
+						<Badge variant="secondary">{runnerSessions.length}</Badge>
+					</div>
+					{runnerSessions.length === 0 ? (
+						<p className="text-sm text-muted-foreground">
+							No Pi sessions running.
+						</p>
+					) : (
+						<div className="space-y-3">
+							{runnerSessions.map((session) => {
+								const meta = runnerSessionTitles.get(session.session_id);
+								const title = meta?.title ?? session.session_id;
+								const readableId = meta?.readableId;
+								const shortId = `${session.session_id.slice(0, 8)}…${session.session_id.slice(-4)}`;
+								return (
+									<div
+										key={session.session_id}
+										className="flex items-start justify-between gap-3 text-xs"
+									>
+										<div className="min-w-0 space-y-1">
+											<p className="font-medium truncate">{title}</p>
+											<div className="flex flex-wrap items-center gap-2 text-muted-foreground">
+												{readableId && (
+													<span className="rounded bg-muted px-2 py-0.5">
+														{readableId}
+													</span>
+												)}
+												<span className="rounded bg-muted px-2 py-0.5 font-mono">
+													{shortId}
+												</span>
+												{session.cwd && (
+													<span className="truncate">{session.cwd}</span>
+												)}
+											</div>
+										</div>
+										<StatusPill status={session.state} />
+									</div>
+								);
+							})}
 						</div>
 					)}
 				</div>

@@ -90,12 +90,6 @@ export function PiSettingsView({
 							<Loader2 className="h-4 w-4 animate-spin" />
 							{locale === "de" ? "Modelle laden..." : "Loading models..."}
 						</div>
-					) : !sessionId ? (
-						<p className="text-xs text-muted-foreground">
-							{locale === "de"
-								? "Keine Sitzung ausgewählt"
-								: "No session selected"}
-						</p>
 					) : (
 						<Select
 							value={effectiveModelRef ?? undefined}

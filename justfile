@@ -8,7 +8,8 @@ build: build-backend build-frontend
 
 # Build backend (all workspace crates)
 build-backend:
-    cd backend && cargo build
+    cd backend && remote-build build --release -p octo --bin octo --bin octo-runner
+    cd backend && remote-build build --release -p octo-files --bin octo-files
 
 # Build frontend
 build-frontend:
@@ -19,7 +20,7 @@ lint: lint-backend lint-frontend
 
 # Lint backend
 lint-backend:
-    cd backend && cargo clippy && cargo fmt --check
+    cd backend && remote-build clippy && cargo fmt --check
 
 # Lint frontend
 lint-frontend:
@@ -30,7 +31,7 @@ test: test-backend test-frontend
 
 # Test backend
 test-backend:
-    cd backend && cargo test
+    cd backend && remote-build test
 
 # Test frontend
 test-frontend:
@@ -42,15 +43,15 @@ fmt:
 
 # Generate TypeScript types from Rust structs
 gen-types:
-    cd backend && cargo test -p octo export_typescript_bindings -- --nocapture
+    cd backend && remote-build test -p octo export_typescript_bindings -- --nocapture
 
 # Check all Rust code compiles
 check:
-    cd backend && cargo check
+    cd backend && remote-build check
 
 # Start backend server
 serve:
-    cd backend && cargo run --bin octo -- serve
+    /usr/local/bin/octo serve
 
 # Start frontend dev server
 dev:
@@ -59,6 +60,10 @@ dev:
 # Start frontend dev server with verbose WS logs and control plane URL
 run-frontend:
     cd frontend && VITE_CONTROL_PLANE_URL="http://archlinux:8080" VITE_DEBUG_WS=1 VITE_DEBUG_PI=1 bun dev
+
+# Fast dev loop: rebuild backend remotely, install, restart services
+reload-fast:
+    ./scripts/fast-reload.sh
 
 # Install all dependencies and binaries
 install:
@@ -147,11 +152,11 @@ config:
 invite-codes:
     cd backend && cargo run --bin octo -- invite-codes generate
 
-# Reload backend: build, install, stop, and restart octo serve --local-mode
+# Fast reload: remote-build + install + restart octo/runner
 reload:
-    ./scripts/reload-backend.sh
+    ./scripts/fast-reload.sh
 
-# Reload backend but don't restart server
+# Reload backend but don't restart server (legacy)
 reload-stop:
     ./scripts/reload-backend.sh --no-start
 

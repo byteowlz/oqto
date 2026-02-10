@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.8.0"
+version = "0.8.1"
 edition = "2024"
 license = "MIT"
 authors = ["Octo Team"]
@@ -100,7 +100,7 @@ tonic = "0.12"
 prost = "0.13"
 
 # External crates
-hstry-core = { path = "../../hstry/crates/hstry-core" }
+hstry-core = { git = "https://github.com/byteowlz/hstry", branch = "main" }
 
 [profile.release]
 lto = true

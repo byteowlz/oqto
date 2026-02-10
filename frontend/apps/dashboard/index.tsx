@@ -11,6 +11,7 @@ import {
 	DashboardSidebar,
 	QueryCard,
 } from "./components";
+import { getReadableIdFromSession } from "@/lib/session-utils";
 import { useDashboardData } from "./hooks";
 import { getTranslations } from "./translations";
 import type {
@@ -32,6 +33,8 @@ export function DashboardApp() {
 		chatHistory,
 		workspaceSessions,
 		busySessions,
+		runnerSessionCount,
+		runnerSessions,
 		selectedWorkspaceSession,
 	} = useApp();
 
@@ -78,6 +81,21 @@ export function DashboardApp() {
 		if (!busySessions.size) return [];
 		return chatHistory.filter((s) => busySessions.has(s.id));
 	}, [busySessions, chatHistory]);
+
+	const runnerSessionTitles = useMemo(() => {
+		const map = new Map<
+			string,
+			{ title?: string | null; readableId?: string | null }
+		>();
+		for (const session of chatHistory) {
+			const title = session.title?.trim();
+			const readableId = getReadableIdFromSession(session);
+			if (title || readableId) {
+				map.set(session.id, { title, readableId });
+			}
+		}
+		return map;
+	}, [chatHistory]);
 
 	const cardMap = useMemo(() => {
 		const map = new Map<
@@ -231,6 +249,9 @@ export function DashboardApp() {
 				workspaceSessions={workspaceSessions}
 				busyChatSessions={busyChatSessions}
 				totalChatCount={chatHistory.length}
+				runnerSessionCount={runnerSessionCount}
+				runnerSessions={runnerSessions}
+				runnerSessionTitles={runnerSessionTitles}
 				scheduleList={scheduleList}
 				scheduleStats={data.scheduleStats}
 				schedulerError={data.schedulerError}
@@ -258,6 +279,9 @@ export function DashboardApp() {
 			workspaceSessions,
 			busyChatSessions,
 			chatHistory.length,
+			runnerSessionCount,
+			runnerSessions,
+			runnerSessionTitles,
 			scheduleList,
 			data,
 			feedUrls,
@@ -306,8 +330,8 @@ export function DashboardApp() {
 					isMobile={true}
 					layoutError={data.layoutError}
 				/>
-				<div className="flex-1 min-h-0 bg-card border border-t-0 border-border rounded-b-xl p-3 sm:p-4 overflow-hidden flex flex-col gap-4">
-					<div className="flex-1 min-h-0 overflow-hidden">
+				<div className="flex-1 min-h-0 bg-card/90 border border-t-0 border-border/60 rounded-b-2xl px-3 pb-3 pt-2 shadow-sm overflow-hidden flex flex-col gap-3">
+					<div className="flex-1 min-h-0 overflow-y-auto overscroll-contain">
 						{mobileView === "dashboard" ? (
 							<DashboardGrid
 								layoutConfig={data.layoutConfig}
@@ -320,22 +344,20 @@ export function DashboardApp() {
 								onReorder={handleReorder}
 							/>
 						) : (
-							<div className="h-full overflow-y-auto">
-								<DashboardSidebar
-									layoutLabel={t.layout}
-									noticeLabel={t.notice}
-									customCardsLabel={t.customCards}
-									collapsed={false}
-									setCollapsed={() => {}}
-									sidebarSection={activeSidebarSection as "cards" | "custom"}
-									setSidebarSection={setSidebarSection}
-									layoutConfig={data.layoutConfig}
-									orderedCards={orderedCards}
-									onToggleCard={handleToggleCard}
-									onRemoveCustomCard={handleRemoveCustomCard}
-									onAddCustomCard={handleAddCustomCard}
-								/>
-							</div>
+							<DashboardSidebar
+								layoutLabel={t.layout}
+								noticeLabel={t.notice}
+								customCardsLabel={t.customCards}
+								collapsed={false}
+								setCollapsed={() => {}}
+								sidebarSection={activeSidebarSection as "cards" | "custom"}
+								setSidebarSection={setSidebarSection}
+								layoutConfig={data.layoutConfig}
+								orderedCards={orderedCards}
+								onToggleCard={handleToggleCard}
+								onRemoveCustomCard={handleRemoveCustomCard}
+								onAddCustomCard={handleAddCustomCard}
+							/>
 						)}
 					</div>
 				</div>

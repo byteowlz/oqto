@@ -246,7 +246,16 @@ pub async fn get_session_messages_from_hstry(
         let cost: Option<f64> = row.get("cost_usd");
         let parts_json: Option<String> = row.get("parts_json");
 
-        let parts = hstry_parts_to_chat_parts(parts_json.as_deref(), &content, &id);
+        let mut parts = hstry_parts_to_chat_parts(parts_json.as_deref(), &content, &id);
+
+        // For tool result messages, strip text parts that duplicate the tool output.
+        // hstry may store both a text part and a tool_result part for the same content.
+        if role == "tool" || role == "toolResult" {
+            let has_tool_result = parts.iter().any(|p| p.part_type == "tool_result");
+            if has_tool_result {
+                parts.retain(|p| p.part_type != "text");
+            }
+        }
 
         messages.push(ChatMessage {
             id,
@@ -499,7 +508,7 @@ fn message_proto_to_chat_message(
     session_id: &str,
 ) -> ChatMessage {
     let id = format!("{session_id}-msg-{}", msg.idx);
-    let parts = hstry_parts_to_chat_parts(
+    let mut parts = hstry_parts_to_chat_parts(
         if msg.parts_json.is_empty() {
             None
         } else {
@@ -508,6 +517,15 @@ fn message_proto_to_chat_message(
         &msg.content,
         &id,
     );
+
+    // For tool result messages, strip text parts that duplicate the tool output.
+    // hstry may store both a text part and a tool_result part for the same content.
+    if msg.role == "tool" || msg.role == "toolResult" {
+        let has_tool_result = parts.iter().any(|p| p.part_type == "tool_result");
+        if has_tool_result {
+            parts.retain(|p| p.part_type != "text");
+        }
+    }
 
     ChatMessage {
         id,

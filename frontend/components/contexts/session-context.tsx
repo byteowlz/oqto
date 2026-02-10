@@ -69,6 +69,16 @@ export interface SessionContextValue {
 	selectedChatFromHistory: ChatSession | undefined;
 	busySessions: Set<string>;
 	setSessionBusy: (sessionId: string, busy: boolean) => void;
+	runnerSessions: Array<{
+		session_id: string;
+		state: string;
+		cwd: string;
+		provider?: string;
+		model?: string;
+		last_activity: number;
+		subscriber_count: number;
+	}>;
+	runnerSessionCount: number;
 	refreshChatHistory: () => Promise<void>;
 	createOptimisticChatSession: (
 		sessionId: string,
@@ -110,6 +120,8 @@ const defaultSessionContext: SessionContextValue = {
 	selectedChatFromHistory: undefined,
 	busySessions: new Set(),
 	setSessionBusy: noop,
+	runnerSessions: [],
+	runnerSessionCount: 0,
 	refreshChatHistory: asyncNoopVoid,
 	createOptimisticChatSession: (_sessionId?: string) => "",
 	clearOptimisticChatSession: noop,
@@ -159,6 +171,8 @@ function SessionContextComposer({ children }: { children: ReactNode }) {
 			selectedChatFromHistory: chat.selectedChatFromHistory,
 			busySessions: chat.busySessions,
 			setSessionBusy: chat.setSessionBusy,
+			runnerSessions: chat.runnerSessions,
+			runnerSessionCount: chat.runnerSessionCount,
 			refreshChatHistory: chat.refreshChatHistory,
 			createOptimisticChatSession: chat.createOptimisticChatSession,
 			clearOptimisticChatSession: chat.clearOptimisticChatSession,

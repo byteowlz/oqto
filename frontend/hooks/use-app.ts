@@ -42,6 +42,8 @@ export function useApp() {
 			selectedChatFromHistory: session.selectedChatFromHistory,
 			busySessions: session.busySessions,
 			setSessionBusy: session.setSessionBusy,
+			runnerSessions: session.runnerSessions,
+			runnerSessionCount: session.runnerSessionCount,
 			refreshWorkspaceSessions: session.refreshWorkspaceSessions,
 			refreshChatHistory: session.refreshChatHistory,
 			createOptimisticChatSession: session.createOptimisticChatSession,

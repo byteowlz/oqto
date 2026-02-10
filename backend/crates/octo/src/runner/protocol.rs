@@ -965,8 +965,11 @@ pub struct PiCycleModelRequest {
 /// Request to get available models.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PiGetAvailableModelsRequest {
-    /// Session ID.
+    /// Session ID (optional placeholder when requesting cached models by workdir).
     pub session_id: String,
+    /// Optional workdir to fetch cached models without a live session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workdir: Option<String>,
 }
 
 /// Request to set the thinking level.

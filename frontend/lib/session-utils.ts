@@ -1840,6 +1840,15 @@ export function normalizeWorkspacePath(
 	return trimmed;
 }
 
+export function getWorkspaceModelStorageKey(
+	workspacePath: string | null | undefined,
+): string {
+	const normalized = normalizeWorkspacePath(workspacePath);
+	const base = normalized ?? "global";
+	const sanitized = base.replace(/[^a-zA-Z0-9._-]+/g, "_");
+	return `octo:workspaceModel:${sanitized}`;
+}
+
 /**
  * Format a timestamp as YYYY/MM/DD - HH:MM
  */
