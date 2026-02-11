@@ -87,6 +87,14 @@ Auth uses JWT with invite codes. A progressive onboarding system with agent-driv
 
 The interactive script handles user mode selection, backend mode, dependency installation, building, configuration, and optional systemd services. See [SETUP.md](./SETUP.md) for full details.
 
+### Portable install config
+
+Generate `octo.install.toml` with the setup wizard or by hand, then hydrate per-app configs:
+
+```bash
+octo-setup hydrate --install-config octo.install.toml
+```
+
 ---
 
 ### Set up manually

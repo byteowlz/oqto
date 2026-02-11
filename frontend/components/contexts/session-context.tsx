@@ -48,6 +48,8 @@ export interface SessionContextValue {
 	selectedWorkspaceSessionId: string;
 	setSelectedWorkspaceSessionId: (id: string) => void;
 	selectedWorkspaceSession: WorkspaceSession | undefined;
+	selectedWorkspaceOverviewPath: string | null;
+	setSelectedWorkspaceOverviewPath: (path: string | null) => void;
 	projects: ProjectEntry[];
 	startProjectSession: (
 		projectPath: string,
@@ -104,6 +106,8 @@ const defaultSessionContext: SessionContextValue = {
 	selectedWorkspaceSessionId: "",
 	setSelectedWorkspaceSessionId: noop,
 	selectedWorkspaceSession: undefined,
+	selectedWorkspaceOverviewPath: null,
+	setSelectedWorkspaceOverviewPath: noop,
 	projects: [],
 	startProjectSession: asyncNoop,
 	projectDefaultAgents: {},
@@ -155,6 +159,8 @@ function SessionContextComposer({ children }: { children: ReactNode }) {
 			selectedWorkspaceSessionId: workspace.selectedWorkspaceSessionId,
 			setSelectedWorkspaceSessionId: workspace.setSelectedWorkspaceSessionId,
 			selectedWorkspaceSession: workspace.selectedWorkspaceSession,
+			selectedWorkspaceOverviewPath: workspace.selectedWorkspaceOverviewPath,
+			setSelectedWorkspaceOverviewPath: workspace.setSelectedWorkspaceOverviewPath,
 			projects: workspace.projects,
 			startProjectSession: workspace.startProjectSession,
 			projectDefaultAgents: workspace.projectDefaultAgents,

@@ -861,7 +861,8 @@ async fn handle_ws_command(
 }
 
 /// Build a canonical `CommandResponse` event wrapped in `WsEvent::Agent`.
-fn agent_response(
+fn agent_response_with_runner(
+    runner_id: &str,
     session_id: &str,
     id: Option<String>,
     cmd: &str,
@@ -873,7 +874,7 @@ fn agent_response(
     };
     WsEvent::Agent(octo_protocol::events::Event {
         session_id: session_id.to_string(),
-        runner_id: "local".to_string(),
+        runner_id: runner_id.to_string(),
         ts: Utc::now().timestamp_millis(),
         payload: octo_protocol::events::EventPayload::Response(
             octo_protocol::events::CommandResponse {
@@ -902,6 +903,13 @@ async fn handle_agent_command(
 
     let id = cmd.id.clone();
     let session_id = cmd.session_id.clone();
+    let runner_id = cmd.runner_id.clone().unwrap_or_else(|| "local".to_string());
+    let agent_response = |session_id: &str,
+                          id: Option<String>,
+                          cmd: &str,
+                          result: Result<Option<Value>, String>| {
+        agent_response_with_runner(&runner_id, session_id, id, cmd, result)
+    };
 
     // Check if runner is available
     let runner = match runner_client {
@@ -1018,9 +1026,16 @@ async fn handle_agent_command(
 
                         // Use a oneshot channel to wait for subscription confirmation
                         let (sub_ready_tx, sub_ready_rx) = oneshot::channel::<()>();
+                        let runner_id = runner_id.clone();
                         tokio::spawn(async move {
-                            if let Err(e) =
-                                forward_pi_events(&runner, &sid, event_tx, Some(sub_ready_tx)).await
+                            if let Err(e) = forward_pi_events(
+                                &runner,
+                                &sid,
+                                event_tx,
+                                Some(sub_ready_tx),
+                                runner_id,
+                            )
+                            .await
                             {
                                 error!("Event forwarding error for session {}: {:?}", sid, e);
                             }
@@ -1261,7 +1276,16 @@ async fn handle_agent_command(
                 "agent get_messages: user={}, session_id={}",
                 user_id, session_id
             );
-            handle_get_messages(id, &session_id, user_id, state, runner, conn_state).await
+            handle_get_messages(
+                id,
+                &session_id,
+                user_id,
+                state,
+                runner,
+                conn_state,
+                &runner_id,
+            )
+            .await
         }
 
         CommandPayload::GetStats => {
@@ -1398,7 +1422,7 @@ async fn handle_agent_command(
                     // Emit ConfigModelChanged event so the frontend UI updates.
                     let config_event = WsEvent::Agent(octo_protocol::events::Event {
                         session_id: session_id.clone(),
-                        runner_id: "local".to_string(),
+                        runner_id: runner_id.clone(),
                         ts: Utc::now().timestamp_millis(),
                         payload: octo_protocol::events::EventPayload::ConfigModelChanged {
                             provider: resp.model.provider.clone(),
@@ -1463,7 +1487,7 @@ async fn handle_agent_command(
                     // Emit ConfigModelChanged event so the frontend UI updates.
                     let config_event = WsEvent::Agent(octo_protocol::events::Event {
                         session_id: session_id.clone(),
-                        runner_id: "local".to_string(),
+                        runner_id: runner_id.clone(),
                         ts: Utc::now().timestamp_millis(),
                         payload: octo_protocol::events::EventPayload::ConfigModelChanged {
                             provider: resp.model.provider.clone(),
@@ -1701,7 +1725,15 @@ async fn handle_get_messages(
     state: &AppState,
     runner: &RunnerClient,
     conn_state: Arc<tokio::sync::Mutex<WsConnectionState>>,
+    runner_id: &str,
 ) -> Option<WsEvent> {
+    let agent_response = |session_id: &str,
+                          id: Option<String>,
+                          cmd: &str,
+                          result: Result<Option<Value>, String>| {
+        agent_response_with_runner(runner_id, session_id, id, cmd, result)
+    };
+
     let (session_meta, is_active) = {
         let state_guard = conn_state.lock().await;
         (
@@ -1867,6 +1899,7 @@ async fn forward_pi_events(
     session_id: &str,
     event_tx: mpsc::UnboundedSender<WsEvent>,
     sub_ready_tx: Option<oneshot::Sender<()>>,
+    runner_id: String,
 ) -> anyhow::Result<()> {
     info!(
         "forward_pi_events: connecting subscription for session {}",
@@ -1906,7 +1939,7 @@ async fn forward_pi_events(
                 // Emit error as canonical agent.error event
                 let error_event = octo_protocol::events::Event {
                     session_id: session_id.to_string(),
-                    runner_id: "local".to_string(),
+                    runner_id: runner_id.clone(),
                     ts: chrono::Utc::now().timestamp_millis(),
                     payload: octo_protocol::events::EventPayload::AgentError {
                         error: format!("Subscription error ({:?}): {}", code, message),

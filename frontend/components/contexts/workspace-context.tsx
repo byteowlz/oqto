@@ -32,6 +32,8 @@ export interface WorkspaceContextValue {
 	selectedWorkspaceSessionId: string;
 	setSelectedWorkspaceSessionId: (id: string) => void;
 	selectedWorkspaceSession: WorkspaceSession | undefined;
+	selectedWorkspaceOverviewPath: string | null;
+	setSelectedWorkspaceOverviewPath: (path: string | null) => void;
 	/** Available projects (directories in workspace_dir) */
 	projects: ProjectEntry[];
 	/** Start a new session for a project */
@@ -65,6 +67,8 @@ const defaultWorkspaceContext: WorkspaceContextValue = {
 	selectedWorkspaceSessionId: "",
 	setSelectedWorkspaceSessionId: noop,
 	selectedWorkspaceSession: undefined,
+	selectedWorkspaceOverviewPath: null,
+	setSelectedWorkspaceOverviewPath: noop,
 	projects: [],
 	startProjectSession: asyncNoop,
 	projectDefaultAgents: {},
@@ -91,6 +95,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
 	const [selectedWorkspaceSessionId, setSelectedWorkspaceSessionId] =
 		useState<string>("");
+	const [selectedWorkspaceOverviewPath, setSelectedWorkspaceOverviewPath] =
+		useState<string | null>(null);
 
 	// Available projects
 	const [projects, setProjects] = useState<ProjectEntry[]>([]);
@@ -424,6 +430,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 			selectedWorkspaceSessionId,
 			setSelectedWorkspaceSessionId,
 			selectedWorkspaceSession,
+			selectedWorkspaceOverviewPath,
+			setSelectedWorkspaceOverviewPath,
 			projects,
 			startProjectSession,
 			projectDefaultAgents,
@@ -440,6 +448,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 			workspaceSessions,
 			selectedWorkspaceSessionId,
 			selectedWorkspaceSession,
+			selectedWorkspaceOverviewPath,
 			projects,
 			startProjectSession,
 			projectDefaultAgents,

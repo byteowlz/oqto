@@ -568,6 +568,7 @@ pub async fn get_chat_messages(
                             tokens_output: m.tokens_output,
                             tokens_reasoning: m.tokens_reasoning,
                             cost: m.cost,
+                            client_id: None,
                             parts: m
                                 .parts
                                 .into_iter()

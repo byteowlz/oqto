@@ -30,10 +30,15 @@ export type {
 	ProjectLogo,
 	WorkspaceDirEntry,
 	ProjectTemplateEntry,
+	ProjectTemplateDefaults,
 	ListProjectTemplatesResponse,
 	CreateProjectFromTemplateRequest,
 	CreateWorkspaceSessionRequest,
 	ProjectEntry,
+	WorkspaceMeta,
+	WorkspaceSandboxConfig,
+	WorkspacePiResources,
+	WorkspacePiResourcesUpdate,
 	SessionUpdateInfo,
 } from "./types";
 
@@ -110,6 +115,15 @@ export {
 	createProjectFromTemplate,
 	getProjectLogoUrl,
 } from "./projects";
+
+export {
+	getWorkspaceMeta,
+	updateWorkspaceMeta,
+	getWorkspaceSandbox,
+	updateWorkspaceSandbox,
+	getWorkspacePiResources,
+	applyWorkspacePiResources,
+} from "./workspace";
 
 // Personas
 export {

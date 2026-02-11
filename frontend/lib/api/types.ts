@@ -112,10 +112,22 @@ export type WorkspaceDirEntry = {
 	logo?: ProjectLogo;
 };
 
+export type ProjectTemplateDefaults = {
+	display_name?: string | null;
+	sandbox_profile?: string | null;
+	default_provider?: string | null;
+	default_model?: string | null;
+	skills_mode?: "all" | "custom";
+	extensions_mode?: "all" | "custom";
+	skills?: string[];
+	extensions?: string[];
+};
+
 export type ProjectTemplateEntry = {
 	name: string;
 	path: string;
 	description?: string;
+	defaults?: ProjectTemplateDefaults;
 };
 
 export type ListProjectTemplatesResponse = {
@@ -146,6 +158,38 @@ export type ProjectEntry = {
 	type: "directory";
 	/** Project logo if found in logo/ directory */
 	logo?: ProjectLogo;
+};
+
+export type WorkspaceMeta = {
+	display_name?: string | null;
+};
+
+export type WorkspaceSandboxConfig = {
+	enabled: boolean;
+	profile: string;
+	profiles: string[];
+};
+
+export type WorkspacePiResourceEntry = {
+	name: string;
+	selected: boolean;
+};
+
+export type WorkspacePiResources = {
+	skills_mode: "all" | "custom";
+	extensions_mode: "all" | "custom";
+	skills: WorkspacePiResourceEntry[];
+	extensions: WorkspacePiResourceEntry[];
+	global_skills_dir: string;
+	global_extensions_dir: string;
+};
+
+export type WorkspacePiResourcesUpdate = {
+	workspace_path: string;
+	skills_mode: "all" | "custom";
+	extensions_mode: "all" | "custom";
+	skills: string[];
+	extensions: string[];
 };
 
 export type SessionUpdateInfo = {

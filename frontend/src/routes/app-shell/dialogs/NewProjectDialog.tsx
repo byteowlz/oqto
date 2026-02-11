@@ -13,6 +13,11 @@ import type { ProjectTemplateEntry } from "@/lib/control-plane-client";
 import { cn } from "@/lib/utils";
 import { Loader2 } from "lucide-react";
 import { memo } from "react";
+import {
+	WorkspaceOverviewForm,
+	 type WorkspaceOverviewValues,
+} from "@/features/sessions/components/WorkspaceOverviewForm";
+import type { PiModelInfo } from "@/lib/api/default-chat";
 
 export interface NewProjectDialogProps {
 	open: boolean;
@@ -30,6 +35,13 @@ export interface NewProjectDialogProps {
 	onSharedChange: (shared: boolean) => void;
 	newProjectError: string | null;
 	newProjectSubmitting: boolean;
+	newProjectSettings: WorkspaceOverviewValues;
+	onProjectSettingsChange: (values: WorkspaceOverviewValues) => void;
+	availableModels: PiModelInfo[];
+	availableSkills: string[];
+	availableExtensions: string[];
+	sandboxProfiles: string[];
+	settingsLoading: boolean;
 	onSubmit: () => void;
 }
 
@@ -49,6 +61,13 @@ export const NewProjectDialog = memo(function NewProjectDialog({
 	onSharedChange,
 	newProjectError,
 	newProjectSubmitting,
+	newProjectSettings,
+	onProjectSettingsChange,
+	availableModels,
+	availableSkills,
+	availableExtensions,
+	sandboxProfiles,
+	settingsLoading,
 	onSubmit,
 }: NewProjectDialogProps) {
 	return (
@@ -145,6 +164,39 @@ export const NewProjectDialog = memo(function NewProjectDialog({
 							checked={newProjectShared}
 							onCheckedChange={onSharedChange}
 						/>
+					</div>
+
+					<div className="space-y-2">
+						<div className="text-xs uppercase text-muted-foreground">
+							{locale === "de"
+								? "Workspace-Einstellungen"
+								: "Workspace settings"}
+						</div>
+						{settingsLoading ? (
+							<div className="text-sm text-muted-foreground">
+								{locale === "de" ? "Lade Einstellungen..." : "Loading settings..."}
+							</div>
+						) : (
+							<div className="border border-border rounded p-3">
+								<WorkspaceOverviewForm
+									locale={locale}
+									workspacePathLabel={
+										newProjectPath.trim().length > 0
+											? newProjectPath.trim()
+											: locale === "de"
+												? "Neues Projekt"
+												: "New project"
+									}
+									values={newProjectSettings}
+									availableModels={availableModels}
+									sandboxProfiles={sandboxProfiles}
+									availableSkills={availableSkills}
+									availableExtensions={availableExtensions}
+									onChange={onProjectSettingsChange}
+									showSave={false}
+								/>
+							</div>
+						)}
 					</div>
 
 					{newProjectError && (

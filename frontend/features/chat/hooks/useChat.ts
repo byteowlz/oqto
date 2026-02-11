@@ -137,6 +137,7 @@ function chatMessageToRaw(message: ChatMessage): RawMessage {
 		parts,
 		model_id: message.model_id ?? null,
 		provider_id: message.provider_id ?? null,
+		client_id: message.client_id ?? undefined,
 	};
 }
 
@@ -347,6 +348,38 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 			}, delay);
 		}
 	}, [flushStreamingUpdate]);
+
+	const fetchHistoryMessages = useCallback(
+		async (sessionId: string) => {
+			try {
+				const history = await getChatMessages(sessionId);
+				if (history.length === 0) return;
+				const displayMessages = normalizeMessages(
+					history.map(chatMessageToRaw),
+					`history-${sessionId}`,
+				);
+				if (displayMessages.length === 0) return;
+				setMessages((prev) => mergeServerMessages(prev, displayMessages));
+				messageIdRef.current = getMaxMessageId(displayMessages);
+				const lastAssistant = [...displayMessages]
+					.reverse()
+					.find((msg) => msg.role === "assistant");
+				lastAssistantMessageIdRef.current = lastAssistant?.id ?? null;
+				if (isPiDebugEnabled()) {
+					console.debug(
+						"[useChat] Loaded history messages:",
+						sessionId,
+						displayMessages.length,
+					);
+				}
+			} catch (err) {
+				if (isPiDebugEnabled()) {
+					console.debug("[useChat] Failed to load history:", err);
+				}
+			}
+		},
+		[mergeServerMessages, normalizeMessages],
+	);
 
 	// ========================================================================
 	// Canonical agent event handler
@@ -1293,38 +1326,6 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 		}
 		return sessionId;
 	}, [getSessionConfig, onSelectedSessionIdChange]);
-
-	const fetchHistoryMessages = useCallback(
-		async (sessionId: string) => {
-			try {
-				const history = await getChatMessages(sessionId);
-				if (history.length === 0) return;
-				const displayMessages = normalizeMessages(
-					history.map(chatMessageToRaw),
-					`history-${sessionId}`,
-				);
-				if (displayMessages.length === 0) return;
-				setMessages((prev) => mergeServerMessages(prev, displayMessages));
-				messageIdRef.current = getMaxMessageId(displayMessages);
-				const lastAssistant = [...displayMessages]
-					.reverse()
-					.find((msg) => msg.role === "assistant");
-				lastAssistantMessageIdRef.current = lastAssistant?.id ?? null;
-				if (isPiDebugEnabled()) {
-					console.debug(
-						"[useChat] Loaded history messages:",
-						sessionId,
-						displayMessages.length,
-					);
-				}
-			} catch (err) {
-				if (isPiDebugEnabled()) {
-					console.debug("[useChat] Failed to load history:", err);
-				}
-			}
-		},
-		[mergeServerMessages, normalizeMessages],
-	);
 
 	// Send message
 	const send = useCallback(

@@ -1,0 +1,50 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "octo.install.schema.json",
+  "title": "Octo Install Configuration",
+  "description": "Portable install configuration used to hydrate Octo, hstry, and mmry config files.",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Reference to the JSON schema for validation and LSP completions"
+    },
+    "install": {
+      "type": "object",
+      "description": "Installer behavior and output locations.",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["merge", "overwrite"],
+          "description": "How to apply config updates when files already exist."
+        },
+        "config_home": {
+          "type": "string",
+          "description": "Base config directory (defaults to $XDG_CONFIG_HOME or ~/.config)."
+        },
+        "data_home": {
+          "type": "string",
+          "description": "Base data directory (defaults to $XDG_DATA_HOME or ~/.local/share)."
+        },
+        "state_home": {
+          "type": "string",
+          "description": "Base state directory (defaults to $XDG_STATE_HOME or ~/.local/state)."
+        }
+      },
+      "additionalProperties": false
+    },
+    "octo": {
+      "$ref": "https://raw.githubusercontent.com/byteowlz/schemas/refs/heads/main/octo/octo.backend.config.schema.json"
+    },
+    "sandbox": {
+      "$ref": "https://raw.githubusercontent.com/byteowlz/schemas/refs/heads/main/octo/octo.sandbox.schema.json"
+    },
+    "hstry": {
+      "$ref": "https://raw.githubusercontent.com/byteowlz/schemas/refs/heads/main/hstry/hstry.config.schema.json"
+    },
+    "mmry": {
+      "$ref": "https://raw.githubusercontent.com/byteowlz/schemas/refs/heads/main/mmry/mmry.config.schema.json"
+    }
+  },
+  "additionalProperties": false
+}
