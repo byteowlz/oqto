@@ -142,6 +142,20 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
             "/session/{session_id}/browser/stream",
             get(proxy::proxy_browser_stream_ws),
         )
+        // Workspace overview
+        .route(
+            "/workspace/meta",
+            get(handlers::get_workspace_meta).patch(handlers::update_workspace_meta),
+        )
+        .route(
+            "/workspace/sandbox",
+            get(handlers::get_workspace_sandbox).patch(handlers::update_workspace_sandbox),
+        )
+        .route(
+            "/workspace/pi-resources",
+            get(handlers::get_workspace_pi_resources)
+                .post(handlers::apply_workspace_pi_resources),
+        )
         // Workspace-based mmry routes (single-user mode)
         .route(
             "/workspace/memories",

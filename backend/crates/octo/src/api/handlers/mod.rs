@@ -47,8 +47,10 @@ pub(crate) use chat::get_runner_for_user;
 
 // Project handlers and types
 pub use projects::{
-    create_project_from_template, get_project_logo, list_project_templates, list_workspace_dirs,
-    list_workspace_locations, set_active_workspace_location, upsert_workspace_location,
+    apply_workspace_pi_resources, create_project_from_template, get_project_logo,
+    get_workspace_meta, get_workspace_pi_resources, get_workspace_sandbox, list_project_templates,
+    list_workspace_dirs, list_workspace_locations, set_active_workspace_location,
+    update_workspace_meta, update_workspace_sandbox, upsert_workspace_location,
 };
 
 // Admin handlers and types
@@ -102,7 +104,6 @@ pub use misc::{
 };
 
 // Internal helpers used by other modules
-pub(crate) use trx::validate_workspace_path;
 
 #[cfg(test)]
 mod tests {

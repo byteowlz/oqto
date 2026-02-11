@@ -45,6 +45,8 @@ pub struct PiManagerConfig {
     pub hstry_db_path: Option<PathBuf>,
     /// Sandbox configuration (if sandboxing is enabled).
     pub sandbox_config: Option<SandboxConfig>,
+    /// Runner identifier (human-readable).
+    pub runner_id: String,
 }
 
 impl Default for PiManagerConfig {
@@ -61,6 +63,7 @@ impl Default for PiManagerConfig {
             cleanup_interval_secs: 60,
             hstry_db_path: Some(data_dir.join("hstry").join("hstry.db")),
             sandbox_config: None,
+            runner_id: "local".to_string(),
         }
     }
 }
@@ -589,6 +592,7 @@ impl PiSessionManager {
             let cmd_tx_for_reader = cmd_tx.clone();
             let hstry_eid = Arc::clone(&hstry_external_id);
 
+            let runner_id = self.config.runner_id.clone();
             tokio::spawn(async move {
                 Self::stdout_reader_task(
                     session_id,
@@ -603,6 +607,7 @@ impl PiSessionManager {
                     pending_client_id,
                     cmd_tx_for_reader,
                     hstry_eid,
+                    runner_id,
                 )
                 .await;
             })
@@ -1835,6 +1840,7 @@ impl PiSessionManager {
         pending_client_id: PendingClientId,
         cmd_tx: mpsc::Sender<PiSessionCommand>,
         hstry_external_id: HstryExternalId,
+        runner_id: String,
     ) {
         // Read stderr in a separate task (for debugging)
         if let Some(stderr) = stderr {
@@ -1852,6 +1858,7 @@ impl PiSessionManager {
         // Read stdout
         let mut reader = BufReader::new(stdout).lines();
         let mut pending_messages: Vec<AgentMessage> = Vec::new();
+        let mut pending_hstry_client_id: Option<String> = None;
         let mut translator = PiTranslator::new();
 
         // Track the last session title synced to hstry to avoid redundant updates
@@ -1864,8 +1871,7 @@ impl PiSessionManager {
         let mut first_event_seen = false;
 
         // Runner ID for canonical event envelopes.
-        // TODO: pass actual runner_id from config
-        let runner_id = "local".to_string();
+        let runner_id = runner_id;
 
         while let Ok(Some(line)) = reader.next_line().await {
             if line.trim().is_empty() {
@@ -2063,7 +2069,8 @@ impl PiSessionManager {
             // This ensures the client_id is included in the user message for optimistic matching.
             if matches!(pi_event, PiEvent::AgentEnd { .. }) {
                 let client_id = pending_client_id.write().await.take();
-                translator.set_pending_client_id(client_id);
+                translator.set_pending_client_id(client_id.clone());
+                pending_hstry_client_id = client_id;
             }
 
             // Translate Pi event to canonical events and broadcast each one
@@ -2083,12 +2090,15 @@ impl PiSessionManager {
             if matches!(pi_event, PiEvent::AgentEnd { .. }) && !pending_messages.is_empty() {
                 if let Some(ref client) = hstry_client {
                     let eid = hstry_external_id.read().await.clone();
+                    let client_id = pending_hstry_client_id.take();
                     if let Err(e) = Self::persist_to_hstry_grpc(
                         client,
                         &eid,
                         &session_id,
+                        &runner_id,
                         &pending_messages,
                         &work_dir,
+                        client_id,
                     )
                     .await
                     {
@@ -2431,10 +2441,12 @@ impl PiSessionManager {
         client: &HstryClient,
         hstry_external_id: &str,
         octo_session_id: &str,
+        runner_id: &str,
         messages: &[AgentMessage],
         work_dir: &PathBuf,
+        client_id: Option<String>,
     ) -> Result<()> {
-        use crate::hstry::agent_message_to_proto;
+        use crate::hstry::agent_message_to_proto_with_client_id;
 
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -2442,17 +2454,34 @@ impl PiSessionManager {
             .unwrap_or(0);
 
         let stats_delta = compute_stats_delta(messages);
-        let metadata_json =
-            build_metadata_json(client, hstry_external_id, octo_session_id, work_dir, stats_delta)
-                .await?;
+        let metadata_json = build_metadata_json(
+            client,
+            hstry_external_id,
+            octo_session_id,
+            runner_id,
+            work_dir,
+            stats_delta,
+        )
+        .await?;
 
         // Convert messages to proto format.
         // Use AppendMessages if the conversation likely exists (most common case),
         // falling back to WriteConversation if not found.
+        let last_user_idx = messages
+            .iter()
+            .rposition(|msg| matches!(msg.role.as_str(), "user" | "human"));
+
         let proto_messages: Vec<_> = messages
             .iter()
             .enumerate()
-            .map(|(i, msg)| agent_message_to_proto(msg, i as i32))
+            .map(|(i, msg)| {
+                let client_id_for_msg = if Some(i) == last_user_idx {
+                    client_id.clone()
+                } else {
+                    None
+                };
+                agent_message_to_proto_with_client_id(msg, i as i32, client_id_for_msg)
+            })
             .collect();
 
         // Try append first (fast path -- conversation already exists)
@@ -2557,6 +2586,7 @@ async fn build_metadata_json(
     client: &HstryClient,
     hstry_external_id: &str,
     octo_session_id: &str,
+    runner_id: &str,
     work_dir: &PathBuf,
     delta: Option<StatsDelta>,
 ) -> Result<String> {
@@ -2580,6 +2610,10 @@ async fn build_metadata_json(
     metadata.insert(
         "workdir".to_string(),
         serde_json::Value::String(work_dir.to_string_lossy().to_string()),
+    );
+    metadata.insert(
+        "runner_id".to_string(),
+        serde_json::Value::String(runner_id.to_string()),
     );
 
     if let Some(delta) = delta {

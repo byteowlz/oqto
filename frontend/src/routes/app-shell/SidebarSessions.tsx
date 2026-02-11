@@ -98,6 +98,7 @@ export interface SidebarSessionsProps {
 	onNewChat: () => void;
 	onNewProject: () => void;
 	onProjectClear: () => void;
+	onProjectOverview: (directory: string) => void;
 	onSessionClick: (sessionId: string) => void;
 	onNewChatInProject: (directory: string) => void;
 	onPinSession: (sessionId: string) => void;
@@ -137,6 +138,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 	onNewChat,
 	onNewProject,
 	onProjectClear,
+	onProjectOverview,
 	onSessionClick,
 	onNewChatInProject,
 	onPinSession,
@@ -677,7 +679,12 @@ export const SidebarSessions = memo(function SidebarSessions({
 											<div className="flex items-center gap-1 px-1 py-1.5 group">
 												<button
 													type="button"
-													onClick={() => toggleProjectExpanded(project.key)}
+													onClick={() => {
+													if (project.directory) {
+														onProjectOverview(project.directory as string);
+													}
+													toggleProjectExpanded(project.key);
+												}}
 													className="flex-1 flex items-center gap-1.5 text-left hover:bg-sidebar-accent/50 px-1 py-0.5 -mx-1"
 												>
 													{isProjectExpanded ? (

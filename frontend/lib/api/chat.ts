@@ -108,6 +108,8 @@ export type ChatMessage = {
 	tokens_input: number | null;
 	tokens_output: number | null;
 	cost: number | null;
+	/** Client-generated ID for optimistic message matching */
+	client_id?: string | null;
 	/** Message content parts */
 	parts: ChatMessagePart[];
 };

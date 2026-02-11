@@ -2290,7 +2290,7 @@ fn setup_runner_for_user(username: &str, json: bool) -> Result<()> {
         std::fs::read_to_string(service_src).context("Failed to read service file")?
     } else {
         // Fallback to embedded service file
-        include_str!("../../../../../deploy/systemd/octo-runner.service").to_string()
+        include_str!("../../resources/systemd/octo-runner.service").to_string()
     };
 
     if !json {

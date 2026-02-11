@@ -1,0 +1,54 @@
+# octo-runner systemd user service
+#
+# This service runs the octo-runner daemon for process isolation in multi-user mode.
+# Each Linux user runs their own runner daemon, which manages processes and provides
+# user-plane isolation from the main octo backend.
+#
+# Installation (per-user):
+#   mkdir -p ~/.config/systemd/user
+#   cp octo-runner.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now octo-runner
+#
+# For multi-user deployments, enable lingering so the service starts at boot:
+#   sudo loginctl enable-linger <username>
+#
+# Socket path: $XDG_RUNTIME_DIR/octo-runner.sock (typically /run/user/<uid>/octo-runner.sock)
+#
+# The main octo backend connects to per-user runners via /run/user/{uid}/octo-runner.sock
+# to spawn processes, manage sessions, and access user workspace files.
+
+[Unit]
+Description=Octo Runner - Process runner for multi-user isolation
+Documentation=https://github.com/byteowlz/octo
+After=default.target
+
+[Service]
+Type=simple
+
+# Socket path uses XDG_RUNTIME_DIR (%t in systemd), which is /run/user/<uid>
+ExecStart=/usr/local/bin/octo-runner
+
+Restart=on-failure
+RestartSec=5
+
+# Environment
+Environment=RUST_LOG=info
+
+# Security hardening - processes run as this user, need access to home
+NoNewPrivileges=true
+ProtectSystem=strict
+PrivateTmp=false
+
+# Allow read/write access to user's home directory for workspaces
+ReadWritePaths=%h
+
+# Allow read/write to XDG_RUNTIME_DIR for the socket
+# Note: %t is XDG_RUNTIME_DIR in user services
+ReadWritePaths=%t
+
+# Standard paths that agent tools need
+ReadWritePaths=/tmp
+
+[Install]
+WantedBy=default.target

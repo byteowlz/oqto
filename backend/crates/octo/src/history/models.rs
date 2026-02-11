@@ -187,6 +187,9 @@ pub struct ChatMessage {
     pub tokens_output: Option<i64>,
     pub tokens_reasoning: Option<i64>,
     pub cost: Option<f64>,
+    /// Client-generated ID for optimistic message matching
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<String>,
     /// Message content parts
     pub parts: Vec<ChatMessagePart>,
 }

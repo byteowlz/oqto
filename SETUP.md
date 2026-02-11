@@ -40,6 +40,12 @@ The script will:
 6. Generate configuration files
 7. Install system services (optional)
 
+If you have a portable install config, hydrate configs directly:
+
+```bash
+octo-setup hydrate --install-config octo.install.toml
+```
+
 For non-interactive installation:
 
 ```bash

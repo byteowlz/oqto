@@ -20,6 +20,7 @@ pub struct SerializableMessage {
     pub tokens: Option<i64>,
     pub cost_usd: Option<f64>,
     pub metadata_json: String,
+    pub client_id: Option<String>,
 }
 
 impl From<&ProtoMessage> for SerializableMessage {
@@ -37,6 +38,7 @@ impl From<&ProtoMessage> for SerializableMessage {
             tokens: msg.tokens,
             cost_usd: msg.cost_usd,
             metadata_json: msg.metadata_json.clone(),
+            client_id: msg.client_id.clone(),
         }
     }
 }
@@ -75,6 +77,15 @@ pub fn proto_messages_to_serializable(messages: Vec<ProtoMessage>) -> Vec<Serial
 
 /// Convert a Pi AgentMessage directly to hstry proto Message.
 pub fn agent_message_to_proto(msg: &AgentMessage, idx: i32) -> ProtoMessage {
+    agent_message_to_proto_with_client_id(msg, idx, None)
+}
+
+/// Convert a Pi AgentMessage directly to hstry proto Message with client_id override.
+pub fn agent_message_to_proto_with_client_id(
+    msg: &AgentMessage,
+    idx: i32,
+    client_id: Option<String>,
+) -> ProtoMessage {
     let role = match msg.role.as_str() {
         "user" | "human" => "user",
         "assistant" | "agent" => "assistant",
@@ -117,7 +128,7 @@ pub fn agent_message_to_proto(msg: &AgentMessage, idx: i32) -> ProtoMessage {
         sender_json: String::new(),
         provider: msg.provider.clone(),
         harness: Some("pi".to_string()),
-        client_id: None,
+        client_id,
         id: None,
     }
 }

@@ -1,5 +1,12 @@
 # Changes
 
+- 2026-02-10: Add workspace overview panel to edit project name, default model, sandbox profile, and Pi skills/extensions.
+- 2026-02-10: Add workspace API endpoints for meta, sandbox profile, and Pi resource selection with copy-on-custom rules.
+- 2026-02-10: Propagate configured runner_id in mux agent responses and subscription errors.
+- 2026-02-10: Add octo-setup crate to hydrate per-app config files from a portable install config.
+- 2026-02-10: Add octo.install schema/example for the setup wizard to generate portable install configs.
+- 2026-02-10: Add configurable runner_id to octo-runner for human-readable multi-runner attribution in hstry metadata.
+- 2026-02-10: Persist client_id into hstry messages to stabilize optimistic merge across reloads.
 - 2026-02-04: Normalize default chat workspace paths to avoid invalid "global" workspace lookups.
 - 2026-02-04: Use pending session IDs for optimistic chats and replace them when Pi sessions are created.
 - 2026-02-04: Normalize workspace-scoped API calls to avoid accidental workspace Pi requests without a path.

@@ -1,7 +1,8 @@
 //! Project/workspace handlers.
 
+use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use axum::{
@@ -10,16 +11,21 @@ use axum::{
     response::IntoResponse,
 };
 use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 use tokio::process::Command;
 use tracing::instrument;
 use uuid::Uuid;
 
+use crate::api::handlers::trx::validate_workspace_path;
 use crate::auth::CurrentUser;
+use crate::local::{SandboxConfigFile, SandboxProfile};
 use crate::projects::{self, ProjectMetadata};
 use crate::session::WorkspaceLocationInput;
+use crate::settings::{ConfigUpdate, SettingsScope};
+use crate::workspace::meta::{WorkspaceMeta, load_workspace_meta, write_workspace_meta};
 
 use crate::api::error::{ApiError, ApiResult};
-use crate::api::state::{AppState, TemplatesRepoType};
+use crate::api::state::AppState;
 
 /// Query for listing workspace directories.
 #[derive(Debug, Deserialize)]
@@ -55,6 +61,8 @@ pub struct ProjectTemplateEntry {
     pub path: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub defaults: Option<ProjectTemplateDefaults>,
 }
 
 /// Response for listing project templates.
@@ -226,6 +234,114 @@ fn read_template_description(template_dir: &std::path::Path) -> Option<String> {
         .map(|v| v.to_string())
 }
 
+fn read_template_defaults(template_dir: &std::path::Path) -> Option<ProjectTemplateDefaults> {
+    let mut defaults = ProjectTemplateDefaults {
+        display_name: None,
+        sandbox_profile: None,
+        default_provider: None,
+        default_model: None,
+        skills_mode: None,
+        extensions_mode: None,
+        skills: Vec::new(),
+        extensions: Vec::new(),
+    };
+    let mut has_any = false;
+
+    let workspace_meta_path = template_dir.join(".octo").join("workspace.toml");
+    if let Ok(contents) = fs::read_to_string(workspace_meta_path) {
+        if let Ok(meta) = toml::from_str::<WorkspaceMeta>(&contents) {
+            if let Some(name) = meta.display_name {
+                let trimmed = name.trim().to_string();
+                if !trimmed.is_empty() {
+                    defaults.display_name = Some(trimmed);
+                    has_any = true;
+                }
+            }
+        }
+    }
+
+    let sandbox_path = template_dir.join(".octo").join("sandbox.toml");
+    if let Ok(contents) = fs::read_to_string(sandbox_path) {
+        if let Ok(file) = toml::from_str::<SandboxConfigFile>(&contents) {
+            if !file.profile.trim().is_empty() {
+                defaults.sandbox_profile = Some(file.profile.trim().to_string());
+                has_any = true;
+            }
+        }
+    }
+
+    let pi_settings_path = template_dir.join(".pi").join("settings.json");
+    if let Ok(contents) = fs::read_to_string(pi_settings_path) {
+        if let Ok(value) = serde_json::from_str::<Value>(&contents) {
+            defaults.default_provider = value
+                .get("defaultProvider")
+                .and_then(|v| v.as_str())
+                .map(|v| v.to_string());
+            defaults.default_model = value
+                .get("defaultModel")
+                .and_then(|v| v.as_str())
+                .map(|v| v.to_string());
+
+            if defaults.default_provider.is_some() || defaults.default_model.is_some() {
+                has_any = true;
+            }
+
+            let skills_paths = read_settings_paths(&value, "skills");
+            let extensions_paths = read_settings_paths(&value, "extensions");
+            let global_skills_dir = expand_path(GLOBAL_PI_SKILLS_DIR).ok();
+            let global_extensions_dir = expand_path(GLOBAL_PI_EXTENSIONS_DIR).ok();
+
+            if global_skills_dir
+                .as_ref()
+                .map(|global| paths_contain(&skills_paths, global))
+                .unwrap_or(false)
+            {
+                defaults.skills_mode = Some("all".to_string());
+                has_any = true;
+            } else {
+                let template_skills_dir = template_dir.join(".pi").join("skills");
+                if template_skills_dir.exists()
+                    || skills_paths
+                        .iter()
+                        .any(|path| path.to_string_lossy().ends_with(".pi/skills"))
+                {
+                    defaults.skills_mode = Some("custom".to_string());
+                    defaults.skills =
+                        list_dir_entries(&template_skills_dir, true).unwrap_or_default();
+                    has_any = true;
+                }
+            }
+
+            if global_extensions_dir
+                .as_ref()
+                .map(|global| paths_contain(&extensions_paths, global))
+                .unwrap_or(false)
+            {
+                defaults.extensions_mode = Some("all".to_string());
+                has_any = true;
+            } else {
+                let template_extensions_dir = template_dir.join(".pi").join("extensions");
+                if template_extensions_dir.exists()
+                    || extensions_paths
+                        .iter()
+                        .any(|path| path.to_string_lossy().ends_with(".pi/extensions"))
+                {
+                    defaults.extensions_mode = Some("custom".to_string());
+                    defaults.extensions =
+                        list_dir_entries(&template_extensions_dir, false).unwrap_or_default();
+                    has_any = true;
+                }
+            }
+        }
+    }
+
+    if has_any {
+        Some(defaults)
+    } else {
+        None
+    }
+}
+
 fn copy_template_dir(src: &std::path::Path, dest: &std::path::Path) -> Result<(), ApiError> {
     fs::create_dir_all(dest)
         .map_err(|e| ApiError::internal(format!("Failed to create project dir: {}", e)))?;
@@ -352,10 +468,12 @@ pub async fn list_project_templates(
             .to_string_lossy()
             .to_string();
         let description = read_template_description(&path);
+        let defaults = read_template_defaults(&path);
         templates.push(ProjectTemplateEntry {
             name,
             path: rel,
             description,
+            defaults,
         });
     }
     templates.sort_by(|a, b| a.name.cmp(&b.name));
@@ -453,6 +571,607 @@ pub async fn create_project_from_template(
         entry_type: "directory".to_string(),
         logo,
     }))
+}
+
+// Workspace overview + Pi resource management.
+
+const GLOBAL_PI_SKILLS_DIR: &str = "~/.pi/agent/skills";
+const GLOBAL_PI_EXTENSIONS_DIR: &str = "~/.pi/agent/extensions";
+
+#[derive(Debug, Deserialize)]
+pub struct WorkspaceMetaQuery {
+    pub workspace_path: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct WorkspaceMetaResponse {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct WorkspaceMetaUpdateRequest {
+    #[serde(default)]
+    pub display_name: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct WorkspaceSandboxResponse {
+    pub enabled: bool,
+    pub profile: String,
+    pub profiles: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct WorkspaceSandboxUpdateRequest {
+    pub profile: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PiResourceEntry {
+    pub name: String,
+    pub selected: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct WorkspacePiResourcesResponse {
+    pub skills_mode: String,
+    pub extensions_mode: String,
+    pub skills: Vec<PiResourceEntry>,
+    pub extensions: Vec<PiResourceEntry>,
+    pub global_skills_dir: String,
+    pub global_extensions_dir: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct WorkspacePiResourcesUpdateRequest {
+    pub workspace_path: String,
+    pub skills_mode: String,
+    pub extensions_mode: String,
+    #[serde(default)]
+    pub skills: Vec<String>,
+    #[serde(default)]
+    pub extensions: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ProjectTemplateDefaults {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sandbox_profile: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_provider: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skills_mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extensions_mode: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skills: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub extensions: Vec<String>,
+}
+
+#[instrument(skip(state, user, query))]
+pub async fn get_workspace_meta(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Query(query): Query<WorkspaceMetaQuery>,
+) -> ApiResult<Json<WorkspaceMetaResponse>> {
+    let workspace_root = validate_workspace_path(&state, user.id(), &query.workspace_path)
+        .await
+        .map_err(|e| ApiError::bad_request(format!("Invalid workspace path: {}", e)))?;
+
+    let display_name = load_workspace_meta(&workspace_root)
+        .and_then(|meta| meta.display_name)
+        .and_then(|name| {
+            let trimmed = name.trim().to_string();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed)
+            }
+        });
+
+    Ok(Json(WorkspaceMetaResponse { display_name }))
+}
+
+#[instrument(skip(state, user, query, request))]
+pub async fn update_workspace_meta(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Query(query): Query<WorkspaceMetaQuery>,
+    Json(request): Json<WorkspaceMetaUpdateRequest>,
+) -> ApiResult<Json<WorkspaceMetaResponse>> {
+    let workspace_root = validate_workspace_path(&state, user.id(), &query.workspace_path)
+        .await
+        .map_err(|e| ApiError::bad_request(format!("Invalid workspace path: {}", e)))?;
+
+    let mut meta = load_workspace_meta(&workspace_root).unwrap_or_default();
+    meta.display_name = request
+        .display_name
+        .and_then(|name| {
+            let trimmed = name.trim().to_string();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed)
+            }
+        });
+
+    write_workspace_meta(&workspace_root, &meta)
+        .map_err(|e| ApiError::internal(format!("Failed to write workspace metadata: {}", e)))?;
+
+    Ok(Json(WorkspaceMetaResponse {
+        display_name: meta.display_name,
+    }))
+}
+
+#[instrument(skip(state, user, query))]
+pub async fn get_workspace_sandbox(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Query(query): Query<WorkspaceMetaQuery>,
+) -> ApiResult<Json<WorkspaceSandboxResponse>> {
+    let workspace_root = validate_workspace_path(&state, user.id(), &query.workspace_path)
+        .await
+        .map_err(|e| ApiError::bad_request(format!("Invalid workspace path: {}", e)))?;
+
+    let sandbox_path = workspace_root.join(".octo").join("sandbox.toml");
+    let file = if sandbox_path.exists() {
+        let contents = std::fs::read_to_string(&sandbox_path).map_err(|e| {
+            ApiError::internal(format!("Failed to read sandbox config: {}", e))
+        })?;
+        toml::from_str::<SandboxConfigFile>(&contents).map_err(|e| {
+            ApiError::internal(format!("Failed to parse sandbox config: {}", e))
+        })?
+    } else {
+        SandboxConfigFile::default()
+    };
+
+    let profile_name = if file.profile.is_empty() {
+        "development".to_string()
+    } else {
+        file.profile.clone()
+    };
+
+    let mut profiles = HashSet::new();
+    profiles.extend(["minimal", "development", "strict"].map(String::from));
+    profiles.extend(file.profiles.keys().cloned());
+
+    Ok(Json(WorkspaceSandboxResponse {
+        enabled: file.enabled,
+        profile: profile_name,
+        profiles: profiles.into_iter().collect(),
+    }))
+}
+
+#[instrument(skip(state, user, query, request))]
+pub async fn update_workspace_sandbox(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Query(query): Query<WorkspaceMetaQuery>,
+    Json(request): Json<WorkspaceSandboxUpdateRequest>,
+) -> ApiResult<Json<WorkspaceSandboxResponse>> {
+    let workspace_root = validate_workspace_path(&state, user.id(), &query.workspace_path)
+        .await
+        .map_err(|e| ApiError::bad_request(format!("Invalid workspace path: {}", e)))?;
+
+    let sandbox_path = workspace_root.join(".octo").join("sandbox.toml");
+    let mut file = if sandbox_path.exists() {
+        let contents = std::fs::read_to_string(&sandbox_path).map_err(|e| {
+            ApiError::internal(format!("Failed to read sandbox config: {}", e))
+        })?;
+        toml::from_str::<SandboxConfigFile>(&contents).map_err(|e| {
+            ApiError::internal(format!("Failed to parse sandbox config: {}", e))
+        })?
+    } else {
+        SandboxConfigFile::default()
+    };
+
+    let profile = request.profile.trim().to_string();
+    if profile.is_empty() {
+        return Err(ApiError::bad_request("Profile cannot be empty"));
+    }
+
+    file.profile = profile.clone();
+    if let Some(parent) = sandbox_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| {
+            ApiError::internal(format!("Failed to create sandbox config dir: {}", e))
+        })?;
+    }
+
+    let body = toml::to_string_pretty(&file)
+        .map_err(|e| ApiError::internal(format!("Failed to serialize sandbox config: {}", e)))?;
+    std::fs::write(&sandbox_path, body)
+        .map_err(|e| ApiError::internal(format!("Failed to write sandbox config: {}", e)))?;
+
+    let mut profiles = HashSet::new();
+    profiles.extend(["minimal", "development", "strict"].map(String::from));
+    profiles.extend(file.profiles.keys().cloned());
+
+    Ok(Json(WorkspaceSandboxResponse {
+        enabled: file.enabled,
+        profile,
+        profiles: profiles.into_iter().collect(),
+    }))
+}
+
+#[instrument(skip(state, user, query))]
+pub async fn get_workspace_pi_resources(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Query(query): Query<WorkspaceMetaQuery>,
+) -> ApiResult<Json<WorkspacePiResourcesResponse>> {
+    let workspace_root = validate_workspace_path(&state, user.id(), &query.workspace_path)
+        .await
+        .map_err(|e| ApiError::bad_request(format!("Invalid workspace path: {}", e)))?;
+
+    let global_skills_dir = expand_path(GLOBAL_PI_SKILLS_DIR)?;
+    let global_extensions_dir = expand_path(GLOBAL_PI_EXTENSIONS_DIR)?;
+
+    let settings_value = read_pi_settings_value(&workspace_root.join(".pi"));
+    let skills_paths = settings_value
+        .as_ref()
+        .map(|value| read_settings_paths(value, "skills"))
+        .unwrap_or_default();
+    let extensions_paths = settings_value
+        .as_ref()
+        .map(|value| read_settings_paths(value, "extensions"))
+        .unwrap_or_default();
+
+    let workspace_skills_dir = workspace_root.join(".pi").join("skills");
+    let workspace_extensions_dir = workspace_root.join(".pi").join("extensions");
+
+    let skills_mode = if paths_contain(&skills_paths, &global_skills_dir) {
+        "all"
+    } else if paths_contain(&skills_paths, &workspace_skills_dir)
+        || paths_match_suffix(&skills_paths, ".pi/skills")
+    {
+        "custom"
+    } else {
+        "all"
+    };
+
+    let extensions_mode = if paths_contain(&extensions_paths, &global_extensions_dir) {
+        "all"
+    } else if paths_contain(&extensions_paths, &workspace_extensions_dir)
+        || paths_match_suffix(&extensions_paths, ".pi/extensions")
+    {
+        "custom"
+    } else {
+        "all"
+    };
+
+    let global_skills = list_dir_entries(&global_skills_dir, true)?;
+    let global_extensions = list_dir_entries(&global_extensions_dir, false)?;
+
+    let selected_skills = list_dir_entries(&workspace_skills_dir, true).unwrap_or_default();
+    let selected_extensions = list_dir_entries(&workspace_extensions_dir, false)
+        .unwrap_or_default();
+
+    let skills = global_skills
+        .iter()
+        .map(|name| PiResourceEntry {
+            name: name.clone(),
+            selected: if skills_mode == "all" {
+                true
+            } else {
+                selected_skills.contains(name)
+            },
+        })
+        .collect();
+
+    let extensions = global_extensions
+        .iter()
+        .map(|name| PiResourceEntry {
+            name: name.clone(),
+            selected: if extensions_mode == "all" {
+                true
+            } else {
+                selected_extensions.contains(name)
+            },
+        })
+        .collect();
+
+    Ok(Json(WorkspacePiResourcesResponse {
+        skills_mode: skills_mode.to_string(),
+        extensions_mode: extensions_mode.to_string(),
+        skills,
+        extensions,
+        global_skills_dir: global_skills_dir.to_string_lossy().to_string(),
+        global_extensions_dir: global_extensions_dir.to_string_lossy().to_string(),
+    }))
+}
+
+#[instrument(skip(state, user, request))]
+pub async fn apply_workspace_pi_resources(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Json(request): Json<WorkspacePiResourcesUpdateRequest>,
+) -> ApiResult<Json<WorkspacePiResourcesResponse>> {
+    let workspace_root = validate_workspace_path(&state, user.id(), &request.workspace_path)
+        .await
+        .map_err(|e| ApiError::bad_request(format!("Invalid workspace path: {}", e)))?;
+
+    let global_skills_dir = expand_path(GLOBAL_PI_SKILLS_DIR)?;
+    let global_extensions_dir = expand_path(GLOBAL_PI_EXTENSIONS_DIR)?;
+
+    let skills_mode = normalize_mode(&request.skills_mode)?;
+    let extensions_mode = normalize_mode(&request.extensions_mode)?;
+
+    let global_skills = list_dir_entries(&global_skills_dir, true)?;
+    let global_extensions = list_dir_entries(&global_extensions_dir, false)?;
+
+    let workspace_pi_dir = workspace_root.join(".pi");
+    let workspace_skills_dir = workspace_pi_dir.join("skills");
+    let workspace_extensions_dir = workspace_pi_dir.join("extensions");
+
+    if skills_mode == "custom" {
+        replace_dir_contents(
+            &workspace_skills_dir,
+            &global_skills_dir,
+            &request.skills,
+            &global_skills,
+        )?;
+    }
+    if extensions_mode == "custom" {
+        replace_dir_contents(
+            &workspace_extensions_dir,
+            &global_extensions_dir,
+            &request.extensions,
+            &global_extensions,
+        )?;
+    }
+
+    let settings_service = state
+        .settings_pi_agent
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("Pi agent settings not configured"))?
+        .with_config_dir(workspace_pi_dir)
+        .map_err(|e| ApiError::internal(format!("Failed to create settings service: {}", e)))?;
+
+    let mut updates = HashMap::new();
+    let skills_path = if skills_mode == "all" {
+        global_skills_dir.to_string_lossy().to_string()
+    } else {
+        workspace_skills_dir.to_string_lossy().to_string()
+    };
+    let extensions_path = if extensions_mode == "all" {
+        global_extensions_dir.to_string_lossy().to_string()
+    } else {
+        workspace_extensions_dir.to_string_lossy().to_string()
+    };
+
+    updates.insert("skills".to_string(), json!([skills_path]));
+    updates.insert("extensions".to_string(), json!([extensions_path]));
+
+    settings_service
+        .update_values(ConfigUpdate { values: updates }, SettingsScope::User)
+        .await
+        .map_err(|e| ApiError::internal(format!("Failed to update Pi settings: {}", e)))?;
+
+    update_workspace_sandbox_pi_access(
+        &workspace_root,
+        &global_skills_dir,
+        &global_extensions_dir,
+        skills_mode == "custom",
+        extensions_mode == "custom",
+    )?;
+
+    // Respond with refreshed view.
+    get_workspace_pi_resources(
+        State(state),
+        user,
+        Query(WorkspaceMetaQuery {
+            workspace_path: request.workspace_path,
+        }),
+    )
+    .await
+}
+
+fn expand_path(path: &str) -> Result<PathBuf, ApiError> {
+    let expanded = shellexpand::full(path)
+        .map_err(|e| ApiError::internal(format!("Failed to expand path {}: {}", path, e)))?;
+    Ok(PathBuf::from(expanded.as_ref()))
+}
+
+fn read_pi_settings_value(config_dir: &Path) -> Option<Value> {
+    let path = config_dir.join("settings.json");
+    let contents = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str(&contents).ok()
+}
+
+fn read_settings_paths(settings: &Value, key: &str) -> Vec<PathBuf> {
+    settings
+        .get(key)
+        .and_then(|value| value.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str())
+                .filter_map(|path| shellexpand::full(path).ok())
+                .map(|expanded| PathBuf::from(expanded.as_ref()))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
+fn paths_contain(paths: &[PathBuf], candidate: &Path) -> bool {
+    paths.iter().any(|path| path == candidate)
+}
+
+fn paths_match_suffix(paths: &[PathBuf], suffix: &str) -> bool {
+    paths
+        .iter()
+        .any(|path| path.to_string_lossy().ends_with(suffix))
+}
+
+fn normalize_mode(mode: &str) -> Result<&str, ApiError> {
+    match mode {
+        "all" => Ok("all"),
+        "custom" => Ok("custom"),
+        _ => Err(ApiError::bad_request("Invalid mode")),
+    }
+}
+
+fn list_dir_entries(path: &Path, directories_only: bool) -> Result<Vec<String>, ApiError> {
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let entries = std::fs::read_dir(path)
+        .with_context(|| format!("reading directory {}", path.display()))
+        .map_err(|e| ApiError::internal(format!("Failed to list directory: {}", e)))?;
+
+    let mut names = Vec::new();
+    for entry in entries {
+        let entry = entry
+            .map_err(|e| ApiError::internal(format!("Failed to read entry: {}", e)))?;
+        let file_type = entry
+            .file_type()
+            .map_err(|e| ApiError::internal(format!("Failed to read entry type: {}", e)))?;
+        if directories_only && !file_type.is_dir() {
+            continue;
+        }
+        if !directories_only && !(file_type.is_dir() || file_type.is_file()) {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.starts_with('.') {
+            continue;
+        }
+        names.push(name);
+    }
+
+    names.sort();
+    Ok(names)
+}
+
+fn replace_dir_contents(
+    target_dir: &Path,
+    source_dir: &Path,
+    requested: &[String],
+    available: &[String],
+) -> Result<(), ApiError> {
+    let requested_set: HashSet<String> = requested.iter().cloned().collect();
+    for name in requested {
+        if !available.contains(name) {
+            return Err(ApiError::bad_request(format!(
+                "Requested item not found: {}",
+                name
+            )));
+        }
+    }
+
+    if target_dir.exists() {
+        std::fs::remove_dir_all(target_dir).map_err(|e| {
+            ApiError::internal(format!("Failed to clear directory {}: {}", target_dir.display(), e))
+        })?;
+    }
+    std::fs::create_dir_all(target_dir).map_err(|e| {
+        ApiError::internal(format!("Failed to create directory {}: {}", target_dir.display(), e))
+    })?;
+
+    for name in requested_set {
+        let src = source_dir.join(&name);
+        let dest = target_dir.join(&name);
+        copy_entry_recursive(&src, &dest)?;
+    }
+
+    Ok(())
+}
+
+fn copy_entry_recursive(src: &Path, dest: &Path) -> Result<(), ApiError> {
+    let metadata = std::fs::metadata(src)
+        .map_err(|e| ApiError::internal(format!("Failed to read source {}: {}", src.display(), e)))?;
+    if metadata.is_dir() {
+        std::fs::create_dir_all(dest).map_err(|e| {
+            ApiError::internal(format!("Failed to create dir {}: {}", dest.display(), e))
+        })?;
+        for entry in std::fs::read_dir(src)
+            .map_err(|e| ApiError::internal(format!("Failed to read dir {}: {}", src.display(), e)))?
+        {
+            let entry = entry
+                .map_err(|e| ApiError::internal(format!("Failed to read entry: {}", e)))?;
+            let file_name = entry.file_name();
+            let src_path = entry.path();
+            let dest_path = dest.join(file_name);
+            copy_entry_recursive(&src_path, &dest_path)?;
+        }
+    } else if metadata.is_file() {
+        std::fs::copy(src, dest).map_err(|e| {
+            ApiError::internal(format!("Failed to copy file {}: {}", src.display(), e))
+        })?;
+    }
+    Ok(())
+}
+
+fn update_workspace_sandbox_pi_access(
+    workspace_root: &Path,
+    global_skills_dir: &Path,
+    global_extensions_dir: &Path,
+    deny_skills: bool,
+    deny_extensions: bool,
+) -> Result<(), ApiError> {
+    let sandbox_path = workspace_root.join(".octo").join("sandbox.toml");
+    let mut file = if sandbox_path.exists() {
+        let contents = std::fs::read_to_string(&sandbox_path)
+            .map_err(|e| ApiError::internal(format!("Failed to read sandbox config: {}", e)))?;
+        toml::from_str::<SandboxConfigFile>(&contents)
+            .map_err(|e| ApiError::internal(format!("Failed to parse sandbox config: {}", e)))?
+    } else {
+        SandboxConfigFile::default()
+    };
+
+    let profile_name = if file.profile.is_empty() {
+        "development".to_string()
+    } else {
+        file.profile.clone()
+    };
+
+    let base_profile = file
+        .profiles
+        .get(&profile_name)
+        .cloned()
+        .or_else(|| SandboxProfile::builtin(&profile_name))
+        .unwrap_or_else(SandboxProfile::development);
+
+    let mut profile = base_profile;
+
+    let skills_path = global_skills_dir.to_string_lossy().to_string();
+    let extensions_path = global_extensions_dir.to_string_lossy().to_string();
+
+    profile
+        .deny_read
+        .retain(|entry| entry != &skills_path && entry != &extensions_path);
+
+    if deny_skills {
+        profile.deny_read.push(skills_path);
+    }
+    if deny_extensions {
+        profile.deny_read.push(extensions_path);
+    }
+
+    profile.deny_read.sort();
+    profile.deny_read.dedup();
+
+    file.profile = profile_name.clone();
+    file.profiles.insert(profile_name, profile);
+
+    if let Some(parent) = sandbox_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| {
+            ApiError::internal(format!("Failed to create sandbox config dir: {}", e))
+        })?;
+    }
+
+    let body = toml::to_string_pretty(&file)
+        .map_err(|e| ApiError::internal(format!("Failed to serialize sandbox config: {}", e)))?;
+    std::fs::write(&sandbox_path, body)
+        .map_err(|e| ApiError::internal(format!("Failed to write sandbox config: {}", e)))?;
+
+    Ok(())
 }
 
 /// Serve a project logo file.

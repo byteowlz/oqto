@@ -1,0 +1,33 @@
+# Portable Octo install configuration.
+# Use this to hydrate per-app config files during setup.
+
+"$schema" = "https://raw.githubusercontent.com/byteowlz/schemas/refs/heads/main/octo/octo.install.schema.json"
+
+[install]
+# Apply updates by merging into existing config files (or overwrite).
+mode = "merge"
+# Override base locations if needed (defaults to XDG paths).
+# config_home = "$XDG_CONFIG_HOME"
+# data_home = "$XDG_DATA_HOME"
+# state_home = "$XDG_STATE_HOME"
+
+[octo]
+"$schema" = "https://raw.githubusercontent.com/byteowlz/schemas/refs/heads/main/octo/octo.backend.config.schema.json"
+profile = "default"
+
+[octo.runner]
+runner_id = "user-runner-main"
+
+[sandbox]
+"$schema" = "https://raw.githubusercontent.com/byteowlz/schemas/refs/heads/main/octo/octo.sandbox.schema.json"
+profile = "development"
+
+[hstry]
+"$schema" = "https://raw.githubusercontent.com/byteowlz/schemas/refs/heads/main/hstry/hstry.config.schema.json"
+# database = "$XDG_DATA_HOME/hstry/hstry.db"
+
+[mmry]
+"$schema" = "https://raw.githubusercontent.com/byteowlz/schemas/refs/heads/main/mmry/mmry.config.schema.json"
+
+[mmry.database]
+path = "$XDG_DATA_HOME/mmry/memories.db"

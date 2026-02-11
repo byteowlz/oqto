@@ -233,6 +233,12 @@
       "x-scope": "user",
       "x-category": "Infrastructure",
       "properties": {
+        "runner_id": {
+          "type": ["string", "null"],
+          "description": "Human-readable runner identifier. Defaults to $OCTO_RUNNER_ID, $HOSTNAME, or \"local\".",
+          "default": null,
+          "examples": ["workstation-1", "wkst-alice-01", "local"]
+        },
         "pi_sessions_dir": {
           "type": ["string", "null"],
           "description": "Directory containing Pi session files (for main chat history). Supports ~ for home directory. Defaults to $XDG_DATA_HOME/pi/sessions (~/.local/share/pi/sessions).",

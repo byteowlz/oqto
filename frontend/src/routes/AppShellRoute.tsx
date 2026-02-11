@@ -52,6 +52,8 @@ const AppShell = memo(function AppShell() {
 		selectedChatSessionId,
 		setSelectedChatSessionId,
 		selectedChatFromHistory,
+		selectedWorkspaceOverviewPath,
+		setSelectedWorkspaceOverviewPath,
 		createOptimisticChatSession,
 		clearOptimisticChatSession,
 		createNewChat,
@@ -83,7 +85,9 @@ const AppShell = memo(function AppShell() {
 
 	// Use extracted hooks
 	const sidebarState = useSidebarState();
-	const projectActions = useProjectActions();
+	const projectActions = useProjectActions(
+		selectedChatFromHistory?.workspace_path ?? null,
+	);
 	const sessionDialogs = useSessionDialogs();
 	const sessionData = useSessionData({
 		chatHistory,
@@ -255,12 +259,29 @@ const AppShell = memo(function AppShell() {
 		[navigate, sessionsRoute, setActiveAppId, sidebarState],
 	);
 
+	const handleProjectOverview = useCallback(
+		(directory: string) => {
+			setSelectedWorkspaceOverviewPath(directory);
+			setActiveAppId("sessions");
+			if (sessionsRoute) navigate(sessionsRoute);
+			sidebarState.setMobileMenuOpen(false);
+		},
+		[
+			navigate,
+			sessionsRoute,
+			setActiveAppId,
+			setSelectedWorkspaceOverviewPath,
+			sidebarState,
+		],
+	);
+
 	const handleProjectClear = useCallback(() => {
 		setSelectedProjectKey(null);
 	}, []);
 
 	const handleSessionClick = useCallback(
 		(sessionId: string) => {
+			setSelectedWorkspaceOverviewPath(null);
 			setSelectedChatSessionId(sessionId);
 			setActiveAppId("sessions");
 			if (sessionsRoute) navigate(sessionsRoute);
@@ -271,6 +292,7 @@ const AppShell = memo(function AppShell() {
 			sessionsRoute,
 			setActiveAppId,
 			setSelectedChatSessionId,
+			setSelectedWorkspaceOverviewPath,
 			sidebarState,
 		],
 	);
@@ -287,6 +309,7 @@ const AppShell = memo(function AppShell() {
 				if (sessionId) {
 					setSelectedChatSessionId(sessionId);
 				}
+				setSelectedWorkspaceOverviewPath(null);
 				setActiveAppId("sessions");
 				if (sessionsRoute) navigate(sessionsRoute);
 			}
@@ -295,6 +318,7 @@ const AppShell = memo(function AppShell() {
 		[
 			setActiveAppId,
 			setSelectedChatSessionId,
+			setSelectedWorkspaceOverviewPath,
 			setScrollToMessageId,
 			navigate,
 			sessionsRoute,
@@ -303,6 +327,7 @@ const AppShell = memo(function AppShell() {
 	);
 
 	const handleNewChat = useCallback(async () => {
+		setSelectedWorkspaceOverviewPath(null);
 		if (selectedProjectKey) {
 			const project = sessionData.projectSummaries.find(
 				(p) => p.key === selectedProjectKey,
@@ -324,15 +349,22 @@ const AppShell = memo(function AppShell() {
 		sessionData.projectSummaries,
 		createNewChat,
 		setActiveAppId,
+		setSelectedWorkspaceOverviewPath,
 	]);
 
 	const handleNewChatInProject = useCallback(
 		async (directory: string) => {
+			setSelectedWorkspaceOverviewPath(null);
 			setActiveAppId("sessions");
 			sidebarState.setMobileMenuOpen(false);
 			await createNewChat(directory);
 		},
-		[createNewChat, setActiveAppId, sidebarState],
+		[
+			createNewChat,
+			setActiveAppId,
+			setSelectedWorkspaceOverviewPath,
+			sidebarState,
+		],
 	);
 
 	const handleProjectDefaultAgentChange = useCallback(
@@ -542,6 +574,7 @@ const AppShell = memo(function AppShell() {
 						onNewChat={handleNewChat}
 						onNewProject={() => projectActions.setNewProjectDialogOpen(true)}
 						onProjectClear={handleProjectClear}
+						onProjectOverview={handleProjectOverview}
 						onSessionClick={handleSessionClick}
 						onNewChatInProject={handleNewChatInProject}
 						onPinSession={sidebarState.togglePinSession}
@@ -681,6 +714,7 @@ const AppShell = memo(function AppShell() {
 										projectActions.setNewProjectDialogOpen(true)
 									}
 									onProjectClear={handleProjectClear}
+									onProjectOverview={handleProjectOverview}
 									onSessionClick={handleSessionClick}
 									onNewChatInProject={handleNewChatInProject}
 									onPinSession={sidebarState.togglePinSession}
@@ -826,6 +860,13 @@ const AppShell = memo(function AppShell() {
 					onSharedChange={projectActions.setNewProjectShared}
 					newProjectError={projectActions.newProjectError}
 					newProjectSubmitting={projectActions.newProjectSubmitting}
+					newProjectSettings={projectActions.newProjectSettings}
+					onProjectSettingsChange={projectActions.setNewProjectSettings}
+					availableModels={projectActions.availableModels}
+					availableSkills={projectActions.availableSkills}
+					availableExtensions={projectActions.availableExtensions}
+					sandboxProfiles={projectActions.sandboxProfiles}
+					settingsLoading={projectActions.settingsLoading}
 					onSubmit={projectActions.handleCreateProjectFromTemplate}
 				/>
 			</div>

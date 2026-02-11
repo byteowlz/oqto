@@ -17,6 +17,7 @@
 //!
 //! [runner]
 //! # Runner-specific settings
+//! runner_id = "workstation-1"
 //! pi_sessions_dir = "~/.local/share/pi/sessions"
 //! memories_dir = "~/.local/share/mmry"
 //! ```
@@ -74,6 +75,8 @@ struct RunnerUserConfig {
     fileserver_binary: String,
     ttyd_binary: String,
     pi_binary: String,
+    /// Runner identifier (human-readable)
+    runner_id: String,
     /// Data directories
     workspace_dir: PathBuf,
     pi_sessions_dir: PathBuf,
@@ -126,6 +129,8 @@ impl Default for LocalSection {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
 struct RunnerSection {
+    /// Runner identifier (human-readable).
+    runner_id: Option<String>,
     /// Directory containing Pi session files.
     pi_sessions_dir: Option<String>,
     /// Directory containing memories (mmry).
@@ -207,11 +212,21 @@ impl RunnerUserConfig {
         };
         info!("Pi binary: {}", pi_binary);
 
+        let runner_id = config_file
+            .runner
+            .runner_id
+            .or_else(|| std::env::var("OCTO_RUNNER_ID").ok())
+            .or_else(|| std::env::var("HOSTNAME").ok())
+            .unwrap_or_else(|| "local".to_string());
+
+        info!("Runner ID: {}", runner_id);
+
         Self {
             opencode_binary: config_file.local.opencode_binary,
             fileserver_binary: config_file.local.fileserver_binary,
             ttyd_binary: config_file.local.ttyd_binary,
             pi_binary,
+            runner_id,
             workspace_dir: Self::expand_path(&config_file.local.workspace_dir, &home),
             pi_sessions_dir: config_file
                 .runner
@@ -3453,6 +3468,7 @@ async fn main() -> Result<()> {
         cleanup_interval_secs: 60,
         hstry_db_path: octo::history::hstry_db_path(),
         sandbox_config: sandbox_config.clone(),
+        runner_id: user_config.runner_id.clone(),
     };
     let pi_manager = PiSessionManager::new(pi_config);
 

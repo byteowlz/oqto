@@ -22,6 +22,7 @@ import {
 	ChevronUp,
 	CircleDot,
 	FileText,
+	FolderKanban,
 	Globe,
 	ListTodo,
 	Maximize2,
@@ -79,6 +80,11 @@ const TrxView = lazy(() =>
 		default: mod.TrxView,
 	})),
 );
+const WorkspaceOverviewPanel = lazy(() =>
+	import("@/features/sessions/components/WorkspaceOverviewPanel").then((mod) => ({
+		default: mod.WorkspaceOverviewPanel,
+	})),
+);
 const PreviewView = lazy(() =>
 	import("@/features/sessions/components/PreviewView").then((mod) => ({
 		default: mod.PreviewView,
@@ -87,6 +93,7 @@ const PreviewView = lazy(() =>
 
 type ViewKey =
 	| "chat"
+	| "overview"
 	| "tasks"
 	| "files"
 	| "canvas"
@@ -372,6 +379,8 @@ export const SessionScreen = memo(function SessionScreen() {
 		selectedChatSessionId,
 		setSelectedChatSessionId,
 		selectedChatFromHistory,
+		selectedWorkspaceOverviewPath,
+		setSelectedWorkspaceOverviewPath,
 		createNewChat,
 		replaceOptimisticChatSession,
 		clearOptimisticChatSession,
@@ -413,6 +422,14 @@ export const SessionScreen = memo(function SessionScreen() {
 		[selectedChatFromHistory?.workspace_path],
 	);
 
+	const normalizedOverviewPath = useMemo(
+		() =>
+			selectedWorkspaceOverviewPath
+				? normalizeWorkspacePath(selectedWorkspaceOverviewPath)
+				: null,
+		[selectedWorkspaceOverviewPath],
+	);
+
 	const handleNewChat = useCallback(async () => {
 		const id = await createNewChat(normalizedWorkspacePath ?? undefined);
 		if (id) setSelectedChatSessionId(id);
@@ -434,6 +451,17 @@ export const SessionScreen = memo(function SessionScreen() {
 			mounted = false;
 		};
 	}, []);
+
+	useEffect(() => {
+		if (!isMobileLayout) return;
+		if (normalizedOverviewPath) {
+			setActiveView("overview");
+			return;
+		}
+		if (activeView === "overview") {
+			setActiveView("chat");
+		}
+	}, [activeView, isMobileLayout, normalizedOverviewPath]);
 
 	// Clear file preview and tree state when session changes
 	// biome-ignore lint/correctness/useExhaustiveDependencies: intentionally reset on session change
@@ -457,6 +485,9 @@ export const SessionScreen = memo(function SessionScreen() {
 				locale === "de" ? "de-DE" : "en-US",
 			)
 		: null;
+	const overviewWorkspaceName =
+		normalizedOverviewPath?.split("/").filter(Boolean).pop() ?? null;
+	const isOverviewActive = Boolean(normalizedOverviewPath);
 
 	const chatPanel = normalizedWorkspacePath ? (
 		<ChatView
@@ -479,6 +510,16 @@ export const SessionScreen = memo(function SessionScreen() {
 			label={locale === "de" ? "Lade Chat..." : "Loading chat..."}
 		/>
 	);
+
+	const overviewPanel = normalizedOverviewPath ? (
+		<Suspense fallback={viewLoadingFallback}>
+			<WorkspaceOverviewPanel
+				workspacePath={normalizedOverviewPath}
+				locale={locale}
+				onClose={() => setSelectedWorkspaceOverviewPath(null)}
+			/>
+		</Suspense>
+	) : null;
 
 	const tasksPanel = (
 		<div className="flex flex-col h-full overflow-hidden">
@@ -552,7 +593,7 @@ export const SessionScreen = memo(function SessionScreen() {
 		</div>
 	);
 
-	const sessionHeader = (
+	const chatHeader = (
 		<div className="pb-3 mb-3 border-b border-border pr-20">
 			<div className="min-w-0">
 				<div className="flex items-center gap-2">
@@ -587,8 +628,33 @@ export const SessionScreen = memo(function SessionScreen() {
 		</div>
 	);
 
+	const overviewHeader = (
+		<div className="pb-3 mb-3 border-b border-border pr-20">
+			<div className="min-w-0">
+				<div className="flex items-center gap-2">
+					<h1 className="text-base sm:text-lg font-semibold text-foreground tracking-wider truncate">
+						{locale === "de" ? "Workspace-Ubersicht" : "Workspace overview"}
+					</h1>
+				</div>
+				<div className="flex items-center gap-2 text-xs text-foreground/60 dark:text-muted-foreground">
+					{overviewWorkspaceName && (
+						<span className="font-mono truncate">{overviewWorkspaceName}</span>
+					)}
+					{normalizedOverviewPath && !overviewWorkspaceName && (
+						<span className="font-mono truncate">{normalizedOverviewPath}</span>
+					)}
+				</div>
+			</div>
+		</div>
+	);
+
+	const sessionHeader = isOverviewActive ? overviewHeader : chatHeader;
+
 	const showEmptyChat =
-		!selectedChatSessionId && chatHistory.length === 0 && featuresLoaded;
+		!isOverviewActive &&
+		!selectedChatSessionId &&
+		chatHistory.length === 0 &&
+		featuresLoaded;
 
 	return (
 		<div className="flex flex-col h-full min-h-0 p-1 sm:p-4 md:p-6 gap-1 sm:gap-4">
@@ -604,6 +670,15 @@ export const SessionScreen = memo(function SessionScreen() {
 								icon={MessageSquare}
 								label={locale === "de" ? "Chat" : "Chat"}
 							/>
+							{normalizedOverviewPath && (
+								<TabButton
+									activeView={activeView}
+									onSelect={setActiveView}
+									view="overview"
+									icon={FolderKanban}
+									label={locale === "de" ? "Ubersicht" : "Overview"}
+								/>
+							)}
 							<TabButton
 								activeView={activeView}
 								onSelect={setActiveView}
@@ -673,6 +748,7 @@ export const SessionScreen = memo(function SessionScreen() {
 						)}
 					>
 						{activeView === "chat" && chatPanel}
+									{activeView === "overview" && overviewPanel}
 						<div
 							className={cn(
 								"h-full flex flex-col",
@@ -804,7 +880,7 @@ export const SessionScreen = memo(function SessionScreen() {
 								)}
 							</button>
 						</div>
-						{isSearchOpen && (
+						{!isOverviewActive && isSearchOpen && (
 							<div className="mb-3 pr-16">
 								<ChatSearchBar
 									sessionId={selectedChatSessionId ?? undefined}
@@ -825,6 +901,8 @@ export const SessionScreen = memo(function SessionScreen() {
 							<div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">
 								{locale === "de" ? "Keine Sitzungen" : "No sessions yet"}
 							</div>
+						) : isOverviewActive ? (
+							overviewPanel
 						) : (
 							chatPanel
 						)}

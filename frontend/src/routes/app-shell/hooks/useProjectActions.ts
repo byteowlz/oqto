@@ -1,12 +1,21 @@
 import {
 	type CreateProjectFromTemplateRequest,
 	type ProjectTemplateEntry,
+	applyWorkspacePiResources,
 	createProjectFromTemplate,
+	getWorkspacePiResources,
+	getWorkspaceSandbox,
+	updateSettingsValues,
+	updateWorkspaceMeta,
+	updateWorkspaceSandbox,
 	listProjectTemplates,
 	listWorkspaceDirectories,
 } from "@/lib/control-plane-client";
+import type { PiModelInfo } from "@/lib/api/default-chat";
 import type { ProjectLogo } from "@/lib/control-plane-client";
-import { useCallback, useEffect, useState } from "react";
+import { getWsManager } from "@/lib/ws-manager";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { WorkspaceOverviewValues } from "@/features/sessions/components/WorkspaceOverviewForm";
 
 export interface WorkspaceDirectory {
 	name: string;
@@ -35,6 +44,15 @@ export interface ProjectActionsState {
 	setNewProjectShared: (shared: boolean) => void;
 	newProjectSubmitting: boolean;
 	newProjectError: string | null;
+	newProjectSettings: WorkspaceOverviewValues;
+	setNewProjectSettings: (values: WorkspaceOverviewValues) => void;
+
+	// Settings options
+	availableModels: PiModelInfo[];
+	availableSkills: string[];
+	availableExtensions: string[];
+	sandboxProfiles: string[];
+	settingsLoading: boolean;
 
 	// Actions
 	handleCreateProjectFromTemplate: () => Promise<void>;
@@ -50,7 +68,19 @@ export interface ProjectActionsState {
 	setProjectSortAsc: (asc: boolean) => void;
 }
 
-export function useProjectActions(): ProjectActionsState {
+const defaultOverviewValues: WorkspaceOverviewValues = {
+	displayName: "",
+	sandboxProfile: "development",
+	defaultModelRef: null,
+	skillsMode: "all",
+	extensionsMode: "all",
+	selectedSkills: [],
+	selectedExtensions: [],
+};
+
+export function useProjectActions(
+	workspacePath?: string | null,
+): ProjectActionsState {
 	// Dialog states
 	const [newProjectDialogOpen, setNewProjectDialogOpen] = useState(false);
 	const [projectTemplates, setProjectTemplates] = useState<
@@ -66,6 +96,15 @@ export function useProjectActions(): ProjectActionsState {
 	const [newProjectShared, setNewProjectShared] = useState(false);
 	const [newProjectSubmitting, setNewProjectSubmitting] = useState(false);
 	const [newProjectError, setNewProjectError] = useState<string | null>(null);
+	const [newProjectSettings, setNewProjectSettings] =
+		useState<WorkspaceOverviewValues>(defaultOverviewValues);
+
+	const [availableModels, setAvailableModels] = useState<PiModelInfo[]>([]);
+	const [availableSkills, setAvailableSkills] = useState<string[]>([]);
+	const [availableExtensions, setAvailableExtensions] = useState<string[]>([]);
+	const [sandboxProfiles, setSandboxProfiles] = useState<string[]>([]);
+	const [settingsLoading, setSettingsLoading] = useState(false);
+	const lastTemplatePathRef = useRef<string | null>(null);
 
 	// Project sort state
 	const [projectSortBy, setProjectSortBy] = useState<
@@ -86,6 +125,8 @@ export function useProjectActions(): ProjectActionsState {
 		setNewProjectShared(false);
 		setNewProjectSubmitting(false);
 		setNewProjectError(null);
+		setNewProjectSettings(defaultOverviewValues);
+		lastTemplatePathRef.current = null;
 	}, []);
 
 	const handleNewProjectDialogChange = useCallback(
@@ -115,9 +156,139 @@ export function useProjectActions(): ProjectActionsState {
 			});
 	}, []);
 
+	const loadSettingsOptions = useCallback(async () => {
+		if (!workspacePath) return;
+		setSettingsLoading(true);
+		try {
+			const [resources, sandbox, models] = await Promise.all([
+				getWorkspacePiResources(workspacePath),
+				getWorkspaceSandbox(workspacePath),
+				getWsManager()
+					.agentGetAvailableModels("_system", workspacePath)
+					.then((result) => (result as PiModelInfo[]) ?? [])
+					.catch(() => [] as PiModelInfo[]),
+			]);
+			setAvailableSkills(resources.skills.map((skill) => skill.name));
+			setAvailableExtensions(resources.extensions.map((ext) => ext.name));
+			setSandboxProfiles(sandbox.profiles);
+			setAvailableModels(models);
+		} catch (err) {
+			console.error("Failed to load workspace settings options:", err);
+			setAvailableSkills([]);
+			setAvailableExtensions([]);
+			setSandboxProfiles([]);
+			setAvailableModels([]);
+		} finally {
+			setSettingsLoading(false);
+		}
+	}, [workspacePath]);
+
 	const handleNewProjectPathChange = useCallback((value: string) => {
 		setNewProjectPath(value);
 	}, []);
+
+	const selectedTemplate = useMemo(
+		() =>
+			projectTemplates.find((template) => template.path === selectedTemplatePath) ??
+			null,
+		[projectTemplates, selectedTemplatePath],
+	);
+
+	const buildSettingsFromDefaults = useCallback(
+		(defaults?: ProjectTemplateEntry["defaults"] | null) => {
+			const next: WorkspaceOverviewValues = {
+				...defaultOverviewValues,
+				selectedSkills: [...defaultOverviewValues.selectedSkills],
+				selectedExtensions: [...defaultOverviewValues.selectedExtensions],
+			};
+
+			if (defaults?.display_name) {
+				next.displayName = defaults.display_name ?? "";
+			}
+			if (defaults?.sandbox_profile) {
+				next.sandboxProfile = defaults.sandbox_profile ?? "development";
+			}
+			if (defaults?.default_provider && defaults?.default_model) {
+				next.defaultModelRef = `${defaults.default_provider}/${defaults.default_model}`;
+			}
+			if (defaults?.skills_mode) {
+				next.skillsMode = defaults.skills_mode;
+			}
+			if (defaults?.extensions_mode) {
+				next.extensionsMode = defaults.extensions_mode;
+			}
+			if (defaults?.skills && defaults.skills.length > 0) {
+				next.selectedSkills = [...defaults.skills];
+			}
+			if (defaults?.extensions && defaults.extensions.length > 0) {
+				next.selectedExtensions = [...defaults.extensions];
+			}
+
+			if (next.skillsMode === "custom" && next.selectedSkills.length === 0) {
+				next.selectedSkills = [...availableSkills];
+			}
+			if (
+				next.extensionsMode === "custom" &&
+				next.selectedExtensions.length === 0
+			) {
+				next.selectedExtensions = [...availableExtensions];
+			}
+
+			if (!next.defaultModelRef && availableModels[0]) {
+				next.defaultModelRef = `${availableModels[0].provider}/${availableModels[0].id}`;
+			}
+
+			return next;
+		},
+		[availableExtensions, availableModels, availableSkills],
+	);
+
+	useEffect(() => {
+		if (!newProjectDialogOpen) return;
+		if (selectedTemplatePath === lastTemplatePathRef.current) return;
+		const nextValues = buildSettingsFromDefaults(selectedTemplate?.defaults ?? null);
+		setNewProjectSettings(nextValues);
+		lastTemplatePathRef.current = selectedTemplatePath;
+	}, [
+		buildSettingsFromDefaults,
+		newProjectDialogOpen,
+		selectedTemplate?.defaults,
+		selectedTemplatePath,
+	]);
+
+	useEffect(() => {
+		if (!newProjectDialogOpen) return;
+		setNewProjectSettings((prev) => {
+			let next = prev;
+			if (!prev.defaultModelRef && availableModels[0]) {
+				next = {
+					...next,
+					defaultModelRef: `${availableModels[0].provider}/${availableModels[0].id}`,
+				};
+			}
+			if (next.skillsMode === "custom" && next.selectedSkills.length === 0) {
+				next = {
+					...next,
+					selectedSkills: [...availableSkills],
+				};
+			}
+			if (
+				next.extensionsMode === "custom" &&
+				next.selectedExtensions.length === 0
+			) {
+				next = {
+					...next,
+					selectedExtensions: [...availableExtensions],
+				};
+			}
+			return next;
+		});
+	}, [
+		availableExtensions,
+		availableModels,
+		availableSkills,
+		newProjectDialogOpen,
+	]);
 
 	const handleCreateProjectFromTemplate = useCallback(async () => {
 		setNewProjectError(null);
@@ -140,6 +311,42 @@ export function useProjectActions(): ProjectActionsState {
 		setNewProjectSubmitting(true);
 		try {
 			await createProjectFromTemplate(payload);
+
+			const displayName = newProjectSettings.displayName.trim();
+			await updateWorkspaceMeta(trimmedPath, {
+				display_name: displayName.length > 0 ? displayName : null,
+			});
+
+			if (newProjectSettings.sandboxProfile) {
+				await updateWorkspaceSandbox(trimmedPath, {
+					profile: newProjectSettings.sandboxProfile,
+				});
+			}
+
+			if (newProjectSettings.defaultModelRef) {
+				const [provider, model] = newProjectSettings.defaultModelRef.split("/");
+				if (provider && model) {
+					await updateSettingsValues(
+						"pi-agent",
+						{
+							values: {
+								defaultProvider: provider,
+								defaultModel: model,
+							},
+						},
+						trimmedPath,
+					);
+				}
+			}
+
+			await applyWorkspacePiResources({
+				workspace_path: trimmedPath,
+				skills_mode: newProjectSettings.skillsMode,
+				extensions_mode: newProjectSettings.extensionsMode,
+				skills: newProjectSettings.selectedSkills,
+				extensions: newProjectSettings.selectedExtensions,
+			});
+
 			await refreshWorkspaceDirectories();
 			handleNewProjectDialogChange(false);
 		} catch (err) {
@@ -153,6 +360,7 @@ export function useProjectActions(): ProjectActionsState {
 		selectedTemplatePath,
 		newProjectPath,
 		newProjectShared,
+		newProjectSettings,
 		refreshWorkspaceDirectories,
 		handleNewProjectDialogChange,
 	]);
@@ -161,6 +369,12 @@ export function useProjectActions(): ProjectActionsState {
 	useEffect(() => {
 		refreshWorkspaceDirectories();
 	}, [refreshWorkspaceDirectories]);
+
+	// Load settings options when dialog opens
+	useEffect(() => {
+		if (!newProjectDialogOpen) return;
+		void loadSettingsOptions();
+	}, [loadSettingsOptions, newProjectDialogOpen]);
 
 	// Load templates when dialog opens
 	useEffect(() => {
@@ -209,6 +423,13 @@ export function useProjectActions(): ProjectActionsState {
 		setNewProjectShared,
 		newProjectSubmitting,
 		newProjectError,
+		newProjectSettings,
+		setNewProjectSettings,
+		availableModels,
+		availableSkills,
+		availableExtensions,
+		sandboxProfiles,
+		settingsLoading,
 		handleCreateProjectFromTemplate,
 		workspaceDirectories,
 		refreshWorkspaceDirectories,

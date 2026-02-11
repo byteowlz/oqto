@@ -225,7 +225,7 @@ pub async fn get_session_messages_from_hstry(
 
     let rows = sqlx::query(
         r#"
-        SELECT id, role, content, created_at, model, tokens, cost_usd, parts_json
+        SELECT id, role, content, created_at, model, tokens, cost_usd, parts_json, client_id
         FROM messages
         WHERE conversation_id = ?
         ORDER BY idx
@@ -245,6 +245,7 @@ pub async fn get_session_messages_from_hstry(
         let tokens: Option<i64> = row.get("tokens");
         let cost: Option<f64> = row.get("cost_usd");
         let parts_json: Option<String> = row.get("parts_json");
+        let client_id: Option<String> = row.get("client_id");
 
         let mut parts = hstry_parts_to_chat_parts(parts_json.as_deref(), &content, &id);
 
@@ -272,6 +273,7 @@ pub async fn get_session_messages_from_hstry(
             tokens_output: tokens,
             tokens_reasoning: None,
             cost,
+            client_id,
             parts,
         });
     }
@@ -542,6 +544,7 @@ fn message_proto_to_chat_message(
         tokens_output: msg.tokens,
         tokens_reasoning: None,
         cost: msg.cost_usd,
+        client_id: msg.client_id.clone(),
         parts,
     }
 }
@@ -872,6 +875,7 @@ fn load_single_message(msg_path: &Path, part_dir: &Path) -> Result<Option<ChatMe
         tokens_output: info.tokens.as_ref().and_then(|t| t.output),
         tokens_reasoning: info.tokens.as_ref().and_then(|t| t.reasoning),
         cost: info.cost,
+        client_id: None,
         parts,
     }))
 }
@@ -949,6 +953,7 @@ pub fn get_session_messages_from_dir(
             tokens_output: info.tokens.as_ref().and_then(|t| t.output),
             tokens_reasoning: info.tokens.as_ref().and_then(|t| t.reasoning),
             cost: info.cost,
+            client_id: None,
             parts,
         });
     }

@@ -133,6 +133,9 @@ create_home = true
 # Runner configuration for user-plane isolation.
 # The runner daemon (octo-runner) reads this section to locate user data.
 [runner]
+# Human-readable runner identifier (falls back to $OCTO_RUNNER_ID, $HOSTNAME, or "local").
+# runner_id = "workstation-1"
+
 # Directory containing Pi session files (for main chat history).
 # Defaults to $XDG_DATA_HOME/pi/sessions (~/.local/share/pi/sessions)
 # pi_sessions_dir = "~/.local/share/pi/sessions"
