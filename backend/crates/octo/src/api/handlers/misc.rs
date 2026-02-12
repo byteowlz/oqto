@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use axum::{
     Json,
-    extract::{Query, State},
+    extract::{Path, Query, State},
 };
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
@@ -61,6 +61,8 @@ pub struct FeaturesResponse {
     pub voice: Option<VoiceConfig>,
     /// Whether WebSocket events are enabled (vs SSE).
     pub websocket_events: bool,
+    /// Whether the agent-browser integration is enabled.
+    pub agent_browser_enabled: bool,
 }
 
 /// Voice configuration exposed to frontend.
@@ -140,6 +142,7 @@ pub async fn features(State(state): State<AppState>) -> Json<FeaturesResponse> {
         voice,
         // WebSocket events are always enabled when the ws module is compiled in
         websocket_events: true,
+        agent_browser_enabled: state.sessions.agent_browser_enabled(),
     })
 }
 
@@ -418,6 +421,25 @@ pub async fn scheduler_overview(
     };
 
     Ok(Json(SchedulerOverview { stats, schedules }))
+}
+
+/// Delete a scheduled job by name.
+#[instrument(skip(state))]
+pub async fn scheduler_delete(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(name): Path<String>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let workspace_root = state.sessions.for_user(user.id()).workspace_root();
+    exec_skdlr_command(
+        &workspace_root,
+        &["remove", &name],
+        state.linux_users.as_ref(),
+        user.id(),
+    )
+    .await?;
+
+    Ok(Json(serde_json::json!({ "deleted": name })))
 }
 
 #[derive(Debug, Deserialize)]

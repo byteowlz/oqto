@@ -49,17 +49,21 @@ export type FileNode = {
 	children?: FileNode[];
 };
 
-// Cache for file tree data
+// Cache for file tree data - keyed by workspace:path:depth
 const treeCache = new Map<string, { data: FileNode[]; timestamp: number }>();
-const TREE_CACHE_TTL_MS = 10000; // 10 seconds - shorter TTL since tree can change
+const TREE_CACHE_TTL_MS = 30000; // 30 seconds
 const treeInFlight = new Map<string, Promise<FileNode[]>>();
 
-function getTreeCacheKey(workspaceKey: string, path: string): string {
-	return `${workspaceKey}:${path}`;
+// Initial load depth (shallow for speed) and lazy-load depth on expand
+const INITIAL_DEPTH = 2;
+const LAZY_LOAD_DEPTH = 2;
+
+function getTreeCacheKey(workspaceKey: string, path: string, depth = INITIAL_DEPTH): string {
+	return `${workspaceKey}:${path}:${depth}`;
 }
 
-function getCachedTree(workspaceKey: string, path: string): FileNode[] | null {
-	const key = getTreeCacheKey(workspaceKey, path);
+function getCachedTree(workspaceKey: string, path: string, depth = INITIAL_DEPTH): FileNode[] | null {
+	const key = getTreeCacheKey(workspaceKey, path, depth);
 	const entry = treeCache.get(key);
 	if (!entry) return null;
 	if (Date.now() - entry.timestamp > TREE_CACHE_TTL_MS) {
@@ -73,10 +77,11 @@ function setCachedTree(
 	workspaceKey: string,
 	path: string,
 	data: FileNode[],
+	depth = INITIAL_DEPTH,
 ): void {
-	const key = getTreeCacheKey(workspaceKey, path);
+	const key = getTreeCacheKey(workspaceKey, path, depth);
 	// Limit cache size
-	if (treeCache.size >= 20) {
+	if (treeCache.size >= 50) {
 		const firstKey = treeCache.keys().next().value;
 		if (firstKey) treeCache.delete(firstKey);
 	}
@@ -86,12 +91,13 @@ function setCachedTree(
 async function fetchFileTree(
 	workspacePath: string,
 	path = ".",
+	depth = INITIAL_DEPTH,
 ): Promise<FileNode[]> {
-	const key = getTreeCacheKey(workspacePath, path);
+	const key = getTreeCacheKey(workspacePath, path, depth);
 	const existing = treeInFlight.get(key);
 	if (existing) return existing;
 
-	const request = fetchFileTreeMux(workspacePath, path, 6, false)
+	const request = fetchFileTreeMux(workspacePath, path, depth, false)
 		.then((result) => {
 			return result;
 		})
@@ -101,6 +107,42 @@ async function fetchFileTree(
 
 	treeInFlight.set(key, request);
 	return request;
+}
+
+/** Lazy-load children for a directory node, merging into the existing tree. */
+function mergeChildrenIntoTree(
+	tree: FileNode[],
+	parentPath: string,
+	children: FileNode[],
+): FileNode[] {
+	return tree.map((node) => {
+		if (node.path === parentPath) {
+			return { ...node, children };
+		}
+		if (node.children && parentPath.startsWith(node.path + "/")) {
+			return {
+				...node,
+				children: mergeChildrenIntoTree(node.children, parentPath, children),
+			};
+		}
+		return node;
+	});
+}
+
+/** Check if a directory node needs lazy-loading.
+ *  A directory needs loading if:
+ *  - It has no children array at all (depth boundary - never fetched)
+ *  - Its children contain subdirectories without their own children arrays
+ */
+function needsLazyLoad(node: FileNode): boolean {
+	if (node.type !== "directory") return false;
+	// No children array at all - this directory was at the depth boundary
+	if (node.children === undefined) return true;
+	if (node.children.length === 0) return false;
+	// Children exist but some subdirectories haven't been expanded yet
+	return node.children.some(
+		(child) => child.type === "directory" && child.children === undefined,
+	);
 }
 
 // File extensions that can be previewed
@@ -254,6 +296,7 @@ export function FileTreeView({
 	const [uploading, setUploading] = useState(false);
 	const [newFolderName, setNewFolderName] = useState<string | null>(null);
 	const [renamingPath, setRenamingPath] = useState<string | null>(null);
+	const [loadingDirs, setLoadingDirs] = useState<Set<string>>(new Set());
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const lastLoadRef = useRef<{ key: string; ts: number } | null>(null);
 
@@ -276,10 +319,16 @@ export function FileTreeView({
 	const viewMode = state?.viewMode ?? internalViewMode;
 	const currentPath = state?.currentPath ?? internalCurrentPath;
 
+	// Use a ref for external state to avoid recreating updateState on every render.
+	// This breaks the dependency chain that caused loadTree to re-run on every
+	// state change, which wiped out lazy-loaded children with stale cache data.
+	const stateRef = useRef(state);
+	stateRef.current = state;
+
 	const updateState = useCallback(
 		(updates: Partial<FileTreeState>) => {
-			if (onStateChange && state) {
-				onStateChange({ ...state, ...updates });
+			if (onStateChange && stateRef.current) {
+				onStateChange({ ...stateRef.current, ...updates });
 			} else {
 				if (updates.expanded !== undefined)
 					setInternalExpanded(updates.expanded);
@@ -293,7 +342,7 @@ export function FileTreeView({
 					setInternalCurrentPath(updates.currentPath);
 			}
 		},
-		[onStateChange, state],
+		[onStateChange],
 	);
 
 	const cacheKey = normalizedWorkspacePath ?? null;
@@ -301,7 +350,7 @@ export function FileTreeView({
 	const loadTree = useCallback(
 		async (path: string, preserveState = false, skipCache = false) => {
 			if (!normalizedWorkspacePath || !cacheKey) return;
-			const requestKey = getTreeCacheKey(cacheKey, path);
+			const requestKey = getTreeCacheKey(cacheKey, path, INITIAL_DEPTH);
 			const now = Date.now();
 			if (
 				lastLoadRef.current &&
@@ -314,7 +363,7 @@ export function FileTreeView({
 
 			// Check cache first (unless explicitly skipping)
 			if (!skipCache) {
-				const cached = getCachedTree(cacheKey, path);
+				const cached = getCachedTree(cacheKey, path, INITIAL_DEPTH);
 				if (cached) {
 					setTree(cached);
 					if (!preserveState) {
@@ -328,9 +377,9 @@ export function FileTreeView({
 			setLoading(true);
 			setError("");
 			try {
-				const data = await fetchFileTree(normalizedWorkspacePath, path);
+				const data = await fetchFileTree(normalizedWorkspacePath, path, INITIAL_DEPTH);
 				// Cache the result
-				setCachedTree(cacheKey, path, data);
+				setCachedTree(cacheKey, path, data, INITIAL_DEPTH);
 				setTree(data);
 				if (!preserveState) {
 					updateState({ currentPath: path });
@@ -346,20 +395,85 @@ export function FileTreeView({
 		[normalizedWorkspacePath, updateState, cacheKey],
 	);
 
+	/** Lazy-load deeper children for a directory when it is expanded. */
+	const lazyLoadChildren = useCallback(
+		async (dirPath: string) => {
+			if (!normalizedWorkspacePath || !cacheKey) return;
+
+			// Check cache for this sub-tree
+			const cached = getCachedTree(cacheKey, dirPath, LAZY_LOAD_DEPTH);
+			if (cached) {
+				setTree((prev) => mergeChildrenIntoTree(prev, dirPath, cached));
+				return;
+			}
+
+			setLoadingDirs((prev) => new Set(prev).add(dirPath));
+			try {
+				const children = await fetchFileTree(
+					normalizedWorkspacePath,
+					dirPath,
+					LAZY_LOAD_DEPTH,
+				);
+				setCachedTree(cacheKey, dirPath, children, LAZY_LOAD_DEPTH);
+				setTree((prev) => mergeChildrenIntoTree(prev, dirPath, children));
+			} catch {
+				// Silently fail - the user can still see the shallow children
+			} finally {
+				setLoadingDirs((prev) => {
+					const next = new Set(prev);
+					next.delete(dirPath);
+					return next;
+				});
+			}
+		},
+		[normalizedWorkspacePath, cacheKey],
+	);
+
 	const refreshTree = useCallback(() => {
 		// Force refresh bypasses cache
 		loadTree(currentPath, true, true);
 	}, [loadTree, currentPath]);
 
+	// Only re-load the tree when the workspace or current path actually changes,
+	// not when loadTree is recreated due to dependency churn. This prevents
+	// lazy-loaded children from being wiped out by stale shallow cache data.
+	const loadTreeRef = useRef(loadTree);
+	loadTreeRef.current = loadTree;
 	useEffect(() => {
 		if (!normalizedWorkspacePath) return;
-		// Load tree for current path (uses cache if available)
-		loadTree(currentPath, true);
-	}, [currentPath, loadTree, normalizedWorkspacePath]);
+		loadTreeRef.current(currentPath, true);
+	}, [currentPath, normalizedWorkspacePath]);
 
-	const toggle = (path: string) => {
-		updateState({ expanded: { ...expanded, [path]: !expanded[path] } });
-	};
+	/** Find a node in the tree by path. */
+	const findNode = useCallback(
+		(nodes: FileNode[], path: string): FileNode | null => {
+			for (const node of nodes) {
+				if (node.path === path) return node;
+				if (node.children) {
+					const found = findNode(node.children, path);
+					if (found) return found;
+				}
+			}
+			return null;
+		},
+		[],
+	);
+
+	const toggle = useCallback(
+		(path: string) => {
+			const willExpand = !expanded[path];
+			updateState({ expanded: { ...expanded, [path]: willExpand } });
+
+			// Lazy-load deeper children when expanding a directory
+			if (willExpand) {
+				const node = findNode(tree, path);
+				if (node && needsLazyLoad(node)) {
+					void lazyLoadChildren(path);
+				}
+			}
+		},
+		[expanded, updateState, tree, findNode, lazyLoadChildren],
+	);
 
 	const handleSelectFile = (
 		path: string,
@@ -841,6 +955,7 @@ export function FileTreeView({
 						onRenameConfirm={handleConfirmRename}
 						onRenameCancel={handleCancelRename}
 						onOpenInCanvas={onOpenInCanvas}
+						loadingDirs={loadingDirs}
 					/>
 				) : viewMode === "list" ? (
 					<ListView
@@ -1051,6 +1166,7 @@ function TreeView({
 	onRenameConfirm,
 	onRenameCancel,
 	onOpenInCanvas,
+	loadingDirs,
 }: {
 	nodes: FileNode[];
 	expanded: Record<string, boolean>;
@@ -1072,6 +1188,7 @@ function TreeView({
 	onRenameConfirm: (newName: string) => void;
 	onRenameCancel: () => void;
 	onOpenInCanvas?: (path: string) => void;
+	loadingDirs?: Set<string>;
 }) {
 	// Sort: directories first, then files, both alphabetically
 	const sortedNodes = [...nodes].sort((a, b) => {
@@ -1101,6 +1218,7 @@ function TreeView({
 					onRenameConfirm={onRenameConfirm}
 					onRenameCancel={onRenameCancel}
 					onOpenInCanvas={onOpenInCanvas}
+					loadingDirs={loadingDirs}
 				/>
 			))}
 		</ul>
@@ -1125,6 +1243,7 @@ function TreeRow({
 	onRenameConfirm,
 	onRenameCancel,
 	onOpenInCanvas,
+	loadingDirs,
 }: {
 	node: FileNode;
 	level: number;
@@ -1147,11 +1266,13 @@ function TreeRow({
 	onRenameConfirm: (newName: string) => void;
 	onRenameCancel: () => void;
 	onOpenInCanvas?: (path: string) => void;
+	loadingDirs?: Set<string>;
 }) {
 	const isDir = node.type === "directory";
 	const isExpanded = expanded[node.path];
 	const isSelected = selectedFiles.has(node.path);
 	const isRenaming = renamingPath === node.path;
+	const isLoading = loadingDirs?.has(node.path) ?? false;
 
 	// Sort children: directories first, then files
 	const sortedChildren = node.children
@@ -1238,7 +1359,8 @@ function TreeRow({
 					)}
 				</button>
 			</FileContextMenu>
-			{isDir && isExpanded && sortedChildren.length > 0 && (
+			{isDir && isExpanded && (
+				sortedChildren.length > 0 ? (
 				<ul>
 					{sortedChildren.map((child) => (
 						<TreeRow
@@ -1259,9 +1381,19 @@ function TreeRow({
 							onRenameConfirm={onRenameConfirm}
 							onRenameCancel={onRenameCancel}
 							onOpenInCanvas={onOpenInCanvas}
+							loadingDirs={loadingDirs}
 						/>
 					))}
 				</ul>
+				) : isLoading ? (
+				<div
+					className="flex items-center gap-2 py-1.5 text-xs text-muted-foreground"
+					style={{ paddingLeft: `${(level + 1) * 16 + 8}px` }}
+				>
+					<Loader2 className="w-3 h-3 animate-spin" />
+					Loading...
+				</div>
+				) : null
 			)}
 		</li>
 	);

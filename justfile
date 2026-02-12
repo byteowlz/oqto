@@ -68,6 +68,7 @@ reload-fast:
 # Install all dependencies and binaries
 install:
     cd frontend && bun install
+    cd backend/crates/octo-browserd && bun install && bun run build
     cd backend && cargo install --path crates/octo
     cd backend && cargo install --path crates/octo --bin octo-runner
     cd backend && cargo install --path crates/octo-files
@@ -136,6 +137,17 @@ install-system:
 
       sudo install -m 0755 "$src" "$dst"
     done
+
+    # Install octo-browserd daemon bundle (dist + node_modules + package.json + bin)
+    sudo install -d -m 0755 /usr/local/lib/octo-browserd
+    sudo rsync -a --delete backend/crates/octo-browserd/dist/ /usr/local/lib/octo-browserd/dist/
+    sudo rsync -a --delete backend/crates/octo-browserd/node_modules/ /usr/local/lib/octo-browserd/node_modules/
+    sudo install -m 0644 backend/crates/octo-browserd/package.json /usr/local/lib/octo-browserd/package.json
+    sudo install -d -m 0755 /usr/local/lib/octo-browserd/bin
+    sudo install -m 0755 backend/crates/octo-browserd/bin/octo-browserd.js /usr/local/lib/octo-browserd/bin/octo-browserd.js
+    # Wrapper script that runs from the lib dir so node resolves modules correctly
+    printf '#!/usr/bin/env bash\nexec node /usr/local/lib/octo-browserd/dist/index.js "$@"\n' | sudo tee /usr/local/bin/octo-browserd > /dev/null
+    sudo chmod 0755 /usr/local/bin/octo-browserd
 
     # Enable lingering for current user so `systemctl --user` services can run without login
     sudo loginctl enable-linger "$(id -un)" || true

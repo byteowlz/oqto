@@ -315,6 +315,8 @@ pub struct AppState {
     pub runner_socket_pattern: Option<String>,
     /// hstry client for unified chat history persistence.
     pub hstry: Option<HstryClient>,
+    /// Audit logger for user-facing events.
+    pub audit_logger: Option<Arc<crate::audit::AuditLogger>>,
     /// Feedback configuration.
     pub feedback: crate::feedback::FeedbackConfig,
 }
@@ -361,6 +363,7 @@ impl AppState {
             linux_users: None,
             runner_socket_pattern: None,
             hstry: None,
+            audit_logger: None,
             feedback: crate::feedback::FeedbackConfig::default(),
         }
     }
@@ -407,6 +410,7 @@ impl AppState {
             linux_users: None,
             runner_socket_pattern: None,
             hstry: None,
+            audit_logger: None,
             feedback: crate::feedback::FeedbackConfig::default(),
         }
     }
@@ -475,6 +479,12 @@ impl AppState {
     /// Set the hstry client for unified chat history persistence.
     pub fn with_hstry(mut self, client: HstryClient) -> Self {
         self.hstry = Some(client);
+        self
+    }
+
+    /// Set the audit logger for user-facing events.
+    pub fn with_audit_logger(mut self, logger: Arc<crate::audit::AuditLogger>) -> Self {
+        self.audit_logger = Some(logger);
         self
     }
 }

@@ -11,7 +11,7 @@ import {
 	DashboardSidebar,
 	QueryCard,
 } from "./components";
-import { getReadableIdFromSession } from "@/lib/session-utils";
+import { formatTempId, getTempIdFromSession } from "@/lib/session-utils";
 import { useDashboardData } from "./hooks";
 import { getTranslations } from "./translations";
 import type {
@@ -85,13 +85,14 @@ export function DashboardApp() {
 	const runnerSessionTitles = useMemo(() => {
 		const map = new Map<
 			string,
-			{ title?: string | null; readableId?: string | null }
+			{ title?: string | null; tempIdLabel?: string | null }
 		>();
 		for (const session of chatHistory) {
 			const title = session.title?.trim();
-			const readableId = getReadableIdFromSession(session);
-			if (title || readableId) {
-				map.set(session.id, { title, readableId });
+			const tempId = getTempIdFromSession(session);
+			const tempIdLabel = formatTempId(tempId);
+			if (title || tempIdLabel) {
+				map.set(session.id, { title, tempIdLabel });
 			}
 		}
 		return map;
@@ -257,6 +258,7 @@ export function DashboardApp() {
 				schedulerError={data.schedulerError}
 				schedulerLoading={data.schedulerLoading}
 				onLoadScheduler={data.handleLoadScheduler}
+				onDeleteSchedulerJob={data.handleDeleteSchedulerJob}
 				agents={data.agents}
 				topTrxIssues={data.topTrxIssues}
 				trxStats={data.trxStats}

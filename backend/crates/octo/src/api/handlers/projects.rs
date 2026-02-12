@@ -531,16 +531,59 @@ pub async fn create_project_from_template(
 
     copy_template_dir(&template_dir, &target_dir)?;
 
-    let status = Command::new("git")
+    // Initialize git repo.
+    // We capture stdout/stderr for diagnosis, because failures here are usually environment/
+    // permission related and should be actionable.
+    let git_init_output = Command::new("git")
         .arg("init")
         .arg("--branch")
         .arg("main")
         .current_dir(&target_dir)
-        .status()
-        .await
-        .map_err(|e| ApiError::internal(format!("Failed to init git repo: {}", e)))?;
-    if !status.success() {
-        return Err(ApiError::internal("git init failed"));
+        .output()
+        .await;
+
+    match git_init_output {
+        Ok(output) if output.status.success() => {
+            tracing::info!(
+                project_path = %target_dir.display(),
+                stdout = %String::from_utf8_lossy(&output.stdout),
+                stderr = %String::from_utf8_lossy(&output.stderr),
+                "git init succeeded"
+            );
+        }
+        Ok(output) => {
+            // Log as much context as possible.
+            let uid = unsafe { libc::geteuid() };
+            let gid = unsafe { libc::getegid() };
+            let home = std::env::var("HOME").unwrap_or_default();
+            let path = std::env::var("PATH").unwrap_or_default();
+            tracing::error!(
+                project_path = %target_dir.display(),
+                exit_code = ?output.status.code(),
+                uid,
+                gid,
+                home = %home,
+                path = %path,
+                stdout = %String::from_utf8_lossy(&output.stdout),
+                stderr = %String::from_utf8_lossy(&output.stderr),
+                "git init failed"
+            );
+        }
+        Err(e) => {
+            let uid = unsafe { libc::geteuid() };
+            let gid = unsafe { libc::getegid() };
+            let home = std::env::var("HOME").unwrap_or_default();
+            let path = std::env::var("PATH").unwrap_or_default();
+            tracing::error!(
+                project_path = %target_dir.display(),
+                uid,
+                gid,
+                home = %home,
+                path = %path,
+                error = %e,
+                "failed to spawn git init"
+            );
+        }
     }
 
     if request.shared {

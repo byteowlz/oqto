@@ -30,7 +30,12 @@ import {
 	renamePiSession,
 	updateDefaultChatAssistant,
 } from "@/features/chat/api";
-import { formatSessionDate, getDisplayPiTitle } from "@/lib/session-utils";
+import {
+	formatSessionDate,
+	formatTempId,
+	getDisplayPiTitle,
+	getTempIdFromSession,
+} from "@/lib/session-utils";
 import { cn } from "@/lib/utils";
 import {
 	ChevronDown,
@@ -106,8 +111,8 @@ export function ChatEntry({
 				return true;
 			}
 
-			const readableId = session.readable_id ?? null;
-			if (readableId.toLowerCase().includes(filterLower)) return true;
+			const tempId = getTempIdFromSession(session);
+			if (tempId?.toLowerCase().includes(filterLower)) return true;
 
 			const dateStr = formatSessionDate(session.modified_at);
 			if (dateStr.toLowerCase().includes(filterLower)) return true;
@@ -849,7 +854,8 @@ export function ChatEntry({
 											session.title ||
 											(session.message_count === 0 ? emptyTitle : "Untitled");
 
-										const readableId = session.readable_id ?? null;
+										const tempId = getTempIdFromSession(session);
+									const tempIdLabel = formatTempId(tempId);
 
 										const formattedDate = formatSessionDate(
 											new Date(session.started_at).getTime(),
@@ -899,11 +905,11 @@ export function ChatEntry({
 												<ContextMenuContent>
 													<ContextMenuItem
 														onClick={() =>
-															navigator.clipboard.writeText(readableId)
+															tempId && navigator.clipboard.writeText(tempId)
 														}
 													>
 														<Copy className="w-4 h-4 mr-2" />
-														{readableId}
+														{locale === "de" ? "Temp-ID kopieren" : "Copy Temp ID"}
 													</ContextMenuItem>
 													<ContextMenuSeparator />
 													<ContextMenuItem
@@ -1047,7 +1053,8 @@ function SessionTimeline({
 					);
 
 					const displayTitle = session.title || formattedDate;
-					const readableId = session.readable_id ?? null;
+					const tempId = getTempIdFromSession(session);
+					const tempIdLabel = formatTempId(tempId);
 
 					return (
 						<button
@@ -1080,7 +1087,7 @@ function SessionTimeline({
 									)}
 								>
 									{displayTitle}
-									{readableId && <span className="ml-1 opacity-60">[{readableId}]</span>}
+									{tempIdLabel && <span className="ml-1 opacity-60">[{tempIdLabel}]</span>}
 								</span>
 							</div>
 						</button>

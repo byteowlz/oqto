@@ -13,6 +13,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
 use anyhow::{Context, Result};
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
@@ -20,6 +23,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, Command};
 use tokio::sync::{RwLock, broadcast, mpsc, oneshot};
 
+use crate::agent_browser::{agent_browser_session_dir, browser_session_name};
 use crate::hstry::HstryClient;
 use crate::local::SandboxConfig;
 use crate::pi::{AgentMessage, PiCommand, PiEvent, PiMessage, PiResponse, PiState, SessionStats};
@@ -459,6 +463,31 @@ impl PiSessionManager {
             .or(continue_session.as_ref())
             .cloned();
 
+        let browser_session_id = browser_session_name(&session_id);
+        let socket_dir_override = config.env.get("AGENT_BROWSER_SOCKET_DIR").map(String::as_str);
+        let session_socket_dir =
+            agent_browser_session_dir(&browser_session_id, socket_dir_override);
+        if let Err(err) = std::fs::create_dir_all(&session_socket_dir) {
+            warn!(
+                "Failed to create agent-browser socket dir {}: {}",
+                session_socket_dir.display(),
+                err
+            );
+        }
+        #[cfg(unix)]
+        if let Err(err) = std::fs::set_permissions(
+            &session_socket_dir,
+            std::fs::Permissions::from_mode(0o700),
+        ) {
+            warn!(
+                "Failed to set permissions for agent-browser socket dir {}: {}",
+                session_socket_dir.display(),
+                err
+            );
+        }
+
+        let session_socket_dir_str = session_socket_dir.to_string_lossy().to_string();
+
         // Build Pi arguments
         let mut pi_args: Vec<String> = vec!["--mode".to_string(), "rpc".to_string()];
 
@@ -478,7 +507,12 @@ impl PiSessionManager {
         let mut cmd = if let Some(ref sandbox_config) = self.config.sandbox_config {
             if sandbox_config.enabled {
                 // Merge with workspace-specific config (can only add restrictions)
-                let effective_config = sandbox_config.with_workspace_config(&config.cwd);
+                let mut effective_config = sandbox_config.with_workspace_config(&config.cwd);
+                if !effective_config.extra_rw_bind.contains(&session_socket_dir_str) {
+                    effective_config
+                        .extra_rw_bind
+                        .push(session_socket_dir_str.clone());
+                }
 
                 // Build bwrap args for the workspace
                 match effective_config.build_bwrap_args_for_user(&config.cwd, None) {
@@ -546,6 +580,12 @@ impl PiSessionManager {
 
         // Set environment variables
         cmd.envs(&config.env);
+        if !config.env.contains_key("AGENT_BROWSER_SOCKET_DIR") {
+            cmd.env("AGENT_BROWSER_SOCKET_DIR", &session_socket_dir_str);
+        }
+        if !config.env.contains_key("AGENT_BROWSER_SESSION") {
+            cmd.env("AGENT_BROWSER_SESSION", &browser_session_id);
+        }
 
         // Configure pipes
         cmd.stdin(std::process::Stdio::piped());
@@ -1969,9 +2009,6 @@ impl PiSessionManager {
                                             && last_synced_title != clean_title
                                         {
                                             last_synced_title = clean_title.clone();
-                                            let readable_id = parsed
-                                                .get_readable_id()
-                                                .map(String::from);
                                             let client = client.clone();
                                             let eid = hstry_external_id.read().await.clone();
                                             tokio::spawn(async move {
@@ -1983,7 +2020,7 @@ impl PiSessionManager {
                                                         None,
                                                         None,
                                                         None,
-                                                        readable_id,
+                                                        None,
                                                         Some("pi".to_string()),
                                                     )
                                                     .await

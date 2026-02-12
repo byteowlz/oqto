@@ -1,5 +1,8 @@
 # Changes
 
+- 2026-02-12: Add octo-browserd Playwright daemon with full feature parity to agent-browser. Includes: all ~120 commands (click, fill, type, press, check, uncheck, upload, dblclick, focus, drag, hover, select, tap, clear, scroll, frame/mainframe switching, tab/window management, cookies/localStorage/sessionStorage, dialog handling, route/unroute network interception, request tracking, download, geolocation, permissions, device emulation, viewport, screenshot, PDF, evaluate/evalhandle, content/setContent, console/error logs, keyboard/mouse/wheel/clipboard, addScript/addStyle/addInitScript, tracing, HAR, video recording, screencast start/stop, CDP input injection for mouse/keyboard/touch). Enhanced snapshot with refs (role/text/label/placeholder/alttext/title/testid/nth selectors), cursor-interactive element detection, compact/interactive/depth filtering. AI-friendly error messages. Origin-validated WebSocket stream server. Session-scoped socket dirs with 0700 permissions.
+- 2026-02-12: Forward keyCode values in browser stream keyboard events to improve special-key handling, and allow higher-quality agent-browser screencast settings via AGENT_BROWSER_STREAM_* env overrides with higher defaults.
+- 2026-02-12: Use per-session agent-browser socket directories under XDG_RUNTIME_DIR and bind them into the sandbox for session-scoped browser control. Derive short agent-browser session IDs from chat session IDs to avoid Unix socket path length limits. Navigate/back/forward/reload via backend actions instead of keyboard shortcuts to keep URL bar behavior reliable.
 - 2026-02-10: Add workspace overview panel to edit project name, default model, sandbox profile, and Pi skills/extensions.
 - 2026-02-10: Add workspace API endpoints for meta, sandbox profile, and Pi resource selection with copy-on-custom rules.
 - 2026-02-10: Propagate configured runner_id in mux agent responses and subscription errors.
@@ -7,6 +10,7 @@
 - 2026-02-10: Add octo.install schema/example for the setup wizard to generate portable install configs.
 - 2026-02-10: Add configurable runner_id to octo-runner for human-readable multi-runner attribution in hstry metadata.
 - 2026-02-10: Persist client_id into hstry messages to stabilize optimistic merge across reloads.
+- 2026-02-10: Keep hstry readable_id stable during Pi auto-rename to prevent duplicate sessions after hstry sync.
 - 2026-02-04: Normalize default chat workspace paths to avoid invalid "global" workspace lookups.
 - 2026-02-04: Use pending session IDs for optimistic chats and replace them when Pi sessions are created.
 - 2026-02-04: Normalize workspace-scoped API calls to avoid accidental workspace Pi requests without a path.

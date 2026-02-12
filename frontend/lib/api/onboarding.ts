@@ -57,6 +57,17 @@ export type UpdateOnboardingRequest = {
 	complete?: boolean;
 };
 
+export type BootstrapOnboardingRequest = {
+	display_name: string;
+	language?: string;
+};
+
+export type BootstrapOnboardingResponse = {
+	workspace_path: string;
+	session_id: string;
+	message: string;
+};
+
 // ============================================================================
 // Onboarding API
 // ============================================================================
@@ -180,6 +191,23 @@ export async function completeOnboarding(): Promise<OnboardingState> {
 export async function resetOnboarding(): Promise<OnboardingState> {
 	const res = await authFetch(controlPlaneApiUrl("/api/onboarding/reset"), {
 		method: "POST",
+		credentials: "include",
+	});
+	if (!res.ok) {
+		const message = await readApiError(res);
+		throw new Error(message);
+	}
+	return res.json();
+}
+
+/** Bootstrap default workspace and initial chat session */
+export async function bootstrapOnboarding(
+	request: BootstrapOnboardingRequest,
+): Promise<BootstrapOnboardingResponse> {
+	const res = await authFetch(controlPlaneApiUrl("/api/onboarding/bootstrap"), {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(request),
 		credentials: "include",
 	});
 	if (!res.ok) {

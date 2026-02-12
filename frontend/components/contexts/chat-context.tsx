@@ -22,6 +22,18 @@ import {
 } from "react";
 import { useLocale } from "./ui-context";
 
+function isPiDebugEnabled(): boolean {
+	if (!import.meta.env.DEV) return false;
+	try {
+		if (typeof localStorage !== "undefined") {
+			return localStorage.getItem("debug:pi-v2") === "1";
+		}
+	} catch {
+		// ignore
+	}
+	return import.meta.env.VITE_DEBUG_PI_V2 === "1";
+}
+
 export interface ChatContextValue {
 	/** Chat sessions from disk (no running opencode needed) */
 	chatHistory: ChatSession[];

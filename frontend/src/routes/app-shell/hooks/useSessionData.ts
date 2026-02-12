@@ -5,7 +5,7 @@ import type {
 } from "@/lib/control-plane-client";
 import {
 	formatSessionDate,
-	getReadableIdFromSession,
+	getTempIdFromSession,
 } from "@/lib/session-utils";
 import { useCallback, useMemo } from "react";
 import type { SessionHierarchy, SessionsByProject } from "../SidebarSessions";
@@ -166,8 +166,8 @@ export function useSessionData({
 		if (searchLower) {
 			sessions = sessions.filter((session) => {
 				if (session.title?.toLowerCase().includes(searchLower)) return true;
-				const readableId = getReadableIdFromSession(session);
-				if (readableId?.toLowerCase().includes(searchLower)) {
+				const tempId = getTempIdFromSession(session);
+				if (tempId?.toLowerCase().includes(searchLower)) {
 					return true;
 				}
 				if (session.updated_at) {

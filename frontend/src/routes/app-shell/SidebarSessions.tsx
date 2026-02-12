@@ -25,8 +25,9 @@ import type {
 } from "@/lib/control-plane-client";
 import {
 	formatSessionDate,
+	formatTempId,
 	getDisplayPiTitle,
-	getReadableIdFromSession,
+	getTempIdFromSession,
 } from "@/lib/session-utils";
 import { cn } from "@/lib/utils";
 import { DeleteConfirmDialog } from "@/src/routes/app-shell/dialogs/DeleteConfirmDialog";
@@ -47,6 +48,7 @@ import {
 	Pin,
 	Plus,
 	Search,
+	Settings,
 	Trash2,
 	X,
 } from "lucide-react";
@@ -111,6 +113,11 @@ export interface SidebarSessionsProps {
 	onSearchResultClick: (hit: HstrySearchHit) => void;
 	messageSearchExtraHits: HstrySearchHit[];
 	isMobile?: boolean;
+	// Search props - for external control of search input
+	sessionSearch?: string;
+	onSessionSearchChange?: (query: string) => void;
+	searchMode?: SearchMode;
+	onSearchModeChange?: (mode: SearchMode) => void;
 }
 
 export const SidebarSessions = memo(function SidebarSessions({
@@ -151,11 +158,22 @@ export const SidebarSessions = memo(function SidebarSessions({
 	onSearchResultClick,
 	messageSearchExtraHits,
 	isMobile = false,
+	sessionSearch: controlledSessionSearch,
+	onSessionSearchChange: controlledOnSessionSearchChange,
+	searchMode: controlledSearchMode,
+	onSearchModeChange: controlledOnSearchModeChange,
 }: SidebarSessionsProps) {
-	// Session search
-	const [sessionSearch, setSessionSearch] = useState("");
+	// Local state for uncontrolled mode
+	const [localSessionSearch, setLocalSessionSearch] = useState("");
+	const [localSearchMode, setLocalSearchMode] = useState<SearchMode>("sessions");
+
+	// Use controlled or local state
+	const sessionSearch = controlledSessionSearch ?? localSessionSearch;
+	const setSessionSearch = controlledOnSessionSearchChange ?? setLocalSessionSearch;
+	const searchMode = controlledSearchMode ?? localSearchMode;
+	const setSearchMode = controlledOnSearchModeChange ?? setLocalSearchMode;
+
 	const deferredSearch = useDeferredValue(sessionSearch);
-	const [searchMode, setSearchMode] = useState<SearchMode>("sessions");
 	const [agentFilter, setAgentFilter] = useState<AgentFilter>("all");
 	const [selectedSessionIds, setSelectedSessionIds] = useState<Set<string>>(
 		() => new Set(),
@@ -674,18 +692,13 @@ export const SidebarSessions = memo(function SidebarSessions({
 									className="border-b border-sidebar-border/50 last:border-b-0"
 								>
 									{/* Project header */}
-									<ContextMenu>
-										<ContextMenuTrigger className="contents">
-											<div className="flex items-center gap-1 px-1 py-1.5 group">
+										<ContextMenu>
+											<ContextMenuTrigger className="contents">
+													<div className="flex items-center gap-1 px-1 py-1.5 group">
 												<button
 													type="button"
-													onClick={() => {
-													if (project.directory) {
-														onProjectOverview(project.directory as string);
-													}
-													toggleProjectExpanded(project.key);
-												}}
-													className="flex-1 flex items-center gap-1.5 text-left hover:bg-sidebar-accent/50 px-1 py-0.5 -mx-1"
+													onClick={() => toggleProjectExpanded(project.key)}
+													className="flex items-center gap-1.5 text-left hover:bg-sidebar-accent/50 px-1 py-0.5 -mx-1"
 												>
 													{isProjectExpanded ? (
 														<ChevronDown
@@ -702,6 +715,12 @@ export const SidebarSessions = memo(function SidebarSessions({
 															)}
 														/>
 													)}
+												</button>
+												<button
+													type="button"
+													onClick={() => toggleProjectExpanded(project.key)}
+													className="flex-1 flex items-center gap-1.5 text-left hover:bg-sidebar-accent/50 px-1 py-0.5 -mx-1"
+														>
 													{isProjectPinned && (
 														<Pin
 															className={cn(
@@ -729,33 +748,47 @@ export const SidebarSessions = memo(function SidebarSessions({
 													</span>
 												</button>
 												{project.directory ? (
-													<button
-														type="button"
-														onClick={() =>
-															onNewChatInProject(project.directory as string)
-														}
-														className={cn(
-															"text-muted-foreground hover:text-primary hover:bg-sidebar-accent opacity-0 group-hover:opacity-100 transition-opacity",
-															sizeClasses.buttonSize,
-														)}
-														title={
-															locale === "de"
-																? "Neuer Chat in diesem Projekt"
-																: "New chat in this project"
-														}
-													>
-														<Plus className={sizeClasses.iconSize} />
-													</button>
+													<>
+														<button
+															type="button"
+															onClick={() => onProjectOverview(project.directory as string)}
+															className={cn(
+																"text-muted-foreground hover:text-primary hover:bg-sidebar-accent opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity",
+																sizeClasses.buttonSize,
+															)}
+															title={
+																locale === "de"
+																	? "Workspace-Ubersicht"
+																	: "Workspace overview"
+															}
+														>
+															<Settings className={sizeClasses.iconSize} />
+														</button>
+														<button
+															type="button"
+															onClick={() => onNewChatInProject(project.directory as string)}
+															className={cn(
+																"text-muted-foreground hover:text-primary hover:bg-sidebar-accent opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity",
+																sizeClasses.buttonSize,
+															)}
+															title={
+																locale === "de"
+																	? "Neuer Chat in diesem Projekt"
+																	: "New chat in this project"
+															}
+														>
+															<Plus className={sizeClasses.iconSize} />
+														</button>
+													</>
 												) : null}
 											</div>
 										</ContextMenuTrigger>
-										<ContextMenuContent>
+											<ContextMenuContent>
+
 											{project.directory && (
 												<>
 													<ContextMenuItem
-														onClick={() =>
-															onNewChatInProject(project.directory as string)
-														}
+														onClick={() => onNewChatInProject(project.directory as string)}
 													>
 														<Plus className="w-4 h-4 mr-2" />
 														{locale === "de" ? "Neue Sitzung" : "New Session"}
@@ -814,7 +847,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 														) || [];
 													const hasChildren = children.length > 0;
 													const isExpanded = expandedSessions.has(session.id);
-													const readableId = getReadableIdFromSession(session);
+													const tempId = getTempIdFromSession(session);
 													const formattedDate = session.updated_at
 														? formatSessionDate(session.updated_at)
 														: null;
@@ -912,16 +945,16 @@ export const SidebarSessions = memo(function SidebarSessions({
 																	</div>
 																</ContextMenuTrigger>
 																<ContextMenuContent>
-																	{readableId && (
+																	{tempId && (
 																		<ContextMenuItem
 																			onClick={() => {
 																				navigator.clipboard.writeText(
-																					readableId,
+																					tempId,
 																				);
 																			}}
 																		>
 																			<Copy className="w-4 h-4 mr-2" />
-																			{readableId}
+																			{locale === "de" ? "Temp-ID kopieren" : "Copy Temp ID"}
 																		</ContextMenuItem>
 																	)}
 																	<ContextMenuItem
@@ -981,8 +1014,9 @@ export const SidebarSessions = memo(function SidebarSessions({
 																				selectedChatSessionId === child.id;
 																			const isChildMultiSelected =
 																				selectedSessionIds.has(child.id);
-																			const childReadableId =
-																				getReadableIdFromSession(child);
+																			const childTempId =
+																				getTempIdFromSession(child);
+												const childTempIdLabel = formatTempId(childTempId);
 																			const childFormattedDate =
 																				child.updated_at
 																					? formatSessionDate(child.updated_at)
@@ -1047,12 +1081,14 @@ export const SidebarSessions = memo(function SidebarSessions({
 																						<ContextMenuItem
 																							onClick={() => {
 																								navigator.clipboard.writeText(
-																									childReadableId,
+																									childTempId ?? "",
 																								);
 																							}}
 																						>
 																							<Copy className="w-4 h-4 mr-2" />
-																							{childReadableId}
+																							{childTempIdLabel
+															? `${locale === "de" ? "Temp-ID kopieren" : "Copy Temp ID"} (${childTempIdLabel})`
+															: locale === "de" ? "Temp-ID kopieren" : "Copy Temp ID"}
 																						</ContextMenuItem>
 																						<ContextMenuItem
 																							onClick={() => {

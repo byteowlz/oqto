@@ -3,6 +3,7 @@ import {
 	type SchedulerOverview,
 	fetchFeed,
 	getCodexBarUsage,
+	deleteSchedulerJob,
 	getSchedulerOverview,
 } from "@/lib/control-plane-client";
 import { readFileMux, writeFileMux } from "@/lib/mux-files";
@@ -228,6 +229,7 @@ export type UseDashboardDataReturn = {
 	schedulerError: string | null;
 	schedulerLoading: boolean;
 	handleLoadScheduler: () => Promise<void>;
+	handleDeleteSchedulerJob: (name: string) => Promise<void>;
 	scheduleStats: { total: number; enabled: number; disabled: number };
 
 	// Agents
@@ -355,6 +357,15 @@ export function useDashboardData(
 			setSchedulerLoading(false);
 		}
 	}, []);
+
+	const handleDeleteSchedulerJob = useCallback(
+		async (name: string) => {
+			await deleteSchedulerJob(name);
+			// Reload the list after deletion
+			await handleLoadScheduler();
+		},
+		[handleLoadScheduler],
+	);
 
 	const handleLoadAgents = useCallback(async () => {
 		if (!opencodeBaseUrl) return;
@@ -645,6 +656,7 @@ export function useDashboardData(
 		schedulerError,
 		schedulerLoading,
 		handleLoadScheduler,
+		handleDeleteSchedulerJob,
 		scheduleStats,
 		agents,
 		handleLoadAgents,

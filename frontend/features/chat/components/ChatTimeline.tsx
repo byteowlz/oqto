@@ -4,7 +4,12 @@ import {
 	type PiSessionFile,
 	listDefaultChatPiSessions,
 } from "@/features/chat/api";
-import { formatSessionDate, getDisplayPiTitle } from "@/lib/session-utils";
+import {
+	formatSessionDate,
+	formatTempId,
+	getDisplayPiTitle,
+	getTempIdFromSession,
+} from "@/lib/session-utils";
 import { cn } from "@/lib/utils";
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -110,7 +115,8 @@ function TimelineDot({
 		new Date(session.started_at).getTime(),
 	);
 	const displayTitle = session.title || "Untitled";
-	const readableId = session.readable_id ?? null;
+	const tempId = getTempIdFromSession(session);
+	const tempIdLabel = formatTempId(tempId);
 
 	return (
 		<div className="relative group">
@@ -140,7 +146,9 @@ function TimelineDot({
 				>
 					<div className="font-medium">
 						{displayTitle}
-						{readableId && <span className="opacity-60">[{readableId}]</span>}
+						{tempIdLabel && (
+							<span className="opacity-60">[{tempIdLabel}]</span>
+						)}
 					</div>
 					<div className="text-muted-foreground">{formattedDate}</div>
 					{session.message_count > 0 && (

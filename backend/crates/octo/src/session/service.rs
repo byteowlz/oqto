@@ -18,6 +18,24 @@ use serde::Serialize;
 use uuid::Uuid;
 
 use crate::agent_browser::{AgentBrowserConfig, AgentBrowserManager};
+
+#[derive(Debug, Clone, Copy)]
+pub enum BrowserAction {
+    Back,
+    Forward,
+    Reload,
+}
+
+impl BrowserAction {
+    pub fn parse(action: &str) -> Option<Self> {
+        match action {
+            "back" => Some(Self::Back),
+            "forward" => Some(Self::Forward),
+            "reload" => Some(Self::Reload),
+            _ => None,
+        }
+    }
+}
 use crate::container::{ContainerConfig, ContainerRuntimeApi, ContainerStats};
 use crate::eavs::{CreateKeyRequest, EavsApi, KeyPermissions};
 use crate::local::{LocalRuntime, LocalRuntimeConfig, UserMmryManager};
@@ -615,6 +633,31 @@ impl SessionService {
         self.agent_browser
             .stream_port_for_session(session_id)
             .map(Some)
+    }
+
+    /// Navigate the agent-browser to a URL, launching the daemon if needed.
+    /// Optionally sets the viewport size.
+    pub async fn navigate_browser(
+        &self,
+        session_id: &str,
+        url: &str,
+        viewport_width: Option<u32>,
+        viewport_height: Option<u32>,
+    ) -> Result<()> {
+        self.agent_browser.navigate_to(session_id, url).await?;
+        if let (Some(w), Some(h)) = (viewport_width, viewport_height) {
+            self.agent_browser.set_viewport(session_id, w, h).await?;
+        }
+        Ok(())
+    }
+
+    /// Run a browser action (back, forward, reload) for a session.
+    pub async fn browser_action(&self, session_id: &str, action: BrowserAction) -> Result<()> {
+        match action {
+            BrowserAction::Back => self.agent_browser.go_back(session_id).await,
+            BrowserAction::Forward => self.agent_browser.go_forward(session_id).await,
+            BrowserAction::Reload => self.agent_browser.reload(session_id).await,
+        }
     }
 
     pub async fn list_sessions_for_user(&self, user_id: &str) -> Result<Vec<Session>> {

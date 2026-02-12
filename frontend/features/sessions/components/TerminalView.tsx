@@ -6,6 +6,7 @@ import {
 } from "@/components/terminal/ghostty-terminal";
 import { MobileKeyboardToolbar } from "@/components/terminal/mobile-keyboard-toolbar";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { cn } from "@/lib/utils";
 import { useTheme } from "next-themes";
 import { useCallback, useRef } from "react";
 
@@ -45,9 +46,19 @@ export function TerminalView({ workspacePath }: TerminalViewProps) {
 	// Pass theme to terminal so it can include it in its session key
 	return (
 		<div className="h-full flex flex-col" data-spotlight="terminal">
-			{/* Terminal container - leaves room for toolbar on mobile */}
+			{/* Mobile keyboard toolbar - at the top like a nav bar */}
+			{isMobile && (
+				<MobileKeyboardToolbar
+					onSendKey={handleSendKey}
+					onDismiss={handleDismiss}
+					visible={true}
+					className="flex-shrink-0 border border-border rounded-t bg-muted/30"
+				/>
+			)}
+
+			{/* Terminal container */}
 			<div
-				className={`flex-1 min-h-0 ${isMobile ? "pb-[52px]" : ""}`}
+				className="flex-1 min-h-0"
 				onClick={() => terminalRef.current?.focus()}
 				onKeyDown={() => terminalRef.current?.focus()}
 				role="presentation"
@@ -56,20 +67,13 @@ export function TerminalView({ workspacePath }: TerminalViewProps) {
 					ref={terminalRef}
 					key={`${workspacePath}-${resolvedTheme}`}
 					workspacePath={workspacePath}
-					className="border border-border h-full"
+					className={cn(
+						"border border-border h-full",
+						isMobile && "border-t-0 rounded-b rounded-t-none",
+					)}
 					theme={resolvedTheme}
 				/>
 			</div>
-
-			{/* Mobile keyboard toolbar - always visible on mobile */}
-			{isMobile && (
-				<MobileKeyboardToolbar
-					onSendKey={handleSendKey}
-					onDismiss={handleDismiss}
-					visible={true}
-					className="fixed bottom-0 left-0 right-0 z-50"
-				/>
-			)}
 		</div>
 	);
 }

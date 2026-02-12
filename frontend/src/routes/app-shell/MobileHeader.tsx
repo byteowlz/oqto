@@ -3,8 +3,9 @@ import { Button } from "@/components/ui/button";
 import type { ChatSession } from "@/lib/control-plane-client";
 import {
 	formatSessionDate,
+	formatTempId,
 	getDisplayPiTitle,
-	getReadableIdFromSession,
+	getTempIdFromSession,
 } from "@/lib/session-utils";
 import { Menu, Plus } from "lucide-react";
 import { memo } from "react";
@@ -63,13 +64,14 @@ export const MobileHeader = memo(function MobileHeader({
 									?.split("/")
 									.filter(Boolean)
 									.pop();
-								const readableId = getReadableIdFromSession(selectedChatFromHistory);
+								const tempId = getTempIdFromSession(selectedChatFromHistory);
+													const tempIdLabel = formatTempId(tempId);
 								const date = selectedChatFromHistory.updated_at
 									? formatSessionDate(selectedChatFromHistory.updated_at)
 									: null;
 								const parts: Array<{ text: string; bold?: boolean; dim?: boolean }> = [];
 								if (workspace) parts.push({ text: workspace, bold: true });
-								if (readableId) parts.push({ text: readableId });
+								if (tempIdLabel) parts.push({ text: tempIdLabel });
 								if (date) parts.push({ text: date, dim: true });
 								return parts.map((part, i) => (
 									<span key={part.text}>

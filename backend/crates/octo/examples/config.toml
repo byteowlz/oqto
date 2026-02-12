@@ -147,8 +147,8 @@ create_home = true
 [agent_browser]
 # Enable per-session agent-browser daemon management.
 enabled = false
-# Path to the agent-browser CLI binary.
-binary = "agent-browser"
+# Path to the octo browser daemon CLI binary.
+binary = "octo-browserd"
 # Launch headed browser windows instead of headless.
 headed = false
 # Base port for screencast WebSocket streams.

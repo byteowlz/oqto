@@ -72,7 +72,7 @@ export const NewProjectDialog = memo(function NewProjectDialog({
 }: NewProjectDialogProps) {
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
-			<DialogContent className="sm:max-w-xl">
+			<DialogContent className="sm:max-w-xl max-h-[85vh] overflow-y-auto">
 				<DialogHeader>
 					<DialogTitle>
 						{locale === "de" ? "Neues Projekt" : "New project"}

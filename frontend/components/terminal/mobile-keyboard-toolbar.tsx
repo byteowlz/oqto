@@ -94,20 +94,16 @@ export function MobileKeyboardToolbar({
 
 	const modifierButtonClass = (mod: ModifierKey) =>
 		cn(
-			"min-w-[44px] h-[36px] text-xs font-mono",
+			"text-xs font-mono",
 			activeModifier === mod
 				? "bg-primary text-primary-foreground"
-				: "bg-muted/80 text-foreground",
+				: "",
 		);
-
-	const keyButtonClass =
-		"min-w-[44px] h-[36px] bg-muted/80 text-foreground active:bg-muted";
 
 	return (
 		<div
 			className={cn(
-				"flex items-center gap-1 px-2 py-1.5 bg-background/95 backdrop-blur border-t border-border",
-				"safe-area-inset-bottom",
+				"flex items-center gap-1 px-2 py-1.5",
 				className,
 			)}
 			// Prevent focus loss when tapping buttons
@@ -115,130 +111,110 @@ export function MobileKeyboardToolbar({
 			onTouchStart={(e) => e.preventDefault()}
 		>
 			{/* Modifier keys */}
-			<div className="flex gap-1 mr-2">
-				<Button
-					variant="ghost"
-					size="sm"
-					className={modifierButtonClass("ctrl")}
-					onClick={() => toggleModifier("ctrl")}
-					aria-pressed={activeModifier === "ctrl"}
-					aria-label="Control modifier"
-				>
-					<Command className="size-3.5" />
-					<span className="sr-only">Ctrl</span>
-				</Button>
-				<Button
-					variant="ghost"
-					size="sm"
-					className={modifierButtonClass("alt")}
-					onClick={() => toggleModifier("alt")}
-					aria-pressed={activeModifier === "alt"}
-					aria-label="Alt/Option modifier"
-				>
-					<Option className="size-3.5" />
-					<span className="sr-only">Alt</span>
-				</Button>
-			</div>
+			<Button
+				variant="ghost"
+				size="icon-sm"
+				onClick={() => toggleModifier("ctrl")}
+				aria-pressed={activeModifier === "ctrl"}
+				aria-label="Control modifier"
+			>
+				<Command className="size-3.5" />
+			</Button>
+			<Button
+				variant="ghost"
+				size="icon-sm"
+				onClick={() => toggleModifier("ctrl")}
+				aria-pressed={activeModifier === "ctrl"}
+				aria-label="Control modifier"
+			>
+				Ctrl
+			</Button>
+			<Button
+				variant="ghost"
+				size="icon-sm"
+				className={modifierButtonClass("alt")}
+				onClick={() => toggleModifier("alt")}
+				aria-pressed={activeModifier === "alt"}
+				aria-label="Alt/Option modifier"
+			>
+				<Option className="size-3.5" />
+			</Button>
 
 			{/* Common terminal keys */}
-			<div className="flex gap-1 mr-2">
-				<Button
-					variant="ghost"
-					size="sm"
-					className={keyButtonClass}
-					onClick={() => sendKey(KEYS.ESC, true)}
-					aria-label="Escape"
-				>
-					Esc
-				</Button>
-				<Button
-					variant="ghost"
-					size="sm"
-					className={keyButtonClass}
-					onClick={() => sendKey(KEYS.TAB, true)}
-					aria-label="Tab"
-				>
-					Tab
-				</Button>
-			</div>
+			<Button
+				variant="ghost"
+				size="icon-sm"
+				onClick={() => sendKey(KEYS.ESC, true)}
+				aria-label="Escape"
+			>
+				Esc
+			</Button>
+			<Button
+				variant="ghost"
+				size="icon-sm"
+				onClick={() => sendKey(KEYS.TAB, true)}
+				aria-label="Tab"
+			>
+				Tab
+			</Button>
 
 			{/* Arrow keys */}
-			<div className="flex gap-0.5 mr-2">
-				<Button
-					variant="ghost"
-					size="sm"
-					className={keyButtonClass}
-					onClick={() => sendKey(KEYS.LEFT, true)}
-					aria-label="Left arrow"
-				>
-					<ArrowLeft className="size-4" />
-				</Button>
-				<div className="flex flex-col gap-0.5">
-					<Button
-						variant="ghost"
-						size="sm"
-						className="min-w-[36px] h-[17px] bg-muted/80 text-foreground"
-						onClick={() => sendKey(KEYS.UP, true)}
-						aria-label="Up arrow"
-					>
-						<ArrowUp className="size-3" />
-					</Button>
-					<Button
-						variant="ghost"
-						size="sm"
-						className="min-w-[36px] h-[17px] bg-muted/80 text-foreground"
-						onClick={() => sendKey(KEYS.DOWN, true)}
-						aria-label="Down arrow"
-					>
-						<ArrowDown className="size-3" />
-					</Button>
-				</div>
-				<Button
-					variant="ghost"
-					size="sm"
-					className={keyButtonClass}
-					onClick={() => sendKey(KEYS.RIGHT, true)}
-					aria-label="Right arrow"
-				>
-					<ArrowRight className="size-4" />
-				</Button>
-			</div>
+			<Button
+				variant="ghost"
+				size="icon-sm"
+				onClick={() => sendKey(KEYS.LEFT, true)}
+				aria-label="Left arrow"
+			>
+				<ArrowLeft className="size-4" />
+			</Button>
+			<Button
+				variant="ghost"
+				size="icon-sm"
+				onClick={() => sendKey(KEYS.UP, true)}
+				aria-label="Up arrow"
+			>
+				<ArrowUp className="size-4" />
+			</Button>
+			<Button
+				variant="ghost"
+				size="icon-sm"
+				onClick={() => sendKey(KEYS.DOWN, true)}
+				aria-label="Down arrow"
+			>
+				<ArrowDown className="size-4" />
+			</Button>
+			<Button
+				variant="ghost"
+				size="icon-sm"
+				onClick={() => sendKey(KEYS.RIGHT, true)}
+				aria-label="Right arrow"
+			>
+				<ArrowRight className="size-4" />
+			</Button>
 
 			{/* Spacer */}
 			<div className="flex-1" />
 
-			{/* Quick actions: Ctrl+C, Ctrl+D */}
-			<div className="flex gap-1 mr-2">
-				<Button
-					variant="ghost"
-					size="sm"
-					className={cn(keyButtonClass, "text-red-400")}
-					onClick={() => sendKey(KEYS.CTRL_C, true)}
-					aria-label="Ctrl+C (interrupt)"
-				>
-					^C
-				</Button>
-				<Button
-					variant="ghost"
-					size="sm"
-					className={keyButtonClass}
-					onClick={() => sendKey(KEYS.CTRL_D, true)}
-					aria-label="Ctrl+D (EOF)"
-				>
-					^D
-				</Button>
-			</div>
+			{/* Quick actions: Ctrl+C */}
+			<Button
+				variant="ghost"
+				size="icon-sm"
+				className="text-red-400"
+				onClick={() => sendKey(KEYS.CTRL_C, true)}
+				aria-label="Ctrl+C (interrupt)"
+			>
+				^C
+			</Button>
 
 			{/* Dismiss keyboard button */}
 			{onDismiss && (
 				<Button
 					variant="ghost"
-					size="sm"
-					className="min-w-[44px] h-[36px] bg-primary/20 text-primary"
+					size="icon-sm"
 					onClick={onDismiss}
 					aria-label="Dismiss keyboard"
 				>
-					<ChevronDown className="size-5" />
+					<ChevronDown className="size-4" />
 				</Button>
 			)}
 		</div>
