@@ -51,7 +51,7 @@ export type BuiltinCardRendererProps = {
 	}>;
 	runnerSessionTitles: Map<
 		string,
-		{ title?: string | null; readableId?: string | null }
+		{ title?: string | null; tempIdLabel?: string | null }
 	>;
 	// Scheduler data
 	scheduleList: ScheduleItem[];
@@ -59,6 +59,7 @@ export type BuiltinCardRendererProps = {
 	schedulerError: string | null;
 	schedulerLoading: boolean;
 	onLoadScheduler: () => void;
+	onDeleteSchedulerJob?: (name: string) => Promise<void>;
 	// Agent data
 	agents: OpenCodeAgent[];
 	// TRX data
@@ -99,6 +100,7 @@ export const BuiltinCardRenderer = memo(function BuiltinCardRenderer({
 	schedulerError,
 	schedulerLoading,
 	onLoadScheduler,
+	onDeleteSchedulerJob,
 	agents,
 	topTrxIssues,
 	trxStats,
@@ -166,6 +168,7 @@ export const BuiltinCardRenderer = memo(function BuiltinCardRenderer({
 					schedulerLoading={schedulerLoading}
 					locale={locale}
 					onReload={onLoadScheduler}
+					onDelete={onDeleteSchedulerJob}
 				/>
 			);
 		case "agents":

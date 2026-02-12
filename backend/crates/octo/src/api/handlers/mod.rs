@@ -31,9 +31,9 @@ pub mod trx;
 
 // Session handlers and types
 pub use sessions::{
-    check_all_updates, check_session_update, create_session, delete_session, get_or_create_session,
-    get_or_create_session_for_workspace, get_session, list_sessions, resume_session, stop_session,
-    touch_session_activity, upgrade_session,
+    browser_action, check_all_updates, check_session_update, create_session, delete_session,
+    get_or_create_session, get_or_create_session_for_workspace, get_session, list_sessions,
+    resume_session, start_browser, stop_session, touch_session_activity, upgrade_session,
 };
 
 // Chat history handlers and types
@@ -100,7 +100,8 @@ pub use trx::{
 
 // Misc handlers and types
 pub use misc::{
-    codexbar_usage, features, fetch_feed, health, scheduler_overview, search_sessions, ws_debug,
+    codexbar_usage, features, fetch_feed, health, scheduler_delete, scheduler_overview,
+    search_sessions, ws_debug,
 };
 
 // Internal helpers used by other modules

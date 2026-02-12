@@ -1,7 +1,8 @@
-# Agent-Browser Integration
+# Browser Daemon Integration
 
-Octo can optionally start an agent-browser daemon per session. This provides the
-backend foundation for the server-side browser feature.
+Octo can optionally start a Playwright-backed browser daemon per session. This provides the
+backend foundation for the server-side browser feature. The daemon is shipped in-repo as
+`backend/crates/octo-browserd` and is installed as `octo-browserd`.
 
 ## Configuration
 
@@ -11,8 +12,8 @@ Add to `config.toml`:
 [agent_browser]
 # Enable per-session daemon management
 enabled = false
-# Path to the agent-browser CLI
-binary = "agent-browser"
+# Path to the octo browser daemon CLI
+binary = "octo-browserd"
 # Launch headed browser windows (default is headless)
 headed = false
 # Base port for screencast WebSocket streams
@@ -27,10 +28,12 @@ stream_port_range = 10000
 
 ## Notes
 
-- The backend calls `agent-browser --session <session_id> open about:blank` to
+- The backend calls `octo-browserd --session <session_id> open about:blank` to
   start the daemon.
-- The daemon is stopped with `agent-browser --session <session_id> close` when
+- The daemon is stopped with `octo-browserd --session <session_id> close` when
   the session stops or is deleted.
+- Socket directories are session-scoped under `$XDG_RUNTIME_DIR/octo/agent-browser/<session_id>`
+  and created with `0700` permissions (or overridden via `AGENT_BROWSER_SOCKET_DIR`).
 - The browser stream WebSocket is proxied at
   `GET /api/session/{session_id}/browser/stream`.
 
@@ -60,7 +63,7 @@ octo-browser --session <session_id> fill "input[name=email]" "user@example.com"
 octo-browser --session <session_id> close
 ```
 
-For any action supported by agent-browser, use the generic command:
+For any action supported by the browser daemon, use the generic command:
 
 ```bash
 # Snapshot with extra options

@@ -844,6 +844,18 @@ async fn handle_ws_command(
     runner_client: Option<&RunnerClient>,
     conn_state: Arc<tokio::sync::Mutex<WsConnectionState>>,
 ) -> Option<WsEvent> {
+    if let Some(logger) = state.audit_logger.as_ref() {
+        let (label, session_id, workspace_path) = ws_command_summary(&cmd);
+        logger
+            .log_ws_command(
+                user_id,
+                &label,
+                session_id.as_deref(),
+                workspace_path.as_deref(),
+            )
+            .await;
+    }
+
     match cmd {
         WsCommand::Agent(agent_cmd) => {
             handle_agent_command(agent_cmd, user_id, state, runner_client, conn_state).await
@@ -856,6 +868,99 @@ async fn handle_ws_command(
         WsCommand::Trx(trx_cmd) => handle_trx_command(trx_cmd, user_id, state).await,
         WsCommand::Session(session_cmd) => {
             handle_session_command(session_cmd, user_id, state).await
+        }
+    }
+}
+
+fn ws_command_summary(cmd: &WsCommand) -> (String, Option<String>, Option<String>) {
+    match cmd {
+        WsCommand::Agent(agent_cmd) => {
+            let label = match agent_cmd.payload {
+                octo_protocol::commands::CommandPayload::SessionCreate { .. } => "agent.session_create",
+                octo_protocol::commands::CommandPayload::SessionClose => "agent.session_close",
+                octo_protocol::commands::CommandPayload::SessionNew { .. } => "agent.session_new",
+                octo_protocol::commands::CommandPayload::SessionSwitch { .. } => "agent.session_switch",
+                octo_protocol::commands::CommandPayload::Prompt { .. } => "agent.prompt",
+                octo_protocol::commands::CommandPayload::Steer { .. } => "agent.steer",
+                octo_protocol::commands::CommandPayload::FollowUp { .. } => "agent.follow_up",
+                octo_protocol::commands::CommandPayload::Abort => "agent.abort",
+                octo_protocol::commands::CommandPayload::InputResponse { .. } => "agent.input_response",
+                octo_protocol::commands::CommandPayload::GetState => "agent.get_state",
+                octo_protocol::commands::CommandPayload::GetMessages => "agent.get_messages",
+                octo_protocol::commands::CommandPayload::GetStats => "agent.get_stats",
+                octo_protocol::commands::CommandPayload::GetModels { .. } => "agent.get_models",
+                octo_protocol::commands::CommandPayload::GetCommands => "agent.get_commands",
+                octo_protocol::commands::CommandPayload::GetForkPoints => "agent.get_fork_points",
+                octo_protocol::commands::CommandPayload::ListSessions => "agent.list_sessions",
+                octo_protocol::commands::CommandPayload::SetModel { .. } => "agent.set_model",
+                octo_protocol::commands::CommandPayload::CycleModel => "agent.cycle_model",
+                octo_protocol::commands::CommandPayload::SetThinkingLevel { .. } => "agent.set_thinking_level",
+                octo_protocol::commands::CommandPayload::CycleThinkingLevel => "agent.cycle_thinking_level",
+                octo_protocol::commands::CommandPayload::SetAutoCompaction { .. } => "agent.set_auto_compaction",
+                octo_protocol::commands::CommandPayload::SetAutoRetry { .. } => "agent.set_auto_retry",
+                octo_protocol::commands::CommandPayload::Compact { .. } => "agent.compact",
+                octo_protocol::commands::CommandPayload::AbortRetry => "agent.abort_retry",
+                octo_protocol::commands::CommandPayload::SetSessionName { .. } => "agent.set_session_name",
+                octo_protocol::commands::CommandPayload::Fork { .. } => "agent.fork",
+                octo_protocol::commands::CommandPayload::Delegate(_) => "agent.delegate",
+                octo_protocol::commands::CommandPayload::DelegateCancel(_) => "agent.delegate_cancel",
+            };
+            (label.to_string(), Some(agent_cmd.session_id.clone()), None)
+        }
+        WsCommand::Files(files_cmd) => {
+            let label = match files_cmd {
+                FilesWsCommand::Tree { .. } => "files.tree",
+                FilesWsCommand::Read { .. } => "files.read",
+                FilesWsCommand::Write { .. } => "files.write",
+                FilesWsCommand::List { .. } => "files.list",
+                FilesWsCommand::Stat { .. } => "files.stat",
+                FilesWsCommand::Delete { .. } => "files.delete",
+                FilesWsCommand::CreateDirectory { .. } => "files.create_dir",
+                FilesWsCommand::Rename { .. } => "files.rename",
+                FilesWsCommand::Copy { .. } => "files.copy",
+                FilesWsCommand::Move { .. } => "files.move",
+            };
+            let workspace_path = extract_files_workspace_path(files_cmd).map(|s| s.to_string());
+            (label.to_string(), None, workspace_path)
+        }
+        WsCommand::Terminal(term_cmd) => {
+            let label = match term_cmd {
+                TerminalWsCommand::Open { .. } => "terminal.open",
+                TerminalWsCommand::Input { .. } => "terminal.input",
+                TerminalWsCommand::Resize { .. } => "terminal.resize",
+                TerminalWsCommand::Close { .. } => "terminal.close",
+            };
+            let (session_id, workspace_path) = match term_cmd {
+                TerminalWsCommand::Open {
+                    session_id,
+                    workspace_path,
+                    ..
+                } => (session_id.clone(), workspace_path.clone()),
+                _ => (None, None),
+            };
+            (label.to_string(), session_id, workspace_path)
+        }
+        WsCommand::Hstry(_) => ("hstry.query".to_string(), None, None),
+        WsCommand::Trx(trx_cmd) => {
+            let label = match trx_cmd {
+                TrxWsCommand::List { .. } => "trx.list",
+                TrxWsCommand::Create { .. } => "trx.create",
+                TrxWsCommand::Update { .. } => "trx.update",
+                TrxWsCommand::Close { .. } => "trx.close",
+                TrxWsCommand::Sync { .. } => "trx.sync",
+            };
+            let workspace_path = match trx_cmd {
+                TrxWsCommand::List { workspace_path, .. }
+                | TrxWsCommand::Create { workspace_path, .. }
+                | TrxWsCommand::Update { workspace_path, .. }
+                | TrxWsCommand::Close { workspace_path, .. }
+                | TrxWsCommand::Sync { workspace_path, .. } => Some(workspace_path.clone()),
+            };
+            (label.to_string(), None, workspace_path)
+        }
+        WsCommand::Session(session_cmd) => {
+            let session_id = extract_legacy_session_id(&session_cmd.cmd);
+            ("session.legacy".to_string(), session_id, None)
         }
     }
 }
@@ -2042,25 +2147,43 @@ async fn handle_files_command(
                     format!("list_directory failed for {}: {:#}", resolved.display(), e)
                 })?;
 
-            let mut nodes = Vec::new();
+            // Separate directories (need recursive fetch) from files (instant)
+            let mut file_nodes = Vec::new();
+            let mut dir_entries = Vec::new();
+
             for entry in entries {
                 let child_path = join_relative_path(relative_path, &entry.name);
-                let children = if entry.is_dir && depth > 1 {
-                    Some(
-                        build_tree(
-                            user_plane,
-                            workspace_root,
-                            &child_path,
-                            depth - 1,
-                            include_hidden,
-                        )
-                        .await?,
-                    )
+                if entry.is_dir && depth > 1 {
+                    dir_entries.push((entry, child_path));
                 } else {
-                    None
-                };
+                    file_nodes.push(map_tree_node(&entry, child_path, None));
+                }
+            }
+
+            // Fetch all subdirectories concurrently
+            let dir_futures: Vec<_> = dir_entries
+                .iter()
+                .map(|(_, child_path)| {
+                    build_tree(
+                        user_plane,
+                        workspace_root,
+                        child_path,
+                        depth - 1,
+                        include_hidden,
+                    )
+                })
+                .collect();
+
+            let dir_results = futures::future::join_all(dir_futures).await;
+
+            // Build directory nodes from results, preserving original order
+            let mut nodes = Vec::with_capacity(file_nodes.len() + dir_entries.len());
+            for ((entry, child_path), result) in dir_entries.into_iter().zip(dir_results) {
+                let children = Some(result?);
                 nodes.push(map_tree_node(&entry, child_path, children));
             }
+            nodes.append(&mut file_nodes);
+
             Ok(nodes)
         })
     }

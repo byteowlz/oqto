@@ -256,7 +256,7 @@
     },
     "agent_browser": {
       "type": "object",
-      "description": "Agent-browser daemon configuration for server-side browser sessions.",
+      "description": "Browser daemon configuration for server-side browser sessions.",
       "x-scope": "admin",
       "x-category": "Infrastructure",
       "properties": {
@@ -267,9 +267,9 @@
         },
         "binary": {
           "type": "string",
-          "description": "Path to the agent-browser CLI binary.",
-          "default": "agent-browser",
-          "examples": ["agent-browser", "/usr/local/bin/agent-browser"]
+          "description": "Path to the Octo browser daemon CLI binary.",
+          "default": "octo-browserd",
+          "examples": ["octo-browserd", "/usr/local/bin/octo-browserd"]
         },
         "headed": {
           "type": "boolean",

@@ -2,9 +2,13 @@
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { browserStreamWsUrl } from "@/lib/control-plane-client";
+import {
+	browserAction,
+	browserStreamWsUrl,
+	startBrowser,
+} from "@/lib/control-plane-client";
 import { cn } from "@/lib/utils";
-import { ArrowLeft, ArrowRight, RefreshCw } from "lucide-react";
+import { ArrowLeft, ArrowRight, Globe, Loader2, RefreshCw } from "lucide-react";
 import {
 	type KeyboardEvent,
 	type PointerEvent,
@@ -49,6 +53,7 @@ type RenderTransform = {
 
 interface BrowserViewProps {
 	sessionId?: string | null;
+	workspacePath?: string | null;
 	className?: string;
 }
 
@@ -73,7 +78,7 @@ function mapMouseButton(button: number): "left" | "right" | "middle" | "none" {
 	return "none";
 }
 
-export function BrowserView({ sessionId, className }: BrowserViewProps) {
+export function BrowserView({ sessionId, workspacePath, className }: BrowserViewProps) {
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
 	const containerRef = useRef<HTMLDivElement | null>(null);
 	const socketRef = useRef<WebSocket | null>(null);
@@ -96,17 +101,31 @@ export function BrowserView({ sessionId, className }: BrowserViewProps) {
 		height: number;
 	}>({ width: 0, height: 0 });
 	const [urlInput, setUrlInput] = useState("");
+	const [launching, setLaunching] = useState(false);
+	const [launchError, setLaunchError] = useState<string>("");
+	// The octo session ID the browser daemon is bound to (returned by startBrowser)
+	const [browserSessionId, setBrowserSessionId] = useState<string | null>(null);
 
 	const wsUrl = useMemo(() => {
-		if (!sessionId) return "";
-		return browserStreamWsUrl(sessionId);
-	}, [sessionId]);
+		if (!browserSessionId) return "";
+		return browserStreamWsUrl(browserSessionId);
+	}, [browserSessionId]);
 	const isMac = useMemo(() => {
 		if (typeof navigator === "undefined") return false;
 		return /Mac|iPhone|iPad|iPod/.test(navigator.platform);
 	}, []);
 	const isConnected = connectionState === "connected";
 	const primaryModifier = isMac ? 4 : 2;
+
+	// Reset state when workspace changes
+	// biome-ignore lint/correctness/useExhaustiveDependencies: intentional reset on workspace change
+	useEffect(() => {
+		setBrowserSessionId(null);
+		setLaunching(false);
+		setLaunchError("");
+		setUrlInput("");
+		lastFrameRef.current = null;
+	}, [workspacePath]);
 
 	useEffect(() => {
 		const container = containerRef.current;
@@ -303,46 +322,52 @@ export function BrowserView({ sessionId, className }: BrowserViewProps) {
 	}, []);
 
 	const handleBack = useCallback(() => {
-		if (!isConnected) return;
-		if (isMac) {
-			sendShortcut("[", "BracketLeft", 4);
-		} else {
-			sendShortcut("ArrowLeft", "ArrowLeft", 1);
-		}
-	}, [isConnected, isMac, sendShortcut]);
+		if (!isConnected || !sessionId) return;
+		browserAction(sessionId, "back").catch((err: unknown) => {
+			console.warn("Failed to navigate back:", err);
+		});
+	}, [isConnected, sessionId]);
 
 	const handleForward = useCallback(() => {
-		if (!isConnected) return;
-		if (isMac) {
-			sendShortcut("]", "BracketRight", 4);
-		} else {
-			sendShortcut("ArrowRight", "ArrowRight", 1);
-		}
-	}, [isConnected, isMac, sendShortcut]);
+		if (!isConnected || !sessionId) return;
+		browserAction(sessionId, "forward").catch((err: unknown) => {
+			console.warn("Failed to navigate forward:", err);
+		});
+	}, [isConnected, sessionId]);
 
 	const handleReload = useCallback(() => {
-		if (!isConnected) return;
-		sendShortcut("r", "KeyR", primaryModifier);
-	}, [isConnected, primaryModifier, sendShortcut]);
+		if (!isConnected || !sessionId) return;
+		browserAction(sessionId, "reload").catch((err: unknown) => {
+			console.warn("Failed to reload:", err);
+		});
+	}, [isConnected, sessionId]);
 
 	const handleNavigate = useCallback(() => {
-		if (!isConnected) return;
 		const target = normalizeUrl(urlInput);
 		if (!target) return;
-		sendShortcut("l", "KeyL", primaryModifier);
-		for (const char of target) {
-			sendChar(char);
-		}
-		sendKey("Enter", "Enter");
-	}, [
-		isConnected,
-		normalizeUrl,
-		primaryModifier,
-		sendChar,
-		sendKey,
-		sendShortcut,
-		urlInput,
-	]);
+		if (!workspacePath || !sessionId) return;
+
+		setLaunching(true);
+		setLaunchError("");
+		startBrowser(
+			workspacePath,
+			sessionId,
+			target,
+			canvasSize.width || undefined,
+			canvasSize.height || undefined,
+		)
+			.then((result) => {
+				setBrowserSessionId(result.session_id);
+			})
+			.catch((err: unknown) => {
+				const msg =
+					err instanceof Error ? err.message : "Failed to start browser";
+				setLaunchError(msg);
+			})
+			.finally(() => {
+				setLaunching(false);
+			});
+	}, [normalizeUrl, workspacePath, sessionId, urlInput, canvasSize]);
 
 	function mapClientToDevice(
 		clientX: number,
@@ -444,11 +469,13 @@ export function BrowserView({ sessionId, className }: BrowserViewProps) {
 	}
 
 	function handleKeyDown(e: KeyboardEvent<HTMLCanvasElement>) {
+		e.preventDefault();
 		sendMessage({
 			type: "input_keyboard",
 			eventType: "keyDown",
 			key: e.key,
 			code: e.code,
+			keyCode: e.keyCode,
 			modifiers: getModifiers(e),
 		});
 		if (e.key.length === 1 && !e.metaKey && !e.ctrlKey) {
@@ -458,28 +485,44 @@ export function BrowserView({ sessionId, className }: BrowserViewProps) {
 				text: e.key,
 				modifiers: getModifiers(e),
 			});
+		} else if (e.key === "Backspace") {
+			sendMessage({
+				type: "input_keyboard",
+				eventType: "char",
+				text: "\b",
+				modifiers: getModifiers(e),
+			});
+		} else if (e.key === "Delete") {
+			sendMessage({
+				type: "input_keyboard",
+				eventType: "char",
+				text: "\u007f",
+				modifiers: getModifiers(e),
+			});
 		}
 	}
 
 	function handleKeyUp(e: KeyboardEvent<HTMLCanvasElement>) {
+		e.preventDefault();
 		sendMessage({
 			type: "input_keyboard",
 			eventType: "keyUp",
 			key: e.key,
 			code: e.code,
+			keyCode: e.keyCode,
 			modifiers: getModifiers(e),
 		});
 	}
 
-	if (!sessionId) {
+	if (!workspacePath) {
 		return (
 			<div
 				className={cn(
-					"h-full bg-black/70 rounded p-4 text-sm font-mono text-red-300",
+					"h-full bg-black/70 rounded p-4 text-sm font-mono text-muted-foreground flex items-center justify-center",
 					className,
 				)}
 			>
-				Select a session to attach to the browser.
+				No workspace selected
 			</div>
 		);
 	}
@@ -527,17 +570,23 @@ export function BrowserView({ sessionId, className }: BrowserViewProps) {
 					<Input
 						value={urlInput}
 						onChange={(event) => setUrlInput(event.target.value)}
-						placeholder="Enter URL"
-						disabled={!isConnected}
+						placeholder={isConnected ? "Enter URL" : "Enter URL to start browser"}
+						disabled={launching}
 						className="h-8 text-xs font-mono"
 					/>
 					<Button
 						type="submit"
 						variant="outline"
 						size="sm"
-						disabled={!isConnected || !urlInput.trim()}
+						disabled={launching || !urlInput.trim()}
 					>
-						Go
+						{launching ? (
+							<Loader2 className="size-4 animate-spin" />
+						) : isConnected ? (
+							"Go"
+						) : (
+							"Open"
+						)}
 					</Button>
 				</form>
 			</div>
@@ -559,12 +608,38 @@ export function BrowserView({ sessionId, className }: BrowserViewProps) {
 					style={{ touchAction: "none" }}
 				/>
 				{connectionState !== "connected" && (
-					<div className="absolute inset-0 flex items-center justify-center text-xs text-muted-foreground bg-black/30">
-						{connectionState === "connecting"
-							? "Connecting to browser..."
-							: connectionState === "error"
-								? statusMessage || "Browser stream unavailable"
-								: "Browser stream idle"}
+					<div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/30">
+						{launching ? (
+							<>
+								<Loader2 className="size-6 text-muted-foreground animate-spin" />
+								<span className="text-xs text-muted-foreground">
+									Starting browser...
+								</span>
+							</>
+						) : connectionState === "connecting" ? (
+							<>
+								<Loader2 className="size-6 text-muted-foreground animate-spin" />
+								<span className="text-xs text-muted-foreground">
+									Connecting to browser...
+								</span>
+							</>
+						) : connectionState === "error" ? (
+							<span className="text-xs text-destructive">
+								{statusMessage || "Browser stream unavailable"}
+							</span>
+						) : (
+							<>
+								<Globe className="size-8 text-muted-foreground/50" />
+								<span className="text-xs text-muted-foreground">
+									Enter a URL above to start the browser
+								</span>
+							</>
+						)}
+						{launchError && (
+							<span className="text-xs text-destructive max-w-[80%] text-center">
+								{launchError}
+							</span>
+						)}
 					</div>
 				)}
 				{statusMessage && connectionState === "connected" && (

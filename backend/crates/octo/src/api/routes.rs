@@ -14,6 +14,7 @@ use tracing::Level;
 use crate::auth::auth_middleware;
 
 use super::a2ui as a2ui_handlers;
+use super::audit;
 use super::delegate as delegate_handlers;
 use super::handlers;
 use super::onboarding_handlers;
@@ -134,6 +135,8 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
                 .put(proxy::proxy_opencode)
                 .delete(proxy::proxy_opencode),
         )
+        .route("/browser/start", post(handlers::start_browser))
+        .route("/browser/action", post(handlers::browser_action))
         .route(
             "/sessions/{session_id}/browser/stream",
             get(proxy::proxy_browser_stream_ws),
@@ -223,6 +226,10 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
         .route(
             "/onboarding/reset",
             post(onboarding_handlers::reset_onboarding),
+        )
+        .route(
+            "/onboarding/bootstrap",
+            post(onboarding_handlers::bootstrap_onboarding),
         )
         // Admin routes - sessions
         .route("/admin/sessions", get(handlers::admin_list_sessions))
@@ -347,6 +354,7 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
         .route("/search", get(handlers::search_sessions))
         // Scheduler (skdlr) overview
         .route("/scheduler/overview", get(handlers::scheduler_overview))
+        .route("/scheduler/jobs/:name", delete(handlers::scheduler_delete))
         // RSS/Atom feed fetch proxy
         .route("/feeds/fetch", get(handlers::fetch_feed))
         // CodexBar usage (optional, requires codexbar on PATH)
@@ -392,6 +400,10 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
             "/agents/sessions/{session_id}/search",
             get(handlers::agents_session_search),
         )
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            audit::audit_middleware,
+        ))
         .layer(middleware::from_fn_with_state(
             auth_state.clone(),
             auth_middleware,

@@ -7,8 +7,8 @@ import {
 	CardTitle,
 } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-import { RefreshCw } from "lucide-react";
-import { memo } from "react";
+import { RefreshCw, Trash2 } from "lucide-react";
+import { memo, useCallback, useState } from "react";
 
 type ScheduleItem = {
 	name: string;
@@ -226,6 +226,7 @@ export type SchedulerCardProps = {
 	schedulerLoading: boolean;
 	locale: "de" | "en";
 	onReload: () => void;
+	onDelete?: (name: string) => Promise<void>;
 };
 
 export const SchedulerCard = memo(function SchedulerCard({
@@ -238,7 +239,23 @@ export const SchedulerCard = memo(function SchedulerCard({
 	schedulerLoading,
 	locale,
 	onReload,
+	onDelete,
 }: SchedulerCardProps) {
+	const [deletingName, setDeletingName] = useState<string | null>(null);
+
+	const handleDelete = useCallback(
+		async (name: string) => {
+			if (!onDelete) return;
+			if (!window.confirm(`Delete scheduled job "${name}"?`)) return;
+			setDeletingName(name);
+			try {
+				await onDelete(name);
+			} finally {
+				setDeletingName(null);
+			}
+		},
+		[onDelete],
+	);
 	return (
 		<Card className="border-border bg-muted/30 shadow-none h-full flex flex-col">
 			<CardHeader className="flex flex-row items-center justify-between">
@@ -282,16 +299,30 @@ export const SchedulerCard = memo(function SchedulerCard({
 										{schedule.command}
 									</p>
 								</div>
-								<div className="text-xs text-muted-foreground text-right">
-									{schedule.schedule.trim().split(/\s+/).length === 5 ? (
-										<>
-											<div>{humanizeCron(schedule.schedule, locale)}</div>
-											<div className="opacity-70">{schedule.schedule}</div>
-										</>
-									) : (
-										<div>Once: {schedule.schedule}</div>
+								<div className="flex items-center gap-2">
+									<div className="text-xs text-muted-foreground text-right">
+										{schedule.schedule.trim().split(/\s+/).length === 5 ? (
+											<>
+												<div>{humanizeCron(schedule.schedule, locale)}</div>
+												<div className="opacity-70">{schedule.schedule}</div>
+											</>
+										) : (
+											<div>Once: {schedule.schedule}</div>
+										)}
+										{schedule.next_run && <div>Next: {schedule.next_run}</div>}
+									</div>
+									{onDelete && (
+										<Button
+											variant="ghost"
+											size="sm"
+											className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive shrink-0"
+											onClick={() => handleDelete(schedule.name)}
+											disabled={deletingName === schedule.name}
+											title={`Delete "${schedule.name}"`}
+										>
+											<Trash2 className="h-3.5 w-3.5" />
+										</Button>
 									)}
-									{schedule.next_run && <div>Next: {schedule.next_run}</div>}
 								</div>
 							</div>
 						))}

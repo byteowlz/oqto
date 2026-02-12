@@ -9,6 +9,7 @@ description = "CLI for communicating with agent-browser daemon"
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
+dirs.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 uuid.workspace = true

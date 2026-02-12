@@ -149,6 +149,7 @@ export type {
 } from "./dashboard";
 export {
 	getSchedulerOverview,
+	deleteSchedulerJob,
 	fetchFeed,
 	getCodexBarUsage,
 } from "./dashboard";
@@ -165,6 +166,8 @@ export {
 	memoriesWorkspaceBaseUrl,
 	voiceProxyWsUrl,
 	browserStreamWsUrl,
+	startBrowser,
+	browserAction,
 } from "./files";
 
 // Config
@@ -222,6 +225,8 @@ export type {
 	UnlockedComponents,
 	OnboardingState,
 	UpdateOnboardingRequest,
+	BootstrapOnboardingRequest,
+	BootstrapOnboardingResponse,
 } from "./onboarding";
 export {
 	getOnboardingState,
@@ -231,4 +236,5 @@ export {
 	activateOnboardingGodmode,
 	completeOnboarding,
 	resetOnboarding,
+	bootstrapOnboarding,
 } from "./onboarding";

@@ -56,7 +56,7 @@ export type ActiveAgentsCardProps = {
 	}>;
 	runnerSessionTitles: Map<
 		string,
-		{ title?: string | null; readableId?: string | null }
+		{ title?: string | null; tempIdLabel?: string | null }
 	>;
 };
 
@@ -148,7 +148,7 @@ export const ActiveAgentsCard = memo(function ActiveAgentsCard({
 							{runnerSessions.map((session) => {
 								const meta = runnerSessionTitles.get(session.session_id);
 								const title = meta?.title ?? session.session_id;
-								const readableId = meta?.readableId;
+								const tempIdLabel = meta?.tempIdLabel;
 								const shortId = `${session.session_id.slice(0, 8)}…${session.session_id.slice(-4)}`;
 								return (
 									<div
@@ -158,9 +158,9 @@ export const ActiveAgentsCard = memo(function ActiveAgentsCard({
 										<div className="min-w-0 space-y-1">
 											<p className="font-medium truncate">{title}</p>
 											<div className="flex flex-wrap items-center gap-2 text-muted-foreground">
-												{readableId && (
+												{tempIdLabel && (
 													<span className="rounded bg-muted px-2 py-0.5">
-														{readableId}
+														{tempIdLabel}
 													</span>
 												)}
 												<span className="rounded bg-muted px-2 py-0.5 font-mono">

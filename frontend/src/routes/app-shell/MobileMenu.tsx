@@ -1,3 +1,4 @@
+import { type SearchMode } from "@/components/search";
 import { Button } from "@/components/ui/button";
 import type { ChatSession, HstrySearchHit } from "@/lib/control-plane-client";
 import type { OpenCodeAgent } from "@/lib/opencode-client";
@@ -64,6 +65,7 @@ export interface MobileMenuProps {
 	onNewChat: () => void;
 	onNewProject: () => void;
 	onProjectClear: () => void;
+	onProjectOverview: (directory: string) => void;
 	onSessionClick: (sessionId: string) => void;
 	onNewChatInProject: (directory: string) => void;
 	onPinSession: (sessionId: string) => void;
@@ -82,6 +84,11 @@ export interface MobileMenuProps {
 	onLogout: () => void;
 	onProjectSelect: (projectKey: string) => void;
 	onProjectDefaultAgentChange: (projectKey: string, agentId: string) => void;
+	// Search props
+	sessionSearch?: string;
+	onSessionSearchChange?: (query: string) => void;
+	searchMode?: SearchMode;
+	onSearchModeChange?: (mode: SearchMode) => void;
 }
 
 export const MobileMenu = memo(function MobileMenu({
@@ -116,6 +123,7 @@ export const MobileMenu = memo(function MobileMenu({
 	onNewChat,
 	onNewProject,
 	onProjectClear,
+	onProjectOverview,
 	onSessionClick,
 	onNewChatInProject,
 	onPinSession,
@@ -134,6 +142,10 @@ export const MobileMenu = memo(function MobileMenu({
 	onLogout,
 	onProjectSelect,
 	onProjectDefaultAgentChange,
+	sessionSearch,
+	onSessionSearchChange,
+	searchMode,
+	onSearchModeChange,
 }: MobileMenuProps) {
 	return (
 		<div
@@ -194,6 +206,7 @@ export const MobileMenu = memo(function MobileMenu({
 						onNewChat={onNewChat}
 						onNewProject={onNewProject}
 						onProjectClear={onProjectClear}
+						onProjectOverview={onProjectOverview}
 						onSessionClick={onSessionClick}
 						onNewChatInProject={onNewChatInProject}
 						onPinSession={onPinSession}
@@ -205,6 +218,10 @@ export const MobileMenu = memo(function MobileMenu({
 						onDeleteProject={onDeleteProject}
 						onSearchResultClick={onSearchResultClick}
 						messageSearchExtraHits={messageSearchExtraHits}
+						sessionSearch={sessionSearch}
+						onSessionSearchChange={onSessionSearchChange}
+						searchMode={searchMode}
+						onSearchModeChange={onSearchModeChange}
 						isMobile
 					/>
 				)}

@@ -1,6 +1,8 @@
 [workspace]
 resolver = "2"
 members = ["crates/*"]
+exclude = ["crates/octo-browserd"]
+exclude = ["crates/octo-browserd"]
 
 [workspace.package]
 version = "0.8.1"
@@ -53,7 +55,7 @@ http-body-util = "0.1"
 sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "migrate"] }
 
 # Utilities
-uuid = { version = "1.19", features = ["v4", "serde"] }
+uuid = { version = "1.19", features = ["v4", "v5", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 async-trait = "0.1"
 futures = "0.3"

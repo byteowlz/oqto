@@ -1,7 +1,7 @@
 import { getWsManager } from "@/lib/ws-manager";
 import type { FileTreeNode, FilesWsEvent } from "@/lib/ws-mux-types";
 
-const TREE_CACHE_TTL_MS = 10000;
+const TREE_CACHE_TTL_MS = 30000;
 const treeCache = new Map<
 	string,
 	{ timestamp: number; entries: FileTreeNode[] }

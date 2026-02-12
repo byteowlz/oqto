@@ -1,7 +1,46 @@
+import wordlistToml from "@/src/assets/word_lists.toml?raw";
+
 // Word lists for generating human-readable session IDs
 // Format: <adjective>-<noun> (e.g., "cold-lamp", "blue-frog")
 // Based on backend/examples/word_lists.toml
 
+type WordlistConfig = {
+	adjectives: string[];
+	nouns: string[];
+};
+
+const FALLBACK_WORDLIST: WordlistConfig = {
+	adjectives: ["calm", "brisk", "faint"],
+	nouns: ["river", "lamp", "trail"],
+};
+
+function extractTomlList(content: string, key: string): string[] {
+	const regex = new RegExp(`${key}\\s*=\\s*\\[([\\s\\S]*?)\\]`, "m");
+	const match = content.match(regex);
+	if (!match) return [];
+	const listBody = match[1];
+	return Array.from(listBody.matchAll(/"([^"]+)"/g)).map((value) => value[1]);
+}
+
+function parseWordlistToml(content: string): WordlistConfig | null {
+	const adjectives = extractTomlList(content, "adjectives");
+	const nouns = extractTomlList(content, "nouns");
+	if (adjectives.length === 0 || nouns.length === 0) return null;
+	return { adjectives, nouns };
+}
+
+function loadWordlist(): WordlistConfig {
+	const parsed = parseWordlistToml(wordlistToml);
+	if (!parsed) {
+		console.warn("Failed to parse word_lists.toml; using fallback word list.");
+		return FALLBACK_WORDLIST;
+	}
+	return parsed;
+}
+
+const { adjectives: ADJECTIVES, nouns: NOUNS } = loadWordlist();
+
+/*
 const ADJECTIVES = [
 	"able",
 	"acid",
@@ -1800,6 +1839,7 @@ const NOUNS = [
 	"zoom",
 	"zoos",
 ];
+*/
 
 /**
  * Simple hash function for strings
@@ -1917,6 +1957,25 @@ export function resolveReadableId(
 ): string | null {
 	if (readableId?.trim()) return readableId.trim();
 	return null;
+}
+
+export function getTempIdFromSession(session: {
+	readable_id?: string | null;
+	temp_id?: string | null;
+	title?: string | null;
+}): string | null {
+	if (session.temp_id && session.temp_id.trim().length > 0) {
+		return session.temp_id;
+	}
+	if (session.readable_id && session.readable_id.trim().length > 0) {
+		return session.readable_id;
+	}
+	return null;
+}
+
+export function formatTempId(tempId: string | null | undefined): string | null {
+	if (!tempId?.trim()) return null;
+	return `temp:${tempId.trim()}`;
 }
 
 export function getReadableIdFromSession(session: {

@@ -1,6 +1,7 @@
 import { AppProvider, useOnboarding } from "@/components/app-context";
 import { CommandPalette } from "@/components/command-palette";
 import { useChatContext } from "@/components/contexts";
+import { BootstrapWorkspaceDialog } from "@/components/onboarding/BootstrapWorkspaceDialog";
 import { StatusBar } from "@/components/status-bar";
 import { Button } from "@/components/ui/button";
 import { useApp } from "@/hooks/use-app";
@@ -8,7 +9,7 @@ import { useCurrentUser, useLogout } from "@/hooks/use-auth";
 import { useCommandPalette } from "@/hooks/use-command-palette";
 import { setChatPrefetchLimit } from "@/lib/app-settings";
 import type { HstrySearchHit } from "@/lib/control-plane-client";
-import { getSettingsValues } from "@/lib/control-plane-client";
+import { bootstrapOnboarding, getSettingsValues } from "@/lib/control-plane-client";
 import { cn } from "@/lib/utils";
 import { Clock, PanelLeftClose, PanelRightClose } from "lucide-react";
 import { useTheme } from "next-themes";
@@ -24,6 +25,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import "@/apps";
 import { UIControlProvider } from "@/components/contexts/ui-control-context";
 
+import { type SearchMode } from "@/components/search";
 import {
 	DeleteConfirmDialog,
 	MobileHeader,
@@ -64,9 +66,12 @@ const AppShell = memo(function AppShell() {
 		projectDefaultAgents,
 		setProjectDefaultAgents,
 		setScrollToMessageId,
+		projects,
+		refreshChatHistory,
+		refreshWorkspaceSessions,
 	} = useApp();
 
-	const { chatHistoryError, refreshChatHistory } = useChatContext();
+	const { chatHistoryError } = useChatContext();
 
 	const location = useLocation();
 	const navigate = useNavigate();
@@ -78,6 +83,12 @@ const AppShell = memo(function AppShell() {
 	);
 	const [sessionSearch, setSessionSearch] = useState("");
 	const deferredSearch = useDeferredValue(sessionSearch);
+	const [searchMode, setSearchMode] = useState<"sessions" | "messages">("sessions");
+	const [bootstrapOpen, setBootstrapOpen] = useState(false);
+	const [bootstrapName, setBootstrapName] = useState("");
+	const [bootstrapError, setBootstrapError] = useState<string | null>(null);
+	const [bootstrapSubmitting, setBootstrapSubmitting] = useState(false);
+	const [bootstrapReady, setBootstrapReady] = useState(false);
 
 	const { mutate: handleLogout } = useLogout();
 	const { data: currentUser } = useCurrentUser();
@@ -225,6 +236,61 @@ const AppShell = memo(function AppShell() {
 
 	const _availableAgents = useMemo(() => [], []);
 
+	useEffect(() => {
+		const timer = window.setTimeout(() => setBootstrapReady(true), 300);
+		return () => window.clearTimeout(timer);
+	}, []);
+
+	useEffect(() => {
+		if (!bootstrapReady || bootstrapSubmitting) return;
+		if (projects.length === 0 && chatHistory.length === 0) {
+			setBootstrapOpen(true);
+		}
+	}, [bootstrapReady, bootstrapSubmitting, projects.length, chatHistory.length]);
+
+	const handleBootstrapOpenChange = useCallback(
+		(open: boolean) => {
+			if (!open && projects.length === 0 && chatHistory.length === 0) {
+				return;
+			}
+			setBootstrapOpen(open);
+		},
+		[chatHistory.length, projects.length],
+	);
+
+	const handleBootstrapSubmit = useCallback(async () => {
+		if (!bootstrapName.trim() || bootstrapSubmitting) return;
+		setBootstrapSubmitting(true);
+		setBootstrapError(null);
+		try {
+			const response = await bootstrapOnboarding({
+				display_name: bootstrapName.trim(),
+				language: locale,
+			});
+			setBootstrapOpen(false);
+			setBootstrapName("");
+			setSelectedWorkspaceOverviewPath(null);
+			setSelectedChatSessionId(response.session_id);
+			await Promise.all([refreshChatHistory(), refreshWorkspaceSessions()]);
+			setActiveAppId("sessions");
+		} catch (err) {
+			setBootstrapError(
+				err instanceof Error ? err.message : "Failed to bootstrap workspace",
+			);
+		} finally {
+			setBootstrapSubmitting(false);
+		}
+	}, [
+		bootstrapName,
+		bootstrapSubmitting,
+		locale,
+		refreshChatHistory,
+		refreshWorkspaceSessions,
+		setActiveAppId,
+		setSelectedChatSessionId,
+		setSelectedWorkspaceOverviewPath,
+	]);
+
 	// Load settings
 	useEffect(() => {
 		let mounted = true;
@@ -261,6 +327,7 @@ const AppShell = memo(function AppShell() {
 
 	const handleProjectOverview = useCallback(
 		(directory: string) => {
+			setSelectedChatSessionId(null);
 			setSelectedWorkspaceOverviewPath(directory);
 			setActiveAppId("sessions");
 			if (sessionsRoute) navigate(sessionsRoute);
@@ -270,6 +337,7 @@ const AppShell = memo(function AppShell() {
 			navigate,
 			sessionsRoute,
 			setActiveAppId,
+			setSelectedChatSessionId,
 			setSelectedWorkspaceOverviewPath,
 			sidebarState,
 		],
@@ -588,6 +656,10 @@ const AppShell = memo(function AppShell() {
 						onDeleteProject={sessionDialogs.handleDeleteProject}
 						onSearchResultClick={handleSearchResultClick}
 						messageSearchExtraHits={messageSearchExtraHits}
+						sessionSearch={sessionSearch}
+						onSessionSearchChange={setSessionSearch}
+						searchMode={searchMode}
+						onSearchModeChange={setSearchMode}
 						onToggleApp={handleMobileToggleClick}
 						onToggleLocale={toggleLocale}
 						onToggleTheme={toggleTheme}
@@ -728,6 +800,10 @@ const AppShell = memo(function AppShell() {
 									onDeleteProject={sessionDialogs.handleDeleteProject}
 									onSearchResultClick={handleSearchResultClick}
 									messageSearchExtraHits={messageSearchExtraHits}
+									sessionSearch={sessionSearch}
+									onSessionSearchChange={setSessionSearch}
+									searchMode={searchMode}
+									onSearchModeChange={setSearchMode}
 								/>
 							</div>
 						</>
@@ -800,6 +876,17 @@ const AppShell = memo(function AppShell() {
 				<CommandPalette
 					open={commandPaletteOpen}
 					onOpenChange={setCommandPaletteOpen}
+				/>
+
+				<BootstrapWorkspaceDialog
+					open={bootstrapOpen}
+					onOpenChange={handleBootstrapOpenChange}
+					name={bootstrapName}
+					onNameChange={setBootstrapName}
+					onSubmit={handleBootstrapSubmit}
+					loading={bootstrapSubmitting}
+					error={bootstrapError}
+					locale={locale}
 				/>
 
 				<RenameSessionDialog

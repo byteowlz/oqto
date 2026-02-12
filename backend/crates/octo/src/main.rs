@@ -887,6 +887,8 @@ fn default_eavs_base_url() -> String {
 struct LoggingConfig {
     level: String,
     file: Option<String>,
+    audit_enabled: bool,
+    audit_file: Option<String>,
 }
 
 impl Default for LoggingConfig {
@@ -894,6 +896,8 @@ impl Default for LoggingConfig {
         Self {
             level: "info".to_string(),
             file: None,
+            audit_enabled: true,
+            audit_file: None,
         }
     }
 }
@@ -2327,6 +2331,30 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     info!("Onboarding templates service initialized");
     state = state.with_onboarding_templates(onboarding_templates_service);
 
+    if ctx.config.logging.audit_enabled {
+        let audit_path = ctx
+            .config
+            .logging
+            .audit_file
+            .as_ref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| ctx.paths.state_dir.join("audit.log.jsonl"));
+
+        match audit::AuditLogger::new(audit_path).await {
+            Ok(logger) => {
+                info!("Audit logging enabled at {}", logger.path().display());
+                state = state.with_audit_logger(Arc::new(logger));
+            }
+            Err(err) => {
+                warn!("Failed to initialize audit logger: {}", err);
+            }
+        }
+    } else {
+        info!("Audit logging disabled");
+    }
+
     // Initialize hstry (chat history) service
     if ctx.config.hstry.enabled {
         // Always auto-start hstry daemon and connect.
@@ -2490,6 +2518,11 @@ fn load_or_init_config(paths: &mut AppPaths, common: &CommonOpts) -> Result<AppC
     if let Some(ref file) = config.logging.file {
         let expanded = expand_str_path(file)?;
         config.logging.file = Some(expanded.display().to_string());
+    }
+
+    if let Some(ref file) = config.logging.audit_file {
+        let expanded = expand_str_path(file)?;
+        config.logging.audit_file = Some(expanded.display().to_string());
     }
 
     Ok(config)

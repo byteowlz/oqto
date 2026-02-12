@@ -290,6 +290,105 @@ pub struct SessionUpdateStatus {
     pub new_digest: Option<String>,
 }
 
+/// Request body for browser navigation.
+#[derive(Debug, Deserialize)]
+pub struct BrowserNavigateRequest {
+    pub url: String,
+    pub workspace_path: String,
+    /// The Pi/chat session ID to use as the agent-browser session name.
+    /// This is the session ID the agent knows, so it can control the same browser.
+    pub session_id: String,
+    /// Optional viewport width in pixels.
+    pub viewport_width: Option<u32>,
+    /// Optional viewport height in pixels.
+    pub viewport_height: Option<u32>,
+}
+
+/// Response for browser start.
+#[derive(Debug, Serialize)]
+pub struct BrowserStartResponse {
+    /// The agent-browser session name (short, derived from Pi/chat session ID).
+    /// Use this for the browser stream WebSocket.
+    pub session_id: String,
+}
+
+/// Request body for browser actions.
+#[derive(Debug, Deserialize)]
+pub struct BrowserActionRequest {
+    /// Pi/chat session ID.
+    pub session_id: String,
+    /// Action name: back, forward, reload.
+    pub action: String,
+}
+
+/// Start or navigate the agent-browser for a chat session.
+///
+/// Uses the Pi/chat session ID to derive a short agent-browser session name.
+/// The browser stream WebSocket also uses this session ID.
+#[instrument(skip(state))]
+pub async fn start_browser(
+    State(state): State<AppState>,
+    _user: CurrentUser,
+    Json(request): Json<BrowserNavigateRequest>,
+) -> ApiResult<Json<BrowserStartResponse>> {
+    if !state.sessions.agent_browser_enabled() {
+        return Err(ApiError::service_unavailable(
+            "Agent browser integration is not enabled",
+        ));
+    }
+
+    let browser_session_id = crate::agent_browser::browser_session_name(&request.session_id);
+
+    state
+        .sessions
+        .navigate_browser(
+            &browser_session_id,
+            &request.url,
+            request.viewport_width,
+            request.viewport_height,
+        )
+        .await
+        .map_err(|e| ApiError::internal(format!("Failed to start browser: {}", e)))?;
+
+    info!(
+        session_id = %request.session_id,
+        browser_session_id = %browser_session_id,
+        workspace = %request.workspace_path,
+        url = %request.url,
+        "Started/navigated browser"
+    );
+    Ok(Json(BrowserStartResponse {
+        session_id: browser_session_id,
+    }))
+}
+
+/// Trigger a browser action (back, forward, reload) for a chat session.
+#[instrument(skip(state))]
+pub async fn browser_action(
+    State(state): State<AppState>,
+    _user: CurrentUser,
+    Json(request): Json<BrowserActionRequest>,
+) -> ApiResult<StatusCode> {
+    if !state.sessions.agent_browser_enabled() {
+        return Err(ApiError::service_unavailable(
+            "Agent browser integration is not enabled",
+        ));
+    }
+
+    let action = crate::session::BrowserAction::parse(&request.action).ok_or_else(|| {
+        ApiError::bad_request("Invalid browser action (expected back, forward, reload)")
+    })?;
+    let browser_session_id = crate::agent_browser::browser_session_name(&request.session_id);
+
+    state
+        .sessions
+        .browser_action(&browser_session_id, action)
+        .await
+        .map_err(|e| ApiError::internal(format!("Failed to run browser action: {}", e)))?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
 /// Check all sessions for available updates.
 #[instrument(skip(state, user))]
 pub async fn check_all_updates(

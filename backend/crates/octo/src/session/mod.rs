@@ -15,7 +15,8 @@ pub use models::{CreateSessionRequest, RuntimeMode, Session, SessionResponse, Se
 pub use repository::SessionRepository;
 #[allow(unused_imports)]
 pub use service::{
-    ContainerStatsReport, SessionContainerStats, SessionService, SessionServiceConfig,
+    BrowserAction, ContainerStatsReport, SessionContainerStats, SessionService,
+    SessionServiceConfig,
 };
 pub use workspace_locations::{
     WorkspaceLocation, WorkspaceLocationInput, WorkspaceLocationRepository,

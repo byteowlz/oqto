@@ -263,18 +263,19 @@ pub async fn proxy_terminal_ws_for_workspace(
 // ============================================================================
 
 /// WebSocket upgrade handler for browser stream proxy.
+///
+/// The session_id here is the agent-browser session name (typically the Pi/chat
+/// session ID), NOT an octo IO session. We just need it to find the stream port
+/// file at `/tmp/agent-browser-{session_id}.stream`.
 pub async fn proxy_browser_stream_ws(
     State(state): State<AppState>,
-    user: CurrentUser,
+    _user: CurrentUser,
     Path(session_id): Path<String>,
     ws: WebSocketUpgrade,
 ) -> Result<impl IntoResponse, StatusCode> {
     if !state.sessions.agent_browser_enabled() {
         return Err(StatusCode::SERVICE_UNAVAILABLE);
     }
-
-    let session = get_session_for_user(&state, &user, &session_id).await?;
-    let _session = ensure_session_for_io_proxy(&state, user.id(), &session_id, session).await?;
 
     let stream_port = state
         .sessions

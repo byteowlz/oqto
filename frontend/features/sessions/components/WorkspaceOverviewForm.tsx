@@ -63,10 +63,12 @@ export function WorkspaceOverviewForm({
 		? [...sandboxProfiles].sort()
 		: ["development", "minimal", "strict"];
 
-	const modelOptions = availableModels.map((model) => ({
-		value: `${model.provider}/${model.id}`,
-		label: `${model.name} (${model.provider})`,
-	}));
+	const modelOptions = availableModels
+		.filter((model) => model.provider && model.id)
+		.map((model) => ({
+			value: `${model.provider}/${model.id}`,
+			label: `${model.name} (${model.provider})`,
+		}));
 
 	const handleModeToggle = (
 		key: "skills" | "extensions",
@@ -133,7 +135,7 @@ export function WorkspaceOverviewForm({
 					{modeLabel("custom", locale)}
 				</Button>
 			</div>
-			<div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+			<div className="grid grid-cols-1 md:grid-cols-3 gap-2">
 				{items.length === 0 && (
 					<div className="text-xs text-muted-foreground">
 						{locale === "de"
@@ -166,6 +168,12 @@ export function WorkspaceOverviewForm({
 		</div>
 	);
 
+	const selectedModelValue =
+		values.defaultModelRef &&
+		modelOptions.some((option) => option.value === values.defaultModelRef)
+			? values.defaultModelRef
+			: "";
+
 	return (
 		<div className="space-y-6">
 			<div>
@@ -189,11 +197,18 @@ export function WorkspaceOverviewForm({
 			</div>
 
 			<div className="space-y-2">
-				<div className="text-xs uppercase text-muted-foreground">
-					{locale === "de" ? "Standardmodell" : "Default model"}
+				<div className="flex items-center justify-between">
+					<div className="text-xs uppercase text-muted-foreground">
+						{locale === "de" ? "Pi Standardmodell" : "Pi Default Model"}
+					</div>
 				</div>
+				<p className="text-[11px] text-muted-foreground">
+					{locale === "de"
+						? "Standardmodell für neue Pi-Sitzungen in diesem Workspace"
+						: "Default model for new Pi sessions in this workspace"}
+				</p>
 				<Select
-					value={values.defaultModelRef ?? ""}
+					value={selectedModelValue}
 					onValueChange={(value) =>
 						update({ defaultModelRef: value || null })
 					}
@@ -208,18 +223,19 @@ export function WorkspaceOverviewForm({
 						/>
 					</SelectTrigger>
 					<SelectContent>
-						{modelOptions.length === 0 && (
-							<SelectItem value="" disabled>
+						{modelOptions.length === 0 ? (
+							<div className="px-2 py-1.5 text-xs text-muted-foreground">
 								{locale === "de"
 									? "Keine Modelle verfügbar"
 									: "No models available"}
-							</SelectItem>
+							</div>
+						) : (
+							modelOptions.map((option) => (
+								<SelectItem key={option.value} value={option.value}>
+									{option.label}
+								</SelectItem>
+							))
 						)}
-						{modelOptions.map((option) => (
-							<SelectItem key={option.value} value={option.value}>
-								{option.label}
-							</SelectItem>
-						))}
 					</SelectContent>
 				</Select>
 			</div>

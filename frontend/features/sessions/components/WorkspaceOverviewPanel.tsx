@@ -175,8 +175,8 @@ export function WorkspaceOverviewPanel({
 	}, [values, workspacePath]);
 
 	return (
-		<div className="h-full flex flex-col">
-			<div className="flex items-center justify-between border-b border-border pb-3 mb-4">
+		<div className="h-full flex flex-col overflow-hidden">
+			<div className="flex-shrink-0 flex items-center justify-between border-b border-border pb-3 mb-4">
 				<div>
 					<div className="text-base font-semibold">
 						{locale === "de" ? "Workspace Overview" : "Workspace overview"}
@@ -184,7 +184,7 @@ export function WorkspaceOverviewPanel({
 					<div className="text-xs text-muted-foreground">
 						{locale === "de"
 							? "Projektweite Einstellungen fur Pi"
-							: "Project-wide settings for Pi"}
+							: "Project-wide settings for Pi agent"}
 					</div>
 				</div>
 				<Button variant="outline" size="sm" onClick={onClose}>
@@ -197,19 +197,21 @@ export function WorkspaceOverviewPanel({
 					{locale === "de" ? "Lade..." : "Loading..."}
 				</div>
 			) : (
-				<WorkspaceOverviewForm
-					locale={locale}
-					workspacePathLabel={workspaceLabel}
-					values={values}
-					availableModels={availableModels}
-					sandboxProfiles={sandboxProfiles}
-					availableSkills={availableSkills}
-					availableExtensions={availableExtensions}
-					onChange={setValues}
-					onSave={handleSave}
-					saving={saving}
-					error={error}
-				/>
+				<div className="flex-1 min-h-0 overflow-y-auto">
+					<WorkspaceOverviewForm
+						locale={locale}
+						workspacePathLabel={workspaceLabel}
+						values={values}
+						availableModels={availableModels}
+						sandboxProfiles={sandboxProfiles}
+						availableSkills={availableSkills}
+						availableExtensions={availableExtensions}
+						onChange={setValues}
+						onSave={handleSave}
+						saving={saving}
+						error={error}
+					/>
+				</div>
 			)}
 		</div>
 	);

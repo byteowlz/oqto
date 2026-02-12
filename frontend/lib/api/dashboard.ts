@@ -83,6 +83,23 @@ export async function getSchedulerOverview(): Promise<SchedulerOverview> {
 	return res.json();
 }
 
+export async function deleteSchedulerJob(
+	name: string,
+): Promise<{ deleted: string }> {
+	const res = await authFetch(
+		controlPlaneApiUrl(`/api/scheduler/jobs/${encodeURIComponent(name)}`),
+		{
+			method: "DELETE",
+			credentials: "include",
+		},
+	);
+	if (!res.ok) {
+		const message = await readApiError(res);
+		throw new Error(message);
+	}
+	return res.json();
+}
+
 export async function fetchFeed(url: string): Promise<FeedFetchResponse> {
 	const endpoint = controlPlaneApiUrl(
 		`/api/feeds/fetch?url=${encodeURIComponent(url)}`,

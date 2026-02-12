@@ -3,6 +3,7 @@
 //! Provides REST endpoints and proxy functionality for session management.
 
 pub mod a2ui;
+mod audit;
 mod delegate;
 mod error;
 pub mod handlers;

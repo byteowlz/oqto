@@ -17,6 +17,7 @@ All notable changes to this project will be documented in this file.
 - Setup now clones the octo-templates repo to a shared system path and configures onboarding templates to use it.
 - Setup now updates git repos in /usr/local/share/octo/external-repos and uses the shared templates repo for project templates.
 - Added feedback dropbox configuration and background sync to a private archive.
+- Added onboarding bootstrap flow that creates the main workspace, writes onboarding templates, and seeds the first Pi chat session in hstry.
 
 ### Changed
 

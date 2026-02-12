@@ -4,7 +4,7 @@
  */
 
 import { toAbsoluteWsUrl } from "@/lib/url";
-import { controlPlaneApiUrl, getAuthToken } from "./client";
+import { authFetch, controlPlaneApiUrl, getAuthToken } from "./client";
 
 // ============================================================================
 // Proxy URLs
@@ -71,4 +71,59 @@ export function browserStreamWsUrl(sessionId: string): string {
 		wsUrl = `${wsUrl}${separator}token=${encodeURIComponent(token)}`;
 	}
 	return wsUrl;
+}
+
+/**
+ * Start or navigate the agent-browser for a chat session.
+ * Uses the Pi/chat session ID as the agent-browser session name so the agent
+ * running in that session can control the same browser instance.
+ * Returns the session ID to use for the browser stream WebSocket.
+ */
+export async function startBrowser(
+	workspacePath: string,
+	sessionId: string,
+	url: string,
+	viewportWidth?: number,
+	viewportHeight?: number,
+): Promise<{ session_id: string }> {
+	const body: Record<string, unknown> = {
+		url,
+		workspace_path: workspacePath,
+		session_id: sessionId,
+	};
+	if (viewportWidth && viewportHeight) {
+		body.viewport_width = Math.round(viewportWidth);
+		body.viewport_height = Math.round(viewportHeight);
+	}
+	const res = await authFetch(controlPlaneApiUrl("/api/browser/start"), {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		credentials: "include",
+		body: JSON.stringify(body),
+	});
+	if (!res.ok) {
+		const msg = await res.text().catch(() => res.statusText);
+		throw new Error(`Failed to start browser: ${msg}`);
+	}
+	return res.json();
+}
+
+export async function browserAction(
+	sessionId: string,
+	action: "back" | "forward" | "reload",
+): Promise<void> {
+	const body = {
+		session_id: sessionId,
+		action,
+	};
+	const res = await authFetch(controlPlaneApiUrl("/api/browser/action"), {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		credentials: "include",
+		body: JSON.stringify(body),
+	});
+	if (!res.ok) {
+		const msg = await res.text().catch(() => res.statusText);
+		throw new Error(`Failed to run browser action: ${msg}`);
+	}
 }

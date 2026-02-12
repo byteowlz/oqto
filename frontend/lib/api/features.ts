@@ -41,6 +41,8 @@ export type Features = {
 	voice?: VoiceFeatureConfig | null;
 	/** Use WebSocket for real-time events instead of SSE */
 	websocket_events?: boolean;
+	/** Whether the agent-browser integration is enabled */
+	agent_browser_enabled?: boolean;
 };
 
 // ============================================================================

@@ -6,6 +6,7 @@ pub mod agent;
 pub mod agent_browser;
 pub mod agent_rpc;
 pub mod api;
+pub mod audit;
 pub mod auth;
 pub mod canon;
 pub mod container;
