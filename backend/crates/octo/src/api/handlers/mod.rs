@@ -62,7 +62,7 @@ pub use admin::{
 // User management (admin)
 pub use admin::{
     activate_user, create_user, deactivate_user, delete_user, get_user, get_user_stats, list_users,
-    update_user,
+    sync_user_configs, update_user,
 };
 
 // Auth handlers and types

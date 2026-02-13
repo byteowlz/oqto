@@ -343,10 +343,17 @@ export const MobileMenu = memo(function MobileMenu({
 										<div className="text-sm font-medium">
 											{agent.name || agent.id}
 										</div>
-										<div className="text-xs text-muted-foreground/60">
-											{agent.model?.providerID
-												? `${agent.model.providerID}/${agent.model.modelID ?? ""}`
-												: agent.id}
+										<div className="text-xs text-muted-foreground/60 text-left">
+											{agent.model?.providerID ? (
+												<span className="flex flex-col text-left leading-tight">
+													<span>{agent.model.providerID}</span>
+													{agent.model.modelID ? (
+														<span>{agent.model.modelID}</span>
+													) : null}
+												</span>
+											) : (
+												agent.id
+											)}
 										</div>
 									</div>
 								))

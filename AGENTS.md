@@ -283,6 +283,38 @@ just gen-types        # Generate TypeScript types from Rust structs
 
 ---
 
+## External Dependencies
+
+Octo depends on several external tools and services. Version tracking is maintained in `dependencies.toml`.
+
+### Updating Dependencies
+
+```bash
+just update-deps      # Update dependencies.toml from local repos and git tags
+just check-updates    # Check for available updates to external dependencies
+```
+
+The `dependencies.toml` manifest tracks:
+
+- **byteowlz tools**: hstry, mmry, trx, agntz, mailz, sx, sldr, eaRS, kokorox
+- **External tools**: pi (from crates.io), opencode (from opencode.ai)
+
+Key dependencies:
+
+| Tool | Purpose | Install Command |
+|------|---------|-----------------|
+| **hstry** | Chat history storage (gRPC + SQLite) | `cargo install --git https://github.com/byteowlz/hstry` |
+| **mmry** | Memory system with semantic search | `cargo install --git https://github.com/byteowlz/mmry` |
+| **trx** | Issue and task tracking | `cargo install --git https://github.com/byteowlz/trx` |
+| **agntz** | Agent toolkit (memory, issues, mail) | `cargo install --git https://github.com/byteowlz/agntz` |
+| **pi** | Main chat/LLM interface | `bun install -g @mariozechner/pi-coding-agent` |
+| **eaRS** | Speech-to-text (STT) service | `cargo install --git https://github.com/byteowlz/ears` |
+| **kokorox** | Text-to-speech (TTS) service | `cargo install --git https://github.com/byteowlz/kokorox` |
+
+For a complete list, see `dependencies.toml`.
+
+---
+
 ## Issue Tracking (trx)
 
 ```bash

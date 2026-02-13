@@ -747,11 +747,7 @@ fn pi_content_to_parts(content: &Value, msg: &AgentMessage) -> Vec<Part> {
                                 parts.push(Part::thinking(&thinking));
                             }
                             ContentBlock::ToolCall(tc) => {
-                                parts.push(Part::tool_call(
-                                    &tc.id,
-                                    &tc.name,
-                                    Some(tc.arguments),
-                                ));
+                                parts.push(Part::tool_call(&tc.id, &tc.name, Some(tc.arguments)));
                             }
                             ContentBlock::Image { source } => {
                                 parts.push(pi_image_to_part(&source));
@@ -1350,9 +1346,7 @@ mod tests {
         });
         assert!(events.is_empty(), "User message_start should be suppressed");
 
-        let events = t.translate(&PiEvent::MessageEnd {
-            message: user_msg,
-        });
+        let events = t.translate(&PiEvent::MessageEnd { message: user_msg });
         assert!(events.is_empty(), "User message_end should be suppressed");
 
         // Tool result message should also be suppressed
@@ -1378,9 +1372,7 @@ mod tests {
             "Tool result message_start should be suppressed"
         );
 
-        let events = t.translate(&PiEvent::MessageEnd {
-            message: tool_msg,
-        });
+        let events = t.translate(&PiEvent::MessageEnd { message: tool_msg });
         assert!(
             events.is_empty(),
             "Tool result message_end should be suppressed"
@@ -1425,10 +1417,8 @@ mod tests {
             .is_empty()
         );
         assert!(
-            t.translate(&PiEvent::MessageEnd {
-                message: user_msg
-            })
-            .is_empty()
+            t.translate(&PiEvent::MessageEnd { message: user_msg })
+                .is_empty()
         );
 
         // 2. Assistant with tool_use
@@ -1439,9 +1429,7 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert!(matches!(events[0], EventPayload::StreamMessageStart { .. }));
 
-        let events = t.translate(&PiEvent::MessageEnd {
-            message: asst_msg,
-        });
+        let events = t.translate(&PiEvent::MessageEnd { message: asst_msg });
         assert_eq!(events.len(), 1);
         assert!(matches!(events[0], EventPayload::StreamMessageEnd { .. }));
 
@@ -1451,7 +1439,11 @@ mod tests {
             tool_name: "read".to_string(),
             args: serde_json::json!({"path": "README.md"}),
         });
-        assert!(events.iter().any(|e| matches!(e, EventPayload::ToolStart { .. })));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, EventPayload::ToolStart { .. }))
+        );
 
         let events = t.translate(&PiEvent::ToolExecutionEnd {
             tool_call_id: "tc_1".to_string(),
@@ -1462,7 +1454,11 @@ mod tests {
             },
             is_error: false,
         });
-        assert!(events.iter().any(|e| matches!(e, EventPayload::ToolEnd { .. })));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, EventPayload::ToolEnd { .. }))
+        );
 
         // 4. Tool result message (suppressed)
         let tool_msg = AgentMessage {
@@ -1479,10 +1475,8 @@ mod tests {
             .is_empty()
         );
         assert!(
-            t.translate(&PiEvent::MessageEnd {
-                message: tool_msg
-            })
-            .is_empty()
+            t.translate(&PiEvent::MessageEnd { message: tool_msg })
+                .is_empty()
         );
 
         // 5. Final assistant response
@@ -1493,9 +1487,7 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert!(matches!(events[0], EventPayload::StreamMessageStart { .. }));
 
-        let events = t.translate(&PiEvent::MessageEnd {
-            message: final_msg,
-        });
+        let events = t.translate(&PiEvent::MessageEnd { message: final_msg });
         assert_eq!(events.len(), 1);
         assert!(matches!(events[0], EventPayload::StreamMessageEnd { .. }));
 

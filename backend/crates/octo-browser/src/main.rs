@@ -396,9 +396,7 @@ fn main() -> Result<()> {
         } => {
             // Detect if target is a number (ms) or a selector
             let (selector, wait_timeout) = match &target {
-                Some(t) if t.parse::<u64>().is_ok() => {
-                    (None, Some(t.parse::<u64>().unwrap()))
-                }
+                Some(t) if t.parse::<u64>().is_ok() => (None, Some(t.parse::<u64>().unwrap())),
                 sel => (sel.clone(), timeout_ms),
             };
             send_command(
@@ -690,7 +688,9 @@ fn main() -> Result<()> {
 ///   - Everything else: compact JSON of the data field
 fn print_clean_output(data: &Option<Value>) {
     let Some(data) = data else { return };
-    if data.is_null() { return }
+    if data.is_null() {
+        return;
+    }
 
     let obj = match data.as_object() {
         Some(o) => o,
@@ -791,7 +791,9 @@ fn print_clean_output(data: &Option<Value>) {
     // cookies
     if let Some(cookies) = obj.get("cookies") {
         if let Some(arr) = cookies.as_array() {
-            if arr.is_empty() { return }
+            if arr.is_empty() {
+                return;
+            }
             if let Ok(s) = serde_json::to_string(cookies) {
                 println!("{s}");
             }
@@ -802,7 +804,9 @@ fn print_clean_output(data: &Option<Value>) {
     // requests
     if let Some(requests) = obj.get("requests") {
         if let Some(arr) = requests.as_array() {
-            if arr.is_empty() { return }
+            if arr.is_empty() {
+                return;
+            }
             if let Ok(s) = serde_json::to_string(requests) {
                 println!("{s}");
             }
@@ -886,13 +890,41 @@ fn print_clean_output(data: &Option<Value>) {
     // Silent success for action confirmations (clicked, filled, typed, etc.)
     // These have only boolean flags like {"clicked": true} -- no output needed.
     let confirm_keys = [
-        "launched", "clicked", "typed", "filled", "pressed", "checked",
-        "unchecked", "uploaded", "focused", "hovered", "dragged",
-        "selected", "tapped", "cleared", "highlighted", "scrolled",
-        "switched", "waited", "set", "closed", "routed", "unrouted",
-        "emulated", "added", "exposed", "paused", "injected",
-        "started", "stopped", "copied", "pasted", "inserted",
-        "moved", "down", "up",
+        "launched",
+        "clicked",
+        "typed",
+        "filled",
+        "pressed",
+        "checked",
+        "unchecked",
+        "uploaded",
+        "focused",
+        "hovered",
+        "dragged",
+        "selected",
+        "tapped",
+        "cleared",
+        "highlighted",
+        "scrolled",
+        "switched",
+        "waited",
+        "set",
+        "closed",
+        "routed",
+        "unrouted",
+        "emulated",
+        "added",
+        "exposed",
+        "paused",
+        "injected",
+        "started",
+        "stopped",
+        "copied",
+        "pasted",
+        "inserted",
+        "moved",
+        "down",
+        "up",
     ];
     for key in confirm_keys {
         if obj.contains_key(key) {

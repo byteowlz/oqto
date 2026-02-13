@@ -6,7 +6,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 #[derive(Parser)]
-#[command(name = "octo-setup", about = "Hydrate Octo config files from an install config")]
+#[command(
+    name = "octo-setup",
+    about = "Hydrate Octo config files from an install config"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -140,9 +143,15 @@ impl XdgDefaults {
 
     fn expand_context(&self) -> HashMap<String, String> {
         let mut vars = HashMap::new();
-        vars.insert("XDG_CONFIG_HOME".to_string(), self.config.display().to_string());
+        vars.insert(
+            "XDG_CONFIG_HOME".to_string(),
+            self.config.display().to_string(),
+        );
         vars.insert("XDG_DATA_HOME".to_string(), self.data.display().to_string());
-        vars.insert("XDG_STATE_HOME".to_string(), self.state.display().to_string());
+        vars.insert(
+            "XDG_STATE_HOME".to_string(),
+            self.state.display().to_string(),
+        );
         if let Ok(home) = std::env::var("HOME") {
             vars.insert("HOME".to_string(), home);
         }
@@ -188,9 +197,8 @@ fn home_dir() -> Result<PathBuf> {
 
 fn write_config_file(path: &Path, config: toml::Value, mode: HydrateMode) -> Result<()> {
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).with_context(|| {
-            format!("Failed to create config directory: {}", parent.display())
-        })?;
+        fs::create_dir_all(parent)
+            .with_context(|| format!("Failed to create config directory: {}", parent.display()))?;
     }
 
     let final_value = match mode {

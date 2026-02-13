@@ -3,16 +3,21 @@
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
+	Tooltip,
+	TooltipContent,
+	TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
 	browserAction,
 	browserStreamWsUrl,
 	startBrowser,
 } from "@/lib/control-plane-client";
 import { cn } from "@/lib/utils";
-import { ArrowLeft, ArrowRight, Globe, Loader2, RefreshCw } from "lucide-react";
+import { ArrowLeft, ArrowRight, Globe, Loader2, Maximize2, MessageSquare, Minimize2, RefreshCw } from "lucide-react";
+import { useTheme } from "next-themes";
 import {
 	type KeyboardEvent,
 	type PointerEvent,
-	type WheelEvent,
 	useCallback,
 	useEffect,
 	useMemo,
@@ -55,6 +60,12 @@ interface BrowserViewProps {
 	sessionId?: string | null;
 	workspacePath?: string | null;
 	className?: string;
+	/** Callback to inject text into the chat input */
+	onSendToChat?: (text: string) => void;
+	/** Callback to expand browser into the main panel */
+	onExpand?: () => void;
+	/** Callback to collapse browser back to sidebar (shown when expanded) */
+	onCollapse?: () => void;
 }
 
 function getModifiers(event: {
@@ -78,7 +89,7 @@ function mapMouseButton(button: number): "left" | "right" | "middle" | "none" {
 	return "none";
 }
 
-export function BrowserView({ sessionId, workspacePath, className }: BrowserViewProps) {
+export function BrowserView({ sessionId, workspacePath, className, onSendToChat, onExpand, onCollapse }: BrowserViewProps) {
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
 	const containerRef = useRef<HTMLDivElement | null>(null);
 	const socketRef = useRef<WebSocket | null>(null);
@@ -116,6 +127,34 @@ export function BrowserView({ sessionId, workspacePath, className }: BrowserView
 	}, []);
 	const isConnected = connectionState === "connected";
 	const primaryModifier = isMac ? 4 : 2;
+	const { resolvedTheme } = useTheme();
+
+	// Sync host color scheme to the browser daemon
+	useEffect(() => {
+		if (!isConnected || !sessionId || !resolvedTheme) return;
+		const scheme = resolvedTheme === "dark" ? "dark" : "light";
+		browserAction(sessionId, `color_scheme:${scheme}`).catch(() => {
+			// Best-effort: ignore errors (daemon may not be ready yet)
+		});
+	}, [isConnected, sessionId, resolvedTheme]);
+
+	const handleSendToChat = useCallback(() => {
+		if (!browserSessionId || !onSendToChat) return;
+		const cmd = [
+			"The user has started a browser session you can control.",
+			`Use \`octo-browser --session ${browserSessionId}\` to interact with it.`,
+			"",
+			"Quick reference:",
+			"  octo-browser --session " + browserSessionId + " snapshot -i    # list interactive elements",
+			"  octo-browser --session " + browserSessionId + " click @e1      # click element by ref",
+			"  octo-browser --session " + browserSessionId + " fill @e2 \"text\" # fill input",
+			"  octo-browser --session " + browserSessionId + " press Enter    # press key",
+			"  octo-browser --session " + browserSessionId + " screenshot /tmp/shot.png",
+			"  octo-browser --session " + browserSessionId + " open <url>     # navigate",
+			"  octo-browser --session " + browserSessionId + " eval \"JS\"      # run JS in page",
+		].join("\n");
+		onSendToChat(cmd);
+	}, [browserSessionId, onSendToChat]);
 
 	// Reset state when workspace changes
 	// biome-ignore lint/correctness/useExhaustiveDependencies: intentional reset on workspace change
@@ -134,9 +173,11 @@ export function BrowserView({ sessionId, workspacePath, className }: BrowserView
 		const resizeObserver = new ResizeObserver((entries) => {
 			for (const entry of entries) {
 				const { width, height } = entry.contentRect;
+				// Skip trivial sizes (container not yet laid out or hidden)
+				if (width < 10 || height < 10) return;
 				setCanvasSize({
-					width: Math.max(1, Math.floor(width)),
-					height: Math.max(1, Math.floor(height)),
+					width: Math.floor(width),
+					height: Math.floor(height),
 				});
 			}
 		});
@@ -353,8 +394,8 @@ export function BrowserView({ sessionId, workspacePath, className }: BrowserView
 			workspacePath,
 			sessionId,
 			target,
-			canvasSize.width || undefined,
-			canvasSize.height || undefined,
+			canvasSize.width > 10 ? canvasSize.width : undefined,
+			canvasSize.height > 10 ? canvasSize.height : undefined,
 		)
 			.then((result) => {
 				setBrowserSessionId(result.session_id);
@@ -454,19 +495,52 @@ export function BrowserView({ sessionId, workspacePath, className }: BrowserView
 		});
 	}
 
-	function handleWheel(e: WheelEvent<HTMLCanvasElement>) {
-		e.preventDefault();
-		const { x, y } = mapClientToDevice(e.clientX, e.clientY);
-		sendMessage({
-			type: "input_mouse",
-			eventType: "mouseWheel",
-			x,
-			y,
-			deltaX: e.deltaX,
-			deltaY: e.deltaY,
-			modifiers: getModifiers(e),
-		});
-	}
+	// Attach native listeners for wheel and contentEditable suppression.
+	// - wheel: React registers as passive, preventing preventDefault()
+	// - beforeinput: block contentEditable from inserting text into the canvas DOM
+	// - paste: forward clipboard text to the remote browser instead
+	useEffect(() => {
+		const canvas = canvasRef.current;
+		if (!canvas) return;
+		function onWheel(e: globalThis.WheelEvent) {
+			e.preventDefault();
+			const { x, y } = mapClientToDevice(e.clientX, e.clientY);
+			sendMessage({
+				type: "input_mouse",
+				eventType: "mouseWheel",
+				x,
+				y,
+				deltaX: e.deltaX,
+				deltaY: e.deltaY,
+				modifiers: getModifiers(e),
+			});
+		}
+		function onBeforeInput(e: Event) {
+			e.preventDefault();
+		}
+		function onPaste(e: ClipboardEvent) {
+			e.preventDefault();
+			const text = e.clipboardData?.getData("text/plain");
+			if (text) {
+				for (const char of text) {
+					sendMessage({
+						type: "input_keyboard",
+						eventType: "char",
+						text: char,
+						modifiers: 0,
+					});
+				}
+			}
+		}
+		canvas.addEventListener("wheel", onWheel, { passive: false });
+		canvas.addEventListener("beforeinput", onBeforeInput);
+		canvas.addEventListener("paste", onPaste);
+		return () => {
+			canvas.removeEventListener("wheel", onWheel);
+			canvas.removeEventListener("beforeinput", onBeforeInput);
+			canvas.removeEventListener("paste", onPaste);
+		};
+	}, [sendMessage]);
 
 	function handleKeyDown(e: KeyboardEvent<HTMLCanvasElement>) {
 		e.preventDefault();
@@ -560,6 +634,25 @@ export function BrowserView({ sessionId, workspacePath, className }: BrowserView
 				>
 					<RefreshCw className="size-4" />
 				</Button>
+				{onSendToChat && (
+					<Tooltip>
+						<TooltipTrigger asChild>
+							<Button
+								type="button"
+								variant="ghost"
+								size="icon-sm"
+								onClick={handleSendToChat}
+								disabled={!isConnected}
+								title="Send browser commands to chat"
+							>
+								<MessageSquare className="size-4" />
+							</Button>
+						</TooltipTrigger>
+						<TooltipContent side="bottom">
+							Send browser control instructions to chat
+						</TooltipContent>
+					</Tooltip>
+				)}
 				<form
 					className="flex-1 flex items-center gap-2"
 					onSubmit={(event) => {
@@ -589,23 +682,41 @@ export function BrowserView({ sessionId, workspacePath, className }: BrowserView
 						)}
 					</Button>
 				</form>
+				{(onExpand || onCollapse) && (
+					<Button
+						type="button"
+						variant="ghost"
+						size="icon-sm"
+						onClick={onCollapse ?? onExpand}
+						title={onCollapse ? "Collapse browser" : "Expand browser"}
+					>
+						{onCollapse ? (
+							<Minimize2 className="size-4" />
+						) : (
+							<Maximize2 className="size-4" />
+						)}
+					</Button>
+				)}
 			</div>
 			<div
 				ref={containerRef}
 				className="relative flex-1 min-h-0 border border-t-0 border-border rounded-b bg-black/80 overflow-hidden"
 			>
+				{/* contentEditable suppresses Vimium shortcuts so all keys reach the remote browser.
+				    caret-color:transparent hides the blinking text cursor that contentEditable adds. */}
 				<canvas
 					ref={canvasRef}
 					className="h-full w-full outline-none"
 					tabIndex={0}
+					contentEditable
+					suppressContentEditableWarning
 					onPointerDown={handlePointerDown}
 					onPointerMove={handlePointerMove}
 					onPointerUp={handlePointerUp}
 					onPointerCancel={handlePointerUp}
-					onWheel={handleWheel}
 					onKeyDown={handleKeyDown}
 					onKeyUp={handleKeyUp}
-					style={{ touchAction: "none" }}
+					style={{ touchAction: "none", caretColor: "transparent", userSelect: "none" }}
 				/>
 				{connectionState !== "connected" && (
 					<div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/30">

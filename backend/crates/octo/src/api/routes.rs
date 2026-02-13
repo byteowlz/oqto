@@ -156,8 +156,7 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
         )
         .route(
             "/workspace/pi-resources",
-            get(handlers::get_workspace_pi_resources)
-                .post(handlers::apply_workspace_pi_resources),
+            get(handlers::get_workspace_pi_resources).post(handlers::apply_workspace_pi_resources),
         )
         // Workspace-based mmry routes (single-user mode)
         .route(
@@ -246,6 +245,7 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
         // Admin routes - user management
         .route("/admin/users", get(handlers::list_users))
         .route("/admin/users", post(handlers::create_user))
+        .route("/admin/users/sync-configs", post(handlers::sync_user_configs))
         .route("/admin/users/stats", get(handlers::get_user_stats))
         .route("/admin/metrics", get(handlers::admin_metrics_stream))
         .route("/admin/users/{user_id}", get(handlers::get_user))
@@ -354,7 +354,7 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
         .route("/search", get(handlers::search_sessions))
         // Scheduler (skdlr) overview
         .route("/scheduler/overview", get(handlers::scheduler_overview))
-        .route("/scheduler/jobs/:name", delete(handlers::scheduler_delete))
+        .route("/scheduler/jobs/{name}", delete(handlers::scheduler_delete))
         // RSS/Atom feed fetch proxy
         .route("/feeds/fetch", get(handlers::fetch_feed))
         // CodexBar usage (optional, requires codexbar on PATH)

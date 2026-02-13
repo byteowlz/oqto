@@ -6,7 +6,10 @@ import {
 	updateChatSession,
 } from "@/lib/api";
 import { getChatPrefetchLimit } from "@/lib/app-settings";
-import { createPiSessionId, normalizeWorkspacePath } from "@/lib/session-utils";
+import {
+	createPiSessionId,
+	normalizeWorkspacePath,
+} from "@/lib/session-utils";
 import type { WsMuxConnectionState } from "@/lib/ws-mux-types";
 import { getWsManager } from "@/lib/ws-manager";
 import {
@@ -285,17 +288,37 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 		setSelectedChatSessionId,
 	]);
 
-	const mergeOptimisticSessions = useCallback((history: ChatSession[]) => {
-		if (optimisticChatSessionsRef.current.size === 0) return history;
-		const optimistic = Array.from(optimisticChatSessionsRef.current.values());
-		const byId = new Map(history.map((s) => [s.id, s]));
-		for (const session of optimistic) {
-			if (!byId.has(session.id)) {
-				byId.set(session.id, session);
+	const mergeOptimisticSessions = useCallback(
+		(history: ChatSession[]) => {
+			if (optimisticChatSessionsRef.current.size === 0) return history;
+			const optimistic = Array.from(
+				optimisticChatSessionsRef.current.values(),
+			);
+			const byId = new Map(history.map((s) => [s.id, s]));
+			const byReadable = new Map(
+				history
+					.filter((s) => s.readable_id?.trim())
+					.map((s) => [s.readable_id.trim(), s]),
+			);
+
+			for (const session of optimistic) {
+				const replacement = byReadable.get(session.id);
+				if (replacement) {
+					optimisticChatSessionsRef.current.delete(session.id);
+					optimisticSelectionRef.current.delete(session.id);
+					if (selectedChatSessionId === session.id) {
+						setSelectedChatSessionId(replacement.id);
+					}
+					continue;
+				}
+				if (!byId.has(session.id)) {
+					byId.set(session.id, session);
+				}
 			}
-		}
-		return Array.from(byId.values());
-	}, []);
+			return Array.from(byId.values());
+		},
+		[selectedChatSessionId, setSelectedChatSessionId],
+	);
 
 	const normalizeHistory = useCallback((history: ChatSession[]) => {
 		return history.map((session) => {

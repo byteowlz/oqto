@@ -20,6 +20,7 @@ mod agent;
 mod agent_browser;
 mod agent_rpc;
 mod api;
+mod audit;
 mod auth;
 mod canon;
 mod container;
@@ -77,7 +78,6 @@ fn try_main() -> Result<()> {
 
     match cli.command {
         Command::Serve(cmd) => async_main(ctx, cmd),
-        Command::Run(cmd) => handle_run(&mut ctx, cmd),
         Command::Init(cmd) => handle_init(&ctx, cmd),
         Command::Config { command } => handle_config(&ctx, command),
         Command::InviteCodes { command } => async_invite_codes(ctx, command),
@@ -160,8 +160,6 @@ enum ColorOption {
 enum Command {
     /// Start the HTTP API server
     Serve(ServeCommand),
-    /// Execute the CLI's primary behavior
-    Run(RunCommand),
     /// Create config directories and default files
     Init(InitCommand),
     /// Inspect and manage configuration
@@ -209,16 +207,6 @@ struct ServeCommand {
     /// Run in local mode (no containers, spawn processes directly)
     #[arg(long = "local-mode")]
     local_mode: bool,
-}
-
-#[derive(Debug, Clone, Args)]
-struct RunCommand {
-    /// Named task to execute
-    #[arg(value_name = "TASK", default_value = "default")]
-    task: String,
-    /// Override the profile to run under
-    #[arg(long, value_name = "PROFILE")]
-    profile: Option<String>,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -1184,28 +1172,6 @@ impl Default for LocalModeConfig {
     }
 }
 
-fn handle_run(ctx: &mut RuntimeContext, cmd: RunCommand) -> Result<()> {
-    let effective = ctx.config.clone().with_profile_override(cmd.profile);
-    let output = if ctx.common.json {
-        serde_json::to_string_pretty(&effective).context("serializing run output to JSON")?
-    } else if ctx.common.yaml {
-        serde_yaml::to_string(&effective).context("serializing run output to YAML")?
-    } else {
-        format!(
-            "Running task '{}' with profile '{}' (parallelism: {})",
-            cmd.task,
-            effective.profile,
-            effective
-                .runtime
-                .parallelism
-                .unwrap_or_else(default_parallelism)
-        )
-    };
-
-    println!("{output}");
-    Ok(())
-}
-
 fn handle_init(ctx: &RuntimeContext, cmd: InitCommand) -> Result<()> {
     if ctx.paths.config_file.exists() && !(cmd.force || ctx.common.assume_yes) {
         return Err(anyhow!(
@@ -1994,6 +1960,12 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         warn!("Startup cleanup failed (continuing anyway): {:?}", e);
     }
 
+    // Clean up stale browser daemon processes from previous runs
+    {
+        let browser_mgr = agent_browser::AgentBrowserManager::new(ctx.config.agent_browser.clone());
+        browser_mgr.cleanup_all_sessions();
+    }
+
     // Start idle session cleanup background task
     // Check every 5 minutes, stop sessions idle for 30 minutes
     let session_service_arc = std::sync::Arc::new(session_service.clone());
@@ -2120,6 +2092,8 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         local_service_url: ctx.config.mmry.local_service_url.clone(),
         host_service_url: ctx.config.mmry.host_service_url.clone(),
         host_api_key: ctx.config.mmry.host_api_key.clone(),
+        default_model: ctx.config.mmry.default_model.clone(),
+        dimension: ctx.config.mmry.dimension,
         user_base_port: ctx.config.mmry.user_base_port,
         user_port_range: ctx.config.mmry.user_port_range,
     };
@@ -2356,10 +2330,11 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     }
 
     // Initialize hstry (chat history) service
-    if ctx.config.hstry.enabled {
+    let multi_user = ctx.config.local.linux_users.enabled && !ctx.config.local.single_user;
+    if multi_user {
+        info!("Skipping shared hstry client in multi-user mode (per-user hstry via runner)");
+    } else if ctx.config.hstry.enabled {
         // Always auto-start hstry daemon and connect.
-        // In multi-user mode, per-user hstry instances may also be spawned via
-        // runner, but the main octo process needs its own client for session listing.
         let hstry_config = hstry::HstryServiceConfig {
             binary: ctx.config.hstry.binary.clone(),
             auto_start: true,
@@ -2438,6 +2413,14 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         }
 
         info!("Shutdown signal received, stopping containers...");
+
+        // Kill browser daemon processes
+        {
+            let browser_mgr = agent_browser::AgentBrowserManager::new(
+                agent_browser::AgentBrowserConfig { enabled: true, ..Default::default() },
+            );
+            browser_mgr.cleanup_all_sessions();
+        }
 
         // Stop all running containers/sessions if enabled
         if stop_sessions_on_shutdown {

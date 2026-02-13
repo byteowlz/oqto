@@ -229,6 +229,174 @@ bump version:
 add:
     git add --all -- ':!uploads/'
 
+# Update external dependencies manifest from local repos and git tags
+update-deps:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    ROOT="$(pwd)"
+    MANIFEST="$ROOT/dependencies.toml"
+
+    echo "Updating dependencies.toml..."
+
+    # Get current Octo version
+    OCTO_VERSION=$(grep -m1 '^version = ' "$ROOT/backend/Cargo.toml" | sed 's/version = "\(.*\)"/\1/')
+
+    # Array of byteowlz repos with their TOML section paths
+    declare -A REPOS=(
+        ["hstry"]="byteowlz.hstry"
+        ["mmry"]="byteowlz.mmry"
+        ["trx"]="byteowlz.trx"
+        ["agntz"]="byteowlz.agntz"
+        ["mailz"]="byteowlz.mailz"
+        ["sldr"]="byteowlz.sldr"
+        ["eaRS"]="byteowlz.eaRS"
+    )
+
+    # Update versions from local repos
+    for repo in "${!REPOS[@]}"; do
+        REPO_PATH="$ROOT/../$repo"
+        TOML_PATH="${REPOS[$repo]}"
+
+        if [[ -f "$REPO_PATH/Cargo.toml" ]]; then
+            VERSION=$(grep -m1 '^version = ' "$REPO_PATH/Cargo.toml" | sed 's/version = "\(.*\)"/\1/')
+            # Update in place using sed
+            sed -i "s/^\($TOML_PATH =\) \"[^\"]*\"/\1 \"$VERSION\"/" "$MANIFEST"
+            echo "  $repo: $VERSION"
+        else
+            echo "  $repo: (not found locally, keeping existing value)"
+        fi
+    done
+
+    # Update Octo version
+    sed -i 's/^\(octo.version =\) "[^"]*"/\1 "'"$OCTO_VERSION"'"/' "$MANIFEST"
+    echo "  octo: $OCTO_VERSION"
+
+    # Optional: Fetch latest tags for external repos (requires network)
+    if command -v git &> /dev/null; then
+        echo ""
+        echo "Fetching latest tags from GitHub..."
+
+        # kokorox (byteowlz/kokorox)
+        if git ls-remote --tags https://github.com/byteowlz/kokorox &> /dev/null; then
+            KOKOROX_LATEST=$(git ls-remote --tags https://github.com/byteowlz/kokorox | tail -1 | sed 's/.*refs\/tags\///' | sed 's/\^{}//')
+            if [[ -n "$KOKOROX_LATEST" ]]; then
+                sed -i 's/^\(kokorox =\) "[^"]*"/\1 "'"$KOKOROX_LATEST"'"/' "$MANIFEST"
+                echo "  kokorox: $KOKOROX_LATEST (from GitHub)"
+            fi
+        fi
+
+        # Note: pi and sx are not fetched from GitHub
+        # - pi: Installed from crates.io, repo doesn't exist on GitHub
+        # - sx: Repo exists but has no tags yet
+    fi
+
+    echo ""
+    echo "Done: dependencies.toml updated"
+
+# Check for updates to external dependencies
+check-updates:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    echo "Checking for external dependency updates..."
+    echo ""
+
+    if ! command -v git &> /dev/null; then
+        echo "Error: git is required"
+        exit 1
+    fi
+
+    # Helper function to get version safely
+    get_version() {
+        local file="$1"
+        grep -m1 '^version = ' "$file" 2>/dev/null | sed 's/version = "\(.*\)"/\1/' || echo ""
+    }
+
+    # Array of repos to check
+    # Note: pi and sx are excluded - pi is from crates.io, sx has no tags
+    declare -A REPOS=(
+        ["byteowlz/hstry"]="hstry"
+        ["byteowlz/mmry"]="mmry"
+        ["byteowlz/trx"]="trx"
+        ["byteowlz/agntz"]="agntz"
+        ["byteowlz/mailz"]="mailz"
+        ["byteowlz/sldr"]="sldr"
+        ["byteowlz/eaRS"]="eaRS"
+        ["byteowlz/kokorox"]="kokorox"
+    )
+
+    for repo_path in "${!REPOS[@]}"; do
+        REPO_NAME="${REPOS[$repo_path]}"
+        REPO_DIR="../$REPO_NAME"
+
+        echo "=== $REPO_NAME ==="
+
+        # Get local version if repo exists locally
+        if [[ -f "$REPO_DIR/Cargo.toml" ]]; then
+            LOCAL_VERSION=$(get_version "$REPO_DIR/Cargo.toml")
+
+            # If workspace Cargo.toml doesn't have a version, check member crates
+            if [[ -z "$LOCAL_VERSION" ]]; then
+                # For workspaces, try to find version in the first member crate
+                FIRST_MEMBER=$(grep '^members' "$REPO_DIR/Cargo.toml" | head -1 | sed 's/.*\[\"\([^\"]*\).*/\1/')
+                if [[ -n "$FIRST_MEMBER" && -f "$REPO_DIR/$FIRST_MEMBER/Cargo.toml" ]]; then
+                    LOCAL_VERSION=$(get_version "$REPO_DIR/$FIRST_MEMBER/Cargo.toml")
+                fi
+            fi
+
+            # If still no version, mark as unknown
+            if [[ -z "$LOCAL_VERSION" ]]; then
+                LOCAL_VERSION="unknown"
+            fi
+
+            echo "  Local: $LOCAL_VERSION"
+
+            # Get latest tag from GitHub
+            if REMOTE_TAG=$(git ls-remote --tags https://github.com/$repo_path 2>/dev/null | tail -1 | sed 's/.*refs\/tags\///' | sed 's/\^{}//'); then
+                if [[ -n "$REMOTE_TAG" ]]; then
+                    echo "  Remote: $REMOTE_TAG"
+
+                    # Normalize versions (remove 'v' prefix for comparison)
+                    if [[ "$LOCAL_VERSION" != "unknown" ]]; then
+                        LOCAL_NORMALIZED="${LOCAL_VERSION#v}"
+                        REMOTE_NORMALIZED="${REMOTE_TAG#v}"
+
+                        if [[ "$LOCAL_NORMALIZED" != "$REMOTE_NORMALIZED" ]]; then
+                            # Use simple string comparison - not perfect for semver but works for basic checks
+                            if [[ "$LOCAL_NORMALIZED" < "$REMOTE_NORMALIZED" ]]; then
+                                echo "  Status: UPDATE AVAILABLE"
+                            else
+                                echo "  Status: AHEAD of remote"
+                            fi
+                        else
+                            echo "  Status: Up to date"
+                        fi
+                    else
+                        echo "  Status: (cannot compare - local version unknown)"
+                    fi
+                else
+                    echo "  Remote: (no tags found)"
+                fi
+            else
+                echo "  Remote: (failed to fetch)"
+            fi
+        else
+            echo "  Local: (not found locally)"
+
+            # Still show remote version
+            if REMOTE_TAG=$(git ls-remote --tags https://github.com/$repo_path 2>/dev/null | tail -1 | sed 's/.*refs\/tags\///' | sed 's/\^{}//'); then
+                if [[ -n "$REMOTE_TAG" ]]; then
+                    echo "  Remote: $REMOTE_TAG"
+                fi
+            fi
+        fi
+
+        echo ""
+    done
+
+    echo "Note: pi is installed from npm as @mariozechner/pi-coding-agent, sx has no tags yet"
+
 # Release: bump version, commit, and tag
 # Usage: just release patch|minor|major|x.y.z
 release version:

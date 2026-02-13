@@ -10,6 +10,10 @@ profile = "default"
 level = "info"
 # Optional path for log file output; supports ~ and environment variables.
 # file = "~/Library/Logs/octo.log"
+# Enable JSONL audit logging for user events.
+audit_enabled = true
+# Optional path for audit log output; defaults to $XDG_STATE_HOME/octo/audit.log.jsonl
+# audit_file = "$XDG_STATE_HOME/octo/audit.log.jsonl"
 
 [runtime]
 # Override the worker pool size; defaults to logical CPU count when unset.
@@ -195,6 +199,7 @@ dev_mode = true
 
 # CORS allowed origins (defaults to localhost:3000 and localhost:8080 in dev mode)
 # allowed_origins = ["https://your-domain.com"]
+# allowed_origins = ["http://archlinux:3000", "http://archlinux:8080"]
 
 # Development users (only used when dev_mode = true)
 # These are created with bcrypt-hashed passwords at startup

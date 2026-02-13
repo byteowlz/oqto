@@ -83,6 +83,8 @@ export type ChatMessagePart = {
 	text: string | null;
 	/** Tool name (for tool parts) */
 	tool_name: string | null;
+	/** Tool call id (for tool parts) */
+	tool_call_id?: string | null;
 	/** Tool input (for tool parts) */
 	tool_input: unknown | null;
 	/** Tool output (for tool parts) */

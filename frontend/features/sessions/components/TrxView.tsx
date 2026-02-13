@@ -730,6 +730,12 @@ export const TrxView = memo(function TrxView({
 		setSearchQueryInput(searchQuery);
 	}, [searchQuery]);
 
+	useEffect(() => {
+		if (filterStatus === "closed" && hideClosed) {
+			setHideClosed(false);
+		}
+	}, [filterStatus, hideClosed]);
+
 	const loadIssues = useCallback(async () => {
 		if (!workspacePath) {
 			setLoading(false);
@@ -819,7 +825,12 @@ export const TrxView = memo(function TrxView({
 	const filterIssues = useCallback(
 		(issueList: TrxIssue[]): TrxIssue[] => {
 			return issueList.filter((issue) => {
-				if (hideClosed && issue.status === "closed") return false;
+				if (
+					hideClosed &&
+					issue.status === "closed" &&
+					filterStatus !== "closed"
+				)
+					return false;
 				if (filterStatus !== "all" && issue.status !== filterStatus)
 					return false;
 				if (filterType !== "all" && issue.issue_type !== filterType)

@@ -51,6 +51,9 @@ pub struct PiManagerConfig {
     pub sandbox_config: Option<SandboxConfig>,
     /// Runner identifier (human-readable).
     pub runner_id: String,
+    /// Directory for persisting the model cache across restarts.
+    /// Each workdir gets its own JSON file: `<cache_dir>/models/<hash>.json`
+    pub model_cache_dir: Option<PathBuf>,
 }
 
 impl Default for PiManagerConfig {
@@ -59,6 +62,9 @@ impl Default for PiManagerConfig {
         let data_dir = std::env::var("XDG_DATA_HOME")
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from(&home).join(".local").join("share"));
+        let state_dir = std::env::var("XDG_STATE_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from(&home).join(".local").join("state"));
 
         Self {
             pi_binary: PathBuf::from(home.clone()).join(".bun/bin/pi"),
@@ -68,8 +74,20 @@ impl Default for PiManagerConfig {
             hstry_db_path: Some(data_dir.join("hstry").join("hstry.db")),
             sandbox_config: None,
             runner_id: "local".to_string(),
+            model_cache_dir: Some(state_dir.join("octo").join("model-cache")),
         }
     }
+}
+
+// ============================================================================
+// Model Cache Persistence
+// ============================================================================
+
+/// On-disk format for a persisted model cache entry.
+#[derive(Debug, Serialize, Deserialize)]
+struct ModelCacheEntry {
+    workdir: String,
+    models: serde_json::Value,
 }
 
 // ============================================================================
@@ -387,6 +405,8 @@ pub struct PiSessionManager {
     /// Cached model lists per workdir (populated when any session in that workdir fetches models).
     /// Key: canonical workdir path, Value: list of available models as JSON.
     model_cache: RwLock<HashMap<String, serde_json::Value>>,
+    /// Map Pi native session IDs back to the runner session key.
+    session_aliases: Arc<RwLock<HashMap<String, String>>>,
 }
 
 impl PiSessionManager {
@@ -398,13 +418,17 @@ impl PiSessionManager {
         // The actual gRPC connection is established lazily on first use.
         let hstry_client = config.hstry_db_path.as_ref().map(|_| HstryClient::new());
 
+        // Load persisted model cache from disk
+        let model_cache = Self::load_model_cache_from_disk(config.model_cache_dir.as_deref());
+
         Arc::new(Self {
             sessions: RwLock::new(HashMap::new()),
             config,
             shutdown_tx,
             hstry_client,
             creating: tokio::sync::Mutex::new(std::collections::HashSet::new()),
-            model_cache: RwLock::new(HashMap::new()),
+            model_cache: RwLock::new(model_cache),
+            session_aliases: Arc::new(RwLock::new(HashMap::new())),
         })
     }
 
@@ -439,15 +463,9 @@ impl PiSessionManager {
         // find an existing JSONL session file for this session ID. This
         // enables resuming external sessions (started in Pi directly,
         // not through Octo) so the agent has the full conversation context.
-        let continue_session = config
-            .continue_session
-            .clone()
-            .or_else(|| {
-                crate::pi::session_files::find_session_file(
-                    &session_id,
-                    Some(&config.cwd),
-                )
-            });
+        let continue_session = config.continue_session.clone().or_else(|| {
+            crate::pi::session_files::find_session_file(&session_id, Some(&config.cwd))
+        });
 
         if continue_session.is_some() && config.continue_session.is_none() {
             info!(
@@ -464,7 +482,10 @@ impl PiSessionManager {
             .cloned();
 
         let browser_session_id = browser_session_name(&session_id);
-        let socket_dir_override = config.env.get("AGENT_BROWSER_SOCKET_DIR").map(String::as_str);
+        let socket_dir_override = config
+            .env
+            .get("AGENT_BROWSER_SOCKET_DIR")
+            .map(String::as_str);
         let session_socket_dir =
             agent_browser_session_dir(&browser_session_id, socket_dir_override);
         if let Err(err) = std::fs::create_dir_all(&session_socket_dir) {
@@ -475,10 +496,9 @@ impl PiSessionManager {
             );
         }
         #[cfg(unix)]
-        if let Err(err) = std::fs::set_permissions(
-            &session_socket_dir,
-            std::fs::Permissions::from_mode(0o700),
-        ) {
+        if let Err(err) =
+            std::fs::set_permissions(&session_socket_dir, std::fs::Permissions::from_mode(0o700))
+        {
             warn!(
                 "Failed to set permissions for agent-browser socket dir {}: {}",
                 session_socket_dir.display(),
@@ -508,7 +528,10 @@ impl PiSessionManager {
             if sandbox_config.enabled {
                 // Merge with workspace-specific config (can only add restrictions)
                 let mut effective_config = sandbox_config.with_workspace_config(&config.cwd);
-                if !effective_config.extra_rw_bind.contains(&session_socket_dir_str) {
+                if !effective_config
+                    .extra_rw_bind
+                    .contains(&session_socket_dir_str)
+                {
                     effective_config
                         .extra_rw_bind
                         .push(session_socket_dir_str.clone());
@@ -616,8 +639,7 @@ impl PiSessionManager {
         // Pending client_id for optimistic message matching (shared between command and reader tasks)
         let pending_client_id: PendingClientId = Arc::new(RwLock::new(None));
         // hstry external_id -- starts as Octo UUID, updated to Pi native ID by reader task
-        let hstry_external_id: HstryExternalId =
-            Arc::new(RwLock::new(session_id.clone()));
+        let hstry_external_id: HstryExternalId = Arc::new(RwLock::new(session_id.clone()));
 
         // Spawn stdout reader task
         let reader_handle = {
@@ -631,6 +653,7 @@ impl PiSessionManager {
             let pending_client_id = Arc::clone(&pending_client_id);
             let cmd_tx_for_reader = cmd_tx.clone();
             let hstry_eid = Arc::clone(&hstry_external_id);
+            let session_aliases = Arc::clone(&self.session_aliases);
 
             let runner_id = self.config.runner_id.clone();
             tokio::spawn(async move {
@@ -647,6 +670,7 @@ impl PiSessionManager {
                     pending_client_id,
                     cmd_tx_for_reader,
                     hstry_eid,
+                    session_aliases,
                     runner_id,
                 )
                 .await;
@@ -715,13 +739,9 @@ impl PiSessionManager {
         session_id: &str,
         config: PiSessionConfig,
     ) -> Result<String> {
-        // Fast path: session already exists.
-        {
-            let sessions = self.sessions.read().await;
-            if sessions.contains_key(session_id) {
-                debug!("Session '{}' already exists", session_id);
-                return Ok(session_id.to_string());
-            }
+        if let Some(existing) = self.resolve_session_key(session_id).await {
+            debug!("Session '{}' already exists (alias '{}')", session_id, existing);
+            return Ok(existing);
         }
 
         // Acquire creation lock to prevent concurrent spawns for the same ID.
@@ -729,12 +749,9 @@ impl PiSessionManager {
             let mut creating = self.creating.lock().await;
             // Re-check under lock: another caller may have finished creating
             // between our read above and acquiring this lock.
-            {
-                let sessions = self.sessions.read().await;
-                if sessions.contains_key(session_id) {
-                    debug!("Session '{}' created by concurrent caller", session_id);
-                    return Ok(session_id.to_string());
-                }
+            if let Some(existing) = self.resolve_session_key(session_id).await {
+                debug!("Session '{}' created by concurrent caller", session_id);
+                return Ok(existing);
             }
             if creating.contains(session_id) {
                 // Another task is currently creating this session. Return
@@ -815,13 +832,20 @@ impl PiSessionManager {
 
     /// List all sessions.
     pub async fn list_sessions(&self) -> Vec<PiSessionInfo> {
-        let snapshots: Vec<(String, Arc<RwLock<PiSessionState>>, Instant, usize)> = {
+        let snapshots: Vec<(
+            String,
+            Arc<RwLock<String>>,
+            Arc<RwLock<PiSessionState>>,
+            Instant,
+            usize,
+        )> = {
             let sessions = self.sessions.read().await;
             sessions
                 .values()
                 .map(|s| {
                     (
                         s.id.clone(),
+                        Arc::clone(&s.hstry_external_id),
                         Arc::clone(&s.state),
                         s.last_activity,
                         s.subscriber_count(),
@@ -831,10 +855,12 @@ impl PiSessionManager {
         };
 
         let mut infos = Vec::with_capacity(snapshots.len());
-        for (id, state, last_activity, subscriber_count) in snapshots {
+        for (id, external_id, state, last_activity, subscriber_count) in snapshots {
             let current_state = *state.read().await;
+            let resolved_id = external_id.read().await.clone();
+            let session_id = if resolved_id.is_empty() { id } else { resolved_id };
             infos.push(PiSessionInfo {
-                session_id: id,
+                session_id,
                 state: current_state,
                 last_activity: last_activity.elapsed().as_millis() as i64,
                 subscriber_count,
@@ -1085,61 +1111,281 @@ impl PiSessionManager {
             } else if data.is_array() {
                 data.clone()
             } else {
-                warn!(
-                    "GetAvailableModels: unexpected data shape, returning empty"
-                );
+                warn!("GetAvailableModels: unexpected data shape, returning empty");
                 serde_json::Value::Array(vec![])
             };
 
-            // Cache by workdir so dead sessions can still list models
+            // Cache by workdir so dead sessions can still list models, and persist to disk
             if models_array.as_array().is_some_and(|a| !a.is_empty()) {
-                let mut cache = self.model_cache.write().await;
-                cache.insert(workdir, models_array.clone());
+                {
+                    let mut cache = self.model_cache.write().await;
+                    cache.insert(workdir.clone(), models_array.clone());
+                }
+                Self::persist_model_cache_to_disk(
+                    self.config.model_cache_dir.as_deref(),
+                    &workdir,
+                    &models_array,
+                );
             }
 
             Ok(models_array)
         } else {
-            // No live session — try workdir cache first, then hstry lookup
-            if let Some(workdir) = workdir.and_then(|value| {
-                let trimmed = value.trim();
-                (!trimmed.is_empty()).then_some(trimmed)
-            }) {
-                if let Some(models) = self.get_cached_models_for_workdir(workdir).await {
+            // No live session — try workdir cache first, then hstry lookup,
+            // then spawn an ephemeral Pi to fetch models
+            let resolved_workdir = workdir
+                .and_then(|value| {
+                    let trimmed = value.trim();
+                    (!trimmed.is_empty()).then_some(trimmed.to_string())
+                })
+                .or_else(|| {
+                    // Try to resolve workdir from the session via hstry (blocking-safe
+                    // because we're already in an async context)
+                    None
+                });
+
+            if let Some(ref wd) = resolved_workdir {
+                if let Some(models) = self.get_cached_models_for_workdir(wd).await {
                     return Ok(models);
                 }
             }
-            self.get_cached_models_for_session(session_id).await
-        }
-    }
 
-    /// Look up cached models for a session by finding its workdir.
-    /// Falls back to returning the first available cache entry if we can't determine the workdir.
-    async fn get_cached_models_for_session(&self, session_id: &str) -> Result<serde_json::Value> {
-        // Try to determine workdir from hstry
-        if let Some(ref hstry) = self.hstry_client {
-            let eid = self.hstry_external_id(session_id).await;
-            if let Ok(Some(session)) =
-                crate::history::repository::get_session_via_grpc(hstry, &eid).await
-            {
-                let workdir = session.workspace_path;
-                let cache = self.model_cache.read().await;
-                if let Some(models) = cache.get(&workdir) {
-                    return Ok(models.clone());
+            // Try hstry lookup to find workdir
+            let hstry_workdir = self.resolve_workdir_from_hstry(session_id).await;
+            if let Some(ref wd) = hstry_workdir {
+                if let Some(models) = self.get_cached_models_for_workdir(wd).await {
+                    return Ok(models);
+                }
+            }
+
+            // No cache hit — spawn ephemeral Pi to fetch models
+            let target_workdir = resolved_workdir
+                .or(hstry_workdir)
+                .unwrap_or_else(|| self.config.default_cwd.to_string_lossy().to_string());
+
+            match self.fetch_models_ephemeral(&target_workdir).await {
+                Ok(models) => {
+                    if models.as_array().is_some_and(|a| !a.is_empty()) {
+                        {
+                            let mut cache = self.model_cache.write().await;
+                            cache.insert(target_workdir.clone(), models.clone());
+                        }
+                        Self::persist_model_cache_to_disk(
+                            self.config.model_cache_dir.as_deref(),
+                            &target_workdir,
+                            &models,
+                        );
+                    }
+                    Ok(models)
+                }
+                Err(e) => {
+                    warn!(
+                        "Ephemeral model fetch failed for '{}': {}",
+                        target_workdir, e
+                    );
+                    Ok(serde_json::Value::Array(vec![]))
                 }
             }
         }
+    }
 
-        // Couldn't find a specific workdir match — return empty
-        Ok(serde_json::Value::Array(vec![]))
+    /// Resolve the workdir for a session by looking it up in hstry.
+    async fn resolve_workdir_from_hstry(&self, session_id: &str) -> Option<String> {
+        let hstry = self.hstry_client.as_ref()?;
+        let eid = self.hstry_external_id(session_id).await;
+        if let Ok(Some(session)) =
+            crate::history::repository::get_session_via_grpc(hstry, &eid).await
+        {
+            let wd = session.workspace_path;
+            if !wd.is_empty() {
+                return Some(wd);
+            }
+        }
+        None
     }
 
     /// Get cached models for a specific workdir (called directly by runner for dead sessions).
-    pub async fn get_cached_models_for_workdir(
-        &self,
-        workdir: &str,
-    ) -> Option<serde_json::Value> {
+    pub async fn get_cached_models_for_workdir(&self, workdir: &str) -> Option<serde_json::Value> {
         let cache = self.model_cache.read().await;
         cache.get(workdir).cloned()
+    }
+
+    // ========================================================================
+    // Model cache persistence
+    // ========================================================================
+
+    /// Compute a stable filename for a workdir path.
+    fn model_cache_filename(workdir: &str) -> String {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut hasher = DefaultHasher::new();
+        workdir.hash(&mut hasher);
+        format!("{:016x}.json", hasher.finish())
+    }
+
+    /// Load all persisted model cache files from disk.
+    fn load_model_cache_from_disk(
+        cache_dir: Option<&std::path::Path>,
+    ) -> HashMap<String, serde_json::Value> {
+        let Some(dir) = cache_dir else {
+            return HashMap::new();
+        };
+        let mut map = HashMap::new();
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return map;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().is_some_and(|e| e == "json") {
+                match std::fs::read_to_string(&path) {
+                    Ok(contents) => match serde_json::from_str::<ModelCacheEntry>(&contents) {
+                        Ok(entry) => {
+                            info!(
+                                "Loaded cached models for workdir '{}' ({} models)",
+                                entry.workdir,
+                                entry.models.as_array().map(|a| a.len()).unwrap_or(0)
+                            );
+                            map.insert(entry.workdir, entry.models);
+                        }
+                        Err(e) => {
+                            warn!("Failed to parse model cache file {:?}: {}", path, e);
+                        }
+                    },
+                    Err(e) => {
+                        warn!("Failed to read model cache file {:?}: {}", path, e);
+                    }
+                }
+            }
+        }
+        if !map.is_empty() {
+            info!("Loaded model cache for {} workdir(s) from disk", map.len());
+        }
+        map
+    }
+
+    /// Persist the model cache for a single workdir to disk.
+    fn persist_model_cache_to_disk(
+        cache_dir: Option<&std::path::Path>,
+        workdir: &str,
+        models: &serde_json::Value,
+    ) {
+        let Some(dir) = cache_dir else {
+            return;
+        };
+        if let Err(e) = std::fs::create_dir_all(dir) {
+            warn!("Failed to create model cache dir {:?}: {}", dir, e);
+            return;
+        }
+        let filename = Self::model_cache_filename(workdir);
+        let path = dir.join(filename);
+        let entry = ModelCacheEntry {
+            workdir: workdir.to_string(),
+            models: models.clone(),
+        };
+        match serde_json::to_string_pretty(&entry) {
+            Ok(json) => {
+                if let Err(e) = std::fs::write(&path, json) {
+                    warn!("Failed to write model cache file {:?}: {}", path, e);
+                }
+            }
+            Err(e) => {
+                warn!("Failed to serialize model cache for '{}': {}", workdir, e);
+            }
+        }
+    }
+
+    /// Spawn an ephemeral Pi RPC process to fetch models for a workdir.
+    /// Used when the cache is empty for a workdir and no live session exists.
+    async fn fetch_models_ephemeral(&self, workdir: &str) -> Result<serde_json::Value> {
+        // Validate workdir exists before spawning
+        let workdir_path = std::path::Path::new(workdir);
+        if !workdir_path.is_dir() {
+            anyhow::bail!("Workdir '{}' does not exist", workdir);
+        }
+
+        info!(
+            "Spawning ephemeral Pi process to fetch models for '{}'",
+            workdir
+        );
+
+        let mut cmd = Command::new(&self.config.pi_binary);
+        cmd.args(["--mode", "rpc", "--no-session"])
+            .current_dir(workdir)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null());
+
+        let mut child = cmd
+            .spawn()
+            .context("Failed to spawn ephemeral Pi process")?;
+        let mut stdin = child.stdin.take().context("No stdin on ephemeral Pi")?;
+        let stdout = child.stdout.take().context("No stdout on ephemeral Pi")?;
+
+        let mut reader = BufReader::new(stdout).lines();
+
+        // Wait for Pi to emit at least one line (it outputs extension_ui_request events
+        // during init before it's ready to accept commands)
+        let result = tokio::time::timeout(Duration::from_secs(30), async {
+            let mut got_first_line = false;
+            loop {
+                let line = reader
+                    .next_line()
+                    .await
+                    .context("Failed to read from ephemeral Pi")?;
+                let Some(line) = line else {
+                    anyhow::bail!("Ephemeral Pi stdout closed without response");
+                };
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+
+                // Once we see the first output, Pi is initializing. Send our command
+                // after the first line so Pi's stdin reader is ready.
+                if !got_first_line {
+                    got_first_line = true;
+                    let pi_cmd = PiCommand::GetAvailableModels {
+                        id: Some("ephemeral_get_models".to_string()),
+                    };
+                    Self::write_command(&mut stdin, &pi_cmd).await?;
+                }
+
+                match PiMessage::parse(trimmed) {
+                    Ok(PiMessage::Response(resp)) => {
+                        if resp.id.as_deref() == Some("ephemeral_get_models") {
+                            if resp.success {
+                                if let Some(data) = resp.data {
+                                    let models = if let Some(inner) = data.get("models") {
+                                        inner.clone()
+                                    } else if data.is_array() {
+                                        data
+                                    } else {
+                                        serde_json::Value::Array(vec![])
+                                    };
+                                    return Ok(models);
+                                }
+                            } else {
+                                let err_msg =
+                                    resp.error.unwrap_or_else(|| "unknown error".to_string());
+                                anyhow::bail!("Ephemeral Pi get_models failed: {}", err_msg);
+                            }
+                        }
+                    }
+                    Ok(PiMessage::Event(_)) => {
+                        // Ignore events (extension_ui_request, session_ready, etc.)
+                    }
+                    Err(e) => {
+                        debug!("Ephemeral Pi: failed to parse line: {}", e);
+                    }
+                }
+            }
+        })
+        .await
+        .map_err(|_| anyhow::anyhow!("Timeout waiting for ephemeral Pi models"))??;
+
+        // Kill the ephemeral process
+        let _ = child.kill().await;
+
+        Ok(result)
     }
 
     /// Get session statistics.
@@ -1681,22 +1927,30 @@ impl PiSessionManager {
 
     /// Close a session.
     pub async fn close_session(&self, session_id: &str) -> Result<()> {
-        info!("Closing session '{}'", session_id);
+        let resolved_id = self.resolve_session_key(session_id).await;
+        let resolved_id = resolved_id.as_deref().unwrap_or(session_id);
+        info!("Closing session '{}'", resolved_id);
 
         // Send close command
         {
             let sessions = self.sessions.read().await;
-            if let Some(session) = sessions.get(session_id) {
+            if let Some(session) = sessions.get(resolved_id) {
                 let _ = session.cmd_tx.send(PiSessionCommand::Close).await;
             }
         }
 
         // Remove from sessions map
         let mut sessions = self.sessions.write().await;
-        if let Some(mut session) = sessions.remove(session_id) {
+        if let Some(mut session) = sessions.remove(resolved_id) {
             // Kill the process if still running
             let _ = session.process.kill().await;
-            info!("Session '{}' closed", session_id);
+            info!("Session '{}' closed", resolved_id);
+        }
+
+        let mut aliases = self.session_aliases.write().await;
+        aliases.retain(|_, value| value != resolved_id);
+        if resolved_id != session_id {
+            aliases.remove(session_id);
         }
 
         Ok(())
@@ -1748,15 +2002,19 @@ impl PiSessionManager {
 
     /// Send a command to a session.
     async fn send_command(&self, session_id: &str, cmd: PiSessionCommand) -> Result<()> {
+        let resolved_id = self
+            .resolve_session_key(session_id)
+            .await
+            .ok_or_else(|| anyhow::anyhow!("Session '{}' not found", session_id))?;
         let (cmd_tx, state) = {
             let sessions = self.sessions.read().await;
             let session = sessions
-                .get(session_id)
+                .get(&resolved_id)
                 .ok_or_else(|| anyhow::anyhow!("Session '{}' not found", session_id))?;
             (session.cmd_tx.clone(), Arc::clone(&session.state))
         };
 
-        self.validate_command(session_id, &state, &cmd).await?;
+        self.validate_command(&resolved_id, &state, &cmd).await?;
 
         cmd_tx
             .send(cmd)
@@ -1764,6 +2022,17 @@ impl PiSessionManager {
             .context("Failed to send command to session")?;
 
         Ok(())
+    }
+
+    async fn resolve_session_key(&self, session_id: &str) -> Option<String> {
+        {
+            let sessions = self.sessions.read().await;
+            if sessions.contains_key(session_id) {
+                return Some(session_id.to_string());
+            }
+        }
+        let aliases = self.session_aliases.read().await;
+        aliases.get(session_id).cloned()
     }
 
     async fn validate_command(
@@ -1880,6 +2149,7 @@ impl PiSessionManager {
         pending_client_id: PendingClientId,
         cmd_tx: mpsc::Sender<PiSessionCommand>,
         hstry_external_id: HstryExternalId,
+        session_aliases: Arc<RwLock<HashMap<String, String>>>,
         runner_id: String,
     ) {
         // Read stderr in a separate task (for debugging)
@@ -1947,9 +2217,7 @@ impl PiSessionManager {
                             // This is the authoritative external_id for hstry -- the
                             // same ID that hstry's adapter sync will use when importing
                             // the JSONL file, so using it here prevents duplicates.
-                            if let Some(pi_sid) =
-                                data.get("sessionId").and_then(|v| v.as_str())
-                            {
+                            if let Some(pi_sid) = data.get("sessionId").and_then(|v| v.as_str()) {
                                 if !pi_sid.is_empty() && !pi_native_id_known {
                                     pi_native_id_known = true;
                                     let old_eid = hstry_external_id.read().await.clone();
@@ -1988,6 +2256,13 @@ impl PiSessionManager {
                                             });
                                         }
                                     }
+
+                                    if pi_sid != session_id {
+                                        session_aliases
+                                            .write()
+                                            .await
+                                            .insert(pi_sid.to_string(), session_id.clone());
+                                    }
                                 }
                             }
 
@@ -2000,11 +2275,8 @@ impl PiSessionManager {
                                 {
                                     if !raw_name.is_empty() {
                                         let parsed =
-                                            crate::pi::session_parser::ParsedTitle::parse(
-                                                raw_name,
-                                            );
-                                        let clean_title =
-                                            parsed.display_title().to_string();
+                                            crate::pi::session_parser::ParsedTitle::parse(raw_name);
+                                        let clean_title = parsed.display_title().to_string();
                                         if !clean_title.is_empty()
                                             && last_synced_title != clean_title
                                         {
@@ -2521,12 +2793,33 @@ impl PiSessionManager {
             })
             .collect();
 
+        let octo_readable_id = if octo_session_id != hstry_external_id {
+            Some(octo_session_id.to_string())
+        } else {
+            None
+        };
+
         // Try append first (fast path -- conversation already exists)
         match client
             .append_messages(hstry_external_id, proto_messages.clone(), Some(now_ms))
             .await
         {
-            Ok(_) => {}
+            Ok(_) => {
+                if stats_delta.is_some() || octo_readable_id.is_some() {
+                    let _ = client
+                        .update_conversation(
+                            hstry_external_id,
+                            None,
+                            None,
+                            None,
+                            None,
+                            Some(metadata_json.clone()),
+                            octo_readable_id.clone(),
+                            Some("pi".to_string()),
+                        )
+                        .await;
+                }
+            }
             Err(_) => {
                 // Conversation doesn't exist yet -- create it with WriteConversation
                 let model = messages.iter().rev().find_map(|m| m.model.clone());
@@ -2535,12 +2828,6 @@ impl PiSessionManager {
                 // Use Octo UUID as readable_id so hstry lookups by Octo
                 // session_id still work (the query does external_id OR
                 // readable_id OR id matching).
-                let octo_readable_id = if octo_session_id != hstry_external_id {
-                    Some(octo_session_id.to_string())
-                } else {
-                    None
-                };
-
                 client
                     .write_conversation(
                         hstry_external_id,
@@ -2557,21 +2844,6 @@ impl PiSessionManager {
                     )
                     .await?;
             }
-        }
-
-        if stats_delta.is_some() {
-            let _ = client
-                .update_conversation(
-                    hstry_external_id,
-                    None,
-                    None,
-                    None,
-                    None,
-                    Some(metadata_json),
-                    None,
-                    Some("pi".to_string()),
-                )
-                .await;
         }
 
         info!(

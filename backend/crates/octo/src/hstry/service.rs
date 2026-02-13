@@ -84,7 +84,10 @@ impl HstryServiceManager {
 
     /// Start the hstry daemon via `hstry service start`.
     async fn start(&self) -> Result<()> {
-        info!("Starting hstry daemon via `{} service start`...", self.config.binary);
+        info!(
+            "Starting hstry daemon via `{} service start`...",
+            self.config.binary
+        );
 
         let output = Command::new(&self.config.binary)
             .args(["service", "start"])

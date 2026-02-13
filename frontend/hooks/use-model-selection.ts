@@ -51,10 +51,31 @@ export function useModelSelection(
 		[workspacePath],
 	);
 
-	const [availableModels, setAvailableModels] = useState<PiModelInfo[]>([]);
+	// Load cached models from localStorage instantly (no loading spinner)
+	const modelCacheKey = useMemo(
+		() =>
+			_normalizedWorkspacePath
+				? `octo:modelCache:${_normalizedWorkspacePath}`
+				: null,
+		[_normalizedWorkspacePath],
+	);
+
+	const [availableModels, setAvailableModels] = useState<PiModelInfo[]>(
+		() => {
+			if (!modelCacheKey) return [];
+			try {
+				const cached = localStorage.getItem(modelCacheKey);
+				if (cached) return JSON.parse(cached) as PiModelInfo[];
+			} catch {
+				// ignore
+			}
+			return [];
+		},
+	);
 	const [selectedModelRef, setSelectedModelRef] = useState<string | null>(null);
 	const [pendingModelRef, setPendingModelRef] = useState<string | null>(null);
 	const [isSwitching, setIsSwitching] = useState(false);
+	// Only show loading if we have no cached models
 	const [loading, setLoading] = useState(false);
 	const [isIdle, setIsIdle] = useState(true);
 
@@ -131,18 +152,20 @@ export function useModelSelection(
 
 		const fetchModels = (attempt: number) => {
 			if (!active) return;
-			if (attempt === 0) setLoading(true);
+			// Only show loading spinner if we have no cached models yet
+			if (attempt === 0 && availableModels.length === 0) setLoading(true);
 
 			getWsManager()
 				.agentGetAvailableModels(
 					targetSessionId,
-					hasSession ? undefined : workdir ?? undefined,
+					workdir ?? undefined,
 				)
 				.then((result) => {
 					if (!active) return;
 					const models = (result as PiModelInfo[]) ?? [];
-					if (models.length === 0 && attempt < 5 && hasSession) {
-						// Pi process may still be initializing - retry with backoff
+					if (models.length === 0 && attempt < 5) {
+						// Pi process may still be initializing (live session) or
+						// runner is spawning an ephemeral Pi to fetch models - retry with backoff
 						retryTimer = setTimeout(
 							() => fetchModels(attempt + 1),
 							1000 * (attempt + 1),
@@ -151,6 +174,17 @@ export function useModelSelection(
 					}
 					setAvailableModels(models);
 					setLoading(false);
+					// Cache to localStorage for instant display on next load
+					if (models.length > 0 && modelCacheKey) {
+						try {
+							localStorage.setItem(
+								modelCacheKey,
+								JSON.stringify(models),
+							);
+						} catch {
+							// ignore quota errors
+						}
+					}
 					if (models.length > 0) {
 						setSelectedModelRef((prev) => {
 							if (prev) return prev;
@@ -161,7 +195,7 @@ export function useModelSelection(
 				})
 				.catch(() => {
 					if (!active) return;
-					if (attempt < 5 && hasSession) {
+					if (attempt < 5) {
 						retryTimer = setTimeout(
 							() => fetchModels(attempt + 1),
 							1000 * (attempt + 1),
@@ -179,7 +213,7 @@ export function useModelSelection(
 			active = false;
 			if (retryTimer) clearTimeout(retryTimer);
 		};
-	}, [effectiveSessionId, _normalizedWorkspacePath]);
+	}, [effectiveSessionId, _normalizedWorkspacePath, modelCacheKey]);
 
 	// Derive idle/streaming state from agent events (no polling)
 	// Also handles applying pending model when agent goes idle
@@ -191,6 +225,14 @@ export function useModelSelection(
 			if (event.session_id !== effectiveSessionId) return;
 
 			const eventType = event.event as string | undefined;
+
+			if (eventType === "session.created") {
+				setIsIdle(true);
+				const pending = pendingModelRefRef.current;
+				if (pending && effectiveSessionId) {
+					void applyPendingModel(pending, effectiveSessionId, workspacePath);
+				}
+			}
 
 			// Track streaming/idle state from agent events
 			if (eventType === "agent.working" || eventType === "stream.start") {
@@ -299,6 +341,28 @@ export function useModelSelection(
 		}
 	};
 
+	const persistSelection = useCallback(
+		async (provider: string, modelId: string, modelRef: string) => {
+			persistModelSelection(modelRef);
+			try {
+				const settingsWorkspacePath = workspacePath ?? undefined;
+				await updateSettingsValues(
+					"pi-agent",
+					{
+						values: {
+							defaultProvider: provider,
+							defaultModel: modelId,
+						},
+					},
+					settingsWorkspacePath,
+				);
+			} catch (err) {
+				console.error("Failed to persist model selection:", err);
+			}
+		},
+		[persistModelSelection, workspacePath],
+	);
+
 	const selectModel = useCallback(
 		async (modelRef: string) => {
 			if (!modelRef) return;
@@ -313,22 +377,15 @@ export function useModelSelection(
 
 			if (!effectiveSessionId) {
 				setSelectedModelRef(modelRef);
-				persistModelSelection(modelRef);
-				try {
-					const settingsWorkspacePath = workspacePath ?? undefined;
-					await updateSettingsValues(
-						"pi-agent",
-						{
-							values: {
-								defaultProvider: provider,
-								defaultModel: modelId,
-							},
-						},
-						settingsWorkspacePath,
-					);
-				} catch (err) {
-					console.error("Failed to persist model selection:", err);
-				}
+				await persistSelection(provider, modelId, modelRef);
+				return;
+			}
+
+			await persistSelection(provider, modelId, modelRef);
+
+			const manager = getWsManager();
+			if (!manager.isSessionReady(effectiveSessionId)) {
+				setPendingModelRef(modelRef);
 				return;
 			}
 
@@ -337,25 +394,21 @@ export function useModelSelection(
 				setSelectedModelRef(modelRef);
 				setIsSwitching(true);
 				try {
-					await getWsManager().agentSetModel(
+					await manager.agentSetModel(
 						effectiveSessionId,
 						provider,
 						modelId,
 					);
-					const settingsWorkspacePath = workspacePath ?? undefined;
-					await updateSettingsValues(
-						"pi-agent",
-						{
-							values: {
-								defaultProvider: provider,
-								defaultModel: modelId,
-							},
-						},
-						settingsWorkspacePath,
-					);
-					persistModelSelection(modelRef);
 				} catch (err) {
 					console.error("Failed to switch model:", err);
+					const message = err instanceof Error ? err.message : String(err);
+					if (
+						message.includes("SessionNotFound") ||
+						message.includes("PiSessionNotFound") ||
+						message.includes("Response channel closed")
+					) {
+						setPendingModelRef(modelRef);
+					}
 				} finally {
 					setIsSwitching(false);
 				}
@@ -364,12 +417,7 @@ export function useModelSelection(
 				setPendingModelRef(modelRef);
 			}
 		},
-		[
-			isIdle,
-			effectiveSessionId,
-			workspacePath,
-			persistModelSelection,
-		],
+		[isIdle, effectiveSessionId, persistSelection],
 	);
 
 	const cycleModel = useCallback(async () => {

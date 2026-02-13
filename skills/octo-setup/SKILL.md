@@ -39,7 +39,6 @@ Octo is a self-hosted AI agent workspace platform with multiple deployment modes
 | Repository | Purpose | Installation |
 |------------|---------|--------------|
 | [pi](https://github.com/byteowlz/pi) | Main chat/LLM interface | `cargo install --git https://github.com/byteowlz/pi` |
-| [opencode](https://opencode.ai) | AI agent CLI for sessions | `curl -fsSL https://opencode.ai/install \| bash` |
 | [agntz](https://github.com/byteowlz/agntz) | Agent toolkit (memory, issues, mail) | `cargo install --git https://github.com/byteowlz/agntz` |
 
 ### Voice Mode (Optional)
@@ -59,8 +58,8 @@ Octo is a self-hosted AI agent workspace platform with multiple deployment modes
 
 | Repository | Purpose | Installation |
 |------------|---------|--------------|
-| [mailz](https://github.com/byteowlz/mailz) | Agent messaging and coordination | `cargo install --git https://github.com/byteowlz/mailz` |
-| [sx](https://github.com/byteowlz/sx) | External search via SearXNG | `cargo install --git https://github.com/byteowlz/sx` |
+| [sx](https://github.com/byteowlz/sx) | External search via SearXNG | `go install https://github.com/byteowlz/sx` |
+| [scrpr](https://github.com/byteowlz/scrpr) | Get website content | `go install https://github.com/byteowlz/scrpr` |
 
 ### Quick Install All Tools
 
@@ -84,6 +83,7 @@ agntz tools install mmry trx mailz sx
 ```
 
 The script handles:
+
 - OS detection and prerequisite installation
 - User mode selection (single/multi)
 - Backend mode selection (local/container)
@@ -325,6 +325,7 @@ sudo -H ./utils/searxng.sh install all
 ### Option 2: Manual Step-by-Step
 
 **Ubuntu/Debian:**
+
 ```bash
 # Install dependencies
 sudo apt-get install -y python3-dev python3-babel python3-venv \
@@ -370,18 +371,21 @@ search:
 By default SearXNG only serves HTML. To use the API with the `sx` tool, you **must** add `json` to the `search.formats` list in `/etc/searxng/settings.yml`.
 
 **Service:** SearXNG runs via uWSGI:
+
 ```bash
 sudo systemctl start searxng
 sudo systemctl enable searxng
 ```
 
 **Test API:**
+
 ```bash
 # Should return JSON results
 curl 'http://localhost:8888/search?q=hello+world&format=json'
 ```
 
 **Configure sx tool:**
+
 ```bash
 # Set SearXNG URL for sx
 export SEARXNG_URL=http://localhost:8888
@@ -392,6 +396,7 @@ sx config set searxng.url http://localhost:8888
 ### Why SearXNG in 2026?
 
 SearXNG remains the best FOSS meta-search engine:
+
 - Aggregates results from 246+ search engines
 - No tracking or profiling
 - Active development and community

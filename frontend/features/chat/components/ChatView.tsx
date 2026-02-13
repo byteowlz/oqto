@@ -154,6 +154,10 @@ export interface ChatViewProps {
 	pendingFileAttachment?: FileAttachment | null;
 	/** Called after the pending file attachment has been consumed */
 	onPendingFileAttachmentConsumed?: () => void;
+	/** Text to prefill into the chat input (e.g. from browser "Send to chat") */
+	pendingChatInput?: string | null;
+	/** Called after the pending chat input has been consumed */
+	onPendingChatInputConsumed?: () => void;
 }
 
 /**
@@ -177,6 +181,8 @@ export function ChatView({
 	onTodosChange,
 	pendingFileAttachment,
 	onPendingFileAttachmentConsumed,
+	pendingChatInput,
+	onPendingChatInputConsumed,
 }: ChatViewProps) {
 	const [sendPending, setSendPending] = useState(false);
 	const [sendPendingSessionId, setSendPendingSessionId] = useState<
@@ -241,7 +247,8 @@ export function ChatView({
 		if (pendingFileAttachment) {
 			setFileAttachments((prev) => {
 				// Avoid duplicates
-				if (prev.some((a) => a.path === pendingFileAttachment.path)) return prev;
+				if (prev.some((a) => a.path === pendingFileAttachment.path))
+					return prev;
 				return [...prev, pendingFileAttachment];
 			});
 			onPendingFileAttachmentConsumed?.();
@@ -259,6 +266,18 @@ export function ChatView({
 		null,
 	);
 	const initialScrollDoneRef = useRef(false);
+
+	// Consume pending chat input from external source (e.g. browser "Send to chat")
+	useEffect(() => {
+		if (pendingChatInput) {
+			setInput(pendingChatInput);
+			onPendingChatInputConsumed?.();
+			// Focus the input after a tick so the user can review/edit
+			setTimeout(() => {
+				inputRef.current?.focus();
+			}, 100);
+		}
+	}, [pendingChatInput, onPendingChatInputConsumed]);
 
 	useEffect(() => {
 		if (typeof window === "undefined") return;
@@ -1156,18 +1175,8 @@ export function ChatView({
 				message = `${fileRefs}\n\n${trimmed}`;
 			}
 
-			setInput("");
-			setFileAttachments([]);
-			// Clear draft from localStorage
-			try {
-				localStorage.removeItem(draftStorageKey);
-			} catch {
-				// Ignore localStorage errors
-			}
-			// Reset textarea height
-			if (inputRef.current) {
-				inputRef.current.style.height = "auto";
-			}
+			const draftInput = input;
+			const draftAttachments = fileAttachments;
 			const hasHistory =
 				messages.length > 0 || (piState?.messageCount ?? 0) > 0;
 			const effectiveMode =
@@ -1184,6 +1193,20 @@ export function ChatView({
 				toast.error("No active chat session.");
 				return;
 			}
+
+			setInput("");
+			setFileAttachments([]);
+			// Clear draft from localStorage
+			try {
+				localStorage.removeItem(draftStorageKey);
+			} catch {
+				// Ignore localStorage errors
+			}
+			// Reset textarea height
+			if (inputRef.current) {
+				inputRef.current.style.height = "auto";
+			}
+
 			setSendPendingSessionId(resolvedSessionId);
 			try {
 				await send(message, {
@@ -1195,6 +1218,8 @@ export function ChatView({
 			} catch {
 				setSendPending(false);
 				setSendPendingSessionId(null);
+				setInput(draftInput);
+				setFileAttachments(draftAttachments);
 				toast.error("Failed to send message.");
 			}
 		},
@@ -1693,7 +1718,7 @@ export function ChatView({
 
 								return (
 									<div
-										key={groupMessageId ?? `${group.role}-${groupIndex}`}
+										key={`${groupMessageId ?? `${group.role}-${groupIndex}`}-${groupIndex}`}
 										className={groupIndex > 0 ? "mt-4 sm:mt-6" : ""}
 									>
 										{modelChangeDivider}
@@ -2117,7 +2142,9 @@ export function ChatView({
 
 /** Extract a model identifier from the first assistant message in a group that has model info.
  * hstry stores model as "provider/model" or just "model"; live messages have separate fields. */
-function getGroupModelRef(group: { messages: DisplayMessage[] }): string | null {
+function getGroupModelRef(group: { messages: DisplayMessage[] }):
+	| string
+	| null {
 	for (const msg of group.messages) {
 		if (msg.model) {
 			// If provider is separate, combine them
@@ -2275,7 +2302,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 		const base = message.timestamp || Date.now();
 		for (const [partIndex, part] of message.parts.entries()) {
 			timedParts.push({
-				key: `${message.id}-${part.type}-${partIndex}`,
+				key: `${message.id}-${msgIndex}-${part.type}-${partIndex}`,
 				part,
 				timestamp: base + msgIndex * 100 + partIndex,
 			});
@@ -2325,9 +2352,10 @@ const MessageGroupCard = memo(function MessageGroupCard({
 		lastTs = timestamp;
 		if (part.type === "text") {
 			// Safely resolve text content (might be .text or .content depending on source)
-			const partText = (part as { text?: string; content?: string }).text
-				?? (part as { content?: string }).content
-				?? "";
+			const partText =
+				(part as { text?: string; content?: string }).text ??
+				(part as { content?: string }).content ??
+				"";
 			// Skip empty chunks to match OpenCode feel
 			if (!partText.trim()) continue;
 			// Skip text that looks like raw tool JSON output
@@ -2412,6 +2440,28 @@ const MessageGroupCard = memo(function MessageGroupCard({
 
 	segments.sort((a, b) => a.timestamp - b.timestamp);
 
+	const normalizedSegments: Segment[] = [];
+	for (let i = 0; i < segments.length; i++) {
+		const segment = segments[i];
+		if (segment.type === "tool_call") {
+			let toolResult = segment.toolResult;
+			if (!toolResult) {
+				const next = segments[i + 1];
+				if (next?.type === "tool_result_only") {
+					toolResult = next.part;
+					i += 1;
+				}
+			}
+			normalizedSegments.push(
+				toolResult && !segment.toolResult
+					? { ...segment, toolResult }
+					: segment,
+			);
+			continue;
+		}
+		normalizedSegments.push(segment);
+	}
+
 	type RenderSegment =
 		| Segment
 		| {
@@ -2427,7 +2477,10 @@ const MessageGroupCard = memo(function MessageGroupCard({
 	const renderSegments: RenderSegment[] = (() => {
 		if (verbosity === 1) {
 			const grouped: RenderSegment[] = [];
-			let toolBuffer: Extract<RenderSegment, { type: "tool_group" }>["segments"] = [];
+			let toolBuffer: Extract<
+				RenderSegment,
+				{ type: "tool_group" }
+			>["segments"] = [];
 			let thinkingBuffer: string[] = [];
 			let thinkingKey: string | null = null;
 			let thinkingTimestamp = 0;
@@ -2455,7 +2508,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 				}
 			};
 
-			for (const segment of segments) {
+			for (const segment of normalizedSegments) {
 				if (segment.type === "thinking") {
 					if (thinkingBuffer.length === 0) {
 						thinkingKey = segment.key;
@@ -2477,9 +2530,10 @@ const MessageGroupCard = memo(function MessageGroupCard({
 			flushRun();
 			return grouped;
 		}
-		if (verbosity !== 2) return segments;
+		if (verbosity !== 2) return normalizedSegments;
 		const grouped: RenderSegment[] = [];
-		let toolBuffer: Extract<RenderSegment, { type: "tool_group" }>["segments"] = [];
+		let toolBuffer: Extract<RenderSegment, { type: "tool_group" }>["segments"] =
+			[];
 		let thinkingBuffer: string[] = [];
 		let thinkingKey: string | null = null;
 		let thinkingTimestamp = 0;
@@ -2517,7 +2571,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 			flushTools();
 		};
 
-		for (const segment of segments) {
+		for (const segment of normalizedSegments) {
 			if (segment.type === "tool_call" || segment.type === "tool_result_only") {
 				toolBuffer.push(segment);
 				continue;
@@ -2614,7 +2668,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 				)}
 			</div>
 
-			<div className="px-2 sm:px-4 py-2 sm:py-3 group space-y-3 overflow-hidden">
+			<div className="px-2 sm:px-4 py-2 sm:py-3 group space-y-2 overflow-hidden">
 				{renderSegments.length === 0 && !isUser && showWorkingIndicator && (
 					<div className="flex items-center gap-3 text-muted-foreground text-sm">
 						<BrailleSpinner />
@@ -2646,7 +2700,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 						return (
 							<div
 								key={segment.key}
-								className={needsTopMargin ? "mt-3" : undefined}
+								className={needsTopMargin ? "mt-2" : undefined}
 							>
 								<PiPartRenderer
 									part={segment.part}
@@ -2662,7 +2716,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 						return (
 							<div
 								key={segment.key}
-								className={needsTopMargin ? "mt-3" : undefined}
+								className={needsTopMargin ? "mt-2" : undefined}
 							>
 								<PiPartRenderer
 									part={segment.part}
@@ -2679,7 +2733,11 @@ const MessageGroupCard = memo(function MessageGroupCard({
 								className={needsTopMargin ? "mt-3" : undefined}
 							>
 								<PiPartRenderer
-									part={{ type: "thinking", id: segment.key, text: segment.text }}
+									part={{
+										type: "thinking",
+										id: segment.key,
+										text: segment.text,
+									}}
 									locale={locale}
 									workspacePath={workspacePath}
 								/>
@@ -2796,7 +2854,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 						return (
 							<div
 								key={segment.key}
-								className={needsTopMargin ? "mt-3" : undefined}
+								className={needsTopMargin ? "mt-2" : undefined}
 							>
 								<ToolCallGroup
 									key={`${segment.key}-verbosity-${verbosity}`}
@@ -2811,7 +2869,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 						return (
 							<div
 								key={segment.key}
-								className={needsTopMargin ? "mt-3" : undefined}
+								className={needsTopMargin ? "mt-2" : undefined}
 							>
 								<A2UICallCard
 									surfaceId={segment.surface.surfaceId}
@@ -2848,214 +2906,6 @@ const MessageGroupCard = memo(function MessageGroupCard({
 						{locale === "de" ? "Alles kopieren" : "Copy all"}
 					</ContextMenuItem>
 				)}
-			</ContextMenuContent>
-		</ContextMenu>
-	);
-});
-
-/**
- * Renders a single Pi message - legacy path (unused now).
- */
-const PiMessageCard = memo(function PiMessageCard({
-	message,
-	locale,
-	workspacePath,
-	assistantName,
-	a2uiSurfaces,
-	onA2UIAction,
-}: {
-	message: DisplayMessage;
-	locale: "en" | "de";
-	workspacePath?: string | null;
-	assistantName?: string | null;
-	a2uiSurfaces?: A2UISurfaceState[];
-	onA2UIAction?: (action: import("@/lib/a2ui/types").A2UIUserAction) => void;
-}) {
-	const isUser = message.role === "user";
-	const isSystem = message.role === "system";
-
-	// Discrete sessions: system messages are rendered like normal messages
-	// (we don't use separators for session boundaries anymore).
-
-	const textContent = message.parts
-		.filter(
-			(p): p is Extract<DisplayPart, { type: "text" }> => p.type === "text",
-		)
-		.map((p) => p.text)
-		.join("\n");
-
-	const createdAt = message.timestamp ? new Date(message.timestamp) : null;
-
-	// Use configured assistant name or fallback to workspace name instead of "Assistant"
-	const workspaceName = workspacePath?.split("/").pop() || "Assistant";
-	const displayName = isUser ? "You" : assistantName || workspaceName;
-
-	const messageCard = (
-		<div
-			data-message-id={message.id}
-			className={cn(
-				"group transition-all duration-200 overflow-hidden",
-				isUser
-					? "sm:ml-8 bg-primary/20 dark:bg-primary/10 border border-primary/40 dark:border-primary/30"
-					: "sm:mr-8 bg-muted/50 border border-border",
-			)}
-		>
-			{/* Header */}
-			<div
-				className={cn(
-					"compact-header flex items-center gap-1 sm:gap-2 px-2 sm:px-3 py-1.5 sm:py-2 border-b",
-					isUser ? "border-primary/30 dark:border-primary/20" : "border-border",
-				)}
-			>
-				{isUser ? (
-					<User className="w-3 h-3 sm:w-4 sm:h-4 text-primary flex-shrink-0" />
-				) : (
-					<Bot className="w-3 h-3 sm:w-4 sm:h-4 text-primary flex-shrink-0" />
-				)}
-				<span className="text-sm font-medium text-foreground">
-					{displayName}
-				</span>
-				<div className="flex-1" />
-				{/* Read aloud button for assistant messages */}
-				{!isUser && textContent && !message.isStreaming && (
-					<ReadAloudButton text={textContent} className="ml-1" />
-				)}
-				{/* Timestamp */}
-				{createdAt && !Number.isNaN(createdAt.getTime()) && (
-					<span className="text-[9px] sm:text-[10px] text-foreground/50 dark:text-muted-foreground leading-none sm:leading-normal ml-2">
-						{createdAt.toLocaleTimeString([], {
-							hour: "2-digit",
-							minute: "2-digit",
-						})}
-					</span>
-				)}
-				{/* Copy button - to the right of timestamp */}
-				{textContent && !message.isStreaming && (
-					<CopyButton
-						text={textContent}
-						className="ml-1 [&_svg]:w-3 [&_svg]:h-3"
-					/>
-				)}
-			</div>
-
-			{/* Content */}
-			<div className="px-2 sm:px-4 py-2 sm:py-3 group space-y-3 overflow-hidden">
-				{message.parts.length === 0 && !isUser && message.isStreaming && (
-					<div className="flex items-center gap-3 text-muted-foreground text-sm">
-						<BrailleSpinner />
-						<span>{locale === "de" ? "Arbeitet..." : "Working..."}</span>
-					</div>
-				)}
-
-				{/* Render parts, combining tool_call with matching tool_result */}
-				{(() => {
-					// Build a map of tool_result by toolCallId for quick lookup
-					const toolResults = new Map<string, DisplayPart>();
-					for (const part of message.parts) {
-						if (part.type === "tool_result") {
-							toolResults.set(part.toolCallId, part);
-						}
-					}
-					// Track which tool_results we've already rendered
-					const renderedResults = new Set<string>();
-
-					return message.parts.map((part, idx) => {
-						// Skip tool_result if it will be rendered with its tool_call
-						if (part.type === "tool_result" && renderedResults.has(part.toolCallId)) {
-							return null;
-						}
-
-						// For tool_call, find and combine with matching tool_result
-						if (part.type === "tool_call") {
-							const result = toolResults.get(part.toolCallId);
-							if (result && result.type === "tool_result") {
-								renderedResults.add(part.toolCallId);
-							}
-							return (
-								<PiPartRenderer
-									key={`${message.id}-part-${idx}`}
-									part={part}
-									toolResult={
-										result?.type === "tool_result" ? result : undefined
-									}
-									locale={locale}
-									workspacePath={workspacePath}
-								/>
-							);
-						}
-
-						return (
-							<PiPartRenderer
-								key={`${message.id}-part-${idx}`}
-								part={part}
-								locale={locale}
-								workspacePath={workspacePath}
-							/>
-						);
-					});
-				})()}
-
-				{/* A2UI surfaces anchored to this message */}
-				{a2uiSurfaces && a2uiSurfaces.length > 0 && (
-					<div className="space-y-2 mt-2">
-						{a2uiSurfaces.map((surface) => (
-							<A2UICallCard
-								key={surface.surfaceId}
-								surfaceId={surface.surfaceId}
-								messages={surface.messages}
-								blocking={surface.blocking}
-								requestId={surface.requestId}
-								answered={surface.answered}
-								answeredAction={surface.answeredAction}
-								answeredAt={surface.answeredAt}
-								onAction={onA2UIAction}
-								defaultCollapsed={surface.answered}
-							/>
-						))}
-					</div>
-				)}
-
-				{/* Streaming indicator when there's already content */}
-				{message.isStreaming && message.parts.length > 0 && (
-					<div className="flex items-center gap-3 text-muted-foreground text-sm">
-						<BrailleSpinner />
-						<span>{locale === "de" ? "Arbeitet..." : "Working..."}</span>
-					</div>
-				)}
-
-				{/* Usage info */}
-				{message.usage && !message.isStreaming && (
-					<div className="text-xs text-muted-foreground pt-2 border-t border-border/50">
-						{message.usage.input_tokens + message.usage.output_tokens} tokens
-						{message.usage.cost_usd !== undefined && (
-							<span className="ml-2">
-								${message.usage.cost_usd.toFixed(4)}
-							</span>
-						)}
-					</div>
-				)}
-			</div>
-		</div>
-	);
-
-	// Only wrap in context menu if there's text content to copy
-	if (!textContent) {
-		return messageCard;
-	}
-
-	return (
-		<ContextMenu>
-			<ContextMenuTrigger className="contents">
-				{messageCard}
-			</ContextMenuTrigger>
-			<ContextMenuContent>
-				<ContextMenuItem
-					onClick={() => navigator.clipboard?.writeText(textContent)}
-					className="gap-2"
-				>
-					<Copy className="w-4 h-4" />
-					{locale === "de" ? "Alles kopieren" : "Copy all"}
-				</ContextMenuItem>
 			</ContextMenuContent>
 		</ContextMenu>
 	);
@@ -3170,7 +3020,11 @@ function PiPartRenderer({
 		case "text":
 			return (
 				<TextWithFileReferences
-					content={(part as { text?: string; content?: string }).text ?? (part as { content?: string }).content ?? ""}
+					content={
+						(part as { text?: string; content?: string }).text ??
+						(part as { content?: string }).content ??
+						""
+					}
 					workspacePath={workspacePath}
 					locale={locale}
 				/>

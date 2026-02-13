@@ -411,6 +411,7 @@ export const SessionScreen = memo(function SessionScreen() {
 		type: "file";
 	} | null>(null);
 	const [fileTreeState, setFileTreeState] = useState<FileTreeState>(initialFileTreeState);
+	const [pendingChatInput, setPendingChatInput] = useState<string | null>(null);
 
 	const handlePreviewFile = useCallback((filePath: string) => {
 		setPreviewFilePath(filePath);
@@ -418,6 +419,11 @@ export const SessionScreen = memo(function SessionScreen() {
 
 	const handleClosePreview = useCallback(() => {
 		setPreviewFilePath(null);
+	}, []);
+
+	const handleSendToChat = useCallback((text: string) => {
+		setPendingChatInput(text);
+		setActiveView("chat");
 	}, []);
 
 	const handleOpenInCanvas = useCallback((filePath: string) => {
@@ -452,9 +458,17 @@ export const SessionScreen = memo(function SessionScreen() {
 	);
 
 	const handleNewChat = useCallback(async () => {
-		const id = await createNewChat(normalizedWorkspacePath ?? undefined);
+		const targetWorkspace = normalizedOverviewPath ?? normalizedWorkspacePath;
+		setSelectedWorkspaceOverviewPath(null);
+		const id = await createNewChat(targetWorkspace ?? undefined);
 		if (id) setSelectedChatSessionId(id);
-	}, [createNewChat, normalizedWorkspacePath, setSelectedChatSessionId]);
+	}, [
+		createNewChat,
+		normalizedOverviewPath,
+		normalizedWorkspacePath,
+		setSelectedChatSessionId,
+		setSelectedWorkspaceOverviewPath,
+	]);
 
 	useEffect(() => {
 		let mounted = true;
@@ -528,6 +542,8 @@ export const SessionScreen = memo(function SessionScreen() {
 			hideHeader
 			pendingFileAttachment={pendingFileAttachment}
 			onPendingFileAttachmentConsumed={handlePendingFileAttachmentConsumed}
+			pendingChatInput={pendingChatInput}
+			onPendingChatInputConsumed={() => setPendingChatInput(null)}
 		/>
 	) : (
 		<EmptyWorkspacePanel
@@ -852,6 +868,8 @@ export const SessionScreen = memo(function SessionScreen() {
 									sessionId={selectedChatSessionId}
 									workspacePath={normalizedWorkspacePath}
 									className="h-full"
+									onSendToChat={handleSendToChat}
+									onExpand={() => setExpandedView("browser")}
 								/>
 							</Suspense>
 						</div>
@@ -890,6 +908,18 @@ export const SessionScreen = memo(function SessionScreen() {
 										<CanvasView workspacePath={normalizedWorkspacePath} onSaveAndAddToChat={handleCanvasSaveAndAddToChat} />
 									</Suspense>
 								</div>
+							</div>
+						) : expandedView === "browser" ? (
+							<div className="flex-1 min-h-0 flex flex-col -m-4 xl:-m-6">
+								<Suspense fallback={viewLoadingFallback}>
+									<BrowserView
+										sessionId={selectedChatSessionId}
+										workspacePath={normalizedWorkspacePath}
+										className="h-full"
+										onSendToChat={handleSendToChat}
+										onCollapse={() => setExpandedView(null)}
+									/>
+								</Suspense>
 							</div>
 						) : (
 							<>
@@ -1225,6 +1255,7 @@ export const SessionScreen = memo(function SessionScreen() {
 												sessionId={selectedChatSessionId}
 												workspacePath={normalizedWorkspacePath}
 												className="h-full"
+												onSendToChat={handleSendToChat}
 											/>
 										</Suspense>
 									</div>

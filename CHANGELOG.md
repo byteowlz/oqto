@@ -18,10 +18,12 @@ All notable changes to this project will be documented in this file.
 - Setup now updates git repos in /usr/local/share/octo/external-repos and uses the shared templates repo for project templates.
 - Added feedback dropbox configuration and background sync to a private archive.
 - Added onboarding bootstrap flow that creates the main workspace, writes onboarding templates, and seeds the first Pi chat session in hstry.
+- Added JSONL audit logging for authenticated HTTP requests and WebSocket commands, configurable via logging.audit_* settings.
 
 ### Changed
 
 - Replaced cass-backed session search with hstry search and added line-based scroll resolution for search hits.
+- Documented archlinux CORS origins in the example Octo config.
 - Renamed CASS search types and comments to hstry in the API and frontend.
 - Pi session resolution now de-duplicates JSONL files by session id, prefers the newest file, and persists session metadata into hstry to prevent split chats.
 - Sidebar multi-select now anchors the active session, and minimal tool-call badge sizing matches the compact badge style.
@@ -40,6 +42,7 @@ All notable changes to this project will be documented in this file.
 - `tools/test-ssh-proxy.sh` now runs a host SSH test by default (use `--no-host` to skip).
 - `tools/test-ssh-proxy.sh` now bypasses system SSH config during host tests to avoid permission errors.
 - Workspace Pi header model switching now uses Pi RPC and shows Pi models instead of OpenCode options.
+- Model selection now persists while sessions are still starting and applies once sessions are created to prevent new/reconnected chats from defaulting to the fallback model.
 - New Pi sessions clear cached messages to avoid leaking previous session history.
 - Workspace Pi API now resumes sessions when fetching state/models/WS and returns empty history when no session file exists.
 - Workspace Pi UI now skips pending session IDs for Pi RPC/model/state calls to avoid 500s during optimistic creation.
@@ -53,8 +56,15 @@ All notable changes to this project will be documented in this file.
 - Pi chat view now shows a working spinner bubble immediately after sending a prompt.
 - Pi chat input and empty timeline now show a working indicator while awaiting the first response.
 - Pi todo extension now persists todos in the central Pi store instead of writing to repo paths.
+- Trx view now disables the hide-closed filter when viewing closed issues so completed items can be listed.
+- Pi list_sessions now returns the resolved session ID (Pi native ID when known) to avoid reattach mismatches.
 
 ### Security
 
 - **Session services now bind to localhost only**: OpenCode, fileserver, and ttyd sessions spawned via octo-runner and local mode now bind to `127.0.0.1` instead of `0.0.0.0`. This prevents these services from being accessible over the network, ensuring all access goes through the octo backend proxy. Added 8 security tests to prevent regression.
+- Chat history listing now uses per-user runner data in multi-user mode, skips direct hstry fallback for message retrieval, and the backend no longer starts a shared hstry client when linux user isolation is enabled.
+- Per-user octo-runner systemd services now bind to the expected /run/octo/runner-sockets/<user>/octo-runner.sock path and auto-update when the unit file changes.
+- Per-user mmry configs are now initialized/updated to use the central mmry embedding endpoint and per-user runners auto-enable hstry/mmry services.
+- Added admin API and octoctl command to batch sync per-user configs.
+- Login now ensures the per-user octo-runner is started (including lingering) so new users do not require a Linux login to access isolated history.
 - Sandbox deny-read masking now handles file paths (for example, `systemctl`) without bubblewrap tmpfs errors, and deny rules are enforced even when the workspace is the home directory.

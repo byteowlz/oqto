@@ -43,6 +43,10 @@ pub struct MmryState {
     pub host_service_url: String,
     /// API key for authenticating with host mmry (optional).
     pub host_api_key: Option<String>,
+    /// Default embedding model name for per-user config.
+    pub default_model: String,
+    /// Embedding dimension for per-user config.
+    pub dimension: u16,
 
     /// Dedicated base port for per-user mmry instances (local multi-user mode).
     pub user_base_port: u16,
@@ -58,6 +62,8 @@ impl Default for MmryState {
             local_service_url: "http://localhost:8081".to_string(),
             host_service_url: "http://localhost:8081".to_string(),
             host_api_key: None,
+            default_model: "Xenova/all-MiniLM-L6-v2".to_string(),
+            dimension: 384,
 
             user_base_port: 48_000,
             user_port_range: 1_000,

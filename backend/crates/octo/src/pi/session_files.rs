@@ -118,10 +118,7 @@ fn find_in_all_directories(base: &Path, suffix: &str) -> Option<PathBuf> {
 }
 
 /// Async wrapper for find_session_file (runs blocking I/O on spawn_blocking).
-pub async fn find_session_file_async(
-    session_id: String,
-    cwd: Option<PathBuf>,
-) -> Option<PathBuf> {
+pub async fn find_session_file_async(session_id: String, cwd: Option<PathBuf>) -> Option<PathBuf> {
     tokio::task::spawn_blocking(move || find_session_file(&session_id, cwd.as_deref()))
         .await
         .ok()

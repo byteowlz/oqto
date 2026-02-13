@@ -54,6 +54,31 @@ pub async fn dev_login(
         .validate_dev_credentials(&request.username, &request.password)
         .ok_or(AuthError::InvalidCredentials)?;
 
+    if let Some(ref linux_users) = state.linux_users {
+        let (uid, linux_username) = linux_users
+            .ensure_user(&user.id)
+            .map_err(|e| AuthError::Internal(format!(
+                "Failed to initialize user runtime: {e}"
+            )))?;
+
+        if state.mmry.enabled && !state.mmry.single_user {
+            if let Err(e) = linux_users.ensure_mmry_config_for_user(
+                &linux_username,
+                uid,
+                &state.mmry.host_service_url,
+                state.mmry.host_api_key.as_deref(),
+                &state.mmry.default_model,
+                state.mmry.dimension,
+            ) {
+                warn!(
+                    user_id = %user.id,
+                    error = %e,
+                    "Failed to update mmry config for user"
+                );
+            }
+        }
+    }
+
     // Generate token
     let token = state.auth.generate_dev_token(user)?;
 
@@ -225,6 +250,23 @@ pub async fn register(
                     );
                 }
 
+                if state.mmry.enabled && !state.mmry.single_user {
+                    if let Err(e) = linux_users.ensure_mmry_config_for_user(
+                        &actual_linux_username,
+                        uid,
+                        &state.mmry.host_service_url,
+                        state.mmry.host_api_key.as_deref(),
+                        &state.mmry.default_model,
+                        state.mmry.dimension,
+                    ) {
+                        warn!(
+                            user_id = %user.id,
+                            error = %e,
+                            "Failed to update mmry config for user"
+                        );
+                    }
+                }
+
                 info!(
                     user_id = %user.id,
                     linux_user = %actual_linux_username,
@@ -343,6 +385,69 @@ pub async fn login(
 
     let (token, user_info) = match user {
         Some(db_user) => {
+            if let Some(ref linux_users) = state.linux_users {
+                let ensure_result = if let (Some(ref linux_username), Some(linux_uid)) =
+                    (db_user.linux_username.as_ref(), db_user.linux_uid)
+                {
+                    linux_users.ensure_user_with_verification(
+                        &db_user.id,
+                        Some(linux_username),
+                        Some(linux_uid as u32),
+                    )
+                } else {
+                    linux_users.ensure_user(&db_user.id)
+                };
+
+                match ensure_result {
+                    Ok((uid, actual_linux_username)) => {
+                        if db_user.linux_username.as_deref() != Some(actual_linux_username.as_str())
+                            || db_user.linux_uid != Some(uid as i64)
+                        {
+                            if let Err(e) = state
+                                .users
+                                .update_user(
+                                    &db_user.id,
+                                    crate::user::UpdateUserRequest {
+                                        linux_username: Some(actual_linux_username.clone()),
+                                        linux_uid: Some(uid as i64),
+                                        ..Default::default()
+                                    },
+                                )
+                                .await
+                            {
+                                warn!(
+                                    user_id = %db_user.id,
+                                    error = %e,
+                                    "Failed to store linux_username/uid in database"
+                                );
+                            }
+                        }
+
+                        if state.mmry.enabled && !state.mmry.single_user {
+                            if let Err(e) = linux_users.ensure_mmry_config_for_user(
+                                &actual_linux_username,
+                                uid,
+                                &state.mmry.host_service_url,
+                                state.mmry.host_api_key.as_deref(),
+                                &state.mmry.default_model,
+                                state.mmry.dimension,
+                            ) {
+                                warn!(
+                                    user_id = %db_user.id,
+                                    error = %e,
+                                    "Failed to update mmry config for user"
+                                );
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        return Err(ApiError::internal(format!(
+                            "Failed to initialize user runtime: {e}"
+                        )));
+                    }
+                }
+            }
+
             // Database user found and verified
             let token = state.auth.generate_token(
                 &db_user.id,
@@ -365,6 +470,29 @@ pub async fn login(
                     .auth
                     .validate_dev_credentials(&request.username, &request.password)
                     .ok_or_else(|| ApiError::unauthorized("Invalid username or password"))?;
+
+                if let Some(ref linux_users) = state.linux_users {
+                    let (uid, linux_username) = linux_users.ensure_user(&dev_user.id).map_err(|e| {
+                        ApiError::internal(format!("Failed to initialize user runtime: {e}"))
+                    })?;
+
+                    if state.mmry.enabled && !state.mmry.single_user {
+                        if let Err(e) = linux_users.ensure_mmry_config_for_user(
+                            &linux_username,
+                            uid,
+                            &state.mmry.host_service_url,
+                            state.mmry.host_api_key.as_deref(),
+                            &state.mmry.default_model,
+                            state.mmry.dimension,
+                        ) {
+                            warn!(
+                                user_id = %dev_user.id,
+                                error = %e,
+                                "Failed to update mmry config for user"
+                            );
+                        }
+                    }
+                }
 
                 let token = state.auth.generate_dev_token(dev_user)?;
                 let user_info = UserInfo {

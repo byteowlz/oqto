@@ -7,11 +7,8 @@
  * and produce a uniform DisplayMessage[] for rendering.
  */
 
+import type { PiAgentMessage, PiSessionMessage } from "@/lib/api/default-chat";
 import type { Part, ToolStatus } from "@/lib/canonical-types";
-import type {
-	PiAgentMessage,
-	PiSessionMessage,
-} from "@/lib/api/default-chat";
 import type { DisplayMessage, DisplayPart, RawMessage } from "./types";
 
 const MESSAGE_ID_PATTERN = /^pi-msg-(\d+)$/;
@@ -54,7 +51,9 @@ function safeStringify(value: unknown): string {
 // ============================================================================
 
 /** Try to interpret a raw value as a tool_result Part. */
-function coerceToolResult(value: unknown): (Part & { type: "tool_result" }) | null {
+function coerceToolResult(
+	value: unknown,
+): (Part & { type: "tool_result" }) | null {
 	if (!value || typeof value !== "object") return null;
 	const obj = value as Record<string, unknown>;
 	const type = typeof obj.type === "string" ? obj.type : "";
@@ -154,7 +153,9 @@ function coerceBlockToPart(b: Record<string, unknown>): DisplayPart | null {
 				typeof b.arguments === "object" && b.arguments !== null
 					? b.arguments
 					: b.input,
-			status: (typeof b.status === "string" ? b.status : "success") as ToolStatus,
+			status: (typeof b.status === "string"
+				? b.status
+				: "success") as ToolStatus,
 		};
 	}
 
@@ -167,7 +168,6 @@ function coerceBlockToPart(b: Record<string, unknown>): DisplayPart | null {
 				(typeof b.tool_use_id === "string" && b.tool_use_id) ||
 				(typeof b.toolCallId === "string" && b.toolCallId) ||
 				(typeof b.tool_call_id === "string" && b.tool_call_id) ||
-				(typeof b.id === "string" && b.id) ||
 				"",
 			name:
 				(typeof b.name === "string" && b.name) ||
@@ -202,8 +202,7 @@ function coerceBlockToPart(b: Record<string, unknown>): DisplayPart | null {
 			};
 		}
 		if (source && typeof source === "object") {
-			const srcType =
-				typeof source.type === "string" ? source.type : "base64";
+			const srcType = typeof source.type === "string" ? source.type : "base64";
 			if (srcType === "url" && typeof source.url === "string") {
 				return {
 					type: "image",
@@ -306,9 +305,7 @@ export function convertCanonicalMessageToDisplay(
 			? roleValue
 			: "assistant";
 	const parts = normalizeContentToParts(
-		Array.isArray(msg.parts) && msg.parts.length > 0
-			? msg.parts
-			: msg.content,
+		Array.isArray(msg.parts) && msg.parts.length > 0 ? msg.parts : msg.content,
 	);
 	const timestamp =
 		typeof msg.created_at === "number" && msg.created_at > 0
@@ -386,8 +383,6 @@ export function normalizeMessages(
 					? canonicalParts
 					: message.content;
 
-		
-
 		// --- Tool result messages (role=tool/toolResult) ---
 		if (role === "toolResult" || role === "tool") {
 			// For hstry messages, toolCallId lives inside parts_json, not on the message.
@@ -401,9 +396,9 @@ export function normalizeMessages(
 				Array.isArray(parsedParts) &&
 				parsedParts.length > 0
 			) {
-				const firstResult = (
-					parsedParts as Record<string, unknown>[]
-				).find((p) => p.type === "tool_result");
+				const firstResult = (parsedParts as Record<string, unknown>[]).find(
+					(p) => p.type === "tool_result",
+				);
 				if (firstResult) {
 					resolvedToolCallId =
 						(firstResult.toolCallId as string) ||
@@ -412,8 +407,7 @@ export function normalizeMessages(
 						"";
 					resolvedToolName =
 						resolvedToolName || (firstResult.name as string | undefined);
-					resolvedOutput =
-						firstResult.output ?? firstResult.content ?? content;
+					resolvedOutput = firstResult.output ?? firstResult.content ?? content;
 					resolvedIsError =
 						resolvedIsError ??
 						(firstResult.is_error as boolean | undefined) ??
@@ -439,8 +433,7 @@ export function normalizeMessages(
 			if (targetIndex !== undefined) {
 				// Check if this tool result has already been added to this message
 				const existingResults =
-					toolResultsByMessageIndex.get(targetIndex) ||
-					new Set<string>();
+					toolResultsByMessageIndex.get(targetIndex) || new Set<string>();
 				if (!existingResults.has(toolCallId)) {
 					display[targetIndex].parts.push(toolResultPart);
 					existingResults.add(toolCallId);
@@ -490,11 +483,13 @@ export function normalizeMessages(
 					const indexById = tcId ? toolCallIndexById.get(tcId) : undefined;
 					const indexByName = resolvePendingByName(part.name);
 					const targetIndex = indexById ?? indexByName;
-					if (targetIndex !== undefined && targetIndex !== display.length - 1) {
+					if (
+						targetIndex !== undefined &&
+						targetIndex !== display.length - 1
+					) {
 						// Check if this tool result has already been added to target message
 						const existingResults =
-							toolResultsByMessageIndex.get(targetIndex) ||
-							new Set<string>();
+							toolResultsByMessageIndex.get(targetIndex) || new Set<string>();
 						if (!existingResults.has(tcId)) {
 							display[targetIndex].parts.push(part);
 							existingResults.add(tcId);
