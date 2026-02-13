@@ -2,7 +2,6 @@
 resolver = "2"
 members = ["crates/*"]
 exclude = ["crates/octo-browserd"]
-exclude = ["crates/octo-browserd"]
 
 [workspace.package]
 version = "0.8.1"

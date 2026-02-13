@@ -8,7 +8,7 @@ use axum::{
     http::{Request, StatusCode},
     response::{IntoResponse, Response},
 };
-use log::error;
+use log::{error, info};
 
 use crate::auth::CurrentUser;
 use crate::session::SessionStatus;
@@ -273,7 +273,10 @@ pub async fn proxy_browser_stream_ws(
     Path(session_id): Path<String>,
     ws: WebSocketUpgrade,
 ) -> Result<impl IntoResponse, StatusCode> {
+    info!("Browser stream WS request for session {}", session_id);
+
     if !state.sessions.agent_browser_enabled() {
+        info!("Browser stream: agent_browser not enabled");
         return Err(StatusCode::SERVICE_UNAVAILABLE);
     }
 
@@ -287,7 +290,18 @@ pub async fn proxy_browser_stream_ws(
             );
             StatusCode::SERVICE_UNAVAILABLE
         })?
-        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+        .ok_or_else(|| {
+            info!(
+                "Browser stream: no stream port found for session {}",
+                session_id
+            );
+            StatusCode::SERVICE_UNAVAILABLE
+        })?;
+
+    info!(
+        "Browser stream: resolved port {} for session {}",
+        stream_port, session_id
+    );
 
     Ok(ws.on_upgrade(move |socket| async move {
         if let Err(e) = handle_browser_stream_proxy(socket, stream_port).await {

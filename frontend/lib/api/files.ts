@@ -110,7 +110,7 @@ export async function startBrowser(
 
 export async function browserAction(
 	sessionId: string,
-	action: "back" | "forward" | "reload",
+	action: string,
 ): Promise<void> {
 	const body = {
 		session_id: sessionId,

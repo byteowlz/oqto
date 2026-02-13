@@ -661,11 +661,85 @@ Key configuration sections:
 - `[runtime]` - Worker pool and timeout settings
 - `[container]` - Container runtime and image settings
 - `[local]` - Local mode configuration
-- `[eavs]` - LLM proxy integration
+- `[eavs]` - LLM proxy integration (see [EAVS Post-Setup](#eavs-post-setup) below)
 - `[auth]` - Authentication and authorization
 - `[sessions]` - Session behavior settings
 - `[scaffold]` - Agent scaffolding configuration
 - `[pi]` - Main chat configuration
+
+## EAVS Post-Setup
+
+EAVS is the LLM proxy that routes agent requests to providers (Anthropic, OpenAI, Google, etc.). After `setup.sh` configures it, you may need to add or change providers.
+
+### Configuration Files
+
+| Mode | Config | Secrets (env file) | Service |
+|------|--------|--------------------|---------|
+| **Single-user** | `~/.config/eavs/config.toml` | `~/.config/eavs/env` | `systemctl --user restart eavs` |
+| **Multi-user** | `~octo/.config/eavs/config.toml` | `~octo/.config/eavs/env` | `sudo systemctl restart eavs` |
+
+### Adding Providers (env file method)
+
+The simplest way to add or change API keys:
+
+```bash
+# Single-user
+echo 'ANTHROPIC_API_KEY=sk-ant-...' >> ~/.config/eavs/env
+systemctl --user restart eavs
+
+# Multi-user (octo user owns the files)
+echo 'ANTHROPIC_API_KEY=sk-ant-...' | sudo tee -a ~octo/.config/eavs/env
+sudo systemctl restart eavs
+```
+
+Then reference the key in `config.toml`:
+
+```toml
+[providers.anthropic]
+type = "anthropic"
+api_key = "env:ANTHROPIC_API_KEY"
+```
+
+### Adding Providers (keychain method)
+
+For more secure storage, use the system keychain:
+
+```bash
+# Single-user
+eavs secret set anthropic
+
+# Multi-user (must run as octo with a D-Bus session)
+sudo -u octo dbus-run-session -- eavs secret set anthropic
+```
+
+Then reference in `config.toml`:
+
+```toml
+[providers.anthropic]
+type = "anthropic"
+api_key = "keychain:anthropic"
+```
+
+### Editing Config (multi-user)
+
+In multi-user mode, EAVS config is owned by the `octo` system user:
+
+```bash
+sudo nano ~octo/.config/eavs/config.toml
+sudo systemctl restart eavs
+```
+
+### Octo Backend EAVS Settings
+
+The Octo backend also has an `[eavs]` section in its own config (`~/.config/octo/config.toml` or `~octo/.config/octo/config.toml`) that controls session budgets and rate limits:
+
+```toml
+[eavs]
+enabled = true
+base_url = "http://localhost:3033"
+default_session_budget_usd = 10.0
+default_session_rpm = 60
+```
 
 ## Verification
 

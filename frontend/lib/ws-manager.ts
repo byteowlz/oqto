@@ -177,7 +177,14 @@ class WsConnectionManager {
 			const data = resp.data as { commands?: unknown[] };
 			return data.commands ?? [];
 		}
-		throw new Error(resp?.error ?? "Unexpected response to get_commands");
+		const errMsg = resp?.error ?? "Unexpected response to get_commands";
+		if (
+			errMsg.includes("SessionNotFound") ||
+			errMsg.includes("PiSessionNotFound")
+		) {
+			return [];
+		}
+		throw new Error(errMsg);
 	}
 
 	async agentGetStateWait(sessionId: string): Promise<unknown> {

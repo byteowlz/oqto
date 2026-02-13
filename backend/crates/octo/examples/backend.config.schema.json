@@ -32,6 +32,16 @@
           "type": "string",
           "description": "Optional path for log file output. Supports ~ and environment variables.",
           "examples": ["~/Library/Logs/octo.log", "$XDG_STATE_HOME/octo/app.log"]
+        },
+        "audit_enabled": {
+          "type": "boolean",
+          "description": "Enable JSONL audit logging for user events.",
+          "default": true
+        },
+        "audit_file": {
+          "type": "string",
+          "description": "Optional path for audit log output. Defaults to $XDG_STATE_HOME/octo/audit.log.jsonl",
+          "examples": ["$XDG_STATE_HOME/octo/audit.log.jsonl", "~/.local/state/octo/audit.log.jsonl"]
         }
       },
       "additionalProperties": false

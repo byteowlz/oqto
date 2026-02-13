@@ -60,6 +60,65 @@ impl AgentBrowserManager {
         Self { config }
     }
 
+    /// Whether agent-browser integration is enabled.
+    pub fn enabled(&self) -> bool {
+        self.config.enabled
+    }
+
+    /// Kill all browser daemon processes from previous runs.
+    ///
+    /// Scans the session socket base directory for PID files and sends SIGTERM
+    /// to each daemon, then cleans up the socket directories.
+    pub fn cleanup_all_sessions(&self) {
+        if !self.config.enabled {
+            return;
+        }
+
+        let base = agent_browser_base_dir();
+        let entries = match std::fs::read_dir(&base) {
+            Ok(e) => e,
+            Err(_) => return,
+        };
+
+        let mut killed = 0u32;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let session_name = match path.file_name().and_then(|n| n.to_str()) {
+                Some(n) => n.to_string(),
+                None => continue,
+            };
+            let pid_file = path.join(format!("{}.pid", session_name));
+            if let Ok(contents) = std::fs::read_to_string(&pid_file) {
+                if let Ok(pid) = contents.trim().parse::<i32>() {
+                    #[cfg(unix)]
+                    {
+                        // Check if process exists before killing
+                        unsafe {
+                            if libc::kill(pid, 0) == 0 {
+                                log::info!(
+                                    "Killing stale browser daemon pid={} session={}",
+                                    pid,
+                                    session_name
+                                );
+                                libc::kill(pid, libc::SIGTERM);
+                                killed += 1;
+                            }
+                        }
+                    }
+                }
+            }
+            // Clean up the session directory
+            let _ = std::fs::remove_dir_all(&path);
+        }
+
+        if killed > 0 {
+            log::info!("Cleaned up {} stale browser daemon(s)", killed);
+        }
+    }
+
     /// Ensure the daemon is running for the session.
     pub async fn ensure_session(&self, session_id: &str) -> Result<()> {
         if !self.config.enabled {
@@ -80,13 +139,16 @@ impl AgentBrowserManager {
         }
 
         // Ensure daemon is running first (always succeeds for valid sessions)
-        self.run_command(session_id, &["open", "about:blank"]).await?;
+        self.run_command(session_id, &["open", "about:blank"])
+            .await?;
 
         // Navigate to the requested URL -- best-effort, don't fail the launch
         if let Err(e) = self.run_command(session_id, &["open", url]).await {
             log::warn!(
                 "agent-browser navigation to {} failed (session {}): {}. Browser is still running.",
-                url, session_id, e
+                url,
+                session_id,
+                e
             );
         }
 
@@ -101,7 +163,8 @@ impl AgentBrowserManager {
 
         let w = width.to_string();
         let h = height.to_string();
-        self.run_command(session_id, &["set", "viewport", &w, &h]).await
+        self.run_command(session_id, &["set", "viewport", &w, &h])
+            .await
     }
 
     /// Stop the daemon for the session.
@@ -137,6 +200,15 @@ impl AgentBrowserManager {
         self.run_command(session_id, &["reload"]).await
     }
 
+    /// Set the browser color scheme (light/dark).
+    pub async fn set_color_scheme(&self, session_id: &str, scheme: &str) -> Result<()> {
+        if !self.config.enabled {
+            anyhow::bail!("agent-browser integration is not enabled");
+        }
+        self.run_command(session_id, &["emulatemedia", scheme])
+            .await
+    }
+
     /// Get the stream port for a session.
     pub fn stream_port_for_session(&self, session_id: &str) -> Result<u16> {
         if let Some(port) = read_stream_port_file(session_id) {
@@ -165,7 +237,8 @@ impl AgentBrowserManager {
             );
         }
         #[cfg(unix)]
-        if let Err(err) = std::fs::set_permissions(&socket_dir, std::fs::Permissions::from_mode(0o700))
+        if let Err(err) =
+            std::fs::set_permissions(&socket_dir, std::fs::Permissions::from_mode(0o700))
         {
             log::warn!(
                 "Failed to set permissions for agent-browser socket dir {}: {}",
@@ -254,8 +327,8 @@ fn agent_browser_base_dir() -> std::path::PathBuf {
 /// truncate them to a short stable name.
 pub fn browser_session_name(chat_session_id: &str) -> String {
     const NAMESPACE_BYTES: [u8; 16] = [
-        0x8b, 0x3a, 0x8f, 0x51, 0x90, 0x4c, 0x4a, 0x09, 0x97, 0x7c, 0x83, 0x37, 0x9f, 0x7a,
-        0x21, 0x59,
+        0x8b, 0x3a, 0x8f, 0x51, 0x90, 0x4c, 0x4a, 0x09, 0x97, 0x7c, 0x83, 0x37, 0x9f, 0x7a, 0x21,
+        0x59,
     ];
     let namespace = uuid::Uuid::from_bytes(NAMESPACE_BYTES);
     let uuid = uuid::Uuid::new_v5(&namespace, chat_session_id.as_bytes());
@@ -264,7 +337,10 @@ pub fn browser_session_name(chat_session_id: &str) -> String {
 }
 
 /// Resolve the agent-browser socket directory for a session.
-pub fn agent_browser_session_dir(session_id: &str, override_dir: Option<&str>) -> std::path::PathBuf {
+pub fn agent_browser_session_dir(
+    session_id: &str,
+    override_dir: Option<&str>,
+) -> std::path::PathBuf {
     if let Some(dir) = override_dir {
         return std::path::PathBuf::from(dir);
     }

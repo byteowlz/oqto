@@ -17,7 +17,7 @@ use chrono::{SecondsFormat, Utc};
 use rand::prelude::IndexedRandom;
 use serde::{Deserialize, Serialize};
 use std::path::{Path as FsPath, PathBuf};
-use tracing::{info, instrument, warn};
+use tracing::instrument;
 use uuid::Uuid;
 
 use super::error::{ApiError, ApiResult};
@@ -221,9 +221,7 @@ pub async fn bootstrap_onboarding(
         let mut entries = std::fs::read_dir(&workspace_root)
             .map_err(|e| ApiError::Internal(format!("Failed to read workspace root: {e}")))?;
         if entries.next().is_some() {
-            return Err(ApiError::BadRequest(
-                "workspace already initialized".into(),
-            ));
+            return Err(ApiError::BadRequest("workspace already initialized".into()));
         }
     }
 
@@ -256,7 +254,10 @@ pub async fn bootstrap_onboarding(
         .map_err(|e| ApiError::Internal(format!("Failed to resolve templates: {e}")))?;
 
     write_if_missing(&workspace_path.join("ONBOARD.md"), &templates.onboard)?;
-    write_if_missing(&workspace_path.join("PERSONALITY.md"), &templates.personality)?;
+    write_if_missing(
+        &workspace_path.join("PERSONALITY.md"),
+        &templates.personality,
+    )?;
     write_if_missing(&workspace_path.join("USER.md"), &templates.user)?;
     write_if_missing(&workspace_path.join("AGENTS.md"), &templates.agents)?;
 
@@ -264,9 +265,10 @@ pub async fn bootstrap_onboarding(
     let (message, title) = pick_bootstrap_greeting(language.as_deref());
     let workspace_path_str = workspace_path.to_string_lossy().to_string();
 
-    let hstry = state.hstry.as_ref().ok_or_else(|| {
-        ApiError::ServiceUnavailable("Chat history service not available".into())
-    })?;
+    let hstry = state
+        .hstry
+        .as_ref()
+        .ok_or_else(|| ApiError::ServiceUnavailable("Chat history service not available".into()))?;
 
     let now = Utc::now();
     let now_ms = now.timestamp_millis();

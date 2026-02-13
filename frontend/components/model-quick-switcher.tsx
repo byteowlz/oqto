@@ -26,7 +26,7 @@ import {
 } from "@/hooks/use-model-selection";
 import { fuzzyMatch } from "@/lib/slash-commands";
 import { cn } from "@/lib/utils";
-import { Loader2 } from "lucide-react";
+import { Clock, Loader2 } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 
 interface ModelQuickSwitcherProps {
@@ -85,18 +85,24 @@ export function ModelQuickSwitcher({
 		[selectModel],
 	);
 
-	const currentModelLabel = useMemo(() => {
-		if (pendingModelRef) {
-			return pendingModelRef;
+	const modelLabel = useMemo(() => {
+		const ref = pendingModelRef || selectedModelRef;
+		if (!ref) {
+			return { full: null, provider: null, model: null };
 		}
-
-		if (!selectedModelRef) return null;
-
-		return selectedModelRef;
+		const parts = ref.split("/");
+		if (parts.length < 2) {
+			return { full: ref, provider: null, model: ref };
+		}
+		return {
+			full: ref,
+			provider: parts[0],
+			model: parts.slice(1).join("/"),
+		};
 	}, [selectedModelRef, pendingModelRef]);
 
 	// Provider from current selection
-	const provider = (pendingModelRef || selectedModelRef)?.split("/")[0] ?? null;
+	const provider = modelLabel.provider;
 
 	// Labels
 	const placeholder = locale === "de" ? "Modell suchen..." : "Search models...";
@@ -115,17 +121,43 @@ export function ModelQuickSwitcher({
 				<button
 					type="button"
 					className={cn(
-						"flex items-center gap-1 hover:bg-accent hover:text-accent-foreground rounded px-1.5 transition-colors",
+						"flex items-center gap-1 text-left hover:bg-accent hover:text-accent-foreground rounded px-1.5 transition-colors",
 						className,
 					)}
 					onClick={() => setOpen((prev) => !prev)}
 				>
 					{provider && <ProviderIcon provider={provider} className="w-3 h-3" />}
-					<span className="font-mono">{currentModelLabel}</span>
-					{pendingModelRef && (
-						<span className="text-xs text-muted-foreground ml-1">
-							{queueText}
+					{modelLabel.full ? (
+						<>
+							<span className="font-mono hidden md:inline">
+								{modelLabel.full}
+							</span>
+							<span className="font-mono flex flex-col text-left leading-tight md:hidden min-w-0">
+								{modelLabel.provider ? (
+									<>
+										<span className="truncate">{modelLabel.provider}</span>
+										<span className="truncate">{modelLabel.model}</span>
+									</>
+								) : (
+									<span className="truncate">{modelLabel.model}</span>
+								)}
+							</span>
+						</>
+					) : (
+						<span className="font-mono text-muted-foreground">
+							{loading ? loadingText : selectText}
 						</span>
+					)}
+					{pendingModelRef && (
+						<>
+							<Clock
+								className="w-3 h-3 text-muted-foreground ml-1 md:hidden"
+								aria-label={queueText}
+							/>
+							<span className="text-[10px] text-muted-foreground ml-1 hidden md:inline">
+								{queueText}
+							</span>
+						</>
 					)}
 					{isSwitching && <Loader2 className="w-3 h-3 animate-spin" />}
 				</button>

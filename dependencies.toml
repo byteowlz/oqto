@@ -1,0 +1,27 @@
+# External Dependencies Manifest
+#
+# This file tracks the versions of external tools and services that Octo depends on.
+# Run `just update-deps` to refresh this manifest from local repos and git tags.
+
+[octo]
+version = "0.8.1"
+description = "Main platform (this repo)"
+
+[byteowlz]
+# Core backend services
+hstry = "0.4.2"
+hstry_core = { git = "https://github.com/byteowlz/hstry", branch = "main" }
+mmry = "0.8.0"
+trx = "0.2.1"
+agntz = "0.3.0"
+mailz = "0.1.0"
+sx = "latest"  # No tags on GitHub yet
+sldr = "0.1.1"
+
+# Optional: Voice mode
+eaRS = "0.4.2"
+kokorox = "v0.1.4"
+
+[external]
+# Not byteowlz, but required for Octo
+pi = "latest"  # From npm: `bun install -g @mariozechner/pi-coding-agent`

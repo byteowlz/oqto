@@ -4,7 +4,13 @@ Epic: `octo-thhx` - Onboarding & Agent UI Control
 
 ## Vision
 
-The most awesome onboarding experience - progressive, agent-driven, and visually stunning. New users see a minimal UI that expands as they learn, guided by the AI assistant using spotlights, A2UI elements, and natural conversation.
+Progressive onboarding with wizard-driven setup and spotlight-based tutorials. New users see a minimal UI that expands as they learn, guided by step-by-step wizard forms and optional spotlight overlays.
+
+**Setup is split into two layers:**
+1. **System setup** (`setup.sh`) -- installs packages, tools, SearXNG, systemd services
+2. **Config wizard** (`octo-setup wizard` CLI or `/setup` web wizard) -- deployment mode, LLM provider, API keys, workspace, admin user
+
+The web onboarding (provider, profile, personality) uses simple multi-step wizard forms, not agent-driven A2UI conversations.
 
 ## Onboarding Flow
 

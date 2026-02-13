@@ -335,11 +335,7 @@ fn read_template_defaults(template_dir: &std::path::Path) -> Option<ProjectTempl
         }
     }
 
-    if has_any {
-        Some(defaults)
-    } else {
-        None
-    }
+    if has_any { Some(defaults) } else { None }
 }
 
 fn copy_template_dir(src: &std::path::Path, dest: &std::path::Path) -> Result<(), ApiError> {
@@ -733,16 +729,14 @@ pub async fn update_workspace_meta(
         .map_err(|e| ApiError::bad_request(format!("Invalid workspace path: {}", e)))?;
 
     let mut meta = load_workspace_meta(&workspace_root).unwrap_or_default();
-    meta.display_name = request
-        .display_name
-        .and_then(|name| {
-            let trimmed = name.trim().to_string();
-            if trimmed.is_empty() {
-                None
-            } else {
-                Some(trimmed)
-            }
-        });
+    meta.display_name = request.display_name.and_then(|name| {
+        let trimmed = name.trim().to_string();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
+    });
 
     write_workspace_meta(&workspace_root, &meta)
         .map_err(|e| ApiError::internal(format!("Failed to write workspace metadata: {}", e)))?;
@@ -764,12 +758,10 @@ pub async fn get_workspace_sandbox(
 
     let sandbox_path = workspace_root.join(".octo").join("sandbox.toml");
     let file = if sandbox_path.exists() {
-        let contents = std::fs::read_to_string(&sandbox_path).map_err(|e| {
-            ApiError::internal(format!("Failed to read sandbox config: {}", e))
-        })?;
-        toml::from_str::<SandboxConfigFile>(&contents).map_err(|e| {
-            ApiError::internal(format!("Failed to parse sandbox config: {}", e))
-        })?
+        let contents = std::fs::read_to_string(&sandbox_path)
+            .map_err(|e| ApiError::internal(format!("Failed to read sandbox config: {}", e)))?;
+        toml::from_str::<SandboxConfigFile>(&contents)
+            .map_err(|e| ApiError::internal(format!("Failed to parse sandbox config: {}", e)))?
     } else {
         SandboxConfigFile::default()
     };
@@ -804,12 +796,10 @@ pub async fn update_workspace_sandbox(
 
     let sandbox_path = workspace_root.join(".octo").join("sandbox.toml");
     let mut file = if sandbox_path.exists() {
-        let contents = std::fs::read_to_string(&sandbox_path).map_err(|e| {
-            ApiError::internal(format!("Failed to read sandbox config: {}", e))
-        })?;
-        toml::from_str::<SandboxConfigFile>(&contents).map_err(|e| {
-            ApiError::internal(format!("Failed to parse sandbox config: {}", e))
-        })?
+        let contents = std::fs::read_to_string(&sandbox_path)
+            .map_err(|e| ApiError::internal(format!("Failed to read sandbox config: {}", e)))?;
+        toml::from_str::<SandboxConfigFile>(&contents)
+            .map_err(|e| ApiError::internal(format!("Failed to parse sandbox config: {}", e)))?
     } else {
         SandboxConfigFile::default()
     };
@@ -892,8 +882,8 @@ pub async fn get_workspace_pi_resources(
     let global_extensions = list_dir_entries(&global_extensions_dir, false)?;
 
     let selected_skills = list_dir_entries(&workspace_skills_dir, true).unwrap_or_default();
-    let selected_extensions = list_dir_entries(&workspace_extensions_dir, false)
-        .unwrap_or_default();
+    let selected_extensions =
+        list_dir_entries(&workspace_extensions_dir, false).unwrap_or_default();
 
     let skills = global_skills
         .iter()
@@ -1070,8 +1060,8 @@ fn list_dir_entries(path: &Path, directories_only: bool) -> Result<Vec<String>, 
 
     let mut names = Vec::new();
     for entry in entries {
-        let entry = entry
-            .map_err(|e| ApiError::internal(format!("Failed to read entry: {}", e)))?;
+        let entry =
+            entry.map_err(|e| ApiError::internal(format!("Failed to read entry: {}", e)))?;
         let file_type = entry
             .file_type()
             .map_err(|e| ApiError::internal(format!("Failed to read entry type: {}", e)))?;
@@ -1110,11 +1100,19 @@ fn replace_dir_contents(
 
     if target_dir.exists() {
         std::fs::remove_dir_all(target_dir).map_err(|e| {
-            ApiError::internal(format!("Failed to clear directory {}: {}", target_dir.display(), e))
+            ApiError::internal(format!(
+                "Failed to clear directory {}: {}",
+                target_dir.display(),
+                e
+            ))
         })?;
     }
     std::fs::create_dir_all(target_dir).map_err(|e| {
-        ApiError::internal(format!("Failed to create directory {}: {}", target_dir.display(), e))
+        ApiError::internal(format!(
+            "Failed to create directory {}: {}",
+            target_dir.display(),
+            e
+        ))
     })?;
 
     for name in requested_set {
@@ -1127,17 +1125,18 @@ fn replace_dir_contents(
 }
 
 fn copy_entry_recursive(src: &Path, dest: &Path) -> Result<(), ApiError> {
-    let metadata = std::fs::metadata(src)
-        .map_err(|e| ApiError::internal(format!("Failed to read source {}: {}", src.display(), e)))?;
+    let metadata = std::fs::metadata(src).map_err(|e| {
+        ApiError::internal(format!("Failed to read source {}: {}", src.display(), e))
+    })?;
     if metadata.is_dir() {
         std::fs::create_dir_all(dest).map_err(|e| {
             ApiError::internal(format!("Failed to create dir {}: {}", dest.display(), e))
         })?;
-        for entry in std::fs::read_dir(src)
-            .map_err(|e| ApiError::internal(format!("Failed to read dir {}: {}", src.display(), e)))?
-        {
-            let entry = entry
-                .map_err(|e| ApiError::internal(format!("Failed to read entry: {}", e)))?;
+        for entry in std::fs::read_dir(src).map_err(|e| {
+            ApiError::internal(format!("Failed to read dir {}: {}", src.display(), e))
+        })? {
+            let entry =
+                entry.map_err(|e| ApiError::internal(format!("Failed to read entry: {}", e)))?;
             let file_name = entry.file_name();
             let src_path = entry.path();
             let dest_path = dest.join(file_name);

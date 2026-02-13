@@ -4,7 +4,7 @@
 
 use axum::extract::ws::WebSocket;
 use futures::{SinkExt, StreamExt};
-use log::debug;
+use log::{debug, info};
 use tokio_tungstenite::connect_async;
 
 /// Handle bidirectional WebSocket proxy to a voice service (STT/TTS).
@@ -70,7 +70,7 @@ pub async fn handle_browser_stream_proxy(
     use tokio_tungstenite::tungstenite::Message as TungsteniteMessage;
 
     let target_url = format!("ws://127.0.0.1:{}", stream_port);
-    debug!("Proxying browser stream WebSocket to {}", target_url);
+    info!("Proxying browser stream WebSocket to {}", target_url);
 
     let start = tokio::time::Instant::now();
     let timeout = tokio::time::Duration::from_secs(10);
@@ -100,6 +100,11 @@ pub async fn handle_browser_stream_proxy(
         }
     };
 
+    info!(
+        "Browser stream proxy connected to upstream at port {}",
+        stream_port
+    );
+
     let (mut client_tx, mut client_rx) = client_socket.split();
     let (mut server_tx, mut server_rx) = server_socket.split();
 
@@ -111,32 +116,88 @@ pub async fn handle_browser_stream_proxy(
                 AxumMessage::Binary(data) => TungsteniteMessage::Binary(data),
                 AxumMessage::Ping(data) => TungsteniteMessage::Ping(data),
                 AxumMessage::Pong(data) => TungsteniteMessage::Pong(data),
-                AxumMessage::Close(_) => TungsteniteMessage::Close(None),
+                AxumMessage::Close(_) => {
+                    info!("Browser stream: client sent close");
+                    TungsteniteMessage::Close(None)
+                }
             };
             server_tx.send(forward).await?;
         }
+        info!("Browser stream: client_to_server loop ended (client disconnected)");
         Ok::<(), anyhow::Error>(())
     };
 
     let server_to_client = async {
+        let mut msg_count: u64 = 0;
         while let Some(msg) = server_rx.next().await {
-            let msg = msg?;
+            let msg = match msg {
+                Ok(m) => m,
+                Err(e) => {
+                    info!(
+                        "Browser stream: upstream recv error after {} msgs: {}",
+                        msg_count, e
+                    );
+                    break;
+                }
+            };
             let forward = match msg {
-                TungsteniteMessage::Text(text) => AxumMessage::Text(text.to_string().into()),
-                TungsteniteMessage::Binary(data) => AxumMessage::Binary(data),
+                TungsteniteMessage::Text(ref text) => {
+                    if msg_count < 3 {
+                        debug!(
+                            "Browser stream: msg #{} from upstream ({} bytes)",
+                            msg_count,
+                            text.len()
+                        );
+                    }
+                    msg_count += 1;
+                    AxumMessage::Text(text.to_string().into())
+                }
+                TungsteniteMessage::Binary(data) => {
+                    if msg_count < 3 {
+                        debug!(
+                            "Browser stream: binary msg #{} ({} bytes)",
+                            msg_count,
+                            data.len()
+                        );
+                    }
+                    msg_count += 1;
+                    AxumMessage::Binary(data)
+                }
                 TungsteniteMessage::Ping(data) => AxumMessage::Ping(data),
                 TungsteniteMessage::Pong(data) => AxumMessage::Pong(data),
-                TungsteniteMessage::Close(_) => AxumMessage::Close(None),
+                TungsteniteMessage::Close(_) => {
+                    info!(
+                        "Browser stream: upstream sent close after {} msgs",
+                        msg_count
+                    );
+                    AxumMessage::Close(None)
+                }
                 TungsteniteMessage::Frame(_) => continue,
             };
-            client_tx.send(forward).await?;
+            if let Err(e) = client_tx.send(forward).await {
+                debug!(
+                    "Browser stream: client send error after {} msgs: {}",
+                    msg_count, e
+                );
+                break;
+            }
         }
+        info!(
+            "Browser stream: server_to_client loop ended after {} msgs",
+            msg_count
+        );
         Ok::<(), anyhow::Error>(())
     };
 
     tokio::select! {
-        result = client_to_server => result?,
-        result = server_to_client => result?,
+        result = client_to_server => {
+            info!("Browser stream: client_to_server completed first: {:?}", result.as_ref().err());
+            result?;
+        },
+        result = server_to_client => {
+            info!("Browser stream: server_to_client completed first: {:?}", result.as_ref().err());
+            result?;
+        },
     }
 
     Ok(())

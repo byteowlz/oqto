@@ -178,20 +178,72 @@ pub async fn list_chat_history(
     Query(query): Query<ChatHistoryQuery>,
 ) -> ApiResult<Json<Vec<ChatSession>>> {
     let mut sessions: Vec<ChatSession> = Vec::new();
-    let source = "hstry";
+    let mut source = "hstry";
+    let multi_user = is_multi_user_mode(&state);
 
-    if let Some(hstry) = state.hstry.as_ref() {
-        match crate::history::repository::list_sessions_via_grpc(hstry).await {
-            Ok(found) => {
-                sessions = found;
+    if let Some(runner) = get_runner_for_user(&state, user.id()) {
+        match runner
+            .list_opencode_sessions(
+                query.workspace.clone(),
+                query.include_children,
+                query.limit,
+            )
+            .await
+        {
+            Ok(response) => {
+                sessions = response
+                    .sessions
+                    .into_iter()
+                    .map(|s| ChatSession {
+                        id: s.id,
+                        readable_id: s.readable_id,
+                        title: s.title,
+                        parent_id: s.parent_id,
+                        workspace_path: s.workspace_path,
+                        project_name: s.project_name,
+                        created_at: s.created_at,
+                        updated_at: s.updated_at,
+                        version: s.version,
+                        is_child: s.is_child,
+                        source_path: None,
+                        stats: None,
+                        model: s.model,
+                        provider: s.provider,
+                    })
+                    .collect();
+                source = "runner";
             }
             Err(e) => {
-                tracing::error!("Failed to list sessions via hstry gRPC: {}", e);
-                return Err(ApiError::service_unavailable(format!(
-                    "Chat history service (hstry) is not reachable: {}. \
+                if multi_user {
+                    tracing::error!(
+                        user_id = %user.id(),
+                        error = %e,
+                        "Runner failed in multi-user mode"
+                    );
+                    return Err(ApiError::internal("Chat history service unavailable."));
+                }
+            }
+        }
+    } else if multi_user {
+        return Err(ApiError::internal(
+            "Chat history service not configured for this user.",
+        ));
+    }
+
+    if sessions.is_empty() && !multi_user {
+        if let Some(hstry) = state.hstry.as_ref() {
+            match crate::history::repository::list_sessions_via_grpc(hstry).await {
+                Ok(found) => {
+                    sessions = found;
+                }
+                Err(e) => {
+                    tracing::error!("Failed to list sessions via hstry gRPC: {}", e);
+                    return Err(ApiError::service_unavailable(format!(
+                        "Chat history service (hstry) is not reachable: {}. \
                      Try restarting it with: hstry service start",
-                    e
-                )));
+                        e
+                    )));
+                }
             }
         }
     }
@@ -578,6 +630,7 @@ pub async fn get_chat_messages(
                                     text: p.text,
                                     text_html: p.text_html,
                                     tool_name: p.tool_name,
+                                    tool_call_id: None,
                                     tool_input: p.tool_input,
                                     tool_output: p.tool_output,
                                     tool_status: p.tool_status,
@@ -616,6 +669,13 @@ pub async fn get_chat_messages(
         return Err(ApiError::internal(
             "Chat history service not configured for this user.",
         ));
+    }
+
+    if multi_user {
+        return Err(ApiError::not_found(format!(
+            "Chat session {} not found",
+            session_id
+        )));
     }
 
     // SECURITY: Only use direct access in single-user mode

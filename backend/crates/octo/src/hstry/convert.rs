@@ -165,7 +165,7 @@ fn build_parts_json(content: &Value, msg: &AgentMessage) -> String {
         let tool_call_id = msg.tool_call_id.clone().unwrap_or_default();
         parts.push(serde_json::json!({
             "type": "tool_result",
-            "tool_call_id": tool_call_id,
+            "toolCallId": tool_call_id,
             "name": msg.tool_name,
             "output": content,
             "is_error": msg.is_error.unwrap_or(false)
@@ -181,8 +181,7 @@ fn build_parts_json(content: &Value, msg: &AgentMessage) -> String {
             Value::Array(blocks) => {
                 for block in blocks {
                     if let Some(obj) = block.as_object() {
-                        let block_type =
-                            obj.get("type").and_then(|t| t.as_str()).unwrap_or("");
+                        let block_type = obj.get("type").and_then(|t| t.as_str()).unwrap_or("");
                         match block_type {
                             "text" => {
                                 if let Some(text) = obj.get("text") {

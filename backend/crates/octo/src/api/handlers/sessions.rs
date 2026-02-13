@@ -376,7 +376,7 @@ pub async fn browser_action(
     }
 
     let action = crate::session::BrowserAction::parse(&request.action).ok_or_else(|| {
-        ApiError::bad_request("Invalid browser action (expected back, forward, reload)")
+        ApiError::bad_request("Invalid browser action (expected back, forward, reload, color_scheme:<light|dark>)")
     })?;
     let browser_session_id = crate::agent_browser::browser_session_name(&request.session_id);
 

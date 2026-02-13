@@ -20,6 +20,10 @@ export type ChatMessagePart = {
 	 */
 	tool_name: string | null;
 	/**
+	 * Tool call id (for tool parts)
+	 */
+	tool_call_id: string | null;
+	/**
 	 * Tool input (for tool parts)
 	 */
 	tool_input: JsonValue | null;

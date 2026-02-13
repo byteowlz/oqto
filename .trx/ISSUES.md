@@ -144,7 +144,7 @@ REST endpoints: GET/PUT /api/onboarding/state, POST /api/onboarding/unlock/{comp
 Backend model for tracking onboarding progress, unlocked components, user level, and language preference. Store in user preferences table or dedicated onboarding_state table.
 
 ### [octo-thhx] Onboarding & Agent UI Control (P1, epic)
-Progressive onboarding experience with agent-driven UI control, spotlight system, and i18n support
+Progressive onboarding experience with wizard-driven UI, spotlight system, and i18n support. Onboarding uses step-by-step wizard forms, NOT agent-driven A2UI conversations.
 
 ### [octo-af5j.7.6] Release manifest generator (byt release) (P1, task)
 byt release command that: 1) Reads component list from octo/release.toml, 2) Fetches current version from each repo (Cargo.toml, package.json, go.mod), 3) Generates versions.toml with all pinned versions, 4) Optionally tags all repos with octo-0.2.0 tag
@@ -173,6 +173,24 @@ Convert synchronous imports in apps/index.ts to React.lazy() imports. Currently 
 Location: frontend/apps/index.ts:1-56
 
 Implementation:
+...
+
+
+### [octo-af5j.6.4] octo-setup web wizard (P2, feature)
+Web-based setup wizard served by octo itself for first-run configuration. Triggered when octo starts with no config or incomplete config.
+
+Flow:
+- Deployment mode selection
+- LLM provider + API key configuration
+...
+
+
+### [octo-af5j.6.3] octo-setup CLI wizard (P2, feature)
+Expand octo-setup from config hydrator into interactive CLI wizard. Two modes:
+
+1. **octo-setup wizard** (CLI) -- Interactive terminal wizard using dialoguer/inquire:
+   - Deployment mode (development/production)
+   - User mode (single/multi)
 ...
 
 
@@ -352,8 +370,6 @@ Keep docker multi-user working:
 
 ### [octo-85f4] the stop button doesnt seem to stop a running agent response (P2, bug)
 
-### [octo-e8q8] There is no way to display closed trx issues (P2, bug)
-
 ### [octo-w85q] When adding an image to the canvas, we need to automatically fit the canvas to the image size. And the default canvas size should be 1280x1280 with a properly sized default font size (P2, bug)
 
 ### [octo-vbzq] Add Edit button to file viewer toolbar (P2, feature)
@@ -405,13 +421,13 @@ When agent encounters OAuth, captcha, or 2FA, it needs to hand control to user.
 
 
 ### [octo-thhx.16] Tutorial script using spotlight and A2UI (P2, task)
-Agent script/prompts for guided tutorial: introduce chat, unlock sidebar, show file tree, demonstrate command palette, explain todos, create first workspace, delegate task to opencode session.
+Optional guided tutorial using spotlight overlays to introduce UI components. Sequential step-by-step walkthrough, not agent-driven. User can skip at any time.
 
 ### [octo-thhx.15] Profile and personality setup conversation (P2, task)
-Agent-driven A2UI conversation to fill USER.md (name, timezone, preferences) and PERSONALITY.md (assistant name, signature). Use TextField, MultipleChoice components.
+Web wizard step for user profile and personality setup. Simple form fields for name, timezone, communication style, assistant name/personality. Writes USER.md and PERSONALITY.md. Not agent conversation.
 
 ### [octo-thhx.14] Provider setup wizard via A2UI (P2, task)
-A2UI flow for connecting providers. If EAVS pre-configured by admin, skip. Otherwise: show provider options, collect API key via TextField, test connection, store in EAVS or user config.
+Web wizard step for connecting LLM providers. If EAVS pre-configured by admin, skip. Otherwise: show provider options, collect API key via form input, test connection, store in EAVS or user config. Simple multi-step form, not agent conversation.
 
 ### [octo-thhx.13] i18n AGENTS.md translations (P2, task)
 Prepare AGENTS.md in multiple languages: en, de, es, fr, pl, etc. Either use symlinks (AGENTS.md -> AGENTS.{lang}.md) or dynamic injection based on user language preference.
@@ -817,6 +833,9 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [octo-af5j.6.5] setup.sh: EAVS mandatory LLM proxy + octo user home dir (closed 2026-02-13)
+- [octo-62c1] Chat sessions: zombie entries, wrong titles, empty responses after reattach (closed 2026-02-13)
+- [octo-e8q8] There is no way to display closed trx issues (closed 2026-02-13)
 - [octo-hz24] bash tool calls are duplicated in the chat i.e. the same bash call always appears twice (closed 2026-02-10)
 - [octo-rzc2] Missing icons in chat session list - icons not displaying for each item (closed 2026-02-10)
 - [octo-78dz] Model switcher missing models: runner env file support (closed 2026-02-09)
@@ -1398,9 +1417,9 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
 - [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
 - [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
-- [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (closed )
 - [octo-k8z1.2] Backend: WebSocket proxy for screencast stream (closed )
+- [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )

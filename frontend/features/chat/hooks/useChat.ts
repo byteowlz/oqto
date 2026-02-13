@@ -14,8 +14,17 @@
  */
 
 import { useBusySessions } from "@/components/contexts";
-import type { CommandResponse, Part, SessionConfig, ToolStatus } from "@/lib/canonical-types";
-import { getChatMessages, type ChatMessage, type ChatMessagePart } from "@/lib/api";
+import {
+	type ChatMessage,
+	type ChatMessagePart,
+	getChatMessages,
+} from "@/lib/api";
+import type {
+	CommandResponse,
+	Part,
+	SessionConfig,
+	ToolStatus,
+} from "@/lib/canonical-types";
 import {
 	createPiSessionId,
 	getWorkspaceModelStorageKey,
@@ -91,9 +100,35 @@ function chatMessagePartToCanonicalParts(part: ChatMessagePart): Part[] {
 		return parts;
 	}
 
-	const hasToolData = Boolean(part.tool_name || part.tool_input || part.tool_output);
+	const hasToolData = Boolean(
+		part.tool_name || part.tool_input || part.tool_output,
+	);
+	if (part.part_type === "tool_call") {
+		const toolCallId = part.tool_call_id ?? part.id;
+		parts.push({
+			type: "tool_call",
+			id: `${part.id}-call`,
+			toolCallId,
+			name: part.tool_name ?? "tool",
+			input: part.tool_input ?? undefined,
+			status: normalizeToolStatus(part.tool_status),
+		});
+		return parts;
+	}
+	if (part.part_type === "tool_result") {
+		const toolCallId = part.tool_call_id ?? part.id;
+		parts.push({
+			type: "tool_result",
+			id: `${part.id}-result`,
+			toolCallId,
+			name: part.tool_name ?? "tool",
+			output: part.tool_output ?? part.tool_title ?? "",
+			isError: normalizeToolStatus(part.tool_status) === "error",
+		});
+		return parts;
+	}
 	if (part.part_type === "tool" || hasToolData) {
-		const toolCallId = part.id;
+		const toolCallId = part.tool_call_id ?? part.id;
 		const name = part.tool_name ?? "tool";
 		if (part.tool_input) {
 			parts.push({
@@ -246,10 +281,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 			const storedModelRef = localStorage.getItem(storageKey);
 			if (storedModelRef) {
 				const separatorIndex = storedModelRef.indexOf("/");
-				if (
-					separatorIndex > 0 &&
-					separatorIndex < storedModelRef.length - 1
-				) {
+				if (separatorIndex > 0 && separatorIndex < storedModelRef.length - 1) {
 					config.provider = storedModelRef.slice(0, separatorIndex);
 					config.model = storedModelRef.slice(separatorIndex + 1);
 				}
@@ -456,7 +488,11 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 					if (lastPart?.type === "text") {
 						(lastPart as { text: string }).text += delta;
 					} else {
-						currentMsg.parts.push({ type: "text", id: nextPartId(), text: delta });
+						currentMsg.parts.push({
+							type: "text",
+							id: nextPartId(),
+							text: delta,
+						});
 					}
 					scheduleStreamingUpdate();
 					setIsAwaitingResponse(false);
@@ -472,7 +508,11 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 					if (lastPart?.type === "thinking") {
 						(lastPart as { text: string }).text += delta;
 					} else {
-						currentMsg.parts.push({ type: "thinking", id: nextPartId(), text: delta });
+						currentMsg.parts.push({
+							type: "thinking",
+							id: nextPartId(),
+							text: delta,
+						});
 					}
 					scheduleStreamingUpdate();
 					setIsAwaitingResponse(false);
@@ -1075,13 +1115,12 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 									requestedSessionId &&
 									realSessionId !== requestedSessionId
 								) {
-									// For Pi, the runner session is keyed by the requested session_id.
-									// The sessionId in get_state is Pi's internal ID and must NOT be
-									// used for future commands, otherwise the runner will report
-									// SessionNotFound and spawn duplicate sessions.
+									const manager = getWsManager();
+									manager.reKeySession(requestedSessionId, realSessionId);
+									onSelectedSessionIdChange?.(realSessionId);
 									if (isPiDebugEnabled()) {
 										console.debug(
-											"[useChat] Ignoring Pi internal sessionId mismatch:",
+											"[useChat] Re-keyed session to Pi native ID:",
 											requestedSessionId,
 											"->",
 											realSessionId,
@@ -1671,10 +1710,27 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 								setBusyForEvent(sid, true);
 							}
 						} else {
-							// Session is not on the runner -- just fetch
-							// historical state and messages.
-							manager.agentGetState(sid);
-							void fetchHistoryMessages(sid);
+							// Session ID didn't appear in list_sessions. It may still
+							// be active under a different alias (e.g. Pi native ID), so
+							// probe with get_state before falling back to history.
+							try {
+								await manager.agentGetStateWait(sid);
+
+								// Session exists -- reattach to enable event forwarding.
+								forceMessageSyncRef.current.add(sid);
+								unsubscribeRef.current?.();
+								unsubscribeRef.current = manager.subscribeAgentSession(
+									sid,
+									stableHandler,
+									sessionConfig,
+									{ create: true },
+								);
+							} catch {
+								// Session is not on the runner -- just fetch
+								// historical state and messages.
+								manager.agentGetState(sid);
+								void fetchHistoryMessages(sid);
+							}
 						}
 					} catch {
 						// list_sessions failed -- fall back to direct fetch

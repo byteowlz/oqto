@@ -298,6 +298,12 @@ enum UserCommand {
         /// Username or user ID
         user: String,
     },
+    /// Sync per-user config files via the admin API
+    SyncConfigs {
+        /// Optional user ID to target
+        #[arg(long)]
+        user: Option<String>,
+    },
     /// Bootstrap the first admin user (for fresh installs)
     ///
     /// This creates an admin user directly in the database without requiring
@@ -1923,6 +1929,44 @@ async fn handle_user(command: UserCommand, json: bool) -> Result<()> {
                     socket_path,
                     if socket_exists { "exists" } else { "not found" }
                 );
+            }
+        }
+
+        UserCommand::SyncConfigs { user } => {
+            let body = serde_json::json!({ "user_id": user });
+            let response = client.post_json("/api/admin/users/sync-configs", &body).await?;
+
+            if !response.status().is_success() {
+                anyhow::bail!(
+                    "Server returned error: {}",
+                    response.status().as_u16()
+                );
+            }
+
+            let payload: serde_json::Value = response.json().await?;
+
+            if json {
+                println!("{}", serde_json::to_string_pretty(&payload)?);
+            } else {
+                let results = payload
+                    .get("results")
+                    .and_then(|r| r.as_array())
+                    .cloned()
+                    .unwrap_or_default();
+
+                println!("Synced config for {} users", results.len());
+                for result in results {
+                    let user_id = result
+                        .get("user_id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("-");
+                    let error = result.get("error").and_then(|v| v.as_str());
+                    if let Some(err) = error {
+                        println!("  {}: error: {}", user_id, err);
+                    } else {
+                        println!("  {}: ok", user_id);
+                    }
+                }
             }
         }
 

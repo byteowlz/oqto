@@ -299,6 +299,7 @@ fn hstry_parts_to_chat_parts(
                         text: Some(text),
                         text_html: None,
                         tool_name: None,
+                        tool_call_id: None,
                         tool_input: None,
                         tool_output: None,
                         tool_status: None,
@@ -310,6 +311,7 @@ fn hstry_parts_to_chat_parts(
                         text: Some(text),
                         text_html: None,
                         tool_name: None,
+                        tool_call_id: None,
                         tool_input: None,
                         tool_output: None,
                         tool_status: None,
@@ -319,6 +321,7 @@ fn hstry_parts_to_chat_parts(
                         name,
                         input,
                         status,
+                        tool_call_id,
                         ..
                     } => parts.push(ChatMessagePart {
                         id,
@@ -326,6 +329,7 @@ fn hstry_parts_to_chat_parts(
                         text: None,
                         text_html: None,
                         tool_name: Some(name),
+                        tool_call_id: Some(tool_call_id),
                         tool_input: input,
                         tool_output: None,
                         tool_status: Some(match status {
@@ -341,6 +345,7 @@ fn hstry_parts_to_chat_parts(
                         output,
                         is_error,
                         title,
+                        tool_call_id,
                         ..
                     } => parts.push(ChatMessagePart {
                         id,
@@ -348,6 +353,7 @@ fn hstry_parts_to_chat_parts(
                         text: None,
                         text_html: None,
                         tool_name: name,
+                        tool_call_id: Some(tool_call_id),
                         tool_input: None,
                         tool_output: output.as_ref().map(|v| v.to_string()),
                         tool_status: Some(if is_error { "error" } else { "success" }.to_string()),
@@ -364,11 +370,18 @@ fn hstry_parts_to_chat_parts(
                 let serde_json::Value::Object(obj) = value else {
                     continue;
                 };
-                let part_type = obj
-                    .get("type")
+                let part_type_raw = obj.get("type").and_then(|v| v.as_str()).unwrap_or("text");
+                let part_type = part_type_raw.to_string();
+                let normalized_type = part_type_raw.to_lowercase();
+                let tool_call_id = obj
+                    .get("toolCallId")
+                    .or_else(|| obj.get("tool_call_id"))
                     .and_then(|v| v.as_str())
-                    .unwrap_or("text")
-                    .to_string();
+                    .map(|v| v.to_string());
+                let tool_name = obj
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .map(|v| v.to_string());
                 let text = match part_type.as_str() {
                     "text" | "thinking" => obj.get("text").and_then(|v| v.as_str()),
                     "status" | "error" => obj
@@ -377,6 +390,61 @@ fn hstry_parts_to_chat_parts(
                         .and_then(|v| v.as_str()),
                     _ => None,
                 };
+
+                let is_tool_call = matches!(
+                    normalized_type.as_str(),
+                    "tool_call" | "tool_use" | "toolcall"
+                );
+                let is_tool_result =
+                    matches!(normalized_type.as_str(), "tool_result" | "toolresult");
+
+                if is_tool_call {
+                    let input = obj.get("input").or_else(|| obj.get("arguments")).cloned();
+                    let call_id = tool_call_id.or_else(|| {
+                        obj.get("id")
+                            .and_then(|v| v.as_str())
+                            .map(|v| v.to_string())
+                    });
+                    parts.push(ChatMessagePart {
+                        id: format!("{message_id}-part-{idx}"),
+                        part_type: "tool_call".to_string(),
+                        text: None,
+                        text_html: None,
+                        tool_name: tool_name.clone(),
+                        tool_call_id: call_id,
+                        tool_input: input,
+                        tool_output: None,
+                        tool_status: None,
+                        tool_title: None,
+                    });
+                    continue;
+                }
+
+                if is_tool_result {
+                    let output = obj.get("output").cloned();
+                    let call_id = tool_call_id.or_else(|| {
+                        obj.get("id")
+                            .and_then(|v| v.as_str())
+                            .map(|v| v.to_string())
+                    });
+                    parts.push(ChatMessagePart {
+                        id: format!("{message_id}-part-{idx}"),
+                        part_type: "tool_result".to_string(),
+                        text: None,
+                        text_html: None,
+                        tool_name,
+                        tool_call_id: call_id,
+                        tool_input: None,
+                        tool_output: output.map(|v| v.to_string()),
+                        tool_status: obj
+                            .get("is_error")
+                            .and_then(|v| v.as_bool())
+                            .map(|is_error| if is_error { "error" } else { "success" }.to_string()),
+                        tool_title: None,
+                    });
+                    continue;
+                }
+
                 if let Some(text) = text {
                     parts.push(ChatMessagePart {
                         id: format!("{message_id}-part-{idx}"),
@@ -384,6 +452,7 @@ fn hstry_parts_to_chat_parts(
                         text: Some(text.to_string()),
                         text_html: None,
                         tool_name: None,
+                        tool_call_id: None,
                         tool_input: None,
                         tool_output: None,
                         tool_status: None,
@@ -402,6 +471,7 @@ fn hstry_parts_to_chat_parts(
             text: Some(content.to_string()),
             text_html: None,
             tool_name: None,
+            tool_call_id: None,
             tool_input: None,
             tool_output: None,
             tool_status: None,
@@ -458,10 +528,17 @@ fn conversation_proto_to_session(conv: &hstry_core::service::proto::Conversation
         .clone()
         .unwrap_or_else(|| "global".to_string());
     let project_name = project_name_from_path(&workspace_path);
+    let mut readable_id = conv.readable_id.clone().unwrap_or_default();
+
+    if readable_id.trim().is_empty() {
+        if let Some(octo_session_id) = parse_octo_session_id(&conv.metadata_json) {
+            readable_id = octo_session_id;
+        }
+    }
 
     ChatSession {
         id: conv.external_id.clone(),
-        readable_id: String::new(),
+        readable_id,
         title: conv.title.clone(),
         parent_id: None,
         workspace_path,
@@ -502,6 +579,17 @@ fn parse_stats_from_metadata(metadata_json: &str) -> Option<ChatSessionStats> {
             .and_then(|v| v.as_f64())
             .unwrap_or(0.0),
     })
+}
+
+fn parse_octo_session_id(metadata_json: &str) -> Option<String> {
+    if metadata_json.trim().is_empty() {
+        return None;
+    }
+    let value: serde_json::Value = serde_json::from_str(metadata_json).ok()?;
+    value
+        .get("octo_session_id")
+        .and_then(|v| v.as_str())
+        .map(|value| value.to_string())
 }
 
 /// Convert a proto Message to a ChatMessage.
@@ -1032,6 +1120,7 @@ fn load_message_parts(message_id: &str, session_id: &str, part_dir: &Path) -> Ve
                 text: info.text,
                 text_html: None, // Rendered on-demand via separate endpoint
                 tool_name: None,
+                tool_call_id: None,
                 tool_input: None,
                 tool_output: None,
                 tool_status: None,
@@ -1043,6 +1132,7 @@ fn load_message_parts(message_id: &str, session_id: &str, part_dir: &Path) -> Ve
                 text: None,
                 text_html: None,
                 tool_name: info.tool,
+                tool_call_id: None,
                 tool_input: info.state.as_ref().and_then(|s| s.input.clone()),
                 tool_output: info.state.as_ref().and_then(|s| s.output.clone()),
                 tool_status: info.state.as_ref().and_then(|s| s.status.clone()),
@@ -1055,6 +1145,7 @@ fn load_message_parts(message_id: &str, session_id: &str, part_dir: &Path) -> Ve
                 text: info.text,
                 text_html: None,
                 tool_name: None,
+                tool_call_id: None,
                 tool_input: None,
                 tool_output: None,
                 tool_status: None,

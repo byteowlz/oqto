@@ -876,15 +876,21 @@ fn ws_command_summary(cmd: &WsCommand) -> (String, Option<String>, Option<String
     match cmd {
         WsCommand::Agent(agent_cmd) => {
             let label = match agent_cmd.payload {
-                octo_protocol::commands::CommandPayload::SessionCreate { .. } => "agent.session_create",
+                octo_protocol::commands::CommandPayload::SessionCreate { .. } => {
+                    "agent.session_create"
+                }
                 octo_protocol::commands::CommandPayload::SessionClose => "agent.session_close",
                 octo_protocol::commands::CommandPayload::SessionNew { .. } => "agent.session_new",
-                octo_protocol::commands::CommandPayload::SessionSwitch { .. } => "agent.session_switch",
+                octo_protocol::commands::CommandPayload::SessionSwitch { .. } => {
+                    "agent.session_switch"
+                }
                 octo_protocol::commands::CommandPayload::Prompt { .. } => "agent.prompt",
                 octo_protocol::commands::CommandPayload::Steer { .. } => "agent.steer",
                 octo_protocol::commands::CommandPayload::FollowUp { .. } => "agent.follow_up",
                 octo_protocol::commands::CommandPayload::Abort => "agent.abort",
-                octo_protocol::commands::CommandPayload::InputResponse { .. } => "agent.input_response",
+                octo_protocol::commands::CommandPayload::InputResponse { .. } => {
+                    "agent.input_response"
+                }
                 octo_protocol::commands::CommandPayload::GetState => "agent.get_state",
                 octo_protocol::commands::CommandPayload::GetMessages => "agent.get_messages",
                 octo_protocol::commands::CommandPayload::GetStats => "agent.get_stats",
@@ -894,16 +900,28 @@ fn ws_command_summary(cmd: &WsCommand) -> (String, Option<String>, Option<String
                 octo_protocol::commands::CommandPayload::ListSessions => "agent.list_sessions",
                 octo_protocol::commands::CommandPayload::SetModel { .. } => "agent.set_model",
                 octo_protocol::commands::CommandPayload::CycleModel => "agent.cycle_model",
-                octo_protocol::commands::CommandPayload::SetThinkingLevel { .. } => "agent.set_thinking_level",
-                octo_protocol::commands::CommandPayload::CycleThinkingLevel => "agent.cycle_thinking_level",
-                octo_protocol::commands::CommandPayload::SetAutoCompaction { .. } => "agent.set_auto_compaction",
-                octo_protocol::commands::CommandPayload::SetAutoRetry { .. } => "agent.set_auto_retry",
+                octo_protocol::commands::CommandPayload::SetThinkingLevel { .. } => {
+                    "agent.set_thinking_level"
+                }
+                octo_protocol::commands::CommandPayload::CycleThinkingLevel => {
+                    "agent.cycle_thinking_level"
+                }
+                octo_protocol::commands::CommandPayload::SetAutoCompaction { .. } => {
+                    "agent.set_auto_compaction"
+                }
+                octo_protocol::commands::CommandPayload::SetAutoRetry { .. } => {
+                    "agent.set_auto_retry"
+                }
                 octo_protocol::commands::CommandPayload::Compact { .. } => "agent.compact",
                 octo_protocol::commands::CommandPayload::AbortRetry => "agent.abort_retry",
-                octo_protocol::commands::CommandPayload::SetSessionName { .. } => "agent.set_session_name",
+                octo_protocol::commands::CommandPayload::SetSessionName { .. } => {
+                    "agent.set_session_name"
+                }
                 octo_protocol::commands::CommandPayload::Fork { .. } => "agent.fork",
                 octo_protocol::commands::CommandPayload::Delegate(_) => "agent.delegate",
-                octo_protocol::commands::CommandPayload::DelegateCancel(_) => "agent.delegate_cancel",
+                octo_protocol::commands::CommandPayload::DelegateCancel(_) => {
+                    "agent.delegate_cancel"
+                }
             };
             (label.to_string(), Some(agent_cmd.session_id.clone()), None)
         }
@@ -920,7 +938,18 @@ fn ws_command_summary(cmd: &WsCommand) -> (String, Option<String>, Option<String
                 FilesWsCommand::Copy { .. } => "files.copy",
                 FilesWsCommand::Move { .. } => "files.move",
             };
-            let workspace_path = extract_files_workspace_path(files_cmd).map(|s| s.to_string());
+            let workspace_path = match files_cmd {
+                FilesWsCommand::Tree { workspace_path, .. }
+                | FilesWsCommand::Read { workspace_path, .. }
+                | FilesWsCommand::Write { workspace_path, .. }
+                | FilesWsCommand::List { workspace_path, .. }
+                | FilesWsCommand::Stat { workspace_path, .. }
+                | FilesWsCommand::Delete { workspace_path, .. }
+                | FilesWsCommand::CreateDirectory { workspace_path, .. }
+                | FilesWsCommand::Rename { workspace_path, .. }
+                | FilesWsCommand::Copy { workspace_path, .. }
+                | FilesWsCommand::Move { workspace_path, .. } => workspace_path.clone(),
+            };
             (label.to_string(), None, workspace_path)
         }
         WsCommand::Terminal(term_cmd) => {
@@ -1009,12 +1038,10 @@ async fn handle_agent_command(
     let id = cmd.id.clone();
     let session_id = cmd.session_id.clone();
     let runner_id = cmd.runner_id.clone().unwrap_or_else(|| "local".to_string());
-    let agent_response = |session_id: &str,
-                          id: Option<String>,
-                          cmd: &str,
-                          result: Result<Option<Value>, String>| {
-        agent_response_with_runner(&runner_id, session_id, id, cmd, result)
-    };
+    let agent_response =
+        |session_id: &str, id: Option<String>, cmd: &str, result: Result<Option<Value>, String>| {
+            agent_response_with_runner(&runner_id, session_id, id, cmd, result)
+        };
 
     // Check if runner is available
     let runner = match runner_client {
@@ -1473,12 +1500,7 @@ async fn handle_agent_command(
                             Ok(Some(Value::Array(Vec::new()))),
                         ));
                     }
-                    Some(agent_response(
-                        &session_id,
-                        id,
-                        "get_commands",
-                        Err(msg),
-                    ))
+                    Some(agent_response(&session_id, id, "get_commands", Err(msg)))
                 }
             }
         }
@@ -1832,12 +1854,10 @@ async fn handle_get_messages(
     conn_state: Arc<tokio::sync::Mutex<WsConnectionState>>,
     runner_id: &str,
 ) -> Option<WsEvent> {
-    let agent_response = |session_id: &str,
-                          id: Option<String>,
-                          cmd: &str,
-                          result: Result<Option<Value>, String>| {
-        agent_response_with_runner(runner_id, session_id, id, cmd, result)
-    };
+    let agent_response =
+        |session_id: &str, id: Option<String>, cmd: &str, result: Result<Option<Value>, String>| {
+            agent_response_with_runner(runner_id, session_id, id, cmd, result)
+        };
 
     let (session_meta, is_active) = {
         let state_guard = conn_state.lock().await;

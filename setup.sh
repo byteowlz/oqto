@@ -49,7 +49,6 @@ PROJECT_TEMPLATES_PATH_DEFAULT="/usr/share/octo/octo-templates/agents/"
 
 # Agent tools installation tracking
 INSTALL_MMRY="false"
-INSTALL_MAILZ="false"
 INSTALL_ALL_TOOLS="false"
 
 # LLM provider configuration (set during generate_config)
@@ -73,7 +72,6 @@ ADMIN_EMAIL=""
 
 OCTO_CONFIG_DIR="${XDG_CONFIG_HOME}/octo"
 OCTO_DATA_DIR="${XDG_DATA_HOME}/octo"
-OPENCODE_CONFIG_DIR="${XDG_CONFIG_HOME}/opencode"
 
 # Colors for output
 RED='\033[0;31m'
@@ -139,13 +137,13 @@ prompt_choice() {
     return
   fi
 
-  echo -e "\n${BOLD}$prompt${NC}"
+  echo -e "\n${BOLD}$prompt${NC}" >&2
   local i=1
   for opt in "${options[@]}"; do
     if [[ $i -eq 1 ]]; then
-      echo "  $i) $opt (default)"
+      echo "  $i) $opt (default)" >&2
     else
-      echo "  $i) $opt"
+      echo "  $i) $opt" >&2
     fi
     ((i++))
   done
@@ -353,26 +351,6 @@ install_bun() {
   log_success "Bun installed: $(bun --version)"
 }
 
-install_opencode() {
-  log_step "Installing OpenCode"
-
-  if command_exists opencode; then
-    log_success "OpenCode already installed: $(opencode --version 2>/dev/null || echo 'version unknown')"
-    if ! confirm "Reinstall OpenCode?"; then
-      return 0
-    fi
-  fi
-
-  log_info "Installing OpenCode..."
-  curl -fsSL https://opencode.ai/install | bash
-
-  if command_exists opencode; then
-    log_success "OpenCode installed successfully"
-  else
-    log_warn "OpenCode installed but not in PATH. You may need to restart your shell."
-  fi
-}
-
 install_ttyd() {
   log_step "Installing ttyd (web terminal)"
 
@@ -439,134 +417,140 @@ install_ttyd_from_source() {
 # Pi Extensions Installation
 # ==============================================================================
 
-install_pi_extensions() {
-  log_step "Installing Pi extensions"
+# GitHub repo for Pi agent extensions
+PI_EXTENSIONS_REPO="https://github.com/byteowlz/pi-agent-extensions.git"
 
-  local pi_ext_source="${SCRIPT_DIR}/pi-extension"
+# Default extensions to install (subset of what's available in the repo)
+# These are the Octo-relevant extensions; users can install others via the
+# pi-agent-extensions justfile.
+PI_DEFAULT_EXTENSIONS=(
+  "auto-rename"
+  "octo-bridge"
+  "octo-todos"
+  "custom-context-files"
+)
 
-  if [[ ! -d "$pi_ext_source" ]]; then
-    log_warn "Pi extension source not found at $pi_ext_source"
+# Clone or update the pi-agent-extensions repo into a cache directory
+clone_pi_extensions_repo() {
+  local cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/octo/pi-agent-extensions"
+
+  if [[ -d "$cache_dir/.git" ]]; then
+    log_info "Updating pi-agent-extensions repo..."
+    git -C "$cache_dir" fetch --all --prune 2>/dev/null || true
+    git -C "$cache_dir" reset --hard origin/main 2>/dev/null || true
+  else
+    # Remove stale cache dir if it exists without .git
+    if [[ -d "$cache_dir" ]]; then
+      rm -rf "$cache_dir"
+    fi
+    log_info "Cloning pi-agent-extensions from GitHub..."
+    mkdir -p "$(dirname "$cache_dir")"
+    if ! git clone --depth 1 "$PI_EXTENSIONS_REPO" "$cache_dir"; then
+      log_error "Failed to clone pi-agent-extensions repo"
+      return 1
+    fi
+  fi
+
+  # Verify the clone has content
+  if [[ ! -f "$cache_dir/README.md" ]]; then
+    log_error "pi-agent-extensions clone appears empty at $cache_dir"
+    rm -rf "$cache_dir"
     return 1
   fi
 
+  echo "$cache_dir"
+}
+
+install_pi_extensions() {
+  log_step "Installing Pi extensions"
+
+  local ext_source
+  ext_source=$(clone_pi_extensions_repo) || return 1
+
   # Install for current user
-  install_pi_extensions_for_user "$HOME"
+  install_pi_extensions_for_user "$HOME" "$ext_source"
 
   log_success "Pi extensions installed"
 }
 
 # Install Pi extensions for a specific user's home directory
+# Args: $1 = user home dir, $2 = extensions source dir (cloned repo)
 install_pi_extensions_for_user() {
   local user_home="$1"
-  local pi_ext_source="${SCRIPT_DIR}/pi-extension"
-  local pi_agent_dir="${user_home}/.pi/agent"
-  local extensions_dir="${pi_agent_dir}/extensions"
-  local octo_ext_dir="${extensions_dir}/octo"
-  local user_data_dir="${user_home}/.local/share/octo"
-  local data_extensions_dir="${user_data_dir}/extensions"
+  local ext_source="$2"
+  local extensions_dir="${user_home}/.pi/agent/extensions"
 
   log_info "Installing Pi extensions to ${extensions_dir}"
 
-  # Create extensions directory
-  mkdir -p "$octo_ext_dir"
-  mkdir -p "$data_extensions_dir"
+  mkdir -p "$extensions_dir"
 
-  # Copy extension files
-  # The octo-delegate.ts becomes index.ts in the extension directory
-  if [[ -f "${pi_ext_source}/octo-delegate.ts" ]]; then
-    cp "${pi_ext_source}/octo-delegate.ts" "${octo_ext_dir}/index.ts"
-    cp "${pi_ext_source}/octo-delegate.ts" "${data_extensions_dir}/octo-delegate.ts"
-    log_success "Installed octo-delegate extension"
-  fi
+  local installed=0
+  for ext_name in "${PI_DEFAULT_EXTENSIONS[@]}"; do
+    local src_dir="${ext_source}/${ext_name}"
+    local dest_dir="${extensions_dir}/${ext_name}"
 
-  # Copy octo-todos as a separate extension if it exists
-  if [[ -f "${pi_ext_source}/octo-todos.ts" ]]; then
-    local todos_ext_dir="${extensions_dir}/octo-todos"
-    mkdir -p "$todos_ext_dir"
-    cp "${pi_ext_source}/octo-todos.ts" "${todos_ext_dir}/index.ts"
-    cp "${pi_ext_source}/octo-todos.ts" "${data_extensions_dir}/octo-todos.ts"
-    log_success "Installed octo-todos extension"
-  fi
+    if [[ ! -d "$src_dir" || ! -f "$src_dir/index.ts" ]]; then
+      log_warn "Extension not found in repo: $ext_name"
+      continue
+    fi
 
-  # Copy octo-prompts as a separate extension if it exists
-  if [[ -f "${pi_ext_source}/octo-prompts.ts" ]]; then
-    local prompts_ext_dir="${extensions_dir}/octo-prompts"
-    mkdir -p "$prompts_ext_dir"
-    cp "${pi_ext_source}/octo-prompts.ts" "${prompts_ext_dir}/index.ts"
-    cp "${pi_ext_source}/octo-prompts.ts" "${data_extensions_dir}/octo-prompts.ts"
-    log_success "Installed octo-prompts extension"
-  fi
+    # Copy extension directory
+    rm -rf "$dest_dir"
+    cp -r "$src_dir" "$dest_dir"
 
-  # Install dependencies if package.json exists
-  if [[ -f "${pi_ext_source}/package.json" ]]; then
-    # Copy package.json for reference (extensions may need peer deps)
-    cp "${pi_ext_source}/package.json" "${octo_ext_dir}/package.json"
+    # Remove files that should not be in the install target
+    rm -f "$dest_dir/package.json" "$dest_dir/install.sh"
 
-    # Note: Extensions use pi's runtime, so we don't need to install deps
-    # The peer dependency @mariozechner/pi-coding-agent is provided by pi itself
-  fi
+    log_success "Installed $ext_name extension"
+    ((installed++)) || true
+  done
 
   # Create a README for the user
   cat >"${extensions_dir}/README.md" <<'EOF'
-# Octo Pi Extensions
+# Pi Agent Extensions (installed by Octo)
 
-These extensions are installed by Octo setup and provide integration between
-Pi (main chat) and Octo (session management).
+These extensions are installed by Octo setup from the pi-agent-extensions
+repository: https://github.com/byteowlz/pi-agent-extensions
 
-## Extensions
+## Installed Extensions
 
-- **octo/**: Task delegation to OpenCode sessions via Octo backend
-- **octo-todos/**: Todo list management for the Octo UI
-- **octo-prompts/**: Auto-load USER.md and PERSONALITY.md into system prompt
+- **auto-rename**: Automatically generate session names from first user query
+- **octo-bridge**: Emit granular agent phase status for the Octo runner
+- **octo-todos**: Todo management tools for Octo frontend integration
+- **custom-context-files**: Auto-load USER.md, PERSONALITY.md, and other context files into prompts
 
-## Usage
+## Managing Extensions
 
-These extensions are automatically loaded by Pi when running within Octo.
-They provide tools like:
+To install additional extensions or update existing ones, clone the
+pi-agent-extensions repo and use its justfile:
 
-- `octo_session`: Delegate work to an OpenCode session
-- `todowrite`: Write/update the session todo list
-- `todoread`: Read the current session todo list
+    git clone https://github.com/byteowlz/pi-agent-extensions.git
+    cd pi-agent-extensions
+    just install      # Interactive picker
+    just install-all  # Install everything
+    just status       # Show sync status
 
-The prompts extension adds USER.md and PERSONALITY.md from the session directory
-to the system prompt when present.
-
-## Configuration
-
-Extensions can be configured via JSON files in `~/.pi/agent/` or the project directory.
-See each extension's source for available options.
-
-## Updates
-
-To update extensions, run the Octo setup script again or manually copy
-the latest files from the octo repository's `pi-extension/` directory.
+Or re-run the Octo setup script to update the default set.
 EOF
 
-  log_info "Pi extensions installed to ${extensions_dir}"
+  log_info "$installed extensions installed to ${extensions_dir}"
 }
 
 # Install Pi extensions for all users in multi-user mode
 install_pi_extensions_all_users() {
   log_step "Installing Pi extensions for all users"
 
-  local pi_ext_source="${SCRIPT_DIR}/pi-extension"
-
-  if [[ ! -d "$pi_ext_source" ]]; then
-    log_warn "Pi extension source not found at $pi_ext_source"
-    return 1
-  fi
+  local ext_source
+  ext_source=$(clone_pi_extensions_repo) || return 1
 
   # Install for current user first
-  install_pi_extensions_for_user "$HOME"
-
-  # In multi-user mode, we might want to install to /etc/skel for new users
-  # or to a shared location. For now, each user gets their own copy.
+  install_pi_extensions_for_user "$HOME" "$ext_source"
 
   # Install to /etc/skel so new users get extensions automatically
   if [[ "$SELECTED_USER_MODE" == "multi" && -d "/etc/skel" ]]; then
     log_info "Installing Pi extensions to /etc/skel for new users..."
     sudo mkdir -p /etc/skel/.pi/agent/extensions
-    install_pi_extensions_for_user "/etc/skel" 2>/dev/null || true
+    install_pi_extensions_for_user "/etc/skel" "$ext_source" 2>/dev/null || true
   fi
 
   log_success "Pi extensions installed for all applicable users"
@@ -815,23 +799,32 @@ install_shell_tools_cargo() {
     return 1
   fi
 
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  trap "rm -rf '$tmpdir'" RETURN
+
   for tool in "${tools[@]}"; do
     case "$tool" in
     yazi | yazi-fm)
       log_info "Installing yazi via cargo..."
-      cargo install --locked yazi-fm yazi-cli
+      cargo install --locked yazi-fm yazi-cli --root "$tmpdir"
+      sudo install -m 755 "$tmpdir/bin/yazi" "${TOOLS_INSTALL_DIR}/yazi"
+      sudo install -m 755 "$tmpdir/bin/ya" "${TOOLS_INSTALL_DIR}/ya" 2>/dev/null || true
       ;;
     zoxide)
       log_info "Installing zoxide via cargo..."
-      cargo install zoxide --locked
+      cargo install zoxide --locked --root "$tmpdir"
+      sudo install -m 755 "$tmpdir/bin/zoxide" "${TOOLS_INSTALL_DIR}/zoxide"
       ;;
     fd)
       log_info "Installing fd via cargo..."
-      cargo install fd-find
+      cargo install fd-find --root "$tmpdir"
+      sudo install -m 755 "$tmpdir/bin/fd" "${TOOLS_INSTALL_DIR}/fd"
       ;;
     ripgrep)
       log_info "Installing ripgrep via cargo..."
-      cargo install ripgrep
+      cargo install ripgrep --root "$tmpdir"
+      sudo install -m 755 "$tmpdir/bin/rg" "${TOOLS_INSTALL_DIR}/rg"
       ;;
     esac
   done
@@ -897,29 +890,49 @@ setup_feedback_dirs() {
 
 # ==============================================================================
 # ==============================================================================
-# Byteowlz Agent Tools Installation
+# Agent Tools Installation
 # ==============================================================================
 #
-# The byteowlz ecosystem provides several CLI tools for AI agents:
+# Tools for AI agents in the Octo platform:
 #
-#   agntz  - Agent toolkit (wraps other tools, file reservations, etc.)
-#   mmry   - Memory storage and semantic search
-#   mailz  - Agent coordination and messaging
-#   trx    - Issue/task tracking (via byt/bd)
-#   byt    - Cross-repo governance and management
-#   sx     - External search via SearXNG
+#   agntz   - Agent toolkit (wraps other tools, file reservations, etc.)
+#   mmry    - Memory storage and semantic search
+#   trx     - Issue/task tracking
+#   scrpr   - Web content extraction (readability, Tavily, Jina)
+#   tmpltr  - Document generation from templates (Typst)
+#   sldr    - Markdown presentations (Slidev)
+#   ignr    - Gitignore generation (auto-detect languages/tools)
 #
 # Installation sources (in order of preference):
-#   1. cargo install from crates.io (if published)
-#   2. cargo install --git from GitHub
-#   3. Local build from byteowlz monorepo (if available)
+#   1. cargo install / go install from registries
+#   2. cargo install --git / go install from GitHub
+#   3. Local build from source (if available)
 #
 # ==============================================================================
 
 # GitHub org for byteowlz tools
 BYTEOWLZ_GITHUB="https://github.com/byteowlz"
 
-install_byteowlz_tool() {
+# Global install directory for all agent tools
+TOOLS_INSTALL_DIR="/usr/local/bin"
+
+# Move a built binary into TOOLS_INSTALL_DIR
+install_binary_global() {
+  local binary_path="$1"
+  local tool="$2"
+
+  if [[ ! -f "$binary_path" ]]; then
+    log_warn "Binary not found: $binary_path"
+    return 1
+  fi
+
+  sudo install -m 755 "$binary_path" "${TOOLS_INSTALL_DIR}/${tool}"
+  log_success "$tool installed to ${TOOLS_INSTALL_DIR}/${tool}"
+}
+
+# Install a Rust tool from crates.io, GitHub, or local source.
+# Installs to /usr/local/bin so all users can access it.
+install_rust_tool() {
   local tool="$1"
   local repo="${2:-$tool}" # repo name, defaults to tool name
 
@@ -937,21 +950,25 @@ install_byteowlz_tool() {
 
   log_info "Installing $tool..."
 
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  trap "rm -rf '$tmpdir'" RETURN
+
   # Try crates.io first
-  if cargo install "$tool" 2>/dev/null; then
-    log_success "$tool installed via crates.io"
+  if cargo install "$tool" --root "$tmpdir" 2>/dev/null; then
+    install_binary_global "$tmpdir/bin/$tool" "$tool"
     return 0
   fi
 
   # Try GitHub
   log_info "Trying GitHub repository..."
-  if cargo install --git "${BYTEOWLZ_GITHUB}/${repo}.git" 2>/dev/null; then
-    log_success "$tool installed via GitHub"
+  if cargo install --git "${BYTEOWLZ_GITHUB}/${repo}.git" --root "$tmpdir" 2>/dev/null; then
+    install_binary_global "$tmpdir/bin/$tool" "$tool"
     return 0
   fi
 
-  # Check for local byteowlz directory (development setup)
-  local local_path
+  # Check for local source directory
+  local local_path=""
   for base in "$HOME/byteowlz" "$HOME/code/byteowlz" "/opt/byteowlz"; do
     if [[ -d "$base/$repo" ]]; then
       local_path="$base/$repo"
@@ -961,8 +978,86 @@ install_byteowlz_tool() {
 
   if [[ -n "$local_path" && -f "$local_path/Cargo.toml" ]]; then
     log_info "Installing from local path: $local_path"
-    if cargo install --path "$local_path" 2>/dev/null; then
-      log_success "$tool installed from local source"
+    if cargo install --path "$local_path" --root "$tmpdir" 2>/dev/null; then
+      install_binary_global "$tmpdir/bin/$tool" "$tool"
+      return 0
+    fi
+  fi
+
+  log_warn "Failed to install $tool"
+  return 1
+}
+
+# Install a Go tool from GitHub or local source.
+# Installs to /usr/local/bin so all users can access it.
+# Handles both root-level main.go and cmd/<tool>/main.go layouts.
+install_go_tool() {
+  local tool="$1"
+  local repo="${2:-$tool}" # repo name, defaults to tool name
+  local go_module="github.com/byteowlz/${repo}"
+
+  if command_exists "$tool"; then
+    local version
+    version=$("$tool" --version 2>/dev/null | head -1 || echo 'unknown')
+    log_success "$tool already installed: $version"
+    return 0
+  fi
+
+  if ! command_exists go; then
+    log_warn "Go not available. Cannot install $tool."
+    return 1
+  fi
+
+  log_info "Installing $tool..."
+
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  trap "rm -rf '$tmpdir'" RETURN
+
+  # Try go install from GitHub (root package first, then cmd/<tool>)
+  if GOBIN="$tmpdir" go install "${go_module}@latest" 2>/dev/null; then
+    install_binary_global "$tmpdir/$tool" "$tool"
+    return 0
+  fi
+
+  if GOBIN="$tmpdir" go install "${go_module}/cmd/${tool}@latest" 2>/dev/null; then
+    install_binary_global "$tmpdir/$tool" "$tool"
+    return 0
+  fi
+
+  # Check for local source directory
+  local local_path=""
+  for base in "$HOME/byteowlz" "$HOME/code/byteowlz" "/opt/byteowlz"; do
+    if [[ -d "$base/$repo" ]]; then
+      local_path="$base/$repo"
+      break
+    fi
+  done
+
+  if [[ -n "$local_path" && -f "$local_path/go.mod" ]]; then
+    log_info "Installing from local path: $local_path"
+    if [[ -f "$local_path/cmd/$tool/main.go" ]]; then
+      if (cd "$local_path" && GOBIN="$tmpdir" go install "./cmd/$tool" 2>/dev/null); then
+        install_binary_global "$tmpdir/$tool" "$tool"
+        return 0
+      fi
+    elif (cd "$local_path" && GOBIN="$tmpdir" go install . 2>/dev/null); then
+      install_binary_global "$tmpdir/$tool" "$tool"
+      return 0
+    fi
+  fi
+
+  # Fallback: clone repo and build locally (handles mismatched module paths)
+  log_info "Trying clone and build..."
+  local clone_dir="${tmpdir}/src"
+  if git clone --depth 1 "${BYTEOWLZ_GITHUB}/${repo}.git" "$clone_dir" 2>/dev/null; then
+    if [[ -f "$clone_dir/cmd/$tool/main.go" ]]; then
+      if (cd "$clone_dir" && GOBIN="$tmpdir" go install "./cmd/$tool"); then
+        install_binary_global "$tmpdir/$tool" "$tool"
+        return 0
+      fi
+    elif (cd "$clone_dir" && GOBIN="$tmpdir" go install .); then
+      install_binary_global "$tmpdir/$tool" "$tool"
       return 0
     fi
   fi
@@ -973,78 +1068,866 @@ install_byteowlz_tool() {
 
 install_agntz() {
   log_step "Installing agntz (Agent Toolkit)"
-  install_byteowlz_tool agntz
+  install_rust_tool agntz
 }
 
-install_all_byteowlz_tools() {
-  log_step "Installing byteowlz agent tools"
+install_all_agent_tools() {
+  log_step "Installing agent tools"
 
-  # Core tools
-  install_byteowlz_tool agntz
-  install_byteowlz_tool mmry
-  install_byteowlz_tool mailz
-  install_byteowlz_tool byt
-  install_byteowlz_tool sx
+  # Core tools (Rust)
+  install_rust_tool agntz
+  install_rust_tool mmry
+  install_rust_tool tmpltr
+  install_rust_tool sldr
+  install_rust_tool ignr
 
-  # Use agntz to install additional tools if available
-  if command_exists agntz; then
-    log_info "Installing additional tools via agntz..."
-    agntz tools install all 2>/dev/null || true
-  fi
+  # Core tools (Go)
+  install_go_tool scrpr
+  install_go_tool sx
 }
 
 select_agent_tools() {
   log_step "Agent Tools Selection"
 
   echo
-  echo "Octo can install byteowlz agent tools:"
+  echo "Octo can install agent tools:"
   echo
-  echo "  ${BOLD}Core tools (recommended):${NC}"
-  echo "    agntz  - Agent toolkit (file reservations, tool management)"
-  echo "    mmry   - Memory storage and semantic search"
-  echo "    mailz  - Agent coordination and messaging"
+  echo -e "  ${BOLD}Core tools (recommended):${NC}"
+  echo "    agntz   - Agent toolkit (file reservations, tool management)"
+  echo "    mmry    - Memory storage and semantic search"
+  echo "    scrpr   - Web content extraction"
+  echo "    sx      - Web search via local SearXNG instance"
   echo
-  echo "  ${BOLD}Additional tools:${NC}"
-  echo "    byt    - Cross-repo governance and management"
-  echo "    sx     - External search via SearXNG"
-  echo "    trx    - Issue/task tracking"
+  echo -e "  ${BOLD}Additional tools:${NC}"
+  echo "    tmpltr  - Document generation from templates"
+  echo "    sldr    - Markdown presentations"
+  echo "    ignr    - Gitignore generation"
+  echo "    trx     - Issue/task tracking"
+  echo
+  echo "  Installing sx will also set up a local SearXNG search engine"
+  echo "  with Valkey for caching (binds to 127.0.0.1:8888)."
   echo
 
-  if confirm "Install all byteowlz tools (recommended)?"; then
+  if confirm "Install all agent tools (recommended)?"; then
     INSTALL_MMRY="true"
-    INSTALL_MAILZ="true"
     INSTALL_ALL_TOOLS="true"
   else
     if confirm "Install mmry (memory system)?"; then
       INSTALL_MMRY="true"
     fi
-
-    if confirm "Install mailz (agent messaging)?"; then
-      INSTALL_MAILZ="true"
-    fi
   fi
 }
 
-install_agent_tools_via_agntz() {
+install_agent_tools_selected() {
   log_step "Installing agent tools"
 
   if [[ "$INSTALL_ALL_TOOLS" == "true" ]]; then
-    install_all_byteowlz_tools
+    install_all_agent_tools
     return
   fi
 
   if [[ "$INSTALL_MMRY" == "true" ]]; then
-    install_byteowlz_tool mmry
-  fi
-
-  if [[ "$INSTALL_MAILZ" == "true" ]]; then
-    install_byteowlz_tool mailz
+    install_rust_tool mmry
   fi
 
   # Use agntz tools install for additional tools if agntz is available
   if command_exists agntz; then
     log_info "Running agntz doctor to check tool health..."
     agntz tools doctor 2>/dev/null || true
+  fi
+}
+
+# ==============================================================================
+# SearXNG Installation (local search engine for agents)
+# ==============================================================================
+#
+# SearXNG is a privacy-respecting metasearch engine. We install it locally so
+# agents can use `sx` for web searches without depending on external APIs.
+#
+# Architecture:
+#   - Runs under the backend user (current user in single-user, 'octo' in multi-user)
+#   - Binds to 127.0.0.1:8888 (local only, no external exposure)
+#   - JSON API enabled so `sx` can query it programmatically
+#   - Valkey (Redis-compatible) for rate limiting and caching
+#   - Managed via systemd user service (single-user) or system service (multi-user)
+#
+# ==============================================================================
+
+: "${SEARXNG_PORT:=8888}"
+: "${SEARXNG_BIND:=127.0.0.1}"
+
+install_searxng() {
+  log_step "Installing SearXNG (local search engine)"
+
+  # Determine install paths based on user mode
+  local searxng_base searxng_user service_type
+  if [[ "$SELECTED_USER_MODE" == "multi" ]]; then
+    searxng_user="octo"
+    searxng_base="${OCTO_HOME}/.local/share/searxng"
+    service_type="system"
+  else
+    searxng_user="$(whoami)"
+    searxng_base="${XDG_DATA_HOME}/searxng"
+    service_type="user"
+  fi
+
+  local searxng_src="${searxng_base}/searxng-src"
+  local searxng_venv="${searxng_base}/venv"
+  local searxng_settings="${searxng_base}/settings.yml"
+
+  # 1. Install system dependencies
+  install_searxng_deps
+
+  # 2. Install Valkey (Redis-compatible key-value store)
+  install_valkey
+
+  # 3. Clone SearXNG source
+  log_info "Setting up SearXNG in ${searxng_base}..."
+  if [[ "$service_type" == "system" ]]; then
+    sudo mkdir -p "$searxng_base"
+    sudo chown "$searxng_user:$searxng_user" "$searxng_base"
+  else
+    mkdir -p "$searxng_base"
+  fi
+
+  if [[ -d "$searxng_src/.git" ]]; then
+    log_info "Updating SearXNG source..."
+    run_as_searxng_user "$service_type" "$searxng_user" \
+      "git -C '$searxng_src' pull --ff-only" || true
+  else
+    log_info "Cloning SearXNG..."
+    run_as_searxng_user "$service_type" "$searxng_user" \
+      "git clone --depth 1 'https://github.com/searxng/searxng' '$searxng_src'"
+  fi
+
+  # 4. Create virtualenv and install dependencies
+  if [[ ! -d "$searxng_venv" ]]; then
+    log_info "Creating Python virtualenv..."
+    run_as_searxng_user "$service_type" "$searxng_user" \
+      "python3 -m venv '$searxng_venv'"
+  fi
+
+  log_info "Installing SearXNG Python dependencies..."
+  run_as_searxng_user "$service_type" "$searxng_user" \
+    "'$searxng_venv/bin/pip' install -U pip setuptools wheel"
+  run_as_searxng_user "$service_type" "$searxng_user" \
+    "'$searxng_venv/bin/pip' install -r '$searxng_src/requirements.txt'"
+  run_as_searxng_user "$service_type" "$searxng_user" \
+    "cd '$searxng_src' && '$searxng_venv/bin/pip' install --use-pep517 --no-build-isolation -e ."
+
+  # 5. Generate settings.yml with JSON API enabled
+  generate_searxng_settings "$searxng_settings" "$service_type" "$searxng_user"
+
+  # 6. Install systemd service
+  install_searxng_service "$searxng_base" "$searxng_venv" "$searxng_settings" "$service_type" "$searxng_user"
+
+  # 7. Configure sx to use local instance
+  configure_sx_for_searxng
+
+  log_success "SearXNG installed and configured"
+  log_info "SearXNG API: http://${SEARXNG_BIND}:${SEARXNG_PORT}"
+  log_info "Test with: sx 'hello world'"
+}
+
+# Helper: run a command as the SearXNG user
+run_as_searxng_user() {
+  local service_type="$1"
+  local user="$2"
+  local cmd="$3"
+
+  if [[ "$service_type" == "system" ]]; then
+    sudo -H -u "$user" bash -c "$cmd"
+  else
+    bash -c "$cmd"
+  fi
+}
+
+install_searxng_deps() {
+  log_info "Installing SearXNG system dependencies..."
+
+  case "$OS" in
+  linux)
+    case "$OS_DISTRO" in
+    arch | manjaro | endeavouros)
+      sudo pacman -S --noconfirm --needed \
+        python python-pip python-virtualenv \
+        git base-devel libxslt zlib libffi openssl
+      ;;
+    debian | ubuntu | pop | linuxmint)
+      apt_update_once
+      sudo apt-get install -y \
+        python3-dev python3-babel python3-venv python-is-python3 \
+        git build-essential libxslt-dev zlib1g-dev libffi-dev libssl-dev
+      ;;
+    fedora | centos | rhel | rocky | alma)
+      sudo dnf install -y \
+        python3-devel python3-babel python3-virtualenv \
+        git gcc libxslt-devel zlib-devel libffi-devel openssl-devel
+      ;;
+    opensuse* | suse*)
+      sudo zypper install -y \
+        python3-devel python3-Babel python3-virtualenv \
+        git gcc libxslt-devel zlib-devel libffi-devel libopenssl-devel
+      ;;
+    *)
+      log_warn "Unknown distribution. Please install Python 3 dev packages manually."
+      ;;
+    esac
+    ;;
+  macos)
+    if command_exists brew; then
+      brew install python3 libxslt
+    else
+      log_warn "Homebrew not found. Please install Python 3 manually."
+    fi
+    ;;
+  esac
+}
+
+install_valkey() {
+  if command_exists valkey-server; then
+    log_success "Valkey already installed: $(valkey-server --version 2>/dev/null | head -1)"
+  elif command_exists redis-server; then
+    log_success "Redis already installed (compatible with Valkey): $(redis-server --version 2>/dev/null | head -1)"
+  else
+    log_info "Installing Valkey (Redis-compatible key-value store)..."
+
+    case "$OS" in
+    linux)
+      case "$OS_DISTRO" in
+      arch | manjaro | endeavouros)
+        sudo pacman -S --noconfirm valkey
+        ;;
+      debian | ubuntu | pop | linuxmint)
+        apt_update_once
+        # Valkey may not be in default repos, fall back to redis
+        if sudo apt-get install -y valkey 2>/dev/null; then
+          true
+        else
+          log_info "Valkey not in repos, installing Redis instead..."
+          sudo apt-get install -y redis-server
+        fi
+        ;;
+      fedora | centos | rhel | rocky | alma)
+        sudo dnf install -y valkey 2>/dev/null || sudo dnf install -y redis
+        ;;
+      opensuse* | suse*)
+        sudo zypper install -y valkey 2>/dev/null || sudo zypper install -y redis
+        ;;
+      *)
+        log_warn "Please install Valkey or Redis manually."
+        ;;
+      esac
+      ;;
+    macos)
+      if command_exists brew; then
+        brew install valkey 2>/dev/null || brew install redis
+      fi
+      ;;
+    esac
+  fi
+
+  # Enable and start Valkey/Redis
+  if command_exists valkey-server; then
+    if [[ "$OS" == "linux" ]]; then
+      sudo systemctl enable --now valkey 2>/dev/null || sudo systemctl enable --now valkey-server 2>/dev/null || true
+    fi
+    log_success "Valkey is running"
+  elif command_exists redis-server; then
+    if [[ "$OS" == "linux" ]]; then
+      sudo systemctl enable --now redis 2>/dev/null || sudo systemctl enable --now redis-server 2>/dev/null || true
+    fi
+    log_success "Redis is running"
+  fi
+}
+
+generate_searxng_settings() {
+  local settings_file="$1"
+  local service_type="$2"
+  local user="$3"
+
+  log_info "Generating SearXNG settings with JSON API enabled..."
+
+  # Generate a random secret key
+  local secret_key
+  secret_key=$(generate_secure_secret 32)
+
+  # Detect Valkey/Redis URL
+  local kv_url="false"
+  if command_exists valkey-server; then
+    kv_url="valkey://localhost:6379/0"
+  elif command_exists redis-server; then
+    kv_url="redis://localhost:6379/0"
+  fi
+
+  local settings_content
+  read -r -d '' settings_content <<EOSETTINGS || true
+# SearXNG settings - generated by Octo setup.sh
+# Local instance for agent web search via sx CLI
+
+use_default_settings: true
+
+general:
+  debug: false
+  instance_name: "Octo SearXNG"
+
+search:
+  safe_search: 0
+  autocomplete: "duckduckgo"
+  # Enable JSON format for sx API access
+  formats:
+    - html
+    - json
+
+server:
+  port: ${SEARXNG_PORT}
+  bind_address: "${SEARXNG_BIND}"
+  secret_key: "${secret_key}"
+  limiter: false
+  public_instance: false
+  image_proxy: false
+  http_protocol_version: "1.0"
+  method: "GET"
+
+valkey:
+  url: ${kv_url}
+
+ui:
+  static_use_hash: true
+
+outgoing:
+  request_timeout: 10.0
+  max_request_timeout: 15.0
+  # Use multiple user agents to avoid blocks
+  useragent_suffix: ""
+
+engines:
+  - name: duckduckgo
+    disabled: false
+  - name: google
+    disabled: false
+  - name: brave
+    disabled: false
+  - name: wikipedia
+    disabled: false
+  - name: github
+    disabled: false
+  - name: stackoverflow
+    disabled: false
+  - name: arch linux wiki
+    disabled: false
+  - name: npm
+    disabled: false
+  - name: crates.io
+    disabled: false
+  - name: pypi
+    disabled: false
+EOSETTINGS
+
+  if [[ "$service_type" == "system" ]]; then
+    echo "$settings_content" | sudo -u "$user" tee "$settings_file" >/dev/null
+  else
+    echo "$settings_content" >"$settings_file"
+  fi
+
+  log_success "SearXNG settings written to $settings_file"
+}
+
+install_searxng_service() {
+  local searxng_base="$1"
+  local searxng_venv="$2"
+  local searxng_settings="$3"
+  local service_type="$4"
+  local user="$5"
+
+  local searxng_src="${searxng_base}/searxng-src"
+
+  if [[ "$service_type" == "user" ]]; then
+    # User-level systemd service
+    local service_dir="$HOME/.config/systemd/user"
+    mkdir -p "$service_dir"
+
+    cat >"${service_dir}/searxng.service" <<EOF
+[Unit]
+Description=SearXNG local search engine
+After=default.target
+
+[Service]
+Type=simple
+Environment=SEARXNG_SETTINGS_PATH=${searxng_settings}
+WorkingDirectory=${searxng_src}
+ExecStart=${searxng_venv}/bin/python -m searx.webapp
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+EOF
+
+    systemctl --user daemon-reload
+    systemctl --user enable searxng
+
+    if confirm "Start SearXNG now?"; then
+      systemctl --user start searxng
+      log_success "SearXNG started (user service)"
+      log_info "Check status: systemctl --user status searxng"
+    fi
+
+  else
+    # System-level systemd service
+    sudo tee /etc/systemd/system/searxng.service >/dev/null <<EOF
+[Unit]
+Description=SearXNG local search engine
+After=network.target valkey.service redis.service
+
+[Service]
+Type=simple
+User=${user}
+Group=${user}
+Environment=SEARXNG_SETTINGS_PATH=${searxng_settings}
+WorkingDirectory=${searxng_src}
+ExecStart=${searxng_venv}/bin/python -m searx.webapp
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    sudo systemctl daemon-reload
+    sudo systemctl enable searxng
+
+    if confirm "Start SearXNG now?"; then
+      sudo systemctl start searxng
+      log_success "SearXNG started (system service)"
+      log_info "Check status: sudo systemctl status searxng"
+    fi
+  fi
+}
+
+configure_sx_for_searxng() {
+  local sx_config_dir="${XDG_CONFIG_HOME}/sx"
+  local sx_config_file="${sx_config_dir}/config.toml"
+
+  mkdir -p "$sx_config_dir"
+
+  if [[ -f "$sx_config_file" ]]; then
+    # Update existing config - just change the URL
+    if grep -q "searxng_url" "$sx_config_file"; then
+      sed -i "s|searxng_url = .*|searxng_url = \"http://${SEARXNG_BIND}:${SEARXNG_PORT}\"|" "$sx_config_file"
+      log_success "Updated sx config with local SearXNG URL"
+    else
+      echo "searxng_url = \"http://${SEARXNG_BIND}:${SEARXNG_PORT}\"" >>"$sx_config_file"
+      log_success "Added SearXNG URL to sx config"
+    fi
+  else
+    cat >"$sx_config_file" <<EOF
+"\$schema" = "https://raw.githubusercontent.com/byteowlz/schemas/refs/heads/main/sx/sx.config.schema.json"
+
+# sx configuration - generated by Octo setup.sh
+engine = "searxng"
+searxng_url = "http://${SEARXNG_BIND}:${SEARXNG_PORT}"
+result_count = 10
+safe_search = "none"
+http_method = "GET"
+timeout = 30.0
+history_enabled = true
+max_history = 100
+EOF
+    log_success "Created sx config at $sx_config_file"
+  fi
+}
+
+# ==============================================================================
+# EAVS Installation (LLM proxy for agents)
+# ==============================================================================
+#
+# EAVS is a bidirectional LLM proxy that:
+#   - Routes requests to multiple providers (Anthropic, OpenAI, Google, etc.)
+#   - Manages virtual API keys per session with budgets and rate limits
+#   - Provides a single endpoint for all LLM access
+#   - Octo creates per-session virtual keys automatically
+#
+# ==============================================================================
+
+: "${EAVS_PORT:=3033}"
+EAVS_MASTER_KEY=""
+
+install_eavs() {
+  log_step "Installing EAVS (LLM proxy)"
+
+  # EAVS uses the system keychain for secret storage (keychain: syntax in config).
+  # On headless Linux servers, gnome-keyring provides the org.freedesktop.secrets
+  # D-Bus service that libsecret needs. Without it, `eavs secret set` fails with:
+  #   "The name org.freedesktop.secrets was not provided by any .service files"
+  if [[ "$OS" == "linux" ]]; then
+    install_eavs_keyring_deps
+  fi
+
+  install_rust_tool eavs
+
+  if ! command_exists eavs; then
+    log_error "EAVS installation failed"
+    return 1
+  fi
+
+  log_success "EAVS installed: $(eavs --version 2>/dev/null | head -1)"
+}
+
+# Install gnome-keyring and libsecret for headless servers.
+# These provide the org.freedesktop.secrets D-Bus service that EAVS needs
+# for its keychain backend (storing OAuth tokens and API keys securely).
+install_eavs_keyring_deps() {
+  # Check if the secrets service is already available
+  if dbus-send --session --dest=org.freedesktop.secrets \
+    --print-reply /org/freedesktop/secrets \
+    org.freedesktop.DBus.Peer.Ping &>/dev/null; then
+    log_info "Secret service already available"
+    return 0
+  fi
+
+  log_info "Installing secret service for EAVS keychain support"
+
+  case "$OS_DISTRO" in
+  ubuntu | debian | pop)
+    sudo apt-get install -y gnome-keyring libsecret-1-0 >/dev/null 2>&1
+    ;;
+  fedora | centos | rhel | rocky | alma)
+    sudo dnf install -y gnome-keyring libsecret >/dev/null 2>&1
+    ;;
+  arch | manjaro | endeavouros)
+    sudo pacman -S --noconfirm --needed gnome-keyring libsecret >/dev/null 2>&1
+    ;;
+  opensuse*)
+    sudo zypper install -y gnome-keyring libsecret >/dev/null 2>&1
+    ;;
+  *)
+    log_warn "Unknown distro '$OS_DISTRO' - install gnome-keyring manually if EAVS keychain fails"
+    return 0
+    ;;
+  esac
+
+  # Start gnome-keyring for the current session
+  if command_exists gnome-keyring-daemon; then
+    eval "$(gnome-keyring-daemon --start --components=secrets 2>/dev/null)" || true
+    log_success "gnome-keyring started for current session"
+  fi
+
+  # Enable the socket for future sessions so it auto-starts on login/reboot
+  if [[ -f /usr/lib/systemd/user/gnome-keyring-daemon.socket ]]; then
+    systemctl --user enable gnome-keyring-daemon.socket 2>/dev/null || true
+    systemctl --user start gnome-keyring-daemon.socket 2>/dev/null || true
+    log_success "gnome-keyring-daemon.socket enabled for future sessions"
+  fi
+
+  # In multi-user mode, also enable gnome-keyring for the octo system user.
+  # The EAVS service runs as octo and needs D-Bus + gnome-keyring for the
+  # keychain: config syntax and `eavs secret set` commands.
+  if [[ "$SELECTED_USER_MODE" == "multi" ]] && id octo &>/dev/null; then
+    enable_keyring_for_octo_user
+  fi
+}
+
+# Enable gnome-keyring-daemon for the octo system user so that:
+#   1. The EAVS system service (User=octo) can resolve keychain: secrets at startup
+#   2. Admins can run `sudo -u octo dbus-run-session -- eavs secret set <name>`
+# Requires linger so octo's user-level systemd instance persists without a login.
+enable_keyring_for_octo_user() {
+  log_info "Enabling gnome-keyring for octo user..."
+
+  # Enable linger so octo gets a persistent user-level systemd instance
+  sudo loginctl enable-linger octo 2>/dev/null || true
+
+  # Enable the gnome-keyring socket for the octo user
+  if [[ -f /usr/lib/systemd/user/gnome-keyring-daemon.socket ]]; then
+    sudo -u octo systemctl --user enable gnome-keyring-daemon.socket 2>/dev/null || true
+    sudo -u octo systemctl --user start gnome-keyring-daemon.socket 2>/dev/null || true
+    log_success "gnome-keyring-daemon.socket enabled for octo user"
+  fi
+}
+
+configure_eavs() {
+  log_step "Configuring EAVS"
+
+  # Determine config/data paths based on user mode:
+  #   single-user: ~/.config/eavs/ (runs as installing user)
+  #   multi-user:  ~octo/.config/eavs/ (runs as octo system user, same home)
+  local eavs_config_dir eavs_data_dir eavs_env_file
+  if [[ "$SELECTED_USER_MODE" == "single" ]]; then
+    eavs_config_dir="${XDG_CONFIG_HOME}/eavs"
+    eavs_data_dir="${XDG_DATA_HOME:-$HOME/.local/share}/eavs"
+    eavs_env_file="${eavs_config_dir}/env"
+    mkdir -p "$eavs_config_dir" "$eavs_data_dir"
+  else
+    eavs_config_dir="${OCTO_HOME}/.config/eavs"
+    eavs_data_dir="${OCTO_HOME}/.local/share/eavs"
+    eavs_env_file="${eavs_config_dir}/env"
+    sudo mkdir -p "$eavs_config_dir" "$eavs_data_dir"
+  fi
+
+  local eavs_config_file="${eavs_config_dir}/config.toml"
+
+  # Generate master key for octo to create per-session virtual keys
+  EAVS_MASTER_KEY=$(generate_secure_secret 32)
+
+  echo
+  echo "EAVS needs at least one LLM provider to route agent requests."
+  echo "You can add more providers later by editing: $eavs_config_file"
+  echo
+
+  # Collect provider configs
+  local providers_toml=""
+  local first_provider=""
+  local has_any_provider="false"
+
+  # Ask about each major provider
+  for provider_name in anthropic openai google openrouter groq mistral; do
+    local env_var_name=""
+    local provider_type=""
+    local display_name=""
+    local signup_url=""
+
+    case "$provider_name" in
+    anthropic)
+      env_var_name="ANTHROPIC_API_KEY"
+      provider_type="anthropic"
+      display_name="Anthropic (Claude)"
+      signup_url="https://console.anthropic.com/"
+      ;;
+    openai)
+      env_var_name="OPENAI_API_KEY"
+      provider_type="openai"
+      display_name="OpenAI (GPT)"
+      signup_url="https://platform.openai.com/api-keys"
+      ;;
+    google)
+      env_var_name="GEMINI_API_KEY"
+      provider_type="google"
+      display_name="Google (Gemini)"
+      signup_url="https://aistudio.google.com/app/apikey"
+      ;;
+    openrouter)
+      env_var_name="OPENROUTER_API_KEY"
+      provider_type="openrouter"
+      display_name="OpenRouter"
+      signup_url="https://openrouter.ai/keys"
+      ;;
+    groq)
+      env_var_name="GROQ_API_KEY"
+      provider_type="groq"
+      display_name="Groq"
+      signup_url="https://console.groq.com/keys"
+      ;;
+    mistral)
+      env_var_name="MISTRAL_API_KEY"
+      provider_type="mistral"
+      display_name="Mistral AI"
+      signup_url="https://console.mistral.ai/"
+      ;;
+    esac
+
+    # Check if key exists in environment
+    local existing_key=""
+    existing_key="${!env_var_name:-}"
+
+    if [[ -n "$existing_key" ]]; then
+      log_info "Found $env_var_name in environment"
+      if confirm "Configure $display_name (key found in env)?"; then
+        providers_toml+="
+[providers.${provider_name}]
+type = \"${provider_type}\"
+api_key = \"env:${env_var_name}\"
+"
+        has_any_provider="true"
+        if [[ -z "$first_provider" ]]; then
+          first_provider="$provider_name"
+        fi
+      fi
+    else
+      if confirm "Configure $display_name?" "n"; then
+        echo "  Get your API key from: $signup_url"
+        local api_key
+        api_key=$(prompt_input "  $display_name API key")
+        if [[ -n "$api_key" ]]; then
+          # Store key in env file, reference via env: syntax in config
+          if [[ "$SELECTED_USER_MODE" == "single" ]]; then
+            echo "${env_var_name}=${api_key}" >>"${eavs_env_file}"
+          else
+            echo "${env_var_name}=${api_key}" | sudo tee -a "${eavs_env_file}" >/dev/null
+          fi
+          providers_toml+="
+[providers.${provider_name}]
+type = \"${provider_type}\"
+api_key = \"env:${env_var_name}\"
+"
+          has_any_provider="true"
+          if [[ -z "$first_provider" ]]; then
+            first_provider="$provider_name"
+          fi
+        fi
+      fi
+    fi
+  done
+
+  if [[ "$has_any_provider" != "true" ]]; then
+    log_warn "No providers configured. EAVS will start but agents cannot use any LLM."
+    log_info "Add providers later: edit $eavs_config_file"
+  fi
+
+  # Set first provider as default (EAVS routes requests to "default" when
+  # no X-Provider header is sent)
+  local default_provider_toml=""
+  if [[ -n "$first_provider" ]]; then
+    local first_type first_key
+    first_type=$(grep "^type = " <<<"$providers_toml" | head -1 | cut -d'"' -f2)
+    first_key=$(grep "^api_key = " <<<"$providers_toml" | head -1 | cut -d'"' -f2)
+    default_provider_toml="[providers.default]
+type = \"${first_type}\"
+api_key = \"${first_key}\"
+"
+  fi
+
+  # Write eavs config
+  local config_content
+  config_content=$(cat <<EOF
+"\$schema" = "https://raw.githubusercontent.com/byteowlz/schemas/refs/heads/main/eavs/eavs.config.schema.json"
+
+# EAVS Configuration - generated by Octo setup.sh
+# Edit this file to add/change LLM providers.
+# Docs: https://github.com/byteowlz/eavs
+
+[server]
+host = "127.0.0.1"
+port = ${EAVS_PORT}
+
+# --- Providers ---
+# API key values support: "env:VAR_NAME", "keychain:account", or literal strings.
+# Add providers with: eavs secret set <name>  (stores in system keychain)
+# Then use: api_key = "keychain:<name>"
+
+${default_provider_toml}
+${providers_toml}
+
+[logging]
+default = "stdout"
+
+[analysis]
+enabled = true
+broadcast_channel_size = 1024
+
+[state]
+enabled = true
+ttl_secs = 3600
+cleanup_interval_secs = 60
+max_conversations = 10000
+
+[keys]
+enabled = true
+require_key = true
+database_path = "${eavs_data_dir}/keys.db"
+master_key = "env:EAVS_MASTER_KEY"
+allow_self_provisioning = false
+default_rpm_limit = 60
+default_budget_usd = 50.0
+update_pricing_on_startup = true
+EOF
+)
+
+  if [[ "$SELECTED_USER_MODE" == "single" ]]; then
+    echo "$config_content" >"$eavs_config_file"
+    # Append master key to env file
+    echo "EAVS_MASTER_KEY=${EAVS_MASTER_KEY}" >>"${eavs_env_file}"
+    chmod 600 "${eavs_env_file}"
+  else
+    echo "$config_content" | sudo tee "$eavs_config_file" >/dev/null
+    echo "EAVS_MASTER_KEY=${EAVS_MASTER_KEY}" | sudo tee -a "${eavs_env_file}" >/dev/null
+    sudo chmod 600 "${eavs_env_file}"
+    # Owned by octo - same user that runs the eavs service
+    sudo chown -R octo:octo "$eavs_config_dir" "$eavs_data_dir"
+  fi
+
+  log_success "EAVS config written to $eavs_config_file"
+  if [[ -n "$first_provider" ]]; then
+    log_success "Default provider: $first_provider"
+  fi
+}
+
+install_eavs_service() {
+  log_step "Setting up EAVS service"
+
+  if [[ "$SELECTED_USER_MODE" == "single" ]]; then
+    # Single-user: systemd user service, runs as installing user
+    local eavs_config_dir="${XDG_CONFIG_HOME}/eavs"
+    local service_dir="$HOME/.config/systemd/user"
+    mkdir -p "$service_dir"
+
+    cat >"${service_dir}/eavs.service" <<EOF
+[Unit]
+Description=EAVS LLM Proxy
+After=default.target
+
+[Service]
+Type=simple
+EnvironmentFile=-${eavs_config_dir}/env
+ExecStart=/usr/local/bin/eavs serve
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+EOF
+
+    systemctl --user daemon-reload
+    systemctl --user enable eavs
+    systemctl --user start eavs
+    log_success "EAVS started (user service on port ${EAVS_PORT})"
+
+  else
+    # Multi-user: system service, runs as octo user alongside the backend.
+    # EAVS config lives in octo's home (~octo/.config/eavs/) so XDG just works.
+    #
+    # The DBUS_SESSION_BUS_ADDRESS and XDG_RUNTIME_DIR environment variables
+    # give the service access to the octo user's D-Bus session bus, which is
+    # needed for gnome-keyring (the keychain: config syntax). This requires
+    # linger to be enabled for octo (done in enable_keyring_for_octo_user).
+    local octo_uid
+    octo_uid=$(id -u octo)
+
+    sudo tee /etc/systemd/system/eavs.service >/dev/null <<EOF
+[Unit]
+Description=EAVS LLM Proxy
+After=network.target
+Before=octo.service
+
+[Service]
+Type=simple
+User=octo
+Group=octo
+WorkingDirectory=${OCTO_HOME}
+Environment=HOME=${OCTO_HOME}
+Environment=XDG_CONFIG_HOME=${OCTO_HOME}/.config
+Environment=XDG_DATA_HOME=${OCTO_HOME}/.local/share
+Environment=XDG_STATE_HOME=${OCTO_HOME}/.local/state
+Environment=XDG_RUNTIME_DIR=/run/user/${octo_uid}
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/${octo_uid}/bus
+EnvironmentFile=-${OCTO_HOME}/.config/eavs/env
+ExecStart=/usr/local/bin/eavs serve
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=${OCTO_HOME}
+ReadWritePaths=/run/user/${octo_uid}
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    sudo systemctl daemon-reload
+    sudo systemctl enable eavs
+    sudo systemctl start eavs
+    log_success "EAVS started (system service, user=octo, port ${EAVS_PORT})"
   fi
 }
 
@@ -1058,13 +1941,13 @@ select_deployment_mode() {
   echo
   echo "Octo can be deployed in two modes:"
   echo
-  echo "  ${BOLD}Development${NC} - For local development and testing"
+  echo -e "  ${BOLD}Development${NC} - For local development and testing"
   echo "    - Uses dev_mode authentication (no JWT secret required)"
   echo "    - Preconfigured dev users for easy login"
   echo "    - HTTP only (no TLS)"
   echo "    - Best for: local development, testing"
   echo
-  echo "  ${BOLD}Production${NC} - For server deployments"
+  echo -e "  ${BOLD}Production${NC} - For server deployments"
   echo "    - Secure JWT-based authentication"
   echo "    - Creates an admin user with secure credentials"
   echo "    - Optional Caddy reverse proxy with automatic HTTPS"
@@ -1519,26 +2402,23 @@ build_octo() {
   (cd frontend && bun run build)
   log_success "Frontend built"
 
-  # Install binaries
-  log_info "Installing binaries to ~/.cargo/bin..."
-  (cd backend && cargo install --path .)
-  (cd fileserver && cargo install --path .)
+  # Install binaries to /usr/local/bin (globally accessible)
+  log_info "Installing binaries to ${TOOLS_INSTALL_DIR}..."
 
-  # Install additional binaries (octo-runner for multi-user, pi-bridge for container Pi, octo-sandbox for sandboxing)
-  if [[ -f "$SCRIPT_DIR/backend/target/release/octo-runner" ]]; then
-    cp "$SCRIPT_DIR/backend/target/release/octo-runner" "$HOME/.cargo/bin/"
-    log_success "octo-runner installed"
-  fi
-  if [[ -f "$SCRIPT_DIR/backend/target/release/pi-bridge" ]]; then
-    cp "$SCRIPT_DIR/backend/target/release/pi-bridge" "$HOME/.cargo/bin/"
-    log_success "pi-bridge installed"
-  fi
-  if [[ -f "$SCRIPT_DIR/backend/target/release/octo-sandbox" ]]; then
-    cp "$SCRIPT_DIR/backend/target/release/octo-sandbox" "$HOME/.cargo/bin/"
-    log_success "octo-sandbox installed"
+  local release_dir="$SCRIPT_DIR/backend/target/release"
+  for bin in octo octo-runner pi-bridge octo-sandbox octo-setup; do
+    if [[ -f "${release_dir}/${bin}" ]]; then
+      sudo install -m 755 "${release_dir}/${bin}" "${TOOLS_INSTALL_DIR}/${bin}"
+      log_success "${bin} installed"
+    fi
+  done
+
+  if [[ -f "$SCRIPT_DIR/fileserver/target/release/fileserver" ]]; then
+    sudo install -m 755 "$SCRIPT_DIR/fileserver/target/release/fileserver" "${TOOLS_INSTALL_DIR}/fileserver"
+    log_success "fileserver installed"
   fi
 
-  log_success "Binaries installed"
+  log_success "Binaries installed to ${TOOLS_INSTALL_DIR}"
 }
 
 # ==============================================================================
@@ -1551,12 +2431,12 @@ select_user_mode() {
   echo
   echo "Octo supports two user modes:"
   echo
-  echo "  ${BOLD}Single-user${NC} - Personal deployment"
+  echo -e "  ${BOLD}Single-user${NC} - Personal deployment"
   echo "    - All sessions use the same workspace"
   echo "    - Simpler setup, no user management"
   echo "    - Best for: personal laptops, single-developer servers"
   echo
-  echo "  ${BOLD}Multi-user${NC} - Team deployment"
+  echo -e "  ${BOLD}Multi-user${NC} - Team deployment"
   echo "    - Each user gets isolated workspace"
   echo "    - User authentication and management"
   echo "    - Best for: teams, shared servers"
@@ -1598,12 +2478,12 @@ select_backend_mode() {
   echo
   echo "Octo can run agents in two modes:"
   echo
-  echo "  ${BOLD}Local${NC} - Native processes"
-  echo "    - Runs OpenCode, fileserver, ttyd directly on host"
+  echo -e "  ${BOLD}Local${NC} - Native processes"
+  echo "    - Runs Pi, fileserver, ttyd directly on host"
   echo "    - Lower overhead, faster startup"
   echo "    - Best for: development, single-user, trusted environments"
   echo
-  echo "  ${BOLD}Container${NC} - Docker/Podman containers"
+  echo -e "  ${BOLD}Container${NC} - Docker/Podman containers"
   echo "    - Full isolation per session"
   echo "    - Reproducible environment"
   echo "    - Best for: multi-user, production, untrusted code"
@@ -1677,7 +2557,6 @@ generate_config() {
   # Create config directories
   mkdir -p "$OCTO_CONFIG_DIR"
   mkdir -p "$OCTO_DATA_DIR"
-  mkdir -p "$OPENCODE_CONFIG_DIR"
 
   local config_file="$OCTO_CONFIG_DIR/config.toml"
 
@@ -1733,100 +2612,15 @@ generate_config() {
   fi
 
   # EAVS configuration
-  local eavs_enabled="false"
-  local eavs_base_url="http://localhost:41800"
-  local eavs_container_url="http://host.docker.internal:41800"
+  # EAVS is always used - it's the mandatory LLM proxy layer.
+  # Provider API keys are configured via EAVS, not directly.
+  local eavs_enabled="true"
+  local eavs_base_url="http://127.0.0.1:${EAVS_PORT}"
+  local eavs_container_url="http://host.docker.internal:${EAVS_PORT}"
+  EAVS_ENABLED="true"
 
-  # LLM Provider configuration
-  local llm_provider=""
-  local llm_api_key=""
-
-  echo
-  echo "LLM Provider Configuration:"
-  echo
-  echo "  Octo needs access to an LLM provider for AI agents."
-  echo "  You can either:"
-  echo "    1) Use EAVS (LLM proxy) - manages API keys and usage limits"
-  echo "    2) Configure API keys directly for a provider"
-  echo
-
-  if confirm "Use EAVS LLM proxy?" "n"; then
-    eavs_enabled="true"
-    EAVS_ENABLED="true"
-    eavs_base_url=$(prompt_input "EAVS base URL" "$eavs_base_url")
-    if [[ "$SELECTED_BACKEND_MODE" == "container" ]]; then
-      eavs_container_url=$(prompt_input "EAVS container URL" "$eavs_container_url")
-    fi
-  else
-    # Direct provider configuration
-    echo
-    echo "Select LLM provider:"
-    echo
-    local provider_choice
-    provider_choice=$(prompt_choice "Provider:" "anthropic" "openai" "openrouter" "google" "groq")
-    llm_provider="$provider_choice"
-
-    case "$llm_provider" in
-    anthropic)
-      echo
-      echo "Get your Anthropic API key from: https://console.anthropic.com/"
-      if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
-        log_info "Found ANTHROPIC_API_KEY in environment"
-        llm_api_key="$ANTHROPIC_API_KEY"
-      else
-        llm_api_key=$(prompt_input "Anthropic API key (or press Enter to skip)")
-      fi
-      ;;
-    openai)
-      echo
-      echo "Get your OpenAI API key from: https://platform.openai.com/api-keys"
-      if [[ -n "${OPENAI_API_KEY:-}" ]]; then
-        log_info "Found OPENAI_API_KEY in environment"
-        llm_api_key="$OPENAI_API_KEY"
-      else
-        llm_api_key=$(prompt_input "OpenAI API key (or press Enter to skip)")
-      fi
-      ;;
-    openrouter)
-      echo
-      echo "Get your OpenRouter API key from: https://openrouter.ai/keys"
-      if [[ -n "${OPENROUTER_API_KEY:-}" ]]; then
-        log_info "Found OPENROUTER_API_KEY in environment"
-        llm_api_key="$OPENROUTER_API_KEY"
-      else
-        llm_api_key=$(prompt_input "OpenRouter API key (or press Enter to skip)")
-      fi
-      ;;
-    google)
-      echo
-      echo "Get your Google AI API key from: https://aistudio.google.com/app/apikey"
-      if [[ -n "${GOOGLE_API_KEY:-}" ]]; then
-        log_info "Found GOOGLE_API_KEY in environment"
-        llm_api_key="$GOOGLE_API_KEY"
-      else
-        llm_api_key=$(prompt_input "Google AI API key (or press Enter to skip)")
-      fi
-      ;;
-    groq)
-      echo
-      echo "Get your Groq API key from: https://console.groq.com/keys"
-      if [[ -n "${GROQ_API_KEY:-}" ]]; then
-        log_info "Found GROQ_API_KEY in environment"
-        llm_api_key="$GROQ_API_KEY"
-      else
-        llm_api_key=$(prompt_input "Groq API key (or press Enter to skip)")
-      fi
-      ;;
-    esac
-
-    # Set global variables for summary
-    LLM_PROVIDER="$llm_provider"
-    if [[ -n "$llm_api_key" ]]; then
-      LLM_API_KEY_SET="true"
-    else
-      log_warn "No API key configured. You'll need to set the appropriate environment variable before running Octo."
-      log_info "Set one of: ANTHROPIC_API_KEY, OPENAI_API_KEY, OPENROUTER_API_KEY, GOOGLE_API_KEY, or GROQ_API_KEY"
-    fi
+  if [[ "$SELECTED_BACKEND_MODE" == "container" ]]; then
+    eavs_container_url=$(prompt_input "EAVS container URL (for Docker access)" "$eavs_container_url")
   fi
 
   # Linux user isolation (multi-user local mode only)
@@ -1879,7 +2673,6 @@ EOF
 
 [local]
 enabled = true
-opencode_binary = "opencode"
 fileserver_binary = "fileserver"
 ttyd_binary = "ttyd"
 workspace_dir = "$WORKSPACE_DIR"
@@ -1899,8 +2692,9 @@ EOF
   cat >>"$config_file" <<EOF
 
 [eavs]
-enabled = $eavs_enabled
+enabled = true
 base_url = "$eavs_base_url"
+master_key = "$EAVS_MASTER_KEY"
 EOF
 
   if [[ "$SELECTED_BACKEND_MODE" == "container" ]]; then
@@ -1956,29 +2750,9 @@ EOF
     pi_runtime_mode="runner"
   fi
 
-  # Set default provider based on selection
+  # Pi default provider/model (agents can switch at runtime)
   local default_provider="anthropic"
   local default_model="claude-sonnet-4-20250514"
-  if [[ -n "$llm_provider" ]]; then
-    default_provider="$llm_provider"
-    case "$llm_provider" in
-    anthropic)
-      default_model="claude-sonnet-4-20250514"
-      ;;
-    openai)
-      default_model="gpt-4o"
-      ;;
-    openrouter)
-      default_model="anthropic/claude-3.5-sonnet"
-      ;;
-    google)
-      default_model="gemini-1.5-pro"
-      ;;
-    groq)
-      default_model="llama-3.3-70b-versatile"
-      ;;
-    esac
-  fi
 
   cat >>"$config_file" <<EOF
 
@@ -2047,33 +2821,7 @@ EOF
 
   log_success "Configuration written to $config_file"
 
-  # Create environment file for API keys (if not using EAVS)
-  if [[ "$eavs_enabled" == "false" && -n "$llm_api_key" ]]; then
-    local env_file="$OCTO_CONFIG_DIR/env"
-    log_info "Writing API key to $env_file"
-
-    case "$llm_provider" in
-    anthropic)
-      echo "ANTHROPIC_API_KEY=$llm_api_key" >"$env_file"
-      ;;
-    openai)
-      echo "OPENAI_API_KEY=$llm_api_key" >"$env_file"
-      ;;
-    openrouter)
-      echo "OPENROUTER_API_KEY=$llm_api_key" >"$env_file"
-      ;;
-    google)
-      echo "GOOGLE_API_KEY=$llm_api_key" >"$env_file"
-      ;;
-    groq)
-      echo "GROQ_API_KEY=$llm_api_key" >"$env_file"
-      ;;
-    esac
-
-    chmod 600 "$env_file"
-    log_success "API key saved to $env_file"
-    log_info "Source this file before running Octo: source $env_file"
-  fi
+  # API keys are now managed by EAVS, not stored in octo's env file
 
   # Create workspace directory
   if [[ "$SELECTED_USER_MODE" == "single" ]]; then
@@ -2128,12 +2876,7 @@ setup_linux_user_isolation() {
   if [[ "${MULTI_USER:-false}" == "true" ]] && [[ "$OS" == "linux" ]]; then
     # Production multi-user mode: backend runs as 'octo' system user
     server_user="octo"
-
-    # Create octo system user if it doesn't exist
-    if ! id "$server_user" &>/dev/null; then
-      log_info "Creating '$server_user' system user..."
-      sudo useradd -r -s /usr/sbin/nologin -d /var/lib/octo -m "$server_user" || true
-    fi
+    ensure_octo_system_user
   else
     # Development mode: backend runs as current user
     server_user=$(whoami)
@@ -2291,11 +3034,9 @@ allow_write = [
     # Agent tools - data directories
     "~/.local/share/skdlr",
     "~/.local/share/mmry",
-    "~/.local/share/mailz",
     # Agent tools - config directories
     "~/.config/skdlr",
     "~/.config/mmry",
-    "~/.config/mailz",
     "~/.config/byt",
     "/tmp",
 ]
@@ -2981,6 +3722,33 @@ harden_server() {
 # Service Installation
 # ==============================================================================
 
+# Ensure the octo system user exists with a proper home directory.
+# Called early in multi-user setup so EAVS/hstry/mmry config can be
+# written into ~octo/.config/ before services are installed.
+# Safe to call multiple times (idempotent).
+OCTO_HOME="/home/octo"
+
+ensure_octo_system_user() {
+  if id octo &>/dev/null; then
+    OCTO_HOME=$(eval echo "~octo")
+    return 0
+  fi
+
+  log_info "Creating octo system user with home at $OCTO_HOME..."
+  # Use /bin/bash so admins can: sudo -su octo
+  # No password set, so direct/SSH login is impossible.
+  sudo useradd -r -m -d "$OCTO_HOME" -s /bin/bash octo
+
+  # Create XDG directory structure
+  sudo mkdir -p \
+    "${OCTO_HOME}/.config" \
+    "${OCTO_HOME}/.local/share" \
+    "${OCTO_HOME}/.local/state"
+  sudo chown -R octo:octo "$OCTO_HOME"
+
+  log_success "Created octo system user (home: $OCTO_HOME)"
+}
+
 install_service_linux() {
   log_step "Installing systemd service"
 
@@ -3004,7 +3772,7 @@ Type=simple
 Environment=OCTO_CONFIG=$OCTO_CONFIG_DIR/config.toml
 Environment=RUST_LOG=$OCTO_LOG_LEVEL
 EnvironmentFile=-$OCTO_CONFIG_DIR/env
-ExecStart=$HOME/.cargo/bin/octo serve --local-mode
+ExecStart=/usr/local/bin/octo serve --local-mode
 ExecStop=/bin/kill -TERM \$MAINPID
 TimeoutStopSec=30
 Restart=on-failure
@@ -3037,19 +3805,31 @@ EOF
       return
     fi
 
-    # Create octo system user
-    if ! id octo &>/dev/null; then
-      log_info "Creating octo system user..."
-      sudo useradd -r -s /usr/sbin/nologin -d /var/lib/octo octo
+    # Ensure octo user exists (may already be created by ensure_octo_system_user)
+    ensure_octo_system_user
+    local octo_home="$OCTO_HOME"
+
+    # Create runtime directories
+    sudo mkdir -p /run/octo
+    sudo chown octo:octo /run/octo
+
+    # Runtime config in octo's home (XDG layout: ~/.config/octo/)
+    # This is what the octo service actually reads at startup.
+    local octo_config_home="${octo_home}/.config/octo"
+    sudo mkdir -p "$octo_config_home"
+    sudo cp "$OCTO_CONFIG_DIR/config.toml" "${octo_config_home}/config.toml"
+    if [[ -f "$OCTO_CONFIG_DIR/env" ]]; then
+      sudo cp "$OCTO_CONFIG_DIR/env" "${octo_config_home}/env"
+      sudo chmod 600 "${octo_config_home}/env"
     fi
 
-    # Create directories
-    sudo mkdir -p /var/lib/octo /etc/octo /run/octo
-    sudo chown octo:octo /var/lib/octo /run/octo
-
-    # Copy config
+    # Also copy a baseline config to /etc/octo/ for sandbox policy reference.
+    # Sandbox configs (sandbox.toml, skdlr-agent.toml) live here too - these
+    # are system-wide policy the admin controls, not per-service runtime config.
+    sudo mkdir -p /etc/octo
     sudo cp "$OCTO_CONFIG_DIR/config.toml" /etc/octo/config.toml
-    sudo chown octo:octo /etc/octo/config.toml
+
+    sudo chown -R octo:octo "$octo_home"
 
     # Install service file
     local service_file="/etc/systemd/system/octo.service"
@@ -3060,19 +3840,23 @@ EOF
 
 [Unit]
 Description=Octo Control Plane Server
-After=network.target
+After=network.target eavs.service
+Wants=eavs.service
 
 [Service]
 Type=simple
 User=octo
 Group=octo
-WorkingDirectory=/var/lib/octo
-Environment=OCTO_CONFIG=/etc/octo/config.toml
+WorkingDirectory=${octo_home}
+Environment=HOME=${octo_home}
+Environment=XDG_CONFIG_HOME=${octo_home}/.config
+Environment=XDG_DATA_HOME=${octo_home}/.local/share
+Environment=XDG_STATE_HOME=${octo_home}/.local/state
+Environment=OCTO_CONFIG=${octo_config_home}/config.toml
 Environment=RUST_LOG=$OCTO_LOG_LEVEL
-StateDirectory=octo
+EnvironmentFile=-${octo_config_home}/env
 RuntimeDirectory=octo
 RuntimeDirectoryMode=0755
-ConfigurationDirectory=octo
 ExecStart=/usr/local/bin/octo serve
 ExecStop=/bin/kill -TERM \$MAINPID
 TimeoutStopSec=30
@@ -3080,7 +3864,7 @@ Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true
 ProtectSystem=strict
-ReadWritePaths=/var/lib/octo
+ReadWritePaths=${octo_home}
 ReadWritePaths=/run/octo
 PrivateTmp=true
 AmbientCapabilities=CAP_NET_BIND_SERVICE
@@ -3089,12 +3873,7 @@ AmbientCapabilities=CAP_NET_BIND_SERVICE
 WantedBy=multi-user.target
 EOF
 
-    # Copy binaries to /usr/local/bin
-    sudo cp "$HOME/.cargo/bin/octo" /usr/local/bin/octo
-    sudo cp "$HOME/.cargo/bin/fileserver" /usr/local/bin/fileserver
-    if [[ -f "$HOME/.cargo/bin/octo-runner" ]]; then
-      sudo cp "$HOME/.cargo/bin/octo-runner" /usr/local/bin/octo-runner
-    fi
+    # Binaries are already in /usr/local/bin from build_octo
 
     log_success "Service file created: $service_file"
 
@@ -3185,7 +3964,7 @@ install_service_macos() {
 
     <key>ProgramArguments</key>
     <array>
-        <string>$HOME/.cargo/bin/octo</string>
+        <string>/usr/local/bin/octo</string>
         <string>serve</string>
         $serve_flags
     </array>
@@ -3197,7 +3976,7 @@ install_service_macos() {
         <key>RUST_LOG</key>
         <string>$OCTO_LOG_LEVEL</string>
         <key>PATH</key>
-        <string>/usr/local/bin:/usr/bin:/bin:$HOME/.cargo/bin:$HOME/.bun/bin</string>
+        <string>/usr/local/bin:/usr/bin:/bin:$HOME/.bun/bin</string>
     </dict>
 
     <key>WorkingDirectory</key>
@@ -3297,7 +4076,64 @@ print_summary() {
   log_step "Setup Complete!"
 
   echo
-  echo "Configuration:"
+  echo "============================================================"
+  echo "                    SERVICE STATUS"
+  echo "============================================================"
+  echo
+
+  # Helper to check service status
+  check_service_status() {
+    local name="$1"
+    local user_service="${2:-false}"
+
+    if [[ "$user_service" == "true" ]]; then
+      if systemctl --user is-active "$name" &>/dev/null; then
+        echo -e "${GREEN}running${NC}"
+      elif systemctl --user is-enabled "$name" &>/dev/null; then
+        echo -e "${YELLOW}enabled (not running)${NC}"
+      else
+        echo -e "${RED}not configured${NC}"
+      fi
+    else
+      if systemctl is-active "$name" &>/dev/null; then
+        echo -e "${GREEN}running${NC}"
+      elif systemctl is-enabled "$name" &>/dev/null; then
+        echo -e "${YELLOW}enabled (not running)${NC}"
+      else
+        echo -e "${RED}not configured${NC}"
+      fi
+    fi
+  }
+
+  local is_user_service="false"
+  if [[ "$SELECTED_USER_MODE" == "single" ]]; then
+    is_user_service="true"
+  fi
+
+  echo -e "  EAVS (LLM):     $(check_service_status eavs "$is_user_service")"
+  echo -e "  Octo backend:   $(check_service_status octo "$is_user_service")"
+
+  if [[ "$SETUP_CADDY" == "yes" ]]; then
+    echo -e "  Caddy:          $(check_service_status caddy)"
+  fi
+
+  echo -e "  SearXNG:        $(check_service_status searxng "$is_user_service")"
+
+  if command_exists valkey-server; then
+    echo -e "  Valkey:         $(check_service_status valkey)"
+  elif command_exists redis-server; then
+    echo -e "  Redis:          $(check_service_status redis)"
+  fi
+
+  if [[ "$OS" == "linux" ]]; then
+    echo -e "  hstry:          $(check_service_status hstry "$is_user_service")"
+  fi
+
+  echo
+  echo "============================================================"
+  echo "                    CONFIGURATION"
+  echo "============================================================"
+  echo
   echo "  User mode:       $SELECTED_USER_MODE"
   echo "  Backend mode:    $SELECTED_BACKEND_MODE"
   echo "  Deployment mode: $([[ "$PRODUCTION_MODE" == "true" ]] && echo "Production" || echo "Development")"
@@ -3305,139 +4141,167 @@ print_summary() {
   echo
 
   if [[ "$PRODUCTION_MODE" == "true" ]]; then
-    echo "Security:"
-    echo "  JWT secret:    configured (64 characters)"
-    echo "  Admin user:    $ADMIN_USERNAME"
-    echo "  Admin email:   $ADMIN_EMAIL"
+    echo "  Security:"
+    echo "    JWT secret:    configured (64 characters)"
+    echo "    Admin user:    $ADMIN_USERNAME"
+    echo "    Admin email:   $ADMIN_EMAIL"
     if [[ "$NONINTERACTIVE" == "true" ]]; then
-      echo -e "  ${YELLOW}Admin password: $ADMIN_PASSWORD${NC}"
-      echo -e "  ${RED}SAVE THIS PASSWORD - it will not be shown again!${NC}"
+      echo -e "    ${YELLOW}Admin password: $ADMIN_PASSWORD${NC}"
+      echo -e "    ${RED}SAVE THIS PASSWORD - it will not be shown again!${NC}"
     fi
     echo
 
     if [[ "$SETUP_CADDY" == "yes" ]]; then
-      echo "Reverse Proxy:"
-      echo "  Caddy:       installed"
-      echo "  Domain:      $DOMAIN"
+      echo "  Reverse Proxy:"
+      echo "    Caddy:         installed"
+      echo "    Domain:        $DOMAIN"
       if [[ "$DOMAIN" != "localhost" ]]; then
-        echo "  HTTPS:       enabled (automatic via Let's Encrypt)"
+        echo "    HTTPS:         enabled (automatic via Let's Encrypt)"
       fi
-      echo "  Config:      /etc/caddy/Caddyfile"
+      echo "    Caddyfile:     /etc/caddy/Caddyfile"
       echo
     fi
 
     if [[ "$OCTO_HARDEN_SERVER" == "yes" && "$OS" == "linux" ]]; then
-      echo "Server Hardening:"
-      echo "  Firewall:    $(command_exists ufw && echo 'UFW enabled' || (command_exists firewall-cmd && echo 'firewalld enabled' || echo 'not configured'))"
-      echo "  Fail2ban:    $(systemctl is-active fail2ban 2>/dev/null || echo 'not running')"
-      echo "  SSH port:    ${OCTO_SSH_PORT:-22}"
-      echo "  SSH auth:    public key only (password disabled)"
-      echo "  Auto updates: ${OCTO_SETUP_AUTO_UPDATES}"
-      echo "  Kernel:      hardened sysctl parameters"
-      echo "  Audit:       $(systemctl is-active auditd 2>/dev/null || echo 'not running')"
+      echo "  Server Hardening:"
+      echo "    Firewall:      $(command_exists ufw && echo 'UFW enabled' || (command_exists firewall-cmd && echo 'firewalld enabled' || echo 'not configured'))"
+      echo -e "    Fail2ban:      $(check_service_status fail2ban)"
+      echo "    SSH port:      ${OCTO_SSH_PORT:-22}"
+      echo "    SSH auth:      public key only (password disabled)"
+      echo "    Auto updates:  ${OCTO_SETUP_AUTO_UPDATES}"
+      echo "    Kernel:        hardened sysctl parameters"
+      echo -e "    Audit:         $(check_service_status auditd)"
       echo
     fi
   fi
 
-  echo "LLM Configuration:"
-  if [[ "$EAVS_ENABLED" == "true" ]]; then
-    echo "  Mode:         EAVS proxy"
-  elif [[ -n "$LLM_PROVIDER" ]]; then
-    echo "  Provider:     $LLM_PROVIDER"
-    if [[ "$LLM_API_KEY_SET" == "true" ]]; then
-      echo "  API key:      configured (saved to $OCTO_CONFIG_DIR/env)"
+  local eavs_cfg
+  if [[ "$SELECTED_USER_MODE" == "single" ]]; then
+    eavs_cfg="${XDG_CONFIG_HOME}/eavs/config.toml"
+  else
+    eavs_cfg="/etc/eavs/config.toml"
+  fi
+
+  echo "  LLM Access (EAVS):"
+  echo "    Proxy URL:     http://127.0.0.1:${EAVS_PORT}"
+  echo "    Config:        $eavs_cfg"
+  if [[ -f "$eavs_cfg" ]]; then
+    local configured_providers
+    configured_providers=$(grep '^\[providers\.' "$eavs_cfg" 2>/dev/null | sed 's/\[providers\.\(.*\)\]/\1/' | grep -v '^default$' | tr '\n' ', ' | sed 's/,$//')
+    if [[ -n "$configured_providers" ]]; then
+      echo -e "    Providers:     ${GREEN}${configured_providers}${NC}"
     else
-      echo "  API key:      NOT SET - you need to configure this!"
+      echo -e "    Providers:     ${RED}none configured${NC}"
     fi
   else
-    echo "  Provider:     not configured"
+    echo -e "    Providers:     ${YELLOW}config not found${NC}"
   fi
+
+  echo
+  echo "============================================================"
+  echo "                    INSTALLED SOFTWARE"
+  echo "============================================================"
   echo
 
-  echo "Installed binaries:"
-  echo "  octo:         $(which octo 2>/dev/null || echo 'not in PATH')"
-  echo "  fileserver:   $(which fileserver 2>/dev/null || echo 'not in PATH')"
+  # Helper: check if binary exists and show path or red "missing"
+  check_bin() {
+    local name="$1"
+    local path
+    path=$(which "$name" 2>/dev/null)
+    if [[ -n "$path" ]]; then
+      echo -e "${GREEN}$path${NC}"
+    else
+      echo -e "${RED}missing${NC}"
+    fi
+  }
+
+  echo "  Core binaries:"
+  echo -e "    octo:          $(check_bin octo)"
+  echo -e "    eavs:          $(check_bin eavs)"
+  echo -e "    fileserver:    $(check_bin fileserver)"
+  echo -e "    pi:            $(check_bin pi)"
   if [[ "$SELECTED_BACKEND_MODE" == "local" ]]; then
-    echo "  opencode:     $(which opencode 2>/dev/null || echo 'not in PATH')"
-    echo "  ttyd:         $(which ttyd 2>/dev/null || echo 'not in PATH')"
+    echo -e "    ttyd:          $(check_bin ttyd)"
   fi
   if [[ "$SELECTED_USER_MODE" == "multi" && "$OS" == "linux" ]]; then
-    echo "  octo-runner:  $(which octo-runner 2>/dev/null || echo 'not in PATH')"
+    echo -e "    octo-runner:   $(check_bin octo-runner)"
   fi
   if [[ "$SELECTED_BACKEND_MODE" == "container" ]]; then
-    echo "  pi-bridge:    $(which pi-bridge 2>/dev/null || echo 'not in PATH')"
+    echo -e "    pi-bridge:     $(check_bin pi-bridge)"
   fi
   echo
 
-  echo "Shell tools:"
-  echo "  tmux:       $(which tmux 2>/dev/null || echo 'not installed')"
-  echo "  fd:         $(which fd 2>/dev/null || which fdfind 2>/dev/null || echo 'not installed')"
-  echo "  ripgrep:    $(which rg 2>/dev/null || echo 'not installed')"
-  echo "  yazi:       $(which yazi 2>/dev/null || echo 'not installed')"
-  echo "  zsh:        $(which zsh 2>/dev/null || echo 'not installed')"
-  echo "  zoxide:     $(which zoxide 2>/dev/null || echo 'not installed')"
+  echo "  Agent tools:"
+  for tool in agntz mmry scrpr sx tmpltr sldr ignr; do
+    printf "    %-14s " "$tool:"
+    echo -e "$(check_bin "$tool")"
+  done
   echo
 
-  echo "Byteowlz agent tools:"
-  echo "  agntz:      $(which agntz 2>/dev/null || echo 'not installed')"
-  echo "  mmry:       $(which mmry 2>/dev/null || echo 'not installed')"
-  echo "  mailz:      $(which mailz 2>/dev/null || echo 'not installed')"
-  echo "  byt:        $(which byt 2>/dev/null || echo 'not installed')"
-  echo "  sx:         $(which sx 2>/dev/null || echo 'not installed')"
+  echo "  Shell tools:"
+  for tool in tmux fd rg yazi zsh zoxide; do
+    printf "    %-14s " "$tool:"
+    echo -e "$(check_bin "$tool")"
+  done
   echo
 
-  echo "Pi extensions:"
+  echo "  Pi extensions:"
   local pi_ext_dir="$HOME/.pi/agent/extensions"
-  if [[ -d "${pi_ext_dir}/octo" ]]; then
-    echo "  octo:       installed (${pi_ext_dir}/octo)"
-  else
-    echo "  octo:       not installed"
-  fi
-  if [[ -d "${pi_ext_dir}/octo-todos" ]]; then
-    echo "  octo-todos: installed (${pi_ext_dir}/octo-todos)"
-  else
-    echo "  octo-todos: not installed"
-  fi
-  if [[ -d "${pi_ext_dir}/octo-prompts" ]]; then
-    echo "  octo-prompts: installed (${pi_ext_dir}/octo-prompts)"
-  else
-    echo "  octo-prompts: not installed"
-  fi
-  echo
-
-  echo "Next steps:"
-  echo
-
-  if [[ "$PRODUCTION_MODE" == "true" ]]; then
-    # Production mode instructions
-    local step=1
-
-    if [[ "$SETUP_CADDY" == "yes" ]]; then
-      echo "  $step. Start Caddy reverse proxy:"
-      if [[ "$OS" == "linux" ]]; then
-        echo "     sudo systemctl start caddy"
-      else
-        echo "     sudo caddy start --config /etc/caddy/Caddyfile"
-      fi
-      echo
-      ((step++))
-    fi
-
-    echo "  $step. Start the Octo server:"
-    if [[ "$OS" == "linux" ]]; then
-      if [[ "$SELECTED_USER_MODE" == "single" ]]; then
-        echo "     systemctl --user start octo"
-      else
-        echo "     sudo systemctl start octo"
-      fi
+  for ext_name in "${PI_DEFAULT_EXTENSIONS[@]}"; do
+    printf "    %-22s " "${ext_name}:"
+    if [[ -d "${pi_ext_dir}/${ext_name}" ]]; then
+      echo -e "${GREEN}installed${NC}"
     else
-      echo "     launchctl load ~/Library/LaunchAgents/ai.octo.server.plist"
+      echo -e "${RED}missing${NC}"
     fi
-    echo "     # or manually:"
-    echo "     octo serve $([[ "$SELECTED_BACKEND_MODE" == "local" ]] && echo '--local-mode')"
+  done
+  echo
+
+  echo "============================================================"
+  echo "                    NEXT STEPS"
+  echo "============================================================"
+  echo
+
+  local step=1
+
+  # Check which services need starting
+  local need_start=()
+
+  # Helper: check if a service needs starting
+  service_needs_start() {
+    local svc="$1"
+    if [[ "$SELECTED_USER_MODE" == "single" ]]; then
+      ! systemctl --user is-active "$svc" &>/dev/null
+    else
+      ! systemctl is-active "$svc" &>/dev/null
+    fi
+  }
+
+  if [[ "$OS" == "linux" ]]; then
+    service_needs_start eavs && need_start+=("eavs")
+    service_needs_start octo && need_start+=("octo")
+    if [[ "$SETUP_CADDY" == "yes" ]]; then
+      service_needs_start caddy && need_start+=("caddy")
+    fi
+    if systemctl --user is-enabled searxng &>/dev/null || systemctl is-enabled searxng &>/dev/null; then
+      service_needs_start searxng && need_start+=("searxng")
+    fi
+  fi
+
+  if [[ ${#need_start[@]} -gt 0 ]]; then
+    echo "  $step. Start services that are not yet running:"
+    for svc in "${need_start[@]}"; do
+      if [[ "$SELECTED_USER_MODE" == "single" ]]; then
+        echo "     systemctl --user start $svc"
+      else
+        echo "     sudo systemctl start $svc"
+      fi
+    done
     echo
     ((step++))
+  fi
 
+  if [[ "$PRODUCTION_MODE" == "true" ]]; then
     echo "  $step. Start the frontend (production build):"
     echo "     cd $SCRIPT_DIR/frontend && bun run preview"
     echo "     # Or deploy the dist/ folder to your web server"
@@ -3460,34 +4324,26 @@ print_summary() {
     ((step++))
 
     echo "  $step. Create invite codes for new users:"
-    echo "     octo invites create --uses 1"
+    echo "     octoctl invites create --uses 1"
     echo "     # Or use the admin interface"
     echo
   else
-    # Development mode instructions
-    echo "  1. Start the server:"
-    if [[ "$OS" == "linux" && "$SELECTED_USER_MODE" == "single" ]]; then
-      echo "     systemctl --user start octo"
-      echo "     # or manually:"
-    fi
-    if [[ "$OS" == "macos" ]]; then
-      echo "     launchctl load ~/Library/LaunchAgents/ai.octo.server.plist"
-      echo "     # or manually:"
-    fi
-    echo "     octo serve $([[ "$SELECTED_BACKEND_MODE" == "local" ]] && echo '--local-mode')"
-    echo
-    echo "  2. Start the frontend dev server:"
+    echo "  $step. Start the frontend dev server:"
     echo "     cd $SCRIPT_DIR/frontend && bun dev"
     echo
-    echo "  3. Open the web interface:"
+    ((step++))
+
+    echo "  $step. Open the web interface:"
     echo "     http://localhost:3000"
     echo
+    ((step++))
 
     if [[ "$OCTO_DEV_MODE" == "true" && -n "${dev_user_id:-}" ]]; then
-      echo "  4. Login with your dev credentials:"
+      echo "  $step. Login with your dev credentials:"
       echo "     Username: $dev_user_id"
       echo "     Password: (the password you entered)"
       echo
+      ((step++))
     fi
   fi
 
@@ -3598,21 +4454,28 @@ LLM Provider API Keys (set one of these, or use EAVS):
 Shell Tools Installed:
   tmux, fd, ripgrep, yazi, zsh, zoxide
 
-Byteowlz Agent Tools:
+Agent Tools:
   agntz   - Agent toolkit (file reservations, tool management)
   mmry    - Memory storage and semantic search
-  mailz   - Agent coordination and messaging
-  byt     - Cross-repo governance and management
-  sx      - External search via SearXNG
+  scrpr   - Web content extraction (readability, Tavily, Jina)
+  sx      - Web search via local SearXNG instance
+  tmpltr  - Document generation from templates (Typst)
+  sldr    - Markdown presentations (Slidev)
+  ignr    - Gitignore generation (auto-detect)
 
 Other Tools:
-  opencode - OpenCode AI agent CLI (local mode)
   ttyd    - Web terminal
-  pi      - Main chat interface
+  pi      - Main chat interface (primary agent harness)
 
-Pi Extensions (installed to ~/.pi/agent/extensions/):
-  octo       - Task delegation to OpenCode sessions
-  octo-todos - Todo list management for Octo UI
+Search Engine:
+  SearXNG - Local privacy-respecting metasearch engine (for sx)
+  Valkey  - In-memory cache for SearXNG rate limiting
+
+Pi Extensions (from github.com/byteowlz/pi-agent-extensions):
+  auto-rename          - Auto-generate session names from first query
+  octo-bridge          - Emit agent phase status for the Octo runner
+  octo-todos           - Todo management for Octo UI
+  custom-context-files - Auto-load USER.md, PERSONALITY.md into prompts
 
 For detailed documentation on all prerequisites and components, see SETUP.md
 
@@ -3717,7 +4580,6 @@ main() {
     --all-tools)
       INSTALL_ALL_TOOLS="true"
       INSTALL_MMRY="true"
-      INSTALL_MAILZ="true"
       shift
       ;;
     --no-agent-tools)
@@ -3771,7 +4633,6 @@ main() {
     install_shell_tools
 
     if [[ "$SELECTED_BACKEND_MODE" == "local" ]]; then
-      install_opencode
       install_ttyd
     fi
 
@@ -3782,7 +4643,7 @@ main() {
       install_pi_extensions
     fi
 
-    # Agent tools (agntz and optional mmry, trx)
+    # Agent tools (agntz, mmry, scrpr, sx, tmpltr, sldr, ignr)
     if [[ "$OCTO_INSTALL_AGENT_TOOLS" == "yes" ]]; then
       install_agntz
 
@@ -3790,11 +4651,29 @@ main() {
         select_agent_tools
       fi
 
-      if [[ "$INSTALL_MMRY" == "true" || "$INSTALL_TRX" == "true" || "$INSTALL_MAILZ" == "true" ]]; then
-        install_agent_tools_via_agntz
+      if [[ "$INSTALL_MMRY" == "true" || "$INSTALL_ALL_TOOLS" == "true" ]]; then
+        install_agent_tools_selected
+      fi
+
+      # Install SearXNG if sx was installed (all tools or explicitly)
+      if [[ "$INSTALL_ALL_TOOLS" == "true" ]] || command_exists sx; then
+        if confirm "Install SearXNG local search engine for sx?"; then
+          install_searxng
+        fi
       fi
     fi
   fi
+
+  # In multi-user mode, create the octo system user early so that EAVS
+  # and other tools can write config into its home directory.
+  if [[ "$SELECTED_USER_MODE" == "multi" && "$OS" == "linux" ]]; then
+    ensure_octo_system_user
+  fi
+
+  # Install and configure EAVS (LLM proxy - mandatory for agent access)
+  install_eavs
+  configure_eavs
+  install_eavs_service
 
   # Build Octo
   if confirm "Build Octo from source?"; then

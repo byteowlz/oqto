@@ -19,11 +19,12 @@ use uuid::Uuid;
 
 use crate::agent_browser::{AgentBrowserConfig, AgentBrowserManager};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum BrowserAction {
     Back,
     Forward,
     Reload,
+    ColorScheme(String),
 }
 
 impl BrowserAction {
@@ -32,7 +33,13 @@ impl BrowserAction {
             "back" => Some(Self::Back),
             "forward" => Some(Self::Forward),
             "reload" => Some(Self::Reload),
-            _ => None,
+            _ => {
+                if let Some(scheme) = action.strip_prefix("color_scheme:") {
+                    Some(Self::ColorScheme(scheme.to_string()))
+                } else {
+                    None
+                }
+            }
         }
     }
 }
@@ -651,14 +658,19 @@ impl SessionService {
         Ok(())
     }
 
-    /// Run a browser action (back, forward, reload) for a session.
+    /// Run a browser action (back, forward, reload, color_scheme) for a session.
     pub async fn browser_action(&self, session_id: &str, action: BrowserAction) -> Result<()> {
         match action {
             BrowserAction::Back => self.agent_browser.go_back(session_id).await,
             BrowserAction::Forward => self.agent_browser.go_forward(session_id).await,
             BrowserAction::Reload => self.agent_browser.reload(session_id).await,
+            BrowserAction::ColorScheme(ref scheme) => {
+                self.agent_browser.set_color_scheme(session_id, scheme).await
+            }
         }
     }
+
+
 
     pub async fn list_sessions_for_user(&self, user_id: &str) -> Result<Vec<Session>> {
         let sessions = self.repo.list_for_user(user_id).await?;

@@ -180,20 +180,23 @@ export function StatusBar() {
 		};
 	}, [selectedModelRef]);
 
-	// Get workspace path for model switcher
-	// Find the workspace session for the selected chat
+	// Get workspace path for model switcher from chat history or workspace sessions
 	const workspacePath = useMemo(() => {
-		if (!selectedChatSessionId) return null;
-		// Find in chat history or sessions
-		// For now, return null and let the switcher handle it internally
+		if (selectedChatFromHistory?.workspace_path) {
+			return selectedChatFromHistory.workspace_path;
+		}
+		// Fall back to first workspace session's path
+		if (workspaceSessions?.length) {
+			return workspaceSessions[0].workspace_path ?? null;
+		}
 		return null;
-	}, [selectedChatSessionId]);
+	}, [selectedChatFromHistory?.workspace_path, workspaceSessions]);
 
 	return (
 		<div
 			className={cn(
 				"flex items-center justify-between",
-				"px-8 md:px-3",
+				"px-4 md:px-3",
 				"bg-sidebar/80 border-t border-sidebar-border",
 				"text-[10px] text-muted-foreground",
 				"select-none",
@@ -201,10 +204,10 @@ export function StatusBar() {
 			)}
 		>
 			{/* Left side - user metrics */}
-			<div className="flex items-center gap-3">
+			<div className="flex items-center gap-2 md:gap-3 min-w-0">
 				{/* Running sessions for current user */}
 				<span
-					className="flex items-center gap-1"
+					className="flex items-center gap-1 shrink-0"
 					title="Your running Pi sessions"
 				>
 					<Activity className="w-3 h-3" />
@@ -212,17 +215,17 @@ export function StatusBar() {
 				</span>
 
 				{/* Current model - clickable to open quick switcher */}
-				{selectedModelRef && provider && (
+				{selectedChatSessionId && (
 					<ModelQuickSwitcherSafe
 						sessionId={selectedChatSessionId}
 						workspacePath={workspacePath}
-						className="text-[10px]"
+						className="text-[10px] min-w-0"
 					/>
 				)}
 			</div>
 
 			{/* Right side - admin metrics + version */}
-			<div className="flex items-center gap-3">
+			<div className="flex items-center gap-2 md:gap-3 shrink-0">
 				{/* Admin-only metrics */}
 				{isAdmin && adminStats && (
 					<>

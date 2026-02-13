@@ -552,16 +552,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 							({filteredSessions.length}
 							{deferredSearch ? `/${chatHistory.length}` : ""})
 						</span>
-						{runnerSessionCount > 0 && (
-							<span
-								className={cn(
-									"text-muted-foreground/70",
-									sizeClasses.sessionCount,
-								)}
-							>
-								• {runnerSessionCount} running
-							</span>
-						)}
+
 					</div>
 					<div className="flex items-center gap-1">
 						<button

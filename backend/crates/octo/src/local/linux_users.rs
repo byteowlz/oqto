@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use toml::Value as TomlValue;
 
 /// Configuration for Linux user isolation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -538,19 +539,15 @@ impl LinuxUsersConfig {
         // Create user if needed (returns actual username which may have suffix)
         let (uid, username) = self.create_user(user_id)?;
 
-        // Best-effort: ensure the per-user octo-runner daemon is enabled and started.
+        // Ensure the per-user octo-runner daemon is enabled and started.
         // This is required for multi-user components that must run as the target Linux user
         // (e.g. per-user mmry instances, Pi runner mode).
-        // During user creation, we don't fail if the runner can't start -- the runner will
-        // be retried on first session/connection. This prevents user creation from being
-        // blocked by transient systemd issues, sudo misconfigurations, etc.
-        if let Err(e) = self.ensure_octo_runner_running(&username, uid) {
-            warn!(
-                "Failed to start octo-runner for user '{}' (uid={}): {:?}. \
-                 Will retry on first session.",
-                username, uid, e
-            );
-        }
+        self.ensure_octo_runner_running(&username, uid).with_context(|| {
+            format!(
+                "starting octo-runner for user '{}' (uid={})",
+                username, uid
+            )
+        })?;
 
         Ok((uid, username))
     }
@@ -725,11 +722,7 @@ impl LinuxUsersConfig {
         let service_dir = format!("{}/.config/systemd/user", home_str);
         let service_path = format!("{}/octo-runner.service", service_dir);
 
-        // Check if already installed
-        if Path::new(&service_path).exists() {
-            debug!("octo-runner.service already installed for {}", username);
-            return Ok(());
-        }
+        let expected_socket = format!("/run/octo/runner-sockets/{}/octo-runner.sock", username);
 
         // Find the octo-runner binary
         let runner_path = find_octo_runner_binary()?;
@@ -742,7 +735,7 @@ After=default.target
 
 [Service]
 Type=simple
-ExecStart={}
+ExecStart={} --socket {}
 Restart=on-failure
 RestartSec=5
 Environment=RUST_LOG=info
@@ -750,8 +743,19 @@ Environment=RUST_LOG=info
 [Install]
 WantedBy=default.target
 "#,
-            runner_path.display()
+            runner_path.display(),
+            expected_socket
         );
+
+        if Path::new(&service_path).exists() {
+            let existing = std::fs::read_to_string(&service_path)
+                .with_context(|| format!("reading {}", service_path))?;
+            if existing == service_content {
+                debug!("octo-runner.service already installed for {}", username);
+                return Ok(());
+            }
+            info!("Updating octo-runner.service for {}", username);
+        }
 
         // Create the directory and service file as the target user
         let is_current_user = std::env::var("USER").ok().as_deref() == Some(username);
@@ -761,6 +765,10 @@ WantedBy=default.target
                 .with_context(|| format!("creating {}", service_dir))?;
             std::fs::write(&service_path, &service_content)
                 .with_context(|| format!("writing {}", service_path))?;
+
+            let _ = Command::new("systemctl")
+                .args(["--user", "daemon-reload"])
+                .output();
         } else {
             // Create directory as the target user
             run_as_user(self.use_sudo, username, "mkdir", &["-p", &service_dir], &[])
@@ -777,7 +785,7 @@ WantedBy=default.target
             run_privileged_command(
                 self.use_sudo,
                 "chown",
-                &[&format!("{}:{}", username, username), &service_path],
+                &[&format!("{}:{}", username, self.group), &service_path],
             )
             .context("chown service file")?;
 
@@ -803,6 +811,111 @@ WantedBy=default.target
         Ok(())
     }
 
+    /// Ensure mmry config for a user points to the central embedding service.
+    pub fn ensure_mmry_config_for_user(
+        &self,
+        linux_username: &str,
+        uid: u32,
+        host_service_url: &str,
+        host_api_key: Option<&str>,
+        default_model: &str,
+        dimension: u16,
+    ) -> Result<()> {
+        if host_service_url.trim().is_empty() {
+            return Ok(());
+        }
+
+        let home = get_user_home(linux_username)?
+            .ok_or_else(|| anyhow::anyhow!("could not find home directory for {}", linux_username))?;
+        let config_dir = home.join(".config").join("mmry");
+        let config_path = config_dir.join("config.toml");
+
+        if !config_path.exists() {
+            run_as_user(self.use_sudo, linux_username, "mmry", &["init"], &[])
+                .context("initializing mmry config")?;
+        }
+
+        let content = std::fs::read_to_string(&config_path).unwrap_or_default();
+        let mut parsed: TomlValue = match toml::from_str(&content) {
+            Ok(value) => value,
+            Err(_) => {
+                run_as_user(
+                    self.use_sudo,
+                    linux_username,
+                    "mmry",
+                    &["init", "--force"],
+                    &[],
+                )
+                .context("resetting mmry config")?;
+                let fresh = std::fs::read_to_string(&config_path)
+                    .with_context(|| format!("reading {}", config_path.display()))?;
+                toml::from_str(&fresh).context("parsing reset mmry config")?
+            }
+        };
+
+        let embeddings = ensure_toml_table(&mut parsed, "embeddings");
+        embeddings.insert(
+            "enabled".to_string(),
+            TomlValue::Boolean(true),
+        );
+        embeddings.insert(
+            "model".to_string(),
+            TomlValue::String(default_model.to_string()),
+        );
+        embeddings.insert(
+            "dimension".to_string(),
+            TomlValue::Integer(i64::from(dimension)),
+        );
+
+        let remote = ensure_toml_subtable(embeddings, "remote");
+        remote.insert(
+            "base_url".to_string(),
+            TomlValue::String(host_service_url.to_string()),
+        );
+        match host_api_key {
+            Some(key) => {
+                remote.insert("api_key".to_string(), TomlValue::String(key.to_string()));
+            }
+            None => {
+                remote.remove("api_key");
+            }
+        }
+        remote.insert(
+            "request_timeout_seconds".to_string(),
+            TomlValue::Integer(30),
+        );
+        remote.insert("max_batch_size".to_string(), TomlValue::Integer(64));
+        remote.insert("required".to_string(), TomlValue::Boolean(true));
+
+        let output = format!(
+            "# @schema ./config.schema.json\n{}",
+            toml::to_string_pretty(&parsed).context("serializing mmry config")?
+        );
+
+        let is_current_user = std::env::var("USER").ok().as_deref() == Some(linux_username);
+        if is_current_user {
+            std::fs::create_dir_all(&config_dir)
+                .with_context(|| format!("creating {}", config_dir.display()))?;
+            std::fs::write(&config_path, output)
+                .with_context(|| format!("writing {}", config_path.display()))?;
+        } else {
+            let temp_file = format!("/tmp/mmry-config-{}.toml", uid);
+            let config_path_str = config_path.to_string_lossy().to_string();
+            std::fs::write(&temp_file, output).context("writing temp mmry config")?;
+            run_privileged_command(self.use_sudo, "cp", &[&temp_file, &config_path_str])
+                .context("copying mmry config")?;
+            run_privileged_command(
+                self.use_sudo,
+                "chown",
+                &[&format!("{}:{}", linux_username, self.group), &config_path_str],
+            )
+            .context("chown mmry config")?;
+            let _ = std::fs::remove_file(&temp_file);
+        }
+
+        Ok(())
+    }
+
     /// Find the next available UID starting from uid_start.
     fn find_next_uid(&self) -> Result<u32> {
         // Read /etc/passwd to find used UIDs
@@ -823,6 +936,34 @@ WantedBy=default.target
 
         Ok(max_uid + 1)
     }
+}
+
+fn ensure_toml_table<'a>(value: &'a mut TomlValue, key: &str) -> &'a mut toml::value::Table {
+    if !value.is_table() {
+        *value = TomlValue::Table(toml::value::Table::new());
+    }
+
+    let table = value.as_table_mut().expect("toml root table");
+    table
+        .entry(key.to_string())
+        .or_insert_with(|| TomlValue::Table(toml::value::Table::new()));
+    table
+        .get_mut(key)
+        .and_then(TomlValue::as_table_mut)
+        .expect("toml subtable")
+}
+
+fn ensure_toml_subtable<'a>(
+    parent: &'a mut toml::value::Table,
+    key: &str,
+) -> &'a mut toml::value::Table {
+    parent
+        .entry(key.to_string())
+        .or_insert_with(|| TomlValue::Table(toml::value::Table::new()));
+    parent
+        .get_mut(key)
+        .and_then(TomlValue::as_table_mut)
+        .expect("toml nested subtable")
 }
 
 /// Sanitize a user ID to be a valid Linux username.

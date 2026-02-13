@@ -189,17 +189,13 @@ impl RunnerUserConfig {
                 configured.clone()
             } else {
                 // Bare name - resolve via which/PATH
-                match std::process::Command::new("which")
-                    .arg(configured)
-                    .output()
-                {
+                match std::process::Command::new("which").arg(configured).output() {
                     Ok(output) if output.status.success() => {
                         String::from_utf8_lossy(&output.stdout).trim().to_string()
                     }
                     _ => {
                         // Fallback to ~/.bun/bin/pi
-                        let fallback =
-                            PathBuf::from(&home).join(".bun/bin/pi");
+                        let fallback = PathBuf::from(&home).join(".bun/bin/pi");
                         warn!(
                             "Could not resolve '{}' in PATH, falling back to {}",
                             configured,
@@ -2557,7 +2553,8 @@ impl Runner {
             Ok(response) => {
                 // Parse model info from Pi's response data.
                 // Pi returns { model: "<id>", provider: "<provider>", ... }
-                let model = Self::parse_model_from_response(&response, &req.provider, &req.model_id);
+                let model =
+                    Self::parse_model_from_response(&response, &req.provider, &req.model_id);
                 RunnerResponse::PiModelChanged(PiModelChangedResponse {
                     session_id: req.session_id,
                     model,
@@ -2622,9 +2619,16 @@ impl Runner {
                                 match serde_json::from_value::<octo::pi::PiModel>(v.clone()) {
                                     Ok(m) => Some(m),
                                     Err(e) => {
-                                        let provider = v.get("provider").and_then(|p| p.as_str()).unwrap_or("?");
-                                        let id = v.get("id").and_then(|i| i.as_str()).unwrap_or("?");
-                                        warn!("Failed to deserialize model {}/{}: {}", provider, id, e);
+                                        let provider = v
+                                            .get("provider")
+                                            .and_then(|p| p.as_str())
+                                            .unwrap_or("?");
+                                        let id =
+                                            v.get("id").and_then(|i| i.as_str()).unwrap_or("?");
+                                        warn!(
+                                            "Failed to deserialize model {}/{}: {}",
+                                            provider, id, e
+                                        );
                                         None
                                     }
                                 }
@@ -3461,6 +3465,12 @@ async fn main() -> Result<()> {
     );
 
     // Create PiSessionManager for managing Pi agent processes
+    let state_dir = std::env::var("XDG_STATE_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+            PathBuf::from(home).join(".local").join("state")
+        });
     let pi_config = PiManagerConfig {
         pi_binary: PathBuf::from(&user_config.pi_binary),
         default_cwd: user_config.workspace_dir.clone(),
@@ -3469,6 +3479,7 @@ async fn main() -> Result<()> {
         hstry_db_path: octo::history::hstry_db_path(),
         sandbox_config: sandbox_config.clone(),
         runner_id: user_config.runner_id.clone(),
+        model_cache_dir: Some(state_dir.join("octo").join("model-cache")),
     };
     let pi_manager = PiSessionManager::new(pi_config);
 
@@ -3498,6 +3509,34 @@ async fn main() -> Result<()> {
 /// is treated as success.
 async fn ensure_user_service(name: &str) {
     info!("Ensuring {} daemon is running...", name);
+
+    match tokio::process::Command::new(name)
+        .args(["service", "enable"])
+        .output()
+        .await
+    {
+        Ok(out) => {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            if out.status.success() {
+                info!("{} service enabled", name);
+            } else {
+                let combined = format!("{}{}", stdout, stderr);
+                if !combined.contains("already enabled")
+                    && !combined.contains("Already enabled")
+                {
+                    warn!(
+                        "{} service enable failed (exit {}): {}{}",
+                        name, out.status, stdout, stderr
+                    );
+                }
+            }
+        }
+        Err(e) => {
+            warn!("Failed to run `{} service enable`: {}", name, e);
+        }
+    }
+
     match tokio::process::Command::new(name)
         .args(["service", "start"])
         .output()
@@ -3532,12 +3571,10 @@ async fn ensure_user_service(name: &str) {
 /// Empty lines are skipped. Values are NOT shell-unquoted (quotes are literal).
 /// Variables are set into the process environment so all child processes inherit them.
 fn load_env_file() {
-    let env_path = std::env::var("XDG_CONFIG_HOME")
-        .unwrap_or_else(|_| {
-            let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-            format!("{}/.config", home)
-        })
-        + "/octo/env";
+    let env_path = std::env::var("XDG_CONFIG_HOME").unwrap_or_else(|_| {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+        format!("{}/.config", home)
+    }) + "/octo/env";
 
     let path = std::path::Path::new(&env_path);
     if !path.exists() {

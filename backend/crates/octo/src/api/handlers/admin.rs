@@ -10,7 +10,7 @@ use axum::{
     http::StatusCode,
     response::sse::{Event, KeepAlive, Sse},
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use tokio_stream::{StreamExt, wrappers::IntervalStream};
 use tracing::{error, info, instrument, warn};
@@ -216,6 +216,127 @@ pub async fn list_users(
     Ok(Json(user_infos))
 }
 
+#[derive(Debug, Deserialize)]
+pub struct SyncUserConfigsRequest {
+    pub user_id: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SyncUserConfigResult {
+    pub user_id: String,
+    pub linux_username: Option<String>,
+    pub runner_configured: bool,
+    pub mmry_configured: bool,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SyncUserConfigsResponse {
+    pub results: Vec<SyncUserConfigResult>,
+}
+
+/// Sync per-user config files and runner services (admin only).
+#[instrument(skip(state, _user))]
+pub async fn sync_user_configs(
+    State(state): State<AppState>,
+    RequireAdmin(_user): RequireAdmin,
+    Json(request): Json<SyncUserConfigsRequest>,
+) -> ApiResult<Json<SyncUserConfigsResponse>> {
+    let linux_users = state.linux_users.as_ref().ok_or_else(|| {
+        ApiError::bad_request("Linux user isolation is not enabled.")
+    })?;
+
+    let users = if let Some(ref user_id) = request.user_id {
+        let user = state
+            .users
+            .get_user(user_id)
+            .await?
+            .ok_or_else(|| ApiError::not_found(format!("User {} not found", user_id)))?;
+        vec![user]
+    } else {
+        state.users.list_users(UserListQuery::default()).await?
+    };
+
+    let mut results = Vec::with_capacity(users.len());
+
+    for user in users {
+        let mut result = SyncUserConfigResult {
+            user_id: user.id.clone(),
+            linux_username: user.linux_username.clone(),
+            runner_configured: false,
+            mmry_configured: false,
+            error: None,
+        };
+
+        let ensure_result = if let (Some(ref linux_username), Some(linux_uid)) =
+            (user.linux_username.as_ref(), user.linux_uid)
+        {
+            linux_users.ensure_user_with_verification(
+                &user.id,
+                Some(linux_username),
+                Some(linux_uid as u32),
+            )
+        } else {
+            linux_users.ensure_user(&user.id)
+        };
+
+        match ensure_result {
+            Ok((uid, linux_username)) => {
+                result.runner_configured = true;
+                result.linux_username = Some(linux_username.clone());
+
+                if user.linux_username.as_deref() != Some(linux_username.as_str())
+                    || user.linux_uid != Some(uid as i64)
+                {
+                    if let Err(e) = state
+                        .users
+                        .update_user(
+                            &user.id,
+                            crate::user::UpdateUserRequest {
+                                linux_username: Some(linux_username.clone()),
+                                linux_uid: Some(uid as i64),
+                                ..Default::default()
+                            },
+                        )
+                        .await
+                    {
+                        warn!(
+                            user_id = %user.id,
+                            error = %e,
+                            "Failed to store linux_username/uid in database"
+                        );
+                    }
+                }
+
+                if state.mmry.enabled && !state.mmry.single_user {
+                    match linux_users.ensure_mmry_config_for_user(
+                        &linux_username,
+                        uid,
+                        &state.mmry.host_service_url,
+                        state.mmry.host_api_key.as_deref(),
+                        &state.mmry.default_model,
+                        state.mmry.dimension,
+                    ) {
+                        Ok(()) => {
+                            result.mmry_configured = true;
+                        }
+                        Err(err) => {
+                            result.error = Some(format!("mmry config update failed: {err}"));
+                        }
+                    }
+                }
+            }
+            Err(err) => {
+                result.error = Some(format!("runner provisioning failed: {err}"));
+            }
+        }
+
+        results.push(result);
+    }
+
+    Ok(Json(SyncUserConfigsResponse { results }))
+}
+
 /// Get a specific user (admin only).
 #[instrument(skip(state, _user))]
 pub async fn get_user(
@@ -278,6 +399,23 @@ pub async fn create_user(
                         error = %e,
                         "Failed to store linux_username/uid in database"
                     );
+                }
+
+                if state.mmry.enabled && !state.mmry.single_user {
+                    if let Err(e) = linux_users.ensure_mmry_config_for_user(
+                        &actual_linux_username,
+                        uid,
+                        &state.mmry.host_service_url,
+                        state.mmry.host_api_key.as_deref(),
+                        &state.mmry.default_model,
+                        state.mmry.dimension,
+                    ) {
+                        warn!(
+                            user_id = %user.id,
+                            error = %e,
+                            "Failed to update mmry config for user"
+                        );
+                    }
                 }
 
                 info!(
