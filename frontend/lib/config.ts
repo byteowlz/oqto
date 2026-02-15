@@ -18,7 +18,7 @@ export const getContainerUrls = (containerId?: string) => {
 		// Route through Caddy with container-specific paths
 		const basePath = `/c/${containerId}`;
 		return {
-			opencodeBaseUrl: `${basePath}/api`,
+			agentBaseUrl: `${basePath}/api`,
 			fileServerBaseUrl: `${basePath}/files`,
 			terminalWsUrl: `${caddyBase.replace(/^http/, "ws")}${basePath}/term`,
 		};
@@ -26,10 +26,10 @@ export const getContainerUrls = (containerId?: string) => {
 
 	// Fallback to legacy direct URLs (local dev without Caddy)
 	return {
-		opencodeBaseUrl:
+		agentBaseUrl:
 			typeof window !== "undefined"
-				? "/api/opencode"
-				: trimTrailingSlash(env.VITE_OPENCODE_BASE_URL),
+				? "/api/agent"
+				: trimTrailingSlash(env.VITE_AGENT_BASE_URL),
 		fileServerBaseUrl: trimTrailingSlash(env.VITE_FILE_SERVER_URL),
 		terminalWsUrl: trimTrailingSlash(env.VITE_TERMINAL_WS_URL),
 	};

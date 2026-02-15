@@ -112,29 +112,6 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
         // Voice mode WebSocket proxies
         .route("/voice/stt", get(proxy::proxy_voice_stt_ws))
         .route("/voice/tts", get(proxy::proxy_voice_tts_ws))
-        // Opencode events (legacy global endpoint)
-        .route("/opencode/event", get(proxy::opencode_events))
-        // SSE events proxy for specific session
-        .route(
-            "/session/{session_id}/code/event",
-            get(proxy::proxy_opencode_events),
-        )
-        // Proxy routes
-        .route(
-            "/sessions/{session_id}/opencode/{*path}",
-            get(proxy::proxy_opencode)
-                .post(proxy::proxy_opencode)
-                .put(proxy::proxy_opencode)
-                .delete(proxy::proxy_opencode),
-        )
-        // PRD-compatible proxy routes
-        .route(
-            "/session/{session_id}/code/{*path}",
-            get(proxy::proxy_opencode)
-                .post(proxy::proxy_opencode)
-                .put(proxy::proxy_opencode)
-                .delete(proxy::proxy_opencode),
-        )
         .route("/browser/start", post(handlers::start_browser))
         .route("/browser/action", post(handlers::browser_action))
         .route(
@@ -172,18 +149,6 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
             get(proxy::proxy_mmry_memory_for_workspace)
                 .put(proxy::proxy_mmry_memory_for_workspace)
                 .delete(proxy::proxy_mmry_memory_for_workspace),
-        )
-        // Sub-agent proxy routes
-        .route(
-            "/session/{session_id}/agent/{agent_id}/code/event",
-            get(proxy::proxy_opencode_agent_events),
-        )
-        .route(
-            "/session/{session_id}/agent/{agent_id}/code/{*path}",
-            get(proxy::proxy_opencode_agent)
-                .post(proxy::proxy_opencode_agent)
-                .put(proxy::proxy_opencode_agent)
-                .delete(proxy::proxy_opencode_agent),
         )
         // User profile routes (authenticated users)
         .route("/me", get(handlers::get_me))
@@ -245,7 +210,10 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
         // Admin routes - user management
         .route("/admin/users", get(handlers::list_users))
         .route("/admin/users", post(handlers::create_user))
-        .route("/admin/users/sync-configs", post(handlers::sync_user_configs))
+        .route(
+            "/admin/users/sync-configs",
+            post(handlers::sync_user_configs),
+        )
         .route("/admin/users/stats", get(handlers::get_user_stats))
         .route("/admin/metrics", get(handlers::admin_metrics_stream))
         .route("/admin/users/{user_id}", get(handlers::get_user))
@@ -282,28 +250,8 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
             "/admin/invite-codes/{code_id}/revoke",
             post(handlers::revoke_invite_code),
         )
-        // Agent management routes
-        .route(
-            "/session/{session_id}/agents",
-            get(handlers::list_agents).post(handlers::start_agent),
-        )
-        .route(
-            "/session/{session_id}/agents/create",
-            post(handlers::create_agent),
-        )
-        .route(
-            "/session/{session_id}/agents/exec",
-            post(handlers::exec_agent_command),
-        )
-        .route(
-            "/session/{session_id}/agents/{agent_id}",
-            get(handlers::get_agent).delete(handlers::stop_agent),
-        )
-        .route(
-            "/session/{session_id}/agents/rediscover",
-            post(handlers::rediscover_agents),
-        )
-        // Chat history routes (reads from disk, no running opencode needed)
+
+        // Chat history routes (reads from disk, reads from hstry)
         .route("/chat-history", get(handlers::list_chat_history))
         .route(
             "/chat-history/grouped",
@@ -343,11 +291,6 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
             get(handlers::get_settings_values).patch(handlers::update_settings_values),
         )
         .route("/settings/reload", post(handlers::reload_settings))
-        // OpenCode global config
-        .route(
-            "/opencode/config",
-            get(handlers::get_global_opencode_config),
-        )
         // Legacy Main Chat routes removed -- all communication now goes through
         // the multiplexed WebSocket (agent channel)
         // HSTRY (chat history) search routes
@@ -360,46 +303,6 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
         // CodexBar usage (optional, requires codexbar on PATH)
         .route("/codexbar/usage", get(handlers::codexbar_usage))
         // TRX (issue tracking) now uses mux-only channel
-        // AgentRPC routes (unified backend API)
-        .route("/agent/health", get(handlers::agent_health))
-        .route(
-            "/agent/conversations",
-            get(handlers::agent_list_conversations),
-        )
-        .route(
-            "/agent/conversations/{conversation_id}",
-            get(handlers::agent_get_conversation),
-        )
-        .route(
-            "/agent/conversations/{conversation_id}/messages",
-            get(handlers::agent_get_messages),
-        )
-        .route("/agent/sessions", post(handlers::agent_start_session))
-        .route(
-            "/agent/sessions/{session_id}/messages",
-            post(handlers::agent_send_message),
-        )
-        .route(
-            "/agent/sessions/{session_id}",
-            delete(handlers::agent_stop_session),
-        )
-        .route(
-            "/agent/sessions/{session_id}/url",
-            get(handlers::agent_get_session_url),
-        )
-        .route(
-            "/agent/sessions/{session_id}/events",
-            get(handlers::agent_attach),
-        )
-        // Agent ask endpoint - ask any agent a question and get response
-        .route("/agents/ask", post(handlers::agents_ask))
-        // Agent sessions search endpoint - find sessions by query
-        .route("/agents/sessions", get(handlers::agents_search_sessions))
-        // In-session search - search within a specific session using hstry
-        .route(
-            "/agents/sessions/{session_id}/search",
-            get(handlers::agents_session_search),
-        )
         .layer(middleware::from_fn_with_state(
             state.clone(),
             audit::audit_middleware,
@@ -509,7 +412,7 @@ fn build_cors_layer(state: &AppState) -> CorsLayer {
         header::ACCEPT,
         header::ORIGIN,
         header::COOKIE,
-        header::HeaderName::from_static("x-opencode-directory"),
+
     ];
 
     if allowed_origins.is_empty() {

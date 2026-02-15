@@ -10,7 +10,7 @@ import { authFetch, controlPlaneApiUrl, getAuthToken } from "./client";
 // Proxy URLs
 // ============================================================================
 
-export function opencodeProxyBaseUrl(sessionId: string) {
+export function agentProxyBaseUrl(sessionId: string) {
 	return controlPlaneApiUrl(`/api/session/${sessionId}/code`);
 }
 

@@ -1,9 +1,11 @@
 # **Product Requirements Document (PRD)**
 
+> **ARCHIVED DOCUMENT** - This document describes the original architecture design when OpenCode was planned as the primary agent runtime. The current implementation uses **Pi** as the primary harness via the canonical protocol. This document is kept for historical reference only.
+
 ## **AI Agent Workspace Platform**
 
 **Version:** 2.0 (Final)
-**Status:** Approved for Implementation
+**Status:** Archived - Historical Reference
 
 ---
 

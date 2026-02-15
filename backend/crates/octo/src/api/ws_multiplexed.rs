@@ -1577,6 +1577,7 @@ async fn handle_agent_command(
                                     None,
                                     None,
                                     None,
+                                    None,
                                 )
                                 .await
                             {
@@ -1802,7 +1803,7 @@ async fn handle_agent_command(
                     let sessions_json: Vec<Value> = sessions
                         .iter()
                         .map(|s| {
-                            serde_json::json!({
+                            let mut obj = serde_json::json!({
                                 "session_id": s.session_id,
                                 "state": s.state,
                                 "cwd": s.cwd,
@@ -1810,7 +1811,11 @@ async fn handle_agent_command(
                                 "model": s.model,
                                 "last_activity": s.last_activity,
                                 "subscriber_count": s.subscriber_count,
-                            })
+                            });
+                            if let Some(ref hid) = s.hstry_id {
+                                obj["hstry_id"] = serde_json::Value::String(hid.clone());
+                            }
+                            obj
                         })
                         .collect();
                     Some(agent_response(
@@ -3194,18 +3199,16 @@ async fn handle_trx_command(cmd: TrxWsCommand, user_id: &str, state: &AppState) 
 
 async fn handle_session_command(
     cmd: SessionWsCommand,
-    user_id: &str,
-    state: &AppState,
+    _user_id: &str,
+    _state: &AppState,
 ) -> Option<WsEvent> {
-    let hub = state.ws_hub.clone();
     let session_id = extract_legacy_session_id(&cmd.cmd);
-    if let Err(err) = crate::ws::handler::handle_command(&hub, state, user_id, cmd.cmd).await {
-        return Some(WsEvent::Session(LegacyWsEvent::Error {
-            message: err.to_string(),
-            session_id,
-        }));
-    }
-    None
+    // Legacy Session channel commands targeted the OpenCode HTTP API which has been removed.
+    // All agent interaction now flows through the Agent channel.
+    Some(WsEvent::Session(LegacyWsEvent::Error {
+        message: "Legacy session channel is deprecated. Use the agent channel instead.".to_string(),
+        session_id,
+    }))
 }
 
 fn extract_legacy_session_id(cmd: &LegacyWsCommand) -> Option<String> {

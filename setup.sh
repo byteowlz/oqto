@@ -21,7 +21,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TEMPLATES_DIR="${SCRIPT_DIR}/templates"
-ONBOARDING_TEMPLATES_REPO_DEFAULT="https://github.com/byteowlz/octo-templates"
+# Use SSH for private repos (allows SSH key authentication)
+ONBOARDING_TEMPLATES_REPO_DEFAULT="git@github.com:byteowlz/octo-templates.git"
 EXTERNAL_REPOS_DIR_DEFAULT="/usr/local/share/octo/external-repos"
 ONBOARDING_TEMPLATES_PATH_DEFAULT="/usr/share/octo/octo-templates/dotfiles_users/"
 PROJECT_TEMPLATES_PATH_DEFAULT="/usr/share/octo/octo-templates/agents/"
@@ -65,6 +66,12 @@ ADMIN_USERNAME=""
 ADMIN_PASSWORD=""
 ADMIN_EMAIL=""
 
+# Dev user configuration (set during generate_config)
+dev_user_id=""
+dev_user_name=""
+dev_user_email=""
+dev_user_password=""
+
 # Paths (XDG compliant)
 : "${XDG_CONFIG_HOME:=$HOME/.config}"
 : "${XDG_DATA_HOME:=$HOME/.local/share}"
@@ -81,6 +88,183 @@ BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 BOLD='\033[1m'
+
+# ==============================================================================
+# Setup State Persistence
+# ==============================================================================
+#
+# Saves all interactive decisions to a state file so re-runs don't require
+# re-entering everything. State is stored in ~/.config/octo/setup-state.env
+# and loaded automatically on subsequent runs.
+#
+# Usage:
+#   ./setup.sh              # Loads previous state, prompts to reuse
+#   ./setup.sh --fresh      # Ignore saved state, start from scratch
+#
+
+SETUP_STATE_FILE="${XDG_CONFIG_HOME}/octo/setup-state.env"
+
+# Keys that are persisted (order matters for display)
+SETUP_STATE_KEYS=(
+  SELECTED_USER_MODE
+  SELECTED_BACKEND_MODE
+  PRODUCTION_MODE
+  OCTO_DEV_MODE
+  WORKSPACE_DIR
+  DOMAIN
+  SETUP_CADDY
+  ADMIN_USERNAME
+  ADMIN_EMAIL
+  ADMIN_PASSWORD
+  dev_user_id
+  dev_user_name
+  dev_user_email
+  dev_user_password
+  INSTALL_ALL_TOOLS
+  INSTALL_MMRY
+  OCTO_HARDEN_SERVER
+  OCTO_SSH_PORT
+  OCTO_SETUP_FIREWALL
+  OCTO_SETUP_FAIL2BAN
+  OCTO_HARDEN_SSH
+  OCTO_SETUP_AUTO_UPDATES
+  OCTO_HARDEN_KERNEL
+  CONTAINER_RUNTIME
+  JWT_SECRET
+  EAVS_MASTER_KEY
+)
+
+# Save current decisions to state file
+save_setup_state() {
+  mkdir -p "$(dirname "$SETUP_STATE_FILE")"
+
+  {
+    echo "# Octo setup state - generated $(date)"
+    echo "# This file is loaded on re-runs to avoid re-entering decisions."
+    echo "# Delete this file or run ./setup.sh --fresh to start over."
+    echo ""
+    for key in "${SETUP_STATE_KEYS[@]}"; do
+      local val="${!key:-}"
+      if [[ -n "$val" ]]; then
+        echo "${key}=$(printf '%q' "$val")"
+      fi
+    done
+  } > "$SETUP_STATE_FILE"
+  chmod 600 "$SETUP_STATE_FILE"
+  log_success "Setup state saved to $SETUP_STATE_FILE"
+}
+
+# Load previous state and offer to reuse it
+load_setup_state() {
+  if [[ ! -f "$SETUP_STATE_FILE" ]]; then
+    return 1
+  fi
+
+  echo -e "${BOLD}Previous setup state found:${NC}"
+  echo ""
+
+  # Show key decisions (skip secrets)
+  local secrets_regex="^(ADMIN_PASSWORD|JWT_SECRET|EAVS_MASTER_KEY)$"
+  while IFS='=' read -r key val; do
+    # Skip comments and empty lines
+    [[ "$key" =~ ^#.*$ || -z "$key" ]] && continue
+    # Unescape the value
+    val=$(eval "echo $val" 2>/dev/null || echo "$val")
+    if [[ "$key" =~ $secrets_regex ]]; then
+      echo -e "  ${CYAN}${key}${NC} = ****"
+    else
+      echo -e "  ${CYAN}${key}${NC} = ${val}"
+    fi
+  done < "$SETUP_STATE_FILE"
+
+  # Show completed steps
+  if [[ -f "$SETUP_STEPS_FILE" ]]; then
+    local step_count
+    step_count=$(wc -l < "$SETUP_STEPS_FILE")
+    echo -e "  ${GREEN}Completed steps:${NC} $step_count"
+    echo ""
+  fi
+
+  return 0
+}
+
+# Source the state file to restore variables
+apply_setup_state() {
+  if [[ -f "$SETUP_STATE_FILE" ]]; then
+    # shellcheck source=/dev/null
+    source "$SETUP_STATE_FILE"
+    log_success "Loaded previous setup state"
+  fi
+}
+
+# ==============================================================================
+# Step Tracking
+# ==============================================================================
+#
+# Tracks which setup steps have completed so re-runs skip finished work.
+# Steps are stored in ~/.config/octo/setup-steps-done alongside the state file.
+# Use --fresh to clear completed steps and start over.
+#
+
+SETUP_STEPS_FILE="${XDG_CONFIG_HOME}/octo/setup-steps-done"
+
+# Check if a step has already been completed
+step_done() {
+  local step="$1"
+  [[ -f "$SETUP_STEPS_FILE" ]] && grep -qxF "$step" "$SETUP_STEPS_FILE"
+}
+
+# Mark a step as completed
+mark_step_done() {
+  local step="$1"
+  mkdir -p "$(dirname "$SETUP_STEPS_FILE")"
+  if ! step_done "$step"; then
+    echo "$step" >> "$SETUP_STEPS_FILE"
+  fi
+}
+
+# Run a step if not already completed; mark done on success
+# Usage: run_step "step_name" "description" command [args...]
+run_step() {
+  local step="$1"
+  local desc="$2"
+  shift 2
+
+  if step_done "$step"; then
+    log_success "Already done: $desc"
+    return 0
+  fi
+
+  "$@"
+  mark_step_done "$step"
+}
+
+# Clear all completed steps (used with --fresh)
+clear_steps() {
+  rm -f "$SETUP_STEPS_FILE"
+}
+
+# Run a step with verification: skip only if both marked done AND verify passes
+# Usage: verify_or_rerun "step_name" "description" "verify_cmd" install_func
+verify_or_rerun() {
+  local step="$1"
+  local desc="$2"
+  local verify="$3"
+  local func="$4"
+
+  if step_done "$step" && eval "$verify" &>/dev/null; then
+    log_success "Already done: $desc"
+    return 0
+  fi
+
+  # Clear stale marker if verify failed
+  if step_done "$step"; then
+    log_warn "$desc marked done but verification failed, re-running..."
+    sed -i "/^${step}$/d" "$SETUP_STEPS_FILE" 2>/dev/null || true
+  fi
+
+  run_step "$step" "$desc" "$func"
+}
 
 # ==============================================================================
 # Helper Functions
@@ -417,8 +601,8 @@ install_ttyd_from_source() {
 # Pi Extensions Installation
 # ==============================================================================
 
-# GitHub repo for Pi agent extensions
-PI_EXTENSIONS_REPO="https://github.com/byteowlz/pi-agent-extensions.git"
+# GitHub repo for Pi agent extensions (SSH for private repo access)
+PI_EXTENSIONS_REPO="git@github.com:byteowlz/pi-agent-extensions.git"
 
 # Default extensions to install (subset of what's available in the repo)
 # These are the Octo-relevant extensions; users can install others via the
@@ -443,11 +627,15 @@ clone_pi_extensions_repo() {
     if [[ -d "$cache_dir" ]]; then
       rm -rf "$cache_dir"
     fi
-    log_info "Cloning pi-agent-extensions from GitHub..."
+    log_info "Cloning pi-agent-extensions (SSH)..."
     mkdir -p "$(dirname "$cache_dir")"
     if ! git clone --depth 1 "$PI_EXTENSIONS_REPO" "$cache_dir"; then
-      log_error "Failed to clone pi-agent-extensions repo"
-      return 1
+      log_warn "SSH clone failed, trying HTTPS..."
+      local https_url="${PI_EXTENSIONS_REPO/git@github.com:/https://github.com/}"
+      if ! git clone --depth 1 "$https_url" "$cache_dir"; then
+        log_error "Failed to clone pi-agent-extensions repo"
+        return 1
+      fi
     fi
   fi
 
@@ -732,6 +920,12 @@ install_shell_tools_debian() {
     log_info "Installing via apt: ${apt_pkgs[*]}"
     apt_update_once
     sudo apt-get install -y "${apt_pkgs[@]}"
+
+    # On Debian/Ubuntu, fd-find installs as 'fdfind' - create 'fd' symlink
+    if command_exists fdfind && ! command_exists fd; then
+      sudo ln -sf "$(command -v fdfind)" /usr/local/bin/fd
+      log_success "Created fd -> fdfind symlink"
+    fi
   fi
 
   if [[ ${#cargo_pkgs[@]} -gt 0 ]]; then
@@ -836,20 +1030,42 @@ setup_onboarding_templates_repo() {
 
   log_step "Setting up onboarding templates repo"
 
-  if command -v git >/dev/null 2>&1; then
-    if [[ -d "$target_path/.git" ]]; then
-      log_info "Updating onboarding templates in $target_path"
-      sudo git -C "$target_path" fetch --all --prune >/dev/null 2>&1 || true
-      sudo git -C "$target_path" reset --hard origin/main >/dev/null 2>&1 || true
-    else
-      log_info "Cloning onboarding templates repo to $target_path"
-      sudo mkdir -p "$(dirname "$target_path")"
-      sudo git clone "$repo_url" "$target_path" >/dev/null 2>&1 || true
-    fi
-    sudo chmod -R a+rX "$target_path" >/dev/null 2>&1 || true
-  else
+  if ! command -v git >/dev/null 2>&1; then
     log_warn "git not available; skipping onboarding templates clone"
+    return 0
   fi
+
+  # Use a temporary location for cloning (preserves SSH agent access)
+  local temp_clone_dir="${XDG_CACHE_HOME:-$HOME/.cache}/octo/octo-templates-clone"
+  mkdir -p "$(dirname "$temp_clone_dir")"
+
+  if [[ -d "$temp_clone_dir/.git" ]]; then
+    log_info "Updating onboarding templates..."
+    git -C "$temp_clone_dir" fetch --all --prune 2>/dev/null || true
+    git -C "$temp_clone_dir" reset --hard origin/main 2>/dev/null || true
+  else
+    log_info "Cloning onboarding templates repo (SSH)..."
+    rm -rf "$temp_clone_dir"
+    git clone "$repo_url" "$temp_clone_dir" || {
+      log_warn "SSH clone failed, trying HTTPS..."
+      # Fallback to HTTPS if SSH fails
+      local https_url="${repo_url/git@github.com:/https://github.com/}"
+      https_url="${https_url%.git}"
+      git clone "$https_url" "$temp_clone_dir" || {
+        log_warn "Failed to clone templates repo"
+        return 1
+      }
+    }
+  fi
+
+  # Copy to target with sudo (system location)
+  log_info "Installing templates to $target_path..."
+  sudo mkdir -p "$(dirname "$target_path")"
+  sudo rm -rf "$target_path"
+  sudo cp -r "$temp_clone_dir" "$target_path"
+  sudo chmod -R a+rX "$target_path" >/dev/null 2>&1 || true
+
+  log_success "Onboarding templates installed"
 }
 
 update_external_repos() {
@@ -1667,8 +1883,12 @@ configure_eavs() {
 
   local eavs_config_file="${eavs_config_dir}/config.toml"
 
-  # Generate master key for octo to create per-session virtual keys
-  EAVS_MASTER_KEY=$(generate_secure_secret 32)
+  # Generate master key for octo to create per-session virtual keys (reuse saved one)
+  if [[ -z "${EAVS_MASTER_KEY:-}" ]]; then
+    EAVS_MASTER_KEY=$(generate_secure_secret 32)
+  else
+    log_info "Using saved EAVS master key"
+  fi
 
   echo
   echo "EAVS needs at least one LLM provider to route agent requests."
@@ -1975,11 +2195,15 @@ select_deployment_mode() {
 setup_production_mode() {
   log_step "Production Mode Configuration"
 
-  # Generate JWT secret
+  # Generate JWT secret (reuse saved one if available)
   echo
-  log_info "Generating secure JWT secret..."
-  JWT_SECRET=$(generate_secure_secret 64)
-  log_success "JWT secret generated (64 characters)"
+  if [[ -n "${JWT_SECRET:-}" ]]; then
+    log_info "Using saved JWT secret"
+  else
+    log_info "Generating secure JWT secret..."
+    JWT_SECRET=$(generate_secure_secret 64)
+    log_success "JWT secret generated (64 characters)"
+  fi
 
   # Admin user setup
   setup_admin_user
@@ -2011,14 +2235,16 @@ setup_admin_user() {
   echo
 
   # Username
-  ADMIN_USERNAME=$(prompt_input "Admin username" "admin")
+  ADMIN_USERNAME=$(prompt_input "Admin username" "${ADMIN_USERNAME:-admin}")
 
   # Email
-  ADMIN_EMAIL=$(prompt_input "Admin email" "admin@localhost")
+  ADMIN_EMAIL=$(prompt_input "Admin email" "${ADMIN_EMAIL:-admin@localhost}")
 
   # Password
   echo
-  if [[ "$NONINTERACTIVE" == "true" ]]; then
+  if [[ -n "${ADMIN_PASSWORD:-}" ]]; then
+    log_info "Using saved admin password"
+  elif [[ "$NONINTERACTIVE" == "true" ]]; then
     ADMIN_PASSWORD=$(generate_secure_secret 16)
     log_info "Generated admin password: $ADMIN_PASSWORD"
     log_warn "SAVE THIS PASSWORD - it will not be shown again!"
@@ -2087,6 +2313,12 @@ setup_caddy_config() {
   else
     DOMAIN=$(prompt_input "Domain name" "localhost")
   fi
+
+  # Strip protocol prefix if user included it
+  DOMAIN="${DOMAIN#https://}"
+  DOMAIN="${DOMAIN#http://}"
+  # Strip trailing slash
+  DOMAIN="${DOMAIN%/}"
 
   if [[ "$DOMAIN" == "localhost" ]]; then
     log_warn "Using localhost - HTTPS will not be enabled"
@@ -2179,9 +2411,9 @@ generate_caddyfile() {
   local caddy_config_dir="/etc/caddy"
   local caddyfile="${caddy_config_dir}/Caddyfile"
 
-  # Determine ports based on backend mode
+  # Determine ports and paths
   local backend_port="8080"
-  local frontend_port="3000"
+  local frontend_dir="/var/www/octo"
 
   # Create config directory
   if [[ ! -d "$caddy_config_dir" ]]; then
@@ -2204,50 +2436,16 @@ generate_caddyfile() {
 # Generated by setup.sh on $(date)
 
 :80 {
-    # Backend API - strip /api prefix
+    # Backend API (all routes are under /api on the backend)
     handle /api/* {
-        uri strip_prefix /api
         reverse_proxy localhost:${backend_port}
     }
     
-    # Backend WebSocket endpoint
-    handle /ws {
-        reverse_proxy localhost:${backend_port}
-    }
-    
-    # Session proxies (terminal, files, code)
-    handle /session/* {
-        reverse_proxy localhost:${backend_port}
-    }
-    
-    # Auth endpoints
-    handle /auth/* {
-        reverse_proxy localhost:${backend_port}
-    }
-    
-    # Health check
-    handle /health {
-        reverse_proxy localhost:${backend_port}
-    }
-    
-    # User profile
-    handle /me {
-        reverse_proxy localhost:${backend_port}
-    }
-    
-    # Admin routes
-    handle /admin/* {
-        reverse_proxy localhost:${backend_port}
-    }
-    
-    # Voice endpoints
-    handle /voice/* {
-        reverse_proxy localhost:${backend_port}
-    }
-    
-    # Default to frontend
+    # Frontend (static files with SPA fallback)
     handle {
-        reverse_proxy localhost:${frontend_port}
+        root * ${frontend_dir}
+        try_files {path} /index.html
+        file_server
     }
     
     log {
@@ -2263,56 +2461,16 @@ EOF
 # Domain: ${DOMAIN}
 
 ${DOMAIN} {
-    # Backend API - strip /api prefix
-    # Frontend calls /api/sessions -> backend /sessions
+    # Backend API (all routes are under /api on the backend)
     handle /api/* {
-        uri strip_prefix /api
         reverse_proxy localhost:${backend_port}
     }
     
-    # Backend WebSocket endpoint
-    handle /ws {
-        reverse_proxy localhost:${backend_port}
-    }
-    
-    # Session proxies (terminal WebSocket, files, code)
-    handle /session/* {
-        reverse_proxy localhost:${backend_port}
-    }
-    
-    # Auth endpoints (login, register, logout)
-    handle /auth/* {
-        reverse_proxy localhost:${backend_port}
-    }
-    
-    # Health check
-    handle /health {
-        reverse_proxy localhost:${backend_port}
-    }
-    
-    # User profile endpoint
-    handle /me {
-        reverse_proxy localhost:${backend_port}
-    }
-    
-    # Admin routes
-    handle /admin/* {
-        reverse_proxy localhost:${backend_port}
-    }
-    
-    # Voice STT/TTS WebSocket endpoints
-    handle /voice/* {
-        reverse_proxy localhost:${backend_port}
-    }
-    
-    # Workspace terminal (by path)
-    handle /workspace/* {
-        reverse_proxy localhost:${backend_port}
-    }
-    
-    # Frontend (React app) - default handler
+    # Frontend (static files with SPA fallback)
     handle {
-        reverse_proxy localhost:${frontend_port}
+        root * ${frontend_dir}
+        try_files {path} /index.html
+        file_server
     }
     
     # Security headers
@@ -2363,8 +2521,10 @@ install_caddy_service() {
       sudo systemctl enable caddy
 
       if confirm "Start Caddy now?"; then
-        sudo systemctl start caddy
-        log_success "Caddy service started"
+        # Use restart (not start) to pick up the new Caddyfile
+        # start is a no-op if caddy is already running with the default config
+        sudo systemctl restart caddy
+        log_success "Caddy service started with Octo config"
         log_info "Check status with: sudo systemctl status caddy"
       fi
     else
@@ -2380,6 +2540,71 @@ install_caddy_service() {
   esac
 }
 
+# ==============================================================================
+# Update Mode
+# ==============================================================================
+# Pulls latest code, rebuilds everything, deploys, copies config, restarts.
+
+update_octo() {
+  log_step "Updating Octo"
+
+  cd "$SCRIPT_DIR"
+
+  # Pull latest code
+  log_info "Pulling latest code..."
+  if git pull --ff-only; then
+    log_success "Code updated"
+  else
+    log_warn "git pull --ff-only failed, trying rebase..."
+    git pull --rebase || {
+      log_error "Failed to pull latest code. Resolve conflicts and retry."
+      return 1
+    }
+    log_success "Code updated (rebased)"
+  fi
+
+  # Rebuild everything
+  build_octo
+
+  # Copy config to service user (multi-user mode uses /var/lib/octo)
+  if [[ -f "/var/lib/octo/.config/octo/config.toml" ]]; then
+    log_info "Syncing config to service user..."
+    local octo_config_home="/var/lib/octo/.config/octo"
+    sudo cp "${XDG_CONFIG_HOME:-$HOME/.config}/octo/config.toml" "${octo_config_home}/config.toml"
+    if [[ -f "${XDG_CONFIG_HOME:-$HOME/.config}/octo/env" ]]; then
+      sudo cp "${XDG_CONFIG_HOME:-$HOME/.config}/octo/env" "${octo_config_home}/env"
+      sudo chmod 600 "${octo_config_home}/env"
+    fi
+    sudo chown -R octo:octo "$octo_config_home"
+    log_success "Config synced"
+  fi
+
+  # Restart services
+  log_info "Restarting services..."
+  if systemctl is-active --quiet octo 2>/dev/null; then
+    sudo systemctl restart octo
+    log_success "octo service restarted"
+  elif sudo systemctl is-active --quiet octo 2>/dev/null; then
+    sudo systemctl restart octo
+    log_success "octo service restarted"
+  fi
+
+  if systemctl is-active --quiet caddy 2>/dev/null; then
+    sudo systemctl restart caddy
+    log_success "caddy restarted"
+  fi
+
+  # Quick health check
+  sleep 2
+  if curl -sf http://localhost:8080/api/health >/dev/null 2>&1; then
+    log_success "Backend is healthy"
+  else
+    log_warn "Backend health check failed - check logs with: sudo journalctl -u octo -n 20"
+  fi
+
+  log_success "Update complete!"
+}
+
 build_octo() {
   log_step "Building Octo components"
 
@@ -2390,9 +2615,9 @@ build_octo() {
   (cd backend && cargo build --release)
   log_success "Backend built"
 
-  # Build fileserver
+  # Build fileserver (octo-files crate in workspace)
   log_info "Building fileserver..."
-  (cd fileserver && cargo build --release)
+  (cd backend && cargo build --release -p octo-files --bin octo-files)
   log_success "Fileserver built"
 
   # Build frontend
@@ -2406,19 +2631,32 @@ build_octo() {
   log_info "Installing binaries to ${TOOLS_INSTALL_DIR}..."
 
   local release_dir="$SCRIPT_DIR/backend/target/release"
-  for bin in octo octo-runner pi-bridge octo-sandbox octo-setup; do
+  for bin in octo octoctl octo-runner pi-bridge octo-sandbox octo-setup; do
     if [[ -f "${release_dir}/${bin}" ]]; then
       sudo install -m 755 "${release_dir}/${bin}" "${TOOLS_INSTALL_DIR}/${bin}"
       log_success "${bin} installed"
     fi
   done
 
-  if [[ -f "$SCRIPT_DIR/fileserver/target/release/fileserver" ]]; then
-    sudo install -m 755 "$SCRIPT_DIR/fileserver/target/release/fileserver" "${TOOLS_INSTALL_DIR}/fileserver"
-    log_success "fileserver installed"
+  if [[ -f "$SCRIPT_DIR/backend/target/release/octo-files" ]]; then
+    sudo install -m 755 "$SCRIPT_DIR/backend/target/release/octo-files" "${TOOLS_INSTALL_DIR}/octo-files"
+    log_success "octo-files installed"
   fi
 
   log_success "Binaries installed to ${TOOLS_INSTALL_DIR}"
+
+  # Deploy frontend static files
+  local frontend_dist="$SCRIPT_DIR/frontend/dist"
+  local frontend_deploy="/var/www/octo"
+  if [[ -d "$frontend_dist" ]]; then
+    log_info "Deploying frontend to ${frontend_deploy}..."
+    sudo mkdir -p "$frontend_deploy"
+    sudo rsync -a --delete "$frontend_dist/" "$frontend_deploy/"
+    sudo chown -R root:root "$frontend_deploy"
+    log_success "Frontend deployed to ${frontend_deploy}"
+  else
+    log_warn "Frontend dist not found, skipping deployment"
+  fi
 }
 
 # ==============================================================================
@@ -2479,7 +2717,7 @@ select_backend_mode() {
   echo "Octo can run agents in two modes:"
   echo
   echo -e "  ${BOLD}Local${NC} - Native processes"
-  echo "    - Runs Pi, fileserver, ttyd directly on host"
+  echo "    - Runs Pi, octo-files, ttyd directly on host"
   echo "    - Lower overhead, faster startup"
   echo "    - Best for: development, single-user, trusted environments"
   echo
@@ -2513,13 +2751,14 @@ generate_jwt_secret() {
 
 generate_password_hash() {
   local password="$1"
-  # Use htpasswd if available, otherwise python
-  if command_exists htpasswd; then
-    htpasswd -nbBC 12 user "$password" | cut -d: -f2
-  elif command_exists python3; then
-    python3 -c "import bcrypt; print(bcrypt.hashpw('$password'.encode(), bcrypt.gensalt(12)).decode())"
+  # Use octoctl (same bcrypt implementation as the backend) for guaranteed compatibility
+  if command_exists octoctl; then
+    echo -n "$password" | octoctl hash-password
+  elif command_exists python3 && python3 -c "import bcrypt" 2>/dev/null; then
+    # Fallback: python3 with bcrypt module
+    python3 -c "import bcrypt, base64; pwd = base64.b64decode('$([[ -n "$password" ]] && echo -n "$password" | base64 -w0 || echo)').decode(); print(bcrypt.hashpw(pwd.encode(), bcrypt.gensalt(12)).decode())"
   else
-    log_error "Cannot generate password hash. Install htpasswd or python3 with bcrypt."
+    log_error "Cannot generate password hash. Install octoctl or python3 with bcrypt."
     exit 1
   fi
 }
@@ -2573,23 +2812,26 @@ generate_config() {
   # Gather configuration values
   log_info "Configuring Octo..."
 
-  # Workspace directory
+  # Workspace directory (use saved value as default if available)
   if [[ "$SELECTED_USER_MODE" == "single" ]]; then
-    WORKSPACE_DIR=$(prompt_input "Workspace directory" "$HOME/octo/workspace")
+    WORKSPACE_DIR=$(prompt_input "Workspace directory" "${WORKSPACE_DIR:-$HOME/octo/workspace}")
   else
-    WORKSPACE_DIR=$(prompt_input "Workspace base directory (user dirs created here)" "$HOME/octo/{user_id}")
+    WORKSPACE_DIR=$(prompt_input "Workspace base directory (user dirs created here)" "${WORKSPACE_DIR:-/home/{user_id}/octo}")
   fi
 
-  # Auth configuration
-  local dev_user_id dev_user_name dev_user_email dev_user_password dev_user_hash
-  local admin_user_hash=""
+  # Auth configuration (use globals so state persistence works)
+  local dev_user_hash admin_user_hash=""
 
   if [[ "$OCTO_DEV_MODE" == "true" ]]; then
     log_info "Setting up development user..."
-    dev_user_id=$(prompt_input "Dev user ID" "dev")
-    dev_user_name=$(prompt_input "Dev user name" "Developer")
-    dev_user_email=$(prompt_input "Dev user email" "dev@localhost")
-    dev_user_password=$(prompt_password "Dev user password")
+    dev_user_id=$(prompt_input "Dev user ID" "${dev_user_id:-dev}")
+    dev_user_name=$(prompt_input "Dev user name" "${dev_user_name:-Developer}")
+    dev_user_email=$(prompt_input "Dev user email" "${dev_user_email:-dev@localhost}")
+    if [[ -n "${dev_user_password:-}" ]]; then
+      log_info "Using saved dev user password"
+    else
+      dev_user_password=$(prompt_password "Dev user password")
+    fi
 
     if [[ -n "$dev_user_password" ]]; then
       log_info "Generating password hash..."
@@ -2669,14 +2911,20 @@ base_port = 41820
 EOF
 
   if [[ "$SELECTED_BACKEND_MODE" == "local" ]]; then
+    local runner_socket_line=""
+    if [[ "$pi_runtime_mode" == "runner" ]]; then
+      runner_socket_line='runner_socket_pattern = "/run/octo/runner-sockets/{user}/octo-runner.sock"'
+    fi
+
     cat >>"$config_file" <<EOF
 
 [local]
 enabled = true
-fileserver_binary = "fileserver"
+fileserver_binary = "octo-files"
 ttyd_binary = "ttyd"
 workspace_dir = "$WORKSPACE_DIR"
 single_user = $([[ "$SELECTED_USER_MODE" == "single" ]] && echo "true" || echo "false")
+${runner_socket_line}
 
 [local.linux_users]
 enabled = $linux_users_enabled
@@ -2794,14 +3042,7 @@ keep_public = true
 sync_interval_seconds = 60
 EOF
 
-  # Add runner socket pattern for multi-user Linux mode
-  if [[ "$pi_runtime_mode" == "runner" ]]; then
-    cat >>"$config_file" <<'EOF'
-
-[local]
-runner_socket_pattern = "/run/octo/runner-sockets/{user}/octo-runner.sock"
-EOF
-  fi
+  # runner_socket_pattern is added inline in the [local] block above
 
   cat >>"$config_file" <<EOF
 
@@ -2842,11 +3083,13 @@ EOF
   # Save admin credentials for post-setup user creation
   if [[ "$PRODUCTION_MODE" == "true" && -n "$ADMIN_USERNAME" ]]; then
     local creds_file="$OCTO_CONFIG_DIR/.admin_setup"
-    cat >"$creds_file" <<EOF
-ADMIN_USERNAME="$ADMIN_USERNAME"
-ADMIN_EMAIL="$ADMIN_EMAIL"
-ADMIN_PASSWORD_HASH="$admin_user_hash"
-EOF
+    # Write username/email normally, but use printf for the bcrypt hash
+    # to avoid $2b$ being expanded as positional params when sourced
+    {
+      echo "ADMIN_USERNAME=\"$ADMIN_USERNAME\""
+      echo "ADMIN_EMAIL=\"$ADMIN_EMAIL\""
+      printf "ADMIN_PASSWORD_HASH='%s'\n" "$admin_user_hash"
+    } >"$creds_file"
     chmod 600 "$creds_file"
     log_info "Admin credentials saved for database setup"
   fi
@@ -2913,7 +3156,9 @@ setup_linux_user_isolation() {
   # Extract first digit of uid_start for regex (assumes 4-digit UIDs starting with 2-9)
   local uid_first_digit="${uid_start:0:1}"
 
-  local sudoers_content="# Octo Multi-User Process Isolation - SECURE VERSION
+  local sudoers_content
+  sudoers_content=$(cat <<SUDOERS_EOF
+# Octo Multi-User Process Isolation - SECURE VERSION
 # Generated by setup.sh on $(date)
 # Allows the octo server user to manage isolated user accounts
 #
@@ -2929,7 +3174,7 @@ Cmnd_Alias OCTO_GROUPADD = /usr/sbin/groupadd ${octo_group}
 # User creation - RESTRICTED to safe UID range and ${user_prefix} prefix
 # Regex matches: -u NNNN -g ${octo_group} -s /bin/bash -m/-M -c COMMENT USERNAME
 # UID must be ${uid_first_digit}000-${uid_first_digit}999, username must start with ${user_prefix}
-# GECOS format: "Octo platform user: <user_id >" - use .* to match including spaces
+# GECOS format: "Octo platform user: USER_ID" - use .* to match including spaces
 Cmnd_Alias OCTO_USERADD = \\
     /usr/sbin/useradd ^-u [${uid_first_digit}][0-9][0-9][0-9] -g ${octo_group} -s /bin/bash -m -c .* ${user_prefix}[a-z0-9_-]+\$, \\
     /usr/sbin/useradd ^-u [${uid_first_digit}][0-9][0-9][0-9] -g ${octo_group} -s /bin/bash -M -c .* ${user_prefix}[a-z0-9_-]+\$
@@ -2974,7 +3219,8 @@ ${server_user} ALL=(root) NOPASSWD: OCTO_MKDIR, OCTO_CHOWN_RUNNER, OCTO_CHOWN_WO
 
 # User systemd management
 ${server_user} ALL=(root) NOPASSWD: OCTO_START_USER, OCTO_LINGER
-"
+SUDOERS_EOF
+)
 
   # Write sudoers file (use visudo -c to validate)
   echo "$sudoers_content" | sudo tee "$sudoers_file" >/dev/null
@@ -3111,33 +3357,210 @@ create_admin_user_db() {
   log_step "Creating admin user in database"
 
   local creds_file="$OCTO_CONFIG_DIR/.admin_setup"
-  if [[ ! -f "$creds_file" ]]; then
-    log_warn "Admin credentials file not found, skipping database setup"
+  local admin_user="${ADMIN_USERNAME:-}"
+  local admin_email="${ADMIN_EMAIL:-}"
+  local admin_hash=""
+
+  # Try to load from creds file first (has pre-computed bcrypt hash)
+  if [[ -f "$creds_file" ]]; then
+    # shellcheck source=/dev/null
+    source "$creds_file"
+    admin_user="${ADMIN_USERNAME:-$admin_user}"
+    admin_email="${ADMIN_EMAIL:-$admin_email}"
+    admin_hash="${ADMIN_PASSWORD_HASH:-}"
+  fi
+
+  # If no hash but we have the password from saved state, generate hash now
+  if [[ -z "$admin_hash" && -n "${ADMIN_PASSWORD:-}" ]]; then
+    log_info "Generating password hash..."
+    admin_hash=$(generate_password_hash "$ADMIN_PASSWORD")
+  fi
+
+  if [[ -z "$admin_user" || -z "$admin_email" ]]; then
+    log_warn "Admin username/email not set. Re-run setup or create manually:"
+    log_info "  octoctl user bootstrap --username <user> --email <email> --role admin"
     return 0
   fi
 
-  # shellcheck source=/dev/null
-  source "$creds_file"
-
-  # Check if octo CLI is available
-  if ! command_exists octo; then
-    log_warn "octo CLI not found. You'll need to create the admin user manually."
-    log_info "After starting the server, run:"
-    log_info "  octo user create --username \"$ADMIN_USERNAME\" --email \"$ADMIN_EMAIL\" --role admin"
+  if [[ -z "$admin_hash" ]]; then
+    log_warn "No admin password available. Create admin user manually:"
+    log_info "  octoctl user bootstrap --username \"$admin_user\" --email \"$admin_email\" --role admin"
     return 0
   fi
 
-  echo
-  echo "The admin user will be created when you first start Octo."
-  echo "You can also create users manually with:"
-  echo "  octo user create --username \"$ADMIN_USERNAME\" --email \"$ADMIN_EMAIL\" --role admin"
-  echo
+  # Determine database path based on service config
+  local db_path=""
+  local is_multi_user="false"
+  if [[ "${MULTI_USER:-}" == "true" || "${SELECTED_USER_MODE:-}" == "multi" ]]; then
+    is_multi_user="true"
+    # Multi-user: service runs as 'octo' user with XDG dirs under /var/lib/octo
+    db_path="/var/lib/octo/.local/share/octo/sessions.db"
+    sudo mkdir -p "$(dirname "$db_path")"
+    sudo chown -R octo:octo /var/lib/octo/.local
+  else
+    # Single-user: use local XDG data dir
+    local data_dir="${XDG_DATA_HOME:-$HOME/.local/share}"
+    db_path="${data_dir}/octo/sessions.db"
+    mkdir -p "$(dirname "$db_path")"
+  fi
+
+  # Ensure the database exists by briefly starting the service (it runs migrations)
+  if [[ ! -f "$db_path" ]]; then
+    log_info "Starting service to initialize database..."
+    if [[ "$is_multi_user" == "true" ]]; then
+      sudo systemctl start octo 2>/dev/null || true
+    else
+      systemctl --user start octo 2>/dev/null || true
+    fi
+
+    # Wait for DB to appear
+    local retries=0
+    while [[ ! -f "$db_path" && $retries -lt 15 ]]; do
+      sleep 1
+      retries=$((retries + 1))
+    done
+  fi
+
+  if [[ ! -f "$db_path" ]]; then
+    log_warn "Database not found at $db_path"
+    log_info "Create admin user manually after starting Octo:"
+    log_info "  octoctl user bootstrap --username \"$ADMIN_USERNAME\" --email \"$ADMIN_EMAIL\" --role admin"
+    return 0
+  fi
+
+  # Check if sqlite3 is available
+  if ! command_exists sqlite3; then
+    log_warn "sqlite3 not found. Install it or create admin user manually:"
+    log_info "  octoctl user bootstrap --username \"$ADMIN_USERNAME\" --email \"$ADMIN_EMAIL\" --role admin"
+    return 0
+  fi
+
+  # Helper to run sqlite3 with correct permissions
+  run_sql() {
+    if [[ "$is_multi_user" == "true" ]]; then
+      sudo sqlite3 "$db_path" "$1" 2>/dev/null
+    else
+      sqlite3 "$db_path" "$1" 2>/dev/null
+    fi
+  }
+
+  # Check if user already exists
+  local existing
+  existing=$(run_sql "SELECT COUNT(*) FROM users WHERE username = '$admin_user';" || echo "0")
+
+  if [[ "$existing" -gt 0 ]]; then
+    log_info "Admin user '$admin_user' already exists in database, skipping"
+    rm -f "$creds_file"
+    return 0
+  fi
+
+  # Generate a user ID
+  local user_id="usr_$(date +%s%N | sha256sum | head -c 16)"
+  local now
+  now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+  # Insert user into database
+  local sql="INSERT INTO users (id, username, email, password_hash, display_name, role, is_active, created_at, updated_at) VALUES ('$user_id', '$admin_user', '$admin_email', '$admin_hash', '$admin_user', 'admin', 1, '$now', '$now');"
+
+  if run_sql "$sql"; then
+    log_success "Admin user '$admin_user' created in database (id: $user_id)"
+  else
+    log_warn "Failed to insert admin user. Create manually:"
+    log_info "  octoctl user bootstrap --username \"$admin_user\" --email \"$admin_email\" --role admin"
+    return 0
+  fi
+
+  # In multi-user mode, create the Linux user and setup runner
+  if [[ "$is_multi_user" == "true" && "$LINUX_USERS_ENABLED" == "true" ]]; then
+    ADMIN_DB_PATH="$db_path" create_admin_linux_user "$admin_user" "$user_id"
+  fi
 
   # Generate an initial invite code for the admin
   generate_initial_invite_code
 
   # Clean up the credentials file
   rm -f "$creds_file"
+}
+
+# Create Linux user and runner for the admin user in multi-user mode
+create_admin_linux_user() {
+  local username="$1"
+  local user_id="$2"
+  local user_prefix="${OCTO_USER_PREFIX:-octo_}"
+  local octo_group="${OCTO_GROUP:-octo}"
+  local uid_start="${OCTO_UID_START:-2000}"
+  local linux_username="${user_prefix}${username}"
+
+  log_info "Creating Linux user '$linux_username' for admin '$username'..."
+
+  # Check if Linux user already exists
+  if id "$linux_username" &>/dev/null; then
+    log_info "Linux user '$linux_username' already exists"
+  else
+    # Find next available UID
+    local uid="$uid_start"
+    while getent passwd "$uid" &>/dev/null; do
+      uid=$((uid + 1))
+    done
+
+    if sudo useradd -u "$uid" -g "$octo_group" -s /bin/bash -m \
+      -c "Octo user: $username" "$linux_username"; then
+      log_success "Linux user '$linux_username' created (uid: $uid)"
+    else
+      log_warn "Failed to create Linux user '$linux_username'"
+      log_info "Create manually: sudo useradd -u $uid -g $octo_group -s /bin/bash -m '$linux_username'"
+      return 0
+    fi
+  fi
+
+  # Create workspace directory
+  local workspace_dir="/home/${linux_username}/octo"
+  sudo mkdir -p "$workspace_dir"
+  sudo chown "${linux_username}:${octo_group}" "$workspace_dir"
+
+  # Enable systemd lingering so user services persist after logout
+  if command_exists loginctl; then
+    sudo loginctl enable-linger "$linux_username" 2>/dev/null || true
+    log_info "Enabled systemd lingering for '$linux_username'"
+  fi
+
+  # Setup runner service for this user
+  local runner_service_dir="/home/${linux_username}/.config/systemd/user"
+  sudo mkdir -p "$runner_service_dir"
+
+  # Create runner socket directory
+  sudo install -d -m 2770 -o "$linux_username" -g "$octo_group" \
+    "/run/octo/runner-sockets/${linux_username}" 2>/dev/null || true
+
+  # Copy runner service file if it exists as a template
+  if [[ -f "/etc/systemd/user/octo-runner.service" ]]; then
+    sudo cp "/etc/systemd/user/octo-runner.service" "$runner_service_dir/octo-runner.service"
+    sudo chown -R "${linux_username}:${octo_group}" "/home/${linux_username}/.config"
+    log_info "Runner service installed for '$linux_username'"
+
+    # Try to enable and start the runner
+    if sudo -u "$linux_username" XDG_RUNTIME_DIR="/run/user/$(id -u "$linux_username")" \
+      systemctl --user daemon-reload 2>/dev/null; then
+      sudo -u "$linux_username" XDG_RUNTIME_DIR="/run/user/$(id -u "$linux_username")" \
+        systemctl --user enable octo-runner 2>/dev/null || true
+      sudo -u "$linux_username" XDG_RUNTIME_DIR="/run/user/$(id -u "$linux_username")" \
+        systemctl --user start octo-runner 2>/dev/null || true
+      log_success "Runner service started for '$linux_username'"
+    else
+      log_warn "Could not start runner service for '$linux_username' (will start on login)"
+    fi
+  fi
+
+  # Store the linux_username mapping in the database
+  local update_sql="UPDATE users SET linux_username = '$linux_username' WHERE id = '$user_id';"
+  local admin_db_path="${ADMIN_DB_PATH:-/var/lib/octo/.local/share/octo/sessions.db}"
+  if [[ "${MULTI_USER:-}" == "true" || "${SELECTED_USER_MODE:-}" == "multi" ]]; then
+    sudo sqlite3 "$admin_db_path" "$update_sql" 2>/dev/null || true
+  else
+    sqlite3 "$admin_db_path" "$update_sql" 2>/dev/null || true
+  fi
+
+  log_success "Admin Linux user setup complete: $linux_username"
 }
 
 generate_initial_invite_code() {
@@ -3371,8 +3794,9 @@ EOF
   sudo systemctl enable fail2ban
   sudo systemctl restart fail2ban
 
-  # Show status
-  sudo fail2ban-client status
+  # Wait for service to be ready, then show status
+  sleep 2
+  sudo fail2ban-client status 2>/dev/null || log_warn "fail2ban started but client not ready yet (check: sudo fail2ban-client status)"
   log_success "fail2ban configured"
 }
 
@@ -3446,10 +3870,18 @@ ClientAliveCountMax 2
 # Restrict to admin user if set
 EOF
 
-  # Add AllowUsers if admin user is set
-  if [[ -n "$ADMIN_USERNAME" ]]; then
-    echo "AllowUsers $ADMIN_USERNAME" | sudo tee -a "$hardening_conf" >/dev/null
+  # Add AllowUsers - always include the current server user (who runs setup)
+  # plus the admin username if different
+  local ssh_allowed_users="$(whoami)"
+  if [[ -n "$ADMIN_USERNAME" && "$ADMIN_USERNAME" != "$(whoami)" ]]; then
+    ssh_allowed_users="$ssh_allowed_users $ADMIN_USERNAME"
   fi
+  # Also include root in case of emergency console access
+  if [[ "$ssh_allowed_users" != *"root"* ]]; then
+    ssh_allowed_users="$ssh_allowed_users root"
+  fi
+  echo "AllowUsers $ssh_allowed_users" | sudo tee -a "$hardening_conf" >/dev/null
+  log_info "SSH AllowUsers: $ssh_allowed_users"
 
   # Validate configuration
   log_info "Validating SSH configuration..."
@@ -4218,7 +4650,7 @@ print_summary() {
   echo "  Core binaries:"
   echo -e "    octo:          $(check_bin octo)"
   echo -e "    eavs:          $(check_bin eavs)"
-  echo -e "    fileserver:    $(check_bin fileserver)"
+  echo -e "    octo-files:    $(check_bin octo-files)"
   echo -e "    pi:            $(check_bin pi)"
   if [[ "$SELECTED_BACKEND_MODE" == "local" ]]; then
     echo -e "    ttyd:          $(check_bin ttyd)"
@@ -4419,6 +4851,13 @@ Options:
   --no-auto-updates     Skip automatic security updates
   --no-kernel-hardening Skip kernel sysctl hardening
   
+  State management:
+  --update              Pull latest code, rebuild, deploy, and restart services
+  --fresh               Clear all saved state and completed steps, start over
+  --redo step1,step2    Re-run specific steps (comma-separated)
+                        (state: ~/.config/octo/setup-state.env)
+                        (steps: ~/.config/octo/setup-steps-done)
+
   Tool installation:
   --all-tools           Install all byteowlz agent tools
   --no-agent-tools      Skip agent tools installation
@@ -4505,6 +4944,7 @@ EOF
 
 main() {
   NONINTERACTIVE="false"
+  FRESH_SETUP="false"
 
   # Parse arguments
   while [[ $# -gt 0 ]]; do
@@ -4512,6 +4952,34 @@ main() {
     --help | -h)
       show_help
       exit 0
+      ;;
+    --update)
+      UPDATE_MODE="true"
+      shift
+      ;;
+    --fresh)
+      FRESH_SETUP="true"
+      rm -f "${XDG_CONFIG_HOME:-$HOME/.config}/octo/setup-state.env"
+      rm -f "${XDG_CONFIG_HOME:-$HOME/.config}/octo/setup-steps-done"
+      shift
+      ;;
+    --redo)
+      # Clear specific steps so they re-run: --redo step1,step2,...
+      local redo_steps="${2:-}"
+      if [[ -z "$redo_steps" ]]; then
+        log_error "--redo requires comma-separated step names"
+        log_info "Steps file: ${XDG_CONFIG_HOME:-$HOME/.config}/octo/setup-steps-done"
+        exit 1
+      fi
+      local steps_file="${XDG_CONFIG_HOME:-$HOME/.config}/octo/setup-steps-done"
+      if [[ -f "$steps_file" ]]; then
+        IFS=',' read -ra steps_to_redo <<< "$redo_steps"
+        for s in "${steps_to_redo[@]}"; do
+          sed -i "/^${s}$/d" "$steps_file" 2>/dev/null || true
+          log_info "Cleared step: $s"
+        done
+      fi
+      shift 2
       ;;
     --non-interactive)
       NONINTERACTIVE="true"
@@ -4605,23 +5073,53 @@ main() {
   echo -e "${BOLD}AI Agent Workspace Platform${NC}"
   echo
 
+  # Save state on exit (including failures) so re-runs can pick up where we left off
+  trap save_setup_state EXIT
+
   # Initialize
   detect_os
 
-  # Mode selection
-  SELECTED_USER_MODE="${OCTO_USER_MODE}"
-  SELECTED_BACKEND_MODE="${OCTO_BACKEND_MODE}"
+  # Update mode: just pull, rebuild, deploy, restart
+  if [[ "${UPDATE_MODE:-}" == "true" ]]; then
+    update_octo
+    return 0
+  fi
 
-  if [[ "$NONINTERACTIVE" != "true" ]]; then
-    select_user_mode
-    select_backend_mode
-    select_deployment_mode
-  else
-    # Non-interactive: use env var or default to dev mode
-    if [[ -z "$OCTO_DEV_MODE" ]]; then
-      OCTO_DEV_MODE="true"
+  # Load previous setup state (if available and not --fresh)
+  local use_saved_state="false"
+  if [[ "$FRESH_SETUP" != "true" && "$NONINTERACTIVE" != "true" ]]; then
+    if load_setup_state; then
+      if confirm "Reuse previous setup decisions?"; then
+        apply_setup_state
+        use_saved_state="true"
+      fi
     fi
-    PRODUCTION_MODE="$([[ "$OCTO_DEV_MODE" == "false" ]] && echo "true" || echo "false")"
+  elif [[ "$FRESH_SETUP" != "true" && "$NONINTERACTIVE" == "true" ]]; then
+    # Non-interactive mode: silently load saved state as defaults
+    if [[ -f "$SETUP_STATE_FILE" ]]; then
+      apply_setup_state
+      use_saved_state="true"
+    fi
+  fi
+
+  # Mode selection (skip if loaded from state)
+  if [[ "$use_saved_state" != "true" ]]; then
+    SELECTED_USER_MODE="${OCTO_USER_MODE}"
+    SELECTED_BACKEND_MODE="${OCTO_BACKEND_MODE}"
+  fi
+
+  if [[ "$use_saved_state" != "true" ]]; then
+    if [[ "$NONINTERACTIVE" != "true" ]]; then
+      select_user_mode
+      select_backend_mode
+      select_deployment_mode
+    else
+      # Non-interactive: use env var or default to dev mode
+      if [[ -z "$OCTO_DEV_MODE" ]]; then
+        OCTO_DEV_MODE="true"
+      fi
+      PRODUCTION_MODE="$([[ "$OCTO_DEV_MODE" == "false" ]] && echo "true" || echo "false")"
+    fi
   fi
 
   # Prerequisites
@@ -4629,86 +5127,100 @@ main() {
 
   # Install dependencies
   if [[ "$OCTO_INSTALL_DEPS" == "yes" ]]; then
-    # Shell tools (always useful)
-    install_shell_tools
+    # Shell tools - verify key binaries exist, not just that the step ran
+    verify_or_rerun "shell_tools" "Shell tools" \
+      "command -v tmux && command -v rg && (command -v fd || command -v fdfind)" \
+      install_shell_tools
 
     if [[ "$SELECTED_BACKEND_MODE" == "local" ]]; then
-      install_ttyd
+      verify_or_rerun "ttyd" "ttyd" "command -v ttyd" install_ttyd
     fi
 
-    # Pi extensions (always install for main chat integration)
-    if [[ "$SELECTED_USER_MODE" == "multi" ]]; then
-      install_pi_extensions_all_users
-    else
-      install_pi_extensions
-    fi
+    # Pi extensions - verify they're actually on disk
+    verify_or_rerun "pi_extensions" "Pi extensions" \
+      "test -d $HOME/.pi/agent/extensions/octo-bridge" \
+      "$(if [[ "$SELECTED_USER_MODE" == "multi" ]]; then echo install_pi_extensions_all_users; else echo install_pi_extensions; fi)"
 
-    # Agent tools (agntz, mmry, scrpr, sx, tmpltr, sldr, ignr)
+    # Agent tools
     if [[ "$OCTO_INSTALL_AGENT_TOOLS" == "yes" ]]; then
-      install_agntz
+      verify_or_rerun "agntz" "agntz" "command -v agntz" install_agntz
 
-      if [[ "$NONINTERACTIVE" != "true" ]]; then
+      if [[ "$NONINTERACTIVE" != "true" ]] && ! step_done "agent_tools_selected"; then
         select_agent_tools
+        mark_step_done "agent_tools_selected"
       fi
 
       if [[ "$INSTALL_MMRY" == "true" || "$INSTALL_ALL_TOOLS" == "true" ]]; then
-        install_agent_tools_selected
+        run_step "agent_tools" "Agent tools" install_agent_tools_selected
       fi
 
-      # Install SearXNG if sx was installed (all tools or explicitly)
       if [[ "$INSTALL_ALL_TOOLS" == "true" ]] || command_exists sx; then
-        if confirm "Install SearXNG local search engine for sx?"; then
-          install_searxng
+        if ! step_done "searxng"; then
+          if confirm "Install SearXNG local search engine for sx?"; then
+            install_searxng
+            mark_step_done "searxng"
+          else
+            mark_step_done "searxng"
+          fi
+        else
+          log_success "Already done: SearXNG"
         fi
       fi
     fi
   fi
 
-  # In multi-user mode, create the octo system user early so that EAVS
-  # and other tools can write config into its home directory.
+  # In multi-user mode, create the octo system user early
   if [[ "$SELECTED_USER_MODE" == "multi" && "$OS" == "linux" ]]; then
-    ensure_octo_system_user
+    run_step "octo_system_user" "Octo system user" ensure_octo_system_user
   fi
 
-  # Install and configure EAVS (LLM proxy - mandatory for agent access)
-  install_eavs
-  configure_eavs
-  install_eavs_service
+  # EAVS (LLM proxy)
+  verify_or_rerun "eavs_install" "EAVS install" "command -v eavs" install_eavs
+  run_step "eavs_configure" "EAVS configure" configure_eavs
+  run_step "eavs_service" "EAVS service" install_eavs_service
 
   # Build Octo
-  if confirm "Build Octo from source?"; then
-    build_octo
+  if ! step_done "build_octo"; then
+    if confirm "Build Octo from source?"; then
+      build_octo
+    fi
+    mark_step_done "build_octo"
+  else
+    log_success "Already done: Build Octo"
   fi
 
   # Generate configuration
-  generate_config
+  run_step "generate_config" "Configuration" generate_config
 
-  # Setup onboarding templates repository and update shared external repos
-  setup_onboarding_templates_repo
-  update_external_repos
-  setup_feedback_dirs
+  # Onboarding templates and shared repos
+  run_step "onboarding_templates" "Onboarding templates" setup_onboarding_templates_repo
+  run_step "external_repos" "External repos" update_external_repos
+  run_step "feedback_dirs" "Feedback directories" setup_feedback_dirs
 
-  # Setup Linux user isolation (if enabled)
-  setup_linux_user_isolation
+  # Linux user isolation
+  run_step "linux_user_isolation" "Linux user isolation" setup_linux_user_isolation
 
-  # Build container image (if container mode)
-  build_container_image
+  # Container image
+  run_step "container_image" "Container image" build_container_image
 
-  # Install Caddy (if production mode)
+  # Caddy reverse proxy
   if [[ "$SETUP_CADDY" == "yes" ]]; then
-    install_caddy
-    generate_caddyfile
-    install_caddy_service
+    verify_or_rerun "caddy_install" "Caddy install" "command -v caddy" install_caddy
+    # Verify Caddyfile contains our config, not the default
+    verify_or_rerun "caddy_config" "Caddy config" \
+      "grep -q 'reverse_proxy' /etc/caddy/Caddyfile 2>/dev/null" \
+      generate_caddyfile
+    run_step "caddy_service" "Caddy service" install_caddy_service
   fi
 
-  # Server hardening (Linux production only)
-  harden_server
+  # Server hardening
+  run_step "harden_server" "Server hardening" harden_server
 
   # Install service
-  install_service
+  run_step "install_service" "System service" install_service
 
-  # Create admin user in database (production mode)
-  create_admin_user_db
+  # Create admin user in database
+  run_step "admin_user_db" "Admin user in database" create_admin_user_db
 
   # Summary
   print_summary

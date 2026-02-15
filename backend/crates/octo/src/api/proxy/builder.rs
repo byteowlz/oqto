@@ -64,22 +64,6 @@ pub async fn get_session_by_id(state: &AppState, session_id: &str) -> Result<Ses
         .ok_or(StatusCode::NOT_FOUND)
 }
 
-/// Get or create the user's primary opencode session.
-pub async fn get_opencode_session(
-    state: &AppState,
-    user: &CurrentUser,
-) -> Result<Session, StatusCode> {
-    state
-        .sessions
-        .for_user(user.id())
-        .get_or_create_opencode_session()
-        .await
-        .map_err(|e| {
-            error!("Failed to get primary opencode session: {:?}", e);
-            StatusCode::SERVICE_UNAVAILABLE
-        })
-}
-
 /// Get or create an IO session for a workspace path.
 pub async fn get_io_session_for_workspace(
     state: &AppState,
@@ -98,96 +82,6 @@ pub async fn get_io_session_for_workspace(
             );
             StatusCode::SERVICE_UNAVAILABLE
         })
-}
-
-/// Check if opencode is healthy by hitting its /session endpoint.
-pub async fn is_opencode_healthy(client: Client<HttpConnector, Body>, port: u16) -> bool {
-    let uri = match format!("http://localhost:{}/session", port).parse::<Uri>() {
-        Ok(uri) => uri,
-        Err(_) => return false,
-    };
-    let req = match Request::builder()
-        .method("GET")
-        .uri(uri)
-        .body(Body::empty())
-    {
-        Ok(req) => req,
-        Err(_) => return false,
-    };
-
-    match tokio::time::timeout(Duration::from_secs(2), client.request(req)).await {
-        Ok(Ok(resp)) => resp.status().is_success(),
-        _ => false,
-    }
-}
-
-/// Ensure a session is active for proxy requests that need the full agent runtime.
-///
-/// For Running sessions, verifies opencode is healthy and restarts if needed.
-/// For Stopped sessions, attempts to resume.
-/// Returns error for Stopping/Failed sessions.
-pub async fn ensure_session_active_for_proxy(
-    state: &AppState,
-    user_id: &str,
-    session_id: &str,
-    session: Session,
-) -> Result<Session, StatusCode> {
-    match session.status {
-        SessionStatus::Running => {
-            if !is_opencode_healthy(state.http_client.clone(), session.opencode_port as u16).await {
-                warn!(
-                    "Opencode for session {} is unreachable; attempting restart",
-                    session_id
-                );
-                if let Err(err) = state
-                    .sessions
-                    .for_user(user_id)
-                    .stop_session(session_id)
-                    .await
-                {
-                    error!("Failed to stop session {}: {:?}", session_id, err);
-                    return Err(StatusCode::SERVICE_UNAVAILABLE);
-                }
-                match state
-                    .sessions
-                    .for_user(user_id)
-                    .resume_session(session_id)
-                    .await
-                {
-                    Ok(resumed) => Ok(resumed),
-                    Err(err) => {
-                        error!("Failed to resume session {}: {:?}", session_id, err);
-                        Err(StatusCode::SERVICE_UNAVAILABLE)
-                    }
-                }
-            } else {
-                Ok(session)
-            }
-        }
-        SessionStatus::Starting | SessionStatus::Pending => Ok(session),
-        SessionStatus::Stopped => {
-            warn!(
-                "Session {} is stopped; attempting to resume for proxy request",
-                session_id
-            );
-            match state
-                .sessions
-                .for_user(user_id)
-                .resume_session(session_id)
-                .await
-            {
-                Ok(resumed) => Ok(resumed),
-                Err(err) => {
-                    error!("Failed to resume session {}: {:?}", session_id, err);
-                    Err(StatusCode::SERVICE_UNAVAILABLE)
-                }
-            }
-        }
-        SessionStatus::Stopping | SessionStatus::Failed => {
-            warn!("Attempted to proxy to inactive session {}", session_id);
-            Err(StatusCode::SERVICE_UNAVAILABLE)
-        }
-    }
 }
 
 /// Ensure a session is active for IO proxy requests (fileserver, terminal).

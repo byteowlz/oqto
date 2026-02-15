@@ -5,9 +5,9 @@
  */
 export type SessionUrls = {
 	/**
-	 * URL for opencode API.
+	 * URL for agent runtime API (reserved).
 	 */
-	opencode: string;
+	agent: string;
 	/**
 	 * URL for file server.
 	 */

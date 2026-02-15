@@ -91,6 +91,14 @@ function normalizeToolStatus(value?: string | null): ToolStatus {
 
 function chatMessagePartToCanonicalParts(part: ChatMessagePart): Part[] {
 	const parts: Part[] = [];
+	if (part.part_type === "thinking" && part.text) {
+		parts.push({
+			type: "thinking",
+			id: part.id,
+			text: part.text,
+		});
+		return parts;
+	}
 	if (part.part_type === "text" && part.text) {
 		parts.push({
 			type: "text",
@@ -189,6 +197,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 		onSelectedSessionIdChange,
 		onMessageComplete,
 		onError,
+		onTitleChanged,
 	} = options;
 
 	const normalizedWorkspacePath = normalizeWorkspacePath(workspacePath);
@@ -234,6 +243,10 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 	const handleAgentEventRef = useRef<((event: AgentWsEvent) => void) | null>(
 		null,
 	);
+	// Stable ref for onTitleChanged callback
+	const onTitleChangedRef = useRef(onTitleChanged);
+	onTitleChangedRef.current = onTitleChanged;
+
 
 	// Batched update state
 	const batchedUpdateRef = useRef({
@@ -801,7 +814,11 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 				// -- Agent working (streaming started) --
 				case "agent.working": {
 					setBusyForEvent(event.session_id ?? activeSessionIdRef.current, true);
-					setIsAwaitingResponse(false);
+					// Keep isAwaitingResponse true — it will be cleared when
+					// streaming actually starts (stream.message_start / text_delta)
+					// or when the agent goes idle/error. Clearing it here causes
+					// the working indicator to disappear between agent.working
+					// and the first streaming event.
 					break;
 				}
 
@@ -1108,25 +1125,6 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 							if (resp.success && resp.data) {
 								const nextState = resp.data as AgentState;
 								setState(nextState);
-								const realSessionId = nextState.sessionId ?? null;
-								const requestedSessionId = event.session_id ?? null;
-								if (
-									realSessionId &&
-									requestedSessionId &&
-									realSessionId !== requestedSessionId
-								) {
-									const manager = getWsManager();
-									manager.reKeySession(requestedSessionId, realSessionId);
-									onSelectedSessionIdChange?.(realSessionId);
-									if (isPiDebugEnabled()) {
-										console.debug(
-											"[useChat] Re-keyed session to Pi native ID:",
-											requestedSessionId,
-											"->",
-											realSessionId,
-										);
-									}
-								}
 								if (nextState?.isStreaming === true) {
 									// Runner reports the session is actively streaming.
 									// Restore streaming/busy UI state so spinners show
@@ -1136,13 +1134,20 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 										setIsStreaming(true);
 										isStreamingRef.current = true;
 										setBusyForEvent(
-											requestedSessionId ?? activeSessionIdRef.current,
+											event.session_id ?? activeSessionIdRef.current,
 											true,
 										);
 									}
 								} else if (nextState?.isStreaming === false) {
 									setIsStreaming(false);
-									setIsAwaitingResponse(false);
+									// Only clear isAwaitingResponse if we don't
+									// have a send in-flight. Otherwise, the
+									// get_state after session.create arrives
+									// before Pi starts streaming and kills the
+									// working indicator prematurely.
+									if (!sendInFlightRef.current) {
+										setIsAwaitingResponse(false);
+									}
 									if (streamingMessageRef.current) {
 										streamingMessageRef.current.isStreaming = false;
 										streamingMessageRef.current = null;
@@ -1251,6 +1256,24 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 					break;
 				}
 
+				// -- Session title changed --
+				case "session.title_changed": {
+					const title = event.title as string | undefined;
+					const readableId = event.readable_id as string | undefined;
+					// Use the event's session_id, NOT activeSessionIdRef.
+					// A delayed title event from a previous session must not
+					// overwrite the current session's title.
+					const eventSessionId = event.session_id as string | undefined;
+					if (title && eventSessionId) {
+						onTitleChangedRef.current?.(
+							eventSessionId,
+							title,
+							readableId ?? null,
+						);
+					}
+					break;
+				}
+
 				default: {
 					if (isPiDebugEnabled()) {
 						console.debug("[useChat] Unhandled canonical event:", eventType);
@@ -1323,14 +1346,20 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 			onSelectedSessionIdChange?.(sessionId);
 		}
 		const manager = getWsManager();
+
+		// If the session is already ready and we have an active subscription,
+		// there is nothing to do.  Re-subscribing would kill the existing
+		// event handler and create a gap where streaming events are lost.
+		if (manager.isSessionReady(sessionId) && unsubscribeRef.current) {
+			return sessionId;
+		}
+
 		const sessionConfig = getSessionConfig();
-		// Use the stable ref wrapper so this callback doesn't depend on
-		// handleAgentEvent identity (which changes frequently).
 		const stableHandler = (event: AgentWsEvent) => {
 			handleAgentEventRef.current?.(event);
 		};
 		unsubscribeRef.current?.();
-		// If the session is already ready, just attach without re-creating.
+
 		if (manager.isSessionReady(sessionId)) {
 			unsubscribeRef.current = manager.subscribeAgentSession(
 				sessionId,
@@ -1492,6 +1521,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 		// Clear local state
 		setMessages([]);
 		streamingMessageRef.current = null;
+		isStreamingRef.current = false;
 		setIsStreaming(false);
 		setIsAwaitingResponse(false);
 		setError(null);
@@ -1510,6 +1540,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 		// Clear local state
 		setMessages([]);
 		streamingMessageRef.current = null;
+		isStreamingRef.current = false;
 		setIsStreaming(false);
 		setIsAwaitingResponse(false);
 		setError(null);
@@ -1601,27 +1632,29 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 		// same) prevents clobbering in-flight streaming and the optimistic user
 		// message.
 		if (sessionActuallyChanged) {
-			// Load cached messages for this session -- skip if we're actively
-			// streaming to avoid overwriting in-progress content.
-			if (!streamingMessageRef.current && !isStreamingRef.current) {
-				const cached = readCachedSessionMessages(
-					activeSessionId,
-					resolvedStorageKeyPrefix,
-				);
-				if (cached.length > 0) {
-					setMessages(cached);
-					messageIdRef.current = getMaxMessageId(cached);
-					const lastAssistant = [...cached]
-						.reverse()
-						.find((msg) => msg.role === "assistant");
-					lastAssistantMessageIdRef.current = lastAssistant?.id ?? null;
-				} else {
-					setMessages([]);
-					messageIdRef.current = 0;
-					lastAssistantMessageIdRef.current = null;
-				}
+			// Load cached messages for this session.
+			const cached = readCachedSessionMessages(
+				activeSessionId,
+				resolvedStorageKeyPrefix,
+			);
+			if (cached.length > 0) {
+				setMessages(cached);
+				messageIdRef.current = getMaxMessageId(cached);
+				const lastAssistant = [...cached]
+					.reverse()
+					.find((msg) => msg.role === "assistant");
+				lastAssistantMessageIdRef.current = lastAssistant?.id ?? null;
+			} else {
+				setMessages([]);
+				messageIdRef.current = 0;
+				lastAssistantMessageIdRef.current = null;
 			}
+
+			// Reset streaming and agent state for the new session.
+			// Clearing state prevents stale sessionName from the previous
+			// session being applied to the new one as a title.
 			streamingMessageRef.current = null;
+			setState(null);
 			setIsStreaming(false);
 			isStreamingRef.current = false;
 			setIsAwaitingResponse(false);

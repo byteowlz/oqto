@@ -10,7 +10,6 @@
 //!
 //! ```toml
 //! [local]
-//! opencode_binary = "opencode"
 //! fileserver_binary = "octo-files"
 //! ttyd_binary = "ttyd"
 //! workspace_dir = "~/projects"
@@ -71,7 +70,6 @@ use octo::runner::protocol::*;
 #[derive(Debug, Clone, Default)]
 struct RunnerUserConfig {
     /// Binary paths
-    opencode_binary: String,
     fileserver_binary: String,
     ttyd_binary: String,
     pi_binary: String,
@@ -109,7 +107,6 @@ impl Default for PiSection {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 struct LocalSection {
-    opencode_binary: String,
     fileserver_binary: String,
     ttyd_binary: String,
     workspace_dir: String,
@@ -118,7 +115,6 @@ struct LocalSection {
 impl Default for LocalSection {
     fn default() -> Self {
         Self {
-            opencode_binary: "opencode".to_string(),
             fileserver_binary: "octo-files".to_string(),
             ttyd_binary: "ttyd".to_string(),
             workspace_dir: "~/projects".to_string(),
@@ -218,7 +214,6 @@ impl RunnerUserConfig {
         info!("Runner ID: {}", runner_id);
 
         Self {
-            opencode_binary: config_file.local.opencode_binary,
             fileserver_binary: config_file.local.fileserver_binary,
             ttyd_binary: config_file.local.ttyd_binary,
             pi_binary,
@@ -282,10 +277,6 @@ struct Args {
     verbose: bool,
 
     // Session service binaries (override config file)
-    /// Path to the opencode binary.
-    #[arg(long)]
-    opencode_binary: Option<String>,
-
     /// Path to the fileserver binary.
     #[arg(long)]
     fileserver_binary: Option<String>,
@@ -302,14 +293,10 @@ struct SessionState {
     id: String,
     /// Workspace path.
     workspace_path: PathBuf,
-    /// OpenCode process ID (runner-assigned).
-    opencode_id: String,
     /// Fileserver process ID (runner-assigned).
     fileserver_id: String,
     /// ttyd process ID (runner-assigned).
     ttyd_id: String,
-    /// OpenCode port.
-    opencode_port: u16,
     /// Fileserver port.
     fileserver_port: u16,
     /// ttyd port.
@@ -399,7 +386,6 @@ impl RunnerState {
 /// Configuration for session service binaries.
 #[derive(Debug, Clone)]
 struct SessionBinaries {
-    opencode: String,
     fileserver: String,
     ttyd: String,
 }
@@ -500,6 +486,13 @@ impl Runner {
             RunnerRequest::ListMainChatSessions => self.list_main_chat_sessions().await,
             RunnerRequest::GetMainChatMessages(r) => self.get_main_chat_messages(r).await,
             RunnerRequest::GetWorkspaceChatMessages(r) => self.get_workspace_chat_messages(r).await,
+            RunnerRequest::ListWorkspaceChatSessions(r) => {
+                self.list_workspace_chat_sessions(r).await
+            }
+            RunnerRequest::GetWorkspaceChatSession(r) => self.get_workspace_chat_session(r).await,
+            RunnerRequest::GetWorkspaceChatSessionMessages(r) => {
+                self.get_workspace_chat_session_messages(r).await
+            }
 
             // ================================================================
             // Memory operations (user-plane)
@@ -508,15 +501,9 @@ impl Runner {
             RunnerRequest::AddMemory(r) => self.add_memory(r).await,
             RunnerRequest::DeleteMemory(r) => self.delete_memory(r).await,
 
-            // ================================================================
-            // OpenCode chat history operations (user-plane)
-            // ================================================================
-            RunnerRequest::ListOpencodeSessions(r) => self.list_opencode_sessions(r).await,
-            RunnerRequest::GetOpencodeSession(r) => self.get_opencode_session(r).await,
-            RunnerRequest::GetOpencodeSessionMessages(r) => {
-                self.get_opencode_session_messages(r).await
+            RunnerRequest::UpdateWorkspaceChatSession(r) => {
+                self.update_workspace_chat_session(r).await
             }
-            RunnerRequest::UpdateOpencodeSession(r) => self.update_opencode_session(r).await,
 
             // ================================================================
             // Pi session management operations
@@ -1300,12 +1287,12 @@ impl Runner {
                     id: s.id.clone(),
                     workspace_path: s.workspace_path.clone(),
                     status,
-                    opencode_port: Some(s.opencode_port),
+                    agent_port: None,
                     fileserver_port: Some(s.fileserver_port),
                     ttyd_port: Some(s.ttyd_port),
                     pids: Some(format!(
-                        "{},{},{}",
-                        s.opencode_id, s.fileserver_id, s.ttyd_id
+                        "{},{}",
+                        s.fileserver_id, s.ttyd_id
                     )),
                     created_at: chrono::Utc::now().to_rfc3339(), // TODO: track actual time
                     started_at: Some(chrono::Utc::now().to_rfc3339()),
@@ -1323,12 +1310,12 @@ impl Runner {
             id: s.id.clone(),
             workspace_path: s.workspace_path.clone(),
             status: "running".to_string(),
-            opencode_port: Some(s.opencode_port),
+            agent_port: None,
             fileserver_port: Some(s.fileserver_port),
             ttyd_port: Some(s.ttyd_port),
             pids: Some(format!(
-                "{},{},{}",
-                s.opencode_id, s.fileserver_id, s.ttyd_id
+                "{},{}",
+                s.fileserver_id, s.ttyd_id
             )),
             created_at: chrono::Utc::now().to_rfc3339(),
             started_at: Some(chrono::Utc::now().to_rfc3339()),
@@ -1340,12 +1327,8 @@ impl Runner {
 
     async fn start_session(&self, req: StartSessionRequest) -> RunnerResponse {
         info!(
-            "Starting session {} in {:?} with ports {}/{}/{}",
-            req.session_id,
-            req.workspace_path,
-            req.opencode_port,
-            req.fileserver_port,
-            req.ttyd_port
+            "Starting session {} in {:?} with ports fs={}/ttyd={}",
+            req.session_id, req.workspace_path, req.fileserver_port, req.ttyd_port
         );
 
         // Check if session already exists
@@ -1368,7 +1351,6 @@ impl Runner {
         }
 
         // Generate unique process IDs for this session
-        let opencode_id = format!("{}-opencode", req.session_id);
         let fileserver_id = format!("{}-fileserver", req.session_id);
         let ttyd_id = format!("{}-ttyd", req.session_id);
 
@@ -1424,57 +1406,12 @@ impl Runner {
             return RunnerResponse::Error(e);
         }
 
-        // Spawn opencode
-        let mut opencode_args = vec![
-            "serve".to_string(),
-            "--port".to_string(),
-            req.opencode_port.to_string(),
-            "--hostname".to_string(),
-            "127.0.0.1".to_string(),
-        ];
-        if let Some(ref agent) = req.agent {
-            opencode_args.push("--agent".to_string());
-            opencode_args.push(agent.clone());
-        }
-
-        let opencode_req = SpawnProcessRequest {
-            id: opencode_id.clone(),
-            binary: self.binaries.opencode.clone(),
-            args: opencode_args,
-            cwd: req.workspace_path.clone(),
-            env: req.env.clone(),
-            sandboxed: self
-                .sandbox_config
-                .as_ref()
-                .map(|s| s.enabled)
-                .unwrap_or(false),
-        };
-
-        if let RunnerResponse::Error(e) = self.spawn_process(opencode_req, false).await {
-            // Clean up fileserver and ttyd
-            let _ = self
-                .kill_process(KillProcessRequest {
-                    id: fileserver_id.clone(),
-                    force: false,
-                })
-                .await;
-            let _ = self
-                .kill_process(KillProcessRequest {
-                    id: ttyd_id.clone(),
-                    force: false,
-                })
-                .await;
-            return RunnerResponse::Error(e);
-        }
-
-        // Record session state
+        // Record session state (Pi agent is managed separately by PiSessionManager)
         let session_state = SessionState {
             id: req.session_id.clone(),
             workspace_path: req.workspace_path.clone(),
-            opencode_id: opencode_id.clone(),
             fileserver_id: fileserver_id.clone(),
             ttyd_id: ttyd_id.clone(),
-            opencode_port: req.opencode_port,
             fileserver_port: req.fileserver_port,
             ttyd_port: req.ttyd_port,
             agent: req.agent.clone(),
@@ -1486,7 +1423,7 @@ impl Runner {
             state.sessions.insert(req.session_id.clone(), session_state);
         }
 
-        let pids = format!("{},{},{}", opencode_id, fileserver_id, ttyd_id);
+        let pids = format!("{},{}", fileserver_id, ttyd_id);
         info!(
             "Session {} started with processes: {}",
             req.session_id, pids
@@ -1516,14 +1453,7 @@ impl Runner {
             }
         };
 
-        // Kill all session processes
-        let _ = self
-            .kill_process(KillProcessRequest {
-                id: session_state.opencode_id,
-                force: false,
-            })
-            .await;
-
+        // Kill session processes (fileserver + ttyd)
         let _ = self
             .kill_process(KillProcessRequest {
                 id: session_state.fileserver_id,
@@ -1568,6 +1498,7 @@ impl Runner {
             SELECT
               c.id AS id,
               c.external_id AS external_id,
+              c.platform_id AS platform_id,
               c.title AS title,
               c.created_at AS created_at,
               c.updated_at AS updated_at,
@@ -1593,12 +1524,16 @@ impl Runner {
         for row in rows {
             let id: String = row.get("id");
             let external_id: Option<String> = row.get("external_id");
+            let platform_id: Option<String> = row.try_get("platform_id").ok().flatten();
             let title: Option<String> = row.get("title");
             let created_at: i64 = row.get("created_at");
             let updated_at: Option<i64> = row.get("updated_at");
             let message_count: i64 = row.get("message_count");
 
-            let session_id = external_id.unwrap_or(id);
+            let session_id = platform_id
+                .filter(|s| !s.is_empty())
+                .or(external_id)
+                .unwrap_or(id);
             let started_at = chrono::Utc
                 .timestamp_opt(created_at, 0)
                 .single()
@@ -1639,10 +1574,11 @@ impl Runner {
             r#"
             SELECT id, external_id
             FROM conversations
-            WHERE source_id = 'pi' AND (external_id = ? OR readable_id = ? OR id = ?)
+            WHERE source_id = 'pi' AND (external_id = ? OR platform_id = ? OR readable_id = ? OR id = ?)
             LIMIT 1
             "#,
         )
+        .bind(&req.session_id)
         .bind(&req.session_id)
         .bind(&req.session_id)
         .bind(&req.session_id)
@@ -1795,11 +1731,12 @@ impl Runner {
             SELECT id, external_id
             FROM conversations
             WHERE source_id = 'pi'
-              AND (external_id = ? OR readable_id = ? OR id = ?)
+              AND (external_id = ? OR platform_id = ? OR readable_id = ? OR id = ?)
               AND workspace = ?
             LIMIT 1
             "#,
         )
+        .bind(&req.session_id)
         .bind(&req.session_id)
         .bind(&req.session_id)
         .bind(&req.session_id)
@@ -1823,10 +1760,11 @@ impl Runner {
                 r#"
                 SELECT id, external_id
                 FROM conversations
-                WHERE source_id = 'pi' AND (external_id = ? OR readable_id = ? OR id = ?)
+                WHERE source_id = 'pi' AND (external_id = ? OR platform_id = ? OR readable_id = ? OR id = ?)
                 LIMIT 1
                 "#,
             )
+            .bind(&req.session_id)
             .bind(&req.session_id)
             .bind(&req.session_id)
             .bind(&req.session_id)
@@ -1955,6 +1893,278 @@ impl Runner {
         })
     }
 
+    async fn list_workspace_chat_sessions(
+        &self,
+        req: ListWorkspaceChatSessionsRequest,
+    ) -> RunnerResponse {
+        let Some(db_path) = octo::history::hstry_db_path() else {
+            return RunnerResponse::WorkspaceChatSessionList(WorkspaceChatSessionListResponse {
+                sessions: Vec::new(),
+            });
+        };
+
+        let pool = match octo::history::repository::open_hstry_pool(&db_path).await {
+            Ok(pool) => pool,
+            Err(e) => {
+                return error_response(ErrorCode::IoError, format!("Failed to open hstry DB: {e}"));
+            }
+        };
+
+        let rows = if let Some(ref workspace) = req.workspace {
+            match sqlx::query(
+                r#"
+                SELECT id, external_id, platform_id, readable_id, title, created_at, updated_at, workspace, model, provider
+                FROM conversations
+                WHERE source_id = 'pi' AND workspace = ?
+                ORDER BY COALESCE(updated_at, created_at) DESC
+                "#,
+            )
+            .bind(workspace)
+            .fetch_all(&pool)
+            .await
+            {
+                Ok(rows) => rows,
+                Err(e) => {
+                    return error_response(
+                        ErrorCode::IoError,
+                        format!("Failed to query conversations: {e}"),
+                    );
+                }
+            }
+        } else {
+            match sqlx::query(
+                r#"
+                SELECT id, external_id, platform_id, readable_id, title, created_at, updated_at, workspace, model, provider
+                FROM conversations
+                WHERE source_id = 'pi'
+                ORDER BY COALESCE(updated_at, created_at) DESC
+                "#,
+            )
+            .fetch_all(&pool)
+            .await
+            {
+                Ok(rows) => rows,
+                Err(e) => {
+                    return error_response(
+                        ErrorCode::IoError,
+                        format!("Failed to query conversations: {e}"),
+                    );
+                }
+            }
+        };
+
+        let mut sessions = Vec::with_capacity(rows.len());
+        for row in rows {
+            let id: String = row.get("id");
+            let external_id: Option<String> = row.get("external_id");
+            let platform_id: Option<String> = row.try_get("platform_id").ok().flatten();
+            let readable_id: Option<String> = row.get("readable_id");
+            let title: Option<String> = row.get("title");
+            let created_at: i64 = row.get("created_at");
+            let updated_at: Option<i64> = row.get("updated_at");
+            let workspace: Option<String> = row.get("workspace");
+            let model: Option<String> = row.get("model");
+            let provider: Option<String> = row.get("provider");
+
+            // Prefer platform_id (Octo session ID) over external_id (Pi native ID)
+            let session_id = platform_id
+                .filter(|s| !s.is_empty())
+                .or(external_id.clone())
+                .unwrap_or_else(|| id.clone());
+            let workspace_path = workspace.unwrap_or_else(|| "global".to_string());
+            let project_name = octo::history::project_name_from_path(&workspace_path);
+            let readable_id = readable_id.unwrap_or_default();
+            let updated_at_ms = updated_at.unwrap_or(created_at) * 1000;
+
+            sessions.push(WorkspaceChatSessionInfo {
+                id: session_id,
+                readable_id,
+                title,
+                parent_id: None,
+                workspace_path,
+                project_name,
+                created_at: created_at * 1000,
+                updated_at: updated_at_ms,
+                version: None,
+                is_child: false,
+                model,
+                provider,
+            });
+        }
+
+        if let Some(limit) = req.limit {
+            sessions.truncate(limit);
+        }
+
+        RunnerResponse::WorkspaceChatSessionList(WorkspaceChatSessionListResponse { sessions })
+    }
+
+    async fn get_workspace_chat_session(
+        &self,
+        req: GetWorkspaceChatSessionRequest,
+    ) -> RunnerResponse {
+        let Some(db_path) = octo::history::hstry_db_path() else {
+            return RunnerResponse::WorkspaceChatSession(WorkspaceChatSessionResponse {
+                session: None,
+            });
+        };
+
+        let pool = match octo::history::repository::open_hstry_pool(&db_path).await {
+            Ok(pool) => pool,
+            Err(e) => {
+                return error_response(ErrorCode::IoError, format!("Failed to open hstry DB: {e}"));
+            }
+        };
+
+        let row = match sqlx::query(
+            r#"
+            SELECT id, external_id, platform_id, readable_id, title, created_at, updated_at, workspace, model, provider
+            FROM conversations
+            WHERE source_id = 'pi' AND (external_id = ? OR platform_id = ? OR readable_id = ? OR id = ?)
+            LIMIT 1
+            "#,
+        )
+        .bind(&req.session_id)
+        .bind(&req.session_id)
+        .bind(&req.session_id)
+        .bind(&req.session_id)
+        .fetch_optional(&pool)
+        .await
+        {
+            Ok(row) => row,
+            Err(e) => {
+                return error_response(
+                    ErrorCode::IoError,
+                    format!("Failed to resolve conversation: {e}"),
+                );
+            }
+        };
+
+        let Some(row) = row else {
+            return RunnerResponse::WorkspaceChatSession(WorkspaceChatSessionResponse {
+                session: None,
+            });
+        };
+
+        let id: String = row.get("id");
+        let external_id: Option<String> = row.get("external_id");
+        let platform_id: Option<String> = row.try_get("platform_id").ok().flatten();
+        let readable_id: Option<String> = row.get("readable_id");
+        let title: Option<String> = row.get("title");
+        let created_at: i64 = row.get("created_at");
+        let updated_at: Option<i64> = row.get("updated_at");
+        let workspace: Option<String> = row.get("workspace");
+        let model: Option<String> = row.get("model");
+        let provider: Option<String> = row.get("provider");
+
+        let session_id = platform_id
+            .filter(|s| !s.is_empty())
+            .or(external_id.clone())
+            .unwrap_or_else(|| id.clone());
+        let workspace_path = workspace.unwrap_or_else(|| "global".to_string());
+        let project_name = octo::history::project_name_from_path(&workspace_path);
+        let readable_id = readable_id.unwrap_or_default();
+        let updated_at_ms = updated_at.unwrap_or(created_at) * 1000;
+
+        let session = WorkspaceChatSessionInfo {
+            id: session_id,
+            readable_id,
+            title,
+            parent_id: None,
+            workspace_path,
+            project_name,
+            created_at: created_at * 1000,
+            updated_at: updated_at_ms,
+            version: None,
+            is_child: false,
+            model,
+            provider,
+        };
+
+        RunnerResponse::WorkspaceChatSession(WorkspaceChatSessionResponse {
+            session: Some(session),
+        })
+    }
+
+    async fn get_workspace_chat_session_messages(
+        &self,
+        req: GetWorkspaceChatSessionMessagesRequest,
+    ) -> RunnerResponse {
+        let Some(db_path) = octo::history::hstry_db_path() else {
+            return RunnerResponse::WorkspaceChatSessionMessages(
+                WorkspaceChatSessionMessagesResponse {
+                    session_id: req.session_id,
+                    messages: Vec::new(),
+                },
+            );
+        };
+
+        let messages = match octo::history::repository::get_session_messages_from_hstry(
+            &req.session_id,
+            &db_path,
+        )
+        .await
+        {
+            Ok(messages) => messages,
+            Err(e) => {
+                return error_response(
+                    ErrorCode::IoError,
+                    format!("Failed to load hstry messages: {e}"),
+                );
+            }
+        };
+
+        let start = req
+            .limit
+            .and_then(|limit| messages.len().checked_sub(limit))
+            .unwrap_or(0);
+
+        let mapped: Vec<ChatMessageProto> = messages
+            .into_iter()
+            .skip(start)
+            .map(|message| {
+                let parts = message
+                    .parts
+                    .into_iter()
+                    .map(|part| ChatMessagePartProto {
+                        id: part.id,
+                        part_type: part.part_type,
+                        text: part.text,
+                        text_html: if req.render { part.text_html } else { None },
+                        tool_name: part.tool_name,
+                        tool_input: part.tool_input,
+                        tool_output: part.tool_output,
+                        tool_status: part.tool_status,
+                        tool_title: part.tool_title,
+                    })
+                    .collect();
+
+                ChatMessageProto {
+                    id: message.id,
+                    session_id: message.session_id,
+                    role: message.role,
+                    created_at: message.created_at,
+                    completed_at: message.completed_at,
+                    parent_id: message.parent_id,
+                    model_id: message.model_id,
+                    provider_id: message.provider_id,
+                    agent: message.agent,
+                    summary_title: message.summary_title,
+                    tokens_input: message.tokens_input,
+                    tokens_output: message.tokens_output,
+                    tokens_reasoning: message.tokens_reasoning,
+                    cost: message.cost,
+                    parts,
+                }
+            })
+            .collect();
+
+        RunnerResponse::WorkspaceChatSessionMessages(WorkspaceChatSessionMessagesResponse {
+            session_id: req.session_id,
+            messages: mapped,
+        })
+    }
+
     // ========================================================================
     // Memory Operations (user-plane)
     // ========================================================================
@@ -1981,207 +2191,77 @@ impl Runner {
         error_response(ErrorCode::Internal, "Memory operations not yet implemented")
     }
 
-    // ========================================================================
-    // OpenCode Chat History Operations (user-plane)
-    // ========================================================================
-
-    /// Get the OpenCode data directory for this user.
-    fn opencode_data_dir(&self) -> PathBuf {
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-        let data_dir = std::env::var("XDG_DATA_HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from(&home).join(".local").join("share"));
-        data_dir.join("opencode")
-    }
-
-    async fn list_opencode_sessions(&self, req: ListOpencodeSessionsRequest) -> RunnerResponse {
-        let opencode_dir = self.opencode_data_dir();
-
-        match octo::history::list_sessions_from_dir(&opencode_dir) {
-            Ok(sessions) => {
-                let mut filtered: Vec<_> = sessions
-                    .into_iter()
-                    .filter(|s| {
-                        // Filter by workspace if specified
-                        if let Some(ref ws) = req.workspace
-                            && s.workspace_path != *ws
-                        {
-                            return false;
-                        }
-                        // Filter out child sessions unless explicitly included
-                        if !req.include_children && s.is_child {
-                            return false;
-                        }
-                        true
-                    })
-                    .collect();
-
-                // Apply limit if specified
-                if let Some(limit) = req.limit {
-                    filtered.truncate(limit);
-                }
-
-                let sessions: Vec<OpencodeSessionInfo> = filtered
-                    .into_iter()
-                    .map(|s| OpencodeSessionInfo {
-                        id: s.id,
-                        readable_id: s.readable_id,
-                        title: s.title,
-                        parent_id: s.parent_id,
-                        workspace_path: s.workspace_path,
-                        project_name: s.project_name,
-                        created_at: s.created_at,
-                        updated_at: s.updated_at,
-                        version: s.version,
-                        is_child: s.is_child,
-                        model: s.model,
-                        provider: s.provider,
-                    })
-                    .collect();
-
-                RunnerResponse::OpencodeSessionList(OpencodeSessionListResponse { sessions })
-            }
-            Err(e) => error_response(
-                ErrorCode::IoError,
-                format!("Failed to list OpenCode sessions: {}", e),
-            ),
-        }
-    }
-
-    async fn get_opencode_session(&self, req: GetOpencodeSessionRequest) -> RunnerResponse {
-        let opencode_dir = self.opencode_data_dir();
-
-        match octo::history::get_session_from_dir(&req.session_id, &opencode_dir) {
-            Ok(Some(s)) => RunnerResponse::OpencodeSession(OpencodeSessionResponse {
-                session: Some(OpencodeSessionInfo {
-                    id: s.id,
-                    readable_id: s.readable_id,
-                    title: s.title,
-                    parent_id: s.parent_id,
-                    workspace_path: s.workspace_path,
-                    project_name: s.project_name,
-                    created_at: s.created_at,
-                    updated_at: s.updated_at,
-                    version: s.version,
-                    is_child: s.is_child,
-                    model: s.model,
-                    provider: s.provider,
-                }),
-            }),
-            Ok(None) => RunnerResponse::OpencodeSession(OpencodeSessionResponse { session: None }),
-            Err(e) => error_response(
-                ErrorCode::IoError,
-                format!("Failed to get OpenCode session: {}", e),
-            ),
-        }
-    }
-
-    async fn get_opencode_session_messages(
+    /// Update a workspace chat session (e.g., rename title) via hstry gRPC.
+    async fn update_workspace_chat_session(
         &self,
-        req: GetOpencodeSessionMessagesRequest,
+        req: UpdateWorkspaceChatSessionRequest,
     ) -> RunnerResponse {
-        let opencode_dir = self.opencode_data_dir();
-
-        let messages_result = if req.render {
-            // Use blocking task for rendering since it may do async markdown processing
-            let session_id = req.session_id.clone();
-            let dir = opencode_dir.clone();
-            tokio::task::spawn_blocking(move || {
-                // We need to run async code in blocking context
-                let rt = tokio::runtime::Handle::current();
-                rt.block_on(async {
-                    octo::history::get_session_messages_rendered_from_dir(&session_id, &dir).await
-                })
-            })
-            .await
-            .map_err(|e| anyhow::anyhow!("Task join error: {}", e))
-            .and_then(|r| r)
-        } else {
-            octo::history::get_session_messages_from_dir(&req.session_id, &opencode_dir)
+        let Some(title) = req.title else {
+            return error_response(ErrorCode::InvalidRequest, "No update fields provided");
         };
 
-        match messages_result {
-            Ok(messages) => {
-                let messages: Vec<OpencodeMessage> = messages
-                    .into_iter()
-                    .map(|m| OpencodeMessage {
-                        id: m.id,
-                        session_id: m.session_id,
-                        role: m.role,
-                        created_at: m.created_at,
-                        completed_at: m.completed_at,
-                        parent_id: m.parent_id,
-                        model_id: m.model_id,
-                        provider_id: m.provider_id,
-                        agent: m.agent,
-                        summary_title: m.summary_title,
-                        tokens_input: m.tokens_input,
-                        tokens_output: m.tokens_output,
-                        tokens_reasoning: m.tokens_reasoning,
-                        cost: m.cost,
-                        parts: m
-                            .parts
-                            .into_iter()
-                            .map(|p| OpencodeMessagePart {
-                                id: p.id,
-                                part_type: p.part_type,
-                                text: p.text,
-                                text_html: p.text_html,
-                                tool_name: p.tool_name,
-                                tool_input: p.tool_input,
-                                tool_output: p.tool_output,
-                                tool_status: p.tool_status,
-                                tool_title: p.tool_title,
-                            })
-                            .collect(),
-                    })
-                    .collect();
+        let Some(client) = self.pi_manager.hstry_client() else {
+            return error_response(ErrorCode::Internal, "hstry client not available");
+        };
 
-                RunnerResponse::OpencodeSessionMessages(OpencodeSessionMessagesResponse {
-                    session_id: req.session_id,
-                    messages,
+        // Update title via hstry gRPC (partial update -- only title is set)
+        if let Err(e) = client
+            .update_conversation(
+                &req.session_id,
+                Some(title.clone()),
+                None, // workspace unchanged
+                None, // model unchanged
+                None, // provider unchanged
+                None, // metadata unchanged
+                None, // readable_id unchanged
+                None, // harness unchanged
+                None, // platform_id unchanged
+            )
+            .await
+        {
+            return error_response(
+                ErrorCode::Internal,
+                format!("Failed to update session title: {e}"),
+            );
+        }
+
+        // Fetch updated session to return
+        match client.get_conversation(&req.session_id, None).await {
+            Ok(Some(conv)) => {
+                let workspace_path = conv
+                    .workspace
+                    .clone()
+                    .unwrap_or_else(|| "global".to_string());
+                let project_name = octo::history::project_name_from_path(&workspace_path);
+
+                RunnerResponse::WorkspaceChatSessionUpdated(WorkspaceChatSessionUpdatedResponse {
+                    session: WorkspaceChatSessionInfo {
+                        id: conv.external_id.clone(),
+                        readable_id: conv.readable_id.clone().unwrap_or_default(),
+                        title: conv.title.clone(),
+                        parent_id: None,
+                        workspace_path,
+                        project_name,
+                        created_at: conv.created_at_ms,
+                        updated_at: conv.updated_at_ms.unwrap_or(conv.created_at_ms),
+                        version: None,
+                        is_child: false,
+                        model: conv.model.clone(),
+                        provider: conv.provider.clone(),
+                    },
                 })
             }
+            Ok(None) => error_response(
+                ErrorCode::SessionNotFound,
+                format!("Session {} not found", req.session_id),
+            ),
             Err(e) => error_response(
-                ErrorCode::IoError,
-                format!("Failed to get OpenCode session messages: {}", e),
+                ErrorCode::Internal,
+                format!("Failed to fetch updated session: {e}"),
             ),
         }
     }
 
-    async fn update_opencode_session(&self, req: UpdateOpencodeSessionRequest) -> RunnerResponse {
-        let opencode_dir = self.opencode_data_dir();
-
-        if let Some(title) = req.title {
-            match octo::history::update_session_title_in_dir(&req.session_id, &title, &opencode_dir)
-            {
-                Ok(s) => RunnerResponse::OpencodeSessionUpdated(OpencodeSessionUpdatedResponse {
-                    session: OpencodeSessionInfo {
-                        id: s.id,
-                        readable_id: s.readable_id,
-                        title: s.title,
-                        parent_id: s.parent_id,
-                        workspace_path: s.workspace_path,
-                        project_name: s.project_name,
-                        created_at: s.created_at,
-                        updated_at: s.updated_at,
-                        version: s.version,
-                        is_child: s.is_child,
-                        model: s.model,
-                        provider: s.provider,
-                    },
-                }),
-                Err(e) => error_response(
-                    ErrorCode::IoError,
-                    format!("Failed to update OpenCode session: {}", e),
-                ),
-            }
-        } else {
-            error_response(ErrorCode::InvalidRequest, "No update fields provided")
-        }
-    }
-
-    // ========================================================================
     // Pi Session Management Operations
     // ========================================================================
 
@@ -2334,32 +2414,7 @@ impl Runner {
     /// List all active Pi sessions.
     async fn pi_list_sessions(&self) -> RunnerResponse {
         debug!("pi_list_sessions");
-
         let sessions = self.pi_manager.list_sessions().await;
-        let sessions: Vec<PiSessionInfo> = sessions
-            .into_iter()
-            .map(|s| PiSessionInfo {
-                session_id: s.session_id,
-                state: match s.state {
-                    octo::runner::pi_manager::PiSessionState::Starting => PiSessionState::Starting,
-                    octo::runner::pi_manager::PiSessionState::Idle => PiSessionState::Idle,
-                    octo::runner::pi_manager::PiSessionState::Streaming => {
-                        PiSessionState::Streaming
-                    }
-                    octo::runner::pi_manager::PiSessionState::Compacting => {
-                        PiSessionState::Compacting
-                    }
-                    octo::runner::pi_manager::PiSessionState::Aborting => PiSessionState::Aborting,
-                    octo::runner::pi_manager::PiSessionState::Stopping => PiSessionState::Stopping,
-                },
-                last_activity: s.last_activity,
-                subscriber_count: s.subscriber_count,
-                cwd: PathBuf::new(), // TODO: expose from pi_manager
-                provider: None,
-                model: None,
-            })
-            .collect();
-
         RunnerResponse::PiSessionList(PiSessionListResponse { sessions })
     }
 
@@ -3450,9 +3505,7 @@ async fn main() -> Result<()> {
 
     // CLI args override config file
     let binaries = SessionBinaries {
-        opencode: args
-            .opencode_binary
-            .unwrap_or(user_config.opencode_binary.clone()),
+
         fileserver: args
             .fileserver_binary
             .unwrap_or(user_config.fileserver_binary.clone()),
@@ -3460,8 +3513,8 @@ async fn main() -> Result<()> {
     };
 
     info!(
-        "Session binaries: opencode={}, fileserver={}, ttyd={}",
-        binaries.opencode, binaries.fileserver, binaries.ttyd
+        "Session binaries: fileserver={}, ttyd={}",
+        binaries.fileserver, binaries.ttyd
     );
 
     // Create PiSessionManager for managing Pi agent processes
@@ -3522,9 +3575,7 @@ async fn ensure_user_service(name: &str) {
                 info!("{} service enabled", name);
             } else {
                 let combined = format!("{}{}", stdout, stderr);
-                if !combined.contains("already enabled")
-                    && !combined.contains("Already enabled")
-                {
+                if !combined.contains("already enabled") && !combined.contains("Already enabled") {
                     warn!(
                         "{} service enable failed (exit {}): {}{}",
                         name, out.status, stdout, stderr
@@ -3621,22 +3672,6 @@ mod tests {
     //! rather than all interfaces (0.0.0.0). This is critical for security:
     //! services should only be accessible via the octo backend proxy.
 
-    /// Helper to build opencode args (mirrors the logic in Runner::start_session).
-    fn build_opencode_args(port: u16, agent: Option<&str>) -> Vec<String> {
-        let mut args = vec![
-            "serve".to_string(),
-            "--port".to_string(),
-            port.to_string(),
-            "--hostname".to_string(),
-            "127.0.0.1".to_string(),
-        ];
-        if let Some(agent_name) = agent {
-            args.push("--agent".to_string());
-            args.push(agent_name.to_string());
-        }
-        args
-    }
-
     /// Helper to build fileserver args (mirrors the logic in Runner::start_session).
     fn build_fileserver_args(port: u16, workspace_path: &str) -> Vec<String> {
         vec![
@@ -3662,40 +3697,6 @@ mod tests {
             "zsh".to_string(),
             "-l".to_string(),
         ]
-    }
-
-    #[test]
-    fn test_opencode_binds_to_localhost_only() {
-        let args = build_opencode_args(4096, None);
-
-        let hostname_idx = args.iter().position(|a| a == "--hostname");
-        assert!(
-            hostname_idx.is_some(),
-            "opencode args must include --hostname"
-        );
-
-        let bind_addr = &args[hostname_idx.unwrap() + 1];
-        assert_eq!(
-            bind_addr, "127.0.0.1",
-            "opencode must bind to 127.0.0.1, not {}. Binding to 0.0.0.0 exposes the service to the network!",
-            bind_addr
-        );
-        assert_ne!(
-            bind_addr, "0.0.0.0",
-            "SECURITY: opencode must NOT bind to 0.0.0.0"
-        );
-    }
-
-    #[test]
-    fn test_opencode_with_agent_binds_to_localhost_only() {
-        let args = build_opencode_args(4096, Some("test-agent"));
-
-        let hostname_idx = args.iter().position(|a| a == "--hostname");
-        assert!(hostname_idx.is_some());
-
-        let bind_addr = &args[hostname_idx.unwrap() + 1];
-        assert_eq!(bind_addr, "127.0.0.1");
-        assert_ne!(bind_addr, "0.0.0.0");
     }
 
     #[test]

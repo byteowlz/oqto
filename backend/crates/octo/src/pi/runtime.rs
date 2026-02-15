@@ -626,7 +626,7 @@ impl PiProcess for RunnerPiProcess {
 /// Runtime that connects to pi-bridge running inside a container.
 ///
 /// This is used for container mode where Pi runs inside the same container
-/// as opencode. Communication happens via HTTP to the pi-bridge service
+/// as the agent. Communication happens via HTTP to the pi-bridge service
 /// which bridges to Pi's stdin/stdout.
 pub struct ContainerPiRuntime {
     /// HTTP client for making requests.

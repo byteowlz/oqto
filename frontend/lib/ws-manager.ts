@@ -610,44 +610,6 @@ class WsConnectionManager {
 	}
 
 	/**
-	 * Re-key a session from a provisional ID to Pi's real ID.
-	 * Migrates all internal maps (subscriptions, handlers, pending
-	 * messages, readiness state) so subsequent commands use the real ID.
-	 */
-	reKeySession(provisionalId: string, realId: string): void {
-		console.log(`[ws-mux] Re-keying session: ${provisionalId} -> ${realId}`);
-
-		const entry = this.subscribedSessions.get(provisionalId);
-		if (entry !== undefined) {
-			this.subscribedSessions.delete(provisionalId);
-			this.subscribedSessions.set(realId, entry);
-		}
-
-		const handlers = this.agentSessionHandlers.get(provisionalId);
-		if (handlers) {
-			this.agentSessionHandlers.delete(provisionalId);
-			this.agentSessionHandlers.set(realId, handlers);
-		}
-
-		if (this.sessionReady.has(provisionalId)) {
-			this.sessionReady.delete(provisionalId);
-			this.sessionReady.add(realId);
-		}
-
-		const pendingMsgs = this.pendingMessages.get(provisionalId);
-		if (pendingMsgs) {
-			this.pendingMessages.delete(provisionalId);
-			this.pendingMessages.set(realId, pendingMsgs);
-		}
-
-		const pendingSub = this.pendingSubscriptions.get(provisionalId);
-		if (pendingSub !== undefined) {
-			this.pendingSubscriptions.delete(provisionalId);
-			this.pendingSubscriptions.set(realId, pendingSub);
-		}
-	}
-
-	/**
 	 * Get agent session state.
 	 */
 	agentGetState(sessionId: string, id?: string): void {
@@ -989,9 +951,7 @@ class WsConnectionManager {
 						this.sessionReadyWaiters.delete(sessionId);
 					}
 
-					// Request initial state (includes model info and Pi's
-					// real session ID -- useChat detects ID mismatches and
-					// triggers re-keying from there).
+					// Request initial state (model info, streaming flag, etc.)
 					this.send({
 						channel: "agent",
 						session_id: sessionId,
@@ -1083,7 +1043,7 @@ class WsConnectionManager {
 			}
 		}
 
-		// Dispatch agent channel events to session-specific handlers
+		// Dispatch agent channel events to session-specific handlers.
 		if (event.channel === "agent") {
 			const agentEvent = event as AgentWsEvent;
 			const sessionId = agentEvent.session_id;

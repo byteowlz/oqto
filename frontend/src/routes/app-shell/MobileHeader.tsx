@@ -113,7 +113,7 @@ export const MobileHeader = memo(function MobileHeader({
 					type="button"
 					variant="ghost"
 					size="icon"
-					aria-label={locale === "de" ? "Neuer Chat" : "New Chat"}
+					aria-label={locale === "de" ? "Neue Sitzung" : "New Session"}
 					onClick={onNewChat}
 					className="text-muted-foreground hover:text-primary flex-shrink-0"
 				>

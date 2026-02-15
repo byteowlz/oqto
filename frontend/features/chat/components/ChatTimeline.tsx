@@ -114,7 +114,7 @@ function TimelineDot({
 	const formattedDate = formatSessionDate(
 		new Date(session.started_at).getTime(),
 	);
-	const displayTitle = session.title || "Untitled";
+	const displayTitle = session.title || "New Session";
 	const tempId = getTempIdFromSession(session);
 	const tempIdLabel = formatTempId(tempId);
 

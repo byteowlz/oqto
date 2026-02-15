@@ -213,7 +213,7 @@ export function useSessionData({
 				agent: "pi",
 				source_path: `title:oc:${session.id}`,
 				session_id: session.id,
-				title: session.title ?? "Untitled",
+				title: session.title ?? "New Session",
 				timestamp: session.updated_at,
 				match_type: "title",
 				snippet: "Title match",
@@ -296,6 +296,18 @@ export function useSessionData({
 			}
 		>();
 
+		// First, add all workspace directories (even those without sessions)
+		for (const directory of workspaceDirectories) {
+			groups.set(directory.path, {
+				key: directory.path,
+				name: directory.name,
+				directory: directory.path,
+				sessions: [],
+				logo: directory.logo,
+			});
+		}
+
+		// Then, add sessions to their respective projects
 		for (const session of filteredSessions) {
 			const key = projectKeyForSession(session);
 			const name = projectLabelForSession(session);
@@ -322,8 +334,8 @@ export function useSessionData({
 
 			let comparison = 0;
 			if (projectSortBy === "date") {
-				const aLatest = Math.max(...a.sessions.map((s) => s.updated_at ?? 0));
-				const bLatest = Math.max(...b.sessions.map((s) => s.updated_at ?? 0));
+				const aLatest = Math.max(...a.sessions.map((s) => s.updated_at ?? 0), 0);
+				const bLatest = Math.max(...b.sessions.map((s) => s.updated_at ?? 0), 0);
 				comparison = bLatest - aLatest;
 			} else if (projectSortBy === "name") {
 				comparison = a.name.localeCompare(b.name);
@@ -335,6 +347,7 @@ export function useSessionData({
 		});
 	}, [
 		filteredSessions,
+		workspaceDirectories,
 		projectKeyForSession,
 		projectLabelForSession,
 		projectSummaries,

@@ -2,9 +2,7 @@
 //!
 //! This library provides the core components for the AI Agent Workspace Platform backend.
 
-pub mod agent;
 pub mod agent_browser;
-pub mod agent_rpc;
 pub mod api;
 pub mod audit;
 pub mod auth;

@@ -4,7 +4,7 @@ import {
 	CopyButton,
 	MarkdownRenderer,
 } from "@/components/data-display/markdown-renderer";
-import type { OpenCodePart } from "@/lib/opencode-client";
+import type { MessagePart } from "@/lib/agent-client";
 import { cn } from "@/lib/utils";
 import {
 	Bot,
@@ -30,7 +30,7 @@ import {
 import { useState } from "react";
 
 interface ToolCallCardProps {
-	part: OpenCodePart;
+	part: MessagePart;
 	defaultCollapsed?: boolean;
 	hideTodoTools?: boolean;
 	collapsible?: boolean;
@@ -937,6 +937,8 @@ export function ToolCallCard({
 						"px-3 pb-3 space-y-2",
 						hideHeader ? "pt-3" : "border-t border-border pt-2",
 					)}
+					data-collapsed={!resolvedOpen}
+					style={!resolvedOpen ? { display: "none" } : undefined}
 				>
 					{input && Object.keys(input).length > 0 && (
 						<div>

@@ -3,7 +3,7 @@
 //! Provides administrative commands for managing the Octo server,
 //! including container management, image refresh, and housekeeping.
 
-use std::io::{self, Read, Write};
+use std::io::{self, IsTerminal, Read, Write};
 use std::process::ExitCode;
 
 use anyhow::{Context, Result};
@@ -42,7 +42,8 @@ async fn try_main() -> Result<()> {
         Command::Ui { command } => handle_ui(&client, command, cli.json).await,
         Command::Local { command } => handle_local(&client, command, cli.json).await,
         Command::Sandbox { command } => handle_sandbox(command, cli.json).await,
-        Command::User { command } => handle_user(command, cli.json).await,
+        Command::User { command } => handle_user(&client, command, cli.json).await,
+        Command::HashPassword { password, cost } => handle_hash_password(password, cost),
     }
 }
 
@@ -153,6 +154,19 @@ enum Command {
     Ui {
         #[command(subcommand)]
         command: UiCommand,
+    },
+
+    /// Hash a password using bcrypt (same algorithm as the backend)
+    ///
+    /// Reads password from stdin if not provided. Outputs only the hash
+    /// to stdout for use in scripts.
+    HashPassword {
+        /// Password to hash (reads from stdin if not provided)
+        #[arg(long)]
+        password: Option<String>,
+        /// Bcrypt cost factor (default: 12)
+        #[arg(long, default_value = "12")]
+        cost: u32,
     },
 }
 
@@ -549,7 +563,7 @@ enum UiCommand {
     Session {
         /// Session ID
         session_id: String,
-        /// Mode: main, opencode, or pi
+        /// Mode: main or pi
         #[arg(long)]
         mode: Option<String>,
     },
@@ -955,8 +969,8 @@ async fn handle_session(client: &OctoClient, command: SessionCommand, json: bool
                 println!("  Image: {}", session["image"]);
                 println!("  Container: {}", session["container_id"]);
                 println!(
-                    "  Ports: opencode={}, fileserver={}, ttyd={}",
-                    session["opencode_port"], session["fileserver_port"], session["ttyd_port"]
+                    "  Ports: agent={}, fileserver={}, ttyd={}",
+                    session["agent_port"], session["fileserver_port"], session["ttyd_port"]
                 );
             }
         }
@@ -1655,7 +1669,7 @@ fn create_linux_user(linux_username: &str, json: bool) -> Result<()> {
     Ok(())
 }
 
-async fn handle_user(command: UserCommand, json: bool) -> Result<()> {
+async fn handle_user(client: &OctoClient, command: UserCommand, json: bool) -> Result<()> {
     match command {
         UserCommand::Create {
             username,
@@ -1934,13 +1948,12 @@ async fn handle_user(command: UserCommand, json: bool) -> Result<()> {
 
         UserCommand::SyncConfigs { user } => {
             let body = serde_json::json!({ "user_id": user });
-            let response = client.post_json("/api/admin/users/sync-configs", &body).await?;
+            let response = client
+                .post_json("/api/admin/users/sync-configs", &body)
+                .await?;
 
             if !response.status().is_success() {
-                anyhow::bail!(
-                    "Server returned error: {}",
-                    response.status().as_u16()
-                );
+                anyhow::bail!("Server returned error: {}", response.status().as_u16());
             }
 
             let payload: serde_json::Value = response.json().await?;
@@ -2030,24 +2043,13 @@ async fn bootstrap_admin_user(
                 anyhow::bail!("Password is required in JSON mode. Use --password");
             }
 
-            // Simple password prompt without rpassword dependency
-            eprint!("Enter admin password: ");
-            std::io::stderr().flush()?;
-
-            let mut password = String::new();
-            std::io::stdin().read_line(&mut password)?;
-            let password = password.trim().to_string();
+            let password = read_password_prompt("Enter admin password: ")?;
 
             if password.len() < 8 {
                 anyhow::bail!("Password must be at least 8 characters");
             }
 
-            eprint!("Confirm password: ");
-            std::io::stderr().flush()?;
-
-            let mut confirm = String::new();
-            std::io::stdin().read_line(&mut confirm)?;
-            let confirm = confirm.trim();
+            let confirm = read_password_prompt("Confirm password: ")?;
 
             if password != confirm {
                 anyhow::bail!("Passwords do not match");
@@ -2180,6 +2182,90 @@ async fn bootstrap_admin_user(
     }
 
     Ok(())
+}
+
+/// Generate a short random ID
+/// Hash a password using bcrypt and print the hash to stdout.
+/// If no password is provided, reads from stdin with echo disabled.
+fn handle_hash_password(password: Option<String>, cost: u32) -> Result<()> {
+    let password = match password {
+        Some(p) => p,
+        None => {
+            // Check if stdin is a TTY
+            if std::io::stdin().is_terminal() {
+                read_password_prompt("Password: ")?
+            } else {
+                // Reading from pipe
+                let mut buf = String::new();
+                std::io::stdin().read_line(&mut buf)?;
+                buf.trim().to_string()
+            }
+        }
+    };
+
+    if password.is_empty() {
+        anyhow::bail!("Password cannot be empty");
+    }
+
+    let hash = bcrypt::hash(&password, cost).context("Failed to hash password")?;
+    // Print only the hash to stdout (no newline decoration) for script consumption
+    println!("{hash}");
+    Ok(())
+}
+
+/// Read a password from stdin with echo disabled (input is hidden).
+/// Falls back to plain stdin read if terminal echo cannot be disabled.
+fn read_password_prompt(prompt: &str) -> Result<String> {
+    eprint!("{prompt}");
+    std::io::stderr().flush()?;
+
+    let password = read_password_no_echo().unwrap_or_else(|_| {
+        // Fallback: plain read (echo visible)
+        let mut buf = String::new();
+        let _ = std::io::stdin().read_line(&mut buf);
+        buf
+    });
+    // Print newline since echo was disabled (user's Enter wasn't shown)
+    eprintln!();
+
+    let password = password.trim().to_string();
+    Ok(password)
+}
+
+/// Read a line from stdin with terminal echo disabled using termios.
+#[cfg(unix)]
+fn read_password_no_echo() -> Result<String> {
+    use std::os::unix::io::AsRawFd;
+
+    let stdin_fd = std::io::stdin().as_raw_fd();
+
+    // Get current terminal attributes
+    let mut termios = unsafe { std::mem::zeroed::<libc::termios>() };
+    if unsafe { libc::tcgetattr(stdin_fd, &mut termios) } != 0 {
+        anyhow::bail!("tcgetattr failed");
+    }
+
+    // Save original and disable echo
+    let original = termios;
+    termios.c_lflag &= !libc::ECHO;
+    if unsafe { libc::tcsetattr(stdin_fd, libc::TCSANOW, &termios) } != 0 {
+        anyhow::bail!("tcsetattr failed");
+    }
+
+    // Read the password
+    let mut password = String::new();
+    let result = std::io::stdin().read_line(&mut password);
+
+    // Restore original terminal attributes (always, even on error)
+    unsafe { libc::tcsetattr(stdin_fd, libc::TCSANOW, &original) };
+
+    result?;
+    Ok(password)
+}
+
+#[cfg(not(unix))]
+fn read_password_no_echo() -> Result<String> {
+    anyhow::bail!("Password echo suppression not supported on this platform");
 }
 
 /// Generate a short random ID

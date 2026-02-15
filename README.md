@@ -158,7 +158,7 @@ tools/            CLI tools and utilities
 
 ## Configuration
 
-See [backend/examples/config.toml](./backend/examples/config.toml) for the full reference.
+See [backend/crates/octo/examples/config.toml](./backend/crates/octo/examples/config.toml) for the full reference.
 
 ### Edit the config file (`~/.config/octo/config.toml`)
 
@@ -173,10 +173,9 @@ single_user = false  # true for single-user, false for multi-user
 [local.linux_users]
 enabled = true       # multi-user Linux isolation
 
-[pi]
-enabled = true
-executable = "pi"
-default_provider = "anthropic"
+[runner]
+# Pi session storage directory
+pi_sessions_dir = "~/.local/share/pi/sessions"
 
 [mmry]
 enabled = true
@@ -253,7 +252,7 @@ octoctl session list          # List sessions
 - [AGENTS.md](./AGENTS.md) -- Agent development guidelines
 - [docs/design/canonical-protocol.md](./docs/design/canonical-protocol.md) -- Canonical agent protocol spec
 - [deploy/systemd/README.md](./deploy/systemd/README.md) -- Systemd service setup
-- [backend/examples/config.toml](./backend/examples/config.toml) -- Full configuration reference
+- [backend/crates/octo/examples/config.toml](./backend/crates/octo/examples/config.toml) -- Full configuration reference
 
 ## License
 

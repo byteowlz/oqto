@@ -4,8 +4,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-/// OpenCode session as stored on disk.
-/// This matches the actual structure in ~/.local/share/opencode/storage/session/
+/// Legacy session as stored on disk.
+/// This matches the legacy structure on disk
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionInfo {
     pub id: String,
@@ -58,7 +58,7 @@ pub struct ChatSession {
     pub created_at: i64,
     /// Updated timestamp (ms since epoch)
     pub updated_at: i64,
-    /// OpenCode version that created this session
+    /// Version that created this session
     pub version: Option<String>,
     /// Whether this session is a child session
     pub is_child: bool,
@@ -105,7 +105,7 @@ pub struct HstrySearchHit {
     pub host: Option<String>,
 }
 
-/// Message metadata as stored in OpenCode's message directory.
+/// Legacy message metadata.
 #[derive(Debug, Clone, Deserialize)]
 pub struct MessageInfo {
     pub id: String,
@@ -143,7 +143,7 @@ pub struct TokenUsage {
     pub reasoning: Option<i64>,
 }
 
-/// Message part as stored in OpenCode's part directory.
+/// Legacy message part.
 #[derive(Debug, Clone, Deserialize)]
 pub struct PartInfo {
     pub id: String,

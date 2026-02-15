@@ -29,7 +29,7 @@ export type AdminSession = {
 	agent: string | null;
 	image: string;
 	image_digest: string | null;
-	opencode_port: number;
+	agent_port: number;
 	fileserver_port: number;
 	ttyd_port: number;
 	eavs_port: number | null;

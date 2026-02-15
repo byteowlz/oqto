@@ -55,6 +55,7 @@ export function useApp() {
 			createNewChat: session.createNewChat,
 			deleteChatSession: session.deleteChatSession,
 			renameChatSession: session.renameChatSession,
+			getSessionWorkspacePath: session.getSessionWorkspacePath,
 			stopWorkspaceSession: session.stopWorkspaceSession,
 			deleteWorkspaceSession: session.deleteWorkspaceSession,
 			upgradeWorkspaceSession: session.upgradeWorkspaceSession,

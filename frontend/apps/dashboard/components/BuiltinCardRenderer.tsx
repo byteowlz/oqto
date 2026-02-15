@@ -1,4 +1,4 @@
-import type { OpenCodeAgent } from "@/lib/opencode-client";
+import type { AgentInfo } from "@/lib/agent-client";
 import type { WorkspaceSession } from "@/lib/workspace-session";
 import { Activity, CalendarClock, Flame, ListTodo } from "lucide-react";
 import { memo } from "react";
@@ -61,7 +61,7 @@ export type BuiltinCardRendererProps = {
 	onLoadScheduler: () => void;
 	onDeleteSchedulerJob?: (name: string) => Promise<void>;
 	// Agent data
-	agents: OpenCodeAgent[];
+	agents: AgentInfo[];
 	// TRX data
 	topTrxIssues: TrxIssue[];
 	trxStats: {

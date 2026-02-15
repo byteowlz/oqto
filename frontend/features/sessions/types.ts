@@ -1,7 +1,7 @@
-import type { OpenCodeMessageWithParts } from "./api";
+import type { MessageWithParts } from "./api";
 
 // Extended message type for Default Chat threading - includes session info.
-export type ThreadedMessage = OpenCodeMessageWithParts & {
+export type ThreadedMessage = MessageWithParts & {
 	/** Session ID this message belongs to (for Default Chat threading). */
 	_sessionId?: string;
 	/** Session title (for displaying session dividers). */
@@ -13,7 +13,7 @@ export type ThreadedMessage = OpenCodeMessageWithParts & {
 // Group consecutive messages from the same role.
 export type MessageGroup = {
 	role: "user" | "assistant";
-	messages: OpenCodeMessageWithParts[];
+	messages: MessageWithParts[];
 	startIndex: number;
 	/** For Default Chat: session ID this group belongs to. */
 	sessionId?: string;

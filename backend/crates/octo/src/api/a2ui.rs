@@ -24,7 +24,7 @@ use crate::ws::WsEvent;
 /// Request to display an A2UI surface.
 #[derive(Debug, Deserialize)]
 pub struct A2uiSurfaceRequest {
-    /// Session ID (Octo session, not OpenCode session).
+    /// Session ID (Octo session, not legacy session).
     pub session_id: String,
     /// Unique surface identifier.
     #[serde(default = "generate_surface_id")]

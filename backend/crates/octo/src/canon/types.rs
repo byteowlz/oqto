@@ -1066,7 +1066,7 @@ pub struct CanonConversation {
     /// Parent conversation ID (for branching).
     #[serde(rename = "parentId", default, skip_serializing_if = "Option::is_none")]
     pub parent_id: Option<String>,
-    /// Source agent type (e.g., "pi", "claude-code", "opencode").
+    /// Source agent type (e.g., "pi", "claude-code").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent: Option<String>,
     /// Whether this conversation is currently active/running.

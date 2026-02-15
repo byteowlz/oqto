@@ -20,6 +20,14 @@ All notable changes to this project will be documented in this file.
 - Added onboarding bootstrap flow that creates the main workspace, writes onboarding templates, and seeds the first Pi chat session in hstry.
 - Added JSONL audit logging for authenticated HTTP requests and WebSocket commands, configurable via logging.audit_* settings.
 
+### Removed
+
+- Removed OpenCode chat history runner protocol endpoints (ListOpencodeSessions, GetOpencodeSession, GetOpencodeSessionMessages, UpdateOpencodeSession) and their request/response types.
+- Removed OpenCode chat history runner client methods and handler implementations.
+- Removed OpenCode disk-based session fallbacks from chat API handlers (get_chat_session, update_chat_session, get_chat_messages) -- all chat history now flows through hstry.
+- Renamed protocol types: OpencodeMessage -> ChatMessageProto, OpencodeMessagePart -> ChatMessagePartProto.
+- Added UpdateWorkspaceChatSession runner endpoint to replace UpdateOpencodeSession for session title updates via hstry SQLite.
+
 ### Changed
 
 - Replaced cass-backed session search with hstry search and added line-based scroll resolution for search hits.
@@ -38,6 +46,11 @@ All notable changes to this project will be documented in this file.
 - Settings editor now allows clearing numeric fields without browser "null" input errors.
 - `tools/test-ssh-proxy.sh` now auto-adds `~/.ssh/id_ed25519` if the agent has no keys loaded.
 - `tools/test-ssh-proxy.sh` now starts an `ssh-agent` if `SSH_AUTH_SOCK` is unset.
+- Runner now creates hstry conversation metadata as soon as Pi reports the native session id.
+- Runner now migrates hstry history on session re-key so existing chats keep their full history.
+- New Pi chats now use an octo- prefixed provisional ID so Octo IDs never look like Pi UUIDs.
+- Multi-user chat history now lists Pi sessions from hstry via the runner and fetches Pi messages from hstry for workspace chats.
+- Updated hstry install template to point Pi adapter sources at ~/.pi/agent/sessions.
 - `tools/test-ssh-proxy.sh` now places its proxy socket under `~/.config/octo` so it is visible inside the sandbox.
 - `tools/test-ssh-proxy.sh` now runs a host SSH test by default (use `--no-host` to skip).
 - `tools/test-ssh-proxy.sh` now bypasses system SSH config during host tests to avoid permission errors.
@@ -58,6 +71,7 @@ All notable changes to this project will be documented in this file.
 - Pi todo extension now persists todos in the central Pi store instead of writing to repo paths.
 - Trx view now disables the hide-closed filter when viewing closed issues so completed items can be listed.
 - Pi list_sessions now returns the resolved session ID (Pi native ID when known) to avoid reattach mismatches.
+- Linux user ownership now accepts sanitized GECOS fields without a colon to avoid login failures after chfn.
 
 ### Security
 

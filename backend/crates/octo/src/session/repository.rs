@@ -8,7 +8,7 @@ use super::models::{Session, SessionStatus};
 /// All session columns for SELECT queries.
 const SESSION_COLUMNS: &str = r#"
     id, readable_id, container_id, container_name, user_id, workspace_path, agent, image, image_digest,
-    opencode_port, fileserver_port, ttyd_port, eavs_port, agent_base_port, max_agents,
+    agent_port, fileserver_port, ttyd_port, eavs_port, agent_base_port, max_agents,
     eavs_key_id, eavs_key_hash, eavs_virtual_key, mmry_port,
     status, runtime_mode, created_at, started_at, stopped_at, last_activity_at, error_message
 "#;
@@ -35,7 +35,7 @@ impl SessionRepository {
             r#"
             INSERT INTO sessions (
                 id, readable_id, container_id, container_name, user_id, workspace_path, agent, image, image_digest,
-                opencode_port, fileserver_port, ttyd_port, eavs_port, agent_base_port, max_agents,
+                agent_port, fileserver_port, ttyd_port, eavs_port, agent_base_port, max_agents,
                 eavs_key_id, eavs_key_hash, eavs_virtual_key, mmry_port,
                 status, runtime_mode, created_at, started_at, stopped_at, last_activity_at, error_message
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -50,7 +50,7 @@ impl SessionRepository {
         .bind(&session.agent)
         .bind(&session.image)
         .bind(&session.image_digest)
-        .bind(session.opencode_port)
+        .bind(session.agent_port)
         .bind(session.fileserver_port)
         .bind(session.ttyd_port)
         .bind(session.eavs_port)
@@ -232,16 +232,16 @@ impl SessionRepository {
     pub async fn update_ports(
         &self,
         id: &str,
-        opencode_port: i64,
+        agent_port: i64,
         fileserver_port: i64,
         ttyd_port: i64,
         mmry_port: Option<i64>,
         agent_base_port: Option<i64>,
     ) -> Result<()> {
         sqlx::query(
-            "UPDATE sessions SET opencode_port = ?, fileserver_port = ?, ttyd_port = ?, mmry_port = ?, agent_base_port = ? WHERE id = ?",
+            "UPDATE sessions SET agent_port = ?, fileserver_port = ?, ttyd_port = ?, mmry_port = ?, agent_base_port = ? WHERE id = ?",
         )
-        .bind(opencode_port)
+        .bind(agent_port)
         .bind(fileserver_port)
         .bind(ttyd_port)
         .bind(mmry_port)
@@ -470,8 +470,8 @@ impl SessionRepository {
     }
 
     /// Find a free port range with a specific number of agent ports.
-    /// Returns the first available base port (opencode_port).
-    /// Allocates: opencode (base), fileserver (base+1), ttyd (base+2), agents (base+3 to base+3+agent_count-1).
+    /// Returns the first available base port (agent_port).
+    /// Allocates: agent (base), fileserver (base+1), ttyd (base+2), agents (base+3 to base+3+agent_count-1).
     pub async fn find_free_port_range_with_agents(
         &self,
         start_port: i64,
@@ -480,7 +480,7 @@ impl SessionRepository {
         // Get all port ranges currently in use by active sessions
         let used_ranges: Vec<(i64, i64, i64, Option<i64>, Option<i64>)> = sqlx::query_as(
             r#"
-            SELECT opencode_port, fileserver_port, ttyd_port, agent_base_port, max_agents
+            SELECT agent_port, fileserver_port, ttyd_port, agent_base_port, max_agents
             FROM sessions
             WHERE status IN ('pending', 'starting', 'running')
             "#,
@@ -489,7 +489,7 @@ impl SessionRepository {
         .await
         .context("fetching used ports")?;
 
-        // We need: opencode, fileserver, ttyd (3 ports) + agent_count ports for sub-agents
+        // We need: agent (reserved), fileserver, ttyd (3 ports) + agent_count ports for sub-agents
         let ports_needed = 3 + agent_count;
         let mut port = start_port;
 

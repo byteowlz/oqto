@@ -97,8 +97,8 @@ tempfile = "3"
 axum-test = "17"
 
 # gRPC
-tonic = "0.12"
-prost = "0.13"
+tonic = "0.14"
+prost = "0.14"
 
 # External crates
 hstry-core = { git = "https://github.com/byteowlz/hstry", branch = "main" }
@@ -142,3 +142,4 @@ derivable_impls = "warn"
 too_many_arguments = "allow"
 type_complexity = "allow"
 module_inception = "allow"
+

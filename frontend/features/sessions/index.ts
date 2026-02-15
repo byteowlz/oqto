@@ -4,7 +4,6 @@
  * Provides session management functionality including:
  * - WebSocket session connections
  * - Session event subscriptions
- * - OpenCode integration
  * - Workspace session management
  */
 
@@ -22,14 +21,6 @@ export {
 	useSessionEvents,
 	type TransportMode,
 	type UseSessionEventsOptions,
-	// OpenCode
-	useOpenCodeSessions,
-	useOpenCodeMessages,
-	useCreateOpenCodeSession,
-	useSendMessage,
-	useAbortSession,
-	useInvalidateOpenCode,
-	openCodeKeys,
 	// Workspace sessions
 	useWorkspaceSessions,
 	useWorkspaceSession,

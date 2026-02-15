@@ -406,15 +406,12 @@ pub async fn list_workspace_dirs(
         let path = entry.path();
         if path.is_dir() {
             let name = entry.file_name().to_str().unwrap_or_default().to_string();
-            let rel = path
-                .strip_prefix(&root)
-                .unwrap_or(&path)
-                .to_string_lossy()
-                .to_string();
+            // Return absolute path for proper session creation
             let logo = find_project_logo(&path, &name);
+            let abs_path = path.canonicalize().unwrap_or(path);
             dirs.push(WorkspaceDirEntry {
                 name,
-                path: if rel.is_empty() { ".".to_string() } else { rel },
+                path: abs_path.to_string_lossy().to_string(),
                 entry_type: "directory".to_string(),
                 logo,
             });

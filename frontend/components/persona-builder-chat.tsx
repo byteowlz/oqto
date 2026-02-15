@@ -4,14 +4,14 @@ import { MarkdownRenderer } from "@/components/data-display";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import {
-	type OpenCodeMessageWithParts,
-	type OpenCodeSession,
+	type MessageWithParts,
+	type AgentSession,
 	createSession,
 	fetchMessages,
 	fetchSessions,
 	invalidateMessageCache,
 	sendMessageAsync,
-} from "@/lib/opencode-client";
+} from "@/lib/agent-client";
 import { cn } from "@/lib/utils";
 import { Bot, Loader2, MessageSquare, Plus, Send, User } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -22,21 +22,21 @@ const SESSION_TITLE_PREFIX = "Persona Builder";
 type ChatState = "idle" | "sending";
 
 interface PersonaBuilderChatProps {
-	opencodeBaseUrl: string | null;
+	agentBaseUrl: string | null;
 	onPersonaCreated?: (personaId: string) => void;
 	className?: string;
 }
 
 export function PersonaBuilderChat({
-	opencodeBaseUrl,
+	agentBaseUrl,
 	onPersonaCreated,
 	className,
 }: PersonaBuilderChatProps) {
-	const [sessions, setSessions] = useState<OpenCodeSession[]>([]);
+	const [sessions, setSessions] = useState<AgentSession[]>([]);
 	const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
 		null,
 	);
-	const [messages, setMessages] = useState<OpenCodeMessageWithParts[]>([]);
+	const [messages, setMessages] = useState<MessageWithParts[]>([]);
 	const [messageInput, setMessageInput] = useState("");
 	const [chatState, setChatState] = useState<ChatState>("idle");
 	const [isLoading, setIsLoading] = useState(true);
@@ -52,9 +52,9 @@ export function PersonaBuilderChat({
 
 	// Load sessions on mount
 	useEffect(() => {
-		if (!opencodeBaseUrl) return;
+		if (!agentBaseUrl) return;
 		setIsLoading(true);
-		fetchSessions(opencodeBaseUrl)
+		fetchSessions(agentBaseUrl)
 			.then((allSessions) => {
 				setSessions(allSessions);
 				// Auto-select the most recent persona builder session
@@ -70,21 +70,21 @@ export function PersonaBuilderChat({
 			})
 			.catch(console.error)
 			.finally(() => setIsLoading(false));
-	}, [opencodeBaseUrl]);
+	}, [agentBaseUrl]);
 
 	// Load messages when session changes
 	const loadMessages = useCallback(async () => {
-		if (!opencodeBaseUrl || !selectedSessionId) {
+		if (!agentBaseUrl || !selectedSessionId) {
 			setMessages([]);
 			return;
 		}
 		try {
-			const data = await fetchMessages(opencodeBaseUrl, selectedSessionId);
+			const data = await fetchMessages(agentBaseUrl, selectedSessionId);
 			setMessages(data);
 		} catch (err) {
 			console.error("Failed to load messages:", err);
 		}
-	}, [opencodeBaseUrl, selectedSessionId]);
+	}, [agentBaseUrl, selectedSessionId]);
 
 	useEffect(() => {
 		loadMessages();
@@ -92,12 +92,12 @@ export function PersonaBuilderChat({
 
 	// Poll for message updates (replaces legacy SSE subscription)
 	useEffect(() => {
-		if (!opencodeBaseUrl || !selectedSessionId) return;
+		if (!agentBaseUrl || !selectedSessionId) return;
 		const interval = setInterval(() => {
 			loadMessages();
 		}, 3000);
 		return () => clearInterval(interval);
-	}, [opencodeBaseUrl, selectedSessionId, loadMessages]);
+	}, [agentBaseUrl, selectedSessionId, loadMessages]);
 
 	// Scroll to bottom when messages change
 	useEffect(() => {
@@ -108,7 +108,7 @@ export function PersonaBuilderChat({
 
 	// Create new session
 	const handleNewSession = useCallback(async () => {
-		if (!opencodeBaseUrl) return;
+		if (!agentBaseUrl) return;
 		try {
 			const timestamp = new Date().toLocaleString("en-US", {
 				month: "short",
@@ -117,7 +117,7 @@ export function PersonaBuilderChat({
 				minute: "2-digit",
 			});
 			const session = await createSession(
-				opencodeBaseUrl,
+				agentBaseUrl,
 				`${SESSION_TITLE_PREFIX} - ${timestamp}`,
 			);
 			setSessions((prev) => [session, ...prev]);
@@ -127,11 +127,11 @@ export function PersonaBuilderChat({
 		} catch (err) {
 			console.error("Failed to create session:", err);
 		}
-	}, [opencodeBaseUrl]);
+	}, [agentBaseUrl]);
 
 	// Send message
 	const handleSend = useCallback(async () => {
-		if (!opencodeBaseUrl || !messageInput.trim()) return;
+		if (!agentBaseUrl || !messageInput.trim()) return;
 
 		// Create session if none selected
 		let sessionId = selectedSessionId;
@@ -144,7 +144,7 @@ export function PersonaBuilderChat({
 					minute: "2-digit",
 				});
 				const session = await createSession(
-					opencodeBaseUrl,
+					agentBaseUrl,
 					`${SESSION_TITLE_PREFIX} - ${timestamp}`,
 				);
 				setSessions((prev) => [session, ...prev]);
@@ -162,7 +162,7 @@ export function PersonaBuilderChat({
 			: `@${PERSONA_BUILDER_AGENT} ${messageInput.trim()}`;
 
 		// Optimistic update
-		const optimisticMessage: OpenCodeMessageWithParts = {
+		const optimisticMessage: MessageWithParts = {
 			info: {
 				id: `temp-${Date.now()}`,
 				sessionID: sessionId,
@@ -190,15 +190,15 @@ export function PersonaBuilderChat({
 		}
 
 		try {
-			await sendMessageAsync(opencodeBaseUrl, sessionId, messageText);
-			invalidateMessageCache(opencodeBaseUrl, sessionId);
+			await sendMessageAsync(agentBaseUrl, sessionId, messageText);
+			invalidateMessageCache(agentBaseUrl, sessionId);
 			loadMessages();
 		} catch (err) {
 			console.error("Failed to send message:", err);
 			setChatState("idle");
 			setMessages((prev) => prev.filter((m) => !m.info.id.startsWith("temp-")));
 		}
-	}, [opencodeBaseUrl, selectedSessionId, messageInput, loadMessages]);
+	}, [agentBaseUrl, selectedSessionId, messageInput, loadMessages]);
 
 	// Handle Enter key
 	const handleKeyDown = useCallback(
@@ -226,7 +226,7 @@ export function PersonaBuilderChat({
 		[],
 	);
 
-	if (!opencodeBaseUrl) {
+	if (!agentBaseUrl) {
 		return (
 			<div
 				className={cn(

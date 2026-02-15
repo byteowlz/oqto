@@ -7,10 +7,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { useApp } from "@/hooks/use-app";
 import { fileserverProxyBaseUrl } from "@/lib/control-plane-client";
 import {
-	type OpenCodeAgent,
+	type AgentInfo,
 	fetchAgents,
 	sendPartsAsync,
-} from "@/lib/opencode-client";
+} from "@/lib/agent-client";
 import { cn } from "@/lib/utils";
 import { Save, Search } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -125,14 +125,14 @@ function parseAgentMarkdown(content: string): AgentFormState {
 export function AgentsApp() {
 	const {
 		locale,
-		opencodeBaseUrl,
-		opencodeDirectory,
+		agentBaseUrl,
+		agentDirectory,
 		selectedWorkspaceSession,
 		createNewChat,
 		refreshOpencodeSessions,
 		setActiveAppId,
 	} = useApp();
-	const [agents, setAgents] = useState<OpenCodeAgent[]>([]);
+	const [agents, setAgents] = useState<AgentInfo[]>([]);
 	const [search, setSearch] = useState("");
 	const [loading, setLoading] = useState(false);
 	const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
@@ -144,7 +144,7 @@ export function AgentsApp() {
 		() => ({
 			de: {
 				title: "Agenten",
-				subtitle: "OpenCode-Agenten erstellen und bearbeiten.",
+				subtitle: "Agenten erstellen und bearbeiten.",
 				search: "Agenten suchen",
 				noAgents: "Keine Agenten gefunden",
 				start: "Chat starten",
@@ -154,7 +154,7 @@ export function AgentsApp() {
 			},
 			en: {
 				title: "Agents",
-				subtitle: "Create and edit OpenCode agents.",
+				subtitle: "Create and edit agents.",
 				search: "Search agents",
 				noAgents: "No agents found",
 				start: "Start chat",
@@ -168,16 +168,16 @@ export function AgentsApp() {
 	const t = copy[locale];
 
 	useEffect(() => {
-		if (!opencodeBaseUrl) return;
+		if (!agentBaseUrl) return;
 		setLoading(true);
-		fetchAgents(opencodeBaseUrl, { directory: opencodeDirectory })
+		fetchAgents(agentBaseUrl, { directory: agentDirectory })
 			.then((list) => setAgents(list))
 			.catch((err) => {
 				console.error("Failed to fetch agents:", err);
 				setAgents([]);
 			})
 			.finally(() => setLoading(false));
-	}, [opencodeBaseUrl, opencodeDirectory]);
+	}, [agentBaseUrl, agentDirectory]);
 
 	const filteredAgents = useMemo(() => {
 		const term = search.trim().toLowerCase();
@@ -225,17 +225,17 @@ export function AgentsApp() {
 
 	const handleStartChat = useCallback(
 		async (agentId: string) => {
-			if (!opencodeBaseUrl) return;
+			if (!agentBaseUrl) return;
 			setStartingAgentId(agentId);
 			try {
 				const session = await createNewChat();
 				if (session) {
 					await sendPartsAsync(
-						opencodeBaseUrl,
+						agentBaseUrl,
 						session.id,
 						[{ type: "agent", name: agentId }],
 						undefined,
-						{ directory: opencodeDirectory },
+						{ directory: agentDirectory },
 					);
 					await refreshOpencodeSessions();
 					setActiveAppId("sessions");
@@ -248,8 +248,8 @@ export function AgentsApp() {
 		},
 		[
 			createNewChat,
-			opencodeBaseUrl,
-			opencodeDirectory,
+			agentBaseUrl,
+			agentDirectory,
 			refreshOpencodeSessions,
 			setActiveAppId,
 		],
@@ -282,8 +282,8 @@ export function AgentsApp() {
 				const text = await res.text().catch(() => res.statusText);
 				throw new Error(text || `Save failed (${res.status})`);
 			}
-			if (opencodeBaseUrl) {
-				await fetchAgents(opencodeBaseUrl)
+			if (agentBaseUrl) {
+				await fetchAgents(agentBaseUrl)
 					.then((list) => setAgents(list))
 					.catch(() => null);
 			}
@@ -292,7 +292,7 @@ export function AgentsApp() {
 		} finally {
 			setSaving(false);
 		}
-	}, [form, opencodeBaseUrl, selectedWorkspaceSession?.id]);
+	}, [form, agentBaseUrl, selectedWorkspaceSession?.id]);
 
 	const toggleListValue = (values: string[], value: string) =>
 		values.includes(value)
@@ -559,7 +559,7 @@ export function AgentsApp() {
 
 				<div className="border border-border rounded-lg bg-muted/40 overflow-hidden h-[500px]">
 					<PersonaBuilderChat
-						opencodeBaseUrl={opencodeBaseUrl}
+						agentBaseUrl={agentBaseUrl}
 						onPersonaCreated={(personaId) => {
 							// Could refresh agents list or navigate to persona
 							console.log("Persona created:", personaId);

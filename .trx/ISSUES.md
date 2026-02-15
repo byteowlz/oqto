@@ -176,6 +176,8 @@ Implementation:
 ...
 
 
+### [octo-eez0] octo-browser session is killed when sending instructions to chat (P2, bug)
+
 ### [octo-af5j.6.4] octo-setup web wizard (P2, feature)
 Web-based setup wizard served by octo itself for first-run configuration. Triggered when octo starts with no config or incomplete config.
 
@@ -833,6 +835,17 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [octo-1194] Remove OpenCode harness code (closed 2026-02-15)
+- [octo-1194.6] Phase 5: Remove agent and session service OpenCode references (closed 2026-02-15)
+- [octo-1194.10] Phase 9: Regenerate TypeScript types and final cleanup (closed 2026-02-15)
+- [octo-1194.9] Phase 8: Clean up remaining scattered OpenCode references (closed 2026-02-15)
+- [octo-1194.8] Phase 7: Delete opencode-client.ts and useOpenCode.ts (closed 2026-02-15)
+- [octo-1194.7] Phase 6: Rename opencode-client.ts types to generic names (closed 2026-02-15)
+- [octo-1194.5] Phase 4: Remove local/runtime.rs OpenCode config (closed 2026-02-15)
+- [octo-1194.4] Phase 3: Remove OpenCode session spawning from runner (closed 2026-02-15)
+- [octo-1194.3] Phase 2: Remove agent_rpc module (closed 2026-02-15)
+- [octo-1194.2] Phase 1: Remove OpenCode proxy routes and SSE (closed 2026-02-15)
+- [octo-1194.1] Phase 0: Delete dead WS and adapter files (closed 2026-02-15)
 - [octo-af5j.6.5] setup.sh: EAVS mandatory LLM proxy + octo user home dir (closed 2026-02-13)
 - [octo-62c1] Chat sessions: zombie entries, wrong titles, empty responses after reattach (closed 2026-02-13)
 - [octo-e8q8] There is no way to display closed trx issues (closed 2026-02-13)
@@ -1417,9 +1430,9 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
 - [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
 - [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
-- [octo-k8z1.2] Backend: WebSocket proxy for screencast stream (closed )
 - [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (closed )
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
+- [octo-k8z1.2] Backend: WebSocket proxy for screencast stream (closed )
+- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )

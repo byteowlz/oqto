@@ -19,12 +19,12 @@ import {
 	type PermissionConfig,
 	type ShareMode,
 	type WorkspaceConfig,
-	getGlobalOpencodeConfig,
+	getGlobalAgentConfig,
 	getWorkspaceConfig,
 	restartWorkspaceSession,
 	saveWorkspaceConfig,
 } from "@/lib/control-plane-client";
-import { fetchAgents } from "@/lib/opencode-client";
+import { fetchAgents } from "@/lib/agent-client";
 import { cn } from "@/lib/utils";
 import {
 	AlertCircle,
@@ -69,18 +69,18 @@ export function AgentSettingsView({
 }: AgentSettingsViewProps) {
 	const {
 		selectedWorkspaceSession,
-		opencodeBaseUrl,
-		opencodeDirectory,
+		agentBaseUrl,
+		agentDirectory,
 		busySessions,
 		refreshWorkspaceSessions,
 	} = useApp();
 	const sessionId = selectedWorkspaceSession?.id;
 
-	// Global config (~/.config/opencode/opencode.json) - read-only reference
+	// Global config (legacy) - read-only reference
 	const [globalConfig, setGlobalConfig] = useState<WorkspaceConfig | null>(
 		null,
 	);
-	// Local workspace config (opencode.json in workspace root) - editable
+	// Local workspace config - editable
 	const [localConfig, setLocalConfig] = useState<WorkspaceConfig | null>(null);
 	const [agents, setAgents] = useState<AgentInfo[]>([]);
 	const [loading, setLoading] = useState(true);
@@ -108,18 +108,18 @@ export function AgentSettingsView({
 			try {
 				// Fetch both global and local configs in parallel
 				const [globalData, localData] = await Promise.all([
-					getGlobalOpencodeConfig(),
+					getGlobalAgentConfig(),
 					getWorkspaceConfig(sessionId),
 				]);
 
-				// Fetch agents from opencode API (requires running instance)
+				// Fetch agents from agent API (requires running instance)
 				let agentsList: AgentInfo[] = [];
-				if (opencodeBaseUrl) {
+				if (agentBaseUrl) {
 					try {
-						const agentsData = await fetchAgents(opencodeBaseUrl, {
-							directory: opencodeDirectory,
+						const agentsData = await fetchAgents(agentBaseUrl, {
+							directory: agentDirectory,
 						});
-						// fetchAgents returns an array of OpenCodeAgent objects
+						// fetchAgents returns an array of AgentInfo objects
 						agentsList = (agentsData || []).map((agent) => ({
 							id: agent.id,
 							name: agent.name || agent.id,
@@ -145,7 +145,7 @@ export function AgentSettingsView({
 				setLoading(false);
 			}
 		},
-		[sessionId, opencodeBaseUrl, opencodeDirectory],
+		[sessionId, agentBaseUrl, agentDirectory],
 	);
 
 	// For save operations, we work with local config only
@@ -427,11 +427,11 @@ export function AgentSettingsView({
 					</div>
 				)}
 
-				{/* OpenCode Config Section */}
+				{/* Agent Config Section */}
 				<div className="border border-border rounded-lg overflow-hidden">
 					<div className="flex items-center justify-between px-3 py-2 bg-muted/50 border-b border-border">
 						<Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-							OpenCode Configuration
+							Agent Configuration
 						</Label>
 						<Button
 							type="button"

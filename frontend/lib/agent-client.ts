@@ -2,7 +2,7 @@ import { getAuthHeaders } from "./control-plane-client";
 
 // Message cache for client-side caching
 type MessageCache = {
-	messages: OpenCodeMessageWithParts[];
+	messages: AgentMessageWithParts[];
 	timestamp: number;
 	sessionId: string;
 };
@@ -10,12 +10,12 @@ type MessageCache = {
 const messageCache = new Map<string, MessageCache>();
 const MESSAGE_CACHE_TTL = 30_000; // 30 seconds
 
-type OpencodeRequestOptions = {
+type AgentRequestOptions = {
 	directory?: string;
 };
 
 // Session type matching actual API response
-export type OpenCodeSession = {
+export type AgentSession = {
 	id: string;
 	title: string;
 	time: {
@@ -34,7 +34,7 @@ export type OpenCodeSession = {
 };
 
 // Part types
-export type OpenCodePart = {
+export type MessagePart = {
 	id: string;
 	sessionID: string;
 	messageID: string;
@@ -69,7 +69,7 @@ export type OpenCodePart = {
 };
 
 // Message types
-export type OpenCodeUserMessage = {
+export type UserMessage = {
 	id: string;
 	sessionID: string;
 	role: "user";
@@ -78,7 +78,7 @@ export type OpenCodeUserMessage = {
 	model?: { providerID: string; modelID: string };
 };
 
-export type OpenCodeAssistantMessage = {
+export type AssistantMessage = {
 	id: string;
 	sessionID: string;
 	role: "assistant";
@@ -96,19 +96,19 @@ export type OpenCodeAssistantMessage = {
 	error?: { type: string; message?: string };
 };
 
-export type OpenCodeMessage = OpenCodeUserMessage | OpenCodeAssistantMessage;
+export type AgentMessage = UserMessage | AssistantMessage;
 
 // API response for messages endpoint
-export type OpenCodeMessageWithParts = {
-	info: OpenCodeMessage;
-	parts: OpenCodePart[];
+export type AgentMessageWithParts = {
+	info: AgentMessage;
+	parts: MessagePart[];
 };
 
 const trimTrailingSlash = (value: string) => value.replace(/\/$/, "");
 
-const base = (opencodeBaseUrl: string) => {
-	if (!opencodeBaseUrl) throw new Error("OpenCode base URL is not configured");
-	return trimTrailingSlash(opencodeBaseUrl);
+const base = (agentBaseUrl: string) => {
+	if (!agentBaseUrl) throw new Error("Agent base URL is not configured");
+	return trimTrailingSlash(agentBaseUrl);
 };
 
 const withDirectory = (url: string, directory?: string) => {
@@ -137,25 +137,25 @@ async function handleResponse<T>(res: Response): Promise<T> {
 }
 
 export async function fetchSessions(
-	opencodeBaseUrl: string,
-	options?: OpencodeRequestOptions,
-): Promise<OpenCodeSession[]> {
+	agentBaseUrl: string,
+	options?: AgentRequestOptions,
+): Promise<AgentSession[]> {
 	const res = await fetch(
-		withDirectory(`${base(opencodeBaseUrl)}/session`, options?.directory),
+		withDirectory(`${base(agentBaseUrl)}/session`, options?.directory),
 		{
 			cache: "no-store",
 			credentials: "include",
 		},
 	);
-	return handleResponse<OpenCodeSession[]>(res);
+	return handleResponse<AgentSession[]>(res);
 }
 
 export async function fetchMessages(
-	opencodeBaseUrl: string,
+	agentBaseUrl: string,
 	sessionId: string,
 	options?: { skipCache?: boolean; directory?: string },
-): Promise<OpenCodeMessageWithParts[]> {
-	const cacheKey = `${opencodeBaseUrl}:${sessionId}:${options?.directory ?? ""}`;
+): Promise<AgentMessageWithParts[]> {
+	const cacheKey = `${agentBaseUrl}:${sessionId}:${options?.directory ?? ""}`;
 
 	// Check cache unless explicitly skipped
 	if (!options?.skipCache) {
@@ -168,12 +168,12 @@ export async function fetchMessages(
 	// Fetch from server
 	const res = await fetch(
 		withDirectory(
-			`${base(opencodeBaseUrl)}/session/${sessionId}/message`,
+			`${base(agentBaseUrl)}/session/${sessionId}/message`,
 			options?.directory,
 		),
 		{ cache: "no-store", credentials: "include" },
 	);
-	const messages = await handleResponse<OpenCodeMessageWithParts[]>(res);
+	const messages = await handleResponse<AgentMessageWithParts[]>(res);
 
 	// Update cache
 	messageCache.set(cacheKey, {
@@ -187,11 +187,11 @@ export async function fetchMessages(
 
 // Invalidate cache for a session (call this when SSE events indicate changes)
 export function invalidateMessageCache(
-	opencodeBaseUrl: string,
+	agentBaseUrl: string,
 	sessionId: string,
 	directory?: string,
 ): void {
-	const cacheKey = `${opencodeBaseUrl}:${sessionId}:${directory ?? ""}`;
+	const cacheKey = `${agentBaseUrl}:${sessionId}:${directory ?? ""}`;
 	messageCache.delete(cacheKey);
 }
 
@@ -201,16 +201,16 @@ export function clearMessageCache(): void {
 }
 
 export async function sendMessage(
-	opencodeBaseUrl: string,
+	agentBaseUrl: string,
 	sessionId: string,
 	content: string,
 	model?: { providerID: string; modelID: string },
-	options?: OpencodeRequestOptions,
+	options?: AgentRequestOptions,
 ) {
 	// Correct endpoint is /message with POST, body contains parts array
 	const res = await fetch(
 		withDirectory(
-			`${base(opencodeBaseUrl)}/session/${sessionId}/message`,
+			`${base(agentBaseUrl)}/session/${sessionId}/message`,
 			options?.directory,
 		),
 		{
@@ -223,20 +223,20 @@ export async function sendMessage(
 			credentials: "include",
 		},
 	);
-	return handleResponse<OpenCodeMessageWithParts>(res);
+	return handleResponse<AgentMessageWithParts>(res);
 }
 
 export async function sendMessageAsync(
-	opencodeBaseUrl: string,
+	agentBaseUrl: string,
 	sessionId: string,
 	content: string,
 	model?: { providerID: string; modelID: string },
-	options?: OpencodeRequestOptions,
+	options?: AgentRequestOptions,
 ) {
 	// Async version - returns immediately, use SSE for updates
 	const res = await fetch(
 		withDirectory(
-			`${base(opencodeBaseUrl)}/session/${sessionId}/prompt_async`,
+			`${base(agentBaseUrl)}/session/${sessionId}/prompt_async`,
 			options?.directory,
 		),
 		{
@@ -257,24 +257,24 @@ export async function sendMessageAsync(
 	return true;
 }
 
-export type OpenCodePartInput =
+export type MessagePartInput =
 	| { type: "text"; text: string }
 	| { type: "agent"; name: string; id?: string }
 	| { type: "file"; mime: string; url: string; filename?: string };
 
 export async function sendPartsAsync(
-	opencodeBaseUrl: string,
+	agentBaseUrl: string,
 	sessionId: string,
-	parts: OpenCodePartInput[],
+	parts: MessagePartInput[],
 	model?: { providerID: string; modelID: string },
-	options?: OpencodeRequestOptions,
+	options?: AgentRequestOptions,
 ) {
 	const body: Record<string, unknown> = { parts };
 	if (model) body.model = model;
 
 	const res = await fetch(
 		withDirectory(
-			`${base(opencodeBaseUrl)}/session/${sessionId}/prompt_async`,
+			`${base(agentBaseUrl)}/session/${sessionId}/prompt_async`,
 			options?.directory,
 		),
 		{
@@ -292,13 +292,13 @@ export async function sendPartsAsync(
 }
 
 export async function abortSession(
-	opencodeBaseUrl: string,
+	agentBaseUrl: string,
 	sessionId: string,
-	options?: OpencodeRequestOptions,
+	options?: AgentRequestOptions,
 ): Promise<boolean> {
 	const res = await fetch(
 		withDirectory(
-			`${base(opencodeBaseUrl)}/session/${sessionId}/abort`,
+			`${base(agentBaseUrl)}/session/${sessionId}/abort`,
 			options?.directory,
 		),
 		{
@@ -309,7 +309,7 @@ export async function abortSession(
 	return handleResponse<boolean>(res);
 }
 
-export type OpenCodeAgent = {
+export type AgentInfo = {
 	id: string;
 	name?: string;
 	description?: string;
@@ -318,21 +318,21 @@ export type OpenCodeAgent = {
 };
 
 export async function fetchAgents(
-	opencodeBaseUrl: string,
-	options?: OpencodeRequestOptions,
-): Promise<OpenCodeAgent[]> {
+	agentBaseUrl: string,
+	options?: AgentRequestOptions,
+): Promise<AgentInfo[]> {
 	const res = await fetch(
-		withDirectory(`${base(opencodeBaseUrl)}/agent`, options?.directory),
+		withDirectory(`${base(agentBaseUrl)}/agent`, options?.directory),
 		{
 			cache: "no-store",
 			credentials: "include",
 		},
 	);
-	return handleResponse<OpenCodeAgent[]>(res);
+	return handleResponse<AgentInfo[]>(res);
 }
 
-// Command definition from opencode config
-export type OpenCodeCommand = {
+// Command definition from agent config
+export type AgentCommand = {
 	template: string;
 	description?: string;
 	agent?: string;
@@ -340,15 +340,15 @@ export type OpenCodeCommand = {
 	subtask?: boolean;
 };
 
-// Config response from opencode
-export type OpenCodeConfig = {
+// Config response from agent API
+export type AgentConfig = {
 	model?: string;
 	agent?: string;
-	command?: Record<string, OpenCodeCommand>;
+	command?: Record<string, AgentCommand>;
 	// Other config fields we don't need for now
 };
 
-export type OpenCodeProviderModel = {
+export type ProviderModel = {
 	id: string;
 	name?: string;
 	limit?: {
@@ -356,15 +356,15 @@ export type OpenCodeProviderModel = {
 	};
 };
 
-export type OpenCodeProvider = {
+export type Provider = {
 	id: string;
 	name?: string;
-	models?: Record<string, OpenCodeProviderModel>;
+	models?: Record<string, ProviderModel>;
 };
 
-export type OpenCodeProvidersResponse = {
-	providers?: OpenCodeProvider[];
-	all?: OpenCodeProvider[];
+export type ProvidersResponse = {
+	providers?: Provider[];
+	all?: Provider[];
 	default?: {
 		providerID?: string;
 		modelID?: string;
@@ -372,25 +372,25 @@ export type OpenCodeProvidersResponse = {
 };
 
 export async function fetchConfig(
-	opencodeBaseUrl: string,
-	options?: OpencodeRequestOptions,
-): Promise<OpenCodeConfig> {
+	agentBaseUrl: string,
+	options?: AgentRequestOptions,
+): Promise<AgentConfig> {
 	const res = await fetch(
-		withDirectory(`${base(opencodeBaseUrl)}/config`, options?.directory),
+		withDirectory(`${base(agentBaseUrl)}/config`, options?.directory),
 		{
 			cache: "no-store",
 			credentials: "include",
 		},
 	);
-	return handleResponse<OpenCodeConfig>(res);
+	return handleResponse<AgentConfig>(res);
 }
 
 export async function fetchProviders(
-	opencodeBaseUrl: string,
-	options?: OpencodeRequestOptions,
-): Promise<OpenCodeProvidersResponse> {
+	agentBaseUrl: string,
+	options?: AgentRequestOptions,
+): Promise<ProvidersResponse> {
 	const providersUrl = withDirectory(
-		`${base(opencodeBaseUrl)}/config/providers`,
+		`${base(agentBaseUrl)}/config/providers`,
 		options?.directory,
 	);
 	try {
@@ -400,14 +400,14 @@ export async function fetchProviders(
 			headers: getAuthHeaders(),
 		});
 		if (res.ok) {
-			return handleResponse<OpenCodeProvidersResponse>(res);
+			return handleResponse<ProvidersResponse>(res);
 		}
 	} catch {
 		// Fall back to /provider
 	}
 
 	const fallbackUrl = withDirectory(
-		`${base(opencodeBaseUrl)}/provider`,
+		`${base(agentBaseUrl)}/provider`,
 		options?.directory,
 	);
 	const res = await fetch(fallbackUrl, {
@@ -415,11 +415,11 @@ export async function fetchProviders(
 		credentials: "include",
 		headers: getAuthHeaders(),
 	});
-	return handleResponse<OpenCodeProvidersResponse>(res);
+	return handleResponse<ProvidersResponse>(res);
 }
 
 // Command from the /command list endpoint (includes built-in + custom commands)
-export type OpenCodeCommandInfo = {
+export type AgentCommandInfo = {
 	name: string;
 	description?: string;
 	agent?: string;
@@ -429,33 +429,33 @@ export type OpenCodeCommandInfo = {
 };
 
 export async function fetchCommands(
-	opencodeBaseUrl: string,
-	options?: OpencodeRequestOptions,
-): Promise<OpenCodeCommandInfo[]> {
+	agentBaseUrl: string,
+	options?: AgentRequestOptions,
+): Promise<AgentCommandInfo[]> {
 	const res = await fetch(
-		withDirectory(`${base(opencodeBaseUrl)}/command`, options?.directory),
+		withDirectory(`${base(agentBaseUrl)}/command`, options?.directory),
 		{
 			cache: "no-store",
 			credentials: "include",
 		},
 	);
-	return handleResponse<OpenCodeCommandInfo[]>(res);
+	return handleResponse<AgentCommandInfo[]>(res);
 }
 
 export async function runShellCommand(
-	opencodeBaseUrl: string,
+	agentBaseUrl: string,
 	sessionId: string,
 	command: string,
 	agent: string,
 	model?: { providerID: string; modelID: string },
-	options?: OpencodeRequestOptions,
-): Promise<OpenCodeMessageWithParts> {
+	options?: AgentRequestOptions,
+): Promise<AgentMessageWithParts> {
 	const body: Record<string, unknown> = { command, agent };
 	if (model) body.model = model;
 
 	const res = await fetch(
 		withDirectory(
-			`${base(opencodeBaseUrl)}/session/${sessionId}/shell`,
+			`${base(agentBaseUrl)}/session/${sessionId}/shell`,
 			options?.directory,
 		),
 		{
@@ -465,23 +465,23 @@ export async function runShellCommand(
 			credentials: "include",
 		},
 	);
-	return handleResponse<OpenCodeMessageWithParts>(res);
+	return handleResponse<AgentMessageWithParts>(res);
 }
 
 export async function runShellCommandAsync(
-	opencodeBaseUrl: string,
+	agentBaseUrl: string,
 	sessionId: string,
 	command: string,
 	agent: string,
 	model?: { providerID: string; modelID: string },
-	options?: OpencodeRequestOptions,
+	options?: AgentRequestOptions,
 ): Promise<boolean> {
 	const body: Record<string, unknown> = { command, agent };
 	if (model) body.model = model;
 
 	const res = await fetch(
 		withDirectory(
-			`${base(opencodeBaseUrl)}/session/${sessionId}/shell`,
+			`${base(agentBaseUrl)}/session/${sessionId}/shell`,
 			options?.directory,
 		),
 		{
@@ -506,19 +506,19 @@ export async function runShellCommandAsync(
 	return true;
 }
 
-// Send a slash command to opencode (e.g., /init, /undo, /redo, /share, /help, or custom commands)
+// Send a slash command to the agent (e.g., /init, /undo, /redo, /share, /help, or custom commands)
 // Command should be the name without the slash (e.g., "init", "help")
 // Arguments is the string after the command name (e.g., for "/test foo bar", args would be "foo bar")
 export async function sendCommandAsync(
-	opencodeBaseUrl: string,
+	agentBaseUrl: string,
 	sessionId: string,
 	command: string,
 	args = "",
-	options?: OpencodeRequestOptions,
+	options?: AgentRequestOptions,
 ): Promise<boolean> {
 	const res = await fetch(
 		withDirectory(
-			`${base(opencodeBaseUrl)}/session/${sessionId}/command`,
+			`${base(agentBaseUrl)}/session/${sessionId}/command`,
 			options?.directory,
 		),
 		{
@@ -544,13 +544,13 @@ export async function sendCommandAsync(
 }
 
 export async function createSession(
-	opencodeBaseUrl: string,
+	agentBaseUrl: string,
 	title?: string,
 	parentID?: string,
-	options?: OpencodeRequestOptions,
-): Promise<OpenCodeSession> {
+	options?: AgentRequestOptions,
+): Promise<AgentSession> {
 	const res = await fetch(
-		withDirectory(`${base(opencodeBaseUrl)}/session`, options?.directory),
+		withDirectory(`${base(agentBaseUrl)}/session`, options?.directory),
 		{
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
@@ -558,17 +558,17 @@ export async function createSession(
 			credentials: "include",
 		},
 	);
-	return handleResponse<OpenCodeSession>(res);
+	return handleResponse<AgentSession>(res);
 }
 
 export async function deleteSession(
-	opencodeBaseUrl: string,
+	agentBaseUrl: string,
 	sessionId: string,
-	options?: OpencodeRequestOptions,
+	options?: AgentRequestOptions,
 ): Promise<void> {
 	const res = await fetch(
 		withDirectory(
-			`${base(opencodeBaseUrl)}/session/${sessionId}`,
+			`${base(agentBaseUrl)}/session/${sessionId}`,
 			options?.directory,
 		),
 		{
@@ -583,14 +583,14 @@ export async function deleteSession(
 }
 
 export async function updateSession(
-	opencodeBaseUrl: string,
+	agentBaseUrl: string,
 	sessionId: string,
 	updates: { title?: string },
-	options?: OpencodeRequestOptions,
-): Promise<OpenCodeSession> {
+	options?: AgentRequestOptions,
+): Promise<AgentSession> {
 	const res = await fetch(
 		withDirectory(
-			`${base(opencodeBaseUrl)}/session/${sessionId}`,
+			`${base(agentBaseUrl)}/session/${sessionId}`,
 			options?.directory,
 		),
 		{
@@ -600,7 +600,7 @@ export async function updateSession(
 			credentials: "include",
 		},
 	);
-	return handleResponse<OpenCodeSession>(res);
+	return handleResponse<AgentSession>(res);
 }
 
 /**
@@ -609,14 +609,14 @@ export async function updateSession(
  * If no messageID is provided, forks from the current end of the conversation.
  */
 export async function forkSession(
-	opencodeBaseUrl: string,
+	agentBaseUrl: string,
 	sessionId: string,
 	messageId?: string,
-	options?: OpencodeRequestOptions,
-): Promise<OpenCodeSession> {
+	options?: AgentRequestOptions,
+): Promise<AgentSession> {
 	const res = await fetch(
 		withDirectory(
-			`${base(opencodeBaseUrl)}/session/${sessionId}/fork`,
+			`${base(agentBaseUrl)}/session/${sessionId}/fork`,
 			options?.directory,
 		),
 		{
@@ -626,11 +626,11 @@ export async function forkSession(
 			credentials: "include",
 		},
 	);
-	return handleResponse<OpenCodeSession>(res);
+	return handleResponse<AgentSession>(res);
 }
 
 // Permission types for tool execution approval
-// Matches OpenCode SDK Permission type
+// Matches permission type
 export type Permission = {
 	id: string;
 	type: string; // Permission type (e.g., "bash", "edit", "webfetch")
@@ -648,7 +648,7 @@ export type Permission = {
 export type PermissionResponse = "yes" | "no" | "always" | "never";
 
 // Question types for user question/multiple choice selection
-// Matches OpenCode Question types
+// Matches question types
 export type QuestionOption = {
 	label: string; // Display text (1-5 words, concise)
 	description: string; // Explanation of choice
@@ -679,15 +679,15 @@ export type QuestionReply = {
 
 // Respond to a permission request
 export async function respondToPermission(
-	opencodeBaseUrl: string,
+	agentBaseUrl: string,
 	sessionId: string,
 	permissionId: string,
 	response: PermissionResponse,
-	options?: OpencodeRequestOptions,
+	options?: AgentRequestOptions,
 ): Promise<void> {
 	const res = await fetch(
 		withDirectory(
-			`${base(opencodeBaseUrl)}/session/${sessionId}/permission/${permissionId}`,
+			`${base(agentBaseUrl)}/session/${sessionId}/permission/${permissionId}`,
 			options?.directory,
 		),
 		{
@@ -705,12 +705,12 @@ export async function respondToPermission(
 
 // Fetch pending permissions for a session
 export async function fetchPermissions(
-	opencodeBaseUrl: string,
+	agentBaseUrl: string,
 	sessionId: string,
-	options?: OpencodeRequestOptions,
+	options?: AgentRequestOptions,
 ): Promise<Permission[]> {
 	const url = withDirectory(
-		`${base(opencodeBaseUrl)}/session/${sessionId}/permission`,
+		`${base(agentBaseUrl)}/session/${sessionId}/permission`,
 		options?.directory,
 	);
 	console.log("[Permission] Fetching permissions from:", url);
@@ -725,11 +725,11 @@ export async function fetchPermissions(
 
 // Fetch pending questions
 export async function fetchQuestions(
-	opencodeBaseUrl: string,
-	options?: OpencodeRequestOptions,
+	agentBaseUrl: string,
+	options?: AgentRequestOptions,
 ): Promise<QuestionRequest[]> {
 	const url = withDirectory(
-		`${base(opencodeBaseUrl)}/question`,
+		`${base(agentBaseUrl)}/question`,
 		options?.directory,
 	);
 	const res = await fetch(url, { cache: "no-store", credentials: "include" });
@@ -742,14 +742,14 @@ export async function fetchQuestions(
 
 // Reply to a question request
 export async function replyToQuestion(
-	opencodeBaseUrl: string,
+	agentBaseUrl: string,
 	requestId: string,
 	answers: QuestionAnswer[],
-	options?: OpencodeRequestOptions,
+	options?: AgentRequestOptions,
 ): Promise<void> {
 	const res = await fetch(
 		withDirectory(
-			`${base(opencodeBaseUrl)}/question/${requestId}/reply`,
+			`${base(agentBaseUrl)}/question/${requestId}/reply`,
 			options?.directory,
 		),
 		{
@@ -767,13 +767,13 @@ export async function replyToQuestion(
 
 // Reject a question request
 export async function rejectQuestion(
-	opencodeBaseUrl: string,
+	agentBaseUrl: string,
 	requestId: string,
-	options?: OpencodeRequestOptions,
+	options?: AgentRequestOptions,
 ): Promise<void> {
 	const res = await fetch(
 		withDirectory(
-			`${base(opencodeBaseUrl)}/question/${requestId}/reject`,
+			`${base(agentBaseUrl)}/question/${requestId}/reject`,
 			options?.directory,
 		),
 		{

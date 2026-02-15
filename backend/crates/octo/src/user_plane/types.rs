@@ -61,8 +61,8 @@ pub struct SessionInfo {
     pub workspace_path: PathBuf,
     /// Session status.
     pub status: String,
-    /// OpenCode/Claude Code port.
-    pub opencode_port: Option<u16>,
+    /// Agent port (reserved).
+    pub agent_port: Option<u16>,
     /// Fileserver port.
     pub fileserver_port: Option<u16>,
     /// ttyd port.
@@ -84,8 +84,8 @@ pub struct StartSessionRequest {
     pub session_id: String,
     /// Workspace path.
     pub workspace_path: PathBuf,
-    /// Port for opencode/Claude Code.
-    pub opencode_port: u16,
+    /// Reserved agent port/Claude Code.
+    pub agent_port: u16,
     /// Port for fileserver.
     pub fileserver_port: u16,
     /// Port for ttyd terminal.

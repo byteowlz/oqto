@@ -849,10 +849,9 @@ export function ChatEntry({
 										const isSelectedRow = selectedSessionIds.has(session.id);
 
 										const emptyTitle =
-											locale === "de" ? "Neue Sitzung" : "New Chat";
+											locale === "de" ? "Neue Sitzung" : "New Session";
 										const displayTitle =
-											session.title ||
-											(session.message_count === 0 ? emptyTitle : "Untitled");
+											session.title || emptyTitle;
 
 										const tempId = getTempIdFromSession(session);
 									const tempIdLabel = formatTempId(tempId);
@@ -1029,7 +1028,7 @@ export function ChatEntry({
 /**
  * Vertical timeline showing sessions as connected dots.
  *
- * Legacy: replaced by OpenCode-style list above.
+ * Legacy: replaced by canonical-style list above.
  */
 function SessionTimeline({
 	sessions,

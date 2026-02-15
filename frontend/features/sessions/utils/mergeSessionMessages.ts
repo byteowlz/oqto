@@ -1,7 +1,7 @@
-import type { OpenCodeMessageWithParts } from "@/features/sessions/api";
+import type { MessageWithParts } from "@/features/sessions/api";
 
 // Generate a fingerprint for optimistic message matching
-function getOptimisticFingerprint(msg: OpenCodeMessageWithParts): string {
+function getOptimisticFingerprint(msg: MessageWithParts): string {
 	const text = msg.parts.find((p) => p.type === "text")?.text || "";
 	return `${msg.info.role}:${text}`;
 }
@@ -9,9 +9,9 @@ function getOptimisticFingerprint(msg: OpenCodeMessageWithParts): string {
 // Merge messages to prevent flickering - preserves existing message references when unchanged.
 // Also preserves optimistic (temp-*) messages that haven't been confirmed yet.
 export function mergeSessionMessages(
-	prev: OpenCodeMessageWithParts[],
-	next: OpenCodeMessageWithParts[],
-): OpenCodeMessageWithParts[] {
+	prev: MessageWithParts[],
+	next: MessageWithParts[],
+): MessageWithParts[] {
 	if (prev.length === 0) return next;
 	if (next.length === 0) {
 		// Keep optimistic messages even if server returns empty.
@@ -23,7 +23,7 @@ export function mergeSessionMessages(
 	const prevById = new Map(prev.map((m) => [m.info.id, m]));
 
 	// Pre-index next messages by fingerprint for O(1) optimistic matching
-	const nextByFingerprint = new Map<string, OpenCodeMessageWithParts[]>();
+	const nextByFingerprint = new Map<string, MessageWithParts[]>();
 	for (const m of next) {
 		if (m.info.role !== "user") continue;
 		const fp = getOptimisticFingerprint(m);
@@ -36,7 +36,7 @@ export function mergeSessionMessages(
 	}
 
 	// Preserve optimistic messages (temp-*) that don't have corresponding real messages yet.
-	const pendingOptimistic: OpenCodeMessageWithParts[] = [];
+	const pendingOptimistic: MessageWithParts[] = [];
 	for (const optMsg of prev) {
 		if (!optMsg.info.id.startsWith("temp-")) continue;
 

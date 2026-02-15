@@ -753,7 +753,7 @@ impl ContainerRuntime {
     /// Execute a command in a container (detached, fire-and-forget).
     ///
     /// This runs `docker exec -d` to execute the command in the background.
-    /// Useful for starting long-running processes like opencode serve.
+    /// Useful for starting long-running processes like agent serve.
     pub async fn exec_detached(&self, container_id: &str, command: &[&str]) -> ContainerResult<()> {
         validate_container_id_or_name(container_id)?;
 

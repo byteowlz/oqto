@@ -5,7 +5,6 @@ import {
 	listChatHistory,
 	updateChatSession,
 } from "@/lib/api";
-import { getChatPrefetchLimit } from "@/lib/app-settings";
 import {
 	createPiSessionId,
 	normalizeWorkspacePath,
@@ -38,7 +37,7 @@ function isPiDebugEnabled(): boolean {
 }
 
 export interface ChatContextValue {
-	/** Chat sessions from disk (no running opencode needed) */
+	/** Chat sessions from disk (read from hstry) */
 	chatHistory: ChatSession[];
 	/** Error message when chat history service is unavailable */
 	chatHistoryError: string | null;
@@ -87,6 +86,7 @@ export interface ChatContextValue {
 	) => Promise<string | null>;
 	deleteChatSession: (sessionId: string) => Promise<boolean>;
 	renameChatSession: (sessionId: string, title: string) => Promise<boolean>;
+	getSessionWorkspacePath: (sessionId: string | null) => string | null;
 }
 
 const noop = () => {};
@@ -151,6 +151,7 @@ const defaultChatContext: ChatContextValue = {
 	createNewChat: asyncNoop,
 	deleteChatSession: asyncNoopBool,
 	renameChatSession: asyncNoopBool,
+	getSessionWorkspacePath: () => null,
 };
 
 const ChatContext = createContext<ChatContextValue>(defaultChatContext);
@@ -167,6 +168,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 	const chatHistoryRef = useRef<ChatSession[]>([]);
 	const optimisticChatSessionsRef = useRef<Map<string, ChatSession>>(new Map());
 	const optimisticSelectionRef = useRef<Map<string, string | null>>(new Map());
+	const sessionWorkspaceOverridesRef = useRef<Map<string, string | null>>(
+		new Map(),
+	);
+
 	const lastPrefetchRef = useRef(0);
 	const prefetchInFlightRef = useRef(false);
 	chatHistoryRef.current = chatHistory;
@@ -174,14 +179,25 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 	const [selectedChatSessionId, setSelectedChatSessionIdRaw] = useState<
 		string | null
 	>(() => {
-		if (typeof window !== "undefined") {
-			try {
-				return localStorage.getItem("octo:lastChatSessionId") || null;
-			} catch {
-				return null;
+		if (typeof window === "undefined") return null;
+		// Pick the most recently updated session from cache so the UI
+		// immediately shows the newest session instead of a stale
+		// localStorage value. The auto-select effect will refine this
+		// once runner sessions are known.
+		const cached = readCachedChatHistory();
+		if (cached.length > 0) {
+			let best = cached[0];
+			for (let i = 1; i < cached.length; i++) {
+				if (cached[i].updated_at > best.updated_at) best = cached[i];
 			}
+			return best.id;
 		}
-		return null;
+		// Fallback to localStorage if no cache exists
+		try {
+			return localStorage.getItem("octo:lastChatSessionId") || null;
+		} catch {
+			return null;
+		}
 	});
 
 	const setSelectedChatSessionId = useCallback(
@@ -236,10 +252,12 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 		return chatHistory.find((s) => s.id === selectedChatSessionId);
 	}, [chatHistory, selectedChatSessionId]);
 
-	// Auto-select the most recently active session from hstry when
-	// nothing valid is selected (first load or stale localStorage value).
-	// Prefer sessions that are currently active on the runner to enable
-	// automatic reattachment after a frontend reload.
+	// Auto-select the best session on first load.
+	// Priority: active runner session > most recently updated session.
+	// We do NOT blindly trust localStorage because the saved ID may point
+	// to a very old session while newer ones exist. Instead, we always
+	// pick the most recently updated session (which will match the saved
+	// ID if the user's last session is also the newest).
 	const autoSelectedRef = useRef(false);
 	const runnerSessionsById = useMemo(
 		() => new Map(runnerSessions.map((s) => [s.session_id, s])),
@@ -248,11 +266,6 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 	useEffect(() => {
 		if (autoSelectedRef.current) return;
 		if (chatHistory.length === 0) return;
-		if (
-			selectedChatSessionId &&
-			chatHistory.some((s) => s.id === selectedChatSessionId)
-		)
-			return;
 
 		// Prefer an active runner session if available
 		const activeCandidates = chatHistory.filter((s) =>
@@ -302,6 +315,15 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 			);
 
 			for (const session of optimistic) {
+				// hstry now returns the Octo session ID (platform_id) as the
+				// session id, so byId.has() matches directly -- no cross-ID
+				// dedup needed.
+				if (byId.has(session.id)) {
+					// hstry has the real entry; retire the optimistic placeholder
+					optimisticChatSessionsRef.current.delete(session.id);
+					optimisticSelectionRef.current.delete(session.id);
+					continue;
+				}
 				const replacement = byReadable.get(session.id);
 				if (replacement) {
 					optimisticChatSessionsRef.current.delete(session.id);
@@ -311,13 +333,50 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 					}
 					continue;
 				}
-				if (!byId.has(session.id)) {
-					byId.set(session.id, session);
-				}
+				byId.set(session.id, session);
 			}
 			return Array.from(byId.values());
 		},
 		[selectedChatSessionId, setSelectedChatSessionId],
+	);
+
+	const mergeRunnerSessions = useCallback(
+		(history: ChatSession[]) => {
+			if (runnerSessions.length === 0) return history;
+			const byId = new Map(history.map((s) => [s.id, s]));
+
+			for (const session of runnerSessions) {
+				// hstry now returns platform_id (Octo ID) as the session id,
+				// so a direct match is sufficient.
+				if (byId.has(session.session_id)) continue;
+
+				const resolvedPath = normalizeWorkspacePath(session.cwd);
+				const derivedProjectName = resolvedPath
+					? (resolvedPath.replace(/\\/g, "/").split("/").filter(Boolean).pop() ??
+							null)
+					: null;
+				const timestamp = session.last_activity || Date.now();
+
+				byId.set(session.session_id, {
+					id: session.session_id,
+					readable_id: null,
+					title: locale === "de" ? "Aktive Sitzung" : "Active Session",
+					parent_id: null,
+					workspace_path: resolvedPath ?? null,
+					project_name: derivedProjectName,
+					created_at: timestamp,
+					updated_at: timestamp,
+					version: null,
+					is_child: false,
+					source_path: null,
+					model: session.model ?? null,
+					provider: session.provider ?? null,
+				});
+			}
+
+			return Array.from(byId.values());
+		},
+		[locale, runnerSessions],
 	);
 
 	const normalizeHistory = useCallback((history: ChatSession[]) => {
@@ -330,44 +389,95 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 		});
 	}, []);
 
+	const mergeActiveSessions = useCallback(
+		(history: ChatSession[]) => {
+			if (!selectedChatSessionId && runnerSessionsRef.current.length === 0) {
+				return history;
+			}
+
+			const byId = new Map(history.map((session) => [session.id, session]));
+			const activeIds = new Set<string>();
+			if (selectedChatSessionId) {
+				activeIds.add(selectedChatSessionId);
+			}
+			for (const session of runnerSessionsRef.current) {
+				activeIds.add(session.session_id);
+			}
+
+			if (activeIds.size === 0) return history;
+
+			for (const session of chatHistoryRef.current) {
+				if (activeIds.has(session.id) && !byId.has(session.id)) {
+					byId.set(session.id, session);
+				}
+			}
+
+			return Array.from(byId.values());
+		},
+		[selectedChatSessionId],
+	);
+
 	const refreshChatHistory = useCallback(async () => {
-		const prefetchLimit = getChatPrefetchLimit();
 		const now = Date.now();
-		if (prefetchInFlightRef.current) return;
+		if (prefetchInFlightRef.current) {
+			if (isPiDebugEnabled()) console.debug("[chat-context] refreshChatHistory skipped: in-flight");
+			return;
+		}
 		// Bypass debounce when there's an active error (user clicking Retry)
 		const hasError = chatHistoryErrorRef.current !== null;
 		if (
 			!hasError &&
 			now - lastPrefetchRef.current < CHAT_HISTORY_PREFETCH_DEBOUNCE_MS
 		) {
+			if (isPiDebugEnabled()) console.debug("[chat-context] refreshChatHistory skipped: debounce");
 			return;
 		}
 		prefetchInFlightRef.current = true;
 		lastPrefetchRef.current = now;
+		const t0 = performance.now();
 		try {
-			const history = await listChatHistory(prefetchLimit);
+			const history = await listChatHistory();
+			const t1 = performance.now();
 			const normalized = normalizeHistory(history);
-			const merged = mergeOptimisticSessions(normalized);
-			startTransition(() => {
-				setChatHistory(merged);
-				setChatHistoryError(null);
-			});
-			writeCachedChatHistory(merged);
+			const merged = mergeRunnerSessions(mergeOptimisticSessions(normalized));
+			const withActive = mergeActiveSessions(merged);
+			if (isPiDebugEnabled()) {
+				console.debug("[chat-context] refreshChatHistory: fetched", history.length,
+					"sessions in", Math.round(t1 - t0) + "ms, total",
+					Math.round(performance.now() - t0) + "ms");
+			}
+			setChatHistory(withActive);
+			setChatHistoryError(null);
+			writeCachedChatHistory(withActive);
 		} catch (err) {
 			const msg =
 				err instanceof Error ? err.message : "Failed to load chat history";
 			console.error("[chat-context] refreshChatHistory failed:", msg);
-			startTransition(() => {
-				setChatHistoryError(msg);
-			});
+			setChatHistoryError(msg);
 		} finally {
 			prefetchInFlightRef.current = false;
 		}
-	}, [mergeOptimisticSessions, normalizeHistory]);
+	}, [mergeActiveSessions, mergeOptimisticSessions, mergeRunnerSessions, normalizeHistory]);
 
 	useEffect(() => {
 		refreshChatHistory();
 	}, [refreshChatHistory]);
+
+	useEffect(() => {
+		if (runnerSessions.length === 0) return;
+		const current = chatHistoryRef.current;
+		let hasMissing = false;
+		for (const session of runnerSessions) {
+			if (!current.some((item) => item.id === session.session_id)) {
+				hasMissing = true;
+				break;
+			}
+		}
+		if (!hasMissing) return;
+		const merged = mergeRunnerSessions(current);
+		setChatHistory(merged);
+		writeCachedChatHistory(merged);
+	}, [mergeRunnerSessions, runnerSessions]);
 
 	// Poll runner for active Pi sessions via the mux WebSocket.
 	// Keeps busy indicators accurate across reloads and backend restarts.
@@ -443,6 +553,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 				return optimisticId;
 			}
 			const resolvedPath = normalizeWorkspacePath(workspacePath);
+			sessionWorkspaceOverridesRef.current.set(
+				optimisticId,
+				resolvedPath ?? null,
+			);
 			// Derive a client-side project name from the workspace path
 			// (last path component), matching the backend's logic in
 			// project_name_from_path(). Without this, optimistic sessions
@@ -498,6 +612,8 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 		[selectedChatSessionId, setSelectedChatSessionId],
 	);
 
+
+
 	const updateChatSessionTitleLocal = useCallback(
 		(sessionId: string, title: string, readableId?: string | null) => {
 			if (!title.trim()) return;
@@ -516,16 +632,39 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 		[],
 	);
 
+	const getSessionWorkspacePath = useCallback((sessionId: string | null) => {
+		if (!sessionId) return null;
+		const override = sessionWorkspaceOverridesRef.current.get(sessionId);
+		if (override !== undefined) return override;
+		const historyEntry = chatHistoryRef.current.find(
+			(session) => session.id === sessionId,
+		);
+		if (historyEntry?.workspace_path) return historyEntry.workspace_path;
+		const runnerEntry = runnerSessionsRef.current.find(
+			(session) => session.session_id === sessionId,
+		);
+		return normalizeWorkspacePath(runnerEntry?.cwd) ?? null;
+	}, []);
+
 	const createNewChat = useCallback(
 		async (workspacePath?: string) => {
-			const resolvedPath = normalizeWorkspacePath(workspacePath) ?? null;
+			let resolvedPath = normalizeWorkspacePath(workspacePath) ?? null;
+			if (!resolvedPath && selectedChatSessionId) {
+				resolvedPath = getSessionWorkspacePath(selectedChatSessionId);
+			}
 			const sessionId = createPiSessionId();
 			createOptimisticChatSession(sessionId, resolvedPath);
 			setSelectedChatSessionId(sessionId);
 			void refreshChatHistory();
 			return sessionId;
 		},
-		[createOptimisticChatSession, refreshChatHistory, setSelectedChatSessionId],
+		[
+			createOptimisticChatSession,
+			getSessionWorkspacePath,
+			refreshChatHistory,
+			selectedChatSessionId,
+			setSelectedChatSessionId,
+		],
 	);
 
 	const deleteChatSession = useCallback(
@@ -582,6 +721,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 			clearOptimisticChatSession,
 			replaceOptimisticChatSession,
 			updateChatSessionTitleLocal,
+			getSessionWorkspacePath,
 			createNewChat,
 			deleteChatSession,
 			renameChatSession,
@@ -600,6 +740,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 			clearOptimisticChatSession,
 			replaceOptimisticChatSession,
 			updateChatSessionTitleLocal,
+			getSessionWorkspacePath,
 			createNewChat,
 			deleteChatSession,
 			renameChatSession,

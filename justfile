@@ -177,6 +177,11 @@ restart-runner:
     sudo pkill -f "/usr/local/bin/octo-runner --socket /run/octo/runner-sockets/$(id -un)/octo-runner.sock" || true
     nohup /usr/local/bin/octo-runner --socket "/run/octo/runner-sockets/$(id -un)/octo-runner.sock" >/tmp/octo-runner.log 2>&1 &
 
+# Build, install, and restart runner + backend
+update-runner:
+    cd backend && remote-build build --release -p octo --bin octo --bin octo-runner
+    ./scripts/update-runner.sh
+
 # Bump version across all components
 # Usage: just bump patch|minor|major|x.y.z
 bump version:

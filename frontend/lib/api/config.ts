@@ -1,13 +1,13 @@
 /**
  * Workspace Config API
- * Read/write opencode.json configuration
+ * Read/write agent configuration
  */
 
 import { authFetch, controlPlaneApiUrl, readApiError } from "./client";
 import { fileserverProxyBaseUrl } from "./files";
 
 // ============================================================================
-// Workspace Config Types (opencode.json)
+// Workspace Config Types
 // ============================================================================
 
 /** Tool permission action */
@@ -34,7 +34,7 @@ export interface CompactionConfig {
 /** Share mode for session sharing */
 export type ShareMode = "manual" | "auto" | "disabled";
 
-/** Full OpenCode workspace configuration (opencode.json) */
+/** Full workspace configuration */
 export interface WorkspaceConfig {
 	/** Model in format "provider/model" */
 	model?: string;
@@ -61,12 +61,12 @@ export interface WorkspaceConfig {
 // ============================================================================
 
 /**
- * Read the global opencode.json from ~/.config/opencode/opencode.json.
+ * Read the global agent config.
  * Returns null if the file doesn't exist or can't be parsed.
  */
-export async function getGlobalOpencodeConfig(): Promise<WorkspaceConfig | null> {
+export async function getGlobalAgentConfig(): Promise<WorkspaceConfig | null> {
 	try {
-		const res = await authFetch(controlPlaneApiUrl("/api/opencode/config"), {
+		const res = await authFetch(controlPlaneApiUrl("/api/agent/config"), {
 			credentials: "include",
 		});
 		if (!res.ok) return null;
@@ -79,7 +79,7 @@ export async function getGlobalOpencodeConfig(): Promise<WorkspaceConfig | null>
 }
 
 /**
- * Read opencode.json from the workspace root.
+ * Read workspace agent config.
  * Returns null if the file doesn't exist or can't be parsed.
  */
 export async function getWorkspaceConfig(
@@ -100,7 +100,7 @@ export async function getWorkspaceConfig(
 }
 
 /**
- * Save opencode.json to the workspace root.
+ * Save workspace agent config.
  * Creates the file if it doesn't exist.
  */
 export async function saveWorkspaceConfig(

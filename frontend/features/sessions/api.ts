@@ -1,7 +1,7 @@
 export {
 	askAgent,
 	controlPlaneDirectBaseUrl,
-	convertChatMessagesToOpenCode,
+	convertChatMessagesToCanonical,
 	fileserverWorkspaceBaseUrl,
 	getAuthHeaders,
 	getChatMessages,
@@ -9,7 +9,7 @@ export {
 	getOrCreateSessionForWorkspace,
 	getProjectLogoUrl,
 	getWorkspaceConfig,
-	opencodeProxyBaseUrl,
+	agentProxyBaseUrl,
 	touchSessionActivity,
 	workspaceFileUrl,
 } from "@/lib/control-plane-client";
@@ -37,15 +37,15 @@ export {
 	sendCommandAsync,
 	sendMessageAsync,
 	sendPartsAsync,
-} from "@/lib/opencode-client";
+} from "@/lib/agent-client";
 
 export type {
-	OpenCodeAssistantMessage,
-	OpenCodeMessageWithParts,
-	OpenCodePart,
-	OpenCodePartInput,
+	AssistantMessage,
+	MessageWithParts,
+	MessagePart,
+	MessagePartInput,
 	Permission,
 	PermissionResponse,
 	QuestionAnswer,
 	QuestionRequest,
-} from "@/lib/opencode-client";
+} from "@/lib/agent-client";

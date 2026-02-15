@@ -1,7 +1,7 @@
 // Slash command system for chat input
 // Typing "/" shows a popup list of available commands with fuzzy filtering
 
-import type { OpenCodeCommandInfo } from "./opencode-client";
+import type { CommandInfo } from "./agent-client";
 
 export interface SlashCommand {
 	name: string; // Command name (without slash)
@@ -19,16 +19,16 @@ const knownIcons: Record<string, string> = {
 	"close-browser": "X",
 };
 
-// Built-in UI commands shown alongside opencode commands.
+// Built-in UI commands shown alongside agent commands.
 export const builtInCommands: SlashCommand[] = [
 	{ name: "browser", description: "Show the browser stream" },
 	{ name: "close-browser", description: "Hide the browser stream" },
 ];
 
-// Convert opencode command list to SlashCommand format
+// Convert agent command list to SlashCommand format
 // Only shows commands that are available via the /command API
 export function commandInfoToSlashCommands(
-	commands: OpenCodeCommandInfo[],
+	commands: CommandInfo[],
 ): SlashCommand[] {
 	return commands.map((cmd) => ({
 		name: cmd.name,

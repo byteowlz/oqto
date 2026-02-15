@@ -4,7 +4,7 @@
  * Session Context - Composition Layer
  *
  * Composes workspace + chat contexts into a single surface for legacy callers.
- * Default chat and opencode-specific state have been removed.
+ * Default chat and legacy OpenCode state has been removed.
  */
 
 import type {
@@ -94,6 +94,7 @@ export interface SessionContextValue {
 	createNewChat: (workspacePath?: string) => Promise<string | null>;
 	deleteChatSession: (sessionId: string) => Promise<boolean>;
 	renameChatSession: (sessionId: string, title: string) => Promise<boolean>;
+	getSessionWorkspacePath: (sessionId: string | null) => string | null;
 }
 
 const noop = () => {};
@@ -133,6 +134,7 @@ const defaultSessionContext: SessionContextValue = {
 	createNewChat: asyncNoop,
 	deleteChatSession: asyncNoopBool,
 	renameChatSession: asyncNoopBool,
+	getSessionWorkspacePath: () => null,
 };
 
 const SessionContext = createContext<SessionContextValue>(
@@ -186,6 +188,7 @@ function SessionContextComposer({ children }: { children: ReactNode }) {
 			createNewChat: chat.createNewChat,
 			deleteChatSession: chat.deleteChatSession,
 			renameChatSession: chat.renameChatSession,
+			getSessionWorkspacePath: chat.getSessionWorkspacePath,
 		}),
 		[workspace, chat],
 	);

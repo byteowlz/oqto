@@ -24,10 +24,35 @@ export function useSidebarState(): SidebarState {
 		new Set(),
 	);
 
-	// Expanded state for project groups in sidebar (default: all expanded)
+	// Expanded state for project groups in sidebar (persisted to localStorage)
 	const [expandedProjects, setExpandedProjects] = useState<Set<string>>(
-		() => new Set(["__all__"]),
+		() => {
+			if (typeof window === "undefined") return new Set<string>();
+			try {
+				const stored = localStorage.getItem("octo:expandedProjects");
+				if (stored) {
+					const parsed = JSON.parse(stored);
+					if (Array.isArray(parsed)) return new Set<string>(parsed);
+				}
+			} catch {
+				localStorage.removeItem("octo:expandedProjects");
+			}
+			return new Set<string>();
+		},
 	);
+
+	// Persist expanded projects to localStorage
+	useEffect(() => {
+		if (typeof window === "undefined") return;
+		try {
+			localStorage.setItem(
+				"octo:expandedProjects",
+				JSON.stringify([...expandedProjects]),
+			);
+		} catch {
+			// Ignore storage failures
+		}
+	}, [expandedProjects]);
 
 	// Pinned sessions (persisted to localStorage)
 	const [pinnedSessions, setPinnedSessions] = useState<Set<string>>(() => {

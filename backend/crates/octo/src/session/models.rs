@@ -111,15 +111,15 @@ pub struct Session {
     pub user_id: String,
     /// Path to the workspace directory.
     pub workspace_path: String,
-    /// Agent name to use with opencode (passed via --agent flag).
-    /// If not set, opencode uses its default agent.
+    /// Agent name for the session.
+    /// If not set, the default agent is used.
     pub agent: Option<String>,
     /// Container image to use (ignored in local mode).
     pub image: String,
     /// Image digest (sha256) when the container was created.
     pub image_digest: Option<String>,
-    /// Port for opencode serve.
-    pub opencode_port: i64,
+    /// Reserved agent port.
+    pub agent_port: i64,
     /// Port for file server.
     pub fileserver_port: i64,
     /// Port for ttyd terminal.
@@ -171,7 +171,7 @@ pub struct SessionConfig {
     pub workspace_path: String,
     /// Container image to use.
     pub image: String,
-    /// Base port for services (will allocate opencode, fileserver, ttyd sequentially).
+    /// Base port for services (will allocate agent, fileserver, ttyd sequentially).
     pub base_port: u16,
     /// Environment variables to inject.
     #[serde(default)]
@@ -199,9 +199,9 @@ pub struct CreateSessionRequest {
     /// Container image to use (optional, defaults to octo-dev).
     #[serde(default)]
     pub image: Option<String>,
-    /// Agent name to use with opencode (passed via --agent flag).
-    /// Agents are defined in opencode's global config or the workspace's
-    /// opencode.json / .opencode/agents/ directory.
+    /// Agent name for the session.
+    /// Agents are defined in Pi's config or the workspace's
+    /// agents directory.
     #[serde(default)]
     pub agent: Option<String>,
     /// Environment variables to inject.
@@ -226,8 +226,8 @@ pub struct SessionResponse {
 #[allow(dead_code)]
 #[ts(export, export_to = "../../../../frontend/src/generated/")]
 pub struct SessionUrls {
-    /// URL for opencode API.
-    pub opencode: String,
+    /// URL for agent runtime API (reserved).
+    pub agent: String,
     /// URL for file server.
     pub fileserver: String,
     /// URL for terminal WebSocket.
@@ -252,7 +252,7 @@ impl Session {
     #[allow(dead_code)]
     pub fn urls(&self, host: &str) -> SessionUrls {
         SessionUrls {
-            opencode: format!("http://{}:{}", host, self.opencode_port),
+            agent: format!("http://{}:{}", host, self.agent_port),
             fileserver: format!("http://{}:{}", host, self.fileserver_port),
             terminal: format!("ws://{}:{}", host, self.ttyd_port),
         }

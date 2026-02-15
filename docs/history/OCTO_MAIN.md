@@ -1,9 +1,11 @@
 # OCTO_MAIN.md - Main Chat Architecture Specification
 
+> **ARCHIVED DOCUMENT** - This document describes the historical implementation using OpenCode as the agent runtime. The current architecture uses **Pi** as the primary harness via the canonical protocol. See [AGENTS.md](../../AGENTS.md) for current documentation.
+
 This document defines the architecture for Octo's Main Chat - a persistent AI assistant that maintains context and personality across sessions.
 
 **Epic**: workspace-vmu2  
-**Status**: In Progress (core foundation complete, enhancements ongoing)
+**Status**: Archived - Historical Reference
 
 ---
 
