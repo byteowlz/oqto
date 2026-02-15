@@ -589,7 +589,7 @@ pub async fn codexbar_usage() -> ApiResult<Json<serde_json::Value>> {
 pub struct SearchQuery {
     /// Search query string.
     pub q: String,
-    /// Agent filter: "all", "pi_agent", "opencode", or comma-separated list.
+    /// Agent filter: "all", "pi_agent", or comma-separated list.
     #[serde(default = "default_agent_filter")]
     pub agents: String,
     /// Maximum number of results.
@@ -608,7 +608,7 @@ fn default_search_limit() -> usize {
 /// A single search hit from hstry.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SearchHit {
-    /// Agent type (pi_agent, opencode, etc.)
+    /// Agent type (pi_agent, etc.)
     pub agent: String,
     /// Path to the session file.
     pub source_path: String,
@@ -789,15 +789,15 @@ pub mod hstry_search_tests {
 
     #[test]
     fn hstry_filters_support_multiple() {
-        let filters = parse_agent_filters("opencode,pi_agent").expect("filters");
-        assert!(filters.contains("opencode"));
+        let filters = parse_agent_filters("pi_agent,custom_agent").expect("filters");
+        assert!(filters.contains("pi_agent"));
         assert!(filters.contains("pi"));
     }
 
     #[test]
     fn hstry_filters_trim_tokens() {
-        let filters = parse_agent_filters(" opencode , pi_agent , ").expect("filters");
-        assert!(filters.contains("opencode"));
+        let filters = parse_agent_filters(" pi_agent , custom_agent , ").expect("filters");
+        assert!(filters.contains("pi_agent"));
         assert!(filters.contains("pi"));
     }
 

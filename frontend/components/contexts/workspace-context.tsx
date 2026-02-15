@@ -43,7 +43,7 @@ export interface WorkspaceContextValue {
 	projectDefaultAgents: Record<string, string>;
 	setProjectDefaultAgents: Dispatch<SetStateAction<Record<string, string>>>;
 	refreshWorkspaceSessions: () => Promise<void>;
-	/** Ensure the workspace runner session exists (no opencode assumptions). */
+	/** Ensure the workspace runner session exists (no legacy assumptions). */
 	ensureWorkspaceRunning: (
 		workspacePath?: string,
 	) => Promise<WorkspaceSession | null>;

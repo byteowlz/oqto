@@ -1,6 +1,6 @@
 //! Process management for local runtime.
 //!
-//! Handles spawning and managing native processes for opencode, fileserver, and ttyd.
+//! Handles spawning and managing native processes for fileserver and ttyd.
 //! Supports running processes as specific Linux users for multi-user isolation.
 //! Optionally wraps processes in a bubblewrap sandbox for additional security.
 
@@ -45,7 +45,7 @@ impl RunAsUser {
 pub struct ProcessHandle {
     /// Process ID.
     pub pid: u32,
-    /// Service name (e.g., "opencode", "fileserver", "ttyd").
+    /// Service name (e.g., "fileserver", "ttyd").
     pub service: String,
     /// Port the service is listening on (kept for debugging/logging).
     #[allow(dead_code)]
@@ -171,69 +171,6 @@ impl ProcessManager {
     }
 
     // Pi process management is handled by Main Chat Pi service.
-
-    /// Spawn opencode serve.
-    ///
-    /// If `agent` is provided, it is passed via the --agent flag.
-    /// If `sandbox` is provided and enabled, wraps the process in bubblewrap.
-    pub async fn spawn_opencode(
-        &self,
-        session_id: &str,
-        port: u16,
-        workspace_dir: &Path,
-        opencode_binary: &str,
-        agent: Option<&str>,
-        env: HashMap<String, String>,
-        run_as: &RunAsUser,
-        sandbox: Option<&SandboxConfig>,
-    ) -> Result<u32> {
-        info!(
-            "Spawning opencode serve on port {} for session {}, agent: {:?}, sandbox: {}",
-            port,
-            session_id,
-            agent,
-            sandbox.map(|s| s.enabled).unwrap_or(false)
-        );
-
-        let mut args = vec![
-            "serve".to_string(),
-            "--port".to_string(),
-            port.to_string(),
-            "--hostname".to_string(),
-            "127.0.0.1".to_string(),
-        ];
-
-        if let Some(agent_name) = agent {
-            args.push("--agent".to_string());
-            args.push(agent_name.to_string());
-        }
-
-        let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-        let child = self
-            .spawn_sandboxed(
-                run_as,
-                opencode_binary,
-                &args_refs,
-                Some(workspace_dir),
-                env,
-                sandbox,
-            )
-            .await
-            .context("spawning opencode")?;
-
-        let handle = ProcessHandle::new(child, "opencode", port)
-            .ok_or_else(|| anyhow::anyhow!("failed to get PID for opencode"))?;
-        let pid = handle.pid;
-
-        let mut processes = self.processes.lock().await;
-        processes
-            .entry(session_id.to_string())
-            .or_default()
-            .push(handle);
-
-        info!("opencode spawned with PID {} on port {}", pid, port);
-        Ok(pid)
-    }
 
     /// Spawn fileserver.
     pub async fn spawn_fileserver(
@@ -760,7 +697,7 @@ pub fn find_process_on_port(port: u16) -> Option<(u32, String)> {
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     // Parse the output to find PID
-    // Format: LISTEN 0 4096 0.0.0.0:41820 0.0.0.0:* users:(("opencode",pid=12345,fd=15))
+    // Format: LISTEN 0 4096 0.0.0.0:41820 0.0.0.0:* users:(("pi",pid=12345,fd=15))
     for line in stdout.lines().skip(1) {
         if let Some(users_part) = line.split("users:((").nth(1)
             && let Some(pid_part) = users_part.split("pid=").nth(1)
@@ -1111,25 +1048,9 @@ mod tests {
     // Security tests: Verify services bind to localhost only
     // =========================================================================
     //
-    // These tests ensure that session services (opencode, fileserver, ttyd) bind
+    // These tests ensure that session services (fileserver, ttyd) bind
     // to 127.0.0.1 (localhost) rather than 0.0.0.0 (all interfaces). Binding to
     // 0.0.0.0 would expose these services to the network, bypassing the proxy.
-
-    /// Helper to build opencode args (mirrors the logic in spawn_opencode).
-    fn build_opencode_args(port: u16, agent: Option<&str>) -> Vec<String> {
-        let mut args = vec![
-            "serve".to_string(),
-            "--port".to_string(),
-            port.to_string(),
-            "--hostname".to_string(),
-            "127.0.0.1".to_string(),
-        ];
-        if let Some(agent_name) = agent {
-            args.push("--agent".to_string());
-            args.push(agent_name.to_string());
-        }
-        args
-    }
 
     /// Helper to build fileserver args (mirrors the logic in spawn_fileserver).
     fn build_fileserver_args(port: u16, root_dir: &str) -> Vec<String> {
@@ -1156,43 +1077,6 @@ mod tests {
             "zsh".to_string(),
             "-l".to_string(),
         ]
-    }
-
-    #[test]
-    fn test_opencode_binds_to_localhost_only() {
-        let args = build_opencode_args(4096, None);
-
-        // Find the --hostname argument
-        let hostname_idx = args.iter().position(|a| a == "--hostname");
-        assert!(
-            hostname_idx.is_some(),
-            "opencode args must include --hostname"
-        );
-
-        let bind_addr = &args[hostname_idx.unwrap() + 1];
-        assert_eq!(
-            bind_addr, "127.0.0.1",
-            "opencode must bind to 127.0.0.1, not {}. Binding to 0.0.0.0 exposes the service to the network!",
-            bind_addr
-        );
-
-        // Verify it's NOT 0.0.0.0
-        assert_ne!(
-            bind_addr, "0.0.0.0",
-            "SECURITY: opencode must NOT bind to 0.0.0.0"
-        );
-    }
-
-    #[test]
-    fn test_opencode_with_agent_binds_to_localhost_only() {
-        let args = build_opencode_args(4096, Some("test-agent"));
-
-        let hostname_idx = args.iter().position(|a| a == "--hostname");
-        assert!(hostname_idx.is_some());
-
-        let bind_addr = &args[hostname_idx.unwrap() + 1];
-        assert_eq!(bind_addr, "127.0.0.1");
-        assert_ne!(bind_addr, "0.0.0.0");
     }
 
     #[test]

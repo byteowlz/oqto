@@ -15,9 +15,9 @@ use tracing::{debug, warn};
 use crate::hstry::HstryClient;
 use crate::local::UserSldrManager;
 
-use super::super::agent::AgentService;
+
 use super::a2ui::PendingA2uiRequests;
-use crate::agent_rpc::AgentBackend;
+
 use crate::auth::AuthState;
 use crate::invite::InviteCodeRepository;
 use crate::local::LinuxUsersConfig;
@@ -275,8 +275,6 @@ impl Default for TemplatesState {
 pub struct AppState {
     /// Session service for managing container lifecycles.
     pub sessions: Arc<SessionService>,
-    /// Agent service for managing opencode agents within containers.
-    pub agents: Arc<AgentService>,
     /// User service for user management.
     pub users: Arc<UserService>,
     /// Invite code repository for registration.
@@ -285,8 +283,7 @@ pub struct AppState {
     pub auth: AuthState,
     /// HTTP client for proxying requests to per-session services.
     pub http_client: Client<HttpConnector, Body>,
-    /// Unified agent backend (optional, for new AgentRPC-based architecture).
-    pub agent_backend: Option<Arc<dyn AgentBackend>>,
+
     /// Mmry (memory service) configuration.
     pub mmry: MmryState,
     /// Voice mode configuration.
@@ -331,7 +328,6 @@ impl AppState {
     /// Create new application state.
     pub fn new(
         sessions: SessionService,
-        agents: AgentService,
         users: UserService,
         invites: InviteCodeRepository,
         auth: AuthState,
@@ -346,59 +342,10 @@ impl AppState {
 
         Self {
             sessions: Arc::new(sessions),
-            agents: Arc::new(agents),
             users: Arc::new(users),
             invites: Arc::new(invites),
             auth,
             http_client,
-            agent_backend: None,
-            mmry,
-            voice,
-            session_ui,
-            templates,
-            sldr_users: None,
-            settings_octo: None,
-            settings_mmry: None,
-            settings_pi_agent: None,
-            settings_pi_models: None,
-            onboarding: None,
-            onboarding_templates: None,
-            ws_hub: Arc::new(WsHub::new()),
-            pending_a2ui_requests: super::a2ui::new_pending_requests(),
-            max_proxy_body_bytes,
-            linux_users: None,
-            runner_socket_pattern: None,
-            hstry: None,
-            audit_logger: None,
-            feedback: crate::feedback::FeedbackConfig::default(),
-        }
-    }
-
-    /// Create new application state with AgentBackend.
-    pub fn with_agent_backend(
-        sessions: SessionService,
-        agents: AgentService,
-        users: UserService,
-        invites: InviteCodeRepository,
-        auth: AuthState,
-        backend: Arc<dyn AgentBackend>,
-        mmry: MmryState,
-        voice: VoiceState,
-        session_ui: SessionUiState,
-        templates: TemplatesState,
-        max_proxy_body_bytes: usize,
-    ) -> Self {
-        let http_client: Client<HttpConnector, Body> =
-            Client::builder(TokioExecutor::new()).build_http();
-
-        Self {
-            sessions: Arc::new(sessions),
-            agents: Arc::new(agents),
-            users: Arc::new(users),
-            invites: Arc::new(invites),
-            auth,
-            http_client,
-            agent_backend: Some(backend),
             mmry,
             voice,
             session_ui,

@@ -312,6 +312,7 @@ pub async fn bootstrap_onboarding(
             Some(now_ms),
             Some("pi".to_string()),
             Some(readable_id),
+            None, // no platform_id for onboarding sessions
         )
         .await
         .map_err(|e| ApiError::Internal(format!("Failed to seed chat history: {e}")))?;

@@ -46,8 +46,6 @@ base_port = 41820
 # Enable with --local-mode CLI flag or set enabled = true here
 enabled = false
 
-# Path to the opencode binary (must be installed on the host)
-opencode_binary = "opencode"
 # Path to the fileserver binary (from this repo's fileserver/ directory)
 fileserver_binary = "fileserver"
 # Path to the ttyd binary (install via package manager or from https://tsl0922.github.io/ttyd/)
@@ -62,25 +60,6 @@ ttyd_binary = "ttyd"
 #   Single-user: "$HOME/octo/{user_id}" -> /home/alice/octo (ignores {user_id})
 #   Single-user: "$HOME/workspace" -> /home/alice/workspace
 workspace_dir = "$HOME/octo/{user_id}"
-
-# Persona configuration - point opencode at a custom persona directory.
-# A "persona" is a directory with AGENTS.md, opencode.json, and other config files
-# that define how opencode behaves for a specific project or use case.
-#
-# personas_path: Base directory where persona directories live.
-# default_persona: Name of the persona subdirectory to use.
-#
-# When both are set, opencode runs with its working directory set to:
-#   {personas_path}/{default_persona}
-#
-# This allows you to have multiple personas in one location:
-#   ~/byteowlz/govnr/    <- govnr persona with its own AGENTS.md
-#   ~/byteowlz/octo/     <- octo persona
-#   ~/byteowlz/myapp/    <- another project's persona
-#
-# Supports ~ and environment variables.
-# personas_path = "~/byteowlz"
-# default_persona = "govnr"
 
 # Enable single-user mode for personal/single-user deployments.
 # When true:
@@ -97,7 +76,7 @@ runner_socket_pattern = "/run/octo/runner-sockets/{user}/octo-runner.sock"
 
 # Preserve running sessions across backend restarts.
 # When false, Octo will skip startup port cleanup to avoid killing running
-# opencode/fileserver/ttyd processes.
+# pi/fileserver/ttyd processes.
 cleanup_on_startup = false
 # When false, Octo will NOT stop local sessions on shutdown.
 stop_sessions_on_shutdown = false

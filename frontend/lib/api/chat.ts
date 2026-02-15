@@ -1,13 +1,13 @@
 /**
  * Chat History API
- * Reads Pi chat history from disk (no running opencode needed)
+ * Reads Pi chat history from disk (from hstry)
  */
 
 import type {
-	OpenCodeMessage,
-	OpenCodeMessageWithParts,
-	OpenCodePart,
-} from "../opencode-client";
+	AgentMessage,
+	MessageWithParts,
+	MessagePart,
+} from "../agent-client";
 import { authFetch, controlPlaneApiUrl, readApiError } from "./client";
 
 const normalizeWorkspacePathValue = (path?: string | null): string | null => {
@@ -16,7 +16,7 @@ const normalizeWorkspacePathValue = (path?: string | null): string | null => {
 };
 
 // ============================================================================
-// Chat History Types (from disk, no running opencode needed)
+// Chat History Types (from disk, from hstry)
 // ============================================================================
 
 /** A Pi session read directly from disk */
@@ -37,7 +37,7 @@ export type ChatSession = {
 	created_at: number;
 	/** Updated timestamp (ms since epoch) */
 	updated_at: number;
-	/** OpenCode version that created this session */
+	/** Version that created this session */
 	version: string | null;
 	/** Whether this session is a child session */
 	is_child: boolean;
@@ -72,7 +72,7 @@ export type UpdateChatSessionRequest = {
 };
 
 // ============================================================================
-// Chat Message Types (from disk, no running opencode needed)
+// Chat Message Types (from disk, from hstry)
 // ============================================================================
 
 /** A single part of a chat message */
@@ -117,7 +117,7 @@ export type ChatMessage = {
 };
 
 // ============================================================================
-// Chat History API (reads from disk, no running opencode needed)
+// Chat History API (reads from disk, from hstry)
 // ============================================================================
 
 /** List all chat sessions. */
@@ -217,19 +217,19 @@ export async function getChatMessages(
 }
 
 // ============================================================================
-// Message Format Conversion (disk format -> opencode format)
+// Message Format Conversion (disk format -> canonical format)
 // ============================================================================
 
-/** Convert a ChatMessage (from disk) to OpenCodeMessageWithParts (for rendering) */
-export function convertChatMessageToOpenCode(
+/** Convert a ChatMessage (from disk) to MessageWithParts (for rendering) */
+export function convertChatMessageToAgent(
 	msg: ChatMessage,
-): OpenCodeMessageWithParts {
+): MessageWithParts {
 	// Convert parts
-	const parts: OpenCodePart[] = msg.parts.map((part) => ({
+	const parts: MessagePart[] = msg.parts.map((part) => ({
 		id: part.id,
 		sessionID: msg.session_id,
 		messageID: msg.id,
-		type: part.part_type as OpenCodePart["type"],
+		type: part.part_type as MessagePart["type"],
 		text: part.text ?? undefined,
 		tool: part.tool_name ?? undefined,
 		state: part.tool_name
@@ -248,7 +248,7 @@ export function convertChatMessageToOpenCode(
 	}));
 
 	// Build message info based on role
-	const info: OpenCodeMessage =
+	const info: AgentMessage =
 		msg.role === "user"
 			? {
 					id: msg.id,
@@ -290,9 +290,9 @@ export function convertChatMessageToOpenCode(
 	return { info, parts };
 }
 
-/** Convert an array of ChatMessages to OpenCodeMessageWithParts */
-export function convertChatMessagesToOpenCode(
+/** Convert an array of ChatMessages to MessageWithParts */
+export function convertChatMessagesToAgent(
 	messages: ChatMessage[],
-): OpenCodeMessageWithParts[] {
-	return messages.map(convertChatMessageToOpenCode);
+): MessageWithParts[] {
+	return messages.map(convertChatMessageToAgent);
 }

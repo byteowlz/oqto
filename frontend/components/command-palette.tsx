@@ -152,7 +152,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
 				<CommandGroup heading={locale === "de" ? "Aktionen" : "Actions"}>
 					<CommandItem onSelect={handleNewChat}>
 						<Plus className="mr-2 h-4 w-4" />
-						<span>{locale === "de" ? "Neuer Chat" : "New Chat"}</span>
+						<span>{locale === "de" ? "Neue Sitzung" : "New Session"}</span>
 						<CommandShortcut>N</CommandShortcut>
 					</CommandItem>
 					<CommandItem onSelect={toggleTheme}>

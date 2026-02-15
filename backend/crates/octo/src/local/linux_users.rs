@@ -433,11 +433,11 @@ impl LinuxUsersConfig {
             // SECURITY: We cannot safely return this UID as it may belong to someone else.
             // The admin should either:
             // 1. Delete the conflicting Linux user, or
-            // 2. Add proper GECOS: "Octo platform user: <user_id>"
+            // 2. Add proper GECOS: "Octo platform user <user_id>"
             anyhow::bail!(
                 "Linux user '{}' exists but has no valid Octo GECOS field. \
                  Cannot verify ownership for user_id '{}'. \
-                 Either delete the Linux user or set GECOS to 'Octo platform user: {}'",
+                 Either delete the Linux user or set GECOS to 'Octo platform user {}'",
                 username,
                 user_id,
                 user_id
@@ -478,7 +478,7 @@ impl LinuxUsersConfig {
         // Add comment with platform user ID for reference (sanitize for useradd compat)
         // This GECOS field is used to verify ownership on subsequent calls
         args.push("-c".to_string());
-        args.push(sanitize_gecos(&format!("Octo platform user: {}", user_id)));
+        args.push(sanitize_gecos(&format!("Octo platform user {}", user_id)));
 
         args.push(username.to_string());
 
@@ -542,12 +542,10 @@ impl LinuxUsersConfig {
         // Ensure the per-user octo-runner daemon is enabled and started.
         // This is required for multi-user components that must run as the target Linux user
         // (e.g. per-user mmry instances, Pi runner mode).
-        self.ensure_octo_runner_running(&username, uid).with_context(|| {
-            format!(
-                "starting octo-runner for user '{}' (uid={})",
-                username, uid
-            )
-        })?;
+        self.ensure_octo_runner_running(&username, uid)
+            .with_context(|| {
+                format!("starting octo-runner for user '{}' (uid={})", username, uid)
+            })?;
 
         Ok((uid, username))
     }
@@ -825,8 +823,9 @@ WantedBy=default.target
             return Ok(());
         }
 
-        let home = get_user_home(linux_username)?
-            .ok_or_else(|| anyhow::anyhow!("could not find home directory for {}", linux_username))?;
+        let home = get_user_home(linux_username)?.ok_or_else(|| {
+            anyhow::anyhow!("could not find home directory for {}", linux_username)
+        })?;
         let config_dir = home.join(".config").join("mmry");
         let config_path = config_dir.join("config.toml");
 
@@ -854,10 +853,7 @@ WantedBy=default.target
         };
 
         let embeddings = ensure_toml_table(&mut parsed, "embeddings");
-        embeddings.insert(
-            "enabled".to_string(),
-            TomlValue::Boolean(true),
-        );
+        embeddings.insert("enabled".to_string(), TomlValue::Boolean(true));
         embeddings.insert(
             "model".to_string(),
             TomlValue::String(default_model.to_string()),
@@ -907,7 +903,10 @@ WantedBy=default.target
             run_privileged_command(
                 self.use_sudo,
                 "chown",
-                &[&format!("{}:{}", linux_username, self.group), &config_path_str],
+                &[
+                    &format!("{}:{}", linux_username, self.group),
+                    &config_path_str,
+                ],
             )
             .context("chown mmry config")?;
             let _ = std::fs::remove_file(&temp_file);
@@ -1156,9 +1155,13 @@ fn get_user_gecos(username: &str) -> Result<Option<String>> {
 }
 
 /// Extract the platform user_id from a GECOS field.
-/// GECOS format: "Octo platform user: <user_id>"
+/// GECOS format: "Octo platform user <user_id>" (colon removed by sanitize).
 fn extract_user_id_from_gecos(gecos: &str) -> Option<&str> {
-    gecos.strip_prefix("Octo platform user: ").map(|s| s.trim())
+    let trimmed = gecos.trim();
+    if let Some(rest) = trimmed.strip_prefix("Octo platform user:") {
+        return Some(rest.trim());
+    }
+    trimmed.strip_prefix("Octo platform user").map(|s| s.trim())
 }
 
 /// Run a command with optional sudo.

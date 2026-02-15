@@ -8,7 +8,7 @@
 //!
 //! ```bash
 //! # With config file
-//! octo-sandbox --config /path/to/sandbox.toml -- opencode serve --port 8080
+//! octo-sandbox --config /path/to/sandbox.toml -- agent serve --port 8080
 //!
 //! # With built-in profile
 //! octo-sandbox --profile development --workspace ~/project -- cargo build
@@ -20,7 +20,7 @@
 //! octo-sandbox --profile strict -- npm install
 //!
 //! # Dry run (show sandbox command without executing)
-//! octo-sandbox --dry-run --profile development -- opencode serve
+//! octo-sandbox --dry-run --profile development -- agent serve
 //! ```
 //!
 //! ## Profiles
@@ -45,7 +45,7 @@ use octo::local::SandboxConfig;
     name = "octo-sandbox",
     about = "Sandbox wrapper for agent processes",
     after_help = "Examples:\n  \
-        octo-sandbox --profile development -- opencode serve\n  \
+        octo-sandbox --profile development -- agent serve\n  \
         octo-sandbox --config ./sandbox.toml -- cargo build\n  \
         octo-sandbox --dry-run --profile strict -- npm install"
 )]

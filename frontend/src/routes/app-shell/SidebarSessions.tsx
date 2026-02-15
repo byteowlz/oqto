@@ -1046,7 +1046,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 																								/>
 																								<span className="truncate font-medium">
 																									{getDisplayPiTitle(child) !==
-																									"Untitled"
+																									"New Session"
 																										? getDisplayPiTitle(child)
 																										: "Subagent"}
 																								</span>

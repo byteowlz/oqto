@@ -38,7 +38,6 @@ export default defineConfig(({ mode }) => {
 	const env = loadEnv(mode, process.cwd(), "");
 	const caddyUrl = env.VITE_CADDY_BASE_URL || "http://localhost";
 	const controlPlaneUrl = env.VITE_CONTROL_PLANE_URL || "http://localhost:8080";
-	const opencodeUrl = env.VITE_OPENCODE_BASE_URL || "http://localhost:41820";
 	const fileserverUrl = env.VITE_FILE_SERVER_URL || "http://localhost:41821";
 
 	return {
@@ -84,11 +83,6 @@ export default defineConfig(({ mode }) => {
 					target: caddyUrl,
 					changeOrigin: true,
 					ws: true,
-				},
-				"/api/opencode": {
-					target: opencodeUrl,
-					changeOrigin: true,
-					rewrite: (pathValue) => pathValue.replace(/^\/api\/opencode/, ""),
 				},
 				"/api/files": {
 					target: fileserverUrl,

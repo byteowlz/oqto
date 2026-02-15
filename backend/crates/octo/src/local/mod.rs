@@ -1,7 +1,7 @@
 //! Local runtime module for running services directly on the host.
 //!
 //! This module provides an alternative to container-based sessions for single-user
-//! setups (e.g., Proxmox LXC, local development). It spawns opencode, fileserver,
+//! setups (e.g., Proxmox LXC, local development). It spawns fileserver,
 //! and ttyd as native processes instead of inside containers.
 //!
 //! ## Linux User Isolation

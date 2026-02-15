@@ -70,7 +70,7 @@ export function DefaultChatProvider({ children }: { children: ReactNode }) {
 				if (lastDefaultChatActive !== null) {
 					return lastDefaultChatActive === "true";
 				}
-				// If we have a last session ID, default to opencode mode
+				// If we have a last session ID, default to the session
 				if (lastSessionId) {
 					return false;
 				}

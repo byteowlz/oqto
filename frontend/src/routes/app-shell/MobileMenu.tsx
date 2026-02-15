@@ -1,7 +1,7 @@
 import { type SearchMode } from "@/components/search";
 import { Button } from "@/components/ui/button";
 import type { ChatSession, HstrySearchHit } from "@/lib/control-plane-client";
-import type { OpenCodeAgent } from "@/lib/opencode-client";
+import type { AgentInfo } from "@/lib/agent-client";
 import { formatSessionDate } from "@/lib/session-utils";
 import { cn } from "@/lib/utils";
 import {
@@ -60,7 +60,7 @@ export interface MobileMenuProps {
 	selectedProjectLabel: string | null;
 	projectSummaries: ProjectSummary[];
 	projectDefaultAgents: Record<string, string>;
-	availableAgents: OpenCodeAgent[];
+	availableAgents: AgentInfo[];
 	onClose: () => void;
 	onNewChat: () => void;
 	onNewProject: () => void;

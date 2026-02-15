@@ -25,7 +25,7 @@ pub struct SessionWithUrls {
 /// URLs for accessing session services.
 #[derive(Debug, Serialize)]
 pub struct SessionUrls {
-    pub opencode: String,
+    pub agent: String,
     pub fileserver: String,
     pub terminal: String,
 }
@@ -34,7 +34,7 @@ impl SessionWithUrls {
     pub fn from_session(session: Session, host: &str) -> Self {
         let _ = host;
         let urls = SessionUrls {
-            opencode: format!("/session/{}/code", session.id),
+            agent: format!("/session/{}/code", session.id),
             fileserver: format!("/session/{}/files", session.id),
             terminal: format!("/session/{}/term", session.id),
         };
@@ -376,7 +376,9 @@ pub async fn browser_action(
     }
 
     let action = crate::session::BrowserAction::parse(&request.action).ok_or_else(|| {
-        ApiError::bad_request("Invalid browser action (expected back, forward, reload, color_scheme:<light|dark>)")
+        ApiError::bad_request(
+            "Invalid browser action (expected back, forward, reload, color_scheme:<light|dark>)",
+        )
     })?;
     let browser_session_id = crate::agent_browser::browser_session_name(&request.session_id);
 

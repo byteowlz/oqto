@@ -1,6 +1,6 @@
 //! HTTP proxy handlers for session services.
 //!
-//! Contains the public handler functions for proxying to opencode, fileserver, and sldr.
+//! Contains the public handler functions for proxying to fileserver and sldr.
 
 use axum::{
     body::Body,
@@ -15,9 +15,8 @@ use crate::session::SessionStatus;
 
 use super::super::state::AppState;
 use super::builder::{
-    build_fileserver_query, ensure_session_active_for_proxy, ensure_session_for_io_proxy,
-    get_io_session_for_workspace, get_opencode_session, get_session_for_user, proxy_http_request,
-    proxy_http_request_with_query,
+    build_fileserver_query, ensure_session_for_io_proxy, get_io_session_for_workspace,
+    get_session_for_user, proxy_http_request, proxy_http_request_with_query,
 };
 use super::terminal::handle_terminal_proxy;
 use super::websocket::{handle_browser_stream_proxy, handle_voice_ws_proxy};
@@ -30,11 +29,6 @@ use super::websocket::{handle_browser_stream_proxy, handle_voice_ws_proxy};
 pub struct WorkspaceProxyQuery {
     pub workspace_path: String,
     pub store: Option<String>,
-}
-
-#[derive(serde::Deserialize)]
-pub struct OpencodeEventQuery {
-    pub directory: Option<String>,
 }
 
 // ============================================================================
@@ -78,46 +72,13 @@ pub async fn proxy_voice_tts_ws(
 }
 
 // ============================================================================
-// Opencode Proxy
-// ============================================================================
-
-/// Proxy HTTP requests to a session's opencode server.
-pub async fn proxy_opencode(
-    State(state): State<AppState>,
-    user: CurrentUser,
-    Path((session_id, path)): Path<(String, String)>,
-    req: Request<Body>,
-) -> Result<Response, StatusCode> {
-    // Validate the requested session exists for this user
-    let _requested = get_session_for_user(&state, &user, &session_id).await?;
-
-    // Get the primary opencode session (shared across workspaces)
-    let opencode_session = get_opencode_session(&state, &user).await?;
-    let opencode_session_id = opencode_session.id.clone();
-    let opencode_session =
-        ensure_session_active_for_proxy(&state, user.id(), &opencode_session_id, opencode_session)
-            .await?;
-
-    let starting = matches!(opencode_session.status, SessionStatus::Starting);
-    proxy_http_request(
-        state.http_client.clone(),
-        req,
-        opencode_session.opencode_port as u16,
-        &path,
-        starting,
-        state.max_proxy_body_bytes,
-    )
-    .await
-}
-
-// ============================================================================
 // Fileserver Proxy
 // ============================================================================
 
 /// Proxy HTTP requests to a session's file server.
 ///
 /// In single-user mode, the fileserver runs independently and remains accessible
-/// even when the opencode session is inactive.
+/// even when the agent session is inactive.
 pub async fn proxy_fileserver(
     State(state): State<AppState>,
     user: CurrentUser,
@@ -310,58 +271,4 @@ pub async fn proxy_browser_stream_ws(
     }))
 }
 
-// ============================================================================
-// Sub-Agent Proxy
-// ============================================================================
 
-/// Proxy HTTP requests to a specific agent's opencode server.
-///
-/// Routes: /session/{session_id}/agent/{agent_id}/code/{*path}
-pub async fn proxy_opencode_agent(
-    State(state): State<AppState>,
-    user: CurrentUser,
-    Path((session_id, agent_id, path)): Path<(String, String, String)>,
-    req: Request<Body>,
-) -> Result<Response, StatusCode> {
-    // Validate the requested session exists for this user
-    let _requested = get_session_for_user(&state, &user, &session_id).await?;
-
-    // Get the primary opencode session
-    let opencode_session = get_opencode_session(&state, &user).await?;
-    let opencode_session_id = opencode_session.id.clone();
-    let opencode_session =
-        ensure_session_active_for_proxy(&state, user.id(), &opencode_session_id, opencode_session)
-            .await?;
-
-    // Resolve the agent's port
-    let port = state
-        .agents
-        .get_agent_port(&opencode_session_id, &agent_id)
-        .await
-        .map_err(|e| {
-            error!(
-                "Failed to get agent port for {}/{}: {:?}",
-                opencode_session_id, agent_id, e
-            );
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?
-        .ok_or_else(|| {
-            log::warn!(
-                "Agent {} not found or not running in session {}",
-                agent_id,
-                opencode_session_id
-            );
-            StatusCode::NOT_FOUND
-        })?;
-
-    let starting = matches!(opencode_session.status, SessionStatus::Starting);
-    proxy_http_request(
-        state.http_client.clone(),
-        req,
-        port,
-        &path,
-        starting,
-        state.max_proxy_body_bytes,
-    )
-    .await
-}

@@ -132,9 +132,9 @@ export function useWsSession(
 	options?: {
 		/** Whether subscription is enabled (default: true) */
 		enabled?: boolean;
-		/** Base URL for OpenCode API (used for query cache invalidation) */
-		opencodeBaseUrl?: string;
-		/** OpenCode session ID within the workspace session */
+		/** Base URL for agent API (used for query cache invalidation) */
+		agentBaseUrl?: string;
+		/** Agent session ID within the workspace session */
 		activeSessionId?: string;
 	},
 ) {
@@ -196,7 +196,7 @@ export function useWsSession(
 			}
 
 			// Note: React Query cache invalidation removed - SessionsApp uses manual message loading
-			// via loadMessages() and requestMessageRefresh(), not useOpenCodeMessages hook.
+			// via loadMessages() and requestMessageRefresh(), not loadMessages hook.
 			// The event callback above handles notifying components of changes.
 		});
 
@@ -436,7 +436,7 @@ export function useWsSessionWithConnection(
 	onEvent: SessionEventCallback,
 	options?: {
 		enabled?: boolean;
-		opencodeBaseUrl?: string;
+		agentBaseUrl?: string;
 		activeSessionId?: string;
 	},
 ) {
@@ -458,9 +458,9 @@ export function useWsSessionEvents(
 	options?: {
 		/** Whether subscription is enabled (default: true) */
 		enabled?: boolean;
-		/** Base URL for OpenCode API */
-		opencodeBaseUrl?: string;
-		/** OpenCode session ID within the workspace session */
+		/** Base URL for agent API */
+		agentBaseUrl?: string;
+		/** Agent session ID within the workspace session */
 		activeSessionId?: string;
 	},
 ) {

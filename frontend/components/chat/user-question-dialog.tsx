@@ -17,7 +17,7 @@ import type {
 	QuestionAnswer,
 	QuestionInfo,
 	QuestionRequest,
-} from "@/lib/opencode-client";
+} from "@/lib/agent-client";
 import { cn } from "@/lib/utils";
 import { HelpCircle, MessageSquare } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";

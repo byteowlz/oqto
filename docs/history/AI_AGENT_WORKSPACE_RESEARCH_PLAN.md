@@ -1,5 +1,7 @@
 # AI Agent Workspace Platform - Deep Research Plan
 
+> **ARCHIVED DOCUMENT** - This research plan was created during the early OpenCode-centric architecture phase. The current implementation uses **Pi** as the primary harness via the canonical protocol. This document is kept for historical reference.
+
 ## Executive Summary
 
 This research plan provides a structured approach to exploring advanced technologies and architectural patterns that could significantly enhance the AI Agent Workspace Platform. The plan prioritizes research areas based on technical impact, feasibility, and alignment with the platform's current Rust/Next.js architecture.

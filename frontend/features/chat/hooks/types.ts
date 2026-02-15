@@ -79,6 +79,12 @@ export type UseChatOptions = {
 	onMessageComplete?: (message: DisplayMessage) => void;
 	/** Callback on error */
 	onError?: (error: Error) => void;
+	/** Callback when session title changes (from auto-rename or server event) */
+	onTitleChanged?: (
+		sessionId: string,
+		title: string,
+		readableId?: string | null,
+	) => void;
 };
 
 /** Hook return type */

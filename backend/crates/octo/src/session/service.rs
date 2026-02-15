@@ -66,10 +66,8 @@ const DEFAULT_BASE_PORT: i64 = 41820;
 trait SessionReadiness: Send + Sync {
     async fn wait_for_session_services(
         &self,
-        opencode_port: u16,
         fileserver_port: u16,
         ttyd_port: u16,
-        require_opencode: bool,
     ) -> Result<()>;
 }
 
@@ -80,39 +78,23 @@ struct HttpSessionReadiness;
 impl SessionReadiness for HttpSessionReadiness {
     async fn wait_for_session_services(
         &self,
-        opencode_port: u16,
         fileserver_port: u16,
         ttyd_port: u16,
-        require_opencode: bool,
     ) -> Result<()> {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(5))
             .build()
             .context("building readiness HTTP client")?;
 
-        let opencode_url = format!("http://localhost:{}/session", opencode_port);
         let fileserver_url = format!("http://localhost:{}/tree?path=.", fileserver_port);
         let ttyd_url = format!("http://localhost:{}/", ttyd_port);
 
         let start = tokio::time::Instant::now();
-        // Increased timeout to 60s because opencode may need to download plugins
-        // on first request, which can take time depending on network conditions.
         let timeout = tokio::time::Duration::from_secs(60);
         let mut attempts: u32 = 0;
 
         loop {
             attempts += 1;
-
-            let opencode_ok = if require_opencode {
-                client
-                    .get(&opencode_url)
-                    .send()
-                    .await
-                    .map(|res| res.status().is_success())
-                    .unwrap_or(false)
-            } else {
-                true
-            };
 
             let fileserver_ok = client
                 .get(&fileserver_url)
@@ -128,16 +110,15 @@ impl SessionReadiness for HttpSessionReadiness {
                 .map(|res| res.status().is_success())
                 .unwrap_or(false);
 
-            if opencode_ok && ttyd_ok && fileserver_ok {
+            if ttyd_ok && fileserver_ok {
                 return Ok(());
             }
 
             if start.elapsed() >= timeout {
                 anyhow::bail!(
-                    "session services not ready after {} attempts over {:?} (opencode_ok={}, fileserver_ok={}, ttyd_ok={})",
+                    "session services not ready after {} attempts over {:?} (fileserver_ok={}, ttyd_ok={})",
                     attempts,
                     timeout,
-                    opencode_ok,
                     fileserver_ok,
                     ttyd_ok
                 );
@@ -275,12 +256,6 @@ impl<'a> UserSessionService<'a> {
     ) -> Result<Session> {
         self.svc
             .get_or_create_io_session_for_workspace_for_user(self.user_id, workspace_path)
-            .await
-    }
-
-    pub async fn get_or_create_opencode_session(&self) -> Result<Session> {
-        self.svc
-            .get_or_create_opencode_session_for_user(self.user_id)
             .await
     }
 
@@ -665,12 +640,12 @@ impl SessionService {
             BrowserAction::Forward => self.agent_browser.go_forward(session_id).await,
             BrowserAction::Reload => self.agent_browser.reload(session_id).await,
             BrowserAction::ColorScheme(ref scheme) => {
-                self.agent_browser.set_color_scheme(session_id, scheme).await
+                self.agent_browser
+                    .set_color_scheme(session_id, scheme)
+                    .await
             }
         }
     }
-
-
 
     pub async fn list_sessions_for_user(&self, user_id: &str) -> Result<Vec<Session>> {
         let sessions = self.repo.list_for_user(user_id).await?;
@@ -879,70 +854,7 @@ impl SessionService {
         self.create_session_for_user(user_id, request).await
     }
 
-    /// Get or create the primary opencode session for the user.
-    ///
-    /// This uses the workspace root as the canonical opencode session target and
-    /// avoids tying opencode to per-workspace IO sessions.
-    async fn get_or_create_opencode_session_for_user(&self, user_id: &str) -> Result<Session> {
-        let workspace_root = self.workspace_root_for_user(user_id);
-        let workspace_root_str = workspace_root.to_string_lossy().to_string();
-
-        if let Some(session) = self
-            .repo
-            .find_running_for_workspace(user_id, &workspace_root_str)
-            .await?
-        {
-            if let Ok(Some(_new_digest)) = self.check_for_image_update(&session.id).await {
-                info!(
-                    "Primary opencode session {} has outdated image, auto-upgrading...",
-                    session.id
-                );
-                return self.upgrade_session(&session.id).await;
-            }
-            return Ok(session);
-        }
-
-        self.enforce_session_cap(user_id).await?;
-
-        if let Some(session) = self
-            .repo
-            .find_latest_stopped_for_workspace(user_id, &workspace_root_str)
-            .await?
-        {
-            info!(
-                "Resuming primary opencode session {} for workspace root {}",
-                session.id, workspace_root_str
-            );
-            match self.resume_session(&session.id).await {
-                Ok(resumed) => {
-                    if resumed.status == SessionStatus::Failed {
-                        anyhow::bail!("failed to resume session {}", resumed.id);
-                    }
-                    return Ok(resumed);
-                }
-                Err(err) => {
-                    if Self::is_retryable_unique_violation(&err) {
-                        warn!(
-                            "Resume port conflict for primary opencode session {}, creating new session instead",
-                            session.id
-                        );
-                    } else {
-                        return Err(err);
-                    }
-                }
-            }
-        }
-
-        let request = CreateSessionRequest {
-            workspace_path: Some(workspace_root_str),
-            image: None,
-            agent: None,
-            env: Default::default(),
-        };
-
-        self.create_session_for_user(user_id, request).await
-    }
-
+    /// Get or create the primary agent session for the user.
     /// Create and start a new session.
     ///
     /// This method handles port allocation with retry logic to handle race conditions
@@ -957,15 +869,13 @@ impl SessionService {
         user_id: &str,
         request: CreateSessionRequest,
     ) -> Result<Session> {
-        self.create_session_with_readiness(user_id, request, true)
-            .await
+        self.create_session_with_readiness(user_id, request).await
     }
 
     async fn create_session_with_readiness(
         &self,
         user_id: &str,
         request: CreateSessionRequest,
-        require_opencode: bool,
     ) -> Result<Session> {
         let image = request
             .image
@@ -1062,7 +972,6 @@ impl SessionService {
                     agent.as_deref(),
                     user_id,
                     attempt,
-                    require_opencode,
                 )
                 .await
             {
@@ -1123,15 +1032,14 @@ impl SessionService {
         agent: Option<&str>,
         user_id: &str,
         attempt: u32,
-        require_opencode: bool,
     ) -> Result<Session> {
         let session_id = Uuid::new_v4().to_string();
         let container_name = format!("{}{}", CONTAINER_NAME_PREFIX, &session_id[..8]);
 
-        // Find available ports (opencode, fileserver, ttyd, + agent ports). On retry, offset the search window.
+        // Find available ports (agent, fileserver, ttyd, + sub-agent ports). On retry, offset the search window.
         // Container mode may also reserve a per-session mmry port when enabled.
         // Port layout:
-        //   base+0: opencode
+        //   base+0: agent (reserved for future use)
         //   base+1: fileserver
         //   base+2: ttyd
         //   base+3+: sub-agents (local mode)
@@ -1150,7 +1058,7 @@ impl SessionService {
             .repo
             .find_free_port_range_with_agents(search_start, max_agents)
             .await?;
-        let opencode_port = base_port;
+        let agent_port = base_port;
         let fileserver_port = base_port + 1;
         let ttyd_port = base_port + 2;
         // mmry port is only allocated per-session for container mode.
@@ -1190,7 +1098,7 @@ impl SessionService {
             agent: agent.map(ToString::to_string),
             image: image.to_string(),
             image_digest: image_digest.map(ToString::to_string),
-            opencode_port,
+            agent_port,
             fileserver_port,
             ttyd_port,
             eavs_port: None,
@@ -1215,12 +1123,12 @@ impl SessionService {
 
         info!(
             "Created session {} with ports {}/{}/{}",
-            session_id, opencode_port, fileserver_port, ttyd_port
+            session_id, agent_port, fileserver_port, ttyd_port
         );
 
         // Start the container synchronously so callers can reliably know whether startup succeeded.
         if let Err(e) = self
-            .start_container(&session, eavs_virtual_key.as_deref(), require_opencode)
+            .start_container(&session, eavs_virtual_key.as_deref())
             .await
         {
             error!(
@@ -1273,12 +1181,12 @@ impl SessionService {
     /// Start services for the given session.
     ///
     /// For container mode: creates and starts a Docker/Podman container.
-    /// For local mode: spawns native processes for opencode, fileserver, and ttyd.
+    /// For local mode: spawns native processes for fileserver, and ttyd.
     async fn start_container(
         &self,
         session: &Session,
         eavs_virtual_key: Option<&str>,
-        require_opencode: bool,
+        
     ) -> Result<()> {
         debug!(
             "Starting session {} in {:?} mode",
@@ -1287,11 +1195,11 @@ impl SessionService {
 
         let result = match session.runtime_mode {
             RuntimeMode::Container => {
-                self.start_container_mode(session, eavs_virtual_key, require_opencode)
+                self.start_container_mode(session, eavs_virtual_key)
                     .await
             }
             RuntimeMode::Local => {
-                self.start_local_mode(session, eavs_virtual_key, require_opencode)
+                self.start_local_mode(session, eavs_virtual_key)
                     .await
             }
         };
@@ -1329,7 +1237,7 @@ impl SessionService {
         &self,
         session: &Session,
         eavs_virtual_key: Option<&str>,
-        require_opencode: bool,
+        
     ) -> Result<()> {
         let runtime = self
             .container_runtime()
@@ -1340,7 +1248,7 @@ impl SessionService {
         let mut config = ContainerConfig::new(&session.image)
             .name(&session.container_name)
             .hostname(&session.container_name)
-            .port(session.opencode_port as u16, 41820)
+            .port(session.agent_port as u16, 41820)
             .port(session.fileserver_port as u16, 41821)
             .port(session.ttyd_port as u16, 41822)
             .volume(&session.workspace_path, "/home/dev")
@@ -1436,10 +1344,8 @@ impl SessionService {
         if let Err(e) = self
             .readiness
             .wait_for_session_services(
-                session.opencode_port as u16,
                 session.fileserver_port as u16,
                 session.ttyd_port as u16,
-                require_opencode,
             )
             .await
         {
@@ -1473,17 +1379,17 @@ impl SessionService {
         &self,
         session: &Session,
         eavs_virtual_key: Option<&str>,
-        require_opencode: bool,
+        
     ) -> Result<()> {
         let runner = self.runner_for_user(&session.user_id)?;
 
-        let opencode_port = session.opencode_port as u16;
+        let agent_port = session.agent_port as u16;
         let fileserver_port = session.fileserver_port as u16;
         let ttyd_port = session.ttyd_port as u16;
 
         // Ensure per-user mmry is running (local multi-user mode).
         //
-        // This is best-effort: if mmry fails to start, we still want opencode/fileserver/ttyd
+        // This is best-effort: if mmry fails to start, we still want fileserver/ttyd
         // to be usable. The mmry proxy will return 503 for memory endpoints until mmry is up.
         if self.config.mmry_enabled && !self.config.single_user {
             if let Some(ref user_mmry) = self.user_mmry {
@@ -1516,7 +1422,7 @@ impl SessionService {
         }
         if let Some(virtual_key) = eavs_virtual_key {
             env.insert("EAVS_VIRTUAL_KEY".to_string(), virtual_key.to_string());
-            // Also set API keys for opencode
+            // Also set API keys for agent
             env.insert("ANTHROPIC_API_KEY".to_string(), virtual_key.to_string());
             env.insert("OPENAI_API_KEY".to_string(), virtual_key.to_string());
         }
@@ -1548,7 +1454,7 @@ impl SessionService {
             .start_session(
                 &session.id,
                 &workspace_path,
-                opencode_port,
+                agent_port,
                 fileserver_port,
                 ttyd_port,
                 session.agent.clone(),
@@ -1570,7 +1476,7 @@ impl SessionService {
         // Wait for core services to become reachable
         if let Err(e) = self
             .readiness
-            .wait_for_session_services(opencode_port, fileserver_port, ttyd_port, require_opencode)
+            .wait_for_session_services(fileserver_port, ttyd_port)
             .await
         {
             // Best-effort cleanup: stop the session via runner
@@ -1672,17 +1578,16 @@ impl SessionService {
     /// For container mode: restarts the stopped container.
     /// For local mode: respawns the processes (workspace data is preserved).
     pub async fn resume_session(&self, session_id: &str) -> Result<Session> {
-        self.resume_session_with_readiness(session_id, true).await
+        self.resume_session_with_readiness(session_id).await
     }
 
     pub async fn resume_session_for_io(&self, session_id: &str) -> Result<Session> {
-        self.resume_session_with_readiness(session_id, false).await
+        self.resume_session_with_readiness(session_id).await
     }
 
     async fn resume_session_with_readiness(
         &self,
         session_id: &str,
-        require_opencode: bool,
     ) -> Result<Session> {
         let mut session = self
             .repo
@@ -1734,7 +1639,7 @@ impl SessionService {
 
         // Wrap the resume logic to ensure we mark as failed on error
         let result = self
-            .resume_session_inner(&mut session, session_id, require_opencode)
+            .resume_session_inner(&mut session, session_id)
             .await;
 
         if let Err(ref e) = result {
@@ -1782,7 +1687,7 @@ impl SessionService {
             )
             .await?;
 
-        session.opencode_port = base_port;
+        session.agent_port = base_port;
         session.fileserver_port = base_port + 1;
         session.ttyd_port = base_port + 2;
         session.mmry_port = new_mmry_port;
@@ -1790,7 +1695,7 @@ impl SessionService {
 
         info!(
             "Reassigned ports for session {}: {}/{}/{}",
-            session.id, session.opencode_port, session.fileserver_port, session.ttyd_port
+            session.id, session.agent_port, session.fileserver_port, session.ttyd_port
         );
 
         Ok(())
@@ -1801,7 +1706,6 @@ impl SessionService {
         &self,
         session: &mut Session,
         session_id: &str,
-        require_opencode: bool,
     ) -> Result<Session> {
         match session.runtime_mode {
             RuntimeMode::Container => {
@@ -1830,10 +1734,8 @@ impl SessionService {
                 if let Err(e) = self
                     .readiness
                     .wait_for_session_services(
-                        session.opencode_port as u16,
                         session.fileserver_port as u16,
                         session.ttyd_port as u16,
-                        require_opencode,
                     )
                     .await
                 {
@@ -1860,19 +1762,19 @@ impl SessionService {
                     .local_runtime()
                     .context("local runtime not available")?;
 
-                let mut opencode_port = session.opencode_port as u16;
+                let mut agent_port = session.agent_port as u16;
                 let mut fileserver_port = session.fileserver_port as u16;
                 let mut ttyd_port = session.ttyd_port as u16;
 
-                if !local_runtime.check_ports_available(opencode_port, fileserver_port, ttyd_port) {
+                if !local_runtime.check_ports_available(agent_port, fileserver_port, ttyd_port) {
                     warn!(
                         "Ports {}/{}/{} are in use for session {}, attempting cleanup...",
-                        opencode_port, fileserver_port, ttyd_port, session_id
+                        agent_port, fileserver_port, ttyd_port, session_id
                     );
                     let cleared =
-                        local_runtime.clear_ports(&[opencode_port, fileserver_port, ttyd_port]);
+                        local_runtime.clear_ports(&[agent_port, fileserver_port, ttyd_port]);
                     if local_runtime.check_ports_available(
-                        opencode_port,
+                        agent_port,
                         fileserver_port,
                         ttyd_port,
                     ) {
@@ -1886,30 +1788,30 @@ impl SessionService {
                             .repo
                             .find_free_port_range_with_agents(self.config.base_port, max_agents)
                             .await?;
-                        let new_opencode_port = base_port as u16;
+                        let new_agent_port = base_port as u16;
                         let new_fileserver_port = (base_port + 1) as u16;
                         let new_ttyd_port = (base_port + 2) as u16;
                         let new_mmry_port = session.mmry_port.map(|_| base_port + 3);
                         let new_agent_base_port = session.agent_base_port.map(|_| base_port + 4);
 
                         if !local_runtime.check_ports_available(
-                            new_opencode_port,
+                            new_agent_port,
                             new_fileserver_port,
                             new_ttyd_port,
                         ) {
                             let cleared_new = local_runtime.clear_ports(&[
-                                new_opencode_port,
+                                new_agent_port,
                                 new_fileserver_port,
                                 new_ttyd_port,
                             ]);
                             if !local_runtime.check_ports_available(
-                                new_opencode_port,
+                                new_agent_port,
                                 new_fileserver_port,
                                 new_ttyd_port,
                             ) {
                                 anyhow::bail!(
                                     "Ports {}/{}/{} are still in use after cleanup (cleared {} processes) for session {}",
-                                    new_opencode_port,
+                                    new_agent_port,
                                     new_fileserver_port,
                                     new_ttyd_port,
                                     cleared_new,
@@ -1936,20 +1838,20 @@ impl SessionService {
                         info!(
                             "Reassigned ports for session {}: {}/{}/{} -> {}/{}/{}",
                             session_id,
-                            opencode_port,
+                            agent_port,
                             fileserver_port,
                             ttyd_port,
-                            new_opencode_port,
+                            new_agent_port,
                             new_fileserver_port,
                             new_ttyd_port
                         );
 
-                        session.opencode_port = base_port;
+                        session.agent_port = base_port;
                         session.fileserver_port = base_port + 1;
                         session.ttyd_port = base_port + 2;
                         session.mmry_port = new_mmry_port;
                         session.agent_base_port = new_agent_base_port;
-                        opencode_port = new_opencode_port;
+                        agent_port = new_agent_port;
                         fileserver_port = new_fileserver_port;
                         ttyd_port = new_ttyd_port;
                     }
@@ -2013,7 +1915,7 @@ impl SessionService {
                     .start_session(
                         session_id,
                         &workspace_path,
-                        opencode_port,
+                        agent_port,
                         fileserver_port,
                         ttyd_port,
                         session.agent.clone(),
@@ -2043,10 +1945,8 @@ impl SessionService {
                 if let Err(e) = self
                     .readiness
                     .wait_for_session_services(
-                        session.opencode_port as u16,
                         session.fileserver_port as u16,
                         session.ttyd_port as u16,
-                        require_opencode,
                     )
                     .await
                 {
@@ -2394,7 +2294,7 @@ impl SessionService {
         );
 
         // Start the container (this will update session status)
-        if let Err(e) = self.start_container(&session, None, true).await {
+        if let Err(e) = self.start_container(&session, None).await {
             error!(
                 "Failed to start upgraded container for session {}: {:?}",
                 session_id, e
@@ -2474,7 +2374,7 @@ impl SessionService {
                 let service = self.clone();
                 let session_id = session.id.clone();
                 let container_id_owned = container_id.to_string();
-                let opencode_port = session.opencode_port as u16;
+                let agent_port = session.agent_port as u16;
                 let fileserver_port = session.fileserver_port as u16;
                 let ttyd_port = session.ttyd_port as u16;
 
@@ -2511,7 +2411,7 @@ impl SessionService {
                     // Wait for services to become ready
                     if let Err(e) = service
                         .readiness
-                        .wait_for_session_services(opencode_port, fileserver_port, ttyd_port, true)
+                        .wait_for_session_services(fileserver_port, ttyd_port)
                         .await
                     {
                         error!(
@@ -2603,7 +2503,7 @@ impl SessionService {
 
         // Fallback: if expected ports are still bound, treat as running.
         let ports = [
-            session.opencode_port as u16,
+            session.agent_port as u16,
             session.fileserver_port as u16,
             session.ttyd_port as u16,
         ];
@@ -2988,7 +2888,7 @@ impl SessionService {
 
     /// Get or create a session for IO (fileserver + ttyd) for a workspace path.
     ///
-    /// This does NOT require opencode to be ready before returning.
+    /// This does does not wait for agent readiness before returning.
     async fn get_or_create_io_session_for_workspace_for_user(
         &self,
         user_id: &str,
@@ -3011,7 +2911,7 @@ impl SessionService {
             .await?
         {
             let resumed = self
-                .resume_session_with_readiness(&session.id, false)
+                .resume_session_with_readiness(&session.id)
                 .await?;
             if resumed.status != SessionStatus::Failed {
                 return Ok(resumed);
@@ -3025,8 +2925,7 @@ impl SessionService {
             env: Default::default(),
         };
 
-        self.create_session_with_readiness(user_id, request, false)
-            .await
+        self.create_session_with_readiness(user_id, request).await
     }
 
     /// Enforce the maximum concurrent sessions cap using LRU policy.
@@ -3268,10 +3167,8 @@ mod tests {
     impl SessionReadiness for NoopReadiness {
         async fn wait_for_session_services(
             &self,
-            _opencode_port: u16,
             _fileserver_port: u16,
             _ttyd_port: u16,
-            _require_opencode: bool,
         ) -> Result<()> {
             Ok(())
         }
@@ -3379,7 +3276,7 @@ mod tests {
             agent: None,
             image: "octo-dev:latest".to_string(),
             image_digest: None,
-            opencode_port: 41821,
+            agent_port: 41821,
             fileserver_port: 41822,
             ttyd_port: 41823,
             eavs_port: None,
@@ -3478,8 +3375,8 @@ mod tests {
         assert_eq!(config.runtime_mode, RuntimeMode::Local);
         assert!(config.local_config.is_some());
         assert_eq!(
-            config.local_config.unwrap().opencode_binary,
-            local_config.opencode_binary
+            config.local_config.unwrap().fileserver_binary,
+            local_config.fileserver_binary
         );
     }
 
@@ -3688,10 +3585,8 @@ mod tests {
     impl SessionReadiness for FailingReadiness {
         async fn wait_for_session_services(
             &self,
-            _opencode_port: u16,
             _fileserver_port: u16,
             _ttyd_port: u16,
-            _require_opencode: bool,
         ) -> Result<()> {
             anyhow::bail!("simulated readiness failure")
         }
@@ -3725,7 +3620,7 @@ mod tests {
             agent: None,
             image: "test-image:latest".to_string(),
             image_digest: None,
-            opencode_port: 41821,
+            agent_port: 41821,
             fileserver_port: 41822,
             ttyd_port: 41823,
             eavs_port: None,
@@ -3794,7 +3689,7 @@ mod tests {
             agent: None,
             image: "test-image:latest".to_string(),
             image_digest: None,
-            opencode_port: 41824,
+            agent_port: 41824,
             fileserver_port: 41825,
             ttyd_port: 41826,
             eavs_port: None,
@@ -3849,7 +3744,7 @@ mod tests {
             agent: None,
             image: "test-image:latest".to_string(),
             image_digest: None,
-            opencode_port: 41827,
+            agent_port: 41827,
             fileserver_port: 41828,
             ttyd_port: 41829,
             eavs_port: None,
@@ -3921,7 +3816,7 @@ mod tests {
             agent: None,
             image: "test-image:latest".to_string(),
             image_digest: None,
-            opencode_port: 41830,
+            agent_port: 41830,
             fileserver_port: 41831,
             ttyd_port: 41832,
             eavs_port: None,

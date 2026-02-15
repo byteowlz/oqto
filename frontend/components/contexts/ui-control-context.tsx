@@ -45,7 +45,7 @@ export interface SessionUiControls {
 
 interface UIControlContextValue {
 	navigate: (path: string, replace?: boolean) => void;
-	switchSession: (sessionId: string, mode?: "main" | "opencode" | "pi") => void;
+	switchSession: (sessionId: string, mode?: "main" | "pi") => void;
 	switchView: (view: SessionView) => void;
 	openPalette: (open?: boolean) => void;
 	toggleSidebar: (collapsed?: boolean) => void;
@@ -117,7 +117,7 @@ export function UIControlProvider({
 	);
 
 	const switchSession = useCallback(
-		(sessionId: string, _mode?: "main" | "opencode" | "pi") => {
+		(sessionId: string, _mode?: "main" | "pi") => {
 			setActiveAppId("sessions");
 			setSelectedChatSessionId(sessionId);
 		},
@@ -235,7 +235,7 @@ export function UIControlProvider({
 					case "ui.session":
 						switchSession(
 							event.session_id,
-							event.mode as "main" | "opencode" | "pi",
+							event.mode as "main" | "pi",
 						);
 						break;
 					case "ui.view":

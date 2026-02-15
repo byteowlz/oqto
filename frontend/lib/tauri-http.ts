@@ -121,7 +121,7 @@ export async function httpDelete<T = unknown>(
 }
 
 /**
- * Discover OpenCode servers on the local network
+ * Discover agent servers on the local network
  */
 export async function discoverServers(): Promise<DiscoveredServer[]> {
 	if (!isTauri()) {

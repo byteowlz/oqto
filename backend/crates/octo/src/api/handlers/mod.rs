@@ -8,15 +8,12 @@
 //! - `settings`: Settings management
 //! - `auth`: Authentication handlers
 //! - `agents`: Agent management
-//! - `agent_rpc`: AgentRPC unified backend API
+//! - `agent_rpc`: Agent unified backend API
 //! - `invites`: Invite code management
 //! - `trx`: TRX issue tracking
 //! - `misc`: Health checks, features, and utilities
 
 mod admin;
-mod agent_ask;
-mod agent_rpc;
-mod agents;
 mod auth;
 mod chat;
 mod feedback;
@@ -70,22 +67,13 @@ pub use auth::{change_password, dev_login, get_me, login, logout, register, upda
 
 // Settings handlers and types
 pub use settings::{
-    get_global_opencode_config, get_settings_schema, get_settings_values, reload_settings,
+    get_settings_schema, get_settings_values, reload_settings,
     update_settings_values,
 };
 
-// Agent handlers and types
-pub use agents::{
-    create_agent, exec_agent_command, get_agent, list_agents, rediscover_agents, start_agent,
-    stop_agent,
-};
 
-// AgentRPC handlers and types
-pub use agent_rpc::{
-    agent_attach, agent_get_conversation, agent_get_messages, agent_get_session_url, agent_health,
-    agent_list_conversations, agent_send_message, agent_start_session, agent_stop_session,
-    agents_ask, agents_search_sessions, agents_session_search,
-};
+
+
 
 // Invite code handlers and types
 pub use invites::{

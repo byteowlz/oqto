@@ -24,7 +24,7 @@ export type HstrySearchQuery = {
 
 /** A single search hit from hstry */
 export type HstrySearchHit = {
-	/** Agent type (pi_agent, opencode, etc.) */
+	/** Agent type (pi_agent, etc.) */
 	agent: string;
 	/** Path to the session file */
 	source_path: string;
@@ -65,7 +65,7 @@ export type HstrySearchResponse = {
 
 /**
  * Search across coding agent sessions using hstry.
- * Searches both Default Chat (pi_agent) and OpenCode sessions.
+ * Searches chat sessions.
  */
 export async function searchSessions(
 	query: HstrySearchQuery,

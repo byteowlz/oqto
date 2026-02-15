@@ -112,21 +112,15 @@ pub enum RunnerRequest {
     GetMainChatMessages(GetMainChatMessagesRequest),
     /// Get messages from a workspace Pi session (hstry-backed).
     GetWorkspaceChatMessages(GetWorkspaceChatMessagesRequest),
+    /// List workspace Pi chat sessions (hstry-backed).
+    ListWorkspaceChatSessions(ListWorkspaceChatSessionsRequest),
+    /// Get a workspace Pi chat session (hstry-backed).
+    GetWorkspaceChatSession(GetWorkspaceChatSessionRequest),
+    /// Get workspace Pi chat session messages (hstry-backed, parts preserved).
+    GetWorkspaceChatSessionMessages(GetWorkspaceChatSessionMessagesRequest),
 
-    // ========================================================================
-    // OpenCode Chat History (user-plane)
-    // ========================================================================
-    /// List OpenCode chat sessions from ~/.local/share/opencode/storage/session/
-    ListOpencodeSessions(ListOpencodeSessionsRequest),
-
-    /// Get a specific OpenCode chat session.
-    GetOpencodeSession(GetOpencodeSessionRequest),
-
-    /// Get messages from an OpenCode chat session.
-    GetOpencodeSessionMessages(GetOpencodeSessionMessagesRequest),
-
-    /// Update an OpenCode chat session (e.g., rename title).
-    UpdateOpencodeSession(UpdateOpencodeSessionRequest),
+    /// Update a workspace Pi chat session (e.g., rename title).
+    UpdateWorkspaceChatSession(UpdateWorkspaceChatSessionRequest),
 
     // ========================================================================
     // Memory Operations (user-plane)
@@ -369,20 +363,17 @@ pub enum RunnerResponse {
     /// Workspace chat messages.
     WorkspaceChatMessages(MainChatMessagesResponse),
 
-    // ========================================================================
-    // OpenCode Chat History Responses
-    // ========================================================================
-    /// List of OpenCode chat sessions.
-    OpencodeSessionList(OpencodeSessionListResponse),
+    /// Workspace chat session list.
+    WorkspaceChatSessionList(WorkspaceChatSessionListResponse),
 
-    /// Single OpenCode chat session.
-    OpencodeSession(OpencodeSessionResponse),
+    /// Workspace chat session.
+    WorkspaceChatSession(WorkspaceChatSessionResponse),
 
-    /// OpenCode chat session messages.
-    OpencodeSessionMessages(OpencodeSessionMessagesResponse),
+    /// Workspace chat session messages.
+    WorkspaceChatSessionMessages(WorkspaceChatSessionMessagesResponse),
 
-    /// OpenCode session updated.
-    OpencodeSessionUpdated(OpencodeSessionUpdatedResponse),
+    /// Workspace chat session updated.
+    WorkspaceChatSessionUpdated(WorkspaceChatSessionUpdatedResponse),
 
     // ========================================================================
     // Memory Responses
@@ -648,13 +639,13 @@ pub struct StartSessionRequest {
     pub session_id: String,
     /// Workspace path for the session.
     pub workspace_path: PathBuf,
-    /// Port for opencode/Claude Code.
-    pub opencode_port: u16,
+    /// Reserved port for agent runtime.
+    pub agent_port: u16,
     /// Port for fileserver.
     pub fileserver_port: u16,
     /// Port for ttyd terminal.
     pub ttyd_port: u16,
-    /// Optional agent name for opencode.
+    /// Optional agent name.
     #[serde(default)]
     pub agent: Option<String>,
     /// Additional environment variables.
@@ -695,13 +686,9 @@ pub struct GetWorkspaceChatMessagesRequest {
     pub limit: Option<usize>,
 }
 
-// ============================================================================
-// OpenCode Chat History Request Types
-// ============================================================================
-
-/// Request to list OpenCode chat sessions.
+/// Request to list workspace Pi chat sessions (hstry-backed).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ListOpencodeSessionsRequest {
+pub struct ListWorkspaceChatSessionsRequest {
     /// Filter by workspace path.
     #[serde(default)]
     pub workspace: Option<String>,
@@ -713,26 +700,29 @@ pub struct ListOpencodeSessionsRequest {
     pub limit: Option<usize>,
 }
 
-/// Request to get a specific OpenCode session.
+/// Request to get a workspace Pi chat session (hstry-backed).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GetOpencodeSessionRequest {
+pub struct GetWorkspaceChatSessionRequest {
     /// Session ID.
     pub session_id: String,
 }
 
-/// Request to get messages from an OpenCode session.
+/// Request to get messages from a workspace Pi chat session (hstry-backed).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GetOpencodeSessionMessagesRequest {
+pub struct GetWorkspaceChatSessionMessagesRequest {
     /// Session ID.
     pub session_id: String,
-    /// Whether to render markdown to HTML.
+    /// Include pre-rendered HTML for text parts (if supported).
     #[serde(default)]
     pub render: bool,
+    /// Optional limit on number of messages.
+    #[serde(default)]
+    pub limit: Option<usize>,
 }
 
-/// Request to update an OpenCode session.
+/// Request to update a workspace Pi chat session (e.g., rename title).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UpdateOpencodeSessionRequest {
+pub struct UpdateWorkspaceChatSessionRequest {
     /// Session ID.
     pub session_id: String,
     /// New title (if updating).
@@ -1311,8 +1301,8 @@ pub struct SessionInfo {
     pub workspace_path: PathBuf,
     /// Session status.
     pub status: String,
-    /// OpenCode/Claude Code port.
-    pub opencode_port: Option<u16>,
+    /// Agent runtime port (reserved).
+    pub agent_port: Option<u16>,
     /// Fileserver port.
     pub fileserver_port: Option<u16>,
     /// ttyd port.
@@ -1407,20 +1397,16 @@ pub struct MainChatMessagesResponse {
     pub messages: Vec<MainChatMessage>,
 }
 
-// ============================================================================
-// OpenCode Chat History Response Types
-// ============================================================================
-
-/// OpenCode chat session info.
+/// Workspace chat session info.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OpencodeSessionInfo {
-    /// Session ID (e.g., "ses_xxx").
+pub struct WorkspaceChatSessionInfo {
+    /// Session ID.
     pub id: String,
-    /// Human-readable ID (e.g., "cold-lamp").
+    /// Human-readable ID.
     pub readable_id: String,
     /// Session title.
     pub title: Option<String>,
-    /// Parent session ID (for child sessions).
+    /// Parent session ID (if any).
     pub parent_id: Option<String>,
     /// Workspace/project path.
     pub workspace_path: String,
@@ -1430,35 +1416,49 @@ pub struct OpencodeSessionInfo {
     pub created_at: i64,
     /// Updated timestamp (ms since epoch).
     pub updated_at: i64,
-    /// OpenCode version that created this session.
+    /// Session version (if available).
     pub version: Option<String>,
-    /// Whether this session is a child session.
+    /// Whether this is a child session.
     pub is_child: bool,
-    /// Last used model ID (from hstry conversation).
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// Last used model ID.
     pub model: Option<String>,
-    /// Last used provider ID (from hstry conversation).
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// Last used provider ID.
     pub provider: Option<String>,
 }
 
-/// Response with list of OpenCode sessions.
+/// Response with list of workspace chat sessions.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OpencodeSessionListResponse {
+pub struct WorkspaceChatSessionListResponse {
     /// List of sessions.
-    pub sessions: Vec<OpencodeSessionInfo>,
+    pub sessions: Vec<WorkspaceChatSessionInfo>,
 }
 
-/// Response with single OpenCode session.
+/// Response with single workspace chat session.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OpencodeSessionResponse {
+pub struct WorkspaceChatSessionResponse {
     /// Session info, or None if not found.
-    pub session: Option<OpencodeSessionInfo>,
+    pub session: Option<WorkspaceChatSessionInfo>,
 }
 
-/// OpenCode chat message part.
+/// Response with workspace chat session messages.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OpencodeMessagePart {
+pub struct WorkspaceChatSessionMessagesResponse {
+    /// Session ID.
+    pub session_id: String,
+    /// Messages in chronological order.
+    pub messages: Vec<ChatMessageProto>,
+}
+
+/// Response when a workspace chat session is updated.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceChatSessionUpdatedResponse {
+    /// Updated session info.
+    pub session: WorkspaceChatSessionInfo,
+}
+
+/// Chat message part (protocol type for runner communication).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatMessagePartProto {
     /// Part ID.
     pub id: String,
     /// Part type: "text", "tool", etc.
@@ -1479,9 +1479,9 @@ pub struct OpencodeMessagePart {
     pub tool_title: Option<String>,
 }
 
-/// OpenCode chat message.
+/// Chat message (protocol type for runner communication).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OpencodeMessage {
+pub struct ChatMessageProto {
     /// Message ID.
     pub id: String,
     /// Session ID.
@@ -1511,23 +1511,7 @@ pub struct OpencodeMessage {
     /// Cost in USD.
     pub cost: Option<f64>,
     /// Message parts.
-    pub parts: Vec<OpencodeMessagePart>,
-}
-
-/// Response with OpenCode session messages.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OpencodeSessionMessagesResponse {
-    /// Session ID.
-    pub session_id: String,
-    /// Messages in chronological order.
-    pub messages: Vec<OpencodeMessage>,
-}
-
-/// Response when OpenCode session is updated.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OpencodeSessionUpdatedResponse {
-    /// Updated session info.
-    pub session: OpencodeSessionInfo,
+    pub parts: Vec<ChatMessagePartProto>,
 }
 
 // ============================================================================
@@ -1590,8 +1574,12 @@ pub struct PiSessionCreatedResponse {
 /// Information about a Pi session.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PiSessionInfo {
-    /// Session ID.
+    /// Session ID (the Octo session ID used in events and commands).
     pub session_id: String,
+    /// The hstry external_id (Pi's native session ID).
+    /// Used to correlate runner sessions with hstry conversations.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hstry_id: Option<String>,
     /// Current session state.
     pub state: PiSessionState,
     /// Last activity timestamp (Unix ms).
@@ -1622,6 +1610,19 @@ pub enum PiSessionState {
     Aborting,
     /// Session is stopping.
     Stopping,
+}
+
+impl std::fmt::Display for PiSessionState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Starting => write!(f, "starting"),
+            Self::Idle => write!(f, "idle"),
+            Self::Streaming => write!(f, "streaming"),
+            Self::Compacting => write!(f, "compacting"),
+            Self::Aborting => write!(f, "aborting"),
+            Self::Stopping => write!(f, "stopping"),
+        }
+    }
 }
 
 /// Response with list of Pi sessions.
@@ -1900,7 +1901,7 @@ mod tests {
     fn test_request_serialization() {
         let req = RunnerRequest::SpawnProcess(SpawnProcessRequest {
             id: "proc-1".to_string(),
-            binary: "/usr/bin/opencode".to_string(),
+            binary: "/usr/bin/pi".to_string(),
             args: vec![
                 "serve".to_string(),
                 "--port".to_string(),
@@ -1919,7 +1920,7 @@ mod tests {
         match parsed {
             RunnerRequest::SpawnProcess(p) => {
                 assert_eq!(p.id, "proc-1");
-                assert_eq!(p.binary, "/usr/bin/opencode");
+                assert_eq!(p.binary, "/usr/bin/pi");
             }
             _ => panic!("wrong variant"),
         }

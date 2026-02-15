@@ -422,6 +422,9 @@ impl PiTranslator {
                 if key == "octo_phase" {
                     return self.on_octo_phase_status(req.status_text.as_deref());
                 }
+                if key == "octo_title_changed" {
+                    return self.on_title_changed(req.status_text.as_deref());
+                }
             }
         }
 
@@ -498,6 +501,21 @@ impl PiTranslator {
                 .into_iter()
                 .collect(),
         }
+    }
+
+    fn on_title_changed(&mut self, status_text: Option<&str>) -> Vec<EventPayload> {
+        let Some(raw_name) = status_text.filter(|s| !s.is_empty()) else {
+            return vec![];
+        };
+        let parsed = crate::pi::session_parser::ParsedTitle::parse(raw_name);
+        let title = parsed.display_title().to_string();
+        if title.is_empty() {
+            return vec![];
+        }
+        vec![EventPayload::SessionTitleChanged {
+            title,
+            readable_id: parsed.readable_id.map(|s| s.to_string()),
+        }]
     }
 
     // -- Compaction events --

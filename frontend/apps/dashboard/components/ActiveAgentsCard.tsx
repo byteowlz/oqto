@@ -7,7 +7,7 @@ import {
 	CardTitle,
 } from "@/components/ui/card";
 import type { ChatSession } from "@/lib/control-plane-client";
-import type { OpenCodeAgent } from "@/lib/opencode-client";
+import type { AgentInfo } from "@/lib/agent-client";
 import { formatSessionDate } from "@/lib/session-utils";
 import { cn } from "@/lib/utils";
 import type { WorkspaceSession } from "@/lib/workspace-session";
@@ -43,7 +43,7 @@ export type ActiveAgentsCardProps = {
 	noAgentsLabel: string;
 	runningSessions: WorkspaceSession[];
 	busyChatSessions: ChatSession[];
-	agents: OpenCodeAgent[];
+	agents: AgentInfo[];
 	runnerSessionCount: number;
 	runnerSessions: Array<{
 		session_id: string;

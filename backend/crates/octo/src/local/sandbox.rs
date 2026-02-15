@@ -303,9 +303,6 @@ impl SandboxProfile {
                 "~/.cache/uv".to_string(),
                 // Pi (Main Chat) - session files
                 "~/.pi".to_string(),
-                // Opencode - session and state files
-                "~/.local/share/opencode".to_string(),
-                "~/.opencode".to_string(),
                 // Agent tools - data directories
                 "~/.local/share/skdlr".to_string(),
                 "~/.local/share/mmry".to_string(),

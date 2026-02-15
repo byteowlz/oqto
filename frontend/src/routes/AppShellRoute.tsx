@@ -19,6 +19,7 @@ import {
 	useDeferredValue,
 	useEffect,
 	useMemo,
+	useRef,
 	useState,
 } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
@@ -134,6 +135,27 @@ const AppShell = memo(function AppShell() {
 		},
 		[deleteChatSession],
 	);
+
+	// Auto-expand the project containing the selected session so it is
+	// visible in the sidebar immediately after load.
+	const autoExpandedRef = useRef(false);
+	useEffect(() => {
+		if (autoExpandedRef.current) return;
+		if (!selectedChatSessionId) return;
+		const session = chatHistory.find((s) => s.id === selectedChatSessionId);
+		if (!session) return;
+		const key = sessionData.projectKeyForSession(session);
+		if (key && !sidebarState.expandedProjects.has(key)) {
+			sidebarState.toggleProjectExpanded(key);
+		}
+		autoExpandedRef.current = true;
+	}, [
+		selectedChatSessionId,
+		chatHistory,
+		sessionData.projectKeyForSession,
+		sidebarState.expandedProjects,
+		sidebarState.toggleProjectExpanded,
+	]);
 
 	const { open: commandPaletteOpen, setOpen: setCommandPaletteOpen } =
 		useCommandPalette();
@@ -351,6 +373,7 @@ const AppShell = memo(function AppShell() {
 		(sessionId: string) => {
 			setSelectedWorkspaceOverviewPath(null);
 			setSelectedChatSessionId(sessionId);
+			setSelectedProjectKey(null);
 			setActiveAppId("sessions");
 			if (sessionsRoute) navigate(sessionsRoute);
 			sidebarState.setMobileMenuOpen(false);
@@ -361,6 +384,7 @@ const AppShell = memo(function AppShell() {
 			setActiveAppId,
 			setSelectedChatSessionId,
 			setSelectedWorkspaceOverviewPath,
+			setSelectedProjectKey,
 			sidebarState,
 		],
 	);
@@ -378,6 +402,7 @@ const AppShell = memo(function AppShell() {
 					setSelectedChatSessionId(sessionId);
 				}
 				setSelectedWorkspaceOverviewPath(null);
+				setSelectedProjectKey(null);
 				setActiveAppId("sessions");
 				if (sessionsRoute) navigate(sessionsRoute);
 			}
@@ -387,6 +412,7 @@ const AppShell = memo(function AppShell() {
 			setActiveAppId,
 			setSelectedChatSessionId,
 			setSelectedWorkspaceOverviewPath,
+			setSelectedProjectKey,
 			setScrollToMessageId,
 			navigate,
 			sessionsRoute,

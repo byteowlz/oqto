@@ -1,6 +1,6 @@
 import type { ThreadedMessage } from "@/features/sessions/types";
 import {
-	convertChatMessagesToOpenCode,
+	convertChatMessagesToCanonical,
 	getChatMessages,
 	listDefaultChatPiSessions,
 } from "@/lib/api";
@@ -23,7 +23,7 @@ export async function fetchDefaultChatThreadedMessages(
 		try {
 			const historyMessages = await getChatMessages(session.id);
 			if (historyMessages.length === 0) continue;
-			const converted = convertChatMessagesToOpenCode(historyMessages);
+			const converted = convertChatMessagesToCanonical(historyMessages);
 			converted.forEach((msg, idx) => {
 				const threadedMsg: ThreadedMessage = {
 					...msg,

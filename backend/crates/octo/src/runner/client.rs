@@ -416,7 +416,7 @@ impl RunnerClient {
         &self,
         session_id: impl Into<String>,
         workspace_path: impl Into<PathBuf>,
-        opencode_port: u16,
+        agent_port: u16,
         fileserver_port: u16,
         ttyd_port: u16,
         agent: Option<String>,
@@ -425,7 +425,7 @@ impl RunnerClient {
         let req = RunnerRequest::StartSession(StartSessionRequest {
             session_id: session_id.into(),
             workspace_path: workspace_path.into(),
-            opencode_port,
+            agent_port,
             fileserver_port,
             ttyd_port,
             agent,
@@ -508,6 +508,64 @@ impl RunnerClient {
         }
     }
 
+    /// List workspace Pi chat sessions (hstry-backed).
+    pub async fn list_workspace_chat_sessions(
+        &self,
+        workspace: Option<String>,
+        include_children: bool,
+        limit: Option<usize>,
+    ) -> Result<WorkspaceChatSessionListResponse> {
+        let req = RunnerRequest::ListWorkspaceChatSessions(ListWorkspaceChatSessionsRequest {
+            workspace,
+            include_children,
+            limit,
+        });
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::WorkspaceChatSessionList(r) => Ok(r),
+            _ => anyhow::bail!("unexpected response to list_workspace_chat_sessions"),
+        }
+    }
+
+    /// Get a workspace Pi chat session (hstry-backed).
+    pub async fn get_workspace_chat_session(
+        &self,
+        session_id: impl Into<String>,
+    ) -> Result<WorkspaceChatSessionResponse> {
+        let req = RunnerRequest::GetWorkspaceChatSession(GetWorkspaceChatSessionRequest {
+            session_id: session_id.into(),
+        });
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::WorkspaceChatSession(r) => Ok(r),
+            _ => anyhow::bail!("unexpected response to get_workspace_chat_session"),
+        }
+    }
+
+    /// Get messages from a workspace Pi chat session (hstry-backed, parts preserved).
+    pub async fn get_workspace_chat_session_messages(
+        &self,
+        session_id: impl Into<String>,
+        render: bool,
+        limit: Option<usize>,
+    ) -> Result<WorkspaceChatSessionMessagesResponse> {
+        let req = RunnerRequest::GetWorkspaceChatSessionMessages(
+            GetWorkspaceChatSessionMessagesRequest {
+                session_id: session_id.into(),
+                render,
+                limit,
+            },
+        );
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::WorkspaceChatSessionMessages(r) => Ok(r),
+            _ => anyhow::bail!("unexpected response to get_workspace_chat_session_messages"),
+        }
+    }
+
     // ========================================================================
     // Memory Operations (user-plane)
     // ========================================================================
@@ -568,79 +626,21 @@ impl RunnerClient {
         }
     }
 
-    // ========================================================================
-    // OpenCode Chat History Operations (user-plane)
-    // ========================================================================
-
-    /// List OpenCode chat sessions.
-    pub async fn list_opencode_sessions(
-        &self,
-        workspace: Option<String>,
-        include_children: bool,
-        limit: Option<usize>,
-    ) -> Result<OpencodeSessionListResponse> {
-        let req = RunnerRequest::ListOpencodeSessions(ListOpencodeSessionsRequest {
-            workspace,
-            include_children,
-            limit,
-        });
-
-        let resp = self.request(&req).await?;
-        match resp {
-            RunnerResponse::OpencodeSessionList(r) => Ok(r),
-            _ => anyhow::bail!("unexpected response to list_opencode_sessions"),
-        }
-    }
-
-    /// Get a specific OpenCode session.
-    pub async fn get_opencode_session(
-        &self,
-        session_id: impl Into<String>,
-    ) -> Result<OpencodeSessionResponse> {
-        let req = RunnerRequest::GetOpencodeSession(GetOpencodeSessionRequest {
-            session_id: session_id.into(),
-        });
-
-        let resp = self.request(&req).await?;
-        match resp {
-            RunnerResponse::OpencodeSession(r) => Ok(r),
-            _ => anyhow::bail!("unexpected response to get_opencode_session"),
-        }
-    }
-
-    /// Get messages from an OpenCode session.
-    pub async fn get_opencode_session_messages(
-        &self,
-        session_id: impl Into<String>,
-        render: bool,
-    ) -> Result<OpencodeSessionMessagesResponse> {
-        let req = RunnerRequest::GetOpencodeSessionMessages(GetOpencodeSessionMessagesRequest {
-            session_id: session_id.into(),
-            render,
-        });
-
-        let resp = self.request(&req).await?;
-        match resp {
-            RunnerResponse::OpencodeSessionMessages(r) => Ok(r),
-            _ => anyhow::bail!("unexpected response to get_opencode_session_messages"),
-        }
-    }
-
-    /// Update an OpenCode session (e.g., rename title).
-    pub async fn update_opencode_session(
+    /// Update a workspace chat session (e.g., rename title).
+    pub async fn update_workspace_chat_session(
         &self,
         session_id: impl Into<String>,
         title: Option<String>,
-    ) -> Result<OpencodeSessionUpdatedResponse> {
-        let req = RunnerRequest::UpdateOpencodeSession(UpdateOpencodeSessionRequest {
+    ) -> Result<WorkspaceChatSessionUpdatedResponse> {
+        let req = RunnerRequest::UpdateWorkspaceChatSession(UpdateWorkspaceChatSessionRequest {
             session_id: session_id.into(),
             title,
         });
 
         let resp = self.request(&req).await?;
         match resp {
-            RunnerResponse::OpencodeSessionUpdated(r) => Ok(r),
-            _ => anyhow::bail!("unexpected response to update_opencode_session"),
+            RunnerResponse::WorkspaceChatSessionUpdated(r) => Ok(r),
+            _ => anyhow::bail!("unexpected response to update_workspace_chat_session"),
         }
     }
 

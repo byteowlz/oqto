@@ -7,8 +7,8 @@ import {
 	getSchedulerOverview,
 } from "@/lib/control-plane-client";
 import { readFileMux, writeFileMux } from "@/lib/mux-files";
-import type { OpenCodeAgent } from "@/lib/opencode-client";
-import { fetchAgents } from "@/lib/opencode-client";
+import type { AgentInfo } from "@/lib/agent-client";
+import { fetchAgents } from "@/lib/agent-client";
 import { getWsManager } from "@/lib/ws-manager";
 import type { TrxWsEvent } from "@/lib/ws-mux-types";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -218,8 +218,8 @@ function normalizeLayout(
 export type UseDashboardDataOptions = {
 	workspacePath: string;
 	configWorkspacePath: string;
-	opencodeBaseUrl?: string;
-	opencodeDirectory?: string;
+	agentBaseUrl?: string;
+	agentDirectory?: string;
 	builtinCards: BuiltinCardDefinition[];
 };
 
@@ -233,7 +233,7 @@ export type UseDashboardDataReturn = {
 	scheduleStats: { total: number; enabled: number; disabled: number };
 
 	// Agents
-	agents: OpenCodeAgent[];
+	agents: AgentInfo[];
 	handleLoadAgents: () => Promise<void>;
 
 	// TRX
@@ -279,15 +279,15 @@ export function useDashboardData(
 	const {
 		workspacePath,
 		configWorkspacePath,
-		opencodeBaseUrl,
-		opencodeDirectory,
+		agentBaseUrl,
+		agentDirectory,
 		builtinCards,
 	} = options;
 
 	const [scheduler, setScheduler] = useState<SchedulerOverview | null>(null);
 	const [schedulerError, setSchedulerError] = useState<string | null>(null);
 	const [schedulerLoading, setSchedulerLoading] = useState(false);
-	const [agents, setAgents] = useState<OpenCodeAgent[]>([]);
+	const [agents, setAgents] = useState<AgentInfo[]>([]);
 	const [trxIssues, setTrxIssues] = useState<TrxIssue[]>([]);
 	const [trxError, setTrxError] = useState<string | null>(null);
 	const [trxLoading, setTrxLoading] = useState(false);
@@ -368,17 +368,17 @@ export function useDashboardData(
 	);
 
 	const handleLoadAgents = useCallback(async () => {
-		if (!opencodeBaseUrl) return;
+		if (!agentBaseUrl) return;
 		try {
-			const list = await fetchAgents(opencodeBaseUrl, {
-				directory: opencodeDirectory,
+			const list = await fetchAgents(agentBaseUrl, {
+				directory: agentDirectory,
 			});
 			setAgents(list);
 		} catch (err) {
 			console.error("Failed to fetch agents:", err);
 			setAgents([]);
 		}
-	}, [opencodeBaseUrl, opencodeDirectory]);
+	}, [agentBaseUrl, agentDirectory]);
 
 	const handleLoadTrx = useCallback(async () => {
 		if (!workspacePath) return;

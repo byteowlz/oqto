@@ -9,7 +9,7 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from "@/components/ui/dialog";
-import type { Permission, PermissionResponse } from "@/lib/opencode-client";
+import type { Permission, PermissionResponse } from "@/lib/agent-client";
 import { cn } from "@/lib/utils";
 import { AlertTriangle, FileEdit, Globe, Shield, Terminal } from "lucide-react";
 import { useCallback, useState } from "react";

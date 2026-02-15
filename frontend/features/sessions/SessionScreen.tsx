@@ -388,11 +388,25 @@ export const SessionScreen = memo(function SessionScreen() {
 		refreshChatHistory,
 		scrollToMessageId,
 		setScrollToMessageId,
+		getSessionWorkspacePath,
 	} = useApp();
 	const isMobileLayout = useIsMobile();
 	const [features, setFeatures] = useState<Features>({ mmry_enabled: false });
 	const [featuresLoaded, setFeaturesLoaded] = useState(false);
-	const [activeView, setActiveView] = useState<ViewKey>("chat");
+	const [activeView, setActiveViewRaw] = useState<ViewKey>(() => {
+		try {
+			const cached = localStorage.getItem("octo:rightSidebarView");
+			if (cached && ["chat", "overview", "tasks", "files", "canvas", "memories", "terminal", "browser", "settings"].includes(cached)) {
+				return cached as ViewKey;
+			}
+		} catch { /* ignore */ }
+		// Mobile: chat is a tab, so default to it. Desktop: chat is always visible, default to files.
+		return window.innerWidth < 768 ? "chat" : "files";
+	});
+	const setActiveView = useCallback((view: ViewKey) => {
+		setActiveViewRaw(view);
+		try { localStorage.setItem("octo:rightSidebarView", view); } catch { /* ignore */ }
+	}, []);
 	const [tasksSubTab, setTasksSubTab] = useState<"todos" | "planner">("todos");
 	const [latestTodos, setLatestTodos] = useState<TodoItem[]>([]);
 	const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(false);
@@ -444,10 +458,16 @@ export const SessionScreen = memo(function SessionScreen() {
 		setPendingFileAttachment(null);
 	}, []);
 
-	const normalizedWorkspacePath = useMemo(
-		() => normalizeWorkspacePath(selectedChatFromHistory?.workspace_path),
-		[selectedChatFromHistory?.workspace_path],
-	);
+	const normalizedWorkspacePath = useMemo(() => {
+		const fallback = getSessionWorkspacePath(selectedChatSessionId);
+		return normalizeWorkspacePath(
+			selectedChatFromHistory?.workspace_path ?? fallback,
+		);
+	}, [
+		getSessionWorkspacePath,
+		selectedChatFromHistory?.workspace_path,
+		selectedChatSessionId,
+	]);
 
 	const normalizedOverviewPath = useMemo(
 		() =>
@@ -928,7 +948,7 @@ export const SessionScreen = memo(function SessionScreen() {
 										type="button"
 										onClick={handleNewChat}
 										className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted/50 rounded transition-colors"
-										title={locale === "de" ? "Neue Sitzung" : "New chat"}
+										title={locale === "de" ? "Neue Sitzung" : "New Session"}
 									>
 										<Plus className="w-4 h-4" />
 									</button>

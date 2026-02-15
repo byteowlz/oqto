@@ -1,13 +1,11 @@
 //! WebSocket hub for managing user connections and broadcasting events.
 
 use dashmap::DashMap;
-use log::{debug, info, warn};
+use log::{info, warn};
 use std::collections::HashSet;
-use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
 
-use super::opencode_adapter::OpenCodeAdapter;
-use super::types::{SessionSubscription, WsEvent};
+use super::types::WsEvent;
 
 /// Size of the broadcast channel for events.
 const EVENT_BUFFER_SIZE: usize = 256;
@@ -24,16 +22,12 @@ pub type WsSender = mpsc::Sender<WsEvent>;
 /// - Tracking active WebSocket connections per user
 /// - Managing session subscriptions (which sessions a user is watching)
 /// - Broadcasting events to subscribed users
-/// - Managing OpenCode adapters for SSE connections
 pub struct WsHub {
     /// User ID -> list of their WebSocket senders
     connections: DashMap<String, Vec<WsSender>>,
 
     /// Session ID -> set of subscribed user IDs
     session_subscribers: DashMap<String, HashSet<String>>,
-
-    /// Session ID -> OpenCode adapter
-    adapters: DashMap<String, Arc<OpenCodeAdapter>>,
 
     /// Broadcast channel for hub-wide events
     event_tx: broadcast::Sender<(String, WsEvent)>,
@@ -46,7 +40,6 @@ impl WsHub {
         Self {
             connections: DashMap::new(),
             session_subscribers: DashMap::new(),
-            adapters: DashMap::new(),
             event_tx,
         }
     }
@@ -83,56 +76,13 @@ impl WsHub {
     }
 
     /// Subscribe a user to a session's events.
-    pub async fn subscribe_session(
-        &self,
-        user_id: &str,
-        subscription: SessionSubscription,
-    ) -> anyhow::Result<()> {
-        let session_id = subscription.session_id.clone();
-
-        // Add user to session subscribers
+    pub fn subscribe_session(&self, user_id: &str, session_id: &str) {
         self.session_subscribers
-            .entry(session_id.clone())
+            .entry(session_id.to_string())
             .or_default()
             .insert(user_id.to_string());
 
-        // Get or create adapter for this session
-        if let Some(existing) = self.adapters.get(&session_id)
-            && !existing.matches(&subscription.workspace_path, subscription.opencode_port)
-        {
-            info!(
-                "Replacing OpenCode adapter for session {} (port/path updated)",
-                session_id
-            );
-            existing.stop();
-            self.adapters.remove(&session_id);
-        }
-
-        if !self.adapters.contains_key(&session_id) {
-            let adapter = OpenCodeAdapter::new(
-                session_id.clone(),
-                subscription.workspace_path.clone(),
-                subscription.opencode_port,
-            );
-
-            let adapter = Arc::new(adapter);
-            self.adapters.insert(session_id.clone(), adapter.clone());
-
-            // Start the adapter and forward events to hub
-            let event_tx = self.event_tx.clone();
-            let session_id_clone = session_id.clone();
-
-            tokio::spawn(async move {
-                adapter
-                    .run(move |event| {
-                        let _ = event_tx.send((session_id_clone.clone(), event));
-                    })
-                    .await;
-            });
-        }
-
         info!("User {} subscribed to session {}", user_id, session_id);
-        Ok(())
     }
 
     /// Unsubscribe a user from a session.
@@ -142,15 +92,11 @@ impl WsHub {
             info!("User {} unsubscribed from session {}", user_id, session_id);
         }
 
-        // If no more subscribers, consider cleaning up the adapter
+        // Clean up empty entries
         if let Some(subscribers) = self.session_subscribers.get(session_id)
             && subscribers.is_empty()
         {
-            if let Some(adapter) = self.adapters.get(session_id) {
-                adapter.stop();
-            }
-            self.adapters.remove(session_id);
-            debug!("Session {} has no subscribers, adapter stopped", session_id);
+            self.session_subscribers.remove(session_id);
         }
     }
 

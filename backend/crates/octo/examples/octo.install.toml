@@ -25,6 +25,24 @@ profile = "development"
 [hstry]
 "$schema" = "https://raw.githubusercontent.com/byteowlz/schemas/refs/heads/main/hstry/hstry.config.schema.json"
 # database = "$XDG_DATA_HOME/hstry/hstry.db"
+# adapter_paths = ["$XDG_CONFIG_HOME/hstry/adapters", "/usr/local/share/hstry/adapters"]
+# js_runtime = "auto"
+# workspaces = ["$HOME"]
+#
+# [[hstry.adapters]]
+# name = "pi"
+# enabled = true
+#
+# [hstry.service]
+# enabled = true
+# poll_interval_secs = 30
+# search_api = true
+#
+# [[hstry.sources]]
+# id = "pi"
+# adapter = "pi"
+# path = "~/.pi/agent/sessions"
+# auto_sync = true
 
 [mmry]
 "$schema" = "https://raw.githubusercontent.com/byteowlz/schemas/refs/heads/main/mmry/mmry.config.schema.json"

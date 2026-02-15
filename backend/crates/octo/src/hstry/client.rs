@@ -103,6 +103,7 @@ impl HstryClient {
         updated_at_ms: Option<i64>,
         harness: Option<String>,
         readable_id: Option<String>,
+        platform_id: Option<String>,
     ) -> Result<WriteConversationResponse> {
         let mut client = self.ensure_write_connected().await?;
 
@@ -122,6 +123,7 @@ impl HstryClient {
                 metadata_json: metadata_json.unwrap_or_default(),
                 harness,
                 readable_id,
+                platform_id,
             }),
             messages,
         };
@@ -145,6 +147,7 @@ impl HstryClient {
         metadata_json: Option<String>,
         readable_id: Option<String>,
         harness: Option<String>,
+        platform_id: Option<String>,
     ) -> Result<UpdateConversationResponse> {
         let mut client = self.ensure_write_connected().await?;
 
@@ -158,6 +161,7 @@ impl HstryClient {
             metadata_json,
             readable_id,
             harness,
+            platform_id,
         };
 
         let response = client

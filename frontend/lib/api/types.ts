@@ -65,13 +65,13 @@ export type Persona = {
 	avatar?: string | null;
 	/** Whether this is the default persona */
 	is_default: boolean;
-	/** opencode agent ID to use */
+	/** agent ID to use */
 	agent_id: string;
 	/** Default working directory (optional) */
 	default_workdir?: string | null;
 	/** Workspace mode (default_only, ask, or any) */
 	workspace_mode: WorkspaceMode;
-	/** If true, has own directory with opencode.json. If false, wrapper for existing agent */
+	/** If true, has own directory with agent config. If false, wrapper for existing agent */
 	standalone: boolean;
 	/** If true, can work on external projects. If false, only works in own persona directory */
 	project_access: boolean;
@@ -85,7 +85,7 @@ export type WorkspaceSession = {
 	workspace_path: string;
 	persona_path: string | null;
 	image: string;
-	opencode_port: number;
+	agent_port: number;
 	fileserver_port: number;
 	ttyd_port: number;
 	status: WorkspaceSessionStatus;

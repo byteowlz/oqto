@@ -16,9 +16,8 @@ use log::{LevelFilter, debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
 
-mod agent;
 mod agent_browser;
-mod agent_rpc;
+
 mod api;
 mod audit;
 mod auth;
@@ -508,9 +507,9 @@ impl Default for ServerConfig {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 enum BackendMode {
-    /// Local mode - opencode runs as native process
+    /// Local mode - runs as native process
     Local,
-    /// Container mode - opencode runs in Docker/Podman container
+    /// Container mode - runs in Docker/Podman container
     #[default]
     Container,
     /// Auto mode - prefers local if configured, falls back to container
@@ -523,8 +522,6 @@ enum BackendMode {
 struct BackendConfig {
     /// Backend mode: "local", "container", or "auto"
     mode: BackendMode,
-    /// Use the new AgentRPC abstraction (experimental)
-    use_agent_rpc: bool,
     /// Runner configuration for user-plane isolation.
     runner: RunnerConfig,
 }
@@ -533,7 +530,6 @@ impl Default for BackendConfig {
     fn default() -> Self {
         Self {
             mode: BackendMode::Container,
-            use_agent_rpc: false,
             runner: RunnerConfig::default(),
         }
     }
@@ -951,8 +947,6 @@ impl Default for ContainerRuntimeConfig {
 struct LocalModeConfig {
     /// Enable local mode (run services as native processes instead of containers)
     enabled: bool,
-    /// Path to the opencode binary
-    opencode_binary: String,
     /// Path to the fileserver binary
     fileserver_binary: String,
     /// Path to the ttyd binary
@@ -961,8 +955,8 @@ struct LocalModeConfig {
     /// Supports ~ and environment variables. The {user_id} placeholder is replaced with the user ID.
     /// Default: $HOME/octo/{user_id}
     workspace_dir: String,
-    /// Default agent name to pass to opencode via --agent flag.
-    /// Agents are defined in opencode's global config or workspace's opencode.json.
+    /// Default agent name for sessions.
+    /// Agents are defined in the workspace configuration.
     default_agent: Option<String>,
     /// Enable single-user mode. When true, the platform operates with a single user
     /// (no multi-tenancy), but password protection is still available.
@@ -1156,7 +1150,6 @@ impl Default for LocalModeConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            opencode_binary: "opencode".to_string(),
             fileserver_binary: "fileserver".to_string(),
             ttyd_binary: "ttyd".to_string(),
             workspace_dir: "$HOME/octo/{user_id}".to_string(),
@@ -1651,7 +1644,6 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         };
 
         let mut local_config = local::LocalRuntimeConfig {
-            opencode_binary: ctx.config.local.opencode_binary.clone(),
             fileserver_binary: ctx.config.local.fileserver_binary.clone(),
             ttyd_binary: ctx.config.local.ttyd_binary.clone(),
             workspace_dir: ctx.config.local.workspace_dir.clone(),
@@ -1668,7 +1660,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         if let Err(e) = local_config.validate() {
             error!("Local mode validation failed: {:?}", e);
             anyhow::bail!(
-                "Local mode requires opencode, fileserver, and ttyd binaries. Error: {}",
+                "Local mode requires fileserver and ttyd binaries. Error: {}",
                 e
             );
         }
@@ -1691,8 +1683,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         }
 
         info!(
-            "Local runtime ready: opencode={}, fileserver={}, ttyd={}, workspace={}",
-            local_config.opencode_binary,
+            "Local runtime ready: fileserver={}, ttyd={}, workspace={}",
             local_config.fileserver_binary,
             local_config.ttyd_binary,
             local_config.workspace_dir
@@ -1974,33 +1965,6 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         session_config.idle_timeout_minutes,
     );
 
-    // Initialize agent service for managing opencode instances
-    // In local mode, we use a dummy container runtime (agent features limited)
-    let agent_runtime: std::sync::Arc<dyn container::ContainerRuntimeApi> =
-        if let Some(ref rt) = container_runtime {
-            rt.clone()
-        } else {
-            // Create a container runtime for agent service even in local mode
-            // This allows basic agent operations to work (though docker exec will fail)
-            std::sync::Arc::new(container::ContainerRuntime::new())
-        };
-    let agent_repo = agent::AgentRepository::new(database.pool().clone());
-    let scaffold_config = agent::ScaffoldConfig {
-        binary: ctx.config.scaffold.binary.clone(),
-        subcommand: ctx.config.scaffold.subcommand.clone(),
-        template_arg: ctx.config.scaffold.template_arg.clone(),
-        output_arg: ctx.config.scaffold.output_arg.clone(),
-        github_arg: ctx.config.scaffold.github_arg.clone(),
-        private_arg: ctx.config.scaffold.private_arg.clone(),
-        description_arg: ctx.config.scaffold.description_arg.clone(),
-    };
-    let agent_service = agent::AgentService::with_scaffold_config(
-        agent_runtime,
-        session_service.clone(),
-        agent_repo,
-        scaffold_config,
-    );
-
     // Initialize user service
     let user_repo = user::UserRepository::new(database.pool().clone());
     let user_service = user::UserService::new(user_repo);
@@ -2010,80 +1974,6 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
 
     // Clone session_service before creating state for shutdown handler
     let session_service_for_shutdown = session_service.clone();
-
-    // Create AgentBackend if enabled
-    let agent_backend: Option<std::sync::Arc<dyn agent_rpc::AgentBackend>> =
-        if ctx.config.backend.use_agent_rpc {
-            info!("AgentRPC backend enabled");
-            if local_mode {
-                // Load sandbox config from separate file
-                let sandbox_config = local::SandboxConfig::load_global().ok();
-
-                // Use LocalBackend - convert LocalModeConfig to LocalRuntimeConfig
-                let runtime_config = local::LocalRuntimeConfig {
-                    opencode_binary: ctx.config.local.opencode_binary.clone(),
-                    fileserver_binary: ctx.config.local.fileserver_binary.clone(),
-                    ttyd_binary: ctx.config.local.ttyd_binary.clone(),
-                    workspace_dir: ctx.config.local.workspace_dir.clone(),
-                    default_agent: ctx.config.local.default_agent.clone(),
-                    single_user: ctx.config.local.single_user,
-                    linux_users: local::LinuxUsersConfig {
-                        enabled: ctx.config.local.linux_users.enabled,
-                        prefix: ctx.config.local.linux_users.prefix.clone(),
-                        uid_start: ctx.config.local.linux_users.uid_start,
-                        group: ctx.config.local.linux_users.group.clone(),
-                        shell: ctx.config.local.linux_users.shell.clone(),
-                        use_sudo: ctx.config.local.linux_users.use_sudo,
-                        create_home: ctx.config.local.linux_users.create_home,
-                    },
-                    sandbox: sandbox_config,
-                    cleanup_on_startup: ctx.config.local.cleanup_on_startup,
-                    stop_sessions_on_shutdown: ctx.config.local.stop_sessions_on_shutdown,
-                };
-                let local_config = agent_rpc::LocalBackendConfig {
-                    runtime: runtime_config,
-                    data_dir: std::path::PathBuf::from(
-                        &ctx.config
-                            .container
-                            .user_data_path
-                            .clone()
-                            .unwrap_or_else(|| "./data".to_string()),
-                    ),
-                    base_port: ctx.config.container.base_port,
-                    single_user: ctx.config.local.single_user,
-                };
-                match agent_rpc::LocalBackend::new(local_config) {
-                    Ok(backend) => {
-                        info!("LocalBackend initialized");
-                        Some(std::sync::Arc::new(backend))
-                    }
-                    Err(e) => {
-                        warn!("Failed to create LocalBackend: {:?}", e);
-                        None
-                    }
-                }
-            } else {
-                // Use ContainerBackend
-                let container_config = agent_rpc::ContainerBackendConfig {
-                    image: ctx.config.container.default_image.clone(),
-                    base_port: ctx.config.container.base_port,
-                    data_dir: std::path::PathBuf::from(
-                        &ctx.config
-                            .container
-                            .user_data_path
-                            .clone()
-                            .unwrap_or_else(|| "./data".to_string()),
-                    ),
-                    host_network: false,
-                    env: std::collections::HashMap::new(),
-                };
-                let backend = agent_rpc::ContainerBackend::with_auto_runtime(container_config);
-                info!("ContainerBackend initialized");
-                Some(std::sync::Arc::new(backend))
-            }
-        } else {
-            None
-        };
 
     // Build mmry state based on configuration
     let mmry_state = api::MmryState {
@@ -2221,34 +2111,17 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         settings::SettingsService::new_json(pi_models_schema, pi_config_dir, "models.json").ok();
 
     // Create app state
-    let mut state = if let Some(backend) = agent_backend {
-        api::AppState::with_agent_backend(
-            session_service,
-            agent_service,
-            user_service,
-            invite_repo,
-            auth_state,
-            backend,
-            mmry_state,
-            voice_state,
-            session_ui_state,
-            templates_state.clone(),
-            max_proxy_body_bytes,
-        )
-    } else {
-        api::AppState::new(
-            session_service,
-            agent_service,
-            user_service,
-            invite_repo,
-            auth_state,
-            mmry_state,
-            voice_state,
-            session_ui_state,
-            templates_state.clone(),
-            max_proxy_body_bytes,
-        )
-    };
+    let mut state = api::AppState::new(
+        session_service,
+        user_service,
+        invite_repo,
+        auth_state,
+        mmry_state,
+        voice_state,
+        session_ui_state,
+        templates_state.clone(),
+        max_proxy_body_bytes,
+    );
     state = state.with_feedback_config(ctx.config.feedback.clone());
 
     if let Err(err) = feedback::ensure_feedback_dirs(&ctx.config.feedback) {
@@ -2416,9 +2289,11 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
 
         // Kill browser daemon processes
         {
-            let browser_mgr = agent_browser::AgentBrowserManager::new(
-                agent_browser::AgentBrowserConfig { enabled: true, ..Default::default() },
-            );
+            let browser_mgr =
+                agent_browser::AgentBrowserManager::new(agent_browser::AgentBrowserConfig {
+                    enabled: true,
+                    ..Default::default()
+                });
             browser_mgr.cleanup_all_sessions();
         }
 

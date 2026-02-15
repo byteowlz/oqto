@@ -82,8 +82,8 @@ export {
 	getChatSession,
 	updateChatSession,
 	getChatMessages,
-	convertChatMessageToOpenCode,
-	convertChatMessagesToOpenCode,
+	convertChatMessageToAgent,
+	convertChatMessagesToAgent,
 } from "./chat";
 
 // Default chat (Pi) APIs
@@ -156,7 +156,7 @@ export {
 
 // Files and proxy URLs
 export {
-	opencodeProxyBaseUrl,
+	agentProxyBaseUrl,
 	terminalProxyPath,
 	fileserverProxyBaseUrl,
 	fileserverWorkspaceBaseUrl,
@@ -180,7 +180,7 @@ export type {
 	WorkspaceConfig,
 } from "./config";
 export {
-	getGlobalOpencodeConfig,
+	getGlobalAgentConfig,
 	getWorkspaceConfig,
 	saveWorkspaceConfig,
 } from "./config";

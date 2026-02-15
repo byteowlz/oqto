@@ -8,9 +8,9 @@ Comprehensive setup and installation guide for self-hosting Octo on your own inf
 |-----------|------|----------|---------|
 | **octo** | Core | Yes | Control plane server and session orchestration |
 | **fileserver** | Core | Yes | File server for workspace access |
-| **opencode** | Agent Runtime | Yes (local mode) | AI agent CLI that runs in sessions |
+| **pi** | Agent Runtime | Yes | Main chat/LLM interface (primary harness) |
 | **ttyd** | Agent Runtime | Yes (local mode) | Web terminal for browser access |
-| **pi** | Agent Runtime | Yes | Main chat/LLM interface |
+| **opencode** | Agent Runtime | No (TBD) | Planned future agent runtime |
 | **docker/podman** | Runtime | Yes (container mode) | Container runtime for isolation |
 | **agntz** | Tool | Recommended | Agent operations (memory, issues, mail, reservations) |
 | **mmry** | Tool | Optional | Memory system (integrated with Octo API) |
@@ -188,16 +188,16 @@ VITE_CONTROL_PLANE_URL=http://localhost:8080
 
 ## Agent Runtime Components
 
-### OpenCode (opencode)
+### Pi (pi)
 
-OpenCode CLI - the AI agent that runs within sessions. Required for local mode.
+Pi CLI - the primary AI agent harness that runs within sessions. Required for all modes.
 
 **Installation**:
 ```bash
-curl -fsSL https://opencode.ai/install | bash
+bun install -g @mariozechner/pi-coding-agent
 ```
 
-**Configuration**: `~/.config/opencode/opencode.json`
+**Configuration**: Configured via the `[pi]` section in `~/.config/octo/config.toml`. Pi is managed by octo-runner and runs in RPC mode with JSON over stdin/stdout.
 
 ### ttyd
 
@@ -303,25 +303,25 @@ The main chat/LLM interface used by Octo for AI conversations.
 
 **Installation**:
 ```bash
-cargo install pi
+bun install -g @mariozechner/pi-coding-agent
 ```
 
 **Configuration**:
-Pi is configured via the `[pi]` section in `~/.config/octo/config.toml`:
+Pi is spawned by octo-runner and configured via runner settings. The runner locates the pi binary from your PATH.
+
+Session directories are configured in `~/.config/octo/config.toml`:
 
 ```toml
-[pi]
-enabled = true
-executable = "pi"
-default_provider = "anthropic"
-default_model = "claude-sonnet-4-20250514"
-runtime_mode = "local"  # or "container" or "runner"
+[runner]
+# Directory containing Pi session files (for main chat history)
+# Defaults to $XDG_DATA_HOME/pi/sessions (~/.local/share/pi/sessions)
+pi_sessions_dir = "~/.local/share/pi/sessions"
 ```
 
-**Runtime modes**:
-- `local` - Pi runs directly on the host (single-user local mode)
-- `container` - Pi runs inside containers (container mode)
-- `runner` - Pi runs via octo-runner for multi-user Linux mode
+**Runtime modes** (determined by Octo backend mode):
+- `local` - Pi runs directly via octo-runner on the host (single-user local mode)
+- `container` - Pi runs inside containers (container mode) via pi-bridge
+- `runner` - Pi runs via octo-runner daemon for multi-user Linux mode
 
 ## Deployment Modes
 
@@ -330,10 +330,9 @@ runtime_mode = "local"  # or "container" or "runner"
 Runs all components as native processes on the host.
 
 **Prerequisites**:
-- opencode binary
-- fileserver binary
-- ttyd binary
-- pi binary
+- pi binary (install: `bun install -g @mariozechner/pi-coding-agent`)
+- fileserver binary (build from this repo)
+- ttyd binary (install via package manager)
 
 **Best for**:
 - Development
@@ -343,14 +342,15 @@ Runs all components as native processes on the host.
 
 **Configuration**:
 ```toml
-[backend]
-mode = "local"
-
 [local]
+# Enable local mode (non-container)
 enabled = true
-opencode_binary = "opencode"
+
+# Binary paths
 fileserver_binary = "fileserver"
 ttyd_binary = "ttyd"
+
+# Workspace directory - {user_id} placeholder replaced in multi-user mode
 workspace_dir = "$HOME/octo/{user_id}"
 single_user = false
 ```
@@ -653,7 +653,7 @@ allowed_origins = ["https://octo.example.com"]
 
 ## Configuration Reference
 
-Full configuration reference available at `backend/examples/config.toml`.
+Full configuration reference available at `backend/crates/octo/examples/config.toml`.
 
 Key configuration sections:
 
@@ -661,11 +661,11 @@ Key configuration sections:
 - `[runtime]` - Worker pool and timeout settings
 - `[container]` - Container runtime and image settings
 - `[local]` - Local mode configuration
+- `[runner]` - Runner configuration for Pi sessions
 - `[eavs]` - LLM proxy integration (see [EAVS Post-Setup](#eavs-post-setup) below)
 - `[auth]` - Authentication and authorization
 - `[sessions]` - Session behavior settings
 - `[scaffold]` - Agent scaffolding configuration
-- `[pi]` - Main chat configuration
 
 ## EAVS Post-Setup
 
@@ -749,9 +749,10 @@ After installation, verify all components are working:
 # Check binaries
 which octo
 which fileserver
-which opencode
 which ttyd
-which pi
+
+# Check pi (installed via bun/npm)
+which pi || echo "Pi not in PATH - check: bun list -g | grep pi-coding-agent"
 
 # Check agent tools
 which agntz
@@ -796,18 +797,23 @@ lsof -i :8080
 kill -9 <PID>
 ```
 
-### opencode not found
+### pi not found
 
-Error: `opencode: command not found`
+Error: `pi: command not found` or Pi sessions fail to start
 
-Solution: Install opencode:
+Solution: Install Pi:
 ```bash
-curl -fsSL https://opencode.ai/install | bash
+bun install -g @mariozechner/pi-coding-agent
+```
+
+Verify installation:
+```bash
+pi --version
 ```
 
 ### Permission prompts or errors not showing (UI)
 
-Symptoms: OpenCode requests permissions or hits errors, but the web UI shows nothing.
+Symptoms: Pi requests permissions or hits errors, but the web UI shows nothing.
 
 Solution:
 - Update Octo to a recent build (the UI normalizes both `tool`/`input` and `permission_type`/`pattern` payload shapes).

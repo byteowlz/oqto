@@ -53,6 +53,14 @@ pub enum EventPayload {
         reason: Option<String>,
     },
 
+    /// Session title changed (auto-rename or manual rename).
+    #[serde(rename = "session.title_changed")]
+    SessionTitleChanged {
+        title: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        readable_id: Option<String>,
+    },
+
     /// Session health heartbeat (emitted periodically by the runner).
     #[serde(rename = "session.heartbeat")]
     SessionHeartbeat { process: ProcessHealth },

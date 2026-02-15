@@ -163,13 +163,13 @@ fn merge_duplicate_sessions(mut sessions: Vec<ChatSession>) -> Vec<ChatSession> 
     merged
 }
 
-/// List all chat sessions from OpenCode history.
+/// List all chat sessions from hstry.
 ///
-/// In multi-user mode, this uses the runner to read from the user's home directory.
-/// In single-user mode, uses direct filesystem access.
+/// In multi-user mode, this uses the runner to query hstry for the user.
+/// In single-user mode, queries hstry gRPC directly.
 ///
 /// SECURITY: In multi-user mode, we MUST use the runner. Falling back to direct
-/// filesystem access would read from the backend user's home directory, potentially
+/// access would read from the backend user's data, potentially
 /// exposing other users' data.
 #[instrument(skip(state))]
 pub async fn list_chat_history(
@@ -183,7 +183,7 @@ pub async fn list_chat_history(
 
     if let Some(runner) = get_runner_for_user(&state, user.id()) {
         match runner
-            .list_opencode_sessions(
+            .list_workspace_chat_sessions(
                 query.workspace.clone(),
                 query.include_children,
                 query.limit,
@@ -284,7 +284,7 @@ pub async fn get_chat_session(
 
     // In multi-user mode, use runner
     if let Some(runner) = get_runner_for_user(&state, user.id()) {
-        match runner.get_opencode_session(&session_id).await {
+        match runner.get_workspace_chat_session(&session_id).await {
             Ok(response) => {
                 if let Some(s) = response.session {
                     return Ok(Json(ChatSession {
@@ -332,25 +332,26 @@ pub async fn get_chat_session(
         ));
     }
 
-    // SECURITY: Only use direct access in single-user mode
+    // Single-user mode: use hstry gRPC
     if let Some(hstry) = state.hstry.as_ref() {
         match crate::history::repository::get_session_via_grpc(hstry, &session_id).await {
             Ok(Some(session)) => return Ok(Json(session)),
-            Ok(None) => {}
+            Ok(None) => {
+                return Err(ApiError::not_found(format!(
+                    "Chat session {} not found",
+                    session_id
+                )));
+            }
             Err(err) => {
-                tracing::warn!(
-                    session_id = %session_id,
-                    error = %err,
-                    "Failed to load chat session via hstry gRPC, falling back to disk"
-                );
+                return Err(ApiError::internal(format!(
+                    "Failed to load chat session: {}",
+                    err
+                )));
             }
         }
     }
 
-    crate::history::get_session(&session_id)
-        .map_err(|e| ApiError::internal(format!("Failed to get chat session: {}", e)))?
-        .map(Json)
-        .ok_or_else(|| ApiError::not_found(format!("Chat session {} not found", session_id)))
+    Err(ApiError::internal("hstry not configured"))
 }
 
 /// Request to update a chat session.
@@ -375,7 +376,7 @@ pub async fn update_chat_session(
     // In multi-user mode, use runner
     if let Some(runner) = get_runner_for_user(&state, user.id()) {
         match runner
-            .update_opencode_session(&session_id, request.title.clone())
+            .update_workspace_chat_session(&session_id, request.title.clone())
             .await
         {
             Ok(response) => {
@@ -421,33 +422,72 @@ pub async fn update_chat_session(
         ));
     }
 
-    // SECURITY: Only use direct access in single-user mode
-    if let Some(title) = request.title {
-        match crate::history::update_session_title(&session_id, &title) {
-            Ok(session) => {
-                info!(session_id = %session_id, title = %title, "Updated chat session title");
-                return Ok(Json(session));
+    // Single-user mode: update via hstry gRPC (partial update)
+    if let Some(hstry) = state.hstry.as_ref() {
+        if let Some(ref title) = request.title {
+            match hstry
+                .update_conversation(
+                    &session_id,
+                    Some(title.clone()),
+                    None, // workspace unchanged
+                    None, // model unchanged
+                    None, // provider unchanged
+                    None, // metadata unchanged
+                    None, // readable_id unchanged
+                    None, // harness unchanged
+                    None, // platform_id unchanged
+                )
+                .await
+            {
+                Ok(_) => {
+                    match crate::history::repository::get_session_via_grpc(hstry, &session_id).await
+                    {
+                        Ok(Some(session)) => {
+                            info!(session_id = %session_id, title = %title, "Updated chat session title");
+                            return Ok(Json(session));
+                        }
+                        Ok(None) => {
+                            return Err(ApiError::not_found(format!(
+                                "Chat session {} not found after update",
+                                session_id
+                            )));
+                        }
+                        Err(err) => {
+                            return Err(ApiError::internal(format!(
+                                "Failed to fetch updated session: {}",
+                                err
+                            )));
+                        }
+                    }
+                }
+                Err(err) => {
+                    return Err(ApiError::internal(format!(
+                        "Failed to update chat session: {}",
+                        err
+                    )));
+                }
             }
-            Err(err) if err.to_string().contains("not found") => {
-                return Err(ApiError::not_found(format!(
-                    "Chat session {} not found",
-                    session_id
-                )));
-            }
-            Err(err) => {
-                return Err(ApiError::internal(format!(
-                    "Failed to update chat session: {}",
-                    err
-                )));
+        } else {
+            // No updates requested - just return the current session
+            match crate::history::repository::get_session_via_grpc(hstry, &session_id).await {
+                Ok(Some(session)) => return Ok(Json(session)),
+                Ok(None) => {
+                    return Err(ApiError::not_found(format!(
+                        "Chat session {} not found",
+                        session_id
+                    )));
+                }
+                Err(err) => {
+                    return Err(ApiError::internal(format!(
+                        "Failed to get chat session: {}",
+                        err
+                    )));
+                }
             }
         }
-    } else {
-        // No updates requested - just return the current session
-        crate::history::get_session(&session_id)
-            .map_err(|e| ApiError::internal(format!("Failed to get chat session: {}", e)))?
-            .map(Json)
-            .ok_or_else(|| ApiError::not_found(format!("Chat session {} not found", session_id)))
     }
+
+    Err(ApiError::internal("hstry not configured"))
 }
 
 /// Response for grouped chat history.
@@ -470,6 +510,55 @@ pub async fn list_chat_history_grouped(
     let mut sessions: Vec<ChatSession> = Vec::new();
     let mut source = "hstry";
     let multi_user = is_multi_user_mode(&state);
+
+    if let Some(runner) = get_runner_for_user(&state, user.id()) {
+        match runner
+            .list_workspace_chat_sessions(
+                query.workspace.clone(),
+                query.include_children,
+                query.limit,
+            )
+            .await
+        {
+            Ok(response) => {
+                sessions = response
+                    .sessions
+                    .into_iter()
+                    .map(|s| ChatSession {
+                        id: s.id,
+                        readable_id: s.readable_id,
+                        title: s.title,
+                        parent_id: s.parent_id,
+                        workspace_path: s.workspace_path,
+                        project_name: s.project_name,
+                        created_at: s.created_at,
+                        updated_at: s.updated_at,
+                        version: s.version,
+                        is_child: s.is_child,
+                        source_path: None,
+                        stats: None,
+                        model: s.model,
+                        provider: s.provider,
+                    })
+                    .collect();
+                source = "runner";
+            }
+            Err(e) => {
+                if multi_user {
+                    tracing::error!(
+                        user_id = %user.id(),
+                        error = %e,
+                        "Runner failed in multi-user mode"
+                    );
+                    return Err(ApiError::internal("Chat history service unavailable."));
+                }
+            }
+        }
+    } else if multi_user {
+        return Err(ApiError::internal(
+            "Chat history service not configured for this user.",
+        ));
+    }
 
     let mut hstry_sessions: Vec<ChatSession> = Vec::new();
     if !multi_user && let Some(hstry) = state.hstry.as_ref() {
@@ -577,8 +666,7 @@ pub struct ChatMessagesQuery {
 
 /// Get all messages for a chat session.
 ///
-/// This reads messages and their parts directly from OpenCode's storage on disk.
-/// Uses async I/O with caching for better performance on large sessions.
+/// Get all messages for a chat session via hstry.
 ///
 /// Query params:
 /// - `render=true`: Include pre-rendered markdown HTML in `text_html` field
@@ -592,16 +680,16 @@ pub async fn get_chat_messages(
     Query(query): Query<ChatMessagesQuery>,
 ) -> ApiResult<Json<Vec<ChatMessage>>> {
     let multi_user = is_multi_user_mode(&state);
+    let prefer_hstry = !multi_user && state.hstry.is_some();
 
-    // In multi-user mode, use runner
-    if let Some(runner) = get_runner_for_user(&state, user.id()) {
-        match runner
-            .get_opencode_session_messages(&session_id, query.render)
-            .await
-        {
-            Ok(response) => {
-                if !response.messages.is_empty() {
-                    // Convert protocol types to history types
+    // In multi-user mode, use runner -> hstry
+    if !prefer_hstry {
+        if let Some(runner) = get_runner_for_user(&state, user.id()) {
+            match runner
+                .get_workspace_chat_session_messages(&session_id, query.render, None)
+                .await
+            {
+                Ok(response) => {
                     let messages: Vec<ChatMessage> = response
                         .messages
                         .into_iter()
@@ -643,32 +731,23 @@ pub async fn get_chat_messages(
                     info!(user_id = %user.id(), session_id = %session_id, count = messages.len(), render = query.render, "Listed chat messages via runner");
                     return Ok(Json(messages));
                 }
-                // Runner returned 0 messages - session may be historical (not active
-                // in the runner). Fall through to hstry for historical session data.
-                info!(
-                    user_id = %user.id(),
-                    session_id = %session_id,
-                    "Runner returned 0 messages, falling through to hstry"
-                );
-            }
-            Err(e) => {
-                // SECURITY: In multi-user mode, do NOT fall back on error
-                if multi_user {
-                    tracing::error!(
-                        user_id = %user.id(),
-                        session_id = %session_id,
-                        error = %e,
-                        "Runner failed in multi-user mode"
-                    );
-                    return Err(ApiError::internal("Chat history service unavailable."));
+                Err(e) => {
+                    if multi_user {
+                        tracing::error!(
+                            user_id = %user.id(),
+                            session_id = %session_id,
+                            error = %e,
+                            "Runner failed in multi-user mode"
+                        );
+                        return Err(ApiError::internal("Chat history service unavailable."));
+                    }
                 }
             }
+        } else if multi_user {
+            return Err(ApiError::internal(
+                "Chat history service not configured for this user.",
+            ));
         }
-    } else if multi_user {
-        // SECURITY: Multi-user mode requires runner
-        return Err(ApiError::internal(
-            "Chat history service not configured for this user.",
-        ));
     }
 
     if multi_user {
@@ -678,17 +757,15 @@ pub async fn get_chat_messages(
         )));
     }
 
-    // SECURITY: Only use direct access in single-user mode
+    // Single-user mode: use hstry gRPC directly
     let messages = if let Some(hstry) = state.hstry.as_ref() {
         if query.render {
             crate::history::get_session_messages_rendered_via_grpc(hstry, &session_id).await
         } else {
             crate::history::get_session_messages_via_grpc_cached(hstry, &session_id).await
         }
-    } else if query.render {
-        crate::history::get_session_messages_rendered(&session_id).await
     } else {
-        crate::history::get_session_messages_async(&session_id).await
+        Err(anyhow::anyhow!("hstry not configured"))
     }
     .map_err(|e| ApiError::internal(format!("Failed to get chat messages: {}", e)))?;
 

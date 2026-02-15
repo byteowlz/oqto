@@ -242,9 +242,10 @@ pub async fn sync_user_configs(
     RequireAdmin(_user): RequireAdmin,
     Json(request): Json<SyncUserConfigsRequest>,
 ) -> ApiResult<Json<SyncUserConfigsResponse>> {
-    let linux_users = state.linux_users.as_ref().ok_or_else(|| {
-        ApiError::bad_request("Linux user isolation is not enabled.")
-    })?;
+    let linux_users = state
+        .linux_users
+        .as_ref()
+        .ok_or_else(|| ApiError::bad_request("Linux user isolation is not enabled."))?;
 
     let users = if let Some(ref user_id) = request.user_id {
         let user = state

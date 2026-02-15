@@ -16,11 +16,11 @@ use super::models::{
     ChatMessage, ChatMessagePart, ChatSession, ChatSessionStats, MessageInfo, PartInfo, SessionInfo,
 };
 
-/// Default OpenCode data directory.
-pub fn default_opencode_data_dir() -> PathBuf {
+/// Default legacy (OpenCode) data directory.
+pub fn default_legacy_data_dir() -> PathBuf {
     dirs::data_local_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join("opencode")
+        .join("opencode") // legacy path
 }
 
 /// Default hstry database path, if it exists.
@@ -150,12 +150,13 @@ pub async fn get_session_from_hstry(
     let pool = open_hstry_pool(db_path).await?;
     let row = sqlx::query(
         r#"
-        SELECT id, external_id, readable_id, title, created_at, updated_at, workspace, model, provider
+        SELECT id, external_id, platform_id, readable_id, title, created_at, updated_at, workspace, model, provider
         FROM conversations
-        WHERE external_id = ? OR readable_id = ? OR id = ?
+        WHERE external_id = ? OR platform_id = ? OR readable_id = ? OR id = ?
         LIMIT 1
         "#,
     )
+    .bind(session_id)
     .bind(session_id)
     .bind(session_id)
     .bind(session_id)
@@ -168,6 +169,7 @@ pub async fn get_session_from_hstry(
 
     let id: String = row.get("id");
     let external_id: Option<String> = row.get("external_id");
+    let platform_id: Option<String> = row.try_get("platform_id").ok().flatten();
     let readable_id: Option<String> = row.get("readable_id");
     let title: Option<String> = row.get("title");
     let created_at: i64 = row.get("created_at");
@@ -176,7 +178,10 @@ pub async fn get_session_from_hstry(
     let model: Option<String> = row.get("model");
     let provider: Option<String> = row.get("provider");
 
-    let session_id = external_id.clone().unwrap_or_else(|| id.clone());
+    let session_id = platform_id
+        .filter(|s| !s.is_empty())
+        .or(external_id.clone())
+        .unwrap_or_else(|| id.clone());
     let workspace_path = workspace.unwrap_or_else(|| "global".to_string());
     let project_name = project_name_from_path(&workspace_path);
     let readable_id = readable_id.unwrap_or_default();
@@ -208,10 +213,11 @@ pub async fn get_session_messages_from_hstry(
         r#"
         SELECT id
         FROM conversations
-        WHERE external_id = ? OR readable_id = ? OR id = ?
+        WHERE external_id = ? OR platform_id = ? OR readable_id = ? OR id = ?
         LIMIT 1
         "#,
     )
+    .bind(session_id)
     .bind(session_id)
     .bind(session_id)
     .bind(session_id)
@@ -528,16 +534,19 @@ fn conversation_proto_to_session(conv: &hstry_core::service::proto::Conversation
         .clone()
         .unwrap_or_else(|| "global".to_string());
     let project_name = project_name_from_path(&workspace_path);
-    let mut readable_id = conv.readable_id.clone().unwrap_or_default();
+    let readable_id = conv.readable_id.clone().unwrap_or_default();
 
-    if readable_id.trim().is_empty() {
-        if let Some(octo_session_id) = parse_octo_session_id(&conv.metadata_json) {
-            readable_id = octo_session_id;
-        }
-    }
+    // Prefer the platform_id (Octo session ID) so the frontend always uses
+    // the same ID as events and commands.  Fall back to external_id (Pi
+    // native ID) for sessions not created through Octo.
+    let id = conv
+        .platform_id
+        .clone()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| conv.external_id.clone());
 
     ChatSession {
-        id: conv.external_id.clone(),
+        id,
         readable_id,
         title: conv.title.clone(),
         parent_id: None,
@@ -553,6 +562,8 @@ fn conversation_proto_to_session(conv: &hstry_core::service::proto::Conversation
         provider: conv.provider.clone(),
     }
 }
+
+
 
 fn parse_stats_from_metadata(metadata_json: &str) -> Option<ChatSessionStats> {
     if metadata_json.trim().is_empty() {
@@ -579,17 +590,6 @@ fn parse_stats_from_metadata(metadata_json: &str) -> Option<ChatSessionStats> {
             .and_then(|v| v.as_f64())
             .unwrap_or(0.0),
     })
-}
-
-fn parse_octo_session_id(metadata_json: &str) -> Option<String> {
-    if metadata_json.trim().is_empty() {
-        return None;
-    }
-    let value: serde_json::Value = serde_json::from_str(metadata_json).ok()?;
-    value
-        .get("octo_session_id")
-        .and_then(|v| v.as_str())
-        .map(|value| value.to_string())
 }
 
 /// Convert a proto Message to a ChatMessage.
@@ -641,16 +641,16 @@ fn message_proto_to_chat_message(
 // File-based repository functions
 // ============================================================================
 
-/// Read all chat sessions from OpenCode's data directory.
+/// Read all chat sessions from legacy's data directory.
 pub fn list_sessions() -> Result<Vec<ChatSession>> {
-    list_sessions_from_dir(&default_opencode_data_dir())
+    list_sessions_from_dir(&default_legacy_data_dir())
 }
 
-/// Read all chat sessions from a specific OpenCode data directory.
+/// Read all chat sessions from a specific legacy data directory.
 ///
-/// OpenCode stores sessions in: {opencode_dir}/storage/session/{projectID}/ses_*.json
-pub fn list_sessions_from_dir(opencode_dir: &Path) -> Result<Vec<ChatSession>> {
-    let session_dir = opencode_dir.join("storage/session");
+/// Legacy sessions stored in: {legacy_dir}/storage/session/{projectID}/ses_*.json
+pub fn list_sessions_from_dir(legacy_dir: &Path) -> Result<Vec<ChatSession>> {
+    let session_dir = legacy_dir.join("storage/session");
 
     if !session_dir.exists() {
         tracing::debug!("Session directory does not exist: {:?}", session_dir);
@@ -773,12 +773,12 @@ pub fn list_sessions_grouped() -> Result<HashMap<String, Vec<ChatSession>>> {
 
 /// Get a single session by ID.
 pub fn get_session(session_id: &str) -> Result<Option<ChatSession>> {
-    get_session_from_dir(session_id, &default_opencode_data_dir())
+    get_session_from_dir(session_id, &default_legacy_data_dir())
 }
 
-/// Get a single session by ID from a specific OpenCode data directory.
-pub fn get_session_from_dir(session_id: &str, opencode_dir: &Path) -> Result<Option<ChatSession>> {
-    let sessions = list_sessions_from_dir(opencode_dir)?;
+/// Get a single session by ID from a specific legacy data directory.
+pub fn get_session_from_dir(session_id: &str, legacy_dir: &Path) -> Result<Option<ChatSession>> {
+    let sessions = list_sessions_from_dir(legacy_dir)?;
     Ok(sessions.into_iter().find(|s| s.id == session_id))
 }
 
@@ -787,16 +787,16 @@ pub fn get_session_from_dir(session_id: &str, opencode_dir: &Path) -> Result<Opt
 /// This reads the session JSON file, updates the title field, and writes it back.
 /// Returns the updated session or an error if the session doesn't exist.
 pub fn update_session_title(session_id: &str, new_title: &str) -> Result<ChatSession> {
-    update_session_title_in_dir(session_id, new_title, &default_opencode_data_dir())
+    update_session_title_in_dir(session_id, new_title, &default_legacy_data_dir())
 }
 
-/// Update a session's title on disk from a specific OpenCode data directory.
+/// Update a session's title on disk from a specific legacy data directory.
 pub fn update_session_title_in_dir(
     session_id: &str,
     new_title: &str,
-    opencode_dir: &Path,
+    legacy_dir: &Path,
 ) -> Result<ChatSession> {
-    let session_dir = opencode_dir.join("storage/session");
+    let session_dir = legacy_dir.join("storage/session");
 
     if !session_dir.exists() {
         anyhow::bail!("Session directory does not exist");
@@ -878,10 +878,10 @@ pub fn update_session_title_in_dir(
 /// Get all messages for a session using parallel I/O.
 pub async fn get_session_messages_parallel(
     session_id: &str,
-    opencode_dir: &Path,
+    legacy_dir: &Path,
 ) -> Result<Vec<ChatMessage>> {
-    let message_dir = opencode_dir.join("storage/message").join(session_id);
-    let part_dir = opencode_dir.join("storage/part");
+    let message_dir = legacy_dir.join("storage/message").join(session_id);
+    let part_dir = legacy_dir.join("storage/part");
 
     if !message_dir.exists() {
         tracing::debug!("Message directory does not exist: {:?}", message_dir);
@@ -968,13 +968,13 @@ fn load_single_message(msg_path: &Path, part_dir: &Path) -> Result<Option<ChatMe
     }))
 }
 
-/// Get all messages for a session from a specific OpenCode data directory.
+/// Get all messages for a session from a specific legacy data directory.
 pub fn get_session_messages_from_dir(
     session_id: &str,
-    opencode_dir: &Path,
+    legacy_dir: &Path,
 ) -> Result<Vec<ChatMessage>> {
-    let message_dir = opencode_dir.join("storage/message").join(session_id);
-    let part_dir = opencode_dir.join("storage/part");
+    let message_dir = legacy_dir.join("storage/message").join(session_id);
+    let part_dir = legacy_dir.join("storage/part");
 
     if !message_dir.exists() {
         tracing::debug!("Message directory does not exist: {:?}", message_dir);

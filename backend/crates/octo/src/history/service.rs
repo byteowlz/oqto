@@ -13,7 +13,7 @@ use crate::markdown;
 
 use super::models::{ChatMessage, HstryJsonResponse, HstrySearchHit};
 use super::repository::{
-    default_opencode_data_dir, get_session_messages_from_dir, get_session_messages_from_hstry,
+    default_legacy_data_dir, get_session_messages_from_dir, get_session_messages_from_hstry,
     get_session_messages_parallel, get_session_messages_via_grpc, hstry_db_path,
 };
 
@@ -121,8 +121,8 @@ pub async fn get_session_messages_async(session_id: &str) -> Result<Vec<ChatMess
     }
 
     // Cache miss - load from disk
-    let opencode_dir = default_opencode_data_dir();
-    let messages = get_session_messages_parallel(session_id, &opencode_dir).await?;
+    let legacy_data_dir = default_legacy_data_dir();
+    let messages = get_session_messages_parallel(session_id, &legacy_data_dir).await?;
 
     // Update cache
     {
@@ -178,7 +178,7 @@ pub async fn get_session_messages_rendered(session_id: &str) -> Result<Vec<ChatM
             }
         }
     }
-    get_session_messages_rendered_from_dir(session_id, &default_opencode_data_dir()).await
+    get_session_messages_rendered_from_dir(session_id, &default_legacy_data_dir()).await
 }
 
 /// Get all messages for a session via gRPC (async version with caching).
@@ -218,8 +218,8 @@ pub async fn get_session_messages_via_grpc_cached(
     }
 
     // Fallback to disk
-    let opencode_dir = default_opencode_data_dir();
-    let messages = get_session_messages_parallel(session_id, &opencode_dir).await?;
+    let legacy_data_dir = default_legacy_data_dir();
+    let messages = get_session_messages_parallel(session_id, &legacy_data_dir).await?;
 
     // Update cache
     {
@@ -267,15 +267,15 @@ pub async fn get_session_messages_rendered_via_grpc(
             );
         }
     }
-    get_session_messages_rendered_from_dir(session_id, &default_opencode_data_dir()).await
+    get_session_messages_rendered_from_dir(session_id, &default_legacy_data_dir()).await
 }
 
 /// Get all messages for a session with pre-rendered markdown HTML from a specific directory.
 pub async fn get_session_messages_rendered_from_dir(
     session_id: &str,
-    opencode_dir: &std::path::Path,
+    legacy_data_dir: &std::path::Path,
 ) -> Result<Vec<ChatMessage>> {
-    let mut messages = get_session_messages_from_dir(session_id, opencode_dir)?;
+    let mut messages = get_session_messages_from_dir(session_id, legacy_data_dir)?;
 
     // Collect all text content that needs rendering
     let texts_to_render: Vec<(usize, usize, String)> = messages

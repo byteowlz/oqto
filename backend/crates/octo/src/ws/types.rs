@@ -52,7 +52,7 @@ pub enum WsEvent {
         workspace_path: String,
     },
 
-    /// Session error from OpenCode.
+    /// Session error (legacy).
     SessionError {
         session_id: String,
         error_type: String,
@@ -62,7 +62,7 @@ pub enum WsEvent {
     },
 
     // ========== Agent Connection Events ==========
-    /// Agent (OpenCode/Pi) connected and ready.
+    /// Agent connected and ready.
     AgentConnected { session_id: String },
 
     /// Agent disconnected.
@@ -122,7 +122,7 @@ pub enum WsEvent {
 
     // ========== Permission Events ==========
     /// Permission request from agent.
-    /// Matches OpenCode SDK Permission type structure.
+    /// Matches permission type structure.
     PermissionRequest {
         session_id: String,
         permission_id: String,
@@ -147,7 +147,7 @@ pub enum WsEvent {
 
     // ========== Question Events ==========
     /// Question request from agent (user question / multiple choice).
-    /// Matches OpenCode Question.Request type structure.
+    /// Matches question.Request type structure.
     QuestionRequest {
         session_id: String,
         request_id: String,
@@ -260,8 +260,8 @@ pub enum WsEvent {
     #[serde(rename = "ui.theme")]
     UiTheme { theme: String },
 
-    // ========== OpenCode-Specific Events ==========
-    /// Raw OpenCode SSE event (for backwards compatibility).
+    // ========== Legacy Events ==========
+    /// Legacy SSE event (deprecated).
     /// Contains the original event type and data.
     OpencodeEvent {
         session_id: String,
@@ -405,35 +405,7 @@ pub enum MessagePart {
 // Internal Types
 // ============================================================================
 
-/// Subscription info for a user's session.
-#[derive(Debug, Clone)]
-pub struct SessionSubscription {
-    pub session_id: String,
-    pub workspace_path: String,
-    pub opencode_port: u16,
-}
 
-/// Connection state for an agent adapter.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ConnectionState {
-    Disconnected,
-    Connecting,
-    Connected,
-    Reconnecting,
-    Failed,
-}
-
-impl std::fmt::Display for ConnectionState {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ConnectionState::Disconnected => write!(f, "disconnected"),
-            ConnectionState::Connecting => write!(f, "connecting"),
-            ConnectionState::Connected => write!(f, "connected"),
-            ConnectionState::Reconnecting => write!(f, "reconnecting"),
-            ConnectionState::Failed => write!(f, "failed"),
-        }
-    }
-}
 
 #[cfg(test)]
 mod tests_a2ui {
