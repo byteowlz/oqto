@@ -962,8 +962,8 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 										id: event.model_id,
 										provider: event.provider,
 										name: event.model_id,
-										context_window: 0,
-										max_tokens: 0,
+										contextWindow: 0,
+										maxTokens: 0,
 									};
 						return {
 							...prev,

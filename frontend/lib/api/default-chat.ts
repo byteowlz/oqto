@@ -96,8 +96,8 @@ export type PiModelInfo = {
 	id: string;
 	provider: string;
 	name: string;
-	context_window: number;
-	max_tokens: number;
+	contextWindow: number;
+	maxTokens: number;
 };
 
 export type PiPromptCommandInfo = {
