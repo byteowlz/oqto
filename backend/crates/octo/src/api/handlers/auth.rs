@@ -444,7 +444,7 @@ pub async fn login(
                     }
                     Err(e) => {
                         return Err(ApiError::internal(format!(
-                            "Failed to initialize user runtime: {e}"
+                            "Failed to initialize user runtime: {e:#}"
                         )));
                     }
                 }
