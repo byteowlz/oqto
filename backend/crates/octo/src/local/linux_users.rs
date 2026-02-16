@@ -586,40 +586,14 @@ impl LinuxUsersConfig {
                 .context("chmod runner socket user dir")?;
         }
 
-        // Build service file content
-        let runner_path = find_octo_runner_binary()?;
-        let expected_socket_str = expected_socket
-            .to_str()
-            .ok_or_else(|| anyhow::anyhow!("invalid socket path"))?;
-
-        let service_content = format!(
-            r#"[Unit]
-Description=Octo Runner - Process isolation daemon
-After=default.target
-
-[Service]
-Type=simple
-ExecStart={} --socket {}
-Restart=on-failure
-RestartSec=5
-Environment=RUST_LOG=info
-
-[Install]
-WantedBy=default.target
-"#,
-            runner_path.display(),
-            expected_socket_str
-        );
-
-        // Delegate the full setup to octo-usermgr (runs as root)
+        // Delegate the full setup to octo-usermgr (runs as root).
+        // Only send username and uid -- the daemon constructs the service file
+        // content server-side to prevent injection of arbitrary ExecStart commands.
         usermgr_request(
             "setup-user-runner",
             serde_json::json!({
                 "username": username,
                 "uid": uid,
-                "runner_binary": runner_path.to_string_lossy(),
-                "socket_path": expected_socket_str,
-                "service_content": service_content,
             }),
         )
         .context("setup-user-runner via octo-usermgr")?;
@@ -942,39 +916,6 @@ fn get_user_home(username: &str) -> Result<Option<PathBuf>> {
 /// Find the octo-runner binary.
 ///
 /// Searches in common locations and PATH.
-fn find_octo_runner_binary() -> Result<PathBuf> {
-    // Try `which` first
-    if let Ok(output) = Command::new("which").arg("octo-runner").output()
-        && output.status.success()
-    {
-        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if !path.is_empty() {
-            return Ok(PathBuf::from(path));
-        }
-    }
-
-    // Check common locations
-    let candidates = ["/usr/local/bin/octo-runner", "/usr/bin/octo-runner"];
-
-    for path in candidates {
-        if Path::new(path).exists() {
-            return Ok(PathBuf::from(path));
-        }
-    }
-
-    // Check ~/.cargo/bin for current user (development)
-    if let Ok(home) = std::env::var("HOME") {
-        let cargo_path = format!("{}/.cargo/bin/octo-runner", home);
-        if Path::new(&cargo_path).exists() {
-            return Ok(PathBuf::from(cargo_path));
-        }
-    }
-
-    anyhow::bail!(
-        "octo-runner binary not found. Install it with 'cargo install --path backend/crates/octo' \
-         or copy to /usr/local/bin/"
-    )
-}
 
 /// Get the GECOS field (comment) of a Linux user.
 /// Used to verify which platform user_id owns a Linux account.
