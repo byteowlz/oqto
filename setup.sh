@@ -3387,230 +3387,128 @@ create_admin_user_db() {
     return 0
   fi
 
-  log_step "Creating admin user in database"
+  log_step "Creating admin user"
 
-  local creds_file="$OCTO_CONFIG_DIR/.admin_setup"
   local admin_user="${ADMIN_USERNAME:-}"
   local admin_email="${ADMIN_EMAIL:-}"
-  local admin_hash=""
 
-  # Try to load from creds file first (has pre-computed bcrypt hash)
+  # Load from creds file if available
+  local creds_file="$OCTO_CONFIG_DIR/.admin_setup"
   if [[ -f "$creds_file" ]]; then
     # shellcheck source=/dev/null
     source "$creds_file"
     admin_user="${ADMIN_USERNAME:-$admin_user}"
     admin_email="${ADMIN_EMAIL:-$admin_email}"
-    admin_hash="${ADMIN_PASSWORD_HASH:-}"
   fi
 
   if [[ -z "$admin_user" || -z "$admin_email" ]]; then
     log_warn "Admin username/email not set. Re-run setup or create manually:"
-    log_info "  octoctl user bootstrap --username <user> --email <email> --role admin"
+    log_info "  octoctl user bootstrap --username <user> --email <email>"
     return 0
   fi
 
-  # Generate hash: prompt for password if we don't have one
-  # Passwords are never persisted to disk -- only the hash is stored in the DB.
-  if [[ -z "$admin_hash" ]]; then
-    local octoctl_bin=""
-    if command_exists octoctl && octoctl hash-password --help >/dev/null 2>&1; then
-      octoctl_bin="octoctl"
-    elif [[ -x "${TOOLS_INSTALL_DIR}/octoctl" ]]; then
-      octoctl_bin="${TOOLS_INSTALL_DIR}/octoctl"
-    fi
-
-    if [[ -z "$octoctl_bin" ]]; then
-      log_error "octoctl not found. Run the build step first."
-      return 1
-    fi
-
-    if [[ "$NONINTERACTIVE" == "true" ]]; then
-      local admin_password
-      admin_password=$(generate_secure_secret 16)
-      log_info "Generated admin password: $admin_password"
-      log_warn "SAVE THIS PASSWORD - it will not be shown again!"
-      admin_hash=$("$octoctl_bin" hash-password --password "$admin_password")
-      admin_password=""
-    else
-      # octoctl handles interactive prompting and confirmation
-      log_info "Set the admin password:"
-      admin_hash=$("$octoctl_bin" hash-password)
-    fi
+  # Find octoctl
+  local octoctl_bin=""
+  if [[ -x "${TOOLS_INSTALL_DIR}/octoctl" ]]; then
+    octoctl_bin="${TOOLS_INSTALL_DIR}/octoctl"
+  elif command_exists octoctl; then
+    octoctl_bin="octoctl"
+  else
+    log_error "octoctl not found. Run the build step first."
+    return 1
   fi
 
-  # Determine database path based on service config
+  # Ensure database exists by starting the service (runs migrations)
   local db_path=""
-  local is_multi_user="false"
-  if [[ "${MULTI_USER:-}" == "true" || "${SELECTED_USER_MODE:-}" == "multi" ]]; then
-    is_multi_user="true"
-    # Multi-user: service runs as 'octo' user with XDG dirs under /var/lib/octo
-    db_path="/var/lib/octo/.local/share/octo/sessions.db"
+  if [[ "${SELECTED_USER_MODE:-}" == "multi" ]]; then
+    db_path="/var/lib/octo/.local/share/octo/octo.db"
+    # Migrate from old name
+    local old_db="/var/lib/octo/.local/share/octo/sessions.db"
+    if [[ -f "$old_db" && ! -f "$db_path" ]]; then
+      sudo mv "$old_db" "$db_path"
+      sudo mv "${old_db}-wal" "${db_path}-wal" 2>/dev/null || true
+      sudo mv "${old_db}-shm" "${db_path}-shm" 2>/dev/null || true
+    fi
     sudo mkdir -p "$(dirname "$db_path")"
     sudo chown -R octo:octo /var/lib/octo/.local
   else
-    # Single-user: use local XDG data dir
     local data_dir="${XDG_DATA_HOME:-$HOME/.local/share}"
-    db_path="${data_dir}/octo/sessions.db"
+    db_path="${data_dir}/octo/octo.db"
     mkdir -p "$(dirname "$db_path")"
   fi
 
-  # Ensure the database exists by briefly starting the service (it runs migrations)
   if [[ ! -f "$db_path" ]]; then
     log_info "Starting service to initialize database..."
-    if [[ "$is_multi_user" == "true" ]]; then
+    if [[ "${SELECTED_USER_MODE:-}" == "multi" ]]; then
       sudo systemctl start octo 2>/dev/null || true
     else
       systemctl --user start octo 2>/dev/null || true
     fi
-
     # Wait for DB to appear
     local retries=0
     while [[ ! -f "$db_path" && $retries -lt 15 ]]; do
       sleep 1
       retries=$((retries + 1))
     done
+    # Stop the service again so bootstrap can write to the DB
+    if [[ "${SELECTED_USER_MODE:-}" == "multi" ]]; then
+      sudo systemctl stop octo 2>/dev/null || true
+    else
+      systemctl --user stop octo 2>/dev/null || true
+    fi
   fi
 
   if [[ ! -f "$db_path" ]]; then
     log_warn "Database not found at $db_path"
     log_info "Create admin user manually after starting Octo:"
-    log_info "  octoctl user bootstrap --username \"$ADMIN_USERNAME\" --email \"$ADMIN_EMAIL\" --role admin"
+    log_info "  $octoctl_bin user bootstrap --username \"$admin_user\" --email \"$admin_email\""
     return 0
   fi
-
-  # Check if sqlite3 is available
-  if ! command_exists sqlite3; then
-    log_warn "sqlite3 not found. Install it or create admin user manually:"
-    log_info "  octoctl user bootstrap --username \"$ADMIN_USERNAME\" --email \"$ADMIN_EMAIL\" --role admin"
-    return 0
-  fi
-
-  # Helper to run sqlite3 with correct permissions
-  run_sql() {
-    if [[ "$is_multi_user" == "true" ]]; then
-      sudo sqlite3 "$db_path" "$1" 2>/dev/null
-    else
-      sqlite3 "$db_path" "$1" 2>/dev/null
-    fi
-  }
 
   # Check if user already exists
-  local existing
-  existing=$(run_sql "SELECT COUNT(*) FROM users WHERE username = '$admin_user';" || echo "0")
-
-  if [[ "$existing" -gt 0 ]]; then
-    log_info "Admin user '$admin_user' already exists in database, skipping"
-    rm -f "$creds_file"
-    return 0
-  fi
-
-  # Generate a user ID
-  local user_id="usr_$(date +%s%N | sha256sum | head -c 16)"
-  local now
-  now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-
-  # Insert user into database
-  local sql="INSERT INTO users (id, username, email, password_hash, display_name, role, is_active, created_at, updated_at) VALUES ('$user_id', '$admin_user', '$admin_email', '$admin_hash', '$admin_user', 'admin', 1, '$now', '$now');"
-
-  if run_sql "$sql"; then
-    log_success "Admin user '$admin_user' created in database (id: $user_id)"
-  else
-    log_warn "Failed to insert admin user. Create manually:"
-    log_info "  octoctl user bootstrap --username \"$admin_user\" --email \"$admin_email\" --role admin"
-    return 0
-  fi
-
-  # In multi-user mode, create the Linux user and setup runner
-  if [[ "$is_multi_user" == "true" && "$LINUX_USERS_ENABLED" == "true" ]]; then
-    ADMIN_DB_PATH="$db_path" create_admin_linux_user "$admin_user" "$user_id"
-  fi
-
-  # Generate an initial invite code for the admin
-  generate_initial_invite_code
-
-  # Clean up the credentials file
-  rm -f "$creds_file"
-}
-
-# Create Linux user and runner for the admin user in multi-user mode
-create_admin_linux_user() {
-  local username="$1"
-  local user_id="$2"
-  local user_prefix="${OCTO_USER_PREFIX:-octo_}"
-  local octo_group="${OCTO_GROUP:-octo}"
-  local uid_start="${OCTO_UID_START:-2000}"
-  local linux_username="${user_prefix}${username}"
-
-  log_info "Creating Linux user '$linux_username' for admin '$username'..."
-
-  # Check if Linux user already exists
-  if id "$linux_username" &>/dev/null; then
-    log_info "Linux user '$linux_username' already exists"
-  else
-    # Find next available UID
-    local uid="$uid_start"
-    while getent passwd "$uid" &>/dev/null; do
-      uid=$((uid + 1))
-    done
-
-    if sudo useradd -u "$uid" -g "$octo_group" -s /bin/bash -m \
-      -c "Octo user: $username" "$linux_username"; then
-      log_success "Linux user '$linux_username' created (uid: $uid)"
+  if command_exists sqlite3; then
+    local existing
+    if [[ "${SELECTED_USER_MODE:-}" == "multi" ]]; then
+      existing=$(sudo sqlite3 "$db_path" "SELECT COUNT(*) FROM users WHERE username = '$admin_user';" 2>/dev/null || echo "0")
     else
-      log_warn "Failed to create Linux user '$linux_username'"
-      log_info "Create manually: sudo useradd -u $uid -g $octo_group -s /bin/bash -m '$linux_username'"
+      existing=$(sqlite3 "$db_path" "SELECT COUNT(*) FROM users WHERE username = '$admin_user';" 2>/dev/null || echo "0")
+    fi
+    if [[ "$existing" -gt 0 ]]; then
+      log_info "Admin user '$admin_user' already exists, skipping"
+      rm -f "$creds_file"
       return 0
     fi
   fi
 
-  # Create workspace directory
-  local workspace_dir="/home/${linux_username}/octo"
-  sudo mkdir -p "$workspace_dir"
-  sudo chown "${linux_username}:${octo_group}" "$workspace_dir"
+  # Delegate everything to octoctl: user ID generation, password hashing,
+  # DB insert, Linux user creation -- all in one place, no duplication.
+  local bootstrap_args=(user bootstrap --username "$admin_user" --email "$admin_email")
+  bootstrap_args+=(--database "$db_path")
 
-  # Enable systemd lingering so user services persist after logout
-  if command_exists loginctl; then
-    sudo loginctl enable-linger "$linux_username" 2>/dev/null || true
-    log_info "Enabled systemd lingering for '$linux_username'"
+  # Skip Linux user creation during setup -- it happens at first login via octo-usermgr
+  bootstrap_args+=(--no-linux-user)
+
+  if [[ "$NONINTERACTIVE" == "true" ]]; then
+    local admin_password
+    admin_password=$(generate_secure_secret 16)
+    bootstrap_args+=(--password "$admin_password")
+    log_info "Generated admin password: $admin_password"
+    log_warn "SAVE THIS PASSWORD - it will not be shown again!"
   fi
 
-  # Setup runner service for this user
-  local runner_service_dir="/home/${linux_username}/.config/systemd/user"
-  sudo mkdir -p "$runner_service_dir"
-
-  # Create runner socket directory
-  sudo install -d -m 2770 -o "$linux_username" -g "$octo_group" \
-    "/run/octo/runner-sockets/${linux_username}" 2>/dev/null || true
-
-  # Copy runner service file if it exists as a template
-  if [[ -f "/etc/systemd/user/octo-runner.service" ]]; then
-    sudo cp "/etc/systemd/user/octo-runner.service" "$runner_service_dir/octo-runner.service"
-    sudo chown -R "${linux_username}:${octo_group}" "/home/${linux_username}/.config"
-    log_info "Runner service installed for '$linux_username'"
-
-    # Try to enable and start the runner
-    if sudo -u "$linux_username" XDG_RUNTIME_DIR="/run/user/$(id -u "$linux_username")" \
-      systemctl --user daemon-reload 2>/dev/null; then
-      sudo -u "$linux_username" XDG_RUNTIME_DIR="/run/user/$(id -u "$linux_username")" \
-        systemctl --user enable octo-runner 2>/dev/null || true
-      sudo -u "$linux_username" XDG_RUNTIME_DIR="/run/user/$(id -u "$linux_username")" \
-        systemctl --user start octo-runner 2>/dev/null || true
-      log_success "Runner service started for '$linux_username'"
-    else
-      log_warn "Could not start runner service for '$linux_username' (will start on login)"
-    fi
-  fi
-
-  # Store the linux_username mapping in the database
-  local update_sql="UPDATE users SET linux_username = '$linux_username' WHERE id = '$user_id';"
-  local admin_db_path="${ADMIN_DB_PATH:-/var/lib/octo/.local/share/octo/sessions.db}"
-  if [[ "${MULTI_USER:-}" == "true" || "${SELECTED_USER_MODE:-}" == "multi" ]]; then
-    sudo sqlite3 "$admin_db_path" "$update_sql" 2>/dev/null || true
+  if "$octoctl_bin" "${bootstrap_args[@]}"; then
+    log_success "Admin user '$admin_user' created"
   else
-    sqlite3 "$admin_db_path" "$update_sql" 2>/dev/null || true
+    log_warn "Failed to create admin user. Create manually:"
+    log_info "  $octoctl_bin user bootstrap --username \"$admin_user\" --email \"$admin_email\""
+    return 0
   fi
 
-  log_success "Admin Linux user setup complete: $linux_username"
+  # Generate an initial invite code
+  generate_initial_invite_code
+
+  # Clean up
+  rm -f "$creds_file"
 }
 
 generate_initial_invite_code() {
