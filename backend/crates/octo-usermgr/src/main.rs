@@ -280,7 +280,18 @@ fn cmd_create_user(args: &serde_json::Value) -> Response {
             "-u", &uid_str, "-g", group, "-s", shell, home_flag, "-c", gecos, username,
         ],
     ) {
-        Ok(_) => Response::success(),
+        Ok(_) => {
+            // Create workspace directory inside the user's home with group-write
+            // so the octo backend (same group) can manage workspaces.
+            let workspace = format!("/home/{username}/octo");
+            let _ = run_cmd("/bin/mkdir", &["-p", &workspace]);
+            let _ = run_cmd(
+                "/usr/bin/chown",
+                &[&format!("{username}:{group}"), &workspace],
+            );
+            let _ = run_cmd("/usr/bin/chmod", &["2770", &workspace]);
+            Response::success()
+        }
         Err(e) => Response::error(e),
     }
 }
