@@ -1316,6 +1316,7 @@ install_all_agent_tools() {
   log_step "Installing agent tools"
 
   # Core tools (Rust)
+  install_rust_tool hstry
   install_rust_tool agntz
   install_rust_tool mmry
   install_rust_tool tmpltr
@@ -1366,6 +1367,9 @@ install_agent_tools_selected() {
     install_all_agent_tools
     return
   fi
+
+  # hstry is required for per-user chat history (runner starts it per-user)
+  install_rust_tool hstry
 
   if [[ "$INSTALL_MMRY" == "true" ]]; then
     install_rust_tool mmry
