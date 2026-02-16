@@ -616,34 +616,41 @@ export function ChatView({
 			);
 		});
 	}, [availableModels, modelQuery]);
-	const messageTokenUsage = useMemo(() => {
-		// Pi reports cumulative usage totals on each message (OpenAI-style).
-		// Only take the LAST message's usage to avoid double-counting.
-		// Find the index of the last compaction message
-		let lastCompactionIndex = -1;
-		for (let i = messages.length - 1; i >= 0; i--) {
-			const msg = messages[i];
-			if (msg.parts.some((part) => part.type === "compaction")) {
-				lastCompactionIndex = i;
-				break;
-			}
+	// Calculate current context window size from message content.
+// Pi's usage fields are cumulative session totals, not current context.
+const contextTokenCount = useMemo(() => {
+	// Find last compaction - only count messages after it
+	let lastCompactionIndex = -1;
+	for (let i = messages.length - 1; i >= 0; i--) {
+		if (messages[i].parts.some((p) => p.type === "compaction")) {
+			lastCompactionIndex = i;
+			break;
 		}
+	}
 
-		// Find the last message with usage after the last compaction
-		const startIndex = lastCompactionIndex >= 0 ? lastCompactionIndex + 1 : 0;
-		for (let i = messages.length - 1; i >= startIndex; i--) {
-			const msg = messages[i];
-			if (msg.usage) {
-				return {
-					inputTokens: msg.usage.input_tokens || 0,
-					outputTokens: msg.usage.output_tokens || 0,
-				};
+	// Estimate tokens from text content (rough approximation: 4 chars ≈ 1 token)
+	let inputTokens = 0;
+	let outputTokens = 0;
+	const startIndex = lastCompactionIndex >= 0 ? lastCompactionIndex + 1 : 0;
+
+	for (let i = startIndex; i < messages.length; i++) {
+		const msg = messages[i];
+		for (const part of msg.parts) {
+			if (part.type === "text" && part.text) {
+				const estimatedTokens = Math.ceil(part.text.length / 4);
+				if (msg.role === "user") {
+					inputTokens += estimatedTokens;
+				} else if (msg.role === "assistant") {
+					outputTokens += estimatedTokens;
+				}
 			}
 		}
-		return { inputTokens: 0, outputTokens: 0 };
-	}, [messages]);
-	// Use Pi's authoritative session stats exclusively
-	const gaugeTokens = sessionTokens ?? { inputTokens: 0, outputTokens: 0 };
+	}
+	return { inputTokens, outputTokens };
+}, [messages]);
+
+// Use content-based estimate for current context window
+const gaugeTokens = contextTokenCount;
 
 	// Report token usage to parent when it changes
 	useEffect(() => {
@@ -728,6 +735,7 @@ export function ChatView({
 		if (!targetSessionId) return;
 		try {
 			const stats = await getWsManager().agentGetSessionStats(targetSessionId);
+			console.log("[Pi stats] raw:", stats);
 			const fallbackStats = sessionMeta?.stats ?? null;
 			const tokens =
 				stats && typeof stats === "object" && "tokens" in stats
@@ -739,6 +747,7 @@ export function ChatView({
 							}
 						: null;
 			if (tokens) {
+				console.log("[Pi stats] tokens:", tokens, "contextWindow:", contextWindowLimit);
 				setSessionTokens({
 					input: tokens.input ?? 0,
 					output: tokens.output ?? 0,
