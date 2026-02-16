@@ -4615,7 +4615,11 @@ print_summary() {
   fi
 
   if [[ "$OS" == "linux" ]]; then
-    echo -e "  hstry:          $(check_service_status hstry "$is_user_service")"
+    if [[ "$SELECTED_USER_MODE" == "multi" ]]; then
+      echo -e "  hstry:          ${CYAN}per-user (managed by runner)${NC}"
+    else
+      echo -e "  hstry:          $(check_service_status hstry "$is_user_service")"
+    fi
   fi
 
   echo
