@@ -414,7 +414,7 @@ export const SessionScreen = memo(function SessionScreen() {
 	const [tokenUsage, setTokenUsage] = useState({
 		inputTokens: 0,
 		outputTokens: 0,
-		maxTokens: 0,
+		maxTokens: 200000,
 	});
 	const [expandedView, setExpandedView] = useState<ViewKey | null>(null);
 	const [previewFilePath, setPreviewFilePath] = useState<string | null>(null);

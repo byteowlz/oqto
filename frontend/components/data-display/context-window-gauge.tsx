@@ -17,7 +17,8 @@ export function ContextWindowGauge({
 	compact?: boolean;
 }) {
 	const totalTokens = inputTokens + outputTokens;
-	const percentage = Math.min((totalTokens / maxTokens) * 100, 100);
+	const effectiveMaxTokens = maxTokens > 0 ? maxTokens : 200000;
+	const percentage = Math.min((totalTokens / effectiveMaxTokens) * 100, 100);
 
 	const getColor = () => {
 		if (percentage >= 90) return "bg-destructive";
@@ -35,7 +36,7 @@ export function ContextWindowGauge({
 		return (
 			<div
 				className="w-full h-1 bg-muted overflow-hidden"
-				title={`${locale === "de" ? "Kontextfenster" : "Context window"}: ${formatTokens(totalTokens)} / ${formatTokens(maxTokens)} tokens (${percentage.toFixed(0)}%)`}
+				title={`${locale === "de" ? "Kontextfenster" : "Context window"}: ${formatTokens(totalTokens)} / ${formatTokens(effectiveMaxTokens)} tokens (${percentage.toFixed(0)}%)`}
 			>
 				<div
 					className={cn("h-full transition-all duration-300", getColor())}
@@ -48,7 +49,7 @@ export function ContextWindowGauge({
 	return (
 		<div
 			className="flex items-center gap-2 text-xs text-muted-foreground"
-			title={`${locale === "de" ? "Kontextfenster" : "Context window"}: ${formatTokens(totalTokens)} / ${formatTokens(maxTokens)} tokens`}
+			title={`${locale === "de" ? "Kontextfenster" : "Context window"}: ${formatTokens(totalTokens)} / ${formatTokens(effectiveMaxTokens)} tokens`}
 		>
 			<Gauge className="w-3.5 h-3.5" />
 			<div className="flex items-center gap-1.5">
