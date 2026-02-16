@@ -3390,27 +3390,9 @@ create_admin_user_db() {
       admin_hash=$("$octoctl_bin" hash-password --password "$admin_password")
       admin_password=""
     else
-      while true; do
-        local pw1 pw2
-        echo -n "Admin password (min 8 characters): " >&2
-        read -r -s pw1 < /dev/tty
-        echo >&2
-        if [[ ${#pw1} -lt 8 ]]; then
-          log_error "Password must be at least 8 characters"
-          continue
-        fi
-        echo -n "Confirm password: " >&2
-        read -r -s pw2 < /dev/tty
-        echo >&2
-        if [[ "$pw1" != "$pw2" ]]; then
-          log_error "Passwords do not match"
-          continue
-        fi
-        log_info "Generating password hash..."
-        admin_hash=$("$octoctl_bin" hash-password --password "$pw1")
-        pw1="" pw2=""
-        break
-      done
+      # octoctl handles interactive prompting and confirmation
+      log_info "Set the admin password:"
+      admin_hash=$("$octoctl_bin" hash-password)
     fi
   fi
 
