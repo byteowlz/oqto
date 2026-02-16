@@ -472,6 +472,7 @@ export function ChatView({
 	}, [availableModels, piState?.model, selectedModelRef]);
 	const contextWindowLimit = useMemo(() => {
 		if (!currentModelInfo) return 200000;
+		console.debug("[contextWindowLimit] model:", currentModelInfo);
 		if (currentModelInfo.contextWindow > 0) {
 			return currentModelInfo.contextWindow;
 		}
@@ -617,9 +618,8 @@ export function ChatView({
 		});
 	}, [availableModels, modelQuery]);
 	const messageTokenUsage = useMemo(() => {
-		let inputTokens = 0;
-		let outputTokens = 0;
-
+		// Pi reports cumulative usage totals on each message (OpenAI-style).
+		// Only take the LAST message's usage to avoid double-counting.
 		// Find the index of the last compaction message
 		let lastCompactionIndex = -1;
 		for (let i = messages.length - 1; i >= 0; i--) {
@@ -630,21 +630,25 @@ export function ChatView({
 			}
 		}
 
-		// Only count tokens from messages after the last compaction
+		// Find the last message with usage after the last compaction
 		const startIndex = lastCompactionIndex >= 0 ? lastCompactionIndex + 1 : 0;
-		for (let i = startIndex; i < messages.length; i++) {
+		for (let i = messages.length - 1; i >= startIndex; i--) {
 			const msg = messages[i];
-			if (!msg.usage) continue;
-			inputTokens += msg.usage.input_tokens || 0;
-			outputTokens += msg.usage.output_tokens || 0;
+			if (msg.usage) {
+				return {
+					inputTokens: msg.usage.input_tokens || 0,
+					outputTokens: msg.usage.output_tokens || 0,
+				};
+			}
 		}
-		return { inputTokens, outputTokens };
+		return { inputTokens: 0, outputTokens: 0 };
 	}, [messages]);
 	const gaugeTokens = useMemo(() => {
 		// Always prefer Pi's authoritative session stats when available.
 		// messageTokenUsage accumulates from individual messages but can be
 		// inconsistent during streaming or when stats haven't updated yet.
 		if (sessionTokens) {
+			console.debug("[gauge] using sessionTokens:", sessionTokens);
 			return {
 				inputTokens: sessionTokens.input,
 				outputTokens: sessionTokens.output,
@@ -652,6 +656,7 @@ export function ChatView({
 		}
 		const total =
 			messageTokenUsage.inputTokens + messageTokenUsage.outputTokens;
+		console.debug("[gauge] using messageTokenUsage:", messageTokenUsage, "total:", total);
 		if (total > 0) return messageTokenUsage;
 		return { inputTokens: 0, outputTokens: 0 };
 	}, [messageTokenUsage, sessionTokens]);
@@ -736,9 +741,11 @@ export function ChatView({
 
 	const refreshStats = useCallback(async () => {
 		const targetSessionId = selectedSessionId ?? piState?.sessionId ?? null;
+		console.debug("[refreshStats] targetSessionId:", targetSessionId);
 		if (!targetSessionId) return;
 		try {
 			const stats = await getWsManager().agentGetSessionStats(targetSessionId);
+			console.debug("[refreshStats] got stats:", stats);
 			const fallbackStats = sessionMeta?.stats ?? null;
 			const tokens =
 				stats && typeof stats === "object" && "tokens" in stats
@@ -749,19 +756,22 @@ export function ChatView({
 								output: fallbackStats.tokens_out,
 							}
 						: null;
+			console.debug("[refreshStats] extracted tokens:", tokens);
 			if (tokens) {
 				setSessionTokens({
 					input: tokens.input ?? 0,
 					output: tokens.output ?? 0,
 				});
 			}
-		} catch {
+		} catch (e) {
+			console.debug("[refreshStats] error:", e);
 			// Ignore stats errors; token gauge will fall back to message usage.
 		}
 	}, [piState?.sessionId, selectedSessionId, sessionMeta?.stats]);
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: messages.length triggers refresh when message count changes
 	useEffect(() => {
+		console.debug("[stats effect] isConnected:", isConnected, "isStreaming:", isStreaming, "msgCount:", messages.length);
 		if (!isConnected || isStreaming) return;
 		// Small delay to ensure Pi has updated internal stats after streaming
 		const timer = setTimeout(() => refreshStats(), 300);
