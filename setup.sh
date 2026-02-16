@@ -4514,6 +4514,56 @@ build_container_image() {
 # Summary and Next Steps
 # ==============================================================================
 
+start_all_services() {
+  log_step "Starting services"
+
+  local is_user_service="false"
+  if [[ "$SELECTED_USER_MODE" == "single" ]]; then
+    is_user_service="true"
+  fi
+
+  start_svc() {
+    local svc="$1"
+    local user_svc="${2:-false}"
+
+    if [[ "$user_svc" == "true" ]]; then
+      if systemctl --user is-active "$svc" &>/dev/null; then
+        log_success "$svc: already running"
+      elif systemctl --user is-enabled "$svc" &>/dev/null; then
+        systemctl --user start "$svc" && log_success "$svc: started" || log_warn "$svc: failed to start"
+      fi
+    else
+      if sudo systemctl is-active "$svc" &>/dev/null; then
+        log_success "$svc: already running"
+      elif sudo systemctl is-enabled "$svc" &>/dev/null; then
+        sudo systemctl start "$svc" && log_success "$svc: started" || log_warn "$svc: failed to start"
+      fi
+    fi
+  }
+
+  # Core services
+  start_svc eavs "$is_user_service"
+  start_svc octo "$is_user_service"
+
+  # Reverse proxy
+  if [[ "$SETUP_CADDY" == "yes" ]]; then
+    start_svc caddy
+  fi
+
+  # Optional services
+  if sudo systemctl is-enabled searxng &>/dev/null || systemctl --user is-enabled searxng &>/dev/null; then
+    start_svc searxng "$is_user_service"
+  fi
+
+  # Restart octo to pick up any config changes from this setup run
+  if [[ "$is_user_service" == "true" ]]; then
+    systemctl --user restart octo &>/dev/null || true
+  else
+    sudo systemctl restart octo &>/dev/null || true
+  fi
+  log_success "All services started"
+}
+
 print_summary() {
   log_step "Setup Complete!"
 
@@ -5224,6 +5274,9 @@ main() {
 
   # Create admin user in database
   run_step "admin_user_db" "Admin user in database" create_admin_user_db
+
+  # Start all services
+  start_all_services
 
   # Summary
   print_summary
