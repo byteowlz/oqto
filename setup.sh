@@ -3483,27 +3483,42 @@ create_admin_user_db() {
     fi
   fi
 
-  # Delegate everything to octoctl: user ID generation, password hashing,
-  # DB insert, Linux user creation -- all in one place, no duplication.
-  local bootstrap_args=(user bootstrap --username "$admin_user" --email "$admin_email")
-  bootstrap_args+=(--database "$db_path")
-
-  # Skip Linux user creation during setup -- it happens at first login via octo-usermgr
-  bootstrap_args+=(--no-linux-user)
-
+  # Hash the password first (runs as current user -- no DB access needed)
+  local admin_hash=""
   if [[ "$NONINTERACTIVE" == "true" ]]; then
     local admin_password
     admin_password=$(generate_secure_secret 16)
-    bootstrap_args+=(--password "$admin_password")
+    admin_hash=$("$octoctl_bin" hash-password --password "$admin_password")
     log_info "Generated admin password: $admin_password"
     log_warn "SAVE THIS PASSWORD - it will not be shown again!"
+  else
+    log_info "Set the admin password:"
+    admin_hash=$("$octoctl_bin" hash-password)
   fi
 
-  if "$octoctl_bin" "${bootstrap_args[@]}"; then
+  if [[ -z "$admin_hash" ]]; then
+    log_error "Failed to hash password"
+    return 1
+  fi
+
+  # Build bootstrap args with pre-computed hash (no interactive prompts needed)
+  local bootstrap_args=(user bootstrap --username "$admin_user" --email "$admin_email")
+  bootstrap_args+=(--database "$db_path")
+  bootstrap_args+=(--password-hash "$admin_hash")
+  # Skip Linux user creation during setup -- it happens at first login via octo-usermgr
+  bootstrap_args+=(--no-linux-user)
+
+  # In multi-user mode, run as octo user (DB is owned by octo)
+  local run_prefix=()
+  if [[ "${SELECTED_USER_MODE:-}" == "multi" ]]; then
+    run_prefix=(sudo -u octo)
+  fi
+
+  if "${run_prefix[@]}" "$octoctl_bin" "${bootstrap_args[@]}"; then
     log_success "Admin user '$admin_user' created"
   else
     log_warn "Failed to create admin user. Create manually:"
-    log_info "  $octoctl_bin user bootstrap --username \"$admin_user\" --email \"$admin_email\""
+    log_info "  sudo -u octo $octoctl_bin user bootstrap --username \"$admin_user\" --email \"$admin_email\""
     return 0
   fi
 

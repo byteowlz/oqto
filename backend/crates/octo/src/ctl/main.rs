@@ -338,6 +338,9 @@ enum UserCommand {
         /// Admin password (will prompt if not provided)
         #[arg(long, short)]
         password: Option<String>,
+        /// Pre-computed bcrypt hash (skips password prompting)
+        #[arg(long, conflicts_with = "password")]
+        password_hash: Option<String>,
         /// Display name
         #[arg(long, short = 'n')]
         display_name: Option<String>,
@@ -1991,6 +1994,7 @@ async fn handle_user(client: &OctoClient, command: UserCommand, json: bool) -> R
             username,
             email,
             password,
+            password_hash,
             display_name,
             database,
             linux_user,
@@ -2024,6 +2028,7 @@ async fn handle_user(client: &OctoClient, command: UserCommand, json: bool) -> R
                 &username,
                 &email,
                 password.as_deref(),
+                password_hash.as_deref(),
                 display_name.as_deref(),
                 database.as_deref(),
                 &user_id,
@@ -2046,6 +2051,7 @@ async fn bootstrap_admin_user(
     username: &str,
     email: &str,
     password: Option<&str>,
+    pre_hashed: Option<&str>,
     display_name: Option<&str>,
     database_path: Option<&str>,
     user_id: &str,
@@ -2055,38 +2061,39 @@ async fn bootstrap_admin_user(
     use sqlx::sqlite::SqlitePoolOptions;
     use std::io::Write;
 
-    // Get or prompt for password
-    let password = match password {
-        Some(p) => p.to_string(),
-        None => {
-            if json {
-                anyhow::bail!("Password is required in JSON mode. Use --password");
+    // Determine password hash: use pre-computed hash, hash provided password, or prompt
+    let password_hash = if let Some(hash) = pre_hashed {
+        hash.to_string()
+    } else {
+        let password = match password {
+            Some(p) => p.to_string(),
+            None => {
+                if json {
+                    anyhow::bail!("Password is required in JSON mode. Use --password");
+                }
+
+                let password = read_password_prompt("Enter admin password: ")?;
+
+                if password.len() < 8 {
+                    anyhow::bail!("Password must be at least 8 characters");
+                }
+
+                let confirm = read_password_prompt("Confirm password: ")?;
+
+                if password != confirm {
+                    anyhow::bail!("Passwords do not match");
+                }
+
+                password
             }
+        };
 
-            let password = read_password_prompt("Enter admin password: ")?;
-
-            if password.len() < 8 {
-                anyhow::bail!("Password must be at least 8 characters");
-            }
-
-            let confirm = read_password_prompt("Confirm password: ")?;
-
-            if password != confirm {
-                anyhow::bail!("Passwords do not match");
-            }
-
-            password
+        if password.len() < 8 {
+            anyhow::bail!("Password must be at least 8 characters");
         }
+
+        bcrypt::hash(&password, bcrypt::DEFAULT_COST).context("Failed to hash password")?
     };
-
-    // Validate password length
-    if password.len() < 8 {
-        anyhow::bail!("Password must be at least 8 characters");
-    }
-
-    // Hash the password
-    let password_hash =
-        bcrypt::hash(&password, bcrypt::DEFAULT_COST).context("Failed to hash password")?;
 
     // Get database path from option or default
     let db_path = match database_path {
