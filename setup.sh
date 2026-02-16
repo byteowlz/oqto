@@ -2845,7 +2845,8 @@ generate_config() {
   if [[ "$SELECTED_USER_MODE" == "single" ]]; then
     WORKSPACE_DIR=$(prompt_input "Workspace directory" "${WORKSPACE_DIR:-$HOME/octo/workspace}")
   else
-    WORKSPACE_DIR=$(prompt_input "Workspace base directory (user dirs created here)" "${WORKSPACE_DIR:-/home/{user_id}/octo}")
+    local default_workspace="/home/{user_id}/octo"
+    WORKSPACE_DIR=$(prompt_input "Workspace base directory (user dirs created here)" "${WORKSPACE_DIR:-$default_workspace}")
   fi
 
   # Auth configuration (use globals so state persistence works)
