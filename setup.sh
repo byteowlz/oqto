@@ -237,6 +237,18 @@ run_step() {
   mark_step_done "$step"
 }
 
+# Run a step unconditionally (always executes, never skipped).
+# Used for steps like building where stale artifacts cause subtle bugs.
+run_step_always() {
+  local step="$1"
+  local desc="$2"
+  shift 2
+
+  log_info "Running: $desc"
+  "$@"
+  mark_step_done "$step"
+}
+
 # Clear all completed steps (used with --fresh)
 clear_steps() {
   rm -f "$SETUP_STEPS_FILE"
@@ -2647,6 +2659,23 @@ build_octo() {
     log_success "Frontend deployed to ${frontend_deploy}"
   else
     log_warn "Frontend dist not found, skipping deployment"
+  fi
+
+  # Restart running services so they pick up the new binaries
+  if sudo systemctl is-active --quiet octo-usermgr 2>/dev/null; then
+    sudo systemctl restart octo-usermgr
+    log_success "octo-usermgr restarted"
+  fi
+  if sudo systemctl is-active --quiet octo 2>/dev/null; then
+    sudo systemctl restart octo
+    log_success "octo restarted with new binary"
+  elif systemctl --user is-active --quiet octo 2>/dev/null; then
+    systemctl --user restart octo
+    log_success "octo restarted with new binary"
+  fi
+  if sudo systemctl is-active --quiet eavs 2>/dev/null; then
+    sudo systemctl restart eavs
+    log_success "eavs restarted"
   fi
 }
 
@@ -5286,9 +5315,11 @@ main() {
   run_step "eavs_configure" "EAVS configure" configure_eavs
   verify_or_rerun "eavs_service" "EAVS service" "systemctl is-enabled eavs 2>/dev/null" install_eavs_service
 
-  # Build Octo - octoctl is required for password hashing during config generation,
-  # so we must verify the binary exists before proceeding
-  verify_or_rerun "build_octo" "Build Octo" "octoctl hash-password --help >/dev/null 2>&1" build_octo
+  # Build Octo - ALWAYS rebuild to ensure binaries match the current source.
+  # This is critical: stale binaries cause subtle bugs that are hard to diagnose.
+  # The build is incremental (cargo only recompiles changed crates) so it's fast
+  # when nothing changed.
+  run_step_always "build_octo" "Build Octo" build_octo
 
   # Generate configuration
   run_step "generate_config" "Configuration" generate_config
