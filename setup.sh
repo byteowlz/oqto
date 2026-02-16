@@ -4804,12 +4804,6 @@ print_summary() {
   fi
 
   if [[ "$PRODUCTION_MODE" == "true" ]]; then
-    echo "  $step. Start the frontend (production build):"
-    echo "     cd $SCRIPT_DIR/frontend && bun run preview"
-    echo "     # Or deploy the dist/ folder to your web server"
-    echo
-    ((step++))
-
     echo "  $step. Access the web interface:"
     if [[ -n "$DOMAIN" && "$DOMAIN" != "localhost" ]]; then
       echo "     https://${DOMAIN}"
