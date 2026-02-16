@@ -189,6 +189,8 @@ load_setup_state() {
 # Source the state file to restore variables
 apply_setup_state() {
   if [[ -f "$SETUP_STATE_FILE" ]]; then
+    # Fix known typos from previous versions before sourcing
+    sed -i 's|/home/{user_id/octo}|/home/{user_id}/octo|g' "$SETUP_STATE_FILE" 2>/dev/null || true
     # shellcheck source=/dev/null
     source "$SETUP_STATE_FILE"
     log_success "Loaded previous setup state"
