@@ -3144,8 +3144,9 @@ setup_linux_user_isolation() {
   local sudoers_file="/etc/sudoers.d/octo-multiuser"
   # Note: uid_start comes from config, default 2000
   local uid_start="${OCTO_UID_START:-2000}"
-  # Extract first digit of uid_start for regex (assumes 4-digit UIDs starting with 2-9)
-  local uid_first_digit="${uid_start:0:1}"
+  # UID regex: match 2000-60000 range (avoids system UIDs below and nobody/reserved above)
+  # [2-9][0-9]{3} matches 2000-9999, [1-5][0-9]{4} matches 10000-59999, 60000 exact
+  local uid_regex="([2-9][0-9][0-9][0-9]|[1-5][0-9][0-9][0-9][0-9]|60000)"
 
   local sudoers_content
   sudoers_content=$(cat <<SUDOERS_EOF
@@ -3154,7 +3155,7 @@ setup_linux_user_isolation() {
 # Allows the octo server user to manage isolated user accounts
 #
 # SECURITY: Uses regex patterns (^...\$) to prevent privilege escalation.
-# - UIDs restricted to ${uid_first_digit}000-${uid_first_digit}999 range (avoids system/user UIDs)
+# - UIDs restricted to ${uid_start}-60000 range (avoids system UIDs and nobody/reserved)
 # - Usernames must start with ${user_prefix} prefix
 # - Workspace chown restricted to ${user_prefix}* home directories only
 # Requires sudo 1.9.10+ for regex support.
@@ -3164,11 +3165,11 @@ Cmnd_Alias OCTO_GROUPADD = /usr/sbin/groupadd ${octo_group}
 
 # User creation - RESTRICTED to safe UID range and ${user_prefix} prefix
 # Regex matches: -u NNNN -g ${octo_group} -s /bin/bash -m/-M -c COMMENT USERNAME
-# UID must be ${uid_first_digit}000-${uid_first_digit}999, username must start with ${user_prefix}
+# UID must be in ${uid_start}-60000 range, username must start with ${user_prefix}
 # GECOS format: "Octo platform user: USER_ID" - use .* to match including spaces
 Cmnd_Alias OCTO_USERADD = \\
-    /usr/sbin/useradd ^-u [${uid_first_digit}][0-9][0-9][0-9] -g ${octo_group} -s /bin/bash -m -c .* ${user_prefix}[a-z0-9_-]+\$, \\
-    /usr/sbin/useradd ^-u [${uid_first_digit}][0-9][0-9][0-9] -g ${octo_group} -s /bin/bash -M -c .* ${user_prefix}[a-z0-9_-]+\$
+    /usr/sbin/useradd ^-u ${uid_regex} -g ${octo_group} -s /bin/bash -m -c .* ${user_prefix}[a-z0-9_-]+\$, \\
+    /usr/sbin/useradd ^-u ${uid_regex} -g ${octo_group} -s /bin/bash -M -c .* ${user_prefix}[a-z0-9_-]+\$
 
 # User deletion - only ${user_prefix} users, no home removal (-r flag not allowed)
 Cmnd_Alias OCTO_USERDEL = /usr/sbin/userdel ^${user_prefix}[a-z0-9_-]+\$
@@ -3193,7 +3194,7 @@ Cmnd_Alias OCTO_CHMOD_RUNNER = /usr/bin/chmod ^2770 /run/octo/runner-sockets/${u
 Cmnd_Alias OCTO_LINGER = /usr/bin/loginctl ^enable-linger ${user_prefix}[a-z0-9_]+\$
 
 # Start user systemd instance - RESTRICTED to ${user_prefix} user UIDs
-Cmnd_Alias OCTO_START_USER = /usr/bin/systemctl ^start user@[${uid_first_digit}][0-9][0-9][0-9]\\.service\$
+Cmnd_Alias OCTO_START_USER = /usr/bin/systemctl ^start user@${uid_regex}\\.service\$
 
 # User management - group and user creation
 ${server_user} ALL=(root) NOPASSWD: OCTO_GROUPADD, OCTO_USERADD
