@@ -4,10 +4,10 @@
 //! platform users, enabling proper process isolation in multi-user deployments.
 
 use anyhow::{Context, Result};
-use log::{debug, info, warn};
+use log::{debug, info};
 use rustix::process::{geteuid, getuid};
 use serde::{Deserialize, Serialize};
-use std::os::unix::fs::PermissionsExt;
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use toml::Value as TomlValue;
@@ -552,180 +552,46 @@ impl LinuxUsersConfig {
 
     /// Ensure the per-user octo-runner daemon is enabled and started.
     fn ensure_octo_runner_running(&self, username: &str, uid: u32) -> Result<()> {
-        // NOTE: do not attempt to create /run/octo/... via sudo here.
-        // It must be provisioned at boot (tmpfiles) or during install.
-        // Request-time privilege prompts would hang the backend.
         let base_dir = Path::new("/run/octo/runner-sockets");
         if !base_dir.exists() {
             anyhow::bail!(
-                "runner socket base dir missing at {}. Install tmpfiles config (systemd/octo-runner.tmpfiles.conf) \
-                 and run `sudo systemd-tmpfiles --create`, or create the directory as root with mode 2770 and group '{}'.",
+                "runner socket base dir missing at {}. Install tmpfiles config \
+                 or create the directory as root with mode 2770 and group '{}'.",
                 base_dir.display(),
                 self.group
             );
         }
 
         // Fast path: if the runner socket already exists, we're good.
-        // This avoids expensive privilege checks on every session creation.
         let expected_socket = base_dir.join(username).join("octo-runner.sock");
         if expected_socket.exists() {
             return Ok(());
         }
 
-        // Ensure per-user socket directory exists.
-        // If we're provisioning as root/sudo, we can set correct ownership. Otherwise,
-        // we only create it when username==current user.
+        // Ensure per-user socket directory exists
         let user_dir = base_dir.join(username);
         if !user_dir.exists() {
-            let is_current_user = std::env::var("USER").ok().as_deref() == Some(username);
-            if is_current_user {
-                std::fs::create_dir_all(&user_dir)
-                    .with_context(|| format!("creating {}", user_dir.display()))?;
-                let _ =
-                    std::fs::set_permissions(&user_dir, std::fs::Permissions::from_mode(0o2770));
-            } else {
-                let user_dir_str = user_dir
-                    .to_str()
-                    .ok_or_else(|| anyhow::anyhow!("invalid user_dir path"))?;
-                run_privileged_command(self.use_sudo, "mkdir", &["-p", user_dir_str])
-                    .context("creating runner socket user dir")?;
-                run_privileged_command(
-                    self.use_sudo,
-                    "chown",
-                    &[&format!("{}:{}", username, self.group), user_dir_str],
-                )
-                .context("chown runner socket user dir")?;
-                run_privileged_command(self.use_sudo, "chmod", &["2770", user_dir_str])
-                    .context("chmod runner socket user dir")?;
-            }
-        }
-
-        // Enable lingering so the user's systemd instance can run without login.
-        // This is required for headless multi-user deployments.
-        // Check if already enabled to avoid requiring sudo on every session.
-        if !self.is_linger_enabled(username) {
-            run_privileged_command(self.use_sudo, "loginctl", &["enable-linger", username])
-                .context("enabling systemd linger")?;
-        }
-
-        // Install the octo-runner systemd user service file if not present.
-        // The user needs ~/.config/systemd/user/octo-runner.service for `systemctl --user enable`.
-        self.install_runner_service_for_user(username, uid)
-            .context("installing octo-runner.service for user")?;
-
-        // Ensure the user's systemd instance is running.
-        // This is required for systemctl --user to work.
-        run_privileged_command(
-            self.use_sudo,
-            "systemctl",
-            &["start", &format!("user@{}.service", uid)],
-        )
-        .context("starting user systemd instance")?;
-
-        // Give the user's systemd instance a moment to initialize.
-        // This is especially important for newly created users.
-        std::thread::sleep(std::time::Duration::from_millis(500));
-
-        // Enable + start the runner as that user.
-        // Try multiple approaches since the user may not have a D-Bus session yet.
-        let runtime_dir = format!("/run/user/{}", uid);
-        let bus = format!("unix:path={}/bus", runtime_dir);
-
-        // Method 1: Use --machine=user@.host which connects via machinectl
-        // This works without a local D-Bus session socket.
-        let machine_arg = format!("{}@.host", username);
-        let machine_result = run_privileged_command(
-            self.use_sudo,
-            "systemctl",
-            &[
-                "--machine",
-                &machine_arg,
-                "--user",
-                "enable",
-                "--now",
-                "octo-runner",
-            ],
-        );
-
-        if let Err(e) = &machine_result {
-            debug!(
-                "systemctl --machine failed for {}: {:?}, trying XDG_RUNTIME_DIR method",
-                username, e
-            );
-
-            // Method 2: Set XDG_RUNTIME_DIR and DBUS_SESSION_BUS_ADDRESS explicitly
-            if let Err(e2) = run_as_user(
+            let user_dir_str = user_dir
+                .to_str()
+                .ok_or_else(|| anyhow::anyhow!("invalid user_dir path"))?;
+            run_privileged_command(self.use_sudo, "mkdir", &["-p", user_dir_str])
+                .context("creating runner socket user dir")?;
+            run_privileged_command(
                 self.use_sudo,
-                username,
-                "systemctl",
-                &["--user", "enable", "--now", "octo-runner"],
-                &[
-                    ("XDG_RUNTIME_DIR", runtime_dir.as_str()),
-                    ("DBUS_SESSION_BUS_ADDRESS", bus.as_str()),
-                ],
-            ) {
-                warn!(
-                    "Failed to enable/start octo-runner for {} (both methods failed): \
-                     machine method: {:?}, env method: {:?}",
-                    username, e, e2
-                );
-            }
+                "chown",
+                &[&format!("{}:{}", username, self.group), user_dir_str],
+            )
+            .context("chown runner socket user dir")?;
+            run_privileged_command(self.use_sudo, "chmod", &["2770", user_dir_str])
+                .context("chmod runner socket user dir")?;
         }
 
-        // Wait for the socket to appear (up to 5 seconds).
-        // The service may take a moment to create its socket.
-        for i in 0..10 {
-            if expected_socket.exists() {
-                debug!("octo-runner socket appeared after {}ms", i * 500);
-                return Ok(());
-            }
-            std::thread::sleep(std::time::Duration::from_millis(500));
-        }
-
-        // If the runner socket still doesn't exist, fail.
-        anyhow::bail!(
-            "octo-runner socket not found at {} after waiting 5s. \
-             Check if octo-runner.service is properly installed for user {}.",
-            expected_socket.display(),
-            username
-        )
-    }
-
-    /// Check if systemd linger is already enabled for a user.
-    fn is_linger_enabled(&self, username: &str) -> bool {
-        // Check via loginctl show-user --value -p Linger
-        // This doesn't require privileges.
-        std::process::Command::new("loginctl")
-            .args(["show-user", username, "-p", "Linger", "--value"])
-            .output()
-            .map(|out| {
-                out.status.success()
-                    && String::from_utf8_lossy(&out.stdout)
-                        .trim()
-                        .eq_ignore_ascii_case("yes")
-            })
-            .unwrap_or(false)
-    }
-
-    /// Install the octo-runner systemd user service file for a user.
-    ///
-    /// This creates ~/.config/systemd/user/octo-runner.service so that
-    /// `systemctl --user enable octo-runner` can find the service.
-    fn install_runner_service_for_user(&self, username: &str, uid: u32) -> Result<()> {
-        // Get the user's home directory
-        let home = get_user_home(username)?
-            .ok_or_else(|| anyhow::anyhow!("could not find home directory for {}", username))?;
-        let home_str = home.to_string_lossy();
-
-        let service_dir = format!("{}/.config/systemd/user", home_str);
-        let service_path = format!("{}/octo-runner.service", service_dir);
-
-        let expected_socket = format!("/run/octo/runner-sockets/{}/octo-runner.sock", username);
-
-        // Find the octo-runner binary
+        // Build service file content
         let runner_path = find_octo_runner_binary()?;
+        let expected_socket_str = expected_socket
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("invalid socket path"))?;
 
-        // Service file content
         let service_content = format!(
             r#"[Unit]
 Description=Octo Runner - Process isolation daemon
@@ -742,73 +608,40 @@ Environment=RUST_LOG=info
 WantedBy=default.target
 "#,
             runner_path.display(),
-            expected_socket
+            expected_socket_str
         );
 
-        if Path::new(&service_path).exists() {
-            let existing = std::fs::read_to_string(&service_path)
-                .with_context(|| format!("reading {}", service_path))?;
-            if existing == service_content {
-                debug!("octo-runner.service already installed for {}", username);
+        // Delegate the full setup to octo-usermgr (runs as root)
+        usermgr_request(
+            "setup-user-runner",
+            serde_json::json!({
+                "username": username,
+                "uid": uid,
+                "runner_binary": runner_path.to_string_lossy(),
+                "socket_path": expected_socket_str,
+                "service_content": service_content,
+            }),
+        )
+        .context("setup-user-runner via octo-usermgr")?;
+
+        // Wait for the socket to appear (up to 5 seconds)
+        for i in 0..10 {
+            if expected_socket.exists() {
+                debug!("octo-runner socket appeared after {}ms", i * 500);
                 return Ok(());
             }
-            info!("Updating octo-runner.service for {}", username);
+            std::thread::sleep(std::time::Duration::from_millis(500));
         }
 
-        // Create the directory and service file as the target user
-        let is_current_user = std::env::var("USER").ok().as_deref() == Some(username);
-
-        if is_current_user {
-            std::fs::create_dir_all(&service_dir)
-                .with_context(|| format!("creating {}", service_dir))?;
-            std::fs::write(&service_path, &service_content)
-                .with_context(|| format!("writing {}", service_path))?;
-
-            let _ = Command::new("systemctl")
-                .args(["--user", "daemon-reload"])
-                .output();
-        } else {
-            // Create directory as the target user
-            run_as_user(self.use_sudo, username, "mkdir", &["-p", &service_dir], &[])
-                .with_context(|| format!("creating {} as {}", service_dir, username))?;
-
-            // Write the service file via a temp file and move
-            // (we can't easily write file content via run_as_user)
-            let temp_file = format!("/tmp/octo-runner-{}.service", uid);
-            std::fs::write(&temp_file, &service_content).context("writing temp service file")?;
-
-            // Copy and set ownership
-            run_privileged_command(self.use_sudo, "cp", &[&temp_file, &service_path])
-                .context("copying service file")?;
-            run_privileged_command(
-                self.use_sudo,
-                "chown",
-                &[&format!("{}:{}", username, self.group), &service_path],
-            )
-            .context("chown service file")?;
-
-            // Clean up temp file
-            let _ = std::fs::remove_file(&temp_file);
-
-            // Reload systemd for the user to pick up the new service file
-            let runtime_dir = format!("/run/user/{}", uid);
-            let bus = format!("unix:path={}/bus", runtime_dir);
-            let _ = run_as_user(
-                self.use_sudo,
-                username,
-                "systemctl",
-                &["--user", "daemon-reload"],
-                &[
-                    ("XDG_RUNTIME_DIR", runtime_dir.as_str()),
-                    ("DBUS_SESSION_BUS_ADDRESS", bus.as_str()),
-                ],
-            );
-        }
-
-        info!("Installed octo-runner.service for user {}", username);
-        Ok(())
+        anyhow::bail!(
+            "octo-runner socket not found at {} after waiting 5s. \
+             Check if octo-runner.service is properly installed for user {}.",
+            expected_socket.display(),
+            username
+        )
     }
 
+    /// Check if systemd linger is already enabled for a user.
     /// Ensure mmry config for a user points to the central embedding service.
     pub fn ensure_mmry_config_for_user(
         &self,
