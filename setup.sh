@@ -2814,7 +2814,7 @@ generate_config() {
   if [[ "$SELECTED_USER_MODE" == "single" ]]; then
     WORKSPACE_DIR=$(prompt_input "Workspace directory" "${WORKSPACE_DIR:-$HOME/octo/workspace}")
   else
-    WORKSPACE_DIR=$(prompt_input "Workspace base directory (user dirs created here)" "${WORKSPACE_DIR:-/home/{user_id}/octo}")
+    WORKSPACE_DIR=$(prompt_input "Workspace base directory (user dirs created here)" "${WORKSPACE_DIR:-/home/{user_id}/workspace}")
   fi
 
   # Auth configuration (use globals so state persistence works)
@@ -2883,6 +2883,15 @@ generate_config() {
       linux_users_enabled="true"
       LINUX_USERS_ENABLED="true"
     fi
+  fi
+
+  # Determine Pi runtime mode based on backend mode and user mode
+  # (needed early for runner_socket_pattern in [local] section)
+  local pi_runtime_mode="local"
+  if [[ "$SELECTED_BACKEND_MODE" == "container" ]]; then
+    pi_runtime_mode="container"
+  elif [[ "$SELECTED_USER_MODE" == "multi" && "$OS" == "linux" ]]; then
+    pi_runtime_mode="runner"
   fi
 
   # Write config file
@@ -2992,14 +3001,6 @@ EOF
   fi
 
   # Pi (Main Chat) configuration
-  # Determine Pi runtime mode based on backend mode and user mode
-  local pi_runtime_mode="local"
-  if [[ "$SELECTED_BACKEND_MODE" == "container" ]]; then
-    pi_runtime_mode="container"
-  elif [[ "$SELECTED_USER_MODE" == "multi" && "$OS" == "linux" ]]; then
-    pi_runtime_mode="runner"
-  fi
-
   # Pi default provider/model (agents can switch at runtime)
   local default_provider="anthropic"
   local default_model="claude-sonnet-4-20250514"
