@@ -96,17 +96,48 @@ import {
 } from "react";
 import { toast } from "sonner";
 
-// ANSI escape sequence patterns (module-level to avoid regex-in-loop overhead
-// and biome/oxlint control-character-in-regex warnings)
-const ANSI_ESC = String.fromCharCode(0x1b);
-// Match SGR codes (colors, styles) ending with 'm'
-const ANSI_SGR_RE = new RegExp(`${ANSI_ESC}\\[[0-9;]*m`, "g");
-// Match other CSI sequences ending with letters (cursor movement, clear, etc.)
-const ANSI_CSI_RE = new RegExp(`${ANSI_ESC}\\[[0-9;]*[A-Za-z]`, "g");
-// Match OSC sequences (window titles, etc.) ending with BEL or ST
-const ANSI_OSC_RE = new RegExp(`${ANSI_ESC}\\][^\x07\x1b]*(?:\x07|\x1b\\\\)`, "g");
-// Match standalone ESC + simple codes
-const ANSI_SIMPLE_RE = new RegExp(`${ANSI_ESC}[NOc\\[\\]()#\\]\\^_%@[\\]\\\\`, "g");
+// Strip ANSI escape codes from text content (tool output may contain them).
+// Uses a single comprehensive regex that handles SGR, CSI, OSC, and literal sequences.
+const ANSI_RE =
+	// biome-ignore lint: control chars needed for ANSI matching
+	/[\x1b\x9b][\[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nq-uy=><~]|\\x1b\[[0-9;]*[A-Za-z]/g;
+
+/**
+ * Remove common leading whitespace from text to prevent CommonMark from
+ * interpreting 4+-space-indented lines as indented code blocks.
+ * Preserves relative indentation and skips lines inside fenced code blocks.
+ */
+function dedentMarkdown(text: string): string {
+	const lines = text.split("\n");
+	// Find minimum indent of non-empty lines that are NOT inside fenced code blocks
+	let minIndent = Number.POSITIVE_INFINITY;
+	let inFence = false;
+	for (const line of lines) {
+		if (/^[ \t]*```/.test(line)) {
+			inFence = !inFence;
+			continue;
+		}
+		if (inFence) continue;
+		if (line.trim().length === 0) continue;
+		const match = line.match(/^( +)/);
+		const indent = match ? match[1].length : 0;
+		if (indent < minIndent) minIndent = indent;
+	}
+	if (minIndent === 0 || minIndent === Number.POSITIVE_INFINITY) return text;
+	// Strip the common prefix
+	const prefix = new RegExp(`^[ ]{1,${minIndent}}`);
+	inFence = false;
+	return lines
+		.map((line) => {
+			if (/^[ \t]*```/.test(line)) {
+				inFence = !inFence;
+				return line.replace(prefix, "");
+			}
+			if (inFence) return line;
+			return line.replace(prefix, "");
+		})
+		.join("\n");
+}
 
 /** Todo item structure (matching todowrite tool) */
 export interface TodoItem {
@@ -2951,12 +2982,7 @@ function PiPartRenderer({
 	collapsible?: boolean;
 	hideHeader?: boolean;
 }) {
-	const stripAnsi = (value: string): string =>
-		value
-			.replace(ANSI_SGR_RE, "")
-			.replace(ANSI_CSI_RE, "")
-			.replace(ANSI_OSC_RE, "")
-			.replace(ANSI_SIMPLE_RE, "");
+	const stripAnsi = (value: string): string => value.replace(ANSI_RE, "");
 
 	const formatToolResultOutput = (content: unknown): string | undefined => {
 		const decodeBytes = (bytes: Uint8Array): string | undefined => {
@@ -3159,12 +3185,10 @@ function TextWithFileReferences({
 	workspacePath?: string | null;
 	locale?: "en" | "de";
 }) {
-	// Strip ANSI escape codes before rendering (tool output may contain them)
-	const cleanContent = content
-		.replace(ANSI_SGR_RE, "")
-		.replace(ANSI_CSI_RE, "")
-		.replace(ANSI_OSC_RE, "")
-		.replace(ANSI_SIMPLE_RE, "");
+	// Strip ANSI escape codes and fix indentation before rendering.
+	// Some models (e.g. Kimi-K2.5) prefix text with 4+ spaces which CommonMark
+	// interprets as indented code blocks, causing plain text to render as <pre><code>.
+	const cleanContent = dedentMarkdown(content.replace(ANSI_RE, ""));
 
 	// Parse @file references, excluding code blocks
 	const fileRefs = useMemo(

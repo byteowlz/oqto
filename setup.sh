@@ -4319,6 +4319,7 @@ Restart=on-failure
 RestartSec=3
 RuntimeDirectory=octo
 RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=yes
 ProtectSystem=strict
 ReadWritePaths=/etc
 ReadWritePaths=/home
