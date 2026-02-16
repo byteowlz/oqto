@@ -2637,6 +2637,7 @@ build_octo() {
       # Remove stale copies from ~/.cargo/bin to avoid PATH precedence issues
       if [[ -f "$HOME/.cargo/bin/${bin}" ]]; then
         rm -f "$HOME/.cargo/bin/${bin}"
+        hash -d "$bin" 2>/dev/null || true
         log_info "Removed stale ${bin} from ~/.cargo/bin"
       fi
       log_success "${bin} installed"
@@ -2757,8 +2758,15 @@ generate_jwt_secret() {
 generate_password_hash() {
   local password="$1"
   # Use octoctl (same bcrypt implementation as the backend) for guaranteed compatibility
+  # Try PATH first, then known install locations (PATH cache may be stale)
+  local octoctl_bin=""
   if command_exists octoctl; then
-    echo -n "$password" | octoctl hash-password
+    octoctl_bin="octoctl"
+  elif [[ -x "${TOOLS_INSTALL_DIR}/octoctl" ]]; then
+    octoctl_bin="${TOOLS_INSTALL_DIR}/octoctl"
+  fi
+  if [[ -n "$octoctl_bin" ]] && "$octoctl_bin" hash-password --help >/dev/null 2>&1; then
+    echo -n "$password" | "$octoctl_bin" hash-password
   elif command_exists python3 && python3 -c "import bcrypt" 2>/dev/null; then
     # Fallback: python3 with bcrypt module
     python3 -c "import bcrypt, base64; pwd = base64.b64decode('$([[ -n "$password" ]] && echo -n "$password" | base64 -w0 || echo)').decode(); print(bcrypt.hashpw(pwd.encode(), bcrypt.gensalt(12)).decode())"
