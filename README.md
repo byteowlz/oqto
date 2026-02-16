@@ -234,9 +234,17 @@ My plan is to soon offer a test version via Testflight on iOS.
 
 I have many ideas I want to try out but even with the help of AI coding agents, time is finite. Here are the things I want to prioritize:
 
+- Properly fix all warnings especially on the rust side and remove any use of unsafe code and replace it with safe alternatives.
+- UX/UI improvements especially with regards to workspace and sandbox configuration. This is currently not intuitive and requires too much internal knowledge.
 - Ready-to-use iso image for easier setup. I haven't decided on the best distribution to base this one but am very much favoring arch linux. NixOS would maybe be even better suited but I haven't tried it out yet so my experience is the limiting factor here.
 - Improved STT and TTS support: There are so many good new models out there that I want to try out and see if they could be integrated into my existing tools. The goal would be a good dialogue mode that can orchestrate agent tasks on the platform
 - Support for remote workspaces: Apart from creating workspaces in userspace, I want to add first-class support for remote workspaces for even better isolation. This includes having clients on e.g. your laptop that can be reached via the platform for certain tasks. I am building a cross-platform launcher that shall eventually integrate with octo for this.
+
+## Contributions
+
+The biggest support you can currently provide is trying out to set up and use octo yourself and reporting any issues you encounter. I would also appreciate any feedback regarding the general architecture especially concerning the security aspects.
+
+If you want to actively contribute to the codebase, I would appreciate you start a discussion beforehand to share what improvements you would like to make. I have strong options on certain aspects but am very open to suggestions in general.
 
 ## Documentation
 
