@@ -2193,7 +2193,15 @@ fn handle_hash_password(password: Option<String>, cost: u32) -> Result<()> {
         None => {
             // Check if stdin is a TTY
             if std::io::stdin().is_terminal() {
-                read_password_prompt("Password: ")?
+                let pw = read_password_prompt("Password: ")?;
+                if pw.is_empty() {
+                    anyhow::bail!("Password cannot be empty");
+                }
+                let confirm = read_password_prompt("Confirm password: ")?;
+                if pw != confirm {
+                    anyhow::bail!("Passwords do not match");
+                }
+                pw
             } else {
                 // Reading from pipe
                 let mut buf = String::new();
