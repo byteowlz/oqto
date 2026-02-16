@@ -225,7 +225,11 @@ pub async fn register(
     // SECURITY: Create Linux user if multi-user isolation is enabled.
     // Since we pre-generated a unique ID, this should succeed unless there's a system error.
     if let Some(ref linux_users) = state.linux_users {
-        match linux_users.ensure_user(&user.id) {
+        match linux_users.ensure_user_with_verification(
+            &user.id,
+            user.linux_username.as_deref(),
+            user.linux_uid.map(|u| u as u32),
+        ) {
             Ok((uid, actual_linux_username)) => {
                 // Store both linux_username and linux_uid for verification
                 // UID is immutable by non-root, unlike GECOS which users can change via chfn
