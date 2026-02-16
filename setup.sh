@@ -4315,12 +4315,22 @@ ExecStop=/bin/kill -TERM \$MAINPID
 TimeoutStopSec=30
 Restart=on-failure
 RestartSec=5
-NoNewPrivileges=true
 ProtectSystem=strict
 ReadWritePaths=${octo_home}
 ReadWritePaths=/run/octo
 PrivateTmp=true
 AmbientCapabilities=CAP_NET_BIND_SERVICE
+EOF
+
+    # In multi-user mode, octo needs sudo for useradd/groupadd (via sudoers rules).
+    # NoNewPrivileges=true prevents sudo from escalating, so we only enable it in single-user mode.
+    if [[ "${LINUX_USERS_ENABLED:-false}" != "true" ]]; then
+      sudo tee -a "$service_file" >/dev/null <<EOF
+NoNewPrivileges=true
+EOF
+    fi
+
+    sudo tee -a "$service_file" >/dev/null <<EOF
 
 [Install]
 WantedBy=multi-user.target
