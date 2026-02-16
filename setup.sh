@@ -5179,15 +5179,9 @@ main() {
   run_step "eavs_configure" "EAVS configure" configure_eavs
   run_step "eavs_service" "EAVS service" install_eavs_service
 
-  # Build Octo
-  if ! step_done "build_octo"; then
-    if confirm "Build Octo from source?"; then
-      build_octo
-    fi
-    mark_step_done "build_octo"
-  else
-    log_success "Already done: Build Octo"
-  fi
+  # Build Octo - octoctl is required for password hashing during config generation,
+  # so we must verify the binary exists before proceeding
+  verify_or_rerun "build_octo" "Build Octo" "command -v octoctl" build_octo
 
   # Generate configuration
   run_step "generate_config" "Configuration" generate_config
