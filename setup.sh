@@ -190,7 +190,9 @@ load_setup_state() {
 apply_setup_state() {
   if [[ -f "$SETUP_STATE_FILE" ]]; then
     # Fix known typos from previous versions before sourcing
-    sed -i 's|/home/{user_id/octo}|/home/{user_id}/octo|g' "$SETUP_STATE_FILE" 2>/dev/null || true
+    # Fix known typos and outdated defaults from previous versions
+    sed -i 's|/home/{user_id/octo}|/home/{linux_username}/octo|g' "$SETUP_STATE_FILE" 2>/dev/null || true
+    sed -i 's|/home/{user_id}/octo|/home/{linux_username}/octo|g' "$SETUP_STATE_FILE" 2>/dev/null || true
     # shellcheck source=/dev/null
     source "$SETUP_STATE_FILE"
     log_success "Loaded previous setup state"
@@ -2845,7 +2847,7 @@ generate_config() {
   if [[ "$SELECTED_USER_MODE" == "single" ]]; then
     WORKSPACE_DIR=$(prompt_input "Workspace directory" "${WORKSPACE_DIR:-$HOME/octo/workspace}")
   else
-    local default_workspace="/home/{user_id}/octo"
+    local default_workspace="/home/{linux_username}/octo"
     WORKSPACE_DIR=$(prompt_input "Workspace base directory (user dirs created here)" "${WORKSPACE_DIR:-$default_workspace}")
   fi
 
