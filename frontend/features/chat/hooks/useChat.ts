@@ -1161,10 +1161,16 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 							// Defer if we're currently streaming — applying
 							// persisted messages would overwrite live content.
 							// They will be applied when agent.idle fires.
+							// However, if forceMessageSyncRef is set (e.g., reconnect
+							// during streaming), apply immediately to restore state.
+							const forceSync = forceMessageSyncRef.current.has(
+								event.session_id ?? "",
+							);
 							if (
-								streamingMessageRef.current ||
-								isStreamingRef.current ||
-								sendInFlightRef.current
+								!forceSync &&
+								(streamingMessageRef.current ||
+									isStreamingRef.current ||
+									sendInFlightRef.current)
 							) {
 								if (resp.success && resp.data) {
 									const data = resp.data as { messages?: unknown[] };
@@ -1180,6 +1186,12 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 									);
 								}
 								break;
+							}
+							// Clear the force sync flag - we've applied it
+							if (forceSync) {
+								forceMessageSyncRef.current.delete(
+									event.session_id ?? "",
+								);
 							}
 							if (resp.success && resp.data) {
 								const data = resp.data as { messages?: RawMessage[] };
@@ -1743,6 +1755,21 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 								"starting",
 							]);
 							if (busyStates.has(activeSession.state)) {
+								// CRITICAL: When reattaching to a streaming session, fetch
+								// the current messages from Pi. hstry only has completed
+								// turns; Pi's get_messages returns the live window.
+								// Use forceMessageSyncRef to ensure the response is NOT
+								// deferred (which would happen since we're streaming).
+								console.log(
+									"[useChat] Fetching live messages from Pi for streaming session:",
+									sid,
+								);
+								forceMessageSyncRef.current.add(sid);
+								manager.agentGetMessages(sid);
+
+								// Note: isStreamingRef set after get_messages to reduce
+								// race condition window. The forceMessageSyncRef ensures
+								// the response is applied even if we're streaming.
 								setIsStreaming(true);
 								isStreamingRef.current = true;
 								setBusyForEvent(sid, true);
