@@ -18,16 +18,16 @@
 //! - Shell must be in allowlist
 //! - GECOS must start with "Octo platform user "
 
+use octo_usermgr::validate::*;
 use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixListener;
 use std::process::Command;
 
 const SOCKET_PATH: &str = "/run/octo/usermgr.sock";
-const DEFAULT_PREFIX: &str = "octo_";
-const DEFAULT_GROUP: &str = "octo";
-const UID_MIN: u32 = 2000;
-const UID_MAX: u32 = 60000;
+
+/// Allowed path prefixes for mkdir/chown/chmod operations.
+const ALLOWED_PATH_PREFIXES: &[&str] = &["/run/octo/runner-sockets/", "/home/octo_"];
 
 // --- Protocol types ---
 
@@ -84,7 +84,6 @@ fn main() {
         }
     };
 
-    // Set socket permissions: only octo group can connect
     set_socket_permissions();
 
     eprintln!("octo-usermgr: listening on {SOCKET_PATH}");
@@ -169,79 +168,7 @@ fn dispatch(req: &Request) -> Response {
     }
 }
 
-// --- Validation helpers ---
-
-fn validate_username(name: &str) -> Result<(), String> {
-    if !name.starts_with(DEFAULT_PREFIX) {
-        return Err(format!("username must start with '{DEFAULT_PREFIX}' prefix"));
-    }
-    if name.len() > 32 {
-        return Err("username too long (max 32)".into());
-    }
-    if !name
-        .chars()
-        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-')
-    {
-        return Err("username contains invalid characters".into());
-    }
-    Ok(())
-}
-
-fn validate_group(group: &str) -> Result<(), String> {
-    if group != DEFAULT_GROUP {
-        return Err(format!("group must be '{DEFAULT_GROUP}'"));
-    }
-    Ok(())
-}
-
-fn validate_uid(uid: u32) -> Result<(), String> {
-    if uid < UID_MIN || uid > UID_MAX {
-        return Err(format!("UID {uid} out of allowed range ({UID_MIN}-{UID_MAX})"));
-    }
-    Ok(())
-}
-
-fn validate_shell(shell: &str) -> Result<(), String> {
-    match shell {
-        "/bin/bash" | "/bin/sh" | "/usr/bin/bash" | "/usr/bin/sh" | "/bin/false"
-        | "/usr/sbin/nologin" => Ok(()),
-        _ => Err(format!("shell '{shell}' not in allowlist")),
-    }
-}
-
-fn validate_path(path: &str, allowed_prefixes: &[&str]) -> Result<(), String> {
-    if path.contains("..") {
-        return Err("path contains '..' (path traversal)".into());
-    }
-    if path.contains("//") {
-        return Err("path contains '//'".into());
-    }
-    if !path.starts_with('/') {
-        return Err("path must be absolute".into());
-    }
-    for prefix in allowed_prefixes {
-        if path.starts_with(prefix) {
-            return Ok(());
-        }
-    }
-    Err(format!("path '{path}' not in allowed directories"))
-}
-
-fn validate_gecos(gecos: &str) -> Result<(), String> {
-    if !gecos.starts_with("Octo platform user ") {
-        return Err("GECOS must start with 'Octo platform user '".into());
-    }
-    if gecos
-        .chars()
-        .any(|c| matches!(c, '\n' | '\r' | ':' | '\0'))
-    {
-        return Err("GECOS contains invalid characters".into());
-    }
-    if gecos.len() > 256 {
-        return Err("GECOS too long".into());
-    }
-    Ok(())
-}
+// --- Helpers ---
 
 fn run_cmd(cmd: &str, args: &[&str]) -> Result<String, String> {
     let output = Command::new(cmd)
@@ -260,12 +187,25 @@ fn run_cmd(cmd: &str, args: &[&str]) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
+fn get_str<'a>(args: &'a serde_json::Value, key: &str) -> Result<&'a str, Response> {
+    args.get(key)
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| Response::error(format!("missing '{key}'")))
+}
+
+fn get_u32(args: &serde_json::Value, key: &str) -> Result<u32, Response> {
+    args.get(key)
+        .and_then(|v| v.as_u64())
+        .map(|v| v as u32)
+        .ok_or_else(|| Response::error(format!("missing '{key}'")))
+}
+
 // --- Command handlers ---
 
 fn cmd_create_group(args: &serde_json::Value) -> Response {
-    let group = match args.get("group").and_then(|v| v.as_str()) {
-        Some(g) => g,
-        None => return Response::error("missing 'group' argument"),
+    let group = match get_str(args, "group") {
+        Ok(g) => g,
+        Err(r) => return r,
     };
 
     if let Err(e) = validate_group(group) {
@@ -289,25 +229,25 @@ fn cmd_create_group(args: &serde_json::Value) -> Response {
 }
 
 fn cmd_create_user(args: &serde_json::Value) -> Response {
-    let username = match args.get("username").and_then(|v| v.as_str()) {
-        Some(u) => u,
-        None => return Response::error("missing 'username'"),
+    let username = match get_str(args, "username") {
+        Ok(u) => u,
+        Err(r) => return r,
     };
-    let uid = match args.get("uid").and_then(|v| v.as_u64()) {
-        Some(u) => u as u32,
-        None => return Response::error("missing 'uid'"),
+    let uid = match get_u32(args, "uid") {
+        Ok(u) => u,
+        Err(r) => return r,
     };
-    let group = match args.get("group").and_then(|v| v.as_str()) {
-        Some(g) => g,
-        None => return Response::error("missing 'group'"),
+    let group = match get_str(args, "group") {
+        Ok(g) => g,
+        Err(r) => return r,
     };
-    let shell = match args.get("shell").and_then(|v| v.as_str()) {
-        Some(s) => s,
-        None => return Response::error("missing 'shell'"),
+    let shell = match get_str(args, "shell") {
+        Ok(s) => s,
+        Err(r) => return r,
     };
-    let gecos = match args.get("gecos").and_then(|v| v.as_str()) {
-        Some(g) => g,
-        None => return Response::error("missing 'gecos'"),
+    let gecos = match get_str(args, "gecos") {
+        Ok(g) => g,
+        Err(r) => return r,
     };
     let create_home = args
         .get("create_home")
@@ -345,9 +285,9 @@ fn cmd_create_user(args: &serde_json::Value) -> Response {
 }
 
 fn cmd_delete_user(args: &serde_json::Value) -> Response {
-    let username = match args.get("username").and_then(|v| v.as_str()) {
-        Some(u) => u,
-        None => return Response::error("missing 'username'"),
+    let username = match get_str(args, "username") {
+        Ok(u) => u,
+        Err(r) => return r,
     };
 
     if let Err(e) = validate_username(username) {
@@ -361,12 +301,12 @@ fn cmd_delete_user(args: &serde_json::Value) -> Response {
 }
 
 fn cmd_mkdir(args: &serde_json::Value) -> Response {
-    let path = match args.get("path").and_then(|v| v.as_str()) {
-        Some(p) => p,
-        None => return Response::error("missing 'path'"),
+    let path = match get_str(args, "path") {
+        Ok(p) => p,
+        Err(r) => return r,
     };
 
-    if let Err(e) = validate_path(path, &["/run/octo/runner-sockets/", "/home/octo_"]) {
+    if let Err(e) = validate_path(path, ALLOWED_PATH_PREFIXES) {
         return Response::error(e);
     }
 
@@ -377,32 +317,24 @@ fn cmd_mkdir(args: &serde_json::Value) -> Response {
 }
 
 fn cmd_chown(args: &serde_json::Value) -> Response {
-    let owner = match args.get("owner").and_then(|v| v.as_str()) {
-        Some(o) => o,
-        None => return Response::error("missing 'owner' (format: user:group)"),
+    let owner = match get_str(args, "owner") {
+        Ok(o) => o,
+        Err(r) => return r,
     };
-    let path = match args.get("path").and_then(|v| v.as_str()) {
-        Some(p) => p,
-        None => return Response::error("missing 'path'"),
+    let path = match get_str(args, "path") {
+        Ok(p) => p,
+        Err(r) => return r,
     };
     let recursive = args
         .get("recursive")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
-    // Validate owner format
-    let parts: Vec<&str> = owner.split(':').collect();
-    if parts.len() != 2 {
-        return Response::error("owner must be in user:group format");
-    }
-    if let Err(e) = validate_username(parts[0]) {
-        return Response::error(e);
-    }
-    if let Err(e) = validate_group(parts[1]) {
+    if let Err(e) = validate_owner(owner) {
         return Response::error(e);
     }
 
-    if let Err(e) = validate_path(path, &["/run/octo/runner-sockets/", "/home/octo_"]) {
+    if let Err(e) = validate_path(path, ALLOWED_PATH_PREFIXES) {
         return Response::error(e);
     }
 
@@ -419,21 +351,20 @@ fn cmd_chown(args: &serde_json::Value) -> Response {
 }
 
 fn cmd_chmod(args: &serde_json::Value) -> Response {
-    let mode = match args.get("mode").and_then(|v| v.as_str()) {
-        Some(m) => m,
-        None => return Response::error("missing 'mode'"),
+    let mode = match get_str(args, "mode") {
+        Ok(m) => m,
+        Err(r) => return r,
     };
-    let path = match args.get("path").and_then(|v| v.as_str()) {
-        Some(p) => p,
-        None => return Response::error("missing 'path'"),
+    let path = match get_str(args, "path") {
+        Ok(p) => p,
+        Err(r) => return r,
     };
 
-    match mode {
-        "700" | "750" | "755" | "770" | "2770" => {}
-        _ => return Response::error(format!("mode '{mode}' not in allowlist")),
+    if let Err(e) = validate_chmod_mode(mode) {
+        return Response::error(e);
     }
 
-    if let Err(e) = validate_path(path, &["/run/octo/runner-sockets/", "/home/octo_"]) {
+    if let Err(e) = validate_path(path, ALLOWED_PATH_PREFIXES) {
         return Response::error(e);
     }
 
@@ -444,9 +375,9 @@ fn cmd_chmod(args: &serde_json::Value) -> Response {
 }
 
 fn cmd_enable_linger(args: &serde_json::Value) -> Response {
-    let username = match args.get("username").and_then(|v| v.as_str()) {
-        Some(u) => u,
-        None => return Response::error("missing 'username'"),
+    let username = match get_str(args, "username") {
+        Ok(u) => u,
+        Err(r) => return r,
     };
 
     if let Err(e) = validate_username(username) {
@@ -460,9 +391,9 @@ fn cmd_enable_linger(args: &serde_json::Value) -> Response {
 }
 
 fn cmd_start_user_service(args: &serde_json::Value) -> Response {
-    let uid = match args.get("uid").and_then(|v| v.as_u64()) {
-        Some(u) => u as u32,
-        None => return Response::error("missing 'uid'"),
+    let uid = match get_u32(args, "uid") {
+        Ok(u) => u,
+        Err(r) => return r,
     };
 
     if let Err(e) = validate_uid(uid) {

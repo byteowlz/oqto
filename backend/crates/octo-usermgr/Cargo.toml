@@ -1,9 +1,13 @@
 [package]
 name = "octo-usermgr"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
 description = "Privileged user management daemon for Octo (socket-activated)"
+
+[lib]
+name = "octo_usermgr"
+path = "src/lib.rs"
 
 [[bin]]
 name = "octo-usermgr"
