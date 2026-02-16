@@ -63,14 +63,14 @@ SETUP_CADDY="false"
 DOMAIN=""
 JWT_SECRET=""
 ADMIN_USERNAME=""
-ADMIN_PASSWORD=""
+# ADMIN_PASSWORD is never persisted -- prompted inline when needed
 ADMIN_EMAIL=""
 
 # Dev user configuration (set during generate_config)
 dev_user_id=""
 dev_user_name=""
 dev_user_email=""
-dev_user_password=""
+# dev_user_password is never persisted -- prompted inline when needed
 
 # Paths (XDG compliant)
 : "${XDG_CONFIG_HOME:=$HOME/.config}"
@@ -115,11 +115,9 @@ SETUP_STATE_KEYS=(
   SETUP_CADDY
   ADMIN_USERNAME
   ADMIN_EMAIL
-  ADMIN_PASSWORD
   dev_user_id
   dev_user_name
   dev_user_email
-  dev_user_password
   INSTALL_ALL_TOOLS
   INSTALL_MMRY
   OCTO_HARDEN_SERVER
@@ -164,7 +162,7 @@ load_setup_state() {
   echo ""
 
   # Show key decisions (skip secrets)
-  local secrets_regex="^(ADMIN_PASSWORD|JWT_SECRET|EAVS_MASTER_KEY)$"
+  local secrets_regex="^(JWT_SECRET|EAVS_MASTER_KEY)$"
   while IFS='=' read -r key val; do
     # Skip comments and empty lines
     [[ "$key" =~ ^#.*$ || -z "$key" ]] && continue
@@ -2240,33 +2238,8 @@ setup_admin_user() {
   # Email
   ADMIN_EMAIL=$(prompt_input "Admin email" "${ADMIN_EMAIL:-admin@localhost}")
 
-  # Password
-  echo
-  if [[ -n "${ADMIN_PASSWORD:-}" ]]; then
-    log_info "Using saved admin password"
-  elif [[ "$NONINTERACTIVE" == "true" ]]; then
-    ADMIN_PASSWORD=$(generate_secure_secret 16)
-    log_info "Generated admin password: $ADMIN_PASSWORD"
-    log_warn "SAVE THIS PASSWORD - it will not be shown again!"
-  else
-    while true; do
-      ADMIN_PASSWORD=$(prompt_password "Admin password (min 8 characters)")
-      if [[ ${#ADMIN_PASSWORD} -lt 8 ]]; then
-        log_error "Password must be at least 8 characters"
-        continue
-      fi
-
-      local confirm_password
-      confirm_password=$(prompt_password "Confirm password")
-
-      if [[ "$ADMIN_PASSWORD" != "$confirm_password" ]]; then
-        log_error "Passwords do not match"
-        continue
-      fi
-
-      break
-    done
-  fi
+  # Password is prompted later in create_admin_user_db when actually needed.
+  # We never persist plaintext passwords to disk.
 
   log_success "Admin user configured: $ADMIN_USERNAME"
 }
@@ -2840,22 +2813,19 @@ generate_config() {
     dev_user_id=$(prompt_input "Dev user ID" "${dev_user_id:-dev}")
     dev_user_name=$(prompt_input "Dev user name" "${dev_user_name:-Developer}")
     dev_user_email=$(prompt_input "Dev user email" "${dev_user_email:-dev@localhost}")
-    if [[ -n "${dev_user_password:-}" ]]; then
-      log_info "Using saved dev user password"
-    else
-      dev_user_password=$(prompt_password "Dev user password")
-    fi
+    local dev_password
+    dev_password=$(prompt_password "Dev user password")
 
-    if [[ -n "$dev_user_password" ]]; then
+    if [[ -n "$dev_password" ]]; then
       log_info "Generating password hash..."
-      dev_user_hash=$(generate_password_hash "$dev_user_password")
+      dev_user_hash=$(generate_password_hash "$dev_password")
+      dev_password=""
     else
       dev_user_hash=""
     fi
   elif [[ "$PRODUCTION_MODE" == "true" ]]; then
-    # Production mode - use the admin user configured earlier
-    log_info "Generating admin user password hash..."
-    admin_user_hash=$(generate_password_hash "$ADMIN_PASSWORD")
+    # Production mode - admin hash is generated in create_admin_user_db step
+    admin_user_hash=""
   fi
 
   # Use JWT secret from production setup or generate new one
@@ -3383,22 +3353,40 @@ create_admin_user_db() {
     admin_hash="${ADMIN_PASSWORD_HASH:-}"
   fi
 
-  # If no hash but we have the password from saved state, generate hash now
-  if [[ -z "$admin_hash" && -n "${ADMIN_PASSWORD:-}" ]]; then
-    log_info "Generating password hash..."
-    admin_hash=$(generate_password_hash "$ADMIN_PASSWORD")
-  fi
-
   if [[ -z "$admin_user" || -z "$admin_email" ]]; then
     log_warn "Admin username/email not set. Re-run setup or create manually:"
     log_info "  octoctl user bootstrap --username <user> --email <email> --role admin"
     return 0
   fi
 
+  # Generate hash: prompt for password if we don't have one
+  # Passwords are never persisted to disk -- only the hash is stored in the DB.
   if [[ -z "$admin_hash" ]]; then
-    log_warn "No admin password available. Create admin user manually:"
-    log_info "  octoctl user bootstrap --username \"$admin_user\" --email \"$admin_email\" --role admin"
-    return 0
+    local admin_password=""
+    if [[ "$NONINTERACTIVE" == "true" ]]; then
+      admin_password=$(generate_secure_secret 16)
+      log_info "Generated admin password: $admin_password"
+      log_warn "SAVE THIS PASSWORD - it will not be shown again!"
+    else
+      while true; do
+        admin_password=$(prompt_password "Admin password (min 8 characters)")
+        if [[ ${#admin_password} -lt 8 ]]; then
+          log_error "Password must be at least 8 characters"
+          continue
+        fi
+        local confirm_pw
+        confirm_pw=$(prompt_password "Confirm password")
+        if [[ "$admin_password" != "$confirm_pw" ]]; then
+          log_error "Passwords do not match"
+          continue
+        fi
+        break
+      done
+    fi
+    log_info "Generating password hash..."
+    admin_hash=$(generate_password_hash "$admin_password")
+    # Clear plaintext immediately
+    admin_password=""
   fi
 
   # Determine database path based on service config
@@ -4591,8 +4579,7 @@ print_summary() {
     echo "    Admin user:    $ADMIN_USERNAME"
     echo "    Admin email:   $ADMIN_EMAIL"
     if [[ "$NONINTERACTIVE" == "true" ]]; then
-      echo -e "    ${YELLOW}Admin password: $ADMIN_PASSWORD${NC}"
-      echo -e "    ${RED}SAVE THIS PASSWORD - it will not be shown again!${NC}"
+      echo -e "    ${YELLOW}Admin password was shown during setup${NC}"
     fi
     echo
 
