@@ -5263,7 +5263,7 @@ main() {
   run_step "harden_server" "Server hardening" harden_server
 
   # Install service
-  verify_or_rerun "install_service" "System service" "systemctl is-enabled octo 2>/dev/null" install_service
+  run_step_always "install_service" "System service" install_service
 
   # Create admin user in database
   run_step "admin_user_db" "Admin user in database" create_admin_user_db
