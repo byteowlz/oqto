@@ -1403,8 +1403,12 @@ WantedBy=default.target
 }
 
 async fn handle_invite_codes(ctx: &RuntimeContext, cmd: InviteCodesCommand) -> Result<()> {
-    // Initialize database
-    let db_path = ctx.paths.data_dir.join("sessions.db");
+    // Initialize database (migrate from old name if needed)
+    let db_path = ctx.paths.data_dir.join("octo.db");
+    let old_db_path = ctx.paths.data_dir.join("sessions.db");
+    if old_db_path.exists() && !db_path.exists() {
+        std::fs::rename(&old_db_path, &db_path).ok();
+    }
     let database = db::Database::new(&db_path).await?;
     let invite_repo = invite::InviteCodeRepository::new(database.pool().clone());
 
@@ -1543,7 +1547,23 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     info!("Starting workspace backend server...");
 
     // Initialize database
-    let db_path = ctx.paths.data_dir.join("sessions.db");
+    let db_path = ctx.paths.data_dir.join("octo.db");
+    // Migrate from old name (sessions.db -> octo.db)
+    let old_db_path = ctx.paths.data_dir.join("sessions.db");
+    if old_db_path.exists() && !db_path.exists() {
+        info!("Migrating database: sessions.db -> octo.db");
+        std::fs::rename(&old_db_path, &db_path)
+            .context("renaming sessions.db to octo.db")?;
+        // Also rename WAL/SHM files if they exist
+        let _ = std::fs::rename(
+            old_db_path.with_extension("db-wal"),
+            db_path.with_extension("db-wal"),
+        );
+        let _ = std::fs::rename(
+            old_db_path.with_extension("db-shm"),
+            db_path.with_extension("db-shm"),
+        );
+    }
     info!("Database path: {}", db_path.display());
     let database = db::Database::new(&db_path).await?;
 
