@@ -635,15 +635,18 @@ export function ChatView({
 		return { inputTokens, outputTokens };
 	}, [messages]);
 	const gaugeTokens = useMemo(() => {
-		const total =
-			messageTokenUsage.inputTokens + messageTokenUsage.outputTokens;
-		if (total > 0) return messageTokenUsage;
+		// Always prefer Pi's authoritative session stats when available.
+		// messageTokenUsage accumulates from individual messages but can be
+		// inconsistent during streaming or when stats haven't updated yet.
 		if (sessionTokens) {
 			return {
 				inputTokens: sessionTokens.input,
 				outputTokens: sessionTokens.output,
 			};
 		}
+		const total =
+			messageTokenUsage.inputTokens + messageTokenUsage.outputTokens;
+		if (total > 0) return messageTokenUsage;
 		return { inputTokens: 0, outputTokens: 0 };
 	}, [messageTokenUsage, sessionTokens]);
 
@@ -754,7 +757,9 @@ export function ChatView({
 	// biome-ignore lint/correctness/useExhaustiveDependencies: messages.length triggers refresh when message count changes
 	useEffect(() => {
 		if (!isConnected || isStreaming) return;
-		refreshStats();
+		// Small delay to ensure Pi has updated internal stats after streaming
+		const timer = setTimeout(() => refreshStats(), 300);
+		return () => clearTimeout(timer);
 	}, [isConnected, isStreaming, messages.length, refreshStats]);
 
 	// Discrete sessions: selection switches message dataset (no scrolling needed)
