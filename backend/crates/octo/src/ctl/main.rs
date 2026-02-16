@@ -2139,8 +2139,8 @@ async fn bootstrap_admin_user(
         anyhow::bail!("Email '{}' is already registered", email);
     }
 
-    // Generate user ID
-    let user_id = format!("usr_{}", generate_id());
+    // Generate user ID from username (e.g., "admin" -> "admin-a1b2")
+    let user_id = generate_user_id(username);
     let now = chrono::Utc::now().to_rfc3339();
     let display = display_name.unwrap_or(username);
 
@@ -2277,14 +2277,30 @@ fn read_password_no_echo() -> Result<String> {
 }
 
 /// Generate a short random ID
-fn generate_id() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_millis();
-    let random: u32 = rand::random();
-    format!("{:x}{:08x}", timestamp, random)
+/// Generate a user ID from a username (e.g., "admin" -> "admin-x1y2").
+/// Mirrors UserRepository::generate_user_id for use in octoctl.
+fn generate_user_id(username: &str) -> String {
+    // Normalize: lowercase, only [a-z0-9_-], trim dashes, max 31 chars
+    let mut s: String = username
+        .trim()
+        .to_lowercase()
+        .chars()
+        .map(|c| match c {
+            'a'..='z' | '0'..='9' | '_' | '-' => c,
+            _ => '-',
+        })
+        .collect();
+    s = s.trim_matches('-').to_string();
+    if s.is_empty() {
+        s = "user".to_string();
+    }
+    if !s.chars().next().unwrap_or('u').is_ascii_alphabetic() && !s.starts_with('_') {
+        s = format!("u-{}", s);
+    }
+    if s.len() > 31 {
+        s.truncate(31);
+    }
+    format!("{}-{}", s, nanoid::nanoid!(4))
 }
 
 /// Get the database path from config or default location
