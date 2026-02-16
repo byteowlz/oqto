@@ -265,60 +265,67 @@ pub async fn bootstrap_onboarding(
     let (message, title) = pick_bootstrap_greeting(language.as_deref());
     let workspace_path_str = workspace_path.to_string_lossy().to_string();
 
-    let hstry = state
-        .hstry
-        .as_ref()
-        .ok_or_else(|| ApiError::ServiceUnavailable("Chat history service not available".into()))?;
+    // Seed chat history with a greeting message.
+    // In multi-user mode, hstry runs per-user (managed by runner), so the shared
+    // hstry client is not available. Skip seeding -- the first real session will
+    // create history through the runner.
+    if let Some(hstry) = state.hstry.as_ref() {
+        let now = Utc::now();
+        let now_ms = now.timestamp_millis();
+        let readable_id = crate::wordlist::readable_id_from_session_id(&session_id);
+        let metadata_json = serde_json::json!({
+            "bootstrap": true,
+            "workspace_path": workspace_path_str,
+            "language": language.clone().unwrap_or_else(|| "en".to_string()),
+        })
+        .to_string();
 
-    let now = Utc::now();
-    let now_ms = now.timestamp_millis();
-    let readable_id = crate::wordlist::readable_id_from_session_id(&session_id);
-    let metadata_json = serde_json::json!({
-        "bootstrap": true,
-        "workspace_path": workspace_path_str,
-        "language": language.clone().unwrap_or_else(|| "en".to_string()),
-    })
-    .to_string();
+        let agent_message = crate::pi::AgentMessage {
+            role: "assistant".to_string(),
+            content: serde_json::json!([
+                { "type": "text", "text": message }
+            ]),
+            timestamp: Some(now_ms as u64),
+            tool_call_id: None,
+            tool_name: None,
+            is_error: None,
+            api: None,
+            provider: None,
+            model: None,
+            usage: None,
+            stop_reason: None,
+            extra: std::collections::HashMap::new(),
+        };
 
-    let agent_message = crate::pi::AgentMessage {
-        role: "assistant".to_string(),
-        content: serde_json::json!([
-            { "type": "text", "text": message }
-        ]),
-        timestamp: Some(now_ms as u64),
-        tool_call_id: None,
-        tool_name: None,
-        is_error: None,
-        api: None,
-        provider: None,
-        model: None,
-        usage: None,
-        stop_reason: None,
-        extra: std::collections::HashMap::new(),
-    };
+        let proto_message = crate::hstry::agent_message_to_proto(&agent_message, 0);
 
-    let proto_message = crate::hstry::agent_message_to_proto(&agent_message, 0);
+        if let Err(e) = hstry
+            .write_conversation(
+                &session_id,
+                Some(title.to_string()),
+                Some(workspace_path_str.clone()),
+                None,
+                None,
+                Some(metadata_json),
+                vec![proto_message],
+                now_ms,
+                Some(now_ms),
+                Some("pi".to_string()),
+                Some(readable_id),
+                None,
+            )
+            .await
+        {
+            tracing::warn!("Failed to seed chat history (non-fatal): {e}");
+        }
+    }
 
-    hstry
-        .write_conversation(
-            &session_id,
-            Some(title.to_string()),
-            Some(workspace_path_str.clone()),
-            None,
-            None,
-            Some(metadata_json),
-            vec![proto_message],
-            now_ms,
-            Some(now_ms),
-            Some("pi".to_string()),
-            Some(readable_id),
-            None, // no platform_id for onboarding sessions
-        )
-        .await
-        .map_err(|e| ApiError::Internal(format!("Failed to seed chat history: {e}")))?;
-
-    let home_dir = resolve_user_home(&state, user.id())?;
-    write_pi_session_file(&home_dir, &workspace_path, &session_id, message, now)?;
+    // Write Pi session file (also non-fatal in multi-user mode since
+    // the runner's home may differ from the backend's view)
+    if let Ok(home_dir) = resolve_user_home(&state, user.id()) {
+        let now = Utc::now();
+        let _ = write_pi_session_file(&home_dir, &workspace_path, &session_id, message, now);
+    }
 
     Ok(Json(BootstrapOnboardingResponse {
         workspace_path: workspace_path_str,
