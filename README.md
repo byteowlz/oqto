@@ -2,25 +2,31 @@
 
 # octo
 
-Self-hosted platform for managing AI coding agents. Supports local mode (via octo-runner) and container mode (Docker/Podman) with web UI for chat, file browsing, terminal access, canvas, memory, and task tracking.
+## DISCLAIMER
+
+octo is still in early but very active development. Expect bugs and unfinished features. I am very much dog-fooding octo myself and want it to work as well as possible. LLMs are still very susceptible to prompt injection. Be aware that giving an LLM-based agent unrestricted access to your personal information in combination with broad system permissions and unfiltered access to online sources (repos, web search, skills etc.) can lead to data-exfiltration, data-manipulation, installation of malware and other attacks. octo tries to alleviate this by making isolating agents possible through fine-grained permission/sandboxing profiles. For example, an agent that can read and organize your emails does not really need access to many other tools and online sources. A single powerful agent can be very convenient but I believe that isolating multiple tasks-specific agents is the better approach for now. This has the positive side-effect of making context management easier as well. That being said, you can very much still decide to give your agents in octo free permissions to do everything. It's your choice. I don't lock you into a walled garden, I aim to provide you with powerful tools and the freedom to do anything you want with them.
+
+## What is octo?
+
+Octo is a self-hosted, multi-user platform for working with AI agents aimed at technical and non-technical people. Each Agent workspace can be configured individually with regards to sandboxing, skills, extensions etc. It is built around [pi](https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent) with rpc mode as the core agentic harness, which makes it very flexible and extensible. octo comprises a web UI for chat, file browsing, terminal access, canvas, memory and task tracking. It also includes a browser running on the server that the Agent can control which can be streamed to the frontend, enabling users to take control when necessary. Many of the tools used by octo are built as stand-alone tools which can also be useful outside of octo.
+
+Current development focuses on running octo on a Linux server but it's technically possible to run all components on macOS as well. Right now, I would recommend running it on a Linux VM on macOS as well to avoid macOS-specific bugs.
 
 ## Architecture
 
-The backend never spawns agents directly. All agent processes go through `octo-runner`.
+The octo backend is responsible for user authentication and management. The backend never spawns agents directly but starts them through `octo-runner`, which wraps pi processes in a sandbox using [bubblewrap](https://github.com/containers/bubblewrap). octo leverages the file-system for many configuration and isolation tasks. Each user gets an octo workspace which is just a directory in their home dir. Each dir inside this workspaces can be thought of as a project or Agent with individual configuration options. This includes a sandbox profile, pi extensions and skills. This way, you can dial in the permissions per project. For even further isolation, octo will support containerization but mind that this is still experimental.
 
 ```
 Frontend <--[WS: mux]--> Backend (octo) <--[Unix socket]--> octo-runner <--[stdin/stdout]--> Agent
 ```
 
-The frontend speaks a canonical agent protocol over a multiplexed WebSocket (`/api/ws/mux`). It is agent-runtime agnostic -- the backend translates between the canonical protocol and agent-specific protocols.
+The frontend uses a canonical agent protocol over a multiplexed WebSocket (`/api/ws/mux`). It is agent-runtime agnostic in principle -- the backend translates between the canonical protocol and agent-specific protocols like pi rpc mode.
 
 ---
 
 ### Agent runtimes
 
-**pi** -- Lightweight AI coding assistant CLI used for Main Chat. Runs in RPC mode with JSON over stdin/stdout. Supports multiple providers (anthropic, openai, google), extensions, skills, and session compaction.
-
-**Claude Code** -- Full-featured coding agent used for per-workspace coding sessions. Runs in HTTP server mode.
+**pi**: A lightweight AI coding assistant CLI used as the central agent harness. Runs in RPC mode with JSON over stdin/stdout. Supports multiple providers (anthropic, openai, google), extensions, skills, and session compaction.
 
 ---
 
@@ -32,20 +38,9 @@ The frontend speaks a canonical agent protocol over a multiplexed WebSocket (`/a
 | `octoctl` | CLI for server management |
 | `octo-runner` | Multi-user process daemon (Linux only) |
 | `octo-sandbox` | Sandbox wrapper using bwrap/sandbox-exec |
+| `octo-browser` | brower for agents inspired by [agent-broswer](https://github.com/vercel-labs/agent-browser) |
 | `pi-bridge` | HTTP/WebSocket bridge for Pi in containers |
 | `octo-files` | File access server for workspaces |
-
----
-
-### Backend crates
-
-| Crate | Purpose |
-|-------|---------|
-| `octo` | Main server (API, sessions, runner, auth) |
-| `octo-protocol` | Canonical agent protocol types (events, commands, messages) |
-| `octo-files` | File server for workspace access |
-| `octo-browser` | Browser automation |
-| `octo-scaffold` | Project scaffolding |
 
 ---
 
@@ -56,11 +51,13 @@ The frontend speaks a canonical agent protocol over a multiplexed WebSocket (`/a
 | `local` | Via `octo-runner` daemon | Single-user and multi-user Linux |
 | `container` | Inside Docker/Podman | Full container isolation |
 
-Even in local mode, agents are spawned through octo-runner, never directly by the backend.
+Even in local mode, agents are spawned through octo-runner, never directly by the backend. Container mode is still experimental, the current focus lies on making local multi-user mode as good as possible.
 
 ---
 
 ### Integrate with services
+
+octo integrates the following stand-alone tools that are being actively developmed alongside octo. Source code available [here](https://github.com/orgs/byteowlz/repositories).
 
 | Service | Purpose |
 |---------|---------|
@@ -68,6 +65,11 @@ Even in local mode, agents are spawned through octo-runner, never directly by th
 | `mmry` | Memory system (semantic search, embeddings) |
 | `trx` | Issue/task tracking |
 | `eavs` | LLM API proxy |
+| `ears` | Realtime Speech-to-text server using the kyutai STT model and optonally nvidia parakeet|
+| `kokorox` | Realtime Text-to-speech server using the kokoro onnx model |
+| `sx` | Search CLI for searxng and optionally online search services |
+| `scrpr` | Website fetcher with optional markdown conversion |
+| `agntz` | Wrapper aournd the other tools so agents use one unified interface |
 
 ---
 
@@ -75,7 +77,7 @@ Even in local mode, agents are spawned through octo-runner, never directly by th
 
 In multi-user mode each platform user maps to a Linux user (`octo_{username}`). Per-user octo-runner daemons manage agent processes and per-user mmry instances provide memory via HTTP API.
 
-Auth uses JWT with invite codes. A progressive onboarding system with agent-driven UI unlock guides new users.
+Auth uses JWT with invite codes. A progressive onboarding system with agent-driven UI unlock guides new users (planned).
 
 ## Quick Start
 
@@ -86,14 +88,6 @@ Auth uses JWT with invite codes. A progressive onboarding system with agent-driv
 ```
 
 The interactive script handles user mode selection, backend mode, dependency installation, building, configuration, and optional systemd services. See [SETUP.md](./SETUP.md) for full details.
-
-### Portable install config
-
-Generate `octo.install.toml` with the setup wizard or by hand, then hydrate per-app configs:
-
-```bash
-octo-setup hydrate --install-config octo.install.toml
-```
 
 ---
 
@@ -126,6 +120,8 @@ Open `http://localhost:3000`. Check backend logs for dev credentials.
 ---
 
 ### Use container mode
+
+IMPORTANT: I am focussing on local mode for now but will support container mode in the future as well.
 
 ```bash
 docker build -t octo-dev:latest -f container/Dockerfile .
@@ -205,18 +201,6 @@ The primary interface is WebSocket-based via `/api/ws/mux` (multiplexed WebSocke
 
 ---
 
-### Use REST endpoints
-
-| Endpoint | Description |
-|----------|-------------|
-| `POST /api/sessions` | Create session |
-| `GET /api/sessions` | List sessions |
-| `DELETE /api/sessions/:id` | Delete session |
-| `GET /api/workspace/memories` | List memories |
-| `POST /api/workspace/memories/search` | Search memories |
-| `GET /api/onboarding` | Get onboarding state |
-| `POST /api/admin/users` | Create user (admin) |
-
 ## Development
 
 | Component | Build | Lint | Test |
@@ -238,22 +222,19 @@ octoctl session list          # List sessions
 
 ---
 
-### Use agent tools
-
-| Tool | Purpose |
-|------|---------|
-| `agntz` | Memory, issues, mail, file reservations |
-| `byt` | Cross-repo governance (catalog, schemas, releases) |
-| `sx` | External searches via SearXNG |
-
 ## Documentation
 
 - [SETUP.md](./SETUP.md) -- Installation guide
 - [AGENTS.md](./AGENTS.md) -- Agent development guidelines
-- [docs/design/canonical-protocol.md](./docs/design/canonical-protocol.md) -- Canonical agent protocol spec
-- [deploy/systemd/README.md](./deploy/systemd/README.md) -- Systemd service setup
 - [backend/crates/octo/examples/config.toml](./backend/crates/octo/examples/config.toml) -- Full configuration reference
+
+## Acknowledgements
+
+- [pi](https://buildwithpi.ai/) for the core agentic harness used in octo
+- [opencode](https://opencode.ai/) which served as the initial inspiration for the server/client based ai coding-agent approach
+- [openclaw](https://openclaw.ai/) for the markdown-based approach to user onboarding
+- [Jeffrey Emanuel aksk Dicklesworthstone](https://github.com/Dicklesworthstone) for inspiring many of the tools built for octo
 
 ## License
 
-Proprietary
+MIT
