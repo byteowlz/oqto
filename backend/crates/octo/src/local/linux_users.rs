@@ -954,7 +954,7 @@ fn extract_user_id_from_gecos(gecos: &str) -> Option<&str> {
 const USERMGR_SOCKET: &str = "/run/octo/usermgr.sock";
 
 /// Send a JSON request to the octo-usermgr daemon and return the response.
-fn usermgr_request(cmd: &str, args: serde_json::Value) -> Result<()> {
+pub fn usermgr_request(cmd: &str, args: serde_json::Value) -> Result<()> {
     use std::io::{BufRead, BufReader, Write};
     use std::os::unix::net::UnixStream;
 

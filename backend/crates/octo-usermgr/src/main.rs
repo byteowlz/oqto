@@ -164,6 +164,7 @@ fn dispatch(req: &Request) -> Response {
         "enable-linger" => cmd_enable_linger(&req.args),
         "start-user-service" => cmd_start_user_service(&req.args),
         "setup-user-runner" => cmd_setup_user_runner(&req.args),
+        "create-workspace" => cmd_create_workspace(&req.args),
         "ping" => Response::success(),
         other => Response::error(format!("unknown command: {other}")),
     }
@@ -585,4 +586,64 @@ WantedBy=default.target
             }
         }
     }
+}
+
+/// Create a workspace directory with files, owned by the target user.
+///
+/// Accepts: username, path (must be under /home/octo_*), files (map of filename -> content)
+fn cmd_create_workspace(args: &serde_json::Value) -> Response {
+    let username = match get_str(args, "username") {
+        Ok(u) => u,
+        Err(r) => return r,
+    };
+    let path = match get_str(args, "path") {
+        Ok(p) => p,
+        Err(r) => return r,
+    };
+
+    if let Err(e) = validate_username(username) {
+        return Response::error(e);
+    }
+
+    // Path must be under the user's home
+    if !path.starts_with(&format!("/home/{username}/")) {
+        return Response::error(format!("path must be under /home/{username}/"));
+    }
+
+    // No traversal
+    if let Err(e) = validate_path(path, &[&format!("/home/{username}/")]) {
+        return Response::error(e);
+    }
+
+    // Create directory
+    if let Err(e) = run_cmd("/bin/mkdir", &["-p", path]) {
+        return Response::error(format!("mkdir: {e}"));
+    }
+
+    // Write files if provided
+    if let Some(files) = args.get("files").and_then(|f| f.as_object()) {
+        for (name, content) in files {
+            // Sanitize filename: no slashes, no dots-only, no control chars
+            if name.contains('/') || name.contains('\0') || name == "." || name == ".." {
+                return Response::error(format!("invalid filename: {name}"));
+            }
+            if let Some(text) = content.as_str() {
+                let file_path = format!("{path}/{name}");
+                if let Err(e) = std::fs::write(&file_path, text) {
+                    return Response::error(format!("writing {file_path}: {e}"));
+                }
+            }
+        }
+    }
+
+    // Chown everything to the user
+    let group = "octo";
+    if let Err(e) = run_cmd("/usr/bin/chown", &["-R", &format!("{username}:{group}"), path]) {
+        return Response::error(format!("chown: {e}"));
+    }
+    if let Err(e) = run_cmd("/usr/bin/chmod", &["2770", path]) {
+        return Response::error(format!("chmod: {e}"));
+    }
+
+    Response::success()
 }

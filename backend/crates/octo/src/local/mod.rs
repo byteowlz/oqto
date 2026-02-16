@@ -23,7 +23,7 @@
 //! - Network namespace: optionally isolated
 //! - Protects sensitive files (~/.ssh, ~/.aws, etc.)
 
-mod linux_users;
+pub mod linux_users;
 mod process;
 mod runtime;
 mod sandbox;

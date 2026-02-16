@@ -226,18 +226,6 @@ pub async fn bootstrap_onboarding(
     }
 
     let workspace_path = workspace_root.join("main");
-    std::fs::create_dir_all(&workspace_path)
-        .map_err(|e| ApiError::Internal(format!("Failed to create workspace: {e}")))?;
-
-    let meta = WorkspaceMeta {
-        display_name: Some(display_name.to_string()),
-        language: language.clone(),
-        pinned: Some(true),
-        bootstrap_pending: Some(true),
-    };
-
-    write_workspace_meta(&workspace_path, &meta)
-        .map_err(|e| ApiError::Internal(format!("Failed to write workspace metadata: {e}")))?;
 
     let templates_service = state.onboarding_templates.as_ref().ok_or_else(|| {
         ApiError::ServiceUnavailable("Onboarding templates not configured".into())
@@ -253,24 +241,107 @@ pub async fn bootstrap_onboarding(
         .await
         .map_err(|e| ApiError::Internal(format!("Failed to resolve templates: {e}")))?;
 
-    write_if_missing(&workspace_path.join("ONBOARD.md"), &templates.onboard)?;
-    write_if_missing(
-        &workspace_path.join("PERSONALITY.md"),
-        &templates.personality,
-    )?;
-    write_if_missing(&workspace_path.join("USER.md"), &templates.user)?;
-    write_if_missing(&workspace_path.join("AGENTS.md"), &templates.agents)?;
+    let meta = WorkspaceMeta {
+        display_name: Some(display_name.to_string()),
+        language: language.clone(),
+        pinned: Some(true),
+        bootstrap_pending: Some(true),
+    };
+
+    let meta_json = serde_json::to_string_pretty(&meta)
+        .map_err(|e| ApiError::Internal(format!("Failed to serialize workspace meta: {e}")))?;
+
+    // In multi-user mode, create workspace via usermgr (runs as root, sets ownership).
+    // In single-user mode, write directly.
+    let is_multi_user = state
+        .linux_users
+        .as_ref()
+        .is_some_and(|lu| lu.enabled);
+
+    if is_multi_user {
+        let linux_username = state
+            .linux_users
+            .as_ref()
+            .unwrap()
+            .linux_username(user.id());
+        let ws_str = workspace_path
+            .to_str()
+            .ok_or_else(|| ApiError::Internal("invalid workspace path".into()))?;
+
+        // Build file map for usermgr
+        let mut files = serde_json::Map::new();
+        files.insert(".workspace.json".into(), serde_json::Value::String(meta_json));
+        files.insert("ONBOARD.md".into(), serde_json::Value::String(templates.onboard.clone()));
+        files.insert("PERSONALITY.md".into(), serde_json::Value::String(templates.personality.clone()));
+        files.insert("USER.md".into(), serde_json::Value::String(templates.user.clone()));
+        files.insert("AGENTS.md".into(), serde_json::Value::String(templates.agents.clone()));
+
+        crate::local::linux_users::usermgr_request(
+            "create-workspace",
+            serde_json::json!({
+                "username": linux_username,
+                "path": ws_str,
+                "files": files,
+            }),
+        )
+        .map_err(|e| ApiError::Internal(format!("Failed to create workspace: {e}")))?;
+    } else {
+        std::fs::create_dir_all(&workspace_path)
+            .map_err(|e| ApiError::Internal(format!("Failed to create workspace: {e}")))?;
+
+        write_workspace_meta(&workspace_path, &meta)
+            .map_err(|e| ApiError::Internal(format!("Failed to write workspace metadata: {e}")))?;
+
+        write_if_missing(&workspace_path.join("ONBOARD.md"), &templates.onboard)?;
+        write_if_missing(
+            &workspace_path.join("PERSONALITY.md"),
+            &templates.personality,
+        )?;
+        write_if_missing(&workspace_path.join("USER.md"), &templates.user)?;
+        write_if_missing(&workspace_path.join("AGENTS.md"), &templates.agents)?;
+    }
 
     let session_id = Uuid::new_v4().to_string();
-    let (message, title) = pick_bootstrap_greeting(language.as_deref());
+    let (message, _title) = pick_bootstrap_greeting(language.as_deref());
     let workspace_path_str = workspace_path.to_string_lossy().to_string();
+    let now = Utc::now();
 
-    // Seed chat history with a greeting message.
-    // In multi-user mode, hstry runs per-user (managed by runner), so the shared
-    // hstry client is not available. Skip seeding -- the first real session will
-    // create history through the runner.
+    // Write Pi session JSONL file (the greeting message).
+    // In multi-user mode, write via usermgr since the session dir is under
+    // the octo_* user's home. In single-user mode, write directly.
+    if is_multi_user {
+        let linux_username = state
+            .linux_users
+            .as_ref()
+            .unwrap()
+            .linux_username(user.id());
+        let home = format!("/home/{linux_username}");
+        let safe_dir = safe_cwd_dirname(&workspace_path);
+        let sessions_dir = format!("{home}/.pi/agent/sessions/{safe_dir}");
+
+        let timestamp = now.timestamp_millis();
+        let filename = format!("{timestamp}_{session_id}.jsonl");
+        let session_content = build_session_jsonl(&workspace_path, &session_id, message, now);
+
+        let mut files = serde_json::Map::new();
+        files.insert(filename, serde_json::Value::String(session_content));
+
+        if let Err(e) = crate::local::linux_users::usermgr_request(
+            "create-workspace",
+            serde_json::json!({
+                "username": linux_username,
+                "path": sessions_dir,
+                "files": files,
+            }),
+        ) {
+            tracing::warn!("Failed to write session file via usermgr: {e}");
+        }
+    } else if let Ok(home_dir) = resolve_user_home(&state, user.id()) {
+        let _ = write_pi_session_file(&home_dir, &workspace_path, &session_id, message, now);
+    }
+
+    // Also seed hstry if available (single-user mode)
     if let Some(hstry) = state.hstry.as_ref() {
-        let now = Utc::now();
         let now_ms = now.timestamp_millis();
         let readable_id = crate::wordlist::readable_id_from_session_id(&session_id);
         let metadata_json = serde_json::json!({
@@ -302,7 +373,7 @@ pub async fn bootstrap_onboarding(
         if let Err(e) = hstry
             .write_conversation(
                 &session_id,
-                Some(title.to_string()),
+                Some(_title.to_string()),
                 Some(workspace_path_str.clone()),
                 None,
                 None,
@@ -318,13 +389,6 @@ pub async fn bootstrap_onboarding(
         {
             tracing::warn!("Failed to seed chat history (non-fatal): {e}");
         }
-    }
-
-    // Write Pi session file (also non-fatal in multi-user mode since
-    // the runner's home may differ from the backend's view)
-    if let Ok(home_dir) = resolve_user_home(&state, user.id()) {
-        let now = Utc::now();
-        let _ = write_pi_session_file(&home_dir, &workspace_path, &session_id, message, now);
     }
 
     Ok(Json(BootstrapOnboardingResponse {
@@ -376,6 +440,40 @@ fn write_if_missing(path: &FsPath, contents: &str) -> Result<(), ApiError> {
     std::fs::write(path, contents)
         .map_err(|e| ApiError::Internal(format!("Failed to write {}: {e}", path.display())))?;
     Ok(())
+}
+
+fn build_session_jsonl(
+    workspace_path: &FsPath,
+    session_id: &str,
+    message: &str,
+    now: chrono::DateTime<Utc>,
+) -> String {
+    let timestamp = now.timestamp_millis();
+    let header = serde_json::json!({
+        "cwd": workspace_path.to_string_lossy(),
+        "id": session_id,
+        "timestamp": now.to_rfc3339(),
+        "type": "session",
+    });
+
+    let message_id = nanoid::nanoid!(8);
+    let parent_id = nanoid::nanoid!(8);
+    let line_timestamp = now.to_rfc3339_opts(SecondsFormat::Millis, true);
+    let message_entry = serde_json::json!({
+        "type": "message",
+        "id": message_id,
+        "parentId": parent_id,
+        "timestamp": line_timestamp,
+        "message": {
+            "role": "assistant",
+            "content": [
+                { "type": "text", "text": message }
+            ],
+            "timestamp": timestamp,
+        }
+    });
+
+    format!("{}\n{}\n", header, message_entry)
 }
 
 fn write_pi_session_file(
