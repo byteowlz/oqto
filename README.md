@@ -16,9 +16,7 @@ Current development focuses on running octo on a Linux server but it's technical
 
 The octo backend is responsible for user authentication and management. The backend never spawns agents directly but starts them through `octo-runner`, which wraps pi processes in a sandbox using [bubblewrap](https://github.com/containers/bubblewrap). octo leverages the file-system for many configuration and isolation tasks. Each user gets an octo workspace which is just a directory in their home dir. Each dir inside this workspaces can be thought of as a project or Agent with individual configuration options. This includes a sandbox profile, pi extensions and skills. This way, you can dial in the permissions per project. For even further isolation, octo will support containerization but mind that this is still experimental.
 
-```
-Frontend <--[WS: mux]--> Backend (octo) <--[Unix socket]--> octo-runner <--[stdin/stdout]--> Agent
-```
+![architecture](./diagrams/octo_architecture.svg)
 
 The frontend uses a canonical agent protocol over a multiplexed WebSocket (`/api/ws/mux`). It is agent-runtime agnostic in principle -- the backend translates between the canonical protocol and agent-specific protocols like pi rpc mode.
 
@@ -32,24 +30,24 @@ The frontend uses a canonical agent protocol over a multiplexed WebSocket (`/api
 
 ### Key binaries
 
-| Binary | Purpose |
-|--------|---------|
-| `octo` | Main backend server |
-| `octoctl` | CLI for server management |
-| `octo-runner` | Multi-user process daemon (Linux only) |
-| `octo-sandbox` | Sandbox wrapper using bwrap/sandbox-exec |
+| Binary         | Purpose                                                                                     |
+| -------------- | ------------------------------------------------------------------------------------------- |
+| `octo`         | Main backend server                                                                         |
+| `octoctl`      | CLI for server management                                                                   |
+| `octo-runner`  | Multi-user process daemon (Linux only)                                                      |
+| `octo-sandbox` | Sandbox wrapper using bwrap/sandbox-exec                                                    |
 | `octo-browser` | brower for agents inspired by [agent-broswer](https://github.com/vercel-labs/agent-browser) |
-| `pi-bridge` | HTTP/WebSocket bridge for Pi in containers |
-| `octo-files` | File access server for workspaces |
+| `pi-bridge`    | HTTP/WebSocket bridge for Pi in containers                                                  |
+| `octo-files`   | File access server for workspaces                                                           |
 
 ---
 
 ### Runtime modes
 
-| Mode | Description | Use Case |
-|------|-------------|----------|
-| `local` | Via `octo-runner` daemon | Single-user and multi-user Linux |
-| `container` | Inside Docker/Podman | Full container isolation |
+| Mode        | Description              | Use Case                         |
+| ----------- | ------------------------ | -------------------------------- |
+| `local`     | Via `octo-runner` daemon | Single-user and multi-user Linux |
+| `container` | Inside Docker/Podman     | Full container isolation         |
 
 Even in local mode, agents are spawned through octo-runner, never directly by the backend. Container mode is still experimental, the current focus lies on making local multi-user mode as good as possible.
 
@@ -59,18 +57,18 @@ Even in local mode, agents are spawned through octo-runner, never directly by th
 
 octo integrates the following stand-alone tools that are being actively developmed alongside octo. Source code available [here](https://github.com/orgs/byteowlz/repositories).
 
-| Service | Purpose |
-|---------|---------|
-| `hstry` | Chat history storage (per-user SQLite) |
-| `mmry` | Memory system (semantic search, embeddings) |
-| `trx` | Issue/task tracking |
-| `skdlr` | CLI for scheduling tasks  |
-| `eavs` | LLM API proxy |
-| `ears` | Realtime Speech-to-text server using the kyutai STT model and optonally nvidia parakeet|
-| `kokorox` | Realtime Text-to-speech server using the kokoro onnx model |
-| `sx` | Search CLI for searxng and optionally online search services |
-| `scrpr` | Website fetcher with optional markdown conversion |
-| `agntz` | Wrapper aournd the other tools so agents use one unified interface |
+| Service   | Purpose                                                                                 |
+| --------- | --------------------------------------------------------------------------------------- |
+| `hstry`   | Chat history storage (per-user SQLite)                                                  |
+| `mmry`    | Memory system (semantic search, embeddings)                                             |
+| `trx`     | Issue/task tracking                                                                     |
+| `skdlr`   | CLI for scheduling tasks                                                                |
+| `eavs`    | LLM API proxy                                                                           |
+| `ears`    | Realtime Speech-to-text server using the kyutai STT model and optonally nvidia parakeet |
+| `kokorox` | Realtime Text-to-speech server using the kokoro onnx model                              |
+| `sx`      | Search CLI for searxng and optionally online search services                            |
+| `scrpr`   | Website fetcher with optional markdown conversion                                       |
+| `agntz`   | Wrapper aournd the other tools so agents use one unified interface                      |
 
 ---
 
@@ -204,10 +202,10 @@ The primary interface is WebSocket-based via `/api/ws/mux` (multiplexed WebSocke
 
 ## Development
 
-| Component | Build | Lint | Test |
-|-----------|-------|------|------|
-| backend | `cargo build` | `cargo clippy && cargo fmt --check` | `cargo test` |
-| frontend | `bun run build` | `bun run lint` | `bun run test` |
+| Component | Build           | Lint                                | Test           |
+| --------- | --------------- | ----------------------------------- | -------------- |
+| backend   | `cargo build`   | `cargo clippy && cargo fmt --check` | `cargo test`   |
+| frontend  | `bun run build` | `bun run lint`                      | `bun run test` |
 
 ## CLI
 
