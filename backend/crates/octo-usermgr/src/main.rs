@@ -56,14 +56,6 @@ impl Response {
         }
     }
 
-    fn success_with_data(data: serde_json::Value) -> Self {
-        Self {
-            ok: true,
-            error: None,
-            data: Some(data),
-        }
-    }
-
     fn error(msg: impl Into<String>) -> Self {
         Self {
             ok: false,
@@ -109,31 +101,10 @@ fn set_socket_permissions() {
     // Socket owned by octo:root with mode 0600.
     // Only the octo service user can connect -- NOT octo_* platform users
     // (who share the octo group but are different UIDs).
-    let c_path = std::ffi::CString::new(SOCKET_PATH).unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    let _ = std::fs::set_permissions(SOCKET_PATH, std::fs::Permissions::from_mode(0o600));
     if let Some(uid) = get_user_uid("octo") {
-        libc_chown(&c_path, uid, 0);
-    }
-    libc_chmod(&c_path, 0o600);
-}
-
-// Minimal libc wrappers to avoid pulling in nix/rustix
-fn libc_chmod(path: &std::ffi::CString, mode: u32) {
-    #[cfg(target_os = "linux")]
-    {
-        unsafe extern "C" {
-            fn chmod(path: *const std::ffi::c_char, mode: u32) -> i32;
-        }
-        unsafe { chmod(path.as_ptr(), mode) };
-    }
-}
-
-fn libc_chown(path: &std::ffi::CString, uid: u32, gid: u32) {
-    #[cfg(target_os = "linux")]
-    {
-        unsafe extern "C" {
-            fn chown(path: *const std::ffi::c_char, uid: u32, gid: u32) -> i32;
-        }
-        unsafe { chown(path.as_ptr(), uid, gid) };
+        let _ = run_cmd("/usr/bin/chown", &[&format!("{uid}:0"), SOCKET_PATH]);
     }
 }
 
@@ -146,19 +117,6 @@ fn get_user_uid(name: &str) -> Option<u32> {
         return None;
     }
     String::from_utf8_lossy(&output.stdout).trim().parse().ok()
-}
-
-fn get_group_id(name: &str) -> Option<u32> {
-    let output = Command::new("/usr/bin/getent")
-        .args(["group", name])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let line = String::from_utf8_lossy(&output.stdout);
-    // Format: group:x:GID:members
-    line.split(':').nth(2)?.parse().ok()
 }
 
 fn handle_connection(stream: std::os::unix::net::UnixStream) {
