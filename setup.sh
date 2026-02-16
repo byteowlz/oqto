@@ -2819,7 +2819,14 @@ generate_config() {
 
     if [[ -n "$dev_password" ]]; then
       log_info "Generating password hash..."
-      dev_user_hash=$(generate_password_hash "$dev_password")
+      local octoctl_bin=""
+      command_exists octoctl && octoctl_bin="octoctl"
+      [[ -z "$octoctl_bin" && -x "${TOOLS_INSTALL_DIR}/octoctl" ]] && octoctl_bin="${TOOLS_INSTALL_DIR}/octoctl"
+      if [[ -n "$octoctl_bin" ]]; then
+        dev_user_hash=$("$octoctl_bin" hash-password --password "$dev_password")
+      else
+        dev_user_hash=$(generate_password_hash "$dev_password")
+      fi
       dev_password=""
     else
       dev_user_hash=""
@@ -3363,31 +3370,48 @@ create_admin_user_db() {
   # Generate hash: prompt for password if we don't have one
   # Passwords are never persisted to disk -- only the hash is stored in the DB.
   if [[ -z "$admin_hash" ]]; then
-    local admin_password=""
+    local octoctl_bin=""
+    if command_exists octoctl && octoctl hash-password --help >/dev/null 2>&1; then
+      octoctl_bin="octoctl"
+    elif [[ -x "${TOOLS_INSTALL_DIR}/octoctl" ]]; then
+      octoctl_bin="${TOOLS_INSTALL_DIR}/octoctl"
+    fi
+
+    if [[ -z "$octoctl_bin" ]]; then
+      log_error "octoctl not found. Run the build step first."
+      return 1
+    fi
+
     if [[ "$NONINTERACTIVE" == "true" ]]; then
+      local admin_password
       admin_password=$(generate_secure_secret 16)
       log_info "Generated admin password: $admin_password"
       log_warn "SAVE THIS PASSWORD - it will not be shown again!"
+      admin_hash=$("$octoctl_bin" hash-password --password "$admin_password")
+      admin_password=""
     else
       while true; do
-        admin_password=$(prompt_password "Admin password (min 8 characters)")
-        if [[ ${#admin_password} -lt 8 ]]; then
+        local pw1 pw2
+        echo -n "Admin password (min 8 characters): " >&2
+        read -r -s pw1 < /dev/tty
+        echo >&2
+        if [[ ${#pw1} -lt 8 ]]; then
           log_error "Password must be at least 8 characters"
           continue
         fi
-        local confirm_pw
-        confirm_pw=$(prompt_password "Confirm password")
-        if [[ "$admin_password" != "$confirm_pw" ]]; then
+        echo -n "Confirm password: " >&2
+        read -r -s pw2 < /dev/tty
+        echo >&2
+        if [[ "$pw1" != "$pw2" ]]; then
           log_error "Passwords do not match"
           continue
         fi
+        log_info "Generating password hash..."
+        admin_hash=$("$octoctl_bin" hash-password --password "$pw1")
+        pw1="" pw2=""
         break
       done
     fi
-    log_info "Generating password hash..."
-    admin_hash=$(generate_password_hash "$admin_password")
-    # Clear plaintext immediately
-    admin_password=""
   fi
 
   # Determine database path based on service config
