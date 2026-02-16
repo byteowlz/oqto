@@ -64,6 +64,7 @@ octo integrates the following stand-alone tools that are being actively developm
 | `hstry` | Chat history storage (per-user SQLite) |
 | `mmry` | Memory system (semantic search, embeddings) |
 | `trx` | Issue/task tracking |
+| `skdlr` | CLI for scheduling tasks  |
 | `eavs` | LLM API proxy |
 | `ears` | Realtime Speech-to-text server using the kyutai STT model and optonally nvidia parakeet|
 | `kokorox` | Realtime Text-to-speech server using the kokoro onnx model |
