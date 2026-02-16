@@ -106,14 +106,14 @@ fn main() {
 }
 
 fn set_socket_permissions() {
-    // Socket should be owned by root:octo with mode 0660
-    // so only root and octo group members can connect
+    // Socket owned by octo:root with mode 0600.
+    // Only the octo service user can connect -- NOT octo_* platform users
+    // (who share the octo group but are different UIDs).
     let c_path = std::ffi::CString::new(SOCKET_PATH).unwrap();
-    libc_chmod(&c_path, 0o660);
-    // Try to chgrp to octo group
-    if let Some(gid) = get_group_id(DEFAULT_GROUP) {
-        libc_chown(&c_path, 0, gid);
+    if let Some(uid) = get_user_uid("octo") {
+        libc_chown(&c_path, uid, 0);
     }
+    libc_chmod(&c_path, 0o600);
 }
 
 // Minimal libc wrappers to avoid pulling in nix/rustix
@@ -135,6 +135,17 @@ fn libc_chown(path: &std::ffi::CString, uid: u32, gid: u32) {
         }
         unsafe { chown(path.as_ptr(), uid, gid) };
     }
+}
+
+fn get_user_uid(name: &str) -> Option<u32> {
+    let output = Command::new("/usr/bin/id")
+        .args(["-u", name])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&output.stdout).trim().parse().ok()
 }
 
 fn get_group_id(name: &str) -> Option<u32> {
