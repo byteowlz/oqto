@@ -370,8 +370,9 @@ prompt_password() {
   fi
 
   local password
-  read -r -s -p "$prompt: " password
-  echo
+  # Read from /dev/tty explicitly so this works inside $() subshells
+  read -r -s -p "$prompt: " password < /dev/tty
+  echo >&2
   echo "$password"
 }
 
