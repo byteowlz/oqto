@@ -20,16 +20,6 @@ export function ContextWindowGauge({
 	const effectiveMaxTokens = maxTokens > 0 ? maxTokens : 200000;
 	const percentage = Math.min((totalTokens / effectiveMaxTokens) * 100, 100);
 
-	// DEBUG: Remove after fixing
-	console.debug("[ContextWindowGauge]", {
-		inputTokens,
-		outputTokens,
-		maxTokens,
-		effectiveMaxTokens,
-		totalTokens,
-		percentage,
-	});
-
 	const getColor = () => {
 		if (percentage >= 90) return "bg-destructive";
 		if (percentage >= 70) return "bg-yellow-500";
