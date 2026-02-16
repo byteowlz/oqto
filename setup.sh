@@ -4253,8 +4253,6 @@ Environment=XDG_STATE_HOME=${octo_home}/.local/state
 Environment=OCTO_CONFIG=${octo_config_home}/config.toml
 Environment=RUST_LOG=$OCTO_LOG_LEVEL
 EnvironmentFile=-${octo_config_home}/env
-RuntimeDirectory=octo
-RuntimeDirectoryMode=0755
 ExecStart=/usr/local/bin/octo serve
 ExecStop=/bin/kill -TERM \$MAINPID
 TimeoutStopSec=30
