@@ -358,10 +358,18 @@ export function ChatView({
 	const [isUserScrolled, setIsUserScrolled] = useState(
 		() => getCachedScrollPosition(scrollStorageKey) !== null,
 	);
-	// Pagination: start with last 30 messages, load more on scroll up
-	const INITIAL_MESSAGES = 30;
+	// Pagination: show all messages. The visibleCount tracks the current
+	// total so all history is visible after reload. New streaming messages
+	// also bump it via the messages-length effect below.
 	const LOAD_MORE_COUNT = 30;
-	const [visibleCount, setVisibleCount] = useState(INITIAL_MESSAGES);
+	const [visibleCount, setVisibleCount] = useState(
+		Math.max(messages.length, 30),
+	);
+	// Keep visibleCount in sync when messages are loaded from history
+	// (e.g. fetchHistoryMessages completing after mount).
+	useEffect(() => {
+		setVisibleCount((prev) => Math.max(prev, messages.length));
+	}, [messages.length]);
 
 	// A2UI integration - adapt Pi messages to expected format
 	const a2uiMessagesRef = useRef<Array<{ info: { id: string; role: string } }>>(
@@ -824,7 +832,7 @@ export function ChatView({
 		// Only auto-scroll if messages were added (not on initial load)
 		if (messages.length > prevCount) {
 			// Ensure new messages are visible
-			setVisibleCount((prev) => Math.max(prev, INITIAL_MESSAGES));
+			setVisibleCount((prev) => Math.max(prev, messages.length));
 			if (!isUserScrolled) {
 				messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
 			}
@@ -3022,18 +3030,19 @@ function PiPartRenderer({
 	};
 
 	switch (part.type) {
-		case "text":
+		case "text": {
+			const textContent =
+				(part as { text?: string; content?: string }).text ??
+				(part as { content?: string }).content ??
+				"";
 			return (
 				<TextWithFileReferences
-					content={
-						(part as { text?: string; content?: string }).text ??
-						(part as { content?: string }).content ??
-						""
-					}
+					content={stripAnsi(textContent)}
 					workspacePath={workspacePath}
 					locale={locale}
 				/>
 			);
+		}
 
 		case "thinking":
 			return (
@@ -3041,7 +3050,7 @@ function PiPartRenderer({
 					<summary className="cursor-pointer hover:text-foreground list-none [&::-webkit-details-marker]:hidden [&::marker]:content-['']">
 						{locale === "de" ? "Gedanken" : "Thinking"}
 					</summary>
-					<pre className="mt-1 whitespace-pre-wrap font-mono text-xs">{((part as { text?: string }).text ?? "").trim()}</pre>
+					<pre className="mt-1 whitespace-pre-wrap font-mono text-xs">{stripAnsi(((part as { text?: string }).text ?? "").trim())}</pre>
 				</details>
 			);
 

@@ -1715,9 +1715,14 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 								activeSession.state,
 							);
 
-							// Mark this session for a forced message sync once
-							// the reattach handshake completes.
-							forceMessageSyncRef.current.add(sid);
+							// Always fetch history messages first so the chat
+							// is never empty. If the session is truly streaming,
+							// live events will merge on top of these. Without
+							// this, a stale "streaming" state from the runner
+							// blocks the session.create handler from fetching
+							// (it checks !isStreamingRef) and agent.idle never
+							// fires (dead Pi), leaving the chat permanently empty.
+							void fetchHistoryMessages(sid);
 
 							// Re-subscribe with create: true to trigger
 							// session.create on the backend, which sets up
@@ -1750,7 +1755,8 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 								await manager.agentGetStateWait(sid);
 
 								// Session exists -- reattach to enable event forwarding.
-								forceMessageSyncRef.current.add(sid);
+								// Fetch history immediately (same reasoning as above).
+								void fetchHistoryMessages(sid);
 								unsubscribeRef.current?.();
 								unsubscribeRef.current = manager.subscribeAgentSession(
 									sid,

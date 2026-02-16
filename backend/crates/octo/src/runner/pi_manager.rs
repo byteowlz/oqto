@@ -433,9 +433,50 @@ impl PiSessionManager {
         // find an existing JSONL session file for this session ID. This
         // enables resuming external sessions (started in Pi directly,
         // not through Octo) so the agent has the full conversation context.
-        let continue_session = config.continue_session.clone().or_else(|| {
-            crate::pi::session_files::find_session_file(&session_id, Some(&config.cwd))
-        });
+        //
+        // The JSONL filename uses Pi's native UUID, but session_id may be
+        // an Octo ID (octo-...). If direct lookup fails, resolve the Pi
+        // native ID from hstry's external_id and retry.
+        let continue_session = if config.continue_session.is_some() {
+            config.continue_session.clone()
+        } else {
+            // Try direct match first (works for Pi-native IDs)
+            let mut found =
+                crate::pi::session_files::find_session_file(&session_id, Some(&config.cwd));
+            // No match -- resolve Pi native ID via hstry and retry
+            if found.is_none() {
+                if let Some(ref client) = self.hstry_client {
+                    match client.get_conversation(&session_id, None).await {
+                        Ok(Some(conv)) => {
+                            let pi_id = conv.external_id;
+                            if !pi_id.is_empty() && pi_id != session_id {
+                                debug!(
+                                    "Resolved Pi native ID for '{}' -> '{}' via hstry",
+                                    session_id, pi_id
+                                );
+                                found = crate::pi::session_files::find_session_file(
+                                    &pi_id,
+                                    Some(&config.cwd),
+                                );
+                            }
+                        }
+                        Ok(None) => {
+                            debug!(
+                                "No hstry conversation found for session '{}'",
+                                session_id
+                            );
+                        }
+                        Err(e) => {
+                            warn!(
+                                "Failed to resolve Pi native ID for '{}': {}",
+                                session_id, e
+                            );
+                        }
+                    }
+                }
+            }
+            found
+        };
 
         if continue_session.is_some() && config.continue_session.is_none() {
             info!(
@@ -578,6 +619,10 @@ impl PiSessionManager {
         }
         if !config.env.contains_key("AGENT_BROWSER_SESSION") {
             cmd.env("AGENT_BROWSER_SESSION", &browser_session_id);
+        }
+        // Set OCTO_SESSION_ID so agents can use octoctl a2ui commands
+        if !config.env.contains_key("OCTO_SESSION_ID") {
+            cmd.env("OCTO_SESSION_ID", &session_id);
         }
 
         // Configure pipes
