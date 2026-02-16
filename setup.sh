@@ -2616,7 +2616,7 @@ build_octo() {
   log_info "Installing binaries to ${TOOLS_INSTALL_DIR}..."
 
   local release_dir="$SCRIPT_DIR/backend/target/release"
-  for bin in octo octoctl octo-runner pi-bridge octo-sandbox octo-setup; do
+  for bin in octo octoctl octo-runner pi-bridge octo-sandbox octo-setup octo-usermgr; do
     if [[ -f "${release_dir}/${bin}" ]]; then
       sudo install -m 755 "${release_dir}/${bin}" "${TOOLS_INSTALL_DIR}/${bin}"
       # Remove stale copies from ~/.cargo/bin to avoid PATH precedence issues
@@ -2632,6 +2632,14 @@ build_octo() {
   if [[ -f "$SCRIPT_DIR/backend/target/release/octo-files" ]]; then
     sudo install -m 755 "$SCRIPT_DIR/backend/target/release/octo-files" "${TOOLS_INSTALL_DIR}/octo-files"
     log_success "octo-files installed"
+  fi
+
+  # Set file capabilities on octo-usermgr so it can manage users without sudo.
+  # This allows the main octo service to keep NoNewPrivileges=true.
+  if [[ -f "${TOOLS_INSTALL_DIR}/octo-usermgr" ]]; then
+    sudo setcap 'cap_setuid,cap_setgid,cap_dac_override,cap_chown,cap_fowner+ep' \
+      "${TOOLS_INSTALL_DIR}/octo-usermgr"
+    log_success "octo-usermgr capabilities set"
   fi
 
   log_success "Binaries installed to ${TOOLS_INSTALL_DIR}"
@@ -4322,18 +4330,21 @@ PrivateTmp=true
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 EOF
 
-    # In multi-user mode, octo needs sudo for useradd/groupadd (via sudoers rules).
-    # - NoNewPrivileges must be off (sudo needs privilege escalation)
-    # - /run/sudo must be writable (sudo timestamp files)
-    # - /home must be writable (useradd -m creates home dirs)
-    # - /etc must be writable (useradd modifies passwd/shadow)
     if [[ "${LINUX_USERS_ENABLED:-false}" == "true" ]]; then
+      # Multi-user mode: octo-usermgr (a minimal, auditable helper binary with
+      # file capabilities) manages Linux users on behalf of the octo service.
+      # It needs write access to /etc (passwd/shadow), /home (user dirs), and
+      # /run/sudo (timestamp cache). NoNewPrivileges must be off for file
+      # capabilities to work on child processes.
+      # Security: octo-usermgr strictly validates all inputs (username prefix,
+      # UID range, allowed paths). The octo process routes all privileged ops
+      # through it -- never calling useradd/groupadd directly.
       sudo tee -a "$service_file" >/dev/null <<EOF
-ReadWritePaths=/run/sudo
-ReadWritePaths=/home
 ReadWritePaths=/etc
+ReadWritePaths=/home
 EOF
     else
+      # Single-user mode: no privilege escalation needed
       sudo tee -a "$service_file" >/dev/null <<EOF
 NoNewPrivileges=true
 EOF

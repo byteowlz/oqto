@@ -1176,18 +1176,169 @@ fn extract_user_id_from_gecos(gecos: &str) -> Option<&str> {
     trimmed.strip_prefix("Octo platform user").map(|s| s.trim())
 }
 
-/// Run a command with optional sudo.
+/// Path to the octo-usermgr helper binary.
+/// This helper has file capabilities set so it can manage users without sudo.
+const USERMGR_BINARY: &str = "octo-usermgr";
+
+/// Try to translate a privileged command into an octo-usermgr subcommand.
+/// Returns None if the command isn't handled by octo-usermgr.
+fn translate_to_usermgr(cmd: &str, args: &[&str]) -> Option<Vec<String>> {
+    match cmd {
+        "/usr/sbin/groupadd" => {
+            // groupadd <group>
+            let group = args.first()?;
+            Some(vec!["create-group".to_string(), group.to_string()])
+        }
+        "/usr/sbin/useradd" => {
+            // useradd -u <uid> -g <group> -s <shell> -m/-M -c <gecos> <username>
+            // Parse the useradd arguments into usermgr format
+            let mut uid = None;
+            let mut group = None;
+            let mut shell = None;
+            let mut gecos = None;
+            let mut username = None;
+            let mut i = 0;
+            while i < args.len() {
+                match args[i] {
+                    "-u" => {
+                        uid = args.get(i + 1).map(|s| s.to_string());
+                        i += 2;
+                    }
+                    "-g" => {
+                        group = args.get(i + 1).map(|s| s.to_string());
+                        i += 2;
+                    }
+                    "-s" => {
+                        shell = args.get(i + 1).map(|s| s.to_string());
+                        i += 2;
+                    }
+                    "-c" => {
+                        gecos = args.get(i + 1).map(|s| s.to_string());
+                        i += 2;
+                    }
+                    "-m" | "-M" => {
+                        i += 1;
+                    }
+                    _ => {
+                        // Last positional arg is the username
+                        username = Some(args[i].to_string());
+                        i += 1;
+                    }
+                }
+            }
+            Some(vec![
+                "create-user".to_string(),
+                username?,
+                uid?,
+                group?,
+                shell?,
+                gecos?,
+            ])
+        }
+        "/usr/sbin/userdel" => {
+            let username = args.first()?;
+            Some(vec!["delete-user".to_string(), username.to_string()])
+        }
+        "mkdir" | "/bin/mkdir" => {
+            // mkdir -p <path>
+            if args.first() == Some(&"-p") {
+                let path = args.get(1)?;
+                Some(vec!["mkdir".to_string(), path.to_string()])
+            } else {
+                None
+            }
+        }
+        "chown" | "/usr/bin/chown" => {
+            // chown [-R] <owner:group> <path>
+            if args.first() == Some(&"-R") && args.len() == 3 {
+                Some(vec![
+                    "chown".to_string(),
+                    args[1].to_string(),
+                    args[2].to_string(),
+                    "-R".to_string(),
+                ])
+            } else if args.len() == 2 {
+                Some(vec![
+                    "chown".to_string(),
+                    args[0].to_string(),
+                    args[1].to_string(),
+                ])
+            } else {
+                None
+            }
+        }
+        "chmod" | "/usr/bin/chmod" => {
+            // chmod <mode> <path>
+            if args.len() == 2 {
+                Some(vec![
+                    "chmod".to_string(),
+                    args[0].to_string(),
+                    args[1].to_string(),
+                ])
+            } else {
+                None
+            }
+        }
+        "loginctl" | "/usr/bin/loginctl" => {
+            // loginctl enable-linger <username>
+            if args.first() == Some(&"enable-linger") && args.len() == 2 {
+                Some(vec!["enable-linger".to_string(), args[1].to_string()])
+            } else {
+                None
+            }
+        }
+        "/usr/bin/systemctl" => {
+            // systemctl start user@<uid>.service
+            if args.first() == Some(&"start") && args.len() == 2 {
+                if let Some(uid_str) = args[1]
+                    .strip_prefix("user@")
+                    .and_then(|s| s.strip_suffix(".service"))
+                {
+                    return Some(vec!["start-user-service".to_string(), uid_str.to_string()]);
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+/// Run a privileged command, preferring octo-usermgr helper over sudo.
+///
+/// The octo-usermgr binary has file capabilities (CAP_SETUID etc.) so it can
+/// manage users without sudo. This allows the octo service to keep
+/// NoNewPrivileges=true and ProtectSystem=strict.
+///
+/// Commands not handled by octo-usermgr fall back to sudo.
 fn run_privileged_command(use_sudo: bool, cmd: &str, args: &[&str]) -> Result<()> {
     let is_root = geteuid().is_root();
 
-    let output = if use_sudo && !is_root {
-        debug!("Running: sudo {} {:?}", cmd, args);
-        Command::new("sudo")
-            .arg("-n")
-            .arg(cmd)
-            .args(args)
-            .output()
-            .with_context(|| format!("running sudo {} {:?}", cmd, args))?
+    // If we're not root, try octo-usermgr first
+    let output = if !is_root {
+        if let Some(usermgr_args) = translate_to_usermgr(cmd, args) {
+            let usermgr_args_refs: Vec<&str> = usermgr_args.iter().map(|s| s.as_str()).collect();
+            debug!("Running: {} {:?}", USERMGR_BINARY, usermgr_args_refs);
+            Command::new(USERMGR_BINARY)
+                .args(&usermgr_args_refs)
+                .output()
+                .with_context(|| {
+                    format!("running {} {:?}", USERMGR_BINARY, usermgr_args_refs)
+                })?
+        } else if use_sudo {
+            debug!("Running: sudo {} {:?}", cmd, args);
+            Command::new("sudo")
+                .arg("-n")
+                .arg(cmd)
+                .args(args)
+                .output()
+                .with_context(|| format!("running sudo {} {:?}", cmd, args))?
+        } else {
+            debug!("Running: {} {:?}", cmd, args);
+            Command::new(cmd)
+                .args(args)
+                .output()
+                .with_context(|| format!("running {} {:?}", cmd, args))?
+        }
     } else {
         debug!("Running: {} {:?}", cmd, args);
         Command::new(cmd)
@@ -1199,10 +1350,17 @@ fn run_privileged_command(use_sudo: bool, cmd: &str, args: &[&str]) -> Result<()
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
-        let exit_code = output.status.code().map_or("signal".to_string(), |c| c.to_string());
+        let exit_code = output
+            .status
+            .code()
+            .map_or("signal".to_string(), |c| c.to_string());
         tracing::error!(
             "Privileged command failed (exit {}): {} {:?}\nstderr: {}\nstdout: {}",
-            exit_code, cmd, args, stderr.trim(), stdout.trim()
+            exit_code,
+            cmd,
+            args,
+            stderr.trim(),
+            stdout.trim()
         );
         anyhow::bail!(
             "Command failed (exit {}): {} {:?} -- {}",
