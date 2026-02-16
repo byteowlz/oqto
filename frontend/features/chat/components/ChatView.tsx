@@ -466,11 +466,11 @@ export function ChatView({
 	}, [availableModels, piState?.model, selectedModelRef]);
 	const contextWindowLimit = useMemo(() => {
 		if (!currentModelInfo) return 200000;
-		if (currentModelInfo.context_window > 0) {
-			return currentModelInfo.context_window;
+		if (currentModelInfo.contextWindow > 0) {
+			return currentModelInfo.contextWindow;
 		}
-		if (currentModelInfo.max_tokens > 0) {
-			return currentModelInfo.max_tokens;
+		if (currentModelInfo.maxTokens > 0) {
+			return currentModelInfo.maxTokens;
 		}
 		return 200000;
 	}, [currentModelInfo]);
