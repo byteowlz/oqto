@@ -2,6 +2,70 @@
 
 ## Open
 
+### [octo-nqg8.9] Replace unsafe env::set_var in octo-runner and test code (P1, task)
+Two categories of unsafe env::set_var/remove_var:
+
+1. bin/octo-runner.rs line 3650 - set_var at startup for .env loading. Replace with a proper env file loading approach: either collect all vars into a HashMap and apply them before spawning threads, or use a crate like dotenvy which handles this safely.
+
+2. auth/config.rs tests (4 blocks) and local/sandbox.rs tests (3 blocks) - set_var/remove_var in tests. Replace with the temp_env crate (temp_env::with_var/with_vars) which provides scoped env var overrides that are automatically cleaned up, or use serial_test with proper isolation.
+
+### [octo-nqg8.8] Replace unsafe termios code in octoctl with rpassword crate (P1, task)
+ctl/main.rs uses 4 unsafe blocks (lines 2274-2291) for terminal echo suppression during password input via raw libc::tcgetattr/tcsetattr. Replace entire read_password() function with the rpassword crate which provides a safe, cross-platform rpassword::read_password() function that handles all the terminal manipulation safely.
+
+### [octo-nqg8.7] Replace unsafe libc calls with nix crate safe wrappers (P1, task)
+Replace all unsafe libc calls with safe alternatives from the nix crate (already listed in workspace Cargo.toml):
+
+1. api/handlers/projects.rs - libc::geteuid()/getegid() (4 blocks) -> nix::unistd::geteuid()/getegid()
+2. local/sandbox.rs - libc::getpwnam + pointer deref (2 blocks) -> nix::unistd::User::from_name()
+3. runner/client.rs - libc::getpwnam + pointer deref (2 blocks) -> nix::unistd::User::from_name()
+...
+
+
+### [octo-nqg8.6] Remove dead code in user_plane/, ws/, canon/, container/, api/, session/, templates/, onboarding/, workspace/, hstry/ (P1, task)
+Remove remaining dead code across smaller modules:
+- user_plane/types.rs (7): SessionInfo, StartSessionRequest, StartSessionResponse, MainChatSessionInfo, MainChatMessage, MemoryEntry, MemorySearchResults
+- user_plane/mod.rs: unused UserPlane trait methods
+- user_plane/runner.rs: RunnerUserPlane::for_user
+- ws/types.rs (11): WsEvent variants (SessionUpdated, SessionError, AgentReconnecting, ThinkingDelta, MessageUpdated, ToolStart, ToolEnd, PermissionResolved, QuestionResolved, A2uiActionResolved, OpencodeEvent), unused WsCommand fields, WsCommand::session_id method, Ping variant
+...
+
+
+### [octo-nqg8.5] Remove dead code in local/ module (process.rs, runtime.rs, sandbox.rs, linux_users.rs, user_hstry.rs) (P1, task)
+Remove ~17 dead code items:
+- local/process.rs (5): RunAsUser struct, ProcessHandle::new, ProcessManager methods (spawn_fileserver, spawn_ttyd, spawn_as_user, spawn_sandboxed, stop_session), shell_escape fn
+- local/runtime.rs (2): LocalRuntime::start_session, LocalRuntime::stop_session
+- local/sandbox.rs (9): SandboxConfig methods (minimal, strict, from_profile, from_profile_with_custom, load_from_workspace, merge_with_workspace, with_workspace_config, build_bwrap_args_for_user, is_bwrap_available)
+- local/linux_users.rs (6): PROJECT_PREFIX const, LinuxUsersConfig methods (project_username, ensure_project_user, chown_directory_to_user, effective_username, ensure_effective_user)
+...
+
+
+### [octo-nqg8.4] Remove dead code in runner/pi_translator.rs and runner/client.rs (P1, task)
+Remove dead code:
+- runner/pi_translator.rs (8+): PiTranslator struct and all methods (new, set_pending_client_id, translate, on_agent_start, on_agent_end, etc), plus standalone functions (pi_response_to_canonical, pi_agent_message_to_canonical, pi_content_to_parts, pi_image_to_part, pi_stop_reason, extract_text_content)
+- runner/client.rs (8+): write_stdin, subscribe_stdout, list_sessions, get_session, list_main_chat_sessions, search_memories, add_memory, delete_memory, pi_unsubscribe, pi_get_last_assistant_text, pi_set_steering_mode, pi_set_follow_up_mode, pi_export_html, pi_bash, pi_abort_bash, StdoutSubscription, StdoutSubscriptionEvent, PiSubscription and its methods
+
+### [octo-nqg8.3] Remove dead code in history/ module (repository.rs, service.rs, models.rs) (P1, task)
+Remove ~19 dead code items:
+- history/repository.rs (14): hstry_db_path, HSTRY_POOL_CACHE static, open_hstry_pool, hstry_timestamp_ms, list_sessions_from_hstry, get_session_from_hstry, get_session_messages_from_hstry, list_sessions, list_sessions_from_dir, list_sessions_grouped, get_session, get_session_from_dir, update_session_title, update_session_title_in_dir
+- history/service.rs (3): get_session_messages_async, get_session_messages_rendered_from_hstry, get_session_messages_rendered
+- history/models.rs (2): SessionInfo struct, SessionTime struct
+These are legacy history functions superseded by hstry gRPC.
+
+### [octo-nqg8.2] Remove dead code in pi/ module (runtime.rs, types.rs, session_parser.rs, client.rs) (P1, task)
+Remove ~31 dead code items across the pi module:
+- pi/runtime.rs (15): PiSpawnConfig, PiProcess trait, PiRuntime trait, LocalPiRuntime, LocalPiProcess, RunnerPiRuntime, RunnerPiProcess, ContainerPiRuntime, ContainerPiProcess and all their methods
+- pi/types.rs (13): PiCommand enum, ImageContent, ImageSource, PiResponse, PiEvent enum, AssistantMessageEvent, ToolResultMessage, ContentBlock, ToolCall, ToolResult, ExtensionUiRequest, PiMessage, PiMessage::parse
+- pi/session_parser.rs (3): TITLE_PATTERN static, ParsedTitle struct and all methods
+- pi/client.rs (1): PiClientConfig struct
+...
+
+
+### [octo-nqg8.1] Remove dead code in runner/pi_manager.rs (P1, task)
+Remove ~28 dead code items: PiSessionManager, PiSession, PiManagerConfig, PiSessionConfig, PiSessionCommand, PiEventWrapper, PendingResponses, PendingClientId, HstryExternalId, ModelCacheEntry, JsonlMessageKey, JsonlEntry, JsonlSessionInfoEntry, JsonlMessageEntry, StatsDelta, and all associated functions (message_signature, build_jsonl_key, build_metadata_json, compute_stats_delta, read_jsonl_message_entries, read_jsonl_session_name, resolve_jsonl_message_indices, fetch_last_hstry_idx, resolve_jsonl_session_title). This is the largest concentration of dead code - the entire old Pi session management that was superseded by the runner architecture.
+
+### [octo-nqg8] Eliminate all Rust warnings and unsafe code in backend (P1, epic)
+Fix all ~398 compiler warnings in the backend workspace without bandaid fixes (#[allow], etc). This includes removing ~201 dead code items, replacing ~15 unsafe blocks with safe alternatives, fixing 164 ts-rs serde parse warnings, removing unused imports, and addressing unused variables. All changes must preserve existing functionality - dead code should only be removed if truly unused, not just stubbed.
+
 ### [octo-9cdt] Make hstry the sole history source while preserving streaming (P1, epic)
 
 ### [octo-wg67] Implement @@ cross-agent routing in runner (P1, task)
@@ -41,9 +105,6 @@ Add workspace-level clippy configuration to deny warnings and enforce best pract
 
 ### [octo-zjs8.2] Fix clippy warnings in frontend/src-tauri (P1, task)
 Fix unnecessary_lazy_evaluations, manual_flatten, single_match, and manual_strip warnings
-
-### [octo-zjs8.1] Fix all clippy warnings in backend crates (P1, task)
-Fix warnings in octo-files, octo-scaffold, octo-browser, and octo main crate without using #[allow] or other bandaid fixes
 
 ### [octo-zqyg] Fix Linux user creation sudo allowlist path mismatch (P1, bug)
 
@@ -173,6 +234,24 @@ Convert synchronous imports in apps/index.ts to React.lazy() imports. Currently 
 Location: frontend/apps/index.ts:1-56
 
 Implementation:
+...
+
+
+### [octo-nqg8.11] Fix unused imports and variables across backend (P2, task)
+Fix ~14 remaining minor warnings:
+- ~11 unused imports across multiple files (SenderType in octo-protocol, chat::get_runner_for_user, get_trx_issue, ContainerPiRuntime/LocalPiRuntime/PiProcess/PiRuntime/PiSpawnConfig/RunnerPiRuntime, proxy functions, UserHstryConfig/UserHstryManager, WorkspaceLocationRepository/WorkspaceLocation, WorkspaceMeta and related, warn, WsCommand)
+- ~2 unused variables (agent_port, etc)
+- ~1 unnecessary mut
+
+...
+
+
+### [octo-nqg8.10] Fix ts-rs serde attribute parse warnings in canon/types.rs (P2, task)
+164 'failed to parse serde attribute' warnings from ts-rs when processing canon/types.rs. These are generated by ts-rs v10 when it encounters serde attributes it doesnt understand (like skip_serializing_if, is_default_format custom functions etc).
+
+Options:
+1. Update ts-rs to a version that handles these attributes (check if v11+ fixes this)
+2. Add ts(skip) or ts-specific attributes alongside serde ones where needed
 ...
 
 
@@ -837,6 +916,7 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [octo-zjs8.1] Fix all clippy warnings in backend crates (closed 2026-02-16)
 - [octo-1194] Remove OpenCode harness code (closed 2026-02-15)
 - [octo-1194.6] Phase 5: Remove agent and session service OpenCode references (closed 2026-02-15)
 - [octo-1194.10] Phase 9: Regenerate TypeScript types and final cleanup (closed 2026-02-15)
@@ -1432,9 +1512,9 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
+- [octo-k8z1.2] Backend: WebSocket proxy for screencast stream (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
 - [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
-- [octo-k8z1.2] Backend: WebSocket proxy for screencast stream (closed )
-- [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (closed )
 - [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (closed )
