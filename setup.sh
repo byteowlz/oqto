@@ -2634,6 +2634,11 @@ build_octo() {
   for bin in octo octoctl octo-runner pi-bridge octo-sandbox octo-setup; do
     if [[ -f "${release_dir}/${bin}" ]]; then
       sudo install -m 755 "${release_dir}/${bin}" "${TOOLS_INSTALL_DIR}/${bin}"
+      # Remove stale copies from ~/.cargo/bin to avoid PATH precedence issues
+      if [[ -f "$HOME/.cargo/bin/${bin}" ]]; then
+        rm -f "$HOME/.cargo/bin/${bin}"
+        log_info "Removed stale ${bin} from ~/.cargo/bin"
+      fi
       log_success "${bin} installed"
     fi
   done
