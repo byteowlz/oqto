@@ -63,6 +63,10 @@ struct Cli {
     #[arg(long, global = true)]
     json: bool,
 
+    /// Path to Octo config file (auto-detected if not set)
+    #[arg(long, short = 'c', env = "OCTO_CONFIG", global = true)]
+    config: Option<String>,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -2303,38 +2307,45 @@ fn generate_user_id(username: &str) -> String {
     format!("{}-{}", s, nanoid::nanoid!(4))
 }
 
-/// Get the database path from config or default location
+/// Database filename used by octo and octoctl.
+const DB_FILENAME: &str = "octo.db";
+
+/// Get the database path, checking multiple locations in order:
+/// 1. Service data dir: /var/lib/octo/.local/share/octo/ (multi-user mode)
+/// 2. XDG_DATA_HOME/octo/ (single-user / env override)
+/// 3. ~/.local/share/octo/ (fallback)
 fn get_database_path() -> Result<std::path::PathBuf> {
-    // Try XDG data dir first
+    // Multi-user: check the service user's data dir first
+    let service_db = std::path::PathBuf::from("/var/lib/octo/.local/share/octo").join(DB_FILENAME);
+    if service_db.exists() {
+        return Ok(service_db);
+    }
+
+    // XDG_DATA_HOME (respects env override)
+    if let Some(dir) = std::env::var_os("XDG_DATA_HOME").filter(|v| !v.is_empty()) {
+        let db = std::path::PathBuf::from(dir).join("octo").join(DB_FILENAME);
+        if db.exists() {
+            return Ok(db);
+        }
+    }
+
+    // Default: ~/.local/share/octo/
     let data_dir = dirs::data_dir()
         .map(|d| d.join("octo"))
         .unwrap_or_else(|| std::path::PathBuf::from("."));
-
-    let db_path = data_dir.join("octo.db");
-
-    // If database exists, use it
+    let db_path = data_dir.join(DB_FILENAME);
     if db_path.exists() {
         return Ok(db_path);
     }
 
-    // Try config dir
-    let config_dir = dirs::config_dir()
-        .map(|d| d.join("octo"))
-        .unwrap_or_else(|| std::path::PathBuf::from("."));
-
-    let config_db = config_dir.join("octo.db");
-    if config_db.exists() {
-        return Ok(config_db);
+    // Nothing exists yet, prefer service path if /var/lib/octo exists,
+    // otherwise fall back to user dir
+    if std::path::Path::new("/var/lib/octo").exists() {
+        let dir = std::path::PathBuf::from("/var/lib/octo/.local/share/octo");
+        std::fs::create_dir_all(&dir).ok();
+        return Ok(dir.join(DB_FILENAME));
     }
 
-    // Try current directory
-    let local_db = std::path::PathBuf::from("octo.db");
-    if local_db.exists() {
-        return Ok(local_db);
-    }
-
-    // Return default path (will be created)
-    // Create data directory if it doesn't exist
     std::fs::create_dir_all(&data_dir).ok();
     Ok(db_path)
 }
