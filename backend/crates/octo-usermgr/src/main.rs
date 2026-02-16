@@ -408,11 +408,20 @@ fn cmd_start_user_service(args: &serde_json::Value) -> Response {
     }
 }
 
+/// Hardcoded runner binary path -- never trust client-supplied paths for ExecStart.
+const RUNNER_BINARY: &str = "/usr/local/bin/octo-runner";
+
 /// High-level command: install, enable, and start octo-runner for a user.
 ///
-/// This handles the full setup sequence that requires root privileges:
+/// SECURITY: The service file content is constructed server-side from validated
+/// inputs. The client only provides username and uid -- never executable paths
+/// or service file content. This prevents a compromised octo process from
+/// injecting arbitrary ExecStart commands that would run as root or as the
+/// target user.
+///
+/// Steps:
 /// 1. Create ~/.config/systemd/user/ directory
-/// 2. Write octo-runner.service file
+/// 2. Write octo-runner.service file (content generated here, not from client)
 /// 3. Set ownership to the target user
 /// 4. Enable systemd linger
 /// 5. Start user@{uid}.service
@@ -426,18 +435,6 @@ fn cmd_setup_user_runner(args: &serde_json::Value) -> Response {
         Ok(u) => u,
         Err(r) => return r,
     };
-    let runner_binary = match get_str(args, "runner_binary") {
-        Ok(b) => b,
-        Err(r) => return r,
-    };
-    let socket_path = match get_str(args, "socket_path") {
-        Ok(s) => s,
-        Err(r) => return r,
-    };
-    let service_content = match get_str(args, "service_content") {
-        Ok(s) => s,
-        Err(r) => return r,
-    };
 
     if let Err(e) = validate_username(username) {
         return Response::error(e);
@@ -446,17 +443,33 @@ fn cmd_setup_user_runner(args: &serde_json::Value) -> Response {
         return Response::error(e);
     }
 
-    // Validate runner binary exists
-    if !std::path::Path::new(runner_binary).exists() {
-        return Response::error(format!("runner binary not found: {runner_binary}"));
+    // Verify the runner binary exists at the hardcoded path
+    if !std::path::Path::new(RUNNER_BINARY).exists() {
+        return Response::error(format!("runner binary not found: {RUNNER_BINARY}"));
     }
 
-    // Validate socket path is under /run/octo/
-    if !socket_path.starts_with("/run/octo/runner-sockets/") {
-        return Response::error(format!("invalid socket path: {socket_path}"));
-    }
+    // Derive the socket path from the validated username (never from client input)
+    let socket_path = format!("/run/octo/runner-sockets/{username}/octo-runner.sock");
 
-    // Get user home directory
+    // Construct service file content server-side
+    let service_content = format!(
+        r#"[Unit]
+Description=Octo Runner - Process isolation daemon
+After=default.target
+
+[Service]
+Type=simple
+ExecStart={RUNNER_BINARY} --socket {socket_path}
+Restart=on-failure
+RestartSec=5
+Environment=RUST_LOG=info
+
+[Install]
+WantedBy=default.target
+"#
+    );
+
+    // Get user home directory from passwd (not from client)
     let home = match run_cmd("/usr/bin/getent", &["passwd", username]) {
         Ok(output) => {
             let fields: Vec<&str> = output.trim().split(':').collect();
@@ -468,6 +481,13 @@ fn cmd_setup_user_runner(args: &serde_json::Value) -> Response {
         Err(e) => return Response::error(format!("cannot find user {username}: {e}")),
     };
 
+    // Validate the home directory is under the expected prefix
+    if !home.starts_with("/home/octo_") {
+        return Response::error(format!(
+            "unexpected home directory for {username}: {home} (expected /home/octo_*)"
+        ));
+    }
+
     let group = "octo";
     let service_dir = format!("{home}/.config/systemd/user");
     let service_file = format!("{service_dir}/octo-runner.service");
@@ -478,7 +498,7 @@ fn cmd_setup_user_runner(args: &serde_json::Value) -> Response {
     }
 
     // 2. Write service file
-    if let Err(e) = std::fs::write(&service_file, service_content) {
+    if let Err(e) = std::fs::write(&service_file, &service_content) {
         return Response::error(format!("writing {service_file}: {e}"));
     }
 
