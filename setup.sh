@@ -2130,6 +2130,7 @@ Environment=XDG_STATE_HOME=${OCTO_HOME}/.local/state
 Environment=XDG_RUNTIME_DIR=/run/user/${octo_uid}
 Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/${octo_uid}/bus
 EnvironmentFile=-${OCTO_HOME}/.config/eavs/env
+ExecStartPre=+/bin/bash -c 'mkdir -p /run/user/${octo_uid} && chown octo:octo /run/user/${octo_uid} && chmod 700 /run/user/${octo_uid}'
 ExecStart=/usr/local/bin/eavs serve
 Restart=on-failure
 RestartSec=5
