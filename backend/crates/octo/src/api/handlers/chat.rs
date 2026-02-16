@@ -44,8 +44,15 @@ pub(crate) fn get_runner_for_user(
     // Need runner socket pattern for multi-user mode
     let pattern = state.runner_socket_pattern.as_ref()?;
 
-    // Use for_user_with_pattern which handles both {user} and {uid} placeholders
-    match crate::runner::client::RunnerClient::for_user_with_pattern(user_id, pattern) {
+    // The socket path uses the linux_username (e.g., octo_hansgerd-vyon),
+    // not the platform user_id (e.g., hansgerd-vYoN).
+    let effective_user = if let Some(ref lu) = state.linux_users {
+        lu.linux_username(user_id)
+    } else {
+        user_id.to_string()
+    };
+
+    match crate::runner::client::RunnerClient::for_user_with_pattern(&effective_user, pattern) {
         Ok(client) => {
             let socket_path = client.socket_path();
             if socket_path.exists() {
