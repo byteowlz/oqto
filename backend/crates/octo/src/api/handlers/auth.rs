@@ -57,7 +57,7 @@ pub async fn dev_login(
     if let Some(ref linux_users) = state.linux_users {
         let (uid, linux_username) = linux_users
             .ensure_user(&user.id)
-            .map_err(|e| AuthError::Internal(format!("Failed to initialize user runtime: {e}")))?;
+            .map_err(|e| AuthError::Internal(format!("Failed to initialize user runtime: {e:#}")))?;
 
         if state.mmry.enabled && !state.mmry.single_user {
             if let Err(e) = linux_users.ensure_mmry_config_for_user(
