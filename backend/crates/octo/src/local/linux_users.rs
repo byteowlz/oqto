@@ -917,23 +917,35 @@ WantedBy=default.target
 
     /// Find the next available UID starting from uid_start.
     fn find_next_uid(&self) -> Result<u32> {
-        // Read /etc/passwd to find used UIDs
+        // UID 65534 is typically nobody, 65535 is often reserved
+        const UID_MAX: u32 = 60000;
+
+        // Read /etc/passwd to find used UIDs in our range
         let passwd = std::fs::read_to_string("/etc/passwd").context("reading /etc/passwd")?;
 
-        let mut max_uid = self.uid_start - 1;
-
+        let mut used_uids = std::collections::HashSet::new();
         for line in passwd.lines() {
             let parts: Vec<&str> = line.split(':').collect();
-            if parts.len() >= 3
-                && let Ok(uid) = parts[2].parse::<u32>()
-                && uid >= self.uid_start
-                && uid > max_uid
-            {
-                max_uid = uid;
+            if parts.len() >= 3 {
+                if let Ok(uid) = parts[2].parse::<u32>() {
+                    used_uids.insert(uid);
+                }
             }
         }
 
-        Ok(max_uid + 1)
+        // Find first available UID in range
+        for uid in self.uid_start..=UID_MAX {
+            if !used_uids.contains(&uid) {
+                return Ok(uid);
+            }
+        }
+
+        anyhow::bail!(
+            "No available UIDs in range {}-{}. {} UIDs in use.",
+            self.uid_start,
+            UID_MAX,
+            used_uids.len()
+        )
     }
 }
 
@@ -1186,8 +1198,15 @@ fn run_privileged_command(use_sudo: bool, cmd: &str, args: &[&str]) -> Result<()
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let exit_code = output.status.code().map_or("signal".to_string(), |c| c.to_string());
+        tracing::error!(
+            "Privileged command failed (exit {}): {} {:?}\nstderr: {}\nstdout: {}",
+            exit_code, cmd, args, stderr.trim(), stdout.trim()
+        );
         anyhow::bail!(
-            "Command failed: {} {:?}\nstderr: {}",
+            "Command failed (exit {}): {} {:?} -- {}",
+            exit_code,
             cmd,
             args,
             stderr.trim()
