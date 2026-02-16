@@ -168,3 +168,6 @@ dist
 .vercel
 # Bun
 bun.lockb
+
+# Tauri generated build artifacts
+src-tauri/gen/
