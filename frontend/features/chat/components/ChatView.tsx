@@ -99,8 +99,14 @@ import { toast } from "sonner";
 // ANSI escape sequence patterns (module-level to avoid regex-in-loop overhead
 // and biome/oxlint control-character-in-regex warnings)
 const ANSI_ESC = String.fromCharCode(0x1b);
+// Match SGR codes (colors, styles) ending with 'm'
 const ANSI_SGR_RE = new RegExp(`${ANSI_ESC}\\[[0-9;]*m`, "g");
+// Match other CSI sequences ending with letters (cursor movement, clear, etc.)
 const ANSI_CSI_RE = new RegExp(`${ANSI_ESC}\\[[0-9;]*[A-Za-z]`, "g");
+// Match OSC sequences (window titles, etc.) ending with BEL or ST
+const ANSI_OSC_RE = new RegExp(`${ANSI_ESC}\\][^\x07\x1b]*(?:\x07|\x1b\\\\)`, "g");
+// Match standalone ESC + simple codes
+const ANSI_SIMPLE_RE = new RegExp(`${ANSI_ESC}[NOc\\[\\]()#\\]\\^_%@[\\]\\\\`, "g");
 
 /** Todo item structure (matching todowrite tool) */
 export interface TodoItem {
@@ -2948,7 +2954,11 @@ function PiPartRenderer({
 	hideHeader?: boolean;
 }) {
 	const stripAnsi = (value: string): string =>
-		value.replace(ANSI_SGR_RE, "").replace(ANSI_CSI_RE, "");
+		value
+			.replace(ANSI_SGR_RE, "")
+			.replace(ANSI_CSI_RE, "")
+			.replace(ANSI_OSC_RE, "")
+			.replace(ANSI_SIMPLE_RE, "");
 
 	const formatToolResultOutput = (content: unknown): string | undefined => {
 		const decodeBytes = (bytes: Uint8Array): string | undefined => {
@@ -3151,10 +3161,17 @@ function TextWithFileReferences({
 	workspacePath?: string | null;
 	locale?: "en" | "de";
 }) {
+	// Strip ANSI escape codes before rendering (tool output may contain them)
+	const cleanContent = content
+		.replace(ANSI_SGR_RE, "")
+		.replace(ANSI_CSI_RE, "")
+		.replace(ANSI_OSC_RE, "")
+		.replace(ANSI_SIMPLE_RE, "");
+
 	// Parse @file references, excluding code blocks
 	const fileRefs = useMemo(
-		() => extractFileReferenceDetails(content),
-		[content],
+		() => extractFileReferenceDetails(cleanContent),
+		[cleanContent],
 	);
 
 	return (
@@ -3162,7 +3179,7 @@ function TextWithFileReferences({
 			<ContextMenuTrigger className="contents">
 				<div className="space-y-2 select-none sm:select-auto">
 					<MarkdownRenderer
-						content={content}
+						content={cleanContent}
 						className="text-sm text-foreground leading-relaxed overflow-hidden"
 					/>
 					{/* Render file reference cards */}
@@ -3182,7 +3199,7 @@ function TextWithFileReferences({
 			</ContextMenuTrigger>
 			<ContextMenuContent>
 				<ContextMenuItem
-					onClick={() => navigator.clipboard?.writeText(content)}
+					onClick={() => navigator.clipboard?.writeText(cleanContent)}
 					className="gap-2"
 				>
 					<Copy className="w-4 h-4" />

@@ -240,6 +240,14 @@ pub enum PiSessionCommand {
     AbortRetry,
 
     // ========================================================================
+    // Internal: Incremental hstry persistence
+    // ========================================================================
+    /// Request Pi's current messages for incremental hstry persistence.
+    /// Triggered on TurnEnd events so hstry stays current during streaming.
+    /// Response is intercepted by the reader task (not routed to callers).
+    IncrementalPersist,
+
+    // ========================================================================
     // Forking (response via pending_responses)
     // ========================================================================
     /// Fork from a previous user message.
@@ -2255,6 +2263,14 @@ impl PiSessionManager {
         // Mark as Idle after first successful read (Pi is ready)
         let mut first_event_seen = false;
 
+        // Debounce incremental hstry persistence: persist at most every 5 seconds
+        // during streaming (triggered on TurnEnd events).
+        let mut last_incremental_persist = Instant::now();
+        let incremental_persist_interval = Duration::from_secs(5);
+        // Track whether an incremental persist is already in flight to avoid
+        // queuing multiple get_messages requests.
+        let mut incremental_persist_in_flight = false;
+
         // Runner ID for canonical event envelopes.
         let runner_id = runner_id;
 
@@ -2431,6 +2447,71 @@ impl PiSessionManager {
                         }
                     }
 
+                    // Intercept incremental persistence responses (internal use only).
+                    // These are NOT routed to external callers.
+                    if response.id.as_deref() == Some("_incremental_persist") {
+                        incremental_persist_in_flight = false;
+                        if response.success {
+                            if let Some(ref data) = response.data {
+                                if let Some(msgs_val) = data.get("messages") {
+                                    match serde_json::from_value::<Vec<AgentMessage>>(
+                                        msgs_val.clone(),
+                                    ) {
+                                        Ok(messages) if !messages.is_empty() => {
+                                            if let Some(ref client) = hstry_client {
+                                                let client = client.clone();
+                                                let eid =
+                                                    hstry_external_id.read().await.clone();
+                                                let sid = session_id.clone();
+                                                let rid = runner_id.clone();
+                                                let wd = work_dir.clone();
+                                                tokio::spawn(async move {
+                                                    if let Err(e) =
+                                                        Self::persist_to_hstry_grpc(
+                                                            &client,
+                                                            &eid,
+                                                            &sid,
+                                                            &rid,
+                                                            &messages,
+                                                            &wd,
+                                                            None, // no client_id for incremental
+                                                        )
+                                                        .await
+                                                    {
+                                                        warn!(
+                                                            "Pi[{}] incremental hstry persist failed: {}",
+                                                            sid, e
+                                                        );
+                                                    } else {
+                                                        debug!(
+                                                            "Pi[{}] incremental hstry persist: {} messages (eid={})",
+                                                            sid,
+                                                            messages.len(),
+                                                            eid,
+                                                        );
+                                                    }
+                                                });
+                                            }
+                                        }
+                                        Ok(_) => {} // empty messages, skip
+                                        Err(e) => {
+                                            warn!(
+                                                "Pi[{}] failed to parse incremental persist messages: {}",
+                                                session_id, e
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            debug!(
+                                "Pi[{}] incremental persist get_messages failed: {:?}",
+                                session_id, response.error
+                            );
+                        }
+                        continue; // Don't route to external callers
+                    }
+
                     // Route response to waiting caller if there's a matching ID
                     if let Some(ref id) = response.id {
                         let mut pending = pending_responses.write().await;
@@ -2541,6 +2622,30 @@ impl PiSessionManager {
                                 }
                             });
                         }
+                    }
+                }
+            }
+
+            // Incremental hstry persistence on TurnEnd events.
+            // This ensures hstry stays reasonably current during multi-turn streaming,
+            // so that a page reload mid-stream can recover messages from hstry.
+            // Debounced to avoid hammering hstry on rapid turn sequences.
+            if matches!(pi_event, PiEvent::TurnEnd { .. }) {
+                let elapsed = last_incremental_persist.elapsed();
+                if elapsed >= incremental_persist_interval
+                    && hstry_client.is_some()
+                    && !incremental_persist_in_flight
+                {
+                    last_incremental_persist = Instant::now();
+                    incremental_persist_in_flight = true;
+                    if let Err(e) = cmd_tx.send(PiSessionCommand::IncrementalPersist).await {
+                        warn!(
+                            "Pi[{}] failed to send IncrementalPersist command: {}",
+                            session_id, e
+                        );
+                        incremental_persist_in_flight = false;
+                    } else {
+                        debug!("Pi[{}] triggered incremental hstry persist on TurnEnd", session_id);
                     }
                 }
             }
@@ -2711,6 +2816,15 @@ impl PiSessionManager {
                     // Response coordination happens via pending_responses map
                     let pi_cmd = PiCommand::GetMessages {
                         id: Some("get_messages".to_string()),
+                    };
+                    Self::write_command(&mut stdin, &pi_cmd).await
+                }
+                PiSessionCommand::IncrementalPersist => {
+                    // Internal command: fetch messages for incremental hstry persistence.
+                    // Uses a distinct request ID so the reader task can intercept it
+                    // without interfering with external get_messages requests.
+                    let pi_cmd = PiCommand::GetMessages {
+                        id: Some("_incremental_persist".to_string()),
                     };
                     Self::write_command(&mut stdin, &pi_cmd).await
                 }
