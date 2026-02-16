@@ -163,6 +163,7 @@ fn dispatch(req: &Request) -> Response {
         "chmod" => cmd_chmod(&req.args),
         "enable-linger" => cmd_enable_linger(&req.args),
         "start-user-service" => cmd_start_user_service(&req.args),
+        "setup-user-runner" => cmd_setup_user_runner(&req.args),
         "ping" => Response::success(),
         other => Response::error(format!("unknown command: {other}")),
     }
@@ -404,5 +405,153 @@ fn cmd_start_user_service(args: &serde_json::Value) -> Response {
     match run_cmd("/usr/bin/systemctl", &["start", &service]) {
         Ok(_) => Response::success(),
         Err(e) => Response::error(e),
+    }
+}
+
+/// High-level command: install, enable, and start octo-runner for a user.
+///
+/// This handles the full setup sequence that requires root privileges:
+/// 1. Create ~/.config/systemd/user/ directory
+/// 2. Write octo-runner.service file
+/// 3. Set ownership to the target user
+/// 4. Enable systemd linger
+/// 5. Start user@{uid}.service
+/// 6. Daemon-reload + enable+start octo-runner via machinectl
+fn cmd_setup_user_runner(args: &serde_json::Value) -> Response {
+    let username = match get_str(args, "username") {
+        Ok(u) => u,
+        Err(r) => return r,
+    };
+    let uid = match get_u32(args, "uid") {
+        Ok(u) => u,
+        Err(r) => return r,
+    };
+    let runner_binary = match get_str(args, "runner_binary") {
+        Ok(b) => b,
+        Err(r) => return r,
+    };
+    let socket_path = match get_str(args, "socket_path") {
+        Ok(s) => s,
+        Err(r) => return r,
+    };
+    let service_content = match get_str(args, "service_content") {
+        Ok(s) => s,
+        Err(r) => return r,
+    };
+
+    if let Err(e) = validate_username(username) {
+        return Response::error(e);
+    }
+    if let Err(e) = validate_uid(uid) {
+        return Response::error(e);
+    }
+
+    // Validate runner binary exists
+    if !std::path::Path::new(runner_binary).exists() {
+        return Response::error(format!("runner binary not found: {runner_binary}"));
+    }
+
+    // Validate socket path is under /run/octo/
+    if !socket_path.starts_with("/run/octo/runner-sockets/") {
+        return Response::error(format!("invalid socket path: {socket_path}"));
+    }
+
+    // Get user home directory
+    let home = match run_cmd("/usr/bin/getent", &["passwd", username]) {
+        Ok(output) => {
+            let fields: Vec<&str> = output.trim().split(':').collect();
+            if fields.len() < 6 {
+                return Response::error(format!("cannot parse home dir for {username}"));
+            }
+            fields[5].to_string()
+        }
+        Err(e) => return Response::error(format!("cannot find user {username}: {e}")),
+    };
+
+    let group = "octo";
+    let service_dir = format!("{home}/.config/systemd/user");
+    let service_file = format!("{service_dir}/octo-runner.service");
+
+    // 1. Create service directory
+    if let Err(e) = run_cmd("/bin/mkdir", &["-p", &service_dir]) {
+        return Response::error(format!("mkdir {service_dir}: {e}"));
+    }
+
+    // 2. Write service file
+    if let Err(e) = std::fs::write(&service_file, service_content) {
+        return Response::error(format!("writing {service_file}: {e}"));
+    }
+
+    // 3. Set ownership of .config tree
+    let config_dir = format!("{home}/.config");
+    if let Err(e) = run_cmd(
+        "/usr/bin/chown",
+        &["-R", &format!("{username}:{group}"), &config_dir],
+    ) {
+        return Response::error(format!("chown {config_dir}: {e}"));
+    }
+
+    // 4. Enable linger
+    if let Err(e) = run_cmd("/usr/bin/loginctl", &["enable-linger", username]) {
+        return Response::error(format!("enable-linger: {e}"));
+    }
+
+    // 5. Start user systemd instance
+    let user_service = format!("user@{uid}.service");
+    if let Err(e) = run_cmd("/usr/bin/systemctl", &["start", &user_service]) {
+        return Response::error(format!("start {user_service}: {e}"));
+    }
+
+    // Give the user's systemd instance time to initialize
+    std::thread::sleep(std::time::Duration::from_millis(500));
+
+    // 6. Daemon-reload + enable+start octo-runner via --machine
+    let machine_arg = format!("{username}@.host");
+    if let Err(e) = run_cmd(
+        "/usr/bin/systemctl",
+        &["--machine", &machine_arg, "--user", "daemon-reload"],
+    ) {
+        eprintln!("octo-usermgr: daemon-reload via --machine failed: {e}");
+    }
+
+    match run_cmd(
+        "/usr/bin/systemctl",
+        &[
+            "--machine",
+            &machine_arg,
+            "--user",
+            "enable",
+            "--now",
+            "octo-runner",
+        ],
+    ) {
+        Ok(_) => Response::success(),
+        Err(e) => {
+            // Fallback: try via runuser with XDG_RUNTIME_DIR
+            let runtime_dir = format!("/run/user/{uid}");
+            let bus = format!("unix:path={runtime_dir}/bus");
+            let result = Command::new("/sbin/runuser")
+                .args(["-u", username, "--"])
+                .arg("env")
+                .arg(format!("XDG_RUNTIME_DIR={runtime_dir}"))
+                .arg(format!("DBUS_SESSION_BUS_ADDRESS={bus}"))
+                .args(["systemctl", "--user", "enable", "--now", "octo-runner"])
+                .output();
+
+            match result {
+                Ok(out) if out.status.success() => Response::success(),
+                Ok(out) => {
+                    let stderr = String::from_utf8_lossy(&out.stderr);
+                    Response::error(format!(
+                        "enable+start octo-runner failed. \
+                         machine method: {e}, runuser method: {stderr}"
+                    ))
+                }
+                Err(e2) => Response::error(format!(
+                    "enable+start octo-runner failed. \
+                     machine method: {e}, runuser method: {e2}"
+                )),
+            }
+        }
     }
 }
