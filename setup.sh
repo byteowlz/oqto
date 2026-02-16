@@ -5186,7 +5186,7 @@ main() {
   # EAVS (LLM proxy)
   verify_or_rerun "eavs_install" "EAVS install" "command -v eavs" install_eavs
   run_step "eavs_configure" "EAVS configure" configure_eavs
-  run_step "eavs_service" "EAVS service" install_eavs_service
+  verify_or_rerun "eavs_service" "EAVS service" "systemctl is-enabled eavs 2>/dev/null" install_eavs_service
 
   # Build Octo - octoctl is required for password hashing during config generation,
   # so we must verify the binary exists before proceeding
@@ -5201,7 +5201,7 @@ main() {
   run_step "feedback_dirs" "Feedback directories" setup_feedback_dirs
 
   # Linux user isolation
-  run_step "linux_user_isolation" "Linux user isolation" setup_linux_user_isolation
+  verify_or_rerun "linux_user_isolation" "Linux user isolation" "test -f /etc/sudoers.d/octo-multiuser" setup_linux_user_isolation
 
   # Container image
   run_step "container_image" "Container image" build_container_image
@@ -5213,14 +5213,14 @@ main() {
     verify_or_rerun "caddy_config" "Caddy config" \
       "grep -q 'reverse_proxy' /etc/caddy/Caddyfile 2>/dev/null" \
       generate_caddyfile
-    run_step "caddy_service" "Caddy service" install_caddy_service
+    verify_or_rerun "caddy_service" "Caddy service" "systemctl is-enabled caddy 2>/dev/null" install_caddy_service
   fi
 
   # Server hardening
   run_step "harden_server" "Server hardening" harden_server
 
   # Install service
-  run_step "install_service" "System service" install_service
+  verify_or_rerun "install_service" "System service" "systemctl is-enabled octo 2>/dev/null" install_service
 
   # Create admin user in database
   run_step "admin_user_db" "Admin user in database" create_admin_user_db
