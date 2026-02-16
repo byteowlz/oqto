@@ -1151,10 +1151,20 @@ install_rust_tool() {
   local tool="$1"
   local repo="${2:-$tool}" # repo name, defaults to tool name
 
-  if command_exists "$tool"; then
+  # Check if already installed in the global tools directory
+  if [[ -x "${TOOLS_INSTALL_DIR}/${tool}" ]]; then
     local version
-    version=$("$tool" --version 2>/dev/null | head -1 || echo 'unknown')
+    version=$("${TOOLS_INSTALL_DIR}/${tool}" --version 2>/dev/null | head -1 || echo 'unknown')
     log_success "$tool already installed: $version"
+    return 0
+  fi
+
+  # If it exists elsewhere (e.g. ~/.cargo/bin), copy it to the global dir
+  if command_exists "$tool"; then
+    local existing_path
+    existing_path=$(command -v "$tool")
+    log_info "$tool found at $existing_path, installing to ${TOOLS_INSTALL_DIR}/"
+    install_binary_global "$existing_path" "$tool"
     return 0
   fi
 
