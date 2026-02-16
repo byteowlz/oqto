@@ -4323,8 +4323,17 @@ AmbientCapabilities=CAP_NET_BIND_SERVICE
 EOF
 
     # In multi-user mode, octo needs sudo for useradd/groupadd (via sudoers rules).
-    # NoNewPrivileges=true prevents sudo from escalating, so we only enable it in single-user mode.
-    if [[ "${LINUX_USERS_ENABLED:-false}" != "true" ]]; then
+    # - NoNewPrivileges must be off (sudo needs privilege escalation)
+    # - /run/sudo must be writable (sudo timestamp files)
+    # - /home must be writable (useradd -m creates home dirs)
+    # - /etc must be writable (useradd modifies passwd/shadow)
+    if [[ "${LINUX_USERS_ENABLED:-false}" == "true" ]]; then
+      sudo tee -a "$service_file" >/dev/null <<EOF
+ReadWritePaths=/run/sudo
+ReadWritePaths=/home
+ReadWritePaths=/etc
+EOF
+    else
       sudo tee -a "$service_file" >/dev/null <<EOF
 NoNewPrivileges=true
 EOF
