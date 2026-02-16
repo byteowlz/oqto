@@ -82,6 +82,8 @@ Auth uses JWT with invite codes. A progressive onboarding system with agent-driv
 
 ### Use automated setup (recommended)
 
+This setup script has primarily been tested on an Ubuntu 24.04 VPS but targets multiple distros. Right now, many tools are still being built from source. I will provide pre-built binaries soon to substantially speed up the installation. The script also includes optional server hardening steps (firewall, fail2ban, ssh lockdown etc.)
+
 ```bash
 ./setup.sh
 ```
@@ -91,6 +93,8 @@ The interactive script handles user mode selection, backend mode, dependency ins
 ---
 
 ### Set up manually
+
+I don't recommend manual setup due to many different moving pieces but it's of course technically possible to set everything up manually.
 
 1. Install Rust and Bun
 2. Build the backend:
@@ -221,6 +225,19 @@ octoctl session list          # List sessions
 
 ---
 
+## Mobile App
+
+The repo already includes a tauri-based mobile app that already works. I have only been able to test this on iOS so far but would be happy if someone could try running it on Android.
+My plan is to soon offer a test version via Testflight on iOS.
+
+## Roadmap
+
+I have many ideas I want to try out but even with the help of AI coding agents, time is finite. Here are the things I want to prioritize:
+
+- Ready-to-use iso image for easier setup. I haven't decided on the best distribution to base this one but am very much favoring arch linux. NixOS would maybe be even better suited but I haven't tried it out yet so my experience is the limiting factor here.
+- Improved STT and TTS support: There are so many good new models out there that I want to try out and see if they could be integrated into my existing tools. The goal would be a good dialogue mode that can orchestrate agent tasks on the platform
+- Support for remote workspaces: Apart from creating workspaces in userspace, I want to add first-class support for remote workspaces for even better isolation. This includes having clients on e.g. your laptop that can be reached via the platform for certain tasks. I am building a cross-platform launcher that shall eventually integrate with octo for this.
+
 ## Documentation
 
 - [SETUP.md](./SETUP.md) -- Installation guide
@@ -233,6 +250,7 @@ octoctl session list          # List sessions
 - [opencode](https://opencode.ai/) which served as the initial inspiration for the server/client based ai coding-agent approach
 - [openclaw](https://openclaw.ai/) for the markdown-based approach to user onboarding
 - [Jeffrey Emanuel aksk Dicklesworthstone](https://github.com/Dicklesworthstone) for inspiring many of the tools built for octo
+- And many, many more people that create inspiring stuff. You can look at my github stars to find many cool things others have built!
 
 ## License
 
