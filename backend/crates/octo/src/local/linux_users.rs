@@ -1176,125 +1176,176 @@ fn extract_user_id_from_gecos(gecos: &str) -> Option<&str> {
     trimmed.strip_prefix("Octo platform user").map(|s| s.trim())
 }
 
-/// Path to the octo-usermgr helper binary.
-/// This helper has file capabilities set so it can manage users without sudo.
-const USERMGR_BINARY: &str = "octo-usermgr";
+/// Socket path for the octo-usermgr daemon.
+const USERMGR_SOCKET: &str = "/run/octo/usermgr.sock";
 
-/// Try to translate a privileged command into an octo-usermgr subcommand.
-/// Returns None if the command isn't handled by octo-usermgr.
-fn translate_to_usermgr(cmd: &str, args: &[&str]) -> Option<Vec<String>> {
+/// Send a JSON request to the octo-usermgr daemon and return the response.
+fn usermgr_request(cmd: &str, args: serde_json::Value) -> Result<()> {
+    use std::io::{BufRead, BufReader, Write};
+    use std::os::unix::net::UnixStream;
+
+    let mut stream = UnixStream::connect(USERMGR_SOCKET)
+        .with_context(|| format!("connecting to octo-usermgr at {USERMGR_SOCKET}"))?;
+
+    // Set timeout to avoid hanging forever
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(30)))
+        .ok();
+    stream
+        .set_write_timeout(Some(std::time::Duration::from_secs(10)))
+        .ok();
+
+    let request = serde_json::json!({ "cmd": cmd, "args": args });
+    let mut request_str = serde_json::to_string(&request)?;
+    request_str.push('\n');
+
+    stream
+        .write_all(request_str.as_bytes())
+        .context("writing to octo-usermgr")?;
+    stream.flush().context("flushing to octo-usermgr")?;
+
+    let mut reader = BufReader::new(&stream);
+    let mut response_str = String::new();
+    reader
+        .read_line(&mut response_str)
+        .context("reading from octo-usermgr")?;
+
+    let response: serde_json::Value =
+        serde_json::from_str(&response_str).context("parsing octo-usermgr response")?;
+
+    if response.get("ok").and_then(|v| v.as_bool()) == Some(true) {
+        Ok(())
+    } else {
+        let error = response
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown error");
+        anyhow::bail!("octo-usermgr {cmd}: {error}");
+    }
+}
+
+/// Translate a system command into an octo-usermgr request.
+/// Returns Ok(()) if handled by usermgr, Err(None) if not handled.
+fn try_usermgr(cmd: &str, args: &[&str]) -> Option<Result<()>> {
     match cmd {
         "/usr/sbin/groupadd" => {
-            // groupadd <group>
             let group = args.first()?;
-            Some(vec!["create-group".to_string(), group.to_string()])
+            Some(usermgr_request(
+                "create-group",
+                serde_json::json!({ "group": group }),
+            ))
         }
         "/usr/sbin/useradd" => {
-            // useradd -u <uid> -g <group> -s <shell> -m/-M -c <gecos> <username>
-            // Parse the useradd arguments into usermgr format
+            // Parse useradd args
             let mut uid = None;
             let mut group = None;
             let mut shell = None;
             let mut gecos = None;
             let mut username = None;
+            let mut create_home = true;
             let mut i = 0;
             while i < args.len() {
                 match args[i] {
                     "-u" => {
-                        uid = args.get(i + 1).map(|s| s.to_string());
+                        uid = args.get(i + 1).and_then(|s| s.parse::<u32>().ok());
                         i += 2;
                     }
                     "-g" => {
-                        group = args.get(i + 1).map(|s| s.to_string());
+                        group = args.get(i + 1).copied();
                         i += 2;
                     }
                     "-s" => {
-                        shell = args.get(i + 1).map(|s| s.to_string());
+                        shell = args.get(i + 1).copied();
                         i += 2;
                     }
                     "-c" => {
-                        gecos = args.get(i + 1).map(|s| s.to_string());
+                        gecos = args.get(i + 1).copied();
                         i += 2;
                     }
-                    "-m" | "-M" => {
+                    "-m" => {
+                        create_home = true;
+                        i += 1;
+                    }
+                    "-M" => {
+                        create_home = false;
                         i += 1;
                     }
                     _ => {
-                        // Last positional arg is the username
-                        username = Some(args[i].to_string());
+                        username = Some(args[i]);
                         i += 1;
                     }
                 }
             }
-            Some(vec![
-                "create-user".to_string(),
-                username?,
-                uid?,
-                group?,
-                shell?,
-                gecos?,
-            ])
+            Some(usermgr_request(
+                "create-user",
+                serde_json::json!({
+                    "username": username?,
+                    "uid": uid?,
+                    "group": group?,
+                    "shell": shell?,
+                    "gecos": gecos?,
+                    "create_home": create_home,
+                }),
+            ))
         }
         "/usr/sbin/userdel" => {
             let username = args.first()?;
-            Some(vec!["delete-user".to_string(), username.to_string()])
+            Some(usermgr_request(
+                "delete-user",
+                serde_json::json!({ "username": username }),
+            ))
         }
-        "mkdir" | "/bin/mkdir" => {
-            // mkdir -p <path>
-            if args.first() == Some(&"-p") {
-                let path = args.get(1)?;
-                Some(vec!["mkdir".to_string(), path.to_string()])
-            } else {
-                None
-            }
+        "mkdir" | "/bin/mkdir" if args.first() == Some(&"-p") => {
+            let path = args.get(1)?;
+            Some(usermgr_request("mkdir", serde_json::json!({ "path": path })))
         }
         "chown" | "/usr/bin/chown" => {
-            // chown [-R] <owner:group> <path>
             if args.first() == Some(&"-R") && args.len() == 3 {
-                Some(vec![
-                    "chown".to_string(),
-                    args[1].to_string(),
-                    args[2].to_string(),
-                    "-R".to_string(),
-                ])
+                Some(usermgr_request(
+                    "chown",
+                    serde_json::json!({
+                        "owner": args[1],
+                        "path": args[2],
+                        "recursive": true,
+                    }),
+                ))
             } else if args.len() == 2 {
-                Some(vec![
-                    "chown".to_string(),
-                    args[0].to_string(),
-                    args[1].to_string(),
-                ])
+                Some(usermgr_request(
+                    "chown",
+                    serde_json::json!({
+                        "owner": args[0],
+                        "path": args[1],
+                    }),
+                ))
             } else {
                 None
             }
         }
-        "chmod" | "/usr/bin/chmod" => {
-            // chmod <mode> <path>
-            if args.len() == 2 {
-                Some(vec![
-                    "chmod".to_string(),
-                    args[0].to_string(),
-                    args[1].to_string(),
-                ])
-            } else {
-                None
-            }
+        "chmod" | "/usr/bin/chmod" if args.len() == 2 => Some(usermgr_request(
+            "chmod",
+            serde_json::json!({
+                "mode": args[0],
+                "path": args[1],
+            }),
+        )),
+        "loginctl" | "/usr/bin/loginctl"
+            if args.first() == Some(&"enable-linger") && args.len() == 2 =>
+        {
+            Some(usermgr_request(
+                "enable-linger",
+                serde_json::json!({ "username": args[1] }),
+            ))
         }
-        "loginctl" | "/usr/bin/loginctl" => {
-            // loginctl enable-linger <username>
-            if args.first() == Some(&"enable-linger") && args.len() == 2 {
-                Some(vec!["enable-linger".to_string(), args[1].to_string()])
-            } else {
-                None
-            }
-        }
-        "/usr/bin/systemctl" => {
-            // systemctl start user@<uid>.service
-            if args.first() == Some(&"start") && args.len() == 2 {
-                if let Some(uid_str) = args[1]
-                    .strip_prefix("user@")
-                    .and_then(|s| s.strip_suffix(".service"))
-                {
-                    return Some(vec!["start-user-service".to_string(), uid_str.to_string()]);
+        "/usr/bin/systemctl" if args.first() == Some(&"start") && args.len() == 2 => {
+            if let Some(uid_str) = args[1]
+                .strip_prefix("user@")
+                .and_then(|s| s.strip_suffix(".service"))
+            {
+                if let Ok(uid) = uid_str.parse::<u32>() {
+                    return Some(usermgr_request(
+                        "start-user-service",
+                        serde_json::json!({ "uid": uid }),
+                    ));
                 }
             }
             None
@@ -1303,75 +1354,75 @@ fn translate_to_usermgr(cmd: &str, args: &[&str]) -> Option<Vec<String>> {
     }
 }
 
-/// Run a privileged command, preferring octo-usermgr helper over sudo.
+/// Run a privileged command via octo-usermgr daemon (preferred) or sudo fallback.
 ///
-/// The octo-usermgr binary has file capabilities (CAP_SETUID etc.) so it can
-/// manage users without sudo. This allows the octo service to keep
-/// NoNewPrivileges=true and ProtectSystem=strict.
-///
-/// Commands not handled by octo-usermgr fall back to sudo.
+/// In multi-user mode, the octo-usermgr daemon runs as root on a unix socket.
+/// This provides OS-level privilege separation: even if the octo process is
+/// compromised, it cannot modify /etc/passwd or /home directly.
 fn run_privileged_command(use_sudo: bool, cmd: &str, args: &[&str]) -> Result<()> {
     let is_root = geteuid().is_root();
 
-    // If we're not root, try octo-usermgr first
-    let output = if !is_root {
-        if let Some(usermgr_args) = translate_to_usermgr(cmd, args) {
-            let usermgr_args_refs: Vec<&str> = usermgr_args.iter().map(|s| s.as_str()).collect();
-            debug!("Running: {} {:?}", USERMGR_BINARY, usermgr_args_refs);
-            Command::new(USERMGR_BINARY)
-                .args(&usermgr_args_refs)
-                .output()
-                .with_context(|| {
-                    format!("running {} {:?}", USERMGR_BINARY, usermgr_args_refs)
-                })?
-        } else if use_sudo {
-            debug!("Running: sudo {} {:?}", cmd, args);
-            Command::new("sudo")
-                .arg("-n")
-                .arg(cmd)
-                .args(args)
-                .output()
-                .with_context(|| format!("running sudo {} {:?}", cmd, args))?
-        } else {
-            debug!("Running: {} {:?}", cmd, args);
-            Command::new(cmd)
-                .args(args)
-                .output()
-                .with_context(|| format!("running {} {:?}", cmd, args))?
-        }
-    } else {
-        debug!("Running: {} {:?}", cmd, args);
-        Command::new(cmd)
+    if is_root {
+        // Running as root, execute directly
+        debug!("Running (root): {} {:?}", cmd, args);
+        let output = Command::new(cmd)
             .args(args)
             .output()
-            .with_context(|| format!("running {} {:?}", cmd, args))?
-    };
+            .with_context(|| format!("running {} {:?}", cmd, args))?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let exit_code = output
-            .status
-            .code()
-            .map_or("signal".to_string(), |c| c.to_string());
-        tracing::error!(
-            "Privileged command failed (exit {}): {} {:?}\nstderr: {}\nstdout: {}",
-            exit_code,
-            cmd,
-            args,
-            stderr.trim(),
-            stdout.trim()
-        );
-        anyhow::bail!(
-            "Command failed (exit {}): {} {:?} -- {}",
-            exit_code,
-            cmd,
-            args,
-            stderr.trim()
-        );
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("Command failed: {} {:?} -- {}", cmd, args, stderr.trim());
+        }
+        return Ok(());
     }
 
-    Ok(())
+    // Try octo-usermgr daemon first
+    if let Some(result) = try_usermgr(cmd, args) {
+        debug!("Via octo-usermgr: {} {:?}", cmd, args);
+        return result.with_context(|| format!("{} {:?}", cmd, args));
+    }
+
+    // Fallback to sudo for commands not handled by usermgr
+    if use_sudo {
+        debug!("Running: sudo {} {:?}", cmd, args);
+        let output = Command::new("sudo")
+            .arg("-n")
+            .arg(cmd)
+            .args(args)
+            .output()
+            .with_context(|| format!("running sudo {} {:?}", cmd, args))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let exit_code = output
+                .status
+                .code()
+                .map_or("signal".to_string(), |c| c.to_string());
+            tracing::error!(
+                "Privileged command failed (exit {}): {} {:?}\nstderr: {}",
+                exit_code,
+                cmd,
+                args,
+                stderr.trim()
+            );
+            anyhow::bail!(
+                "Command failed (exit {}): {} {:?} -- {}",
+                exit_code,
+                cmd,
+                args,
+                stderr.trim()
+            );
+        }
+        return Ok(());
+    }
+
+    // No privilege mechanism available
+    anyhow::bail!(
+        "Cannot run privileged command {} {:?}: not root, no usermgr daemon, sudo disabled",
+        cmd,
+        args
+    )
 }
 
 /// Run a command as a specific Linux user, with optional sudo, and environment overrides.

@@ -2634,14 +2634,6 @@ build_octo() {
     log_success "octo-files installed"
   fi
 
-  # Set file capabilities on octo-usermgr so it can manage users without sudo.
-  # This allows the main octo service to keep NoNewPrivileges=true.
-  if [[ -f "${TOOLS_INSTALL_DIR}/octo-usermgr" ]]; then
-    sudo setcap 'cap_setuid,cap_setgid,cap_dac_override,cap_chown,cap_fowner+ep' \
-      "${TOOLS_INSTALL_DIR}/octo-usermgr"
-    log_success "octo-usermgr capabilities set"
-  fi
-
   log_success "Binaries installed to ${TOOLS_INSTALL_DIR}"
 
   # Deploy frontend static files
@@ -4301,8 +4293,8 @@ EOF
 
 [Unit]
 Description=Octo Control Plane Server
-After=network.target eavs.service
-Wants=eavs.service
+After=network.target eavs.service octo-usermgr.service
+Wants=eavs.service octo-usermgr.service
 
 [Service]
 Type=simple
@@ -4327,28 +4319,9 @@ ProtectSystem=strict
 ReadWritePaths=${octo_home}
 ReadWritePaths=/run/octo
 PrivateTmp=true
+NoNewPrivileges=true
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 EOF
-
-    if [[ "${LINUX_USERS_ENABLED:-false}" == "true" ]]; then
-      # Multi-user mode: octo-usermgr (a minimal, auditable helper binary with
-      # file capabilities) manages Linux users on behalf of the octo service.
-      # It needs write access to /etc (passwd/shadow), /home (user dirs), and
-      # /run/sudo (timestamp cache). NoNewPrivileges must be off for file
-      # capabilities to work on child processes.
-      # Security: octo-usermgr strictly validates all inputs (username prefix,
-      # UID range, allowed paths). The octo process routes all privileged ops
-      # through it -- never calling useradd/groupadd directly.
-      sudo tee -a "$service_file" >/dev/null <<EOF
-ReadWritePaths=/etc
-ReadWritePaths=/home
-EOF
-    else
-      # Single-user mode: no privilege escalation needed
-      sudo tee -a "$service_file" >/dev/null <<EOF
-NoNewPrivileges=true
-EOF
-    fi
 
     sudo tee -a "$service_file" >/dev/null <<EOF
 
@@ -4359,6 +4332,9 @@ EOF
     # Binaries are already in /usr/local/bin from build_octo
 
     log_success "Service file created: $service_file"
+
+    # Install octo-usermgr service (privileged user management daemon)
+    install_usermgr_service
 
     # Install octo-runner user service template for multi-user mode
     install_runner_service
@@ -4372,6 +4348,43 @@ EOF
       log_info "View logs with: sudo journalctl -u octo -f"
     fi
   fi
+}
+
+install_usermgr_service() {
+  # octo-usermgr runs as root and listens on a unix socket.
+  # The octo service (unprivileged) sends JSON requests over the socket
+  # to create/delete Linux users, manage directories, etc.
+  # This provides OS-level privilege separation.
+  log_info "Installing octo-usermgr service..."
+
+  local service_file="/etc/systemd/system/octo-usermgr.service"
+  sudo tee "$service_file" >/dev/null <<EOF
+[Unit]
+Description=Octo User Manager (privileged helper)
+Before=octo.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/octo-usermgr
+Restart=on-failure
+RestartSec=3
+RuntimeDirectory=octo
+RuntimeDirectoryMode=0755
+ProtectSystem=strict
+ReadWritePaths=/etc
+ReadWritePaths=/home
+ReadWritePaths=/run/octo
+ReadWritePaths=/var/lib/octo
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+  sudo systemctl daemon-reload
+  sudo systemctl enable octo-usermgr
+  sudo systemctl start octo-usermgr
+  log_success "octo-usermgr service installed and started"
 }
 
 install_runner_service() {
