@@ -180,19 +180,9 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 		string | null
 	>(() => {
 		if (typeof window === "undefined") return null;
-		// Pick the most recently updated session from cache so the UI
-		// immediately shows the newest session instead of a stale
-		// localStorage value. The auto-select effect will refine this
-		// once runner sessions are known.
-		const cached = readCachedChatHistory();
-		if (cached.length > 0) {
-			let best = cached[0];
-			for (let i = 1; i < cached.length; i++) {
-				if (cached[i].updated_at > best.updated_at) best = cached[i];
-			}
-			return best.id;
-		}
-		// Fallback to localStorage if no cache exists
+		// Restore the last session the user was viewing. The auto-select
+		// effect will only override this if the saved ID doesn't exist in
+		// the session list (e.g. deleted session).
 		try {
 			return localStorage.getItem("octo:lastChatSessionId") || null;
 		} catch {
@@ -252,12 +242,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 		return chatHistory.find((s) => s.id === selectedChatSessionId);
 	}, [chatHistory, selectedChatSessionId]);
 
-	// Auto-select the best session on first load.
-	// Priority: active runner session > most recently updated session.
-	// We do NOT blindly trust localStorage because the saved ID may point
-	// to a very old session while newer ones exist. Instead, we always
-	// pick the most recently updated session (which will match the saved
-	// ID if the user's last session is also the newest).
+	// Auto-select a session only when the current selection is invalid
+	// (null or not found in chatHistory). This preserves the user's last
+	// viewed session across reloads. When we do need to pick, prefer an
+	// active runner session, then fall back to the most recently updated.
 	const autoSelectedRef = useRef(false);
 	const runnerSessionsById = useMemo(
 		() => new Map(runnerSessions.map((s) => [s.session_id, s])),
@@ -267,6 +255,16 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 		if (autoSelectedRef.current) return;
 		if (chatHistory.length === 0) return;
 
+		// If the saved session exists in the list, keep it
+		if (
+			selectedChatSessionId &&
+			chatHistory.some((s) => s.id === selectedChatSessionId)
+		) {
+			autoSelectedRef.current = true;
+			return;
+		}
+
+		// Saved session is missing/invalid -- pick a new one.
 		// Prefer an active runner session if available
 		const activeCandidates = chatHistory.filter((s) =>
 			runnerSessionsById.has(s.id),
