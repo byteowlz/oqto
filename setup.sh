@@ -5181,7 +5181,7 @@ main() {
 
   # Build Octo - octoctl is required for password hashing during config generation,
   # so we must verify the binary exists before proceeding
-  verify_or_rerun "build_octo" "Build Octo" "command -v octoctl" build_octo
+  verify_or_rerun "build_octo" "Build Octo" "octoctl hash-password --help >/dev/null 2>&1" build_octo
 
   # Generate configuration
   run_step "generate_config" "Configuration" generate_config
