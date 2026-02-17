@@ -636,8 +636,19 @@ PI_DEFAULT_EXTENSIONS=(
   "custom-context-files"
 )
 
-# Clone or update the pi-agent-extensions repo into a cache directory
+# Clone or update the pi-agent-extensions repo into a cache directory.
+# Falls back to a local checkout if available.
 clone_pi_extensions_repo() {
+  # Check for local checkout first (faster, works offline)
+  for base in "$HOME/byteowlz" "$HOME/code/byteowlz" "/opt/byteowlz"; do
+    local local_dir="$base/pi-agent-extensions"
+    if [[ -d "$local_dir" && -f "$local_dir/README.md" ]]; then
+      log_info "Using local pi-agent-extensions: $local_dir"
+      echo "$local_dir"
+      return 0
+    fi
+  done
+
   local cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/octo/pi-agent-extensions"
 
   if [[ -d "$cache_dir/.git" ]]; then
