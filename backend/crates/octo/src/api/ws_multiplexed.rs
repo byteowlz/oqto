@@ -747,14 +747,12 @@ async fn handle_multiplexed_ws(socket: WebSocket, state: AppState, user_id: Stri
     // Emit legacy connected event for session channel.
     let _ = event_tx.send(WsEvent::Session(LegacyWsEvent::Connected));
 
-    // Get runner client for this user
-    let runner_client = runner_client_for_user(&state, &user_id);
-    if runner_client.is_none() {
-        debug!(
-            "No runner client available for user {}, Pi commands will fail",
-            user_id
-        );
-    }
+    // Runner client is resolved lazily on first command, not at connect time.
+    // The runner may still be starting when the WebSocket connects.
+    let runner_client: std::sync::Arc<tokio::sync::Mutex<Option<RunnerClient>>> =
+        std::sync::Arc::new(tokio::sync::Mutex::new(
+            runner_client_for_user(&state, &user_id),
+        ));
 
     // Spawn task to forward events from channel to WebSocket
     let event_writer = tokio::spawn(async move {
@@ -777,11 +775,27 @@ async fn handle_multiplexed_ws(socket: WebSocket, state: AppState, user_id: Stri
                             Ok(cmd) => {
                                 debug!("Received WS command: {:?}", cmd);
 
+                                // Lazily resolve runner client if not yet available.
+                                // The runner may start after the WebSocket connects.
+                                {
+                                    let mut rc = runner_client.lock().await;
+                                    if rc.is_none() {
+                                        *rc = runner_client_for_user(&state, &user_id);
+                                        if rc.is_some() {
+                                            debug!(
+                                                "Runner client resolved lazily for user {}",
+                                                user_id
+                                            );
+                                        }
+                                    }
+                                }
+
+                                let rc_guard = runner_client.lock().await;
                                 let response = handle_ws_command(
                                     cmd,
                                     &user_id,
                                     &state,
-                                    runner_client.as_ref(),
+                                    rc_guard.as_ref(),
                                     conn_state.clone(),
                                 )
                                 .await;
