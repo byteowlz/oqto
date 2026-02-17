@@ -586,6 +586,20 @@ WantedBy=default.target
     }
 
     // 4. Create per-user socket directory
+    //    Also ensure the parent /run/octo/runner-sockets/ has correct ownership.
+    //    mkdir -p creates it as root:root by default, but we need root:octo
+    //    so platform users (in group octo) can traverse into their subdirectory.
+    let runner_sockets_base = "/run/octo/runner-sockets";
+    if let Err(e) = run_cmd("/bin/mkdir", &["-p", runner_sockets_base]) {
+        return Response::error(format!("mkdir {runner_sockets_base}: {e}"));
+    }
+    if let Err(e) = run_cmd("/usr/bin/chown", &["root:octo", runner_sockets_base]) {
+        return Response::error(format!("chown {runner_sockets_base}: {e}"));
+    }
+    if let Err(e) = run_cmd("/usr/bin/chmod", &["2770", runner_sockets_base]) {
+        return Response::error(format!("chmod {runner_sockets_base}: {e}"));
+    }
+
     let socket_dir = format!("/run/octo/runner-sockets/{username}");
     if let Err(e) = run_cmd("/bin/mkdir", &["-p", &socket_dir]) {
         return Response::error(format!("mkdir {socket_dir}: {e}"));
