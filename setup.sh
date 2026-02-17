@@ -653,8 +653,12 @@ clone_pi_extensions_repo() {
 
   if [[ -d "$cache_dir/.git" ]]; then
     log_info "Updating pi-agent-extensions repo..." >&2
-    git -C "$cache_dir" fetch --all --prune 2>/dev/null || true
-    git -C "$cache_dir" reset --hard origin/main 2>/dev/null || true
+    # Ensure remote URL is HTTPS (may have been cloned via SSH previously)
+    git -C "$cache_dir" remote set-url origin "$PI_EXTENSIONS_REPO" 2>/dev/null || true
+    if git -C "$cache_dir" fetch origin 2>/dev/null; then
+      git -C "$cache_dir" reset --hard origin/main 2>/dev/null ||
+        git -C "$cache_dir" reset --hard origin/HEAD 2>/dev/null || true
+    fi
   else
     # Remove stale cache dir if it exists without .git
     if [[ -d "$cache_dir" ]]; then
@@ -668,11 +672,15 @@ clone_pi_extensions_repo() {
     fi
   fi
 
-  # Verify the clone has content
-  if [[ ! -f "$cache_dir/README.md" ]]; then
-    log_error "pi-agent-extensions clone appears empty at $cache_dir" >&2
+  # Verify the clone has content (an extension with index.ts should exist)
+  if [[ ! -f "$cache_dir/octo-bridge/index.ts" ]]; then
+    log_warn "pi-agent-extensions cache is stale or broken, re-cloning..." >&2
     rm -rf "$cache_dir"
-    return 1
+    mkdir -p "$(dirname "$cache_dir")"
+    if ! git clone --depth 1 "$PI_EXTENSIONS_REPO" "$cache_dir" 2>/dev/null; then
+      log_error "Failed to re-clone pi-agent-extensions repo" >&2
+      return 1
+    fi
   fi
 
   echo "$cache_dir"
