@@ -1167,42 +1167,20 @@ install_rust_tool() {
   local tool="$1"
   local repo="${2:-$tool}" # repo name, defaults to tool name
 
-  # Check if already installed in the global tools directory
-  if [[ -x "${TOOLS_INSTALL_DIR}/${tool}" ]]; then
-    local version
-    version=$("${TOOLS_INSTALL_DIR}/${tool}" --version 2>/dev/null | head -1 || echo 'unknown')
-    log_success "$tool already installed: $version"
-    return 0
-  fi
-
-  # If it exists elsewhere (e.g. ~/.cargo/bin), copy it to the global dir
-  if command_exists "$tool"; then
-    local existing_path
-    existing_path=$(command -v "$tool")
-    log_info "$tool found at $existing_path, installing to ${TOOLS_INSTALL_DIR}/"
-    install_binary_global "$existing_path" "$tool"
-    return 0
-  fi
-
   if ! command_exists cargo; then
     log_error "Cargo not available. Cannot install $tool."
     return 1
   fi
 
-  log_info "Installing $tool..."
+  # Always install from git to get the latest compatible version.
+  # byteowlz tools are tightly coupled and crates.io may lag behind.
+  log_info "Installing $tool from git (latest)..."
 
   local tmpdir
   tmpdir=$(mktemp -d)
   trap "rm -rf '$tmpdir'" RETURN
 
-  # Try crates.io first
-  if cargo install "$tool" --root "$tmpdir" 2>/dev/null; then
-    install_binary_global "$tmpdir/bin/$tool" "$tool"
-    return 0
-  fi
-
-  # Try GitHub
-  log_info "Trying GitHub repository..."
+  # Install from GitHub (always latest main branch)
   if cargo install --git "${BYTEOWLZ_GITHUB}/${repo}.git" --root "$tmpdir" 2>/dev/null; then
     install_binary_global "$tmpdir/bin/$tool" "$tool"
     return 0
