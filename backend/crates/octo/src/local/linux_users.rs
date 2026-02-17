@@ -51,7 +51,7 @@ impl Default for LinuxUsersConfig {
 const PROJECT_PREFIX: &str = "proj_";
 
 /// Check if a Linux user exists.
-fn user_exists(username: &str) -> bool {
+pub(crate) fn user_exists(username: &str) -> bool {
     Command::new("id")
         .arg("-u")
         .arg(username)
@@ -837,7 +837,7 @@ fn ensure_toml_subtable<'a>(
 /// - Start with a lowercase letter or underscore
 /// - Contain only lowercase letters, digits, underscores, or hyphens
 /// - Be at most 32 characters
-fn sanitize_username(user_id: &str) -> String {
+pub(crate) fn sanitize_username(user_id: &str) -> String {
     let mut result = String::with_capacity(32);
 
     for (i, c) in user_id.chars().enumerate() {

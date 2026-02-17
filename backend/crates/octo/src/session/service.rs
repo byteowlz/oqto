@@ -178,6 +178,9 @@ pub struct SessionServiceConfig {
     /// Supports `{user}` (Linux username) and `{uid}`.
     /// Example: `/run/octo/runner-sockets/{user}/octo-runner.sock`
     pub runner_socket_pattern: Option<String>,
+    /// Linux user prefix for multi-user mode (e.g., "octo_").
+    /// Used to convert platform user_id to Linux username for runner socket paths.
+    pub linux_user_prefix: Option<String>,
 }
 
 impl Default for SessionServiceConfig {
@@ -203,6 +206,7 @@ impl Default for SessionServiceConfig {
             pi_model: None,
             agent_browser: AgentBrowserConfig::default(),
             runner_socket_pattern: None,
+            linux_user_prefix: None,
         }
     }
 }
@@ -471,13 +475,25 @@ impl SessionService {
                 .clone()
                 .context("runner not configured for local mode")
         } else {
-            // Multi-user mode: connect to user's runner socket
-            // The user_id is the Linux username in multi-user mode
+            // Multi-user mode: connect to user's runner socket.
+            // Convert platform user_id (e.g., "hansgerd-u469") to Linux username
+            // (e.g., "octo_hansgerd-u469") using the configured prefix.
+            let linux_user = if let Some(ref prefix) = self.config.linux_user_prefix {
+                let sanitized = crate::local::linux_users::sanitize_username(user_id);
+                if crate::local::linux_users::user_exists(&sanitized) {
+                    sanitized
+                } else {
+                    format!("{prefix}{sanitized}")
+                }
+            } else {
+                user_id.to_string()
+            };
+
             if let Some(pattern) = &self.config.runner_socket_pattern {
-                RunnerClient::for_user_with_pattern(user_id, pattern)
+                RunnerClient::for_user_with_pattern(&linux_user, pattern)
             } else {
                 // Fallback to default pattern
-                RunnerClient::for_user(user_id)
+                RunnerClient::for_user(&linux_user)
             }
         }
     }
@@ -3251,6 +3267,7 @@ mod tests {
             pi_model: None,
             agent_browser: AgentBrowserConfig::default(),
             runner_socket_pattern: None,
+            linux_user_prefix: None,
         };
 
         let mut service = SessionService::with_eavs(repo.clone(), runtime.clone(), eavs, config);
