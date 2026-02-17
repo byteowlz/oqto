@@ -464,17 +464,51 @@ fn cmd_setup_user_runner(args: &serde_json::Value) -> Response {
     let socket_path = format!("/run/octo/runner-sockets/{username}/octo-runner.sock");
 
     // Construct service file content server-side
-    let service_content = format!(
-        r#"[Unit]
-Description=Octo Runner - Process isolation daemon
+    // Service file contents -- all constructed server-side, never from client input.
+    // hstry and mmry run as simple foreground services.
+    // octo-runner uses Type=notify and depends on both.
+    let hstry_service = r#"[Unit]
+Description=Octo Chat History Service
 After=default.target
 
 [Service]
 Type=simple
+ExecStart=/usr/local/bin/hstry service run
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
+"#;
+
+    let mmry_service = r#"[Unit]
+Description=Octo Memory Service
+After=default.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/mmry service run
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
+"#;
+
+    let runner_service = format!(
+        r#"[Unit]
+Description=Octo Runner - Process isolation daemon
+Requires=hstry.service mmry.service
+After=hstry.service mmry.service
+
+[Service]
+Type=notify
 ExecStart={RUNNER_BINARY} --socket {socket_path}
 Restart=on-failure
 RestartSec=5
 Environment=RUST_LOG=info
+# systemd waits up to 30s for READY=1 from the runner
+WatchdogSec=30
 
 [Install]
 WantedBy=default.target
@@ -502,16 +536,23 @@ WantedBy=default.target
 
     let group = "octo";
     let service_dir = format!("{home}/.config/systemd/user");
-    let service_file = format!("{service_dir}/octo-runner.service");
 
     // 1. Create service directory
     if let Err(e) = run_cmd("/bin/mkdir", &["-p", &service_dir]) {
         return Response::error(format!("mkdir {service_dir}: {e}"));
     }
 
-    // 2. Write service file
-    if let Err(e) = std::fs::write(&service_file, &service_content) {
-        return Response::error(format!("writing {service_file}: {e}"));
+    // 2. Write all service files
+    let services = [
+        ("hstry.service", hstry_service.to_string()),
+        ("mmry.service", mmry_service.to_string()),
+        ("octo-runner.service", runner_service),
+    ];
+    for (name, content) in &services {
+        let path = format!("{service_dir}/{name}");
+        if let Err(e) = std::fs::write(&path, content) {
+            return Response::error(format!("writing {path}: {e}"));
+        }
     }
 
     // 3. Set ownership of .config tree
@@ -552,56 +593,60 @@ WantedBy=default.target
     // Give the user's systemd instance time to initialize
     std::thread::sleep(std::time::Duration::from_millis(500));
 
-    // 6. Daemon-reload + enable+start octo-runner via --machine
+    // 6. Daemon-reload + enable all services + start octo-runner
+    //    Starting octo-runner pulls in hstry and mmry via Requires= dependency.
+    //    Type=notify on runner means `systemctl start` blocks until READY=1.
     let machine_arg = format!("{username}@.host");
-    if let Err(e) = run_cmd(
-        "/usr/bin/systemctl",
-        &["--machine", &machine_arg, "--user", "daemon-reload"],
-    ) {
-        eprintln!("octo-usermgr: daemon-reload via --machine failed: {e}");
+    let runtime_dir = format!("/run/user/{uid}");
+    let bus = format!("unix:path={runtime_dir}/bus");
+
+    // Helper: run systemctl as the target user. Try --machine first, fall back to runuser.
+    let run_user_systemctl = |args: &[&str]| -> Result<String, String> {
+        // Try --machine method first
+        let mut machine_args = vec!["--machine", &machine_arg, "--user"];
+        machine_args.extend_from_slice(args);
+        if let Ok(output) = run_cmd("/usr/bin/systemctl", &machine_args) {
+            return Ok(output);
+        }
+
+        // Fallback: runuser
+        let mut cmd = Command::new("/sbin/runuser");
+        cmd.args(["-u", username, "--"])
+            .arg("env")
+            .arg(format!("XDG_RUNTIME_DIR={runtime_dir}"))
+            .arg(format!("DBUS_SESSION_BUS_ADDRESS={bus}"))
+            .arg("systemctl")
+            .arg("--user");
+        for arg in args {
+            cmd.arg(arg);
+        }
+        let output = cmd.output().map_err(|e| format!("runuser: {e}"))?;
+        if output.status.success() {
+            Ok(String::from_utf8_lossy(&output.stdout).to_string())
+        } else {
+            Err(format!(
+                "exit {}: {}",
+                output.status.code().unwrap_or(-1),
+                String::from_utf8_lossy(&output.stderr).trim()
+            ))
+        }
+    };
+
+    if let Err(e) = run_user_systemctl(&["daemon-reload"]) {
+        eprintln!("octo-usermgr: daemon-reload failed: {e}");
     }
 
-    match run_cmd(
-        "/usr/bin/systemctl",
-        &[
-            "--machine",
-            &machine_arg,
-            "--user",
-            "enable",
-            "--now",
-            "octo-runner",
-        ],
-    ) {
-        Ok(_) => {}
-        Err(e) => {
-            // Fallback: try via runuser with XDG_RUNTIME_DIR
-            let runtime_dir = format!("/run/user/{uid}");
-            let bus = format!("unix:path={runtime_dir}/bus");
-            let result = Command::new("/sbin/runuser")
-                .args(["-u", username, "--"])
-                .arg("env")
-                .arg(format!("XDG_RUNTIME_DIR={runtime_dir}"))
-                .arg(format!("DBUS_SESSION_BUS_ADDRESS={bus}"))
-                .args(["systemctl", "--user", "enable", "--now", "octo-runner"])
-                .output();
-
-            match result {
-                Ok(out) if out.status.success() => {}
-                Ok(out) => {
-                    let stderr = String::from_utf8_lossy(&out.stderr);
-                    return Response::error(format!(
-                        "enable+start octo-runner failed. \
-                         machine method: {e}, runuser method: {stderr}"
-                    ));
-                }
-                Err(e2) => {
-                    return Response::error(format!(
-                        "enable+start octo-runner failed. \
-                         machine method: {e}, runuser method: {e2}"
-                    ));
-                }
-            }
+    // Enable all three services
+    for svc in ["hstry.service", "mmry.service", "octo-runner.service"] {
+        if let Err(e) = run_user_systemctl(&["enable", svc]) {
+            eprintln!("octo-usermgr: enable {svc} failed: {e}");
         }
+    }
+
+    // Start octo-runner (pulls in hstry + mmry via Requires=).
+    // With Type=notify, this blocks until the runner signals READY=1.
+    if let Err(e) = run_user_systemctl(&["start", "octo-runner.service"]) {
+        return Response::error(format!("start octo-runner failed: {e}"));
     }
 
     // Wait for the runner socket to appear and ensure correct permissions.
