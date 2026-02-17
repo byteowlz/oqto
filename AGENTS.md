@@ -106,6 +106,25 @@ Each runner advertises which harnesses it supports. The frontend shows a harness
 | `octo-files` | File access server for workspaces |
 | `hstry` | Chat history daemon (gRPC, SQLite-backed) |
 
+### Eavs Integration (LLM Proxy)
+
+Eavs is the single source of truth for LLM model metadata and the routing layer between Pi and upstream providers.
+
+**Architecture**: `Pi -> eavs (localhost:3033) -> upstream provider APIs`
+
+Key integration points:
+- **Model metadata**: `octo` queries eavs `/providers/detail` to generate Pi's `models.json` (no hardcoded model lists in octo)
+- **Per-user keys**: Admin API creates eavs virtual keys per user, stored in `eavs.env` files
+- **OAuth routing**: Virtual keys can be bound to OAuth users + account labels for multi-account provider access
+- **Policy enforcement**: Eavs rewrites request fields (e.g., `store: true` for Codex models) before forwarding upstream
+- **Network ACL**: Domain allow/deny lists prevent agents from reaching unauthorized endpoints
+- **Quota tracking**: Upstream rate limit headers are parsed and available via `GET /admin/quotas`
+
+Key files:
+- `backend/crates/octo/src/eavs/` -- `EavsClient` (create/revoke keys), `generate_pi_models_json()`
+- `backend/crates/octo/src/api/handlers/admin.rs` -- `provision_eavs_for_user`, `sync_eavs_models_json`
+- `backend/crates/octo/src/session/service.rs` -- Injects `EAVS_API_KEY` env var into agent sessions
+
 ### Process Sandboxing
 
 Sandbox configuration in `~/.config/octo/sandbox.toml` (separate from main config for security):
@@ -304,13 +323,14 @@ just check-updates    # Check for available updates to external dependencies
 
 The `dependencies.toml` manifest tracks:
 
-- **byteowlz tools**: hstry, mmry, trx, agntz, mailz, sx, sldr, eaRS, kokorox
+- **byteowlz tools**: hstry, mmry, trx, agntz, mailz, sx, sldr, eaRS, kokorox, eavs
 - **External tools**: pi (from crates.io), opencode (from opencode.ai)
 
 Key dependencies:
 
 | Tool | Purpose | Install Command |
 |------|---------|-----------------|
+| **eavs** | LLM proxy: multi-provider routing, OAuth, virtual keys, quotas | `cargo install --git https://github.com/byteowlz/eavs` |
 | **hstry** | Chat history storage (gRPC + SQLite) | `cargo install --git https://github.com/byteowlz/hstry` |
 | **mmry** | Memory system with semantic search | `cargo install --git https://github.com/byteowlz/mmry` |
 | **trx** | Issue and task tracking | `cargo install --git https://github.com/byteowlz/trx` |
