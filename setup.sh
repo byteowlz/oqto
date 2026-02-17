@@ -547,6 +547,13 @@ install_bun() {
   log_info "Installing Bun..."
   curl -fsSL https://bun.sh/install | bash
   export PATH="$HOME/.bun/bin:$PATH"
+
+  # Make bun available globally for all platform users (hstry, pi need it)
+  if [[ -x "$HOME/.bun/bin/bun" ]] && [[ ! -x "/usr/local/bin/bun" ]]; then
+    sudo install -m 755 "$HOME/.bun/bin/bun" /usr/local/bin/bun
+    log_info "Installed bun to /usr/local/bin for multi-user access"
+  fi
+
   log_success "Bun installed: $(bun --version)"
 }
 
