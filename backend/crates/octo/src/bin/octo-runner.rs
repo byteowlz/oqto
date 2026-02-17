@@ -3346,6 +3346,10 @@ impl Runner {
 
         info!("Runner listening on {:?}", socket_path);
 
+        // Notify systemd that we're ready (Type=notify).
+        // This unblocks `systemctl start` so callers know the socket is live.
+        sd_notify_ready();
+
         let mut shutdown_rx = self.shutdown_tx.subscribe();
 
         loop {
@@ -3406,6 +3410,17 @@ fn error_response(code: ErrorCode, message: impl Into<String>) -> RunnerResponse
         code,
         message: message.into(),
     })
+}
+
+/// Notify systemd that the service is ready (sd_notify READY=1).
+/// No-op if $NOTIFY_SOCKET is not set (i.e., not running under systemd Type=notify).
+fn sd_notify_ready() {
+    let Some(addr) = std::env::var_os("NOTIFY_SOCKET") else {
+        return;
+    };
+    if let Ok(sock) = std::os::unix::net::UnixDatagram::unbound() {
+        let _ = sock.send_to(b"READY=1", &addr);
+    }
 }
 
 #[tokio::main]
@@ -3550,12 +3565,9 @@ async fn main() -> Result<()> {
 
     info!("Pi session manager initialized");
 
-    // Auto-start hstry and mmry daemons for this user.
-    // The runner runs as the target Linux user, so `service start` operates
-    // on that user's data directory and config. Both commands are idempotent
-    // (return error if already running, which we ignore).
-    ensure_user_service("hstry").await;
-    ensure_user_service("mmry").await;
+    // hstry and mmry are managed as separate systemd user services.
+    // The runner's service file declares Requires=hstry.service mmry.service,
+    // so systemd starts them before us. No need to manage them here.
 
     let runner = Runner::new(sandbox_config, binaries, user_config, pi_manager);
     runner.run(&socket_path).await
@@ -3563,65 +3575,6 @@ async fn main() -> Result<()> {
 
 /// Ensure a user-level service daemon (hstry, mmry) is running.
 ///
-/// Shells out to `<binary> service start` which properly daemonizes.
-/// If already running, the command fails with "already running" which
-/// is treated as success.
-async fn ensure_user_service(name: &str) {
-    info!("Ensuring {} daemon is running...", name);
-
-    match tokio::process::Command::new(name)
-        .args(["service", "enable"])
-        .output()
-        .await
-    {
-        Ok(out) => {
-            let stdout = String::from_utf8_lossy(&out.stdout);
-            let stderr = String::from_utf8_lossy(&out.stderr);
-            if out.status.success() {
-                info!("{} service enabled", name);
-            } else {
-                let combined = format!("{}{}", stdout, stderr);
-                if !combined.contains("already enabled") && !combined.contains("Already enabled") {
-                    warn!(
-                        "{} service enable failed (exit {}): {}{}",
-                        name, out.status, stdout, stderr
-                    );
-                }
-            }
-        }
-        Err(e) => {
-            warn!("Failed to run `{} service enable`: {}", name, e);
-        }
-    }
-
-    match tokio::process::Command::new(name)
-        .args(["service", "start"])
-        .output()
-        .await
-    {
-        Ok(out) => {
-            let stdout = String::from_utf8_lossy(&out.stdout);
-            let stderr = String::from_utf8_lossy(&out.stderr);
-            if out.status.success() {
-                info!("{} daemon started: {}", name, stdout.trim());
-            } else {
-                let combined = format!("{}{}", stdout, stderr);
-                if combined.contains("already running") || combined.contains("Already running") {
-                    info!("{} daemon already running", name);
-                } else {
-                    warn!(
-                        "{} service start failed (exit {}): {}{}",
-                        name, out.status, stdout, stderr
-                    );
-                }
-            }
-        }
-        Err(e) => {
-            warn!("Failed to run `{} service start`: {}", name, e);
-        }
-    }
-}
-
 /// Load environment variables from `~/.config/octo/env`.
 ///
 /// Format: one `KEY=VALUE` per line. Lines starting with `#` are comments.
