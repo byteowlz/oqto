@@ -548,13 +548,40 @@ install_bun() {
   curl -fsSL https://bun.sh/install | bash
   export PATH="$HOME/.bun/bin:$PATH"
 
-  # Make bun available globally for all platform users (hstry, pi need it)
-  if [[ -x "$HOME/.bun/bin/bun" ]] && [[ ! -x "/usr/local/bin/bun" ]]; then
+  # Always copy bun to /usr/local/bin for multi-user access.
+  # Use install(1) which copies the file (not symlink) and sets permissions.
+  # This also fixes broken symlinks from previous installs.
+  if [[ -x "$HOME/.bun/bin/bun" ]]; then
+    sudo rm -f /usr/local/bin/bun
     sudo install -m 755 "$HOME/.bun/bin/bun" /usr/local/bin/bun
     log_info "Installed bun to /usr/local/bin for multi-user access"
   fi
 
   log_success "Bun installed: $(bun --version)"
+
+  # Install pi (AI coding agent) globally
+  log_info "Installing pi coding agent..."
+  bun install -g @mariozechner/pi-coding-agent
+  # Create a global wrapper so all platform users can run pi.
+  # bun global installs go to ~/.bun/install/global/ which is per-user,
+  # so we need a wrapper script that uses the global bun binary.
+  local pi_module
+  pi_module="$(readlink -f "$HOME/.bun/bin/pi" 2>/dev/null || true)"
+  if [[ -n "$pi_module" && -f "$pi_module" ]]; then
+    sudo tee /usr/local/bin/pi >/dev/null <<PIEOF
+#!/usr/local/bin/bun
+PIEOF
+    # Bun supports shebang scripts -- a file with #!/usr/local/bin/bun as shebang
+    # and the rest being the JS module doesn't work. Use a shell wrapper instead.
+    sudo tee /usr/local/bin/pi >/dev/null <<PIEOF
+#!/usr/bin/env bash
+exec /usr/local/bin/bun run "$pi_module" "\$@"
+PIEOF
+    sudo chmod 755 /usr/local/bin/pi
+    log_success "Installed pi to /usr/local/bin: $(/usr/local/bin/pi --version 2>/dev/null || echo 'installed')"
+  else
+    log_warn "Could not find pi module path. Pi may not be globally accessible."
+  fi
 }
 
 install_ttyd() {
