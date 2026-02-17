@@ -9,18 +9,19 @@ description = "Main platform (this repo)"
 
 [byteowlz]
 # Core backend services
-hstry = "0.4.2"
-hstry_core = { git = "https://github.com/byteowlz/hstry", branch = "main" }
-mmry = "0.8.0"
+hstry = "0.4.4"
+mmry = "0.9.0"
 trx = "0.2.1"
 agntz = "0.3.0"
 mailz = "0.1.0"
-sx = "latest"  # No tags on GitHub yet
-# sldr is optional (private repo, not shipped with octo)
+sx = "2.1.0"
+scrpr = "1.1.0"
+tmpltr = "0.2.0"
+ignr = "0.1.0"
 
 # Optional: Voice mode
 eaRS = "0.4.2"
-kokorox = "v0.1.4"
+kokorox = "0.1.4"
 
 [external]
 # Not byteowlz, but required for Octo

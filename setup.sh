@@ -1194,7 +1194,8 @@ get_release_target() {
 download_or_build_tool() {
   local tool="$1"
   local repo="${2:-$tool}"
-  local pkg="${3:-}"
+  local pkg="${3:-}"           # package name for multi-binary Rust repos
+  local lang="${4:-rust}"      # "rust" or "go"
 
   local version
   version=$(get_dep_version "$repo")
@@ -1204,26 +1205,51 @@ download_or_build_tool() {
   # Try downloading pre-built binary from GitHub releases
   if [[ -n "$version" && "$version" != "latest" && -n "$target" ]]; then
     local tag="v${version}"
-    local archive_url="${BYTEOWLZ_GITHUB}/${repo}/releases/download/${tag}/${repo}-${tag}-${target}.tar.gz"
-
-    log_info "Downloading $tool $tag for $target..."
     local tmpdir
     tmpdir=$(mktemp -d)
 
-    if curl -fsSL "$archive_url" | tar xz -C "$tmpdir" 2>/dev/null; then
-      if [[ -x "$tmpdir/$tool" ]]; then
-        install_binary_global "$tmpdir/$tool" "$tool"
-        rm -rf "$tmpdir"
-        log_success "$tool $tag installed from release"
-        return 0
-      fi
+    # Rust repos: repo-vtag-target.tar.gz  (e.g. hstry-v0.4.4-x86_64-unknown-linux-gnu.tar.gz)
+    # Go repos:   repo_OS_arch.tar.gz      (e.g. sx_Linux_x86_64.tar.gz)
+    local -a urls=()
+
+    # Rust-style URL
+    urls+=("${BYTEOWLZ_GITHUB}/${repo}/releases/download/${tag}/${repo}-${tag}-${target}.tar.gz")
+
+    # Go-style URL (goreleaser convention)
+    local go_os go_arch
+    case "$target" in
+      x86_64-unknown-linux-gnu)  go_os="Linux";  go_arch="x86_64" ;;
+      aarch64-unknown-linux-gnu) go_os="Linux";  go_arch="arm64" ;;
+      x86_64-apple-darwin)       go_os="Darwin"; go_arch="x86_64" ;;
+      aarch64-apple-darwin)      go_os="Darwin"; go_arch="arm64" ;;
+    esac
+    if [[ -n "$go_os" ]]; then
+      urls+=("${BYTEOWLZ_GITHUB}/${repo}/releases/download/${tag}/${repo}_${go_os}_${go_arch}.tar.gz")
     fi
+
+    log_info "Downloading $tool $tag for $target..."
+
+    for url in "${urls[@]}"; do
+      if curl -fsSL "$url" | tar xz -C "$tmpdir" 2>/dev/null; then
+        if [[ -x "$tmpdir/$tool" ]]; then
+          install_binary_global "$tmpdir/$tool" "$tool"
+          rm -rf "$tmpdir"
+          log_success "$tool $tag installed from release"
+          return 0
+        fi
+      fi
+    done
+
     rm -rf "$tmpdir"
     log_info "No pre-built binary available, building from source..."
   fi
 
-  # Fall back to cargo install
-  install_rust_tool "$tool" "$repo" "$pkg"
+  # Fall back to building from source
+  if [[ "$lang" == "go" ]]; then
+    install_go_tool "$tool" "$repo"
+  else
+    install_rust_tool "$tool" "$repo" "$pkg"
+  fi
 }
 
 # Move a built binary into TOOLS_INSTALL_DIR
@@ -1401,9 +1427,9 @@ install_all_agent_tools() {
   download_or_build_tool tmpltr
   download_or_build_tool ignr
 
-  # Core tools (Go)
-  install_go_tool scrpr
-  install_go_tool sx
+  # Core tools (Go) - tries pre-built GitHub release first, falls back to go install
+  download_or_build_tool scrpr scrpr "" go
+  download_or_build_tool sx sx "" go
 }
 
 select_agent_tools() {
