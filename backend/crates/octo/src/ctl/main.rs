@@ -2728,8 +2728,6 @@ fn generate_pi_models_json(
             Some(a) => a,
             None => continue, // Skip providers without Pi API mapping (e.g., mock)
         };
-        let provider_type = provider["type"].as_str().unwrap_or("openai");
-
         // Skip "default" provider (it's an alias)
         if name == "default" {
             continue;
@@ -2738,37 +2736,37 @@ fn generate_pi_models_json(
         // Build base URL with provider path prefix for routing
         let base_url = format!("{}/{}/v1", eavs_base.trim_end_matches('/'), name);
 
-        // Use eavs-provided model shortlist if available, otherwise fall back to built-in
+        // Convert eavs model shortlist to Pi models.json format
         let eavs_models = provider["models"].as_array();
-        let models = if let Some(models) = eavs_models.filter(|m| !m.is_empty()) {
-            models
-                .iter()
-                .map(|m| {
-                    let input = m["input"]
-                        .as_array()
-                        .map(|a| a.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>())
-                        .unwrap_or_else(|| vec!["text"]);
-                    let cost = &m["cost"];
-                    let cost_obj = serde_json::json!({
-                        "input": cost["input"].as_f64().unwrap_or(0.0),
-                        "output": cost["output"].as_f64().unwrap_or(0.0),
-                        "cacheRead": cost["cache_read"].as_f64().unwrap_or(0.0),
-                        "cacheWrite": 0
-                    });
-                    serde_json::json!({
-                        "id": m["id"],
-                        "name": m["name"].as_str().unwrap_or(m["id"].as_str().unwrap_or("")),
-                        "reasoning": m["reasoning"].as_bool().unwrap_or(false),
-                        "input": input,
-                        "contextWindow": m["context_window"].as_u64().unwrap_or(128_000),
-                        "maxTokens": m["max_tokens"].as_u64().unwrap_or(16_384),
-                        "cost": cost_obj
+        let models: Vec<serde_json::Value> = eavs_models
+            .map(|models| {
+                models
+                    .iter()
+                    .map(|m| {
+                        let input = m["input"]
+                            .as_array()
+                            .map(|a| a.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>())
+                            .unwrap_or_else(|| vec!["text"]);
+                        let cost = &m["cost"];
+                        let cost_obj = serde_json::json!({
+                            "input": cost["input"].as_f64().unwrap_or(0.0),
+                            "output": cost["output"].as_f64().unwrap_or(0.0),
+                            "cacheRead": cost["cache_read"].as_f64().unwrap_or(0.0),
+                            "cacheWrite": 0
+                        });
+                        serde_json::json!({
+                            "id": m["id"],
+                            "name": m["name"].as_str().unwrap_or(m["id"].as_str().unwrap_or("")),
+                            "reasoning": m["reasoning"].as_bool().unwrap_or(false),
+                            "input": input,
+                            "contextWindow": m["context_window"].as_u64().unwrap_or(128_000),
+                            "maxTokens": m["max_tokens"].as_u64().unwrap_or(16_384),
+                            "cost": cost_obj
+                        })
                     })
-                })
-                .collect()
-        } else {
-            models_for_provider_type(provider_type)
-        };
+                    .collect()
+            })
+            .unwrap_or_default();
 
         let pi_provider = serde_json::json!({
             "baseUrl": base_url,
@@ -2783,80 +2781,6 @@ fn generate_pi_models_json(
 
     serde_json::json!({
         "providers": pi_providers,
-    })
-}
-
-/// Return a curated list of models for a given provider type.
-///
-/// These are the most commonly used models per provider.
-/// Users can add more via Pi's /model selector.
-fn models_for_provider_type(provider_type: &str) -> Vec<serde_json::Value> {
-    match provider_type {
-        "openai" | "openai-responses" => vec![
-            model_entry("gpt-5.2-codex", "GPT-5.2 Codex", true, true, 400_000, 128_000, 1.75, 14.0, 0.175),
-            model_entry("gpt-5.2-pro", "GPT-5.2 Pro", true, true, 400_000, 128_000, 2.5, 20.0, 0.25),
-            model_entry("gpt-4.1", "GPT-4.1", false, true, 1_047_576, 32_768, 2.0, 8.0, 0.5),
-            model_entry("gpt-4.1-mini", "GPT-4.1 Mini", false, true, 1_047_576, 32_768, 0.4, 1.6, 0.1),
-        ],
-        "openai-codex" | "codex" | "chatgpt" => vec![
-            model_entry("gpt-5.2-codex", "GPT-5.2 Codex", true, true, 272_000, 128_000, 1.75, 14.0, 0.175),
-            model_entry("gpt-5.2", "GPT-5.2", true, true, 272_000, 128_000, 1.75, 14.0, 0.175),
-            model_entry("gpt-5.1", "GPT-5.1", true, true, 272_000, 128_000, 1.25, 10.0, 0.125),
-        ],
-        "anthropic" => vec![
-            model_entry("claude-opus-4-6", "Claude Opus 4.6", true, true, 200_000, 32_000, 15.0, 75.0, 1.875),
-            model_entry("claude-sonnet-4-6", "Claude Sonnet 4.6", true, true, 200_000, 16_384, 3.0, 15.0, 0.3),
-        ],
-        "google" | "google-vertex" | "google-gemini-cli" => vec![
-            model_entry("gemini-2.5-pro", "Gemini 2.5 Pro", true, true, 1_048_576, 65_536, 1.25, 10.0, 0.3125),
-            model_entry("gemini-2.5-flash", "Gemini 2.5 Flash", true, true, 1_048_576, 65_536, 0.15, 0.6, 0.0375),
-        ],
-        "mistral" => vec![
-            model_entry("mistral-large-latest", "Mistral Large", false, false, 128_000, 32_000, 2.0, 6.0, 0.0),
-        ],
-        "groq" => vec![
-            model_entry("llama-3.3-70b-versatile", "Llama 3.3 70B", false, false, 128_000, 32_000, 0.59, 0.79, 0.0),
-        ],
-        "xai" => vec![
-            model_entry("grok-3", "Grok 3", true, true, 131_072, 131_072, 3.0, 15.0, 0.0),
-        ],
-        "openrouter" => vec![
-            // OpenRouter: users pick models in Pi's model selector
-        ],
-        "github-copilot" | "copilot" => vec![
-            model_entry("gpt-5.2-codex", "GPT-5.2 Codex (Copilot)", true, true, 272_000, 128_000, 0.0, 0.0, 0.0),
-            model_entry("claude-sonnet-4-6", "Claude Sonnet 4.6 (Copilot)", true, true, 200_000, 16_384, 0.0, 0.0, 0.0),
-        ],
-        _ => vec![],
-    }
-}
-
-/// Build a single model entry for models.json.
-#[allow(clippy::too_many_arguments)]
-fn model_entry(
-    id: &str,
-    name: &str,
-    reasoning: bool,
-    image: bool,
-    context_window: u64,
-    max_tokens: u64,
-    cost_input: f64,
-    cost_output: f64,
-    cost_cache_read: f64,
-) -> serde_json::Value {
-    serde_json::json!({
-        "id": id,
-        "name": name,
-        "reasoning": reasoning,
-        "input": if image { vec!["text", "image"] } else { vec!["text"] },
-        "contextWindow": context_window,
-        "maxTokens": max_tokens,
-        "cost": {
-            "input": cost_input,
-            "output": cost_output,
-            "cacheRead": cost_cache_read,
-            "cacheWrite": 0
-        }
     })
 }
 
