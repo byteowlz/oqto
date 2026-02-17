@@ -2871,6 +2871,26 @@ build_octo() {
   (cd frontend && bun run build)
   log_success "Frontend built"
 
+  # Build and install agent browser daemon
+  log_info "Building agent browser daemon..."
+  local browserd_dir="$SCRIPT_DIR/backend/crates/octo-browserd"
+  if [[ -d "$browserd_dir" ]]; then
+    (cd "$browserd_dir" && bun install && bun run build)
+    local browserd_deploy="/usr/local/lib/octo-browserd"
+    sudo mkdir -p "$browserd_deploy/bin" "$browserd_deploy/dist"
+    sudo cp "$browserd_dir/bin/octo-browserd.js" "$browserd_deploy/bin/"
+    sudo cp "$browserd_dir/dist/"*.js "$browserd_deploy/dist/"
+    sudo cp "$browserd_dir/package.json" "$browserd_deploy/"
+    (cd "$browserd_deploy" && sudo bun install --production)
+    # Install Playwright browsers (chromium only)
+    sudo npx --yes playwright install --with-deps chromium 2>/dev/null || \
+      sudo bunx playwright install --with-deps chromium 2>/dev/null || \
+      log_warn "Playwright browser install failed - agent browser may not work"
+    log_success "Agent browser daemon installed to $browserd_deploy"
+  else
+    log_warn "octo-browserd not found, skipping agent browser setup"
+  fi
+
   # Install binaries to /usr/local/bin (globally accessible)
   log_info "Installing binaries to ${TOOLS_INSTALL_DIR}..."
 
@@ -3219,7 +3239,7 @@ enabled = $linux_users_enabled
 prefix = "octo_"
 uid_start = 2000
 group = "octo"
-shell = "/bin/bash"
+shell = "/bin/zsh"
 use_sudo = true
 create_home = true
 EOF
@@ -3338,6 +3358,13 @@ output_arg = "--output"
 github_arg = "--github"
 private_arg = "--private"
 description_arg = "--description"
+
+[agent_browser]
+enabled = true
+binary = "/usr/local/lib/octo-browserd/bin/octo-browserd.js"
+headed = false
+stream_port_base = 30000
+stream_port_range = 10000
 EOF
 
   log_success "Configuration written to $config_file"
