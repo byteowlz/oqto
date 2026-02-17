@@ -523,7 +523,22 @@ WantedBy=default.target
         return Response::error(format!("chown {config_dir}: {e}"));
     }
 
-    // 4. Enable linger
+    // 4. Create per-user socket directory
+    let socket_dir = format!("/run/octo/runner-sockets/{username}");
+    if let Err(e) = run_cmd("/bin/mkdir", &["-p", &socket_dir]) {
+        return Response::error(format!("mkdir {socket_dir}: {e}"));
+    }
+    if let Err(e) = run_cmd(
+        "/usr/bin/chown",
+        &[&format!("{username}:{group}"), &socket_dir],
+    ) {
+        return Response::error(format!("chown {socket_dir}: {e}"));
+    }
+    if let Err(e) = run_cmd("/usr/bin/chmod", &["2770", &socket_dir]) {
+        return Response::error(format!("chmod {socket_dir}: {e}"));
+    }
+
+    // 5. Enable linger
     if let Err(e) = run_cmd("/usr/bin/loginctl", &["enable-linger", username]) {
         return Response::error(format!("enable-linger: {e}"));
     }
@@ -557,7 +572,7 @@ WantedBy=default.target
             "octo-runner",
         ],
     ) {
-        Ok(_) => Response::success(),
+        Ok(_) => {}
         Err(e) => {
             // Fallback: try via runuser with XDG_RUNTIME_DIR
             let runtime_dir = format!("/run/user/{uid}");
@@ -571,21 +586,47 @@ WantedBy=default.target
                 .output();
 
             match result {
-                Ok(out) if out.status.success() => Response::success(),
+                Ok(out) if out.status.success() => {}
                 Ok(out) => {
                     let stderr = String::from_utf8_lossy(&out.stderr);
-                    Response::error(format!(
+                    return Response::error(format!(
                         "enable+start octo-runner failed. \
                          machine method: {e}, runuser method: {stderr}"
-                    ))
+                    ));
                 }
-                Err(e2) => Response::error(format!(
-                    "enable+start octo-runner failed. \
-                     machine method: {e}, runuser method: {e2}"
-                )),
+                Err(e2) => {
+                    return Response::error(format!(
+                        "enable+start octo-runner failed. \
+                         machine method: {e}, runuser method: {e2}"
+                    ));
+                }
             }
         }
     }
+
+    // Wait for the runner socket to appear and ensure correct permissions.
+    // The runner needs time to start, bind the socket, and initialize hstry/mmry.
+    let socket = std::path::Path::new(&socket_path);
+    for i in 0..20 {
+        if socket.exists() {
+            // Ensure group-writable so the octo backend can connect.
+            // The runner creates the socket with default umask (0755),
+            // but Unix socket connect() requires write permission.
+            if let Err(e) = run_cmd("/usr/bin/chmod", &["0770", &socket_path]) {
+                eprintln!("octo-usermgr: chmod socket: {e}");
+            }
+            eprintln!(
+                "octo-usermgr: runner socket ready after {}ms: {socket_path}",
+                i * 500
+            );
+            return Response::success();
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+
+    Response::error(format!(
+        "runner socket did not appear at {socket_path} after 10s"
+    ))
 }
 
 /// Create a workspace directory with files, owned by the target user.
