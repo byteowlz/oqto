@@ -562,31 +562,15 @@ impl LinuxUsersConfig {
             );
         }
 
-        // Fast path: if the runner socket already exists, we're good.
+        // Fast path: if the runner socket already exists and is connectable, we're good.
         let expected_socket = base_dir.join(username).join("octo-runner.sock");
         if expected_socket.exists() {
             return Ok(());
         }
 
-        // Ensure per-user socket directory exists
-        let user_dir = base_dir.join(username);
-        if !user_dir.exists() {
-            let user_dir_str = user_dir
-                .to_str()
-                .ok_or_else(|| anyhow::anyhow!("invalid user_dir path"))?;
-            run_privileged_command(self.use_sudo, "/bin/mkdir", &["-p", user_dir_str])
-                .context("creating runner socket user dir")?;
-            run_privileged_command(
-                self.use_sudo,
-                "/usr/bin/chown",
-                &[&format!("{}:{}", username, self.group), user_dir_str],
-            )
-            .context("chown runner socket user dir")?;
-            run_privileged_command(self.use_sudo, "/usr/bin/chmod", &["2770", user_dir_str])
-                .context("chmod runner socket user dir")?;
-        }
-
         // Delegate the full setup to octo-usermgr (runs as root).
+        // usermgr handles: socket dir creation, linger, systemd, and waits for the
+        // socket to appear with correct permissions before returning success.
         // Only send username and uid -- the daemon constructs the service file
         // content server-side to prevent injection of arbitrary ExecStart commands.
         usermgr_request(
@@ -598,18 +582,16 @@ impl LinuxUsersConfig {
         )
         .context("setup-user-runner via octo-usermgr")?;
 
-        // Wait for the socket to appear (up to 5 seconds)
-        for i in 0..10 {
-            if expected_socket.exists() {
-                debug!("octo-runner socket appeared after {}ms", i * 500);
-                return Ok(());
-            }
-            std::thread::sleep(std::time::Duration::from_millis(500));
+        // usermgr waits for the socket internally (up to 10s).
+        // Quick verify that it's actually there.
+        if expected_socket.exists() {
+            debug!("octo-runner socket ready: {}", expected_socket.display());
+            return Ok(());
         }
 
         anyhow::bail!(
-            "octo-runner socket not found at {} after waiting 5s. \
-             Check if octo-runner.service is properly installed for user {}.",
+            "octo-runner socket not found at {} after setup-user-runner completed. \
+             Check octo-runner.service logs for user {}.",
             expected_socket.display(),
             username
         )
