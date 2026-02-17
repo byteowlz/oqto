@@ -42,7 +42,17 @@ pub(crate) fn get_runner_for_user(
     user_id: &str,
 ) -> Option<crate::runner::client::RunnerClient> {
     // Need runner socket pattern for multi-user mode
-    let pattern = state.runner_socket_pattern.as_ref()?;
+    let pattern = match state.runner_socket_pattern.as_ref() {
+        Some(p) => p,
+        None => {
+            tracing::warn!(
+                user_id = %user_id,
+                has_linux_users = state.linux_users.is_some(),
+                "No runner_socket_pattern configured"
+            );
+            return None;
+        }
+    };
 
     // The socket path uses the linux_username (e.g., octo_hansgerd-vyon),
     // not the platform user_id (e.g., hansgerd-vYoN).
@@ -52,21 +62,28 @@ pub(crate) fn get_runner_for_user(
         user_id.to_string()
     };
 
+    tracing::info!(
+        user_id = %user_id,
+        effective_user = %effective_user,
+        pattern = %pattern,
+        "Resolving runner socket"
+    );
+
     match crate::runner::client::RunnerClient::for_user_with_pattern(&effective_user, pattern) {
         Ok(client) => {
             let socket_path = client.socket_path();
             if socket_path.exists() {
-                tracing::debug!(
+                tracing::info!(
                     user_id = %user_id,
                     socket = %socket_path.display(),
                     "Using runner for chat history"
                 );
                 Some(client)
             } else {
-                tracing::debug!(
+                tracing::warn!(
                     user_id = %user_id,
                     socket = %socket_path.display(),
-                    "Runner socket not found, using direct access"
+                    "Runner socket not found"
                 );
                 None
             }
