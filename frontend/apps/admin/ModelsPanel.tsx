@@ -111,6 +111,13 @@ function SyncResultRow({ result }: { result: SyncUserConfigResult }) {
 				)}
 			</td>
 			<td className="py-2 px-3">
+				{result.shell_configured ? (
+					<Check className="w-3.5 h-3.5 text-green-500" />
+				) : (
+					<X className="w-3.5 h-3.5 text-muted-foreground" />
+				)}
+			</td>
+			<td className="py-2 px-3">
 				{result.runner_configured ? (
 					<Check className="w-3.5 h-3.5 text-green-500" />
 				) : (
@@ -263,6 +270,7 @@ export function ModelsPanel() {
 										Linux User
 									</th>
 									<th className="text-left py-2 px-3 font-medium">Models</th>
+									<th className="text-left py-2 px-3 font-medium">Shell</th>
 									<th className="text-left py-2 px-3 font-medium">Runner</th>
 									<th className="text-left py-2 px-3 font-medium">Status</th>
 								</tr>

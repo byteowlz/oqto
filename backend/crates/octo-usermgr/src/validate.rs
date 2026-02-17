@@ -28,8 +28,10 @@ pub const GECOS_PREFIX: &str = "Octo platform user ";
 pub const ALLOWED_SHELLS: &[&str] = &[
     "/bin/bash",
     "/bin/sh",
+    "/bin/zsh",
     "/usr/bin/bash",
     "/usr/bin/sh",
+    "/usr/bin/zsh",
     "/bin/false",
     "/usr/sbin/nologin",
 ];
@@ -379,7 +381,6 @@ mod tests {
 
     #[test]
     fn shell_reject_arbitrary() {
-        assert!(validate_shell("/bin/zsh").is_err());
         assert!(validate_shell("/usr/bin/python3").is_err());
         assert!(validate_shell("/tmp/evil").is_err());
         assert!(validate_shell("bash").is_err());

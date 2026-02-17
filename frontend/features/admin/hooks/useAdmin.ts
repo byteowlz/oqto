@@ -579,6 +579,7 @@ export type SyncUserConfigResult = {
 	user_id: string;
 	linux_username: string | null;
 	runner_configured: boolean;
+	shell_configured: boolean;
 	mmry_configured: boolean;
 	eavs_configured: boolean;
 	error: string | null;

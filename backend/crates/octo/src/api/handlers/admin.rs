@@ -226,6 +226,7 @@ pub struct SyncUserConfigResult {
     pub user_id: String,
     pub linux_username: Option<String>,
     pub runner_configured: bool,
+    pub shell_configured: bool,
     pub mmry_configured: bool,
     pub eavs_configured: bool,
     pub error: Option<String>,
@@ -266,6 +267,7 @@ pub async fn sync_user_configs(
             user_id: user.id.clone(),
             linux_username: user.linux_username.clone(),
             runner_configured: false,
+            shell_configured: false,
             mmry_configured: false,
             eavs_configured: false,
             error: None,
@@ -308,6 +310,22 @@ pub async fn sync_user_configs(
                             error = %e,
                             "Failed to store linux_username/uid in database"
                         );
+                    }
+                }
+
+                // Provision shell dotfiles (zsh + starship)
+                match linux_users.setup_user_shell(&linux_username) {
+                    Ok(()) => {
+                        result.shell_configured = true;
+                    }
+                    Err(e) => {
+                        let msg = format!("shell setup failed: {e}");
+                        if let Some(ref mut existing) = result.error {
+                            existing.push_str("; ");
+                            existing.push_str(&msg);
+                        } else {
+                            result.error = Some(msg);
+                        }
                     }
                 }
 
@@ -443,6 +461,15 @@ pub async fn create_user(
                             "Failed to update mmry config for user"
                         );
                     }
+                }
+
+                // Provision shell dotfiles (zsh + starship)
+                if let Err(e) = linux_users.setup_user_shell(&actual_linux_username) {
+                    warn!(
+                        user_id = %user.id,
+                        error = ?e,
+                        "Failed to provision shell dotfiles (non-fatal)"
+                    );
                 }
 
                 info!(
