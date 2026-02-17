@@ -562,15 +562,28 @@ impl LinuxUsersConfig {
             );
         }
 
-        // Fast path: if the runner socket already exists and is connectable, we're good.
         let expected_socket = base_dir.join(username).join("octo-runner.sock");
+
+        // Fast path: if socket exists AND is connectable, everything is healthy.
         if expected_socket.exists() {
-            return Ok(());
+            if let Ok(_stream) = std::os::unix::net::UnixStream::connect(&expected_socket) {
+                debug!(
+                    "octo-runner socket healthy: {}",
+                    expected_socket.display()
+                );
+                return Ok(());
+            }
+            debug!(
+                "octo-runner socket exists but not connectable, re-running setup: {}",
+                expected_socket.display()
+            );
         }
 
-        // Delegate the full setup to octo-usermgr (runs as root).
-        // usermgr handles: socket dir creation, linger, systemd, and waits for the
-        // socket to appear with correct permissions before returning success.
+        // Delegate to usermgr. It's idempotent:
+        // - Always writes service files (picks up PATH/HOME/dependency changes)
+        // - daemon-reloads
+        // - Restarts if already running, starts if not
+        // - Waits for socket to be ready
         // Only send username and uid -- the daemon constructs the service file
         // content server-side to prevent injection of arbitrary ExecStart commands.
         usermgr_request(

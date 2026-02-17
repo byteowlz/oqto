@@ -653,6 +653,7 @@ WantedBy=default.target
         }
     };
 
+    // Always daemon-reload so updated service files take effect.
     if let Err(e) = run_user_systemctl(&["daemon-reload"]) {
         eprintln!("octo-usermgr: daemon-reload failed: {e}");
     }
@@ -664,10 +665,15 @@ WantedBy=default.target
         }
     }
 
-    // Start octo-runner (pulls in hstry + mmry via Requires=).
+    // Check if the runner is already active. If so, restart to pick up
+    // any service file changes. If not, start fresh.
+    let runner_active = run_user_systemctl(&["is-active", "octo-runner.service"]).is_ok();
+    let action = if runner_active { "restart" } else { "start" };
+
+    // Start/restart octo-runner (pulls in hstry + mmry via Requires=).
     // With Type=notify, this blocks until the runner signals READY=1.
-    if let Err(e) = run_user_systemctl(&["start", "octo-runner.service"]) {
-        return Response::error(format!("start octo-runner failed: {e}"));
+    if let Err(e) = run_user_systemctl(&[action, "octo-runner.service"]) {
+        return Response::error(format!("{action} octo-runner failed: {e}"));
     }
 
     // Wait for the runner socket to appear and ensure correct permissions.
