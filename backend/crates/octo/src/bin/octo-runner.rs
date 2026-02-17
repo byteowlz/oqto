@@ -3324,11 +3324,15 @@ impl Runner {
 
     /// Run the daemon, listening on the given socket path.
     async fn run(&self, socket_path: &PathBuf) -> Result<()> {
-        // Ensure parent directory exists
+        // Verify parent directory exists (created by octo-usermgr, not by us)
         if let Some(parent) = socket_path.parent() {
-            tokio::fs::create_dir_all(parent)
-                .await
-                .with_context(|| format!("creating socket directory {:?}", parent))?;
+            if !parent.exists() {
+                anyhow::bail!(
+                    "socket directory {:?} does not exist. \
+                     It should be created by octo-usermgr before the runner starts.",
+                    parent
+                );
+            }
         }
 
         // Remove existing socket file
