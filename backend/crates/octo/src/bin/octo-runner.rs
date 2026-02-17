@@ -3338,6 +3338,12 @@ impl Runner {
         let listener = UnixListener::bind(socket_path)
             .with_context(|| format!("binding to {:?}", socket_path))?;
 
+        // Allow group write so the octo backend (same group) can connect.
+        // Unix sockets require write permission for connect().
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o770))
+            .with_context(|| format!("setting socket permissions on {:?}", socket_path))?;
+
         info!("Runner listening on {:?}", socket_path);
 
         let mut shutdown_rx = self.shutdown_tx.subscribe();
