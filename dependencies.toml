@@ -16,7 +16,7 @@ trx = "0.2.1"
 agntz = "0.3.0"
 mailz = "0.1.0"
 sx = "latest"  # No tags on GitHub yet
-sldr = "0.1.1"
+sldr = "0.2.0"
 
 # Optional: Voice mode
 eaRS = "0.4.2"
