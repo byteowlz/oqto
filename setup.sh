@@ -1147,6 +1147,86 @@ BYTEOWLZ_GITHUB="https://github.com/byteowlz"
 # Global install directory for all agent tools
 TOOLS_INSTALL_DIR="/usr/local/bin"
 
+# Read a tool version from dependencies.toml
+# Usage: get_dep_version hstry -> "0.4.4"
+get_dep_version() {
+  local tool="$1"
+  local deps_file="${SCRIPT_DIR}/dependencies.toml"
+  if [[ ! -f "$deps_file" ]]; then
+    echo ""
+    return
+  fi
+  # Simple TOML parser: find "tool = "version"" under [byteowlz] section
+  sed -n '/^\[byteowlz\]/,/^\[/{s/^'"$tool"' *= *"\(.*\)"/\1/p}' "$deps_file" | head -1
+}
+
+# Detect platform for GitHub release downloads
+get_release_target() {
+  local arch
+  arch=$(uname -m)
+  local os
+  os=$(uname -s)
+
+  case "$os" in
+    Linux)
+      case "$arch" in
+        x86_64)  echo "x86_64-unknown-linux-gnu" ;;
+        aarch64) echo "aarch64-unknown-linux-gnu" ;;
+        *)       echo "" ;;
+      esac
+      ;;
+    Darwin)
+      case "$arch" in
+        x86_64)  echo "x86_64-apple-darwin" ;;
+        arm64)   echo "aarch64-apple-darwin" ;;
+        *)       echo "" ;;
+      esac
+      ;;
+    *) echo "" ;;
+  esac
+}
+
+# Download pre-built binary from GitHub releases.
+# Falls back to cargo install if download fails or no release exists.
+# Usage: download_or_build_tool <binary> <repo> [package]
+#   binary:  name of the binary to install (e.g., "hstry")
+#   repo:    GitHub repo name (e.g., "hstry")
+#   package: package name for multi-binary repos (e.g., "hstry-cli")
+download_or_build_tool() {
+  local tool="$1"
+  local repo="${2:-$tool}"
+  local pkg="${3:-}"
+
+  local version
+  version=$(get_dep_version "$repo")
+  local target
+  target=$(get_release_target)
+
+  # Try downloading pre-built binary from GitHub releases
+  if [[ -n "$version" && "$version" != "latest" && -n "$target" ]]; then
+    local tag="v${version}"
+    local archive_url="${BYTEOWLZ_GITHUB}/${repo}/releases/download/${tag}/${repo}-${tag}-${target}.tar.gz"
+
+    log_info "Downloading $tool $tag for $target..."
+    local tmpdir
+    tmpdir=$(mktemp -d)
+
+    if curl -fsSL "$archive_url" | tar xz -C "$tmpdir" 2>/dev/null; then
+      if [[ -x "$tmpdir/$tool" ]]; then
+        install_binary_global "$tmpdir/$tool" "$tool"
+        rm -rf "$tmpdir"
+        log_success "$tool $tag installed from release"
+        return 0
+      fi
+    fi
+    rm -rf "$tmpdir"
+    log_info "No pre-built binary available, building from source..."
+  fi
+
+  # Fall back to cargo install
+  install_rust_tool "$tool" "$repo" "$pkg"
+}
+
 # Move a built binary into TOOLS_INSTALL_DIR
 install_binary_global() {
   local binary_path="$1"
@@ -1306,22 +1386,22 @@ install_go_tool() {
 
 install_agntz() {
   log_step "Installing agntz (Agent Toolkit)"
-  install_rust_tool agntz
+  download_or_build_tool agntz
 }
 
 install_all_agent_tools() {
   log_step "Installing agent tools"
 
-  # Core tools (Rust)
-  # Multi-binary repos need the 3rd arg (package hint) so cargo knows which binary to build
-  install_rust_tool hstry hstry hstry-cli
-  install_rust_tool hstry-tui hstry hstry-tui
-  install_rust_tool agntz
-  install_rust_tool mmry mmry mmry-cli
-  install_rust_tool mmry-service mmry mmry-service
-  install_rust_tool tmpltr
-  install_rust_tool sldr sldr sldr-cli
-  install_rust_tool ignr
+  # Core tools (Rust) - tries pre-built GitHub release first, falls back to cargo
+  # Multi-binary repos need the 3rd arg (package hint) for cargo fallback
+  download_or_build_tool hstry hstry hstry-cli
+  download_or_build_tool hstry-tui hstry hstry-tui
+  download_or_build_tool agntz
+  download_or_build_tool mmry mmry mmry-cli
+  download_or_build_tool mmry-service mmry mmry-service
+  download_or_build_tool tmpltr
+  download_or_build_tool sldr sldr sldr-cli
+  download_or_build_tool ignr
 
   # Core tools (Go)
   install_go_tool scrpr
@@ -1369,11 +1449,11 @@ install_agent_tools_selected() {
   fi
 
   # hstry is required for per-user chat history (systemd user service)
-  install_rust_tool hstry hstry hstry-cli
+  download_or_build_tool hstry hstry hstry-cli
 
   if [[ "$INSTALL_MMRY" == "true" ]]; then
-    install_rust_tool mmry mmry mmry-cli
-    install_rust_tool mmry-service mmry mmry-service
+    download_or_build_tool mmry mmry mmry-cli
+    download_or_build_tool mmry-service mmry mmry-service
   fi
 
   # Use agntz tools install for additional tools if agntz is available
@@ -1810,7 +1890,7 @@ install_eavs() {
     install_eavs_keyring_deps
   fi
 
-  install_rust_tool eavs
+  download_or_build_tool eavs
 
   if ! command_exists eavs; then
     log_error "EAVS installation failed"
