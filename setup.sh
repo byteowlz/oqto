@@ -476,9 +476,9 @@ check_prerequisites() {
     log_success "Rust: $(cargo --version)"
   fi
 
-  # Bun (for frontend)
-  if ! command_exists bun; then
-    log_warn "Bun not found"
+  # Bun (for frontend and pi)
+  if ! command_exists bun || ! bun --version >/dev/null 2>&1; then
+    log_warn "Bun not found or broken"
     if confirm "Install Bun?"; then
       install_bun
     else
@@ -486,6 +486,8 @@ check_prerequisites() {
     fi
   else
     log_success "Bun: $(bun --version)"
+    # Always ensure bun and pi are globally accessible
+    ensure_bun_and_pi_global
   fi
 
   # Check container runtime if container mode selected
@@ -500,6 +502,59 @@ check_prerequisites() {
   fi
 
   log_success "All prerequisites satisfied"
+
+  # Install system prerequisites that may be missing
+  install_system_prerequisites
+}
+
+install_system_prerequisites() {
+  log_info "Checking system prerequisites..."
+
+  local pkgs=()
+
+  # bubblewrap is required for Pi process sandboxing
+  if ! command_exists bwrap; then
+    pkgs+=("bubblewrap")
+  fi
+
+  # sqlite3 CLI is useful for debugging
+  if ! command_exists sqlite3; then
+    case "$OS_DISTRO" in
+    arch | manjaro | endeavouros) pkgs+=("sqlite") ;;
+    *) pkgs+=("sqlite3") ;;
+    esac
+  fi
+
+  if [[ ${#pkgs[@]} -eq 0 ]]; then
+    log_success "All system prerequisites already installed"
+    return 0
+  fi
+
+  log_info "Installing system prerequisites: ${pkgs[*]}"
+  case "$OS_DISTRO" in
+  arch | manjaro | endeavouros)
+    sudo pacman -S --noconfirm "${pkgs[@]}"
+    ;;
+  debian | ubuntu | pop | linuxmint)
+    apt_update_once
+    sudo apt-get install -y "${pkgs[@]}"
+    ;;
+  fedora | centos | rhel | rocky | alma*)
+    sudo dnf install -y "${pkgs[@]}"
+    ;;
+  opensuse*)
+    sudo zypper install -y "${pkgs[@]}"
+    ;;
+  *)
+    log_warn "Unknown distribution $OS_DISTRO. Please install manually: ${pkgs[*]}"
+    ;;
+  esac
+
+  if command_exists bwrap; then
+    log_success "bubblewrap (bwrap) installed"
+  else
+    log_warn "bubblewrap (bwrap) not installed. Pi sandboxing will be disabled."
+  fi
 }
 
 check_container_runtime() {
@@ -548,6 +603,14 @@ install_bun() {
   curl -fsSL https://bun.sh/install | bash
   export PATH="$HOME/.bun/bin:$PATH"
 
+  log_success "Bun installed: $(bun --version)"
+
+  ensure_bun_and_pi_global
+}
+
+# Ensure bun and pi are globally accessible to all platform users.
+# Called both after fresh install and on every setup run.
+ensure_bun_and_pi_global() {
   # Always copy bun to /usr/local/bin for multi-user access.
   # Use install(1) which copies the file (not symlink) and sets permissions.
   # This also fixes broken symlinks from previous installs.
@@ -557,11 +620,12 @@ install_bun() {
     log_info "Installed bun to /usr/local/bin for multi-user access"
   fi
 
-  log_success "Bun installed: $(bun --version)"
+  # Install pi (AI coding agent) if not already present
+  if ! command_exists pi || ! pi --version >/dev/null 2>&1; then
+    log_info "Installing pi coding agent..."
+    bun install -g @mariozechner/pi-coding-agent
+  fi
 
-  # Install pi (AI coding agent) globally
-  log_info "Installing pi coding agent..."
-  bun install -g @mariozechner/pi-coding-agent
   # Create a global wrapper so all platform users can run pi.
   # bun global installs go to ~/.bun/install/global/ which is per-user,
   # so we need a wrapper script that uses the global bun binary.
@@ -569,16 +633,11 @@ install_bun() {
   pi_module="$(readlink -f "$HOME/.bun/bin/pi" 2>/dev/null || true)"
   if [[ -n "$pi_module" && -f "$pi_module" ]]; then
     sudo tee /usr/local/bin/pi >/dev/null <<PIEOF
-#!/usr/local/bin/bun
-PIEOF
-    # Bun supports shebang scripts -- a file with #!/usr/local/bin/bun as shebang
-    # and the rest being the JS module doesn't work. Use a shell wrapper instead.
-    sudo tee /usr/local/bin/pi >/dev/null <<PIEOF
 #!/usr/bin/env bash
 exec /usr/local/bin/bun run "$pi_module" "\$@"
 PIEOF
     sudo chmod 755 /usr/local/bin/pi
-    log_success "Installed pi to /usr/local/bin: $(/usr/local/bin/pi --version 2>/dev/null || echo 'installed')"
+    log_success "pi available at /usr/local/bin: $(/usr/local/bin/pi --version 2>/dev/null || echo 'installed')"
   else
     log_warn "Could not find pi module path. Pi may not be globally accessible."
   fi
