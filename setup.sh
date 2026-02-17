@@ -624,7 +624,7 @@ install_ttyd_from_source() {
 # ==============================================================================
 
 # GitHub repo for Pi agent extensions (SSH for private repo access)
-PI_EXTENSIONS_REPO="git@github.com:byteowlz/pi-agent-extensions.git"
+PI_EXTENSIONS_REPO="https://github.com/byteowlz/pi-agent-extensions.git"
 
 # Default extensions to install (subset of what's available in the repo)
 # These are the Octo-relevant extensions; users can install others via the
