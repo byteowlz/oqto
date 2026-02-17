@@ -4656,6 +4656,57 @@ start_all_services() {
         sudo systemctl start "$svc" && log_success "$svc: started" || log_warn "$svc: failed to start"
       fi
     done
+
+    # Re-provision all existing platform users' runner services.
+    # The usermgr was just restarted with new service file templates,
+    # so we need to push updated service files to all octo_* users and
+    # restart their runners.
+    log_info "Updating per-user services for existing platform users..."
+    for user_home in /home/octo_*; do
+      local username
+      username=$(basename "$user_home")
+      local uid
+      uid=$(id -u "$username" 2>/dev/null) || continue
+
+      log_info "Updating services for $username (uid=$uid)..."
+
+      # Stop existing user services (they have stale service files)
+      local runtime_dir="/run/user/$uid"
+      local bus="unix:path=${runtime_dir}/bus"
+      sudo runuser -u "$username" -- env \
+        XDG_RUNTIME_DIR="$runtime_dir" \
+        DBUS_SESSION_BUS_ADDRESS="$bus" \
+        systemctl --user stop octo-runner hstry mmry 2>/dev/null || true
+
+      # Remove stale socket
+      sudo rm -f "/run/octo/runner-sockets/${username}/octo-runner.sock"
+
+      # Trigger usermgr to rewrite service files and restart.
+      # The usermgr socket is owned by octo:root 0600, so we must run as octo.
+      if [[ -S /run/octo/usermgr.sock ]]; then
+        local response
+        response=$(sudo -u octo python3 -c "
+import socket, json, sys
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.connect('/run/octo/usermgr.sock')
+req = json.dumps({'cmd': 'setup-user-runner', 'args': {'username': '${username}', 'uid': ${uid}}}) + '\n'
+s.sendall(req.encode())
+data = b''
+while True:
+    chunk = s.recv(4096)
+    if not chunk: break
+    data += chunk
+    if b'\n' in data: break
+s.close()
+print(data.decode().strip())
+" 2>/dev/null)
+        if echo "$response" | grep -q '"ok":true'; then
+          log_success "$username: services updated"
+        else
+          log_warn "$username: setup-user-runner failed: $response"
+        fi
+      fi
+    done
   else
     start_svc eavs "$is_user_service"
     start_svc octo "$is_user_service"
