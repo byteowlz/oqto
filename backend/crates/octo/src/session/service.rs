@@ -1426,9 +1426,17 @@ impl SessionService {
             env.insert("ANTHROPIC_API_KEY".to_string(), virtual_key.to_string());
             env.insert("OPENAI_API_KEY".to_string(), virtual_key.to_string());
         } else {
-            // Load per-user eavs.env if it exists (provisioned by octoctl user create --eavs)
-            // This provides EAVS_API_KEY for Pi's models.json provider config
-            let user_home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+            // Load per-user eavs.env if it exists (provisioned by admin API or octoctl --eavs).
+            // This provides EAVS_API_KEY for Pi's models.json provider config.
+            //
+            // In single-user mode, read from $HOME. In multi-user mode, derive the
+            // user's home from workspace_path (which is their linux home).
+            let user_home = if self.config.single_user {
+                std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string())
+            } else {
+                // workspace_path is typically /home/octo_{user_id}
+                session.workspace_path.clone()
+            };
             let eavs_env_path = format!("{}/.config/octo/eavs.env", user_home);
             if let Ok(contents) = std::fs::read_to_string(&eavs_env_path) {
                 for line in contents.lines() {
