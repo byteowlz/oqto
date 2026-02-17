@@ -4631,9 +4631,20 @@ start_all_services() {
     fi
   }
 
-  # Core services
-  start_svc eavs "$is_user_service"
-  start_svc octo "$is_user_service"
+  # Core services (restart to pick up rebuilt binaries)
+  if [[ "$is_user_service" == "false" ]]; then
+    # Multi-user: restart system services to pick up new binaries
+    for svc in octo-usermgr eavs octo; do
+      if sudo systemctl is-active "$svc" &>/dev/null; then
+        sudo systemctl restart "$svc" && log_success "$svc: restarted" || log_warn "$svc: failed to restart"
+      elif sudo systemctl is-enabled "$svc" &>/dev/null; then
+        sudo systemctl start "$svc" && log_success "$svc: started" || log_warn "$svc: failed to start"
+      fi
+    done
+  else
+    start_svc eavs "$is_user_service"
+    start_svc octo "$is_user_service"
+  fi
 
   # Reverse proxy
   if [[ "$SETUP_CADDY" == "yes" ]]; then
