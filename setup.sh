@@ -525,6 +525,21 @@ install_system_prerequisites() {
     esac
   fi
 
+  # zsh is the default shell for platform users
+  if ! command_exists zsh; then
+    pkgs+=("zsh")
+  fi
+
+  # starship prompt for a nice terminal experience
+  if ! command_exists starship; then
+    log_info "Installing starship prompt..."
+    if curl -sS https://starship.rs/install.sh | sh -s -- -y >/dev/null 2>&1; then
+      log_success "starship installed"
+    else
+      log_warn "Failed to install starship. Users will have a basic prompt."
+    fi
+  fi
+
   if [[ ${#pkgs[@]} -eq 0 ]]; then
     log_success "All system prerequisites already installed"
     return 0
@@ -554,6 +569,18 @@ install_system_prerequisites() {
     log_success "bubblewrap (bwrap) installed"
   else
     log_warn "bubblewrap (bwrap) not installed. Pi sandboxing will be disabled."
+  fi
+
+  if command_exists zsh; then
+    log_success "zsh installed"
+  else
+    log_warn "zsh not installed. Platform users will fall back to bash."
+  fi
+
+  if command_exists starship; then
+    log_success "starship prompt installed"
+  else
+    log_warn "starship not installed. Platform users will have a basic prompt."
   fi
 }
 
