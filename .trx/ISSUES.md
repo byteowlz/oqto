@@ -120,12 +120,6 @@ The sudoers configuration in setup.sh had critical security vulnerabilities that
 ### [octo-p3n2] API Key Authentication & External Integration (P1, epic)
 Enable external apps (omni, ctx) to integrate with Octo via API keys. Support fire-and-forget and streaming responses, .ctx context files, auto-session creation.
 
-### [octo-9bqx] Add limits to zip download endpoints to prevent disk/CPU exhaustion (P1, bug)
-Zip creation for /download and /download-zip has no caps on total size, file count, or path count; a single request can create huge archives and fill disk/CPU. Add configurable limits (max total bytes, max entries, max depth) and fail early. Consider streaming without temp files or rejecting large directories. Affected: backend/crates/octo-files/src/handlers.rs (download, download_zip, create_zip_file_from_paths, create_zip_tempfile_blocking).
-
-### [octo-k9sp] Restrict token query auth to WebSocket-only paths (P1, bug)
-Auth middleware accepts a token from the query string for all requests (not just WS upgrades). This risks leaking tokens via logs/referrers and enables accidental use on normal HTTP endpoints. Consider restricting query-token auth to Upgrade: websocket requests or specific WS routes, or require the auth_token cookie instead. Affected: backend/crates/octo/src/auth/middleware.rs (query_token parsing and selection).
-
 ### [octo-xjs5.10] Test plan: isolation matrix (P1, task)
 Add automated tests / manual checklist for:
 - local single-user
@@ -920,6 +914,8 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [octo-9bqx] Add limits to zip download endpoints to prevent disk/CPU exhaustion (closed 2026-02-17)
+- [octo-k9sp] Restrict token query auth to WebSocket-only paths (closed 2026-02-17)
 - [octo-zjs8.1] Fix all clippy warnings in backend crates (closed 2026-02-16)
 - [octo-1194] Remove OpenCode harness code (closed 2026-02-15)
 - [octo-1194.6] Phase 5: Remove agent and session service OpenCode references (closed 2026-02-15)
@@ -1517,8 +1513,8 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
 - [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
-- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (closed )
+- [octo-k8z1.2] Backend: WebSocket proxy for screencast stream (closed )
+- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
 - [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [octo-k8z1.2] Backend: WebSocket proxy for screencast stream (closed )

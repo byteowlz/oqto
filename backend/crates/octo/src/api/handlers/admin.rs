@@ -227,6 +227,7 @@ pub struct SyncUserConfigResult {
     pub linux_username: Option<String>,
     pub runner_configured: bool,
     pub mmry_configured: bool,
+    pub eavs_configured: bool,
     pub error: Option<String>,
 }
 
@@ -266,6 +267,7 @@ pub async fn sync_user_configs(
             linux_username: user.linux_username.clone(),
             runner_configured: false,
             mmry_configured: false,
+            eavs_configured: false,
             error: None,
         };
 
@@ -323,6 +325,30 @@ pub async fn sync_user_configs(
                         }
                         Err(err) => {
                             result.error = Some(format!("mmry config update failed: {err}"));
+                        }
+                    }
+                }
+
+                // Sync EAVS models.json (regenerates from current eavs catalog, no key rotation)
+                if let Some(ref eavs_client) = state.eavs_client {
+                    match sync_eavs_models_json(
+                        eavs_client,
+                        linux_users,
+                        &linux_username,
+                    )
+                    .await
+                    {
+                        Ok(()) => {
+                            result.eavs_configured = true;
+                        }
+                        Err(err) => {
+                            let msg = format!("eavs models.json sync failed: {err}");
+                            if let Some(ref mut existing) = result.error {
+                                existing.push_str("; ");
+                                existing.push_str(&msg);
+                            } else {
+                                result.error = Some(msg);
+                            }
                         }
                     }
                 }
@@ -467,6 +493,33 @@ pub async fn create_user(
         warn!(user_id = %user.id, error = %e, "Failed to allocate user mmry port");
     }
 
+    // Provision EAVS virtual key and write Pi models.json if eavs client is available
+    if let (Some(eavs_client), Some(linux_users)) =
+        (&state.eavs_client, &state.linux_users)
+    {
+        let linux_username = user
+            .linux_username
+            .as_deref()
+            .unwrap_or(&user.id);
+
+        match provision_eavs_for_user(eavs_client, linux_users, linux_username, &user.id).await {
+            Ok(key_id) => {
+                info!(
+                    user_id = %user.id,
+                    eavs_key_id = %key_id,
+                    "Provisioned EAVS key and models.json"
+                );
+            }
+            Err(e) => {
+                warn!(
+                    user_id = %user.id,
+                    error = ?e,
+                    "Failed to provision EAVS (non-fatal)"
+                );
+            }
+        }
+    }
+
     info!(user_id = %user.id, "Created new user");
     Ok((StatusCode::CREATED, Json(user.into())))
 }
@@ -538,4 +591,66 @@ pub async fn get_user_stats(
     let stats = state.users.get_stats().await?;
 
     Ok(Json(stats))
+}
+
+/// Provision an EAVS virtual key and Pi models.json for a new user.
+///
+/// Creates a virtual key bound to the user via oauth_user, queries provider
+/// details for model catalog, generates models.json, and writes eavs.env.
+async fn provision_eavs_for_user(
+    eavs_client: &crate::eavs::EavsClient,
+    linux_users: &crate::local::LinuxUsersConfig,
+    linux_username: &str,
+    octo_user_id: &str,
+) -> anyhow::Result<String> {
+    use crate::eavs::CreateKeyRequest;
+
+    // 1. Create virtual key with oauth_user binding
+    let key_req =
+        CreateKeyRequest::new(format!("octo-user-{}", octo_user_id)).oauth_user(octo_user_id);
+
+    let key_resp = eavs_client
+        .create_key(key_req)
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to create eavs key: {}", e))?;
+
+    // 2. Write eavs.env with the new key
+    let home = linux_users.get_user_home(linux_username)?;
+    let eavs_base = eavs_client.base_url();
+    let env_content = format!("EAVS_API_KEY={}\nEAVS_URL={}\n", key_resp.key, eavs_base);
+    let env_dir = format!("{}/.config/octo", home);
+    linux_users.write_file_as_user(linux_username, &env_dir, "eavs.env", &env_content)?;
+    linux_users.chmod_file(linux_username, &format!("{}/eavs.env", env_dir), "600")?;
+
+    // 3. Regenerate models.json from current catalog
+    sync_eavs_models_json(eavs_client, linux_users, linux_username).await?;
+
+    Ok(key_resp.key_id)
+}
+
+/// Regenerate Pi models.json from the current eavs model catalog.
+///
+/// This is safe to call repeatedly -- it only regenerates models.json,
+/// it does NOT create or rotate eavs keys.
+async fn sync_eavs_models_json(
+    eavs_client: &crate::eavs::EavsClient,
+    linux_users: &crate::local::LinuxUsersConfig,
+    linux_username: &str,
+) -> anyhow::Result<()> {
+    use crate::eavs::generate_pi_models_json;
+
+    let providers = eavs_client
+        .providers_detail()
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to query eavs providers: {}", e))?;
+
+    let eavs_base = eavs_client.base_url();
+    let models_json = generate_pi_models_json(&providers, eavs_base);
+    let models_content = serde_json::to_string_pretty(&models_json)?;
+
+    let home = linux_users.get_user_home(linux_username)?;
+    let pi_dir = format!("{}/.pi/agent", home);
+    linux_users.write_file_as_user(linux_username, &pi_dir, "models.json", &models_content)?;
+
+    Ok(())
 }
