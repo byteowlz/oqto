@@ -576,8 +576,7 @@ mod tests {
         let runtime2 = runtime1.clone();
 
         // Both should have same config
-        assert_eq!(
-        );
+        assert_eq!(runtime1.config.workspace_dir, runtime2.config.workspace_dir);
     }
 
     #[tokio::test]

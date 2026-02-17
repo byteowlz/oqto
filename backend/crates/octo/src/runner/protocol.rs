@@ -2019,6 +2019,7 @@ mod tests {
     fn test_pi_session_state() {
         let info = PiSessionInfo {
             session_id: "ses_123".to_string(),
+            hstry_id: None,
             state: PiSessionState::Streaming,
             last_activity: 1234567890000,
             subscriber_count: 2,

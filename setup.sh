@@ -1131,7 +1131,6 @@ setup_feedback_dirs() {
 #   trx     - Issue/task tracking
 #   scrpr   - Web content extraction (readability, Tavily, Jina)
 #   tmpltr  - Document generation from templates (Typst)
-#   sldr    - Markdown presentations (Slidev)
 #   ignr    - Gitignore generation (auto-detect languages/tools)
 #
 # Installation sources (in order of preference):
@@ -1400,7 +1399,6 @@ install_all_agent_tools() {
   download_or_build_tool mmry mmry mmry-cli
   download_or_build_tool mmry-service mmry mmry-service
   download_or_build_tool tmpltr
-  download_or_build_tool sldr sldr sldr-cli
   download_or_build_tool ignr
 
   # Core tools (Go)
@@ -1422,7 +1420,6 @@ select_agent_tools() {
   echo
   echo -e "  ${BOLD}Additional tools:${NC}"
   echo "    tmpltr  - Document generation from templates"
-  echo "    sldr    - Markdown presentations"
   echo "    ignr    - Gitignore generation"
   echo "    trx     - Issue/task tracking"
   echo
@@ -4812,7 +4809,7 @@ print_summary() {
   echo
 
   echo "  Agent tools:"
-  for tool in agntz mmry scrpr sx tmpltr sldr ignr; do
+  for tool in agntz mmry scrpr sx tmpltr ignr; do
     printf "    %-14s " "$tool:"
     echo -e "$(check_bin "$tool")"
   done
@@ -5041,7 +5038,6 @@ Agent Tools:
   scrpr   - Web content extraction (readability, Tavily, Jina)
   sx      - Web search via local SearXNG instance
   tmpltr  - Document generation from templates (Typst)
-  sldr    - Markdown presentations (Slidev)
   ignr    - Gitignore generation (auto-detect)
 
 Other Tools:
