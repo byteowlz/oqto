@@ -620,7 +620,8 @@ async fn provision_eavs_for_user(
     let env_content = format!("EAVS_API_KEY={}\nEAVS_URL={}\n", key_resp.key, eavs_base);
     let env_dir = format!("{}/.config/octo", home);
     linux_users.write_file_as_user(linux_username, &env_dir, "eavs.env", &env_content)?;
-    linux_users.chmod_file(linux_username, &format!("{}/eavs.env", env_dir), "600")?;
+    // 640 so the octo service user (in the shared group) can read it for env injection
+    linux_users.chmod_file(linux_username, &format!("{}/eavs.env", env_dir), "640")?;
 
     // 3. Regenerate models.json from current catalog
     sync_eavs_models_json(eavs_client, linux_users, linux_username).await?;

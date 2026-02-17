@@ -2603,9 +2603,9 @@ async fn provision_eavs_for_user(
     let env_path = format!("{}/.config/octo/eavs.env", home);
     write_file_as_user(linux_username, &env_path, &env_content)?;
 
-    // Set restrictive permissions (contains secret key)
+    // 640 so the octo service user (in the shared group) can read it for env injection
     let _ = std::process::Command::new("sudo")
-        .args(["-u", linux_username, "chmod", "600", &env_path])
+        .args(["-u", linux_username, "chmod", "640", &env_path])
         .status();
 
     if !json_output {
