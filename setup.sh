@@ -2882,9 +2882,13 @@ build_octo() {
     sudo cp "$browserd_dir/dist/"*.js "$browserd_deploy/dist/"
     sudo cp "$browserd_dir/package.json" "$browserd_deploy/"
     (cd "$browserd_deploy" && sudo bun install --production)
-    # Install Playwright browsers (chromium only)
-    sudo npx --yes playwright install --with-deps chromium 2>/dev/null || \
-      sudo bunx playwright install --with-deps chromium 2>/dev/null || \
+    # Install Playwright browsers to a shared location accessible by all users
+    local pw_browsers="/usr/local/share/playwright-browsers"
+    sudo mkdir -p "$pw_browsers"
+    sudo chmod 755 "$pw_browsers"
+    log_info "Installing Playwright chromium to $pw_browsers..."
+    sudo PLAYWRIGHT_BROWSERS_PATH="$pw_browsers" npx --yes playwright install --with-deps chromium 2>/dev/null || \
+      sudo PLAYWRIGHT_BROWSERS_PATH="$pw_browsers" bunx playwright install --with-deps chromium 2>/dev/null || \
       log_warn "Playwright browser install failed - agent browser may not work"
     log_success "Agent browser daemon installed to $browserd_deploy"
   else
@@ -4441,6 +4445,7 @@ After=default.target
 Type=simple
 Environment=OCTO_CONFIG=$OCTO_CONFIG_DIR/config.toml
 Environment=RUST_LOG=$OCTO_LOG_LEVEL
+Environment=PLAYWRIGHT_BROWSERS_PATH=/usr/local/share/playwright-browsers
 EnvironmentFile=-$OCTO_CONFIG_DIR/env
 ExecStart=/usr/local/bin/octo serve --local-mode
 ExecStop=/bin/kill -TERM \$MAINPID
@@ -4524,6 +4529,7 @@ Environment=XDG_DATA_HOME=${octo_home}/.local/share
 Environment=XDG_STATE_HOME=${octo_home}/.local/state
 Environment=OCTO_CONFIG=${octo_config_home}/config.toml
 Environment=RUST_LOG=$OCTO_LOG_LEVEL
+Environment=PLAYWRIGHT_BROWSERS_PATH=/usr/local/share/playwright-browsers
 EnvironmentFile=-${octo_config_home}/env
 ExecStart=/usr/local/bin/octo serve
 ExecStop=/bin/kill -TERM \$MAINPID
