@@ -161,6 +161,7 @@ export const adminKeys = {
 	userStats: () => [...adminKeys.all, "userStats"] as const,
 	inviteCodes: () => [...adminKeys.all, "inviteCodes"] as const,
 	inviteCodeStats: () => [...adminKeys.all, "inviteCodeStats"] as const,
+	eavsProviders: () => [...adminKeys.all, "eavsProviders"] as const,
 };
 
 // ============================================================================
@@ -548,4 +549,91 @@ export function useAdminMetrics() {
 	}, [connect, disconnect]);
 
 	return { metrics, error, isConnected, reconnect: connect };
+}
+
+// ============================================================================
+// EAVS / Model Provider Types & Hooks
+// ============================================================================
+
+export type EavsModelSummary = {
+	id: string;
+	name: string;
+	reasoning: boolean;
+};
+
+export type EavsProviderSummary = {
+	name: string;
+	type: string;
+	pi_api: string | null;
+	has_api_key: boolean;
+	model_count: number;
+	models: EavsModelSummary[];
+};
+
+export type EavsProvidersResponse = {
+	providers: EavsProviderSummary[];
+	eavs_url: string;
+};
+
+export type SyncUserConfigResult = {
+	user_id: string;
+	linux_username: string | null;
+	runner_configured: boolean;
+	mmry_configured: boolean;
+	eavs_configured: boolean;
+	error: string | null;
+};
+
+export type SyncUserConfigsResponse = {
+	results: SyncUserConfigResult[];
+};
+
+async function fetchEavsProviders(): Promise<EavsProvidersResponse> {
+	const res = await fetch(controlPlaneApiUrl("/api/admin/eavs/providers"), {
+		headers: getAuthHeaders(),
+	});
+	if (!res.ok) {
+		const text = await res.text();
+		throw new Error(text || `HTTP ${res.status}`);
+	}
+	return res.json();
+}
+
+async function syncUserConfigs(
+	userId?: string,
+): Promise<SyncUserConfigsResponse> {
+	const res = await fetch(
+		controlPlaneApiUrl("/api/admin/users/sync-configs"),
+		{
+			method: "POST",
+			headers: {
+				...getAuthHeaders(),
+				"Content-Type": "application/json",
+			},
+			body: JSON.stringify(userId ? { user_id: userId } : {}),
+		},
+	);
+	if (!res.ok) {
+		const text = await res.text();
+		throw new Error(text || `HTTP ${res.status}`);
+	}
+	return res.json();
+}
+
+export function useEavsProviders() {
+	return useQuery({
+		queryKey: adminKeys.eavsProviders(),
+		queryFn: fetchEavsProviders,
+		staleTime: 30_000,
+	});
+}
+
+export function useSyncUserConfigs() {
+	const queryClient = useQueryClient();
+	return useMutation({
+		mutationFn: (userId?: string) => syncUserConfigs(userId),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: adminKeys.users() });
+		},
+	});
 }

@@ -5,6 +5,7 @@ import { useApp } from "@/hooks/use-app";
 import { cn } from "@/lib/utils";
 import {
 	Activity,
+	Blocks,
 	PanelLeftClose,
 	PanelRightClose,
 	Shield,
@@ -16,6 +17,7 @@ import { Suspense, lazy, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { InviteCodesPanel } from "./InviteCodesPanel";
 import { MetricsPanel } from "./MetricsPanel";
+import { ModelsPanel } from "./ModelsPanel";
 import { SessionsPanel } from "./SessionsPanel";
 import { UsersPanel } from "./UsersPanel";
 
@@ -59,7 +61,7 @@ export function AdminApp() {
 	const { setActiveAppId, locale } = useApp();
 	const navigate = useNavigate();
 	const [activeSection, setActiveSection] = useState<
-		"overview" | "sessions" | "users" | "invites"
+		"overview" | "sessions" | "users" | "invites" | "models"
 	>("overview");
 	const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(false);
 
@@ -73,6 +75,7 @@ export function AdminApp() {
 		sessions: locale === "de" ? "Sessions" : "Sessions",
 		users: locale === "de" ? "Benutzer" : "Users",
 		invites: locale === "de" ? "Einladungen" : "Invite Codes",
+		models: locale === "de" ? "Modelle" : "Models",
 		close: locale === "de" ? "Schliessen" : "Close",
 		title: locale === "de" ? "ADMIN DASHBOARD" : "ADMIN DASHBOARD",
 		subtitle:
@@ -96,6 +99,8 @@ export function AdminApp() {
 				return <UsersPanel />;
 			case "invites":
 				return <InviteCodesPanel />;
+			case "models":
+				return <ModelsPanel />;
 			default:
 				return null;
 		}
@@ -130,6 +135,12 @@ export function AdminApp() {
 							onClick={() => setActiveSection("invites")}
 							icon={Ticket}
 							label={labels.invites}
+						/>
+						<SectionTabButton
+							active={activeSection === "models"}
+							onClick={() => setActiveSection("models")}
+							icon={Blocks}
+							label={labels.models}
 						/>
 					</div>
 				</div>
@@ -181,6 +192,12 @@ export function AdminApp() {
 									onClick={() => setActiveSection("invites")}
 									icon={Ticket}
 									label={labels.invites}
+								/>
+								<SectionTabButton
+									active={activeSection === "models"}
+									onClick={() => setActiveSection("models")}
+									icon={Blocks}
+									label={labels.models}
 								/>
 							</div>
 							<Button
