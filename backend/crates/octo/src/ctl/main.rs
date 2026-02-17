@@ -2538,30 +2538,22 @@ async fn provision_eavs_for_user(
     budget: Option<f64>,
     json_output: bool,
 ) -> Result<String> {
-    let client = reqwest::Client::new();
+    use octo::eavs::{
+        generate_pi_models_json, CreateKeyRequest, EavsClient, KeyPermissions,
+    };
+
     let eavs_base = eavs_url.trim_end_matches('/');
+    let eavs = EavsClient::new(eavs_base, master_key.unwrap_or(""))
+        .context("Failed to create eavs client")?;
 
     // 1. Query eavs for configured providers
     if !json_output {
         println!("Querying eavs providers...");
     }
-    let providers_resp = client
-        .get(format!("{}/providers/detail", eavs_base))
-        .send()
+    let providers = eavs
+        .providers_detail()
         .await
-        .context("Failed to connect to eavs")?;
-
-    if !providers_resp.status().is_success() {
-        anyhow::bail!(
-            "eavs /providers/detail returned {}",
-            providers_resp.status()
-        );
-    }
-
-    let providers: Vec<serde_json::Value> = providers_resp
-        .json()
-        .await
-        .context("Failed to parse eavs provider response")?;
+        .context("Failed to query eavs providers")?;
 
     if !json_output {
         println!(
@@ -2569,7 +2561,7 @@ async fn provision_eavs_for_user(
             providers.len(),
             providers
                 .iter()
-                .filter_map(|p| p["name"].as_str())
+                .map(|p| p.name.as_str())
                 .collect::<Vec<_>>()
                 .join(", ")
         );
@@ -2580,44 +2572,19 @@ async fn provision_eavs_for_user(
         println!("Creating eavs virtual key...");
     }
 
-    let mut key_request = serde_json::json!({
-        "name": format!("octo-user-{}", octo_username),
-        "oauth_user": octo_username,
-    });
+    let mut key_req = CreateKeyRequest::new(format!("octo-user-{}", octo_username))
+        .oauth_user(octo_username);
     if let Some(budget_usd) = budget {
-        key_request["permissions"] = serde_json::json!({
-            "max_budget_usd": budget_usd,
-        });
+        key_req = key_req.permissions(KeyPermissions::with_budget(budget_usd));
     }
 
-    let mut req = client
-        .post(format!("{}/admin/keys", eavs_base))
-        .json(&key_request);
-    if let Some(mk) = master_key {
-        req = req.header("Authorization", format!("Bearer {}", mk));
-    }
-
-    let key_resp = req.send().await.context("Failed to create eavs key")?;
-
-    if !key_resp.status().is_success() {
-        let body = key_resp.text().await.unwrap_or_default();
-        anyhow::bail!("Failed to create eavs key: {}", body);
-    }
-
-    let key_data: serde_json::Value = key_resp
-        .json()
+    let key_resp = eavs
+        .create_key(key_req)
         .await
-        .context("Failed to parse eavs key response")?;
-
-    let eavs_key = key_data["key"]
-        .as_str()
-        .context("Missing key in eavs response")?;
-    let key_id = key_data["key_id"]
-        .as_str()
-        .context("Missing key_id in eavs response")?;
+        .context("Failed to create eavs key")?;
 
     if !json_output {
-        println!("  Key created: {} ({})", key_id, eavs_key);
+        println!("  Key created: {} ({})", key_resp.key_id, key_resp.key);
     }
 
     // 3. Generate models.json
@@ -2625,74 +2592,61 @@ async fn provision_eavs_for_user(
 
     // 4. Write to user's home directory
     let home = get_user_home(linux_username)?;
-    let pi_agent_dir = format!("{}/.pi/agent", home);
+    write_file_as_user(
+        linux_username,
+        &format!("{}/.pi/agent/models.json", home),
+        &serde_json::to_string_pretty(&models_json)?,
+    )?;
 
-    // Create directory as user
-    let status = std::process::Command::new("sudo")
-        .args(["-u", linux_username, "mkdir", "-p", &pi_agent_dir])
-        .status()
-        .context("Failed to create .pi/agent directory")?;
+    // 5. Write eavs.env (key + URL for session injection)
+    let env_content = format!("EAVS_API_KEY={}\nEAVS_URL={}\n", key_resp.key, eavs_base);
+    let env_path = format!("{}/.config/octo/eavs.env", home);
+    write_file_as_user(linux_username, &env_path, &env_content)?;
 
-    if !status.success() {
-        anyhow::bail!("Failed to create .pi/agent directory for {}", linux_username);
-    }
-
-    let models_path = format!("{}/models.json", pi_agent_dir);
-    let models_content =
-        serde_json::to_string_pretty(&models_json).context("Failed to serialize models.json")?;
-
-    // Write models.json as user
-    let mut child = std::process::Command::new("sudo")
-        .args(["-u", linux_username, "tee", &models_path])
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::null())
-        .spawn()
-        .context("Failed to write models.json")?;
-
-    if let Some(mut stdin) = child.stdin.take() {
-        use std::io::Write;
-        stdin.write_all(models_content.as_bytes())?;
-    }
-
-    let status = child.wait()?;
-    if !status.success() {
-        anyhow::bail!("Failed to write models.json");
-    }
-
-    // Write the eavs key to a env file that the runner can source
-    let env_dir = format!("{}/.config/octo", home);
-    let _ = std::process::Command::new("sudo")
-        .args(["-u", linux_username, "mkdir", "-p", &env_dir])
-        .status();
-
-    let env_path = format!("{}/eavs.env", env_dir);
-    let env_content = format!("EAVS_API_KEY={}\nEAVS_URL={}\n", eavs_key, eavs_base);
-
-    let mut child = std::process::Command::new("sudo")
-        .args(["-u", linux_username, "tee", &env_path])
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::null())
-        .spawn()
-        .context("Failed to write eavs.env")?;
-
-    if let Some(mut stdin) = child.stdin.take() {
-        use std::io::Write;
-        stdin.write_all(env_content.as_bytes())?;
-    }
-
-    let _ = child.wait();
-
-    // Set restrictive permissions on the env file (contains secret key)
+    // Set restrictive permissions (contains secret key)
     let _ = std::process::Command::new("sudo")
         .args(["-u", linux_username, "chmod", "600", &env_path])
         .status();
 
     if !json_output {
-        println!("  models.json written to {}", models_path);
+        println!("  models.json written to {}/.pi/agent/models.json", home);
         println!("  eavs.env written to {}", env_path);
     }
 
-    Ok(key_id.to_string())
+    Ok(key_resp.key_id)
+}
+
+/// Write a file as a specific user, creating parent directories.
+fn write_file_as_user(username: &str, path: &str, content: &str) -> Result<()> {
+    // Create parent directory
+    if let Some(parent) = std::path::Path::new(path).parent() {
+        let status = std::process::Command::new("sudo")
+            .args(["-u", username, "mkdir", "-p", &parent.display().to_string()])
+            .status()
+            .with_context(|| format!("Failed to create directory {}", parent.display()))?;
+        if !status.success() {
+            anyhow::bail!("Failed to create directory {} for {}", parent.display(), username);
+        }
+    }
+
+    // Write file via tee
+    let mut child = std::process::Command::new("sudo")
+        .args(["-u", username, "tee", path])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .with_context(|| format!("Failed to write {}", path))?;
+
+    if let Some(mut stdin) = child.stdin.take() {
+        use std::io::Write;
+        stdin.write_all(content.as_bytes())?;
+    }
+
+    let status = child.wait()?;
+    if !status.success() {
+        anyhow::bail!("Failed to write {}", path);
+    }
+    Ok(())
 }
 
 /// Get a user's home directory.
@@ -2707,81 +2661,6 @@ fn get_user_home(username: &str) -> Result<String> {
         anyhow::bail!("Could not determine home directory for '{}'", username);
     }
     Ok(home)
-}
-
-/// Generate Pi models.json from eavs provider details.
-///
-/// Creates one Pi provider per eavs provider, each pointing at eavs
-/// with the correct path-prefix routing and Pi API type.
-fn generate_pi_models_json(
-    providers: &[serde_json::Value],
-    eavs_base: &str,
-) -> serde_json::Value {
-    let mut pi_providers = serde_json::Map::new();
-
-    for provider in providers {
-        let name = match provider["name"].as_str() {
-            Some(n) => n,
-            None => continue,
-        };
-        let pi_api = match provider["pi_api"].as_str() {
-            Some(a) => a,
-            None => continue, // Skip providers without Pi API mapping (e.g., mock)
-        };
-        // Skip "default" provider (it's an alias)
-        if name == "default" {
-            continue;
-        }
-
-        // Build base URL with provider path prefix for routing
-        let base_url = format!("{}/{}/v1", eavs_base.trim_end_matches('/'), name);
-
-        // Convert eavs model shortlist to Pi models.json format
-        let eavs_models = provider["models"].as_array();
-        let models: Vec<serde_json::Value> = eavs_models
-            .map(|models| {
-                models
-                    .iter()
-                    .map(|m| {
-                        let input = m["input"]
-                            .as_array()
-                            .map(|a| a.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>())
-                            .unwrap_or_else(|| vec!["text"]);
-                        let cost = &m["cost"];
-                        let cost_obj = serde_json::json!({
-                            "input": cost["input"].as_f64().unwrap_or(0.0),
-                            "output": cost["output"].as_f64().unwrap_or(0.0),
-                            "cacheRead": cost["cache_read"].as_f64().unwrap_or(0.0),
-                            "cacheWrite": 0
-                        });
-                        serde_json::json!({
-                            "id": m["id"],
-                            "name": m["name"].as_str().unwrap_or(m["id"].as_str().unwrap_or("")),
-                            "reasoning": m["reasoning"].as_bool().unwrap_or(false),
-                            "input": input,
-                            "contextWindow": m["context_window"].as_u64().unwrap_or(128_000),
-                            "maxTokens": m["max_tokens"].as_u64().unwrap_or(16_384),
-                            "cost": cost_obj
-                        })
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        let pi_provider = serde_json::json!({
-            "baseUrl": base_url,
-            "api": pi_api,
-            "apiKey": "EAVS_API_KEY",
-            "models": models,
-        });
-
-        let pi_name = format!("eavs-{}", name);
-        pi_providers.insert(pi_name, pi_provider);
-    }
-
-    serde_json::json!({
-        "providers": pi_providers,
-    })
 }
 
 /// Setup octo-runner for a user
