@@ -1425,6 +1425,23 @@ impl SessionService {
             // Also set API keys for agent
             env.insert("ANTHROPIC_API_KEY".to_string(), virtual_key.to_string());
             env.insert("OPENAI_API_KEY".to_string(), virtual_key.to_string());
+        } else {
+            // Load per-user eavs.env if it exists (provisioned by octoctl user create --eavs)
+            // This provides EAVS_API_KEY for Pi's models.json provider config
+            let user_home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+            let eavs_env_path = format!("{}/.config/octo/eavs.env", user_home);
+            if let Ok(contents) = std::fs::read_to_string(&eavs_env_path) {
+                for line in contents.lines() {
+                    let line = line.trim();
+                    if line.is_empty() || line.starts_with('#') {
+                        continue;
+                    }
+                    if let Some((key, value)) = line.split_once('=') {
+                        env.insert(key.trim().to_string(), value.trim().to_string());
+                    }
+                }
+                debug!("Loaded eavs env from {}", eavs_env_path);
+            }
         }
 
         // Enforce skdlr wrapper in Octo sandboxed runs

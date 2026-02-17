@@ -291,6 +291,18 @@ enum UserCommand {
         /// Skip runner setup
         #[arg(long)]
         no_runner: bool,
+        /// Provision eavs virtual key and generate Pi models.json
+        #[arg(long)]
+        eavs: bool,
+        /// Eavs server URL
+        #[arg(long, default_value = "http://127.0.0.1:3033", env = "EAVS_URL")]
+        eavs_url: String,
+        /// Eavs master key for admin API
+        #[arg(long, env = "EAVS_MASTER_KEY")]
+        eavs_master_key: Option<String>,
+        /// Budget limit in USD for the eavs key (default: unlimited)
+        #[arg(long)]
+        eavs_budget: Option<f64>,
     },
     /// List all users
     List {
@@ -1686,6 +1698,10 @@ async fn handle_user(client: &OctoClient, command: UserCommand, json: bool) -> R
             linux_user,
             no_linux_user,
             no_runner,
+            eavs,
+            eavs_url,
+            eavs_master_key,
+            eavs_budget,
         } => {
             let linux_username = linux_user.as_deref().unwrap_or(&username);
 
@@ -1704,6 +1720,30 @@ async fn handle_user(client: &OctoClient, command: UserCommand, json: bool) -> R
                 setup_runner_for_user(linux_username, json)?;
             }
 
+            // Provision eavs key and generate models.json
+            let mut eavs_key_id = None;
+            if eavs {
+                match provision_eavs_for_user(
+                    linux_username,
+                    &username,
+                    &eavs_url,
+                    eavs_master_key.as_deref(),
+                    eavs_budget,
+                    json,
+                )
+                .await
+                {
+                    Ok(key_id) => {
+                        eavs_key_id = Some(key_id);
+                    }
+                    Err(e) => {
+                        if !json {
+                            eprintln!("Warning: Failed to provision eavs: {:?}", e);
+                        }
+                    }
+                }
+            }
+
             // Create Octo user via API
             // For now, just print what would be done - actual API call would need the server running
             if json {
@@ -1715,6 +1755,7 @@ async fn handle_user(client: &OctoClient, command: UserCommand, json: bool) -> R
                     "role": role,
                     "linux_username": if no_linux_user { None } else { Some(linux_username) },
                     "runner_setup": !no_runner && !no_linux_user,
+                    "eavs_key_id": eavs_key_id,
                 });
                 println!("{}", serde_json::to_string_pretty(&result)?);
             } else {
@@ -1731,6 +1772,10 @@ async fn handle_user(client: &OctoClient, command: UserCommand, json: bool) -> R
                 }
                 if !no_runner && !no_linux_user {
                     println!("  Runner: configured");
+                }
+                if let Some(ref key_id) = eavs_key_id {
+                    println!("  Eavs key: {}", key_id);
+                    println!("  Pi models.json: generated");
                 }
                 println!(
                     "\nNote: Run the Octo server and use the API to create the database user record."
@@ -2477,6 +2522,342 @@ fn get_runner_status(username: &str) -> String {
             Err(_) => "inactive (no socket)".to_string(),
         }
     }
+}
+
+/// Provision eavs virtual key and generate Pi models.json for a user.
+///
+/// 1. Queries eavs /providers/detail for configured providers
+/// 2. Creates a virtual key with oauth_user binding
+/// 3. Generates ~/.pi/agent/models.json with eavs-routed providers
+/// 4. Returns the eavs key ID
+async fn provision_eavs_for_user(
+    linux_username: &str,
+    octo_username: &str,
+    eavs_url: &str,
+    master_key: Option<&str>,
+    budget: Option<f64>,
+    json_output: bool,
+) -> Result<String> {
+    let client = reqwest::Client::new();
+    let eavs_base = eavs_url.trim_end_matches('/');
+
+    // 1. Query eavs for configured providers
+    if !json_output {
+        println!("Querying eavs providers...");
+    }
+    let providers_resp = client
+        .get(format!("{}/providers/detail", eavs_base))
+        .send()
+        .await
+        .context("Failed to connect to eavs")?;
+
+    if !providers_resp.status().is_success() {
+        anyhow::bail!(
+            "eavs /providers/detail returned {}",
+            providers_resp.status()
+        );
+    }
+
+    let providers: Vec<serde_json::Value> = providers_resp
+        .json()
+        .await
+        .context("Failed to parse eavs provider response")?;
+
+    if !json_output {
+        println!(
+            "  Found {} providers: {}",
+            providers.len(),
+            providers
+                .iter()
+                .filter_map(|p| p["name"].as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
+
+    // 2. Create virtual key with oauth_user binding
+    if !json_output {
+        println!("Creating eavs virtual key...");
+    }
+
+    let mut key_request = serde_json::json!({
+        "name": format!("octo-user-{}", octo_username),
+        "oauth_user": octo_username,
+    });
+    if let Some(budget_usd) = budget {
+        key_request["permissions"] = serde_json::json!({
+            "max_budget_usd": budget_usd,
+        });
+    }
+
+    let mut req = client
+        .post(format!("{}/admin/keys", eavs_base))
+        .json(&key_request);
+    if let Some(mk) = master_key {
+        req = req.header("Authorization", format!("Bearer {}", mk));
+    }
+
+    let key_resp = req.send().await.context("Failed to create eavs key")?;
+
+    if !key_resp.status().is_success() {
+        let body = key_resp.text().await.unwrap_or_default();
+        anyhow::bail!("Failed to create eavs key: {}", body);
+    }
+
+    let key_data: serde_json::Value = key_resp
+        .json()
+        .await
+        .context("Failed to parse eavs key response")?;
+
+    let eavs_key = key_data["key"]
+        .as_str()
+        .context("Missing key in eavs response")?;
+    let key_id = key_data["key_id"]
+        .as_str()
+        .context("Missing key_id in eavs response")?;
+
+    if !json_output {
+        println!("  Key created: {} ({})", key_id, eavs_key);
+    }
+
+    // 3. Generate models.json
+    let models_json = generate_pi_models_json(&providers, eavs_base);
+
+    // 4. Write to user's home directory
+    let home = get_user_home(linux_username)?;
+    let pi_agent_dir = format!("{}/.pi/agent", home);
+
+    // Create directory as user
+    let status = std::process::Command::new("sudo")
+        .args(["-u", linux_username, "mkdir", "-p", &pi_agent_dir])
+        .status()
+        .context("Failed to create .pi/agent directory")?;
+
+    if !status.success() {
+        anyhow::bail!("Failed to create .pi/agent directory for {}", linux_username);
+    }
+
+    let models_path = format!("{}/models.json", pi_agent_dir);
+    let models_content =
+        serde_json::to_string_pretty(&models_json).context("Failed to serialize models.json")?;
+
+    // Write models.json as user
+    let mut child = std::process::Command::new("sudo")
+        .args(["-u", linux_username, "tee", &models_path])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .context("Failed to write models.json")?;
+
+    if let Some(mut stdin) = child.stdin.take() {
+        use std::io::Write;
+        stdin.write_all(models_content.as_bytes())?;
+    }
+
+    let status = child.wait()?;
+    if !status.success() {
+        anyhow::bail!("Failed to write models.json");
+    }
+
+    // Write the eavs key to a env file that the runner can source
+    let env_dir = format!("{}/.config/octo", home);
+    let _ = std::process::Command::new("sudo")
+        .args(["-u", linux_username, "mkdir", "-p", &env_dir])
+        .status();
+
+    let env_path = format!("{}/eavs.env", env_dir);
+    let env_content = format!("EAVS_API_KEY={}\nEAVS_URL={}\n", eavs_key, eavs_base);
+
+    let mut child = std::process::Command::new("sudo")
+        .args(["-u", linux_username, "tee", &env_path])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .context("Failed to write eavs.env")?;
+
+    if let Some(mut stdin) = child.stdin.take() {
+        use std::io::Write;
+        stdin.write_all(env_content.as_bytes())?;
+    }
+
+    let _ = child.wait();
+
+    // Set restrictive permissions on the env file (contains secret key)
+    let _ = std::process::Command::new("sudo")
+        .args(["-u", linux_username, "chmod", "600", &env_path])
+        .status();
+
+    if !json_output {
+        println!("  models.json written to {}", models_path);
+        println!("  eavs.env written to {}", env_path);
+    }
+
+    Ok(key_id.to_string())
+}
+
+/// Get a user's home directory.
+fn get_user_home(username: &str) -> Result<String> {
+    let output = std::process::Command::new("bash")
+        .args(["-c", &format!("echo ~{}", username)])
+        .output()
+        .context("Failed to get home directory")?;
+
+    let home = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if home.is_empty() || home.starts_with('~') {
+        anyhow::bail!("Could not determine home directory for '{}'", username);
+    }
+    Ok(home)
+}
+
+/// Generate Pi models.json from eavs provider details.
+///
+/// Creates one Pi provider per eavs provider, each pointing at eavs
+/// with the correct path-prefix routing and Pi API type.
+fn generate_pi_models_json(
+    providers: &[serde_json::Value],
+    eavs_base: &str,
+) -> serde_json::Value {
+    let mut pi_providers = serde_json::Map::new();
+
+    for provider in providers {
+        let name = match provider["name"].as_str() {
+            Some(n) => n,
+            None => continue,
+        };
+        let pi_api = match provider["pi_api"].as_str() {
+            Some(a) => a,
+            None => continue, // Skip providers without Pi API mapping (e.g., mock)
+        };
+        let provider_type = provider["type"].as_str().unwrap_or("openai");
+
+        // Skip "default" provider (it's an alias)
+        if name == "default" {
+            continue;
+        }
+
+        // Build base URL with provider path prefix for routing
+        let base_url = format!("{}/{}/v1", eavs_base.trim_end_matches('/'), name);
+
+        // Use eavs-provided model shortlist if available, otherwise fall back to built-in
+        let eavs_models = provider["models"].as_array();
+        let models = if let Some(models) = eavs_models.filter(|m| !m.is_empty()) {
+            models
+                .iter()
+                .map(|m| {
+                    let input = m["input"]
+                        .as_array()
+                        .map(|a| a.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>())
+                        .unwrap_or_else(|| vec!["text"]);
+                    let cost = &m["cost"];
+                    let cost_obj = serde_json::json!({
+                        "input": cost["input"].as_f64().unwrap_or(0.0),
+                        "output": cost["output"].as_f64().unwrap_or(0.0),
+                        "cacheRead": cost["cache_read"].as_f64().unwrap_or(0.0),
+                        "cacheWrite": 0
+                    });
+                    serde_json::json!({
+                        "id": m["id"],
+                        "name": m["name"].as_str().unwrap_or(m["id"].as_str().unwrap_or("")),
+                        "reasoning": m["reasoning"].as_bool().unwrap_or(false),
+                        "input": input,
+                        "contextWindow": m["context_window"].as_u64().unwrap_or(128_000),
+                        "maxTokens": m["max_tokens"].as_u64().unwrap_or(16_384),
+                        "cost": cost_obj
+                    })
+                })
+                .collect()
+        } else {
+            models_for_provider_type(provider_type)
+        };
+
+        let pi_provider = serde_json::json!({
+            "baseUrl": base_url,
+            "api": pi_api,
+            "apiKey": "EAVS_API_KEY",
+            "models": models,
+        });
+
+        let pi_name = format!("eavs-{}", name);
+        pi_providers.insert(pi_name, pi_provider);
+    }
+
+    serde_json::json!({
+        "providers": pi_providers,
+    })
+}
+
+/// Return a curated list of models for a given provider type.
+///
+/// These are the most commonly used models per provider.
+/// Users can add more via Pi's /model selector.
+fn models_for_provider_type(provider_type: &str) -> Vec<serde_json::Value> {
+    match provider_type {
+        "openai" | "openai-responses" => vec![
+            model_entry("gpt-5.2-codex", "GPT-5.2 Codex", true, true, 400_000, 128_000, 1.75, 14.0, 0.175),
+            model_entry("gpt-5.2-pro", "GPT-5.2 Pro", true, true, 400_000, 128_000, 2.5, 20.0, 0.25),
+            model_entry("gpt-4.1", "GPT-4.1", false, true, 1_047_576, 32_768, 2.0, 8.0, 0.5),
+            model_entry("gpt-4.1-mini", "GPT-4.1 Mini", false, true, 1_047_576, 32_768, 0.4, 1.6, 0.1),
+        ],
+        "openai-codex" | "codex" | "chatgpt" => vec![
+            model_entry("gpt-5.2-codex", "GPT-5.2 Codex", true, true, 272_000, 128_000, 1.75, 14.0, 0.175),
+            model_entry("gpt-5.2", "GPT-5.2", true, true, 272_000, 128_000, 1.75, 14.0, 0.175),
+            model_entry("gpt-5.1", "GPT-5.1", true, true, 272_000, 128_000, 1.25, 10.0, 0.125),
+        ],
+        "anthropic" => vec![
+            model_entry("claude-opus-4-6", "Claude Opus 4.6", true, true, 200_000, 32_000, 15.0, 75.0, 1.875),
+            model_entry("claude-sonnet-4-6", "Claude Sonnet 4.6", true, true, 200_000, 16_384, 3.0, 15.0, 0.3),
+        ],
+        "google" | "google-vertex" | "google-gemini-cli" => vec![
+            model_entry("gemini-2.5-pro", "Gemini 2.5 Pro", true, true, 1_048_576, 65_536, 1.25, 10.0, 0.3125),
+            model_entry("gemini-2.5-flash", "Gemini 2.5 Flash", true, true, 1_048_576, 65_536, 0.15, 0.6, 0.0375),
+        ],
+        "mistral" => vec![
+            model_entry("mistral-large-latest", "Mistral Large", false, false, 128_000, 32_000, 2.0, 6.0, 0.0),
+        ],
+        "groq" => vec![
+            model_entry("llama-3.3-70b-versatile", "Llama 3.3 70B", false, false, 128_000, 32_000, 0.59, 0.79, 0.0),
+        ],
+        "xai" => vec![
+            model_entry("grok-3", "Grok 3", true, true, 131_072, 131_072, 3.0, 15.0, 0.0),
+        ],
+        "openrouter" => vec![
+            // OpenRouter: users pick models in Pi's model selector
+        ],
+        "github-copilot" | "copilot" => vec![
+            model_entry("gpt-5.2-codex", "GPT-5.2 Codex (Copilot)", true, true, 272_000, 128_000, 0.0, 0.0, 0.0),
+            model_entry("claude-sonnet-4-6", "Claude Sonnet 4.6 (Copilot)", true, true, 200_000, 16_384, 0.0, 0.0, 0.0),
+        ],
+        _ => vec![],
+    }
+}
+
+/// Build a single model entry for models.json.
+#[allow(clippy::too_many_arguments)]
+fn model_entry(
+    id: &str,
+    name: &str,
+    reasoning: bool,
+    image: bool,
+    context_window: u64,
+    max_tokens: u64,
+    cost_input: f64,
+    cost_output: f64,
+    cost_cache_read: f64,
+) -> serde_json::Value {
+    serde_json::json!({
+        "id": id,
+        "name": name,
+        "reasoning": reasoning,
+        "input": if image { vec!["text", "image"] } else { vec!["text"] },
+        "contextWindow": context_window,
+        "maxTokens": max_tokens,
+        "cost": {
+            "input": cost_input,
+            "output": cost_output,
+            "cacheRead": cost_cache_read,
+            "cacheWrite": 0
+        }
+    })
 }
 
 /// Setup octo-runner for a user
