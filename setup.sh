@@ -643,7 +643,7 @@ clone_pi_extensions_repo() {
   for base in "$HOME/byteowlz" "$HOME/code/byteowlz" "/opt/byteowlz"; do
     local local_dir="$base/pi-agent-extensions"
     if [[ -d "$local_dir" && -f "$local_dir/README.md" ]]; then
-      log_info "Using local pi-agent-extensions: $local_dir"
+      log_info "Using local pi-agent-extensions: $local_dir" >&2
       echo "$local_dir"
       return 0
     fi
@@ -652,7 +652,7 @@ clone_pi_extensions_repo() {
   local cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/octo/pi-agent-extensions"
 
   if [[ -d "$cache_dir/.git" ]]; then
-    log_info "Updating pi-agent-extensions repo..."
+    log_info "Updating pi-agent-extensions repo..." >&2
     git -C "$cache_dir" fetch --all --prune 2>/dev/null || true
     git -C "$cache_dir" reset --hard origin/main 2>/dev/null || true
   else
@@ -660,21 +660,17 @@ clone_pi_extensions_repo() {
     if [[ -d "$cache_dir" ]]; then
       rm -rf "$cache_dir"
     fi
-    log_info "Cloning pi-agent-extensions (SSH)..."
+    log_info "Cloning pi-agent-extensions..." >&2
     mkdir -p "$(dirname "$cache_dir")"
-    if ! git clone --depth 1 "$PI_EXTENSIONS_REPO" "$cache_dir"; then
-      log_warn "SSH clone failed, trying HTTPS..."
-      local https_url="${PI_EXTENSIONS_REPO/git@github.com:/https://github.com/}"
-      if ! git clone --depth 1 "$https_url" "$cache_dir"; then
-        log_error "Failed to clone pi-agent-extensions repo"
-        return 1
-      fi
+    if ! git clone --depth 1 "$PI_EXTENSIONS_REPO" "$cache_dir" 2>/dev/null; then
+      log_error "Failed to clone pi-agent-extensions repo" >&2
+      return 1
     fi
   fi
 
   # Verify the clone has content
   if [[ ! -f "$cache_dir/README.md" ]]; then
-    log_error "pi-agent-extensions clone appears empty at $cache_dir"
+    log_error "pi-agent-extensions clone appears empty at $cache_dir" >&2
     rm -rf "$cache_dir"
     return 1
   fi
