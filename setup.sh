@@ -1166,6 +1166,7 @@ install_binary_global() {
 install_rust_tool() {
   local tool="$1"
   local repo="${2:-$tool}" # repo name, defaults to tool name
+  local pkg="${3:-}"       # package name for multi-binary repos (optional)
 
   if ! command_exists cargo; then
     log_error "Cargo not available. Cannot install $tool."
@@ -1173,17 +1174,26 @@ install_rust_tool() {
   fi
 
   # Always install from git to get the latest compatible version.
-  # byteowlz tools are tightly coupled and crates.io may lag behind.
+  # byteowlz tools are tightly coupled and not published to crates.io.
   log_info "Installing $tool from git (latest)..."
 
   local tmpdir
   tmpdir=$(mktemp -d)
   trap "rm -rf '$tmpdir'" RETURN
 
+  # Build cargo install args
+  local -a cargo_args=(--git "${BYTEOWLZ_GITHUB}/${repo}.git" --root "$tmpdir")
+  if [[ -n "$pkg" ]]; then
+    # Multi-binary repo: specify both the package and the binary name
+    cargo_args+=(-p "$pkg" --bin "$tool")
+  fi
+
   # Install from GitHub (always latest main branch)
-  if cargo install --git "${BYTEOWLZ_GITHUB}/${repo}.git" --root "$tmpdir" 2>/dev/null; then
-    install_binary_global "$tmpdir/bin/$tool" "$tool"
-    return 0
+  if cargo install "${cargo_args[@]}" 2>&1 | tail -5; then
+    if [[ -x "$tmpdir/bin/$tool" ]]; then
+      install_binary_global "$tmpdir/bin/$tool" "$tool"
+      return 0
+    fi
   fi
 
   # Check for local source directory
@@ -1197,9 +1207,18 @@ install_rust_tool() {
 
   if [[ -n "$local_path" && -f "$local_path/Cargo.toml" ]]; then
     log_info "Installing from local path: $local_path"
-    if cargo install --path "$local_path" --root "$tmpdir" 2>/dev/null; then
-      install_binary_global "$tmpdir/bin/$tool" "$tool"
-      return 0
+    local -a local_args=(--root "$tmpdir")
+    if [[ -n "$pkg" && -d "$local_path/crates/$pkg" ]]; then
+      # Multi-binary workspace: point --path to the specific package crate
+      local_args+=(--path "$local_path/crates/$pkg")
+    else
+      local_args+=(--path "$local_path")
+    fi
+    if cargo install "${local_args[@]}" 2>&1 | tail -5; then
+      if [[ -x "$tmpdir/bin/$tool" ]]; then
+        install_binary_global "$tmpdir/bin/$tool" "$tool"
+        return 0
+      fi
     fi
   fi
 
@@ -1294,11 +1313,14 @@ install_all_agent_tools() {
   log_step "Installing agent tools"
 
   # Core tools (Rust)
-  install_rust_tool hstry
+  # Multi-binary repos need the 3rd arg (package hint) so cargo knows which binary to build
+  install_rust_tool hstry hstry hstry-cli
+  install_rust_tool hstry-tui hstry hstry-tui
   install_rust_tool agntz
-  install_rust_tool mmry
+  install_rust_tool mmry mmry mmry-cli
+  install_rust_tool mmry-service mmry mmry-service
   install_rust_tool tmpltr
-  install_rust_tool sldr
+  install_rust_tool sldr sldr sldr-cli
   install_rust_tool ignr
 
   # Core tools (Go)
@@ -1346,11 +1368,12 @@ install_agent_tools_selected() {
     return
   fi
 
-  # hstry is required for per-user chat history (runner starts it per-user)
-  install_rust_tool hstry
+  # hstry is required for per-user chat history (systemd user service)
+  install_rust_tool hstry hstry hstry-cli
 
   if [[ "$INSTALL_MMRY" == "true" ]]; then
-    install_rust_tool mmry
+    install_rust_tool mmry mmry mmry-cli
+    install_rust_tool mmry-service mmry mmry-service
   fi
 
   # Use agntz tools install for additional tools if agntz is available
