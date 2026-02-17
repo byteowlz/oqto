@@ -115,6 +115,21 @@ impl EavsClient {
         }
     }
 
+    /// Get detailed provider info including model lists.
+    ///
+    /// Returns providers with their type, Pi API mapping, and model list
+    /// (config shortlist if set, otherwise full models.dev catalog).
+    pub async fn providers_detail(&self) -> EavsResult<Vec<ProviderDetail>> {
+        let url = format!("{}/providers/detail", self.base_url);
+        let response = self.client.get(&url).send().await?;
+        self.handle_response(response).await
+    }
+
+    /// Get the base URL (for constructing provider-prefixed URLs).
+    pub fn base_url(&self) -> &str {
+        &self.base_url
+    }
+
     /// Get usage history for a key.
     pub async fn get_usage(&self, key_id_or_hash: &str) -> EavsResult<Vec<UsageRecord>> {
         let url = format!("{}/admin/keys/{}/usage", self.base_url, key_id_or_hash);

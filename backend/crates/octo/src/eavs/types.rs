@@ -22,6 +22,10 @@ pub struct CreateKeyRequest {
     /// Arbitrary metadata.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<serde_json::Value>,
+
+    /// OAuth user binding -- requests with this key resolve OAuth tokens for this user.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub oauth_user: Option<String>,
 }
 
 impl CreateKeyRequest {
@@ -32,6 +36,7 @@ impl CreateKeyRequest {
             expires_at: None,
             permissions: None,
             metadata: None,
+            oauth_user: None,
         }
     }
 
@@ -50,6 +55,12 @@ impl CreateKeyRequest {
     /// Set metadata.
     pub fn metadata(mut self, metadata: serde_json::Value) -> Self {
         self.metadata = Some(metadata);
+        self
+    }
+
+    /// Set OAuth user binding.
+    pub fn oauth_user(mut self, user: impl Into<String>) -> Self {
+        self.oauth_user = Some(user.into());
         self
     }
 }
@@ -236,6 +247,53 @@ pub struct UsageRecord {
 
     /// Error message if failed.
     pub error: Option<String>,
+}
+
+/// Provider detail from /providers/detail endpoint.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ProviderDetail {
+    /// Provider name as configured in eavs
+    pub name: String,
+    /// Provider type (e.g., "openai", "anthropic")
+    #[serde(rename = "type")]
+    pub type_: String,
+    /// Pi-compatible API type for models.json
+    pub pi_api: Option<String>,
+    /// Whether this provider uses OAuth
+    pub oauth: bool,
+    /// Whether the provider has a resolved API key
+    pub has_api_key: bool,
+    /// Model list (shortlist or full catalog)
+    pub models: Vec<ProviderModel>,
+}
+
+/// Model entry from eavs provider detail.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ProviderModel {
+    pub id: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub reasoning: bool,
+    #[serde(default)]
+    pub input: Vec<String>,
+    #[serde(default)]
+    pub context_window: u64,
+    #[serde(default)]
+    pub max_tokens: u64,
+    #[serde(default)]
+    pub cost: ProviderModelCost,
+}
+
+/// Cost per million tokens.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct ProviderModelCost {
+    #[serde(default)]
+    pub input: f64,
+    #[serde(default)]
+    pub output: f64,
+    #[serde(default)]
+    pub cache_read: f64,
 }
 
 /// Error response from EAVS API.
