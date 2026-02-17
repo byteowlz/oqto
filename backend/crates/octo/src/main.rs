@@ -2262,6 +2262,25 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         debug!("hstry integration disabled");
     }
 
+    // Initialize EAVS client if configured
+    if let Some(ref eavs_config) = ctx.config.eavs {
+        if eavs_config.enabled {
+            if let Some(ref master_key) = eavs_config.master_key {
+                match eavs::EavsClient::new(&eavs_config.base_url, master_key) {
+                    Ok(client) => {
+                        info!("EAVS client initialized at {}", eavs_config.base_url);
+                        state = state.with_eavs_client(client);
+                    }
+                    Err(e) => {
+                        warn!("Failed to create EAVS client: {}. User eavs provisioning disabled.", e);
+                    }
+                }
+            } else {
+                debug!("EAVS master_key not configured, user provisioning disabled");
+            }
+        }
+    }
+
     // Create router - all API routes are served under /api prefix only.
     // This is the single source of truth for routing. All clients (frontend,
     // internal services, containers) must use /api/* paths.

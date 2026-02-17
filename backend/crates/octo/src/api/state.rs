@@ -322,6 +322,8 @@ pub struct AppState {
     pub audit_logger: Option<Arc<crate::audit::AuditLogger>>,
     /// Feedback configuration.
     pub feedback: crate::feedback::FeedbackConfig,
+    /// EAVS client for LLM proxy integration (user provisioning, model catalog).
+    pub eavs_client: Option<Arc<crate::eavs::EavsClient>>,
 }
 
 impl AppState {
@@ -365,6 +367,7 @@ impl AppState {
             hstry: None,
             audit_logger: None,
             feedback: crate::feedback::FeedbackConfig::default(),
+            eavs_client: None,
         }
     }
 
@@ -438,6 +441,12 @@ impl AppState {
     /// Set the audit logger for user-facing events.
     pub fn with_audit_logger(mut self, logger: Arc<crate::audit::AuditLogger>) -> Self {
         self.audit_logger = Some(logger);
+        self
+    }
+
+    /// Set the EAVS client for LLM proxy integration.
+    pub fn with_eavs_client(mut self, client: crate::eavs::EavsClient) -> Self {
+        self.eavs_client = Some(Arc::new(client));
         self
     }
 }

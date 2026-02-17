@@ -190,7 +190,7 @@ impl LinuxUsersConfig {
 
         run_privileged_command(
             self.use_sudo,
-            "chown",
+            "/usr/bin/chown",
             &["-R", &format!("{}:{}", username, self.group), &path_str],
         )
         .with_context(|| format!("chown {} to {}", path_str, username))?;
@@ -574,15 +574,15 @@ impl LinuxUsersConfig {
             let user_dir_str = user_dir
                 .to_str()
                 .ok_or_else(|| anyhow::anyhow!("invalid user_dir path"))?;
-            run_privileged_command(self.use_sudo, "mkdir", &["-p", user_dir_str])
+            run_privileged_command(self.use_sudo, "/bin/mkdir", &["-p", user_dir_str])
                 .context("creating runner socket user dir")?;
             run_privileged_command(
                 self.use_sudo,
-                "chown",
+                "/usr/bin/chown",
                 &[&format!("{}:{}", username, self.group), user_dir_str],
             )
             .context("chown runner socket user dir")?;
-            run_privileged_command(self.use_sudo, "chmod", &["2770", user_dir_str])
+            run_privileged_command(self.use_sudo, "/usr/bin/chmod", &["2770", user_dir_str])
                 .context("chmod runner socket user dir")?;
         }
 
@@ -705,11 +705,11 @@ impl LinuxUsersConfig {
             let temp_file = format!("/tmp/mmry-config-{}.toml", uid);
             let config_path_str = config_path.to_string_lossy().to_string();
             std::fs::write(&temp_file, output).context("writing temp mmry config")?;
-            run_privileged_command(self.use_sudo, "cp", &[&temp_file, &config_path_str])
+            run_privileged_command(self.use_sudo, "/usr/bin/cp", &[&temp_file, &config_path_str])
                 .context("copying mmry config")?;
             run_privileged_command(
                 self.use_sudo,
-                "chown",
+                "/usr/bin/chown",
                 &[
                     &format!("{}:{}", linux_username, self.group),
                     &config_path_str,
@@ -753,6 +753,59 @@ impl LinuxUsersConfig {
             UID_MAX,
             used_uids.len()
         )
+    }
+
+    /// Get the home directory for a linux username.
+    /// Unlike `get_home_dir` which takes an octo user_id, this takes the
+    /// actual linux username directly.
+    pub fn get_user_home(&self, linux_username: &str) -> Result<String> {
+        get_user_home(linux_username)?
+            .map(|p| p.to_string_lossy().to_string())
+            .ok_or_else(|| anyhow::anyhow!("Home directory not found for user {}", linux_username))
+    }
+
+    /// Write a file into a user's directory, creating the directory if needed.
+    /// Uses privileged commands when not root to write as the target user.
+    pub fn write_file_as_user(
+        &self,
+        linux_username: &str,
+        dir: &str,
+        filename: &str,
+        content: &str,
+    ) -> Result<()> {
+        let is_root = geteuid().is_root();
+        let path = format!("{}/{}", dir, filename);
+
+        if is_root {
+            std::fs::create_dir_all(dir)
+                .with_context(|| format!("creating directory {}", dir))?;
+            std::fs::write(&path, content)
+                .with_context(|| format!("writing {}", path))?;
+            // chown to user
+            run_privileged_command(false, "/usr/bin/chown", &[
+                &format!("{}:{}", linux_username, self.group),
+                &path,
+            ])?;
+        } else {
+            // Write to temp file, then copy into place with correct ownership
+            let temp = format!("/tmp/octo-file-{}-{}", linux_username, filename);
+            std::fs::write(&temp, content)
+                .with_context(|| format!("writing temp file {}", temp))?;
+            run_privileged_command(self.use_sudo, "/bin/mkdir", &["-p", dir])?;
+            run_privileged_command(self.use_sudo, "/usr/bin/cp", &[&temp, &path])?;
+            run_privileged_command(self.use_sudo, "/usr/bin/chown", &[
+                &format!("{}:{}", linux_username, self.group),
+                &path,
+            ])?;
+            let _ = std::fs::remove_file(&temp);
+        }
+        Ok(())
+    }
+
+    /// Set file permissions on a path owned by a user.
+    pub fn chmod_file(&self, _linux_username: &str, path: &str, mode: &str) -> Result<()> {
+        run_privileged_command(self.use_sudo, "/usr/bin/chmod", &[mode, path])
+            .with_context(|| format!("chmod {} {}", mode, path))
     }
 }
 
