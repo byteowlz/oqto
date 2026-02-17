@@ -537,7 +537,7 @@ WantedBy=default.target
     let runner_service = format!(
         r#"[Unit]
 Description=Octo Runner - Process isolation daemon
-Requires=hstry.service mmry.service
+Wants=hstry.service mmry.service
 After=hstry.service mmry.service
 
 [Service]
@@ -548,8 +548,8 @@ RestartSec=5
 Environment=RUST_LOG=info
 Environment=PATH={user_path}
 Environment=HOME={home}
-# systemd waits up to 30s for READY=1 from the runner
-WatchdogSec=30
+# systemd waits up to 30s for READY=1 before declaring failure
+TimeoutStartSec=30
 
 [Install]
 WantedBy=default.target
