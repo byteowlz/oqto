@@ -464,56 +464,8 @@ fn cmd_setup_user_runner(args: &serde_json::Value) -> Response {
     let socket_path = format!("/run/octo/runner-sockets/{username}/octo-runner.sock");
 
     // Construct service file content server-side
-    // Service file contents -- all constructed server-side, never from client input.
-    // hstry and mmry run as simple foreground services.
-    // octo-runner uses Type=notify and depends on both.
-    let hstry_service = r#"[Unit]
-Description=Octo Chat History Service
-After=default.target
-
-[Service]
-Type=simple
-ExecStart=/usr/local/bin/hstry service run
-Restart=on-failure
-RestartSec=3
-
-[Install]
-WantedBy=default.target
-"#;
-
-    let mmry_service = r#"[Unit]
-Description=Octo Memory Service
-After=default.target
-
-[Service]
-Type=simple
-ExecStart=/usr/local/bin/mmry-service
-Restart=on-failure
-RestartSec=3
-
-[Install]
-WantedBy=default.target
-"#;
-
-    let runner_service = format!(
-        r#"[Unit]
-Description=Octo Runner - Process isolation daemon
-Requires=hstry.service mmry.service
-After=hstry.service mmry.service
-
-[Service]
-Type=notify
-ExecStart={RUNNER_BINARY} --socket {socket_path}
-Restart=on-failure
-RestartSec=5
-Environment=RUST_LOG=info
-# systemd waits up to 30s for READY=1 from the runner
-WatchdogSec=30
-
-[Install]
-WantedBy=default.target
-"#
-    );
+    // Service file contents are constructed after home dir is resolved (below),
+    // since we need the home path for the Environment=PATH directive.
 
     // Get user home directory from passwd (not from client)
     let home = match run_cmd("/usr/bin/getent", &["passwd", username]) {
@@ -535,6 +487,75 @@ WantedBy=default.target
     }
 
     let group = "octo";
+
+    // Construct a PATH that includes the user's local bin dirs and system paths.
+    // Systemd user services run with a minimal environment, so tools like bun/node
+    // (needed by hstry) won't be found without an explicit PATH.
+    let user_path = format!(
+        "{home}/.bun/bin:{home}/.cargo/bin:{home}/.local/bin:/usr/local/bin:/usr/bin:/bin"
+    );
+
+    // Service file contents -- all constructed server-side, never from client input.
+    // hstry and mmry run as simple foreground services.
+    // octo-runner uses Type=notify and depends on both.
+    let hstry_service = format!(
+        r#"[Unit]
+Description=Octo Chat History Service
+After=default.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/hstry service run
+Restart=on-failure
+RestartSec=3
+Environment=PATH={user_path}
+Environment=HOME={home}
+
+[Install]
+WantedBy=default.target
+"#
+    );
+
+    let mmry_service = format!(
+        r#"[Unit]
+Description=Octo Memory Service
+After=default.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/mmry-service
+Restart=on-failure
+RestartSec=3
+Environment=PATH={user_path}
+Environment=HOME={home}
+
+[Install]
+WantedBy=default.target
+"#
+    );
+
+    let runner_service = format!(
+        r#"[Unit]
+Description=Octo Runner - Process isolation daemon
+Requires=hstry.service mmry.service
+After=hstry.service mmry.service
+
+[Service]
+Type=notify
+ExecStart={RUNNER_BINARY} --socket {socket_path}
+Restart=on-failure
+RestartSec=5
+Environment=RUST_LOG=info
+Environment=PATH={user_path}
+Environment=HOME={home}
+# systemd waits up to 30s for READY=1 from the runner
+WatchdogSec=30
+
+[Install]
+WantedBy=default.target
+"#
+    );
+
     let service_dir = format!("{home}/.config/systemd/user");
 
     // 1. Create service directory
@@ -544,8 +565,8 @@ WantedBy=default.target
 
     // 2. Write all service files
     let services = [
-        ("hstry.service", hstry_service.to_string()),
-        ("mmry.service", mmry_service.to_string()),
+        ("hstry.service", hstry_service),
+        ("mmry.service", mmry_service),
         ("octo-runner.service", runner_service),
     ];
     for (name, content) in &services {
