@@ -487,7 +487,7 @@ After=default.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/mmry service run
+ExecStart=/usr/local/bin/mmry-service
 Restart=on-failure
 RestartSec=3
 
