@@ -4389,8 +4389,8 @@ EOF
     # Install octo-usermgr service (privileged user management daemon)
     install_usermgr_service
 
-    # Install octo-runner user service template for multi-user mode
-    install_runner_service
+    # Ensure runner socket base directory exists at boot
+    install_runner_socket_dirs
 
     if confirm "Enable and start the service now?"; then
       sudo systemctl daemon-reload
@@ -4441,52 +4441,27 @@ EOF
   log_success "octo-usermgr service installed and started"
 }
 
-install_runner_service() {
-  # Install octo-runner as a systemd user service template
-  # Each user runs their own instance of octo-runner for process isolation
-  log_info "Installing octo-runner user service template..."
+install_runner_socket_dirs() {
+  # Ensure the shared runner socket base directory exists at boot.
+  # Per-user subdirectories are created by octo-usermgr at user creation time.
+  # Per-user service files (octo-runner, hstry, mmry) are also created by usermgr.
+  log_info "Setting up runner socket directories..."
 
-  local runner_service="/etc/systemd/user/octo-runner.service"
   local tmpfiles_conf="/etc/tmpfiles.d/octo-runner.conf"
 
-  # Service file
-  sudo tee "$runner_service" >/dev/null <<'EOF'
-# Octo Runner - Per-user process runner for multi-user isolation
-# This service runs as the logged-in user and manages their agent processes
-
-[Unit]
-Description=Octo Runner (User Process Manager)
-After=default.target
-
-[Service]
-Type=simple
-ExecStart=/usr/local/bin/octo-runner --socket /run/octo/runner-sockets/%u/octo-runner.sock
-ExecStop=/bin/kill -TERM $MAINPID
-TimeoutStopSec=30
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=default.target
-EOF
-
-  # Ensure shared runner socket base exists at boot.
   sudo tee "$tmpfiles_conf" >/dev/null <<'EOF'
 d /run/octo/runner-sockets 2770 root octo -
 EOF
 
   sudo systemd-tmpfiles --create "$tmpfiles_conf" >/dev/null 2>&1 || true
 
-  # Ensure shared group exists and current user can connect to runner sockets.
-  # (Group membership changes require re-login to take effect.)
-  sudo groupadd -f octo >/dev/null 2>&1 || true
-  sudo usermod -a -G octo "${SUDO_USER:-$USER}" >/dev/null 2>&1 || true
+  # Remove any stale global service template (usermgr now handles per-user service files)
+  if [[ -f /etc/systemd/user/octo-runner.service ]]; then
+    sudo rm -f /etc/systemd/user/octo-runner.service
+    log_info "Removed stale global octo-runner.service template"
+  fi
 
-  # Ensure shared socket directory exists for current user.
-  sudo install -d -m 2770 -o "${SUDO_USER:-$USER}" -g octo "/run/octo/runner-sockets/${SUDO_USER:-$USER}" >/dev/null 2>&1 || true
-
-  log_success "octo-runner service template installed"
-  log_info "Users can enable it with: systemctl --user enable --now octo-runner"
+  log_success "Runner socket directories configured"
 }
 
 install_service_macos() {
