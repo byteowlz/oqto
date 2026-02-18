@@ -12,16 +12,21 @@ export function getSocketDir(session?: string): string {
 
   const sess = session ?? getSessionId();
 
-  if (process.env.XDG_RUNTIME_DIR) {
-    return path.join(process.env.XDG_RUNTIME_DIR, "octo", "agent-browser", sess);
+  // Use XDG_STATE_HOME instead of XDG_RUNTIME_DIR: XDG_RUNTIME_DIR is a
+  // tmpfs and bwrap re-mounts it as a fresh tmpfs inside the sandbox, so
+  // socket files created here on the host are invisible to Pi agents inside
+  // the sandbox. XDG_STATE_HOME is on a real filesystem and bind-mounts work
+  // correctly.
+  if (process.env.XDG_STATE_HOME) {
+    return path.join(process.env.XDG_STATE_HOME, "octo", "agent-browser", sess);
   }
 
   const home = os.homedir();
   if (home) {
-    return path.join(home, ".agent-browser", "octo", sess);
+    return path.join(home, ".local", "state", "octo", "agent-browser", sess);
   }
 
-  return path.join(os.tmpdir(), "agent-browser", "octo", sess);
+  return path.join(os.tmpdir(), "octo", "agent-browser", sess);
 }
 
 export function getSocketPath(session?: string): string {
@@ -38,3 +43,5 @@ export function getStreamPortFile(session?: string): string {
   const sess = session ?? getSessionId();
   return path.join(getSocketDir(sess), `${sess}.stream`);
 }
+
+

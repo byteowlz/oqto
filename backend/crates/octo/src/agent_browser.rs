@@ -303,21 +303,32 @@ impl AgentBrowserManager {
 /// Resolve the base directory for agent-browser session socket directories.
 ///
 /// Priority:
-///   AGENT_BROWSER_SOCKET_DIR_BASE > XDG_RUNTIME_DIR/octo/agent-browser >
-///   ~/.agent-browser/octo > tmpdir/agent-browser/octo
+///   AGENT_BROWSER_SOCKET_DIR_BASE > XDG_STATE_HOME/octo/agent-browser >
+///   ~/.local/state/octo/agent-browser > tmpdir/octo/agent-browser
+///
+/// XDG_STATE_HOME is used instead of XDG_RUNTIME_DIR because XDG_RUNTIME_DIR
+/// is a tmpfs. When bwrap bind-mounts a path that lives on a tmpfs, it creates
+/// a fresh tmpfs layer inside the sandbox rather than sharing the host
+/// directory, so socket files created by octo-browserd on the host are never
+/// visible to the Pi agent inside the sandbox.  XDG_STATE_HOME is on a real
+/// filesystem and bind-mounts correctly.
 fn agent_browser_base_dir() -> std::path::PathBuf {
     if let Ok(dir) = std::env::var("AGENT_BROWSER_SOCKET_DIR_BASE") {
         return std::path::PathBuf::from(dir);
     }
-    if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
-        return std::path::PathBuf::from(runtime_dir)
+    if let Ok(state_dir) = std::env::var("XDG_STATE_HOME") {
+        return std::path::PathBuf::from(state_dir)
             .join("octo")
             .join("agent-browser");
     }
     if let Some(home) = dirs::home_dir() {
-        return home.join(".agent-browser").join("octo");
+        return home
+            .join(".local")
+            .join("state")
+            .join("octo")
+            .join("agent-browser");
     }
-    std::env::temp_dir().join("agent-browser").join("octo")
+    std::env::temp_dir().join("octo").join("agent-browser")
 }
 
 /// Compute a short, deterministic agent-browser session name from a chat session ID.
