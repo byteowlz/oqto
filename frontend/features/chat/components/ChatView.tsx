@@ -1880,28 +1880,28 @@ const gaugeTokens = contextTokenCount;
 
 				{/* Jump to bottom button - appears when user has scrolled up */}
 				{isUserScrolled && (
-					<Button
-						variant="ghost"
-						size="icon"
+					<button
+						type="button"
 						onClick={handleScrollToBottom}
-						className="absolute bottom-3 right-3 z-10 h-7 w-7 rounded-full bg-background border border-border shadow-md text-muted-foreground hover:text-foreground"
+						className="absolute bottom-3 right-4 z-10 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-primary text-primary-foreground text-xs shadow-md hover:bg-primary/90 transition-colors"
 						title="Jump to bottom"
 					>
 						<svg
 							xmlns="http://www.w3.org/2000/svg"
-							width="14"
-							height="14"
+							width="12"
+							height="12"
 							viewBox="0 0 24 24"
 							fill="none"
 							stroke="currentColor"
-							strokeWidth="2.5"
+							strokeWidth="2"
 							strokeLinecap="round"
 							strokeLinejoin="round"
 							aria-hidden="true"
 						>
 							<polyline points="6 9 12 15 18 9" />
 						</svg>
-					</Button>
+						Jump to bottom
+					</button>
 				)}
 			</div>
 
