@@ -493,7 +493,8 @@ check_prerequisites() {
   fi
 
   # Check container runtime if container mode selected
-  if [[ "$SELECTED_BACKEND_MODE" == "container" ]]; then
+  local backend_mode="${SELECTED_BACKEND_MODE:-$OQTO_BACKEND_MODE}"
+  if [[ "$backend_mode" == "container" ]]; then
     check_container_runtime
   fi
 
