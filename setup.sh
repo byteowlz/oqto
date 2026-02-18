@@ -985,6 +985,18 @@ install_shell_tools() {
     log_success "zoxide already installed: $(zoxide --version)"
   fi
 
+  if ! command_exists gum; then
+    tools_to_install+=("gum")
+  else
+    log_success "gum already installed: $(gum --version 2>/dev/null | head -1)"
+  fi
+
+  if ! command_exists fzf; then
+    tools_to_install+=("fzf")
+  else
+    log_success "fzf already installed: $(fzf --version 2>/dev/null | head -1)"
+  fi
+
   if [[ ${#tools_to_install[@]} -eq 0 ]]; then
     log_success "All shell tools already installed"
     return 0
@@ -1041,6 +1053,14 @@ install_shell_tools_macos() {
       log_info "Installing zsh..."
       brew install zsh
       ;;
+    gum)
+      log_info "Installing gum..."
+      brew install gum
+      ;;
+    fzf)
+      log_info "Installing fzf..."
+      brew install fzf
+      ;;
     esac
   done
 }
@@ -1081,6 +1101,8 @@ install_shell_tools_arch() {
     zoxide) pacman_pkgs+=("zoxide") ;;
     tmux) pacman_pkgs+=("tmux") ;;
     zsh) pacman_pkgs+=("zsh") ;;
+    gum) pacman_pkgs+=("gum") ;;
+    fzf) pacman_pkgs+=("fzf") ;;
     esac
   done
 
@@ -1103,6 +1125,8 @@ install_shell_tools_debian() {
     zoxide) cargo_pkgs+=("zoxide") ;; # newer versions via cargo
     tmux) apt_pkgs+=("tmux") ;;
     zsh) apt_pkgs+=("zsh") ;;
+    fzf) apt_pkgs+=("fzf") ;;
+    gum) ;; # handled separately below (needs charmbracelet repo)
     esac
   done
 
@@ -1121,6 +1145,18 @@ install_shell_tools_debian() {
   if [[ ${#cargo_pkgs[@]} -gt 0 ]]; then
     install_shell_tools_cargo "${cargo_pkgs[@]}"
   fi
+
+  # gum requires the charmbracelet apt repo
+  if printf '%s\n' "${tools[@]}" | grep -qx "gum"; then
+    if ! command_exists gum; then
+      log_info "Installing gum via charmbracelet repo..."
+      sudo mkdir -p /etc/apt/keyrings
+      curl -fsSL https://repo.charm.sh/apt/gpg.key | sudo gpg --dearmor -o /etc/apt/keyrings/charm.gpg 2>/dev/null
+      echo "deb [signed-by=/etc/apt/keyrings/charm.gpg] https://repo.charm.sh/apt/ * *" | sudo tee /etc/apt/sources.list.d/charm.list >/dev/null
+      apt_update_once force
+      sudo apt-get install -y gum
+    fi
+  fi
 }
 
 install_shell_tools_fedora() {
@@ -1136,6 +1172,8 @@ install_shell_tools_fedora() {
     zoxide) dnf_pkgs+=("zoxide") ;;
     tmux) dnf_pkgs+=("tmux") ;;
     zsh) dnf_pkgs+=("zsh") ;;
+    fzf) dnf_pkgs+=("fzf") ;;
+    gum) ;; # handled separately below
     esac
   done
 
@@ -1146,6 +1184,20 @@ install_shell_tools_fedora() {
 
   if [[ ${#cargo_pkgs[@]} -gt 0 ]]; then
     install_shell_tools_cargo "${cargo_pkgs[@]}"
+  fi
+
+  # gum via charmbracelet rpm repo
+  if printf '%s\n' "${tools[@]}" | grep -qx "gum"; then
+    if ! command_exists gum; then
+      log_info "Installing gum via charmbracelet repo..."
+      echo '[charm]
+name=Charm
+baseurl=https://repo.charm.sh/yum/
+enabled=1
+gpgcheck=1
+gpgkey=https://repo.charm.sh/yum/gpg.key' | sudo tee /etc/yum.repos.d/charm.repo >/dev/null
+      sudo dnf install -y gum
+    fi
   fi
 }
 
@@ -1162,6 +1214,8 @@ install_shell_tools_opensuse() {
     zoxide) cargo_pkgs+=("zoxide") ;;
     tmux) zypper_pkgs+=("tmux") ;;
     zsh) zypper_pkgs+=("zsh") ;;
+    fzf) zypper_pkgs+=("fzf") ;;
+    gum) ;; # handled separately below
     esac
   done
 
@@ -1172,6 +1226,21 @@ install_shell_tools_opensuse() {
 
   if [[ ${#cargo_pkgs[@]} -gt 0 ]]; then
     install_shell_tools_cargo "${cargo_pkgs[@]}"
+  fi
+
+  # gum via charmbracelet rpm repo
+  if printf '%s\n' "${tools[@]}" | grep -qx "gum"; then
+    if ! command_exists gum; then
+      log_info "Installing gum via charmbracelet repo..."
+      echo '[charm]
+name=Charm
+baseurl=https://repo.charm.sh/yum/
+enabled=1
+gpgcheck=1
+gpgkey=https://repo.charm.sh/yum/gpg.key' | sudo tee /etc/yum.repos.d/charm.repo >/dev/null
+      sudo zypper refresh
+      sudo zypper install -y gum
+    fi
   fi
 }
 
