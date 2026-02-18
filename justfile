@@ -244,57 +244,102 @@ update-deps:
 
     echo "Updating dependencies.toml..."
 
-    # Get current Octo version
-    OCTO_VERSION=$(grep -m1 '^version = ' "$ROOT/backend/Cargo.toml" | sed 's/version = "\(.*\)"/\1/')
-
-    # Array of byteowlz repos with their TOML section paths
-    declare -A REPOS=(
-        ["hstry"]="byteowlz.hstry"
-        ["mmry"]="byteowlz.mmry"
-        ["trx"]="byteowlz.trx"
-        ["agntz"]="byteowlz.agntz"
-        ["mailz"]="byteowlz.mailz"
-        ["sldr"]="byteowlz.sldr"
-        ["eaRS"]="byteowlz.eaRS"
-    )
-
-    # Update versions from local repos
-    for repo in "${!REPOS[@]}"; do
-        REPO_PATH="$ROOT/../$repo"
-        TOML_PATH="${REPOS[$repo]}"
-
-        if [[ -f "$REPO_PATH/Cargo.toml" ]]; then
-            VERSION=$(grep -m1 '^version = ' "$REPO_PATH/Cargo.toml" | sed 's/version = "\(.*\)"/\1/')
-            # Update in place using sed
-            sed -i "s/^\($TOML_PATH =\) \"[^\"]*\"/\1 \"$VERSION\"/" "$MANIFEST"
-            echo "  $repo: $VERSION"
-        else
-            echo "  $repo: (not found locally, keeping existing value)"
-        fi
-    done
-
     # Update Octo version
+    OCTO_VERSION=$(grep -m1 '^version = ' "$ROOT/backend/Cargo.toml" | sed 's/version = "\(.*\)"/\1/')
     sed -i 's/^\(octo.version =\) "[^"]*"/\1 "'"$OCTO_VERSION"'"/' "$MANIFEST"
     echo "  octo: $OCTO_VERSION"
 
-    # Optional: Fetch latest tags for external repos (requires network)
-    if command -v git &> /dev/null; then
-        echo ""
-        echo "Fetching latest tags from GitHub..."
+    # Auto-discover: parse all keys under [byteowlz] section from the manifest,
+    # then look for matching sibling repos and read their version.
+    # Supports: Cargo.toml, Cargo workspace members, Go modules, pyproject.toml, package.json
+    # No hardcoded list to maintain.
+    in_section=false
+    while IFS= read -r line; do
+      # Detect section headers
+      if [[ "$line" =~ ^\[byteowlz\]$ ]]; then
+        in_section=true
+        continue
+      elif [[ "$line" =~ ^\[.+\]$ ]]; then
+        in_section=false
+        continue
+      fi
 
-        # kokorox (byteowlz/kokorox)
-        if git ls-remote --tags https://github.com/byteowlz/kokorox &> /dev/null; then
-            KOKOROX_LATEST=$(git ls-remote --tags https://github.com/byteowlz/kokorox | tail -1 | sed 's/.*refs\/tags\///' | sed 's/\^{}//')
-            if [[ -n "$KOKOROX_LATEST" ]]; then
-                sed -i 's/^\(kokorox =\) "[^"]*"/\1 "'"$KOKOROX_LATEST"'"/' "$MANIFEST"
-                echo "  kokorox: $KOKOROX_LATEST (from GitHub)"
+      # Skip if not in [byteowlz] section or line is empty/comment
+      $in_section || continue
+      [[ "$line" =~ ^[a-zA-Z] ]] || continue
+
+      # Parse key = "value"
+      key=$(echo "$line" | sed 's/ *=.*//')
+      old_val=$(echo "$line" | sed 's/.*= *"\([^"]*\)".*/\1/')
+
+      # Try to find the repo as a sibling directory (case-insensitive match)
+      repo_dir=""
+      for candidate in "$ROOT/../$key" "$ROOT/../$(echo "$key" | tr '[:upper:]' '[:lower:]')"; do
+        if [[ -d "$candidate" ]]; then
+          repo_dir="$candidate"
+          break
+        fi
+      done
+
+      if [[ -z "$repo_dir" ]]; then
+        echo "  $key: $old_val (no sibling repo found)"
+        continue
+      fi
+
+      # Extract version from project files
+      version=""
+
+      if [[ -f "$repo_dir/Cargo.toml" ]]; then
+        # Try direct version first
+        version=$(grep -m1 '^version = ' "$repo_dir/Cargo.toml" | sed 's/version = "\(.*\)"/\1/' || true)
+
+        # If empty, it's a workspace -- look in the member matching the repo name
+        if [[ -z "$version" ]]; then
+          for member_dir in "$repo_dir/$key" "$repo_dir/$(echo "$key" | tr '[:upper:]' '[:lower:]')"; do
+            if [[ -f "$member_dir/Cargo.toml" ]]; then
+              version=$(grep -m1 '^version = ' "$member_dir/Cargo.toml" | sed 's/version = "\(.*\)"/\1/' || true)
+              [[ -n "$version" ]] && break
             fi
+          done
         fi
 
-        # Note: pi and sx are not fetched from GitHub
-        # - pi: Installed from crates.io, repo doesn't exist on GitHub
-        # - sx: Repo exists but has no tags yet
-    fi
+        # Still empty? Try workspace.package.version
+        if [[ -z "$version" ]]; then
+          version=$(sed -n '/\[workspace.package\]/,/^\[/p' "$repo_dir/Cargo.toml" \
+            | grep -m1 '^version = ' | sed 's/version = "\(.*\)"/\1/' || true)
+        fi
+      fi
+
+      # Go modules: grep for version constant, then fall back to git tags
+      if [[ -z "$version" && -f "$repo_dir/go.mod" ]]; then
+        # Search common locations for version = "x.y.z" or Version = "x.y.z"
+        version=$(grep -rh '[vV]ersion\s*=\s*"[0-9]' "$repo_dir"/*.go "$repo_dir"/cmd/ "$repo_dir"/internal/ 2>/dev/null \
+          | grep -m1 -oP '"\K[0-9]+\.[0-9]+\.[0-9]+' || true)
+        # Fallback: latest git tag
+        if [[ -z "$version" ]]; then
+          version=$(cd "$repo_dir" && git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || true)
+        fi
+      fi
+
+      # Python / JS fallbacks
+      if [[ -z "$version" && -f "$repo_dir/pyproject.toml" ]]; then
+        version=$(grep -m1 '^version = ' "$repo_dir/pyproject.toml" | sed 's/version = "\(.*\)"/\1/' || true)
+      fi
+      if [[ -z "$version" && -f "$repo_dir/package.json" ]]; then
+        version=$(jq -r '.version // empty' "$repo_dir/package.json" 2>/dev/null || true)
+      fi
+
+      if [[ -n "$version" ]]; then
+        sed -i "s/^\($key = \)\"[^\"]*\"/\1\"$version\"/" "$MANIFEST"
+        if [[ "$version" != "$old_val" ]]; then
+          echo "  $key: $old_val -> $version"
+        else
+          echo "  $key: $version (unchanged)"
+        fi
+      else
+        echo "  $key: $old_val (could not detect version in $repo_dir)"
+      fi
+    done < "$MANIFEST"
 
     echo ""
     echo "Done: dependencies.toml updated"
