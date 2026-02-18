@@ -3045,9 +3045,7 @@ ExecStart=/usr/local/bin/eavs serve
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true
-ProtectSystem=strict
-ReadWritePaths=${OQTO_HOME}
-ReadWritePaths=/run/user/${octo_uid}
+ProtectSystem=full
 PrivateTmp=true
 
 [Install]
@@ -5136,7 +5134,7 @@ harden_server() {
   log_warn "╔══════════════════════════════════════════════════════════════════╗"
   log_warn "║  WARNING: SSH hardening will disable password authentication!    ║"
   log_warn "║  Make sure you have SSH key access before continuing.            ║"
-  log_warn "║  SSH port will be set to: ${OQTO_SSH_PORT:-22}                              ║"
+  log_warn "║  SSH port will be set to: ${OQTO_SSH_PORT:-22}                   ║"
   log_warn "╚══════════════════════════════════════════════════════════════════╝"
   echo
 
