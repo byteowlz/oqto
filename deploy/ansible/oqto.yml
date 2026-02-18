@@ -10,8 +10,8 @@
 # Variables (set in inventory or --extra-vars):
 #   admin_user: Username for admin account
 #   admin_ssh_key: SSH public key for admin
-#   octo_mode: "single" or "multi" (default: single)
-#   octo_backend: "local" or "container" (default: local)
+#   oqto_mode: "single" or "multi" (default: single)
+#   oqto_backend: "local" or "container" (default: local)
 #   ssh_port: SSH port (default: 22)
 #   allowed_ports: Additional ports to allow (default: [8080, 3000])
 
@@ -20,10 +20,10 @@
   become: true
 
   vars:
-    octo_mode: "single"
-    octo_backend: "local"
-    octo_user: "oqto"
-    octo_group: "oqto"
+    oqto_mode: "single"
+    oqto_backend: "local"
+    oqto_user: "oqto"
+    oqto_group: "oqto"
     ssh_port: 22
     allowed_ports:
       - 8080  # Oqto backend API
@@ -214,7 +214,7 @@
         state: present
       when:
         - ansible_facts["os_family"] == "Debian"
-        - octo_backend == "container"
+        - oqto_backend == "container"
 
     - name: Add Docker GPG key (Debian/Ubuntu)
       ansible.builtin.apt_key:
@@ -222,7 +222,7 @@
         state: present
       when:
         - ansible_facts["os_family"] == "Debian"
-        - octo_backend == "container"
+        - oqto_backend == "container"
 
     - name: Add Docker repository (Debian/Ubuntu)
       ansible.builtin.apt_repository:
@@ -230,7 +230,7 @@
         state: present
       when:
         - ansible_facts["os_family"] == "Debian"
-        - octo_backend == "container"
+        - oqto_backend == "container"
 
     - name: Install Docker (Debian/Ubuntu)
       ansible.builtin.apt:
@@ -244,7 +244,7 @@
         update_cache: true
       when:
         - ansible_facts["os_family"] == "Debian"
-        - octo_backend == "container"
+        - oqto_backend == "container"
 
     - name: Install Docker (RedHat/CentOS)
       block:
@@ -268,7 +268,7 @@
             state: present
       when:
         - ansible_facts["os_family"] == "RedHat"
-        - octo_backend == "container"
+        - oqto_backend == "container"
 
     - name: Install Docker (Arch)
       community.general.pacman:
@@ -279,21 +279,21 @@
         state: present
       when:
         - ansible_facts["os_family"] == "Archlinux"
-        - octo_backend == "container"
+        - oqto_backend == "container"
 
     - name: Enable and start Docker
       ansible.builtin.systemd:
         name: docker
         enabled: true
         state: started
-      when: octo_backend == "container"
+      when: oqto_backend == "container"
 
     - name: Add oqto user to docker group
       ansible.builtin.user:
-        name: "{{ octo_user }}"
+        name: "{{ oqto_user }}"
         groups: docker
         append: true
-      when: octo_backend == "container"
+      when: oqto_backend == "container"
 
     # ==========================================================================
     # ttyd (Web Terminal) - Required for local mode
@@ -305,7 +305,7 @@
         state: present
       when:
         - ansible_facts["os_family"] == "Debian"
-        - octo_backend == "local"
+        - oqto_backend == "local"
 
     - name: Install ttyd (Arch)
       community.general.pacman:
@@ -313,7 +313,7 @@
         state: present
       when:
         - ansible_facts["os_family"] == "Archlinux"
-        - octo_backend == "local"
+        - oqto_backend == "local"
 
     - name: Install ttyd from binary (RedHat/CentOS)
       ansible.builtin.get_url:
@@ -322,7 +322,7 @@
         mode: "0755"
       when:
         - ansible_facts["os_family"] == "RedHat"
-        - octo_backend == "local"
+        - oqto_backend == "local"
 
     # ==========================================================================
     # Rust Toolchain
@@ -388,14 +388,14 @@
 
     - name: Create oqto group
       ansible.builtin.group:
-        name: "{{ octo_group }}"
+        name: "{{ oqto_group }}"
         system: true
         state: present
 
     - name: Create oqto system user
       ansible.builtin.user:
-        name: "{{ octo_user }}"
-        group: "{{ octo_group }}"
+        name: "{{ oqto_user }}"
+        group: "{{ oqto_group }}"
         system: true
         shell: /usr/sbin/nologin
         home: /var/lib/oqto
@@ -406,8 +406,8 @@
       ansible.builtin.file:
         path: "{{ item }}"
         state: directory
-        owner: "{{ octo_user }}"
-        group: "{{ octo_group }}"
+        owner: "{{ oqto_user }}"
+        group: "{{ oqto_group }}"
         mode: "0755"
       loop:
         - /var/lib/oqto
@@ -484,14 +484,14 @@
         curl -fsSL https://opencode.ai/install | bash
       args:
         creates: /root/.local/bin/opencode
-      when: octo_backend == "local"
+      when: oqto_backend == "local"
 
     - name: Symlink OpenCode to /usr/local/bin
       ansible.builtin.file:
         src: /root/.local/bin/opencode
         dest: /usr/local/bin/opencode
         state: link
-      when: octo_backend == "local"
+      when: oqto_backend == "local"
       failed_when: false
 
     # ==========================================================================
@@ -503,7 +503,7 @@
         name: "{{ admin_user }}"
         groups:
           - sudo
-          - "{{ octo_group }}"
+          - "{{ oqto_group }}"
         shell: /bin/zsh
         create_home: true
         state: present
@@ -704,15 +704,15 @@
         owner: root
         group: root
         mode: "0644"
-      when: octo_mode == "multi"
+      when: oqto_mode == "multi"
       notify: Reload systemd
 
     - name: Deploy Oqto configuration
       ansible.builtin.template:
         src: templates/oqto-config.toml.j2
         dest: /etc/oqto/config.toml
-        owner: "{{ octo_user }}"
-        group: "{{ octo_group }}"
+        owner: "{{ oqto_user }}"
+        group: "{{ oqto_group }}"
         mode: "0640"
 
     - name: Enable Oqto service

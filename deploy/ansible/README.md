@@ -57,8 +57,8 @@ Ansible playbook for setting up and hardening a Linux server for Oqto.
    vars:
      admin_user: yourusername
      admin_ssh_key: "ssh-ed25519 AAAA..."
-     octo_mode: single      # or multi
-     octo_backend: local    # or container
+     oqto_mode: single      # or multi
+     oqto_backend: local    # or container
    ```
 
 3. Run the playbook:
@@ -80,12 +80,12 @@ Ansible playbook for setting up and hardening a Linux server for Oqto.
 |----------|---------|-------------|
 | `admin_user` | - | Admin username to create |
 | `admin_ssh_key` | - | SSH public key for admin |
-| `octo_mode` | `single` | `single` or `multi` user mode |
-| `octo_backend` | `local` | `local` (native) or `container` (Podman) |
+| `oqto_mode` | `single` | `single` or `multi` user mode |
+| `oqto_backend` | `local` | `local` (native) or `container` (Podman) |
 | `ssh_port` | `22` | SSH port |
 | `allowed_ports` | `[8080, 3000]` | Additional firewall ports |
-| `octo_user` | `oqto` | System user for Oqto service |
-| `octo_group` | `oqto` | System group for Oqto |
+| `oqto_user` | `oqto` | System user for Oqto service |
+| `oqto_group` | `oqto` | System group for Oqto |
 
 ## Post-Deployment
 
@@ -95,7 +95,7 @@ Ansible playbook for setting up and hardening a Linux server for Oqto.
    cargo install --path backend
    cargo install --path fileserver
    sudo cp ~/.cargo/bin/oqto /usr/local/bin/
-   sudo cp ~/.cargo/bin/fileserver /usr/local/bin/
+   sudo cp ~/.cargo/bin/oqto-files /usr/local/bin/
    ```
 
 2. **Configure JWT secret** - Edit `/etc/oqto/config.toml`:

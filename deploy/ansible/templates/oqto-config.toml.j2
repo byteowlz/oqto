@@ -13,30 +13,30 @@ timeout = 60
 fail_fast = true
 
 [backend]
-mode = "{{ octo_backend }}"
+mode = "{{ oqto_backend }}"
 
-{% if octo_backend == "container" %}
+{% if oqto_backend == "container" %}
 [container]
 runtime = "docker"
 default_image = "oqto-dev:latest"
 base_port = 41820
 {% endif %}
 
-{% if octo_backend == "local" %}
+{% if oqto_backend == "local" %}
 [local]
 enabled = true
 opencode_binary = "opencode"
 fileserver_binary = "fileserver"
 ttyd_binary = "ttyd"
 workspace_dir = "/var/lib/oqto/workspaces/{% raw %}{user_id}{% endraw %}"
-single_user = {{ 'true' if octo_mode == 'single' else 'false' }}
+single_user = {{ 'true' if oqto_mode == 'single' else 'false' }}
 
-{% if octo_mode == "multi" %}
+{% if oqto_mode == "multi" %}
 [local.linux_users]
 enabled = true
 prefix = "octo_"
 uid_start = 2000
-group = "{{ octo_group }}"
+group = "{{ oqto_group }}"
 shell = "/bin/bash"
 use_sudo = true
 create_home = true
@@ -56,8 +56,8 @@ enabled = true
 executable = "pi"
 default_provider = "anthropic"
 default_model = "claude-sonnet-4-20250514"
-{% if octo_backend == "local" %}
-runtime_mode = "{% if octo_mode == 'multi' %}runner{% else %}local{% endif %}"
+{% if oqto_backend == "local" %}
+runtime_mode = "{% if oqto_mode == 'multi' %}runner{% else %}local{% endif %}"
 {% else %}
 runtime_mode = "container"
 {% endif %}
