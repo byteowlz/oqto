@@ -2669,10 +2669,9 @@ generate_eavs_models_json() {
     sleep 0.5
   done
 
-  # Fetch provider details (requires master key)
+  # Fetch provider details (public endpoint, no auth needed)
   local providers_json
-  providers_json=$(curl -sf "${eavs_url}/providers/detail" \
-    -H "Authorization: Bearer ${EAVS_MASTER_KEY}" 2>&1)
+  providers_json=$(curl -sf "${eavs_url}/providers/detail" 2>&1)
 
   if [[ -z "$providers_json" || "$providers_json" == "null" ]]; then
     log_error "Failed to fetch provider details from EAVS"
@@ -2789,15 +2788,17 @@ provision_eavs_user_key() {
 
   local eavs_url="http://127.0.0.1:${EAVS_PORT}"
 
-  # Create virtual key via eavs CLI or API
+  # Create virtual key via eavs API
   local key_response
   key_response=$(curl -sf -X POST "${eavs_url}/admin/keys" \
     -H "Authorization: Bearer ${EAVS_MASTER_KEY}" \
     -H "Content-Type: application/json" \
     -d "{
       \"name\": \"octo-user-${username}\",
-      \"rpm_limit\": 120,
-      \"budget_usd\": 500.0
+      \"permissions\": {
+        \"rpm_limit\": 120,
+        \"max_budget_usd\": 500.0
+      }
     }" 2>&1)
 
   if [[ -z "$key_response" ]]; then
