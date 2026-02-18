@@ -296,7 +296,6 @@ export function ChatView({
 	const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([]);
 	const messagesEndRef = useRef<HTMLDivElement>(null);
 	const messagesContainerRef = useRef<HTMLDivElement>(null);
-	const scrollContentRef = useRef<HTMLDivElement>(null);
 	const inputRef = useRef<HTMLTextAreaElement>(null);
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const queueSendInFlightRef = useRef(false);
@@ -392,48 +391,23 @@ export function ChatView({
 		input: number;
 		output: number;
 	} | null>(null);
-	// Initialize from cached scroll position - null means bottom
+	// Whether the scroll anchor sentinel is out of view (user has scrolled up).
+	// Driven by an IntersectionObserver on the sentinel div — zero scroll event
+	// interpretation needed.
 	const [isUserScrolled, setIsUserScrolled] = useState(
 		() => getCachedScrollPosition(scrollStorageKey) !== null,
 	);
-	// Ref mirror so callbacks always read the latest value without stale closures
 	const isUserScrolledRef = useRef(isUserScrolled);
-	// Tracks whether the user has physically interacted with the scroll container
-	// recently (wheel, touch, pointer drag). Only scroll events that follow a
-	// recent user gesture count as intentional. Layout-driven scroll events
-	// (tool call cards appearing, content growing) do not have a preceding
-	// gesture and are ignored so they cannot break the stick-to-bottom behavior.
-	const userGestureActiveRef = useRef(false);
-	const userGestureTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-	const markUserGesture = useCallback(() => {
-		userGestureActiveRef.current = true;
-		if (userGestureTimerRef.current !== null) {
-			clearTimeout(userGestureTimerRef.current);
-		}
-		// Give the scroll event a short window to fire after the gesture
-		userGestureTimerRef.current = setTimeout(() => {
-			userGestureActiveRef.current = false;
-			userGestureTimerRef.current = null;
-		}, 200);
-	}, []);
-
-	// Scroll container to the very bottom instantly (no animation, no jank)
+	// Snap the sentinel back into view (browser CSS anchor does the rest).
 	const scrollToBottom = useCallback(() => {
-		const container = messagesContainerRef.current;
-		if (!container) return;
-		container.scrollTop = container.scrollHeight;
+		messagesEndRef.current?.scrollIntoView();
 	}, []);
 
-	// Pagination: show all messages. The visibleCount tracks the current
-	// total so all history is visible after reload. New streaming messages
-	// also bump it via the messages-length effect below.
 	const LOAD_MORE_COUNT = 30;
 	const [visibleCount, setVisibleCount] = useState(
 		Math.max(messages.length, 30),
 	);
-	// Keep visibleCount in sync when messages are loaded from history
-	// (e.g. fetchHistoryMessages completing after mount).
 	useEffect(() => {
 		setVisibleCount((prev) => Math.max(prev, messages.length));
 	}, [messages.length]);
@@ -880,78 +854,60 @@ const gaugeTokens = contextTokenCount;
 		isUserScrolledRef.current = isUserScrolled;
 	}, [isUserScrolled]);
 
-	// Jump-to-bottom button handler: also clears the user-scrolled flag
+	// IntersectionObserver on the sentinel div at the bottom of the message list.
+	// When the sentinel is visible the user is at the bottom (pinned). When it
+	// scrolls out of view the user has scrolled up and we show the jump button.
+	// This replaces all scroll event interpretation — the browser tells us exactly
+	// when the bottom is in/out of view with no ambiguity.
+	useEffect(() => {
+		const sentinel = messagesEndRef.current;
+		const container = messagesContainerRef.current;
+		if (!sentinel || !container) return;
+
+		const observer = new IntersectionObserver(
+			([entry]) => {
+				const atBottom = entry.isIntersecting;
+				setIsUserScrolled(!atBottom);
+				isUserScrolledRef.current = !atBottom;
+				if (atBottom) {
+					setCachedScrollPosition(null, scrollStorageKey);
+				} else {
+					setCachedScrollPosition(container.scrollTop, scrollStorageKey);
+				}
+			},
+			{ root: container, threshold: 0 },
+		);
+
+		observer.observe(sentinel);
+		return () => observer.disconnect();
+	}, [scrollStorageKey]);
+
+	// Jump-to-bottom button handler
 	const handleScrollToBottom = useCallback(() => {
-		// Clear gesture flag so the resulting scroll event is not treated as user intent
-		userGestureActiveRef.current = false;
-		if (userGestureTimerRef.current !== null) {
-			clearTimeout(userGestureTimerRef.current);
-			userGestureTimerRef.current = null;
-		}
 		setIsUserScrolled(false);
 		isUserScrolledRef.current = false;
 		setCachedScrollPosition(null, scrollStorageKey);
 		scrollToBottom();
 	}, [scrollStorageKey, scrollToBottom]);
 
-	// Initial scroll position - instant, no animation
+	// Initial scroll position
 	useLayoutEffect(() => {
 		if (initialScrollDoneRef.current || !messagesContainerRef.current) return;
 		if (messages.length === 0) return;
-
 		initialScrollDoneRef.current = true;
 		const container = messagesContainerRef.current;
 		const cachedPosition = getCachedScrollPosition(scrollStorageKey);
-
 		if (cachedPosition !== null) {
-			// Restore user's scroll position instantly
 			container.scrollTop = cachedPosition;
 		} else {
-			// Scroll to bottom instantly (no animation)
-			container.scrollTop = container.scrollHeight;
+			messagesEndRef.current?.scrollIntoView();
 		}
 	}, [messages.length, scrollStorageKey]);
 
-	// Keep visibleCount in sync when new messages arrive during streaming.
-	const prevMessageCountRef = useRef(messages.length);
-	useLayoutEffect(() => {
-		const prevCount = prevMessageCountRef.current;
-		prevMessageCountRef.current = messages.length;
-		if (messages.length > prevCount) {
-			setVisibleCount((prev) => Math.max(prev, messages.length));
-		}
-	}, [messages.length]);
-
-	// Auto-scroll: use a ResizeObserver on the inner scroll content div.
-	// This fires whenever the content height changes (new tokens, tool cards, images)
-	// and pins scrollTop to scrollHeight if the user hasn't manually scrolled away.
-	// ResizeObserver fires after layout paint so there is no frame gap, and it
-	// never generates scroll events that could be misinterpreted as user intent.
-	useEffect(() => {
-		const content = scrollContentRef.current;
-		const container = messagesContainerRef.current;
-		if (!content || !container) return;
-
-		const observer = new ResizeObserver(() => {
-			if (!initialScrollDoneRef.current) return;
-			if (!isUserScrolledRef.current) {
-				container.scrollTop = container.scrollHeight;
-			}
-		});
-
-		observer.observe(content);
-		return () => observer.disconnect();
-	}, []); // deliberately empty — refs are stable
-
-	// Detect user scroll intent. We only update isUserScrolled when a real
-	// pointer/wheel/touch gesture preceded the scroll event (tracked via
-	// markUserGesture). Programmatic / layout-driven scroll events have no
-	// preceding gesture and are ignored entirely here.
+	// Load more messages when user scrolls near the top
 	const handleScroll = useCallback(() => {
 		const container = messagesContainerRef.current;
 		if (!container) return;
-
-		// Load more messages when the user scrolls near the top
 		const isNearTop = container.scrollTop < 100;
 		if (isNearTop && visibleCount < messages.length) {
 			const prevScrollHeight = container.scrollHeight;
@@ -959,27 +915,10 @@ const gaugeTokens = contextTokenCount;
 				Math.min(prev + LOAD_MORE_COUNT, messages.length),
 			);
 			requestAnimationFrame(() => {
-				const newScrollHeight = container.scrollHeight;
-				container.scrollTop = newScrollHeight - prevScrollHeight;
+				container.scrollTop = container.scrollHeight - prevScrollHeight;
 			});
 		}
-
-		// Ignore layout-driven scroll events — only react to real user gestures
-		if (!userGestureActiveRef.current) return;
-
-		const isNearBottom =
-			container.scrollHeight - container.scrollTop - container.clientHeight <
-			100;
-		const userScrolled = !isNearBottom;
-		setIsUserScrolled(userScrolled);
-		isUserScrolledRef.current = userScrolled;
-
-		if (userScrolled) {
-			setCachedScrollPosition(container.scrollTop, scrollStorageKey);
-		} else {
-			setCachedScrollPosition(null, scrollStorageKey);
-		}
-	}, [scrollStorageKey, visibleCount, messages.length]);
+	}, [visibleCount, messages.length]);
 
 	// Focus input on mount - only on desktop to avoid opening keyboard on mobile
 	useEffect(() => {
@@ -1746,13 +1685,10 @@ const gaugeTokens = contextTokenCount;
 				<div
 					ref={messagesContainerRef}
 					onScroll={handleScroll}
-					onWheel={markUserGesture}
-					onPointerDown={markUserGesture}
-					onTouchStart={markUserGesture}
 					className="h-full bg-muted/30 border border-border p-2 sm:p-4 overflow-y-auto scrollbar-hide"
 					data-spotlight="chat-timeline"
 				>
-					<div ref={scrollContentRef}>
+					<div style={{ overflowAnchor: "none" }}>
 					{showSkeleton && ChatSkeleton}
 
 					{!showSkeleton &&
@@ -1879,8 +1815,8 @@ const gaugeTokens = contextTokenCount;
 						</div>
 					)}
 
-					<div ref={messagesEndRef} />
-					</div>{/* end scrollContentRef */}
+					</div>{/* end overflow-anchor:none wrapper */}
+					<div ref={messagesEndRef} style={{ overflowAnchor: "auto", height: "1px" }} />
 				</div>
 
 				{/* Jump to bottom button - appears when user has scrolled up */}
