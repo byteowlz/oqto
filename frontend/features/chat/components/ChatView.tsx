@@ -395,6 +395,16 @@ export function ChatView({
 	const [isUserScrolled, setIsUserScrolled] = useState(
 		() => getCachedScrollPosition(scrollStorageKey) !== null,
 	);
+	// Ref mirror so callbacks always read the latest value without stale closures
+	const isUserScrolledRef = useRef(isUserScrolled);
+
+	// Scroll container to the very bottom instantly (no animation, no jank)
+	const scrollToBottom = useCallback(() => {
+		const container = messagesContainerRef.current;
+		if (!container) return;
+		container.scrollTop = container.scrollHeight;
+	}, []);
+
 	// Pagination: show all messages. The visibleCount tracks the current
 	// total so all history is visible after reload. New streaming messages
 	// also bump it via the messages-length effect below.
@@ -424,10 +434,10 @@ export function ChatView({
 	} = useA2UI(a2uiMessagesRef, {
 		onSurfaceReceived: useCallback(() => {
 			// Auto-scroll when A2UI surface arrives
-			if (!isUserScrolled) {
-				messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+			if (!isUserScrolledRef.current) {
+				scrollToBottom();
 			}
-		}, [isUserScrolled]),
+		}, [scrollToBottom]),
 	});
 
 	// Memoized map of message ID to surfaces to avoid creating new arrays on each render
@@ -845,6 +855,19 @@ const gaugeTokens = contextTokenCount;
 		}
 	}, [scrollToMessageId, messages, visibleCount, onScrollToMessageComplete]);
 
+	// Keep ref mirror in sync with state
+	useEffect(() => {
+		isUserScrolledRef.current = isUserScrolled;
+	}, [isUserScrolled]);
+
+	// Jump-to-bottom button handler: also clears the user-scrolled flag
+	const handleScrollToBottom = useCallback(() => {
+		setIsUserScrolled(false);
+		isUserScrolledRef.current = false;
+		setCachedScrollPosition(null, scrollStorageKey);
+		scrollToBottom();
+	}, [scrollStorageKey, scrollToBottom]);
+
 	// Initial scroll position - instant, no animation
 	useLayoutEffect(() => {
 		if (initialScrollDoneRef.current || !messagesContainerRef.current) return;
@@ -863,21 +886,26 @@ const gaugeTokens = contextTokenCount;
 		}
 	}, [messages.length, scrollStorageKey]);
 
-	// Auto-scroll to bottom when NEW messages arrive (only if user hasn't scrolled up)
+	// Auto-scroll to bottom on every render when the user hasn't scrolled up.
+	// This covers both new messages (length change) and streaming content updates
+	// (same length, mutated content) so the view always follows the output.
 	const prevMessageCountRef = useRef(messages.length);
 	useLayoutEffect(() => {
+		if (!initialScrollDoneRef.current) return;
+
 		const prevCount = prevMessageCountRef.current;
 		prevMessageCountRef.current = messages.length;
 
-		// Only auto-scroll if messages were added (not on initial load)
 		if (messages.length > prevCount) {
-			// Ensure new messages are visible
+			// New message added - ensure it's in the visible window
 			setVisibleCount((prev) => Math.max(prev, messages.length));
-			if (!isUserScrolled) {
-				messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-			}
 		}
-	}, [messages.length, isUserScrolled]);
+
+		// Pin to bottom whenever user hasn't manually scrolled away
+		if (!isUserScrolledRef.current) {
+			scrollToBottom();
+		}
+	}, [messages, scrollToBottom]);
 
 	// Detect user scroll to disable auto-scroll, save position, and load more messages
 	const handleScroll = useCallback(() => {
@@ -906,6 +934,7 @@ const gaugeTokens = contextTokenCount;
 
 		const userScrolled = !isNearBottom;
 		setIsUserScrolled(userScrolled);
+		isUserScrolledRef.current = userScrolled;
 
 		// Save scroll position to cache
 		if (userScrolled) {
@@ -1812,6 +1841,31 @@ const gaugeTokens = contextTokenCount;
 
 					<div ref={messagesEndRef} />
 				</div>
+
+				{/* Jump to bottom button - appears when user has scrolled up */}
+				{isUserScrolled && (
+					<button
+						type="button"
+						onClick={handleScrollToBottom}
+						className="absolute bottom-3 right-4 z-10 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-background border border-border text-xs text-muted-foreground shadow-md hover:text-foreground hover:border-foreground/30 transition-colors"
+					>
+						<svg
+							xmlns="http://www.w3.org/2000/svg"
+							width="12"
+							height="12"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							strokeWidth="2"
+							strokeLinecap="round"
+							strokeLinejoin="round"
+							aria-hidden="true"
+						>
+							<polyline points="6 9 12 15 18 9" />
+						</svg>
+						Jump to bottom
+					</button>
+				)}
 			</div>
 
 			{/* Hidden file input */}
