@@ -530,7 +530,14 @@ install_system_prerequisites() {
 
   # pkg-config and OpenSSL headers are needed for Rust tools (e.g., ignr)
   if [[ "$OS" == "linux" ]]; then
+    local need_pkg_config="false"
     if ! command_exists pkg-config; then
+      need_pkg_config="true"
+    elif ! pkg-config --exists openssl 2>/dev/null; then
+      need_pkg_config="true"
+    fi
+
+    if [[ "$need_pkg_config" == "true" ]]; then
       case "$OS_DISTRO" in
       arch | manjaro | endeavouros) pkgs+=("pkgconf") ;;
       debian | ubuntu | pop | linuxmint) pkgs+=("pkg-config") ;;
@@ -539,7 +546,7 @@ install_system_prerequisites() {
       esac
     fi
 
-    if [[ ! -f /usr/include/openssl/ssl.h ]]; then
+    if [[ ! -f /usr/include/openssl/ssl.h ]] || ! pkg-config --exists openssl 2>/dev/null; then
       case "$OS_DISTRO" in
       arch | manjaro | endeavouros) pkgs+=("openssl") ;;
       debian | ubuntu | pop | linuxmint) pkgs+=("libssl-dev") ;;
