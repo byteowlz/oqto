@@ -759,6 +759,9 @@ Enable multiple platform users to access the same project/workspace with proper 
 ...
 
 
+### [octo-34f0] Migrate generate_pi_models_json to eavs API endpoint (P3, chore)
+The octo backend has a duplicate of the Pi models.json generation logic in backend/crates/octo/src/eavs/mod.rs. Now that eavs has 'eavs models export pi' (and the export module), the octo backend should call an eavs API endpoint (e.g. GET /providers/export/pi) instead of duplicating the format logic. This would be a new API endpoint in eavs that returns the same JSON as the CLI command.
+
 ### [octo-qqg2] Support octo.install.toml for non-interactive setup with provider API keys (P3, feature)
 Add support for reading an octo.install.toml file that pre-configures LLM providers and API keys for non-interactive setup. The file would be read at the start of setup.sh and converted into environment variables. This enables fully automated deployments without manual key entry. Format:
 ```toml
@@ -1505,6 +1508,6 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
 - [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
 - [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
 - [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
