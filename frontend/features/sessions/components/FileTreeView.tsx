@@ -307,8 +307,7 @@ export function FileTreeView({
 	const [loadingDirs, setLoadingDirs] = useState<Set<string>>(new Set());
 	const [pathDialog, setPathDialog] = useState<{
 		title: string;
-		description: string;
-		defaultValue: string;
+		sourcePath: string;
 		onConfirm: (value: string) => void;
 	} | null>(null);
 	const fileInputRef = useRef<HTMLInputElement>(null);
@@ -624,8 +623,7 @@ export function FileTreeView({
 		if (!normalizedWorkspacePath || !cacheKey) return;
 		setPathDialog({
 			title: "Copy to",
-			description: `Copy "${path}" to a new location.`,
-			defaultValue: path,
+			sourcePath: path,
 			onConfirm: async (target: string) => {
 				if (!target || target === path) return;
 				try {
@@ -642,8 +640,7 @@ export function FileTreeView({
 		if (!normalizedWorkspacePath || !cacheKey) return;
 		setPathDialog({
 			title: "Move to",
-			description: `Move "${path}" to a new location.`,
-			defaultValue: path,
+			sourcePath: path,
 			onConfirm: async (target: string) => {
 				if (!target || target === path) return;
 				try {
@@ -1016,12 +1013,12 @@ export function FileTreeView({
 				)}
 			</div>
 
-			{/* Path input dialog for copy/move operations */}
-			<PathInputDialog
+			{/* Destination picker dialog for copy/move operations */}
+			<DestinationPickerDialog
 				open={pathDialog !== null}
 				title={pathDialog?.title ?? ""}
-				description={pathDialog?.description ?? ""}
-				defaultValue={pathDialog?.defaultValue ?? ""}
+				sourcePath={pathDialog?.sourcePath ?? ""}
+				tree={tree}
 				onConfirm={(value) => {
 					pathDialog?.onConfirm(value);
 					setPathDialog(null);
@@ -1032,43 +1029,128 @@ export function FileTreeView({
 	);
 }
 
-// Styled path input dialog (replaces window.prompt)
-const PathInputDialog = memo(function PathInputDialog({
+// Destination picker dialog for copy/move with directory tree
+const DestinationPickerDialog = memo(function DestinationPickerDialog({
 	open,
 	title,
-	description,
-	defaultValue,
+	sourcePath,
+	tree,
 	onConfirm,
 	onCancel,
 }: {
 	open: boolean;
 	title: string;
-	description: string;
-	defaultValue: string;
+	sourcePath: string;
+	tree: FileNode[];
 	onConfirm: (value: string) => void;
 	onCancel: () => void;
 }) {
-	const [value, setValue] = useState(defaultValue);
+	const [customPath, setCustomPath] = useState("");
+	const [selectedDir, setSelectedDir] = useState<string | null>(null);
+	const [expanded, setExpanded] = useState<Set<string>>(new Set());
 	const inputRef = useRef<HTMLInputElement>(null);
+
+	const fileName = sourcePath.split("/").pop() ?? sourcePath;
+	const sourceDir = sourcePath.includes("/")
+		? sourcePath.substring(0, sourcePath.lastIndexOf("/"))
+		: ".";
 
 	useEffect(() => {
 		if (open) {
-			setValue(defaultValue);
-			// Focus and select filename part after mount
-			requestAnimationFrame(() => {
-				if (inputRef.current) {
-					inputRef.current.focus();
-					inputRef.current.select();
-				}
-			});
+			setCustomPath("");
+			setSelectedDir(null);
+			// Auto-expand the source directory's parents
+			const parts = sourcePath.split("/");
+			const parentPaths = new Set<string>();
+			for (let i = 1; i < parts.length; i++) {
+				parentPaths.add(parts.slice(0, i).join("/"));
+			}
+			setExpanded(parentPaths);
 		}
-	}, [open, defaultValue]);
+	}, [open, sourcePath]);
 
-	const handleSubmit = (e: React.FormEvent) => {
-		e.preventDefault();
-		if (value.trim()) {
-			onConfirm(value.trim());
+	const handleConfirm = () => {
+		if (customPath.trim()) {
+			onConfirm(customPath.trim());
+		} else if (selectedDir !== null) {
+			// Combine selected directory with the filename
+			const dest =
+				selectedDir === "." ? fileName : `${selectedDir}/${fileName}`;
+			onConfirm(dest);
 		}
+	};
+
+	const toggleExpand = (path: string) => {
+		setExpanded((prev) => {
+			const next = new Set(prev);
+			if (next.has(path)) {
+				next.delete(path);
+			} else {
+				next.add(path);
+			}
+			return next;
+		});
+	};
+
+	const renderDirNode = (node: FileNode, depth: number) => {
+		if (node.type !== "directory") return null;
+
+		// Don't show source dir's parent as a target if it's the same path
+		const isSourceDir = node.path === sourceDir;
+		const isSelected = selectedDir === node.path;
+		const isExpanded = expanded.has(node.path);
+		const hasChildren = node.children?.some((c) => c.type === "directory");
+
+		return (
+			<div key={node.path}>
+				<button
+					type="button"
+					onClick={() => {
+						setSelectedDir(node.path);
+						setCustomPath("");
+					}}
+					onDoubleClick={() => toggleExpand(node.path)}
+					className={cn(
+						"flex items-center gap-1.5 w-full px-2 py-1 text-sm rounded transition-colors text-left",
+						isSelected
+							? "bg-primary/15 text-primary"
+							: "hover:bg-muted text-foreground",
+						isSourceDir && "text-muted-foreground",
+					)}
+					style={{ paddingLeft: `${depth * 16 + 8}px` }}
+				>
+					{hasChildren ? (
+						<button
+							type="button"
+							onClick={(e) => {
+								e.stopPropagation();
+								toggleExpand(node.path);
+							}}
+							className="p-0 shrink-0"
+						>
+							{isExpanded ? (
+								<ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
+							) : (
+								<ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />
+							)}
+						</button>
+					) : (
+						<span className="w-3.5" />
+					)}
+					<Folder className="w-4 h-4 shrink-0 text-muted-foreground" />
+					<span className="truncate">{node.name}</span>
+					{isSourceDir && (
+						<span className="text-xs text-muted-foreground ml-auto">
+							current
+						</span>
+					)}
+				</button>
+				{isExpanded &&
+					node.children
+						?.filter((c) => c.type === "directory")
+						.map((child) => renderDirNode(child, depth + 1))}
+			</div>
+		);
 	};
 
 	return (
@@ -1076,38 +1158,86 @@ const PathInputDialog = memo(function PathInputDialog({
 			<DialogContent className="sm:max-w-md">
 				<DialogHeader>
 					<DialogTitle>{title}</DialogTitle>
-					<DialogDescription>{description}</DialogDescription>
+					<DialogDescription>
+						Select a destination for <span className="font-medium text-foreground">{fileName}</span>
+					</DialogDescription>
 				</DialogHeader>
-				<form onSubmit={handleSubmit}>
+
+				{/* Directory tree */}
+				<div className="max-h-64 overflow-y-auto rounded-md border border-border bg-muted/30 py-1">
+					{/* Root directory option */}
+					<button
+						type="button"
+						onClick={() => {
+							setSelectedDir(".");
+							setCustomPath("");
+						}}
+						className={cn(
+							"flex items-center gap-1.5 w-full px-2 py-1 text-sm rounded transition-colors text-left",
+							selectedDir === "."
+								? "bg-primary/15 text-primary"
+								: "hover:bg-muted text-foreground",
+						)}
+						style={{ paddingLeft: "8px" }}
+					>
+						<span className="w-3.5" />
+						<Folder className="w-4 h-4 shrink-0 text-muted-foreground" />
+						<span className="truncate">/ (root)</span>
+						{sourceDir === "." && (
+							<span className="text-xs text-muted-foreground ml-auto">
+								current
+							</span>
+						)}
+					</button>
+					{tree
+						.filter((n) => n.type === "directory")
+						.map((node) => renderDirNode(node, 1))}
+				</div>
+
+				{/* Custom path input as alternative */}
+				<div className="flex items-center gap-2">
+					<span className="text-xs text-muted-foreground whitespace-nowrap">
+						Or type path:
+					</span>
 					<input
 						ref={inputRef}
 						type="text"
-						value={value}
-						onChange={(e) => setValue(e.target.value)}
-						className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+						value={customPath}
+						onChange={(e) => {
+							setCustomPath(e.target.value);
+							if (e.target.value) setSelectedDir(null);
+						}}
+						placeholder={sourcePath}
+						className="flex-1 rounded-md border border-border bg-background px-2.5 py-1.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
 						onKeyDown={(e) => {
 							if (e.key === "Escape") {
 								e.preventDefault();
 								onCancel();
+							} else if (e.key === "Enter") {
+								e.preventDefault();
+								handleConfirm();
 							}
 						}}
 					/>
-					<DialogFooter className="mt-4">
-						<button
-							type="button"
-							onClick={onCancel}
-							className="inline-flex items-center justify-center rounded-md px-4 py-2 text-sm font-medium border border-border bg-background text-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
-						>
-							Cancel
-						</button>
-						<button
-							type="submit"
-							className="inline-flex items-center justify-center rounded-md px-4 py-2 text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
-						>
-							Confirm
-						</button>
-					</DialogFooter>
-				</form>
+				</div>
+
+				<DialogFooter>
+					<button
+						type="button"
+						onClick={onCancel}
+						className="inline-flex items-center justify-center rounded-md px-4 py-2 text-sm font-medium border border-border bg-background text-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
+					>
+						Cancel
+					</button>
+					<button
+						type="button"
+						onClick={handleConfirm}
+						disabled={!selectedDir && !customPath.trim()}
+						className="inline-flex items-center justify-center rounded-md px-4 py-2 text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:pointer-events-none"
+					>
+						Confirm
+					</button>
+				</DialogFooter>
 			</DialogContent>
 		</Dialog>
 	);
