@@ -2172,6 +2172,10 @@ configure_eavs() {
   echo "You can add more providers later by editing: $eavs_config_file"
   echo
 
+  # Ensure the eavs model catalog is downloaded/up-to-date for model selection
+  log_info "Updating model catalog from models.dev..."
+  eavs models update >/dev/null 2>&1 || true
+
   # Collect provider configs (including model shortlists)
   local providers_toml=""
   local first_provider=""
@@ -2259,8 +2263,8 @@ configure_eavs() {
 type = \"${provider_type}\"
 api_key = \"env:${env_var_name}\"
 "
-      # Append curated model shortlist so users get a sensible set of models
-      providers_toml+="$(get_model_shortlist "$provider_name")"
+      # Let user pick models from the live eavs catalog
+      providers_toml+="$(select_models_for_provider "$provider_name")"
 
       has_any_provider="true"
       CONFIGURED_PROVIDERS="${CONFIGURED_PROVIDERS} ${provider_name}"
@@ -2354,216 +2358,210 @@ EOF
 }
 
 # ==============================================================================
-# Curated Model Shortlists
+# Dynamic Model Selection from EAVS Catalog
 # ==============================================================================
-# Returns TOML model shortlist entries for a given provider.
-# These ensure users see a manageable set of best models rather than
-# the entire models.dev catalog (2800+ models).
+# Queries the live eavs model catalog (models.dev) and lets users pick models
+# interactively via fuzzy multi-select. Falls back gracefully:
+#   gum filter (best UX) > fzf (good) > numbered list (basic)
+# In non-interactive mode, auto-selects the top N newest models.
+#
+# The catalog is sorted by release date (newest first) by eavs, so the
+# pre-selected defaults are always the latest models.
 
-get_model_shortlist() {
+# How many models to pre-select per provider in non-interactive/default mode
+DEFAULT_MODEL_COUNT=5
+
+select_models_for_provider() {
   local provider="$1"
-  case "$provider" in
-  anthropic)
-    cat <<'MODELS'
 
-[[providers.anthropic.models]]
-id = "claude-sonnet-4-6"
-name = "Claude Sonnet 4.6"
-reasoning = true
-input = ["text", "image"]
-context_window = 200000
-max_tokens = 64000
-cost = { input = 3.0, output = 15.0, cache_read = 0.3 }
+  # Query the eavs model catalog for this provider
+  local catalog_json
+  catalog_json=$(eavs models list "$provider" --json 2>/dev/null) || true
 
-[[providers.anthropic.models]]
-id = "claude-opus-4-6"
-name = "Claude Opus 4.6"
-reasoning = true
-input = ["text", "image"]
-context_window = 200000
-max_tokens = 32000
-cost = { input = 5.0, output = 25.0, cache_read = 0.5 }
-
-[[providers.anthropic.models]]
-id = "claude-3-5-haiku-20241022"
-name = "Claude 3.5 Haiku"
-reasoning = false
-input = ["text", "image"]
-context_window = 200000
-max_tokens = 8192
-cost = { input = 0.8, output = 4.0, cache_read = 0.08 }
-MODELS
-    ;;
-  openai)
-    cat <<'MODELS'
-
-[[providers.openai.models]]
-id = "o3"
-name = "o3"
-reasoning = true
-input = ["text", "image"]
-context_window = 200000
-max_tokens = 100000
-cost = { input = 2.0, output = 8.0, cache_read = 0.5 }
-
-[[providers.openai.models]]
-id = "o4-mini"
-name = "o4-mini"
-reasoning = true
-input = ["text", "image"]
-context_window = 200000
-max_tokens = 100000
-cost = { input = 1.1, output = 4.4, cache_read = 0.275 }
-
-[[providers.openai.models]]
-id = "gpt-4.1"
-name = "GPT-4.1"
-reasoning = false
-input = ["text", "image"]
-context_window = 1047576
-max_tokens = 32768
-cost = { input = 2.0, output = 8.0, cache_read = 0.5 }
-
-[[providers.openai.models]]
-id = "gpt-4.1-mini"
-name = "GPT-4.1 Mini"
-reasoning = false
-input = ["text", "image"]
-context_window = 1047576
-max_tokens = 32768
-cost = { input = 0.4, output = 1.6, cache_read = 0.1 }
-
-[[providers.openai.models]]
-id = "gpt-4.1-nano"
-name = "GPT-4.1 Nano"
-reasoning = false
-input = ["text", "image"]
-context_window = 1047576
-max_tokens = 32768
-cost = { input = 0.1, output = 0.4, cache_read = 0.025 }
-MODELS
-    ;;
-  google)
-    cat <<'MODELS'
-
-[[providers.google.models]]
-id = "gemini-2.5-pro"
-name = "Gemini 2.5 Pro"
-reasoning = true
-input = ["text", "image"]
-context_window = 1048576
-max_tokens = 65536
-cost = { input = 1.25, output = 10.0, cache_read = 0.315 }
-
-[[providers.google.models]]
-id = "gemini-2.5-flash"
-name = "Gemini 2.5 Flash"
-reasoning = true
-input = ["text", "image"]
-context_window = 1048576
-max_tokens = 65536
-cost = { input = 0.15, output = 0.6, cache_read = 0.0375 }
-
-[[providers.google.models]]
-id = "gemini-2.0-flash"
-name = "Gemini 2.0 Flash"
-reasoning = false
-input = ["text", "image"]
-context_window = 1048576
-max_tokens = 8192
-cost = { input = 0.1, output = 0.4, cache_read = 0.025 }
-MODELS
-    ;;
-  openrouter)
-    # OpenRouter gives access to many providers; include top picks
-    cat <<'MODELS'
-
-[[providers.openrouter.models]]
-id = "anthropic/claude-sonnet-4-6"
-name = "Claude Sonnet 4.6 (via OpenRouter)"
-reasoning = true
-input = ["text", "image"]
-context_window = 200000
-max_tokens = 64000
-cost = { input = 3.0, output = 15.0, cache_read = 0.3 }
-
-[[providers.openrouter.models]]
-id = "openai/o3"
-name = "o3 (via OpenRouter)"
-reasoning = true
-input = ["text", "image"]
-context_window = 200000
-max_tokens = 100000
-cost = { input = 2.0, output = 8.0, cache_read = 0.5 }
-
-[[providers.openrouter.models]]
-id = "google/gemini-2.5-pro"
-name = "Gemini 2.5 Pro (via OpenRouter)"
-reasoning = true
-input = ["text", "image"]
-context_window = 1048576
-max_tokens = 65536
-cost = { input = 1.25, output = 10.0, cache_read = 0.315 }
-
-[[providers.openrouter.models]]
-id = "deepseek/deepseek-r1"
-name = "DeepSeek R1 (via OpenRouter)"
-reasoning = true
-input = ["text"]
-context_window = 131072
-max_tokens = 65536
-cost = { input = 0.55, output = 2.19, cache_read = 0.14 }
-MODELS
-    ;;
-  groq)
-    cat <<'MODELS'
-
-[[providers.groq.models]]
-id = "llama-3.3-70b-versatile"
-name = "Llama 3.3 70B"
-reasoning = false
-input = ["text"]
-context_window = 128000
-max_tokens = 32768
-cost = { input = 0.59, output = 0.79, cache_read = 0.0 }
-
-[[providers.groq.models]]
-id = "deepseek-r1-distill-llama-70b"
-name = "DeepSeek R1 Distill 70B"
-reasoning = true
-input = ["text"]
-context_window = 131072
-max_tokens = 16384
-cost = { input = 0.75, output = 0.99, cache_read = 0.0 }
-MODELS
-    ;;
-  mistral)
-    cat <<'MODELS'
-
-[[providers.mistral.models]]
-id = "mistral-large-latest"
-name = "Mistral Large"
-reasoning = false
-input = ["text"]
-context_window = 131072
-max_tokens = 131072
-cost = { input = 2.0, output = 6.0, cache_read = 0.0 }
-
-[[providers.mistral.models]]
-id = "codestral-latest"
-name = "Codestral"
-reasoning = false
-input = ["text"]
-context_window = 256000
-max_tokens = 131072
-cost = { input = 0.3, output = 0.9, cache_read = 0.0 }
-MODELS
-    ;;
-  *)
-    # No shortlist for unknown providers -- eavs will use the full catalog
+  if [[ -z "$catalog_json" || "$catalog_json" == "[]" || "$catalog_json" == "null" ]]; then
+    log_warn "No models found in catalog for $provider. Skipping model selection."
     echo ""
-    ;;
-  esac
+    return
+  fi
+
+  # Build display lines and extract model data using python3
+  # Each line: "model_id | display_name | $in/$out | ctx_window | reasoning"
+  local model_lines
+  model_lines=$(echo "$catalog_json" | python3 -c "
+import json, sys
+models = json.load(sys.stdin)
+for m in models:
+    mid = m['id']
+    name = m.get('name') or mid
+    cost = m.get('cost', {})
+    cin = cost.get('input', 0)
+    cout = cost.get('output', 0)
+    ctx = m.get('limit', {}).get('context', 0)
+    reasoning = 'R' if m.get('reasoning') else ' '
+    rel = m.get('release_date', '')[:10]
+    # Format context window as human-readable
+    if ctx >= 1000000:
+        ctx_str = f'{ctx/1000000:.0f}M'
+    elif ctx >= 1000:
+        ctx_str = f'{ctx/1000:.0f}K'
+    else:
+        ctx_str = str(ctx)
+    print(f'{mid}\t{name}\t\${cin}/\${cout}\t{ctx_str}\t{reasoning}\t{rel}')
+" 2>/dev/null) || true
+
+  if [[ -z "$model_lines" ]]; then
+    log_warn "Failed to parse model catalog for $provider"
+    echo ""
+    return
+  fi
+
+  local total_count
+  total_count=$(echo "$model_lines" | wc -l)
+
+  # Build formatted display lines for the picker (tab-separated data -> columns)
+  local display_lines
+  display_lines=$(echo "$model_lines" | awk -F'\t' '{
+    printf "%-45s  %s  %-12s  ctx=%-6s  %s\n", $1, $5, $3, $4, $6
+  }')
+
+  # Get the top N model IDs for pre-selection
+  local default_ids
+  default_ids=$(echo "$model_lines" | head -n "$DEFAULT_MODEL_COUNT" | cut -f1)
+  local default_csv
+  default_csv=$(echo "$default_ids" | paste -sd',' -)
+
+  echo
+  echo "  Select models for $provider ($total_count available, newest first):"
+  echo "  [R]=reasoning  Costs per 1M tokens  Pre-selected: top $DEFAULT_MODEL_COUNT newest"
+  echo
+
+  local selected_ids=""
+
+  if [[ "$NONINTERACTIVE" == "true" ]]; then
+    # Non-interactive: just use the top N
+    selected_ids="$default_ids"
+    log_info "Auto-selected top $DEFAULT_MODEL_COUNT models for $provider"
+  elif command -v gum >/dev/null 2>&1; then
+    # gum filter: fuzzy search + multi-select (best UX)
+    # --selected expects full display lines, build CSV of the default lines
+    local default_display_csv=""
+    local line_num=0
+    while IFS= read -r dline; do
+      line_num=$((line_num + 1))
+      if [[ $line_num -le $DEFAULT_MODEL_COUNT ]]; then
+        if [[ -n "$default_display_csv" ]]; then
+          default_display_csv+=","
+        fi
+        default_display_csv+="$dline"
+      fi
+    done <<<"$display_lines"
+
+    selected_ids=$(echo "$display_lines" | \
+      gum filter --no-limit \
+        --header="Select models for $provider (tab=toggle, enter=confirm)" \
+        --placeholder="Type to filter..." \
+        --selected="$default_display_csv" \
+        --height=20 2>/dev/null | \
+      awk '{print $1}') || true
+  elif command -v fzf >/dev/null 2>&1; then
+    # fzf: fuzzy search + multi-select (good fallback)
+    selected_ids=$(echo "$display_lines" | \
+      fzf --multi \
+        --header="Select models for $provider (tab=toggle, enter=confirm)" \
+        --height=20 \
+        --reverse 2>/dev/null | \
+      awk '{print $1}') || true
+  fi
+
+  # Fallback: simple numbered list if no TUI tool or nothing selected
+  if [[ -z "$selected_ids" && "$NONINTERACTIVE" != "true" ]]; then
+    echo "  Available models:"
+    local i=1
+    while IFS=$'\t' read -r mid name cost ctx reasoning rel; do
+      local marker=" "
+      if echo "$default_ids" | grep -qx "$mid"; then
+        marker="*"
+      fi
+      printf "  %s %2d) %-40s  %s  %-12s  ctx=%-6s  %s\n" "$marker" "$i" "$mid" "$reasoning" "$cost" "$ctx" "$rel"
+      i=$((i + 1))
+    done <<<"$model_lines"
+    echo
+    echo "  Enter model numbers to select (comma/space separated, * = pre-selected)."
+    echo "  Press Enter to accept defaults (top $DEFAULT_MODEL_COUNT)."
+    local selection
+    read -r -p "  Selection: " selection
+
+    if [[ -z "$selection" ]]; then
+      # Accept defaults
+      selected_ids="$default_ids"
+    else
+      # Parse comma/space separated numbers
+      selected_ids=""
+      local nums
+      nums=$(echo "$selection" | tr ',' ' ')
+      for num in $nums; do
+        local sel_id
+        sel_id=$(echo "$model_lines" | sed -n "${num}p" | cut -f1)
+        if [[ -n "$sel_id" ]]; then
+          selected_ids+="$sel_id"$'\n'
+        fi
+      done
+    fi
+  fi
+
+  if [[ -z "$selected_ids" ]]; then
+    log_warn "No models selected for $provider"
+    echo ""
+    return
+  fi
+
+  # Convert selected model IDs to TOML shortlist entries
+  local toml_output=""
+  while IFS= read -r model_id; do
+    [[ -z "$model_id" ]] && continue
+    # Look up full model data from catalog JSON
+    local model_toml
+    model_toml=$(echo "$catalog_json" | python3 -c "
+import json, sys
+models = json.load(sys.stdin)
+provider = '${provider}'
+model_id = '${model_id}'
+for m in models:
+    if m['id'] != model_id:
+        continue
+    cost = m.get('cost', {})
+    mods = m.get('modalities', {}).get('input', ['text'])
+    # Filter to text/image only for Pi compatibility
+    pi_input = [x for x in mods if x in ('text', 'image')]
+    if not pi_input:
+        pi_input = ['text']
+    limit = m.get('limit', {})
+    ctx = limit.get('context', 128000)
+    out = limit.get('output', 8192)
+    reasoning = str(m.get('reasoning', False)).lower()
+    input_toml = ', '.join(f'\"{x}\"' for x in pi_input)
+    cache_read = cost.get('cache_read', 0)
+    # Escape quotes in name for TOML safety
+    safe_name = (m.get('name') or m['id']).replace('\\\\', '\\\\\\\\').replace('\"', '\\\\\"')
+    safe_id = m['id'].replace('\\\\', '\\\\\\\\').replace('\"', '\\\\\"')
+    print(f'''
+[[providers.{provider}.models]]
+id = \"{safe_id}\"
+name = \"{safe_name}\"
+reasoning = {reasoning}
+input = [{input_toml}]
+context_window = {ctx}
+max_tokens = {out}
+cost = {{ input = {cost.get('input', 0)}, output = {cost.get('output', 0)}, cache_read = {cache_read} }}''')
+    break
+" 2>/dev/null) || true
+    toml_output+="$model_toml"
+  done <<<"$selected_ids"
+
+  local selected_count
+  selected_count=$(echo "$selected_ids" | grep -c '.' || echo 0)
+  log_success "Selected $selected_count models for $provider"
+  echo "$toml_output"
 }
 
 # ==============================================================================
