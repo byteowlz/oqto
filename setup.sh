@@ -2392,30 +2392,23 @@ select_models_for_provider() {
     return
   fi
 
-  # Build display lines and extract model data using python3
-  # Each line: "model_id | display_name | $in/$out | ctx_window | reasoning"
+  # Build tab-separated display data using jq
+  # Each line: "model_id\tname\t$in/$out\tctx\treasoning\trelease_date"
   local model_lines
-  model_lines=$(echo "$catalog_json" | python3 -c "
-import json, sys
-models = json.load(sys.stdin)
-for m in models:
-    mid = m['id']
-    name = m.get('name') or mid
-    cost = m.get('cost', {})
-    cin = cost.get('input', 0)
-    cout = cost.get('output', 0)
-    ctx = m.get('limit', {}).get('context', 0)
-    reasoning = 'R' if m.get('reasoning') else ' '
-    rel = m.get('release_date', '')[:10]
-    # Format context window as human-readable
-    if ctx >= 1000000:
-        ctx_str = f'{ctx/1000000:.0f}M'
-    elif ctx >= 1000:
-        ctx_str = f'{ctx/1000:.0f}K'
-    else:
-        ctx_str = str(ctx)
-    print(f'{mid}\t{name}\t\${cin}/\${cout}\t{ctx_str}\t{reasoning}\t{rel}')
-" 2>/dev/null) || true
+  model_lines=$(echo "$catalog_json" | jq -r '.[] |
+    def fmt_ctx: .limit.context // 0 |
+      if . >= 1000000 then "\(./1000000 | floor)M"
+      elif . >= 1000 then "\(./1000 | floor)K"
+      else tostring end;
+    [
+      .id,
+      (.name // .id),
+      "$\(.cost.input // 0)/$\(.cost.output // 0)",
+      fmt_ctx,
+      (if .reasoning then "R" else " " end),
+      (.release_date // "")[:10]
+    ] | @tsv
+  ' 2>/dev/null) || true
 
   if [[ -z "$model_lines" ]]; then
     log_warn "Failed to parse model catalog for $provider"
@@ -2523,46 +2516,26 @@ for m in models:
     return
   fi
 
-  # Convert selected model IDs to TOML shortlist entries
+  # Convert selected model IDs to TOML shortlist entries using jq
   local toml_output=""
   while IFS= read -r model_id; do
     [[ -z "$model_id" ]] && continue
-    # Look up full model data from catalog JSON
+    # Look up full model data from catalog JSON and format as TOML
     local model_toml
-    model_toml=$(echo "$catalog_json" | python3 -c "
-import json, sys
-models = json.load(sys.stdin)
-provider = '${provider}'
-model_id = '${model_id}'
-for m in models:
-    if m['id'] != model_id:
-        continue
-    cost = m.get('cost', {})
-    mods = m.get('modalities', {}).get('input', ['text'])
-    # Filter to text/image only for Pi compatibility
-    pi_input = [x for x in mods if x in ('text', 'image')]
-    if not pi_input:
-        pi_input = ['text']
-    limit = m.get('limit', {})
-    ctx = limit.get('context', 128000)
-    out = limit.get('output', 8192)
-    reasoning = str(m.get('reasoning', False)).lower()
-    input_toml = ', '.join(f'\"{x}\"' for x in pi_input)
-    cache_read = cost.get('cache_read', 0)
-    # Escape quotes in name for TOML safety
-    safe_name = (m.get('name') or m['id']).replace('\\\\', '\\\\\\\\').replace('\"', '\\\\\"')
-    safe_id = m['id'].replace('\\\\', '\\\\\\\\').replace('\"', '\\\\\"')
-    print(f'''
-[[providers.{provider}.models]]
-id = \"{safe_id}\"
-name = \"{safe_name}\"
-reasoning = {reasoning}
-input = [{input_toml}]
-context_window = {ctx}
-max_tokens = {out}
-cost = {{ input = {cost.get('input', 0)}, output = {cost.get('output', 0)}, cache_read = {cache_read} }}''')
-    break
-" 2>/dev/null) || true
+    model_toml=$(echo "$catalog_json" | jq -r --arg id "$model_id" --arg prov "$provider" '
+      .[] | select(.id == $id) |
+      # Filter input modalities to text/image for Pi compatibility
+      ([.modalities.input[]? | select(. == "text" or . == "image")] | if length == 0 then ["text"] else . end) as $input |
+      "
+[[providers.\($prov).models]]
+id = \"\(.id)\"
+name = \"\(.name // .id)\"
+reasoning = \(if .reasoning then "true" else "false" end)
+input = [\($input | map("\"" + . + "\"") | join(", "))]
+context_window = \(.limit.context // 128000)
+max_tokens = \(.limit.output // 8192)
+cost = { input = \(.cost.input // 0), output = \(.cost.output // 0), cache_read = \(.cost.cache_read // 0) }"
+    ' 2>/dev/null) || true
     toml_output+="$model_toml"
   done <<<"$selected_ids"
 
@@ -2650,8 +2623,9 @@ test_eavs_providers() {
 # ==============================================================================
 # EAVS models.json Generation
 # ==============================================================================
-# After eavs is running, queries /providers/detail to get the model catalog
-# and generates Pi-compatible models.json for user provisioning.
+# Uses `eavs models export pi` to generate Pi-compatible models.json.
+# The export command reads the eavs config, resolves model shortlists
+# (or full catalog), and outputs the correct Pi format natively.
 #
 # In single-user mode: writes to ~/.pi/agent/models.json
 # In multi-user mode: the octo backend handles this at user creation time
@@ -2662,93 +2636,35 @@ generate_eavs_models_json() {
   log_step "Generating models.json from EAVS"
 
   local eavs_url="http://127.0.0.1:${EAVS_PORT}"
+  local eavs_config_file
+  if [[ "$SELECTED_USER_MODE" == "single" ]]; then
+    eavs_config_file="${XDG_CONFIG_HOME}/eavs/config.toml"
+  else
+    eavs_config_file="${OCTO_HOME}/.config/eavs/config.toml"
+  fi
 
-  # Wait for eavs to be ready (up to 10s)
-  local attempts=0
-  while ! curl -sf "${eavs_url}/health" >/dev/null 2>&1; do
-    attempts=$((attempts + 1))
-    if [[ $attempts -ge 20 ]]; then
-      log_error "EAVS not responding on ${eavs_url} after 10s"
-      log_info "Skipping models.json generation. Start eavs and re-run setup."
-      return 1
-    fi
-    sleep 0.5
-  done
-
-  # Fetch provider details (public endpoint, no auth needed)
-  local providers_json
-  providers_json=$(curl -sf "${eavs_url}/providers/detail" 2>&1)
-
-  if [[ -z "$providers_json" || "$providers_json" == "null" ]]; then
-    log_error "Failed to fetch provider details from EAVS"
+  # Check that eavs supports the export command (>= 0.5.5)
+  if ! eavs models export --help >/dev/null 2>&1; then
+    log_warn "eavs does not support 'models export' (upgrade to >= 0.5.5)"
+    log_info "Skipping models.json generation. Update eavs and re-run setup."
     return 1
   fi
 
-  # Count providers (excluding "default")
-  local provider_count
-  provider_count=$(echo "$providers_json" | python3 -c "
-import json, sys
-providers = json.load(sys.stdin)
-count = sum(1 for p in providers if p.get('name') != 'default' and p.get('pi_api'))
-print(count)
-" 2>/dev/null || echo "0")
+  # Generate Pi models.json via native eavs export
+  local models_json
+  if [[ "$SELECTED_USER_MODE" == "single" ]]; then
+    models_json=$(eavs models export pi \
+      --base-url "$eavs_url" \
+      --config "$eavs_config_file" 2>/dev/null)
+  else
+    models_json=$(sudo -u octo eavs models export pi \
+      --base-url "$eavs_url" \
+      --config "$eavs_config_file" 2>/dev/null)
+  fi
 
-  if [[ "$provider_count" == "0" ]]; then
+  if [[ -z "$models_json" || "$models_json" == '{"providers":{}}' ]]; then
     log_warn "No providers with Pi-compatible APIs found. Skipping models.json."
     return 0
-  fi
-
-  # Generate Pi models.json using the same logic as the octo backend.
-  # This Python script mirrors generate_pi_models_json() from
-  # backend/crates/octo/src/eavs/mod.rs
-  local models_json
-  models_json=$(echo "$providers_json" | python3 -c "
-import json, sys
-
-providers = json.load(sys.stdin)
-eavs_base = '${eavs_url}'
-
-pi_providers = {}
-for provider in providers:
-    name = provider.get('name', '')
-    pi_api = provider.get('pi_api')
-    if not pi_api or name == 'default':
-        continue
-
-    base_url = f'{eavs_base}/{name}/v1'
-    models = []
-    for m in provider.get('models', []):
-        cost = m.get('cost', {})
-        model_entry = {
-            'id': m['id'],
-            'name': m.get('name') or m['id'],
-            'reasoning': m.get('reasoning', False),
-            'input': m.get('input') or ['text'],
-            'contextWindow': m.get('context_window', 128000),
-            'maxTokens': m.get('max_tokens', 8192),
-            'cost': {
-                'input': cost.get('input', 0),
-                'output': cost.get('output', 0),
-                'cacheRead': cost.get('cache_read', 0),
-                'cacheWrite': 0
-            }
-        }
-        models.append(model_entry)
-
-    pi_name = f'eavs-{name}'
-    pi_providers[pi_name] = {
-        'baseUrl': base_url,
-        'api': pi_api,
-        'apiKey': 'EAVS_API_KEY',
-        'models': models
-    }
-
-print(json.dumps({'providers': pi_providers}, indent=2))
-" 2>/dev/null)
-
-  if [[ -z "$models_json" ]]; then
-    log_error "Failed to generate models.json"
-    return 1
   fi
 
   # Write models.json
@@ -2770,14 +2686,10 @@ print(json.dumps({'providers': pi_providers}, indent=2))
     log_info "The octo backend will generate per-user models.json on user creation."
   fi
 
-  # Count total models
-  local model_count
-  model_count=$(echo "$models_json" | python3 -c "
-import json, sys
-data = json.load(sys.stdin)
-count = sum(len(p.get('models', [])) for p in data.get('providers', {}).values())
-print(count)
-" 2>/dev/null || echo "?")
+  # Count total models and providers using jq (available on all target systems)
+  local model_count provider_count
+  model_count=$(echo "$models_json" | jq '[.providers[].models | length] | add // 0' 2>/dev/null || echo "?")
+  provider_count=$(echo "$models_json" | jq '.providers | length' 2>/dev/null || echo "?")
 
   log_success "Models available: $model_count across $provider_count provider(s)"
 }
@@ -2822,11 +2734,7 @@ EOF
   fi
 
   local api_key
-  api_key=$(echo "$key_response" | python3 -c "
-import json, sys
-data = json.load(sys.stdin)
-print(data.get('key', ''))
-" 2>/dev/null || echo "")
+  api_key=$(echo "$key_response" | jq -r '.key // empty' 2>/dev/null || echo "")
 
   if [[ -z "$api_key" ]]; then
     log_warn "Could not parse EAVS key response. Using master key as fallback."
