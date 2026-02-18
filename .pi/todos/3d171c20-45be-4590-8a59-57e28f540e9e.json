@@ -1,0 +1,65 @@
+{
+  "todos": [
+    {
+      "id": "1",
+      "content": "Rename octo-bridge -> oqto-bridge in pi-agent-extensions repo (directory + all references)",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "id": "2",
+      "content": "Rename octo-todos -> oqto-todos in pi-agent-extensions repo (directory + all references)",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "id": "3",
+      "content": "Rename octo_phase -> oqto_phase status key (extensions + backend pi_translator.rs)",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "id": "4",
+      "content": "Rename octo_title_changed -> oqto_title_changed status key (extensions + backend)",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "id": "5",
+      "content": "Update all markdown/docs references (README, CHANGELOG, OAUTH-FIX, AGENTS.md)",
+      "status": "pending",
+      "priority": "medium"
+    },
+    {
+      "id": "6",
+      "content": "Rename OctoTodosConfig and related types to OqtoTodosConfig",
+      "status": "pending",
+      "priority": "medium"
+    },
+    {
+      "id": "7",
+      "content": "Update config filename octo-todos.json -> oqto-todos.json",
+      "status": "pending",
+      "priority": "medium"
+    },
+    {
+      "id": "8",
+      "content": "Commit and push pi-agent-extensions repo",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "id": "9",
+      "content": "Update backend pi_translator.rs to match new status keys",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "id": "10",
+      "content": "Build and test backend after changes",
+      "status": "pending",
+      "priority": "high"
+    }
+  ],
+  "updated_at": "2026-02-18T18:24:02.873Z"
+}

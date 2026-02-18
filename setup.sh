@@ -6195,6 +6195,11 @@ BANNER
   # Prerequisites
   check_prerequisites
 
+  # In multi-user mode, create the oqto system user early
+  if [[ "$SELECTED_USER_MODE" == "multi" && "$OS" == "linux" ]]; then
+    run_step "octo_system_user" "Oqto system user" ensure_octo_system_user
+  fi
+
   # Install dependencies
   if [[ "$OQTO_INSTALL_DEPS" == "yes" ]]; then
     # Shell tools - verify key binaries exist, not just that the step ran
@@ -6237,11 +6242,6 @@ BANNER
         fi
       fi
     fi
-  fi
-
-  # In multi-user mode, create the oqto system user early
-  if [[ "$SELECTED_USER_MODE" == "multi" && "$OS" == "linux" ]]; then
-    run_step "octo_system_user" "Oqto system user" ensure_octo_system_user
   fi
 
   # EAVS (LLM proxy)
