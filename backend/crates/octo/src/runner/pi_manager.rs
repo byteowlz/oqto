@@ -2734,11 +2734,17 @@ impl PiSessionManager {
                 PiSessionCommand::Steer(msg) => {
                     // The runner decides how to deliver based on session state:
                     // - Streaming: send as steer (interrupt mid-run)
-                    // - Idle: send as prompt (new turn)
+                    // - Idle/Starting/Stopping/Aborting: send as prompt (new turn or zombie session)
                     // - Other states: send as steer and let Pi handle it
                     let current_state = *state.read().await;
-                    let pi_cmd = if current_state == PiSessionState::Idle {
-                        debug!("Session '{}' is idle, routing steer as prompt", session_id);
+                    let pi_cmd = if matches!(
+                        current_state,
+                        PiSessionState::Idle | PiSessionState::Starting | PiSessionState::Stopping | PiSessionState::Aborting
+                    ) {
+                        debug!(
+                            "Session '{}' is in {:?}, routing steer as prompt",
+                            session_id, current_state
+                        );
                         *state.write().await = PiSessionState::Streaming;
                         PiCommand::Prompt {
                             id: None,
@@ -2757,13 +2763,16 @@ impl PiSessionManager {
                 PiSessionCommand::FollowUp(msg) => {
                     // The runner decides how to deliver based on session state:
                     // - Streaming: send as follow_up (queued until done)
-                    // - Idle: send as prompt (new turn)
+                    // - Idle/Starting/Stopping/Aborting: send as prompt (new turn or zombie session)
                     // - Other states: send as follow_up and let Pi handle it
                     let current_state = *state.read().await;
-                    let pi_cmd = if current_state == PiSessionState::Idle {
+                    let pi_cmd = if matches!(
+                        current_state,
+                        PiSessionState::Idle | PiSessionState::Starting | PiSessionState::Stopping | PiSessionState::Aborting
+                    ) {
                         debug!(
-                            "Session '{}' is idle, routing follow_up as prompt",
-                            session_id
+                            "Session '{}' is in {:?}, routing follow_up as prompt",
+                            session_id, current_state
                         );
                         *state.write().await = PiSessionState::Streaming;
                         PiCommand::Prompt {

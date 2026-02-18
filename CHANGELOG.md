@@ -48,6 +48,7 @@ All notable changes to this project will be documented in this file.
 - `tools/test-ssh-proxy.sh` now starts an `ssh-agent` if `SSH_AUTH_SOCK` is unset.
 - Runner now creates hstry conversation metadata as soon as Pi reports the native session id.
 - Runner now migrates hstry history on session re-key so existing chats keep their full history.
+- Runner now routes steer/follow_up to prompt when Pi sessions are idle, starting, stopping, or aborting, ensuring new turns are not dropped after reconnects or after Pi exits.
 - New Pi chats now use an octo- prefixed provisional ID so Octo IDs never look like Pi UUIDs.
 - Multi-user chat history now lists Pi sessions from hstry via the runner and fetches Pi messages from hstry for workspace chats.
 - Updated hstry install template to point Pi adapter sources at ~/.pi/agent/sessions.
