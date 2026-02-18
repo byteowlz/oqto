@@ -165,6 +165,7 @@ fn dispatch(req: &Request) -> Response {
         "start-user-service" => cmd_start_user_service(&req.args),
         "setup-user-runner" => cmd_setup_user_runner(&req.args),
         "create-workspace" => cmd_create_workspace(&req.args),
+        "setup-user-shell" => cmd_setup_user_shell(&req.args),
         "ping" => Response::success(),
         other => Response::error(format!("unknown command: {other}")),
     }
@@ -291,6 +292,11 @@ fn cmd_create_user(args: &serde_json::Value) -> Response {
                 &[&format!("{username}:{group}"), &workspace],
             );
             let _ = run_cmd("/usr/bin/chmod", &["2770", &workspace]);
+
+            // Write shell dotfiles (zsh + starship)
+            let home = format!("/home/{username}");
+            write_user_dotfiles(&home, username, group);
+
             Response::success()
         }
         Err(e) => Response::error(e),
@@ -774,3 +780,154 @@ fn cmd_create_workspace(args: &serde_json::Value) -> Response {
 
     Response::success()
 }
+
+// ============================================================================
+// Shell setup command
+// ============================================================================
+
+/// Set up shell dotfiles (zsh + starship) for an existing user.
+/// Also changes their login shell to zsh if it differs.
+fn cmd_setup_user_shell(args: &serde_json::Value) -> Response {
+    let username = match get_str(args, "username") {
+        Ok(u) => u,
+        Err(r) => return r,
+    };
+    let group = args
+        .get("group")
+        .and_then(|v| v.as_str())
+        .unwrap_or("octo");
+    let shell = args
+        .get("shell")
+        .and_then(|v| v.as_str())
+        .unwrap_or("/bin/zsh");
+
+    if let Err(e) = validate_username(username) {
+        return Response::error(e);
+    }
+    if let Err(e) = validate_group(group) {
+        return Response::error(e);
+    }
+    if let Err(e) = validate_shell(shell) {
+        return Response::error(e);
+    }
+
+    let home = format!("/home/{username}");
+    if !std::path::Path::new(&home).exists() {
+        return Response::error(format!("home directory does not exist: {home}"));
+    }
+
+    // Change login shell
+    if let Err(e) = run_cmd("/usr/sbin/usermod", &["-s", shell, username]) {
+        return Response::error(format!("usermod -s: {e}"));
+    }
+
+    write_user_dotfiles(&home, username, group);
+
+    Response::success()
+}
+
+// ============================================================================
+// Shell dotfile provisioning
+// ============================================================================
+
+/// Write .zshrc and starship.toml for a newly created user.
+///
+/// Errors are logged but non-fatal -- the user will still work with
+/// a bare zsh prompt if dotfile creation fails.
+fn write_user_dotfiles(home: &str, username: &str, group: &str) {
+    let zshrc_path = format!("{home}/.zshrc");
+    let starship_dir = format!("{home}/.config");
+    let starship_path = format!("{starship_dir}/starship.toml");
+
+    // .zshrc
+    if let Err(e) = std::fs::write(&zshrc_path, ZSHRC_CONTENT) {
+        eprintln!("warning: writing {zshrc_path}: {e}");
+    }
+
+    // starship.toml
+    if let Err(e) = std::fs::create_dir_all(&starship_dir) {
+        eprintln!("warning: creating {starship_dir}: {e}");
+    }
+    if let Err(e) = std::fs::write(&starship_path, STARSHIP_TOML) {
+        eprintln!("warning: writing {starship_path}: {e}");
+    }
+
+    // chown both to the user
+    let owner = format!("{username}:{group}");
+    let _ = run_cmd("/usr/bin/chown", &[&owner, &zshrc_path]);
+    let _ = run_cmd("/usr/bin/chown", &["-R", &owner, &starship_dir]);
+}
+
+const ZSHRC_CONTENT: &str = r#"# Octo platform shell configuration
+
+# History
+HISTFILE=~/.zsh_history
+HISTSIZE=10000
+SAVEHIST=10000
+setopt SHARE_HISTORY
+setopt HIST_IGNORE_DUPS
+setopt HIST_IGNORE_SPACE
+
+# Key bindings
+bindkey -e
+bindkey '^[[A' up-line-or-search
+bindkey '^[[B' down-line-or-search
+bindkey '^[[H' beginning-of-line
+bindkey '^[[F' end-of-line
+bindkey '^[[3~' delete-char
+
+# Completion
+autoload -Uz compinit && compinit -d ~/.zcompdump
+zstyle ':completion:*' menu select
+zstyle ':completion:*' matcher-list 'm:{a-z}={A-Z}'
+
+# Colors
+autoload -U colors && colors
+export LS_COLORS='di=1;34:ln=35:so=32:pi=33:ex=31:bd=34;46:cd=34;43:su=30;41:sg=30;46:tw=30;42:ow=30;43'
+alias ls='ls --color=auto'
+alias ll='ls -lah'
+alias grep='grep --color=auto'
+
+# PATH
+export PATH="$HOME/.local/bin:$HOME/.cargo/bin:/usr/local/bin:$PATH"
+
+# Starship prompt
+if command -v starship &>/dev/null; then
+    eval "$(starship init zsh)"
+fi
+"#;
+
+const STARSHIP_TOML: &str = r#"# Octo platform starship configuration
+# https://starship.rs/config/
+
+format = """
+$directory\
+$git_branch\
+$git_status\
+$character"""
+
+right_format = """$cmd_duration"""
+
+[directory]
+truncation_length = 3
+truncate_to_repo = false
+style = "bold cyan"
+
+[git_branch]
+format = "[$symbol$branch]($style) "
+symbol = " "
+style = "bold purple"
+
+[git_status]
+format = '([$all_status$ahead_behind]($style) )'
+style = "bold red"
+
+[character]
+success_symbol = "[>](bold green)"
+error_symbol = "[>](bold red)"
+
+[cmd_duration]
+min_time = 2_000
+format = "[$duration]($style)"
+style = "bold yellow"
+"#;

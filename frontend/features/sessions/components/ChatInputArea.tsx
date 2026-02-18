@@ -34,7 +34,6 @@ import {
 	memo,
 	startTransition,
 	useCallback,
-	useDeferredValue,
 	useEffect,
 	useImperativeHandle,
 	useMemo,
@@ -106,129 +105,91 @@ export const ChatInputArea = memo(
 		},
 		ref,
 	) {
-		// Input state - use ref to avoid re-renders on every keystroke
-		// Only sync to state when needed for deferred computations
+		// ---------------------------------------------------------------
+		// Input value lives in a ref (never in React state) so that
+		// keystrokes never trigger a React render.  The textarea is
+		// **uncontrolled** (uses defaultValue, not value).
+		// ---------------------------------------------------------------
 		const messageInputRef = useRef(initialValue);
-		const [messageInputState, setMessageInputState] = useState(initialValue);
-		const inputSyncTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
-			null,
-		);
+		const chatInputRef = useRef<HTMLTextAreaElement>(null);
 
-		const syncInputToState = useCallback((value: string) => {
-			messageInputRef.current = value;
-			if (inputSyncTimeoutRef.current) {
-				clearTimeout(inputSyncTimeoutRef.current);
-			}
-			// Sync to state after 100ms for deferred computations
-			inputSyncTimeoutRef.current = setTimeout(() => {
-				startTransition(() => {
-					setMessageInputState(value);
-				});
-			}, 100);
-		}, []);
+		// Slash-command parsing -- ref, no renders
+		const slashQueryRef = useRef(parseSlashInput(initialValue));
 
+		// Popup state -- these DO cause renders but are deferred via rAF+startTransition
 		const [showSlashPopup, setShowSlashPopup] = useState(false);
 		const [showFileMentionPopup, setShowFileMentionPopup] = useState(false);
 		const [fileMentionQuery, setFileMentionQuery] = useState("");
-		const [fileAttachments, setFileAttachments] = useState<FileAttachment[]>(
-			[],
-		);
+
+		const [fileAttachments, setFileAttachments] = useState<FileAttachment[]>([]);
 		const [pendingUploads, setPendingUploads] = useState<PendingUpload[]>([]);
 		const [isUploading, setIsUploading] = useState(false);
 
-		const chatInputRef = useRef<HTMLTextAreaElement>(null);
+		// Track whether the send button should be enabled.
+		// Updated via ref reads -- no per-keystroke state.
+		const [canSendState, setCanSendState] = useState(!!initialValue.trim());
 
-		// Deferred value for non-critical computations
-		const deferredMessageInput = useDeferredValue(messageInputState);
+		// ---------------------------------------------------------------
+		// Resize helper -- coalesces via rAF
+		// ---------------------------------------------------------------
+		const resizeRafRef = useRef<number | null>(null);
 
-		// Parse slash command from input
-		const slashQuery = useMemo(
-			() => parseSlashInput(deferredMessageInput),
-			[deferredMessageInput],
-		);
+		const resizeTextarea = useCallback(() => {
+			if (resizeRafRef.current !== null) return;
+			resizeRafRef.current = requestAnimationFrame(() => {
+				resizeRafRef.current = null;
+				const textarea = chatInputRef.current;
+				if (!textarea) return;
+				textarea.style.height = "36px";
+				if (textarea.value) {
+					textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`;
+				}
+			});
+		}, []);
 
-		// Resize helper
-		const chatInputResizeRef = useRef<{
-			raf: number | null;
-			value: string;
-		}>({ raf: null, value: "" });
-
-		const setMessageInputWithResize = useCallback(
+		// ---------------------------------------------------------------
+		// Imperatively set the textarea value (for clear, slash select, etc.)
+		// ---------------------------------------------------------------
+		const setTextareaValue = useCallback(
 			(value: string) => {
 				messageInputRef.current = value;
 				if (chatInputRef.current) {
 					chatInputRef.current.value = value;
 				}
-				syncInputToState(value);
-				chatInputResizeRef.current.value = value;
-
-				if (chatInputResizeRef.current.raf !== null) return;
-
-				chatInputResizeRef.current.raf = requestAnimationFrame(() => {
-					chatInputResizeRef.current.raf = null;
-					const textarea = chatInputRef.current;
-					if (!textarea) return;
-
-					const currentValue = chatInputResizeRef.current.value;
-					textarea.style.height = "36px";
-					if (currentValue) {
-						textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`;
-					}
-				});
+				resizeTextarea();
 			},
-			[syncInputToState],
+			[resizeTextarea],
 		);
 
-		// Expose imperative handle for parent access
-		useImperativeHandle(
-			ref,
-			() => ({
-				getValue: () => messageInputRef.current,
-				setValue: setMessageInputWithResize,
-				getFileAttachments: () => fileAttachments,
-				getPendingUploads: () => pendingUploads,
-				clear: () => {
-					setMessageInputWithResize("");
-					setFileAttachments([]);
-					setPendingUploads([]);
-				},
-				focus: () => chatInputRef.current?.focus(),
-			}),
-			[fileAttachments, pendingUploads, setMessageInputWithResize],
-		);
-
-		// Draft change notification (debounced)
+		// ---------------------------------------------------------------
+		// Draft change notification (debounced 300ms)
+		// ---------------------------------------------------------------
 		const draftTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+		const notifyDraft = useCallback(
+			(value: string) => {
+				if (!onDraftChange) return;
+				if (draftTimeoutRef.current) clearTimeout(draftTimeoutRef.current);
+				draftTimeoutRef.current = setTimeout(() => onDraftChange(value), 300);
+			},
+			[onDraftChange],
+		);
 		useEffect(() => {
-			if (!onDraftChange) return;
-			if (draftTimeoutRef.current) {
-				clearTimeout(draftTimeoutRef.current);
-			}
-			draftTimeoutRef.current = setTimeout(() => {
-				onDraftChange(messageInputState);
-			}, 300);
 			return () => {
-				if (draftTimeoutRef.current) {
-					clearTimeout(draftTimeoutRef.current);
-				}
+				if (draftTimeoutRef.current) clearTimeout(draftTimeoutRef.current);
 			};
-		}, [messageInputState, onDraftChange]);
+		}, []);
 
-		// Handle input change
-		const handleInputChange = useCallback(
-			(e: React.ChangeEvent<HTMLTextAreaElement>) => {
-				const value = e.target.value;
+		// ---------------------------------------------------------------
+		// Deferred popup + canSend updater (rAF -> startTransition)
+		// ---------------------------------------------------------------
+		const popupRafRef = useRef<number | null>(null);
 
-				if (dictation.isActive) {
-					messageInputRef.current = value;
-					syncInputToState(value);
-					e.target.style.height = "36px";
-				} else {
-					setMessageInputWithResize(value);
-				}
-
-				// Defer popup state updates
+		const scheduleDeferredUpdates = useCallback((value: string) => {
+			if (popupRafRef.current !== null) cancelAnimationFrame(popupRafRef.current);
+			popupRafRef.current = requestAnimationFrame(() => {
+				popupRafRef.current = null;
 				startTransition(() => {
+					// Slash popup
 					if (value.startsWith("/")) {
 						setShowSlashPopup(true);
 						setShowFileMentionPopup(false);
@@ -236,6 +197,7 @@ export const ChatInputArea = memo(
 						setShowSlashPopup(false);
 					}
 
+					// File mention popup
 					const atMatch = value.match(/@([^\s]*)$/);
 					if (atMatch && !value.startsWith("/")) {
 						setShowFileMentionPopup(true);
@@ -244,19 +206,66 @@ export const ChatInputArea = memo(
 						setShowFileMentionPopup(false);
 						setFileMentionQuery("");
 					}
+
+					// Send-button enabled state
+					setCanSendState(!!value.trim());
 				});
-			},
-			[dictation.isActive, setMessageInputWithResize, syncInputToState],
+			});
+		}, []);
+
+		// ---------------------------------------------------------------
+		// Expose imperative handle for parent access
+		// ---------------------------------------------------------------
+		useImperativeHandle(
+			ref,
+			() => ({
+				getValue: () => messageInputRef.current,
+				setValue: setTextareaValue,
+				getFileAttachments: () => fileAttachments,
+				getPendingUploads: () => pendingUploads,
+				clear: () => {
+					setTextareaValue("");
+					setFileAttachments([]);
+					setPendingUploads([]);
+					setCanSendState(false);
+				},
+				focus: () => chatInputRef.current?.focus(),
+			}),
+			[fileAttachments, pendingUploads, setTextareaValue],
 		);
 
+		// ---------------------------------------------------------------
+		// Handle input change -- the hot path, must be fast
+		// ---------------------------------------------------------------
+		const handleInputChange = useCallback(
+			(e: React.ChangeEvent<HTMLTextAreaElement>) => {
+				const value = e.target.value;
+				messageInputRef.current = value;
+
+				// Update slash query ref synchronously (cheap)
+				slashQueryRef.current = parseSlashInput(value);
+
+				if (dictation.isActive) {
+					e.target.style.height = "36px";
+				} else {
+					resizeTextarea();
+				}
+
+				// Notify draft (debounced)
+				notifyDraft(value);
+
+				// Defer all React state updates
+				scheduleDeferredUpdates(value);
+			},
+			[dictation.isActive, resizeTextarea, notifyDraft, scheduleDeferredUpdates],
+		);
+
+		// ---------------------------------------------------------------
 		// Handle send
+		// ---------------------------------------------------------------
 		const handleSend = useCallback(() => {
 			const text = messageInputRef.current.trim();
-			if (
-				!text &&
-				pendingUploads.length === 0 &&
-				fileAttachments.length === 0
-			) {
+			if (!text && pendingUploads.length === 0 && fileAttachments.length === 0) {
 				return;
 			}
 
@@ -270,32 +279,25 @@ export const ChatInputArea = memo(
 			onSend(text, [...fileAttachments], [...pendingUploads]);
 
 			// Clear input after send
-			setMessageInputWithResize("");
+			setTextareaValue("");
 			setFileAttachments([]);
 			setPendingUploads([]);
-		}, [
-			pendingUploads,
-			fileAttachments,
-			dictation,
-			onSend,
-			setMessageInputWithResize,
-		]);
+			setCanSendState(false);
+		}, [pendingUploads, fileAttachments, dictation, onSend, setTextareaValue]);
 
+		// ---------------------------------------------------------------
 		// Handle key down
+		// ---------------------------------------------------------------
 		const handleInputKeyDown = useCallback(
 			(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-				// Let popups handle their keys
-				if (showSlashPopup && slashQuery.isSlash && !slashQuery.args) {
-					if (
-						["ArrowDown", "ArrowUp", "Enter", "Tab", "Escape"].includes(e.key)
-					) {
+				const sq = slashQueryRef.current;
+				if (showSlashPopup && sq.isSlash && !sq.args) {
+					if (["ArrowDown", "ArrowUp", "Enter", "Tab", "Escape"].includes(e.key)) {
 						return;
 					}
 				}
 				if (showFileMentionPopup) {
-					if (
-						["ArrowDown", "ArrowUp", "Enter", "Tab", "Escape"].includes(e.key)
-					) {
+					if (["ArrowDown", "ArrowUp", "Enter", "Tab", "Escape"].includes(e.key)) {
 						return;
 					}
 				}
@@ -307,16 +309,12 @@ export const ChatInputArea = memo(
 					}
 				}
 			},
-			[
-				showSlashPopup,
-				slashQuery.isSlash,
-				slashQuery.args,
-				showFileMentionPopup,
-				handleSend,
-			],
+			[showSlashPopup, showFileMentionPopup, handleSend],
 		);
 
+		// ---------------------------------------------------------------
 		// Handle file upload
+		// ---------------------------------------------------------------
 		const handleFileUpload = useCallback(
 			async (files: FileList) => {
 				if (!onFileUpload) return;
@@ -331,7 +329,9 @@ export const ChatInputArea = memo(
 			[onFileUpload],
 		);
 
+		// ---------------------------------------------------------------
 		// Handle paste
+		// ---------------------------------------------------------------
 		const handlePaste = useCallback(
 			(e: React.ClipboardEvent<HTMLTextAreaElement>) => {
 				const items = e.clipboardData?.items;
@@ -343,15 +343,11 @@ export const ChatInputArea = memo(
 					if (item.kind === "file") {
 						const file = item.getAsFile();
 						if (file) {
-							const isGenericName = /^image\.(png|gif|jpg|jpeg|webp)$/i.test(
-								file.name,
-							);
+							const isGenericName = /^image\.(png|gif|jpg|jpeg|webp)$/i.test(file.name);
 							if (isGenericName) {
 								const ext = file.name.split(".").pop() || "png";
 								const uniqueName = `pasted-image-${Date.now()}-${imageIndex++}.${ext}`;
-								const renamedFile = new File([file], uniqueName, {
-									type: file.type,
-								});
+								const renamedFile = new File([file], uniqueName, { type: file.type });
 								files.push(renamedFile);
 							} else {
 								files.push(file);
@@ -372,32 +368,35 @@ export const ChatInputArea = memo(
 			[handleFileUpload],
 		);
 
+		// ---------------------------------------------------------------
 		// Handle slash command select
+		// ---------------------------------------------------------------
 		const handleSlashCommandSelect = useCallback(
 			(command: SlashCommand) => {
-				setMessageInputWithResize(`/${command.name} `);
+				setTextareaValue(`/${command.name} `);
+				slashQueryRef.current = parseSlashInput(`/${command.name} `);
 				setShowSlashPopup(false);
 				chatInputRef.current?.focus();
 			},
-			[setMessageInputWithResize],
+			[setTextareaValue],
 		);
 
+		// ---------------------------------------------------------------
 		// Handle file mention select
+		// ---------------------------------------------------------------
 		const handleFileMentionSelect = useCallback(
 			(file: FileAttachment) => {
 				const newInput = messageInputRef.current.replace(/@[^\s]*$/, "");
-				setMessageInputWithResize(newInput);
+				setTextareaValue(newInput);
 				setFileAttachments((prev) => [...prev, file]);
 				setShowFileMentionPopup(false);
 				chatInputRef.current?.focus();
 			},
-			[setMessageInputWithResize],
+			[setTextareaValue],
 		);
 
 		const canSend =
-			deferredMessageInput.trim() ||
-			pendingUploads.length > 0 ||
-			fileAttachments.length > 0;
+			canSendState || pendingUploads.length > 0 || fileAttachments.length > 0;
 
 		const t = useMemo(
 			() => ({
@@ -449,8 +448,8 @@ export const ChatInputArea = memo(
 						{/* Slash command popup */}
 						<SlashCommandPopup
 							commands={slashCommands}
-							query={slashQuery.command}
-							isOpen={showSlashPopup && slashQuery.isSlash && !slashQuery.args}
+							query={slashQueryRef.current.command}
+							isOpen={showSlashPopup && slashQueryRef.current.isSlash && !slashQueryRef.current.args}
 							onSelect={handleSlashCommandSelect}
 						/>
 
@@ -482,7 +481,7 @@ export const ChatInputArea = memo(
 						{/* Textarea or dictation overlay */}
 						{dictation.isActive ? (
 							<DictationOverlay
-								value={messageInput}
+								value={messageInputRef.current}
 								liveTranscript={dictation.liveTranscript}
 								placeholder={
 									locale === "de" ? "Sprechen Sie..." : "Speak now..."
@@ -493,7 +492,7 @@ export const ChatInputArea = memo(
 								onStop={() => {
 									dictation.cancel();
 									requestAnimationFrame(() => {
-										setMessageInputWithResize(messageInputRef.current);
+										setTextareaValue(messageInputRef.current);
 									});
 								}}
 								onChange={handleInputChange}
@@ -503,7 +502,7 @@ export const ChatInputArea = memo(
 									setTimeout(() => setShowSlashPopup(false), 150);
 								}}
 								onFocus={(e) => {
-									if (deferredMessageInput.startsWith("/")) {
+									if (messageInputRef.current.startsWith("/")) {
 										setShowSlashPopup(true);
 									}
 									setTimeout(() => {
@@ -524,7 +523,7 @@ export const ChatInputArea = memo(
 								enterKeyHint="send"
 								data-form-type="other"
 								placeholder={placeholder ?? t.inputPlaceholder}
-								value={messageInput}
+								defaultValue={initialValue}
 								onChange={handleInputChange}
 								onKeyDown={handleInputKeyDown}
 								onPaste={handlePaste}
@@ -532,7 +531,7 @@ export const ChatInputArea = memo(
 									setTimeout(() => setShowSlashPopup(false), 150);
 								}}
 								onFocus={(e) => {
-									if (deferredMessageInput.startsWith("/")) {
+									if (messageInputRef.current.startsWith("/")) {
 										setShowSlashPopup(true);
 									}
 									setTimeout(() => {

@@ -667,9 +667,31 @@ Key configuration sections:
 - `[sessions]` - Session behavior settings
 - `[scaffold]` - Agent scaffolding configuration
 
-## EAVS Post-Setup
+## EAVS Setup and Models
 
-EAVS is the LLM proxy that routes agent requests to providers (Anthropic, OpenAI, Google, etc.). After `setup.sh` configures it, you may need to add or change providers.
+EAVS is the LLM proxy that routes agent requests to providers (Anthropic, OpenAI, Google, etc.).
+
+### What setup.sh does
+
+During setup, the script:
+1. **Configures providers** -- asks which LLM providers you want (Anthropic, OpenAI, Google, etc.) and stores API keys in the eavs env file
+2. **Adds curated model shortlists** -- each provider gets a hand-picked set of the best models so users see a manageable selection (not the full 2800+ models.dev catalog)
+3. **Tests connections** -- validates each provider by making a real API call via `eavs setup test`
+4. **Generates models.json** -- queries the running eavs `/providers/detail` API and generates Pi-compatible `~/.pi/agent/models.json` so users have models available immediately
+5. **Provisions user keys** -- creates virtual API keys with rate limits and budgets
+
+### Regenerating models.json
+
+If you add or change providers after setup, regenerate models.json:
+
+```bash
+# Re-run just the eavs steps
+./setup.sh --redo eavs_configure,eavs_test,eavs_models
+```
+
+### Post-Setup Provider Changes
+
+After `setup.sh` configures EAVS, you may need to add or change providers.
 
 ### Configuration Files
 

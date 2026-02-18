@@ -1812,6 +1812,11 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         pi_model: ctx.config.pi.default_model.clone(),
         agent_browser: ctx.config.agent_browser.clone(),
         runner_socket_pattern: ctx.config.local.runner_socket_pattern.clone(),
+        linux_user_prefix: if ctx.config.local.linux_users.enabled {
+            Some(ctx.config.local.linux_users.prefix.clone())
+        } else {
+            None
+        },
     };
 
     let session_repo = session::SessionRepository::new(database.pool().clone());

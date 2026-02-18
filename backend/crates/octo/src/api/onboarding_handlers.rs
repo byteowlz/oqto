@@ -217,13 +217,10 @@ pub async fn bootstrap_onboarding(
         .filter(|lang| !lang.is_empty());
 
     let workspace_root = state.sessions.for_user(user.id()).workspace_root();
-    if workspace_root.exists() {
-        let mut entries = std::fs::read_dir(&workspace_root)
-            .map_err(|e| ApiError::Internal(format!("Failed to read workspace root: {e}")))?;
-        if entries.next().is_some() {
-            return Err(ApiError::BadRequest("workspace already initialized".into()));
-        }
-    }
+    let workspace_already_initialized = workspace_root.exists()
+        && std::fs::read_dir(&workspace_root)
+            .map(|mut entries| entries.next().is_some())
+            .unwrap_or(false);
 
     let workspace_path = workspace_root.join("main");
 
@@ -258,47 +255,57 @@ pub async fn bootstrap_onboarding(
         .as_ref()
         .is_some_and(|lu| lu.enabled);
 
-    if is_multi_user {
-        let linux_username = state
-            .linux_users
-            .as_ref()
-            .unwrap()
-            .linux_username(user.id());
-        let ws_str = workspace_path
-            .to_str()
-            .ok_or_else(|| ApiError::Internal("invalid workspace path".into()))?;
+    // Only create workspace files if not already initialized.
+    // This makes bootstrap idempotent: if workspace exists (e.g., from a previous
+    // attempt that failed partway through), we skip to session creation.
+    if !workspace_already_initialized {
+        if is_multi_user {
+            let linux_username = state
+                .linux_users
+                .as_ref()
+                .unwrap()
+                .linux_username(user.id());
+            let ws_str = workspace_path
+                .to_str()
+                .ok_or_else(|| ApiError::Internal("invalid workspace path".into()))?;
 
-        // Build file map for usermgr
-        let mut files = serde_json::Map::new();
-        files.insert(".workspace.json".into(), serde_json::Value::String(meta_json));
-        files.insert("ONBOARD.md".into(), serde_json::Value::String(templates.onboard.clone()));
-        files.insert("PERSONALITY.md".into(), serde_json::Value::String(templates.personality.clone()));
-        files.insert("USER.md".into(), serde_json::Value::String(templates.user.clone()));
-        files.insert("AGENTS.md".into(), serde_json::Value::String(templates.agents.clone()));
+            // Build file map for usermgr
+            let mut files = serde_json::Map::new();
+            files.insert(".workspace.json".into(), serde_json::Value::String(meta_json));
+            files.insert("ONBOARD.md".into(), serde_json::Value::String(templates.onboard.clone()));
+            files.insert("PERSONALITY.md".into(), serde_json::Value::String(templates.personality.clone()));
+            files.insert("USER.md".into(), serde_json::Value::String(templates.user.clone()));
+            files.insert("AGENTS.md".into(), serde_json::Value::String(templates.agents.clone()));
 
-        crate::local::linux_users::usermgr_request(
-            "create-workspace",
-            serde_json::json!({
-                "username": linux_username,
-                "path": ws_str,
-                "files": files,
-            }),
-        )
-        .map_err(|e| ApiError::Internal(format!("Failed to create workspace: {e}")))?;
-    } else {
-        std::fs::create_dir_all(&workspace_path)
+            crate::local::linux_users::usermgr_request(
+                "create-workspace",
+                serde_json::json!({
+                    "username": linux_username,
+                    "path": ws_str,
+                    "files": files,
+                }),
+            )
             .map_err(|e| ApiError::Internal(format!("Failed to create workspace: {e}")))?;
+        } else {
+            std::fs::create_dir_all(&workspace_path)
+                .map_err(|e| ApiError::Internal(format!("Failed to create workspace: {e}")))?;
 
-        write_workspace_meta(&workspace_path, &meta)
-            .map_err(|e| ApiError::Internal(format!("Failed to write workspace metadata: {e}")))?;
+            write_workspace_meta(&workspace_path, &meta)
+                .map_err(|e| ApiError::Internal(format!("Failed to write workspace metadata: {e}")))?;
 
-        write_if_missing(&workspace_path.join("ONBOARD.md"), &templates.onboard)?;
-        write_if_missing(
-            &workspace_path.join("PERSONALITY.md"),
-            &templates.personality,
-        )?;
-        write_if_missing(&workspace_path.join("USER.md"), &templates.user)?;
-        write_if_missing(&workspace_path.join("AGENTS.md"), &templates.agents)?;
+            write_if_missing(&workspace_path.join("ONBOARD.md"), &templates.onboard)?;
+            write_if_missing(
+                &workspace_path.join("PERSONALITY.md"),
+                &templates.personality,
+            )?;
+            write_if_missing(&workspace_path.join("USER.md"), &templates.user)?;
+            write_if_missing(&workspace_path.join("AGENTS.md"), &templates.agents)?;
+        }
+    } else {
+        tracing::info!(
+            "Workspace already initialized at {}, skipping file creation",
+            workspace_root.display()
+        );
     }
 
     let session_id = Uuid::new_v4().to_string();

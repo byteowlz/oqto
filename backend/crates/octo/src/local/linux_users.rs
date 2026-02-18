@@ -40,7 +40,7 @@ impl Default for LinuxUsersConfig {
             prefix: "octo_".to_string(),
             uid_start: 2000,
             group: "octo".to_string(),
-            shell: "/bin/bash".to_string(),
+            shell: "/bin/zsh".to_string(),
             use_sudo: true,
             create_home: true,
         }
@@ -51,7 +51,7 @@ impl Default for LinuxUsersConfig {
 const PROJECT_PREFIX: &str = "proj_";
 
 /// Check if a Linux user exists.
-fn user_exists(username: &str) -> bool {
+pub(crate) fn user_exists(username: &str) -> bool {
     Command::new("id")
         .arg("-u")
         .arg(username)
@@ -802,6 +802,22 @@ impl LinuxUsersConfig {
         run_privileged_command(self.use_sudo, "/usr/bin/chmod", &[mode, path])
             .with_context(|| format!("chmod {} {}", mode, path))
     }
+
+    /// Provision shell dotfiles (zsh + starship) for a platform user.
+    ///
+    /// Sends the `setup-user-shell` command to `octo-usermgr`, which writes
+    /// `.zshrc` and `~/.config/starship.toml` and changes the login shell.
+    pub fn setup_user_shell(&self, linux_username: &str) -> Result<()> {
+        usermgr_request(
+            "setup-user-shell",
+            serde_json::json!({
+                "username": linux_username,
+                "group": self.group,
+                "shell": self.shell,
+            }),
+        )
+        .with_context(|| format!("setup shell for {linux_username}"))
+    }
 }
 
 fn ensure_toml_table<'a>(value: &'a mut TomlValue, key: &str) -> &'a mut toml::value::Table {
@@ -837,7 +853,7 @@ fn ensure_toml_subtable<'a>(
 /// - Start with a lowercase letter or underscore
 /// - Contain only lowercase letters, digits, underscores, or hyphens
 /// - Be at most 32 characters
-fn sanitize_username(user_id: &str) -> String {
+pub(crate) fn sanitize_username(user_id: &str) -> String {
     let mut result = String::with_capacity(32);
 
     for (i, c) in user_id.chars().enumerate() {
@@ -1385,7 +1401,7 @@ mod tests {
         assert_eq!(config.prefix, "octo_");
         assert_eq!(config.uid_start, 2000);
         assert_eq!(config.group, "octo");
-        assert_eq!(config.shell, "/bin/bash");
+        assert_eq!(config.shell, "/bin/zsh");
         assert!(config.use_sudo);
         assert!(config.create_home);
     }
