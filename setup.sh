@@ -2057,7 +2057,54 @@ install_eavs() {
     return 1
   fi
 
+  # Install TypeScript adapters for model export (Pi, OpenCode, etc.)
+  install_eavs_adapters
+
   log_success "EAVS installed: $(eavs --version 2>/dev/null | head -1)"
+}
+
+# Install eavs TypeScript adapters for 'eavs models export'.
+# These live next to the binary so eavs can discover them automatically.
+install_eavs_adapters() {
+  local eavs_bin
+  eavs_bin=$(command -v eavs 2>/dev/null) || return 0
+  local eavs_dir
+  eavs_dir=$(dirname "$eavs_bin")
+  local adapters_dest="${eavs_dir}/adapters"
+
+  # If adapters already exist next to binary (from release tarball), done
+  if [[ -d "$adapters_dest" && -f "$adapters_dest/pi/adapter.ts" ]]; then
+    log_info "EAVS adapters already installed"
+    return 0
+  fi
+
+  # Fetch adapters from the eavs repo
+  local version
+  version=$(get_dep_version eavs)
+  local tag="v${version:-main}"
+
+  log_info "Installing EAVS adapters..."
+  local tmpdir
+  tmpdir=$(mktemp -d)
+
+  if curl -fsSL "https://github.com/byteowlz/eavs/archive/refs/tags/${tag}.tar.gz" | \
+     tar xz -C "$tmpdir" --strip-components=1 "*/adapters" 2>/dev/null; then
+    sudo mkdir -p "$adapters_dest"
+    sudo cp -r "$tmpdir/adapters/"* "$adapters_dest/"
+    log_success "EAVS adapters installed to $adapters_dest"
+  else
+    # Try main branch as fallback
+    if curl -fsSL "https://github.com/byteowlz/eavs/archive/refs/heads/main.tar.gz" | \
+       tar xz -C "$tmpdir" --strip-components=1 "*/adapters" 2>/dev/null; then
+      sudo mkdir -p "$adapters_dest"
+      sudo cp -r "$tmpdir/adapters/"* "$adapters_dest/"
+      log_success "EAVS adapters installed from main branch"
+    else
+      log_warn "Could not fetch EAVS adapters. 'eavs models export' will not work."
+    fi
+  fi
+
+  rm -rf "$tmpdir"
 }
 
 # Install gnome-keyring and libsecret for headless servers.
@@ -2651,15 +2698,33 @@ generate_eavs_models_json() {
   fi
 
   # Generate Pi models.json via native eavs export
+  # Use --merge if a models.json already exists to preserve non-eavs providers
+  local pi_models_file
+  if [[ "$SELECTED_USER_MODE" == "single" ]]; then
+    pi_models_file="$HOME/.pi/agent/models.json"
+  else
+    pi_models_file="${OCTO_DATA_DIR:-$HOME/.local/share/octo}/models.json.template"
+  fi
+
+  local merge_flag=""
+  if [[ -f "$pi_models_file" ]]; then
+    merge_flag="--merge $pi_models_file"
+    log_info "Merging into existing $pi_models_file (preserving non-eavs providers)"
+  fi
+
   local models_json
   if [[ "$SELECTED_USER_MODE" == "single" ]]; then
+    # shellcheck disable=SC2086
     models_json=$(eavs models export pi \
       --base-url "$eavs_url" \
-      --config "$eavs_config_file" 2>/dev/null)
+      --config "$eavs_config_file" \
+      $merge_flag 2>/dev/null)
   else
+    # shellcheck disable=SC2086
     models_json=$(sudo -u octo eavs models export pi \
       --base-url "$eavs_url" \
-      --config "$eavs_config_file" 2>/dev/null)
+      --config "$eavs_config_file" \
+      $merge_flag 2>/dev/null)
   fi
 
   if [[ -z "$models_json" || "$models_json" == '{"providers":{}}' ]]; then
