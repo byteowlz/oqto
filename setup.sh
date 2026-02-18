@@ -239,20 +239,28 @@ run_step() {
     return 0
   fi
 
-  "$@"
-  mark_step_done "$step"
+  if "$@"; then
+    mark_step_done "$step"
+  else
+    log_warn "Step failed (non-fatal): $desc"
+  fi
 }
 
 # Run a step unconditionally (always executes, never skipped).
 # Used for steps like building where stale artifacts cause subtle bugs.
+# Returns non-zero on failure so callers can decide whether to abort.
 run_step_always() {
   local step="$1"
   local desc="$2"
   shift 2
 
   log_info "Running: $desc"
-  "$@"
-  mark_step_done "$step"
+  if "$@"; then
+    mark_step_done "$step"
+  else
+    log_error "Step failed: $desc"
+    return 1
+  fi
 }
 
 # Clear all completed steps (used with --fresh)
@@ -2847,7 +2855,7 @@ generate_eavs_models_json() {
   if ! eavs models export --help >/dev/null 2>&1; then
     log_warn "eavs does not support 'models export' (upgrade to >= 0.5.5)"
     log_info "Skipping models.json generation. Update eavs and re-run setup."
-    return 1
+    return 0
   fi
 
   # Generate Pi models.json via native eavs export
@@ -2865,19 +2873,19 @@ generate_eavs_models_json() {
     log_info "Merging into existing $pi_models_file (preserving non-eavs providers)"
   fi
 
-  local models_json
+  local models_json=""
   if [[ "$SELECTED_USER_MODE" == "single" ]]; then
     # shellcheck disable=SC2086
     models_json=$(eavs models export pi \
       --base-url "$eavs_url" \
       --config "$eavs_config_file" \
-      $merge_flag 2>/dev/null)
+      $merge_flag 2>/dev/null) || true
   else
     # shellcheck disable=SC2086
     models_json=$(sudo -u oqto eavs models export pi \
       --base-url "$eavs_url" \
       --config "$eavs_config_file" \
-      $merge_flag 2>/dev/null)
+      $merge_flag 2>/dev/null) || true
   fi
 
   if [[ -z "$models_json" || "$models_json" == '{"providers":{}}' ]]; then
