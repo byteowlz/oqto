@@ -536,26 +536,6 @@ A versioned envelope composed of multiple context "sources".
 ### [octo-skks] Global main agent invoke with context injection (P2, feature)
 ## Problem\nUsers want to invoke the Main Agent from any page in the web app, and have the agent automatically receive UI/runtime context (current page/route, active app/view, selected agent/persona if applicable, selected workspace directory/project, current session IDs).\n\n## Proposed Feature\nAdd a globally-available Main Agent entrypoint (e.g., hotkey + floating button + command palette action) that opens the Main Chat/agent panel. When the user sends a message, inject a structured context block into the message/system prompt containing:\n- Current route/pathname\n- Active app/view (e.g. sessions/settings/admin)\n- Active agent/persona (if any)\n- Current workspace directory / project key\n- Current workspace session ID + current chat session ID (if available)\n\n## Acceptance Criteria\n- Main Agent can be opened from any page without navigation side effects.\n- Sent messages include the context injection reliably and deterministically.\n- Context injection is visible in logs/devtools (or can be toggled) for debugging.\n- Works when OpenCode is not running (falls back to disk/history context).\n- No regression to existing Main Chat / Sessions flows.\n\n## Notes\nImplementation likely touches: app shell routing, global UI overlay, and the message send pipeline (control-plane / opencode proxy headers).
 
-### [octo-k8z1.8] Session management: Browser lifecycle (start/stop with session) (P2, task)
-
-### [octo-k8z1.5] Frontend: Add browser tab to central pane view switcher (P2, task)
-Wire BrowserView into SessionScreen.tsx:
-1. Add 'browser' to ActiveView type union
-2. Add browser tab to TabButton row
-3. Import and render BrowserView when activeView === 'browser'
-4. Add keyboard shortcut for browser tab
-...
-
-
-### [octo-k8z1] Add server-side browser feature (Option B) using agent-browser (P2, feature)
-Server-side browser for AI agent control, rendered in Octo frontend.
-
-## Reference Implementations (cloned)
-- ../external-repos/agent-browser - Vercel's CLI browser automation (Apache-2.0)
-- ../external-repos/playwriter - MCP browser extension by remorses (Option A reference)
-...
-
-
 ### [octo-2r4f] Add slug field to session model and API responses (P2, task)
 
 ### [octo-6pkd] Left sidebar: '+' next to SESSIONS should create session in current project; add separate 'new directory/project' button (P2, feature)
@@ -910,6 +890,11 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [octo-k8z1.8] Session management: Browser lifecycle (start/stop with session) (closed 2026-02-17)
+- [octo-k8z1.5] Frontend: Add browser tab to central pane view switcher (closed 2026-02-17)
+- [octo-k8z1.2] Backend: WebSocket proxy for screencast stream (closed 2026-02-17)
+- [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (closed 2026-02-17)
+- [octo-k8z1] Add server-side browser feature (Option B) using agent-browser (closed 2026-02-17)
 - [octo-vn0r] Admin API: eavs provisioning in create_user and sync_user_configs (closed 2026-02-17)
 - [octo-zqyg] Fix Linux user creation sudo allowlist path mismatch (closed 2026-02-17)
 - [octo-9bqx] Add limits to zip download endpoints to prevent disk/CPU exhaustion (closed 2026-02-17)
@@ -1510,9 +1495,7 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
 - [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
-- [octo-k8z1.2] Backend: WebSocket proxy for screencast stream (closed )
-- [octo-k8z1.1] Backend: Integrate agent-browser daemon per session (closed )
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
