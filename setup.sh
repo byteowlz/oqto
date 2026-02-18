@@ -807,10 +807,10 @@ clone_pi_extensions_repo() {
   if [[ -d "$cache_dir/.git" ]]; then
     log_info "Updating pi-agent-extensions repo..." >&2
     # Ensure remote URL is HTTPS (may have been cloned via SSH previously)
-    git -C "$cache_dir" remote set-url origin "$PI_EXTENSIONS_REPO" 2>/dev/null || true
-    if git -C "$cache_dir" fetch origin 2>/dev/null; then
-      git -C "$cache_dir" reset --hard origin/main 2>/dev/null ||
-        git -C "$cache_dir" reset --hard origin/HEAD 2>/dev/null || true
+    git -C "$cache_dir" remote set-url origin "$PI_EXTENSIONS_REPO" >/dev/null 2>&1 || true
+    if git -C "$cache_dir" fetch origin >/dev/null 2>&1; then
+      git -C "$cache_dir" reset --hard origin/main >/dev/null 2>&1 ||
+        git -C "$cache_dir" reset --hard origin/HEAD >/dev/null 2>&1 || true
     fi
   else
     # Remove stale cache dir if it exists without .git
@@ -819,7 +819,7 @@ clone_pi_extensions_repo() {
     fi
     log_info "Cloning pi-agent-extensions..." >&2
     mkdir -p "$(dirname "$cache_dir")"
-    if ! git clone --depth 1 "$PI_EXTENSIONS_REPO" "$cache_dir" 2>/dev/null; then
+    if ! git clone --depth 1 "$PI_EXTENSIONS_REPO" "$cache_dir" >/dev/null 2>&1; then
       log_error "Failed to clone pi-agent-extensions repo" >&2
       return 1
     fi
@@ -830,7 +830,7 @@ clone_pi_extensions_repo() {
     log_warn "pi-agent-extensions cache is stale or broken, re-cloning..." >&2
     rm -rf "$cache_dir"
     mkdir -p "$(dirname "$cache_dir")"
-    if ! git clone --depth 1 "$PI_EXTENSIONS_REPO" "$cache_dir" 2>/dev/null; then
+    if ! git clone --depth 1 "$PI_EXTENSIONS_REPO" "$cache_dir" >/dev/null 2>&1; then
       log_error "Failed to re-clone pi-agent-extensions repo" >&2
       return 1
     fi
