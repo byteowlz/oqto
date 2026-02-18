@@ -35,6 +35,6 @@ frontend/src-tauri/gen/
 
 # User uploads
 uploads/
-IMG_6853.jpeg
-IMG_6851.jpeg
+IMG_*.jpeg
+IMG_*.png
 pasted-image-*.png

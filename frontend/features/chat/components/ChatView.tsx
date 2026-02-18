@@ -989,11 +989,12 @@ const gaugeTokens = contextTokenCount;
 						if (!normalizedWorkspacePath) {
 							throw new Error("Workspace path is still loading");
 						}
-						await uploadFileMux(normalizedWorkspacePath, file.name, file);
+						const uploadPath = `uploads/${file.name}`;
+						await uploadFileMux(normalizedWorkspacePath, uploadPath, file);
 
 						const attachment: FileAttachment = {
 							id: `file-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-							path: file.name,
+							path: uploadPath,
 							filename: file.name,
 							type: "file",
 						};
