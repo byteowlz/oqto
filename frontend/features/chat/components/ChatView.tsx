@@ -296,6 +296,7 @@ export function ChatView({
 	const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([]);
 	const messagesEndRef = useRef<HTMLDivElement>(null);
 	const messagesContainerRef = useRef<HTMLDivElement>(null);
+	const scrollContentRef = useRef<HTMLDivElement>(null);
 	const inputRef = useRef<HTMLTextAreaElement>(null);
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const queueSendInFlightRef = useRef(false);
@@ -911,35 +912,44 @@ const gaugeTokens = contextTokenCount;
 		}
 	}, [messages.length, scrollStorageKey]);
 
-	// Auto-scroll to bottom on every render when the user hasn't scrolled up.
-	// This covers both new messages (length change) and streaming content updates
-	// (same length, mutated content) so the view always follows the output.
+	// Keep visibleCount in sync when new messages arrive during streaming.
 	const prevMessageCountRef = useRef(messages.length);
 	useLayoutEffect(() => {
-		if (!initialScrollDoneRef.current) return;
-
 		const prevCount = prevMessageCountRef.current;
 		prevMessageCountRef.current = messages.length;
-
 		if (messages.length > prevCount) {
-			// New message added - ensure it's in the visible window
 			setVisibleCount((prev) => Math.max(prev, messages.length));
 		}
+	}, [messages.length]);
 
-		// Pin to bottom whenever user hasn't manually scrolled away
-		if (!isUserScrolledRef.current) {
-			scrollToBottom();
-		}
-	}, [messages, scrollToBottom]);
+	// Auto-scroll: use a ResizeObserver on the inner scroll content div.
+	// This fires whenever the content height changes (new tokens, tool cards, images)
+	// and pins scrollTop to scrollHeight if the user hasn't manually scrolled away.
+	// ResizeObserver fires after layout paint so there is no frame gap, and it
+	// never generates scroll events that could be misinterpreted as user intent.
+	useEffect(() => {
+		const content = scrollContentRef.current;
+		const container = messagesContainerRef.current;
+		if (!content || !container) return;
 
-	// Detect user scroll to disable auto-scroll, save position, and load more messages
+		const observer = new ResizeObserver(() => {
+			if (!initialScrollDoneRef.current) return;
+			if (!isUserScrolledRef.current) {
+				container.scrollTop = container.scrollHeight;
+			}
+		});
+
+		observer.observe(content);
+		return () => observer.disconnect();
+	}, []); // deliberately empty — refs are stable
+
+	// Detect user scroll intent. We only update isUserScrolled when a real
+	// pointer/wheel/touch gesture preceded the scroll event (tracked via
+	// markUserGesture). Programmatic / layout-driven scroll events have no
+	// preceding gesture and are ignored entirely here.
 	const handleScroll = useCallback(() => {
 		const container = messagesContainerRef.current;
 		if (!container) return;
-
-		const isNearBottom =
-			container.scrollHeight - container.scrollTop - container.clientHeight <
-			100;
 
 		// Load more messages when the user scrolls near the top
 		const isNearTop = container.scrollTop < 100;
@@ -954,29 +964,22 @@ const gaugeTokens = contextTokenCount;
 			});
 		}
 
-		// Only treat this scroll as intentional user navigation if a real
-		// pointer/wheel/touch gesture preceded it. Layout-driven scrolls
-		// (tool call cards, content growth) fire without a preceding gesture
-		// and must not break the stick-to-bottom behavior.
-		if (!userGestureActiveRef.current) {
-			// Not user-driven: if we're supposed to be at the bottom, stay there.
-			if (!isUserScrolledRef.current) {
-				scrollToBottom();
-			}
-			return;
-		}
+		// Ignore layout-driven scroll events — only react to real user gestures
+		if (!userGestureActiveRef.current) return;
 
+		const isNearBottom =
+			container.scrollHeight - container.scrollTop - container.clientHeight <
+			100;
 		const userScrolled = !isNearBottom;
 		setIsUserScrolled(userScrolled);
 		isUserScrolledRef.current = userScrolled;
 
-		// Save scroll position to cache
 		if (userScrolled) {
 			setCachedScrollPosition(container.scrollTop, scrollStorageKey);
 		} else {
 			setCachedScrollPosition(null, scrollStorageKey);
 		}
-	}, [scrollStorageKey, visibleCount, messages.length, scrollToBottom]);
+	}, [scrollStorageKey, visibleCount, messages.length]);
 
 	// Focus input on mount - only on desktop to avoid opening keyboard on mobile
 	useEffect(() => {
@@ -1749,6 +1752,7 @@ const gaugeTokens = contextTokenCount;
 					className="h-full bg-muted/30 border border-border p-2 sm:p-4 overflow-y-auto scrollbar-hide"
 					data-spotlight="chat-timeline"
 				>
+					<div ref={scrollContentRef}>
 					{showSkeleton && ChatSkeleton}
 
 					{!showSkeleton &&
@@ -1876,6 +1880,7 @@ const gaugeTokens = contextTokenCount;
 					)}
 
 					<div ref={messagesEndRef} />
+					</div>{/* end scrollContentRef */}
 				</div>
 
 				{/* Jump to bottom button - appears when user has scrolled up */}
