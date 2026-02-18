@@ -397,14 +397,30 @@ export function ChatView({
 	);
 	// Ref mirror so callbacks always read the latest value without stale closures
 	const isUserScrolledRef = useRef(isUserScrolled);
-	// When set, the next scroll event(s) triggered by programmatic scrolling are ignored
-	const programmaticScrollRef = useRef(false);
+	// Tracks whether the user has physically interacted with the scroll container
+	// recently (wheel, touch, pointer drag). Only scroll events that follow a
+	// recent user gesture count as intentional. Layout-driven scroll events
+	// (tool call cards appearing, content growing) do not have a preceding
+	// gesture and are ignored so they cannot break the stick-to-bottom behavior.
+	const userGestureActiveRef = useRef(false);
+	const userGestureTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+	const markUserGesture = useCallback(() => {
+		userGestureActiveRef.current = true;
+		if (userGestureTimerRef.current !== null) {
+			clearTimeout(userGestureTimerRef.current);
+		}
+		// Give the scroll event a short window to fire after the gesture
+		userGestureTimerRef.current = setTimeout(() => {
+			userGestureActiveRef.current = false;
+			userGestureTimerRef.current = null;
+		}, 200);
+	}, []);
 
 	// Scroll container to the very bottom instantly (no animation, no jank)
 	const scrollToBottom = useCallback(() => {
 		const container = messagesContainerRef.current;
 		if (!container) return;
-		programmaticScrollRef.current = true;
 		container.scrollTop = container.scrollHeight;
 	}, []);
 
@@ -865,6 +881,12 @@ const gaugeTokens = contextTokenCount;
 
 	// Jump-to-bottom button handler: also clears the user-scrolled flag
 	const handleScrollToBottom = useCallback(() => {
+		// Clear gesture flag so the resulting scroll event is not treated as user intent
+		userGestureActiveRef.current = false;
+		if (userGestureTimerRef.current !== null) {
+			clearTimeout(userGestureTimerRef.current);
+			userGestureTimerRef.current = null;
+		}
 		setIsUserScrolled(false);
 		isUserScrolledRef.current = false;
 		setCachedScrollPosition(null, scrollStorageKey);
@@ -915,30 +937,33 @@ const gaugeTokens = contextTokenCount;
 		const container = messagesContainerRef.current;
 		if (!container) return;
 
-		// Ignore scroll events triggered by our own programmatic scrollToBottom calls
-		if (programmaticScrollRef.current) {
-			programmaticScrollRef.current = false;
-			return;
-		}
-
-		// Check if user is near the bottom (within 100px)
 		const isNearBottom =
 			container.scrollHeight - container.scrollTop - container.clientHeight <
 			100;
 
-		// Check if user scrolled to the top - load more messages
+		// Load more messages when the user scrolls near the top
 		const isNearTop = container.scrollTop < 100;
 		if (isNearTop && visibleCount < messages.length) {
-			// Preserve scroll position when loading more
 			const prevScrollHeight = container.scrollHeight;
 			setVisibleCount((prev) =>
 				Math.min(prev + LOAD_MORE_COUNT, messages.length),
 			);
-			// After state update, adjust scroll to maintain position
 			requestAnimationFrame(() => {
 				const newScrollHeight = container.scrollHeight;
 				container.scrollTop = newScrollHeight - prevScrollHeight;
 			});
+		}
+
+		// Only treat this scroll as intentional user navigation if a real
+		// pointer/wheel/touch gesture preceded it. Layout-driven scrolls
+		// (tool call cards, content growth) fire without a preceding gesture
+		// and must not break the stick-to-bottom behavior.
+		if (!userGestureActiveRef.current) {
+			// Not user-driven: if we're supposed to be at the bottom, stay there.
+			if (!isUserScrolledRef.current) {
+				scrollToBottom();
+			}
+			return;
 		}
 
 		const userScrolled = !isNearBottom;
@@ -949,10 +974,9 @@ const gaugeTokens = contextTokenCount;
 		if (userScrolled) {
 			setCachedScrollPosition(container.scrollTop, scrollStorageKey);
 		} else {
-			// At bottom - clear saved position so next mount scrolls to bottom
 			setCachedScrollPosition(null, scrollStorageKey);
 		}
-	}, [scrollStorageKey, visibleCount, messages.length]);
+	}, [scrollStorageKey, visibleCount, messages.length, scrollToBottom]);
 
 	// Focus input on mount - only on desktop to avoid opening keyboard on mobile
 	useEffect(() => {
@@ -1719,6 +1743,9 @@ const gaugeTokens = contextTokenCount;
 				<div
 					ref={messagesContainerRef}
 					onScroll={handleScroll}
+					onWheel={markUserGesture}
+					onPointerDown={markUserGesture}
+					onTouchStart={markUserGesture}
 					className="h-full bg-muted/30 border border-border p-2 sm:p-4 overflow-y-auto scrollbar-hide"
 					data-spotlight="chat-timeline"
 				>
