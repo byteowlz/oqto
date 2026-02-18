@@ -2763,18 +2763,28 @@ test_eavs_providers() {
     echo -n "  Testing ${provider}... "
 
     # Source the env file so eavs setup test can resolve env: keys.
-    # Use a subshell to avoid polluting the current environment.
+    # Redirect stdin from /dev/null so eavs doesn't try to prompt for input.
     local test_result
     if [[ "$SELECTED_USER_MODE" == "single" ]]; then
       test_result=$(
         set -a
         source "$eavs_env_file" 2>/dev/null
         set +a
-        eavs setup test "$provider" --config "$eavs_config_file" --format json 2>&1
+        eavs setup test "$provider" --config "$eavs_config_file" --format json </dev/null 2>&1
       ) || true
     else
-      test_result=$(sudo -u oqto bash -c "set -a; source '$eavs_env_file' 2>/dev/null; set +a; \
-        eavs setup test '$provider' --config '$eavs_config_file' --format json" 2>&1) || true
+      # Ensure oqto can read the env file and config.
+      sudo chown -R oqto:oqto "$(dirname "$eavs_config_file")" 2>/dev/null
+      # Source env file in the current shell first, then pass vars via sudo env.
+      local env_args=""
+      if [[ -f "$eavs_env_file" ]]; then
+        while IFS='=' read -r key value; do
+          [[ -z "$key" || "$key" == \#* ]] && continue
+          env_args+="$key=$value "
+        done < <(sudo cat "$eavs_env_file" 2>/dev/null)
+      fi
+      test_result=$(sudo -u oqto env $env_args \
+        eavs setup test "$provider" --config "$eavs_config_file" --format json </dev/null 2>&1) || true
     fi
 
     if echo "$test_result" | grep -qE '"success"[[:space:]]*:[[:space:]]*true|test successful'; then
