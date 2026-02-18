@@ -655,6 +655,34 @@ class WsConnectionManager {
 	}
 
 	/**
+	 * Set the session name/title on the runner side.
+	 * This updates Pi's internal session name so auto-generated titles
+	 * are replaced with the user's choice.
+	 */
+	async agentSetSessionName(
+		sessionId: string,
+		name: string,
+	): Promise<void> {
+		try {
+			const event = await this.sendAndWait(
+				{
+					channel: "agent",
+					session_id: sessionId,
+					cmd: "set_session_name",
+					name,
+				},
+				5000,
+			);
+			const resp = this.extractCommandResponse(event);
+			if (resp && !resp.success) {
+				console.warn("[ws-mux] set_session_name failed:", resp.error);
+			}
+		} catch {
+			// Best-effort -- session may not be active on runner
+		}
+	}
+
+	/**
 	 * Get available models for an agent session or cached workdir.
 	 */
 	async agentGetAvailableModels(
