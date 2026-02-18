@@ -3283,7 +3283,10 @@ update_octo() {
     log_success "Code updated (rebased)"
   fi
 
-  # Rebuild everything
+  # Upgrade external tools to versions in dependencies.toml
+  update_tools
+
+  # Rebuild Octo (backend + frontend + deploy)
   build_octo
 
   # Copy config to service user (multi-user mode uses /var/lib/octo)
@@ -3299,17 +3302,24 @@ update_octo() {
     log_success "Config synced"
   fi
 
+  # Regenerate models.json (picks up new eavs providers/models)
+  update_models_json
+
   # Restart services
   log_info "Restarting services..."
-  if systemctl is-active --quiet octo 2>/dev/null; then
+  if sudo systemctl is-active --quiet eavs 2>/dev/null; then
+    sudo systemctl restart eavs
+    log_success "eavs restarted"
+  fi
+  if sudo systemctl is-active --quiet octo 2>/dev/null; then
     sudo systemctl restart octo
     log_success "octo service restarted"
-  elif sudo systemctl is-active --quiet octo 2>/dev/null; then
-    sudo systemctl restart octo
+  elif systemctl --user is-active --quiet octo 2>/dev/null; then
+    systemctl --user restart octo
     log_success "octo service restarted"
   fi
 
-  if systemctl is-active --quiet caddy 2>/dev/null; then
+  if sudo systemctl is-active --quiet caddy 2>/dev/null; then
     sudo systemctl restart caddy
     log_success "caddy restarted"
   fi
@@ -3323,6 +3333,130 @@ update_octo() {
   fi
 
   log_success "Update complete!"
+}
+
+# Upgrade external tools to the versions tracked in dependencies.toml.
+# Only upgrades tools that are already installed (doesn't install new ones).
+# Skips tools already at the target version.
+update_tools() {
+  log_step "Upgrading external tools"
+
+  # Tools that setup.sh manages (binary name -> repo name)
+  local -A TOOLS=(
+    [eavs]=eavs
+    [hstry]=hstry
+    [mmry]=mmry
+    [trx]=trx
+    [agntz]=agntz
+    [mailz]=mailz
+    [sx]=sx
+    [scrpr]=scrpr
+    [tmpltr]=tmpltr
+    [ignr]=ignr
+  )
+
+  local upgraded=0
+
+  for tool in "${!TOOLS[@]}"; do
+    # Skip tools not currently installed
+    if ! command_exists "$tool"; then
+      continue
+    fi
+
+    local repo="${TOOLS[$tool]}"
+    local target_version
+    target_version=$(get_dep_version "$repo")
+    [[ -z "$target_version" || "$target_version" == "latest" ]] && continue
+
+    # Get currently installed version
+    local current_version
+    current_version=$("$tool" --version 2>/dev/null | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "unknown")
+
+    if [[ "$current_version" == "$target_version" ]]; then
+      log_info "$tool $current_version (up to date)"
+      continue
+    fi
+
+    log_info "Upgrading $tool: $current_version -> $target_version"
+    download_or_build_tool "$tool" "$repo"
+    ((upgraded++)) || true
+  done
+
+  # Special: eavs adapters (must be installed alongside the binary)
+  if command_exists eavs; then
+    install_eavs_adapters
+  fi
+
+  if ((upgraded > 0)); then
+    log_success "Upgraded $upgraded tool(s)"
+  else
+    log_info "All tools up to date"
+  fi
+}
+
+# Regenerate models.json without interactive prompts.
+# Used by --update to pick up new models/providers from eavs config changes.
+update_models_json() {
+  # Need eavs with export support
+  if ! command_exists eavs || ! eavs models export --help >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local eavs_config_file
+  local eavs_url="http://127.0.0.1:${EAVS_PORT:-3033}"
+
+  # Detect mode from existing config
+  if [[ -f "/var/lib/octo/.config/octo/config.toml" ]]; then
+    # Multi-user
+    eavs_config_file="/var/lib/octo/.config/eavs/config.toml"
+    if [[ ! -f "$eavs_config_file" ]]; then
+      eavs_config_file="${XDG_CONFIG_HOME:-$HOME/.config}/eavs/config.toml"
+    fi
+
+    local pi_models_file="$HOME/.pi/agent/models.json"
+    local merge_flag=""
+    if [[ -f "$pi_models_file" ]]; then
+      merge_flag="--merge $pi_models_file"
+    fi
+
+    local models_json
+    # shellcheck disable=SC2086
+    models_json=$(eavs models export pi \
+      --base-url "$eavs_url" \
+      --config "$eavs_config_file" \
+      $merge_flag 2>/dev/null) || true
+
+    if [[ -n "$models_json" && "$models_json" != '{"providers":{}}' ]]; then
+      mkdir -p "$HOME/.pi/agent"
+      echo "$models_json" > "$HOME/.pi/agent/models.json"
+      local count
+      count=$(echo "$models_json" | jq '[.providers[].models | length] | add // 0' 2>/dev/null || echo "?")
+      log_success "models.json updated ($count models)"
+    fi
+  else
+    # Single-user
+    eavs_config_file="${XDG_CONFIG_HOME:-$HOME/.config}/eavs/config.toml"
+    local pi_models_file="$HOME/.pi/agent/models.json"
+    local merge_flag=""
+    if [[ -f "$pi_models_file" ]]; then
+      merge_flag="--merge $pi_models_file"
+    fi
+
+    local models_json
+    # shellcheck disable=SC2086
+    models_json=$(eavs models export pi \
+      --base-url "$eavs_url" \
+      --config "$eavs_config_file" \
+      $merge_flag 2>/dev/null) || true
+
+    if [[ -n "$models_json" && "$models_json" != '{"providers":{}}' ]]; then
+      mkdir -p "$HOME/.pi/agent"
+      echo "$models_json" > "$HOME/.pi/agent/models.json"
+      local count
+      count=$(echo "$models_json" | jq '[.providers[].models | length] | add // 0' 2>/dev/null || echo "?")
+      log_success "models.json updated ($count models)"
+    fi
+  fi
 }
 
 build_octo() {
