@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
 members = ["crates/*"]
-exclude = ["crates/oqto-browserd"]
+exclude = ["crates/oqto-browserd", "crates/octo-browserd"]
 
 [workspace.package]
 version = "0.1.0"
