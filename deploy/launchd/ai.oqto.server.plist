@@ -3,18 +3,18 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>ai.octo.server</string>
+    <string>ai.oqto.server</string>
 
     <key>ProgramArguments</key>
     <array>
-        <string>{{OCTO_BINARY}}</string>
+        <string>{{OQTO_BINARY}}</string>
         <string>serve</string>
         {{SERVE_FLAGS}}
     </array>
 
     <key>EnvironmentVariables</key>
     <dict>
-        <key>OCTO_CONFIG</key>
+        <key>OQTO_CONFIG</key>
         <string>{{CONFIG_PATH}}</string>
         <key>RUST_LOG</key>
         <string>{{LOG_LEVEL}}</string>
@@ -40,9 +40,9 @@
     <integer>5</integer>
 
     <key>StandardOutPath</key>
-    <string>{{LOG_DIR}}/octo.stdout.log</string>
+    <string>{{LOG_DIR}}/oqto.stdout.log</string>
 
     <key>StandardErrorPath</key>
-    <string>{{LOG_DIR}}/octo.stderr.log</string>
+    <string>{{LOG_DIR}}/oqto.stderr.log</string>
 </dict>
 </plist>

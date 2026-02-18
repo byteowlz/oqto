@@ -33,7 +33,7 @@ use crate::pi::{
 };
 use crate::runner::pi_translator::PiTranslator;
 use crate::runner::protocol::{PiSessionInfo, PiSessionState};
-use octo_protocol::events::Event as CanonicalEvent;
+use oqto_protocol::events::Event as CanonicalEvent;
 
 // ============================================================================
 // Configuration
@@ -2405,7 +2405,7 @@ impl PiSessionManager {
                                                 session_id: session_id.clone(),
                                                 runner_id: runner_id.clone(),
                                                 ts: chrono::Utc::now().timestamp_millis(),
-                                                payload: octo_protocol::events::EventPayload::SessionTitleChanged {
+                                                payload: oqto_protocol::events::EventPayload::SessionTitleChanged {
                                                     title: clean_title.clone(),
                                                     readable_id: parsed.readable_id.map(|s| s.to_string()),
                                                 },
@@ -2592,7 +2592,7 @@ impl PiSessionManager {
                 let _ = event_tx.send(canonical_event);
 
                 // Sync title changes to hstry immediately
-                if let octo_protocol::events::EventPayload::SessionTitleChanged {
+                if let oqto_protocol::events::EventPayload::SessionTitleChanged {
                     title,
                     ..
                 } = payload
@@ -2679,7 +2679,7 @@ impl PiSessionManager {
                 pending_messages.clear();
 
                 // Title updates primarily arrive via the auto-rename extension's
-                // setStatus("octo_title_changed", name) which the translator
+                // setStatus("oqto_title_changed", name) which the translator
                 // converts to a SessionTitleChanged canonical event. As a
                 // fallback for older extension versions or if the extension
                 // event was missed, probe get_state after a delay to catch

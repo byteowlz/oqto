@@ -1,26 +1,26 @@
-# Example Ansible Inventory for Octo
+# Example Ansible Inventory for Oqto
 #
 # Copy this to inventory.yml and customize for your environment.
 #
 # Usage:
-#   ansible-playbook -i inventory.yml octo.yml
+#   ansible-playbook -i inventory.yml oqto.yml
 
 all:
   children:
     servers:
       hosts:
-        octo-server:
+        oqto-server:
           ansible_host: 192.168.1.100
           ansible_user: root
           # Or use SSH key:
-          # ansible_ssh_private_key_file: ~/.ssh/octo_key
+          # ansible_ssh_private_key_file: ~/.ssh/oqto_key
 
   vars:
     # Admin user to create
     admin_user: admin
     admin_ssh_key: "ssh-ed25519 AAAA... your-key-here"
 
-    # Octo configuration
+    # Oqto configuration
     octo_mode: single        # single or multi
     octo_backend: local      # local or container
 
@@ -29,7 +29,7 @@ all:
 
     # Additional ports to allow through firewall
     allowed_ports:
-      - 8080   # Octo backend API
+      - 8080   # Oqto backend API
       - 3000   # Frontend (dev only, remove in production)
       - 443    # HTTPS (if using reverse proxy)
 

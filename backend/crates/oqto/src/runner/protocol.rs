@@ -1645,7 +1645,7 @@ pub struct PiStateResponse {
 ///
 /// Carries a canonical event from the runner to clients over Unix socket.
 /// The pi_manager translates native Pi events before broadcasting.
-pub type PiEventWrapper = octo_protocol::events::Event;
+pub type PiEventWrapper = oqto_protocol::events::Event;
 
 /// Response confirming Pi subscription started.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1996,7 +1996,7 @@ mod tests {
 
     #[test]
     fn test_pi_event_wrapper() {
-        use octo_protocol::events::{AgentPhase, EventPayload};
+        use oqto_protocol::events::{AgentPhase, EventPayload};
 
         let canonical_event = PiEventWrapper {
             session_id: "ses_123".to_string(),

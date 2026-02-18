@@ -91,6 +91,6 @@ A ready-to-run container definition lives in `Dockerfile` with the companion lau
 - `lib/opencode-client.ts` – Thin client for opencode REST/SSE workflows.
 - `features/sessions/SessionScreen.tsx` – Sessions app screen composition and orchestration.
 - `features/sessions/components/*` – File tree browser, terminal view, and preview surface wired to live services (file tree stays mounted while previews are open).
-- `public/octo_logo_banner_white.svg` – App logo used by the shell navigation (SVG icon).
+- `public/oqto_logo_banner_white.svg` – App logo used by the shell navigation (SVG icon).
 
 Refer to the documents inside `history/` for deeper architecture notes on opencode and Ghostty integrations.

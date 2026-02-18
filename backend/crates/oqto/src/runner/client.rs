@@ -1287,7 +1287,7 @@ impl PiSubscription {
 #[derive(Debug, Clone)]
 pub enum PiSubscriptionEvent {
     /// A canonical event from the session (translated from Pi native events).
-    Event(octo_protocol::events::Event),
+    Event(oqto_protocol::events::Event),
     /// The subscription ended.
     End { reason: String },
     /// An error occurred.

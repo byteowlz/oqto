@@ -178,7 +178,7 @@ pub enum Channel {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "channel", rename_all = "snake_case")]
 pub enum WsCommand {
-    Agent(octo_protocol::commands::Command),
+    Agent(oqto_protocol::commands::Command),
     Files(FilesWsCommand),
     Terminal(TerminalWsCommand),
     Hstry(HstryWsCommand),
@@ -407,14 +407,14 @@ pub struct TrxIssueUpdate {
 /// Events sent from backend to frontend over WebSocket.
 ///
 /// All agent events (streaming, command responses, lifecycle) flow through
-/// `WsEvent::Agent` as canonical `octo_protocol::events::Event` values.
+/// `WsEvent::Agent` as canonical `oqto_protocol::events::Event` values.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "channel", rename_all = "snake_case")]
 pub enum WsEvent {
     /// Canonical agent events (streaming, state, command responses, delegation, etc.).
     /// Serializes as `{"channel": "agent", "session_id": ..., "event": ..., ...}`.
     #[serde(rename = "agent")]
-    Agent(octo_protocol::events::Event),
+    Agent(oqto_protocol::events::Event),
     Files(FilesWsEvent),
     Terminal(TerminalWsEvent),
     Hstry(HstryWsEvent),
@@ -890,50 +890,50 @@ fn ws_command_summary(cmd: &WsCommand) -> (String, Option<String>, Option<String
     match cmd {
         WsCommand::Agent(agent_cmd) => {
             let label = match agent_cmd.payload {
-                octo_protocol::commands::CommandPayload::SessionCreate { .. } => {
+                oqto_protocol::commands::CommandPayload::SessionCreate { .. } => {
                     "agent.session_create"
                 }
-                octo_protocol::commands::CommandPayload::SessionClose => "agent.session_close",
-                octo_protocol::commands::CommandPayload::SessionNew { .. } => "agent.session_new",
-                octo_protocol::commands::CommandPayload::SessionSwitch { .. } => {
+                oqto_protocol::commands::CommandPayload::SessionClose => "agent.session_close",
+                oqto_protocol::commands::CommandPayload::SessionNew { .. } => "agent.session_new",
+                oqto_protocol::commands::CommandPayload::SessionSwitch { .. } => {
                     "agent.session_switch"
                 }
-                octo_protocol::commands::CommandPayload::Prompt { .. } => "agent.prompt",
-                octo_protocol::commands::CommandPayload::Steer { .. } => "agent.steer",
-                octo_protocol::commands::CommandPayload::FollowUp { .. } => "agent.follow_up",
-                octo_protocol::commands::CommandPayload::Abort => "agent.abort",
-                octo_protocol::commands::CommandPayload::InputResponse { .. } => {
+                oqto_protocol::commands::CommandPayload::Prompt { .. } => "agent.prompt",
+                oqto_protocol::commands::CommandPayload::Steer { .. } => "agent.steer",
+                oqto_protocol::commands::CommandPayload::FollowUp { .. } => "agent.follow_up",
+                oqto_protocol::commands::CommandPayload::Abort => "agent.abort",
+                oqto_protocol::commands::CommandPayload::InputResponse { .. } => {
                     "agent.input_response"
                 }
-                octo_protocol::commands::CommandPayload::GetState => "agent.get_state",
-                octo_protocol::commands::CommandPayload::GetMessages => "agent.get_messages",
-                octo_protocol::commands::CommandPayload::GetStats => "agent.get_stats",
-                octo_protocol::commands::CommandPayload::GetModels { .. } => "agent.get_models",
-                octo_protocol::commands::CommandPayload::GetCommands => "agent.get_commands",
-                octo_protocol::commands::CommandPayload::GetForkPoints => "agent.get_fork_points",
-                octo_protocol::commands::CommandPayload::ListSessions => "agent.list_sessions",
-                octo_protocol::commands::CommandPayload::SetModel { .. } => "agent.set_model",
-                octo_protocol::commands::CommandPayload::CycleModel => "agent.cycle_model",
-                octo_protocol::commands::CommandPayload::SetThinkingLevel { .. } => {
+                oqto_protocol::commands::CommandPayload::GetState => "agent.get_state",
+                oqto_protocol::commands::CommandPayload::GetMessages => "agent.get_messages",
+                oqto_protocol::commands::CommandPayload::GetStats => "agent.get_stats",
+                oqto_protocol::commands::CommandPayload::GetModels { .. } => "agent.get_models",
+                oqto_protocol::commands::CommandPayload::GetCommands => "agent.get_commands",
+                oqto_protocol::commands::CommandPayload::GetForkPoints => "agent.get_fork_points",
+                oqto_protocol::commands::CommandPayload::ListSessions => "agent.list_sessions",
+                oqto_protocol::commands::CommandPayload::SetModel { .. } => "agent.set_model",
+                oqto_protocol::commands::CommandPayload::CycleModel => "agent.cycle_model",
+                oqto_protocol::commands::CommandPayload::SetThinkingLevel { .. } => {
                     "agent.set_thinking_level"
                 }
-                octo_protocol::commands::CommandPayload::CycleThinkingLevel => {
+                oqto_protocol::commands::CommandPayload::CycleThinkingLevel => {
                     "agent.cycle_thinking_level"
                 }
-                octo_protocol::commands::CommandPayload::SetAutoCompaction { .. } => {
+                oqto_protocol::commands::CommandPayload::SetAutoCompaction { .. } => {
                     "agent.set_auto_compaction"
                 }
-                octo_protocol::commands::CommandPayload::SetAutoRetry { .. } => {
+                oqto_protocol::commands::CommandPayload::SetAutoRetry { .. } => {
                     "agent.set_auto_retry"
                 }
-                octo_protocol::commands::CommandPayload::Compact { .. } => "agent.compact",
-                octo_protocol::commands::CommandPayload::AbortRetry => "agent.abort_retry",
-                octo_protocol::commands::CommandPayload::SetSessionName { .. } => {
+                oqto_protocol::commands::CommandPayload::Compact { .. } => "agent.compact",
+                oqto_protocol::commands::CommandPayload::AbortRetry => "agent.abort_retry",
+                oqto_protocol::commands::CommandPayload::SetSessionName { .. } => {
                     "agent.set_session_name"
                 }
-                octo_protocol::commands::CommandPayload::Fork { .. } => "agent.fork",
-                octo_protocol::commands::CommandPayload::Delegate(_) => "agent.delegate",
-                octo_protocol::commands::CommandPayload::DelegateCancel(_) => {
+                oqto_protocol::commands::CommandPayload::Fork { .. } => "agent.fork",
+                oqto_protocol::commands::CommandPayload::Delegate(_) => "agent.delegate",
+                oqto_protocol::commands::CommandPayload::DelegateCancel(_) => {
                     "agent.delegate_cancel"
                 }
             };
@@ -1020,12 +1020,12 @@ fn agent_response_with_runner(
         Ok(data) => (true, data, None),
         Err(e) => (false, None, Some(e)),
     };
-    WsEvent::Agent(octo_protocol::events::Event {
+    WsEvent::Agent(oqto_protocol::events::Event {
         session_id: session_id.to_string(),
         runner_id: runner_id.to_string(),
         ts: Utc::now().timestamp_millis(),
-        payload: octo_protocol::events::EventPayload::Response(
-            octo_protocol::events::CommandResponse {
+        payload: oqto_protocol::events::EventPayload::Response(
+            oqto_protocol::events::CommandResponse {
                 id: id.unwrap_or_default(),
                 cmd: cmd.to_string(),
                 success,
@@ -1041,13 +1041,13 @@ fn agent_response_with_runner(
 /// Every command gets a `CommandResponse` event back (or `None` for fire-and-forget
 /// commands like prompt/steer/abort where streaming events are the real response).
 async fn handle_agent_command(
-    cmd: octo_protocol::commands::Command,
+    cmd: oqto_protocol::commands::Command,
     user_id: &str,
     state: &AppState,
     runner_client: Option<&RunnerClient>,
     conn_state: Arc<tokio::sync::Mutex<WsConnectionState>>,
 ) -> Option<WsEvent> {
-    use octo_protocol::commands::CommandPayload;
+    use oqto_protocol::commands::CommandPayload;
 
     let id = cmd.id.clone();
     let session_id = cmd.session_id.clone();
@@ -1561,11 +1561,11 @@ async fn handle_agent_command(
             match runner.pi_set_model(&session_id, &provider, &model_id).await {
                 Ok(resp) => {
                     // Emit ConfigModelChanged event so the frontend UI updates.
-                    let config_event = WsEvent::Agent(octo_protocol::events::Event {
+                    let config_event = WsEvent::Agent(oqto_protocol::events::Event {
                         session_id: session_id.clone(),
                         runner_id: runner_id.clone(),
                         ts: Utc::now().timestamp_millis(),
-                        payload: octo_protocol::events::EventPayload::ConfigModelChanged {
+                        payload: oqto_protocol::events::EventPayload::ConfigModelChanged {
                             provider: resp.model.provider.clone(),
                             model_id: resp.model.id.clone(),
                         },
@@ -1627,11 +1627,11 @@ async fn handle_agent_command(
             match runner.pi_cycle_model(&session_id).await {
                 Ok(resp) => {
                     // Emit ConfigModelChanged event so the frontend UI updates.
-                    let config_event = WsEvent::Agent(octo_protocol::events::Event {
+                    let config_event = WsEvent::Agent(oqto_protocol::events::Event {
                         session_id: session_id.clone(),
                         runner_id: runner_id.clone(),
                         ts: Utc::now().timestamp_millis(),
-                        payload: octo_protocol::events::EventPayload::ConfigModelChanged {
+                        payload: oqto_protocol::events::EventPayload::ConfigModelChanged {
                             provider: resp.model.provider.clone(),
                             model_id: resp.model.id.clone(),
                         },
@@ -2081,11 +2081,11 @@ async fn forward_pi_events(
                     session_id, code, message
                 );
                 // Emit error as canonical agent.error event
-                let error_event = octo_protocol::events::Event {
+                let error_event = oqto_protocol::events::Event {
                     session_id: session_id.to_string(),
                     runner_id: runner_id.clone(),
                     ts: chrono::Utc::now().timestamp_millis(),
-                    payload: octo_protocol::events::EventPayload::AgentError {
+                    payload: oqto_protocol::events::EventPayload::AgentError {
                         error: format!("Subscription error ({:?}): {}", code, message),
                         recoverable: false,
                         phase: None,
@@ -3305,9 +3305,9 @@ mod tests {
         let json = r#"{"channel":"agent","session_id":"ses_123","cmd":"prompt","message":"hello"}"#;
         let cmd: WsCommand = serde_json::from_str(json).unwrap();
         match cmd {
-            WsCommand::Agent(octo_protocol::commands::Command {
+            WsCommand::Agent(oqto_protocol::commands::Command {
                 session_id,
-                payload: octo_protocol::commands::CommandPayload::Prompt { message, .. },
+                payload: oqto_protocol::commands::CommandPayload::Prompt { message, .. },
                 ..
             }) => {
                 assert_eq!(session_id, "ses_123");
@@ -3322,9 +3322,9 @@ mod tests {
         let json = r#"{"channel":"agent","session_id":"ses_456","cmd":"get_state"}"#;
         let cmd: WsCommand = serde_json::from_str(json).unwrap();
         match cmd {
-            WsCommand::Agent(octo_protocol::commands::Command {
+            WsCommand::Agent(oqto_protocol::commands::Command {
                 session_id,
-                payload: octo_protocol::commands::CommandPayload::GetState,
+                payload: oqto_protocol::commands::CommandPayload::GetState,
                 ..
             }) => {
                 assert_eq!(session_id, "ses_456");
@@ -3335,9 +3335,9 @@ mod tests {
 
     #[test]
     fn test_serialize_agent_command_response() {
-        use octo_protocol::events::{CommandResponse, EventPayload};
+        use oqto_protocol::events::{CommandResponse, EventPayload};
 
-        let event = WsEvent::Agent(octo_protocol::events::Event {
+        let event = WsEvent::Agent(oqto_protocol::events::Event {
             session_id: "ses_123".into(),
             runner_id: "local".into(),
             ts: 1738764000000,
@@ -3366,9 +3366,9 @@ mod tests {
 
     #[test]
     fn test_serialize_canonical_agent_event() {
-        use octo_protocol::events::{AgentPhase, EventPayload};
+        use oqto_protocol::events::{AgentPhase, EventPayload};
 
-        let event = WsEvent::Agent(octo_protocol::events::Event {
+        let event = WsEvent::Agent(oqto_protocol::events::Event {
             session_id: "ses_abc".into(),
             runner_id: "local".into(),
             ts: 1738764000000,
@@ -3387,9 +3387,9 @@ mod tests {
 
     #[test]
     fn test_serialize_canonical_agent_idle() {
-        use octo_protocol::events::EventPayload;
+        use oqto_protocol::events::EventPayload;
 
-        let event = WsEvent::Agent(octo_protocol::events::Event {
+        let event = WsEvent::Agent(oqto_protocol::events::Event {
             session_id: "ses_abc".into(),
             runner_id: "local".into(),
             ts: 1738764000000,

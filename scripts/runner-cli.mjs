@@ -31,23 +31,24 @@ Options:
   --pretty            Pretty-print JSON output
 
 Environment:
-  OCTO_RUNNER_SOCKET  Default socket path override
+  OQTO_RUNNER_SOCKET  Default socket path override
 `);
 }
 
 function defaultSocketPath() {
-	if (process.env.OCTO_RUNNER_SOCKET) return process.env.OCTO_RUNNER_SOCKET;
+	const envSocket = process.env.OQTO_RUNNER_SOCKET || process.env.OCTO_RUNNER_SOCKET;
+	if (envSocket) return envSocket;
 	const user = process.env.USER || "";
 	if (user) {
-		const candidate = `/run/octo/runner-sockets/${user}/octo-runner.sock`;
+		const candidate = `/run/oqto/runner-sockets/${user}/oqto-runner.sock`;
 		if (fs.existsSync(candidate)) return candidate;
 	}
 	const uid = typeof process.getuid === "function" ? String(process.getuid()) : "";
 	if (uid) {
-		const candidate = `/run/user/${uid}/octo-runner.sock`;
+		const candidate = `/run/user/${uid}/oqto-runner.sock`;
 		if (fs.existsSync(candidate)) return candidate;
 	}
-	return "/tmp/octo-runner.sock";
+	return "/tmp/oqto-runner.sock";
 }
 
 function parseArgs(argv) {
