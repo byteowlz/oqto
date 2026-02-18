@@ -1,5 +1,5 @@
 /**
- * React hooks for WebSocket-based real-time communication with Octo backend.
+ * React hooks for WebSocket-based real-time communication with Oqto backend.
  *
  * These hooks wrap the OctoWsClient singleton to provide React-friendly APIs
  * for subscribing to session events and managing connection state.

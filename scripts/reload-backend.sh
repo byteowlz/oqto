@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Reload backend: rebuild, reinstall, and restart octo serve
+# Reload backend: rebuild, reinstall, and restart oqto serve
 # Usage: ./scripts/reload-backend.sh [--no-start]
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-OCTO_DIR="$(dirname "$SCRIPT_DIR")"
+OQTO_DIR="$(dirname "$SCRIPT_DIR")"
 
 # Colors for output
 RED='\033[0;31m'
@@ -18,21 +18,21 @@ log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
 log_success() { echo -e "${GREEN}[OK]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
-# Find and kill existing octo processes
+# Find and kill existing oqto processes
 kill_octo() {
-    log_info "Stopping existing octo processes..."
-    pkill -f "octo serve" 2>/dev/null || true
-    pkill -f "octo-backend" 2>/dev/null || true
+    log_info "Stopping existing oqto processes..."
+    pkill -f "oqto serve" 2>/dev/null || true
+    pkill -f "oqto-backend" 2>/dev/null || true
     sleep 1
 }
 
-# Start octo serve
+# Start oqto serve
 start_octo() {
-    log_info "Starting octo serve --local-mode..."
+    log_info "Starting oqto serve --local-mode..."
     cd "$HOME"
-    octo serve --local-mode &
-    OCTO_PID=$!
-    log_success "octo serve started (PID: $OCTO_PID)"
+    oqto serve --local-mode &
+    OQTO_PID=$!
+    log_success "oqto serve started (PID: $OQTO_PID)"
 }
 
 # One-shot reload
@@ -40,7 +40,7 @@ reload_once() {
     local no_start="${1:-false}"
     
     log_info "Building and installing..."
-    cd "$OCTO_DIR"
+    cd "$OQTO_DIR"
     just install
     
     kill_octo

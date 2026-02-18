@@ -1,0 +1,23 @@
+# oqto-runner socket activation (optional)
+#
+# This allows the runner to be started on-demand when a connection is made.
+# Alternative to running the service constantly.
+#
+# Installation:
+#   mkdir -p ~/.config/systemd/user
+#   cp oqto-runner.socket ~/.config/systemd/user/
+#   cp oqto-runner@.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable oqto-runner.socket
+#   systemctl --user start oqto-runner.socket
+
+[Unit]
+Description=Oqto Runner Socket
+Documentation=https://github.com/byteowlz/oqto
+
+[Socket]
+ListenStream=%t/oqto-runner.sock
+SocketMode=0600
+
+[Install]
+WantedBy=sockets.target

@@ -133,6 +133,6 @@ This could be addressed in a future improvement by tracking aliases with timesta
 
 ## Related Code
 
-- `backend/crates/octo/src/runner/pi_manager.rs`: Backend rekey migration logic (`migrate_hstry_conversation_on_rekey`)
+- `backend/crates/oqto/src/runner/pi_manager.rs`: Backend rekey migration logic (`migrate_hstry_conversation_on_rekey`)
 - `frontend/features/chat/hooks/useChat.ts`: Frontend rekey detection and handling
 - `frontend/lib/ws-manager.ts`: WebSocket manager with session alias tracking

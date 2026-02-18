@@ -105,10 +105,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 	>(() => {
 		if (typeof window === "undefined") return {};
 		try {
-			const stored = localStorage.getItem("octo:projectDefaultAgents");
+			const stored = localStorage.getItem("oqto:projectDefaultAgents");
 			return stored ? JSON.parse(stored) : {};
 		} catch {
-			localStorage.removeItem("octo:projectDefaultAgents");
+			localStorage.removeItem("oqto:projectDefaultAgents");
 			return {};
 		}
 	});
@@ -175,7 +175,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 		if (typeof window === "undefined") return;
 		try {
 			localStorage.setItem(
-				"octo:projectDefaultAgents",
+				"oqto:projectDefaultAgents",
 				JSON.stringify(projectDefaultAgents),
 			);
 		} catch {

@@ -1,6 +1,6 @@
-# Octo Ansible Deployment
+# Oqto Ansible Deployment
 
-Ansible playbook for setting up and hardening a Linux server for Octo.
+Ansible playbook for setting up and hardening a Linux server for Oqto.
 
 ## What It Does
 
@@ -12,7 +12,7 @@ Ansible playbook for setting up and hardening a Linux server for Octo.
    - Kernel security parameters
    - Audit logging
 
-2. **Installs Octo dependencies**
+2. **Installs Oqto dependencies**
    - Rust toolchain
    - Bun (JavaScript runtime)
    - Development tools (git, curl, build-essential, etc.)
@@ -28,8 +28,8 @@ Ansible playbook for setting up and hardening a Linux server for Octo.
    - mailz (agent messaging)
    - OpenCode (local mode only)
 
-4. **Configures Octo**
-   - Creates octo system user
+4. **Configures Oqto**
+   - Creates oqto system user
    - Sets up directories
    - Deploys systemd services
    - Generates configuration
@@ -51,7 +51,7 @@ Ansible playbook for setting up and hardening a Linux server for Octo.
    ```yaml
    servers:
      hosts:
-       octo-server:
+       oqto-server:
          ansible_host: your.server.ip
          ansible_user: root
    vars:
@@ -63,14 +63,14 @@ Ansible playbook for setting up and hardening a Linux server for Octo.
 
 3. Run the playbook:
    ```bash
-   ansible-playbook -i inventory.yml octo.yml
+   ansible-playbook -i inventory.yml oqto.yml
    ```
 
-4. After deployment, build and install Octo binaries on the server:
+4. After deployment, build and install Oqto binaries on the server:
    ```bash
    ssh admin@your.server.ip
-   git clone https://github.com/byteowlz/octo.git
-   cd octo
+   git clone https://github.com/byteowlz/oqto.git
+   cd oqto
    ./setup.sh --non-interactive
    ```
 
@@ -84,35 +84,35 @@ Ansible playbook for setting up and hardening a Linux server for Octo.
 | `octo_backend` | `local` | `local` (native) or `container` (Podman) |
 | `ssh_port` | `22` | SSH port |
 | `allowed_ports` | `[8080, 3000]` | Additional firewall ports |
-| `octo_user` | `octo` | System user for Octo service |
-| `octo_group` | `octo` | System group for Octo |
+| `octo_user` | `oqto` | System user for Oqto service |
+| `octo_group` | `oqto` | System group for Oqto |
 
 ## Post-Deployment
 
-1. **Install Octo binaries** - The playbook prepares the environment but doesn't build Octo from source. SSH into the server and run:
+1. **Install Oqto binaries** - The playbook prepares the environment but doesn't build Oqto from source. SSH into the server and run:
    ```bash
-   cd /path/to/octo
+   cd /path/to/oqto
    cargo install --path backend
    cargo install --path fileserver
-   sudo cp ~/.cargo/bin/octo /usr/local/bin/
+   sudo cp ~/.cargo/bin/oqto /usr/local/bin/
    sudo cp ~/.cargo/bin/fileserver /usr/local/bin/
    ```
 
-2. **Configure JWT secret** - Edit `/etc/octo/config.toml`:
+2. **Configure JWT secret** - Edit `/etc/oqto/config.toml`:
    ```bash
-   sudo -u octo openssl rand -base64 48
+   sudo -u oqto openssl rand -base64 48
    # Add to config.toml under [auth]
    ```
 
-3. **Start Octo**:
+3. **Start Oqto**:
    ```bash
-   sudo systemctl start octo
-   sudo systemctl status octo
+   sudo systemctl start oqto
+   sudo systemctl status oqto
    ```
 
 4. **Build frontend** (if serving from this server):
    ```bash
-   cd /path/to/octo/frontend
+   cd /path/to/oqto/frontend
    bun install && bun run build
    ```
 
@@ -120,12 +120,12 @@ Ansible playbook for setting up and hardening a Linux server for Octo.
 
 ```
 deploy/ansible/
-  octo.yml                    # Main playbook
+  oqto.yml                    # Main playbook
   inventory.yml.example       # Example inventory
   README.md                   # This file
   templates/
     sshd-hardening.conf.j2    # SSH config template
     fail2ban-jail.local.j2    # fail2ban config template
-    octo.service.j2           # systemd service template
-    octo-config.toml.j2       # Octo config template
+    oqto.service.j2           # systemd service template
+    oqto-config.toml.j2       # Oqto config template
 ```

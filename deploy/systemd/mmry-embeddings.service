@@ -1,5 +1,5 @@
 # mmry Embeddings Service
-# Central mmry service that handles embeddings/reranking for all octo sessions.
+# Central mmry service that handles embeddings/reranking for all oqto sessions.
 # Per-user mmry instances delegate heavy operations to this service.
 #
 # Installation:

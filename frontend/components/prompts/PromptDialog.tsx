@@ -1,7 +1,7 @@
 /**
  * Security prompt dialog component.
  *
- * Displays approval requests from octo-guard and octo-ssh-proxy,
+ * Displays approval requests from oqto-guard and oqto-ssh-proxy,
  * allowing users to allow or deny access to protected resources.
  */
 

@@ -1,0 +1,15 @@
+# Oqto First Boot Service
+# Runs once on first boot to complete setup
+[Unit]
+Description=Oqto First Boot Setup
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=!/var/lib/oqto/.first-boot-complete
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/oqto-first-boot
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

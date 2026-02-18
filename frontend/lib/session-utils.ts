@@ -1871,7 +1871,7 @@ export function isProvisionalSessionId(
 	if (!trimmed) return false;
 	return (
 		isUuidLike(trimmed) ||
-		trimmed.startsWith("octo-") ||
+		trimmed.startsWith("oqto-") ||
 		trimmed.startsWith("pi-") ||
 		trimmed.startsWith("pending-")
 	);
@@ -1879,9 +1879,9 @@ export function isProvisionalSessionId(
 
 export function createPiSessionId(): string {
 	if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
-		return `octo-${crypto.randomUUID()}`;
+		return `oqto-${crypto.randomUUID()}`;
 	}
-	return `octo-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+	return `oqto-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
 export function createPendingSessionId(): string {
@@ -1909,7 +1909,7 @@ export function getWorkspaceModelStorageKey(
 	const normalized = normalizeWorkspacePath(workspacePath);
 	const base = normalized ?? "global";
 	const sanitized = base.replace(/[^a-zA-Z0-9._-]+/g, "_");
-	return `octo:workspaceModel:${sanitized}`;
+	return `oqto:workspaceModel:${sanitized}`;
 }
 
 /**

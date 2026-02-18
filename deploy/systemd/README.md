@@ -1,6 +1,6 @@
-# Octo Systemd Services
+# Oqto Systemd Services
 
-This directory contains systemd service files for running Octo in production.
+This directory contains systemd service files for running Oqto in production.
 
 ## Architecture
 
@@ -8,16 +8,16 @@ This directory contains systemd service files for running Octo in production.
 
 ```
                     ┌─────────────────────┐
-                    │    octo.service     │
+                    │    oqto.service     │
                     │  (control plane)    │
-                    │  runs as: octo      │
+                    │  runs as: oqto      │
                     └──────────┬──────────┘
                                │ Unix sockets
               ┌────────────────┼────────────────┐
               │                │                │
               ▼                ▼                ▼
     ┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐
-    │ octo-runner     │ │ octo-runner     │ │ octo-runner     │
+    │ oqto-runner     │ │ oqto-runner     │ │ oqto-runner     │
     │ (user: alice)   │ │ (user: bob)     │ │ (user: ...)     │
     │                 │ │                 │ │                 │
     │ Spawns:         │ │ Spawns:         │ │                 │
@@ -32,27 +32,27 @@ Linux UID/GID, and the backend cannot directly access user files.
 
 ## Service Files
 
-### octo.service
+### oqto.service
 Main control plane server. Handles API requests and routes operations to
 per-user runners via Unix sockets.
 
-### octo-runner.service (User Service)
+### oqto-runner.service (User Service)
 Per-user runner daemon that manages processes for that user. Runs as a systemd
 user service (`systemctl --user`). Each user installs this in their own
 `~/.config/systemd/user/` directory.
 
 The runner:
-- Listens on `$XDG_RUNTIME_DIR/octo-runner.sock`
+- Listens on `$XDG_RUNTIME_DIR/oqto-runner.sock`
 - Spawns opencode, fileserver, ttyd as the user
 - Provides filesystem access to user's workspace
 - Enforces sandbox restrictions if configured
 
-### octo-agent@.service (Deprecated)
-Legacy template service for per-user agents. Replaced by octo-runner for better
+### oqto-agent@.service (Deprecated)
+Legacy template service for per-user agents. Replaced by oqto-runner for better
 isolation. Kept for backwards compatibility.
 
-### octo-user.service (Deprecated)
-Legacy user-level service. Replaced by octo-runner.service.
+### oqto-user.service (Deprecated)
+Legacy user-level service. Replaced by oqto-runner.service.
 
 ## Installation
 
@@ -60,23 +60,23 @@ Legacy user-level service. Replaced by octo-runner.service.
 
 ```bash
 # As root
-cp octo.service /etc/systemd/system/
+cp oqto.service /etc/systemd/system/
 systemctl daemon-reload
 
-# Create octo system user
-useradd -r -s /usr/sbin/nologin octo
+# Create oqto system user
+useradd -r -s /usr/sbin/nologin oqto
 
 # Create directories
-mkdir -p /var/lib/octo /etc/octo
-chown octo:octo /var/lib/octo
+mkdir -p /var/lib/oqto /etc/oqto
+chown oqto:oqto /var/lib/oqto
 
 # Start main service
-systemctl enable --now octo
+systemctl enable --now oqto
 ```
 
 ### 2. Per-User Runner Setup
 
-For each platform user that will use Octo:
+For each platform user that will use Oqto:
 
 ```bash
 # As root: Enable lingering so user services start at boot
@@ -84,17 +84,17 @@ loginctl enable-linger <username>
 
 # As the user: Install runner service
 mkdir -p ~/.config/systemd/user
-cp octo-runner.service ~/.config/systemd/user/
+cp oqto-runner.service ~/.config/systemd/user/
 systemctl --user daemon-reload
-systemctl --user enable --now octo-runner
+systemctl --user enable --now oqto-runner
 ```
 
 ### Automated User Provisioning
 
-Use `octoctl` to create users with proper setup:
+Use `oqtoctl` to create users with proper setup:
 
 ```bash
-octoctl user create alice --email alice@example.com
+oqtoctl user create alice --email alice@example.com
 ```
 
 This automatically:
@@ -109,14 +109,14 @@ For local development, the runner isn't required. The backend runs processes dir
 
 ```bash
 # Just start the backend
-octo serve --mode local --single-user
+oqto serve --mode local --single-user
 ```
 
 ## Socket Communication
 
 The backend communicates with per-user runners via Unix sockets:
 
-- Runner socket: `/run/user/{uid}/octo-runner.sock`
+- Runner socket: `/run/user/{uid}/oqto-runner.sock`
 
 The backend looks up the user's UID and connects to their runner socket.
 Socket permissions (owned by the user, mode 0700 on parent directory)
@@ -124,7 +124,7 @@ ensure cross-user isolation.
 
 ## Configuration
 
-Main config file: `/etc/octo/config.toml`
+Main config file: `/etc/oqto/config.toml`
 
 ```toml
 [server]
@@ -135,27 +135,27 @@ mode = "local"  # or "container" or "auto"
 
 [local]
 # Socket directory for agent communication
-socket_dir = "/run/octo"
+socket_dir = "/run/oqto"
 ```
 
 ## Logs
 
 ```bash
 # Main server logs
-journalctl -u octo -f
+journalctl -u oqto -f
 
 # User runner logs (as root)
-journalctl --user-unit octo-runner -M alice@
+journalctl --user-unit oqto-runner -M alice@
 
 # User runner logs (as the user)
-journalctl --user -u octo-runner -f
+journalctl --user -u oqto-runner -f
 ```
 
 ## Security Notes
 
 ### Isolation Model
 
-1. **Backend** runs as `octo` system user with no access to user home directories
+1. **Backend** runs as `oqto` system user with no access to user home directories
 2. **Runners** run as individual Linux users with access only to their own files
 3. **Socket permissions** prevent users from connecting to other users' runners
 4. **Sandbox** (optional) further restricts what processes can access
@@ -164,5 +164,5 @@ journalctl --user -u octo-runner -f
 
 1. Ensure `/run/user/{uid}` directories have mode 0700
 2. Use separate Linux users for each platform user
-3. Enable sandbox restrictions in `/etc/octo/sandbox.toml`
+3. Enable sandbox restrictions in `/etc/oqto/sandbox.toml`
 4. Consider network isolation for strict deployments

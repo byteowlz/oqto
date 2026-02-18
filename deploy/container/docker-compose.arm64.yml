@@ -5,10 +5,10 @@
 
 networks:
   # Public network - Caddy connects here and exposes ports
-  octo-public:
+  oqto-public:
     driver: bridge
   # Internal network - containers communicate without host exposure
-  octo-internal:
+  oqto-internal:
     driver: bridge
     internal: true
 
@@ -16,7 +16,7 @@ services:
   # Caddy reverse proxy - single entry point for all containers
   caddy:
     image: caddy:2-alpine
-    container_name: octo-caddy
+    container_name: oqto-caddy
     restart: unless-stopped
     ports:
       - "41800:80"    # HTTP
@@ -28,8 +28,8 @@ services:
       - caddy_config:/config
     command: ["caddy", "run", "--config", "/etc/caddy/caddy.json"]
     networks:
-      - octo-public
-      - octo-internal
+      - oqto-public
+      - oqto-internal
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost/health"]
       interval: 10s
@@ -38,7 +38,7 @@ services:
 
   # Template container - use this as a reference for spawning new containers
   # In production, the Rust backend will spawn these dynamically
-  octo-template:
+  oqto-template:
     build:
       context: .
       dockerfile: Dockerfile.arm64
@@ -46,12 +46,12 @@ services:
         USERNAME: dev
         USER_UID: 1000
         USER_GID: 1000
-    image: octo-dev:arm64
+    image: oqto-dev:arm64
     # Container is not started by default - it's a template
     profiles:
       - template
     networks:
-      - octo-internal
+      - oqto-internal
     volumes:
       - ./workspace:/home/dev/workspace
     stdin_open: true

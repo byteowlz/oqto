@@ -13,7 +13,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 export type TTSState = "idle" | "connecting" | "speaking" | "error";
 
-const TTS_SETTINGS_KEY = "octo-tts-read-aloud-settings";
+const TTS_SETTINGS_KEY = "oqto-tts-read-aloud-settings";
 
 export interface TTSSettings {
 	voice: string;

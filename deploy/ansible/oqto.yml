@@ -1,0 +1,741 @@
+---
+# Oqto Server Setup and Hardening Playbook
+#
+# This playbook sets up a hardened Linux server for running Oqto,
+# the AI Agent Workspace Platform.
+#
+# Usage:
+#   ansible-playbook -i inventory.yml oqto.yml
+#
+# Variables (set in inventory or --extra-vars):
+#   admin_user: Username for admin account
+#   admin_ssh_key: SSH public key for admin
+#   octo_mode: "single" or "multi" (default: single)
+#   octo_backend: "local" or "container" (default: local)
+#   ssh_port: SSH port (default: 22)
+#   allowed_ports: Additional ports to allow (default: [8080, 3000])
+
+- name: Setup and harden Oqto server
+  hosts: servers
+  become: true
+
+  vars:
+    octo_mode: "single"
+    octo_backend: "local"
+    octo_user: "oqto"
+    octo_group: "oqto"
+    ssh_port: 22
+    allowed_ports:
+      - 8080  # Oqto backend API
+      - 3000  # Frontend dev server
+    rust_version: "stable"
+
+  tasks:
+    # ==========================================================================
+    # System Updates
+    # ==========================================================================
+
+    - name: Update package cache (Debian/Ubuntu)
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+      when: ansible_facts["os_family"] == "Debian"
+
+    - name: Update package cache (RedHat/CentOS)
+      ansible.builtin.dnf:
+        update_cache: true
+      when: ansible_facts["os_family"] == "RedHat"
+
+    - name: Update package cache (Arch)
+      community.general.pacman:
+        update_cache: true
+      when: ansible_facts["os_family"] == "Archlinux"
+
+    - name: Upgrade all packages (Debian/Ubuntu)
+      ansible.builtin.apt:
+        upgrade: dist
+        autoremove: true
+        autoclean: true
+      when: ansible_facts["os_family"] == "Debian"
+
+    - name: Upgrade all packages (RedHat/CentOS)
+      ansible.builtin.dnf:
+        name: "*"
+        state: latest # noqa package-latest
+      when: ansible_facts["os_family"] == "RedHat"
+
+    - name: Upgrade all packages (Arch)
+      community.general.pacman:
+        update_cache: true
+        upgrade: true
+      when: ansible_facts["os_family"] == "Archlinux"
+
+    # ==========================================================================
+    # Security Packages
+    # ==========================================================================
+
+    - name: Install security packages (Debian/Ubuntu)
+      ansible.builtin.apt:
+        name:
+          - ufw
+          - fail2ban
+          - unattended-upgrades
+          - apt-listchanges
+          - logwatch
+          - aide
+          - rkhunter
+          - auditd
+        state: present
+      when: ansible_facts["os_family"] == "Debian"
+
+    - name: Install security packages (RedHat/CentOS)
+      ansible.builtin.dnf:
+        name:
+          - firewalld
+          - fail2ban
+          - dnf-automatic
+          - aide
+          - rkhunter
+          - audit
+        state: present
+      when: ansible_facts["os_family"] == "RedHat"
+
+    - name: Install security packages (Arch)
+      community.general.pacman:
+        name:
+          - ufw
+          - fail2ban
+          - aide
+          - rkhunter
+          - audit
+        state: present
+      when: ansible_facts["os_family"] == "Archlinux"
+
+    # ==========================================================================
+    # Development Tools and Oqto Dependencies
+    # ==========================================================================
+
+    - name: Install development tools (Debian/Ubuntu)
+      ansible.builtin.apt:
+        name:
+          # Build essentials
+          - build-essential
+          - pkg-config
+          - libssl-dev
+          - cmake
+          # Version control
+          - git
+          # Utilities
+          - curl
+          - wget
+          - unzip
+          - zip
+          - jq
+          - tree
+          # Shell tools (recommended for agents)
+          - tmux
+          - zsh
+          - btop
+          - ncdu
+          # Search tools
+          - ripgrep
+          - fd-find
+          - fzf
+          # File management
+          - trash-cli
+          - stow
+        state: present
+      when: ansible_facts["os_family"] == "Debian"
+
+    - name: Install development tools (RedHat/CentOS)
+      ansible.builtin.dnf:
+        name:
+          - gcc
+          - gcc-c++
+          - make
+          - pkgconfig
+          - openssl-devel
+          - cmake
+          - git
+          - curl
+          - wget
+          - unzip
+          - zip
+          - jq
+          - tree
+          - tmux
+          - zsh
+          - btop
+          - ncdu
+          - ripgrep
+          - fd-find
+          - fzf
+          - trash-cli
+          - stow
+        state: present
+      when: ansible_facts["os_family"] == "RedHat"
+
+    - name: Install development tools (Arch)
+      community.general.pacman:
+        name:
+          - base-devel
+          - pkgconf
+          - openssl
+          - cmake
+          - git
+          - curl
+          - wget
+          - unzip
+          - zip
+          - jq
+          - tree
+          - tmux
+          - zsh
+          - btop
+          - ncdu
+          - ripgrep
+          - fd
+          - fzf
+          - trash-cli
+          - stow
+        state: present
+      when: ansible_facts["os_family"] == "Archlinux"
+
+    # ==========================================================================
+    # Container Runtime (if container mode)
+    # ==========================================================================
+
+    - name: Install Docker prerequisites (Debian/Ubuntu)
+      ansible.builtin.apt:
+        name:
+          - ca-certificates
+          - curl
+          - gnupg
+        state: present
+      when:
+        - ansible_facts["os_family"] == "Debian"
+        - octo_backend == "container"
+
+    - name: Add Docker GPG key (Debian/Ubuntu)
+      ansible.builtin.apt_key:
+        url: https://download.docker.com/linux/{{ ansible_distribution | lower }}/gpg
+        state: present
+      when:
+        - ansible_facts["os_family"] == "Debian"
+        - octo_backend == "container"
+
+    - name: Add Docker repository (Debian/Ubuntu)
+      ansible.builtin.apt_repository:
+        repo: "deb https://download.docker.com/linux/{{ ansible_distribution | lower }} {{ ansible_distribution_release }} stable"
+        state: present
+      when:
+        - ansible_facts["os_family"] == "Debian"
+        - octo_backend == "container"
+
+    - name: Install Docker (Debian/Ubuntu)
+      ansible.builtin.apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-buildx-plugin
+          - docker-compose-plugin
+        state: present
+        update_cache: true
+      when:
+        - ansible_facts["os_family"] == "Debian"
+        - octo_backend == "container"
+
+    - name: Install Docker (RedHat/CentOS)
+      block:
+        - name: Add Docker repository (RedHat/CentOS)
+          ansible.builtin.yum_repository:
+            name: docker-ce
+            description: Docker CE Stable
+            baseurl: https://download.docker.com/linux/centos/$releasever/$basearch/stable
+            gpgcheck: true
+            gpgkey: https://download.docker.com/linux/centos/gpg
+            enabled: true
+
+        - name: Install Docker packages (RedHat/CentOS)
+          ansible.builtin.dnf:
+            name:
+              - docker-ce
+              - docker-ce-cli
+              - containerd.io
+              - docker-buildx-plugin
+              - docker-compose-plugin
+            state: present
+      when:
+        - ansible_facts["os_family"] == "RedHat"
+        - octo_backend == "container"
+
+    - name: Install Docker (Arch)
+      community.general.pacman:
+        name:
+          - docker
+          - docker-compose
+          - docker-buildx
+        state: present
+      when:
+        - ansible_facts["os_family"] == "Archlinux"
+        - octo_backend == "container"
+
+    - name: Enable and start Docker
+      ansible.builtin.systemd:
+        name: docker
+        enabled: true
+        state: started
+      when: octo_backend == "container"
+
+    - name: Add oqto user to docker group
+      ansible.builtin.user:
+        name: "{{ octo_user }}"
+        groups: docker
+        append: true
+      when: octo_backend == "container"
+
+    # ==========================================================================
+    # ttyd (Web Terminal) - Required for local mode
+    # ==========================================================================
+
+    - name: Install ttyd (Debian/Ubuntu)
+      ansible.builtin.apt:
+        name: ttyd
+        state: present
+      when:
+        - ansible_facts["os_family"] == "Debian"
+        - octo_backend == "local"
+
+    - name: Install ttyd (Arch)
+      community.general.pacman:
+        name: ttyd
+        state: present
+      when:
+        - ansible_facts["os_family"] == "Archlinux"
+        - octo_backend == "local"
+
+    - name: Install ttyd from binary (RedHat/CentOS)
+      ansible.builtin.get_url:
+        url: "https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.x86_64"
+        dest: /usr/local/bin/ttyd
+        mode: "0755"
+      when:
+        - ansible_facts["os_family"] == "RedHat"
+        - octo_backend == "local"
+
+    # ==========================================================================
+    # Rust Toolchain
+    # ==========================================================================
+
+    - name: Check if Rust is installed
+      ansible.builtin.command: rustc --version
+      register: rust_check
+      changed_when: false
+      failed_when: false
+
+    - name: Download rustup installer
+      ansible.builtin.get_url:
+        url: https://sh.rustup.rs
+        dest: /tmp/rustup.sh
+        mode: "0755"
+      when: rust_check.rc != 0
+
+    - name: Install Rust via rustup (system-wide)
+      ansible.builtin.command: /tmp/rustup.sh -y --default-toolchain {{ rust_version }}
+      environment:
+        RUSTUP_HOME: /usr/local/rustup
+        CARGO_HOME: /usr/local/cargo
+      when: rust_check.rc != 0
+      changed_when: true
+
+    - name: Add Cargo to system PATH
+      ansible.builtin.copy:
+        dest: /etc/profile.d/cargo.sh
+        content: |
+          export RUSTUP_HOME=/usr/local/rustup
+          export CARGO_HOME=/usr/local/cargo
+          export PATH="$CARGO_HOME/bin:$PATH"
+        mode: "0644"
+
+    # ==========================================================================
+    # Bun (JavaScript Runtime)
+    # ==========================================================================
+
+    - name: Check if Bun is installed
+      ansible.builtin.command: bun --version
+      register: bun_check
+      changed_when: false
+      failed_when: false
+
+    - name: Install Bun
+      ansible.builtin.shell: |
+        curl -fsSL https://bun.sh/install | bash
+      args:
+        creates: /root/.bun/bin/bun
+      when: bun_check.rc != 0
+
+    - name: Symlink Bun to /usr/local/bin
+      ansible.builtin.file:
+        src: /root/.bun/bin/bun
+        dest: /usr/local/bin/bun
+        state: link
+      when: bun_check.rc != 0
+
+    # ==========================================================================
+    # Oqto System User and Directories
+    # ==========================================================================
+
+    - name: Create oqto group
+      ansible.builtin.group:
+        name: "{{ octo_group }}"
+        system: true
+        state: present
+
+    - name: Create oqto system user
+      ansible.builtin.user:
+        name: "{{ octo_user }}"
+        group: "{{ octo_group }}"
+        system: true
+        shell: /usr/sbin/nologin
+        home: /var/lib/oqto
+        create_home: true
+        state: present
+
+    - name: Create Oqto directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ octo_user }}"
+        group: "{{ octo_group }}"
+        mode: "0755"
+      loop:
+        - /var/lib/oqto
+        - /var/lib/oqto/workspaces
+        - /etc/oqto
+        - /run/oqto
+
+    # ==========================================================================
+    # Install Oqto Binaries (from cargo or pre-built)
+    # ==========================================================================
+
+    - name: Install zoxide via cargo
+      ansible.builtin.command: /usr/local/cargo/bin/cargo install zoxide --locked
+      args:
+        creates: /usr/local/cargo/bin/zoxide
+      environment:
+        RUSTUP_HOME: /usr/local/rustup
+        CARGO_HOME: /usr/local/cargo
+
+    - name: Install yazi via cargo
+      ansible.builtin.command: /usr/local/cargo/bin/cargo install yazi-fm yazi-cli --locked
+      args:
+        creates: /usr/local/cargo/bin/yazi
+      environment:
+        RUSTUP_HOME: /usr/local/rustup
+        CARGO_HOME: /usr/local/cargo
+
+    # ==========================================================================
+    # Install Agent Tools
+    # ==========================================================================
+
+    - name: Install agntz via cargo
+      ansible.builtin.command: /usr/local/cargo/bin/cargo install agntz
+      args:
+        creates: /usr/local/cargo/bin/agntz
+      environment:
+        RUSTUP_HOME: /usr/local/rustup
+        CARGO_HOME: /usr/local/cargo
+      failed_when: false  # May not be published yet
+
+    - name: Install mmry via cargo
+      ansible.builtin.command: /usr/local/cargo/bin/cargo install mmry
+      args:
+        creates: /usr/local/cargo/bin/mmry
+      environment:
+        RUSTUP_HOME: /usr/local/rustup
+        CARGO_HOME: /usr/local/cargo
+      failed_when: false  # Optional
+
+    - name: Install trx via cargo
+      ansible.builtin.command: /usr/local/cargo/bin/cargo install trx
+      args:
+        creates: /usr/local/cargo/bin/trx
+      environment:
+        RUSTUP_HOME: /usr/local/rustup
+        CARGO_HOME: /usr/local/cargo
+      failed_when: false  # Optional
+
+    - name: Install mailz via cargo
+      ansible.builtin.command: /usr/local/cargo/bin/cargo install mailz
+      args:
+        creates: /usr/local/cargo/bin/mailz
+      environment:
+        RUSTUP_HOME: /usr/local/rustup
+        CARGO_HOME: /usr/local/cargo
+      failed_when: false  # Optional
+
+    # ==========================================================================
+    # Install OpenCode (local mode)
+    # ==========================================================================
+
+    - name: Install OpenCode
+      ansible.builtin.shell: |
+        curl -fsSL https://opencode.ai/install | bash
+      args:
+        creates: /root/.local/bin/opencode
+      when: octo_backend == "local"
+
+    - name: Symlink OpenCode to /usr/local/bin
+      ansible.builtin.file:
+        src: /root/.local/bin/opencode
+        dest: /usr/local/bin/opencode
+        state: link
+      when: octo_backend == "local"
+      failed_when: false
+
+    # ==========================================================================
+    # Admin User Setup
+    # ==========================================================================
+
+    - name: Create admin user
+      ansible.builtin.user:
+        name: "{{ admin_user }}"
+        groups:
+          - sudo
+          - "{{ octo_group }}"
+        shell: /bin/zsh
+        create_home: true
+        state: present
+      when: admin_user is defined
+
+    - name: Add SSH authorized key for admin user
+      ansible.posix.authorized_key:
+        user: "{{ admin_user }}"
+        key: "{{ admin_ssh_key }}"
+        state: present
+      when:
+        - admin_user is defined
+        - admin_ssh_key is defined
+
+    # ==========================================================================
+    # SSH Hardening
+    # ==========================================================================
+
+    - name: Ensure sshd_config.d directory exists
+      ansible.builtin.file:
+        path: /etc/ssh/sshd_config.d
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Check if Include directive exists in sshd_config
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^Include /etc/ssh/sshd_config.d/\*.conf'
+        line: "Include /etc/ssh/sshd_config.d/*.conf"
+        insertbefore: BOF
+        state: present
+      notify: Restart SSH
+
+    - name: Deploy SSH hardening configuration
+      ansible.builtin.template:
+        src: templates/sshd-hardening.conf.j2
+        dest: /etc/ssh/sshd_config.d/00-oqto-hardening.conf
+        owner: root
+        group: root
+        mode: "0600"
+        validate: /usr/sbin/sshd -t -f /etc/ssh/sshd_config
+      notify: Restart SSH
+
+    # ==========================================================================
+    # Fail2ban Configuration
+    # ==========================================================================
+
+    - name: Configure fail2ban for SSH
+      ansible.builtin.template:
+        src: templates/fail2ban-jail.local.j2
+        dest: /etc/fail2ban/jail.local
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart fail2ban
+
+    - name: Enable and start fail2ban
+      ansible.builtin.systemd:
+        name: fail2ban
+        enabled: true
+        state: started
+
+    # ==========================================================================
+    # Firewall Configuration (UFW)
+    # ==========================================================================
+
+    - name: Configure UFW defaults
+      community.general.ufw:
+        direction: "{{ item.direction }}"
+        policy: "{{ item.policy }}"
+      loop:
+        - { direction: "incoming", policy: "deny" }
+        - { direction: "outgoing", policy: "allow" }
+      when: ansible_facts["os_family"] != "RedHat"
+
+    - name: Allow SSH through firewall
+      community.general.ufw:
+        rule: allow
+        port: "{{ ssh_port }}"
+        proto: tcp
+      when: ansible_facts["os_family"] != "RedHat"
+
+    - name: Allow Oqto ports through firewall
+      community.general.ufw:
+        rule: allow
+        port: "{{ item }}"
+        proto: tcp
+      loop: "{{ allowed_ports }}"
+      when: ansible_facts["os_family"] != "RedHat"
+
+    - name: Enable UFW
+      community.general.ufw:
+        state: enabled
+      when: ansible_facts["os_family"] != "RedHat"
+
+    # ==========================================================================
+    # Automatic Security Updates (Debian/Ubuntu)
+    # ==========================================================================
+
+    - name: Configure automatic security updates
+      ansible.builtin.copy:
+        dest: /etc/apt/apt.conf.d/50unattended-upgrades
+        content: |
+          Unattended-Upgrade::Allowed-Origins {
+              "${distro_id}:${distro_codename}-security";
+              "${distro_id}ESMApps:${distro_codename}-apps-security";
+              "${distro_id}ESM:${distro_codename}-infra-security";
+          };
+          Unattended-Upgrade::AutoFixInterruptedDpkg "true";
+          Unattended-Upgrade::MinimalSteps "true";
+          Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
+          Unattended-Upgrade::Remove-Unused-Dependencies "true";
+          Unattended-Upgrade::Automatic-Reboot "false";
+        owner: root
+        group: root
+        mode: "0644"
+      when: ansible_facts["os_family"] == "Debian"
+
+    - name: Enable automatic updates
+      ansible.builtin.copy:
+        dest: /etc/apt/apt.conf.d/20auto-upgrades
+        content: |
+          APT::Periodic::Update-Package-Lists "1";
+          APT::Periodic::Unattended-Upgrade "1";
+          APT::Periodic::Download-Upgradeable-Packages "1";
+          APT::Periodic::AutocleanInterval "7";
+        owner: root
+        group: root
+        mode: "0644"
+      when: ansible_facts["os_family"] == "Debian"
+
+    # ==========================================================================
+    # Kernel Security Parameters
+    # ==========================================================================
+
+    - name: Configure kernel parameters for security
+      ansible.posix.sysctl:
+        name: "{{ item.name }}"
+        value: "{{ item.value }}"
+        state: present
+        reload: true
+      loop:
+        - { name: "net.ipv4.conf.all.send_redirects", value: "0" }
+        - { name: "net.ipv4.conf.default.send_redirects", value: "0" }
+        - { name: "net.ipv4.conf.all.accept_redirects", value: "0" }
+        - { name: "net.ipv4.conf.default.accept_redirects", value: "0" }
+        - { name: "net.ipv4.conf.all.accept_source_route", value: "0" }
+        - { name: "net.ipv4.conf.default.accept_source_route", value: "0" }
+        - { name: "net.ipv4.icmp_echo_ignore_broadcasts", value: "1" }
+        - { name: "net.ipv4.icmp_ignore_bogus_error_responses", value: "1" }
+        - { name: "net.ipv4.tcp_syncookies", value: "1" }
+        - { name: "net.ipv4.conf.all.log_martians", value: "1" }
+        - { name: "net.ipv4.conf.default.log_martians", value: "1" }
+
+    # ==========================================================================
+    # Password Policies
+    # ==========================================================================
+
+    - name: Set password policies
+      ansible.builtin.lineinfile:
+        path: /etc/login.defs
+        regexp: "{{ item.regexp }}"
+        line: "{{ item.line }}"
+      loop:
+        - { regexp: "^PASS_MAX_DAYS", line: "PASS_MAX_DAYS   90" }
+        - { regexp: "^PASS_MIN_DAYS", line: "PASS_MIN_DAYS   1" }
+        - { regexp: "^PASS_WARN_AGE", line: "PASS_WARN_AGE   7" }
+
+    # ==========================================================================
+    # Audit Logging
+    # ==========================================================================
+
+    - name: Enable and start auditd
+      ansible.builtin.systemd:
+        name: auditd
+        enabled: true
+        state: started
+
+    # ==========================================================================
+    # Oqto Systemd Services
+    # ==========================================================================
+
+    - name: Deploy Oqto main service
+      ansible.builtin.template:
+        src: templates/oqto.service.j2
+        dest: /etc/systemd/system/oqto.service
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Reload systemd
+
+    - name: Deploy Oqto agent template service (multi-user)
+      ansible.builtin.copy:
+        src: ../systemd/oqto-agent@.service
+        dest: /etc/systemd/system/oqto-agent@.service
+        owner: root
+        group: root
+        mode: "0644"
+      when: octo_mode == "multi"
+      notify: Reload systemd
+
+    - name: Deploy Oqto configuration
+      ansible.builtin.template:
+        src: templates/oqto-config.toml.j2
+        dest: /etc/oqto/config.toml
+        owner: "{{ octo_user }}"
+        group: "{{ octo_group }}"
+        mode: "0640"
+
+    - name: Enable Oqto service
+      ansible.builtin.systemd:
+        name: oqto
+        enabled: true
+        daemon_reload: true
+
+  # ============================================================================
+  # Handlers
+  # ============================================================================
+
+  handlers:
+    - name: Restart SSH
+      ansible.builtin.systemd:
+        name: "{{ 'ssh' if ansible_facts['os_family'] == 'Debian' else 'sshd' }}"
+        state: restarted
+
+    - name: Restart fail2ban
+      ansible.builtin.systemd:
+        name: fail2ban
+        state: restarted
+
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true

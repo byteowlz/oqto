@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Octo Reset Script
+# Oqto Reset Script
 # Stops services, wipes databases and state, so setup.sh runs fresh.
 #
 # Usage:
@@ -57,19 +57,19 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-OCTO_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/octo"
-OCTO_DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/octo"
-OCTO_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/octo"
-SERVICE_DATA_DIR="/var/lib/octo"
+OQTO_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/oqto"
+OQTO_DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/oqto"
+OQTO_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/oqto"
+SERVICE_DATA_DIR="/var/lib/oqto"
 
 echo
-echo -e "${BOLD}${RED}Octo Reset${NC}"
+echo -e "${BOLD}${RED}Oqto Reset${NC}"
 echo
 
 # --- Users only ---
 if [[ "$USERS_ONLY" == "true" ]]; then
   log_info "Deleting all users from database..."
-  for db in "$SERVICE_DATA_DIR/.local/share/octo/sessions.db" "$OCTO_DATA_DIR/sessions.db" "$OCTO_DATA_DIR/octo.db"; do
+  for db in "$SERVICE_DATA_DIR/.local/share/oqto/sessions.db" "$OQTO_DATA_DIR/sessions.db" "$OQTO_DATA_DIR/oqto.db"; do
     if [[ -f "$db" ]]; then
       if [[ "$db" == "$SERVICE_DATA_DIR"* ]]; then
         count=$(sudo sqlite3 "$db" "SELECT COUNT(*) FROM users;" 2>/dev/null || echo "0")
@@ -83,7 +83,7 @@ if [[ "$USERS_ONLY" == "true" ]]; then
     fi
   done
 
-  # Also remove Linux users created by octo
+  # Also remove Linux users created by oqto
   log_info "Checking for octo_ Linux users..."
   for user in $(getent passwd | grep '^octo_' | cut -d: -f1); do
     log_info "  Removing Linux user: $user"
@@ -97,21 +97,21 @@ fi
 # --- State only ---
 if [[ "$STATE_ONLY" == "true" ]]; then
   log_info "Wiping setup state..."
-  rm -f "$OCTO_CONFIG_DIR/setup-state.env"
-  rm -f "$OCTO_CONFIG_DIR/setup-steps-done"
-  rm -f "$OCTO_CONFIG_DIR/.admin_setup"
+  rm -f "$OQTO_CONFIG_DIR/setup-state.env"
+  rm -f "$OQTO_CONFIG_DIR/setup-steps-done"
+  rm -f "$OQTO_CONFIG_DIR/.admin_setup"
   log_ok "Setup state cleared. Run ./setup.sh to redo all steps."
   exit 0
 fi
 
 # --- DB only ---
 if [[ "$DB_ONLY" == "true" ]]; then
-  log_info "Stopping octo service..."
-  sudo systemctl stop octo 2>/dev/null || systemctl --user stop octo 2>/dev/null || true
+  log_info "Stopping oqto service..."
+  sudo systemctl stop oqto 2>/dev/null || systemctl --user stop oqto 2>/dev/null || true
   sleep 1
 
   log_info "Wiping databases..."
-  for db in "$SERVICE_DATA_DIR/.local/share/octo/sessions.db" "$OCTO_DATA_DIR/sessions.db" "$OCTO_DATA_DIR/octo.db"; do
+  for db in "$SERVICE_DATA_DIR/.local/share/oqto/sessions.db" "$OQTO_DATA_DIR/sessions.db" "$OQTO_DATA_DIR/oqto.db"; do
     if [[ -f "$db" ]]; then
       if [[ "$db" == "$SERVICE_DATA_DIR"* ]]; then
         sudo rm -f "$db" "${db}-wal" "${db}-shm"
@@ -122,15 +122,15 @@ if [[ "$DB_ONLY" == "true" ]]; then
     fi
   done
 
-  log_info "Restarting octo service (will recreate DB on startup)..."
-  sudo systemctl start octo 2>/dev/null || systemctl --user start octo 2>/dev/null || true
+  log_info "Restarting oqto service (will recreate DB on startup)..."
+  sudo systemctl start oqto 2>/dev/null || systemctl --user start oqto 2>/dev/null || true
   log_ok "Databases reset. Re-run: ./setup.sh --redo admin_user_db"
   exit 0
 fi
 
 # --- Full or interactive ---
 echo "This will:"
-echo "  1. Stop all octo services"
+echo "  1. Stop all oqto services"
 echo "  2. Wipe databases"
 if [[ "$FULL_RESET" == "true" ]]; then
   echo "  3. Wipe config and setup state"
@@ -147,20 +147,20 @@ fi
 
 # 1. Stop services
 log_info "Stopping services..."
-sudo systemctl stop octo 2>/dev/null || true
+sudo systemctl stop oqto 2>/dev/null || true
 sudo systemctl stop caddy 2>/dev/null || true
-systemctl --user stop octo 2>/dev/null || true
+systemctl --user stop oqto 2>/dev/null || true
 
 # Stop any user runners
 for user in $(getent passwd | grep '^octo_' | cut -d: -f1); do
   sudo -u "$user" XDG_RUNTIME_DIR="/run/user/$(id -u "$user" 2>/dev/null || echo 0)" \
-    systemctl --user stop octo-runner 2>/dev/null || true
+    systemctl --user stop oqto-runner 2>/dev/null || true
 done
 log_ok "Services stopped"
 
 # 2. Wipe databases
 log_info "Wiping databases..."
-for db in "$SERVICE_DATA_DIR/.local/share/octo/sessions.db" "$OCTO_DATA_DIR/sessions.db" "$OCTO_DATA_DIR/octo.db"; do
+for db in "$SERVICE_DATA_DIR/.local/share/oqto/sessions.db" "$OQTO_DATA_DIR/sessions.db" "$OQTO_DATA_DIR/oqto.db"; do
   if [[ -f "$db" ]]; then
     if [[ "$db" == "$SERVICE_DATA_DIR"* ]]; then
       sudo rm -f "$db" "${db}-wal" "${db}-shm"
@@ -173,24 +173,24 @@ done
 
 # 3. Wipe state and audit logs
 log_info "Wiping state and logs..."
-rm -rf "$OCTO_STATE_DIR" 2>/dev/null || true
-sudo rm -rf "$SERVICE_DATA_DIR/.local/state/octo" 2>/dev/null || true
+rm -rf "$OQTO_STATE_DIR" 2>/dev/null || true
+sudo rm -rf "$SERVICE_DATA_DIR/.local/state/oqto" 2>/dev/null || true
 log_ok "State wiped"
 
 # 4. Wipe setup tracking
 log_info "Wiping setup state..."
-rm -f "$OCTO_CONFIG_DIR/setup-steps-done"
-rm -f "$OCTO_CONFIG_DIR/.admin_setup"
+rm -f "$OQTO_CONFIG_DIR/setup-steps-done"
+rm -f "$OQTO_CONFIG_DIR/.admin_setup"
 log_ok "Setup steps cleared"
 
 if [[ "$FULL_RESET" == "true" ]]; then
   # 5. Wipe config
   log_info "Wiping config..."
-  rm -f "$OCTO_CONFIG_DIR/config.toml"
-  rm -f "$OCTO_CONFIG_DIR/env"
-  rm -f "$OCTO_CONFIG_DIR/setup-state.env"
-  sudo rm -rf "$SERVICE_DATA_DIR/.config/octo" 2>/dev/null || true
-  sudo rm -f /etc/octo/config.toml 2>/dev/null || true
+  rm -f "$OQTO_CONFIG_DIR/config.toml"
+  rm -f "$OQTO_CONFIG_DIR/env"
+  rm -f "$OQTO_CONFIG_DIR/setup-state.env"
+  sudo rm -rf "$SERVICE_DATA_DIR/.config/oqto" 2>/dev/null || true
+  sudo rm -f /etc/oqto/config.toml 2>/dev/null || true
   log_ok "Config wiped"
 
   # 6. Remove octo_ Linux users

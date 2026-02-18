@@ -152,7 +152,7 @@ export function StatusBar() {
 
 				{/* Version */}
 				{health?.version && (
-					<span className="font-mono opacity-60" title="Octo version">
+					<span className="font-mono opacity-60" title="Oqto version">
 						v{health.version}
 					</span>
 				)}

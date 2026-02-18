@@ -69,7 +69,7 @@ export async function createProjectFromTemplate(
 
 /**
  * Get the URL for a project logo.
- * @param projectPath - The project path (relative to workspace root, e.g., "octo" or "subfolder/project")
+ * @param projectPath - The project path (relative to workspace root, e.g., "oqto" or "subfolder/project")
  * @param logoPath - The logo path relative to project root (e.g., "logo/project_logo_white.svg")
  */
 export function getProjectLogoUrl(

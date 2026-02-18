@@ -1,4 +1,4 @@
-# Octo - AI Agent Workspace Platform
+# Oqto - AI Agent Workspace Platform
 
 default:
     @just --list
@@ -8,8 +8,8 @@ build: build-backend build-frontend
 
 # Build backend (all workspace crates)
 build-backend:
-    cd backend && remote-build build --release -p octo --bin octo --bin octo-runner
-    cd backend && remote-build build --release -p octo-files --bin octo-files
+    cd backend && remote-build build --release -p oqto --bin oqto --bin oqto-runner
+    cd backend && remote-build build --release -p oqto-files --bin oqto-files
 
 # Build frontend
 build-frontend:
@@ -43,7 +43,7 @@ fmt:
 
 # Generate TypeScript types from Rust structs
 gen-types:
-    cd backend && remote-build test -p octo export_typescript_bindings -- --nocapture
+    cd backend && remote-build test -p oqto export_typescript_bindings -- --nocapture
 
 # Check all Rust code compiles
 check:
@@ -51,7 +51,7 @@ check:
 
 # Start backend server
 serve:
-    /usr/local/bin/octo serve
+    /usr/local/bin/oqto serve
 
 # Start frontend dev server
 dev:
@@ -68,23 +68,23 @@ reload-fast:
 # Install all dependencies and binaries
 install:
     cd frontend && bun install
-    cd backend/crates/octo-browserd && bun install && bun run build
-    cd backend && cargo install --path crates/octo
-    cd backend && cargo install --path crates/octo --bin octo-runner
-    cd backend && cargo install --path crates/octo-files
+    cd backend/crates/oqto-browserd && bun install && bun run build
+    cd backend && cargo install --path crates/oqto
+    cd backend && cargo install --path crates/oqto --bin oqto-runner
+    cd backend && cargo install --path crates/oqto-files
     cd ../hstry && cargo install --path crates/hstry-cli || echo "hstry build failed, skipping"
 
 # Install binaries + systemd unit system-wide (Linux).
 #
-# - Installs `octo-runner.service` into /usr/lib/systemd/user/
+# - Installs `oqto-runner.service` into /usr/lib/systemd/user/
 # - Copies local cargo-installed tools into /usr/local/bin
 # - Enables lingering for the current user (so user services can run headless)
 install-system:
     #!/usr/bin/env bash
     set -euo pipefail
 
-    # Store the octo repo root for later use
-    OCTO_ROOT="$(pwd)"
+    # Store the oqto repo root for later use
+    OQTO_ROOT="$(pwd)"
 
     # Prompt for sudo once up-front
     sudo -v
@@ -94,8 +94,8 @@ install-system:
     # Install sldr binaries (as current user, not sudo - avoids rustup issues with root)
     cd ../sldr && cargo install --path crates/sldr-cli && cargo install --path crates/sldr-server
     
-    # Return to octo directory for systemd file installation
-    cd "$OCTO_ROOT"
+    # Return to oqto directory for systemd file installation
+    cd "$OQTO_ROOT"
 
     if [[ "$(uname -s)" != "Linux" ]]; then
       echo "install-system is Linux-only"
@@ -103,22 +103,22 @@ install-system:
     fi
 
     # Ensure shared group exists and current user is a member
-    sudo groupadd -f octo || true
-    sudo usermod -a -G octo "$(id -un)" || true
+    sudo groupadd -f oqto || true
+    sudo usermod -a -G oqto "$(id -un)" || true
 
-    sudo install -Dm644 deploy/systemd/octo-runner.service /usr/lib/systemd/user/octo-runner.service
-    sudo install -Dm644 deploy/systemd/octo-runner.tmpfiles.conf /usr/lib/tmpfiles.d/octo-runner.conf
-    sudo systemd-tmpfiles --create /usr/lib/tmpfiles.d/octo-runner.conf || true
+    sudo install -Dm644 deploy/systemd/oqto-runner.service /usr/lib/systemd/user/oqto-runner.service
+    sudo install -Dm644 deploy/systemd/oqto-runner.tmpfiles.conf /usr/lib/tmpfiles.d/oqto-runner.conf
+    sudo systemd-tmpfiles --create /usr/lib/tmpfiles.d/oqto-runner.conf || true
     sudo systemctl daemon-reload || true
 
     # Ensure shared runner socket dir exists for current user
-    sudo install -d -m 2770 -o "$(id -un)" -g octo "/run/octo/runner-sockets/$(id -un)" || true
+    sudo install -d -m 2770 -o "$(id -un)" -g oqto "/run/oqto/runner-sockets/$(id -un)" || true
 
     # System-wide CLI tools.
     #
     # Prefer copying from ~/.cargo/bin (freshly updated by `just install`) so updates
     # are not blocked by PATH precedence.
-    for bin in trx mmry mmry-service agntz hstry skdlr octo octo-runner octo-files sldr sldr-server; do
+    for bin in trx mmry mmry-service agntz hstry skdlr oqto oqto-runner oqto-files sldr sldr-server; do
       src="$HOME/.cargo/bin/$bin"
       if [[ ! -x "$src" ]]; then
         src="$(command -v "$bin" || true)"
@@ -138,33 +138,33 @@ install-system:
       sudo install -m 0755 "$src" "$dst"
     done
 
-    # Install octo-browserd daemon bundle (dist + node_modules + package.json + bin)
-    sudo install -d -m 0755 /usr/local/lib/octo-browserd
-    sudo rsync -a --delete backend/crates/octo-browserd/dist/ /usr/local/lib/octo-browserd/dist/
-    sudo rsync -a --delete backend/crates/octo-browserd/node_modules/ /usr/local/lib/octo-browserd/node_modules/
-    sudo install -m 0644 backend/crates/octo-browserd/package.json /usr/local/lib/octo-browserd/package.json
-    sudo install -d -m 0755 /usr/local/lib/octo-browserd/bin
-    sudo install -m 0755 backend/crates/octo-browserd/bin/octo-browserd.js /usr/local/lib/octo-browserd/bin/octo-browserd.js
+    # Install oqto-browserd daemon bundle (dist + node_modules + package.json + bin)
+    sudo install -d -m 0755 /usr/local/lib/oqto-browserd
+    sudo rsync -a --delete backend/crates/oqto-browserd/dist/ /usr/local/lib/oqto-browserd/dist/
+    sudo rsync -a --delete backend/crates/oqto-browserd/node_modules/ /usr/local/lib/oqto-browserd/node_modules/
+    sudo install -m 0644 backend/crates/oqto-browserd/package.json /usr/local/lib/oqto-browserd/package.json
+    sudo install -d -m 0755 /usr/local/lib/oqto-browserd/bin
+    sudo install -m 0755 backend/crates/oqto-browserd/bin/oqto-browserd.js /usr/local/lib/oqto-browserd/bin/oqto-browserd.js
     # Wrapper script that runs from the lib dir so node resolves modules correctly
-    printf '#!/usr/bin/env bash\nexec node /usr/local/lib/octo-browserd/dist/index.js "$@"\n' | sudo tee /usr/local/bin/octo-browserd > /dev/null
-    sudo chmod 0755 /usr/local/bin/octo-browserd
+    printf '#!/usr/bin/env bash\nexec node /usr/local/lib/oqto-browserd/dist/index.js "$@"\n' | sudo tee /usr/local/bin/oqto-browserd > /dev/null
+    sudo chmod 0755 /usr/local/bin/oqto-browserd
 
     # Enable lingering for current user so `systemctl --user` services can run without login
     sudo loginctl enable-linger "$(id -un)" || true
 
 # Build container image
 container-build:
-    docker build -t octo-dev:latest -f container/Dockerfile .
+    docker build -t oqto-dev:latest -f container/Dockerfile .
 
 # Show backend config
 config:
-    cd backend && cargo run --bin octo -- config show
+    cd backend && cargo run --bin oqto -- config show
 
 # Generate invite codes
 invite-codes:
-    cd backend && cargo run --bin octo -- invite-codes generate
+    cd backend && cargo run --bin oqto -- invite-codes generate
 
-# Fast reload: remote-build + install + restart octo/runner
+# Fast reload: remote-build + install + restart oqto/runner
 reload:
     ./scripts/fast-reload.sh
 
@@ -174,12 +174,12 @@ reload-stop:
 
 # Restart system runner socket for current user
 restart-runner:
-    sudo pkill -f "/usr/local/bin/octo-runner --socket /run/octo/runner-sockets/$(id -un)/octo-runner.sock" || true
-    nohup /usr/local/bin/octo-runner --socket "/run/octo/runner-sockets/$(id -un)/octo-runner.sock" >/tmp/octo-runner.log 2>&1 &
+    sudo pkill -f "/usr/local/bin/oqto-runner --socket /run/oqto/runner-sockets/$(id -un)/oqto-runner.sock" || true
+    nohup /usr/local/bin/oqto-runner --socket "/run/oqto/runner-sockets/$(id -un)/oqto-runner.sock" >/tmp/oqto-runner.log 2>&1 &
 
 # Build, install, and restart runner + backend
 update-runner:
-    cd backend && remote-build build --release -p octo --bin octo --bin octo-runner
+    cd backend && remote-build build --release -p oqto --bin oqto --bin oqto-runner
     ./scripts/update-runner.sh
 
 # Bump version across all components
@@ -244,10 +244,10 @@ update-deps:
 
     echo "Updating dependencies.toml..."
 
-    # Update Octo version
-    OCTO_VERSION=$(grep -m1 '^version = ' "$ROOT/backend/Cargo.toml" | sed 's/version = "\(.*\)"/\1/')
-    sed -i 's/^\(octo.version =\) "[^"]*"/\1 "'"$OCTO_VERSION"'"/' "$MANIFEST"
-    echo "  octo: $OCTO_VERSION"
+    # Update Oqto version
+    OQTO_VERSION=$(grep -m1 '^version = ' "$ROOT/backend/Cargo.toml" | sed 's/version = "\(.*\)"/\1/')
+    sed -i 's/^\(oqto.version =\) "[^"]*"/\1 "'"$OQTO_VERSION"'"/' "$MANIFEST"
+    echo "  oqto: $OQTO_VERSION"
 
     # Auto-discover: parse all keys under [byteowlz] section from the manifest,
     # then look for matching sibling repos and read their version.

@@ -1,15 +1,15 @@
 # Runner As Core User-Plane
 
-This document describes the architecture for making octo-runner the mandatory user-plane boundary in local Linux multi-user mode.
+This document describes the architecture for making oqto-runner the mandatory user-plane boundary in local Linux multi-user mode.
 
 ## Overview
 
-The goal is to ensure that in local Linux multi-user mode, the octo backend cannot directly access any user data. All user-plane operations (sessions, filesystem, memories, main chat state) are routed through per-user runner daemons, providing OS-level isolation.
+The goal is to ensure that in local Linux multi-user mode, the oqto backend cannot directly access any user data. All user-plane operations (sessions, filesystem, memories, main chat state) are routed through per-user runner daemons, providing OS-level isolation.
 
 ### Current State
 
 ```
-Backend (octo)
+Backend (oqto)
     |
     +-- SQLite DB (sessions, users, all data)
     +-- Direct filesystem access (workspaces)
@@ -20,14 +20,14 @@ Backend (octo)
 ### Target State
 
 ```
-Backend (octo) [control-plane only]
+Backend (oqto) [control-plane only]
     |
     +-- Control-plane DB (users, auth, routing only)
     +-- Per-user runner connections (Unix sockets)
     
 Runner (per-user, runs as Linux user)
     |
-    +-- User-plane DB (~/.local/share/octo/db.sqlite)
+    +-- User-plane DB (~/.local/share/oqto/db.sqlite)
     +-- User filesystem access (workspace)
     +-- Process management (opencode, pi, ttyd, fileserver)
     +-- User mmry instance
@@ -38,10 +38,10 @@ Runner (per-user, runs as Linux user)
 
 ### Isolation Boundary
 
-- Backend runs as a service user (e.g., `octo`)
+- Backend runs as a service user (e.g., `oqto`)
 - Each platform user has a corresponding Linux user (e.g., `octo_alice`)
 - Per-user runner daemon runs as that Linux user via systemd user service
-- Backend connects to runner via Unix socket at `/run/user/{uid}/octo-runner.sock`
+- Backend connects to runner via Unix socket at `/run/user/{uid}/oqto-runner.sock`
 - Socket permissions ensure only backend and the user can access it
 
 ### What Backend CAN Access
@@ -114,13 +114,13 @@ pub enum RunnerRequest {
 The runner manages state at these locations within the user's home:
 
 ```
-~/.local/share/octo/
+~/.local/share/oqto/
     db.sqlite              # User's sessions, settings
     sessions/              # Claude Code session files
     main-chat/             # Pi session files
     mmry/                  # Memory database
 
-~/.config/octo/
+~/.config/oqto/
     config.toml            # User-specific config overrides
     sandbox.toml           # User sandbox restrictions (additive only)
 ```
@@ -130,7 +130,7 @@ The runner manages state at these locations within the user's home:
 ### Phase 1: Protocol Extension
 
 1. Add new request/response types to `runner/protocol.rs`
-2. Implement handlers in `bin/octo-runner.rs`
+2. Implement handlers in `bin/oqto-runner.rs`
 3. Add client methods to `runner/client.rs`
 
 ### Phase 2: User-Plane Trait
@@ -185,12 +185,12 @@ Implementations:
    
 ### Phase 5: User Provisioning
 
-Update `octoctl user create` to:
+Update `oqtoctl user create` to:
 1. Create Linux user with appropriate UID
 2. Create home directory with skel
 3. Initialize per-user state directories
 4. Enable lingering for systemd user services
-5. Start octo-runner as user service
+5. Start oqto-runner as user service
 
 ## Configuration
 

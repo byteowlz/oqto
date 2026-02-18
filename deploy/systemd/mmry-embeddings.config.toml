@@ -1,7 +1,7 @@
 # mmry Central Embeddings Service Configuration
 # Place at /etc/mmry/config.toml
 #
-# This service provides embeddings and reranking for all octo sessions.
+# This service provides embeddings and reranking for all oqto sessions.
 # Per-user mmry instances delegate heavy operations here.
 
 [service]

@@ -9,15 +9,15 @@ All notable changes to this project will be documented in this file.
 - Chat "Jump to bottom" button appears when user has scrolled up; clicking it pins back to the bottom and resumes auto-scroll.
 
 - Sldr integration: backend mounts `/api/sldr` routes and frontend adds a Slides app for browsing slides, skeletons, flavors, and previews.
-- Multi-user sldr: per-user sldr-server instances spawned via octo-runner with `/api/sldr` proxy routing.
+- Multi-user sldr: per-user sldr-server instances spawned via oqto-runner with `/api/sldr` proxy routing.
 - Install system now installs and publishes `sldr` and `sldr-server` binaries to `/usr/local/bin`.
 - Workspace Pi sessions: per-workspace Pi processes with idle cleanup, API endpoints, and WebSocket streaming.
 - Added `/browser` and `/close-browser` slash commands to toggle the browser stream panel.
-- Added `tools/test-ssh-proxy.sh` helper script to validate octo-sandbox with octo-ssh-proxy.
+- Added `tools/test-ssh-proxy.sh` helper script to validate oqto-sandbox with oqto-ssh-proxy.
 - Added workspace locations table to track local/remote workspace roots with active location selection.
 - Added BOOTSTRAP.md onboarding instructions and workspace metadata files for main chat initialization.
-- Setup now clones the octo-templates repo to a shared system path and configures onboarding templates to use it.
-- Setup now updates git repos in /usr/local/share/octo/external-repos and uses the shared templates repo for project templates.
+- Setup now clones the oqto-templates repo to a shared system path and configures onboarding templates to use it.
+- Setup now updates git repos in /usr/local/share/oqto/external-repos and uses the shared templates repo for project templates.
 - Added feedback dropbox configuration and background sync to a private archive.
 - Added onboarding bootstrap flow that creates the main workspace, writes onboarding templates, and seeds the first Pi chat session in hstry.
 - Added JSONL audit logging for authenticated HTTP requests and WebSocket commands, configurable via logging.audit_* settings.
@@ -36,7 +36,7 @@ All notable changes to this project will be documented in this file.
 - Chat scroll position is preserved via a ref mirror to avoid stale closure bugs that could cause missed auto-scrolls.
 
 - Replaced cass-backed session search with hstry search and added line-based scroll resolution for search hits.
-- Documented archlinux CORS origins in the example Octo config.
+- Documented archlinux CORS origins in the example Oqto config.
 - Renamed CASS search types and comments to hstry in the API and frontend.
 - Pi session resolution now de-duplicates JSONL files by session id, prefers the newest file, and persists session metadata into hstry to prevent split chats.
 - Sidebar multi-select now anchors the active session, and minimal tool-call badge sizing matches the compact badge style.
@@ -54,10 +54,10 @@ All notable changes to this project will be documented in this file.
 - Runner now creates hstry conversation metadata as soon as Pi reports the native session id.
 - Runner now migrates hstry history on session re-key so existing chats keep their full history.
 - Runner now routes steer/follow_up to prompt when Pi sessions are idle, starting, stopping, or aborting, ensuring new turns are not dropped after reconnects or after Pi exits.
-- New Pi chats now use an octo- prefixed provisional ID so Octo IDs never look like Pi UUIDs.
+- New Pi chats now use an oqto- prefixed provisional ID so Oqto IDs never look like Pi UUIDs.
 - Multi-user chat history now lists Pi sessions from hstry via the runner and fetches Pi messages from hstry for workspace chats.
 - Updated hstry install template to point Pi adapter sources at ~/.pi/agent/sessions.
-- `tools/test-ssh-proxy.sh` now places its proxy socket under `~/.config/octo` so it is visible inside the sandbox.
+- `tools/test-ssh-proxy.sh` now places its proxy socket under `~/.config/oqto` so it is visible inside the sandbox.
 - `tools/test-ssh-proxy.sh` now runs a host SSH test by default (use `--no-host` to skip).
 - `tools/test-ssh-proxy.sh` now bypasses system SSH config during host tests to avoid permission errors.
 - Workspace Pi header model switching now uses Pi RPC and shows Pi models instead of OpenCode options.
@@ -68,7 +68,7 @@ All notable changes to this project will be documented in this file.
 - Pi RPC model switching now sends `modelId` to match pi-mono's SetModel contract.
 - Chat sidebar now supports multi-select bulk deletes with immediate removal and uses the same selection bar styling as Trx.
 - Chat markdown list rendering keeps markers inline and removes extra indentation inside lists.
-- Onboarding templates now support configurable repo subdirectory (for octo-templates agents/ layout).
+- Onboarding templates now support configurable repo subdirectory (for oqto-templates agents/ layout).
 - Chat history de-duplication now collapses hstry global sessions with matching readable IDs to avoid split entries.
 - Chat history now merges duplicate sessions from mixed sources using a stable key to avoid auto-rename creating extra entries.
 - Pi sessions now persist canonical parts into hstry (tool calls/results preserved) with JSONL backfill for missing history.
@@ -81,10 +81,10 @@ All notable changes to this project will be documented in this file.
 
 ### Security
 
-- **Session services now bind to localhost only**: OpenCode, fileserver, and ttyd sessions spawned via octo-runner and local mode now bind to `127.0.0.1` instead of `0.0.0.0`. This prevents these services from being accessible over the network, ensuring all access goes through the octo backend proxy. Added 8 security tests to prevent regression.
+- **Session services now bind to localhost only**: OpenCode, fileserver, and ttyd sessions spawned via oqto-runner and local mode now bind to `127.0.0.1` instead of `0.0.0.0`. This prevents these services from being accessible over the network, ensuring all access goes through the oqto backend proxy. Added 8 security tests to prevent regression.
 - Chat history listing now uses per-user runner data in multi-user mode, skips direct hstry fallback for message retrieval, and the backend no longer starts a shared hstry client when linux user isolation is enabled.
-- Per-user octo-runner systemd services now bind to the expected /run/octo/runner-sockets/<user>/octo-runner.sock path and auto-update when the unit file changes.
+- Per-user oqto-runner systemd services now bind to the expected /run/oqto/runner-sockets/<user>/oqto-runner.sock path and auto-update when the unit file changes.
 - Per-user mmry configs are now initialized/updated to use the central mmry embedding endpoint and per-user runners auto-enable hstry/mmry services.
-- Added admin API and octoctl command to batch sync per-user configs.
-- Login now ensures the per-user octo-runner is started (including lingering) so new users do not require a Linux login to access isolated history.
+- Added admin API and oqtoctl command to batch sync per-user configs.
+- Login now ensures the per-user oqto-runner is started (including lingering) so new users do not require a Linux login to access isolated history.
 - Sandbox deny-read masking now handles file paths (for example, `systemctl`) without bubblewrap tmpfs errors, and deny rules are enforced even when the workspace is the home directory.

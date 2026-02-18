@@ -203,7 +203,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 	const normalizedWorkspacePath = normalizeWorkspacePath(workspacePath);
 	const resolvedStorageKeyPrefix =
 		storageKeyPrefix ??
-		`octo:workspacePi:v2:${sanitizeStorageKey(
+		`oqto:workspacePi:v2:${sanitizeStorageKey(
 			normalizedWorkspacePath ?? "unknown",
 		)}`;
 

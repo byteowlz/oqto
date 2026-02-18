@@ -55,7 +55,7 @@ export function useModelSelection(
 	const modelCacheKey = useMemo(
 		() =>
 			_normalizedWorkspacePath
-				? `octo:modelCache:${_normalizedWorkspacePath}`
+				? `oqto:modelCache:${_normalizedWorkspacePath}`
 				: null,
 		[_normalizedWorkspacePath],
 	);
@@ -88,7 +88,7 @@ export function useModelSelection(
 	// Storage key for persisting selected model
 	const modelStorageKey = useMemo(() => {
 		if (!effectiveSessionId) return null;
-		return `octo:chatModel:${effectiveSessionId}`;
+		return `oqto:chatModel:${effectiveSessionId}`;
 	}, [effectiveSessionId]);
 
 	const workspaceModelStorageKey = useMemo(

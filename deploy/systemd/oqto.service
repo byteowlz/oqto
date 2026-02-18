@@ -1,0 +1,59 @@
+# Oqto Server - Main control plane service
+#
+# This is the main oqto server that:
+# - Handles API requests from the frontend
+# - Manages user sessions via per-user agents
+# - Proxies requests to OpenCode instances
+#
+# Installation (as root):
+#   cp oqto.service /etc/systemd/system/
+#   systemctl daemon-reload
+#   systemctl enable oqto
+#   systemctl start oqto
+
+[Unit]
+Description=Oqto Control Plane Server
+After=network.target
+Wants=oqto-agent@.service
+
+[Service]
+Type=simple
+User=oqto
+Group=oqto
+
+# Working directory
+WorkingDirectory=/var/lib/oqto
+
+# Environment
+Environment=OQTO_CONFIG=/etc/oqto/config.toml
+Environment=RUST_LOG=info
+
+# Create directories
+StateDirectory=oqto
+RuntimeDirectory=oqto
+RuntimeDirectoryMode=0755
+ConfigurationDirectory=oqto
+
+# Main process
+ExecStart=/usr/local/bin/oqto serve
+
+# Graceful shutdown
+ExecStop=/bin/kill -TERM $MAINPID
+TimeoutStopSec=30
+
+# Restart policy
+Restart=on-failure
+RestartSec=5
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/oqto
+ReadWritePaths=/run/oqto
+PrivateTmp=true
+
+# Allow binding to privileged ports (optional, for port 80/443)
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target

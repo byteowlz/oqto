@@ -390,7 +390,7 @@ export interface A2UISurfaceState {
 }
 
 // =============================================================================
-// A2UI Message Part (for Octo chat integration)
+// A2UI Message Part (for Oqto chat integration)
 // =============================================================================
 
 /**

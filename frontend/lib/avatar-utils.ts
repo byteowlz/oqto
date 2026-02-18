@@ -4,7 +4,7 @@
  * Avatar sources:
  * 1. System avatars: "/avatars/developer.png" - served from frontend/public
  * 2. Persona-local: "avatar.png" - relative to persona directory, served via fileserver
- * 3. User avatars: "user://abc123.png" - stored in ~/octo/avatars/, served via fileserver
+ * 3. User avatars: "user://abc123.png" - stored in ~/oqto/avatars/, served via fileserver
  */
 
 /**
@@ -22,7 +22,7 @@ export const AVATAR_SPECS = {
 };
 
 /**
- * System avatars that ship with octo.
+ * System avatars that ship with oqto.
  * These are available at /avatars/{name}.png
  */
 export const SYSTEM_AVATARS = [
@@ -71,11 +71,11 @@ export function resolveAvatarUrl(
 		return avatarPath;
 	}
 
-	// User avatar - served via fileserver from ~/octo/avatars/
+	// User avatar - served via fileserver from ~/oqto/avatars/
 	if (isUserAvatar(avatarPath)) {
 		if (!sessionId) return null;
 		const filename = avatarPath.replace("user://", "");
-		// Assumes fileserver has access to ~/octo/avatars/
+		// Assumes fileserver has access to ~/oqto/avatars/
 		return `/api/session/${sessionId}/files/file?path=${encodeURIComponent(`avatars/${filename}`)}`;
 	}
 

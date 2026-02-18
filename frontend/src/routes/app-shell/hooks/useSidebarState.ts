@@ -29,13 +29,13 @@ export function useSidebarState(): SidebarState {
 		() => {
 			if (typeof window === "undefined") return new Set<string>();
 			try {
-				const stored = localStorage.getItem("octo:expandedProjects");
+				const stored = localStorage.getItem("oqto:expandedProjects");
 				if (stored) {
 					const parsed = JSON.parse(stored);
 					if (Array.isArray(parsed)) return new Set<string>(parsed);
 				}
 			} catch {
-				localStorage.removeItem("octo:expandedProjects");
+				localStorage.removeItem("oqto:expandedProjects");
 			}
 			return new Set<string>();
 		},
@@ -46,7 +46,7 @@ export function useSidebarState(): SidebarState {
 		if (typeof window === "undefined") return;
 		try {
 			localStorage.setItem(
-				"octo:expandedProjects",
+				"oqto:expandedProjects",
 				JSON.stringify([...expandedProjects]),
 			);
 		} catch {
@@ -58,10 +58,10 @@ export function useSidebarState(): SidebarState {
 	const [pinnedSessions, setPinnedSessions] = useState<Set<string>>(() => {
 		if (typeof window === "undefined") return new Set();
 		try {
-			const stored = localStorage.getItem("octo:pinnedSessions");
+			const stored = localStorage.getItem("oqto:pinnedSessions");
 			return stored ? new Set(JSON.parse(stored)) : new Set();
 		} catch {
-			localStorage.removeItem("octo:pinnedSessions");
+			localStorage.removeItem("oqto:pinnedSessions");
 			return new Set();
 		}
 	});
@@ -71,7 +71,7 @@ export function useSidebarState(): SidebarState {
 		if (typeof window === "undefined") return;
 		try {
 			localStorage.setItem(
-				"octo:pinnedSessions",
+				"oqto:pinnedSessions",
 				JSON.stringify([...pinnedSessions]),
 			);
 		} catch {
@@ -83,10 +83,10 @@ export function useSidebarState(): SidebarState {
 	const [pinnedProjects, setPinnedProjects] = useState<string[]>(() => {
 		if (typeof window === "undefined") return [];
 		try {
-			const stored = localStorage.getItem("octo:pinnedProjects");
+			const stored = localStorage.getItem("oqto:pinnedProjects");
 			return stored ? JSON.parse(stored) : [];
 		} catch {
-			localStorage.removeItem("octo:pinnedProjects");
+			localStorage.removeItem("oqto:pinnedProjects");
 			return [];
 		}
 	});
@@ -96,7 +96,7 @@ export function useSidebarState(): SidebarState {
 		if (typeof window === "undefined") return;
 		try {
 			localStorage.setItem(
-				"octo:pinnedProjects",
+				"oqto:pinnedProjects",
 				JSON.stringify(pinnedProjects),
 			);
 		} catch {

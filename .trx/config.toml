@@ -1,5 +1,5 @@
 storage_version = "v2"
-prefix = "octo"
+prefix = "oqto"
 default_priority = 2
 default_type = "task"
 auto_sync = false

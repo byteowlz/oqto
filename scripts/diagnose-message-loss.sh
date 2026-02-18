@@ -92,18 +92,18 @@ fi
 echo ""
 echo "--- 3. Active Runner Sessions ---"
 # Try to query the runner
-RUNNER_SOCKET="${XDG_RUNTIME_DIR:-/run/user/$(id - u)}/octo/runner.sock"
+RUNNER_SOCKET="${XDG_RUNTIME_DIR:-/run/user/$(id - u)}/oqto/runner.sock"
 if [[ -S "$RUNNER_SOCKET" ]]; then
     echo "Runner socket found: $RUNNER_SOCKET"
-    # Could add octoctl command here if available
+    # Could add oqtoctl command here if available
 else
     echo "Runner socket not found at: $RUNNER_SOCKET"
 fi
 
-# Check tmux for running octo-runner
+# Check tmux for running oqto-runner
 echo ""
-echo "Running octo processes:"
-pgrep -a octo | head -10 || echo "(none found)"
+echo "Running oqto processes:"
+pgrep -a oqto | head -10 || echo "(none found)"
 
 echo ""
 echo "--- 4. Frontend Connection ---"
@@ -112,7 +112,7 @@ lsof -i :8080 2>/dev/null | head -10 || echo "(no connections or lsof not availa
 
 echo ""
 echo "--- 5. Log Analysis (last 5 minutes) ---"
-LOG_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/octo/logs"
+LOG_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/oqto/logs"
 if [[ -d "$LOG_DIR" ]]; then
     LATEST_LOG=$(find "$LOG_DIR" -name "*.log" -mmin -5 2>/dev/null | head -1)
     if [[ -n "$LATEST_LOG" ]]; then

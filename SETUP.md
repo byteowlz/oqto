@@ -1,25 +1,25 @@
-# Octo Setup Guide
+# Oqto Setup Guide
 
-Comprehensive setup and installation guide for self-hosting Octo on your own infrastructure.
+Comprehensive setup and installation guide for self-hosting Oqto on your own infrastructure.
 
 ## Component Overview
 
 | Component | Type | Required | Purpose |
 |-----------|------|----------|---------|
-| **octo** | Core | Yes | Control plane server and session orchestration |
+| **oqto** | Core | Yes | Control plane server and session orchestration |
 | **fileserver** | Core | Yes | File server for workspace access |
 | **pi** | Agent Runtime | Yes | Main chat/LLM interface (primary harness) |
 | **ttyd** | Agent Runtime | Yes (local mode) | Web terminal for browser access |
 | **opencode** | Agent Runtime | No (TBD) | Planned future agent runtime |
 | **docker/podman** | Runtime | Yes (container mode) | Container runtime for isolation |
 | **agntz** | Tool | Recommended | Agent operations (memory, issues, mail, reservations) |
-| **mmry** | Tool | Optional | Memory system (integrated with Octo API) |
-| **trx** | Tool | Optional | Task tracking (integrated with Octo API) |
+| **mmry** | Tool | Optional | Memory system (integrated with Oqto API) |
+| **trx** | Tool | Optional | Task tracking (integrated with Oqto API) |
 | **mailz** | Tool | Optional | Agent messaging and coordination |
 
 ## Overview
 
-Octo is a self-hosted AI agent workspace platform. This guide covers all prerequisites and installation steps for both local and container modes.
+Oqto is a self-hosted AI agent workspace platform. This guide covers all prerequisites and installation steps for both local and container modes.
 
 ## Quick Start
 
@@ -36,20 +36,20 @@ The script will:
 2. Prompt for user mode (single-user or multi-user)
 3. Prompt for backend mode (local processes or containers)
 4. Install all required dependencies
-5. Build Octo components
+5. Build Oqto components
 6. Generate configuration files
 7. Install system services (optional)
 
 If you have a portable install config, hydrate configs directly:
 
 ```bash
-octo-setup hydrate --install-config octo.install.toml
+oqto-setup hydrate --install-config oqto.install.toml
 ```
 
 For non-interactive installation:
 
 ```bash
-OCTO_USER_MODE=single OCTO_BACKEND_MODE=local ./setup.sh --non-interactive
+OQTO_USER_MODE=single OQTO_BACKEND_MODE=local ./setup.sh --non-interactive
 ```
 
 ### Option 2: Setup Script with Server Hardening (Production)
@@ -58,13 +58,13 @@ For production deployment with built-in server hardening (Linux only):
 
 ```bash
 # Interactive production setup with hardening
-OCTO_DEV_MODE=false ./setup.sh
+OQTO_DEV_MODE=false ./setup.sh
 
 # Or fully automated with all hardening enabled
-OCTO_DEV_MODE=false \
-OCTO_HARDEN_SERVER=yes \
-OCTO_SETUP_CADDY=yes \
-OCTO_DOMAIN=octo.example.com \
+OQTO_DEV_MODE=false \
+OQTO_HARDEN_SERVER=yes \
+OQTO_SETUP_CADDY=yes \
+OQTO_DOMAIN=oqto.example.com \
 ./setup.sh --non-interactive
 ```
 
@@ -81,13 +81,13 @@ The setup script with hardening enabled will:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `OCTO_HARDEN_SERVER` | prompt | Enable server hardening (yes/no) |
-| `OCTO_SSH_PORT` | 22 | SSH port number |
-| `OCTO_SETUP_FIREWALL` | yes | Configure UFW/firewalld |
-| `OCTO_SETUP_FAIL2BAN` | yes | Install and configure fail2ban |
-| `OCTO_HARDEN_SSH` | yes | Apply SSH hardening (disables passwords!) |
-| `OCTO_SETUP_AUTO_UPDATES` | yes | Enable automatic security updates |
-| `OCTO_HARDEN_KERNEL` | yes | Apply kernel security parameters |
+| `OQTO_HARDEN_SERVER` | prompt | Enable server hardening (yes/no) |
+| `OQTO_SSH_PORT` | 22 | SSH port number |
+| `OQTO_SETUP_FIREWALL` | yes | Configure UFW/firewalld |
+| `OQTO_SETUP_FAIL2BAN` | yes | Install and configure fail2ban |
+| `OQTO_HARDEN_SSH` | yes | Apply SSH hardening (disables passwords!) |
+| `OQTO_SETUP_AUTO_UPDATES` | yes | Enable automatic security updates |
+| `OQTO_HARDEN_KERNEL` | yes | Apply kernel security parameters |
 
 > ⚠️ **Warning**: SSH hardening disables password authentication. Ensure you have SSH key access before enabling!
 
@@ -99,12 +99,12 @@ For more complex deployments or when you need full control:
 cd deploy/ansible
 cp inventory.yml.example inventory.yml
 # Edit inventory.yml with your server details
-ansible-playbook -i inventory.yml octo.yml
+ansible-playbook -i inventory.yml oqto.yml
 ```
 
 The Ansible playbook provides the same hardening as `setup.sh --harden-server` plus:
-- Creates dedicated octo system user
-- Installs all Octo dependencies including trash-cli
+- Creates dedicated oqto system user
+- Installs all Oqto dependencies including trash-cli
 - Sets up systemd services
 - More granular control via Ansible variables
 
@@ -134,7 +134,7 @@ Required only if using container mode:
 
 ## Core Components
 
-### Octo Backend (octo)
+### Oqto Backend (oqto)
 
 The control plane server that orchestrates agent sessions.
 
@@ -146,11 +146,11 @@ cargo install --path .
 ```
 
 **Binaries built**:
-- `octo` - Main server binary
-- `octo-runner` - Per-user process runner (multi-user Linux mode)
+- `oqto` - Main server binary
+- `oqto-runner` - Per-user process runner (multi-user Linux mode)
 - `pi-bridge` - Bridge for container Pi mode (container mode)
 
-**Configuration**: `~/.config/octo/config.toml`
+**Configuration**: `~/.config/oqto/config.toml`
 
 ### Fileserver (fileserver)
 
@@ -162,7 +162,7 @@ cd fileserver
 cargo install --path .
 ```
 
-**Usage**: Automatically started by octo for each session.
+**Usage**: Automatically started by oqto for each session.
 
 ### Frontend
 
@@ -197,7 +197,7 @@ Pi CLI - the primary AI agent harness that runs within sessions. Required for al
 bun install -g @mariozechner/pi-coding-agent
 ```
 
-**Configuration**: Configured via the `[pi]` section in `~/.config/octo/config.toml`. Pi is managed by octo-runner and runs in RPC mode with JSON over stdin/stdout.
+**Configuration**: Configured via the `[pi]` section in `~/.config/oqto/config.toml`. Pi is managed by oqto-runner and runs in RPC mode with JSON over stdin/stdout.
 
 ### ttyd
 
@@ -250,7 +250,7 @@ agntz release src/file.rs       # Release reservation
 
 ### mmry (Memory System)
 
-Persistent memory storage and retrieval for AI agents. Integrated with Octo API.
+Persistent memory storage and retrieval for AI agents. Integrated with Oqto API.
 
 **Installation**:
 ```bash
@@ -259,7 +259,7 @@ cargo install mmry
 
 ### trx (Task Tracking)
 
-Task tracking and issue management. Integrated with Octo API for displaying issues in the UI.
+Task tracking and issue management. Integrated with Oqto API for displaying issues in the UI.
 
 **Installation**:
 ```bash
@@ -299,7 +299,7 @@ Recommended tools for agents to use within sessions. These improve agent product
 
 ## Pi (Main Chat)
 
-The main chat/LLM interface used by Octo for AI conversations.
+The main chat/LLM interface used by Oqto for AI conversations.
 
 **Installation**:
 ```bash
@@ -307,9 +307,9 @@ bun install -g @mariozechner/pi-coding-agent
 ```
 
 **Configuration**:
-Pi is spawned by octo-runner and configured via runner settings. The runner locates the pi binary from your PATH.
+Pi is spawned by oqto-runner and configured via runner settings. The runner locates the pi binary from your PATH.
 
-Session directories are configured in `~/.config/octo/config.toml`:
+Session directories are configured in `~/.config/oqto/config.toml`:
 
 ```toml
 [runner]
@@ -318,10 +318,10 @@ Session directories are configured in `~/.config/octo/config.toml`:
 pi_sessions_dir = "~/.local/share/pi/sessions"
 ```
 
-**Runtime modes** (determined by Octo backend mode):
-- `local` - Pi runs directly via octo-runner on the host (single-user local mode)
+**Runtime modes** (determined by Oqto backend mode):
+- `local` - Pi runs directly via oqto-runner on the host (single-user local mode)
 - `container` - Pi runs inside containers (container mode) via pi-bridge
-- `runner` - Pi runs via octo-runner daemon for multi-user Linux mode
+- `runner` - Pi runs via oqto-runner daemon for multi-user Linux mode
 
 ## Deployment Modes
 
@@ -351,7 +351,7 @@ fileserver_binary = "fileserver"
 ttyd_binary = "ttyd"
 
 # Workspace directory - {user_id} placeholder replaced in multi-user mode
-workspace_dir = "$HOME/octo/{user_id}"
+workspace_dir = "$HOME/oqto/{user_id}"
 single_user = false
 ```
 
@@ -361,7 +361,7 @@ Runs each session in isolated Docker/Podman containers.
 
 **Prerequisites**:
 - Docker or Podman runtime
-- Container image: `octo-dev:latest`
+- Container image: `oqto-dev:latest`
 
 **Best for**:
 - Multi-user deployments
@@ -371,7 +371,7 @@ Runs each session in isolated Docker/Podman containers.
 
 **Building the container image**:
 ```bash
-docker build -t octo-dev:latest -f container/Dockerfile .
+docker build -t oqto-dev:latest -f container/Dockerfile .
 ```
 
 **Configuration**:
@@ -381,7 +381,7 @@ mode = "container"
 
 [container]
 runtime = "docker"  # or "podman"
-default_image = "octo-dev:latest"
+default_image = "oqto-dev:latest"
 base_port = 41820
 ```
 
@@ -412,9 +412,9 @@ Creates dedicated Linux users for process isolation.
 ```toml
 [local.linux_users]
 enabled = true
-prefix = "octo_"
+prefix = "oqto_"
 uid_start = 2000
-group = "octo"
+group = "oqto"
 shell = "/bin/bash"
 use_sudo = true
 create_home = true
@@ -427,46 +427,46 @@ create_home = true
 **Single-user (user-level service)**:
 ```bash
 # Install
-~/.config/systemd/user/octo.service
+~/.config/systemd/user/oqto.service
 
 # Enable and start
-systemctl --user enable --now octo
+systemctl --user enable --now oqto
 
 # Check status
-systemctl --user status octo
-journalctl --user -u octo -f
+systemctl --user status oqto
+journalctl --user -u oqto -f
 ```
 
 **Multi-user (system-level service)**:
 ```bash
 # Install system service
-cp octo.service /etc/systemd/system/
+cp oqto.service /etc/systemd/system/
 
 # Install per-user runner template
-cp octo-runner.service /etc/systemd/user/
+cp oqto-runner.service /etc/systemd/user/
 
-# Create octo system user
-useradd -r -s /usr/sbin/nologin -d /var/lib/octo octo
+# Create oqto system user
+useradd -r -s /usr/sbin/nologin -d /var/lib/oqto oqto
 
 # Create directories
-mkdir -p /var/lib/octo /etc/octo /run/octo
-chown octo:octo /var/lib/octo /run/octo
+mkdir -p /var/lib/oqto /etc/oqto /run/oqto
+chown oqto:oqto /var/lib/oqto /run/oqto
 
 # Enable and start
-systemctl enable --now octo
+systemctl enable --now oqto
 
-# Octo will attempt to enable lingering and start `octo-runner` automatically
+# Oqto will attempt to enable lingering and start `oqto-runner` automatically
 # when creating Linux users (when `local.linux_users.enabled=true`).
 # If needed, you can enable it manually for a specific Linux user:
 sudo loginctl enable-linger <username>
-sudo -u <username> systemctl --user enable --now octo-runner
+sudo -u <username> systemctl --user enable --now oqto-runner
 
-For non-root Octo backends in local multi-user mode, we recommend using shared
+For non-root Oqto backends in local multi-user mode, we recommend using shared
 runner sockets:
 
-- Runner socket base: `/run/octo/runner-sockets/<user>/octo-runner.sock`
-- Ensure `/run/octo/runner-sockets` exists via tmpfiles (see `systemd/octo-runner.tmpfiles.conf`)
-- Ensure the Octo backend user is in the shared `octo` group
+- Runner socket base: `/run/oqto/runner-sockets/<user>/oqto-runner.sock`
+- Ensure `/run/oqto/runner-sockets` exists via tmpfiles (see `systemd/oqto-runner.tmpfiles.conf`)
+- Ensure the Oqto backend user is in the shared `oqto` group
 ```
 
 ### macOS (launchd)
@@ -474,13 +474,13 @@ runner sockets:
 **Installation**:
 ```bash
 # Install plist
-~/Library/LaunchAgents/ai.octo.server.plist
+~/Library/LaunchAgents/ai.oqto.server.plist
 
 # Load service
-launchctl load ~/Library/LaunchAgents/ai.octo.server.plist
+launchctl load ~/Library/LaunchAgents/ai.oqto.server.plist
 
 # Check status
-launchctl list | grep octo
+launchctl list | grep oqto
 ```
 
 ## Production Deployment
@@ -498,7 +498,7 @@ The setup script will:
 
 ### Caddy Reverse Proxy
 
-Caddy provides automatic HTTPS via Let's Encrypt and serves as a reverse proxy for Octo.
+Caddy provides automatic HTTPS via Let's Encrypt and serves as a reverse proxy for Oqto.
 
 **Installation via setup.sh**:
 The setup script will install and configure Caddy automatically when you select "Production" mode and agree to set up Caddy.
@@ -520,7 +520,7 @@ brew install caddy
 
 **Caddyfile Example** (`/etc/caddy/Caddyfile`):
 ```caddyfile
-octo.example.com {
+oqto.example.com {
     # Backend API
     handle /api/* {
         reverse_proxy localhost:8080
@@ -599,19 +599,19 @@ For a fresh install, use the bootstrap command to create the first admin user:
 ```bash
 # Bootstrap admin user with Linux user + runner (multi-user mode)
 # This creates: database user + Linux user + systemd runner
-octoctl user bootstrap -u admin -e admin@example.com -p "your-secure-password"
+oqtoctl user bootstrap -u admin -e admin@example.com -p "your-secure-password"
 
 # Database-only (single-user mode or existing Linux user)
-octoctl user bootstrap -u admin -e admin@example.com -p "password" --no-linux-user
+oqtoctl user bootstrap -u admin -e admin@example.com -p "password" --no-linux-user
 
-# Custom Linux username (different from Octo username)
-octoctl user bootstrap -u admin -e admin@example.com --linux-user octo_admin
+# Custom Linux username (different from Oqto username)
+oqtoctl user bootstrap -u admin -e admin@example.com --linux-user oqto_admin
 
 # With a custom database path
-octoctl user bootstrap -u admin -e admin@example.com --database /path/to/octo.db
+oqtoctl user bootstrap -u admin -e admin@example.com --database /path/to/oqto.db
 
 # Non-interactive JSON output (for scripting)
-octoctl --json user bootstrap -u admin -e admin@example.com -p "password"
+oqtoctl --json user bootstrap -u admin -e admin@example.com -p "password"
 ```
 
 The setup script (`./setup.sh --production`) will prompt for admin credentials and show the bootstrap command.
@@ -620,7 +620,7 @@ To create additional users after the server is running:
 
 ```bash
 # Using the CLI (server must be running)
-octoctl user create admin2 --email admin2@example.com --role admin
+oqtoctl user create admin2 --email admin2@example.com --role admin
 
 # Generate password hash for config file
 htpasswd -nbBC 12 admin yourpassword | cut -d: -f2
@@ -631,13 +631,13 @@ In production mode, new users need invite codes to register:
 
 ```bash
 # Create a single-use invite code
-octo invites create --uses 1
+oqto invites create --uses 1
 
 # Create a multi-use invite code (e.g., for a team)
-octo invites create --uses 10
+oqto invites create --uses 10
 
 # List active invite codes
-octo invites list
+oqto invites list
 ```
 
 ### CORS Configuration
@@ -648,12 +648,12 @@ For production deployments with a custom domain, configure allowed origins:
 [auth]
 dev_mode = false
 jwt_secret = "your-secure-secret-at-least-32-characters"
-allowed_origins = ["https://octo.example.com"]
+allowed_origins = ["https://oqto.example.com"]
 ```
 
 ## Configuration Reference
 
-Full configuration reference available at `backend/crates/octo/examples/config.toml`.
+Full configuration reference available at `backend/crates/oqto/examples/config.toml`.
 
 Key configuration sections:
 
@@ -698,7 +698,7 @@ After `setup.sh` configures EAVS, you may need to add or change providers.
 | Mode | Config | Secrets (env file) | Service |
 |------|--------|--------------------|---------|
 | **Single-user** | `~/.config/eavs/config.toml` | `~/.config/eavs/env` | `systemctl --user restart eavs` |
-| **Multi-user** | `~octo/.config/eavs/config.toml` | `~octo/.config/eavs/env` | `sudo systemctl restart eavs` |
+| **Multi-user** | `~oqto/.config/eavs/config.toml` | `~oqto/.config/eavs/env` | `sudo systemctl restart eavs` |
 
 ### Adding Providers (env file method)
 
@@ -709,8 +709,8 @@ The simplest way to add or change API keys:
 echo 'ANTHROPIC_API_KEY=sk-ant-...' >> ~/.config/eavs/env
 systemctl --user restart eavs
 
-# Multi-user (octo user owns the files)
-echo 'ANTHROPIC_API_KEY=sk-ant-...' | sudo tee -a ~octo/.config/eavs/env
+# Multi-user (oqto user owns the files)
+echo 'ANTHROPIC_API_KEY=sk-ant-...' | sudo tee -a ~oqto/.config/eavs/env
 sudo systemctl restart eavs
 ```
 
@@ -730,8 +730,8 @@ For more secure storage, use the system keychain:
 # Single-user
 eavs secret set anthropic
 
-# Multi-user (must run as octo with a D-Bus session)
-sudo -u octo dbus-run-session -- eavs secret set anthropic
+# Multi-user (must run as oqto with a D-Bus session)
+sudo -u oqto dbus-run-session -- eavs secret set anthropic
 ```
 
 Then reference in `config.toml`:
@@ -744,16 +744,16 @@ api_key = "keychain:anthropic"
 
 ### Editing Config (multi-user)
 
-In multi-user mode, EAVS config is owned by the `octo` system user:
+In multi-user mode, EAVS config is owned by the `oqto` system user:
 
 ```bash
-sudo nano ~octo/.config/eavs/config.toml
+sudo nano ~oqto/.config/eavs/config.toml
 sudo systemctl restart eavs
 ```
 
-### Octo Backend EAVS Settings
+### Oqto Backend EAVS Settings
 
-The Octo backend also has an `[eavs]` section in its own config (`~/.config/octo/config.toml` or `~octo/.config/octo/config.toml`) that controls session budgets and rate limits:
+The Oqto backend also has an `[eavs]` section in its own config (`~/.config/oqto/config.toml` or `~oqto/.config/oqto/config.toml`) that controls session budgets and rate limits:
 
 ```toml
 [eavs]
@@ -769,7 +769,7 @@ After installation, verify all components are working:
 
 ```bash
 # Check binaries
-which octo
+which oqto
 which fileserver
 which ttyd
 
@@ -785,10 +785,10 @@ which trx
 which mailz
 
 # Start server (local mode)
-octo serve --local-mode
+oqto serve --local-mode
 
 # Start server (container mode)
-octo serve
+oqto serve
 
 # Start frontend (development)
 cd frontend && bun dev
@@ -805,7 +805,7 @@ Error: `Failed to find container image`
 
 Solution: Build the container image:
 ```bash
-docker build -t octo-dev:latest -f container/Dockerfile .
+docker build -t oqto-dev:latest -f container/Dockerfile .
 ```
 
 ### Port already in use
@@ -838,7 +838,7 @@ pi --version
 Symptoms: Pi requests permissions or hits errors, but the web UI shows nothing.
 
 Solution:
-- Update Octo to a recent build (the UI normalizes both `tool`/`input` and `permission_type`/`pattern` payload shapes).
+- Update Oqto to a recent build (the UI normalizes both `tool`/`input` and `permission_type`/`pattern` payload shapes).
 - Enable WebSocket debug logging: `localStorage.setItem("debug:ws", "1")`
 
 ### Permission denied (systemd)

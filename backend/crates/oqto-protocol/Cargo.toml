@@ -1,0 +1,15 @@
+[package]
+name = "oqto-protocol"
+description = "Canonical protocol types for Oqto agent communication"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+hstry-core = { workspace = true }
+
+[lints]
+workspace = true

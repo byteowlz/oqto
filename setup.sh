@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# Octo Setup Script
-# Comprehensive setup and onboarding for the Octo AI Agent Workspace Platform
+# Oqto Setup Script
+# Comprehensive setup and onboarding for the Oqto AI Agent Workspace Platform
 #
 # Supports:
 #   - macOS and Linux
@@ -22,31 +22,31 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TEMPLATES_DIR="${SCRIPT_DIR}/templates"
 # Use SSH for private repos (allows SSH key authentication)
-ONBOARDING_TEMPLATES_REPO_DEFAULT="git@github.com:byteowlz/octo-templates.git"
-EXTERNAL_REPOS_DIR_DEFAULT="/usr/local/share/octo/external-repos"
-ONBOARDING_TEMPLATES_PATH_DEFAULT="/usr/share/octo/octo-templates/dotfiles_users/"
-PROJECT_TEMPLATES_PATH_DEFAULT="/usr/share/octo/octo-templates/agents/"
+ONBOARDING_TEMPLATES_REPO_DEFAULT="git@github.com:byteowlz/oqto-templates.git"
+EXTERNAL_REPOS_DIR_DEFAULT="/usr/local/share/oqto/external-repos"
+ONBOARDING_TEMPLATES_PATH_DEFAULT="/usr/share/oqto/oqto-templates/dotfiles_users/"
+PROJECT_TEMPLATES_PATH_DEFAULT="/usr/share/oqto/oqto-templates/agents/"
 
 # Default values (can be overridden by environment variables)
-: "${OCTO_USER_MODE:=single}"        # single or multi
-: "${OCTO_BACKEND_MODE:=local}"      # local or container
-: "${OCTO_CONTAINER_RUNTIME:=auto}"  # docker, podman, or auto
-: "${OCTO_INSTALL_DEPS:=yes}"        # yes or no
-: "${OCTO_INSTALL_SERVICE:=yes}"     # yes or no
-: "${OCTO_INSTALL_AGENT_TOOLS:=yes}" # yes or no (agntz, mmry, trx)
-: "${OCTO_DEV_MODE:=}"               # true or false (auth dev mode) - empty = prompt
-: "${OCTO_LOG_LEVEL:=info}"          # error, warn, info, debug, trace
-: "${OCTO_SETUP_CADDY:=}"            # yes or no - empty = prompt
-: "${OCTO_DOMAIN:=}"                 # domain for HTTPS (e.g., octo.example.com)
+: "${OQTO_USER_MODE:=single}"        # single or multi
+: "${OQTO_BACKEND_MODE:=local}"      # local or container
+: "${OQTO_CONTAINER_RUNTIME:=auto}"  # docker, podman, or auto
+: "${OQTO_INSTALL_DEPS:=yes}"        # yes or no
+: "${OQTO_INSTALL_SERVICE:=yes}"     # yes or no
+: "${OQTO_INSTALL_AGENT_TOOLS:=yes}" # yes or no (agntz, mmry, trx)
+: "${OQTO_DEV_MODE:=}"               # true or false (auth dev mode) - empty = prompt
+: "${OQTO_LOG_LEVEL:=info}"          # error, warn, info, debug, trace
+: "${OQTO_SETUP_CADDY:=}"            # yes or no - empty = prompt
+: "${OQTO_DOMAIN:=}"                 # domain for HTTPS (e.g., oqto.example.com)
 
 # Server hardening options (Linux only, requires root)
-: "${OCTO_HARDEN_SERVER:=}"         # yes or no - empty = prompt in production mode
-: "${OCTO_SSH_PORT:=22}"            # SSH port (change if needed)
-: "${OCTO_SETUP_FIREWALL:=yes}"     # Configure UFW/firewalld
-: "${OCTO_SETUP_FAIL2BAN:=yes}"     # Install and configure fail2ban
-: "${OCTO_HARDEN_SSH:=yes}"         # Apply SSH hardening config
-: "${OCTO_SETUP_AUTO_UPDATES:=yes}" # Enable automatic security updates
-: "${OCTO_HARDEN_KERNEL:=yes}"      # Apply kernel security parameters
+: "${OQTO_HARDEN_SERVER:=}"         # yes or no - empty = prompt in production mode
+: "${OQTO_SSH_PORT:=22}"            # SSH port (change if needed)
+: "${OQTO_SETUP_FIREWALL:=yes}"     # Configure UFW/firewalld
+: "${OQTO_SETUP_FAIL2BAN:=yes}"     # Install and configure fail2ban
+: "${OQTO_HARDEN_SSH:=yes}"         # Apply SSH hardening config
+: "${OQTO_SETUP_AUTO_UPDATES:=yes}" # Enable automatic security updates
+: "${OQTO_HARDEN_KERNEL:=yes}"      # Apply kernel security parameters
 
 # Agent tools installation tracking
 INSTALL_MMRY="false"
@@ -78,8 +78,8 @@ dev_user_email=""
 : "${XDG_DATA_HOME:=$HOME/.local/share}"
 : "${XDG_STATE_HOME:=$HOME/.local/state}"
 
-OCTO_CONFIG_DIR="${XDG_CONFIG_HOME}/octo"
-OCTO_DATA_DIR="${XDG_DATA_HOME}/octo"
+OQTO_CONFIG_DIR="${XDG_CONFIG_HOME}/oqto"
+OQTO_DATA_DIR="${XDG_DATA_HOME}/oqto"
 
 # Colors for output
 RED='\033[0;31m'
@@ -95,7 +95,7 @@ BOLD='\033[1m'
 # ==============================================================================
 #
 # Saves all interactive decisions to a state file so re-runs don't require
-# re-entering everything. State is stored in ~/.config/octo/setup-state.env
+# re-entering everything. State is stored in ~/.config/oqto/setup-state.env
 # and loaded automatically on subsequent runs.
 #
 # Usage:
@@ -103,14 +103,14 @@ BOLD='\033[1m'
 #   ./setup.sh --fresh      # Ignore saved state, start from scratch
 #
 
-SETUP_STATE_FILE="${XDG_CONFIG_HOME}/octo/setup-state.env"
+SETUP_STATE_FILE="${XDG_CONFIG_HOME}/oqto/setup-state.env"
 
 # Keys that are persisted (order matters for display)
 SETUP_STATE_KEYS=(
   SELECTED_USER_MODE
   SELECTED_BACKEND_MODE
   PRODUCTION_MODE
-  OCTO_DEV_MODE
+  OQTO_DEV_MODE
   WORKSPACE_DIR
   DOMAIN
   SETUP_CADDY
@@ -121,13 +121,13 @@ SETUP_STATE_KEYS=(
   dev_user_email
   INSTALL_ALL_TOOLS
   INSTALL_MMRY
-  OCTO_HARDEN_SERVER
-  OCTO_SSH_PORT
-  OCTO_SETUP_FIREWALL
-  OCTO_SETUP_FAIL2BAN
-  OCTO_HARDEN_SSH
-  OCTO_SETUP_AUTO_UPDATES
-  OCTO_HARDEN_KERNEL
+  OQTO_HARDEN_SERVER
+  OQTO_SSH_PORT
+  OQTO_SETUP_FIREWALL
+  OQTO_SETUP_FAIL2BAN
+  OQTO_HARDEN_SSH
+  OQTO_SETUP_AUTO_UPDATES
+  OQTO_HARDEN_KERNEL
   CONTAINER_RUNTIME
   JWT_SECRET
   EAVS_MASTER_KEY
@@ -139,7 +139,7 @@ save_setup_state() {
   mkdir -p "$(dirname "$SETUP_STATE_FILE")"
 
   {
-    echo "# Octo setup state - generated $(date)"
+    echo "# Oqto setup state - generated $(date)"
     echo "# This file is loaded on re-runs to avoid re-entering decisions."
     echo "# Delete this file or run ./setup.sh --fresh to start over."
     echo ""
@@ -193,8 +193,8 @@ apply_setup_state() {
   if [[ -f "$SETUP_STATE_FILE" ]]; then
     # Fix known typos from previous versions before sourcing
     # Fix known typos and outdated defaults from previous versions
-    sed -i 's|/home/{user_id/octo}|/home/{linux_username}/octo|g' "$SETUP_STATE_FILE" 2>/dev/null || true
-    sed -i 's|/home/{user_id}/octo|/home/{linux_username}/octo|g' "$SETUP_STATE_FILE" 2>/dev/null || true
+    sed -i 's|/home/{user_id/oqto}|/home/{linux_username}/oqto|g' "$SETUP_STATE_FILE" 2>/dev/null || true
+    sed -i 's|/home/{user_id}/oqto|/home/{linux_username}/oqto|g' "$SETUP_STATE_FILE" 2>/dev/null || true
     # shellcheck source=/dev/null
     source "$SETUP_STATE_FILE"
     log_success "Loaded previous setup state"
@@ -206,11 +206,11 @@ apply_setup_state() {
 # ==============================================================================
 #
 # Tracks which setup steps have completed so re-runs skip finished work.
-# Steps are stored in ~/.config/octo/setup-steps-done alongside the state file.
+# Steps are stored in ~/.config/oqto/setup-steps-done alongside the state file.
 # Use --fresh to clear completed steps and start over.
 #
 
-SETUP_STEPS_FILE="${XDG_CONFIG_HOME}/octo/setup-steps-done"
+SETUP_STEPS_FILE="${XDG_CONFIG_HOME}/oqto/setup-steps-done"
 
 # Check if a step has already been completed
 step_done() {
@@ -587,7 +587,7 @@ install_system_prerequisites() {
 }
 
 check_container_runtime() {
-  if [[ "$OCTO_CONTAINER_RUNTIME" == "auto" ]]; then
+  if [[ "$OQTO_CONTAINER_RUNTIME" == "auto" ]]; then
     if command_exists docker; then
       CONTAINER_RUNTIME="docker"
     elif command_exists podman; then
@@ -605,7 +605,7 @@ check_container_runtime() {
       return 1
     fi
   else
-    CONTAINER_RUNTIME="$OCTO_CONTAINER_RUNTIME"
+    CONTAINER_RUNTIME="$OQTO_CONTAINER_RUNTIME"
     if ! command_exists "$CONTAINER_RUNTIME"; then
       log_error "Specified container runtime not found: $CONTAINER_RUNTIME"
       return 1
@@ -742,12 +742,12 @@ install_ttyd_from_source() {
 PI_EXTENSIONS_REPO="https://github.com/byteowlz/pi-agent-extensions.git"
 
 # Default extensions to install (subset of what's available in the repo)
-# These are the Octo-relevant extensions; users can install others via the
+# These are the Oqto-relevant extensions; users can install others via the
 # pi-agent-extensions justfile.
 PI_DEFAULT_EXTENSIONS=(
   "auto-rename"
-  "octo-bridge"
-  "octo-todos"
+  "oqto-bridge"
+  "oqto-todos"
   "custom-context-files"
 )
 
@@ -764,7 +764,7 @@ clone_pi_extensions_repo() {
     fi
   done
 
-  local cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/octo/pi-agent-extensions"
+  local cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/oqto/pi-agent-extensions"
 
   if [[ -d "$cache_dir/.git" ]]; then
     log_info "Updating pi-agent-extensions repo..." >&2
@@ -788,7 +788,7 @@ clone_pi_extensions_repo() {
   fi
 
   # Verify the clone has content (an extension with index.ts should exist)
-  if [[ ! -f "$cache_dir/octo-bridge/index.ts" ]]; then
+  if [[ ! -f "$cache_dir/oqto-bridge/index.ts" ]]; then
     log_warn "pi-agent-extensions cache is stale or broken, re-cloning..." >&2
     rm -rf "$cache_dir"
     mkdir -p "$(dirname "$cache_dir")"
@@ -847,16 +847,16 @@ install_pi_extensions_for_user() {
 
   # Create a README for the user
   cat >"${extensions_dir}/README.md" <<'EOF'
-# Pi Agent Extensions (installed by Octo)
+# Pi Agent Extensions (installed by Oqto)
 
-These extensions are installed by Octo setup from the pi-agent-extensions
+These extensions are installed by Oqto setup from the pi-agent-extensions
 repository: https://github.com/byteowlz/pi-agent-extensions
 
 ## Installed Extensions
 
 - **auto-rename**: Automatically generate session names from first user query
-- **octo-bridge**: Emit granular agent phase status for the Octo runner
-- **octo-todos**: Todo management tools for Octo frontend integration
+- **oqto-bridge**: Emit granular agent phase status for the Oqto runner
+- **oqto-todos**: Todo management tools for Oqto frontend integration
 - **custom-context-files**: Auto-load USER.md, PERSONALITY.md, and other context files into prompts
 
 ## Managing Extensions
@@ -870,7 +870,7 @@ pi-agent-extensions repo and use its justfile:
     just install-all  # Install everything
     just status       # Show sync status
 
-Or re-run the Octo setup script to update the default set.
+Or re-run the Oqto setup script to update the default set.
 EOF
 
   log_info "$installed extensions installed to ${extensions_dir}"
@@ -1188,7 +1188,7 @@ setup_onboarding_templates_repo() {
   fi
 
   # Use a temporary location for cloning (preserves SSH agent access)
-  local temp_clone_dir="${XDG_CACHE_HOME:-$HOME/.cache}/octo/octo-templates-clone"
+  local temp_clone_dir="${XDG_CACHE_HOME:-$HOME/.cache}/oqto/oqto-templates-clone"
   mkdir -p "$(dirname "$temp_clone_dir")"
 
   if [[ -d "$temp_clone_dir/.git" ]]; then
@@ -1246,8 +1246,8 @@ update_external_repos() {
 }
 
 setup_feedback_dirs() {
-  local public_path="${FEEDBACK_PUBLIC_DROPBOX:-/usr/local/share/octo/issues}"
-  local private_path="${FEEDBACK_PRIVATE_ARCHIVE:-/var/lib/octo/issue-archive}"
+  local public_path="${FEEDBACK_PUBLIC_DROPBOX:-/usr/local/share/oqto/issues}"
+  local private_path="${FEEDBACK_PRIVATE_ARCHIVE:-/var/lib/oqto/issue-archive}"
 
   log_step "Setting up feedback directories"
 
@@ -1261,7 +1261,7 @@ setup_feedback_dirs() {
 # Agent Tools Installation
 # ==============================================================================
 #
-# Tools for AI agents in the Octo platform:
+# Tools for AI agents in the Oqto platform:
 #
 #   agntz   - Agent toolkit (wraps other tools, file reservations, etc.)
 #   mmry    - Memory storage and semantic search
@@ -1573,7 +1573,7 @@ select_agent_tools() {
   log_step "Agent Tools Selection"
 
   echo
-  echo "Octo can install agent tools:"
+  echo "Oqto can install agent tools:"
   echo
   echo -e "  ${BOLD}Core tools (recommended):${NC}"
   echo "    agntz   - Agent toolkit (file reservations, tool management)"
@@ -1631,7 +1631,7 @@ install_agent_tools_selected() {
 # agents can use `sx` for web searches without depending on external APIs.
 #
 # Architecture:
-#   - Runs under the backend user (current user in single-user, 'octo' in multi-user)
+#   - Runs under the backend user (current user in single-user, 'oqto' in multi-user)
 #   - Binds to 127.0.0.1:8888 (local only, no external exposure)
 #   - JSON API enabled so `sx` can query it programmatically
 #   - Valkey (Redis-compatible) for rate limiting and caching
@@ -1648,8 +1648,8 @@ install_searxng() {
   # Determine install paths based on user mode
   local searxng_base searxng_user service_type
   if [[ "$SELECTED_USER_MODE" == "multi" ]]; then
-    searxng_user="octo"
-    searxng_base="${OCTO_HOME}/.local/share/searxng"
+    searxng_user="oqto"
+    searxng_base="${OQTO_HOME}/.local/share/searxng"
     service_type="system"
   else
     searxng_user="$(whoami)"
@@ -1848,14 +1848,14 @@ generate_searxng_settings() {
 
   local settings_content
   read -r -d '' settings_content <<EOSETTINGS || true
-# SearXNG settings - generated by Octo setup.sh
+# SearXNG settings - generated by Oqto setup.sh
 # Local instance for agent web search via sx CLI
 
 use_default_settings: true
 
 general:
   debug: false
-  instance_name: "Octo SearXNG"
+  instance_name: "Oqto SearXNG"
 
 search:
   safe_search: 0
@@ -2010,7 +2010,7 @@ configure_sx_for_searxng() {
     cat >"$sx_config_file" <<EOF
 "\$schema" = "https://raw.githubusercontent.com/byteowlz/schemas/refs/heads/main/sx/sx.config.schema.json"
 
-# sx configuration - generated by Octo setup.sh
+# sx configuration - generated by Oqto setup.sh
 engine = "searxng"
 searxng_url = "http://${SEARXNG_BIND}:${SEARXNG_PORT}"
 result_count = 10
@@ -2032,7 +2032,7 @@ EOF
 #   - Routes requests to multiple providers (Anthropic, OpenAI, Google, etc.)
 #   - Manages virtual API keys per session with budgets and rate limits
 #   - Provides a single endpoint for all LLM access
-#   - Octo creates per-session virtual keys automatically
+#   - Oqto creates per-session virtual keys automatically
 #
 # ==============================================================================
 
@@ -2153,29 +2153,29 @@ install_eavs_keyring_deps() {
     log_success "gnome-keyring-daemon.socket enabled for future sessions"
   fi
 
-  # In multi-user mode, also enable gnome-keyring for the octo system user.
-  # The EAVS service runs as octo and needs D-Bus + gnome-keyring for the
+  # In multi-user mode, also enable gnome-keyring for the oqto system user.
+  # The EAVS service runs as oqto and needs D-Bus + gnome-keyring for the
   # keychain: config syntax and `eavs secret set` commands.
-  if [[ "$SELECTED_USER_MODE" == "multi" ]] && id octo &>/dev/null; then
+  if [[ "$SELECTED_USER_MODE" == "multi" ]] && id oqto &>/dev/null; then
     enable_keyring_for_octo_user
   fi
 }
 
-# Enable gnome-keyring-daemon for the octo system user so that:
-#   1. The EAVS system service (User=octo) can resolve keychain: secrets at startup
-#   2. Admins can run `sudo -u octo dbus-run-session -- eavs secret set <name>`
-# Requires linger so octo's user-level systemd instance persists without a login.
+# Enable gnome-keyring-daemon for the oqto system user so that:
+#   1. The EAVS system service (User=oqto) can resolve keychain: secrets at startup
+#   2. Admins can run `sudo -u oqto dbus-run-session -- eavs secret set <name>`
+# Requires linger so oqto's user-level systemd instance persists without a login.
 enable_keyring_for_octo_user() {
-  log_info "Enabling gnome-keyring for octo user..."
+  log_info "Enabling gnome-keyring for oqto user..."
 
-  # Enable linger so octo gets a persistent user-level systemd instance
-  sudo loginctl enable-linger octo 2>/dev/null || true
+  # Enable linger so oqto gets a persistent user-level systemd instance
+  sudo loginctl enable-linger oqto 2>/dev/null || true
 
-  # Enable the gnome-keyring socket for the octo user
+  # Enable the gnome-keyring socket for the oqto user
   if [[ -f /usr/lib/systemd/user/gnome-keyring-daemon.socket ]]; then
-    sudo -u octo systemctl --user enable gnome-keyring-daemon.socket 2>/dev/null || true
-    sudo -u octo systemctl --user start gnome-keyring-daemon.socket 2>/dev/null || true
-    log_success "gnome-keyring-daemon.socket enabled for octo user"
+    sudo -u oqto systemctl --user enable gnome-keyring-daemon.socket 2>/dev/null || true
+    sudo -u oqto systemctl --user start gnome-keyring-daemon.socket 2>/dev/null || true
+    log_success "gnome-keyring-daemon.socket enabled for oqto user"
   fi
 }
 
@@ -2184,7 +2184,7 @@ configure_eavs() {
 
   # Determine config/data paths based on user mode:
   #   single-user: ~/.config/eavs/ (runs as installing user)
-  #   multi-user:  ~octo/.config/eavs/ (runs as octo system user, same home)
+  #   multi-user:  ~oqto/.config/eavs/ (runs as oqto system user, same home)
   local eavs_config_dir eavs_data_dir eavs_env_file
   if [[ "$SELECTED_USER_MODE" == "single" ]]; then
     eavs_config_dir="${XDG_CONFIG_HOME}/eavs"
@@ -2192,8 +2192,8 @@ configure_eavs() {
     eavs_env_file="${eavs_config_dir}/env"
     mkdir -p "$eavs_config_dir" "$eavs_data_dir"
   else
-    eavs_config_dir="${OCTO_HOME}/.config/eavs"
-    eavs_data_dir="${OCTO_HOME}/.local/share/eavs"
+    eavs_config_dir="${OQTO_HOME}/.config/eavs"
+    eavs_data_dir="${OQTO_HOME}/.local/share/eavs"
     eavs_env_file="${eavs_config_dir}/env"
     sudo mkdir -p "$eavs_config_dir" "$eavs_data_dir"
   fi
@@ -2207,7 +2207,7 @@ configure_eavs() {
     sudo bash -c ": > '${eavs_env_file}'"
   fi
 
-  # Generate master key for octo to create per-session virtual keys (reuse saved one)
+  # Generate master key for oqto to create per-session virtual keys (reuse saved one)
   if [[ -z "${EAVS_MASTER_KEY:-}" ]]; then
     EAVS_MASTER_KEY=$(generate_secure_secret 32)
   else
@@ -2344,7 +2344,7 @@ api_key = \"${first_key}\"
   config_content=$(cat <<EOF
 "\$schema" = "https://raw.githubusercontent.com/byteowlz/schemas/refs/heads/main/eavs/eavs.config.schema.json"
 
-# EAVS Configuration - generated by Octo setup.sh
+# EAVS Configuration - generated by Oqto setup.sh
 # Edit this file to add/change LLM providers.
 # Docs: https://github.com/byteowlz/eavs
 
@@ -2394,8 +2394,8 @@ EOF
     echo "$config_content" | sudo tee "$eavs_config_file" >/dev/null
     echo "EAVS_MASTER_KEY=${EAVS_MASTER_KEY}" | sudo tee -a "${eavs_env_file}" >/dev/null
     sudo chmod 600 "${eavs_env_file}"
-    # Owned by octo - same user that runs the eavs service
-    sudo chown -R octo:octo "$eavs_config_dir" "$eavs_data_dir"
+    # Owned by oqto - same user that runs the eavs service
+    sudo chown -R oqto:oqto "$eavs_config_dir" "$eavs_data_dir"
   fi
 
   log_success "EAVS config written to $eavs_config_file"
@@ -2605,7 +2605,7 @@ test_eavs_providers() {
   if [[ "$SELECTED_USER_MODE" == "single" ]]; then
     eavs_config_file="${XDG_CONFIG_HOME}/eavs/config.toml"
   else
-    eavs_config_file="${OCTO_HOME}/.config/eavs/config.toml"
+    eavs_config_file="${OQTO_HOME}/.config/eavs/config.toml"
   fi
 
   # Resolve env file for the test command
@@ -2613,7 +2613,7 @@ test_eavs_providers() {
   if [[ "$SELECTED_USER_MODE" == "single" ]]; then
     eavs_env_file="${XDG_CONFIG_HOME}/eavs/env"
   else
-    eavs_env_file="${OCTO_HOME}/.config/eavs/env"
+    eavs_env_file="${OQTO_HOME}/.config/eavs/env"
   fi
 
   local any_success="false"
@@ -2630,7 +2630,7 @@ test_eavs_providers() {
       test_result=$(set -a; source "$eavs_env_file" 2>/dev/null; set +a; \
         eavs setup test "$provider" --config "$eavs_config_file" --format json 2>&1) || true
     else
-      test_result=$(sudo -u octo bash -c "set -a; source '$eavs_env_file' 2>/dev/null; set +a; \
+      test_result=$(sudo -u oqto bash -c "set -a; source '$eavs_env_file' 2>/dev/null; set +a; \
         eavs setup test '$provider' --config '$eavs_config_file' --format json" 2>&1) || true
     fi
 
@@ -2660,7 +2660,7 @@ test_eavs_providers() {
         if [[ "$SELECTED_USER_MODE" == "single" ]]; then
           echo "${XDG_CONFIG_HOME}/eavs/config.toml"
         else
-          echo "${OCTO_HOME}/.config/eavs/config.toml"
+          echo "${OQTO_HOME}/.config/eavs/config.toml"
         fi
       )"
     fi
@@ -2675,7 +2675,7 @@ test_eavs_providers() {
 # (or full catalog), and outputs the correct Pi format natively.
 #
 # In single-user mode: writes to ~/.pi/agent/models.json
-# In multi-user mode: the octo backend handles this at user creation time
+# In multi-user mode: the oqto backend handles this at user creation time
 #   (via provision_eavs_for_user in admin.rs), but we also generate a
 #   template for the installing admin user.
 
@@ -2687,7 +2687,7 @@ generate_eavs_models_json() {
   if [[ "$SELECTED_USER_MODE" == "single" ]]; then
     eavs_config_file="${XDG_CONFIG_HOME}/eavs/config.toml"
   else
-    eavs_config_file="${OCTO_HOME}/.config/eavs/config.toml"
+    eavs_config_file="${OQTO_HOME}/.config/eavs/config.toml"
   fi
 
   # Check that eavs supports the export command (>= 0.5.5)
@@ -2703,7 +2703,7 @@ generate_eavs_models_json() {
   if [[ "$SELECTED_USER_MODE" == "single" ]]; then
     pi_models_file="$HOME/.pi/agent/models.json"
   else
-    pi_models_file="${OCTO_DATA_DIR:-$HOME/.local/share/octo}/models.json.template"
+    pi_models_file="${OQTO_DATA_DIR:-$HOME/.local/share/oqto}/models.json.template"
   fi
 
   local merge_flag=""
@@ -2721,7 +2721,7 @@ generate_eavs_models_json() {
       $merge_flag 2>/dev/null)
   else
     # shellcheck disable=SC2086
-    models_json=$(sudo -u octo eavs models export pi \
+    models_json=$(sudo -u oqto eavs models export pi \
       --base-url "$eavs_url" \
       --config "$eavs_config_file" \
       $merge_flag 2>/dev/null)
@@ -2742,13 +2742,13 @@ generate_eavs_models_json() {
     # Also create eavs.env for Pi to use (with a virtual key)
     provision_eavs_user_key "$(whoami)" "$HOME"
   else
-    # In multi-user mode, write a template that the octo backend will
+    # In multi-user mode, write a template that the oqto backend will
     # use when provisioning new users. Also set up the admin user.
-    local octo_data="${OCTO_DATA_DIR:-$HOME/.local/share/octo}"
+    local octo_data="${OQTO_DATA_DIR:-$HOME/.local/share/oqto}"
     mkdir -p "$octo_data"
     echo "$models_json" > "${octo_data}/models.json.template"
     log_success "Wrote models.json template to ${octo_data}/models.json.template"
-    log_info "The octo backend will generate per-user models.json on user creation."
+    log_info "The oqto backend will generate per-user models.json on user creation."
   fi
 
   # Count total models and providers using jq (available on all target systems)
@@ -2777,7 +2777,7 @@ provision_eavs_user_key() {
     -H "Authorization: Bearer ${EAVS_MASTER_KEY}" \
     -H "Content-Type: application/json" \
     -d "{
-      \"name\": \"octo-user-${username}\",
+      \"name\": \"oqto-user-${username}\",
       \"permissions\": {
         \"rpm_limit\": 120,
         \"max_budget_usd\": 500.0
@@ -2788,7 +2788,7 @@ provision_eavs_user_key() {
     log_warn "Failed to create EAVS virtual key for ${username}"
     log_info "Users can still use EAVS with the master key for now."
     # Fall back to master key
-    local octo_config_dir="${user_home}/.config/octo"
+    local octo_config_dir="${user_home}/.config/oqto"
     mkdir -p "$octo_config_dir"
     cat > "${octo_config_dir}/eavs.env" <<EOF
 EAVS_API_KEY=${EAVS_MASTER_KEY}
@@ -2806,7 +2806,7 @@ EOF
     api_key="$EAVS_MASTER_KEY"
   fi
 
-  local octo_config_dir="${user_home}/.config/octo"
+  local octo_config_dir="${user_home}/.config/oqto"
   mkdir -p "$octo_config_dir"
   cat > "${octo_config_dir}/eavs.env" <<EOF
 EAVS_API_KEY=${api_key}
@@ -2847,41 +2847,41 @@ EOF
     log_success "EAVS started (user service on port ${EAVS_PORT})"
 
   else
-    # Multi-user: system service, runs as octo user alongside the backend.
-    # EAVS config lives in octo's home (~octo/.config/eavs/) so XDG just works.
+    # Multi-user: system service, runs as oqto user alongside the backend.
+    # EAVS config lives in oqto's home (~oqto/.config/eavs/) so XDG just works.
     #
     # The DBUS_SESSION_BUS_ADDRESS and XDG_RUNTIME_DIR environment variables
-    # give the service access to the octo user's D-Bus session bus, which is
+    # give the service access to the oqto user's D-Bus session bus, which is
     # needed for gnome-keyring (the keychain: config syntax). This requires
-    # linger to be enabled for octo (done in enable_keyring_for_octo_user).
+    # linger to be enabled for oqto (done in enable_keyring_for_octo_user).
     local octo_uid
-    octo_uid=$(id -u octo)
+    octo_uid=$(id -u oqto)
 
     sudo tee /etc/systemd/system/eavs.service >/dev/null <<EOF
 [Unit]
 Description=EAVS LLM Proxy
 After=network.target
-Before=octo.service
+Before=oqto.service
 
 [Service]
 Type=simple
-User=octo
-Group=octo
-WorkingDirectory=${OCTO_HOME}
-Environment=HOME=${OCTO_HOME}
-Environment=XDG_CONFIG_HOME=${OCTO_HOME}/.config
-Environment=XDG_DATA_HOME=${OCTO_HOME}/.local/share
-Environment=XDG_STATE_HOME=${OCTO_HOME}/.local/state
+User=oqto
+Group=oqto
+WorkingDirectory=${OQTO_HOME}
+Environment=HOME=${OQTO_HOME}
+Environment=XDG_CONFIG_HOME=${OQTO_HOME}/.config
+Environment=XDG_DATA_HOME=${OQTO_HOME}/.local/share
+Environment=XDG_STATE_HOME=${OQTO_HOME}/.local/state
 Environment=XDG_RUNTIME_DIR=/run/user/${octo_uid}
 Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/${octo_uid}/bus
-EnvironmentFile=-${OCTO_HOME}/.config/eavs/env
-ExecStartPre=+/bin/bash -c 'mkdir -p /run/user/${octo_uid} && chown octo:octo /run/user/${octo_uid} && chmod 700 /run/user/${octo_uid}'
+EnvironmentFile=-${OQTO_HOME}/.config/eavs/env
+ExecStartPre=+/bin/bash -c 'mkdir -p /run/user/${octo_uid} && chown oqto:oqto /run/user/${octo_uid} && chmod 700 /run/user/${octo_uid}'
 ExecStart=/usr/local/bin/eavs serve
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true
 ProtectSystem=strict
-ReadWritePaths=${OCTO_HOME}
+ReadWritePaths=${OQTO_HOME}
 ReadWritePaths=/run/user/${octo_uid}
 PrivateTmp=true
 
@@ -2892,7 +2892,7 @@ EOF
     sudo systemctl daemon-reload
     sudo systemctl enable eavs
     sudo systemctl start eavs
-    log_success "EAVS started (system service, user=octo, port ${EAVS_PORT})"
+    log_success "EAVS started (system service, user=oqto, port ${EAVS_PORT})"
   fi
 }
 
@@ -2904,7 +2904,7 @@ select_deployment_mode() {
   log_step "Deployment Mode Selection"
 
   echo
-  echo "Octo can be deployed in two modes:"
+  echo "Oqto can be deployed in two modes:"
   echo
   echo -e "  ${BOLD}Development${NC} - For local development and testing"
   echo "    - Uses dev_mode authentication (no JWT secret required)"
@@ -2925,12 +2925,12 @@ select_deployment_mode() {
   case "$choice" in
   "Development")
     PRODUCTION_MODE="false"
-    OCTO_DEV_MODE="true"
+    OQTO_DEV_MODE="true"
     log_info "Development mode selected"
     ;;
   "Production")
     PRODUCTION_MODE="true"
-    OCTO_DEV_MODE="false"
+    OQTO_DEV_MODE="false"
     log_info "Production mode selected"
     setup_production_mode
     ;;
@@ -2972,7 +2972,7 @@ setup_admin_user() {
   log_step "Admin User Setup"
 
   echo
-  echo "Create an administrator account to manage Octo."
+  echo "Create an administrator account to manage Oqto."
   echo "This user will be able to:"
   echo "  - Access the admin dashboard"
   echo "  - Create invite codes for new users"
@@ -3004,8 +3004,8 @@ setup_caddy_prompt() {
   echo "  - Simple configuration"
   echo
 
-  if [[ -n "$OCTO_SETUP_CADDY" ]]; then
-    SETUP_CADDY="$OCTO_SETUP_CADDY"
+  if [[ -n "$OQTO_SETUP_CADDY" ]]; then
+    SETUP_CADDY="$OQTO_SETUP_CADDY"
   elif confirm "Set up Caddy reverse proxy?" "y"; then
     SETUP_CADDY="yes"
   else
@@ -3023,13 +3023,13 @@ setup_caddy_config() {
   echo "The domain must point to this server's IP address."
   echo
   echo "Examples:"
-  echo "  - octo.example.com"
+  echo "  - oqto.example.com"
   echo "  - agents.mycompany.io"
   echo "  - localhost (for local testing without TLS)"
   echo
 
-  if [[ -n "$OCTO_DOMAIN" ]]; then
-    DOMAIN="$OCTO_DOMAIN"
+  if [[ -n "$OQTO_DOMAIN" ]]; then
+    DOMAIN="$OQTO_DOMAIN"
   else
     DOMAIN=$(prompt_input "Domain name" "localhost")
   fi
@@ -3133,7 +3133,7 @@ generate_caddyfile() {
 
   # Determine ports and paths
   local backend_port="8080"
-  local frontend_dir="/var/www/octo"
+  local frontend_dir="/var/www/oqto"
 
   # Create config directory
   if [[ ! -d "$caddy_config_dir" ]]; then
@@ -3152,7 +3152,7 @@ generate_caddyfile() {
   if [[ "$DOMAIN" == "localhost" ]]; then
     # Local development - no TLS
     sudo tee "$caddyfile" >/dev/null <<EOF
-# Octo Caddyfile - Local Development
+# Oqto Caddyfile - Local Development
 # Generated by setup.sh on $(date)
 
 :80 {
@@ -3169,14 +3169,14 @@ generate_caddyfile() {
     }
     
     log {
-        output file /var/log/caddy/octo.log
+        output file /var/log/caddy/oqto.log
     }
 }
 EOF
   else
     # Production - with TLS
     sudo tee "$caddyfile" >/dev/null <<EOF
-# Octo Caddyfile - Production
+# Oqto Caddyfile - Production
 # Generated by setup.sh on $(date)
 # Domain: ${DOMAIN}
 
@@ -3204,7 +3204,7 @@ ${DOMAIN} {
     }
     
     log {
-        output file /var/log/caddy/octo.log
+        output file /var/log/caddy/oqto.log
         format json
     }
     
@@ -3244,7 +3244,7 @@ install_caddy_service() {
         # Use restart (not start) to pick up the new Caddyfile
         # start is a no-op if caddy is already running with the default config
         sudo systemctl restart caddy
-        log_success "Caddy service started with Octo config"
+        log_success "Caddy service started with Oqto config"
         log_info "Check status with: sudo systemctl status caddy"
       fi
     else
@@ -3266,7 +3266,7 @@ install_caddy_service() {
 # Pulls latest code, rebuilds everything, deploys, copies config, restarts.
 
 update_octo() {
-  log_step "Updating Octo"
+  log_step "Updating Oqto"
 
   cd "$SCRIPT_DIR"
 
@@ -3286,19 +3286,19 @@ update_octo() {
   # Upgrade external tools to versions in dependencies.toml
   update_tools
 
-  # Rebuild Octo (backend + frontend + deploy)
+  # Rebuild Oqto (backend + frontend + deploy)
   build_octo
 
-  # Copy config to service user (multi-user mode uses /var/lib/octo)
-  if [[ -f "/var/lib/octo/.config/octo/config.toml" ]]; then
+  # Copy config to service user (multi-user mode uses /var/lib/oqto)
+  if [[ -f "/var/lib/oqto/.config/oqto/config.toml" ]]; then
     log_info "Syncing config to service user..."
-    local octo_config_home="/var/lib/octo/.config/octo"
-    sudo cp "${XDG_CONFIG_HOME:-$HOME/.config}/octo/config.toml" "${octo_config_home}/config.toml"
-    if [[ -f "${XDG_CONFIG_HOME:-$HOME/.config}/octo/env" ]]; then
-      sudo cp "${XDG_CONFIG_HOME:-$HOME/.config}/octo/env" "${octo_config_home}/env"
+    local octo_config_home="/var/lib/oqto/.config/oqto"
+    sudo cp "${XDG_CONFIG_HOME:-$HOME/.config}/oqto/config.toml" "${octo_config_home}/config.toml"
+    if [[ -f "${XDG_CONFIG_HOME:-$HOME/.config}/oqto/env" ]]; then
+      sudo cp "${XDG_CONFIG_HOME:-$HOME/.config}/oqto/env" "${octo_config_home}/env"
       sudo chmod 600 "${octo_config_home}/env"
     fi
-    sudo chown -R octo:octo "$octo_config_home"
+    sudo chown -R oqto:oqto "$octo_config_home"
     log_success "Config synced"
   fi
 
@@ -3311,12 +3311,12 @@ update_octo() {
     sudo systemctl restart eavs
     log_success "eavs restarted"
   fi
-  if sudo systemctl is-active --quiet octo 2>/dev/null; then
-    sudo systemctl restart octo
-    log_success "octo service restarted"
-  elif systemctl --user is-active --quiet octo 2>/dev/null; then
-    systemctl --user restart octo
-    log_success "octo service restarted"
+  if sudo systemctl is-active --quiet oqto 2>/dev/null; then
+    sudo systemctl restart oqto
+    log_success "oqto service restarted"
+  elif systemctl --user is-active --quiet oqto 2>/dev/null; then
+    systemctl --user restart oqto
+    log_success "oqto service restarted"
   fi
 
   if sudo systemctl is-active --quiet caddy 2>/dev/null; then
@@ -3329,7 +3329,7 @@ update_octo() {
   if curl -sf http://localhost:8080/api/health >/dev/null 2>&1; then
     log_success "Backend is healthy"
   else
-    log_warn "Backend health check failed - check logs with: sudo journalctl -u octo -n 20"
+    log_warn "Backend health check failed - check logs with: sudo journalctl -u oqto -n 20"
   fi
 
   log_success "Update complete!"
@@ -3406,9 +3406,9 @@ update_models_json() {
   local eavs_url="http://127.0.0.1:${EAVS_PORT:-3033}"
 
   # Detect mode from existing config
-  if [[ -f "/var/lib/octo/.config/octo/config.toml" ]]; then
+  if [[ -f "/var/lib/oqto/.config/oqto/config.toml" ]]; then
     # Multi-user
-    eavs_config_file="/var/lib/octo/.config/eavs/config.toml"
+    eavs_config_file="/var/lib/oqto/.config/eavs/config.toml"
     if [[ ! -f "$eavs_config_file" ]]; then
       eavs_config_file="${XDG_CONFIG_HOME:-$HOME/.config}/eavs/config.toml"
     fi
@@ -3460,18 +3460,18 @@ update_models_json() {
 }
 
 build_octo() {
-  log_step "Building Octo components"
+  log_step "Building Oqto components"
 
   cd "$SCRIPT_DIR"
 
-  # Build backend (includes octo, octo-runner, octo-sandbox, pi-bridge binaries)
+  # Build backend (includes oqto, oqto-runner, oqto-sandbox, pi-bridge binaries)
   log_info "Building backend..."
   (cd backend && cargo build --release)
   log_success "Backend built"
 
-  # Build fileserver (octo-files crate in workspace)
+  # Build fileserver (oqto-files crate in workspace)
   log_info "Building fileserver..."
-  (cd backend && cargo build --release -p octo-files --bin octo-files)
+  (cd backend && cargo build --release -p oqto-files --bin oqto-files)
   log_success "Fileserver built"
 
   # Build frontend
@@ -3483,12 +3483,12 @@ build_octo() {
 
   # Build and install agent browser daemon
   log_info "Building agent browser daemon..."
-  local browserd_dir="$SCRIPT_DIR/backend/crates/octo-browserd"
+  local browserd_dir="$SCRIPT_DIR/backend/crates/oqto-browserd"
   if [[ -d "$browserd_dir" ]]; then
     (cd "$browserd_dir" && bun install && bun run build)
-    local browserd_deploy="/usr/local/lib/octo-browserd"
+    local browserd_deploy="/usr/local/lib/oqto-browserd"
     sudo mkdir -p "$browserd_deploy/bin" "$browserd_deploy/dist"
-    sudo cp "$browserd_dir/bin/octo-browserd.js" "$browserd_deploy/bin/"
+    sudo cp "$browserd_dir/bin/oqto-browserd.js" "$browserd_deploy/bin/"
     sudo cp "$browserd_dir/dist/"*.js "$browserd_deploy/dist/"
     sudo cp "$browserd_dir/package.json" "$browserd_deploy/"
     (cd "$browserd_deploy" && sudo bun install --production)
@@ -3502,14 +3502,14 @@ build_octo() {
       log_warn "Playwright browser install failed - agent browser may not work"
     log_success "Agent browser daemon installed to $browserd_deploy"
   else
-    log_warn "octo-browserd not found, skipping agent browser setup"
+    log_warn "oqto-browserd not found, skipping agent browser setup"
   fi
 
   # Install binaries to /usr/local/bin (globally accessible)
   log_info "Installing binaries to ${TOOLS_INSTALL_DIR}..."
 
   local release_dir="$SCRIPT_DIR/backend/target/release"
-  for bin in octo octoctl octo-runner pi-bridge octo-sandbox octo-setup octo-usermgr; do
+  for bin in oqto oqtoctl oqto-runner pi-bridge oqto-sandbox oqto-setup oqto-usermgr; do
     if [[ -f "${release_dir}/${bin}" ]]; then
       sudo install -m 755 "${release_dir}/${bin}" "${TOOLS_INSTALL_DIR}/${bin}"
       # Remove stale copies from ~/.cargo/bin to avoid PATH precedence issues
@@ -3522,16 +3522,16 @@ build_octo() {
     fi
   done
 
-  if [[ -f "$SCRIPT_DIR/backend/target/release/octo-files" ]]; then
-    sudo install -m 755 "$SCRIPT_DIR/backend/target/release/octo-files" "${TOOLS_INSTALL_DIR}/octo-files"
-    log_success "octo-files installed"
+  if [[ -f "$SCRIPT_DIR/backend/target/release/oqto-files" ]]; then
+    sudo install -m 755 "$SCRIPT_DIR/backend/target/release/oqto-files" "${TOOLS_INSTALL_DIR}/oqto-files"
+    log_success "oqto-files installed"
   fi
 
   log_success "Binaries installed to ${TOOLS_INSTALL_DIR}"
 
   # Deploy frontend static files
   local frontend_dist="$SCRIPT_DIR/frontend/dist"
-  local frontend_deploy="/var/www/octo"
+  local frontend_deploy="/var/www/oqto"
   if [[ -d "$frontend_dist" ]]; then
     log_info "Deploying frontend to ${frontend_deploy}..."
     sudo mkdir -p "$frontend_deploy"
@@ -3543,16 +3543,16 @@ build_octo() {
   fi
 
   # Restart running services so they pick up the new binaries
-  if sudo systemctl is-active --quiet octo-usermgr 2>/dev/null; then
-    sudo systemctl restart octo-usermgr
-    log_success "octo-usermgr restarted"
+  if sudo systemctl is-active --quiet oqto-usermgr 2>/dev/null; then
+    sudo systemctl restart oqto-usermgr
+    log_success "oqto-usermgr restarted"
   fi
-  if sudo systemctl is-active --quiet octo 2>/dev/null; then
-    sudo systemctl restart octo
-    log_success "octo restarted with new binary"
-  elif systemctl --user is-active --quiet octo 2>/dev/null; then
-    systemctl --user restart octo
-    log_success "octo restarted with new binary"
+  if sudo systemctl is-active --quiet oqto 2>/dev/null; then
+    sudo systemctl restart oqto
+    log_success "oqto restarted with new binary"
+  elif systemctl --user is-active --quiet oqto 2>/dev/null; then
+    systemctl --user restart oqto
+    log_success "oqto restarted with new binary"
   fi
   if sudo systemctl is-active --quiet eavs 2>/dev/null; then
     sudo systemctl restart eavs
@@ -3568,7 +3568,7 @@ select_user_mode() {
   log_step "User Mode Selection"
 
   echo
-  echo "Octo supports two user modes:"
+  echo "Oqto supports two user modes:"
   echo
   echo -e "  ${BOLD}Single-user${NC} - Personal deployment"
   echo "    - All sessions use the same workspace"
@@ -3615,10 +3615,10 @@ select_backend_mode() {
   fi
 
   echo
-  echo "Octo can run agents in two modes:"
+  echo "Oqto can run agents in two modes:"
   echo
   echo -e "  ${BOLD}Local${NC} - Native processes"
-  echo "    - Runs Pi, octo-files, ttyd directly on host"
+  echo "    - Runs Pi, oqto-files, ttyd directly on host"
   echo "    - Lower overhead, faster startup"
   echo "    - Best for: development, single-user, trusted environments"
   echo
@@ -3652,47 +3652,47 @@ generate_jwt_secret() {
 
 generate_password_hash() {
   local password="$1"
-  # Use octoctl (same bcrypt implementation as the backend) for guaranteed compatibility
+  # Use oqtoctl (same bcrypt implementation as the backend) for guaranteed compatibility
   # Try PATH first, then known install locations (PATH cache may be stale)
-  local octoctl_bin=""
-  if command_exists octoctl; then
-    octoctl_bin="octoctl"
-  elif [[ -x "${TOOLS_INSTALL_DIR}/octoctl" ]]; then
-    octoctl_bin="${TOOLS_INSTALL_DIR}/octoctl"
+  local oqtoctl_bin=""
+  if command_exists oqtoctl; then
+    oqtoctl_bin="oqtoctl"
+  elif [[ -x "${TOOLS_INSTALL_DIR}/oqtoctl" ]]; then
+    oqtoctl_bin="${TOOLS_INSTALL_DIR}/oqtoctl"
   fi
-  if [[ -n "$octoctl_bin" ]] && "$octoctl_bin" hash-password --help >/dev/null 2>&1; then
-    echo -n "$password" | "$octoctl_bin" hash-password
+  if [[ -n "$oqtoctl_bin" ]] && "$oqtoctl_bin" hash-password --help >/dev/null 2>&1; then
+    echo -n "$password" | "$oqtoctl_bin" hash-password
   elif command_exists python3 && python3 -c "import bcrypt" 2>/dev/null; then
     # Fallback: python3 with bcrypt module
     python3 -c "import bcrypt, base64; pwd = base64.b64decode('$([[ -n "$password" ]] && echo -n "$password" | base64 -w0 || echo)').decode(); print(bcrypt.hashpw(pwd.encode(), bcrypt.gensalt(12)).decode())"
   else
-    log_error "Cannot generate password hash. Install octoctl or python3 with bcrypt."
+    log_error "Cannot generate password hash. Install oqtoctl or python3 with bcrypt."
     exit 1
   fi
 }
 
 write_skdlr_agent_config() {
-  local skdlr_config="/etc/octo/skdlr-agent.toml"
-  local sandbox_config="/etc/octo/sandbox.toml"
+  local skdlr_config="/etc/oqto/skdlr-agent.toml"
+  local sandbox_config="/etc/oqto/sandbox.toml"
 
   log_info "Writing skdlr agent config to $skdlr_config"
 
-  sudo mkdir -p /etc/octo
+  sudo mkdir -p /etc/oqto
 
-  # Ensure sandbox config exists for octo-sandbox
+  # Ensure sandbox config exists for oqto-sandbox
   if [[ ! -f "$sandbox_config" ]]; then
     log_info "Creating default sandbox config at $sandbox_config"
-    sudo cp "$SCRIPT_DIR/backend/crates/octo/examples/sandbox.toml" "$sandbox_config"
+    sudo cp "$SCRIPT_DIR/backend/crates/oqto/examples/sandbox.toml" "$sandbox_config"
     sudo chmod 644 "$sandbox_config"
   fi
 
   sudo tee "$skdlr_config" >/dev/null <<'EOF'
-# skdlr config for Octo sandboxed agents
-# Forces all scheduled commands through octo-sandbox
+# skdlr config for Oqto sandboxed agents
+# Forces all scheduled commands through oqto-sandbox
 
 [executor]
-wrapper = "octo-sandbox"
-wrapper_args = ["--config", "/etc/octo/sandbox.toml", "--workspace", "{workdir}", "--"]
+wrapper = "oqto-sandbox"
+wrapper_args = ["--config", "/etc/oqto/sandbox.toml", "--workspace", "{workdir}", "--"]
 EOF
 
   sudo chmod 644 "$skdlr_config"
@@ -3702,10 +3702,10 @@ generate_config() {
   log_step "Generating configuration"
 
   # Create config directories
-  mkdir -p "$OCTO_CONFIG_DIR"
-  mkdir -p "$OCTO_DATA_DIR"
+  mkdir -p "$OQTO_CONFIG_DIR"
+  mkdir -p "$OQTO_DATA_DIR"
 
-  local config_file="$OCTO_CONFIG_DIR/config.toml"
+  local config_file="$OQTO_CONFIG_DIR/config.toml"
 
   if [[ -f "$config_file" ]]; then
     if confirm "Config file exists at $config_file. Overwrite?"; then
@@ -3718,20 +3718,20 @@ generate_config() {
   fi
 
   # Gather configuration values
-  log_info "Configuring Octo..."
+  log_info "Configuring Oqto..."
 
   # Workspace directory (use saved value as default if available)
   if [[ "$SELECTED_USER_MODE" == "single" ]]; then
-    WORKSPACE_DIR=$(prompt_input "Workspace directory" "${WORKSPACE_DIR:-$HOME/octo/workspace}")
+    WORKSPACE_DIR=$(prompt_input "Workspace directory" "${WORKSPACE_DIR:-$HOME/oqto/workspace}")
   else
-    local default_workspace="/home/{linux_username}/octo"
+    local default_workspace="/home/{linux_username}/oqto"
     WORKSPACE_DIR=$(prompt_input "Workspace base directory (user dirs created here)" "${WORKSPACE_DIR:-$default_workspace}")
   fi
 
   # Auth configuration (use globals so state persistence works)
   local dev_user_hash admin_user_hash=""
 
-  if [[ "$OCTO_DEV_MODE" == "true" ]]; then
+  if [[ "$OQTO_DEV_MODE" == "true" ]]; then
     log_info "Setting up development user..."
     dev_user_id=$(prompt_input "Dev user ID" "${dev_user_id:-dev}")
     dev_user_name=$(prompt_input "Dev user name" "${dev_user_name:-Developer}")
@@ -3741,11 +3741,11 @@ generate_config() {
 
     if [[ -n "$dev_password" ]]; then
       log_info "Generating password hash..."
-      local octoctl_bin=""
-      command_exists octoctl && octoctl_bin="octoctl"
-      [[ -z "$octoctl_bin" && -x "${TOOLS_INSTALL_DIR}/octoctl" ]] && octoctl_bin="${TOOLS_INSTALL_DIR}/octoctl"
-      if [[ -n "$octoctl_bin" ]]; then
-        dev_user_hash=$("$octoctl_bin" hash-password --password "$dev_password")
+      local oqtoctl_bin=""
+      command_exists oqtoctl && oqtoctl_bin="oqtoctl"
+      [[ -z "$oqtoctl_bin" && -x "${TOOLS_INSTALL_DIR}/oqtoctl" ]] && oqtoctl_bin="${TOOLS_INSTALL_DIR}/oqtoctl"
+      if [[ -n "$oqtoctl_bin" ]]; then
+        dev_user_hash=$("$oqtoctl_bin" hash-password --password "$dev_password")
       else
         dev_user_hash=$(generate_password_hash "$dev_password")
       fi
@@ -3787,7 +3787,7 @@ generate_config() {
     echo
     echo "This requires:"
     echo "  - sudo privileges (for creating users and sudoers rules)"
-    echo "  - The 'octo' group will be created"
+    echo "  - The 'oqto' group will be created"
     echo "  - Sudoers rules will allow managing octo_* users"
     echo
     if confirm "Enable Linux user isolation? (requires sudo)"; then
@@ -3809,15 +3809,15 @@ generate_config() {
   log_info "Writing config to $config_file"
 
   cat >"$config_file" <<EOF
-# Octo Configuration
+# Oqto Configuration
 # Generated by setup.sh on $(date)
 
-"\$schema" = "https://raw.githubusercontent.com/byteowlz/schemas/refs/heads/main/octo/octo.backend.config.schema.json"
+"\$schema" = "https://raw.githubusercontent.com/byteowlz/schemas/refs/heads/main/oqto/oqto.backend.config.schema.json"
 
 profile = "default"
 
 [logging]
-level = "$OCTO_LOG_LEVEL"
+level = "$OQTO_LOG_LEVEL"
 
 [runtime]
 timeout = 60
@@ -3828,21 +3828,21 @@ mode = "$SELECTED_BACKEND_MODE"
 
 [container]
 runtime = "${CONTAINER_RUNTIME:-docker}"
-default_image = "octo-dev:latest"
+default_image = "oqto-dev:latest"
 base_port = 41820
 EOF
 
   if [[ "$SELECTED_BACKEND_MODE" == "local" ]]; then
     local runner_socket_line=""
     if [[ "$pi_runtime_mode" == "runner" ]]; then
-      runner_socket_line='runner_socket_pattern = "/run/octo/runner-sockets/{user}/octo-runner.sock"'
+      runner_socket_line='runner_socket_pattern = "/run/oqto/runner-sockets/{user}/oqto-runner.sock"'
     fi
 
     cat >>"$config_file" <<EOF
 
 [local]
 enabled = true
-fileserver_binary = "octo-files"
+fileserver_binary = "oqto-files"
 ttyd_binary = "ttyd"
 workspace_dir = "$WORKSPACE_DIR"
 single_user = $([[ "$SELECTED_USER_MODE" == "single" ]] && echo "true" || echo "false")
@@ -3852,7 +3852,7 @@ ${runner_socket_line}
 enabled = $linux_users_enabled
 prefix = "octo_"
 uid_start = 2000
-group = "octo"
+group = "oqto"
 shell = "/bin/zsh"
 use_sudo = true
 create_home = true
@@ -3880,7 +3880,7 @@ EOF
   cat >>"$config_file" <<EOF
 
 [auth]
-dev_mode = $OCTO_DEV_MODE
+dev_mode = $OQTO_DEV_MODE
 EOF
 
   # Add JWT secret for production mode (uncommented)
@@ -3899,7 +3899,7 @@ EOF
     echo "$allowed_origins" >>"$config_file"
   fi
 
-  if [[ "$OCTO_DEV_MODE" == "true" && -n "${dev_user_hash:-}" ]]; then
+  if [[ "$OQTO_DEV_MODE" == "true" && -n "${dev_user_hash:-}" ]]; then
     cat >>"$config_file" <<EOF
 
 [[auth.dev_users]]
@@ -3950,8 +3950,8 @@ EOF
   cat >>"$config_file" <<EOF
 
 [feedback]
-public_dropbox = "${FEEDBACK_PUBLIC_DROPBOX:-/usr/local/share/octo/issues}"
-private_archive = "${FEEDBACK_PRIVATE_ARCHIVE:-/var/lib/octo/issue-archive}"
+public_dropbox = "${FEEDBACK_PUBLIC_DROPBOX:-/usr/local/share/oqto/issues}"
+private_archive = "${FEEDBACK_PRIVATE_ARCHIVE:-/var/lib/oqto/issue-archive}"
 keep_public = true
 sync_interval_seconds = 60
 EOF
@@ -3975,7 +3975,7 @@ description_arg = "--description"
 
 [agent_browser]
 enabled = true
-binary = "/usr/local/lib/octo-browserd/bin/octo-browserd.js"
+binary = "/usr/local/lib/oqto-browserd/bin/oqto-browserd.js"
 headed = false
 stream_port_base = 30000
 stream_port_range = 10000
@@ -3983,7 +3983,7 @@ EOF
 
   log_success "Configuration written to $config_file"
 
-  # API keys are now managed by EAVS, not stored in octo's env file
+  # API keys are now managed by EAVS, not stored in oqto's env file
 
   # Create workspace directory
   if [[ "$SELECTED_USER_MODE" == "single" ]]; then
@@ -4003,7 +4003,7 @@ EOF
 
   # Save admin credentials for post-setup user creation
   if [[ "$PRODUCTION_MODE" == "true" && -n "$ADMIN_USERNAME" ]]; then
-    local creds_file="$OCTO_CONFIG_DIR/.admin_setup"
+    local creds_file="$OQTO_CONFIG_DIR/.admin_setup"
     # Write username/email normally, but use printf for the bcrypt hash
     # to avoid $2b$ being expanded as positional params when sourced
     {
@@ -4030,16 +4030,16 @@ setup_linux_user_isolation() {
 
   log_step "Setting up Linux user isolation"
 
-  local octo_group="octo"
+  local octo_group="oqto"
   local user_prefix="octo_"
   local server_user
 
   # Determine who will run the backend:
-  # - For system service (multi-user production): use 'octo' system user
+  # - For system service (multi-user production): use 'oqto' system user
   # - For user service (development): use current user
   if [[ "${MULTI_USER:-false}" == "true" ]] && [[ "$OS" == "linux" ]]; then
-    # Production multi-user mode: backend runs as 'octo' system user
-    server_user="octo"
+    # Production multi-user mode: backend runs as 'oqto' system user
+    server_user="oqto"
     ensure_octo_system_user
   else
     # Development mode: backend runs as current user
@@ -4048,7 +4048,7 @@ setup_linux_user_isolation() {
 
   log_info "Sudoers rules will be configured for user: $server_user"
 
-  # 1. Create the octo group
+  # 1. Create the oqto group
   if ! getent group "$octo_group" &>/dev/null; then
     log_info "Creating group '$octo_group'..."
     if ! sudo groupadd "$octo_group"; then
@@ -4060,7 +4060,7 @@ setup_linux_user_isolation() {
     log_success "Group '$octo_group' already exists"
   fi
 
-  # 2. Add the server user to the octo group
+  # 2. Add the server user to the oqto group
   log_info "Adding user '$server_user' to group '$octo_group'..."
   if ! sudo usermod -aG "$octo_group" "$server_user"; then
     log_warn "Failed to add user to group (may need to re-login)"
@@ -4071,18 +4071,18 @@ setup_linux_user_isolation() {
   # 3. Create sudoers file for multi-user process management
   log_info "Configuring sudoers for multi-user process management..."
 
-  local sudoers_file="/etc/sudoers.d/octo-multiuser"
+  local sudoers_file="/etc/sudoers.d/oqto-multiuser"
   # Note: uid_start comes from config, default 2000
-  local uid_start="${OCTO_UID_START:-2000}"
+  local uid_start="${OQTO_UID_START:-2000}"
   # UID regex: match 2000-60000 range (avoids system UIDs below and nobody/reserved above)
   # [2-9][0-9]{3} matches 2000-9999, [1-5][0-9]{4} matches 10000-59999, 60000 exact
   local uid_regex="([2-9][0-9][0-9][0-9]|[1-5][0-9][0-9][0-9][0-9]|60000)"
 
   local sudoers_content
   sudoers_content=$(cat <<SUDOERS_EOF
-# Octo Multi-User Process Isolation - SECURE VERSION
+# Oqto Multi-User Process Isolation - SECURE VERSION
 # Generated by setup.sh on $(date)
-# Allows the octo server user to manage isolated user accounts
+# Allows the oqto server user to manage isolated user accounts
 #
 # SECURITY: Uses regex patterns (^...\$) to prevent privilege escalation.
 # - UIDs restricted to ${uid_start}-60000 range (avoids system UIDs and nobody/reserved)
@@ -4091,56 +4091,56 @@ setup_linux_user_isolation() {
 # Requires sudo 1.9.10+ for regex support.
 
 # Group management - only create the ${octo_group} group (safe - fixed value)
-Cmnd_Alias OCTO_GROUPADD = /usr/sbin/groupadd ${octo_group}
+Cmnd_Alias OQTO_GROUPADD = /usr/sbin/groupadd ${octo_group}
 
 # User creation - RESTRICTED to safe UID range and ${user_prefix} prefix
 # Regex matches: -u NNNN -g ${octo_group} -s /bin/bash -m/-M -c COMMENT USERNAME
 # UID must be in ${uid_start}-60000 range, username must start with ${user_prefix}
-# GECOS format: "Octo platform user: USER_ID" - use .* to match including spaces
-Cmnd_Alias OCTO_USERADD = \\
+# GECOS format: "Oqto platform user: USER_ID" - use .* to match including spaces
+Cmnd_Alias OQTO_USERADD = \\
     /usr/sbin/useradd ^-u ${uid_regex} -g ${octo_group} -s /bin/bash -m -c .* ${user_prefix}[a-z0-9_-]+\$, \\
     /usr/sbin/useradd ^-u ${uid_regex} -g ${octo_group} -s /bin/bash -M -c .* ${user_prefix}[a-z0-9_-]+\$
 
 # User deletion - only ${user_prefix} users, no home removal (-r flag not allowed)
-Cmnd_Alias OCTO_USERDEL = /usr/sbin/userdel ^${user_prefix}[a-z0-9_-]+\$
+Cmnd_Alias OQTO_USERDEL = /usr/sbin/userdel ^${user_prefix}[a-z0-9_-]+\$
 
 # Directory creation for runner sockets - RESTRICTED path (no path traversal)
-Cmnd_Alias OCTO_MKDIR = /bin/mkdir ^-p /run/octo/runner-sockets/${user_prefix}[a-z0-9_-]+\$
+Cmnd_Alias OQTO_MKDIR = /bin/mkdir ^-p /run/oqto/runner-sockets/${user_prefix}[a-z0-9_-]+\$
 
 # Runner socket ownership - RESTRICTED to exact paths
-Cmnd_Alias OCTO_CHOWN_RUNNER = \\
-    /usr/bin/chown ^${user_prefix}[a-z0-9_-]+\\:${octo_group} /run/octo/runner-sockets/${user_prefix}[a-z0-9_-]+\$
+Cmnd_Alias OQTO_CHOWN_RUNNER = \\
+    /usr/bin/chown ^${user_prefix}[a-z0-9_-]+\\:${octo_group} /run/oqto/runner-sockets/${user_prefix}[a-z0-9_-]+\$
 
 # Workspace ownership - RESTRICTED to ${user_prefix} user home directories ONLY
 # SECURITY: Only allows chown on /home/${user_prefix}*/... NOT on other users' homes
 # The regex ensures the path starts with /home/${user_prefix} to prevent privilege escalation
-Cmnd_Alias OCTO_CHOWN_WORKSPACE = \\
+Cmnd_Alias OQTO_CHOWN_WORKSPACE = \\
     /usr/bin/chown ^-R ${user_prefix}[a-z0-9_-]+\\:${octo_group} /home/${user_prefix}[a-z0-9_-]+(/[^.][^/]*)*\$
 
 # Permissions for runner socket directories
-Cmnd_Alias OCTO_CHMOD_RUNNER = /usr/bin/chmod ^2770 /run/octo/runner-sockets/${user_prefix}[a-z0-9_-]+\$
+Cmnd_Alias OQTO_CHMOD_RUNNER = /usr/bin/chmod ^2770 /run/oqto/runner-sockets/${user_prefix}[a-z0-9_-]+\$
 
 # systemd linger - only for ${user_prefix} users
-Cmnd_Alias OCTO_LINGER = /usr/bin/loginctl ^enable-linger ${user_prefix}[a-z0-9_]+\$
+Cmnd_Alias OQTO_LINGER = /usr/bin/loginctl ^enable-linger ${user_prefix}[a-z0-9_]+\$
 
 # Start user systemd instance - RESTRICTED to ${user_prefix} user UIDs
-Cmnd_Alias OCTO_START_USER = /usr/bin/systemctl ^start user@${uid_regex}\\.service\$
+Cmnd_Alias OQTO_START_USER = /usr/bin/systemctl ^start user@${uid_regex}\\.service\$
 
 # User management - group and user creation
-${server_user} ALL=(root) NOPASSWD: OCTO_GROUPADD, OCTO_USERADD
+${server_user} ALL=(root) NOPASSWD: OQTO_GROUPADD, OQTO_USERADD
 
-# systemd user management - enable/start octo-runner as ${user_prefix}* users
-Cmnd_Alias OCTO_RUNNER_SYSTEMCTL = \\
-    /usr/bin/systemctl --user enable --now octo-runner, \\
-    /usr/bin/systemctl --user start octo-runner, \\
-    /usr/bin/systemctl --user enable octo-runner
-${server_user} ALL=(${user_prefix}*) NOPASSWD: OCTO_RUNNER_SYSTEMCTL
+# systemd user management - enable/start oqto-runner as ${user_prefix}* users
+Cmnd_Alias OQTO_RUNNER_SYSTEMCTL = \\
+    /usr/bin/systemctl --user enable --now oqto-runner, \\
+    /usr/bin/systemctl --user start oqto-runner, \\
+    /usr/bin/systemctl --user enable oqto-runner
+${server_user} ALL=(${user_prefix}*) NOPASSWD: OQTO_RUNNER_SYSTEMCTL
 
 # Runner socket directory setup and workspace ownership
-${server_user} ALL=(root) NOPASSWD: OCTO_MKDIR, OCTO_CHOWN_RUNNER, OCTO_CHOWN_WORKSPACE, OCTO_CHMOD_RUNNER
+${server_user} ALL=(root) NOPASSWD: OQTO_MKDIR, OQTO_CHOWN_RUNNER, OQTO_CHOWN_WORKSPACE, OQTO_CHMOD_RUNNER
 
 # User systemd management
-${server_user} ALL=(root) NOPASSWD: OCTO_START_USER, OCTO_LINGER
+${server_user} ALL=(root) NOPASSWD: OQTO_START_USER, OQTO_LINGER
 SUDOERS_EOF
 )
 
@@ -4159,7 +4159,7 @@ SUDOERS_EOF
 
   # 4. Create workspace base directory with proper permissions
   log_info "Creating workspace directory structure..."
-  local workspace_base="/var/lib/octo/workspaces"
+  local workspace_base="/var/lib/oqto/workspaces"
   sudo mkdir -p "$workspace_base"
   sudo chown root:"$octo_group" "$workspace_base"
   sudo chmod 775 "$workspace_base"
@@ -4167,12 +4167,12 @@ SUDOERS_EOF
 
   # 5. Install system sandbox config (trusted, root-owned)
   log_info "Installing system sandbox configuration..."
-  local sandbox_config="/etc/octo/sandbox.toml"
-  sudo mkdir -p /etc/octo
+  local sandbox_config="/etc/oqto/sandbox.toml"
+  sudo mkdir -p /etc/oqto
 
   sudo tee "$sandbox_config" >/dev/null <<'EOF'
-# Octo Sandbox Configuration (System-wide)
-# This file is owned by root and trusted by octo-runner.
+# Oqto Sandbox Configuration (System-wide)
+# This file is owned by root and trusted by oqto-runner.
 # It cannot be modified by regular users or compromised agents.
 
 enabled = true
@@ -4211,7 +4211,7 @@ allow_write = [
 
 # Paths to deny write access (takes precedence)
 deny_write = [
-    "/etc/octo/sandbox.toml",
+    "/etc/oqto/sandbox.toml",
 ]
 
 # Namespace isolation
@@ -4223,18 +4223,18 @@ EOF
   sudo chown root:root "$sandbox_config"
   log_success "System sandbox config installed: $sandbox_config"
 
-  # 6. Install skdlr agent config (forces octo-sandbox wrapper)
+  # 6. Install skdlr agent config (forces oqto-sandbox wrapper)
   log_info "Installing skdlr agent configuration..."
-  local skdlr_config="/etc/octo/skdlr-agent.toml"
+  local skdlr_config="/etc/oqto/skdlr-agent.toml"
 
   sudo tee "$skdlr_config" >/dev/null <<'EOF'
-# Octo skdlr configuration for agent scheduling
-# This file is owned by root and enforces octo-sandbox for scheduled runs.
+# Oqto skdlr configuration for agent scheduling
+# This file is owned by root and enforces oqto-sandbox for scheduled runs.
 
 [executor]
-wrapper = "octo-sandbox"
+wrapper = "oqto-sandbox"
 wrapper_args = [
-    "--config", "/etc/octo/sandbox.toml",
+    "--config", "/etc/oqto/sandbox.toml",
     "--workspace", "{workdir}",
     "--"
 ]
@@ -4282,7 +4282,7 @@ create_admin_user_db() {
   local admin_email="${ADMIN_EMAIL:-}"
 
   # Load from creds file if available
-  local creds_file="$OCTO_CONFIG_DIR/.admin_setup"
+  local creds_file="$OQTO_CONFIG_DIR/.admin_setup"
   if [[ -f "$creds_file" ]]; then
     # shellcheck source=/dev/null
     source "$creds_file"
@@ -4292,46 +4292,46 @@ create_admin_user_db() {
 
   if [[ -z "$admin_user" || -z "$admin_email" ]]; then
     log_warn "Admin username/email not set. Re-run setup or create manually:"
-    log_info "  octoctl user bootstrap --username <user> --email <email>"
+    log_info "  oqtoctl user bootstrap --username <user> --email <email>"
     return 0
   fi
 
-  # Find octoctl
-  local octoctl_bin=""
-  if [[ -x "${TOOLS_INSTALL_DIR}/octoctl" ]]; then
-    octoctl_bin="${TOOLS_INSTALL_DIR}/octoctl"
-  elif command_exists octoctl; then
-    octoctl_bin="octoctl"
+  # Find oqtoctl
+  local oqtoctl_bin=""
+  if [[ -x "${TOOLS_INSTALL_DIR}/oqtoctl" ]]; then
+    oqtoctl_bin="${TOOLS_INSTALL_DIR}/oqtoctl"
+  elif command_exists oqtoctl; then
+    oqtoctl_bin="oqtoctl"
   else
-    log_error "octoctl not found. Run the build step first."
+    log_error "oqtoctl not found. Run the build step first."
     return 1
   fi
 
   # Ensure database exists by starting the service (runs migrations)
   local db_path=""
   if [[ "${SELECTED_USER_MODE:-}" == "multi" ]]; then
-    db_path="/var/lib/octo/.local/share/octo/octo.db"
+    db_path="/var/lib/oqto/.local/share/oqto/oqto.db"
     # Migrate from old name
-    local old_db="/var/lib/octo/.local/share/octo/sessions.db"
+    local old_db="/var/lib/oqto/.local/share/oqto/sessions.db"
     if [[ -f "$old_db" && ! -f "$db_path" ]]; then
       sudo mv "$old_db" "$db_path"
       sudo mv "${old_db}-wal" "${db_path}-wal" 2>/dev/null || true
       sudo mv "${old_db}-shm" "${db_path}-shm" 2>/dev/null || true
     fi
     sudo mkdir -p "$(dirname "$db_path")"
-    sudo chown -R octo:octo /var/lib/octo/.local
+    sudo chown -R oqto:oqto /var/lib/oqto/.local
   else
     local data_dir="${XDG_DATA_HOME:-$HOME/.local/share}"
-    db_path="${data_dir}/octo/octo.db"
+    db_path="${data_dir}/oqto/oqto.db"
     mkdir -p "$(dirname "$db_path")"
   fi
 
   if [[ ! -f "$db_path" ]]; then
     log_info "Starting service to initialize database..."
     if [[ "${SELECTED_USER_MODE:-}" == "multi" ]]; then
-      sudo systemctl start octo 2>/dev/null || true
+      sudo systemctl start oqto 2>/dev/null || true
     else
-      systemctl --user start octo 2>/dev/null || true
+      systemctl --user start oqto 2>/dev/null || true
     fi
     # Wait for DB to appear
     local retries=0
@@ -4341,16 +4341,16 @@ create_admin_user_db() {
     done
     # Stop the service again so bootstrap can write to the DB
     if [[ "${SELECTED_USER_MODE:-}" == "multi" ]]; then
-      sudo systemctl stop octo 2>/dev/null || true
+      sudo systemctl stop oqto 2>/dev/null || true
     else
-      systemctl --user stop octo 2>/dev/null || true
+      systemctl --user stop oqto 2>/dev/null || true
     fi
   fi
 
   if [[ ! -f "$db_path" ]]; then
     log_warn "Database not found at $db_path"
-    log_info "Create admin user manually after starting Octo:"
-    log_info "  $octoctl_bin user bootstrap --username \"$admin_user\" --email \"$admin_email\""
+    log_info "Create admin user manually after starting Oqto:"
+    log_info "  $oqtoctl_bin user bootstrap --username \"$admin_user\" --email \"$admin_email\""
     return 0
   fi
 
@@ -4374,12 +4374,12 @@ create_admin_user_db() {
   if [[ "$NONINTERACTIVE" == "true" ]]; then
     local admin_password
     admin_password=$(generate_secure_secret 16)
-    admin_hash=$("$octoctl_bin" hash-password --password "$admin_password")
+    admin_hash=$("$oqtoctl_bin" hash-password --password "$admin_password")
     log_info "Generated admin password: $admin_password"
     log_warn "SAVE THIS PASSWORD - it will not be shown again!"
   else
     log_info "Set the admin password:"
-    admin_hash=$("$octoctl_bin" hash-password)
+    admin_hash=$("$oqtoctl_bin" hash-password)
   fi
 
   if [[ -z "$admin_hash" ]]; then
@@ -4391,20 +4391,20 @@ create_admin_user_db() {
   local bootstrap_args=(user bootstrap --username "$admin_user" --email "$admin_email")
   bootstrap_args+=(--database "$db_path")
   bootstrap_args+=(--password-hash "$admin_hash")
-  # Skip Linux user creation during setup -- it happens at first login via octo-usermgr
+  # Skip Linux user creation during setup -- it happens at first login via oqto-usermgr
   bootstrap_args+=(--no-linux-user)
 
-  # In multi-user mode, run as octo user (DB is owned by octo)
+  # In multi-user mode, run as oqto user (DB is owned by oqto)
   local run_prefix=()
   if [[ "${SELECTED_USER_MODE:-}" == "multi" ]]; then
-    run_prefix=(sudo -u octo)
+    run_prefix=(sudo -u oqto)
   fi
 
-  if "${run_prefix[@]}" "$octoctl_bin" "${bootstrap_args[@]}"; then
+  if "${run_prefix[@]}" "$oqtoctl_bin" "${bootstrap_args[@]}"; then
     log_success "Admin user '$admin_user' created"
   else
     log_warn "Failed to create admin user. Create manually:"
-    log_info "  sudo -u octo $octoctl_bin user bootstrap --username \"$admin_user\" --email \"$admin_email\""
+    log_info "  sudo -u oqto $oqtoctl_bin user bootstrap --username \"$admin_user\" --email \"$admin_email\""
     return 0
   fi
 
@@ -4420,10 +4420,10 @@ generate_initial_invite_code() {
 
   echo
   echo "To add additional users, you'll need invite codes."
-  echo "An initial invite code will be generated when you start Octo."
+  echo "An initial invite code will be generated when you start Oqto."
   echo
   echo "After starting the server, create invite codes with:"
-  echo "  octo invites create --uses 1"
+  echo "  oqto invites create --uses 1"
   echo
   echo "Or use the web admin interface at:"
   if [[ -n "$DOMAIN" && "$DOMAIN" != "localhost" ]]; then
@@ -4446,16 +4446,16 @@ should_harden_server() {
   [[ "$PRODUCTION_MODE" != "true" ]] && return 1
 
   # Check if explicitly set
-  if [[ "$OCTO_HARDEN_SERVER" == "yes" ]]; then
+  if [[ "$OQTO_HARDEN_SERVER" == "yes" ]]; then
     return 0
-  elif [[ "$OCTO_HARDEN_SERVER" == "no" ]]; then
+  elif [[ "$OQTO_HARDEN_SERVER" == "no" ]]; then
     return 1
   fi
 
   # Prompt user
   if [[ "$NONINTERACTIVE" != "true" ]]; then
     if confirm "Apply server hardening (firewall, fail2ban, SSH hardening)?"; then
-      OCTO_HARDEN_SERVER="yes"
+      OQTO_HARDEN_SERVER="yes"
       return 0
     fi
   fi
@@ -4513,14 +4513,14 @@ install_security_packages() {
 
 # Configure firewall (UFW or firewalld)
 configure_firewall() {
-  if [[ "$OCTO_SETUP_FIREWALL" != "yes" ]]; then
+  if [[ "$OQTO_SETUP_FIREWALL" != "yes" ]]; then
     log_info "Skipping firewall configuration"
     return
   fi
 
   log_step "Configuring firewall"
 
-  local ssh_port="${OCTO_SSH_PORT:-22}"
+  local ssh_port="${OQTO_SSH_PORT:-22}"
   local http_port="80"
   local https_port="443"
   local octo_port="8080"
@@ -4544,10 +4544,10 @@ configure_firewall() {
         sudo ufw allow "$https_port/tcp" comment 'HTTPS'
       fi
 
-      # Allow Octo ports (only if not using Caddy)
+      # Allow Oqto ports (only if not using Caddy)
       if [[ "$SETUP_CADDY" != "yes" ]]; then
-        sudo ufw allow "$octo_port/tcp" comment 'Octo API'
-        sudo ufw allow "$frontend_port/tcp" comment 'Octo Frontend'
+        sudo ufw allow "$octo_port/tcp" comment 'Oqto API'
+        sudo ufw allow "$frontend_port/tcp" comment 'Oqto Frontend'
       fi
 
       # Enable UFW
@@ -4575,7 +4575,7 @@ configure_firewall() {
         sudo firewall-cmd --permanent --add-service=https
       fi
 
-      # Allow Octo ports (only if not using Caddy)
+      # Allow Oqto ports (only if not using Caddy)
       if [[ "$SETUP_CADDY" != "yes" ]]; then
         sudo firewall-cmd --permanent --add-port="$octo_port/tcp"
         sudo firewall-cmd --permanent --add-port="$frontend_port/tcp"
@@ -4593,19 +4593,19 @@ configure_firewall() {
 
 # Configure fail2ban
 configure_fail2ban() {
-  if [[ "$OCTO_SETUP_FAIL2BAN" != "yes" ]]; then
+  if [[ "$OQTO_SETUP_FAIL2BAN" != "yes" ]]; then
     log_info "Skipping fail2ban configuration"
     return
   fi
 
   log_step "Configuring fail2ban"
 
-  local ssh_port="${OCTO_SSH_PORT:-22}"
+  local ssh_port="${OQTO_SSH_PORT:-22}"
   local jail_local="/etc/fail2ban/jail.local"
 
   # Create jail.local configuration
   sudo tee "$jail_local" >/dev/null <<EOF
-# Fail2ban Configuration for Octo Server
+# Fail2ban Configuration for Oqto Server
 # Generated by setup.sh on $(date)
 
 [DEFAULT]
@@ -4654,16 +4654,16 @@ EOF
 
 # Harden SSH configuration
 harden_ssh() {
-  if [[ "$OCTO_HARDEN_SSH" != "yes" ]]; then
+  if [[ "$OQTO_HARDEN_SSH" != "yes" ]]; then
     log_info "Skipping SSH hardening"
     return
   fi
 
   log_step "Hardening SSH configuration"
 
-  local ssh_port="${OCTO_SSH_PORT:-22}"
+  local ssh_port="${OQTO_SSH_PORT:-22}"
   local sshd_config_dir="/etc/ssh/sshd_config.d"
-  local hardening_conf="$sshd_config_dir/00-octo-hardening.conf"
+  local hardening_conf="$sshd_config_dir/00-oqto-hardening.conf"
 
   # Ensure sshd_config.d directory exists
   sudo mkdir -p "$sshd_config_dir"
@@ -4677,7 +4677,7 @@ harden_ssh() {
   # Create hardening configuration
   log_info "Creating SSH hardening configuration..."
   sudo tee "$hardening_conf" >/dev/null <<EOF
-# SSH Hardening Configuration for Octo Server
+# SSH Hardening Configuration for Oqto Server
 # Generated by setup.sh on $(date)
 #
 # This file applies security best practices for SSH.
@@ -4756,7 +4756,7 @@ EOF
 
 # Configure automatic security updates
 configure_auto_updates() {
-  if [[ "$OCTO_SETUP_AUTO_UPDATES" != "yes" ]]; then
+  if [[ "$OQTO_SETUP_AUTO_UPDATES" != "yes" ]]; then
     log_info "Skipping automatic updates configuration"
     return
   fi
@@ -4768,7 +4768,7 @@ configure_auto_updates() {
     # Configure unattended-upgrades
     sudo tee /etc/apt/apt.conf.d/50unattended-upgrades >/dev/null <<'EOF'
 // Automatic security updates configuration
-// Generated by Octo setup.sh
+// Generated by Oqto setup.sh
 
 Unattended-Upgrade::Allowed-Origins {
     "${distro_id}:${distro_codename}-security";
@@ -4810,7 +4810,7 @@ download_updates = yes
 apply_updates = no
 
 [emitters]
-system_name = octo-server
+system_name = oqto-server
 emit_via = stdio
 
 [email]
@@ -4856,17 +4856,17 @@ EOCONF
 
 # Apply kernel security parameters
 harden_kernel() {
-  if [[ "$OCTO_HARDEN_KERNEL" != "yes" ]]; then
+  if [[ "$OQTO_HARDEN_KERNEL" != "yes" ]]; then
     log_info "Skipping kernel hardening"
     return
   fi
 
   log_step "Applying kernel security parameters"
 
-  local sysctl_conf="/etc/sysctl.d/99-octo-hardening.conf"
+  local sysctl_conf="/etc/sysctl.d/99-oqto-hardening.conf"
 
   sudo tee "$sysctl_conf" >/dev/null <<'EOF'
-# Kernel Security Parameters for Octo Server
+# Kernel Security Parameters for Oqto Server
 # Generated by setup.sh
 
 # Prevent IP spoofing
@@ -4958,7 +4958,7 @@ harden_server() {
   log_warn "╔══════════════════════════════════════════════════════════════════╗"
   log_warn "║  WARNING: SSH hardening will disable password authentication!    ║"
   log_warn "║  Make sure you have SSH key access before continuing.            ║"
-  log_warn "║  SSH port will be set to: ${OCTO_SSH_PORT:-22}                              ║"
+  log_warn "║  SSH port will be set to: ${OQTO_SSH_PORT:-22}                              ║"
   log_warn "╚══════════════════════════════════════════════════════════════════╝"
   echo
 
@@ -4995,9 +4995,9 @@ harden_server() {
   echo "Security summary:"
   echo "  - Firewall:        $(command_exists ufw && echo 'UFW' || (command_exists firewall-cmd && echo 'firewalld' || echo 'not configured'))"
   echo "  - Fail2ban:        $(systemctl is-active fail2ban 2>/dev/null || echo 'not running')"
-  echo "  - SSH hardening:   ${OCTO_HARDEN_SSH}"
-  echo "  - Auto updates:    ${OCTO_SETUP_AUTO_UPDATES}"
-  echo "  - Kernel hardening: ${OCTO_HARDEN_KERNEL}"
+  echo "  - SSH hardening:   ${OQTO_HARDEN_SSH}"
+  echo "  - Auto updates:    ${OQTO_SETUP_AUTO_UPDATES}"
+  echo "  - Kernel hardening: ${OQTO_HARDEN_KERNEL}"
   echo "  - Audit logging:   $(systemctl is-active auditd 2>/dev/null || echo 'not running')"
   echo
 }
@@ -5006,31 +5006,31 @@ harden_server() {
 # Service Installation
 # ==============================================================================
 
-# Ensure the octo system user exists with a proper home directory.
+# Ensure the oqto system user exists with a proper home directory.
 # Called early in multi-user setup so EAVS/hstry/mmry config can be
-# written into ~octo/.config/ before services are installed.
+# written into ~oqto/.config/ before services are installed.
 # Safe to call multiple times (idempotent).
-OCTO_HOME="/home/octo"
+OQTO_HOME="/home/oqto"
 
 ensure_octo_system_user() {
-  if id octo &>/dev/null; then
-    OCTO_HOME=$(eval echo "~octo")
+  if id oqto &>/dev/null; then
+    OQTO_HOME=$(eval echo "~oqto")
     return 0
   fi
 
-  log_info "Creating octo system user with home at $OCTO_HOME..."
-  # Use /bin/bash so admins can: sudo -su octo
+  log_info "Creating oqto system user with home at $OQTO_HOME..."
+  # Use /bin/bash so admins can: sudo -su oqto
   # No password set, so direct/SSH login is impossible.
-  sudo useradd -r -m -d "$OCTO_HOME" -s /bin/bash octo
+  sudo useradd -r -m -d "$OQTO_HOME" -s /bin/bash oqto
 
   # Create XDG directory structure
   sudo mkdir -p \
-    "${OCTO_HOME}/.config" \
-    "${OCTO_HOME}/.local/share" \
-    "${OCTO_HOME}/.local/state"
-  sudo chown -R octo:octo "$OCTO_HOME"
+    "${OQTO_HOME}/.config" \
+    "${OQTO_HOME}/.local/share" \
+    "${OQTO_HOME}/.local/state"
+  sudo chown -R oqto:oqto "$OQTO_HOME"
 
-  log_success "Created octo system user (home: $OCTO_HOME)"
+  log_success "Created oqto system user (home: $OQTO_HOME)"
 }
 
 install_service_linux() {
@@ -5041,23 +5041,23 @@ install_service_linux() {
     local service_dir="$HOME/.config/systemd/user"
     mkdir -p "$service_dir"
 
-    local service_file="$service_dir/octo.service"
+    local service_file="$service_dir/oqto.service"
 
     cat >"$service_file" <<EOF
-# Octo Server - User service
+# Oqto Server - User service
 # Generated by setup.sh
 
 [Unit]
-Description=Octo Server (User Mode)
+Description=Oqto Server (User Mode)
 After=default.target
 
 [Service]
 Type=simple
-Environment=OCTO_CONFIG=$OCTO_CONFIG_DIR/config.toml
-Environment=RUST_LOG=$OCTO_LOG_LEVEL
+Environment=OQTO_CONFIG=$OQTO_CONFIG_DIR/config.toml
+Environment=RUST_LOG=$OQTO_LOG_LEVEL
 Environment=PLAYWRIGHT_BROWSERS_PATH=/usr/local/share/playwright-browsers
-EnvironmentFile=-$OCTO_CONFIG_DIR/env
-ExecStart=/usr/local/bin/octo serve --local-mode
+EnvironmentFile=-$OQTO_CONFIG_DIR/env
+ExecStart=/usr/local/bin/oqto serve --local-mode
 ExecStop=/bin/kill -TERM \$MAINPID
 TimeoutStopSec=30
 Restart=on-failure
@@ -5071,15 +5071,15 @@ EOF
 
     if confirm "Enable and start the service now?"; then
       systemctl --user daemon-reload
-      systemctl --user enable octo
-      systemctl --user start octo
+      systemctl --user enable oqto
+      systemctl --user start oqto
       log_success "Service enabled and started"
-      log_info "Check status with: systemctl --user status octo"
-      log_info "View logs with: journalctl --user -u octo -f"
+      log_info "Check status with: systemctl --user status oqto"
+      log_info "View logs with: journalctl --user -u oqto -f"
     else
       log_info "To enable manually:"
       log_info "  systemctl --user daemon-reload"
-      log_info "  systemctl --user enable --now octo"
+      log_info "  systemctl --user enable --now oqto"
     fi
   else
     # System-level service (requires sudo)
@@ -5090,65 +5090,65 @@ EOF
       return
     fi
 
-    # Ensure octo user exists (may already be created by ensure_octo_system_user)
+    # Ensure oqto user exists (may already be created by ensure_octo_system_user)
     ensure_octo_system_user
-    local octo_home="$OCTO_HOME"
+    local octo_home="$OQTO_HOME"
 
     # Create runtime directories
-    sudo mkdir -p /run/octo
-    sudo chown octo:octo /run/octo
+    sudo mkdir -p /run/oqto
+    sudo chown oqto:oqto /run/oqto
 
-    # Runtime config in octo's home (XDG layout: ~/.config/octo/)
-    # This is what the octo service actually reads at startup.
-    local octo_config_home="${octo_home}/.config/octo"
+    # Runtime config in oqto's home (XDG layout: ~/.config/oqto/)
+    # This is what the oqto service actually reads at startup.
+    local octo_config_home="${octo_home}/.config/oqto"
     sudo mkdir -p "$octo_config_home"
-    sudo cp "$OCTO_CONFIG_DIR/config.toml" "${octo_config_home}/config.toml"
-    if [[ -f "$OCTO_CONFIG_DIR/env" ]]; then
-      sudo cp "$OCTO_CONFIG_DIR/env" "${octo_config_home}/env"
+    sudo cp "$OQTO_CONFIG_DIR/config.toml" "${octo_config_home}/config.toml"
+    if [[ -f "$OQTO_CONFIG_DIR/env" ]]; then
+      sudo cp "$OQTO_CONFIG_DIR/env" "${octo_config_home}/env"
       sudo chmod 600 "${octo_config_home}/env"
     fi
 
-    # Also copy a baseline config to /etc/octo/ for sandbox policy reference.
+    # Also copy a baseline config to /etc/oqto/ for sandbox policy reference.
     # Sandbox configs (sandbox.toml, skdlr-agent.toml) live here too - these
     # are system-wide policy the admin controls, not per-service runtime config.
-    sudo mkdir -p /etc/octo
-    sudo cp "$OCTO_CONFIG_DIR/config.toml" /etc/octo/config.toml
+    sudo mkdir -p /etc/oqto
+    sudo cp "$OQTO_CONFIG_DIR/config.toml" /etc/oqto/config.toml
 
-    sudo chown -R octo:octo "$octo_home"
+    sudo chown -R oqto:oqto "$octo_home"
 
     # Install service file
-    local service_file="/etc/systemd/system/octo.service"
+    local service_file="/etc/systemd/system/oqto.service"
 
     sudo tee "$service_file" >/dev/null <<EOF
-# Octo Server - System service
+# Oqto Server - System service
 # Generated by setup.sh
 
 [Unit]
-Description=Octo Control Plane Server
-After=network.target eavs.service octo-usermgr.service
-Wants=eavs.service octo-usermgr.service
+Description=Oqto Control Plane Server
+After=network.target eavs.service oqto-usermgr.service
+Wants=eavs.service oqto-usermgr.service
 
 [Service]
 Type=simple
-User=octo
-Group=octo
+User=oqto
+Group=oqto
 WorkingDirectory=${octo_home}
 Environment=HOME=${octo_home}
 Environment=XDG_CONFIG_HOME=${octo_home}/.config
 Environment=XDG_DATA_HOME=${octo_home}/.local/share
 Environment=XDG_STATE_HOME=${octo_home}/.local/state
-Environment=OCTO_CONFIG=${octo_config_home}/config.toml
-Environment=RUST_LOG=$OCTO_LOG_LEVEL
+Environment=OQTO_CONFIG=${octo_config_home}/config.toml
+Environment=RUST_LOG=$OQTO_LOG_LEVEL
 Environment=PLAYWRIGHT_BROWSERS_PATH=/usr/local/share/playwright-browsers
 EnvironmentFile=-${octo_config_home}/env
-ExecStart=/usr/local/bin/octo serve
+ExecStart=/usr/local/bin/oqto serve
 ExecStop=/bin/kill -TERM \$MAINPID
 TimeoutStopSec=30
 Restart=on-failure
 RestartSec=5
 ProtectSystem=strict
 ReadWritePaths=${octo_home}
-ReadWritePaths=/run/octo
+ReadWritePaths=/run/oqto
 PrivateTmp=true
 NoNewPrivileges=true
 AmbientCapabilities=CAP_NET_BIND_SERVICE
@@ -5164,7 +5164,7 @@ EOF
 
     log_success "Service file created: $service_file"
 
-    # Install octo-usermgr service (privileged user management daemon)
+    # Install oqto-usermgr service (privileged user management daemon)
     install_usermgr_service
 
     # Ensure runner socket base directory exists at boot
@@ -5172,41 +5172,41 @@ EOF
 
     if confirm "Enable and start the service now?"; then
       sudo systemctl daemon-reload
-      sudo systemctl enable octo
-      sudo systemctl start octo
+      sudo systemctl enable oqto
+      sudo systemctl start oqto
       log_success "Service enabled and started"
-      log_info "Check status with: sudo systemctl status octo"
-      log_info "View logs with: sudo journalctl -u octo -f"
+      log_info "Check status with: sudo systemctl status oqto"
+      log_info "View logs with: sudo journalctl -u oqto -f"
     fi
   fi
 }
 
 install_usermgr_service() {
-  # octo-usermgr runs as root and listens on a unix socket.
-  # The octo service (unprivileged) sends JSON requests over the socket
+  # oqto-usermgr runs as root and listens on a unix socket.
+  # The oqto service (unprivileged) sends JSON requests over the socket
   # to create/delete Linux users, manage directories, etc.
   # This provides OS-level privilege separation.
-  log_info "Installing octo-usermgr service..."
+  log_info "Installing oqto-usermgr service..."
 
-  local service_file="/etc/systemd/system/octo-usermgr.service"
+  local service_file="/etc/systemd/system/oqto-usermgr.service"
   sudo tee "$service_file" >/dev/null <<EOF
 [Unit]
-Description=Octo User Manager (privileged helper)
-Before=octo.service
+Description=Oqto User Manager (privileged helper)
+Before=oqto.service
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/octo-usermgr
+ExecStart=/usr/local/bin/oqto-usermgr
 Restart=on-failure
 RestartSec=3
-RuntimeDirectory=octo
+RuntimeDirectory=oqto
 RuntimeDirectoryMode=0755
 RuntimeDirectoryPreserve=yes
 ProtectSystem=strict
 ReadWritePaths=/etc
 ReadWritePaths=/home
-ReadWritePaths=/run/octo
-ReadWritePaths=/var/lib/octo
+ReadWritePaths=/run/oqto
+ReadWritePaths=/var/lib/oqto
 PrivateTmp=true
 
 [Install]
@@ -5214,29 +5214,29 @@ WantedBy=multi-user.target
 EOF
 
   sudo systemctl daemon-reload
-  sudo systemctl enable octo-usermgr
-  sudo systemctl start octo-usermgr
-  log_success "octo-usermgr service installed and started"
+  sudo systemctl enable oqto-usermgr
+  sudo systemctl start oqto-usermgr
+  log_success "oqto-usermgr service installed and started"
 }
 
 install_runner_socket_dirs() {
   # Ensure the shared runner socket base directory exists at boot.
-  # Per-user subdirectories are created by octo-usermgr at user creation time.
-  # Per-user service files (octo-runner, hstry, mmry) are also created by usermgr.
+  # Per-user subdirectories are created by oqto-usermgr at user creation time.
+  # Per-user service files (oqto-runner, hstry, mmry) are also created by usermgr.
   log_info "Setting up runner socket directories..."
 
-  local tmpfiles_conf="/etc/tmpfiles.d/octo-runner.conf"
+  local tmpfiles_conf="/etc/tmpfiles.d/oqto-runner.conf"
 
   sudo tee "$tmpfiles_conf" >/dev/null <<'EOF'
-d /run/octo/runner-sockets 2770 root octo -
+d /run/oqto/runner-sockets 2770 root oqto -
 EOF
 
   sudo systemd-tmpfiles --create "$tmpfiles_conf" >/dev/null 2>&1 || true
 
   # Remove any stale global service template (usermgr now handles per-user service files)
-  if [[ -f /etc/systemd/user/octo-runner.service ]]; then
-    sudo rm -f /etc/systemd/user/octo-runner.service
-    log_info "Removed stale global octo-runner.service template"
+  if [[ -f /etc/systemd/user/oqto-runner.service ]]; then
+    sudo rm -f /etc/systemd/user/oqto-runner.service
+    log_info "Removed stale global oqto-runner.service template"
   fi
 
   log_success "Runner socket directories configured"
@@ -5249,7 +5249,7 @@ install_service_macos() {
   local log_dir="$HOME/Library/Logs"
   mkdir -p "$plist_dir" "$log_dir"
 
-  local plist_file="$plist_dir/ai.octo.server.plist"
+  local plist_file="$plist_dir/ai.oqto.server.plist"
 
   # Determine serve flags
   local serve_flags=""
@@ -5263,21 +5263,21 @@ install_service_macos() {
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>ai.octo.server</string>
+    <string>ai.oqto.server</string>
 
     <key>ProgramArguments</key>
     <array>
-        <string>/usr/local/bin/octo</string>
+        <string>/usr/local/bin/oqto</string>
         <string>serve</string>
         $serve_flags
     </array>
 
     <key>EnvironmentVariables</key>
     <dict>
-        <key>OCTO_CONFIG</key>
-        <string>$OCTO_CONFIG_DIR/config.toml</string>
+        <key>OQTO_CONFIG</key>
+        <string>$OQTO_CONFIG_DIR/config.toml</string>
         <key>RUST_LOG</key>
-        <string>$OCTO_LOG_LEVEL</string>
+        <string>$OQTO_LOG_LEVEL</string>
         <key>PATH</key>
         <string>/usr/local/bin:/usr/bin:/bin:$HOME/.bun/bin</string>
     </dict>
@@ -5300,10 +5300,10 @@ install_service_macos() {
     <integer>5</integer>
 
     <key>StandardOutPath</key>
-    <string>$log_dir/octo.stdout.log</string>
+    <string>$log_dir/oqto.stdout.log</string>
 
     <key>StandardErrorPath</key>
-    <string>$log_dir/octo.stderr.log</string>
+    <string>$log_dir/oqto.stderr.log</string>
 </dict>
 </plist>
 EOF
@@ -5315,8 +5315,8 @@ EOF
     launchctl unload "$plist_file" 2>/dev/null || true
     launchctl load "$plist_file"
     log_success "Service loaded and started"
-    log_info "Check status with: launchctl list | grep octo"
-    log_info "View logs at: $log_dir/octo.*.log"
+    log_info "Check status with: launchctl list | grep oqto"
+    log_info "View logs at: $log_dir/oqto.*.log"
   else
     log_info "To load manually:"
     log_info "  launchctl load $plist_file"
@@ -5324,8 +5324,8 @@ EOF
 }
 
 install_service() {
-  if [[ "$OCTO_INSTALL_SERVICE" != "yes" ]]; then
-    log_info "Skipping service installation (OCTO_INSTALL_SERVICE=no)"
+  if [[ "$OQTO_INSTALL_SERVICE" != "yes" ]]; then
+    log_info "Skipping service installation (OQTO_INSTALL_SERVICE=no)"
     return
   fi
 
@@ -5350,7 +5350,7 @@ build_container_image() {
 
   log_step "Building container image"
 
-  if ! confirm "Build the Octo container image? (this may take several minutes)"; then
+  if ! confirm "Build the Oqto container image? (this may take several minutes)"; then
     log_info "Skipping container build"
     log_info "You can build later with: just container-build"
     return
@@ -5366,9 +5366,9 @@ build_container_image() {
   fi
 
   log_info "Building image with $CONTAINER_RUNTIME..."
-  $CONTAINER_RUNTIME build -t octo-dev:latest -f "$dockerfile" .
+  $CONTAINER_RUNTIME build -t oqto-dev:latest -f "$dockerfile" .
 
-  log_success "Container image built: octo-dev:latest"
+  log_success "Container image built: oqto-dev:latest"
 }
 
 # ==============================================================================
@@ -5405,7 +5405,7 @@ start_all_services() {
   # Core services (restart to pick up rebuilt binaries)
   if [[ "$is_user_service" == "false" ]]; then
     # Multi-user: restart system services to pick up new binaries
-    for svc in octo-usermgr eavs octo; do
+    for svc in oqto-usermgr eavs oqto; do
       if sudo systemctl is-active "$svc" &>/dev/null; then
         sudo systemctl restart "$svc" && log_success "$svc: restarted" || log_warn "$svc: failed to restart"
       elif sudo systemctl is-enabled "$svc" &>/dev/null; then
@@ -5432,19 +5432,19 @@ start_all_services() {
       sudo runuser -u "$username" -- env \
         XDG_RUNTIME_DIR="$runtime_dir" \
         DBUS_SESSION_BUS_ADDRESS="$bus" \
-        systemctl --user stop octo-runner hstry mmry 2>/dev/null || true
+        systemctl --user stop oqto-runner hstry mmry 2>/dev/null || true
 
       # Remove stale socket
-      sudo rm -f "/run/octo/runner-sockets/${username}/octo-runner.sock"
+      sudo rm -f "/run/oqto/runner-sockets/${username}/oqto-runner.sock"
 
       # Trigger usermgr to rewrite service files and restart.
-      # The usermgr socket is owned by octo:root 0600, so we must run as octo.
-      if [[ -S /run/octo/usermgr.sock ]]; then
+      # The usermgr socket is owned by oqto:root 0600, so we must run as oqto.
+      if [[ -S /run/oqto/usermgr.sock ]]; then
         local response
-        response=$(sudo -u octo python3 -c "
+        response=$(sudo -u oqto python3 -c "
 import socket, json, sys
 s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-s.connect('/run/octo/usermgr.sock')
+s.connect('/run/oqto/usermgr.sock')
 req = json.dumps({'cmd': 'setup-user-runner', 'args': {'username': '${username}', 'uid': ${uid}}}) + '\n'
 s.sendall(req.encode())
 data = b''
@@ -5465,7 +5465,7 @@ print(data.decode().strip())
     done
   else
     start_svc eavs "$is_user_service"
-    start_svc octo "$is_user_service"
+    start_svc oqto "$is_user_service"
   fi
 
   # Reverse proxy
@@ -5478,11 +5478,11 @@ print(data.decode().strip())
     start_svc searxng "$is_user_service"
   fi
 
-  # Restart octo to pick up any config changes from this setup run
+  # Restart oqto to pick up any config changes from this setup run
   if [[ "$is_user_service" == "true" ]]; then
-    systemctl --user restart octo &>/dev/null || true
+    systemctl --user restart oqto &>/dev/null || true
   else
-    sudo systemctl restart octo &>/dev/null || true
+    sudo systemctl restart oqto &>/dev/null || true
   fi
   log_success "All services started"
 }
@@ -5526,7 +5526,7 @@ print_summary() {
   fi
 
   echo -e "  EAVS (LLM):     $(check_service_status eavs "$is_user_service")"
-  echo -e "  Octo backend:   $(check_service_status octo "$is_user_service")"
+  echo -e "  Oqto backend:   $(check_service_status oqto "$is_user_service")"
 
   if [[ "$SETUP_CADDY" == "yes" ]]; then
     echo -e "  Caddy:          $(check_service_status caddy)"
@@ -5556,7 +5556,7 @@ print_summary() {
   echo "  User mode:       $SELECTED_USER_MODE"
   echo "  Backend mode:    $SELECTED_BACKEND_MODE"
   echo "  Deployment mode: $([[ "$PRODUCTION_MODE" == "true" ]] && echo "Production" || echo "Development")"
-  echo "  Config file:     $OCTO_CONFIG_DIR/config.toml"
+  echo "  Config file:     $OQTO_CONFIG_DIR/config.toml"
   echo
 
   if [[ "$PRODUCTION_MODE" == "true" ]]; then
@@ -5580,13 +5580,13 @@ print_summary() {
       echo
     fi
 
-    if [[ "$OCTO_HARDEN_SERVER" == "yes" && "$OS" == "linux" ]]; then
+    if [[ "$OQTO_HARDEN_SERVER" == "yes" && "$OS" == "linux" ]]; then
       echo "  Server Hardening:"
       echo "    Firewall:      $(command_exists ufw && echo 'UFW enabled' || (command_exists firewall-cmd && echo 'firewalld enabled' || echo 'not configured'))"
       echo -e "    Fail2ban:      $(check_service_status fail2ban)"
-      echo "    SSH port:      ${OCTO_SSH_PORT:-22}"
+      echo "    SSH port:      ${OQTO_SSH_PORT:-22}"
       echo "    SSH auth:      public key only (password disabled)"
-      echo "    Auto updates:  ${OCTO_SETUP_AUTO_UPDATES}"
+      echo "    Auto updates:  ${OQTO_SETUP_AUTO_UPDATES}"
       echo "    Kernel:        hardened sysctl parameters"
       echo -e "    Audit:         $(check_service_status auditd)"
       echo
@@ -5634,15 +5634,15 @@ print_summary() {
   }
 
   echo "  Core binaries:"
-  echo -e "    octo:          $(check_bin octo)"
+  echo -e "    oqto:          $(check_bin oqto)"
   echo -e "    eavs:          $(check_bin eavs)"
-  echo -e "    octo-files:    $(check_bin octo-files)"
+  echo -e "    oqto-files:    $(check_bin oqto-files)"
   echo -e "    pi:            $(check_bin pi)"
   if [[ "$SELECTED_BACKEND_MODE" == "local" ]]; then
     echo -e "    ttyd:          $(check_bin ttyd)"
   fi
   if [[ "$SELECTED_USER_MODE" == "multi" && "$OS" == "linux" ]]; then
-    echo -e "    octo-runner:   $(check_bin octo-runner)"
+    echo -e "    oqto-runner:   $(check_bin oqto-runner)"
   fi
   if [[ "$SELECTED_BACKEND_MODE" == "container" ]]; then
     echo -e "    pi-bridge:     $(check_bin pi-bridge)"
@@ -5697,7 +5697,7 @@ print_summary() {
 
   if [[ "$OS" == "linux" ]]; then
     service_needs_start eavs && need_start+=("eavs")
-    service_needs_start octo && need_start+=("octo")
+    service_needs_start oqto && need_start+=("oqto")
     if [[ "$SETUP_CADDY" == "yes" ]]; then
       service_needs_start caddy && need_start+=("caddy")
     fi
@@ -5736,7 +5736,7 @@ print_summary() {
     ((step++))
 
     echo "  $step. Create invite codes for new users:"
-    echo "     octoctl invites create --uses 1"
+    echo "     oqtoctl invites create --uses 1"
     echo "     # Or use the admin interface"
     echo
   else
@@ -5750,7 +5750,7 @@ print_summary() {
     echo
     ((step++))
 
-    if [[ "$OCTO_DEV_MODE" == "true" && -n "${dev_user_id:-}" ]]; then
+    if [[ "$OQTO_DEV_MODE" == "true" && -n "${dev_user_id:-}" ]]; then
       echo "  $step. Login with your dev credentials:"
       echo "     Username: $dev_user_id"
       echo "     Password: (the password you entered)"
@@ -5761,7 +5761,7 @@ print_summary() {
 
   # Show API key warning if not configured
   if [[ "$EAVS_ENABLED" != "true" && "$LLM_API_KEY_SET" != "true" && -n "$LLM_PROVIDER" ]]; then
-    echo -e "  ${YELLOW}IMPORTANT:${NC} Set your API key before starting Octo:"
+    echo -e "  ${YELLOW}IMPORTANT:${NC} Set your API key before starting Oqto:"
     case "$LLM_PROVIDER" in
     anthropic)
       echo "     export ANTHROPIC_API_KEY=your-key-here"
@@ -5785,7 +5785,7 @@ print_summary() {
   # macOS note about env file
   if [[ "$OS" == "macos" && "$LLM_API_KEY_SET" == "true" ]]; then
     echo "  Note: On macOS, source the env file before starting manually:"
-    echo "     source $OCTO_CONFIG_DIR/env"
+    echo "     source $OQTO_CONFIG_DIR/env"
     echo
   fi
 
@@ -5803,7 +5803,7 @@ print_summary() {
 
 show_help() {
   cat <<EOF
-Octo Setup Script
+Oqto Setup Script
 
 Usage: $0 [OPTIONS]
 
@@ -5820,7 +5820,7 @@ Options:
   --dev, --development  Development mode (no hardening, dev auth enabled)
   
   --domain <domain>     Set domain and enable Caddy reverse proxy
-                        Example: --domain octo.example.com
+                        Example: --domain oqto.example.com
   
   --ssh-port <port>     Set SSH port for hardening (default: 22)
   
@@ -5835,33 +5835,33 @@ Options:
   --update              Pull latest code, rebuild, deploy, and restart services
   --fresh               Clear all saved state and completed steps, start over
   --redo step1,step2    Re-run specific steps (comma-separated)
-                        (state: ~/.config/octo/setup-state.env)
-                        (steps: ~/.config/octo/setup-steps-done)
+                        (state: ~/.config/oqto/setup-state.env)
+                        (steps: ~/.config/oqto/setup-steps-done)
 
   Tool installation:
   --all-tools           Install all byteowlz agent tools
   --no-agent-tools      Skip agent tools installation
 
 Environment Variables:
-  OCTO_USER_MODE          single or multi (default: single)
-  OCTO_BACKEND_MODE       local or container (default: local)
-  OCTO_CONTAINER_RUNTIME  docker, podman, or auto (default: auto)
-  OCTO_INSTALL_DEPS       yes or no (default: yes)
-  OCTO_INSTALL_SERVICE    yes or no (default: yes)
-  OCTO_INSTALL_AGENT_TOOLS yes or no (default: yes)
-  OCTO_DEV_MODE           true or false (default: prompt user)
-  OCTO_LOG_LEVEL          error, warn, info, debug, trace (default: info)
-  OCTO_SETUP_CADDY        yes or no (default: prompt user in production mode)
-  OCTO_DOMAIN             domain for HTTPS (e.g., octo.example.com)
+  OQTO_USER_MODE          single or multi (default: single)
+  OQTO_BACKEND_MODE       local or container (default: local)
+  OQTO_CONTAINER_RUNTIME  docker, podman, or auto (default: auto)
+  OQTO_INSTALL_DEPS       yes or no (default: yes)
+  OQTO_INSTALL_SERVICE    yes or no (default: yes)
+  OQTO_INSTALL_AGENT_TOOLS yes or no (default: yes)
+  OQTO_DEV_MODE           true or false (default: prompt user)
+  OQTO_LOG_LEVEL          error, warn, info, debug, trace (default: info)
+  OQTO_SETUP_CADDY        yes or no (default: prompt user in production mode)
+  OQTO_DOMAIN             domain for HTTPS (e.g., oqto.example.com)
 
 Server Hardening (Linux production mode only):
-  OCTO_HARDEN_SERVER      yes or no (default: prompt in production mode)
-  OCTO_SSH_PORT           SSH port number (default: 22)
-  OCTO_SETUP_FIREWALL     yes or no - configure UFW/firewalld (default: yes)
-  OCTO_SETUP_FAIL2BAN     yes or no - install and configure fail2ban (default: yes)
-  OCTO_HARDEN_SSH         yes or no - apply SSH hardening (default: yes)
-  OCTO_SETUP_AUTO_UPDATES yes or no - enable automatic security updates (default: yes)
-  OCTO_HARDEN_KERNEL      yes or no - apply kernel security parameters (default: yes)
+  OQTO_HARDEN_SERVER      yes or no (default: prompt in production mode)
+  OQTO_SSH_PORT           SSH port number (default: 22)
+  OQTO_SETUP_FIREWALL     yes or no - configure UFW/firewalld (default: yes)
+  OQTO_SETUP_FAIL2BAN     yes or no - install and configure fail2ban (default: yes)
+  OQTO_HARDEN_SSH         yes or no - apply SSH hardening (default: yes)
+  OQTO_SETUP_AUTO_UPDATES yes or no - enable automatic security updates (default: yes)
+  OQTO_HARDEN_KERNEL      yes or no - apply kernel security parameters (default: yes)
 
 LLM Provider API Keys (set one of these, or use EAVS):
   ANTHROPIC_API_KEY       Anthropic Claude API key
@@ -5891,8 +5891,8 @@ Search Engine:
 
 Pi Extensions (from github.com/byteowlz/pi-agent-extensions):
   auto-rename          - Auto-generate session names from first query
-  octo-bridge          - Emit agent phase status for the Octo runner
-  octo-todos           - Todo management for Octo UI
+  oqto-bridge          - Emit agent phase status for the Oqto runner
+  oqto-todos           - Todo management for Oqto UI
   custom-context-files - Auto-load USER.md, PERSONALITY.md into prompts
 
 For detailed documentation on all prerequisites and components, see SETUP.md
@@ -5905,19 +5905,19 @@ Examples:
   ./setup.sh --dev
 
   # Full production setup with all hardening (RECOMMENDED for servers)
-  ./setup.sh --production --domain octo.example.com
+  ./setup.sh --production --domain oqto.example.com
 
   # Production with custom SSH port
-  ./setup.sh --production --domain octo.example.com --ssh-port 2222
+  ./setup.sh --production --domain oqto.example.com --ssh-port 2222
 
   # Production but keep password SSH auth (for initial setup)
-  ./setup.sh --production --domain octo.example.com --no-ssh-hardening
+  ./setup.sh --production --domain oqto.example.com --no-ssh-hardening
 
   # Multi-user container setup on Linux
-  OCTO_USER_MODE=multi OCTO_BACKEND_MODE=container ./setup.sh --production
+  OQTO_USER_MODE=multi OQTO_BACKEND_MODE=container ./setup.sh --production
 
   # Environment variable style (equivalent to --production)
-  OCTO_DEV_MODE=false OCTO_HARDEN_SERVER=yes ./setup.sh --non-interactive
+  OQTO_DEV_MODE=false OQTO_HARDEN_SERVER=yes ./setup.sh --non-interactive
 EOF
 }
 
@@ -5938,8 +5938,8 @@ main() {
       ;;
     --fresh)
       FRESH_SETUP="true"
-      rm -f "${XDG_CONFIG_HOME:-$HOME/.config}/octo/setup-state.env"
-      rm -f "${XDG_CONFIG_HOME:-$HOME/.config}/octo/setup-steps-done"
+      rm -f "${XDG_CONFIG_HOME:-$HOME/.config}/oqto/setup-state.env"
+      rm -f "${XDG_CONFIG_HOME:-$HOME/.config}/oqto/setup-steps-done"
       shift
       ;;
     --redo)
@@ -5947,10 +5947,10 @@ main() {
       local redo_steps="${2:-}"
       if [[ -z "$redo_steps" ]]; then
         log_error "--redo requires comma-separated step names"
-        log_info "Steps file: ${XDG_CONFIG_HOME:-$HOME/.config}/octo/setup-steps-done"
+        log_info "Steps file: ${XDG_CONFIG_HOME:-$HOME/.config}/oqto/setup-steps-done"
         exit 1
       fi
-      local steps_file="${XDG_CONFIG_HOME:-$HOME/.config}/octo/setup-steps-done"
+      local steps_file="${XDG_CONFIG_HOME:-$HOME/.config}/oqto/setup-steps-done"
       if [[ -f "$steps_file" ]]; then
         IFS=',' read -ra steps_to_redo <<< "$redo_steps"
         for s in "${steps_to_redo[@]}"; do
@@ -5967,61 +5967,61 @@ main() {
     --production | --prod)
       # Production mode with all hardening enabled
       NONINTERACTIVE="true"
-      OCTO_DEV_MODE="false"
-      OCTO_HARDEN_SERVER="yes"
-      OCTO_SETUP_FIREWALL="yes"
-      OCTO_SETUP_FAIL2BAN="yes"
-      OCTO_HARDEN_SSH="yes"
-      OCTO_SETUP_AUTO_UPDATES="yes"
-      OCTO_HARDEN_KERNEL="yes"
-      OCTO_INSTALL_DEPS="yes"
-      OCTO_INSTALL_SERVICE="yes"
-      OCTO_INSTALL_AGENT_TOOLS="yes"
+      OQTO_DEV_MODE="false"
+      OQTO_HARDEN_SERVER="yes"
+      OQTO_SETUP_FIREWALL="yes"
+      OQTO_SETUP_FAIL2BAN="yes"
+      OQTO_HARDEN_SSH="yes"
+      OQTO_SETUP_AUTO_UPDATES="yes"
+      OQTO_HARDEN_KERNEL="yes"
+      OQTO_INSTALL_DEPS="yes"
+      OQTO_INSTALL_SERVICE="yes"
+      OQTO_INSTALL_AGENT_TOOLS="yes"
       shift
       ;;
     --dev | --development)
       # Development mode, no hardening
       NONINTERACTIVE="true"
-      OCTO_DEV_MODE="true"
-      OCTO_HARDEN_SERVER="no"
+      OQTO_DEV_MODE="true"
+      OQTO_HARDEN_SERVER="no"
       shift
       ;;
     --domain)
-      OCTO_DOMAIN="$2"
-      OCTO_SETUP_CADDY="yes"
+      OQTO_DOMAIN="$2"
+      OQTO_SETUP_CADDY="yes"
       shift 2
       ;;
     --domain=*)
-      OCTO_DOMAIN="${1#*=}"
-      OCTO_SETUP_CADDY="yes"
+      OQTO_DOMAIN="${1#*=}"
+      OQTO_SETUP_CADDY="yes"
       shift
       ;;
     --ssh-port)
-      OCTO_SSH_PORT="$2"
+      OQTO_SSH_PORT="$2"
       shift 2
       ;;
     --ssh-port=*)
-      OCTO_SSH_PORT="${1#*=}"
+      OQTO_SSH_PORT="${1#*=}"
       shift
       ;;
     --no-firewall)
-      OCTO_SETUP_FIREWALL="no"
+      OQTO_SETUP_FIREWALL="no"
       shift
       ;;
     --no-fail2ban)
-      OCTO_SETUP_FAIL2BAN="no"
+      OQTO_SETUP_FAIL2BAN="no"
       shift
       ;;
     --no-ssh-hardening)
-      OCTO_HARDEN_SSH="no"
+      OQTO_HARDEN_SSH="no"
       shift
       ;;
     --no-auto-updates)
-      OCTO_SETUP_AUTO_UPDATES="no"
+      OQTO_SETUP_AUTO_UPDATES="no"
       shift
       ;;
     --no-kernel-hardening)
-      OCTO_HARDEN_KERNEL="no"
+      OQTO_HARDEN_KERNEL="no"
       shift
       ;;
     --all-tools)
@@ -6030,7 +6030,7 @@ main() {
       shift
       ;;
     --no-agent-tools)
-      OCTO_INSTALL_AGENT_TOOLS="no"
+      OQTO_INSTALL_AGENT_TOOLS="no"
       shift
       ;;
     *)
@@ -6083,8 +6083,8 @@ main() {
 
   # Mode selection (skip if loaded from state)
   if [[ "$use_saved_state" != "true" ]]; then
-    SELECTED_USER_MODE="${OCTO_USER_MODE}"
-    SELECTED_BACKEND_MODE="${OCTO_BACKEND_MODE}"
+    SELECTED_USER_MODE="${OQTO_USER_MODE}"
+    SELECTED_BACKEND_MODE="${OQTO_BACKEND_MODE}"
   fi
 
   if [[ "$use_saved_state" != "true" ]]; then
@@ -6094,10 +6094,10 @@ main() {
       select_deployment_mode
     else
       # Non-interactive: use env var or default to dev mode
-      if [[ -z "$OCTO_DEV_MODE" ]]; then
-        OCTO_DEV_MODE="true"
+      if [[ -z "$OQTO_DEV_MODE" ]]; then
+        OQTO_DEV_MODE="true"
       fi
-      PRODUCTION_MODE="$([[ "$OCTO_DEV_MODE" == "false" ]] && echo "true" || echo "false")"
+      PRODUCTION_MODE="$([[ "$OQTO_DEV_MODE" == "false" ]] && echo "true" || echo "false")"
     fi
   fi
 
@@ -6105,7 +6105,7 @@ main() {
   check_prerequisites
 
   # Install dependencies
-  if [[ "$OCTO_INSTALL_DEPS" == "yes" ]]; then
+  if [[ "$OQTO_INSTALL_DEPS" == "yes" ]]; then
     # Shell tools - verify key binaries exist, not just that the step ran
     verify_or_rerun "shell_tools" "Shell tools" \
       "command -v tmux && command -v rg && (command -v fd || command -v fdfind)" \
@@ -6117,11 +6117,11 @@ main() {
 
     # Pi extensions - verify they're actually on disk
     verify_or_rerun "pi_extensions" "Pi extensions" \
-      "test -d $HOME/.pi/agent/extensions/octo-bridge" \
+      "test -d $HOME/.pi/agent/extensions/oqto-bridge" \
       "$(if [[ "$SELECTED_USER_MODE" == "multi" ]]; then echo install_pi_extensions_all_users; else echo install_pi_extensions; fi)"
 
     # Agent tools
-    if [[ "$OCTO_INSTALL_AGENT_TOOLS" == "yes" ]]; then
+    if [[ "$OQTO_INSTALL_AGENT_TOOLS" == "yes" ]]; then
       verify_or_rerun "agntz" "agntz" "command -v agntz" install_agntz
 
       if [[ "$NONINTERACTIVE" != "true" ]] && ! step_done "agent_tools_selected"; then
@@ -6148,9 +6148,9 @@ main() {
     fi
   fi
 
-  # In multi-user mode, create the octo system user early
+  # In multi-user mode, create the oqto system user early
   if [[ "$SELECTED_USER_MODE" == "multi" && "$OS" == "linux" ]]; then
-    run_step "octo_system_user" "Octo system user" ensure_octo_system_user
+    run_step "octo_system_user" "Oqto system user" ensure_octo_system_user
   fi
 
   # EAVS (LLM proxy)
@@ -6164,11 +6164,11 @@ main() {
   fi
   run_step "eavs_models" "EAVS models.json" generate_eavs_models_json
 
-  # Build Octo - ALWAYS rebuild to ensure binaries match the current source.
+  # Build Oqto - ALWAYS rebuild to ensure binaries match the current source.
   # This is critical: stale binaries cause subtle bugs that are hard to diagnose.
   # The build is incremental (cargo only recompiles changed crates) so it's fast
   # when nothing changed.
-  run_step_always "build_octo" "Build Octo" build_octo
+  run_step_always "build_octo" "Build Oqto" build_octo
 
   # Generate configuration
   run_step "generate_config" "Configuration" generate_config
@@ -6179,7 +6179,7 @@ main() {
   run_step "feedback_dirs" "Feedback directories" setup_feedback_dirs
 
   # Linux user isolation
-  verify_or_rerun "linux_user_isolation" "Linux user isolation" "test -f /etc/sudoers.d/octo-multiuser" setup_linux_user_isolation
+  verify_or_rerun "linux_user_isolation" "Linux user isolation" "test -f /etc/sudoers.d/oqto-multiuser" setup_linux_user_isolation
 
   # Container image
   run_step "container_image" "Container image" build_container_image

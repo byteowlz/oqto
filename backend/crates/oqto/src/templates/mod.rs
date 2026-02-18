@@ -1,0 +1,14 @@
+//! Onboarding templates module.
+//!
+//! Manages templates for user onboarding (ONBOARD.md, PERSONALITY.md, USER.md, AGENTS.md).
+//! Templates can come from:
+//! 1. Remote git repo (default: byteowlz/oqto-templates)
+//! 2. Local filesystem path
+//! 3. Embedded fallback (compiled into binary)
+
+mod config;
+mod service;
+
+#[allow(unused_imports)]
+pub use config::{OnboardingTemplatesConfig, TemplatePreset, UserTemplateOverrides};
+pub use service::OnboardingTemplatesService;

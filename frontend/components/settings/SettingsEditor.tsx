@@ -32,7 +32,7 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 interface SettingsEditorProps {
-	/** App to edit settings for (e.g., "octo", "mmry") */
+	/** App to edit settings for (e.g., "oqto", "mmry") */
 	app: string;
 	/** Title to display */
 	title?: string;

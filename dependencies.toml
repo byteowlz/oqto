@@ -1,9 +1,9 @@
 # External Dependencies Manifest
 #
-# This file tracks the versions of external tools and services that Octo depends on.
+# This file tracks the versions of external tools and services that Oqto depends on.
 # Run `just update-deps` to refresh this manifest from local repos and git tags.
 
-[octo]
+[oqto]
 version = "0.1.0"
 description = "Main platform (this repo)"
 
@@ -25,5 +25,5 @@ eaRS = "0.4.2"
 kokorox = "0.2.2"
 
 [external]
-# Not byteowlz, but required for Octo
+# Not byteowlz, but required for Oqto
 pi = "latest"  # From npm: `bun install -g @mariozechner/pi-coding-agent`

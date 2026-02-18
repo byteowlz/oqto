@@ -7,7 +7,7 @@ Interactive UI surfaces that agents can send to users.
 ### Simple Confirmation
 
 ```bash
-octoctl a2ui button "Deploy to production?" --options "Deploy,Cancel"
+oqtoctl a2ui button "Deploy to production?" --options "Deploy,Cancel"
 ```
 
 ```json
@@ -19,7 +19,7 @@ octoctl a2ui button "Deploy to production?" --options "Deploy,Cancel"
 ### Text Input
 
 ```bash
-octoctl a2ui input "Enter commit message" --type text
+oqtoctl a2ui input "Enter commit message" --type text
 ```
 
 ```json
@@ -31,7 +31,7 @@ octoctl a2ui input "Enter commit message" --type text
 ### Multiple Choice (Single Select)
 
 ```bash
-octoctl a2ui choice "Select environment" --options "Development,Staging,Production"
+oqtoctl a2ui choice "Select environment" --options "Development,Staging,Production"
 ```
 
 ```json
@@ -43,7 +43,7 @@ octoctl a2ui choice "Select environment" --options "Development,Staging,Producti
 ### Toggle/Checkbox
 
 ```bash
-octoctl a2ui checkbox "Enable verbose logging" --default false
+oqtoctl a2ui checkbox "Enable verbose logging" --default false
 ```
 
 ```json
@@ -54,7 +54,7 @@ octoctl a2ui checkbox "Enable verbose logging" --default false
 ### Slider
 
 ```bash
-octoctl a2ui slider "Concurrency level" --min 1 --max 16 --default 4
+oqtoctl a2ui slider "Concurrency level" --min 1 --max 16 --default 4
 ```
 
 ```json
@@ -199,12 +199,12 @@ Agent asks for scheduling:
 
 ---
 
-## Using with octoctl
+## Using with oqtoctl
 
 ### Send Raw JSON
 
 ```bash
-octoctl a2ui raw '[
+oqtoctl a2ui raw '[
   {"type":"text","content":"Custom surface"},
   {"type":"button","id":"ok","label":"OK","action":"acknowledge"}
 ]'
@@ -213,17 +213,17 @@ octoctl a2ui raw '[
 ### Environment Variables
 
 ```bash
-export OCTO_SESSION_ID=main-chat
-export OCTO_API_URL=http://localhost:8080
+export OQTO_SESSION_ID=main-chat
+export OQTO_API_URL=http://localhost:8080
 
-octoctl a2ui button "Continue?" --options "Yes,No"
+oqtoctl a2ui button "Continue?" --options "Yes,No"
 ```
 
 ### Blocking Mode (wait for response)
 
 ```bash
 # This will block until user clicks a button
-RESPONSE=$(octoctl a2ui button "Approve?" --options "Approve,Reject" --blocking --timeout 120)
+RESPONSE=$(oqtoctl a2ui button "Approve?" --options "Approve,Reject" --blocking --timeout 120)
 echo "User selected: $RESPONSE"
 ```
 

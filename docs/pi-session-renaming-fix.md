@@ -2,7 +2,7 @@
 
 ## Problem
 
-1. **Message mixing between sessions**: Messages from different Pi sessions were appearing in the wrong sessions in Octo frontend
+1. **Message mixing between sessions**: Messages from different Pi sessions were appearing in the wrong sessions in Oqto frontend
 2. **Auto-generated title parsing**: Pi extension auto-renames sessions to `<workdir>: <generated_title> [adj-noun-verb]`, but:
    - Frontend displayed the full title including workspace and ID
    - The `readable_id` field was missing from backend API
@@ -10,7 +10,7 @@
 
 ## Solution
 
-### Backend Changes (`backend/crates/octo/src/`)
+### Backend Changes (`backend/crates/oqto/src/`)
 
 1. **New parser module**: `pi/session_parser.rs`
    - Parses auto-generated title format: `<workdir>: <title> [readable_id]`
@@ -81,7 +81,7 @@ The workspace prefix and ID brackets are still shown in tooltips for context.
 
 ```bash
 # Backend
-cd backend && cargo check -p octo
+cd backend && cargo check -p oqto
 
 # Frontend
 cd frontend && bun run build

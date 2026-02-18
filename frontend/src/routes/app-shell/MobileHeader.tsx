@@ -88,9 +88,9 @@ export const MobileHeader = memo(function MobileHeader({
 					<div className="flex-1 flex justify-center">
 						<img
 							src={
-								isDark ? "/octo_logo_new_white.png" : "/octo_logo_new_black.png"
+								isDark ? "/oqto_logo_white.svg" : "/oqto_logo_black.svg"
 							}
-							alt="OCTO"
+							alt="OQTO"
 							width={80}
 							height={32}
 							className="h-8 w-auto object-contain"
@@ -100,7 +100,7 @@ export const MobileHeader = memo(function MobileHeader({
 			) : (
 				<div className="flex-1 min-w-0 px-3 text-center">
 					<div className="text-sm font-medium text-foreground truncate">
-						{activeApp?.label ? resolveText(activeApp.label) : "Octo"}
+						{activeApp?.label ? resolveText(activeApp.label) : "Oqto"}
 					</div>
 					<div className="text-[10px] text-muted-foreground truncate">
 						{activeApp?.description || ""}

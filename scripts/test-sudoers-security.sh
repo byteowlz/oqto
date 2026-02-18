@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Sudoers Security Audit Script for Octo Multi-User Mode
+# Sudoers Security Audit Script for Oqto Multi-User Mode
 # Tests that sudoers regex patterns properly restrict privilege escalation
 #
 # NOTE: If you have full sudo access (e.g., "wismut ALL=(ALL) ALL"), all commands
@@ -29,16 +29,16 @@ fail() {
 }
 
 # Verify sudoers rules are active by checking sudo -l output
-SUDOERS_FILE="/etc/sudoers.d/octo-multiuser"
+SUDOERS_FILE="/etc/sudoers.d/oqto-multiuser"
 if ! sudo -l 2>/dev/null | grep -qE "useradd|NOPASSWD"; then
     echo -e "${RED}ERROR${NC}: Cannot verify sudoers rules. Make sure $SUDOERS_FILE exists."
     echo "Install it with:"
-    echo "  sudo cp /tmp/octo-multiuser.sudoers $SUDOERS_FILE"
+    echo "  sudo cp /tmp/oqto-multiuser.sudoers $SUDOERS_FILE"
     echo "  sudo chmod 440 $SUDOERS_FILE"
     exit 1
 fi
 
-echo "=== Octo Sudoers Security Audit ==="
+echo "=== Oqto Sudoers Security Audit ==="
 echo "Testing regex patterns in: $SUDOERS_FILE"
 echo ""
 
@@ -46,21 +46,21 @@ echo ""
 if sudo -l 2>/dev/null | grep -qE "\(ALL\).*ALL|\(ALL : ALL\).*ALL"; then
     echo -e "${YELLOW}NOTE${NC}: You have full sudo access, so runtime tests would pass everything."
     echo "This script tests the REGEX PATTERNS to verify they would restrict a"
-    echo "dedicated service user that only has the octo-multiuser rules."
+    echo "dedicated service user that only has the oqto-multiuser rules."
     echo ""
 fi
 
 # The allowed patterns from our sudoers file (for useradd with -m flag):
-# ^-u [2][0-9][0-9][0-9] -g octo -s /bin/bash -m -c [^ ]+ octo_[a-z0-9_-]+$
-USERADD_PATTERN='^-u [2][0-9][0-9][0-9] -g octo -s /bin/bash -m -c [^ ]+ octo_[a-z0-9_-]+$'
+# ^-u [2][0-9][0-9][0-9] -g oqto -s /bin/bash -m -c [^ ]+ octo_[a-z0-9_-]+$
+USERADD_PATTERN='^-u [2][0-9][0-9][0-9] -g oqto -s /bin/bash -m -c [^ ]+ octo_[a-z0-9_-]+$'
 
 # The allowed pattern for chown workspace:
-# ^-R octo_[a-z0-9_-]+\:octo /home/octo_[a-z0-9_-]+(/[^.][^/]*)*$
-CHOWN_PATTERN='^-R octo_[a-z0-9_-]+:octo /home/octo_[a-z0-9_-]+(/[^.][^/]*)*$'
+# ^-R octo_[a-z0-9_-]+\:oqto /home/octo_[a-z0-9_-]+(/[^.][^/]*)*$
+CHOWN_PATTERN='^-R octo_[a-z0-9_-]+:oqto /home/octo_[a-z0-9_-]+(/[^.][^/]*)*$'
 
 # The allowed pattern for mkdir:
-# ^-p /run/octo/runner-sockets/octo_[a-z0-9_-]+$
-MKDIR_PATTERN='^-p /run/octo/runner-sockets/octo_[a-z0-9_-]+$'
+# ^-p /run/oqto/runner-sockets/octo_[a-z0-9_-]+$
+MKDIR_PATTERN='^-p /run/oqto/runner-sockets/octo_[a-z0-9_-]+$'
 
 # The allowed pattern for systemctl start:
 # ^start user@[2][0-9][0-9][0-9]\.service$
@@ -135,32 +135,32 @@ echo "(These should be BLOCKED - not match the allowed pattern)"
 echo ""
 
 test_useradd_blocked "Block UID 0 (root)" \
-    "-u 0 -g octo -s /bin/bash -m -c test octo_evil"
+    "-u 0 -g oqto -s /bin/bash -m -c test octo_evil"
 
 test_useradd_blocked "Block UID 1 (daemon)" \
-    "-u 1 -g octo -s /bin/bash -m -c test octo_evil"
+    "-u 1 -g oqto -s /bin/bash -m -c test octo_evil"
 
 test_useradd_blocked "Block UID 1000 (typical user)" \
-    "-u 1000 -g octo -s /bin/bash -m -c test octo_evil"
+    "-u 1000 -g oqto -s /bin/bash -m -c test octo_evil"
 
 test_useradd_blocked "Block UID 1999 (below range)" \
-    "-u 1999 -g octo -s /bin/bash -m -c test octo_evil"
+    "-u 1999 -g oqto -s /bin/bash -m -c test octo_evil"
 
 test_useradd_blocked "Block UID 10000 (above range)" \
-    "-u 10000 -g octo -s /bin/bash -m -c test octo_evil"
+    "-u 10000 -g oqto -s /bin/bash -m -c test octo_evil"
 
 echo ""
 echo "--- USERADD: Username Prefix Tests ---"
 echo ""
 
 test_useradd_blocked "Block non-octo_ prefix (evil_)" \
-    "-u 2000 -g octo -s /bin/bash -m -c test evil_user"
+    "-u 2000 -g oqto -s /bin/bash -m -c test evil_user"
 
 test_useradd_blocked "Block no prefix" \
-    "-u 2000 -g octo -s /bin/bash -m -c test alice"
+    "-u 2000 -g oqto -s /bin/bash -m -c test alice"
 
 test_useradd_blocked "Block root username" \
-    "-u 2000 -g octo -s /bin/bash -m -c test root"
+    "-u 2000 -g oqto -s /bin/bash -m -c test root"
 
 echo ""
 echo "--- USERADD: Group Restriction Tests ---"
@@ -180,26 +180,26 @@ echo "--- USERADD: Shell Restriction Tests ---"
 echo ""
 
 test_useradd_blocked "Block /bin/sh shell" \
-    "-u 2000 -g octo -s /bin/sh -m -c test octo_test"
+    "-u 2000 -g oqto -s /bin/sh -m -c test octo_test"
 
 test_useradd_blocked "Block /usr/bin/zsh shell" \
-    "-u 2000 -g octo -s /usr/bin/zsh -m -c test octo_test"
+    "-u 2000 -g oqto -s /usr/bin/zsh -m -c test octo_test"
 
 test_useradd_blocked "Block /bin/false shell" \
-    "-u 2000 -g octo -s /bin/false -m -c test octo_test"
+    "-u 2000 -g oqto -s /bin/false -m -c test octo_test"
 
 echo ""
 echo "--- USERADD: Valid Commands (should be ALLOWED) ---"
 echo ""
 
-test_useradd_allowed "Allow valid: UID 2000, octo group, bash, octo_ prefix" \
-    "-u 2000 -g octo -s /bin/bash -m -c testuser octo_alice"
+test_useradd_allowed "Allow valid: UID 2000, oqto group, bash, octo_ prefix" \
+    "-u 2000 -g oqto -s /bin/bash -m -c testuser octo_alice"
 
-test_useradd_allowed "Allow valid: UID 2999, octo group, bash, octo_ prefix" \
-    "-u 2999 -g octo -s /bin/bash -m -c testuser octo_bob"
+test_useradd_allowed "Allow valid: UID 2999, oqto group, bash, octo_ prefix" \
+    "-u 2999 -g oqto -s /bin/bash -m -c testuser octo_bob"
 
 test_useradd_allowed "Allow valid: UID 2500, longer username" \
-    "-u 2500 -g octo -s /bin/bash -m -c testuser octo_user_with_underscores"
+    "-u 2500 -g oqto -s /bin/bash -m -c testuser octo_user_with_underscores"
 
 echo ""
 echo "--- CHOWN: Path Security Tests ---"
@@ -207,22 +207,22 @@ echo "(These should be BLOCKED)"
 echo ""
 
 test_chown_blocked "Block chown /home/wismut (other user)" \
-    "-R octo_test:octo /home/wismut"
+    "-R octo_test:oqto /home/wismut"
 
 test_chown_blocked "Block chown /home/root" \
-    "-R octo_test:octo /home/root"
+    "-R octo_test:oqto /home/root"
 
 test_chown_blocked "Block chown /etc" \
-    "-R octo_test:octo /etc"
+    "-R octo_test:oqto /etc"
 
 test_chown_blocked "Block chown /root" \
-    "-R octo_test:octo /root"
+    "-R octo_test:oqto /root"
 
 test_chown_blocked "Block chown with path traversal" \
-    "-R octo_test:octo /home/octo_test/../wismut"
+    "-R octo_test:oqto /home/octo_test/../wismut"
 
 test_chown_blocked "Block chown hidden dir at root" \
-    "-R octo_test:octo /home/octo_test/.ssh"
+    "-R octo_test:oqto /home/octo_test/.ssh"
 
 echo ""
 echo "--- MKDIR: Path Traversal Tests ---"
@@ -230,13 +230,13 @@ echo "(These should be BLOCKED)"
 echo ""
 
 test_mkdir_blocked "Block mkdir path traversal" \
-    "-p /run/octo/runner-sockets/octo_test/../../../tmp/evil"
+    "-p /run/oqto/runner-sockets/octo_test/../../../tmp/evil"
 
-test_mkdir_blocked "Block mkdir outside /run/octo" \
+test_mkdir_blocked "Block mkdir outside /run/oqto" \
     "-p /tmp/octo_test"
 
-test_mkdir_blocked "Block mkdir for non-octo user" \
-    "-p /run/octo/runner-sockets/evil_user"
+test_mkdir_blocked "Block mkdir for non-oqto user" \
+    "-p /run/oqto/runner-sockets/evil_user"
 
 echo ""
 echo "--- SYSTEMCTL: UID Restriction Tests ---"

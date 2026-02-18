@@ -1,0 +1,62 @@
+# Oqto Agent - Per-user systemd service
+# 
+# This service runs the oqto-agent for a specific user, providing:
+# - OpenCode instance running as that user
+# - File server for workspace access
+# - Terminal (ttyd) access
+#
+# Installation (as root):
+#   cp oqto-agent@.service /etc/systemd/system/
+#   systemctl daemon-reload
+#
+# Usage:
+#   systemctl start oqto-agent@alice    # Start agent for user alice
+#   systemctl enable oqto-agent@alice   # Enable on boot
+#   systemctl status oqto-agent@alice   # Check status
+#
+# The agent listens on a Unix socket at /run/oqto/agent-%i.sock
+
+[Unit]
+Description=Oqto Agent for %i
+After=network.target
+PartOf=oqto.service
+
+[Service]
+Type=simple
+User=%i
+Group=%i
+
+# Working directory - user's home
+WorkingDirectory=~
+
+# Environment
+Environment=OQTO_USER=%i
+Environment=OQTO_SOCKET=/run/oqto/agent-%i.sock
+Environment=XDG_RUNTIME_DIR=/run/user/%U
+
+# Create runtime directory
+RuntimeDirectory=oqto
+RuntimeDirectoryMode=0755
+
+# Main process - oqto-agent binary
+# Listens on Unix socket for commands from oqto-server
+ExecStart=/usr/local/bin/oqto-agent serve --socket /run/oqto/agent-%i.sock
+
+# Graceful shutdown
+ExecStop=/bin/kill -TERM $MAINPID
+TimeoutStopSec=30
+
+# Restart policy
+Restart=on-failure
+RestartSec=5
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/%i
+ReadWritePaths=/var/lib/oqto/users/%i
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

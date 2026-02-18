@@ -62,9 +62,9 @@ export function DefaultChatProvider({ children }: { children: ReactNode }) {
 	const [defaultChatActive, setDefaultChatActiveRaw] = useState(() => {
 		if (typeof window !== "undefined") {
 			try {
-				const lastSessionId = localStorage.getItem("octo:lastChatSessionId");
+				const lastSessionId = localStorage.getItem("oqto:lastChatSessionId");
 				const lastDefaultChatActive = localStorage.getItem(
-					"octo:lastDefaultChatActive",
+					"oqto:lastDefaultChatActive",
 				);
 				// If we have a stored preference, use it
 				if (lastDefaultChatActive !== null) {
@@ -75,8 +75,8 @@ export function DefaultChatProvider({ children }: { children: ReactNode }) {
 					return false;
 				}
 			} catch {
-				localStorage.removeItem("octo:lastChatSessionId");
-				localStorage.removeItem("octo:lastDefaultChatActive");
+				localStorage.removeItem("oqto:lastChatSessionId");
+				localStorage.removeItem("oqto:lastDefaultChatActive");
 			}
 		}
 		// Default to default chat if nothing stored
@@ -92,7 +92,7 @@ export function DefaultChatProvider({ children }: { children: ReactNode }) {
 					if (typeof window !== "undefined") {
 						try {
 							localStorage.setItem(
-								"octo:lastDefaultChatActive",
+								"oqto:lastDefaultChatActive",
 								String(newValue),
 							);
 						} catch {
@@ -115,9 +115,9 @@ export function DefaultChatProvider({ children }: { children: ReactNode }) {
 		useState<string | null>(() => {
 			if (typeof window !== "undefined") {
 				try {
-					return localStorage.getItem("octo:defaultChatCurrentSessionId");
+					return localStorage.getItem("oqto:defaultChatCurrentSessionId");
 				} catch {
-					localStorage.removeItem("octo:defaultChatCurrentSessionId");
+					localStorage.removeItem("oqto:defaultChatCurrentSessionId");
 				}
 			}
 			return null;
@@ -132,12 +132,12 @@ export function DefaultChatProvider({ children }: { children: ReactNode }) {
 		if (typeof window !== "undefined") {
 			try {
 				if (id) {
-					localStorage.setItem("octo:defaultChatCurrentSessionId", id);
+					localStorage.setItem("oqto:defaultChatCurrentSessionId", id);
 				} else {
-					localStorage.removeItem("octo:defaultChatCurrentSessionId");
+					localStorage.removeItem("oqto:defaultChatCurrentSessionId");
 				}
 			} catch {
-				localStorage.removeItem("octo:defaultChatCurrentSessionId");
+				localStorage.removeItem("oqto:defaultChatCurrentSessionId");
 			}
 		}
 	}, []);

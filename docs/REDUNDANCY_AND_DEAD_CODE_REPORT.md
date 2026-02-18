@@ -1,4 +1,4 @@
-# Octo Codebase - Redundancy and Dead Code Report
+# Oqto Codebase - Redundancy and Dead Code Report
 
 **Date:** 2025-02-15
 **Scope:** Backend (Rust) and Frontend (TypeScript/React)
@@ -9,7 +9,7 @@
 
 ### 1. Dead Code in Container Module
 
-**File:** `backend/crates/octo/src/container/mod.rs` and `container.rs`
+**File:** `backend/crates/oqto/src/container/mod.rs` and `container.rs`
 
 The container module has multiple methods marked with `#[allow(dead_code)]` that appear to be unused:
 
@@ -27,17 +27,17 @@ The trait `ContainerRuntimeApi` defines `get_stats()` as required, but the imple
 ### 2. Unused Binary Targets
 
 **Files:**
-- `backend/crates/octo/src/bin/octo-ssh-proxy.rs` (~450 lines)
-- `backend/crates/octo/src/bin/octo-guard.rs` (~600 lines)
+- `backend/crates/oqto/src/bin/oqto-ssh-proxy.rs` (~450 lines)
+- `backend/crates/oqto/src/bin/oqto-guard.rs` (~600 lines)
 
 These binaries are **NOT** listed in `Cargo.toml` `[[bin]]` sections but exist in the source:
 
 ```toml
 # Current Cargo.toml bins:
-octo, octoctl, octo-runner, octo-sandbox, pi-bridge
+oqto, oqtoctl, oqto-runner, oqto-sandbox, pi-bridge
 
 # Missing from Cargo.toml:
-octo-ssh-proxy, octo-guard
+oqto-ssh-proxy, oqto-guard
 ```
 
 They are referenced in documentation and test scripts (`tools/test-ssh-proxy.sh`), suggesting they are built manually or are incomplete.
@@ -46,7 +46,7 @@ They are referenced in documentation and test scripts (`tools/test-ssh-proxy.sh`
 
 ### 3. `#[allow(dead_code)]` Attributes
 
-**File:** `backend/crates/octo/src/container/container.rs`
+**File:** `backend/crates/oqto/src/container/container.rs`
 
 Multiple fields on `ContainerConfig` are marked dead_code:
 ```rust
@@ -68,19 +68,19 @@ These are configuration fields that are parsed but never used in container creat
 
 Multiple `#[allow(unused_imports)]` attributes throughout the codebase that hide potential dependency issues:
 
-- `backend/crates/octo/src/api/mod.rs`
-- `backend/crates/octo/src/auth/mod.rs`
-- `backend/crates/octo/src/container/mod.rs`
-- `backend/crates/octo/src/eavs/mod.rs`
-- `backend/crates/octo/src/invite/mod.rs`
-- `backend/crates/octo/src/local/mod.rs`
-- `backend/crates/octo/src/session/mod.rs`
-- `backend/crates/octo/src/history/mod.rs`
-- `backend/crates/octo/src/templates/mod.rs`
+- `backend/crates/oqto/src/api/mod.rs`
+- `backend/crates/oqto/src/auth/mod.rs`
+- `backend/crates/oqto/src/container/mod.rs`
+- `backend/crates/oqto/src/eavs/mod.rs`
+- `backend/crates/oqto/src/invite/mod.rs`
+- `backend/crates/oqto/src/local/mod.rs`
+- `backend/crates/oqto/src/session/mod.rs`
+- `backend/crates/oqto/src/history/mod.rs`
+- `backend/crates/oqto/src/templates/mod.rs`
 
 ### 5. DirectUserPlane - Stubbed Methods
 
-**File:** `backend/crates/octo/src/user_plane/direct.rs`
+**File:** `backend/crates/oqto/src/user_plane/direct.rs`
 
 Multiple trait methods are stubbed with TODOs that panic or return empty results:
 
@@ -190,7 +190,7 @@ Multiple Radix UI wrapper components exist but some may be unused:
 
 ### 2. Backend Test Code Marked Dead
 
-**File:** `backend/crates/octo/src/api/handlers/mod.rs`
+**File:** `backend/crates/oqto/src/api/handlers/mod.rs`
 
 ```rust
 #[cfg(test)]
@@ -206,7 +206,7 @@ These test imports are suppressed as unused, indicating potential test organizat
 
 ### 3. Scaffold Dead Code
 
-**File:** `backend/crates/octo-scaffold/src/templates.rs`
+**File:** `backend/crates/oqto-scaffold/src/templates.rs`
 
 ```rust
 #[allow(dead_code)]
@@ -222,7 +222,7 @@ The generate_readme function exists but may be unused.
 ### Immediate Actions (High Impact)
 
 1. **Remove `#[allow(dead_code)]` from ContainerRuntime methods that are truly unused** or implement their functionality
-2. **Add `octo-ssh-proxy` and `octo-guard` to Cargo.toml** or document why they're not built by default
+2. **Add `oqto-ssh-proxy` and `oqto-guard` to Cargo.toml** or document why they're not built by default
 3. **Unify Locale type** - export from one location, import in the other
 4. **Audit generated types usage** - either migrate to them or stop generating unused ones
 
@@ -250,7 +250,7 @@ grep -r "#\[allow(dead_code)\]" --include="*.rs" backend/
 grep -r "#\[allow(unused_imports)\]" --include="*.rs" backend/
 
 # Find TODOs in user_plane
-grep -r "TODO" --include="*.rs" backend/crates/octo/src/user_plane/
+grep -r "TODO" --include="*.rs" backend/crates/oqto/src/user_plane/
 
 # Check for duplicate type definitions
 grep -r "export type Locale" --include="*.ts" frontend/

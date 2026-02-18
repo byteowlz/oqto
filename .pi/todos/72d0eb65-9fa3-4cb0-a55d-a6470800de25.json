@@ -1,0 +1,65 @@
+{
+  "todos": [
+    {
+      "id": "1",
+      "content": "Rename crate directories: oqto->oqto, oqto-browser->oqto-browser, etc.",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "2",
+      "content": "Update all Cargo.toml files (crate names, binary names, dependencies)",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "3",
+      "content": "Replace oqto/Oqto strings in all Rust source files",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "4",
+      "content": "Replace oqto/Oqto strings in all TypeScript/frontend files",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "5",
+      "content": "Rename binary source files (oqto-runner.rs -> oqto-runner.rs etc.)",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "6",
+      "content": "Update config paths (~/.config/oqto -> ~/.config/oqto etc.)",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "7",
+      "content": "Update docs, README, AGENTS.md, justfile, deploy files",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "id": "8",
+      "content": "Update frontend tauri config, package names, settings app keys",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "9",
+      "content": "Update logo references in frontend to use oqto_ logos",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "id": "10",
+      "content": "Run remote-build check to verify no compile errors",
+      "status": "in_progress",
+      "priority": "high"
+    }
+  ],
+  "updated_at": "2026-02-18T15:26:44.304Z"
+}

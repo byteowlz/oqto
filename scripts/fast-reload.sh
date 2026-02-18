@@ -8,21 +8,21 @@ sudo -v
 
 # Build on remote and fetch release binaries
 cd "$ROOT_DIR/backend"
-remote-build build --release -p octo --bin octo --bin octo-runner
-remote-build build --release -p octo-files --bin octo-files
+remote-build build --release -p oqto --bin oqto --bin oqto-runner
+remote-build build --release -p oqto-files --bin oqto-files
 
 # Install binaries system-wide
-sudo install -m 0755 "$ROOT_DIR/backend/target/release/octo" /usr/local/bin/octo
-sudo install -m 0755 "$ROOT_DIR/backend/target/release/octo-runner" /usr/local/bin/octo-runner
-sudo install -m 0755 "$ROOT_DIR/backend/target/release/octo-files" /usr/local/bin/octo-files
+sudo install -m 0755 "$ROOT_DIR/backend/target/release/oqto" /usr/local/bin/oqto
+sudo install -m 0755 "$ROOT_DIR/backend/target/release/oqto-runner" /usr/local/bin/oqto-runner
+sudo install -m 0755 "$ROOT_DIR/backend/target/release/oqto-files" /usr/local/bin/oqto-files
 
-# Restart octo serve
-pkill -f "octo serve" || true
-nohup /usr/local/bin/octo serve >/tmp/octo-serve.log 2>&1 &
+# Restart oqto serve
+pkill -f "oqto serve" || true
+nohup /usr/local/bin/oqto serve >/tmp/oqto-serve.log 2>&1 &
 
 # Restart runner
-sudo pkill -f "/usr/local/bin/octo-runner --socket /run/octo/runner-sockets/$(id -un)/octo-runner.sock" || true
-mkdir -p "/run/octo/runner-sockets/$(id -un)"
-nohup /usr/local/bin/octo-runner --socket "/run/octo/runner-sockets/$(id -un)/octo-runner.sock" >/tmp/octo-runner.log 2>&1 &
+sudo pkill -f "/usr/local/bin/oqto-runner --socket /run/oqto/runner-sockets/$(id -un)/oqto-runner.sock" || true
+mkdir -p "/run/oqto/runner-sockets/$(id -un)"
+nohup /usr/local/bin/oqto-runner --socket "/run/oqto/runner-sockets/$(id -un)/oqto-runner.sock" >/tmp/oqto-runner.log 2>&1 &
 
-echo "octo binaries installed and services restarted"
+echo "oqto binaries installed and services restarted"

@@ -25,7 +25,7 @@ function SettingsHelpPanel({ locale }: { locale: "en" | "de" }) {
 		en: {
 			title: "Settings Help",
 			description:
-				"Configure your Octo workspace and memory service settings here.",
+				"Configure your Oqto workspace and memory service settings here.",
 			tips: [
 				"Changes are applied when you click Save",
 				"Click the reset button next to a field to restore its default value",
@@ -39,7 +39,7 @@ function SettingsHelpPanel({ locale }: { locale: "en" | "de" }) {
 		de: {
 			title: "Einstellungen Hilfe",
 			description:
-				"Konfigurieren Sie hier Ihren Octo-Arbeitsbereich und die Speicherdiensteinstellungen.",
+				"Konfigurieren Sie hier Ihren Oqto-Arbeitsbereich und die Speicherdiensteinstellungen.",
 			tips: [
 				"Anderungen werden angewendet, wenn Sie auf Speichern klicken",
 				"Klicken Sie auf die Reset-Schaltflache neben einem Feld, um den Standardwert wiederherzustellen",
@@ -297,11 +297,11 @@ function AccountPanel({ locale }: { locale: "en" | "de" }) {
 export function SettingsApp() {
 	const { locale, setActiveAppId } = useApp();
 	const navigate = useNavigate();
-	const [mainTab, setMainTab] = useState<"octo" | "mmry" | "account">("octo");
+	const [mainTab, setMainTab] = useState<"oqto" | "mmry" | "account">("oqto");
 	const [sidebarTab, setSidebarTab] = useState<"help" | "shortcuts">("help");
 	const [mobileView, setMobileView] = useState<
-		"octo" | "mmry" | "account" | "help" | "shortcuts"
-	>("octo");
+		"oqto" | "mmry" | "account" | "help" | "shortcuts"
+	>("oqto");
 	const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(false);
 
 	// TODO: Check if user is admin from context
@@ -314,7 +314,7 @@ export function SettingsApp() {
 
 	const t = {
 		en: {
-			octoTab: "Octo",
+			octoTab: "Oqto",
 			mmryTab: "Memory",
 			accountTab: "Account",
 			help: "Help",
@@ -322,7 +322,7 @@ export function SettingsApp() {
 			close: "Close",
 		},
 		de: {
-			octoTab: "Octo",
+			octoTab: "Oqto",
 			mmryTab: "Speicher",
 			accountTab: "Konto",
 			help: "Hilfe",
@@ -338,10 +338,10 @@ export function SettingsApp() {
 				<div className="sticky top-0 z-10 bg-card border border-border rounded-t-xl overflow-hidden">
 					<div className="flex gap-0.5 p-1 sm:p-2">
 						<TabButton
-							active={mobileView === "octo"}
+							active={mobileView === "oqto"}
 							onClick={() => {
-								setMobileView("octo");
-								setMainTab("octo");
+								setMobileView("oqto");
+								setMainTab("oqto");
 							}}
 							icon={Settings}
 							label={t.octoTab}
@@ -398,9 +398,9 @@ export function SettingsApp() {
 						</div>
 					</div>
 					<div className="flex-1 min-h-0 overflow-y-auto scrollbar-hide">
-						{mobileView === "octo" && (
+						{mobileView === "oqto" && (
 							<div className="sm:max-w-3xl sm:mx-auto">
-								<SettingsEditor app="octo" isAdmin={isAdmin} />
+								<SettingsEditor app="oqto" isAdmin={isAdmin} />
 							</div>
 						)}
 						{mobileView === "mmry" && (
@@ -464,8 +464,8 @@ export function SettingsApp() {
 
 					<div className="mt-4 flex items-center gap-2">
 						<TabButton
-							active={mainTab === "octo"}
-							onClick={() => setMainTab("octo")}
+							active={mainTab === "oqto"}
+							onClick={() => setMainTab("oqto")}
 							icon={Settings}
 							label={t.octoTab}
 						/>
@@ -484,9 +484,9 @@ export function SettingsApp() {
 					</div>
 
 					<div className="flex-1 min-h-0 overflow-y-auto scrollbar-hide mt-4">
-						{mainTab === "octo" && (
+						{mainTab === "oqto" && (
 							<div className="max-w-3xl">
-								<SettingsEditor app="octo" isAdmin={isAdmin} />
+								<SettingsEditor app="oqto" isAdmin={isAdmin} />
 							</div>
 						)}
 						{mainTab === "mmry" && (

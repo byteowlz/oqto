@@ -2,7 +2,7 @@
 
 ## Context
 
-We're refactoring Pi session management to move it from the octo backend into octo-runner. This enables:
+We're refactoring Pi session management to move it from the oqto backend into oqto-runner. This enables:
 - Single multiplexed WebSocket for all services (pi, files, terminal, hstry)
 - Runner owns Pi process lifecycle and hstry persistence
 - Backend becomes a stateless relay
@@ -19,8 +19,8 @@ We're refactoring Pi session management to move it from the octo backend into oc
 All 36 Pi commands are defined in the runner protocol:
 
 **Files:**
-- `backend/crates/octo/src/runner/protocol.rs` - Request/response types
-- `backend/crates/octo/src/runner/client.rs` - Client methods
+- `backend/crates/oqto/src/runner/protocol.rs` - Request/response types
+- `backend/crates/oqto/src/runner/client.rs` - Client methods
 
 **Commands implemented:**
 - Session lifecycle: create, close, new, switch, list, subscribe, unsubscribe
@@ -39,7 +39,7 @@ All 36 Pi commands are defined in the runner protocol:
 
 ### 2. Runner Handlers (Wired to PiSessionManager) - COMPLETE
 
-All handlers exist in `backend/crates/octo/src/bin/octo-runner.rs` and route to PiSessionManager.
+All handlers exist in `backend/crates/oqto/src/bin/oqto-runner.rs` and route to PiSessionManager.
 
 **All Pi handlers are now fully wired to PiSessionManager:**
 
@@ -60,7 +60,7 @@ All handlers exist in `backend/crates/octo/src/bin/octo-runner.rs` and route to 
 
 ### 3. Pi Session Manager (Fully Implemented)
 
-**File:** `backend/crates/octo/src/runner/pi_manager.rs`
+**File:** `backend/crates/oqto/src/runner/pi_manager.rs`
 
 Implements:
 - `PiSessionManager` struct with session map
@@ -93,7 +93,7 @@ Implements:
 
 ### 4. Multiplexed WebSocket (Skeleton)
 
-**Backend:** `backend/crates/octo/src/api/ws_multiplexed.rs`
+**Backend:** `backend/crates/oqto/src/api/ws_multiplexed.rs`
 - Channel-based message routing (pi, files, terminal, hstry, system)
 - Route registered at `/api/ws/mux`
 - Handlers log commands, return placeholders
@@ -142,7 +142,7 @@ Implements:
 
 ### Phase 3: Sandbox Integration (COMPLETE)
 
-**Goal:** Pi processes run inside octo-sandbox with security checks.
+**Goal:** Pi processes run inside oqto-sandbox with security checks.
 
 - [x] Add `sandbox_config: Option<SandboxConfig>` to `PiManagerConfig`
 - [x] Update `PiSessionManager::create_session` to wrap Pi in bwrap when sandbox enabled
@@ -152,7 +152,7 @@ Implements:
 - [x] cargo check passes
 
 **Implementation notes:**
-- Sandbox config is loaded by runner at startup from `/etc/octo/sandbox.toml` (system) or `--sandbox-config` flag
+- Sandbox config is loaded by runner at startup from `/etc/oqto/sandbox.toml` (system) or `--sandbox-config` flag
 - PiManagerConfig now includes `sandbox_config: Option<SandboxConfig>`
 - `create_session` uses `sandbox_config.with_workspace_config()` to merge workspace restrictions
 - Pi args are built first, then wrapped with bwrap args if sandboxing enabled
@@ -183,9 +183,9 @@ Implements:
 - [x] Remove `createMainChatPiWebSocket` function
 
 **Deferred (backend REST routes still needed):**
-- [ ] `backend/crates/octo/src/main_chat/pi_service.rs` - Still used by REST API routes
-- [ ] `backend/crates/octo/src/api/main_chat_pi.rs` - Still provides session listing, models, stats
-- [ ] `backend/crates/octo/src/pi/runtime.rs` - Still used by pi_service
+- [ ] `backend/crates/oqto/src/main_chat/pi_service.rs` - Still used by REST API routes
+- [ ] `backend/crates/oqto/src/api/main_chat_pi.rs` - Still provides session listing, models, stats
+- [ ] `backend/crates/oqto/src/pi/runtime.rs` - Still used by pi_service
 
 The backend REST routes (`/api/main/pi/*`) are still used for:
 - Listing Pi sessions from disk
@@ -204,15 +204,15 @@ These can be migrated to runner-backed implementations in a future refactor.
 docs/design/pi-session-refactor.md      # Full spec
 
 # Backend - Protocol
-backend/crates/octo/src/runner/protocol.rs   # All types
-backend/crates/octo/src/runner/client.rs     # Client methods
-backend/crates/octo/src/runner/pi_manager.rs # Session manager (with sandbox support)
+backend/crates/oqto/src/runner/protocol.rs   # All types
+backend/crates/oqto/src/runner/client.rs     # Client methods
+backend/crates/oqto/src/runner/pi_manager.rs # Session manager (with sandbox support)
 
 # Backend - Runner
-backend/crates/octo/src/bin/octo-runner.rs   # All Pi handlers wired to PiSessionManager
+backend/crates/oqto/src/bin/oqto-runner.rs   # All Pi handlers wired to PiSessionManager
 
 # Backend - WS
-backend/crates/octo/src/api/ws_multiplexed.rs  # Multiplexed WebSocket handler
+backend/crates/oqto/src/api/ws_multiplexed.rs  # Multiplexed WebSocket handler
 
 # Frontend (New)
 frontend/lib/ws-mux-types.ts                   # TypeScript types for mux WS
@@ -221,8 +221,8 @@ frontend/features/main-chat/hooks/usePiChatV2.ts  # Main hook (exported as usePi
 frontend/features/main-chat/hooks/index.ts    # Re-exports usePiChatV2 as usePiChat
 
 # Backend - Legacy REST routes (still used)
-backend/crates/octo/src/main_chat/pi_service.rs  # Used by REST routes
-backend/crates/octo/src/api/main_chat_pi.rs      # REST handlers for session listing, models, etc.
+backend/crates/oqto/src/main_chat/pi_service.rs  # Used by REST routes
+backend/crates/oqto/src/api/main_chat_pi.rs      # REST handlers for session listing, models, etc.
 ```
 
 ---
@@ -231,8 +231,8 @@ backend/crates/octo/src/api/main_chat_pi.rs      # REST handlers for session lis
 
 1. **Unit tests:** Run `cargo test` after each change
 2. **Manual testing:**
-   - Start runner: `cargo run --bin octo-runner`
-   - Start backend: `cargo run --bin octo`
+   - Start runner: `cargo run --bin oqto-runner`
+   - Start backend: `cargo run --bin oqto`
    - Open frontend, check console for WS messages
 3. **Integration test:** Send commands via WS, verify Pi responds
 
@@ -242,7 +242,7 @@ backend/crates/octo/src/api/main_chat_pi.rs      # REST handlers for session lis
 
 ```bash
 # Check current state
-cd /home/wismut/byteowlz/octo
+cd /home/wismut/byteowlz/oqto
 cd backend && cargo check      # Backend compiles
 cd frontend && bun run build   # Frontend builds
 
@@ -251,8 +251,8 @@ cd frontend && bun run build   # Frontend builds
 # Frontend (usePiChat) -> WsConnectionManager -> /api/ws/mux -> RunnerClient -> PiSessionManager -> Pi process
 
 # To test:
-# 1. Start runner: cargo run --bin octo-runner
-# 2. Start backend: cargo run --bin octo
+# 1. Start runner: cargo run --bin oqto-runner
+# 2. Start backend: cargo run --bin oqto
 # 3. Open frontend, Main Chat should use multiplexed WS
 ```
 
@@ -260,7 +260,7 @@ cd frontend && bun run build   # Frontend builds
 
 ## Outstanding TODOs in Code
 
-### octo-runner.rs Pi Handler TODOs
+### oqto-runner.rs Pi Handler TODOs
 
 **All Pi handlers are now fully implemented.** Commands are routed through `PiSessionManager` which sends them to Pi's stdin as JSON RPC.
 
@@ -270,10 +270,10 @@ Commands that return data (like `get_state`, `get_messages`, `get_available_mode
 
 | File:Line | TODO | Priority |
 |-----------|------|----------|
-| octo-runner.rs:974 | Add workspace root validation for file reads | Security |
-| octo-runner.rs:1251 | Track actual session creation time | Low |
-| octo-runner.rs:1904-1920 | Implement mmry database search/add/delete | Medium |
-| octo-runner.rs:2286 | Expose cwd from PiSessionInfo in list_sessions | Low |
+| oqto-runner.rs:974 | Add workspace root validation for file reads | Security |
+| oqto-runner.rs:1251 | Track actual session creation time | Low |
+| oqto-runner.rs:1904-1920 | Implement mmry database search/add/delete | Medium |
+| oqto-runner.rs:2286 | Expose cwd from PiSessionInfo in list_sessions | Low |
 
 ---
 

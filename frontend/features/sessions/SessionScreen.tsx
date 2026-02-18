@@ -395,7 +395,7 @@ export const SessionScreen = memo(function SessionScreen() {
 	const [featuresLoaded, setFeaturesLoaded] = useState(false);
 	const [activeView, setActiveViewRaw] = useState<ViewKey>(() => {
 		try {
-			const cached = localStorage.getItem("octo:rightSidebarView");
+			const cached = localStorage.getItem("oqto:rightSidebarView");
 			if (cached && ["chat", "overview", "tasks", "files", "canvas", "memories", "terminal", "browser", "settings"].includes(cached)) {
 				return cached as ViewKey;
 			}
@@ -405,7 +405,7 @@ export const SessionScreen = memo(function SessionScreen() {
 	});
 	const setActiveView = useCallback((view: ViewKey) => {
 		setActiveViewRaw(view);
-		try { localStorage.setItem("octo:rightSidebarView", view); } catch { /* ignore */ }
+		try { localStorage.setItem("oqto:rightSidebarView", view); } catch { /* ignore */ }
 	}, []);
 	const [tasksSubTab, setTasksSubTab] = useState<"todos" | "planner">("todos");
 	const [latestTodos, setLatestTodos] = useState<TodoItem[]>([]);

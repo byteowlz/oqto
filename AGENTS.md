@@ -1,8 +1,8 @@
-# Octo - AI Agent Workspace Platform
+# Oqto - AI Agent Workspace Platform
 
-Octo is a self-hosted platform for managing AI coding agents. Supports local mode (native processes) and container mode (Docker/Podman).
+Oqto is a self-hosted platform for managing AI coding agents. Supports local mode (native processes) and container mode (Docker/Podman).
 
-**New to Octo?** Start with the [SETUP.md](./SETUP.md) guide for installation and prerequisites.
+**New to Oqto?** Start with the [SETUP.md](./SETUP.md) guide for installation and prerequisites.
 
 ---
 
@@ -11,7 +11,7 @@ Octo is a self-hosted platform for managing AI coding agents. Supports local mod
 - Keep this document up to date. Whenever we change functionality or the architecture, we need to also update it in here so that subsequent sessions are always aware of the current status.
 - Don't keep legacy alive. This project is still in it's infancy and there is 0 need for any backward compatibility. Remove any dead or legacy code you encounter without breaking the current system. If you stumble upon parts of the system that can be deprecated, suggest how we could best do this
 - Document your work: Use trx cli for epics, features, bugs etc. Use agntz memory for documenting learnings along the way. Future sessions have access to both. Your todo list is ephemeral, it's like a status bar for the current session. Use it accordingly.
-- Octo is made up of many separate tools that we are building in parallel. If you encounter bugs or potential improvements, file trx in the respective repos (e.g. ../mmry etc)
+- Oqto is made up of many separate tools that we are building in parallel. If you encounter bugs or potential improvements, file trx in the respective repos (e.g. ../mmry etc)
 - During development, use the agent-browser for end to end debugging. You can use wismut:dev to log in. The frontend is accessible under localhost:3000
 
 ## Debugging
@@ -60,8 +60,8 @@ Frontend                          Backend                           Runner (per 
 | Component | Purpose |
 |-----------|---------|
 | **Frontend** | React/TypeScript app speaking the canonical protocol via multiplexed WebSocket |
-| **Backend (octo)** | Stateless relay: routes commands to runners, forwards events to frontend |
-| **Runner (octo-runner)** | Per-user daemon: owns agent processes, translates native events to canonical format |
+| **Backend (oqto)** | Stateless relay: routes commands to runners, forwards events to frontend |
+| **Runner (oqto-runner)** | Per-user daemon: owns agent processes, translates native events to canonical format |
 | **hstry** | Chat history service (gRPC API, SQLite-backed). All reads/writes go through gRPC. |
 
 ### The Canonical Protocol
@@ -91,19 +91,19 @@ Each runner advertises which harnesses it supports. The frontend shows a harness
 | Mode | Description | Use Case |
 |------|-------------|----------|
 | `local` | Direct process spawn | Single-user, development |
-| `runner` | Via `octo-runner` daemon | Multi-user Linux isolation |
+| `runner` | Via `oqto-runner` daemon | Multi-user Linux isolation |
 | `container` | Inside Docker/Podman | Full container isolation |
 
 ### Key Binaries
 
 | Binary | Purpose |
 |--------|---------|
-| `octo` | Main backend server |
-| `octoctl` | CLI for server management |
-| `octo-runner` | Multi-user process daemon, manages agent harnesses |
-| `octo-sandbox` | Sandbox wrapper using bwrap/sandbox-exec |
+| `oqto` | Main backend server |
+| `oqtoctl` | CLI for server management |
+| `oqto-runner` | Multi-user process daemon, manages agent harnesses |
+| `oqto-sandbox` | Sandbox wrapper using bwrap/sandbox-exec |
 | `pi-bridge` | HTTP/WebSocket bridge for Pi in containers |
-| `octo-files` | File access server for workspaces |
+| `oqto-files` | File access server for workspaces |
 | `hstry` | Chat history daemon (gRPC, SQLite-backed) |
 
 ### Eavs Integration (LLM Proxy)
@@ -113,7 +113,7 @@ Eavs is the single source of truth for LLM model metadata and the routing layer 
 **Architecture**: `Pi -> eavs (localhost:3033) -> upstream provider APIs`
 
 Key integration points:
-- **Model metadata**: `octo` queries eavs `/providers/detail` to generate Pi's `models.json` (no hardcoded model lists in octo)
+- **Model metadata**: `oqto` queries eavs `/providers/detail` to generate Pi's `models.json` (no hardcoded model lists in oqto)
 - **Per-user keys**: Admin API creates eavs virtual keys per user, stored in `eavs.env` files
 - **OAuth routing**: Virtual keys can be bound to OAuth users + account labels for multi-account provider access
 - **Policy enforcement**: Eavs rewrites request fields (e.g., `store: true` for Codex models) before forwarding upstream
@@ -121,13 +121,13 @@ Key integration points:
 - **Quota tracking**: Upstream rate limit headers are parsed and available via `GET /admin/quotas`
 
 Key files:
-- `backend/crates/octo/src/eavs/` -- `EavsClient` (create/revoke keys), `generate_pi_models_json()`
-- `backend/crates/octo/src/api/handlers/admin.rs` -- `provision_eavs_for_user`, `sync_eavs_models_json`
-- `backend/crates/octo/src/session/service.rs` -- Injects `EAVS_API_KEY` env var into agent sessions
+- `backend/crates/oqto/src/eavs/` -- `EavsClient` (create/revoke keys), `generate_pi_models_json()`
+- `backend/crates/oqto/src/api/handlers/admin.rs` -- `provision_eavs_for_user`, `sync_eavs_models_json`
+- `backend/crates/oqto/src/session/service.rs` -- Injects `EAVS_API_KEY` env var into agent sessions
 
 ### Process Sandboxing
 
-Sandbox configuration in `~/.config/octo/sandbox.toml` (separate from main config for security):
+Sandbox configuration in `~/.config/oqto/sandbox.toml` (separate from main config for security):
 
 ```toml
 enabled = true
@@ -138,7 +138,7 @@ isolate_network = false  # true in strict profile
 isolate_pid = true
 ```
 
-Per-workspace overrides in `.octo/sandbox.toml` can only ADD restrictions, never remove them.
+Per-workspace overrides in `.oqto/sandbox.toml` can only ADD restrictions, never remove them.
 
 ---
 
@@ -162,16 +162,16 @@ The runner maintains a state machine per session (idle, working, error) and emit
 
 ### hstry (Chat History)
 
-All chat history access goes through hstry's gRPC API - no raw SQLite access from `octo`.
+All chat history access goes through hstry's gRPC API - no raw SQLite access from `oqto`.
 
 - **WriteService**: Persist messages after agent turns complete (via `HstryClient` gRPC)
 - **ReadService**: Query messages, sessions, search (via `HstryClient` gRPC)
 - Stores canonical `Message` format directly (no translation at read time)
-- **Runner exception**: `octo-runner` reads hstry SQLite directly for speed (runs as target user, same machine). This is intentional and secure.
+- **Runner exception**: `oqto-runner` reads hstry SQLite directly for speed (runs as target user, same machine). This is intentional and secure.
 
 ### Session Files (Pi-Owned)
 
-Pi writes its own JSONL session files -- **Octo must NEVER create or write JSONL session files**.
+Pi writes its own JSONL session files -- **Oqto must NEVER create or write JSONL session files**.
 
 - **Pi**: `~/.pi/agent/sessions/--{safe_cwd}--/{timestamp}_{session_id}.jsonl`
 - These are authoritative for harness-specific metadata (titles, fork points)
@@ -312,7 +312,7 @@ just gen-types        # Generate TypeScript types from Rust structs
 
 ## External Dependencies
 
-Octo depends on several external tools and services. Version tracking is maintained in `dependencies.toml`.
+Oqto depends on several external tools and services. Version tracking is maintained in `dependencies.toml`.
 
 ### Updating Dependencies
 

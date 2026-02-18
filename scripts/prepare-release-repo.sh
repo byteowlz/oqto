@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # =============================================================================
-# Prepare a clean octo repo for public/alpha release
+# Prepare a clean oqto repo for public/alpha release
 #
 # What this does:
 #   1. Clones the current repo (single branch: dev/a2ui) into a new directory
@@ -14,16 +14,16 @@ set -euo pipefail
 # Usage:
 #   ./scripts/prepare-release-repo.sh [target-dir]
 #
-# Default target: ../octo-release
+# Default target: ../oqto-release
 # =============================================================================
 
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TARGET_DIR="${1:-$(dirname "$SOURCE_DIR")/octo-release}"
+TARGET_DIR="${1:-$(dirname "$SOURCE_DIR")/oqto-release}"
 
 NOREPLY_EMAIL="redacted@users.noreply.github.com"
 AUTHOR_NAME="REDACTED"
 
-echo "=== Octo Release Repo Preparation ==="
+echo "=== Oqto Release Repo Preparation ==="
 echo "Source:  $SOURCE_DIR"
 echo "Target:  $TARGET_DIR"
 echo "Author:  $AUTHOR_NAME <$NOREPLY_EMAIL>"
@@ -60,7 +60,7 @@ echo "    Cloned $(git rev-list --count HEAD) commits on 'main'"
 echo ""
 echo ">>> Step 2: Rewriting all author/committer identities ..."
 
-MAILMAP_FILE=$(mktemp /tmp/octo-mailmap.XXXXXX)
+MAILMAP_FILE=$(mktemp /tmp/oqto-mailmap.XXXXXX)
 cat > "$MAILMAP_FILE" <<EOF
 $AUTHOR_NAME <$NOREPLY_EMAIL> <redacted@example.com>
 $AUTHOR_NAME <$NOREPLY_EMAIL> <redacted@example.com>
@@ -166,7 +166,7 @@ echo "  4. Review suggested-rebase-todo.txt and adjust squash/drop decisions"
 echo "  5. Apply:  GIT_SEQUENCE_EDITOR='cp ./suggested-rebase-todo.txt' git rebase -i --root --committer-date-is-author-date"
 echo "  6. Verify:  git log --format='%ae %ad %s' --date=short | head -20"
 echo "  7. Create new GitHub repo and push:"
-echo "     git remote add origin git@github.com:byteowlz/octo.git"
+echo "     git remote add origin git@github.com:byteowlz/oqto.git"
 echo "     git push -u origin main"
 echo "     git tag -a v0.1.0-alpha -m 'Initial alpha release'"
 echo "     git push --tags"

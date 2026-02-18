@@ -23,9 +23,9 @@ import type {
 	TrxIssue,
 } from "../types";
 
-const DASHBOARD_CONFIG_PATH = ".octo/dashboard.json";
-const DASHBOARD_REGISTRY_PATH = ".octo/dashboard.registry.json";
-const LEGACY_FEED_STORAGE_KEY = "octo:dashboardFeeds";
+const DASHBOARD_CONFIG_PATH = ".oqto/dashboard.json";
+const DASHBOARD_REGISTRY_PATH = ".oqto/dashboard.registry.json";
+const LEGACY_FEED_STORAGE_KEY = "oqto:dashboardFeeds";
 
 function createId(): string {
 	if (typeof crypto !== "undefined" && crypto.randomUUID) {
