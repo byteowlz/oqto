@@ -56,6 +56,7 @@ INSTALL_ALL_TOOLS="false"
 LLM_PROVIDER=""
 LLM_API_KEY_SET="false"
 EAVS_ENABLED="false"
+CONFIGURED_PROVIDERS=""
 
 # Production configuration (set during setup)
 PRODUCTION_MODE="false"
@@ -130,6 +131,7 @@ SETUP_STATE_KEYS=(
   CONTAINER_RUNTIME
   JWT_SECRET
   EAVS_MASTER_KEY
+  CONFIGURED_PROVIDERS
 )
 
 # Save current decisions to state file
@@ -476,9 +478,9 @@ check_prerequisites() {
     log_success "Rust: $(cargo --version)"
   fi
 
-  # Bun (for frontend)
-  if ! command_exists bun; then
-    log_warn "Bun not found"
+  # Bun (for frontend and pi)
+  if ! command_exists bun || ! bun --version >/dev/null 2>&1; then
+    log_warn "Bun not found or broken"
     if confirm "Install Bun?"; then
       install_bun
     else
@@ -486,6 +488,8 @@ check_prerequisites() {
     fi
   else
     log_success "Bun: $(bun --version)"
+    # Always ensure bun and pi are globally accessible
+    ensure_bun_and_pi_global
   fi
 
   # Check container runtime if container mode selected
@@ -500,6 +504,86 @@ check_prerequisites() {
   fi
 
   log_success "All prerequisites satisfied"
+
+  # Install system prerequisites that may be missing
+  install_system_prerequisites
+}
+
+install_system_prerequisites() {
+  log_info "Checking system prerequisites..."
+
+  local pkgs=()
+
+  # bubblewrap is required for Pi process sandboxing
+  if ! command_exists bwrap; then
+    pkgs+=("bubblewrap")
+  fi
+
+  # sqlite3 CLI is useful for debugging
+  if ! command_exists sqlite3; then
+    case "$OS_DISTRO" in
+    arch | manjaro | endeavouros) pkgs+=("sqlite") ;;
+    *) pkgs+=("sqlite3") ;;
+    esac
+  fi
+
+  # zsh is the default shell for platform users
+  if ! command_exists zsh; then
+    pkgs+=("zsh")
+  fi
+
+  # starship prompt for a nice terminal experience
+  if ! command_exists starship; then
+    log_info "Installing starship prompt..."
+    if curl -sS https://starship.rs/install.sh | sh -s -- -y >/dev/null 2>&1; then
+      log_success "starship installed"
+    else
+      log_warn "Failed to install starship. Users will have a basic prompt."
+    fi
+  fi
+
+  if [[ ${#pkgs[@]} -eq 0 ]]; then
+    log_success "All system prerequisites already installed"
+    return 0
+  fi
+
+  log_info "Installing system prerequisites: ${pkgs[*]}"
+  case "$OS_DISTRO" in
+  arch | manjaro | endeavouros)
+    sudo pacman -S --noconfirm "${pkgs[@]}"
+    ;;
+  debian | ubuntu | pop | linuxmint)
+    apt_update_once
+    sudo apt-get install -y "${pkgs[@]}"
+    ;;
+  fedora | centos | rhel | rocky | alma*)
+    sudo dnf install -y "${pkgs[@]}"
+    ;;
+  opensuse*)
+    sudo zypper install -y "${pkgs[@]}"
+    ;;
+  *)
+    log_warn "Unknown distribution $OS_DISTRO. Please install manually: ${pkgs[*]}"
+    ;;
+  esac
+
+  if command_exists bwrap; then
+    log_success "bubblewrap (bwrap) installed"
+  else
+    log_warn "bubblewrap (bwrap) not installed. Pi sandboxing will be disabled."
+  fi
+
+  if command_exists zsh; then
+    log_success "zsh installed"
+  else
+    log_warn "zsh not installed. Platform users will fall back to bash."
+  fi
+
+  if command_exists starship; then
+    log_success "starship prompt installed"
+  else
+    log_warn "starship not installed. Platform users will have a basic prompt."
+  fi
 }
 
 check_container_runtime() {
@@ -548,13 +632,44 @@ install_bun() {
   curl -fsSL https://bun.sh/install | bash
   export PATH="$HOME/.bun/bin:$PATH"
 
-  # Make bun available globally for all platform users (hstry, pi need it)
-  if [[ -x "$HOME/.bun/bin/bun" ]] && [[ ! -x "/usr/local/bin/bun" ]]; then
+  log_success "Bun installed: $(bun --version)"
+
+  ensure_bun_and_pi_global
+}
+
+# Ensure bun and pi are globally accessible to all platform users.
+# Called both after fresh install and on every setup run.
+ensure_bun_and_pi_global() {
+  # Always copy bun to /usr/local/bin for multi-user access.
+  # Use install(1) which copies the file (not symlink) and sets permissions.
+  # This also fixes broken symlinks from previous installs.
+  if [[ -x "$HOME/.bun/bin/bun" ]]; then
+    sudo rm -f /usr/local/bin/bun
     sudo install -m 755 "$HOME/.bun/bin/bun" /usr/local/bin/bun
     log_info "Installed bun to /usr/local/bin for multi-user access"
   fi
 
-  log_success "Bun installed: $(bun --version)"
+  # Install pi (AI coding agent) if not already present
+  if ! command_exists pi || ! pi --version >/dev/null 2>&1; then
+    log_info "Installing pi coding agent..."
+    bun install -g @mariozechner/pi-coding-agent
+  fi
+
+  # Create a global wrapper so all platform users can run pi.
+  # bun global installs go to ~/.bun/install/global/ which is per-user,
+  # so we need a wrapper script that uses the global bun binary.
+  local pi_module
+  pi_module="$(readlink -f "$HOME/.bun/bin/pi" 2>/dev/null || true)"
+  if [[ -n "$pi_module" && -f "$pi_module" ]]; then
+    sudo tee /usr/local/bin/pi >/dev/null <<PIEOF
+#!/usr/bin/env bash
+exec /usr/local/bin/bun run "$pi_module" "\$@"
+PIEOF
+    sudo chmod 755 /usr/local/bin/pi
+    log_success "pi available at /usr/local/bin: $(/usr/local/bin/pi --version 2>/dev/null || echo 'installed')"
+  else
+    log_warn "Could not find pi module path. Pi may not be globally accessible."
+  fi
 }
 
 install_ttyd() {
@@ -1942,7 +2057,54 @@ install_eavs() {
     return 1
   fi
 
+  # Install TypeScript adapters for model export (Pi, OpenCode, etc.)
+  install_eavs_adapters
+
   log_success "EAVS installed: $(eavs --version 2>/dev/null | head -1)"
+}
+
+# Install eavs TypeScript adapters for 'eavs models export'.
+# These live next to the binary so eavs can discover them automatically.
+install_eavs_adapters() {
+  local eavs_bin
+  eavs_bin=$(command -v eavs 2>/dev/null) || return 0
+  local eavs_dir
+  eavs_dir=$(dirname "$eavs_bin")
+  local adapters_dest="${eavs_dir}/adapters"
+
+  # If adapters already exist next to binary (from release tarball), done
+  if [[ -d "$adapters_dest" && -f "$adapters_dest/pi/adapter.ts" ]]; then
+    log_info "EAVS adapters already installed"
+    return 0
+  fi
+
+  # Fetch adapters from the eavs repo
+  local version
+  version=$(get_dep_version eavs)
+  local tag="v${version:-main}"
+
+  log_info "Installing EAVS adapters..."
+  local tmpdir
+  tmpdir=$(mktemp -d)
+
+  if curl -fsSL "https://github.com/byteowlz/eavs/archive/refs/tags/${tag}.tar.gz" | \
+     tar xz -C "$tmpdir" --strip-components=1 "*/adapters" 2>/dev/null; then
+    sudo mkdir -p "$adapters_dest"
+    sudo cp -r "$tmpdir/adapters/"* "$adapters_dest/"
+    log_success "EAVS adapters installed to $adapters_dest"
+  else
+    # Try main branch as fallback
+    if curl -fsSL "https://github.com/byteowlz/eavs/archive/refs/heads/main.tar.gz" | \
+       tar xz -C "$tmpdir" --strip-components=1 "*/adapters" 2>/dev/null; then
+      sudo mkdir -p "$adapters_dest"
+      sudo cp -r "$tmpdir/adapters/"* "$adapters_dest/"
+      log_success "EAVS adapters installed from main branch"
+    else
+      log_warn "Could not fetch EAVS adapters. 'eavs models export' will not work."
+    fi
+  fi
+
+  rm -rf "$tmpdir"
 }
 
 # Install gnome-keyring and libsecret for headless servers.
@@ -2038,6 +2200,13 @@ configure_eavs() {
 
   local eavs_config_file="${eavs_config_dir}/config.toml"
 
+  # Clear env file on reconfigure to avoid duplicate keys
+  if [[ "$SELECTED_USER_MODE" == "single" ]]; then
+    : > "${eavs_env_file}"
+  else
+    sudo bash -c ": > '${eavs_env_file}'"
+  fi
+
   # Generate master key for octo to create per-session virtual keys (reuse saved one)
   if [[ -z "${EAVS_MASTER_KEY:-}" ]]; then
     EAVS_MASTER_KEY=$(generate_secure_secret 32)
@@ -2050,10 +2219,16 @@ configure_eavs() {
   echo "You can add more providers later by editing: $eavs_config_file"
   echo
 
-  # Collect provider configs
+  # Ensure the eavs model catalog is downloaded/up-to-date for model selection
+  log_info "Updating model catalog from models.dev..."
+  eavs models update >/dev/null 2>&1 || true
+
+  # Collect provider configs (including model shortlists)
   local providers_toml=""
   local first_provider=""
   local has_any_provider="false"
+  # Track configured providers for testing later
+  CONFIGURED_PROVIDERS=""
 
   # Ask about each major provider
   for provider_name in anthropic openai google openrouter groq mistral; do
@@ -2104,19 +2279,12 @@ configure_eavs() {
     # Check if key exists in environment
     local existing_key=""
     existing_key="${!env_var_name:-}"
+    local should_configure="false"
 
     if [[ -n "$existing_key" ]]; then
       log_info "Found $env_var_name in environment"
       if confirm "Configure $display_name (key found in env)?"; then
-        providers_toml+="
-[providers.${provider_name}]
-type = \"${provider_type}\"
-api_key = \"env:${env_var_name}\"
-"
-        has_any_provider="true"
-        if [[ -z "$first_provider" ]]; then
-          first_provider="$provider_name"
-        fi
+        should_configure="true"
       fi
     else
       if confirm "Configure $display_name?" "n"; then
@@ -2130,16 +2298,25 @@ api_key = \"env:${env_var_name}\"
           else
             echo "${env_var_name}=${api_key}" | sudo tee -a "${eavs_env_file}" >/dev/null
           fi
-          providers_toml+="
+          should_configure="true"
+        fi
+      fi
+    fi
+
+    if [[ "$should_configure" == "true" ]]; then
+      # Provider base config
+      providers_toml+="
 [providers.${provider_name}]
 type = \"${provider_type}\"
 api_key = \"env:${env_var_name}\"
 "
-          has_any_provider="true"
-          if [[ -z "$first_provider" ]]; then
-            first_provider="$provider_name"
-          fi
-        fi
+      # Let user pick models from the live eavs catalog
+      providers_toml+="$(select_models_for_provider "$provider_name")"
+
+      has_any_provider="true"
+      CONFIGURED_PROVIDERS="${CONFIGURED_PROVIDERS} ${provider_name}"
+      if [[ -z "$first_provider" ]]; then
+        first_provider="$provider_name"
       fi
     fi
   done
@@ -2225,6 +2402,418 @@ EOF
   if [[ -n "$first_provider" ]]; then
     log_success "Default provider: $first_provider"
   fi
+}
+
+# ==============================================================================
+# Dynamic Model Selection from EAVS Catalog
+# ==============================================================================
+# Queries the live eavs model catalog (models.dev) and lets users pick models
+# interactively via fuzzy multi-select. Falls back gracefully:
+#   gum filter (best UX) > fzf (good) > numbered list (basic)
+# In non-interactive mode, auto-selects the top N newest models.
+#
+# The catalog is sorted by release date (newest first) by eavs, so the
+# pre-selected defaults are always the latest models.
+
+# How many models to pre-select per provider in non-interactive/default mode
+DEFAULT_MODEL_COUNT=5
+
+select_models_for_provider() {
+  local provider="$1"
+
+  # Check if eavs supports the 'models' subcommand (>= 0.5.4)
+  if ! eavs models list "$provider" --json >/dev/null 2>&1; then
+    log_warn "eavs model catalog not available (upgrade eavs to >= 0.5.4 for model selection)" >&2
+    log_info "Skipping model selection for $provider -- all catalog models will be available" >&2
+    echo ""
+    return
+  fi
+
+  # Query the eavs model catalog for this provider
+  local catalog_json
+  catalog_json=$(eavs models list "$provider" --json 2>/dev/null) || true
+
+  if [[ -z "$catalog_json" || "$catalog_json" == "[]" || "$catalog_json" == "null" ]]; then
+    log_warn "No models found in catalog for $provider. Skipping model selection." >&2
+    echo ""
+    return
+  fi
+
+  # Build tab-separated display data using jq
+  # Each line: "model_id\tname\t$in/$out\tctx\treasoning\trelease_date"
+  local model_lines
+  model_lines=$(echo "$catalog_json" | jq -r '.[] |
+    def fmt_ctx: .limit.context // 0 |
+      if . >= 1000000 then "\(./1000000 | floor)M"
+      elif . >= 1000 then "\(./1000 | floor)K"
+      else tostring end;
+    [
+      .id,
+      (.name // .id),
+      "$\(.cost.input // 0)/$\(.cost.output // 0)",
+      fmt_ctx,
+      (if .reasoning then "R" else " " end),
+      (.release_date // "")[:10]
+    ] | @tsv
+  ' 2>/dev/null) || true
+
+  if [[ -z "$model_lines" ]]; then
+    log_warn "Failed to parse model catalog for $provider" >&2
+    echo ""
+    return
+  fi
+
+  local total_count
+  total_count=$(echo "$model_lines" | wc -l)
+
+  # Build formatted display lines for the picker (tab-separated data -> columns)
+  local display_lines
+  display_lines=$(echo "$model_lines" | awk -F'\t' '{
+    printf "%-45s  %s  %-12s  ctx=%-6s  %s\n", $1, $5, $3, $4, $6
+  }')
+
+  # Get the top N model IDs for pre-selection
+  local default_ids
+  default_ids=$(echo "$model_lines" | head -n "$DEFAULT_MODEL_COUNT" | cut -f1)
+  local default_csv
+  default_csv=$(echo "$default_ids" | paste -sd',' -)
+
+  echo >&2
+  echo "  Select models for $provider ($total_count available, newest first):" >&2
+  echo "  [R]=reasoning  Costs per 1M tokens  Pre-selected: top $DEFAULT_MODEL_COUNT newest" >&2
+  echo >&2
+
+  local selected_ids=""
+
+  if [[ "$NONINTERACTIVE" == "true" ]]; then
+    # Non-interactive: just use the top N
+    selected_ids="$default_ids"
+    log_info "Auto-selected top $DEFAULT_MODEL_COUNT models for $provider" >&2
+  elif command -v gum >/dev/null 2>&1; then
+    # gum filter: fuzzy search + multi-select (best UX)
+    # --selected expects full display lines, build CSV of the default lines
+    local default_display_csv=""
+    local line_num=0
+    while IFS= read -r dline; do
+      line_num=$((line_num + 1))
+      if [[ $line_num -le $DEFAULT_MODEL_COUNT ]]; then
+        if [[ -n "$default_display_csv" ]]; then
+          default_display_csv+=","
+        fi
+        default_display_csv+="$dline"
+      fi
+    done <<<"$display_lines"
+
+    selected_ids=$(echo "$display_lines" | \
+      gum filter --no-limit \
+        --header="Select models for $provider (tab=toggle, enter=confirm)" \
+        --placeholder="Type to filter..." \
+        --selected="$default_display_csv" \
+        --height=20 2>/dev/null | \
+      awk '{print $1}') || true
+  elif command -v fzf >/dev/null 2>&1; then
+    # fzf: fuzzy search + multi-select (good fallback)
+    selected_ids=$(echo "$display_lines" | \
+      fzf --multi \
+        --header="Select models for $provider (tab=toggle, enter=confirm)" \
+        --height=20 \
+        --reverse 2>/dev/null | \
+      awk '{print $1}') || true
+  fi
+
+  # Fallback: simple numbered list if no TUI tool or nothing selected
+  if [[ -z "$selected_ids" && "$NONINTERACTIVE" != "true" ]]; then
+    echo "  Available models:" >&2
+    local i=1
+    while IFS=$'\t' read -r mid name cost ctx reasoning rel; do
+      local marker=" "
+      if echo "$default_ids" | grep -qx "$mid"; then
+        marker="*"
+      fi
+      printf "  %s %2d) %-40s  %s  %-12s  ctx=%-6s  %s\n" "$marker" "$i" "$mid" "$reasoning" "$cost" "$ctx" "$rel" >&2
+      i=$((i + 1))
+    done <<<"$model_lines"
+    echo >&2
+    echo "  Enter model numbers to select (comma/space separated, * = pre-selected)." >&2
+    echo "  Press Enter to accept defaults (top $DEFAULT_MODEL_COUNT)." >&2
+    local selection
+    read -r -p "  Selection: " selection
+
+    if [[ -z "$selection" ]]; then
+      # Accept defaults
+      selected_ids="$default_ids"
+    else
+      # Parse comma/space separated numbers
+      selected_ids=""
+      local nums
+      nums=$(echo "$selection" | tr ',' ' ')
+      for num in $nums; do
+        local sel_id
+        sel_id=$(echo "$model_lines" | sed -n "${num}p" | cut -f1)
+        if [[ -n "$sel_id" ]]; then
+          selected_ids+="$sel_id"$'\n'
+        fi
+      done
+    fi
+  fi
+
+  if [[ -z "$selected_ids" ]]; then
+    log_warn "No models selected for $provider" >&2
+    echo ""
+    return
+  fi
+
+  # Convert selected model IDs to TOML shortlist entries using jq
+  local toml_output=""
+  while IFS= read -r model_id; do
+    [[ -z "$model_id" ]] && continue
+    # Look up full model data from catalog JSON and format as TOML
+    local model_toml
+    model_toml=$(echo "$catalog_json" | jq -r --arg id "$model_id" --arg prov "$provider" '
+      .[] | select(.id == $id) |
+      # Filter input modalities to text/image for Pi compatibility
+      ([.modalities.input[]? | select(. == "text" or . == "image")] | if length == 0 then ["text"] else . end) as $input |
+      "
+[[providers.\($prov).models]]
+id = \"\(.id)\"
+name = \"\(.name // .id)\"
+reasoning = \(if .reasoning then "true" else "false" end)
+input = [\($input | map("\"" + . + "\"") | join(", "))]
+context_window = \(.limit.context // 128000)
+max_tokens = \(.limit.output // 8192)
+cost = { input = \(.cost.input // 0), output = \(.cost.output // 0), cache_read = \(.cost.cache_read // 0) }"
+    ' 2>/dev/null) || true
+    toml_output+="$model_toml"
+  done <<<"$selected_ids"
+
+  local selected_count
+  selected_count=$(echo "$selected_ids" | grep -c '.' || echo 0)
+  log_success "Selected $selected_count models for $provider" >&2
+  echo "$toml_output"
+}
+
+# ==============================================================================
+# EAVS Provider Testing
+# ==============================================================================
+# Tests each configured provider by making a real API call via `eavs setup test`.
+# This validates that API keys are correct and providers are reachable.
+
+test_eavs_providers() {
+  log_step "Testing LLM provider connections"
+
+  local eavs_config_file
+  if [[ "$SELECTED_USER_MODE" == "single" ]]; then
+    eavs_config_file="${XDG_CONFIG_HOME}/eavs/config.toml"
+  else
+    eavs_config_file="${OCTO_HOME}/.config/eavs/config.toml"
+  fi
+
+  # Resolve env file for the test command
+  local eavs_env_file
+  if [[ "$SELECTED_USER_MODE" == "single" ]]; then
+    eavs_env_file="${XDG_CONFIG_HOME}/eavs/env"
+  else
+    eavs_env_file="${OCTO_HOME}/.config/eavs/env"
+  fi
+
+  local any_success="false"
+  local any_failure="false"
+
+  for provider in $CONFIGURED_PROVIDERS; do
+    [[ -z "$provider" ]] && continue
+    echo -n "  Testing ${provider}... "
+
+    # Source the env file so eavs setup test can resolve env: keys.
+    # Use a subshell to avoid polluting the current environment.
+    local test_result
+    if [[ "$SELECTED_USER_MODE" == "single" ]]; then
+      test_result=$(set -a; source "$eavs_env_file" 2>/dev/null; set +a; \
+        eavs setup test "$provider" --config "$eavs_config_file" --format json 2>&1) || true
+    else
+      test_result=$(sudo -u octo bash -c "set -a; source '$eavs_env_file' 2>/dev/null; set +a; \
+        eavs setup test '$provider' --config '$eavs_config_file' --format json" 2>&1) || true
+    fi
+
+    if echo "$test_result" | grep -qE '"success"[[:space:]]*:[[:space:]]*true|test successful'; then
+      echo -e "${GREEN}OK${NC}"
+      any_success="true"
+    else
+      echo -e "${RED}FAILED${NC}"
+      # Show a brief error hint
+      local err_hint
+      err_hint=$(echo "$test_result" | grep -i "error\|unauthorized\|invalid\|403\|401" | head -1)
+      if [[ -n "$err_hint" ]]; then
+        echo "    $err_hint"
+      fi
+      any_failure="true"
+    fi
+  done
+
+  if [[ "$any_success" == "true" ]]; then
+    log_success "At least one provider is working"
+  fi
+  if [[ "$any_failure" == "true" ]]; then
+    log_warn "Some providers failed. You can fix API keys later in the eavs config."
+    if [[ "$any_success" != "true" ]]; then
+      log_warn "No working providers! Agents will not be able to use any LLM."
+      log_info "Fix provider config: edit $(
+        if [[ "$SELECTED_USER_MODE" == "single" ]]; then
+          echo "${XDG_CONFIG_HOME}/eavs/config.toml"
+        else
+          echo "${OCTO_HOME}/.config/eavs/config.toml"
+        fi
+      )"
+    fi
+  fi
+}
+
+# ==============================================================================
+# EAVS models.json Generation
+# ==============================================================================
+# Uses `eavs models export pi` to generate Pi-compatible models.json.
+# The export command reads the eavs config, resolves model shortlists
+# (or full catalog), and outputs the correct Pi format natively.
+#
+# In single-user mode: writes to ~/.pi/agent/models.json
+# In multi-user mode: the octo backend handles this at user creation time
+#   (via provision_eavs_for_user in admin.rs), but we also generate a
+#   template for the installing admin user.
+
+generate_eavs_models_json() {
+  log_step "Generating models.json from EAVS"
+
+  local eavs_url="http://127.0.0.1:${EAVS_PORT}"
+  local eavs_config_file
+  if [[ "$SELECTED_USER_MODE" == "single" ]]; then
+    eavs_config_file="${XDG_CONFIG_HOME}/eavs/config.toml"
+  else
+    eavs_config_file="${OCTO_HOME}/.config/eavs/config.toml"
+  fi
+
+  # Check that eavs supports the export command (>= 0.5.5)
+  if ! eavs models export --help >/dev/null 2>&1; then
+    log_warn "eavs does not support 'models export' (upgrade to >= 0.5.5)"
+    log_info "Skipping models.json generation. Update eavs and re-run setup."
+    return 1
+  fi
+
+  # Generate Pi models.json via native eavs export
+  # Use --merge if a models.json already exists to preserve non-eavs providers
+  local pi_models_file
+  if [[ "$SELECTED_USER_MODE" == "single" ]]; then
+    pi_models_file="$HOME/.pi/agent/models.json"
+  else
+    pi_models_file="${OCTO_DATA_DIR:-$HOME/.local/share/octo}/models.json.template"
+  fi
+
+  local merge_flag=""
+  if [[ -f "$pi_models_file" ]]; then
+    merge_flag="--merge $pi_models_file"
+    log_info "Merging into existing $pi_models_file (preserving non-eavs providers)"
+  fi
+
+  local models_json
+  if [[ "$SELECTED_USER_MODE" == "single" ]]; then
+    # shellcheck disable=SC2086
+    models_json=$(eavs models export pi \
+      --base-url "$eavs_url" \
+      --config "$eavs_config_file" \
+      $merge_flag 2>/dev/null)
+  else
+    # shellcheck disable=SC2086
+    models_json=$(sudo -u octo eavs models export pi \
+      --base-url "$eavs_url" \
+      --config "$eavs_config_file" \
+      $merge_flag 2>/dev/null)
+  fi
+
+  if [[ -z "$models_json" || "$models_json" == '{"providers":{}}' ]]; then
+    log_warn "No providers with Pi-compatible APIs found. Skipping models.json."
+    return 0
+  fi
+
+  # Write models.json
+  if [[ "$SELECTED_USER_MODE" == "single" ]]; then
+    local pi_agent_dir="$HOME/.pi/agent"
+    mkdir -p "$pi_agent_dir"
+    echo "$models_json" > "${pi_agent_dir}/models.json"
+    log_success "Wrote models.json to ${pi_agent_dir}/models.json"
+
+    # Also create eavs.env for Pi to use (with a virtual key)
+    provision_eavs_user_key "$(whoami)" "$HOME"
+  else
+    # In multi-user mode, write a template that the octo backend will
+    # use when provisioning new users. Also set up the admin user.
+    local octo_data="${OCTO_DATA_DIR:-$HOME/.local/share/octo}"
+    mkdir -p "$octo_data"
+    echo "$models_json" > "${octo_data}/models.json.template"
+    log_success "Wrote models.json template to ${octo_data}/models.json.template"
+    log_info "The octo backend will generate per-user models.json on user creation."
+  fi
+
+  # Count total models and providers using jq (available on all target systems)
+  local model_count provider_count
+  model_count=$(echo "$models_json" | jq '[.providers[].models | length] | add // 0' 2>/dev/null || echo "?")
+  provider_count=$(echo "$models_json" | jq '.providers | length' 2>/dev/null || echo "?")
+
+  log_success "Models available: $model_count across $provider_count provider(s)"
+}
+
+# ==============================================================================
+# EAVS User Key Provisioning
+# ==============================================================================
+# Creates a virtual API key for a user and writes eavs.env so Pi can
+# authenticate against the eavs proxy.
+
+provision_eavs_user_key() {
+  local username="$1"
+  local user_home="$2"
+
+  local eavs_url="http://127.0.0.1:${EAVS_PORT}"
+
+  # Create virtual key via eavs API
+  local key_response
+  key_response=$(curl -sf -X POST "${eavs_url}/admin/keys" \
+    -H "Authorization: Bearer ${EAVS_MASTER_KEY}" \
+    -H "Content-Type: application/json" \
+    -d "{
+      \"name\": \"octo-user-${username}\",
+      \"permissions\": {
+        \"rpm_limit\": 120,
+        \"max_budget_usd\": 500.0
+      }
+    }" 2>&1)
+
+  if [[ -z "$key_response" ]]; then
+    log_warn "Failed to create EAVS virtual key for ${username}"
+    log_info "Users can still use EAVS with the master key for now."
+    # Fall back to master key
+    local octo_config_dir="${user_home}/.config/octo"
+    mkdir -p "$octo_config_dir"
+    cat > "${octo_config_dir}/eavs.env" <<EOF
+EAVS_API_KEY=${EAVS_MASTER_KEY}
+EAVS_URL=${eavs_url}
+EOF
+    chmod 600 "${octo_config_dir}/eavs.env"
+    return
+  fi
+
+  local api_key
+  api_key=$(echo "$key_response" | jq -r '.key // empty' 2>/dev/null || echo "")
+
+  if [[ -z "$api_key" ]]; then
+    log_warn "Could not parse EAVS key response. Using master key as fallback."
+    api_key="$EAVS_MASTER_KEY"
+  fi
+
+  local octo_config_dir="${user_home}/.config/octo"
+  mkdir -p "$octo_config_dir"
+  cat > "${octo_config_dir}/eavs.env" <<EOF
+EAVS_API_KEY=${api_key}
+EAVS_URL=${eavs_url}
+EOF
+  chmod 600 "${octo_config_dir}/eavs.env"
+  log_success "EAVS key provisioned for ${username}"
 }
 
 install_eavs_service() {
@@ -2694,7 +3283,10 @@ update_octo() {
     log_success "Code updated (rebased)"
   fi
 
-  # Rebuild everything
+  # Upgrade external tools to versions in dependencies.toml
+  update_tools
+
+  # Rebuild Octo (backend + frontend + deploy)
   build_octo
 
   # Copy config to service user (multi-user mode uses /var/lib/octo)
@@ -2710,17 +3302,24 @@ update_octo() {
     log_success "Config synced"
   fi
 
+  # Regenerate models.json (picks up new eavs providers/models)
+  update_models_json
+
   # Restart services
   log_info "Restarting services..."
-  if systemctl is-active --quiet octo 2>/dev/null; then
+  if sudo systemctl is-active --quiet eavs 2>/dev/null; then
+    sudo systemctl restart eavs
+    log_success "eavs restarted"
+  fi
+  if sudo systemctl is-active --quiet octo 2>/dev/null; then
     sudo systemctl restart octo
     log_success "octo service restarted"
-  elif sudo systemctl is-active --quiet octo 2>/dev/null; then
-    sudo systemctl restart octo
+  elif systemctl --user is-active --quiet octo 2>/dev/null; then
+    systemctl --user restart octo
     log_success "octo service restarted"
   fi
 
-  if systemctl is-active --quiet caddy 2>/dev/null; then
+  if sudo systemctl is-active --quiet caddy 2>/dev/null; then
     sudo systemctl restart caddy
     log_success "caddy restarted"
   fi
@@ -2734,6 +3333,130 @@ update_octo() {
   fi
 
   log_success "Update complete!"
+}
+
+# Upgrade external tools to the versions tracked in dependencies.toml.
+# Only upgrades tools that are already installed (doesn't install new ones).
+# Skips tools already at the target version.
+update_tools() {
+  log_step "Upgrading external tools"
+
+  # Tools that setup.sh manages (binary name -> repo name)
+  local -A TOOLS=(
+    [eavs]=eavs
+    [hstry]=hstry
+    [mmry]=mmry
+    [trx]=trx
+    [agntz]=agntz
+    [mailz]=mailz
+    [sx]=sx
+    [scrpr]=scrpr
+    [tmpltr]=tmpltr
+    [ignr]=ignr
+  )
+
+  local upgraded=0
+
+  for tool in "${!TOOLS[@]}"; do
+    # Skip tools not currently installed
+    if ! command_exists "$tool"; then
+      continue
+    fi
+
+    local repo="${TOOLS[$tool]}"
+    local target_version
+    target_version=$(get_dep_version "$repo")
+    [[ -z "$target_version" || "$target_version" == "latest" ]] && continue
+
+    # Get currently installed version
+    local current_version
+    current_version=$("$tool" --version 2>/dev/null | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "unknown")
+
+    if [[ "$current_version" == "$target_version" ]]; then
+      log_info "$tool $current_version (up to date)"
+      continue
+    fi
+
+    log_info "Upgrading $tool: $current_version -> $target_version"
+    download_or_build_tool "$tool" "$repo"
+    ((upgraded++)) || true
+  done
+
+  # Special: eavs adapters (must be installed alongside the binary)
+  if command_exists eavs; then
+    install_eavs_adapters
+  fi
+
+  if ((upgraded > 0)); then
+    log_success "Upgraded $upgraded tool(s)"
+  else
+    log_info "All tools up to date"
+  fi
+}
+
+# Regenerate models.json without interactive prompts.
+# Used by --update to pick up new models/providers from eavs config changes.
+update_models_json() {
+  # Need eavs with export support
+  if ! command_exists eavs || ! eavs models export --help >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local eavs_config_file
+  local eavs_url="http://127.0.0.1:${EAVS_PORT:-3033}"
+
+  # Detect mode from existing config
+  if [[ -f "/var/lib/octo/.config/octo/config.toml" ]]; then
+    # Multi-user
+    eavs_config_file="/var/lib/octo/.config/eavs/config.toml"
+    if [[ ! -f "$eavs_config_file" ]]; then
+      eavs_config_file="${XDG_CONFIG_HOME:-$HOME/.config}/eavs/config.toml"
+    fi
+
+    local pi_models_file="$HOME/.pi/agent/models.json"
+    local merge_flag=""
+    if [[ -f "$pi_models_file" ]]; then
+      merge_flag="--merge $pi_models_file"
+    fi
+
+    local models_json
+    # shellcheck disable=SC2086
+    models_json=$(eavs models export pi \
+      --base-url "$eavs_url" \
+      --config "$eavs_config_file" \
+      $merge_flag 2>/dev/null) || true
+
+    if [[ -n "$models_json" && "$models_json" != '{"providers":{}}' ]]; then
+      mkdir -p "$HOME/.pi/agent"
+      echo "$models_json" > "$HOME/.pi/agent/models.json"
+      local count
+      count=$(echo "$models_json" | jq '[.providers[].models | length] | add // 0' 2>/dev/null || echo "?")
+      log_success "models.json updated ($count models)"
+    fi
+  else
+    # Single-user
+    eavs_config_file="${XDG_CONFIG_HOME:-$HOME/.config}/eavs/config.toml"
+    local pi_models_file="$HOME/.pi/agent/models.json"
+    local merge_flag=""
+    if [[ -f "$pi_models_file" ]]; then
+      merge_flag="--merge $pi_models_file"
+    fi
+
+    local models_json
+    # shellcheck disable=SC2086
+    models_json=$(eavs models export pi \
+      --base-url "$eavs_url" \
+      --config "$eavs_config_file" \
+      $merge_flag 2>/dev/null) || true
+
+    if [[ -n "$models_json" && "$models_json" != '{"providers":{}}' ]]; then
+      mkdir -p "$HOME/.pi/agent"
+      echo "$models_json" > "$HOME/.pi/agent/models.json"
+      local count
+      count=$(echo "$models_json" | jq '[.providers[].models | length] | add // 0' 2>/dev/null || echo "?")
+      log_success "models.json updated ($count models)"
+    fi
+  fi
 }
 
 build_octo() {
@@ -2757,6 +3480,30 @@ build_octo() {
   log_info "Building frontend..."
   (cd frontend && bun run build)
   log_success "Frontend built"
+
+  # Build and install agent browser daemon
+  log_info "Building agent browser daemon..."
+  local browserd_dir="$SCRIPT_DIR/backend/crates/octo-browserd"
+  if [[ -d "$browserd_dir" ]]; then
+    (cd "$browserd_dir" && bun install && bun run build)
+    local browserd_deploy="/usr/local/lib/octo-browserd"
+    sudo mkdir -p "$browserd_deploy/bin" "$browserd_deploy/dist"
+    sudo cp "$browserd_dir/bin/octo-browserd.js" "$browserd_deploy/bin/"
+    sudo cp "$browserd_dir/dist/"*.js "$browserd_deploy/dist/"
+    sudo cp "$browserd_dir/package.json" "$browserd_deploy/"
+    (cd "$browserd_deploy" && sudo bun install --production)
+    # Install Playwright browsers to a shared location accessible by all users
+    local pw_browsers="/usr/local/share/playwright-browsers"
+    sudo mkdir -p "$pw_browsers"
+    sudo chmod 755 "$pw_browsers"
+    log_info "Installing Playwright chromium to $pw_browsers..."
+    sudo PLAYWRIGHT_BROWSERS_PATH="$pw_browsers" npx --yes playwright install --with-deps chromium 2>/dev/null || \
+      sudo PLAYWRIGHT_BROWSERS_PATH="$pw_browsers" bunx playwright install --with-deps chromium 2>/dev/null || \
+      log_warn "Playwright browser install failed - agent browser may not work"
+    log_success "Agent browser daemon installed to $browserd_deploy"
+  else
+    log_warn "octo-browserd not found, skipping agent browser setup"
+  fi
 
   # Install binaries to /usr/local/bin (globally accessible)
   log_info "Installing binaries to ${TOOLS_INSTALL_DIR}..."
@@ -3106,7 +3853,7 @@ enabled = $linux_users_enabled
 prefix = "octo_"
 uid_start = 2000
 group = "octo"
-shell = "/bin/bash"
+shell = "/bin/zsh"
 use_sudo = true
 create_home = true
 EOF
@@ -3225,6 +3972,13 @@ output_arg = "--output"
 github_arg = "--github"
 private_arg = "--private"
 description_arg = "--description"
+
+[agent_browser]
+enabled = true
+binary = "/usr/local/lib/octo-browserd/bin/octo-browserd.js"
+headed = false
+stream_port_base = 30000
+stream_port_range = 10000
 EOF
 
   log_success "Configuration written to $config_file"
@@ -4301,6 +5055,7 @@ After=default.target
 Type=simple
 Environment=OCTO_CONFIG=$OCTO_CONFIG_DIR/config.toml
 Environment=RUST_LOG=$OCTO_LOG_LEVEL
+Environment=PLAYWRIGHT_BROWSERS_PATH=/usr/local/share/playwright-browsers
 EnvironmentFile=-$OCTO_CONFIG_DIR/env
 ExecStart=/usr/local/bin/octo serve --local-mode
 ExecStop=/bin/kill -TERM \$MAINPID
@@ -4384,6 +5139,7 @@ Environment=XDG_DATA_HOME=${octo_home}/.local/share
 Environment=XDG_STATE_HOME=${octo_home}/.local/state
 Environment=OCTO_CONFIG=${octo_config_home}/config.toml
 Environment=RUST_LOG=$OCTO_LOG_LEVEL
+Environment=PLAYWRIGHT_BROWSERS_PATH=/usr/local/share/playwright-browsers
 EnvironmentFile=-${octo_config_home}/env
 ExecStart=/usr/local/bin/octo serve
 ExecStop=/bin/kill -TERM \$MAINPID
@@ -5401,6 +6157,12 @@ main() {
   verify_or_rerun "eavs_install" "EAVS install" "command -v eavs" install_eavs
   run_step "eavs_configure" "EAVS configure" configure_eavs
   verify_or_rerun "eavs_service" "EAVS service" "systemctl is-enabled eavs 2>/dev/null" install_eavs_service
+
+  # Test providers and generate models.json (after eavs service is running)
+  if [[ -n "${CONFIGURED_PROVIDERS:-}" ]]; then
+    run_step "eavs_test" "EAVS provider tests" test_eavs_providers
+  fi
+  run_step "eavs_models" "EAVS models.json" generate_eavs_models_json
 
   # Build Octo - ALWAYS rebuild to ensure binaries match the current source.
   # This is critical: stale binaries cause subtle bugs that are hard to diagnose.

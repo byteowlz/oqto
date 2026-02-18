@@ -6,6 +6,8 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- Chat "Jump to bottom" button appears when user has scrolled up; clicking it pins back to the bottom and resumes auto-scroll.
+
 - Sldr integration: backend mounts `/api/sldr` routes and frontend adds a Slides app for browsing slides, skeletons, flavors, and previews.
 - Multi-user sldr: per-user sldr-server instances spawned via octo-runner with `/api/sldr` proxy routing.
 - Install system now installs and publishes `sldr` and `sldr-server` binaries to `/usr/local/bin`.
@@ -30,6 +32,9 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- Chat auto-scroll now pins to the bottom on every streaming token update, not just on new message arrival, eliminating the jumping/flickering during streaming. Uses direct `scrollTop` assignment instead of `scrollIntoView` to prevent scroll jank.
+- Chat scroll position is preserved via a ref mirror to avoid stale closure bugs that could cause missed auto-scrolls.
+
 - Replaced cass-backed session search with hstry search and added line-based scroll resolution for search hits.
 - Documented archlinux CORS origins in the example Octo config.
 - Renamed CASS search types and comments to hstry in the API and frontend.
@@ -48,6 +53,7 @@ All notable changes to this project will be documented in this file.
 - `tools/test-ssh-proxy.sh` now starts an `ssh-agent` if `SSH_AUTH_SOCK` is unset.
 - Runner now creates hstry conversation metadata as soon as Pi reports the native session id.
 - Runner now migrates hstry history on session re-key so existing chats keep their full history.
+- Runner now routes steer/follow_up to prompt when Pi sessions are idle, starting, stopping, or aborting, ensuring new turns are not dropped after reconnects or after Pi exits.
 - New Pi chats now use an octo- prefixed provisional ID so Octo IDs never look like Pi UUIDs.
 - Multi-user chat history now lists Pi sessions from hstry via the runner and fetches Pi messages from hstry for workspace chats.
 - Updated hstry install template to point Pi adapter sources at ~/.pi/agent/sessions.

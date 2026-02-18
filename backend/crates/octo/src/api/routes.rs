@@ -238,6 +238,8 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
             "/admin/invite-codes/stats",
             get(handlers::get_invite_code_stats),
         )
+        // EAVS / Model management
+        .route("/admin/eavs/providers", get(handlers::list_eavs_providers))
         .route(
             "/admin/invite-codes/{code_id}",
             get(handlers::get_invite_code),

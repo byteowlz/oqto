@@ -1,0 +1,47 @@
+{
+  "todos": [
+    {
+      "id": "ace47240",
+      "content": "Investigate model selection bug - status bar shows claude-opus-4-6 but agent uses GLM-4.7",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "6fd7585a",
+      "content": "Trace the set_model flow: frontend -> ws -> backend -> runner -> pi",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "d2ea12ba",
+      "content": "Fix: revert optimistic model updates on failure in useModelSelection, ChatView, ChatSettingsView",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "642668c9",
+      "content": "Fix: only persist model to localStorage/server after confirmed agentSetModel success",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "0776889a",
+      "content": "Clean up dead code in status-bar.tsx (unused localStorage polling, shortenModelRef, imports)",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "id": "52bbd591",
+      "content": "Build & lint pass",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "b9a4316f",
+      "content": "Changes committed (in 415ced4)",
+      "status": "completed",
+      "priority": "high"
+    }
+  ],
+  "updated_at": "2026-02-18T07:33:17.385Z"
+}

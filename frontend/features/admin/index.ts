@@ -49,4 +49,12 @@ export {
 	useDeleteInviteCode,
 	// Metrics hook
 	useAdminMetrics,
+	// EAVS / Model provider hooks
+	type EavsProviderSummary,
+	type EavsModelSummary,
+	type EavsProvidersResponse,
+	type SyncUserConfigResult,
+	type SyncUserConfigsResponse,
+	useEavsProviders,
+	useSyncUserConfigs,
 } from "./hooks";

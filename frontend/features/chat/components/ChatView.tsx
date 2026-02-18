@@ -87,6 +87,7 @@ import {
 	type ChangeEvent,
 	type KeyboardEvent,
 	memo,
+	startTransition,
 	useCallback,
 	useEffect,
 	useLayoutEffect,
@@ -269,15 +270,29 @@ export function ChatView({
 		onMessageComplete: handleMessageComplete,
 		onTitleChanged: updateChatSessionTitleLocal,
 	});
-	// Draft persistence - restore from localStorage on mount
-	const [input, setInput] = useState(() => {
+	// Draft persistence - restore from localStorage on mount.
+	// Input value lives in a ref (never in React state) so that
+	// keystrokes never trigger a React render of this large component.
+	// The textarea uses defaultValue and is fully uncontrolled.
+	const inputInitialValue = useMemo(() => {
 		if (typeof window === "undefined") return "";
 		try {
 			return localStorage.getItem(draftStorageKey) || "";
 		} catch {
 			return "";
 		}
-	});
+	}, [draftStorageKey]);
+	const inputValueRef = useRef(inputInitialValue);
+	// Lightweight state only for send-button enabled/disabled
+	const [canSendInput, setCanSendInput] = useState(!!inputInitialValue.trim());
+	// Helper to imperatively set the textarea value and sync ref
+	const setInput = useCallback((value: string) => {
+		inputValueRef.current = value;
+		if (inputRef.current) {
+			inputRef.current.value = value;
+		}
+		startTransition(() => setCanSendInput(!!value.trim()));
+	}, []);
 	const [fileAttachments, setFileAttachments] = useState<FileAttachment[]>([]);
 
 	// Consume pending file attachment from external source (e.g. canvas)
@@ -391,19 +406,25 @@ export function ChatView({
 		input: number;
 		output: number;
 	} | null>(null);
-	// Initialize from cached scroll position - null means bottom
 	const [isUserScrolled, setIsUserScrolled] = useState(
 		() => getCachedScrollPosition(scrollStorageKey) !== null,
 	);
-	// Pagination: show all messages. The visibleCount tracks the current
-	// total so all history is visible after reload. New streaming messages
-	// also bump it via the messages-length effect below.
+	const isUserScrolledRef = useRef(isUserScrolled);
+	// Set to true by wheel/touch/pointer events on the container.
+	// Cleared on send and jump-to-bottom. Only while this is true does
+	// the scroll event handler update isUserScrolled state.
+	const userInitiatedScrollRef = useRef(false);
+
+	const scrollToBottom = useCallback(() => {
+		const c = messagesContainerRef.current;
+		if (!c) return;
+		c.scrollTop = c.scrollHeight;
+	}, []);
+
 	const LOAD_MORE_COUNT = 30;
 	const [visibleCount, setVisibleCount] = useState(
 		Math.max(messages.length, 30),
 	);
-	// Keep visibleCount in sync when messages are loaded from history
-	// (e.g. fetchHistoryMessages completing after mount).
 	useEffect(() => {
 		setVisibleCount((prev) => Math.max(prev, messages.length));
 	}, [messages.length]);
@@ -424,10 +445,10 @@ export function ChatView({
 	} = useA2UI(a2uiMessagesRef, {
 		onSurfaceReceived: useCallback(() => {
 			// Auto-scroll when A2UI surface arrives
-			if (!isUserScrolled) {
-				messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+			if (!isUserScrolledRef.current) {
+				scrollToBottom();
 			}
-		}, [isUserScrolled]),
+		}, [scrollToBottom]),
 	});
 
 	// Memoized map of message ID to surfaces to avoid creating new arrays on each render
@@ -556,11 +577,12 @@ export function ChatView({
 			<div className="h-10 bg-muted/20" />
 		</div>
 	);
-	const slashQuery = useMemo(() => parseSlashInput(input), [input]);
+	// Slash query stored in ref -- updated synchronously in handleInputChange
+	const slashQueryRef = useRef(parseSlashInput(inputValueRef.current));
 
 	const enqueueMessage = useCallback(
 		(rawText?: string) => {
-			const trimmed = (rawText ?? input).trim();
+			const trimmed = (rawText ?? inputValueRef.current).trim();
 			if (!trimmed) return;
 
 			if (fileAttachments.length > 0) {
@@ -599,7 +621,7 @@ export function ChatView({
 				inputRef.current.style.height = "auto";
 			}
 		},
-		[draftStorageKey, fileAttachments.length, input],
+		[draftStorageKey, fileAttachments.length, setInput],
 	);
 	const builtInCommands = useMemo<SlashCommand[]>(() => {
 		const commands: SlashCommand[] = [
@@ -698,8 +720,9 @@ const gaugeTokens = contextTokenCount;
 	const dictation = useDictation({
 		config: voiceConfig,
 		onTranscript: useCallback((text: string) => {
-			setInput((prev) => (prev ? `${prev} ${text}` : text));
-		}, []),
+			const prev = inputValueRef.current;
+			setInput(prev ? `${prev} ${text}` : text);
+		}, [setInput]),
 		vadTimeoutMs: features?.voice?.vad_timeout_ms,
 		autoSendOnFinal: true,
 		autoSendDelayMs: 50,
@@ -845,74 +868,85 @@ const gaugeTokens = contextTokenCount;
 		}
 	}, [scrollToMessageId, messages, visibleCount, onScrollToMessageComplete]);
 
-	// Initial scroll position - instant, no animation
+	// Keep ref mirror in sync with state
+	useEffect(() => {
+		isUserScrolledRef.current = isUserScrolled;
+	}, [isUserScrolled]);
+
+	// Auto-scroll: after every render, if not user-scrolled, pin to bottom.
+	// useEffect (not useLayoutEffect) so it runs after paint — by then
+	// handleScroll has already updated isUserScrolledRef if the user scrolled,
+	// so we never race and snap back over a real user scroll.
+	useEffect(() => {
+		if (!initialScrollDoneRef.current) return;
+		if (!isUserScrolledRef.current) {
+			scrollToBottom();
+		}
+	});
+
+	// Update isUserScrolled from real user scroll events only.
+	// wheel/touch/pointer events on the container set userInitiatedScrollRef
+	// so we know the following scroll event came from the user.
+	useEffect(() => {
+		const container = messagesContainerRef.current;
+		if (!container) return;
+		const mark = () => { userInitiatedScrollRef.current = true; };
+		container.addEventListener("wheel", mark, { passive: true });
+		container.addEventListener("touchstart", mark, { passive: true });
+		container.addEventListener("pointerdown", mark, { passive: true });
+		return () => {
+			container.removeEventListener("wheel", mark);
+			container.removeEventListener("touchstart", mark);
+			container.removeEventListener("pointerdown", mark);
+		};
+	}, []);
+
+	const handleScrollToBottom = useCallback(() => {
+		userInitiatedScrollRef.current = false;
+		setIsUserScrolled(false);
+		isUserScrolledRef.current = false;
+		setCachedScrollPosition(null, scrollStorageKey);
+		scrollToBottom();
+	}, [scrollStorageKey, scrollToBottom]);
+
+	// Initial scroll position
 	useLayoutEffect(() => {
 		if (initialScrollDoneRef.current || !messagesContainerRef.current) return;
 		if (messages.length === 0) return;
-
 		initialScrollDoneRef.current = true;
 		const container = messagesContainerRef.current;
 		const cachedPosition = getCachedScrollPosition(scrollStorageKey);
-
 		if (cachedPosition !== null) {
-			// Restore user's scroll position instantly
 			container.scrollTop = cachedPosition;
 		} else {
-			// Scroll to bottom instantly (no animation)
-			container.scrollTop = container.scrollHeight;
+			messagesEndRef.current?.scrollIntoView();
 		}
 	}, [messages.length, scrollStorageKey]);
 
-	// Auto-scroll to bottom when NEW messages arrive (only if user hasn't scrolled up)
-	const prevMessageCountRef = useRef(messages.length);
-	useLayoutEffect(() => {
-		const prevCount = prevMessageCountRef.current;
-		prevMessageCountRef.current = messages.length;
-
-		// Only auto-scroll if messages were added (not on initial load)
-		if (messages.length > prevCount) {
-			// Ensure new messages are visible
-			setVisibleCount((prev) => Math.max(prev, messages.length));
-			if (!isUserScrolled) {
-				messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-			}
-		}
-	}, [messages.length, isUserScrolled]);
-
-	// Detect user scroll to disable auto-scroll, save position, and load more messages
 	const handleScroll = useCallback(() => {
 		const container = messagesContainerRef.current;
 		if (!container) return;
 
-		// Check if user is near the bottom (within 100px)
-		const isNearBottom =
-			container.scrollHeight - container.scrollTop - container.clientHeight <
-			100;
-
-		// Check if user scrolled to the top - load more messages
-		const isNearTop = container.scrollTop < 100;
-		if (isNearTop && visibleCount < messages.length) {
-			// Preserve scroll position when loading more
+		// Load more when near top
+		if (container.scrollTop < 100 && visibleCount < messages.length) {
 			const prevScrollHeight = container.scrollHeight;
-			setVisibleCount((prev) =>
-				Math.min(prev + LOAD_MORE_COUNT, messages.length),
-			);
-			// After state update, adjust scroll to maintain position
+			setVisibleCount((prev) => Math.min(prev + LOAD_MORE_COUNT, messages.length));
 			requestAnimationFrame(() => {
-				const newScrollHeight = container.scrollHeight;
-				container.scrollTop = newScrollHeight - prevScrollHeight;
+				container.scrollTop = container.scrollHeight - prevScrollHeight;
 			});
 		}
 
-		const userScrolled = !isNearBottom;
-		setIsUserScrolled(userScrolled);
+		// Only update scroll state when the scroll came from a user gesture
+		if (!userInitiatedScrollRef.current) return;
+		userInitiatedScrollRef.current = false;
 
-		// Save scroll position to cache
-		if (userScrolled) {
-			setCachedScrollPosition(container.scrollTop, scrollStorageKey);
-		} else {
-			// At bottom - clear saved position so next mount scrolls to bottom
+		const atBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 80;
+		setIsUserScrolled(!atBottom);
+		isUserScrolledRef.current = !atBottom;
+		if (atBottom) {
 			setCachedScrollPosition(null, scrollStorageKey);
+		} else {
+			setCachedScrollPosition(container.scrollTop, scrollStorageKey);
 		}
 	}, [scrollStorageKey, visibleCount, messages.length]);
 
@@ -926,33 +960,12 @@ const gaugeTokens = contextTokenCount;
 	}, []);
 
 	// Auto-resize is now handled inline in handleInputChange for better performance.
-	// This effect is only needed for programmatic input changes (e.g., dictation, file select).
-	const lastInputLengthRef = useRef(input.length);
+	// This effect only handles dictation mode changes.
 	useEffect(() => {
-		// Keep the textarea stable during dictation; the DictationOverlay shows the transcript.
-		if (dictation.isActive) {
-			lastInputLengthRef.current = input.length;
-			if (inputRef.current) {
-				inputRef.current.style.height = "36px";
-			}
-			return;
+		if (dictation.isActive && inputRef.current) {
+			inputRef.current.style.height = "36px";
 		}
-
-		// Only resize if the input changed programmatically (not via typing, which is handled inline)
-		const currentLength = input.length;
-		const lastLength = lastInputLengthRef.current;
-		// Skip if this is likely a single character change (typing)
-		if (Math.abs(currentLength - lastLength) <= 1) {
-			lastInputLengthRef.current = currentLength;
-			return;
-		}
-		lastInputLengthRef.current = currentLength;
-		const textarea = inputRef.current;
-		if (textarea) {
-			textarea.style.height = "auto";
-			textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`;
-		}
-	}, [dictation.isActive, input]);
+	}, [dictation.isActive]);
 
 	// Handle file upload
 	const handleFileUpload = useCallback(
@@ -1011,6 +1024,7 @@ const gaugeTokens = contextTokenCount;
 			if (separatorIndex <= 0 || separatorIndex === value.length - 1) return;
 			const provider = value.slice(0, separatorIndex);
 			const modelId = value.slice(separatorIndex + 1);
+			const previousModelRef = selectedModelRef;
 			setSelectedModelRef(value);
 			setIsSwitchingModel(true);
 			try {
@@ -1024,11 +1038,13 @@ const gaugeTokens = contextTokenCount;
 				await refresh();
 			} catch (err) {
 				console.error("Failed to switch model:", err);
+				// Revert optimistic update on failure
+				setSelectedModelRef(previousModelRef);
 			} finally {
 				setIsSwitchingModel(false);
 			}
 		},
-		[canSwitchModel, piState?.sessionId, refresh, selectedSessionId],
+		[canSwitchModel, piState?.sessionId, refresh, selectedModelRef, selectedSessionId],
 	);
 
 	const runSlashCommand = useCallback(
@@ -1181,15 +1197,13 @@ const gaugeTokens = contextTokenCount;
 
 	const handleSend = useCallback(
 		async (mode: "prompt" | "steer" | "follow_up" = "steer") => {
-			const trimmed = input.trim();
+			const trimmed = inputValueRef.current.trim();
 			if (!trimmed && fileAttachments.length === 0) return;
 
-			if (slashQuery.isSlash && builtInCommandNames.has(slashQuery.command)) {
+			const sq = slashQueryRef.current;
+			if (sq.isSlash && builtInCommandNames.has(sq.command)) {
 				try {
-					const result = await runSlashCommand(
-						slashQuery.command,
-						slashQuery.args,
-					);
+					const result = await runSlashCommand(sq.command, sq.args);
 					if (result.handled) {
 						if (result.clearInput) {
 							setInput("");
@@ -1228,7 +1242,7 @@ const gaugeTokens = contextTokenCount;
 				message = `${fileRefs}\n\n${trimmed}`;
 			}
 
-			const draftInput = input;
+			const draftInput = inputValueRef.current;
 			const draftAttachments = fileAttachments;
 			const hasHistory =
 				messages.length > 0 || (piState?.messageCount ?? 0) > 0;
@@ -1260,6 +1274,10 @@ const gaugeTokens = contextTokenCount;
 				inputRef.current.style.height = "auto";
 			}
 
+			userInitiatedScrollRef.current = false;
+			setIsUserScrolled(false);
+			isUserScrolledRef.current = false;
+
 			setSendPendingSessionId(resolvedSessionId);
 			try {
 				await send(message, {
@@ -1280,21 +1298,19 @@ const gaugeTokens = contextTokenCount;
 			builtInCommandNames,
 			draftStorageKey,
 			fileAttachments,
-			input,
 			messages.length,
 			onMessageSent,
 			piState?.messageCount,
 			runSlashCommand,
 			selectedSessionId,
 			send,
-			slashQuery.command,
-			slashQuery.args,
-			slashQuery.isSlash,
+			setInput,
 		],
 	);
 
 	const handleQueueIntent = useCallback(() => {
-		if (slashQuery.isSlash && builtInCommandNames.has(slashQuery.command)) {
+		const sq = slashQueryRef.current;
+		if (sq.isSlash && builtInCommandNames.has(sq.command)) {
 			handleSend("steer");
 			return;
 		}
@@ -1303,8 +1319,6 @@ const gaugeTokens = contextTokenCount;
 		builtInCommandNames,
 		enqueueMessage,
 		handleSend,
-		slashQuery.command,
-		slashQuery.isSlash,
 	]);
 
 	const messagesRef = useRef(messages);
@@ -1396,7 +1410,8 @@ const gaugeTokens = contextTokenCount;
 
 	const handleKeyDown = useCallback(
 		(e: KeyboardEvent<HTMLTextAreaElement>) => {
-			if (showSlashPopup && slashQuery.isSlash && !slashQuery.args) {
+			const sq = slashQueryRef.current;
+			if (showSlashPopup && sq.isSlash && !sq.args) {
 				if (
 					["ArrowDown", "ArrowUp", "Enter", "Tab", "Escape"].includes(e.key)
 				) {
@@ -1430,7 +1445,6 @@ const gaugeTokens = contextTokenCount;
 			handleSend,
 			showFileMentionPopup,
 			showSlashPopup,
-			slashQuery,
 		],
 	);
 
@@ -1438,7 +1452,10 @@ const gaugeTokens = contextTokenCount;
 		(e: ChangeEvent<HTMLTextAreaElement>) => {
 			const textarea = e.target;
 			const value = textarea.value;
-			setInput(value);
+
+			// Update ref and slash query synchronously -- no React renders
+			inputValueRef.current = value;
+			slashQueryRef.current = parseSlashInput(value);
 			setCommandError(null);
 
 			// Keep textarea stable during dictation to avoid reflow storms.
@@ -1466,24 +1483,31 @@ const gaugeTokens = contextTokenCount;
 				}
 			}, 300);
 
-			if (value.startsWith("/")) {
-				setShowSlashPopup(true);
-				setShowFileMentionPopup(false);
-				setFileMentionQuery("");
-				return;
-			}
+			// Defer all React state updates to avoid blocking typing
+			requestAnimationFrame(() => {
+				startTransition(() => {
+					setCanSendInput(!!value.trim());
 
-			setShowSlashPopup(false);
+					if (value.startsWith("/")) {
+						setShowSlashPopup(true);
+						setShowFileMentionPopup(false);
+						setFileMentionQuery("");
+						return;
+					}
 
-			// Show file mention popup when typing @
-			const atMatch = value.match(/@[^\s]*$/);
-			if (atMatch) {
-				setShowFileMentionPopup(true);
-				setFileMentionQuery(atMatch[1]);
-			} else {
-				setShowFileMentionPopup(false);
-				setFileMentionQuery("");
-			}
+					setShowSlashPopup(false);
+
+					// Show file mention popup when typing @
+					const atMatch = value.match(/@[^\s]*$/);
+					if (atMatch) {
+						setShowFileMentionPopup(true);
+						setFileMentionQuery(atMatch[1]);
+					} else {
+						setShowFileMentionPopup(false);
+						setFileMentionQuery("");
+					}
+				});
+			});
 		},
 		[draftStorageKey, dictation.isActive],
 	);
@@ -1529,11 +1553,12 @@ const gaugeTokens = contextTokenCount;
 	const handleFileSelect = useCallback((file: FileAttachment) => {
 		setFileAttachments((prev) => [...prev, file]);
 		// Remove the @query from input
-		setInput((prev) => prev.replace(/@[^\s]*$/, ""));
+		const newValue = inputValueRef.current.replace(/@[^\s]*$/, "");
+		setInput(newValue);
 		setShowFileMentionPopup(false);
 		setFileMentionQuery("");
 		inputRef.current?.focus();
-	}, []);
+	}, [setInput]);
 
 	const handleStop = useCallback(async () => {
 		await abort();
@@ -1684,6 +1709,7 @@ const gaugeTokens = contextTokenCount;
 					className="h-full bg-muted/30 border border-border p-2 sm:p-4 overflow-y-auto scrollbar-hide"
 					data-spotlight="chat-timeline"
 				>
+					<div>
 					{showSkeleton && ChatSkeleton}
 
 					{!showSkeleton &&
@@ -1810,8 +1836,35 @@ const gaugeTokens = contextTokenCount;
 						</div>
 					)}
 
+					</div>
 					<div ref={messagesEndRef} />
 				</div>
+
+				{/* Jump to bottom button - appears when user has scrolled up */}
+				{isUserScrolled && (
+					<button
+						type="button"
+						onClick={handleScrollToBottom}
+						className="absolute bottom-3 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-primary text-primary-foreground text-xs shadow-md hover:bg-primary/90 transition-colors"
+						title="Jump to bottom"
+					>
+						<svg
+							xmlns="http://www.w3.org/2000/svg"
+							width="12"
+							height="12"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							strokeWidth="2"
+							strokeLinecap="round"
+							strokeLinejoin="round"
+							aria-hidden="true"
+						>
+							<polyline points="6 9 12 15 18 9" />
+						</svg>
+						Jump to bottom
+					</button>
+				)}
 			</div>
 
 			{/* Hidden file input */}
@@ -1861,11 +1914,12 @@ const gaugeTokens = contextTokenCount;
 					>
 						<SlashCommandPopup
 							commands={slashCommands}
-							query={slashQuery.command}
-							isOpen={showSlashPopup && slashQuery.isSlash && !slashQuery.args}
+							query={slashQueryRef.current.command}
+							isOpen={showSlashPopup && slashQueryRef.current.isSlash && !slashQueryRef.current.args}
 							onSelect={(cmd) => {
+								const sq = slashQueryRef.current;
 								if (builtInCommandNames.has(cmd.name)) {
-									runSlashCommand(cmd.name, slashQuery.args)
+									runSlashCommand(cmd.name, sq.args)
 										.then((result) => {
 											if (result.clearInput) {
 												setInput("");
@@ -1887,8 +1941,8 @@ const gaugeTokens = contextTokenCount;
 									return;
 								}
 
-								if (slashQuery.args.trim()) {
-									send(`/${cmd.name} ${slashQuery.args.trim()}`)
+								if (sq.args.trim()) {
+									send(`/${cmd.name} ${sq.args.trim()}`)
 										.then(() => {
 											setInput("");
 											setFileAttachments([]);
@@ -2017,7 +2071,7 @@ const gaugeTokens = contextTokenCount;
 						{hasVoice && dictation.isActive ? (
 							<DictationOverlay
 								open
-								value={input}
+								value={inputValueRef.current}
 								liveTranscript={dictation.liveTranscript}
 								placeholder={t.speakNow}
 								vadProgress={dictation.vadProgress}
@@ -2083,7 +2137,7 @@ const gaugeTokens = contextTokenCount;
 								enterKeyHint="send"
 								data-form-type="other"
 								placeholder={t.inputPlaceholder}
-								value={input}
+								defaultValue={inputInitialValue}
 								onChange={handleInputChange}
 								onKeyDown={handleKeyDown}
 								onPaste={(e) => {
@@ -2176,7 +2230,7 @@ const gaugeTokens = contextTokenCount;
 						onPointerUp={handleSendPointerUp}
 						onPointerCancel={handleSendPointerUp}
 						onPointerLeave={handleSendPointerLeave}
-						disabled={!input.trim() && fileAttachments.length === 0}
+						disabled={!canSendInput && fileAttachments.length === 0}
 						className="flex-shrink-0 h-8 px-2 flex items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed transition-colors bg-transparent hover:bg-transparent"
 						variant="ghost"
 						size="icon"
@@ -2239,6 +2293,19 @@ function groupMessages(messages: DisplayMessage[]): MessageGroup[] {
 	let current: MessageGroup | null = null;
 
 	for (const message of messages) {
+		// Skip user messages that have no renderable text content.
+		// These are empty steer echoes persisted to hstry — the real
+		// content lives in the optimistic message that was already shown.
+		if (message.role === "user") {
+			const hasText = message.parts.some(
+				(p) =>
+					p.type === "text" &&
+					typeof (p as { text?: string }).text === "string" &&
+					(p as { text: string }).text.trim().length > 0,
+			);
+			if (!hasText) continue;
+		}
+
 		if (!current || current.role !== message.role) {
 			current = { role: message.role, messages: [message] };
 			groups.push(current);

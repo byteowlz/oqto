@@ -1,6 +1,5 @@
 "use client";
 
-import { ProviderIcon } from "@/components/data-display";
 import { ModelQuickSwitcher } from "@/components/model-quick-switcher";
 import { useSelectedChat } from "@/components/contexts";
 import { useApp } from "@/hooks/use-app";
@@ -9,7 +8,7 @@ import { controlPlaneApiUrl, getAuthHeaders } from "@/lib/control-plane-client";
 import { cn } from "@/lib/utils";
 import { useQuery } from "@tanstack/react-query";
 import { Activity, Users } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 
 // Types for status bar data
 type HealthResponse = {
@@ -48,93 +47,12 @@ async function fetchAdminStats(): Promise<AdminStats> {
 	return res.json();
 }
 
-// Shorten model string for display (format: "provider/model")
-function shortenModelRef(modelRef: string): string {
-	if (!modelRef) return "";
-
-	const parts = modelRef.split("/");
-	if (parts.length < 2) return modelRef;
-
-	const provider = parts[0];
-	const model = parts.slice(1).join("/");
-
-	// Shorten common providers
-	const shortProvider = provider
-		.replace("anthropic", "anth")
-		.replace("openai", "oai")
-		.replace("google", "goog")
-		.replace("bedrock", "bed");
-
-	// Shorten model names
-	const shortModel = model
-		.replace("claude-", "c-")
-		.replace("sonnet", "son")
-		.replace("opus", "op")
-		.replace("haiku", "hk")
-		.replace("gpt-4", "g4")
-		.replace("gpt-3.5", "g3.5")
-		.replace("-turbo", "-t")
-		.replace("-preview", "-p")
-		.replace("-latest", "");
-
-	return `${shortProvider}/${shortModel}`;
-}
-
 export function StatusBar() {
 	const { data: user } = useCurrentUser();
 	const { workspaceSessions, selectedChatSessionId, runnerSessionCount } = useApp();
 	const { selectedChatFromHistory } = useSelectedChat();
 
 	const isAdmin = (user?.role ?? "").toLowerCase() === "admin";
-
-	// Track selected model from localStorage (same key used by sessions app)
-	const [selectedModelRef, setSelectedModelRef] = useState<string | null>(null);
-
-	// Storage key matches sessions app: octo:chatModel:${chatSessionId}
-	const modelStorageKey = useMemo(() => {
-		const activeSessionId = selectedChatSessionId;
-		if (!activeSessionId) return null;
-		return `octo:chatModel:${activeSessionId}`;
-	}, [selectedChatSessionId]);
-
-	// Fallback model from hstry session metadata
-	const hstryModelRef = useMemo(() => {
-		if (selectedChatFromHistory?.provider && selectedChatFromHistory?.model) {
-			return `${selectedChatFromHistory.provider}/${selectedChatFromHistory.model}`;
-		}
-		return null;
-	}, [selectedChatFromHistory?.provider, selectedChatFromHistory?.model]);
-
-	// Read model from localStorage and listen for changes
-	useEffect(() => {
-		if (!modelStorageKey) {
-			setSelectedModelRef(null);
-			return;
-		}
-
-		// Initial read - localStorage takes priority, then hstry fallback
-		const stored = localStorage.getItem(modelStorageKey);
-		setSelectedModelRef(stored || hstryModelRef);
-
-		// Listen for storage changes from other tabs
-		const handleStorage = (e: StorageEvent) => {
-			if (e.key === modelStorageKey) {
-				setSelectedModelRef(e.newValue);
-			}
-		};
-
-		// Poll for same-tab changes (localStorage events don't fire for same tab)
-		const interval = setInterval(() => {
-			const current = localStorage.getItem(modelStorageKey) || hstryModelRef;
-			setSelectedModelRef((prev) => (current !== prev ? current : prev));
-		}, 1000);
-
-		window.addEventListener("storage", handleStorage);
-		return () => {
-			window.removeEventListener("storage", handleStorage);
-			clearInterval(interval);
-		};
-	}, [modelStorageKey, hstryModelRef]);
 
 	// Fetch version from health endpoint
 	const { data: health } = useQuery({
@@ -161,24 +79,6 @@ export function StatusBar() {
 		if (runnerSessionCount > 0) return runnerSessionCount;
 		return workspaceSessions.filter((s) => s.status === "running").length;
 	}, [runnerSessionCount, workspaceSessions]);
-
-	// Extract provider and model name from ref (format: "provider/model")
-	const { provider, modelName, shortModel } = useMemo(() => {
-		if (!selectedModelRef)
-			return { provider: null, modelName: null, shortModel: null };
-		const parts = selectedModelRef.split("/");
-		if (parts.length < 2)
-			return {
-				provider: null,
-				modelName: selectedModelRef,
-				shortModel: selectedModelRef,
-			};
-		return {
-			provider: parts[0],
-			modelName: parts.slice(1).join("/"),
-			shortModel: shortenModelRef(selectedModelRef),
-		};
-	}, [selectedModelRef]);
 
 	// Get workspace path for model switcher from chat history or workspace sessions
 	const workspacePath = useMemo(() => {

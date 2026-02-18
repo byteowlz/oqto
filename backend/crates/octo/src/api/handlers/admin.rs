@@ -226,6 +226,7 @@ pub struct SyncUserConfigResult {
     pub user_id: String,
     pub linux_username: Option<String>,
     pub runner_configured: bool,
+    pub shell_configured: bool,
     pub mmry_configured: bool,
     pub eavs_configured: bool,
     pub error: Option<String>,
@@ -266,6 +267,7 @@ pub async fn sync_user_configs(
             user_id: user.id.clone(),
             linux_username: user.linux_username.clone(),
             runner_configured: false,
+            shell_configured: false,
             mmry_configured: false,
             eavs_configured: false,
             error: None,
@@ -308,6 +310,22 @@ pub async fn sync_user_configs(
                             error = %e,
                             "Failed to store linux_username/uid in database"
                         );
+                    }
+                }
+
+                // Provision shell dotfiles (zsh + starship)
+                match linux_users.setup_user_shell(&linux_username) {
+                    Ok(()) => {
+                        result.shell_configured = true;
+                    }
+                    Err(e) => {
+                        let msg = format!("shell setup failed: {e}");
+                        if let Some(ref mut existing) = result.error {
+                            existing.push_str("; ");
+                            existing.push_str(&msg);
+                        } else {
+                            result.error = Some(msg);
+                        }
                     }
                 }
 
@@ -443,6 +461,15 @@ pub async fn create_user(
                             "Failed to update mmry config for user"
                         );
                     }
+                }
+
+                // Provision shell dotfiles (zsh + starship)
+                if let Err(e) = linux_users.setup_user_shell(&actual_linux_username) {
+                    warn!(
+                        user_id = %user.id,
+                        error = ?e,
+                        "Failed to provision shell dotfiles (non-fatal)"
+                    );
                 }
 
                 info!(
@@ -654,4 +681,74 @@ async fn sync_eavs_models_json(
     linux_users.write_file_as_user(linux_username, &pi_dir, "models.json", &models_content)?;
 
     Ok(())
+}
+
+// ============================================================================
+// EAVS / Model Provider Management
+// ============================================================================
+
+/// List configured eavs providers with their models.
+#[instrument(skip(state, _user))]
+pub async fn list_eavs_providers(
+    State(state): State<AppState>,
+    RequireAdmin(_user): RequireAdmin,
+) -> ApiResult<Json<EavsProvidersResponse>> {
+    let eavs_client = state
+        .eavs_client
+        .as_ref()
+        .ok_or_else(|| ApiError::ServiceUnavailable("EAVS is not configured.".into()))?;
+
+    let providers = eavs_client
+        .providers_detail()
+        .await
+        .map_err(|e| ApiError::Internal(format!("Failed to query eavs providers: {e}")))?;
+
+    let provider_summaries: Vec<EavsProviderSummary> = providers
+        .iter()
+        .map(|p| EavsProviderSummary {
+            name: p.name.clone(),
+            type_: p.type_.clone(),
+            pi_api: p.pi_api.clone(),
+            has_api_key: p.has_api_key,
+            model_count: p.models.len(),
+            models: p
+                .models
+                .iter()
+                .map(|m| EavsModelSummary {
+                    id: m.id.clone(),
+                    name: m.name.clone(),
+                    reasoning: m.reasoning,
+                })
+                .collect(),
+        })
+        .collect();
+
+    Ok(Json(EavsProvidersResponse {
+        providers: provider_summaries,
+        eavs_url: eavs_client.base_url().to_string(),
+    }))
+}
+
+#[derive(Debug, Serialize)]
+pub struct EavsProvidersResponse {
+    pub providers: Vec<EavsProviderSummary>,
+    pub eavs_url: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct EavsProviderSummary {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub type_: String,
+    pub pi_api: Option<String>,
+    pub has_api_key: bool,
+    pub model_count: usize,
+    pub models: Vec<EavsModelSummary>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct EavsModelSummary {
+    pub id: String,
+    pub name: String,
+    pub reasoning: bool,
 }

@@ -176,6 +176,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 	const prefetchInFlightRef = useRef(false);
 	chatHistoryRef.current = chatHistory;
 
+	// Track sessions that have been manually renamed by the user.
+	// Auto-generated title events from Pi are ignored for these sessions.
+	const manuallyRenamedRef = useRef<Map<string, string>>(new Map());
+
 	const [selectedChatSessionId, setSelectedChatSessionIdRaw] = useState<
 		string | null
 	>(() => {
@@ -444,9 +448,19 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 					"sessions in", Math.round(t1 - t0) + "ms, total",
 					Math.round(performance.now() - t0) + "ms");
 			}
-			setChatHistory(withActive);
+			// Preserve titles for sessions that were manually renamed by the user.
+			// The runner may have overwritten hstry with an auto-generated title
+			// between the user's rename and this refresh.
+			const manualTitles = manuallyRenamedRef.current;
+			const final_ = manualTitles.size > 0
+				? withActive.map((s) => {
+						const manualTitle = manualTitles.get(s.id);
+						return manualTitle ? { ...s, title: manualTitle } : s;
+					})
+				: withActive;
+			setChatHistory(final_);
 			setChatHistoryError(null);
-			writeCachedChatHistory(withActive);
+			writeCachedChatHistory(final_);
 		} catch (err) {
 			const msg =
 				err instanceof Error ? err.message : "Failed to load chat history";
@@ -615,6 +629,19 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 	const updateChatSessionTitleLocal = useCallback(
 		(sessionId: string, title: string, readableId?: string | null) => {
 			if (!title.trim()) return;
+			// If this session was manually renamed by the user, ignore
+			// auto-generated title events from Pi to preserve the user's choice.
+			if (manuallyRenamedRef.current.has(sessionId)) {
+				if (isPiDebugEnabled()) {
+					console.debug(
+						"[chat-context] Ignoring auto-title for manually renamed session:",
+						sessionId,
+						"auto:", title,
+						"manual:", manuallyRenamedRef.current.get(sessionId),
+					);
+				}
+				return;
+			}
 			setChatHistory((prev) =>
 				prev.map((s) =>
 					s.id === sessionId
@@ -690,11 +717,27 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 		async (sessionId: string, title: string): Promise<boolean> => {
 			try {
 				const updated = await updateChatSession(sessionId, { title });
+				// Mark this session as manually renamed so auto-generated
+				// title events from Pi don't overwrite the user's choice.
+				manuallyRenamedRef.current.set(sessionId, updated.title);
 				setChatHistory((prev) =>
 					prev.map((s) =>
 						s.id === sessionId ? { ...s, title: updated.title } : s,
 					),
 				);
+
+				// Also tell the runner/Pi to update its internal session name.
+				// This prevents the runner from overwriting hstry with Pi's
+				// auto-generated title on the next state event.
+				try {
+					const manager = getWsManager();
+					if (manager.isConnected) {
+						void manager.agentSetSessionName(sessionId, updated.title);
+					}
+				} catch {
+					// Best-effort -- runner notification is not critical
+				}
+
 				return true;
 			} catch {
 				return false;

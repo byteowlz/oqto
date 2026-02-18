@@ -269,6 +269,15 @@ pub async fn register(
                     }
                 }
 
+                // Provision shell dotfiles (zsh + starship)
+                if let Err(e) = linux_users.setup_user_shell(&actual_linux_username) {
+                    warn!(
+                        user_id = %user.id,
+                        error = ?e,
+                        "Failed to provision shell dotfiles (non-fatal)"
+                    );
+                }
+
                 info!(
                     user_id = %user.id,
                     linux_user = %actual_linux_username,

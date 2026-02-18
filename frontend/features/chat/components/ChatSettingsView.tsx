@@ -124,6 +124,7 @@ export function ChatSettingsView({
 			if (separatorIndex <= 0 || separatorIndex === value.length - 1) return;
 			const provider = value.slice(0, separatorIndex);
 			const modelId = value.slice(separatorIndex + 1);
+			const previousModelRef = selectedModelRef;
 			setSelectedModelRef(value);
 			setIsSwitchingModel(true);
 			try {
@@ -133,11 +134,13 @@ export function ChatSettingsView({
 				await getWsManager().agentSetModel(sessionId, provider, modelId);
 			} catch (err) {
 				console.error("Failed to switch model:", err);
+				// Revert optimistic update on failure
+				setSelectedModelRef(previousModelRef);
 			} finally {
 				setIsSwitchingModel(false);
 			}
 		},
-		[isIdle, sessionId],
+		[isIdle, selectedModelRef, sessionId],
 	);
 
 	if (loading) {
