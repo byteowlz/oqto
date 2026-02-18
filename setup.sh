@@ -6105,6 +6105,10 @@ BANNER
     SELECTED_BACKEND_MODE="${OQTO_BACKEND_MODE}"
   fi
 
+  # Ensure defaults if state did not include these
+  SELECTED_USER_MODE="${SELECTED_USER_MODE:-$OQTO_USER_MODE}"
+  SELECTED_BACKEND_MODE="${SELECTED_BACKEND_MODE:-$OQTO_BACKEND_MODE}"
+
   if [[ "$use_saved_state" != "true" ]]; then
     if [[ "$NONINTERACTIVE" != "true" ]]; then
       select_user_mode
