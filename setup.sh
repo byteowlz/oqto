@@ -13,7 +13,7 @@
 #   ./setup.sh --non-interactive # Use defaults or environment variables
 #   ./setup.sh --help           # Show help
 
-set -euo pipefail
+set -uo pipefail
 
 # ==============================================================================
 # Configuration and Defaults
@@ -239,7 +239,9 @@ run_step() {
     return 0
   fi
 
-  if "$@"; then
+  "$@"
+  local rc=$?
+  if [[ $rc -eq 0 ]]; then
     mark_step_done "$step"
   else
     log_warn "Step failed (non-fatal): $desc"
@@ -255,7 +257,9 @@ run_step_always() {
   shift 2
 
   log_info "Running: $desc"
-  if "$@"; then
+  "$@"
+  local rc=$?
+  if [[ $rc -eq 0 ]]; then
     mark_step_done "$step"
   else
     log_error "Step failed: $desc"
@@ -6350,7 +6354,10 @@ BANNER
   # This is critical: stale binaries cause subtle bugs that are hard to diagnose.
   # The build is incremental (cargo only recompiles changed crates) so it's fast
   # when nothing changed.
-  run_step_always "build_octo" "Build Oqto" build_octo
+  run_step_always "build_octo" "Build Oqto" build_octo || {
+    log_error "Build failed. Cannot continue without binaries."
+    exit 1
+  }
 
   # Generate configuration
   run_step "generate_config" "Configuration" generate_config
@@ -6380,7 +6387,10 @@ BANNER
   run_step "harden_server" "Server hardening" harden_server
 
   # Install service
-  run_step_always "install_service" "System service" install_service
+  run_step_always "install_service" "System service" install_service || {
+    log_error "Service installation failed. Cannot start services."
+    exit 1
+  }
 
   # Create admin user in database
   run_step "admin_user_db" "Admin user in database" create_admin_user_db
