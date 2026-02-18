@@ -252,6 +252,16 @@ export function normalizeContentToParts(content: unknown): DisplayPart[] {
 
 	if (typeof content === "string") {
 		const parsed = parseJsonMaybe(content);
+		// If the JSON parsed to an array, normalize it recursively — some sources
+		// (e.g. Pi MCP bridge) encode content as a stringified JSON array of blocks.
+		// Without this, the raw JSON string would be rendered as a text part.
+		if (Array.isArray(parsed)) {
+			const arrayParts = normalizeContentToParts(parsed);
+			if (arrayParts.length > 0) {
+				parts.push(...arrayParts);
+				return parts;
+			}
+		}
 		const toolResult = parsed ? coerceToolResult(parsed) : null;
 		if (toolResult) {
 			parts.push(toolResult);

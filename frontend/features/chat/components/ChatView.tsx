@@ -3070,7 +3070,26 @@ function PiPartRenderer({
 			}
 		};
 
-		if (typeof content === "string") return stripAnsi(content);
+		if (typeof content === "string") {
+			// Try to parse the string as JSON — some tools (e.g. MCP) serialize
+			// their output as a JSON string containing an array of content blocks
+			// like [{"type":"tool_result","output":"..."}] or [{"type":"text","text":"..."}].
+			// In that case we recurse to extract the readable text instead of
+			// rendering raw JSON.
+			const trimmed = content.trim();
+			if (trimmed.startsWith("[") || trimmed.startsWith("{")) {
+				try {
+					const parsed: unknown = JSON.parse(trimmed);
+					if (Array.isArray(parsed) || (parsed && typeof parsed === "object")) {
+						const extracted = formatToolResultOutput(parsed);
+						if (extracted !== undefined) return extracted;
+					}
+				} catch {
+					// not valid JSON — fall through to return the raw string
+				}
+			}
+			return stripAnsi(content);
+		}
 		if (content instanceof Uint8Array) {
 			return (
 				decodeBytes(content) ?? `[binary data: ${content.byteLength} bytes]`
@@ -3093,6 +3112,23 @@ function PiPartRenderer({
 					if (!block || typeof block !== "object") return null;
 					const b = block as Record<string, unknown>;
 					if (b.type === "text" && typeof b.text === "string") return b.text;
+					// Anthropic API tool_result block: { type: "tool_result", content: [...] }
+					// Also handles MCP wrappers: { type: "tool_result", output: "..." }
+					if (
+						b.type === "tool_result" ||
+						b.type === "toolResult" ||
+						b.type === "tool_use"
+					) {
+						const inner =
+							"content" in b
+								? b.content
+								: "output" in b
+									? b.output
+									: undefined;
+						if (inner !== undefined) {
+							return formatToolResultOutput(inner) ?? null;
+						}
+					}
 					return null;
 				})
 				.filter((text): text is string => Boolean(text));
