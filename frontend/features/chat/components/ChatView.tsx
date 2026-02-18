@@ -2303,6 +2303,19 @@ function groupMessages(messages: DisplayMessage[]): MessageGroup[] {
 	let current: MessageGroup | null = null;
 
 	for (const message of messages) {
+		// Skip user messages that have no renderable text content.
+		// These are empty steer echoes persisted to hstry — the real
+		// content lives in the optimistic message that was already shown.
+		if (message.role === "user") {
+			const hasText = message.parts.some(
+				(p) =>
+					p.type === "text" &&
+					typeof (p as { text?: string }).text === "string" &&
+					(p as { text: string }).text.trim().length > 0,
+			);
+			if (!hasText) continue;
+		}
+
 		if (!current || current.role !== message.role) {
 			current = { role: message.role, messages: [message] };
 			groups.push(current);
