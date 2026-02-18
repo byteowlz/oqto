@@ -528,6 +528,36 @@ install_system_prerequisites() {
     esac
   fi
 
+  # pkg-config and OpenSSL headers are needed for Rust tools (e.g., ignr)
+  if [[ "$OS" == "linux" ]]; then
+    if ! command_exists pkg-config; then
+      case "$OS_DISTRO" in
+      arch | manjaro | endeavouros) pkgs+=("pkgconf") ;;
+      debian | ubuntu | pop | linuxmint) pkgs+=("pkg-config") ;;
+      fedora | centos | rhel | rocky | alma*) pkgs+=("pkgconf-pkg-config") ;;
+      opensuse*) pkgs+=("pkg-config") ;;
+      esac
+    fi
+
+    if [[ ! -f /usr/include/openssl/ssl.h ]]; then
+      case "$OS_DISTRO" in
+      arch | manjaro | endeavouros) pkgs+=("openssl") ;;
+      debian | ubuntu | pop | linuxmint) pkgs+=("libssl-dev") ;;
+      fedora | centos | rhel | rocky | alma*) pkgs+=("openssl-devel") ;;
+      opensuse*) pkgs+=("libopenssl-devel") ;;
+      esac
+    fi
+  elif [[ "$OS" == "macos" ]]; then
+    if command_exists brew; then
+      if ! command_exists pkg-config; then
+        brew install pkg-config
+      fi
+      if ! command_exists openssl; then
+        brew install openssl@3
+      fi
+    fi
+  fi
+
   # zsh is the default shell for platform users
   if ! command_exists zsh; then
     pkgs+=("zsh")
