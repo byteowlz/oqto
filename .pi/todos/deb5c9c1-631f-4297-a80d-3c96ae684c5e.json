@@ -1,0 +1,65 @@
+{
+  "todos": [
+    {
+      "id": "1",
+      "content": "Understand current setup.sh and deployment architecture",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "2",
+      "content": "Study eavs: config, provider setup, models.json generation",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "3",
+      "content": "Design interactive LLM provider flow in setup.sh",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "4",
+      "content": "Implement provider selection with model catalog",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "5",
+      "content": "Implement dynamic model selection (gum/fzf/numbered list)",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "6",
+      "content": "Implement connection testing (test_eavs_providers)",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "7",
+      "content": "Generate models.json for user provisioning",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "8",
+      "content": "Graceful fallback for older eavs versions",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "9",
+      "content": "Support octo.install.toml (filed as octo-qqg2)",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "id": "10",
+      "content": "Test on octo-azure (server intermittently offline)",
+      "status": "pending",
+      "priority": "high"
+    }
+  ],
+  "updated_at": "2026-02-18T08:06:02.359Z"
+}
