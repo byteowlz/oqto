@@ -857,7 +857,10 @@ const gaugeTokens = contextTokenCount;
 	}, [isUserScrolled]);
 
 	// Auto-scroll: after every render, if not user-scrolled, pin to bottom.
-	useLayoutEffect(() => {
+	// useEffect (not useLayoutEffect) so it runs after paint — by then
+	// handleScroll has already updated isUserScrolledRef if the user scrolled,
+	// so we never race and snap back over a real user scroll.
+	useEffect(() => {
 		if (!initialScrollDoneRef.current) return;
 		if (!isUserScrolledRef.current) {
 			scrollToBottom();
