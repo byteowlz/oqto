@@ -9,6 +9,14 @@ import {
 	ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import {
+	Dialog,
+	DialogContent,
+	DialogDescription,
+	DialogFooter,
+	DialogHeader,
+	DialogTitle,
+} from "@/components/ui/dialog";
+import {
 	copyPathMux,
 	createDirectoryMux,
 	deletePathMux,
@@ -297,6 +305,12 @@ export function FileTreeView({
 	const [newFolderName, setNewFolderName] = useState<string | null>(null);
 	const [renamingPath, setRenamingPath] = useState<string | null>(null);
 	const [loadingDirs, setLoadingDirs] = useState<Set<string>>(new Set());
+	const [pathDialog, setPathDialog] = useState<{
+		title: string;
+		description: string;
+		defaultValue: string;
+		onConfirm: (value: string) => void;
+	} | null>(null);
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const lastLoadRef = useRef<{ key: string; ts: number } | null>(null);
 
@@ -606,30 +620,40 @@ export function FileTreeView({
 		}
 	};
 
-	const handleCopy = async (path: string) => {
+	const handleCopy = (path: string) => {
 		if (!normalizedWorkspacePath || !cacheKey) return;
-		const target = window.prompt("Copy to path", path);
-		if (!target || target === path) return;
-
-		try {
-			await copyPathMux(normalizedWorkspacePath, path, target, false);
-			await refreshTree();
-		} catch (err) {
-			setError(err instanceof Error ? err.message : "Copy failed");
-		}
+		setPathDialog({
+			title: "Copy to",
+			description: `Copy "${path}" to a new location.`,
+			defaultValue: path,
+			onConfirm: async (target: string) => {
+				if (!target || target === path) return;
+				try {
+					await copyPathMux(normalizedWorkspacePath, path, target, false);
+					await refreshTree();
+				} catch (err) {
+					setError(err instanceof Error ? err.message : "Copy failed");
+				}
+			},
+		});
 	};
 
-	const handleMove = async (path: string) => {
+	const handleMove = (path: string) => {
 		if (!normalizedWorkspacePath || !cacheKey) return;
-		const target = window.prompt("Move to path", path);
-		if (!target || target === path) return;
-
-		try {
-			await movePathMux(normalizedWorkspacePath, path, target, false);
-			await refreshTree();
-		} catch (err) {
-			setError(err instanceof Error ? err.message : "Move failed");
-		}
+		setPathDialog({
+			title: "Move to",
+			description: `Move "${path}" to a new location.`,
+			defaultValue: path,
+			onConfirm: async (target: string) => {
+				if (!target || target === path) return;
+				try {
+					await movePathMux(normalizedWorkspacePath, path, target, false);
+					await refreshTree();
+				} catch (err) {
+					setError(err instanceof Error ? err.message : "Move failed");
+				}
+			},
+		});
 	};
 
 	const handleNewFolder = () => {
@@ -991,9 +1015,103 @@ export function FileTreeView({
 					/>
 				)}
 			</div>
+
+			{/* Path input dialog for copy/move operations */}
+			<PathInputDialog
+				open={pathDialog !== null}
+				title={pathDialog?.title ?? ""}
+				description={pathDialog?.description ?? ""}
+				defaultValue={pathDialog?.defaultValue ?? ""}
+				onConfirm={(value) => {
+					pathDialog?.onConfirm(value);
+					setPathDialog(null);
+				}}
+				onCancel={() => setPathDialog(null)}
+			/>
 		</div>
 	);
 }
+
+// Styled path input dialog (replaces window.prompt)
+const PathInputDialog = memo(function PathInputDialog({
+	open,
+	title,
+	description,
+	defaultValue,
+	onConfirm,
+	onCancel,
+}: {
+	open: boolean;
+	title: string;
+	description: string;
+	defaultValue: string;
+	onConfirm: (value: string) => void;
+	onCancel: () => void;
+}) {
+	const [value, setValue] = useState(defaultValue);
+	const inputRef = useRef<HTMLInputElement>(null);
+
+	useEffect(() => {
+		if (open) {
+			setValue(defaultValue);
+			// Focus and select filename part after mount
+			requestAnimationFrame(() => {
+				if (inputRef.current) {
+					inputRef.current.focus();
+					inputRef.current.select();
+				}
+			});
+		}
+	}, [open, defaultValue]);
+
+	const handleSubmit = (e: React.FormEvent) => {
+		e.preventDefault();
+		if (value.trim()) {
+			onConfirm(value.trim());
+		}
+	};
+
+	return (
+		<Dialog open={open} onOpenChange={(o) => !o && onCancel()}>
+			<DialogContent className="sm:max-w-md">
+				<DialogHeader>
+					<DialogTitle>{title}</DialogTitle>
+					<DialogDescription>{description}</DialogDescription>
+				</DialogHeader>
+				<form onSubmit={handleSubmit}>
+					<input
+						ref={inputRef}
+						type="text"
+						value={value}
+						onChange={(e) => setValue(e.target.value)}
+						className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+						onKeyDown={(e) => {
+							if (e.key === "Escape") {
+								e.preventDefault();
+								onCancel();
+							}
+						}}
+					/>
+					<DialogFooter className="mt-4">
+						<button
+							type="button"
+							onClick={onCancel}
+							className="inline-flex items-center justify-center rounded-md px-4 py-2 text-sm font-medium border border-border bg-background text-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
+						>
+							Cancel
+						</button>
+						<button
+							type="submit"
+							className="inline-flex items-center justify-center rounded-md px-4 py-2 text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+						>
+							Confirm
+						</button>
+					</DialogFooter>
+				</form>
+			</DialogContent>
+		</Dialog>
+	);
+});
 
 // Isolated rename input component - manages its own state to avoid parent re-renders
 const RenameInput = memo(function RenameInput({
