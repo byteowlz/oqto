@@ -2374,6 +2374,14 @@ DEFAULT_MODEL_COUNT=5
 select_models_for_provider() {
   local provider="$1"
 
+  # Check if eavs supports the 'models' subcommand (>= 0.5.4)
+  if ! eavs models list "$provider" --json >/dev/null 2>&1; then
+    log_warn "eavs model catalog not available (upgrade eavs to >= 0.5.4 for model selection)"
+    log_info "Skipping model selection for $provider -- all catalog models will be available"
+    echo ""
+    return
+  fi
+
   # Query the eavs model catalog for this provider
   local catalog_json
   catalog_json=$(eavs models list "$provider" --json 2>/dev/null) || true
