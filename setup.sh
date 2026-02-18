@@ -1315,18 +1315,18 @@ setup_onboarding_templates_repo() {
     git -C "$temp_clone_dir" fetch --all --prune 2>/dev/null || true
     git -C "$temp_clone_dir" reset --hard origin/main 2>/dev/null || true
   else
-    log_info "Cloning onboarding templates repo (SSH)..."
+    log_info "Cloning onboarding templates repo..."
     rm -rf "$temp_clone_dir"
-    git clone "$repo_url" "$temp_clone_dir" || {
-      log_warn "SSH clone failed, trying HTTPS..."
+    # Use GIT_TERMINAL_PROMPT=0 to prevent git from prompting for credentials
+    if ! GIT_TERMINAL_PROMPT=0 git clone "$repo_url" "$temp_clone_dir" 2>/dev/null; then
       # Fallback to HTTPS if SSH fails
       local https_url="${repo_url/git@github.com:/https://github.com/}"
       https_url="${https_url%.git}"
-      git clone "$https_url" "$temp_clone_dir" || {
-        log_warn "Failed to clone templates repo"
-        return 1
-      }
-    }
+      if ! GIT_TERMINAL_PROMPT=0 git clone "$https_url" "$temp_clone_dir" 2>/dev/null; then
+        log_warn "Templates repo not available (${repo_url}). Skipping."
+        return 0
+      fi
+    fi
   fi
 
   # Copy to target with sudo (system location)
@@ -3629,21 +3629,33 @@ build_octo() {
 
   cd "$SCRIPT_DIR"
 
+  # Clean up stale directories from octo->oqto rename that confuse workspace
+  rm -rf backend/crates/octo-browserd backend/crates/octo-browser backend/crates/octo 2>/dev/null || true
+
   # Build backend (includes oqto, oqto-runner, oqto-sandbox, pi-bridge binaries)
   log_info "Building backend..."
-  (cd backend && cargo build --release)
+  if ! (cd backend && cargo build --release); then
+    log_error "Backend build failed"
+    return 1
+  fi
   log_success "Backend built"
 
   # Build fileserver (oqto-files crate in workspace)
   log_info "Building fileserver..."
-  (cd backend && cargo build --release -p oqto-files --bin oqto-files)
+  if ! (cd backend && cargo build --release -p oqto-files --bin oqto-files); then
+    log_error "Fileserver build failed"
+    return 1
+  fi
   log_success "Fileserver built"
 
   # Build frontend
   log_info "Installing frontend dependencies..."
   (cd frontend && bun install)
   log_info "Building frontend..."
-  (cd frontend && bun run build)
+  if ! (cd frontend && bun run build); then
+    log_error "Frontend build failed"
+    return 1
+  fi
   log_success "Frontend built"
 
   # Build and install agent browser daemon
