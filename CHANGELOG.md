@@ -6,6 +6,8 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- Chat "Jump to bottom" button appears when user has scrolled up; clicking it pins back to the bottom and resumes auto-scroll.
+
 - Sldr integration: backend mounts `/api/sldr` routes and frontend adds a Slides app for browsing slides, skeletons, flavors, and previews.
 - Multi-user sldr: per-user sldr-server instances spawned via octo-runner with `/api/sldr` proxy routing.
 - Install system now installs and publishes `sldr` and `sldr-server` binaries to `/usr/local/bin`.
@@ -29,6 +31,9 @@ All notable changes to this project will be documented in this file.
 - Added UpdateWorkspaceChatSession runner endpoint to replace UpdateOpencodeSession for session title updates via hstry SQLite.
 
 ### Changed
+
+- Chat auto-scroll now pins to the bottom on every streaming token update, not just on new message arrival, eliminating the jumping/flickering during streaming. Uses direct `scrollTop` assignment instead of `scrollIntoView` to prevent scroll jank.
+- Chat scroll position is preserved via a ref mirror to avoid stale closure bugs that could cause missed auto-scrolls.
 
 - Replaced cass-backed session search with hstry search and added line-based scroll resolution for search hits.
 - Documented archlinux CORS origins in the example Octo config.
