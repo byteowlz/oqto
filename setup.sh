@@ -56,6 +56,7 @@ INSTALL_ALL_TOOLS="false"
 LLM_PROVIDER=""
 LLM_API_KEY_SET="false"
 EAVS_ENABLED="false"
+CONFIGURED_PROVIDERS=""
 
 # Production configuration (set during setup)
 PRODUCTION_MODE="false"
@@ -130,6 +131,7 @@ SETUP_STATE_KEYS=(
   CONTAINER_RUNTIME
   JWT_SECRET
   EAVS_MASTER_KEY
+  CONFIGURED_PROVIDERS
 )
 
 # Save current decisions to state file
@@ -2151,6 +2153,13 @@ configure_eavs() {
 
   local eavs_config_file="${eavs_config_dir}/config.toml"
 
+  # Clear env file on reconfigure to avoid duplicate keys
+  if [[ "$SELECTED_USER_MODE" == "single" ]]; then
+    : > "${eavs_env_file}"
+  else
+    sudo bash -c ": > '${eavs_env_file}'"
+  fi
+
   # Generate master key for octo to create per-session virtual keys (reuse saved one)
   if [[ -z "${EAVS_MASTER_KEY:-}" ]]; then
     EAVS_MASTER_KEY=$(generate_secure_secret 32)
@@ -2163,10 +2172,12 @@ configure_eavs() {
   echo "You can add more providers later by editing: $eavs_config_file"
   echo
 
-  # Collect provider configs
+  # Collect provider configs (including model shortlists)
   local providers_toml=""
   local first_provider=""
   local has_any_provider="false"
+  # Track configured providers for testing later
+  CONFIGURED_PROVIDERS=""
 
   # Ask about each major provider
   for provider_name in anthropic openai google openrouter groq mistral; do
@@ -2217,19 +2228,12 @@ configure_eavs() {
     # Check if key exists in environment
     local existing_key=""
     existing_key="${!env_var_name:-}"
+    local should_configure="false"
 
     if [[ -n "$existing_key" ]]; then
       log_info "Found $env_var_name in environment"
       if confirm "Configure $display_name (key found in env)?"; then
-        providers_toml+="
-[providers.${provider_name}]
-type = \"${provider_type}\"
-api_key = \"env:${env_var_name}\"
-"
-        has_any_provider="true"
-        if [[ -z "$first_provider" ]]; then
-          first_provider="$provider_name"
-        fi
+        should_configure="true"
       fi
     else
       if confirm "Configure $display_name?" "n"; then
@@ -2243,16 +2247,25 @@ api_key = \"env:${env_var_name}\"
           else
             echo "${env_var_name}=${api_key}" | sudo tee -a "${eavs_env_file}" >/dev/null
           fi
-          providers_toml+="
+          should_configure="true"
+        fi
+      fi
+    fi
+
+    if [[ "$should_configure" == "true" ]]; then
+      # Provider base config
+      providers_toml+="
 [providers.${provider_name}]
 type = \"${provider_type}\"
 api_key = \"env:${env_var_name}\"
 "
-          has_any_provider="true"
-          if [[ -z "$first_provider" ]]; then
-            first_provider="$provider_name"
-          fi
-        fi
+      # Append curated model shortlist so users get a sensible set of models
+      providers_toml+="$(get_model_shortlist "$provider_name")"
+
+      has_any_provider="true"
+      CONFIGURED_PROVIDERS="${CONFIGURED_PROVIDERS} ${provider_name}"
+      if [[ -z "$first_provider" ]]; then
+        first_provider="$provider_name"
       fi
     fi
   done
@@ -2338,6 +2351,489 @@ EOF
   if [[ -n "$first_provider" ]]; then
     log_success "Default provider: $first_provider"
   fi
+}
+
+# ==============================================================================
+# Curated Model Shortlists
+# ==============================================================================
+# Returns TOML model shortlist entries for a given provider.
+# These ensure users see a manageable set of best models rather than
+# the entire models.dev catalog (2800+ models).
+
+get_model_shortlist() {
+  local provider="$1"
+  case "$provider" in
+  anthropic)
+    cat <<'MODELS'
+
+[[providers.anthropic.models]]
+id = "claude-sonnet-4-6"
+name = "Claude Sonnet 4.6"
+reasoning = true
+input = ["text", "image"]
+context_window = 200000
+max_tokens = 64000
+cost = { input = 3.0, output = 15.0, cache_read = 0.3 }
+
+[[providers.anthropic.models]]
+id = "claude-opus-4-6"
+name = "Claude Opus 4.6"
+reasoning = true
+input = ["text", "image"]
+context_window = 200000
+max_tokens = 32000
+cost = { input = 5.0, output = 25.0, cache_read = 0.5 }
+
+[[providers.anthropic.models]]
+id = "claude-3-5-haiku-20241022"
+name = "Claude 3.5 Haiku"
+reasoning = false
+input = ["text", "image"]
+context_window = 200000
+max_tokens = 8192
+cost = { input = 0.8, output = 4.0, cache_read = 0.08 }
+MODELS
+    ;;
+  openai)
+    cat <<'MODELS'
+
+[[providers.openai.models]]
+id = "o3"
+name = "o3"
+reasoning = true
+input = ["text", "image"]
+context_window = 200000
+max_tokens = 100000
+cost = { input = 2.0, output = 8.0, cache_read = 0.5 }
+
+[[providers.openai.models]]
+id = "o4-mini"
+name = "o4-mini"
+reasoning = true
+input = ["text", "image"]
+context_window = 200000
+max_tokens = 100000
+cost = { input = 1.1, output = 4.4, cache_read = 0.275 }
+
+[[providers.openai.models]]
+id = "gpt-4.1"
+name = "GPT-4.1"
+reasoning = false
+input = ["text", "image"]
+context_window = 1047576
+max_tokens = 32768
+cost = { input = 2.0, output = 8.0, cache_read = 0.5 }
+
+[[providers.openai.models]]
+id = "gpt-4.1-mini"
+name = "GPT-4.1 Mini"
+reasoning = false
+input = ["text", "image"]
+context_window = 1047576
+max_tokens = 32768
+cost = { input = 0.4, output = 1.6, cache_read = 0.1 }
+
+[[providers.openai.models]]
+id = "gpt-4.1-nano"
+name = "GPT-4.1 Nano"
+reasoning = false
+input = ["text", "image"]
+context_window = 1047576
+max_tokens = 32768
+cost = { input = 0.1, output = 0.4, cache_read = 0.025 }
+MODELS
+    ;;
+  google)
+    cat <<'MODELS'
+
+[[providers.google.models]]
+id = "gemini-2.5-pro"
+name = "Gemini 2.5 Pro"
+reasoning = true
+input = ["text", "image"]
+context_window = 1048576
+max_tokens = 65536
+cost = { input = 1.25, output = 10.0, cache_read = 0.315 }
+
+[[providers.google.models]]
+id = "gemini-2.5-flash"
+name = "Gemini 2.5 Flash"
+reasoning = true
+input = ["text", "image"]
+context_window = 1048576
+max_tokens = 65536
+cost = { input = 0.15, output = 0.6, cache_read = 0.0375 }
+
+[[providers.google.models]]
+id = "gemini-2.0-flash"
+name = "Gemini 2.0 Flash"
+reasoning = false
+input = ["text", "image"]
+context_window = 1048576
+max_tokens = 8192
+cost = { input = 0.1, output = 0.4, cache_read = 0.025 }
+MODELS
+    ;;
+  openrouter)
+    # OpenRouter gives access to many providers; include top picks
+    cat <<'MODELS'
+
+[[providers.openrouter.models]]
+id = "anthropic/claude-sonnet-4-6"
+name = "Claude Sonnet 4.6 (via OpenRouter)"
+reasoning = true
+input = ["text", "image"]
+context_window = 200000
+max_tokens = 64000
+cost = { input = 3.0, output = 15.0, cache_read = 0.3 }
+
+[[providers.openrouter.models]]
+id = "openai/o3"
+name = "o3 (via OpenRouter)"
+reasoning = true
+input = ["text", "image"]
+context_window = 200000
+max_tokens = 100000
+cost = { input = 2.0, output = 8.0, cache_read = 0.5 }
+
+[[providers.openrouter.models]]
+id = "google/gemini-2.5-pro"
+name = "Gemini 2.5 Pro (via OpenRouter)"
+reasoning = true
+input = ["text", "image"]
+context_window = 1048576
+max_tokens = 65536
+cost = { input = 1.25, output = 10.0, cache_read = 0.315 }
+
+[[providers.openrouter.models]]
+id = "deepseek/deepseek-r1"
+name = "DeepSeek R1 (via OpenRouter)"
+reasoning = true
+input = ["text"]
+context_window = 131072
+max_tokens = 65536
+cost = { input = 0.55, output = 2.19, cache_read = 0.14 }
+MODELS
+    ;;
+  groq)
+    cat <<'MODELS'
+
+[[providers.groq.models]]
+id = "llama-3.3-70b-versatile"
+name = "Llama 3.3 70B"
+reasoning = false
+input = ["text"]
+context_window = 128000
+max_tokens = 32768
+cost = { input = 0.59, output = 0.79, cache_read = 0.0 }
+
+[[providers.groq.models]]
+id = "deepseek-r1-distill-llama-70b"
+name = "DeepSeek R1 Distill 70B"
+reasoning = true
+input = ["text"]
+context_window = 131072
+max_tokens = 16384
+cost = { input = 0.75, output = 0.99, cache_read = 0.0 }
+MODELS
+    ;;
+  mistral)
+    cat <<'MODELS'
+
+[[providers.mistral.models]]
+id = "mistral-large-latest"
+name = "Mistral Large"
+reasoning = false
+input = ["text"]
+context_window = 131072
+max_tokens = 131072
+cost = { input = 2.0, output = 6.0, cache_read = 0.0 }
+
+[[providers.mistral.models]]
+id = "codestral-latest"
+name = "Codestral"
+reasoning = false
+input = ["text"]
+context_window = 256000
+max_tokens = 131072
+cost = { input = 0.3, output = 0.9, cache_read = 0.0 }
+MODELS
+    ;;
+  *)
+    # No shortlist for unknown providers -- eavs will use the full catalog
+    echo ""
+    ;;
+  esac
+}
+
+# ==============================================================================
+# EAVS Provider Testing
+# ==============================================================================
+# Tests each configured provider by making a real API call via `eavs setup test`.
+# This validates that API keys are correct and providers are reachable.
+
+test_eavs_providers() {
+  log_step "Testing LLM provider connections"
+
+  local eavs_config_file
+  if [[ "$SELECTED_USER_MODE" == "single" ]]; then
+    eavs_config_file="${XDG_CONFIG_HOME}/eavs/config.toml"
+  else
+    eavs_config_file="${OCTO_HOME}/.config/eavs/config.toml"
+  fi
+
+  # Resolve env file for the test command
+  local eavs_env_file
+  if [[ "$SELECTED_USER_MODE" == "single" ]]; then
+    eavs_env_file="${XDG_CONFIG_HOME}/eavs/env"
+  else
+    eavs_env_file="${OCTO_HOME}/.config/eavs/env"
+  fi
+
+  local any_success="false"
+  local any_failure="false"
+
+  for provider in $CONFIGURED_PROVIDERS; do
+    [[ -z "$provider" ]] && continue
+    echo -n "  Testing ${provider}... "
+
+    # Source the env file so eavs setup test can resolve env: keys.
+    # Use a subshell to avoid polluting the current environment.
+    local test_result
+    if [[ "$SELECTED_USER_MODE" == "single" ]]; then
+      test_result=$(set -a; source "$eavs_env_file" 2>/dev/null; set +a; \
+        eavs setup test "$provider" --config "$eavs_config_file" --format json 2>&1) || true
+    else
+      test_result=$(sudo -u octo bash -c "set -a; source '$eavs_env_file' 2>/dev/null; set +a; \
+        eavs setup test '$provider' --config '$eavs_config_file' --format json" 2>&1) || true
+    fi
+
+    if echo "$test_result" | grep -qE '"success"[[:space:]]*:[[:space:]]*true|test successful'; then
+      echo -e "${GREEN}OK${NC}"
+      any_success="true"
+    else
+      echo -e "${RED}FAILED${NC}"
+      # Show a brief error hint
+      local err_hint
+      err_hint=$(echo "$test_result" | grep -i "error\|unauthorized\|invalid\|403\|401" | head -1)
+      if [[ -n "$err_hint" ]]; then
+        echo "    $err_hint"
+      fi
+      any_failure="true"
+    fi
+  done
+
+  if [[ "$any_success" == "true" ]]; then
+    log_success "At least one provider is working"
+  fi
+  if [[ "$any_failure" == "true" ]]; then
+    log_warn "Some providers failed. You can fix API keys later in the eavs config."
+    if [[ "$any_success" != "true" ]]; then
+      log_warn "No working providers! Agents will not be able to use any LLM."
+      log_info "Fix provider config: edit $(
+        if [[ "$SELECTED_USER_MODE" == "single" ]]; then
+          echo "${XDG_CONFIG_HOME}/eavs/config.toml"
+        else
+          echo "${OCTO_HOME}/.config/eavs/config.toml"
+        fi
+      )"
+    fi
+  fi
+}
+
+# ==============================================================================
+# EAVS models.json Generation
+# ==============================================================================
+# After eavs is running, queries /providers/detail to get the model catalog
+# and generates Pi-compatible models.json for user provisioning.
+#
+# In single-user mode: writes to ~/.pi/agent/models.json
+# In multi-user mode: the octo backend handles this at user creation time
+#   (via provision_eavs_for_user in admin.rs), but we also generate a
+#   template for the installing admin user.
+
+generate_eavs_models_json() {
+  log_step "Generating models.json from EAVS"
+
+  local eavs_url="http://127.0.0.1:${EAVS_PORT}"
+
+  # Wait for eavs to be ready (up to 10s)
+  local attempts=0
+  while ! curl -sf "${eavs_url}/health" >/dev/null 2>&1; do
+    attempts=$((attempts + 1))
+    if [[ $attempts -ge 20 ]]; then
+      log_error "EAVS not responding on ${eavs_url} after 10s"
+      log_info "Skipping models.json generation. Start eavs and re-run setup."
+      return 1
+    fi
+    sleep 0.5
+  done
+
+  # Fetch provider details (requires master key)
+  local providers_json
+  providers_json=$(curl -sf "${eavs_url}/providers/detail" \
+    -H "Authorization: Bearer ${EAVS_MASTER_KEY}" 2>&1)
+
+  if [[ -z "$providers_json" || "$providers_json" == "null" ]]; then
+    log_error "Failed to fetch provider details from EAVS"
+    return 1
+  fi
+
+  # Count providers (excluding "default")
+  local provider_count
+  provider_count=$(echo "$providers_json" | python3 -c "
+import json, sys
+providers = json.load(sys.stdin)
+count = sum(1 for p in providers if p.get('name') != 'default' and p.get('pi_api'))
+print(count)
+" 2>/dev/null || echo "0")
+
+  if [[ "$provider_count" == "0" ]]; then
+    log_warn "No providers with Pi-compatible APIs found. Skipping models.json."
+    return 0
+  fi
+
+  # Generate Pi models.json using the same logic as the octo backend.
+  # This Python script mirrors generate_pi_models_json() from
+  # backend/crates/octo/src/eavs/mod.rs
+  local models_json
+  models_json=$(echo "$providers_json" | python3 -c "
+import json, sys
+
+providers = json.load(sys.stdin)
+eavs_base = '${eavs_url}'
+
+pi_providers = {}
+for provider in providers:
+    name = provider.get('name', '')
+    pi_api = provider.get('pi_api')
+    if not pi_api or name == 'default':
+        continue
+
+    base_url = f'{eavs_base}/{name}/v1'
+    models = []
+    for m in provider.get('models', []):
+        cost = m.get('cost', {})
+        model_entry = {
+            'id': m['id'],
+            'name': m.get('name') or m['id'],
+            'reasoning': m.get('reasoning', False),
+            'input': m.get('input') or ['text'],
+            'contextWindow': m.get('context_window', 128000),
+            'maxTokens': m.get('max_tokens', 8192),
+            'cost': {
+                'input': cost.get('input', 0),
+                'output': cost.get('output', 0),
+                'cacheRead': cost.get('cache_read', 0),
+                'cacheWrite': 0
+            }
+        }
+        models.append(model_entry)
+
+    pi_name = f'eavs-{name}'
+    pi_providers[pi_name] = {
+        'baseUrl': base_url,
+        'api': pi_api,
+        'apiKey': 'EAVS_API_KEY',
+        'models': models
+    }
+
+print(json.dumps({'providers': pi_providers}, indent=2))
+" 2>/dev/null)
+
+  if [[ -z "$models_json" ]]; then
+    log_error "Failed to generate models.json"
+    return 1
+  fi
+
+  # Write models.json
+  if [[ "$SELECTED_USER_MODE" == "single" ]]; then
+    local pi_agent_dir="$HOME/.pi/agent"
+    mkdir -p "$pi_agent_dir"
+    echo "$models_json" > "${pi_agent_dir}/models.json"
+    log_success "Wrote models.json to ${pi_agent_dir}/models.json"
+
+    # Also create eavs.env for Pi to use (with a virtual key)
+    provision_eavs_user_key "$(whoami)" "$HOME"
+  else
+    # In multi-user mode, write a template that the octo backend will
+    # use when provisioning new users. Also set up the admin user.
+    local octo_data="${OCTO_DATA_DIR:-$HOME/.local/share/octo}"
+    mkdir -p "$octo_data"
+    echo "$models_json" > "${octo_data}/models.json.template"
+    log_success "Wrote models.json template to ${octo_data}/models.json.template"
+    log_info "The octo backend will generate per-user models.json on user creation."
+  fi
+
+  # Count total models
+  local model_count
+  model_count=$(echo "$models_json" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+count = sum(len(p.get('models', [])) for p in data.get('providers', {}).values())
+print(count)
+" 2>/dev/null || echo "?")
+
+  log_success "Models available: $model_count across $provider_count provider(s)"
+}
+
+# ==============================================================================
+# EAVS User Key Provisioning
+# ==============================================================================
+# Creates a virtual API key for a user and writes eavs.env so Pi can
+# authenticate against the eavs proxy.
+
+provision_eavs_user_key() {
+  local username="$1"
+  local user_home="$2"
+
+  local eavs_url="http://127.0.0.1:${EAVS_PORT}"
+
+  # Create virtual key via eavs CLI or API
+  local key_response
+  key_response=$(curl -sf -X POST "${eavs_url}/admin/keys" \
+    -H "Authorization: Bearer ${EAVS_MASTER_KEY}" \
+    -H "Content-Type: application/json" \
+    -d "{
+      \"name\": \"octo-user-${username}\",
+      \"rpm_limit\": 120,
+      \"budget_usd\": 500.0
+    }" 2>&1)
+
+  if [[ -z "$key_response" ]]; then
+    log_warn "Failed to create EAVS virtual key for ${username}"
+    log_info "Users can still use EAVS with the master key for now."
+    # Fall back to master key
+    local octo_config_dir="${user_home}/.config/octo"
+    mkdir -p "$octo_config_dir"
+    cat > "${octo_config_dir}/eavs.env" <<EOF
+EAVS_API_KEY=${EAVS_MASTER_KEY}
+EAVS_URL=${eavs_url}
+EOF
+    chmod 600 "${octo_config_dir}/eavs.env"
+    return
+  fi
+
+  local api_key
+  api_key=$(echo "$key_response" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+print(data.get('key', ''))
+" 2>/dev/null || echo "")
+
+  if [[ -z "$api_key" ]]; then
+    log_warn "Could not parse EAVS key response. Using master key as fallback."
+    api_key="$EAVS_MASTER_KEY"
+  fi
+
+  local octo_config_dir="${user_home}/.config/octo"
+  mkdir -p "$octo_config_dir"
+  cat > "${octo_config_dir}/eavs.env" <<EOF
+EAVS_API_KEY=${api_key}
+EAVS_URL=${eavs_url}
+EOF
+  chmod 600 "${octo_config_dir}/eavs.env"
+  log_success "EAVS key provisioned for ${username}"
 }
 
 install_eavs_service() {
@@ -5547,6 +6043,12 @@ main() {
   verify_or_rerun "eavs_install" "EAVS install" "command -v eavs" install_eavs
   run_step "eavs_configure" "EAVS configure" configure_eavs
   verify_or_rerun "eavs_service" "EAVS service" "systemctl is-enabled eavs 2>/dev/null" install_eavs_service
+
+  # Test providers and generate models.json (after eavs service is running)
+  if [[ -n "${CONFIGURED_PROVIDERS:-}" ]]; then
+    run_step "eavs_test" "EAVS provider tests" test_eavs_providers
+  fi
+  run_step "eavs_models" "EAVS models.json" generate_eavs_models_json
 
   # Build Octo - ALWAYS rebuild to ensure binaries match the current source.
   # This is critical: stale binaries cause subtle bugs that are hard to diagnose.
