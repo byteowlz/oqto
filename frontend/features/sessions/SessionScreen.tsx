@@ -304,7 +304,7 @@ const TabButton = memo(function TabButton({
 			type="button"
 			onClick={() => onSelect(view)}
 			className={cn(
-				"flex-1 flex items-center justify-center px-1.5 py-1 relative transition-colors",
+				"flex-1 flex items-center justify-center px-1.5 py-1 relative transition-colors min-w-0",
 				activeView === view
 					? "bg-primary/15 text-foreground border border-primary"
 					: "text-muted-foreground border border-transparent hover:border-border hover:bg-muted/50",
@@ -722,7 +722,7 @@ export const SessionScreen = memo(function SessionScreen() {
 			{isMobileLayout && (
 				<div className="flex-1 min-h-0 flex flex-col lg:hidden">
 					<div className="sticky top-0 z-10 bg-card border border-border rounded-t-xl overflow-hidden">
-						<div className="flex gap-0.5 p-1 sm:p-2">
+						<div className="flex gap-0.5 p-1 sm:p-2 overflow-x-auto scrollbar-none [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
 							<TabButton
 								activeView={activeView}
 								onSelect={setActiveView}
@@ -1108,7 +1108,7 @@ export const SessionScreen = memo(function SessionScreen() {
 							</div>
 						) : (
 							<>
-								<div className="flex gap-1 p-2 border-b border-border">
+								<div className="flex gap-1 p-2 border-b border-border overflow-x-auto scrollbar-none [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
 									<TabButton
 										activeView={activeView}
 										onSelect={setActiveView}
