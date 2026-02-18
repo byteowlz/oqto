@@ -15,8 +15,8 @@ const originalFetch =
 // Auth Token Management (duplicated here to avoid circular imports)
 // ============================================================================
 
-const AUTH_TOKEN_KEY = "octo:authToken";
-const CONTROL_PLANE_STORAGE_KEY = "octo:controlPlaneUrl";
+const AUTH_TOKEN_KEY = "oqto:authToken";
+const CONTROL_PLANE_STORAGE_KEY = "oqto:controlPlaneUrl";
 
 function getAuthToken(): string | null {
 	if (typeof window === "undefined") return null;

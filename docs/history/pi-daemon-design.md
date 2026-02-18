@@ -902,7 +902,7 @@ describe('Daemon Performance', () => {
 
 ## Conclusion
 
-A pi-daemon would provide significant performance benefits for Octo's Main Chat (which uses RPC mode) and any other use cases involving frequent pi invocations. The implementation is straightforward but requires careful attention to:
+A pi-daemon would provide significant performance benefits for Oqto's Main Chat (which uses RPC mode) and any other use cases involving frequent pi invocations. The implementation is straightforward but requires careful attention to:
 
 1. Process lifecycle management
 2. Session isolation and cleanup

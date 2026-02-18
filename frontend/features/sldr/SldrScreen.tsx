@@ -115,7 +115,7 @@ export function SldrScreen() {
 					<h1 className="text-2xl font-semibold">sldr</h1>
 					<p className="text-muted-foreground mt-1 max-w-xl text-sm">
 						Compose slide decks from reusable markdown, manage skeletons, and
-						swap flavors without leaving Octo.
+						swap flavors without leaving Oqto.
 					</p>
 				</div>
 				<div className="flex items-center gap-2">

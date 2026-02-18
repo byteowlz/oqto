@@ -3,15 +3,15 @@ set -euo pipefail
 
 usage() {
   cat <<'USAGE'
-Usage: tools/test-ssh-proxy.sh [--host <host>] [--no-host] [--octo-server <url>] [--profile <name>]
+Usage: tools/test-ssh-proxy.sh [--host <host>] [--no-host] [--oqto-server <url>] [--profile <name>]
 
-Runs octo-ssh-proxy and verifies that octo-sandbox can access SSH agent keys
+Runs oqto-ssh-proxy and verifies that oqto-sandbox can access SSH agent keys
 via the proxy while ~/.ssh stays masked inside the sandbox.
 
 Options:
   --host         Host to attempt an SSH connection (default: github.com).
   --no-host      Skip the SSH connection test.
-  --octo-server  Octo server URL for approval prompts (default: http://localhost:8081).
+  --oqto-server  Oqto server URL for approval prompts (default: http://localhost:8081).
   --profile      Sandbox profile name from config (default: development).
 USAGE
 }
@@ -31,7 +31,7 @@ while [[ $# -gt 0 ]]; do
       run_host_test=false
       shift 1
       ;;
-    --octo-server)
+    --oqto-server)
       octo_server="${2:-}"
       shift 2
       ;;
@@ -51,13 +51,13 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if ! command -v octo-ssh-proxy >/dev/null 2>&1; then
-  echo "octo-ssh-proxy not found in PATH" >&2
+if ! command -v oqto-ssh-proxy >/dev/null 2>&1; then
+  echo "oqto-ssh-proxy not found in PATH" >&2
   exit 1
 fi
 
-if ! command -v octo-sandbox >/dev/null 2>&1; then
-  echo "octo-sandbox not found in PATH" >&2
+if ! command -v oqto-sandbox >/dev/null 2>&1; then
+  echo "oqto-sandbox not found in PATH" >&2
   exit 1
 fi
 
@@ -76,10 +76,10 @@ if ! ssh-add -L >/dev/null 2>&1; then
   fi
 fi
 
-sock_root="$HOME/.config/octo"
+sock_root="$HOME/.config/oqto"
 mkdir -p "$sock_root"
 sock_dir="$(mktemp -d "$sock_root/ssh-proxy-test.XXXXXX")"
-proxy_sock="$sock_dir/octo-ssh.sock"
+proxy_sock="$sock_dir/oqto-ssh.sock"
 
 cleanup() {
   if [[ -n "${proxy_pid:-}" ]]; then
@@ -90,35 +90,35 @@ cleanup() {
 }
 trap cleanup EXIT
 
-octo-ssh-proxy \
+oqto-ssh-proxy \
   --listen "$proxy_sock" \
   --upstream "$SSH_AUTH_SOCK" \
-  --config "$HOME/.config/octo/sandbox.toml" \
-  --octo-server "$octo_server" \
+  --config "$HOME/.config/oqto/sandbox.toml" \
+  --oqto-server "$octo_server" \
   --profile "$profile" \
-  >/tmp/octo-ssh-proxy.log 2>&1 &
+  >/tmp/oqto-ssh-proxy.log 2>&1 &
 proxy_pid=$!
 
 sleep 0.2
 
 if ! kill -0 "$proxy_pid" >/dev/null 2>&1; then
-  echo "octo-ssh-proxy failed to start. See /tmp/octo-ssh-proxy.log" >&2
+  echo "oqto-ssh-proxy failed to start. See /tmp/oqto-ssh-proxy.log" >&2
   exit 1
 fi
 
 echo "Proxy running at $proxy_sock"
 
 echo "Checking ~/.ssh inside sandbox (should be empty)"
-octo-sandbox -- bash -lc 'ls -la ~/.ssh'
+oqto-sandbox -- bash -lc 'ls -la ~/.ssh'
 
 echo "Listing keys through proxy inside sandbox"
 SSH_AUTH_SOCK="$proxy_sock" \
-  octo-sandbox -- bash -lc 'ssh-add -L'
+  oqto-sandbox -- bash -lc 'ssh-add -L'
 
 if [[ "$run_host_test" == "true" && -n "$host" ]]; then
-  echo "Attempting SSH connection to $host (may prompt in Octo UI)"
+  echo "Attempting SSH connection to $host (may prompt in Oqto UI)"
   SSH_AUTH_SOCK="$proxy_sock" \
-    octo-sandbox -- bash -lc "ssh -F /dev/null -o UserKnownHostsFile=/dev/null -o GlobalKnownHostsFile=/dev/null -o StrictHostKeyChecking=accept-new -T git@$host"
+    oqto-sandbox -- bash -lc "ssh -F /dev/null -o UserKnownHostsFile=/dev/null -o GlobalKnownHostsFile=/dev/null -o StrictHostKeyChecking=accept-new -T git@$host"
 fi
 
 echo "OK"

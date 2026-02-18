@@ -2,7 +2,7 @@
  * Type definitions for the multiplexed WebSocket protocol.
  *
  * This file defines the TypeScript types that match the Rust types in
- * backend/crates/octo/src/api/ws_multiplexed.rs
+ * backend/crates/oqto/src/api/ws_multiplexed.rs
  */
 
 // ============================================================================

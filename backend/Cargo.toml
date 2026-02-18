@@ -1,13 +1,13 @@
 [workspace]
 resolver = "2"
 members = ["crates/*"]
-exclude = ["crates/octo-browserd"]
+exclude = ["crates/oqto-browserd"]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
-authors = ["Octo Team"]
+authors = ["Oqto Team"]
 
 [workspace.dependencies]
 # Error handling

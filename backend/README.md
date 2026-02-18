@@ -1,29 +1,29 @@
-# Octo Backend
+# Oqto Backend
 
 Backend server for the AI Agent Workspace Platform. Orchestrates containerized development environments with opencode, fileserver, and web terminal access.
 
 ## Binaries
 
-- **octo** - Main server binary
-- **octoctl** - Control CLI for managing containers, sessions, and images
+- **oqto** - Main server binary
+- **oqtoctl** - Control CLI for managing containers, sessions, and images
 
 ## Prerequisites
 
 ### Container Image (Required)
 
-The backend requires the `octo-dev:latest` container image to create sessions. **The server will fail to start if this image is not found.**
+The backend requires the `oqto-dev:latest` container image to create sessions. **The server will fail to start if this image is not found.**
 
 Build the image from the repository root:
 
 ```bash
 # From the repository root
-docker build -t octo-dev:latest -f container/Dockerfile .
+docker build -t oqto-dev:latest -f container/Dockerfile .
 
 # Or using podman
-podman build -t octo-dev:latest -f container/Dockerfile .
+podman build -t oqto-dev:latest -f container/Dockerfile .
 
-# Or use octoctl
-octoctl image build
+# Or use oqtoctl
+oqtoctl image build
 ```
 
 You can use a different image by setting `default_image` in your config or passing `--image` to the serve command.
@@ -38,16 +38,16 @@ Either Docker or Podman must be installed and running:
 
 ```bash
 # 1. Build the container image first (see Prerequisites)
-docker build -t octo-dev:latest -f container/Dockerfile .
+docker build -t oqto-dev:latest -f container/Dockerfile .
 
 # 2. Install Rust
 rustup default stable
 
 # 3. Build and run
-cargo run --bin octo -- serve
+cargo run --bin oqto -- serve
 
 # Or with custom options
-cargo run --bin octo -- serve --port 8080 --workspace-root ~/projects
+cargo run --bin oqto -- serve --port 8080 --workspace-root ~/projects
 ```
 
 ## Features
@@ -67,10 +67,10 @@ If `codexbar` is installed, the backend exposes `/api/codexbar/usage`. The handl
 
 ## CLI Overview
 
-### octo (Server)
+### oqto (Server)
 
 ```bash
-cargo run --bin octo -- --help
+cargo run --bin oqto -- --help
 ```
 
 Key subcommands:
@@ -81,10 +81,10 @@ Key subcommands:
 - `invite-codes generate|list|revoke` - Manage user invite codes
 - `completions <shell>` - Emit shell completions
 
-### octoctl (Control CLI)
+### oqtoctl (Control CLI)
 
 ```bash
-cargo run --bin octoctl -- --help
+cargo run --bin oqtoctl -- --help
 ```
 
 Key subcommands:
@@ -98,22 +98,22 @@ Example usage:
 
 ```bash
 # Check server status
-octoctl status
+oqtoctl status
 
 # List all sessions
-octoctl session list
+oqtoctl session list
 
 # Force refresh all containers (rebuild from latest image)
-octoctl container refresh
+oqtoctl container refresh
 
 # Only refresh containers with outdated images
-octoctl container refresh --outdated-only
+oqtoctl container refresh --outdated-only
 
 # Stop all running containers
-octoctl container stop-all
+oqtoctl container stop-all
 
 # Build new container image
-octoctl image build --no-cache
+oqtoctl image build --no-cache
 ```
 
 ## Container Runtime
@@ -129,20 +129,20 @@ You can override this in config.toml:
 [container]
 runtime = "docker"  # or "podman"
 # binary = "/usr/local/bin/docker"  # optional custom path
-default_image = "octo-dev:latest"
+default_image = "oqto-dev:latest"
 base_port = 41820
 ```
 
 Or via environment variables:
 ```bash
-OCTO__CONTAINER__RUNTIME=docker
+OQTO__CONTAINER__RUNTIME=docker
 ```
 
 ## Configuration
 
-- Default config path: `$XDG_CONFIG_HOME/octo/config.toml` (or `%APPDATA%\octo\config.toml` on Windows). Override with `--config <path>`.
+- Default config path: `$XDG_CONFIG_HOME/oqto/config.toml` (or `%APPDATA%\oqto\config.toml` on Windows). Override with `--config <path>`.
 - Sample configuration with inline comments is available at `examples/config.toml`.
-- Data and state directories default to `$XDG_DATA_HOME/octo` and `$XDG_STATE_HOME/octo` (falling back to `~/.local/share` and `~/.local/state` when unset). Override inside the config file.
+- Data and state directories default to `$XDG_DATA_HOME/oqto` and `$XDG_STATE_HOME/oqto` (falling back to `~/.local/share` and `~/.local/state` when unset). Override inside the config file.
 - Values support `~` expansion and environment variables (e.g. `$HOME/logs/app.log`).
 
 ## Authentication
@@ -152,7 +152,7 @@ OCTO__CONTAINER__RUNTIME=docker
 
 ## Graceful Shutdown
 
-When the octo server receives SIGTERM or SIGINT (Ctrl+C), it:
+When the oqto server receives SIGTERM or SIGINT (Ctrl+C), it:
 
 1. Stops accepting new requests
 2. Stops all running session containers gracefully
@@ -184,7 +184,7 @@ This ensures no orphan containers are left running when the server exits.
 - Generate completions for your shell:
 
   ```bash
-  cargo run --bin octo -- completions bash > target/octo.bash
+  cargo run --bin oqto -- completions bash > target/oqto.bash
   ```
 
 ## Project Structure
@@ -195,7 +195,7 @@ backend/
     api/          # HTTP routes and handlers
     auth/         # JWT authentication
     container/    # Docker/Podman runtime abstraction
-    ctl/          # octoctl CLI
+    ctl/          # oqtoctl CLI
     db/           # SQLite database
     invite/       # Invite code management
     session/      # Session orchestration

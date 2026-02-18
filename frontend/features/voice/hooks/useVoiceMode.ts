@@ -24,8 +24,8 @@ import {
 } from "@/lib/voice/types";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-const VOICE_SETTINGS_KEY = "octo-voice-settings";
-const VISUALIZER_VOICES_KEY = "octo-visualizer-voices";
+const VOICE_SETTINGS_KEY = "oqto-voice-settings";
+const VISUALIZER_VOICES_KEY = "oqto-visualizer-voices";
 
 /** Load voice settings from localStorage */
 function loadVoiceSettings(): VoiceSettings {

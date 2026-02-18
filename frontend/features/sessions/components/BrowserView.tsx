@@ -114,7 +114,7 @@ export function BrowserView({ sessionId, workspacePath, className, onSendToChat,
 	const [urlInput, setUrlInput] = useState("");
 	const [launching, setLaunching] = useState(false);
 	const [launchError, setLaunchError] = useState<string>("");
-	// The octo session ID the browser daemon is bound to (returned by startBrowser)
+	// The oqto session ID the browser daemon is bound to (returned by startBrowser)
 	const [browserSessionId, setBrowserSessionId] = useState<string | null>(null);
 
 	const wsUrl = useMemo(() => {
@@ -142,16 +142,16 @@ export function BrowserView({ sessionId, workspacePath, className, onSendToChat,
 		if (!browserSessionId || !onSendToChat) return;
 		const cmd = [
 			"The user has started a browser session you can control.",
-			`Use \`octo-browser --session ${browserSessionId}\` to interact with it.`,
+			`Use \`oqto-browser --session ${browserSessionId}\` to interact with it.`,
 			"",
 			"Quick reference:",
-			"  octo-browser --session " + browserSessionId + " snapshot -i    # list interactive elements",
-			"  octo-browser --session " + browserSessionId + " click @e1      # click element by ref",
-			"  octo-browser --session " + browserSessionId + " fill @e2 \"text\" # fill input",
-			"  octo-browser --session " + browserSessionId + " press Enter    # press key",
-			"  octo-browser --session " + browserSessionId + " screenshot /tmp/shot.png",
-			"  octo-browser --session " + browserSessionId + " open <url>     # navigate",
-			"  octo-browser --session " + browserSessionId + " eval \"JS\"      # run JS in page",
+			"  oqto-browser --session " + browserSessionId + " snapshot -i    # list interactive elements",
+			"  oqto-browser --session " + browserSessionId + " click @e1      # click element by ref",
+			"  oqto-browser --session " + browserSessionId + " fill @e2 \"text\" # fill input",
+			"  oqto-browser --session " + browserSessionId + " press Enter    # press key",
+			"  oqto-browser --session " + browserSessionId + " screenshot /tmp/shot.png",
+			"  oqto-browser --session " + browserSessionId + " open <url>     # navigate",
+			"  oqto-browser --session " + browserSessionId + " eval \"JS\"      # run JS in page",
 		].join("\n");
 		onSendToChat(cmd);
 	}, [browserSessionId, onSendToChat]);

@@ -1,8 +1,8 @@
 {
 	"$schema": "https://schema.tauri.app/config/2",
-	"productName": "octo",
+	"productName": "oqto",
 	"version": "0.1.0",
-	"identifier": "com.octo.mobile",
+	"identifier": "com.oqto.mobile",
 	"build": {
 		"beforeBuildCommand": "bun run build",
 		"frontendDist": "../dist"
@@ -11,7 +11,7 @@
 		"withGlobalTauri": true,
 		"windows": [
 			{
-				"title": "octo",
+				"title": "oqto",
 				"decorations": false,
 				"width": 800,
 				"height": 600

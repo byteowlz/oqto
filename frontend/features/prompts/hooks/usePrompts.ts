@@ -2,7 +2,7 @@
  * React hook for security prompt system.
  *
  * Connects to /api/prompts/ws to receive real-time prompt requests
- * from octo-guard and octo-ssh-proxy.
+ * from oqto-guard and oqto-ssh-proxy.
  */
 
 import {
@@ -117,7 +117,7 @@ export function usePrompts(options: UsePromptsOptions = {}): UsePromptsReturn {
 		const wsUrl = `${baseUrl.replace(/^http/, "ws")}/api/prompts/ws`;
 
 		try {
-			const ws = new WebSocket(wsUrl, ["octo-prompts", token]);
+			const ws = new WebSocket(wsUrl, ["oqto-prompts", token]);
 			wsRef.current = ws;
 
 			ws.onopen = () => {

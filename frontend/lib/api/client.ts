@@ -9,7 +9,7 @@ import { isTauri } from "@/lib/tauri-fetch-polyfill";
 // Token Storage (for Tauri/mobile where cookies don't work)
 // ============================================================================
 
-const AUTH_TOKEN_KEY = "octo:authToken";
+const AUTH_TOKEN_KEY = "oqto:authToken";
 
 export function getAuthToken(): string | null {
 	if (typeof window === "undefined") return null;
@@ -72,7 +72,7 @@ type ApiErrorResponse = {
 };
 
 const trimTrailingSlash = (value: string) => value.replace(/\/$/, "");
-const controlPlaneStorageKey = "octo:controlPlaneUrl";
+const controlPlaneStorageKey = "oqto:controlPlaneUrl";
 
 const env =
 	(import.meta as ImportMeta & { env?: Record<string, string | undefined> })

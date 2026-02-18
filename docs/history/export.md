@@ -35,7 +35,7 @@ Found 10 memories (mode: Hybrid):
    Created: 2026-02-01 18:57
 
 2. [1680c75c-68b2-4662-93c9-e088697a1948] Episodic
-   Octo has two agent runtimes: pi (Main Chat, RPC mode, streaming) and opencode (workspace sessions, HTTP serve mode). Pi spawned per-user via LocalPiRuntime. OpenCode currently one server per user with x-opencode-directory header switching workspaces.
+   Oqto has two agent runtimes: pi (Main Chat, RPC mode, streaming) and opencode (workspace sessions, HTTP serve mode). Pi spawned per-user via LocalPiRuntime. OpenCode currently one server per user with x-opencode-directory header switching workspaces.
    Created: 2026-01-15 19:54
 
 3. [b69eb0dd-bc8b-4aa8-bbe0-312261e9ba34] Semantic
@@ -55,7 +55,7 @@ Found 10 memories (mode: Hybrid):
    Created: 2026-02-01 18:53
 
 7. [092d631c-ee3d-418f-8f2c-296d942b9380] Semantic
-   Main chat scroll position cached in localStorage (octo:mainChat:scrollPosition) - null means bottom, number is user's position. Instant scroll on mount, no animation.
+   Main chat scroll position cached in localStorage (oqto:mainChat:scrollPosition) - null means bottom, number is user's position. Instant scroll on mount, no animation.
    Created: 2026-01-12 11:21
 
 8. [36a02a10-ad17-4c33-9815-433df6dd9d31] Episodic
@@ -90,7 +90,7 @@ Found 10 memories (mode: Hybrid):
 Found 10 memories (mode: Hybrid):
 
 1. [092d631c-ee3d-418f-8f2c-296d942b9380] Semantic
-   Main chat scroll position cached in localStorage (octo:mainChat:scrollPosition) - null means bottom, number is user's position. Instant scroll on mount, no animation.
+   Main chat scroll position cached in localStorage (oqto:mainChat:scrollPosition) - null means bottom, number is user's position. Instant scroll on mount, no animation.
    Created: 2026-01-12 11:21
 
 2. [b69eb0dd-bc8b-4aa8-bbe0-312261e9ba34] Semantic
@@ -106,11 +106,11 @@ Found 10 memories (mode: Hybrid):
    Created: 2026-02-01 18:57
 
 5. [7945703c-0b68-4dcd-ad83-92e9c0882100] Semantic
-   Octo uses hstry as canonical history; single-user main chat history is read via hstry ReadService, multi-user history uses octo-runner to read per-user hstry.db.
+   Oqto uses hstry as canonical history; single-user main chat history is read via hstry ReadService, multi-user history uses oqto-runner to read per-user hstry.db.
    Created: 2026-02-01 18:54
 
 6. [1680c75c-68b2-4662-93c9-e088697a1948] Episodic
-   Octo has two agent runtimes: pi (Main Chat, RPC mode, streaming) and opencode (workspace sessions, HTTP serve mode). Pi spawned per-user via LocalPiRuntime. OpenCode currently one server per user with x-opencode-directory header switching workspaces.
+   Oqto has two agent runtimes: pi (Main Chat, RPC mode, streaming) and opencode (workspace sessions, HTTP serve mode). Pi spawned per-user via LocalPiRuntime. OpenCode currently one server per user with x-opencode-directory header switching workspaces.
    Created: 2026-01-15 19:54
 
 7. [bab38d19-0410-4a6e-a276-1a5c0a8e3094] Semantic
@@ -118,7 +118,7 @@ Found 10 memories (mode: Hybrid):
    Created: 2026-01-23 22:25
 
 8. [4f019a0b-6211-4b0b-a211-709e6c77ec3b] Semantic
-   Multi-user isolation design: octo-runner runs as systemd user service per Linux user, no sudo needed from main octo process. Socket at /run/user/<uid>/octo-runner.sock. LocalRuntime and MainChatPiService should use RunnerClient when linux_users.enabled=true
+   Multi-user isolation design: oqto-runner runs as systemd user service per Linux user, no sudo needed from main oqto process. Socket at /run/user/<uid>/oqto-runner.sock. LocalRuntime and MainChatPiService should use RunnerClient when linux_users.enabled=true
    Created: 2026-01-07 19:02
 
 9. [eaa287e1-8d89-4085-8824-f1f3fe6265ed] Episodic
@@ -145,7 +145,7 @@ Found 10 memories (mode: Hybrid):
 ```
 ## Skill: agent-browser
 
-**Base directory**: /home/wismut/byteowlz/octo/.opencode/skills/agent-browser
+**Base directory**: /home/wismut/byteowlz/oqto/.opencode/skills/agent-browser
 
 # Browser Automation with agent-browser
 
@@ -404,7 +404,7 @@ agent-browser trace stop trace.zip       # Stop and save trace
 ## Message 2: Assistant
 **Timestamp:** 20:08:19
 
-Good, I have the agent-browser skill. Let me first check if the Octo frontend is running, then open it to debug the Pi chat issues.
+Good, I have the agent-browser skill. Let me first check if the Oqto frontend is running, then open it to debug the Pi chat issues.
 
 ### Tool Executions
 
@@ -465,7 +465,7 @@ The frontend and backend aren't running. Let me check if they're on different po
 ```
 **Output:**
 ```
-LISTEN 0      4096               0.0.0.0:8080       0.0.0.0:*    users:(("octo",pid=3747889,fd=14))          
+LISTEN 0      4096               0.0.0.0:8080       0.0.0.0:*    users:(("oqto",pid=3747889,fd=14))          
 LISTEN 0      511                      *:3000             *:*    users:(("MainThread",pid=202080,fd=25))     
 
 ```
@@ -542,14 +542,14 @@ Backend is on 8080 and frontend seems to be on 3000. Let me open the browser to 
 
 ### Tool Executions
 
-#### ✅ bash - "Open Octo frontend in browser"
+#### ✅ bash - "Open Oqto frontend in browser"
 **Status:** ✅ Completed
 
 **Input:**
 ```bash
 {
       "command": "agent-browser open http://localhost:3000",
-      "description": "Open Octo frontend in browser"
+      "description": "Open Oqto frontend in browser"
     }
 ```
 **Output:**
@@ -904,7 +904,7 @@ Still on login. Let me use the correct credentials:
 - button "hi 2026/01/16 - 19:17" [ref=e62]
 - button "hi 2026/01/13 - 22:55" [ref=e63]
 - button "clear 2026/01/14 - 09:08" [ref=e64]
-- button "can you look at the octo code to figure out how... 2026/01/14 - 11:51" [ref=e65]
+- button "can you look at the oqto code to figure out how... 2026/01/14 - 11:51" [ref=e65]
 - button "dude, we need to fix your memory. check out ~/b... 2026/01/14 - 14:28" [ref=e66]
 - button "can you run some swe benchmarks against http://... 2026/01/14 - 15:38" [ref=e67]
 - button "so? 2026/01/14 - 18:43" [ref=e68]
@@ -942,7 +942,7 @@ Still on login. Let me use the correct credentials:
 - button "hi 2026/01/09 - 11:48" [ref=e100]
 - button "hi 2026/01/10 - 10:47" [ref=e101]
 - button "hello 2026/01/07 - 13:21" [ref=e102]
-- button "octo (273)" [ref=e103]
+- button "oqto (273)" [ref=e103]
 - button "Neuer Chat in diesem Projekt" [ref=e104]
 - button "wismut (28)" [ref=e105]
 - button "Neuer Chat in diesem Projekt" [ref=e106] [nth=1]
@@ -988,7 +988,7 @@ Still on login. Let me use the correct credentials:
 - button "Neuer Chat in diesem Projekt" [ref=e146] [nth=21]
 - button "main (3)" [ref=e147]
 - button "Neuer Chat in diesem Projekt" [ref=e148] [nth=22]
-- button "octo-browser (1)" [ref=e149]
+- button "oqto-browser (1)" [ref=e149]
 - button "Neuer Chat in diesem Projekt" [ref=e150] [nth=23]
 - button "sirtania (1)" [ref=e151]
 - button "Neuer Chat in diesem Projekt" [ref=e152] [nth=24]
@@ -1022,7 +1022,7 @@ Still on login. Let me use the correct credentials:
 - button "Neuer Chat in diesem Projekt" [ref=e180] [nth=38]
 - button "project (1)" [ref=e181]
 - button "Neuer Chat in diesem Projekt" [ref=e182] [nth=39]
-- button "octo-test-user (1)" [ref=e183]
+- button "oqto-test-user (1)" [ref=e183]
 - button "Neuer Chat in diesem Projekt" [ref=e184] [nth=40]
 - button "agent-workspace (27)" [ref=e185]
 - button "Neuer Chat in diesem Projekt" [ref=e186] [nth=41]
@@ -1224,7 +1224,7 @@ Good, I'm logged in. I can see the main chat interface. I see multiple "Neue Sit
 - button "hi 2026/01/16 - 19:17" [ref=e62]
 - button "hi 2026/01/13 - 22:55" [ref=e63]
 - button "clear 2026/01/14 - 09:08" [ref=e64]
-- button "can you look at the octo code to figure out how... 2026/01/14 - 11:51" [ref=e65]
+- button "can you look at the oqto code to figure out how... 2026/01/14 - 11:51" [ref=e65]
 - button "dude, we need to fix your memory. check out ~/b... 2026/01/14 - 14:28" [ref=e66]
 - button "can you run some swe benchmarks against http://... 2026/01/14 - 15:38" [ref=e67]
 - button "so? 2026/01/14 - 18:43" [ref=e68]
@@ -1262,7 +1262,7 @@ Good, I'm logged in. I can see the main chat interface. I see multiple "Neue Sit
 - button "hi 2026/01/09 - 11:48" [ref=e100]
 - button "hi 2026/01/10 - 10:47" [ref=e101]
 - button "hello 2026/01/07 - 13:21" [ref=e102]
-- button "octo (273)" [ref=e103]
+- button "oqto (273)" [ref=e103]
 - button "Neuer Chat in diesem Projekt" [ref=e104]
 - button "wismut (28)" [ref=e105]
 - button "Neuer Chat in diesem Projekt" [ref=e106] [nth=1]
@@ -1308,7 +1308,7 @@ Good, I'm logged in. I can see the main chat interface. I see multiple "Neue Sit
 - button "Neuer Chat in diesem Projekt" [ref=e146] [nth=21]
 - button "main (3)" [ref=e147]
 - button "Neuer Chat in diesem Projekt" [ref=e148] [nth=22]
-- button "octo-browser (1)" [ref=e149]
+- button "oqto-browser (1)" [ref=e149]
 - button "Neuer Chat in diesem Projekt" [ref=e150] [nth=23]
 - button "sirtania (1)" [ref=e151]
 - button "Neuer Chat in diesem Projekt" [ref=e152] [nth=24]
@@ -1342,7 +1342,7 @@ Good, I'm logged in. I can see the main chat interface. I see multiple "Neue Sit
 - button "Neuer Chat in diesem Projekt" [ref=e180] [nth=38]
 - button "project (1)" [ref=e181]
 - button "Neuer Chat in diesem Projekt" [ref=e182] [nth=39]
-- button "octo-test-user (1)" [ref=e183]
+- button "oqto-test-user (1)" [ref=e183]
 - button "Neuer Chat in diesem Projekt" [ref=e184] [nth=40]
 - button "agent-workspace (27)" [ref=e185]
 - button "Neuer Chat in diesem Projekt" [ref=e186] [nth=41]
@@ -1576,7 +1576,7 @@ Good. I see the sidebar still has the same items. Let me type a message to test 
     - button "hi 2026/01/16 - 19:17" [ref=e66]
     - button "hi 2026/01/13 - 22:55" [ref=e67]
     - button "clear 2026/01/14 - 09:08" [ref=e68]
-    - button "can you look at the octo code to figure out how... 2026/01/14 - 11:51" [ref=e69]
+    - button "can you look at the oqto code to figure out how... 2026/01/14 - 11:51" [ref=e69]
     - button "dude, we need to fix your memory. check out ~/b... 2026/01/14 - 14:28" [ref=e70]
     - button "can you run some swe benchmarks against http://... 2026/01/14 - 15:38" [ref=e71]
     - button "so? 2026/01/14 - 18:43" [ref=e72]
@@ -1614,7 +1614,7 @@ Good. I see the sidebar still has the same items. Let me type a message to test 
     - button "hi 2026/01/09 - 11:48" [ref=e104]
     - button "hi 2026/01/10 - 10:47" [ref=e105]
     - button "hello 2026/01/07 - 13:21" [ref=e106]
-    - button "octo (273)" [ref=e107]
+    - button "oqto (273)" [ref=e107]
     - button "Neuer Chat in diesem Projekt" [ref=e108]
     - button "wismut (28)" [ref=e109]
     - button "Neuer Chat in diesem Projekt" [ref=e110] [nth=1]
@@ -1660,7 +1660,7 @@ Good. I see the sidebar still has the same items. Let me type a message to test 
     - button "Neuer Chat in diesem Projekt" [ref=e150] [nth=21]
     - button "main (3)" [ref=e151]
     - button "Neuer Chat in diesem Projekt" [ref=e152] [nth=22]
-    - button "octo-browser (1)" [ref=e153]
+    - button "oqto-browser (1)" [ref=e153]
     - button "Neuer Chat in diesem Projekt" [ref=e154] [nth=23]
     - button "sirtania (1)" [ref=e155]
     - button "Neuer Chat in diesem Projekt" [ref=e156] [nth=24]
@@ -1694,7 +1694,7 @@ Good. I see the sidebar still has the same items. Let me type a message to test 
     - button "Neuer Chat in diesem Projekt" [ref=e184] [nth=38]
     - button "project (1)" [ref=e185]
     - button "Neuer Chat in diesem Projekt" [ref=e186] [nth=39]
-    - button "octo-test-user (1)" [ref=e187]
+    - button "oqto-test-user (1)" [ref=e187]
     - button "Neuer Chat in diesem Projekt" [ref=e188] [nth=40]
     - button "agent-workspace (27)" [ref=e189]
     - button "Neuer Chat in diesem Projekt" [ref=e190] [nth=41]
@@ -1872,14 +1872,14 @@ Let me check the backend logs and investigate the WebSocket authentication:
 
 ```
 
-#### ✅ bash - "Check octo service logs"
+#### ✅ bash - "Check oqto service logs"
 **Status:** ✅ Completed
 
 **Input:**
 ```bash
 {
-      "command": "journalctl -u octo --no-pager -n 50 2>/dev/null || systemctl status octo 2>/dev/null || echo \"Not a systemd service\"",
-      "description": "Check octo service logs"
+      "command": "journalctl -u oqto --no-pager -n 50 2>/dev/null || systemctl status oqto 2>/dev/null || echo \"Not a systemd service\"",
+      "description": "Check oqto service logs"
     }
 ```
 **Output:**
@@ -1911,7 +1911,7 @@ Let me check the backend logs and investigate the WebSocket authentication:
 ```
 **Output:**
 ```
-1: [busy-gags] octo- (1 panes) [79x21] [layout aa9d,79x21,0,0,0] @0
+1: [busy-gags] oqto- (1 panes) [79x21] [layout aa9d,79x21,0,0,0] @0
 2: [glad-wrap] just (1 panes) [207x56] [layout c81e,207x56,0,0,1] @1
 3: [port-pawn] opencode* (1 panes) [79x65] [layout c29f,79x65,0,0,2] @2 (active)
 4: [real-hand] zsh (1 panes) [207x56] [layout c820,207x56,0,0,3] @3
@@ -1932,14 +1932,14 @@ Let me check the backend logs and investigate the WebSocket authentication:
 
 ### Tool Executions
 
-#### ✅ bash - "Check octo window for logs"
+#### ✅ bash - "Check oqto window for logs"
 **Status:** ✅ Completed
 
 **Input:**
 ```bash
 {
       "command": "tmux capture-pane -t 0:1 -p 2>/dev/null | tail -100",
-      "description": "Check octo window for logs"
+      "description": "Check oqto window for logs"
     }
 ```
 **Output:**
@@ -1988,7 +1988,7 @@ The backend is returning **401** for WebSocket requests. The token is being pass
 ```
 {
       "pattern": "pi/ws|main/pi/ws",
-      "path": "/home/wismut/byteowlz/octo/backend/src"
+      "path": "/home/wismut/byteowlz/oqto/backend/src"
     }
 ```
 **Output:**
@@ -1996,14 +1996,14 @@ The backend is returning **401** for WebSocket requests. The token is being pass
 No files found
 ```
 
-#### ✅ bash - "Check for auth errors in octo logs"
+#### ✅ bash - "Check for auth errors in oqto logs"
 **Status:** ✅ Completed
 
 **Input:**
 ```bash
 {
       "command": "tmux capture-pane -t 0:1 -p 2>/dev/null | grep -i \"401\\|error\\|auth\\|failed\" | tail -30",
-      "description": "Check for auth errors in octo logs"
+      "description": "Check for auth errors in oqto logs"
     }
 ```
 **Output:**
@@ -2048,59 +2048,59 @@ No files found
 
 ### Tool Executions
 
-#### ✅ bash - "Check octo directory structure"
+#### ✅ bash - "Check oqto directory structure"
 **Status:** ✅ Completed
 
 **Input:**
 ```bash
 {
-      "command": "ls -la /home/wismut/byteowlz/octo/",
-      "description": "Check octo directory structure"
+      "command": "ls -la /home/wismut/byteowlz/oqto/",
+      "description": "Check oqto directory structure"
     }
 ```
 **Output:**
 ```
 total 2980
-drwxr-xr-x 1 wismut octo       636 Feb  1 16:10 .
-drwxr-xr-x 1 wismut octo      1082 Jan 29 21:01 ..
+drwxr-xr-x 1 wismut oqto       636 Feb  1 16:10 .
+drwxr-xr-x 1 wismut oqto      1082 Jan 29 21:01 ..
 -rw-r--r-- 1 wismut wismut    8982 Feb  1 19:57 AGENTS.md
-drwxr-xr-x 1 wismut octo       172 Jan 29 16:48 agent_templates
+drwxr-xr-x 1 wismut oqto       172 Jan 29 16:48 agent_templates
 drwxr-xr-x 1 wismut wismut      82 Jan 29 12:43 ansible
-drwxr-xr-x 1 wismut octo       164 Feb  1 10:48 backend
--rw-r--r-- 1 wismut octo    324641 Jan 11 12:46 banner.png
-drwxr-xr-x 1 wismut octo       446 Jan 25 13:58 browser-tools
-drwxr-xr-x 1 wismut octo        14 Jan 13 14:12 .bun
+drwxr-xr-x 1 wismut oqto       164 Feb  1 10:48 backend
+-rw-r--r-- 1 wismut oqto    324641 Jan 11 12:46 banner.png
+drwxr-xr-x 1 wismut oqto       446 Jan 25 13:58 browser-tools
+drwxr-xr-x 1 wismut oqto        14 Jan 13 14:12 .bun
 -rw-r--r-- 1 wismut wismut    3173 Jan 30 17:11 CHANGELOG.md
-drwxr-xr-x 1 wismut octo       236 Jan 11 12:46 container
-drwxr-xr-x 1 wismut octo         8 Dec 27 15:03 data
-drwxr-xr-x 1 wismut octo        42 Jan 31 16:30 deploy
--rw-r--r-- 1 wismut octo       262 Jan 11 12:46 .dockerignore
-drwxr-xr-x 1 wismut octo       266 Jan 31 08:19 docs
+drwxr-xr-x 1 wismut oqto       236 Jan 11 12:46 container
+drwxr-xr-x 1 wismut oqto         8 Dec 27 15:03 data
+drwxr-xr-x 1 wismut oqto        42 Jan 31 16:30 deploy
+-rw-r--r-- 1 wismut oqto       262 Jan 11 12:46 .dockerignore
+drwxr-xr-x 1 wismut oqto       266 Jan 31 08:19 docs
 -rw-r--r-- 1 wismut wismut 1824362 Jan 31 17:19 export.md
-drwxr-xr-x 1 wismut octo       642 Feb  1 17:08 frontend
-drwxr-xr-x 1 wismut octo       252 Feb  1 19:22 .git
--rw-r--r-- 1 wismut octo       583 Feb  1 08:13 .gitignore
-drwxr-xr-x 1 wismut octo       208 Jan 21 17:25 history
-drwxr-xr-x 1 wismut octo       684 Jan 11 12:46 icons
--rw-r--r-- 1 wismut octo      7639 Feb  1 15:10 justfile
-drwxr-xr-x 1 wismut octo      2192 Jan 11 12:46 logo
-drwxr-xr-x 1 wismut octo         0 Jan 23 07:01 .mmry
+drwxr-xr-x 1 wismut oqto       642 Feb  1 17:08 frontend
+drwxr-xr-x 1 wismut oqto       252 Feb  1 19:22 .git
+-rw-r--r-- 1 wismut oqto       583 Feb  1 08:13 .gitignore
+drwxr-xr-x 1 wismut oqto       208 Jan 21 17:25 history
+drwxr-xr-x 1 wismut oqto       684 Jan 11 12:46 icons
+-rw-r--r-- 1 wismut oqto      7639 Feb  1 15:10 justfile
+drwxr-xr-x 1 wismut oqto      2192 Jan 11 12:46 logo
+drwxr-xr-x 1 wismut oqto         0 Jan 23 07:01 .mmry
 -rw------- 1 wismut wismut    1804 Jan 31 23:21 nohup.out
-drwxr-xr-x 1 wismut octo        74 Jan 18 15:46 .octo
-drwxr-xr-x 1 wismut octo        96 Feb  1 20:09 .opencode
--rw-r--r-- 1 wismut octo       226 Jan 26 21:42 opencode.json
+drwxr-xr-x 1 wismut oqto        74 Jan 18 15:46 .oqto
+drwxr-xr-x 1 wismut oqto        96 Feb  1 20:09 .opencode
+-rw-r--r-- 1 wismut oqto       226 Jan 26 21:42 opencode.json
 drwxr-xr-x 1 wismut wismut      10 Feb  1 15:29 .pi
-drwxr-xr-x 1 wismut octo       168 Jan 26 22:33 pi-extension
--rw-r--r-- 1 wismut octo      6924 Jan 23 21:04 README.md
+drwxr-xr-x 1 wismut oqto       168 Jan 26 22:33 pi-extension
+-rw-r--r-- 1 wismut oqto      6924 Jan 23 21:04 README.md
 drwxr-xr-x 1 wismut wismut      56 Jan 25 12:18 .ruff_cache
-drwxr-xr-x 1 wismut octo       278 Jan 31 17:25 scripts
+drwxr-xr-x 1 wismut oqto       278 Jan 31 17:25 scripts
 -rw-r--r-- 1 wismut wismut  705590 Feb  1 16:10 session-ses_3e77.md
--rw-r--r-- 1 wismut octo     19387 Jan 29 13:42 SETUP.md
--rwxr-xr-x 1 wismut octo    118772 Jan 31 17:23 setup.sh
-drwxr-xr-x 1 wismut octo       142 Jan 23 11:07 systemd
-drwxr-xr-x 1 wismut octo        52 Jan 11 12:46 templates
+-rw-r--r-- 1 wismut oqto     19387 Jan 29 13:42 SETUP.md
+-rwxr-xr-x 1 wismut oqto    118772 Jan 31 17:23 setup.sh
+drwxr-xr-x 1 wismut oqto       142 Jan 23 11:07 systemd
+drwxr-xr-x 1 wismut oqto        52 Jan 11 12:46 templates
 drwxr-xr-x 1 wismut wismut      60 Jan 30 16:52 tools
-drwxr-xr-x 1 wismut octo        72 Jan 30 13:41 .trx
+drwxr-xr-x 1 wismut oqto        72 Jan 30 13:41 .trx
 drwxr-xr-x 1 wismut wismut      64 Jan 30 17:19 uploads
 
 ```
@@ -2122,25 +2122,25 @@ drwxr-xr-x 1 wismut wismut      64 Jan 30 17:19 uploads
 **Input:**
 ```bash
 {
-      "command": "ls -la /home/wismut/byteowlz/octo/backend/",
+      "command": "ls -la /home/wismut/byteowlz/oqto/backend/",
       "description": "Check backend directory"
     }
 ```
 **Output:**
 ```
 total 164
-drwxr-xr-x 1 wismut octo      164 Feb  1 10:48 .
-drwxr-xr-x 1 wismut octo      636 Feb  1 16:10 ..
--rw-r--r-- 1 wismut octo     1901 Dec 15 13:51 AGENTS.md
+drwxr-xr-x 1 wismut oqto      164 Feb  1 10:48 .
+drwxr-xr-x 1 wismut oqto      636 Feb  1 16:10 ..
+-rw-r--r-- 1 wismut oqto     1901 Dec 15 13:51 AGENTS.md
 drwxr-xr-x 1 wismut wismut     22 Feb  1 10:49 .cargo
--rw-r--r-- 1 wismut octo   145464 Feb  1 19:17 Cargo.lock
--rw-r--r-- 1 wismut octo     3480 Feb  1 19:17 Cargo.toml
-drwxr-xr-x 1 wismut octo       78 Jan 30 20:53 crates
-drwxr-xr-x 1 wismut octo        8 Dec 27 15:03 data
--rw-r--r-- 1 wismut octo      934 Jan 11 12:46 .gitignore
-drwxr-xr-x 1 wismut octo        0 Jan 13 17:42 .octo
--rw-r--r-- 1 wismut octo     7002 Jan 19 17:43 README.md
-drwxr-xr-x 1 wismut octo        0 Jan 20 10:39 scripts
+-rw-r--r-- 1 wismut oqto   145464 Feb  1 19:17 Cargo.lock
+-rw-r--r-- 1 wismut oqto     3480 Feb  1 19:17 Cargo.toml
+drwxr-xr-x 1 wismut oqto       78 Jan 30 20:53 crates
+drwxr-xr-x 1 wismut oqto        8 Dec 27 15:03 data
+-rw-r--r-- 1 wismut oqto      934 Jan 11 12:46 .gitignore
+drwxr-xr-x 1 wismut oqto        0 Jan 13 17:42 .oqto
+-rw-r--r-- 1 wismut oqto     7002 Jan 19 17:43 README.md
+drwxr-xr-x 1 wismut oqto        0 Jan 20 10:39 scripts
 drwxr-xr-x 1 wismut wismut     86 Feb  1 10:23 target
 
 ```
@@ -2162,16 +2162,16 @@ drwxr-xr-x 1 wismut wismut     86 Feb  1 10:23 target
 **Input:**
 ```bash
 {
-      "command": "ls /home/wismut/byteowlz/octo/backend/crates/",
+      "command": "ls /home/wismut/byteowlz/oqto/backend/crates/",
       "description": "List backend crates"
     }
 ```
 **Output:**
 ```
-octo
-octo-browser
-octo-files
-octo-scaffold
+oqto
+oqto-browser
+oqto-files
+oqto-scaffold
 
 ```
 
@@ -2193,19 +2193,19 @@ octo-scaffold
 ```
 {
       "pattern": "fn ws_handler|WebSocket.*auth|401",
-      "path": "/home/wismut/byteowlz/octo/backend/crates/octo/src"
+      "path": "/home/wismut/byteowlz/oqto/backend/crates/oqto/src"
     }
 ```
 **Output:**
 ```
 Found 3 matches
-/home/wismut/byteowlz/octo/backend/crates/octo/src/api/main_chat_pi.rs:
+/home/wismut/byteowlz/oqto/backend/crates/oqto/src/api/main_chat_pi.rs:
   Line 1006: pub async fn ws_handler(
 
-/home/wismut/byteowlz/octo/backend/crates/octo/src/api/workspace_pi.rs:
+/home/wismut/byteowlz/oqto/backend/crates/oqto/src/api/workspace_pi.rs:
   Line 427: pub async fn ws_handler(
 
-/home/wismut/byteowlz/octo/backend/crates/octo/src/ws/handler.rs:
+/home/wismut/byteowlz/oqto/backend/crates/oqto/src/ws/handler.rs:
   Line 32: pub async fn ws_handler(
 ```
 
@@ -2220,13 +2220,13 @@ Found 3 matches
 
 ### Tool Executions
 
-#### ✅ read - "backend/crates/octo/src/api/main_chat_pi.rs"
+#### ✅ read - "backend/crates/oqto/src/api/main_chat_pi.rs"
 **Status:** ✅ Completed
 
 **Input:**
 ```
 {
-      "filePath": "/home/wismut/byteowlz/octo/backend/crates/octo/src/api/main_chat_pi.rs",
+      "filePath": "/home/wismut/byteowlz/oqto/backend/crates/oqto/src/api/main_chat_pi.rs",
       "offset": 1000,
       "limit": 100
     }
@@ -2339,7 +2339,7 @@ Found 3 matches
 </file>
 
 <system-reminder>
-Instructions from: /home/wismut/byteowlz/octo/backend/AGENTS.md
+Instructions from: /home/wismut/byteowlz/oqto/backend/AGENTS.md
 # AGENTS.md
 
 Guidance for coding agents working on this Rust CLI template.
@@ -2399,13 +2399,13 @@ I see the ws_handler takes a `CurrentUser` for authentication. Let me check how 
 ```
 {
       "pattern": "CurrentUser|auth.*ws|ws.*token",
-      "path": "/home/wismut/byteowlz/octo/backend/crates/octo/src"
+      "path": "/home/wismut/byteowlz/oqto/backend/crates/oqto/src"
     }
 ```
 **Output:**
 ```
 Found 100 matches
-/home/wismut/byteowlz/octo/backend/crates/octo/src/api/main_chat_pi.rs:
+/home/wismut/byteowlz/oqto/backend/crates/oqto/src/api/main_chat_pi.rs:
   Line 25: use crate::auth::CurrentUser;
   Line 165:     user: CurrentUser,
   Line 191:     user: CurrentUser,
@@ -2430,7 +2430,7 @@ Found 100 matches
   Line 970:     user: CurrentUser,
   Line 1008:     user: CurrentUser,
 
-/home/wismut/byteowlz/octo/backend/crates/octo/src/api/workspace_pi.rs:
+/home/wismut/byteowlz/oqto/backend/crates/oqto/src/api/workspace_pi.rs:
   Line 98:     user: crate::auth::CurrentUser,
   Line 119:     user: crate::auth::CurrentUser,
   Line 141:     user: crate::auth::CurrentUser,
@@ -2440,7 +2440,7 @@ Found 100 matches
   Line 394:     user: crate::auth::CurrentUser,
   Line 429:     user: crate::auth::CurrentUser,
 
-/home/wismut/byteowlz/octo/backend/crates/octo/src/auth/middleware.rs:
+/home/wismut/byteowlz/oqto/backend/crates/oqto/src/auth/middleware.rs:
   Line 209: pub struct CurrentUser {
   Line 214: impl CurrentUser {
   Line 237: impl<S> FromRequestParts<S> for CurrentUser
@@ -2452,7 +2452,7 @@ Found 100 matches
   Line 375:             .get::<CurrentUser>()
   Line 548:         let user = CurrentUser { claims };
 
-/home/wismut/byteowlz/octo/backend/crates/octo/src/api/handlers/chat.rs:
+/home/wismut/byteowlz/oqto/backend/crates/oqto/src/api/handlers/chat.rs:
   Line 12: use crate::auth::CurrentUser;
   Line 139:     user: CurrentUser,
   Line 245:     user: CurrentUser,
@@ -2460,13 +2460,13 @@ Found 100 matches
   Line 419:     user: CurrentUser,
   Line 560:     user: CurrentUser,
 
-/home/wismut/byteowlz/octo/backend/crates/octo/src/api/handlers/auth.rs:
+/home/wismut/byteowlz/oqto/backend/crates/oqto/src/api/handlers/auth.rs:
   Line 12: use crate::auth::{AuthError, CurrentUser};
   Line 91: pub async fn get_current_user(user: CurrentUser) -> Json<UserInfo> {
   Line 421:     user: CurrentUser,
   Line 458:     user: CurrentUser,
 
-/home/wismut/byteowlz/octo/backend/crates/octo/src/api/handlers/agent_rpc.rs:
+/home/wismut/byteowlz/oqto/backend/crates/oqto/src/api/handlers/agent_rpc.rs:
   Line 18: use crate::auth::CurrentUser;
   Line 75:     user: CurrentUser,
   Line 95:     user: CurrentUser,
@@ -2478,13 +2478,13 @@ Found 100 matches
   Line 283:     user: CurrentUser,
   Line 368:     user: CurrentUser,
 
-/home/wismut/byteowlz/octo/backend/crates/octo/src/api/handlers/agent_ask.rs:
+/home/wismut/byteowlz/oqto/backend/crates/oqto/src/api/handlers/agent_ask.rs:
   Line 16: use crate::auth::CurrentUser;
   Line 42:     user: CurrentUser,
   Line 221:     user: CurrentUser,
   Line 540:     user: &CurrentUser,
 
-/home/wismut/byteowlz/octo/backend/crates/octo/src/api/handlers/trx.rs:
+/home/wismut/byteowlz/oqto/backend/crates/oqto/src/api/handlers/trx.rs:
   Line 13: use crate::auth::CurrentUser;
   Line 267:     user: CurrentUser,
   Line 286:     user: CurrentUser,
@@ -2493,7 +2493,7 @@ Found 100 matches
   Line 393:     user: CurrentUser,
   Line 423:     user: CurrentUser,
 
-/home/wismut/byteowlz/octo/backend/crates/octo/src/api/handlers/settings.rs:
+/home/wismut/byteowlz/oqto/backend/crates/oqto/src/api/handlers/settings.rs:
   Line 13: use crate::auth::{CurrentUser, RequireAdmin};
   Line 35:     user: CurrentUser,
   Line 52:     user: CurrentUser,
@@ -2502,36 +2502,36 @@ Found 100 matches
   Line 123:     user: &CurrentUser,
   Line 172: pub async fn get_global_opencode_config(_user: CurrentUser) -> ApiResult<Json<serde_json::Value>> {
 
-/home/wismut/byteowlz/octo/backend/crates/octo/src/api/handlers/projects.rs:
+/home/wismut/byteowlz/oqto/backend/crates/oqto/src/api/handlers/projects.rs:
   Line 18: use crate::auth::CurrentUser;
   Line 259:     user: CurrentUser,
   Line 361:     user: CurrentUser,
   Line 441:     user: CurrentUser,
 
-/home/wismut/byteowlz/octo/backend/crates/octo/src/api/handlers/misc.rs:
+/home/wismut/byteowlz/oqto/backend/crates/oqto/src/api/handlers/misc.rs:
   Line 15: use crate::auth::CurrentUser;
   Line 378:     user: CurrentUser,
 
-/home/wismut/byteowlz/octo/backend/crates/octo/src/api/proxy/sse.rs:
+/home/wismut/byteowlz/oqto/backend/crates/oqto/src/api/proxy/sse.rs:
   Line 12: use crate::auth::CurrentUser;
   Line 92:     user: CurrentUser,
   Line 135:     user: CurrentUser,
   Line 169:     user: CurrentUser,
 
-/home/wismut/byteowlz/octo/backend/crates/octo/src/api/proxy/mmry.rs:
+/home/wismut/byteowlz/oqto/backend/crates/oqto/src/api/proxy/mmry.rs:
   Line 14: use crate::auth::CurrentUser;
   Line 399:     user: CurrentUser,
   Line 420:     user: CurrentUser,
   Line 441:     user: CurrentUser,
   Line 463:     user: CurrentUser,
 
-/home/wismut/byteowlz/octo/backend/crates/octo/src/api/proxy/builder.rs:
+/home/wismut/byteowlz/oqto/backend/crates/oqto/src/api/proxy/builder.rs:
   Line 18: use crate::auth::CurrentUser;
   Line 39:     user: &CurrentUser,
   Line 70:     user: &CurrentUser,
   Line 86:     user: &CurrentUser,
 
-/home/wismut/byteowlz/octo/backend/crates/octo/src/api/proxy/handlers.rs:
+/home/wismut/byteowlz/oqto/backend/crates/oqto/src/api/proxy/handlers.rs:
   Line 13: use crate::auth::CurrentUser;
   Line 87:     user: CurrentUser,
 
@@ -2549,13 +2549,13 @@ Found 100 matches
 
 ### Tool Executions
 
-#### ✅ read - "backend/crates/octo/src/auth/middleware.rs"
+#### ✅ read - "backend/crates/oqto/src/auth/middleware.rs"
 **Status:** ✅ Completed
 
 **Input:**
 ```
 {
-      "filePath": "/home/wismut/byteowlz/octo/backend/crates/octo/src/auth/middleware.rs",
+      "filePath": "/home/wismut/byteowlz/oqto/backend/crates/oqto/src/auth/middleware.rs",
       "offset": 265,
       "limit": 80
     }
@@ -2673,26 +2673,26 @@ Let me check the routes:
 ```
 {
       "pattern": "main/pi/ws|\\.route.*ws\"",
-      "path": "/home/wismut/byteowlz/octo/backend/crates/octo/src"
+      "path": "/home/wismut/byteowlz/oqto/backend/crates/oqto/src"
     }
 ```
 **Output:**
 ```
 Found 6 matches
-/home/wismut/byteowlz/octo/backend/crates/octo/src/api/main_chat_pi.rs:
+/home/wismut/byteowlz/oqto/backend/crates/oqto/src/api/main_chat_pi.rs:
   Line 1005: /// GET /api/main/pi/ws?session_id=...
 
-/home/wismut/byteowlz/octo/backend/crates/octo/src/api/routes.rs:
+/home/wismut/byteowlz/oqto/backend/crates/oqto/src/api/routes.rs:
   Line 48:         .route("/ws", get(ws_handler))
   Line 406:         .route("/main/pi/ws", get(main_chat_pi_handlers::ws_handler))
 
-/home/wismut/byteowlz/octo/backend/crates/octo/src/prompts/routes.rs:
+/home/wismut/byteowlz/oqto/backend/crates/oqto/src/prompts/routes.rs:
   Line 32:         .route("/api/prompts/ws", get(websocket_handler))
 
-/home/wismut/byteowlz/octo/backend/crates/octo/src/auth/middleware.rs:
+/home/wismut/byteowlz/oqto/backend/crates/oqto/src/auth/middleware.rs:
   Line 344:         "/api/ws" | "/api/voice/stt" | "/api/voice/tts" | "/api/main/pi/ws" | "/api/workspace/term"
 
-/home/wismut/byteowlz/octo/backend/crates/octo/src/bin/pi-bridge.rs:
+/home/wismut/byteowlz/oqto/backend/crates/oqto/src/bin/pi-bridge.rs:
   Line 481:         .route("/ws", get(handle_ws))
 ```
 
@@ -2707,13 +2707,13 @@ Found 6 matches
 
 ### Tool Executions
 
-#### ✅ read - "backend/crates/octo/src/api/routes.rs"
+#### ✅ read - "backend/crates/oqto/src/api/routes.rs"
 **Status:** ✅ Completed
 
 **Input:**
 ```
 {
-      "filePath": "/home/wismut/byteowlz/octo/backend/crates/octo/src/api/routes.rs",
+      "filePath": "/home/wismut/byteowlz/oqto/backend/crates/oqto/src/api/routes.rs",
       "offset": 400,
       "limit": 20
     }
@@ -2766,16 +2766,16 @@ So the route is `/main/pi/ws` but the middleware checks for `/api/main/pi/ws`. L
 ```
 {
       "pattern": "nest.*api|\\.nest\\(|api_routes",
-      "path": "/home/wismut/byteowlz/octo/backend/crates/octo/src"
+      "path": "/home/wismut/byteowlz/oqto/backend/crates/oqto/src"
     }
 ```
 **Output:**
 ```
 Found 2 matches
-/home/wismut/byteowlz/octo/backend/crates/octo/src/main.rs:
+/home/wismut/byteowlz/oqto/backend/crates/oqto/src/main.rs:
   Line 2446:         .nest("/api", api_router.clone())
 
-/home/wismut/byteowlz/octo/backend/crates/octo/src/api/routes.rs:
+/home/wismut/byteowlz/oqto/backend/crates/oqto/src/api/routes.rs:
   Line 457:         .nest("/main/files", main_chat_files::main_chat_file_routes())
 ```
 
@@ -2790,13 +2790,13 @@ Found 2 matches
 
 ### Tool Executions
 
-#### ✅ read - "backend/crates/octo/src/main.rs"
+#### ✅ read - "backend/crates/oqto/src/main.rs"
 **Status:** ✅ Completed
 
 **Input:**
 ```
 {
-      "filePath": "/home/wismut/byteowlz/octo/backend/crates/octo/src/main.rs",
+      "filePath": "/home/wismut/byteowlz/oqto/backend/crates/oqto/src/main.rs",
       "offset": 2440,
       "limit": 30
     }
@@ -2852,13 +2852,13 @@ OK so routes are mounted at both `/api` and root. The path check in the middlewa
 
 ### Tool Executions
 
-#### ✅ read - "backend/crates/octo/src/auth/middleware.rs"
+#### ✅ read - "backend/crates/oqto/src/auth/middleware.rs"
 **Status:** ✅ Completed
 
 **Input:**
 ```
 {
-      "filePath": "/home/wismut/byteowlz/octo/backend/crates/octo/src/auth/middleware.rs",
+      "filePath": "/home/wismut/byteowlz/oqto/backend/crates/oqto/src/auth/middleware.rs",
       "offset": 329,
       "limit": 30
     }
@@ -2974,13 +2974,13 @@ The token is valid (expires tomorrow). The issue must be elsewhere. Let me check
 
 ### Tool Executions
 
-#### ✅ read - "backend/crates/octo/src/ws/handler.rs"
+#### ✅ read - "backend/crates/oqto/src/ws/handler.rs"
 **Status:** ✅ Completed
 
 **Input:**
 ```
 {
-      "filePath": "/home/wismut/byteowlz/octo/backend/crates/octo/src/ws/handler.rs",
+      "filePath": "/home/wismut/byteowlz/oqto/backend/crates/oqto/src/ws/handler.rs",
       "limit": 100
     }
 ```
@@ -3210,13 +3210,13 @@ Let me check the auth middleware to see what scenarios return 401:
 ```
 {
       "pattern": "401|StatusCode::UNAUTHORIZED",
-      "path": "/home/wismut/byteowlz/octo/backend/crates/octo/src/auth"
+      "path": "/home/wismut/byteowlz/oqto/backend/crates/oqto/src/auth"
     }
 ```
 **Output:**
 ```
 Found 5 matches
-/home/wismut/byteowlz/octo/backend/crates/octo/src/auth/error.rs:
+/home/wismut/byteowlz/oqto/backend/crates/oqto/src/auth/error.rs:
   Line 57:             AuthError::MissingAuthHeader => (StatusCode::UNAUTHORIZED, "missing_auth_header"),
   Line 58:             AuthError::InvalidAuthHeader => (StatusCode::UNAUTHORIZED, "invalid_auth_header"),
   Line 59:             AuthError::InvalidToken(_) => (StatusCode::UNAUTHORIZED, "invalid_token"),
@@ -3235,13 +3235,13 @@ Found 5 matches
 
 ### Tool Executions
 
-#### ✅ read - "backend/crates/octo/src/auth/error.rs"
+#### ✅ read - "backend/crates/oqto/src/auth/error.rs"
 **Status:** ✅ Completed
 
 **Input:**
 ```
 {
-      "filePath": "/home/wismut/byteowlz/octo/backend/crates/octo/src/auth/error.rs",
+      "filePath": "/home/wismut/byteowlz/oqto/backend/crates/oqto/src/auth/error.rs",
       "limit": 80
     }
 ```
@@ -3403,13 +3403,13 @@ The error is `missing authorization header`. The WS auth path check requires the
 
 ### Tool Executions
 
-#### ✅ read - "backend/crates/octo/src/auth/middleware.rs"
+#### ✅ read - "backend/crates/oqto/src/auth/middleware.rs"
 **Status:** ✅ Completed
 
 **Input:**
 ```
 {
-      "filePath": "/home/wismut/byteowlz/octo/backend/crates/octo/src/auth/middleware.rs",
+      "filePath": "/home/wismut/byteowlz/oqto/backend/crates/oqto/src/auth/middleware.rs",
       "offset": 278,
       "limit": 20
     }
@@ -3508,7 +3508,7 @@ Let me trace the actual issue in the frontend code. Looking at the error again: 
 ```
 {
       "pattern": "main/pi/ws|WebSocket.*token",
-      "path": "/home/wismut/byteowlz/octo/frontend/src"
+      "path": "/home/wismut/byteowlz/oqto/frontend/src"
     }
 ```
 **Output:**
@@ -3533,7 +3533,7 @@ No files found
 **Input:**
 ```bash
 {
-      "command": "ls /home/wismut/byteowlz/octo/frontend/",
+      "command": "ls /home/wismut/byteowlz/oqto/frontend/",
       "description": "Check frontend directory"
     }
 ```
@@ -3590,39 +3590,39 @@ vitest.config.ts
 ```
 {
       "pattern": "main/pi/ws|usePiChat",
-      "path": "/home/wismut/byteowlz/octo/frontend"
+      "path": "/home/wismut/byteowlz/oqto/frontend"
     }
 ```
 **Output:**
 ```
 Found 42 matches
-/home/wismut/byteowlz/octo/frontend/features/main-chat/hooks/usePiChatCore.ts:
+/home/wismut/byteowlz/oqto/frontend/features/main-chat/hooks/usePiChatCore.ts:
   Line 70: export function usePiChatCore({
   Line 398: export function usePiChatSessionEffects({
   Line 504: export function usePiChatStreamingFallback({
   Line 602: export function usePiChatInit({
 
-/home/wismut/byteowlz/octo/frontend/features/main-chat/hooks/usePiChatStreaming.ts:
+/home/wismut/byteowlz/oqto/frontend/features/main-chat/hooks/usePiChatStreaming.ts:
   Line 68: export function usePiChatStreaming({
   Line 147: 							`[usePiChatStreaming] Ignoring message for session ${data.session_id}, active session is ${activeId}`,
   Line 460: 					`[usePiChatStreaming] Suppressing WebSocket error that occurred ${now - sessionSelectedAt}ms after session selection`,
 
-/home/wismut/byteowlz/octo/frontend/features/main-chat/components/MainChatPiView.tsx:
+/home/wismut/byteowlz/oqto/frontend/features/main-chat/components/MainChatPiView.tsx:
   Line 53: 	usePiChat,
   Line 54: } from "@/hooks/usePiChat";
   Line 218: 	} = usePiChat({
 
-/home/wismut/byteowlz/octo/frontend/features/main-chat/hooks/usePiChatHistory.ts:
+/home/wismut/byteowlz/oqto/frontend/features/main-chat/hooks/usePiChatHistory.ts:
   Line 48: export function usePiChatHistory({
   Line 174: export function usePiChatHistoryEffects({
 
-/home/wismut/byteowlz/octo/frontend/lib/api/main-chat.ts:
+/home/wismut/byteowlz/oqto/frontend/lib/api/main-chat.ts:
   Line 633: 		controlPlaneApiUrl(`/api/main/pi/ws?session_id=${encodeURIComponent(sessionId)}`),
 
-/home/wismut/byteowlz/octo/frontend/features/sessions/SessionScreen.tsx:
+/home/wismut/byteowlz/oqto/frontend/features/sessions/SessionScreen.tsx:
   Line 2304: 			// Main Chat Pi view handles its own messages via usePiChat - skip loading here
 
-/home/wismut/byteowlz/octo/frontend/features/main-chat/hooks/usePiChat.ts:
+/home/wismut/byteowlz/oqto/frontend/features/main-chat/hooks/usePiChat.ts:
   Line 22: 	usePiChatCore,
   Line 23: 	usePiChatInit,
   Line 24: 	usePiChatSessionEffects,
@@ -3640,11 +3640,11 @@ Found 42 matches
   Line 244: 	usePiChatStreamingFallback({
   Line 256: 	usePiChatInit({
 
-/home/wismut/byteowlz/octo/frontend/hooks/usePiChat.ts:
+/home/wismut/byteowlz/oqto/frontend/hooks/usePiChat.ts:
   Line 4:  * Re-export usePiChat and related utilities from the main-chat feature module.
   Line 10: export { usePiChat } from "@/features/main-chat/hooks";
 
-/home/wismut/byteowlz/octo/frontend/features/main-chat/hooks/index.ts:
+/home/wismut/byteowlz/oqto/frontend/features/main-chat/hooks/index.ts:
   Line 6: export { usePiChat } from "./usePiChat";
   Line 9: export { usePiChatStreaming } from "./usePiChatStreaming";
   Line 10: export { usePiChatHistory, usePiChatHistoryEffects } from "./usePiChatHistory";
@@ -3654,10 +3654,10 @@ Found 42 matches
   Line 15: 	usePiChatInit,
   Line 16: } from "./usePiChatCore";
 
-/home/wismut/byteowlz/octo/frontend/src-tauri/gen/apple/assets/assets/index-g0x4qx2V.js:
+/home/wismut/byteowlz/oqto/frontend/src-tauri/gen/apple/assets/assets/index-g0x4qx2V.js:
   Line 570:  */const Oq=[["path",{d:"M18 6 6 18",key:"1bl5f8"}],["path",{d:"m6 6 12 12",key:"d8bk6v"}]],ua=Ee("x",Oq);function fM(e){var t,n,r="";if(typeof e=="string"||typeof e=="number")r+=e;else if(typeof e=="object")if(Array.isArray(e)){var a=e.length;for(t=0;t<a;t++)e[t]&&(n=fM(e[t]))&&(r&&(r+=" "),r+=n)}else for(n in e)e[n]&&(r&&(r+=" "),r+=n);return r}function pM(){for(var e,t,n=0,r="",a=arguments.length;n<a;n++)(e=arguments[n])&&(t=fM(e))&&(r&&(r+=" "),r+=t);return r}const Dq=(e,t)=>{const n=new Array(e.length+t.length);for(let r=0;r<e.length;r++)n[r]=e[r];for(let r=0;r<t.length;r++)n[e.length+r]=t[r];return n},Lq=(e,t)=>({classGroupId:e,validator:t}),mM=(e=new Map,t=null,n)=>({nextPart:e,validators:t,classGroupId:n}),Th="-",X1=[],jq="arbitrary..",Mq=e=>{const t=Pq(e),{conflictingClassGroups:n,conflictingClassGroupModifiers:r}=e;return{getClassGroupId:s=>{if(s.startsWith("[")&&s.endsWith("]"))return Fq(s);const o=s.split(Th),c=o[0]===""&&o.length>1?1:0;return hM(o,c,t)},getConflictingClassGroupIds:(s,o)=>{if(o){const c=r[s],u=n[s];return c?u?Dq(u,c):c:u||X1}return n[s]||X1}}},hM=(e,t,n)=>{if(e.length-t===0)return n.classGroupId;const a=e[t],i=n.nextPart.get(a);if(i){const u=hM(e,t+1,i);if(u)return u}const s=n.validators;if(s===null)return;const o=t===0?e.join(Th):e.slice(t).join(Th),c=s.length;for(let u=0;u<c;u++){const d=s[u];if(d.validator(o))return d.classGroupId}},Fq=e=>e.slice(1,-1).indexOf(":")===-1?void 0:(()=>{const t=e.slice(1,-1),n=t.indexOf(":"),r=t.slice(0,n);return r?jq+r:void 0})(),Pq=e=>{const{theme:t,classGroups:n}=e;return Uq(n,t)},Uq=(e,t)=>{const n=mM();for(const r in e){const a=e[r];iE(a,n,r,t)}return n},iE=(e,t,n,r)=>{const a=e.length;for(let i=0;i<a;i++){const s=e[i];zq(s,t,n,r)}},zq=(e,t,n,r)=>{if(typeof e=="string"){$q(e,t,n);return}if(typeof e=="function"){Bq(e,t,n,r);return}Vq(e,t,n,r)},$q=(e,t,n)=>{const r=e===""?t:gM(t,e);r.classGroupId=n},Bq=(e,t,n,r)=>{if(Gq(e)){iE(e(r),t,n,r);return}t.validators===null&&(t.validators=[]),t.validators.push(...
 
-/home/wismut/byteowlz/octo/frontend/src-tauri/gen/apple/assets/assets/index-RFMA0cqP.js:
+/home/wismut/byteowlz/oqto/frontend/src-tauri/gen/apple/assets/assets/index-RFMA0cqP.js:
   Line 570:  */const Aq=[["path",{d:"M18 6 6 18",key:"1bl5f8"}],["path",{d:"m6 6 12 12",key:"d8bk6v"}]],ua=Ee("x",Aq);function uM(e){var t,n,r="";if(typeof e=="string"||typeof e=="number")r+=e;else if(typeof e=="object")if(Array.isArray(e)){var a=e.length;for(t=0;t<a;t++)e[t]&&(n=uM(e[t]))&&(r&&(r+=" "),r+=n)}else for(n in e)e[n]&&(r&&(r+=" "),r+=n);return r}function dM(){for(var e,t,n=0,r="",a=arguments.length;n<a;n++)(e=arguments[n])&&(t=uM(e))&&(r&&(r+=" "),r+=t);return r}const Cq=(e,t)=>{const n=new Array(e.length+t.length);for(let r=0;r<e.length;r++)n[r]=e[r];for(let r=0;r<t.length;r++)n[e.length+r]=t[r];return n},Rq=(e,t)=>({classGroupId:e,validator:t}),fM=(e=new Map,t=null,n)=>({nextPart:e,validators:t,classGroupId:n}),Th="-",Y1=[],Iq="arbitrary..",Oq=e=>{const t=Lq(e),{conflictingClassGroups:n,conflictingClassGroupModifiers:r}=e;return{getClassGroupId:s=>{if(s.startsWith("[")&&s.endsWith("]"))return Dq(s);const o=s.split(Th),c=o[0]===""&&o.length>1?1:0;return pM(o,c,t)},getConflictingClassGroupIds:(s,o)=>{if(o){const c=r[s],u=n[s];return c?u?Cq(u,c):c:u||Y1}return n[s]||Y1}}},pM=(e,t,n)=>{if(e.length-t===0)return n.classGroupId;const a=e[t],i=n.nextPart.get(a);if(i){const u=pM(e,t+1,i);if(u)return u}const s=n.validators;if(s===null)return;const o=t===0?e.join(Th):e.slice(t).join(Th),c=s.length;for(let u=0;u<c;u++){const d=s[u];if(d.validator(o))return d.classGroupId}},Dq=e=>e.slice(1,-1).indexOf(":")===-1?void 0:(()=>{const t=e.slice(1,-1),n=t.indexOf(":"),r=t.slice(0,n);return r?Iq+r:void 0})(),Lq=e=>{const{theme:t,classGroups:n}=e;return jq(n,t)},jq=(e,t)=>{const n=fM();for(const r in e){const a=e[r];rE(a,n,r,t)}return n},rE=(e,t,n,r)=>{const a=e.length;for(let i=0;i<a;i++){const s=e[i];Mq(s,t,n,r)}},Mq=(e,t,n,r)=>{if(typeof e=="string"){Fq(e,t,n);return}if(typeof e=="function"){Pq(e,t,n,r);return}Uq(e,t,n,r)},Fq=(e,t,n)=>{const r=e===""?t:mM(t,e);r.classGroupId=n},Pq=(e,t,n,r)=>{if(zq(e)){rE(e(r),t,n,r);return}t.validators===null&&(t.validators=[]),t.validators.push(...
 ```
 
@@ -3680,7 +3680,7 @@ Let me look at the WebSocket connection code more closely:
 **Input:**
 ```
 {
-      "filePath": "/home/wismut/byteowlz/octo/frontend/lib/api/main-chat.ts",
+      "filePath": "/home/wismut/byteowlz/oqto/frontend/lib/api/main-chat.ts",
       "offset": 625,
       "limit": 50
     }
@@ -3761,36 +3761,36 @@ Let me look at the WebSocket connection code more closely:
 ```
 {
       "pattern": "getAuthToken|authToken",
-      "path": "/home/wismut/byteowlz/octo/frontend/lib"
+      "path": "/home/wismut/byteowlz/oqto/frontend/lib"
     }
 ```
 **Output:**
 ```
 Found 15 matches
-/home/wismut/byteowlz/octo/frontend/lib/api/main-chat.ts:
+/home/wismut/byteowlz/oqto/frontend/lib/api/main-chat.ts:
   Line 9: 	getAuthToken,
   Line 636: 	const token = getAuthToken();
   Line 812: 	const token = getAuthToken();
 
-/home/wismut/byteowlz/octo/frontend/lib/api/index.ts:
+/home/wismut/byteowlz/oqto/frontend/lib/api/index.ts:
   Line 8: 	getAuthToken,
 
-/home/wismut/byteowlz/octo/frontend/lib/ws-client.ts:
+/home/wismut/byteowlz/oqto/frontend/lib/ws-client.ts:
   Line 12: import { controlPlaneApiUrl, getAuthToken } from "./control-plane-client";
   Line 505: 		const token = getAuthToken();
 
-/home/wismut/byteowlz/octo/frontend/lib/api/client.ts:
-  Line 12: const AUTH_TOKEN_KEY = "octo:authToken";
+/home/wismut/byteowlz/oqto/frontend/lib/api/client.ts:
+  Line 12: const AUTH_TOKEN_KEY = "oqto:authToken";
   Line 14: export function getAuthToken(): string | null {
   Line 41: 	const token = getAuthToken();
 
-/home/wismut/byteowlz/octo/frontend/lib/api/files.ts:
+/home/wismut/byteowlz/oqto/frontend/lib/api/files.ts:
   Line 7: import { controlPlaneApiUrl, getAuthToken } from "./client";
   Line 56: 	const token = getAuthToken();
   Line 68: 	const token = getAuthToken();
 
-/home/wismut/byteowlz/octo/frontend/lib/tauri-fetch-polyfill.ts:
-  Line 18: const AUTH_TOKEN_KEY = "octo:authToken";
+/home/wismut/byteowlz/oqto/frontend/lib/tauri-fetch-polyfill.ts:
+  Line 18: const AUTH_TOKEN_KEY = "oqto:authToken";
   Line 21: function getAuthToken(): string | null {
   Line 65: 	const token = getAuthToken();
 ```
@@ -3812,7 +3812,7 @@ Found 15 matches
 **Input:**
 ```
 {
-      "filePath": "/home/wismut/byteowlz/octo/frontend/lib/api/client.ts",
+      "filePath": "/home/wismut/byteowlz/oqto/frontend/lib/api/client.ts",
       "offset": 10,
       "limit": 50
     }
@@ -3821,7 +3821,7 @@ Found 15 matches
 ```
 <file>
 00011| 
-00012| const AUTH_TOKEN_KEY = "octo:authToken";
+00012| const AUTH_TOKEN_KEY = "oqto:authToken";
 00013| 
 00014| export function getAuthToken(): string | null {
 00015| 	if (typeof window === "undefined") return null;
@@ -3894,7 +3894,7 @@ OK, so it's setting both localStorage AND a cookie. The issue might be that the 
 **Input:**
 ```bash
 {
-      "command": "agent-browser storage local \"octo:authToken\"",
+      "command": "agent-browser storage local \"oqto:authToken\"",
       "description": "Check auth token in localStorage"
     }
 ```
@@ -3921,7 +3921,7 @@ OK, so it's setting both localStorage AND a cookie. The issue might be that the 
 **Input:**
 ```bash
 {
-      "command": "agent-browser eval \"localStorage.getItem('octo:authToken')\"",
+      "command": "agent-browser eval \"localStorage.getItem('oqto:authToken')\"",
       "description": "Get auth token from localStorage"
     }
 ```
@@ -3950,7 +3950,7 @@ Token is in localStorage. Let me check if the backend URL is correctly configure
 **Input:**
 ```bash
 {
-      "command": "agent-browser eval \"localStorage.getItem('octo:backendUrl')\"",
+      "command": "agent-browser eval \"localStorage.getItem('oqto:backendUrl')\"",
       "description": "Get backend URL from localStorage"
     }
 ```
@@ -3978,14 +3978,14 @@ null
 ```
 {
       "pattern": "controlPlaneApiUrl|backendUrl",
-      "path": "/home/wismut/byteowlz/octo/frontend/lib",
+      "path": "/home/wismut/byteowlz/oqto/frontend/lib",
       "include": "*.ts"
     }
 ```
 **Output:**
 ```
 Found 100 matches
-/home/wismut/byteowlz/octo/frontend/lib/api/main-chat.ts:
+/home/wismut/byteowlz/oqto/frontend/lib/api/main-chat.ts:
   Line 8: 	controlPlaneApiUrl,
   Line 216: 	const res = await authFetch(controlPlaneApiUrl("/api/main"), {
   Line 231: 	const res = await authFetch(controlPlaneApiUrl("/api/main"), {
@@ -4022,17 +4022,17 @@ Found 100 matches
   Line 789: 		controlPlaneApiUrl(`/api/pi/workspace/sessions/${sessionId}/abort`),
   Line 806: 	let wsUrl = toAbsoluteWsUrl(controlPlaneApiUrl("/api/pi/workspace/ws"));
 
-/home/wismut/byteowlz/octo/frontend/lib/api/index.ts:
+/home/wismut/byteowlz/oqto/frontend/lib/api/index.ts:
   Line 15: 	controlPlaneApiUrl,
 
-/home/wismut/byteowlz/octo/frontend/lib/ws-client.ts:
+/home/wismut/byteowlz/oqto/frontend/lib/ws-client.ts:
   Line 12: import { controlPlaneApiUrl, getAuthToken } from "./control-plane-client";
   Line 502: 		let wsUrl = toAbsoluteWsUrl(controlPlaneApiUrl("/api/ws"));
 
-/home/wismut/byteowlz/octo/frontend/lib/api/client.ts:
+/home/wismut/byteowlz/oqto/frontend/lib/api/client.ts:
   Line 118: export function controlPlaneApiUrl(path: string): string {
 
-/home/wismut/byteowlz/octo/frontend/lib/api/projects.ts:
+/home/wismut/byteowlz/oqto/frontend/lib/api/projects.ts:
   Line 6: import { authFetch, controlPlaneApiUrl, readApiError } from "./client";
   Line 16: 	const res = await authFetch(controlPlaneApiUrl("/api/projects"), {
   Line 28: 		controlPlaneApiUrl("/api/projects"),
@@ -4040,7 +4040,7 @@ Found 100 matches
   Line 57: 		controlPlaneApiUrl("/api/projects/templates"),
   Line 82: 	return controlPlaneApiUrl(`/api/projects/logo/${fullPath}`);
 
-/home/wismut/byteowlz/octo/frontend/lib/api/chat.ts:
+/home/wismut/byteowlz/oqto/frontend/lib/api/chat.ts:
   Line 11: import { authFetch, controlPlaneApiUrl, readApiError } from "./client";
   Line 115: 		controlPlaneApiUrl("/api/chat-history"),
   Line 135: 		controlPlaneApiUrl("/api/chat-history/grouped"),
@@ -4048,7 +4048,7 @@ Found 100 matches
   Line 168: 		controlPlaneApiUrl(`/api/chat-history/${sessionId}`),
   Line 185: 		controlPlaneApiUrl(`/api/chat-history/${sessionId}/messages`),
 
-/home/wismut/byteowlz/octo/frontend/lib/api/sessions.ts:
+/home/wismut/byteowlz/oqto/frontend/lib/api/sessions.ts:
   Line 6: import { authFetch, controlPlaneApiUrl, readApiError } from "./client";
   Line 23: 	const res = await authFetch(controlPlaneApiUrl("/api/sessions"), {
   Line 35: 	const res = await authFetch(controlPlaneApiUrl("/api/sessions"), {
@@ -4062,21 +4062,21 @@ Found 100 matches
   Line 199: 		controlPlaneApiUrl(`/api/sessions/${sessionId}/update`),
   Line 212: 		controlPlaneApiUrl(`/api/sessions/${sessionId}/upgrade`),
 
-/home/wismut/byteowlz/octo/frontend/lib/api/auth.ts:
+/home/wismut/byteowlz/oqto/frontend/lib/api/auth.ts:
   Line 8: 	controlPlaneApiUrl,
   Line 22: 	const url = controlPlaneApiUrl("/api/auth/login");
   Line 68: 	const url = controlPlaneApiUrl("/api/auth/register");
   Line 112: 	const res = await authFetch(controlPlaneApiUrl("/api/auth/logout"), {
   Line 123: 	const res = await authFetch(controlPlaneApiUrl("/api/me"), {
 
-/home/wismut/byteowlz/octo/frontend/lib/api/settings.ts:
+/home/wismut/byteowlz/oqto/frontend/lib/api/settings.ts:
   Line 6: import { authFetch, controlPlaneApiUrl, readApiError } from "./client";
   Line 46: 		controlPlaneApiUrl(
   Line 63: 		controlPlaneApiUrl(
   Line 81: 		controlPlaneApiUrl(
   Line 101: 		controlPlaneApiUrl(
 
-/home/wismut/byteowlz/octo/frontend/lib/api/onboarding.ts:
+/home/wismut/byteowlz/oqto/frontend/lib/api/onboarding.ts:
   Line 6: import { authFetch, controlPlaneApiUrl, readApiError } from "./client";
   Line 66: 	const res = await authFetch(controlPlaneApiUrl("/api/onboarding"), {
   Line 109: 	const res = await authFetch(controlPlaneApiUrl("/api/onboarding"), {
@@ -4086,19 +4086,19 @@ Found 100 matches
   Line 168: 	const res = await authFetch(controlPlaneApiUrl("/api/onboarding/complete"), {
   Line 181: 	const res = await authFetch(controlPlaneApiUrl("/api/onboarding/reset"), {
 
-/home/wismut/byteowlz/octo/frontend/lib/api/agents.ts:
+/home/wismut/byteowlz/oqto/frontend/lib/api/agents.ts:
   Line 6: import { authFetch, controlPlaneApiUrl } from "./client";
   Line 67: 	const res = await authFetch(controlPlaneApiUrl("/api/agents/ask"), {
 
-/home/wismut/byteowlz/octo/frontend/lib/api/search.ts:
+/home/wismut/byteowlz/oqto/frontend/lib/api/search.ts:
   Line 6: import { authFetch, controlPlaneApiUrl, readApiError } from "./client";
   Line 74: 		controlPlaneApiUrl("/api/search"),
 
-/home/wismut/byteowlz/octo/frontend/lib/api/config.ts:
+/home/wismut/byteowlz/oqto/frontend/lib/api/config.ts:
   Line 6: import { authFetch, controlPlaneApiUrl, readApiError } from "./client";
   Line 69: 		const res = await authFetch(controlPlaneApiUrl("/api/opencode/config"), {
 
-/home/wismut/byteowlz/octo/frontend/lib/api/files.ts:
+/home/wismut/byteowlz/oqto/frontend/lib/api/files.ts:
   Line 7: import { controlPlaneApiUrl, getAuthToken } from "./client";
   Line 14: 	return controlPlaneApiUrl(`/api/session/${sessionId}/code`);
   Line 22: 	return controlPlaneApiUrl(`/api/session/${sessionId}/files`);
@@ -4108,13 +4108,13 @@ Found 100 matches
   Line 54: 	let wsUrl = toAbsoluteWsUrl(controlPlaneApiUrl(`/api/voice/${kind}`));
   Line 66: 		controlPlaneApiUrl(`/api/session/${sessionId}/browser/stream`),
 
-/home/wismut/byteowlz/octo/frontend/lib/api/dashboard.ts:
+/home/wismut/byteowlz/oqto/frontend/lib/api/dashboard.ts:
   Line 6: import { authFetch, controlPlaneApiUrl, readApiError } from "./client";
   Line 76: 	const res = await authFetch(controlPlaneApiUrl("/api/scheduler/overview"), {
   Line 87: 	const endpoint = controlPlaneApiUrl(
   Line 101: 	const res = await authFetch(controlPlaneApiUrl("/api/codexbar/usage"), {
 
-/home/wismut/byteowlz/octo/frontend/lib/api/features.ts:
+/home/wismut/byteowlz/oqto/frontend/lib/api/features.ts:
   Line 6: import { authFetch, controlPlaneApiUrl } from "./client";
 
 (Results are truncated. Consider using a more specific path or pattern.)
@@ -4137,7 +4137,7 @@ Found 100 matches
 **Input:**
 ```
 {
-      "filePath": "/home/wismut/byteowlz/octo/frontend/lib/api/client.ts",
+      "filePath": "/home/wismut/byteowlz/oqto/frontend/lib/api/client.ts",
       "offset": 115,
       "limit": 30
     }
@@ -4189,21 +4189,21 @@ Found 100 matches
 ```
 {
       "pattern": "getControlPlaneBaseUrl",
-      "path": "/home/wismut/byteowlz/octo/frontend/lib"
+      "path": "/home/wismut/byteowlz/oqto/frontend/lib"
     }
 ```
 **Output:**
 ```
 Found 6 matches
-/home/wismut/byteowlz/octo/frontend/lib/api/index.ts:
+/home/wismut/byteowlz/oqto/frontend/lib/api/index.ts:
   Line 12: 	getControlPlaneBaseUrl,
 
-/home/wismut/byteowlz/octo/frontend/lib/api/client.ts:
+/home/wismut/byteowlz/oqto/frontend/lib/api/client.ts:
   Line 87: export function getControlPlaneBaseUrl(): string {
   Line 115: 	return getControlPlaneBaseUrl();
   Line 119: 	const base = getControlPlaneBaseUrl();
 
-/home/wismut/byteowlz/octo/frontend/lib/tauri-fetch-polyfill.ts:
+/home/wismut/byteowlz/oqto/frontend/lib/tauri-fetch-polyfill.ts:
   Line 26: function getControlPlaneBaseUrl(): string {
   Line 44: 	const controlPlaneBase = getControlPlaneBaseUrl();
 ```
@@ -4225,7 +4225,7 @@ Found 6 matches
 **Input:**
 ```
 {
-      "filePath": "/home/wismut/byteowlz/octo/frontend/lib/api/client.ts",
+      "filePath": "/home/wismut/byteowlz/oqto/frontend/lib/api/client.ts",
       "offset": 85,
       "limit": 35
     }
@@ -4290,7 +4290,7 @@ Found 6 matches
 **Input:**
 ```bash
 {
-      "command": "agent-browser eval \"localStorage.getItem('octo:controlPlane:baseUrl')\"",
+      "command": "agent-browser eval \"localStorage.getItem('oqto:controlPlane:baseUrl')\"",
       "description": "Get control plane base URL from localStorage"
     }
 ```
@@ -4320,27 +4320,27 @@ Let me see what the actual WebSocket URL being used is:
 ```
 {
       "pattern": "toAbsoluteWsUrl",
-      "path": "/home/wismut/byteowlz/octo/frontend/lib"
+      "path": "/home/wismut/byteowlz/oqto/frontend/lib"
     }
 ```
 **Output:**
 ```
 Found 9 matches
-/home/wismut/byteowlz/octo/frontend/lib/api/main-chat.ts:
+/home/wismut/byteowlz/oqto/frontend/lib/api/main-chat.ts:
   Line 12: import { toAbsoluteWsUrl } from "@/lib/url";
   Line 632: 	let wsUrl = toAbsoluteWsUrl(
   Line 806: 	let wsUrl = toAbsoluteWsUrl(controlPlaneApiUrl("/api/pi/workspace/ws"));
 
-/home/wismut/byteowlz/octo/frontend/lib/ws-client.ts:
+/home/wismut/byteowlz/oqto/frontend/lib/ws-client.ts:
   Line 13: import { toAbsoluteWsUrl } from "./url";
   Line 502: 		let wsUrl = toAbsoluteWsUrl(controlPlaneApiUrl("/api/ws"));
 
-/home/wismut/byteowlz/octo/frontend/lib/api/files.ts:
+/home/wismut/byteowlz/oqto/frontend/lib/api/files.ts:
   Line 6: import { toAbsoluteWsUrl } from "@/lib/url";
   Line 54: 	let wsUrl = toAbsoluteWsUrl(controlPlaneApiUrl(`/api/voice/${kind}`));
   Line 65: 	let wsUrl = toAbsoluteWsUrl(
 
-/home/wismut/byteowlz/octo/frontend/lib/url.ts:
+/home/wismut/byteowlz/oqto/frontend/lib/url.ts:
   Line 1: export function toAbsoluteWsUrl(value: string): string {
 ```
 
@@ -4361,7 +4361,7 @@ Found 9 matches
 **Input:**
 ```
 {
-      "filePath": "/home/wismut/byteowlz/octo/frontend/lib/url.ts"
+      "filePath": "/home/wismut/byteowlz/oqto/frontend/lib/url.ts"
     }
 ```
 **Output:**
@@ -4434,7 +4434,7 @@ The console errors show it's connecting to `ws://archlinux:8080/api/main/pi/ws` 
 **Input:**
 ```bash
 {
-      "command": "cat /home/wismut/byteowlz/octo/frontend/.env* 2>/dev/null || echo \"No .env files\"",
+      "command": "cat /home/wismut/byteowlz/oqto/frontend/.env* 2>/dev/null || echo \"No .env files\"",
       "description": "Check frontend env files"
     }
 ```
@@ -4461,13 +4461,13 @@ NEXT_PUBLIC_CONTROL_PLANE_URL=http://archlinux:8080
 **Input:**
 ```bash
 {
-      "command": "ls -la /home/wismut/byteowlz/octo/frontend/.env* 2>/dev/null",
+      "command": "ls -la /home/wismut/byteowlz/oqto/frontend/.env* 2>/dev/null",
       "description": "List env files"
     }
 ```
 **Output:**
 ```
--rw-r--r-- 1 wismut octo 52 Dec 17 22:50 /home/wismut/byteowlz/octo/frontend/.env.local
+-rw-r--r-- 1 wismut oqto 52 Dec 17 22:50 /home/wismut/byteowlz/oqto/frontend/.env.local
 
 ```
 
@@ -4491,28 +4491,28 @@ Wait, that uses `NEXT_PUBLIC_` prefix but the code uses `VITE_`:
 ```
 {
       "pattern": "VITE_CONTROL_PLANE|env\\.VITE",
-      "path": "/home/wismut/byteowlz/octo/frontend"
+      "path": "/home/wismut/byteowlz/oqto/frontend"
     }
 ```
 **Output:**
 ```
 Found 19 matches
-/home/wismut/byteowlz/octo/frontend/features/main-chat/hooks/usePiChatStreaming.ts:
+/home/wismut/byteowlz/oqto/frontend/features/main-chat/hooks/usePiChatStreaming.ts:
   Line 42: 	return import.meta.env.VITE_DEBUG_PI === "1";
 
-/home/wismut/byteowlz/octo/frontend/lib/ws-client.ts:
+/home/wismut/byteowlz/oqto/frontend/lib/ws-client.ts:
   Line 25: 	return import.meta.env.VITE_DEBUG_WS === "1";
 
-/home/wismut/byteowlz/octo/frontend/lib/api/client.ts:
+/home/wismut/byteowlz/oqto/frontend/lib/api/client.ts:
   Line 97: 	return normalizeControlPlaneUrl(env.VITE_CONTROL_PLANE_URL ?? "");
 
-/home/wismut/byteowlz/octo/frontend/vite.config.ts:
+/home/wismut/byteowlz/oqto/frontend/vite.config.ts:
   Line 39: 	const caddyUrl = env.VITE_CADDY_BASE_URL || "http://localhost";
   Line 40: 	const controlPlaneUrl = env.VITE_CONTROL_PLANE_URL || "http://localhost:8080";
   Line 41: 	const opencodeUrl = env.VITE_OPENCODE_BASE_URL || "http://localhost:41820";
   Line 42: 	const fileserverUrl = env.VITE_FILE_SERVER_URL || "http://localhost:41821";
 
-/home/wismut/byteowlz/octo/frontend/lib/config.ts:
+/home/wismut/byteowlz/oqto/frontend/lib/config.ts:
   Line 9: 	return trimTrailingSlash(env.VITE_CADDY_BASE_URL) || "";
   Line 32: 				: trimTrailingSlash(env.VITE_OPENCODE_BASE_URL),
   Line 33: 		fileServerBaseUrl: trimTrailingSlash(env.VITE_FILE_SERVER_URL),
@@ -4522,14 +4522,14 @@ Found 19 matches
   Line 52: 	env.VITE_FILE_SERVER_URL || env.VITE_CADDY_BASE_URL,
   Line 54: export const hasCaddy = Boolean(env.VITE_CADDY_BASE_URL);
 
-/home/wismut/byteowlz/octo/frontend/README.md:
+/home/wismut/byteowlz/oqto/frontend/README.md:
   Line 21: VITE_CONTROL_PLANE_URL=http://localhost:8080
   Line 30: | `VITE_CONTROL_PLANE_URL` | Control plane API base URL for sessions, auth, and proxy endpoints. |
 
-/home/wismut/byteowlz/octo/frontend/src-tauri/gen/apple/assets/assets/index-g0x4qx2V.js:
+/home/wismut/byteowlz/oqto/frontend/src-tauri/gen/apple/assets/assets/index-g0x4qx2V.js:
   Line 570:  */const Oq=[["path",{d:"M18 6 6 18",key:"1bl5f8"}],["path",{d:"m6 6 12 12",key:"d8bk6v"}]],ua=Ee("x",Oq);function fM(e){var t,n,r="";if(typeof e=="string"||typeof e=="number")r+=e;else if(typeof e=="object")if(Array.isArray(e)){var a=e.length;for(t=0;t<a;t++)e[t]&&(n=fM(e[t]))&&(r&&(r+=" "),r+=n)}else for(n in e)e[n]&&(r&&(r+=" "),r+=n);return r}function pM(){for(var e,t,n=0,r="",a=arguments.length;n<a;n++)(e=arguments[n])&&(t=fM(e))&&(r&&(r+=" "),r+=t);return r}const Dq=(e,t)=>{const n=new Array(e.length+t.length);for(let r=0;r<e.length;r++)n[r]=e[r];for(let r=0;r<t.length;r++)n[e.length+r]=t[r];return n},Lq=(e,t)=>({classGroupId:e,validator:t}),mM=(e=new Map,t=null,n)=>({nextPart:e,validators:t,classGroupId:n}),Th="-",X1=[],jq="arbitrary..",Mq=e=>{const t=Pq(e),{conflictingClassGroups:n,conflictingClassGroupModifiers:r}=e;return{getClassGroupId:s=>{if(s.startsWith("[")&&s.endsWith("]"))return Fq(s);const o=s.split(Th),c=o[0]===""&&o.length>1?1:0;return hM(o,c,t)},getConflictingClassGroupIds:(s,o)=>{if(o){const c=r[s],u=n[s];return c?u?Dq(u,c):c:u||X1}return n[s]||X1}}},hM=(e,t,n)=>{if(e.length-t===0)return n.classGroupId;const a=e[t],i=n.nextPart.get(a);if(i){const u=hM(e,t+1,i);if(u)return u}const s=n.validators;if(s===null)return;const o=t===0?e.join(Th):e.slice(t).join(Th),c=s.length;for(let u=0;u<c;u++){const d=s[u];if(d.validator(o))return d.classGroupId}},Fq=e=>e.slice(1,-1).indexOf(":")===-1?void 0:(()=>{const t=e.slice(1,-1),n=t.indexOf(":"),r=t.slice(0,n);return r?jq+r:void 0})(),Pq=e=>{const{theme:t,classGroups:n}=e;return Uq(n,t)},Uq=(e,t)=>{const n=mM();for(const r in e){const a=e[r];iE(a,n,r,t)}return n},iE=(e,t,n,r)=>{const a=e.length;for(let i=0;i<a;i++){const s=e[i];zq(s,t,n,r)}},zq=(e,t,n,r)=>{if(typeof e=="string"){$q(e,t,n);return}if(typeof e=="function"){Bq(e,t,n,r);return}Vq(e,t,n,r)},$q=(e,t,n)=>{const r=e===""?t:gM(t,e);r.classGroupId=n},Bq=(e,t,n,r)=>{if(Gq(e)){iE(e(r),t,n,r);return}t.validators===null&&(t.validators=[]),t.validators.push(...
 
-/home/wismut/byteowlz/octo/frontend/src-tauri/gen/apple/assets/assets/index-RFMA0cqP.js:
+/home/wismut/byteowlz/oqto/frontend/src-tauri/gen/apple/assets/assets/index-RFMA0cqP.js:
   Line 570:  */const Aq=[["path",{d:"M18 6 6 18",key:"1bl5f8"}],["path",{d:"m6 6 12 12",key:"d8bk6v"}]],ua=Ee("x",Aq);function uM(e){var t,n,r="";if(typeof e=="string"||typeof e=="number")r+=e;else if(typeof e=="object")if(Array.isArray(e)){var a=e.length;for(t=0;t<a;t++)e[t]&&(n=uM(e[t]))&&(r&&(r+=" "),r+=n)}else for(n in e)e[n]&&(r&&(r+=" "),r+=n);return r}function dM(){for(var e,t,n=0,r="",a=arguments.length;n<a;n++)(e=arguments[n])&&(t=uM(e))&&(r&&(r+=" "),r+=t);return r}const Cq=(e,t)=>{const n=new Array(e.length+t.length);for(let r=0;r<e.length;r++)n[r]=e[r];for(let r=0;r<t.length;r++)n[e.length+r]=t[r];return n},Rq=(e,t)=>({classGroupId:e,validator:t}),fM=(e=new Map,t=null,n)=>({nextPart:e,validators:t,classGroupId:n}),Th="-",Y1=[],Iq="arbitrary..",Oq=e=>{const t=Lq(e),{conflictingClassGroups:n,conflictingClassGroupModifiers:r}=e;return{getClassGroupId:s=>{if(s.startsWith("[")&&s.endsWith("]"))return Dq(s);const o=s.split(Th),c=o[0]===""&&o.length>1?1:0;return pM(o,c,t)},getConflictingClassGroupIds:(s,o)=>{if(o){const c=r[s],u=n[s];return c?u?Cq(u,c):c:u||Y1}return n[s]||Y1}}},pM=(e,t,n)=>{if(e.length-t===0)return n.classGroupId;const a=e[t],i=n.nextPart.get(a);if(i){const u=pM(e,t+1,i);if(u)return u}const s=n.validators;if(s===null)return;const o=t===0?e.join(Th):e.slice(t).join(Th),c=s.length;for(let u=0;u<c;u++){const d=s[u];if(d.validator(o))return d.classGroupId}},Dq=e=>e.slice(1,-1).indexOf(":")===-1?void 0:(()=>{const t=e.slice(1,-1),n=t.indexOf(":"),r=t.slice(0,n);return r?Iq+r:void 0})(),Lq=e=>{const{theme:t,classGroups:n}=e;return jq(n,t)},jq=(e,t)=>{const n=fM();for(const r in e){const a=e[r];rE(a,n,r,t)}return n},rE=(e,t,n,r)=>{const a=e.length;for(let i=0;i<a;i++){const s=e[i];Mq(s,t,n,r)}},Mq=(e,t,n,r)=>{if(typeof e=="string"){Fq(e,t,n);return}if(typeof e=="function"){Pq(e,t,n,r);return}Uq(e,t,n,r)},Fq=(e,t,n)=>{const r=e===""?t:mM(t,e);r.classGroupId=n},Pq=(e,t,n,r)=>{if(zq(e)){rE(e(r),t,n,r);return}t.validators===null&&(t.validators=[]),t.validators.push(...
 ```
 
@@ -4552,7 +4552,7 @@ OK so the vite config has a default fallback to `http://localhost:8080`. The iss
 **Input:**
 ```
 {
-      "filePath": "/home/wismut/byteowlz/octo/frontend/vite.config.ts",
+      "filePath": "/home/wismut/byteowlz/oqto/frontend/vite.config.ts",
       "offset": 35,
       "limit": 60
     }
@@ -4642,7 +4642,7 @@ OK so the vite config has a default fallback to `http://localhost:8080`. The iss
 **Input:**
 ```
 {
-      "filePath": "/home/wismut/byteowlz/octo/frontend/vite.config.ts",
+      "filePath": "/home/wismut/byteowlz/oqto/frontend/vite.config.ts",
       "offset": 95,
       "limit": 60
     }
@@ -4696,13 +4696,13 @@ But wait - the auth middleware checks for `/api/main/pi/ws` specifically in `is_
 
 ### Tool Executions
 
-#### ✅ read - "backend/crates/octo/src/auth/middleware.rs"
+#### ✅ read - "backend/crates/oqto/src/auth/middleware.rs"
 **Status:** ✅ Completed
 
 **Input:**
 ```
 {
-      "filePath": "/home/wismut/byteowlz/octo/backend/crates/octo/src/auth/middleware.rs",
+      "filePath": "/home/wismut/byteowlz/oqto/backend/crates/oqto/src/auth/middleware.rs",
       "offset": 342,
       "limit": 20
     }
@@ -4850,13 +4850,13 @@ The fix is to update `is_websocket_auth_path` to also match paths without the `/
 
 ### Tool Executions
 
-#### ✅ read - "backend/crates/octo/src/auth/middleware.rs"
+#### ✅ read - "backend/crates/oqto/src/auth/middleware.rs"
 **Status:** ✅ Completed
 
 **Input:**
 ```
 {
-      "filePath": "/home/wismut/byteowlz/octo/backend/crates/octo/src/auth/middleware.rs",
+      "filePath": "/home/wismut/byteowlz/oqto/backend/crates/oqto/src/auth/middleware.rs",
       "offset": 329,
       "limit": 35
     }
@@ -4915,13 +4915,13 @@ The fix is to update `is_websocket_auth_path` to also match paths without the `/
 
 ### Tool Executions
 
-#### ✅ edit - "backend/crates/octo/src/auth/middleware.rs"
+#### ✅ edit - "backend/crates/oqto/src/auth/middleware.rs"
 **Status:** ✅ Completed
 
 **Input:**
 ```
 {
-      "filePath": "/home/wismut/byteowlz/octo/backend/crates/octo/src/auth/middleware.rs",
+      "filePath": "/home/wismut/byteowlz/oqto/backend/crates/oqto/src/auth/middleware.rs",
       "oldString": "    if matches!(\n        path,\n        \"/api/ws\" | \"/api/voice/stt\" | \"/api/voice/tts\" | \"/api/main/pi/ws\" | \"/api/workspace/term\"\n    ) {\n        return true;\n    }\n\n    if let Some(rest) = path.strip_prefix(\"/api/session/\") {\n        return rest.ends_with(\"/term\") || rest.ends_with(\"/browser/stream\");\n    }\n\n    if let Some(rest) = path.strip_prefix(\"/api/sessions/\") {\n        return rest.ends_with(\"/terminal\") || rest.ends_with(\"/browser/stream\");\n    }\n\n    false",
       "newString": "    // Check both with and without /api prefix since vite proxy strips it\n    let path_without_api = path.strip_prefix(\"/api\").unwrap_or(path);\n\n    if matches!(\n        path_without_api,\n        \"/ws\" | \"/voice/stt\" | \"/voice/tts\" | \"/main/pi/ws\" | \"/workspace/term\"\n    ) {\n        return true;\n    }\n\n    if let Some(rest) = path_without_api.strip_prefix(\"/session/\") {\n        return rest.ends_with(\"/term\") || rest.ends_with(\"/browser/stream\");\n    }\n\n    if let Some(rest) = path_without_api.strip_prefix(\"/sessions/\") {\n        return rest.ends_with(\"/terminal\") || rest.ends_with(\"/browser/stream\");\n    }\n\n    false"
     }
@@ -4952,7 +4952,7 @@ Now let's verify the change compiles:
 **Input:**
 ```bash
 {
-      "command": "cd /home/wismut/byteowlz/octo/backend && cargo check --package octo 2>&1 | tail -30",
+      "command": "cd /home/wismut/byteowlz/oqto/backend && cargo check --package oqto 2>&1 | tail -30",
       "description": "Check if auth middleware compiles",
       "timeout": 120000
     }
@@ -4964,30 +4964,30 @@ Now let's verify the change compiles:
     |            ^^^^^^^^^^^^^^^^^^^^
 
 warning: struct `MainChatSessionInfo` is never constructed
-   --> crates/octo/src/user_plane/types.rs:110:12
+   --> crates/oqto/src/user_plane/types.rs:110:12
     |
 110 | pub struct MainChatSessionInfo {
     |            ^^^^^^^^^^^^^^^^^^^
 
 warning: struct `MainChatMessage` is never constructed
-   --> crates/octo/src/user_plane/types.rs:127:12
+   --> crates/oqto/src/user_plane/types.rs:127:12
     |
 127 | pub struct MainChatMessage {
     |            ^^^^^^^^^^^^^^^
 
 warning: struct `MemoryEntry` is never constructed
-   --> crates/octo/src/user_plane/types.rs:140:12
+   --> crates/oqto/src/user_plane/types.rs:140:12
     |
 140 | pub struct MemoryEntry {
     |            ^^^^^^^^^^^
 
 warning: struct `MemorySearchResults` is never constructed
-   --> crates/octo/src/user_plane/types.rs:157:12
+   --> crates/oqto/src/user_plane/types.rs:157:12
     |
 157 | pub struct MemorySearchResults {
     |            ^^^^^^^^^^^^^^^^^^^
 
-warning: `octo` (bin "octo") generated 113 warnings (7 duplicates) (run `cargo fix --bin "octo" -p octo` to apply 3 suggestions)
+warning: `oqto` (bin "oqto") generated 113 warnings (7 duplicates) (run `cargo fix --bin "oqto" -p oqto` to apply 3 suggestions)
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 6.62s
 
 ```
@@ -5011,7 +5011,7 @@ Good, it compiles. Now I need to restart the backend to apply the fix:
 **Input:**
 ```bash
 {
-      "command": "cd /home/wismut/byteowlz/octo/backend && cargo build --release --package octo 2>&1 | tail -10",
+      "command": "cd /home/wismut/byteowlz/oqto/backend && cargo build --release --package oqto 2>&1 | tail -10",
       "description": "Build backend release",
       "timeout": 300000
     }

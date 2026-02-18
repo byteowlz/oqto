@@ -2,15 +2,15 @@
 
 - 2026-02-13: Clear workspace overview selection and reuse overview path when creating new chats so the UI switches correctly.
 - 2026-02-13: Treat missing Pi sessions as empty command lists in the WebSocket manager to avoid session-switch errors.
-- 2026-02-12: Add octo-browserd Playwright daemon with full feature parity to agent-browser. Includes: all ~120 commands (click, fill, type, press, check, uncheck, upload, dblclick, focus, drag, hover, select, tap, clear, scroll, frame/mainframe switching, tab/window management, cookies/localStorage/sessionStorage, dialog handling, route/unroute network interception, request tracking, download, geolocation, permissions, device emulation, viewport, screenshot, PDF, evaluate/evalhandle, content/setContent, console/error logs, keyboard/mouse/wheel/clipboard, addScript/addStyle/addInitScript, tracing, HAR, video recording, screencast start/stop, CDP input injection for mouse/keyboard/touch). Enhanced snapshot with refs (role/text/label/placeholder/alttext/title/testid/nth selectors), cursor-interactive element detection, compact/interactive/depth filtering. AI-friendly error messages. Origin-validated WebSocket stream server. Session-scoped socket dirs with 0700 permissions.
+- 2026-02-12: Add oqto-browserd Playwright daemon with full feature parity to agent-browser. Includes: all ~120 commands (click, fill, type, press, check, uncheck, upload, dblclick, focus, drag, hover, select, tap, clear, scroll, frame/mainframe switching, tab/window management, cookies/localStorage/sessionStorage, dialog handling, route/unroute network interception, request tracking, download, geolocation, permissions, device emulation, viewport, screenshot, PDF, evaluate/evalhandle, content/setContent, console/error logs, keyboard/mouse/wheel/clipboard, addScript/addStyle/addInitScript, tracing, HAR, video recording, screencast start/stop, CDP input injection for mouse/keyboard/touch). Enhanced snapshot with refs (role/text/label/placeholder/alttext/title/testid/nth selectors), cursor-interactive element detection, compact/interactive/depth filtering. AI-friendly error messages. Origin-validated WebSocket stream server. Session-scoped socket dirs with 0700 permissions.
 - 2026-02-12: Forward keyCode values in browser stream keyboard events to improve special-key handling, and allow higher-quality agent-browser screencast settings via AGENT_BROWSER_STREAM_* env overrides with higher defaults.
 - 2026-02-12: Use per-session agent-browser socket directories under XDG_RUNTIME_DIR and bind them into the sandbox for session-scoped browser control. Derive short agent-browser session IDs from chat session IDs to avoid Unix socket path length limits. Navigate/back/forward/reload via backend actions instead of keyboard shortcuts to keep URL bar behavior reliable.
 - 2026-02-10: Add workspace overview panel to edit project name, default model, sandbox profile, and Pi skills/extensions.
 - 2026-02-10: Add workspace API endpoints for meta, sandbox profile, and Pi resource selection with copy-on-custom rules.
 - 2026-02-10: Propagate configured runner_id in mux agent responses and subscription errors.
-- 2026-02-10: Add octo-setup crate to hydrate per-app config files from a portable install config.
-- 2026-02-10: Add octo.install schema/example for the setup wizard to generate portable install configs.
-- 2026-02-10: Add configurable runner_id to octo-runner for human-readable multi-runner attribution in hstry metadata.
+- 2026-02-10: Add oqto-setup crate to hydrate per-app config files from a portable install config.
+- 2026-02-10: Add oqto.install schema/example for the setup wizard to generate portable install configs.
+- 2026-02-10: Add configurable runner_id to oqto-runner for human-readable multi-runner attribution in hstry metadata.
 - 2026-02-10: Persist client_id into hstry messages to stabilize optimistic merge across reloads.
 - 2026-02-10: Keep hstry readable_id stable during Pi auto-rename to prevent duplicate sessions after hstry sync.
 - 2026-02-04: Normalize default chat workspace paths to avoid invalid "global" workspace lookups.
@@ -41,10 +41,10 @@
 - 2026-02-02: Queue Pi messages until session_created arrives and scope Main Chat drafts per session to stop cross-chat input bleed.
 - 2026-02-03: Allow hyphens in octo_* sudoers regex patterns so linux user creation succeeds for generated user IDs.
 - 2026-01-31: Use per-user Linux home directories when resolving Pi session files in main chat and workspace services to restore persistence under runner sandboxing.
-- 2026-01-31: Fix octo-guard policy pattern compilation by adding explicit type annotations for GuardPolicy pattern parsing.
-- 2026-01-31: Read and update Main Chat Pi session files via octo-runner in multi-user mode so sessions persist and titles refresh after reload.
+- 2026-01-31: Fix oqto-guard policy pattern compilation by adding explicit type annotations for GuardPolicy pattern parsing.
+- 2026-01-31: Read and update Main Chat Pi session files via oqto-runner in multi-user mode so sessions persist and titles refresh after reload.
 - 2026-01-31: Trigger Main Chat session list refresh when assistant messages complete to pick up auto-renamed titles.
-- 2026-01-30: Secure sudoers rules in setup.sh by removing overly permissive wildcard patterns. Replaced with explicitly whitelisted commands: restricted useradd to specific flags only, removed dangerous usermod wildcard, prevented home directory deletion with userdel, explicitly limited systemctl --user commands to octo-runner only, and restricted chown to safe paths (/home/* and /var/lib/octo/* with depth limits). Removed dangerous "ALL=(*) NOPASSWD: ALL" rule that allowed running any command as octo_* users.
+- 2026-01-30: Secure sudoers rules in setup.sh by removing overly permissive wildcard patterns. Replaced with explicitly whitelisted commands: restricted useradd to specific flags only, removed dangerous usermod wildcard, prevented home directory deletion with userdel, explicitly limited systemctl --user commands to oqto-runner only, and restricted chown to safe paths (/home/* and /var/lib/oqto/* with depth limits). Removed dangerous "ALL=(*) NOPASSWD: ALL" rule that allowed running any command as octo_* users.
 - 2026-01-30: Point Pi agent storage (settings, models, sessions) at the workspace `.pi` directory instead of `~/.pi/agent`.
 - 2026-01-30: Flatten the Pi settings view to match the OpenCode settings layout (single pane, no tabs).
 - 2026-01-30: Keep focus in the Pi model search input while typing in the selector.
@@ -60,7 +60,7 @@
 - 2026-01-26: Emit session error events when OpenCode message updates include error payloads so UI toasts always appear.
 - 2026-01-25: Create a TRX epic with performance hotspots and remediation steps for UI handler violations.
 - 2026-01-25: Restrict auth token query parameters to WebSocket-only endpoints.
-- 2026-01-25: Cap zip downloads by total bytes and entry count in octo-files.
+- 2026-01-25: Cap zip downloads by total bytes and entry count in oqto-files.
 - 2026-01-21: Sidebar session search now filters Main Chat entries and counts Main Chat matches in results.
 - 2026-01-21: Improved chat session selection stability, Main Chat sidebar refresh, and file upload handling.
 - 2026-01-21: Added a rotating segment ring around stop buttons in Main Chat and OpenCode sessions.
@@ -88,12 +88,12 @@
 - 2026-01-27: Invalidate Main Chat Pi message caches after tool-call/result merge changes and strip Pi citation tokens like 【...†L...】 before markdown rendering.
 - 2026-01-27: Prefer stored readable IDs in session UI and persist readable_id in session records.
 - 2026-01-27: Add optional hstry-backed chat history reads when a hstry.db is available.
-- 2026-01-28: Install hstry via `just install` so Octo setups include the hstry CLI.
+- 2026-01-28: Install hstry via `just install` so Oqto setups include the hstry CLI.
 - 2026-01-28: Fix session insert SQL placeholder count so workspace IO sessions can be created.
 - 2026-01-31: Ensure sandboxed processes start in the requested workspace directory by setting bwrap working directory.
 - 2026-01-31: Accept newer Pi RPC events (extension UI requests, session name fields) and handle setTitle updates for Main Chat sessions.
 - 2026-02-01: Treat Pi text/thinking end events as content to avoid empty Main Chat responses when deltas are absent.
-- 2026-02-01: Add `just restart-runner` helper for restarting the system octo-runner socket.
+- 2026-02-01: Add `just restart-runner` helper for restarting the system oqto-runner socket.
 - 2026-02-01: Retry Main Chat Pi initialization after auth-related failures to avoid empty sessions on first load.
 - 2026-02-01: Prefer Pi session_info names when listing Main Chat Pi sessions so automatic renames show up.
 - 2026-02-01: Use absolute paths for user/group creation helpers to match sudo allowlists on Linux.
@@ -148,7 +148,7 @@
 - 2026-02-03: Add modifier-only multi-select with bulk delete for workspace session lists in the app shell sidebar.
 - 2026-02-03: Include Main Chat Pi sessions in chat history listings and resolve them via standard session lookups.
 - 2026-02-03: Unify session listing UX by removing the pinned Main Chat entry and relying on the shared session list.
-- 2026-02-03: Auto-load USER.md and PERSONALITY.md via a new Pi prompts extension and install extensions into Octo data dir.
+- 2026-02-03: Auto-load USER.md and PERSONALITY.md via a new Pi prompts extension and install extensions into Oqto data dir.
 - 2026-02-03: Cache Pi chat history responses on the multiplexed WebSocket server for faster session loads.
 - 2026-02-03: Store Pi session JSONL files under repo-root session directories (Pi naming scheme) to keep per-repo history isolated.
 - 2026-02-03: Send steer messages on Enter and queue follow-ups on Cmd/Ctrl+Enter; add mobile long-press queue send.

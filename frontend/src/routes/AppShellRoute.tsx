@@ -316,7 +316,7 @@ const AppShell = memo(function AppShell() {
 	// Load settings
 	useEffect(() => {
 		let mounted = true;
-		getSettingsValues("octo")
+		getSettingsValues("oqto")
 			.then((values) => {
 				if (!mounted) return;
 				const raw = values["sessions.max_concurrent_sessions"]?.value;
@@ -499,22 +499,22 @@ const AppShell = memo(function AppShell() {
 		};
 
 		window.addEventListener(
-			"octo:project-filter",
+			"oqto:project-filter",
 			handleFilter as EventListener,
 		);
-		window.addEventListener("octo:project-filter-clear", handleClear);
+		window.addEventListener("oqto:project-filter-clear", handleClear);
 		window.addEventListener(
-			"octo:project-default-agent",
+			"oqto:project-default-agent",
 			handleDefaultAgent as EventListener,
 		);
 		return () => {
 			window.removeEventListener(
-				"octo:project-filter",
+				"oqto:project-filter",
 				handleFilter as EventListener,
 			);
-			window.removeEventListener("octo:project-filter-clear", handleClear);
+			window.removeEventListener("oqto:project-filter-clear", handleClear);
 			window.removeEventListener(
-				"octo:project-default-agent",
+				"oqto:project-default-agent",
 				handleDefaultAgent as EventListener,
 			);
 		};
@@ -720,10 +720,10 @@ const AppShell = memo(function AppShell() {
 							<img
 								src={
 									isDark
-										? "/octo_logo_new_white.png"
-										: "/octo_logo_new_black.png"
+										? "/oqto_logo_white.svg"
+										: "/oqto_logo_black.svg"
 								}
-								alt="OCTO"
+								alt="OQTO"
 								width={200}
 								height={60}
 								className="h-14 w-auto object-contain"

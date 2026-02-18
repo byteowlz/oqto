@@ -1,0 +1,35 @@
+{
+  "todos": [
+    {
+      "id": "1",
+      "content": "Search USPTO TESS for OQ2, OQT, OQTA, OKTA trademarks",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "2",
+      "content": "Search EUIPO for EU trademark registrations",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "3",
+      "content": "Search web for companies using these names",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "id": "4",
+      "content": "Check domain availability for all four names",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "id": "5",
+      "content": "Synthesize findings and write research.md",
+      "status": "completed",
+      "priority": "high"
+    }
+  ],
+  "updated_at": "2026-02-18T14:04:04.011Z"
+}

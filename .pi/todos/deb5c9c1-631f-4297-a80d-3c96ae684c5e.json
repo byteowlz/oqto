@@ -50,13 +50,13 @@
     },
     {
       "id": "9",
-      "content": "Support octo.install.toml (filed as octo-qqg2)",
+      "content": "Support oqto.install.toml (filed as oqto-qqg2)",
       "status": "completed",
       "priority": "medium"
     },
     {
       "id": "10",
-      "content": "Test on octo-azure (server intermittently offline)",
+      "content": "Test on oqto-azure (server intermittently offline)",
       "status": "pending",
       "priority": "high"
     }

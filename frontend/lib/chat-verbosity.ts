@@ -4,8 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 
 export type ChatVerbosity = 1 | 2 | 3;
 
-const STORAGE_KEY = "octo:chatVerbosity";
-const EVENT_NAME = "octo:chat-verbosity";
+const STORAGE_KEY = "oqto:chatVerbosity";
+const EVENT_NAME = "oqto:chat-verbosity";
 
 function clampVerbosity(value: number): ChatVerbosity {
 	if (value <= 1) return 1;

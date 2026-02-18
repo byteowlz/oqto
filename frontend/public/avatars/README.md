@@ -1,6 +1,6 @@
 # System Avatars
 
-Default avatars that ship with octo. Used for personas/agents.
+Default avatars that ship with oqto. Used for personas/agents.
 
 ## Specifications
 
@@ -29,14 +29,14 @@ avatar = "/avatars/developer.png"
 # Custom avatar (relative to persona directory)
 avatar = "my-avatar.png"
 
-# User-generated avatar (stored in ~/octo/avatars/)
+# User-generated avatar (stored in ~/oqto/avatars/)
 avatar = "user://generated-abc123.png"
 ```
 
 ## User Avatars
 
 User-uploaded or generated avatars are stored in:
-- `~/octo/avatars/` (local mode)
+- `~/oqto/avatars/` (local mode)
 - Container volume (container mode)
 
 Same specifications apply (256x256 PNG/WebP).

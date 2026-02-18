@@ -11,10 +11,10 @@
 
 networks:
   # Public network - Caddy connects here and exposes ports
-  octo-public:
+  oqto-public:
     driver: bridge
   # Internal network - containers communicate without host exposure
-  octo-internal:
+  oqto-internal:
     driver: bridge
     internal: true
 
@@ -24,7 +24,7 @@ services:
   # Backend creates/revokes keys via admin API
   eavs:
     image: ghcr.io/eavs/eavs:latest  # TODO: Replace with actual image
-    container_name: octo-eavs
+    container_name: oqto-eavs
     restart: unless-stopped
     ports:
       - "41800:3000"  # EAVS API (accessible from host and containers via host.docker.internal)
@@ -40,8 +40,8 @@ services:
     volumes:
       - eavs_data:/data
     networks:
-      - octo-public
-      - octo-internal
+      - oqto-public
+      - oqto-internal
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
       interval: 10s
@@ -51,7 +51,7 @@ services:
   # Caddy reverse proxy - single entry point for all containers
   caddy:
     image: caddy:2-alpine
-    container_name: octo-caddy
+    container_name: oqto-caddy
     restart: unless-stopped
     ports:
       - "41800:80"    # HTTP
@@ -63,8 +63,8 @@ services:
       - caddy_config:/config
     command: ["caddy", "run", "--config", "/etc/caddy/caddy.json"]
     networks:
-      - octo-public
-      - octo-internal
+      - oqto-public
+      - oqto-internal
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost/health"]
       interval: 10s
@@ -75,7 +75,7 @@ services:
   # Per-container mmry instances delegate heavy operations here
   mmry-embeddings:
     image: ghcr.io/byteowlz/mmry:latest  # TODO: Build and publish mmry image
-    container_name: octo-mmry-embeddings
+    container_name: oqto-mmry-embeddings
     restart: unless-stopped
     ports:
       - "8081:8081"  # mmry external API
@@ -85,8 +85,8 @@ services:
       - mmry_data:/var/lib/mmry
       - ./mmry-embeddings.config.toml:/etc/mmry/config.toml:ro
     networks:
-      - octo-public
-      - octo-internal
+      - oqto-public
+      - oqto-internal
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8081/v1/models"]
       interval: 10s
@@ -95,7 +95,7 @@ services:
 
   # Template container - use this as a reference for spawning new containers
   # In production, the Rust backend will spawn these dynamically
-  octo-template:
+  oqto-template:
     build:
       context: ..
       dockerfile: container/Dockerfile
@@ -103,12 +103,12 @@ services:
         USERNAME: dev
         USER_UID: 1000
         USER_GID: 1000
-    image: octo-dev:x86_64
+    image: oqto-dev:x86_64
     # Container is not started by default - it's a template
     profiles:
       - template
     networks:
-      - octo-internal
+      - oqto-internal
     volumes:
       - ./workspace:/home/dev/workspace
     environment:

@@ -5,7 +5,7 @@ Date: 2026-02-05
 
 ## Overview
 
-This document defines the canonical message, event, and command formats used across all Octo communication boundaries:
+This document defines the canonical message, event, and command formats used across all Oqto communication boundaries:
 
 ```
 Frontend <--[WS: canonical msgs/events]--> Backend <--[canonical stream]--> Runner(s)
@@ -482,7 +482,7 @@ Runners communicate with the backend using newline-delimited JSON-RPC over a per
 
 | Deployment | Transport | Notes |
 |-----------|-----------|-------|
-| Local (same host) | Unix socket at `/run/user/{uid}/octo-runner.sock` | Existing pattern |
+| Local (same host) | Unix socket at `/run/user/{uid}/oqto-runner.sock` | Existing pattern |
 | Remote (VM/workstation) | WebSocket over TLS | Runner connects outward to backend |
 
 The protocol is the same regardless of transport: one JSON object per line, each with a `type` field for routing.
@@ -641,7 +641,7 @@ Pi content blocks map to Parts:
 ## Part 7: What Pi Needs (Extension Only -- No Core Changes)
 
 The pi core is untouched. Everything is achieved through a single pi extension
-(`octo-bridge.ts`) combined with the runner's process-level monitoring.
+(`oqto-bridge.ts`) combined with the runner's process-level monitoring.
 
 ### Responsibility Split
 
@@ -654,14 +654,14 @@ The pi core is untouched. Everything is achieved through a single pi extension
 | Crash detection | Runner | Child process exit handler on PID |
 | Memory/CPU | Runner | `/proc/{pid}/stat` |
 
-### The `octo-bridge` Extension
+### The `oqto-bridge` Extension
 
 A single pi extension that emits granular phase information via `ctx.ui.setStatus()`.
 In RPC mode, these become `extension_ui_request` events with `method: "setStatus"`
 on stdout, which the runner reads and translates to canonical `agent.working` events.
 
 ```typescript
-// extensions/octo-bridge.ts
+// extensions/oqto-bridge.ts
 import type { ExtensionAPI, ExtensionContext } from "pi";
 
 export default function octoBridge(pi: ExtensionAPI) {
@@ -713,7 +713,7 @@ export default function octoBridge(pi: ExtensionAPI) {
   // No extension hook needed -- pi already tracks it internally.
 
   // --- Session name auto-generation ---
-  // (existing octo extension logic can live here too)
+  // (existing oqto extension logic can live here too)
 }
 ```
 
@@ -903,7 +903,7 @@ Agents can delegate via:
    `{target_session_id, message}`. The runner intercepts this tool call,
    performs the delegation, and returns the result as a tool result.
 
-2. **`octo-delegate` CLI** -- The agent runs `octo-delegate --target ses_xyz "message"`.
+2. **`oqto-delegate` CLI** -- The agent runs `oqto-delegate --target ses_xyz "message"`.
    This CLI talks to the runner's local socket. Same routing logic applies.
 
 3. **`@@agent:session` syntax** -- User types `@@pi:ses_xyz do X` in chat.
@@ -916,12 +916,12 @@ All three paths converge at the runner's delegation handler.
 ## Part 9: Migration Path
 
 ### Phase 1: Define Types (this document + code)
-- Canonical Rust types in a shared crate (`octo-protocol` or similar)
+- Canonical Rust types in a shared crate (`oqto-protocol` or similar)
 - Canonical TypeScript types in `frontend/lib/canonical-types.ts`
 - Both kept in sync manually (Rust is source of truth)
 
-### Phase 2: Build `octo-bridge` Pi Extension
-- Single TS file: `extensions/octo-bridge.ts`
+### Phase 2: Build `oqto-bridge` Pi Extension
+- Single TS file: `extensions/oqto-bridge.ts`
 - Emits `setStatus("octo_phase", ...)` for phase tracking
 - Shipped alongside the runner, loaded via `--extension` flag when spawning pi
 - No pi core changes required

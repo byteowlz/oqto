@@ -1,0 +1,818 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "oqto.config.schema.json",
+  "title": "Oqto Configuration",
+  "description": "Configuration schema for the Oqto backend",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Reference to the JSON schema for validation and LSP completions"
+    },
+    "profile": {
+      "type": "string",
+      "description": "Configuration profile name",
+      "default": "default",
+      "x-scope": "admin",
+      "x-category": "General"
+    },
+    "logging": {
+      "type": "object",
+      "description": "Logging configuration",
+      "x-scope": "admin",
+      "x-category": "Infrastructure",
+      "properties": {
+        "level": {
+          "type": "string",
+          "description": "Log level",
+          "enum": ["error", "warn", "info", "debug", "trace"],
+          "default": "info"
+        },
+        "file": {
+          "type": "string",
+          "description": "Optional path for log file output. Supports ~ and environment variables.",
+          "examples": ["~/Library/Logs/oqto.log", "$XDG_STATE_HOME/oqto/app.log"]
+        },
+        "audit_enabled": {
+          "type": "boolean",
+          "description": "Enable JSONL audit logging for user events.",
+          "default": true
+        },
+        "audit_file": {
+          "type": "string",
+          "description": "Optional path for audit log output. Defaults to $XDG_STATE_HOME/oqto/audit.log.jsonl",
+          "examples": ["$XDG_STATE_HOME/oqto/audit.log.jsonl", "~/.local/state/oqto/audit.log.jsonl"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "runtime": {
+      "type": "object",
+      "description": "Runtime configuration",
+      "x-scope": "admin",
+      "x-category": "Infrastructure",
+      "properties": {
+        "parallelism": {
+          "type": "integer",
+          "description": "Override the worker pool size. Defaults to logical CPU count when unset.",
+          "minimum": 1
+        },
+        "timeout": {
+          "type": "integer",
+          "description": "Timeout in seconds for long-running operations",
+          "minimum": 1,
+          "default": 60
+        },
+        "fail_fast": {
+          "type": "boolean",
+          "description": "Stop on first error",
+          "default": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "paths": {
+      "type": "object",
+      "description": "Custom directory paths for persistent data and state",
+      "x-scope": "admin",
+      "x-category": "Infrastructure",
+      "properties": {
+        "data_dir": {
+          "type": "string",
+          "description": "Directory for persistent data. Defaults to $XDG_DATA_HOME/oqto or ~/.local/share/oqto",
+          "examples": ["$XDG_DATA_HOME/oqto", "~/.local/share/oqto"]
+        },
+        "state_dir": {
+          "type": "string",
+          "description": "Directory for machine-specific state (logs, history, etc.). Defaults to $XDG_STATE_HOME/oqto or ~/.local/state/oqto",
+          "examples": ["$XDG_STATE_HOME/oqto", "~/.local/state/oqto"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "container": {
+      "type": "object",
+      "description": "Container runtime configuration",
+      "x-scope": "admin",
+      "x-category": "Infrastructure",
+      "properties": {
+        "runtime": {
+          "type": "string",
+          "description": "Container runtime type. Auto-detected if not specified.",
+          "enum": ["docker", "podman"]
+        },
+        "binary": {
+          "type": "string",
+          "description": "Custom path to the container runtime binary",
+          "examples": ["/usr/local/bin/docker", "/usr/bin/podman"]
+        },
+        "default_image": {
+          "type": "string",
+          "description": "Default container image for sessions",
+          "default": "oqto-dev:latest"
+        },
+        "base_port": {
+          "type": "integer",
+          "description": "Base port for allocating session ports. Each session uses 3 consecutive ports.",
+          "minimum": 1024,
+          "maximum": 65535,
+          "default": 41820
+        },
+        "skel_path": {
+          "type": "string",
+          "description": "Path to skeleton directory for new user homes. When a new user session is created, this directory is copied as the base for the user's home directory.",
+          "examples": ["./container/skel", "/etc/skel"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "local": {
+      "type": "object",
+      "description": "Local mode configuration - run without containers. Useful for Proxmox LXC, bare-metal, or development without Docker.",
+      "x-scope": "admin",
+      "x-category": "Infrastructure",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable local mode (run services as native processes instead of containers). Can also be enabled with --local-mode CLI flag.",
+          "default": false
+        },
+        "opencode_binary": {
+          "type": "string",
+          "description": "Path to the opencode binary. Must be installed on the host.",
+          "default": "opencode",
+          "examples": ["opencode", "/usr/local/bin/opencode", "~/bin/opencode"]
+        },
+        "fileserver_binary": {
+          "type": "string",
+          "description": "Path to the fileserver binary (from this repo's fileserver/ directory).",
+          "default": "fileserver",
+          "examples": ["fileserver", "/usr/local/bin/fileserver"]
+        },
+        "ttyd_binary": {
+          "type": "string",
+          "description": "Path to the ttyd binary. Install via package manager or from https://tsl0922.github.io/ttyd/",
+          "default": "ttyd",
+          "examples": ["ttyd", "/usr/local/bin/ttyd"]
+        },
+        "workspace_dir": {
+          "type": "string",
+          "description": "Base directory for user workspaces in local mode. Supports ~ and environment variables. The {user_id} placeholder is replaced with the user ID (ignored in single_user mode).",
+          "default": "$HOME/oqto/{user_id}",
+          "examples": ["$HOME/oqto/{user_id}", "~/workspace/{user_id}", "/data/workspaces/{user_id}", "$HOME/oqto"]
+        },
+        "cleanup_on_startup": {
+          "type": "boolean",
+          "description": "Whether to clean up local session processes on startup. Disable to preserve running sessions across backend restarts.",
+          "default": false
+        },
+        "stop_sessions_on_shutdown": {
+          "type": "boolean",
+          "description": "Whether to stop local sessions when the backend shuts down. Disable to keep opencode/fileserver/ttyd running.",
+          "default": false
+        },
+        "runner_socket_pattern": {
+          "type": ["string", "null"],
+          "description": "Runner socket path pattern for per-user oqto-runner daemons. Supports {user} (Linux username) and {uid}. Example: /run/user/{uid}/oqto-runner.sock. Required for spawning per-user services (e.g. per-user mmry) via the runner.",
+          "default": null,
+          "examples": ["/run/oqto/runner-sockets/{user}/oqto-runner.sock", "/run/user/{uid}/oqto-runner.sock"]
+        },
+        "single_user": {
+          "type": "boolean",
+          "description": "Enable single-user mode. When true, the platform operates with a single user (no multi-tenancy), and the {user_id} placeholder in workspace_dir is ignored. Required on macOS/Windows.",
+          "default": false,
+          "x-platform-note": {
+            "macos": "Must be true (multi-user not supported)",
+            "windows": "Must be true (multi-user not supported)"
+          }
+        },
+        "linux_users": {
+          "type": "object",
+          "description": "Linux user isolation for multi-user deployments. Creates a dedicated Linux user per platform user for process isolation. Requires root/sudo privileges for user creation. Ignored when single_user = true.",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Enable Linux user isolation. Requires root/sudo privileges.",
+              "default": false
+            },
+            "prefix": {
+              "type": "string",
+              "description": "Prefix for created Linux usernames (e.g., 'octo_' creates users like 'octo_alice').",
+              "default": "octo_",
+              "examples": ["octo_", "ws_", "dev_"]
+            },
+            "uid_start": {
+              "type": "integer",
+              "description": "Starting UID for created users. Subsequent users get uid_start + 1, + 2, etc.",
+              "minimum": 1000,
+              "maximum": 65534,
+              "default": 2000
+            },
+            "group": {
+              "type": "string",
+              "description": "Shared group for all oqto users. Created if it doesn't exist.",
+              "default": "oqto",
+              "examples": ["oqto", "workspace-users", "developers"]
+            },
+            "shell": {
+              "type": "string",
+              "description": "Shell for created users.",
+              "default": "/bin/bash",
+              "examples": ["/bin/bash", "/bin/zsh", "/bin/sh"]
+            },
+            "use_sudo": {
+              "type": "boolean",
+              "description": "Use sudo for privilege escalation. Set to false if running as root.",
+              "default": true
+            },
+            "create_home": {
+              "type": "boolean",
+              "description": "Create home directories for users. Recommended for most setups.",
+              "default": true
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false,
+      "x-note": "Sandbox configuration is in a separate file (~/.config/oqto/sandbox.toml) for security. See sandbox.schema.json."
+    },
+    "runner": {
+      "type": "object",
+      "description": "Runner configuration for user-plane isolation. The oqto-runner daemon reads this section to locate user data directories. This enables existing users to use their current data locations without migration.",
+      "x-scope": "user",
+      "x-category": "Infrastructure",
+      "properties": {
+        "runner_id": {
+          "type": ["string", "null"],
+          "description": "Human-readable runner identifier. Defaults to $OQTO_RUNNER_ID, $HOSTNAME, or \"local\".",
+          "default": null,
+          "examples": ["workstation-1", "wkst-alice-01", "local"]
+        },
+        "pi_sessions_dir": {
+          "type": ["string", "null"],
+          "description": "Directory containing Pi session files (for main chat history). Supports ~ for home directory. Defaults to $XDG_DATA_HOME/pi/sessions (~/.local/share/pi/sessions).",
+          "default": null,
+          "examples": ["~/.local/share/pi/sessions", "/home/alice/.local/share/pi/sessions", "~/pi-sessions"]
+        },
+        "memories_dir": {
+          "type": ["string", "null"],
+          "description": "Directory containing memories (mmry database). Supports ~ for home directory. Defaults to $XDG_DATA_HOME/mmry (~/.local/share/mmry).",
+          "default": null,
+          "examples": ["~/.local/share/mmry", "/home/alice/.local/share/mmry", "~/memories"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "agent_browser": {
+      "type": "object",
+      "description": "Browser daemon configuration for server-side browser sessions.",
+      "x-scope": "admin",
+      "x-category": "Infrastructure",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable per-session agent-browser daemon management.",
+          "default": false
+        },
+        "binary": {
+          "type": "string",
+          "description": "Path to the Oqto browser daemon CLI binary.",
+          "default": "oqto-browserd",
+          "examples": ["oqto-browserd", "/usr/local/bin/oqto-browserd"]
+        },
+        "headed": {
+          "type": "boolean",
+          "description": "Launch browser windows in headed mode instead of headless.",
+          "default": false
+        },
+        "stream_port_base": {
+          "type": "integer",
+          "description": "Base port for screencast WebSocket streams.",
+          "minimum": 1024,
+          "maximum": 65535,
+          "default": 30000
+        },
+        "stream_port_range": {
+          "type": "integer",
+          "description": "Port range size for per-session screencast streams.",
+          "minimum": 1,
+          "maximum": 65535,
+          "default": 10000
+        },
+        "executable_path": {
+          "type": "string",
+          "description": "Optional Chromium executable path (overrides Playwright default).",
+          "examples": ["/usr/bin/chromium", "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"]
+        },
+        "extensions": {
+          "type": "array",
+          "description": "Optional extensions to load (absolute paths).",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        }
+      },
+      "additionalProperties": false
+    },
+    "eavs": {
+      "type": "object",
+      "description": "EAVS (LLM proxy) configuration. EAVS runs on host, not in containers.",
+      "x-scope": "admin",
+      "x-category": "Infrastructure",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable EAVS integration for session virtual keys",
+          "default": true
+        },
+        "base_url": {
+          "type": "string",
+          "description": "URL of the EAVS server (accessible from host)",
+          "format": "uri",
+          "default": "http://localhost:41800"
+        },
+        "container_url": {
+          "type": "string",
+          "description": "URL for containers to reach EAVS (via Docker host networking). For Docker: http://host.docker.internal:41800, for Podman: http://host.containers.internal:41800",
+          "format": "uri",
+          "examples": ["http://host.docker.internal:41800", "http://host.containers.internal:41800"]
+        },
+        "master_key": {
+          "type": "string",
+          "description": "Master key for EAVS admin operations (create/revoke keys). IMPORTANT: Change this in production! Can also be set via EAVS_MASTER_KEY env var.",
+          "x-sensitive": true
+        },
+        "default_session_budget_usd": {
+          "type": "number",
+          "description": "Default session budget limit in USD",
+          "minimum": 0,
+          "examples": [10.0, 50.0, 100.0]
+        },
+        "default_session_rpm": {
+          "type": "integer",
+          "description": "Default session rate limit in requests per minute",
+          "minimum": 1,
+          "examples": [60, 120]
+        }
+      },
+      "additionalProperties": false
+    },
+    "auth": {
+      "type": "object",
+      "description": "Authentication configuration",
+      "x-scope": "admin",
+      "x-category": "Security",
+      "properties": {
+        "dev_mode": {
+          "type": "boolean",
+          "description": "Enable development mode (uses dev_users for authentication, relaxed security). Set to false for production deployments.",
+          "default": true
+        },
+        "jwt_secret": {
+          "type": "string",
+          "description": "JWT secret for signing tokens. REQUIRED when dev_mode = false. Must be at least 32 characters. Can be a literal value or reference an environment variable with env: prefix (e.g., env:AUTH_JWT_SECRET).",
+          "minLength": 32,
+          "examples": ["your-secure-secret-at-least-32-characters-long", "env:AUTH_JWT_SECRET"],
+          "x-sensitive": true
+        },
+        "oidc_issuer": {
+          "type": "string",
+          "description": "OIDC issuer URL for external auth providers",
+          "format": "uri",
+          "examples": ["https://your-auth-provider.com"]
+        },
+        "oidc_audience": {
+          "type": "string",
+          "description": "OIDC audience (application ID)",
+          "examples": ["your-app-id"]
+        },
+        "allowed_origins": {
+          "type": "array",
+          "description": "CORS allowed origins. Defaults to localhost:3000 and localhost:8080 in dev mode.",
+          "items": {
+            "type": "string",
+            "format": "uri"
+          },
+          "default": ["http://localhost:3000", "http://localhost:8080"],
+          "examples": [["https://your-domain.com", "https://app.your-domain.com"]]
+        },
+        "dev_users": {
+          "type": "array",
+          "description": "Development users (only used when dev_mode = true). These are created with bcrypt-hashed passwords at startup.",
+          "items": {
+            "type": "object",
+            "description": "Development user configuration",
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "User ID"
+              },
+              "name": {
+                "type": "string",
+                "description": "Display name"
+              },
+              "email": {
+                "type": "string",
+                "description": "Email address",
+                "format": "email"
+              },
+              "password_hash": {
+                "type": "string",
+                "description": "Password hash (bcrypt). Use: htpasswd -nbBC 12 username password | cut -d: -f2",
+                "x-sensitive": true
+              },
+              "role": {
+                "type": "string",
+                "description": "User role",
+                "enum": ["user", "admin"],
+                "default": "user"
+              }
+            },
+            "required": ["id", "name", "email", "password_hash", "role"],
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "voice": {
+      "type": "object",
+      "description": "Voice mode configuration for speech-to-text and text-to-speech",
+      "x-scope": "user",
+      "x-category": "Features",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable voice mode features (requires eaRS STT and kokorox TTS services)",
+          "default": false,
+          "x-scope": "admin"
+        },
+        "stt_url": {
+          "type": "string",
+          "description": "WebSocket URL for the eaRS STT (speech-to-text) service",
+          "format": "uri",
+          "default": "ws://localhost:8765",
+          "examples": ["ws://localhost:8765", "wss://stt.example.com"],
+          "x-scope": "admin"
+        },
+        "tts_url": {
+          "type": "string",
+          "description": "WebSocket URL for the kokorox TTS (text-to-speech) service",
+          "format": "uri",
+          "default": "ws://localhost:8766",
+          "examples": ["ws://localhost:8766", "wss://tts.example.com"],
+          "x-scope": "admin"
+        },
+        "vad_timeout_ms": {
+          "type": "integer",
+          "description": "Voice Activity Detection timeout in milliseconds. How long to wait after speech stops before processing.",
+          "minimum": 100,
+          "maximum": 10000,
+          "default": 1500
+        },
+        "default_voice": {
+          "type": "string",
+          "description": "Default kokorox voice ID",
+          "default": "af_heart",
+          "examples": ["af_heart", "af_bella", "am_michael", "bf_emma"]
+        },
+        "default_speed": {
+          "type": "number",
+          "description": "Default TTS playback speed (0.5 - 2.0)",
+          "minimum": 0.5,
+          "maximum": 2.0,
+          "default": 1.0
+        },
+        "auto_language_detect": {
+          "type": "boolean",
+          "description": "Enable automatic language detection for STT",
+          "default": true
+        },
+        "tts_muted": {
+          "type": "boolean",
+          "description": "Start with TTS muted by default",
+          "default": false
+        },
+        "continuous_mode": {
+          "type": "boolean",
+          "description": "Enable continuous conversation mode (auto-listen after TTS finishes)",
+          "default": false
+        },
+        "default_visualizer": {
+          "type": "string",
+          "description": "Default voice visualizer style",
+          "enum": ["orb", "kitt"],
+          "default": "orb"
+        },
+        "interrupt_word_count": {
+          "type": "integer",
+          "description": "Minimum words to interrupt TTS playback (0 = disabled)",
+          "minimum": 0,
+          "maximum": 20,
+          "default": 0
+        },
+        "interrupt_backoff_ms": {
+          "type": "integer",
+          "description": "Reset word count after this silence duration in ms (0 = disabled)",
+          "minimum": 0,
+          "maximum": 10000,
+          "default": 0
+        },
+        "visualizer_voices": {
+          "type": "object",
+          "description": "Per-visualizer voice and speed settings",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "voice": {
+                "type": "string",
+                "description": "Voice ID for this visualizer"
+              },
+              "speed": {
+                "type": "number",
+                "description": "Playback speed for this visualizer",
+                "minimum": 0.5,
+                "maximum": 2.0,
+                "default": 1.0
+              }
+            },
+            "required": ["voice", "speed"]
+          },
+          "default": {
+            "orb": { "voice": "af_heart", "speed": 1.0 },
+            "kitt": { "voice": "am_michael", "speed": 1.1 }
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "shortcuts": {
+      "type": "object",
+      "description": "Keyboard shortcut configuration",
+      "x-scope": "user",
+      "x-category": "Preferences",
+      "properties": {
+        "voice_conversation": {
+          "type": "string",
+          "description": "Shortcut to start voice conversation mode",
+          "default": "Alt+V",
+          "examples": ["Alt+V", "Ctrl+Shift+V", "Meta+V"]
+        },
+        "voice_dictation": {
+          "type": "string",
+          "description": "Shortcut to start voice dictation mode",
+          "default": "Alt+D",
+          "examples": ["Alt+D", "Ctrl+Shift+D", "Meta+D"]
+        },
+        "command_palette": {
+          "type": "string",
+          "description": "Shortcut to open command palette",
+          "default": "Ctrl+K",
+          "examples": ["Ctrl+K", "Meta+K", "Ctrl+P"]
+        },
+        "new_chat": {
+          "type": "string",
+          "description": "Shortcut to create new chat",
+          "default": "Ctrl+N",
+          "examples": ["Ctrl+N", "Meta+N"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "sessions": {
+      "type": "object",
+      "description": "Session UX configuration",
+      "x-scope": "admin",
+      "x-category": "Sessions",
+      "properties": {
+        "auto_attach": {
+          "type": "string",
+          "description": "Auto-attach to running sessions when opening chat history (\"resume\" will start a session if needed)",
+          "enum": ["off", "attach", "resume"],
+          "default": "off"
+        },
+        "auto_attach_scan": {
+          "type": "boolean",
+          "description": "Scan running sessions for the selected chat session ID before attaching",
+          "default": true
+        },
+        "max_concurrent_sessions": {
+          "type": "integer",
+          "description": "Maximum concurrent running sessions per user (0 disables the cap)",
+          "minimum": 0,
+          "default": 3
+        },
+        "idle_timeout_minutes": {
+          "type": "integer",
+          "description": "Idle timeout in minutes before stopping a session",
+          "minimum": 1,
+          "default": 30
+        },
+        "idle_check_interval_seconds": {
+          "type": "integer",
+          "description": "Idle cleanup check interval in seconds",
+          "minimum": 10,
+          "default": 300
+        },
+        "chat_prefetch_limit": {
+          "type": "integer",
+          "description": "Number of recent chat sessions to prefetch messages for",
+          "minimum": 0,
+          "default": 8
+        }
+      },
+      "additionalProperties": false
+    },
+    "mmry": {
+      "type": "object",
+      "description": "Memory service (mmry) configuration",
+      "x-scope": "admin",
+      "x-category": "Features",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable mmry integration for persistent memory across sessions",
+          "default": false
+        },
+        "binary": {
+          "type": "string",
+          "description": "Path to the mmry binary",
+          "default": "mmry",
+          "examples": ["mmry", "/usr/local/bin/mmry", "~/.cargo/bin/mmry"]
+        },
+        "port": {
+          "type": "integer",
+          "description": "Port for mmry HTTP server",
+          "minimum": 1024,
+          "maximum": 65535,
+          "default": 8769
+        }
+      },
+      "additionalProperties": false
+    },
+    "templates": {
+      "type": "object",
+      "description": "Project templates repository configuration",
+      "x-scope": "admin",
+      "x-category": "Infrastructure",
+      "properties": {
+        "repo_path": {
+          "type": ["string", "null"],
+          "description": "Path to a local clone of the templates repository on the host",
+          "default": null
+        },
+        "type": {
+          "type": "string",
+          "enum": ["remote", "local"],
+          "description": "Repository type: remote (git) or local (filesystem)",
+          "default": "remote"
+        },
+        "sync_on_list": {
+          "type": "boolean",
+          "description": "Sync the templates repository before listing or creating projects",
+          "default": true
+        },
+        "sync_interval_seconds": {
+          "type": "integer",
+          "description": "Minimum seconds between template repository sync attempts",
+          "default": 120
+        }
+      },
+      "additionalProperties": false
+    },
+    "onboarding_templates": {
+      "type": "object",
+      "description": "Onboarding templates repository configuration",
+      "x-scope": "admin",
+      "x-category": "Infrastructure",
+      "properties": {
+        "repo_url": {
+          "type": "string",
+          "description": "Git repository URL for onboarding templates",
+          "default": "https://github.com/byteowlz/oqto-templates"
+        },
+        "local_path": {
+          "type": ["string", "null"],
+          "description": "Local path to templates directory (overrides repo_url)",
+          "default": null
+        },
+        "cache_path": {
+          "type": ["string", "null"],
+          "description": "Path where remote repo is cloned",
+          "default": null
+        },
+        "sync_enabled": {
+          "type": "boolean",
+          "description": "Sync from remote before using templates",
+          "default": true
+        },
+        "sync_interval_seconds": {
+          "type": "integer",
+          "description": "Minimum seconds between sync attempts",
+          "default": 300
+        },
+        "use_embedded_fallback": {
+          "type": "boolean",
+          "description": "Use embedded templates if repo is unavailable",
+          "default": true
+        },
+        "branch": {
+          "type": "string",
+          "description": "Branch to use from remote repo",
+          "default": "main"
+        },
+        "subdirectory": {
+          "type": "string",
+          "description": "Subdirectory within repo containing onboarding templates",
+          "default": "onboarding"
+        },
+        "defaults": {
+          "type": "object",
+          "description": "Default template file names",
+          "properties": {
+            "onboard": { "type": "string", "default": "ONBOARD.md" },
+            "personality": { "type": "string", "default": "PERSONALITY.md" },
+            "user": { "type": "string", "default": "USER.md" },
+            "agents": { "type": "string", "default": "AGENTS.md" }
+          },
+          "additionalProperties": false
+        },
+        "presets": {
+          "type": "object",
+          "description": "Named presets for user onboarding",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "description": { "type": "string", "default": "" },
+              "onboard": { "type": ["string", "null"], "default": null },
+              "personality": { "type": ["string", "null"], "default": null },
+              "user": { "type": ["string", "null"], "default": null },
+              "agents": { "type": ["string", "null"], "default": null },
+              "skip_stages": {
+                "type": "array",
+                "items": { "type": "string" },
+                "default": []
+              },
+              "unlock_components": {
+                "type": "array",
+                "items": { "type": "string" },
+                "default": []
+              },
+              "user_level": { "type": ["string", "null"], "default": null }
+            },
+            "additionalProperties": false
+          },
+          "default": {}
+        }
+      },
+      "additionalProperties": false
+    },
+    "scaffold": {
+      "type": "object",
+      "description": "Agent scaffolding configuration - defines the tool used to create new agent directories from templates",
+      "x-scope": "admin",
+      "x-category": "Infrastructure",
+      "properties": {
+        "binary": {
+          "type": "string",
+          "description": "Binary to use for scaffolding (e.g., 'byt', 'cookiecutter', custom script)",
+          "default": "byt"
+        },
+        "subcommand": {
+          "type": "string",
+          "description": "Subcommand to invoke (e.g., 'new' for 'byt new')",
+          "default": "new"
+        },
+        "template_arg": {
+          "type": "string",
+          "description": "Argument format for template name (e.g., '--template' for '--template rust-cli')",
+          "default": "--template"
+        },
+        "output_arg": {
+          "type": "string",
+          "description": "Argument format for output directory",
+          "default": "--output"
+        },
+        "github_arg": {
+          "type": ["string", "null"],
+          "description": "Argument to create GitHub repo (optional, null to disable)",
+          "default": "--github"
+        },
+        "private_arg": {
+          "type": ["string", "null"],
+          "description": "Argument to make repo private (optional, null to disable)",
+          "default": "--private"
+        },
+        "description_arg": {
+          "type": ["string", "null"],
+          "description": "Argument format for description (optional, null to disable)",
+          "default": "--description"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

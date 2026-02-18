@@ -1,0 +1,31 @@
+# Oqto Server - Main control plane service
+[Unit]
+Description=Oqto Control Plane Server
+After=network.target
+
+[Service]
+Type=simple
+User=oqto
+Group=oqto
+WorkingDirectory=/var/lib/oqto
+Environment=OQTO_CONFIG=/etc/oqto/config.toml
+Environment=RUST_LOG=info
+StateDirectory=oqto
+RuntimeDirectory=oqto
+RuntimeDirectoryMode=0755
+ConfigurationDirectory=oqto
+ExecStart=/usr/local/bin/oqto serve
+ExecStop=/bin/kill -TERM $MAINPID
+TimeoutStopSec=30
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/oqto
+ReadWritePaths=/run/oqto
+ReadWritePaths=/home
+PrivateTmp=true
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target

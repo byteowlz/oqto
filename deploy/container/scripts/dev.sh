@@ -9,7 +9,7 @@
 #   workspace_path  Path to mount as workspace (default: current directory)
 #
 # Environment:
-#   CONTAINER_NAME   Name for the container (default: octo-dev)
+#   CONTAINER_NAME   Name for the container (default: oqto-dev)
 #   OPENCODE_PORT    Port for opencode serve (default: 41820)
 #   FILESERVER_PORT  Port for file server (default: 41821)
 #   TTYD_PORT        Port for ttyd terminal (default: 41822)
@@ -24,7 +24,7 @@ CONTAINER_DIR="$(dirname "$SCRIPT_DIR")"
 FRONTEND_DIR="$(dirname "$CONTAINER_DIR")/frontend"
 
 # Configuration with defaults
-CONTAINER_NAME="${CONTAINER_NAME:-octo-dev}"
+CONTAINER_NAME="${CONTAINER_NAME:-oqto-dev}"
 OPENCODE_PORT="${OPENCODE_PORT:-41820}"
 FILESERVER_PORT="${FILESERVER_PORT:-41821}"
 TTYD_PORT="${TTYD_PORT:-41822}"
@@ -36,11 +36,11 @@ WORKSPACE_PATH="${1:-$(pwd)}"
 ARCH="$(uname -m)"
 case "$ARCH" in
     x86_64|amd64)
-        IMAGE_TAG="octo-dev:x86_64"
+        IMAGE_TAG="oqto-dev:x86_64"
         DOCKERFILE="Dockerfile"
         ;;
     arm64|aarch64)
-        IMAGE_TAG="octo-dev:arm64"
+        IMAGE_TAG="oqto-dev:arm64"
         DOCKERFILE="Dockerfile.arm64"
         ;;
     *)
@@ -249,7 +249,7 @@ start_frontend() {
 print_status() {
     echo ""
     echo "======================================================"
-    echo -e "${GREEN}Octo Development Environment${NC}"
+    echo -e "${GREEN}Oqto Development Environment${NC}"
     echo "======================================================"
     echo ""
     echo "Services:"
@@ -272,7 +272,7 @@ print_status() {
 # Main
 main() {
     echo ""
-    log_info "Octo Development Environment"
+    log_info "Oqto Development Environment"
     echo ""
     
     check_prerequisites

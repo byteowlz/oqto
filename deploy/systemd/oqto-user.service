@@ -1,0 +1,37 @@
+# Oqto User Agent - Systemd user service
+#
+# Alternative to oqto-agent@.service for systems using systemd user services.
+# This runs as part of the user's session, not as a system service.
+#
+# Installation (as user):
+#   mkdir -p ~/.config/systemd/user
+#   cp oqto-user.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable oqto-user
+#   systemctl --user start oqto-user
+#
+# The agent communicates via Unix socket in XDG_RUNTIME_DIR
+
+[Unit]
+Description=Oqto User Agent
+After=default.target
+
+[Service]
+Type=simple
+
+# Environment
+Environment=OQTO_MODE=user
+
+# Socket path in user's runtime directory
+ExecStart=/usr/local/bin/oqto-agent serve --socket %t/oqto-agent.sock
+
+# Graceful shutdown
+ExecStop=/bin/kill -TERM $MAINPID
+TimeoutStopSec=30
+
+# Restart policy
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

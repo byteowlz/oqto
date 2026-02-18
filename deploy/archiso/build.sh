@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Build Octo Arch Linux ISO
+# Build Oqto Arch Linux ISO
 # Usage: ./build.sh [--with-binaries]
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-OCTO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-BYTEOWLZ_ROOT="$(cd "$OCTO_ROOT/.." && pwd)"
-WORK_DIR="/tmp/octo-archiso-work"
-OUT_DIR="${OUT_DIR:-$HOME/octo-iso}"
+OQTO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+BYTEOWLZ_ROOT="$(cd "$OQTO_ROOT/.." && pwd)"
+WORK_DIR="/tmp/oqto-archiso-work"
+OUT_DIR="${OUT_DIR:-$HOME/oqto-iso}"
 BUILD_BINARIES=false
 
 # Colors
@@ -27,12 +27,12 @@ usage() {
     echo ""
     echo "Options:"
     echo "  --with-binaries    Build and include all byteowlz binaries in the ISO"
-    echo "  --work-dir DIR     Working directory (default: /tmp/octo-archiso-work)"
-    echo "  --out-dir DIR      Output directory (default: ~/octo-iso)"
+    echo "  --work-dir DIR     Working directory (default: /tmp/oqto-archiso-work)"
+    echo "  --out-dir DIR      Output directory (default: ~/oqto-iso)"
     echo "  -h, --help         Show this help"
     echo ""
     echo "Binaries included with --with-binaries:"
-    echo "  Core:    octo, octoctl, octo-runner, octo-files"
+    echo "  Core:    oqto, oqtoctl, oqto-runner, oqto-files"
     echo "  Tools:   mmry, trx, agntz, hstry, byt"
     echo "  Search:  sx, scrpr"
     echo "  LLM:     eavs, skdlr, tmpltr"
@@ -163,17 +163,17 @@ if [[ "$BUILD_BINARIES" == "true" ]]; then
     }
     
     echo ""
-    log_info "=== Core Octo Components ==="
+    log_info "=== Core Oqto Components ==="
     
-    # Octo backend (multiple binaries)
-    if [[ -d "$OCTO_ROOT/backend" ]]; then
-        log_info "  Building octo backend..."
-        (cd "$OCTO_ROOT/backend" && cargo build --release 2>/dev/null) || log_warn "  Backend build failed"
-        copy_workspace_binaries "$OCTO_ROOT" octo octoctl octo-runner pi-bridge octo-sandbox
+    # Oqto backend (multiple binaries)
+    if [[ -d "$OQTO_ROOT/backend" ]]; then
+        log_info "  Building oqto backend..."
+        (cd "$OQTO_ROOT/backend" && cargo build --release 2>/dev/null) || log_warn "  Backend build failed"
+        copy_workspace_binaries "$OQTO_ROOT" oqto oqtoctl oqto-runner pi-bridge oqto-sandbox
     fi
     
     # Fileserver
-    build_rust_binary "octo-files" "$OCTO_ROOT/fileserver" "octo-files"
+    build_rust_binary "oqto-files" "$OQTO_ROOT/fileserver" "oqto-files"
     
     echo ""
     log_info "=== Agent Tools ==="
@@ -282,7 +282,7 @@ if [[ -n "$ISO_FILE" ]]; then
     echo "  sudo dd if=$ISO_FILE of=/dev/sdX bs=4M status=progress oflag=sync"
     echo ""
     echo "After booting, run:"
-    echo "  octo-install"
+    echo "  oqto-install"
 else
     log_error "ISO build failed"
     exit 1

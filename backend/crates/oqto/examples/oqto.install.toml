@@ -1,0 +1,51 @@
+# Portable Oqto install configuration.
+# Use this to hydrate per-app config files during setup.
+
+"$schema" = "https://raw.githubusercontent.com/byteowlz/schemas/refs/heads/main/oqto/oqto.install.schema.json"
+
+[install]
+# Apply updates by merging into existing config files (or overwrite).
+mode = "merge"
+# Override base locations if needed (defaults to XDG paths).
+# config_home = "$XDG_CONFIG_HOME"
+# data_home = "$XDG_DATA_HOME"
+# state_home = "$XDG_STATE_HOME"
+
+[oqto]
+"$schema" = "https://raw.githubusercontent.com/byteowlz/schemas/refs/heads/main/oqto/oqto.backend.config.schema.json"
+profile = "default"
+
+[oqto.runner]
+runner_id = "user-runner-main"
+
+[sandbox]
+"$schema" = "https://raw.githubusercontent.com/byteowlz/schemas/refs/heads/main/oqto/oqto.sandbox.schema.json"
+profile = "development"
+
+[hstry]
+"$schema" = "https://raw.githubusercontent.com/byteowlz/schemas/refs/heads/main/hstry/hstry.config.schema.json"
+# database = "$XDG_DATA_HOME/hstry/hstry.db"
+# adapter_paths = ["$XDG_CONFIG_HOME/hstry/adapters", "/usr/local/share/hstry/adapters"]
+# js_runtime = "auto"
+# workspaces = ["$HOME"]
+#
+# [[hstry.adapters]]
+# name = "pi"
+# enabled = true
+#
+# [hstry.service]
+# enabled = true
+# poll_interval_secs = 30
+# search_api = true
+#
+# [[hstry.sources]]
+# id = "pi"
+# adapter = "pi"
+# path = "~/.pi/agent/sessions"
+# auto_sync = true
+
+[mmry]
+"$schema" = "https://raw.githubusercontent.com/byteowlz/schemas/refs/heads/main/mmry/mmry.config.schema.json"
+
+[mmry.database]
+path = "$XDG_DATA_HOME/mmry/memories.db"

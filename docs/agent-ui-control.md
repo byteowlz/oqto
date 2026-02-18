@@ -1,6 +1,6 @@
 # Agent UI Control
 
-Agent UI control lets backend tools or `octoctl` drive the frontend via WebSocket
+Agent UI control lets backend tools or `oqtoctl` drive the frontend via WebSocket
 events. This is used for onboarding flows, spotlight tours, and agent-driven UI
 navigation.
 
@@ -32,19 +32,19 @@ All endpoints are POST under the main API router:
 - `/ui/panel`
 - `/ui/theme`
 
-## `octoctl ui` Examples
+## `oqtoctl ui` Examples
 
 ```bash
-octoctl ui navigate /sessions
-octoctl ui session ses_123 --mode opencode
-octoctl ui view files
-octoctl ui palette --open true
-octoctl ui palette-exec new_chat
-octoctl ui spotlight --target chat-input --title "Send a message"
-octoctl ui tour --steps '[{"target":"sidebar","title":"Sidebar"},{"target":"chat-input","title":"Chat input"}]'
-octoctl ui sidebar --collapsed true
-octoctl ui panel --view terminal
-octoctl ui theme dark
+oqtoctl ui navigate /sessions
+oqtoctl ui session ses_123 --mode opencode
+oqtoctl ui view files
+oqtoctl ui palette --open true
+oqtoctl ui palette-exec new_chat
+oqtoctl ui spotlight --target chat-input --title "Send a message"
+oqtoctl ui tour --steps '[{"target":"sidebar","title":"Sidebar"},{"target":"chat-input","title":"Chat input"}]'
+oqtoctl ui sidebar --collapsed true
+oqtoctl ui panel --view terminal
+oqtoctl ui theme dark
 ```
 
 ## Spotlight Targets

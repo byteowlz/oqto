@@ -302,7 +302,7 @@ export function normalizeContentToParts(content: unknown): DisplayPart[] {
 // Message-level normalization
 // ============================================================================
 
-/** Convert a canonical Message (octo-protocol) into a DisplayMessage. */
+/** Convert a canonical Message (oqto-protocol) into a DisplayMessage. */
 export function convertCanonicalMessageToDisplay(
 	message: unknown,
 	fallbackId: string,

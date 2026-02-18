@@ -350,7 +350,7 @@ export function ChatEntry({
 	}, [assistantName, sessionActivityTrigger, refreshSessionsUnconditional]);
 
 	function cacheKeySessions(name: string) {
-		return `octo:defaultChatPi:${name}:sessions:v1`;
+		return `oqto:defaultChatPi:${name}:sessions:v1`;
 	}
 	const SESSION_LIST_CACHE_MAX_CHARS = 1_000_000;
 

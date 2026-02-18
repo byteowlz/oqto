@@ -1,5 +1,5 @@
 /**
- * WebSocket client for unified real-time communication with Octo backend.
+ * WebSocket client for unified real-time communication with Oqto backend.
  *
  * This client provides a single WebSocket connection per user that multiplexes
  * events from multiple sessions. It handles:
@@ -267,7 +267,7 @@ export type ConnectionStateHandler = (state: ConnectionState) => void;
 // WebSocket Client
 // ============================================================================
 
-/** Singleton WebSocket client for Octo */
+/** Singleton WebSocket client for Oqto */
 class OctoWsClient {
 	private connectionState: ConnectionState = "disconnected";
 	private muxUnsubscribe: (() => void) | null = null;

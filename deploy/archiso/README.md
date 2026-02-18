@@ -1,8 +1,8 @@
-# Octo Arch Linux ISO
+# Oqto Arch Linux ISO
 
-Custom Arch Linux ISO with a full installer that sets up a complete Octo server.
+Custom Arch Linux ISO with a full installer that sets up a complete Oqto server.
 
-**One command install** - boot the ISO, run `octo-install`, and you have a working Octo server.
+**One command install** - boot the ISO, run `oqto-install`, and you have a working Oqto server.
 
 ## What's Included
 
@@ -11,14 +11,14 @@ Custom Arch Linux ISO with a full installer that sets up a complete Octo server.
 - neovim, vim, tmux, yazi
 - git, curl, wget, htop, btop
 
-### Octo Core
+### Oqto Core
 | Binary | Purpose |
 |--------|---------|
-| `octo` | Control plane server |
-| `octoctl` | CLI for server management |
-| `octo-runner` | Multi-user process isolation daemon |
-| `octo-files` | File server for workspaces |
-| `octo-sandbox` | Sandbox wrapper (bwrap/sandbox-exec) |
+| `oqto` | Control plane server |
+| `oqtoctl` | CLI for server management |
+| `oqto-runner` | Multi-user process isolation daemon |
+| `oqto-files` | File server for workspaces |
+| `oqto-sandbox` | Sandbox wrapper (bwrap/sandbox-exec) |
 | `pi-bridge` | HTTP/WebSocket bridge for Pi in containers |
 
 ### Agent Tools
@@ -95,7 +95,7 @@ sudo pacman -S archiso
 
 ### Build Without Binaries
 
-Creates an ISO with all packages but Octo binaries must be built after install:
+Creates an ISO with all packages but Oqto binaries must be built after install:
 
 ```bash
 cd deploy/archiso
@@ -112,7 +112,7 @@ sudo ./build.sh --with-binaries
 ```
 
 This builds and includes:
-- Octo core: `octo`, `octoctl`, `octo-runner`, `octo-files`, `octo-sandbox`, `pi-bridge`
+- Oqto core: `oqto`, `oqtoctl`, `oqto-runner`, `oqto-files`, `oqto-sandbox`, `pi-bridge`
 - Agent tools: `mmry`, `trx`, `agntz`, `hstry`, `byt`, `mailz`
 - Search: `sx`, `scrpr`
 - LLM: `eavs`, `skdlr`, `tmpltr`
@@ -124,10 +124,10 @@ All binaries are installed to `/usr/local/bin` with mode 755 (accessible to all 
 
 ### Output
 
-The ISO will be created in `~/octo-iso/` by default:
+The ISO will be created in `~/oqto-iso/` by default:
 
 ```
-~/octo-iso/octo-arch-2026.01.31-x86_64.iso
+~/oqto-iso/oqto-arch-2026.01.31-x86_64.iso
 ```
 
 ## Installation
@@ -135,7 +135,7 @@ The ISO will be created in `~/octo-iso/` by default:
 ### 1. Write to USB
 
 ```bash
-sudo dd if=~/octo-iso/octo-arch-*.iso of=/dev/sdX bs=4M status=progress oflag=sync
+sudo dd if=~/oqto-iso/oqto-arch-*.iso of=/dev/sdX bs=4M status=progress oflag=sync
 ```
 
 ### 2. Boot and Run Installer
@@ -143,7 +143,7 @@ sudo dd if=~/octo-iso/octo-arch-*.iso of=/dev/sdX bs=4M status=progress oflag=sy
 Boot from USB. Once at the shell, run:
 
 ```bash
-octo-install
+oqto-install
 ```
 
 The installer will:
@@ -155,41 +155,41 @@ The installer will:
 5. **Partition disk** - GPT for UEFI, MBR for BIOS
 6. **Install base system** - Arch Linux with all packages
 7. **Configure bootloader** - GRUB for both UEFI and BIOS
-8. **Install Octo** - binaries and setup scripts
+8. **Install Oqto** - binaries and setup scripts
 9. **Reboot** into installed system
 
-### 3. Complete Octo Setup
+### 3. Complete Oqto Setup
 
 After reboot, log in as your admin user and run:
 
 ```bash
-sudo octo-setup
+sudo oqto-setup
 ```
 
 This will:
-- Create the `octo` system user
+- Create the `oqto` system user
 - Generate JWT secret
 - Create default configuration
 - Configure secure sudoers (regex patterns, sudo 1.9.10+)
 - Enable systemd services
 
-### 4. Create Octo Admin User
+### 4. Create Oqto Admin User
 
 ```bash
-octoctl user bootstrap -u admin -e admin@example.com
+oqtoctl user bootstrap -u admin -e admin@example.com
 ```
 
-### 5. Start Octo
+### 5. Start Oqto
 
 ```bash
-sudo systemctl start octo
+sudo systemctl start oqto
 ```
 
 Access the web UI at `http://<server-ip>:8080`
 
 ## Configuration
 
-Configuration is stored in `/etc/octo/config.toml`.
+Configuration is stored in `/etc/oqto/config.toml`.
 
 For production deployments, configure:
 
@@ -212,7 +212,7 @@ Place files in `airootfs/` to include them in the ISO:
 
 ### Post-Install Scripts
 
-Modify `airootfs/usr/local/bin/octo-setup` for custom setup steps.
+Modify `airootfs/usr/local/bin/oqto-setup` for custom setup steps.
 
 ## Directory Structure
 
@@ -220,11 +220,11 @@ Modify `airootfs/usr/local/bin/octo-setup` for custom setup steps.
 deploy/archiso/
 |-- airootfs/
 |   |-- etc/
-|   |   |-- octo/              # Octo config (generated at runtime)
+|   |   |-- oqto/              # Oqto config (generated at runtime)
 |   |   |-- systemd/system/    # Systemd service files
 |   |-- usr/local/bin/
-|       |-- octo-setup         # Post-install setup script
-|       |-- octo-first-boot    # First boot script
+|       |-- oqto-setup         # Post-install setup script
+|       |-- oqto-first-boot    # First boot script
 |-- packages.x86_64            # Package list
 |-- pacman.conf                # Pacman configuration
 |-- profiledef.sh              # Archiso profile definition
@@ -241,7 +241,7 @@ The setup uses **regex-based sudoers rules** (requires sudo 1.9.10+) to prevent 
 - **UID restriction**: Only UIDs 2000-2999 can be created (avoids system/user UIDs)
 - **Username prefix**: Only `octo_*` usernames allowed
 - **Shell restriction**: Only `/bin/bash` allowed (no arbitrary shells)
-- **Group restriction**: Only `octo` group allowed
+- **Group restriction**: Only `oqto` group allowed
 - **Path restriction**: chown/mkdir restricted to specific paths with no traversal
 
 For details, see `docs/security/SUDOERS_AUDIT.md` in the main repository.

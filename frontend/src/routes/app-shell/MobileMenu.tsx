@@ -157,8 +157,8 @@ export const MobileMenu = memo(function MobileMenu({
 		>
 			<div className="h-14 flex items-center justify-between px-3">
 				<img
-					src={isDark ? "/octo_logo_new_white.png" : "/octo_logo_new_black.png"}
-					alt="OCTO"
+					src={isDark ? "/oqto_logo_white.svg" : "/oqto_logo_black.svg"}
+					alt="OQTO"
 					width={70}
 					height={28}
 					className="h-7 w-auto object-contain flex-shrink-0"

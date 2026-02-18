@@ -191,7 +191,7 @@ class LazyExtensionLoader {
 
 **Current:** Always walk directory tree for AGENTS.md/CLAUDE.md
 
-**Proposed:** Skip for RPC mode (Octo Main Chat uses RPC)
+**Proposed:** Skip for RPC mode (Oqto Main Chat uses RPC)
 
 ```typescript
 // In main.ts
@@ -389,13 +389,13 @@ time("settings.load");
 // extensions.load: 156ms
 ```
 
-## Octo-Specific Recommendations
+## Oqto-Specific Recommendations
 
-Since Octo uses pi in RPC mode for Main Chat:
+Since Oqto uses pi in RPC mode for Main Chat:
 
-1. **Skip context file discovery entirely** - Octo already has project context
+1. **Skip context file discovery entirely** - Oqto already has project context
 2. **Lazy load extensions** - Only load when tools are actually invoked
-3. **Disable resource cache** - Octo manages its own session state
+3. **Disable resource cache** - Oqto manages its own session state
 4. **Focus on RPC mode path** - Optimize specifically for `--mode rpc`
 
 Estimated RPC-mode startup time improvement: **300-800ms** → **50-150ms**

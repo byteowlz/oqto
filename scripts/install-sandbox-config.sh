@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 #
-# Install Sandbox Configuration for Octo Multi-User Mode
+# Install Sandbox Configuration for Oqto Multi-User Mode
 #
 # This script copies the sandbox.toml from the admin user's config directory
-# to /etc/octo/sandbox.toml and sets up proper permissions so that:
-# - The file is owned by root (cannot be modified by octo users)
-# - The octo group can read it (for octo-runner to load)
+# to /etc/oqto/sandbox.toml and sets up proper permissions so that:
+# - The file is owned by root (cannot be modified by oqto users)
+# - The oqto group can read it (for oqto-runner to load)
 # - octo_* users cannot modify their own sandbox restrictions
 #
 # Usage:
@@ -43,8 +43,8 @@ else
     if [[ -n "${SUDO_USER:-}" ]]; then
         ADMIN_USER="$SUDO_USER"
     else
-        # Fallback: find the first non-root user in the octo group
-        ADMIN_USER=$(getent group octo 2>/dev/null | cut -d: -f4 | tr ',' '\n' | grep -v '^octo_' | head -1 || true)
+        # Fallback: find the first non-root user in the oqto group
+        ADMIN_USER=$(getent group oqto 2>/dev/null | cut -d: -f4 | tr ',' '\n' | grep -v '^octo_' | head -1 || true)
     fi
 
     if [[ -z "$ADMIN_USER" ]]; then
@@ -54,7 +54,7 @@ else
     fi
 
     ADMIN_HOME=$(getent passwd "$ADMIN_USER" | cut -d: -f6)
-    SOURCE_FILE="${ADMIN_HOME}/.config/octo/sandbox.toml"
+    SOURCE_FILE="${ADMIN_HOME}/.config/oqto/sandbox.toml"
 fi
 
 # Validate source file
@@ -64,8 +64,8 @@ if [[ ! -f "$SOURCE_FILE" ]]; then
     echo "Create a sandbox.toml first:"
     echo ""
     echo "  # Copy the example config"
-    echo "  mkdir -p ~/.config/octo"
-    echo "  cp backend/crates/octo/examples/sandbox.toml ~/.config/octo/"
+    echo "  mkdir -p ~/.config/oqto"
+    echo "  cp backend/crates/oqto/examples/sandbox.toml ~/.config/oqto/"
     echo ""
     echo "  # Then run this script again"
     echo "  sudo $0"
@@ -73,7 +73,7 @@ if [[ ! -f "$SOURCE_FILE" ]]; then
     echo "Or create a minimal config:"
     echo ""
     cat <<'EOF'
-# ~/.config/octo/sandbox.toml
+# ~/.config/oqto/sandbox.toml
 enabled = true
 profile = "development"
 
@@ -88,13 +88,13 @@ fi
 info "Source file: $SOURCE_FILE"
 
 # Target locations
-TARGET_DIR="/etc/octo"
+TARGET_DIR="/etc/oqto"
 TARGET_FILE="${TARGET_DIR}/sandbox.toml"
 
-# Check if octo group exists
-if ! getent group octo >/dev/null 2>&1; then
-    error "The 'octo' group does not exist."
-    echo "Create it with: sudo groupadd octo"
+# Check if oqto group exists
+if ! getent group oqto >/dev/null 2>&1; then
+    error "The 'oqto' group does not exist."
+    echo "Create it with: sudo groupadd oqto"
     exit 1
 fi
 
@@ -102,7 +102,7 @@ fi
 if [[ ! -d "$TARGET_DIR" ]]; then
     info "Creating directory: $TARGET_DIR"
     mkdir -p "$TARGET_DIR"
-    chown root:octo "$TARGET_DIR"
+    chown root:oqto "$TARGET_DIR"
     chmod 750 "$TARGET_DIR"
     success "Created $TARGET_DIR"
 fi
@@ -120,12 +120,12 @@ fi
 info "Copying sandbox config..."
 cp "$SOURCE_FILE" "$TARGET_FILE"
 
-# Set ownership: root owns it (cannot be modified by octo users)
-chown root:octo "$TARGET_FILE"
+# Set ownership: root owns it (cannot be modified by oqto users)
+chown root:oqto "$TARGET_FILE"
 
 # Set permissions:
 # - Owner (root): read/write (640)
-# - Group (octo): read only
+# - Group (oqto): read only
 # - Others: no access
 chmod 640 "$TARGET_FILE"
 
@@ -153,11 +153,11 @@ fi
 # Show next steps
 echo ""
 info "Next steps:"
-echo "  1. Restart octo-runner to pick up the new config:"
-echo "     systemctl --user restart octo-runner"
+echo "  1. Restart oqto-runner to pick up the new config:"
+echo "     systemctl --user restart oqto-runner"
 echo ""
-echo "  2. Or for system-wide octo-runner:"
-echo "     sudo systemctl restart octo-runner"
+echo "  2. Or for system-wide oqto-runner:"
+echo "     sudo systemctl restart oqto-runner"
 echo ""
 echo "  3. Verify sandbox is active by checking logs for:"
 echo "     'Sandbox enabled - processes will be wrapped with bwrap'"

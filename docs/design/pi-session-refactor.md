@@ -2,7 +2,7 @@
 
 ## Overview
 
-Move Pi session management from octo backend to octo-runner. This enables:
+Move Pi session management from oqto backend to oqto-runner. This enables:
 - Single multiplexed WebSocket for all services (pi, files, terminal, hstry)
 - Runner owns Pi process lifecycle and hstry writes
 - Backend becomes stateless relay
@@ -258,7 +258,7 @@ Extends existing `RunnerRequest`/`RunnerResponse` enums.
 #### New Request Types
 
 ```rust
-// In backend/crates/octo/src/runner/protocol.rs
+// In backend/crates/oqto/src/runner/protocol.rs
 
 // === Session Lifecycle ===
 PiCreateSession(PiCreateSessionRequest),
@@ -498,7 +498,7 @@ pub struct PiEventWrapper {
 ### 3. Runner Internal: Pi Session Manager
 
 ```rust
-// In octo-runner
+// In oqto-runner
 
 use std::collections::HashMap;
 use tokio::process::{Child, ChildStdin};
@@ -562,7 +562,7 @@ impl PiSessionManager {
 **Owner:** Agent A
 
 Tasks:
-1. Create `PiSessionManager` struct in octo-runner
+1. Create `PiSessionManager` struct in oqto-runner
 2. Implement Pi process spawning with stdin/stdout handling
 3. Implement session map (create, get, close, list)
 4. Implement command routing (prompt, steer, abort, compact)
@@ -631,9 +631,9 @@ After all streams complete:
 ## Files to Create
 
 ```
-backend/crates/octo/src/api/ws_multiplexed.rs      # Stream 2: New WS handler
-backend/crates/octo/src/runner/pi_client.rs        # Stream 3: Runner Pi methods
-backend/crates/octo-runner/src/pi_manager.rs       # Stream 1: Session manager
+backend/crates/oqto/src/api/ws_multiplexed.rs      # Stream 2: New WS handler
+backend/crates/oqto/src/runner/pi_client.rs        # Stream 3: Runner Pi methods
+backend/crates/oqto-runner/src/pi_manager.rs       # Stream 1: Session manager
 
 frontend/lib/ws-manager.ts                          # Stream 2: Connection manager
 frontend/features/main-chat/hooks/usePiChatV2.ts   # Stream 2: Updated hooks
@@ -642,16 +642,16 @@ frontend/features/main-chat/hooks/usePiChatV2.ts   # Stream 2: Updated hooks
 ## Files to Modify
 
 ```
-backend/crates/octo/src/runner/protocol.rs         # Stream 3: Add Pi types
-backend/crates/octo/src/bin/octo-runner.rs         # Stream 1: Integrate manager
-backend/crates/octo/src/api/routes.rs              # Stream 2: Add new WS route
+backend/crates/oqto/src/runner/protocol.rs         # Stream 3: Add Pi types
+backend/crates/oqto/src/bin/oqto-runner.rs         # Stream 1: Integrate manager
+backend/crates/oqto/src/api/routes.rs              # Stream 2: Add new WS route
 ```
 
 ## Files to Eventually Remove
 
 ```
-backend/crates/octo/src/main_chat/pi_service.rs    # Replaced by runner
-backend/crates/octo/src/api/main_chat_pi.rs        # Old WS handlers
-backend/crates/octo/src/pi/runtime.rs              # No longer needed
+backend/crates/oqto/src/main_chat/pi_service.rs    # Replaced by runner
+backend/crates/oqto/src/api/main_chat_pi.rs        # Old WS handlers
+backend/crates/oqto/src/pi/runtime.rs              # No longer needed
 frontend/features/main-chat/hooks/cache.ts         # Global WS cache
 ```

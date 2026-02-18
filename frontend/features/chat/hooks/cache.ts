@@ -15,7 +15,7 @@ import type {
 export const CACHE_WRITE_THROTTLE_MS = 2000; // Write to localStorage at most every 2s during streaming
 export const SESSION_CACHE_VERSION = 2;
 const SESSION_CACHE_MAX_CHARS = 2_000_000;
-const DEFAULT_SCROLL_STORAGE_KEY = "octo:defaultChat:scrollPosition";
+const DEFAULT_SCROLL_STORAGE_KEY = "oqto:defaultChat:scrollPosition";
 
 // Global WebSocket connection cache - survives component remounts
 export const wsCache: WsConnectionState = {

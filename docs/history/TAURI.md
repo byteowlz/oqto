@@ -1,6 +1,6 @@
 # Tauri Desktop & Mobile App Implementation Plan
 
-Wrap Octo frontend in a Tauri v2 app for desktop (macOS, Windows, Linux) and mobile (iOS, Android) by enhancing the Rust backend to serve everything from a single origin.
+Wrap Oqto frontend in a Tauri v2 app for desktop (macOS, Windows, Linux) and mobile (iOS, Android) by enhancing the Rust backend to serve everything from a single origin.
 
 ## Architecture
 
@@ -8,7 +8,7 @@ Wrap Octo frontend in a Tauri v2 app for desktop (macOS, Windows, Linux) and mob
 ┌─────────────────────────────────────────────────────────────┐
 │              Tauri App (Desktop & Mobile)                   │
 │  ┌───────────────────────────────────────────────────────┐  │
-│  │                 Octo Backend (Axum)                   │  │
+│  │                 Oqto Backend (Axum)                   │  │
 │  │                                                       │  │
 │  │  /                    → Static files (frontend dist)  │  │
 │  │  /api/*               → REST API (existing)           │  │
@@ -153,7 +153,7 @@ export function isRemoteBackend(): boolean {
 // Login form - add server URL field
 <Input
   label="Server URL"
-  placeholder="https://octo.example.com"
+  placeholder="https://oqto.example.com"
   value={serverUrl}
   onChange={setServerUrl}
 />

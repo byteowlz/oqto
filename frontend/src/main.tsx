@@ -12,7 +12,7 @@ import { createRoot } from "react-dom/client";
 import { App } from "./App";
 import "./styles/globals.css";
 
-const RECOVERY_FLAG_KEY = "octo:storage_recovery_v1";
+const RECOVERY_FLAG_KEY = "oqto:storage_recovery_v1";
 function setupStorageRecovery() {
 	if (typeof window === "undefined") return;
 	if (sessionStorage.getItem(RECOVERY_FLAG_KEY) === "done") return;

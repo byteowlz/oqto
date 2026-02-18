@@ -236,7 +236,7 @@ export function ChatView({
 
 	const resolvedStorageKeyPrefix =
 		storageKeyPrefix ??
-		`octo:workspacePi:${(normalizedWorkspacePath ?? "default").replace(
+		`oqto:workspacePi:${(normalizedWorkspacePath ?? "default").replace(
 			/[^a-zA-Z0-9._-]+/g,
 			"_",
 		)}`;
@@ -535,7 +535,7 @@ export function ChatView({
 
 	const modelStorageKey = useMemo(() => {
 		if (!selectedSessionId) return null;
-		return `octo:chatModel:${selectedSessionId}`;
+		return `oqto:chatModel:${selectedSessionId}`;
 	}, [selectedSessionId]);
 
 	useEffect(() => {

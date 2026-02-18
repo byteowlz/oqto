@@ -1,6 +1,6 @@
 # Onboarding System Design
 
-Epic: `octo-thhx` - Onboarding & Agent UI Control
+Epic: `oqto-thhx` - Onboarding & Agent UI Control
 
 ## Vision
 
@@ -8,7 +8,7 @@ Progressive onboarding with wizard-driven setup and spotlight-based tutorials. N
 
 **Setup is split into two layers:**
 1. **System setup** (`setup.sh`) -- installs packages, tools, SearXNG, systemd services
-2. **Config wizard** (`octo-setup wizard` CLI or `/setup` web wizard) -- deployment mode, LLM provider, API keys, workspace, admin user
+2. **Config wizard** (`oqto-setup wizard` CLI or `/setup` web wizard) -- deployment mode, LLM provider, API keys, workspace, admin user
 
 The web onboarding (provider, profile, personality) uses simple multi-step wizard forms, not agent-driven A2UI conversations.
 
@@ -80,7 +80,7 @@ For polyglot users:
 
 Prepare agent instructions in multiple languages:
 ```
-~/.local/share/octo/main-chat/default/
+~/.local/share/oqto/main-chat/default/
   AGENTS.md          <- symlink or copy
   AGENTS.en.md
   AGENTS.de.md
@@ -192,36 +192,36 @@ interface OnboardingState {
 
 The agent needs programmatic control over the UI for guided onboarding.
 
-### CLI Commands (octoctl ui)
+### CLI Commands (oqtoctl ui)
 
 ```bash
 # Navigation
-octoctl ui navigate --app sessions|settings|admin|projects
-octoctl ui session --id <session-id>
-octoctl ui view --tab chat|files|tasks|memories|canvas|terminal|settings
+oqtoctl ui navigate --app sessions|settings|admin|projects
+oqtoctl ui session --id <session-id>
+oqtoctl ui view --tab chat|files|tasks|memories|canvas|terminal|settings
 
 # Command palette
-octoctl ui palette open [--search "query"] [--auto-select "item"]
-octoctl ui palette close
-octoctl ui palette exec "New Chat"
+oqtoctl ui palette open [--search "query"] [--auto-select "item"]
+oqtoctl ui palette close
+oqtoctl ui palette exec "New Chat"
 
 # Spotlight
-octoctl ui spotlight --target "sidebar" --message "Navigation here" [--position right] [--pulse]
-octoctl ui spotlight clear
+oqtoctl ui spotlight --target "sidebar" --message "Navigation here" [--position right] [--pulse]
+oqtoctl ui spotlight clear
 
 # Tour (sequential spotlights)
-octoctl ui tour --steps '[
+oqtoctl ui tour --steps '[
   {"target": "chat-input", "message": "Talk to me here"},
   {"target": "sidebar", "message": "Your sessions"},
   {"target": "file-tree", "message": "Browse files"}
 ]'
 
 # Panels
-octoctl ui sidebar toggle|open|close
-octoctl ui panel --name canvas|terminal|preview --expand|--collapse
+oqtoctl ui sidebar toggle|open|close
+oqtoctl ui panel --name canvas|terminal|preview --expand|--collapse
 
 # Theme
-octoctl ui theme dark|light|toggle
+oqtoctl ui theme dark|light|toggle
 ```
 
 ### WebSocket Events
@@ -328,35 +328,35 @@ For power users and developers who want to skip onboarding:
 
 ## Task Breakdown
 
-See trx epic `octo-thhx` for full task list.
+See trx epic `oqto-thhx` for full task list.
 
 ### P1 (Core Infrastructure)
-- octo-thhx.1: Onboarding state model
-- octo-thhx.2: Onboarding API endpoints
-- octo-thhx.3: UIControlContext
-- octo-thhx.4: WebSocket ui.* events
-- octo-thhx.5: octoctl ui CLI
-- octo-thhx.6: Spotlight overlay
-- octo-thhx.7: data-spotlight attributes
+- oqto-thhx.1: Onboarding state model
+- oqto-thhx.2: Onboarding API endpoints
+- oqto-thhx.3: UIControlContext
+- oqto-thhx.4: WebSocket ui.* events
+- oqto-thhx.5: oqtoctl ui CLI
+- oqto-thhx.6: Spotlight overlay
+- oqto-thhx.7: data-spotlight attributes
 
 ### P2 (Onboarding Flow)
-- octo-thhx.8: Tour mode
-- octo-thhx.9: Language word cloud + CRT shader
-- octo-thhx.10: Onboarding route
-- octo-thhx.11: Godmode
-- octo-thhx.12: Progressive unlock
-- octo-thhx.13: i18n AGENTS.md
-- octo-thhx.14: Provider setup wizard
-- octo-thhx.15: Profile/personality setup
-- octo-thhx.16: Tutorial script
+- oqto-thhx.8: Tour mode
+- oqto-thhx.9: Language word cloud + CRT shader
+- oqto-thhx.10: Onboarding route
+- oqto-thhx.11: Godmode
+- oqto-thhx.12: Progressive unlock
+- oqto-thhx.13: i18n AGENTS.md
+- oqto-thhx.14: Provider setup wizard
+- oqto-thhx.15: Profile/personality setup
+- oqto-thhx.16: Tutorial script
 
 ### P3 (Polish)
-- octo-thhx.17: Technical user detection
-- octo-thhx.18: Multi-lingual support
+- oqto-thhx.17: Technical user detection
+- oqto-thhx.18: Multi-lingual support
 
 ## Dependencies
 
-- **octo-wmrf.5** (MCP Tool: a2ui_surface) - Not needed, use `octoctl a2ui` CLI instead
+- **oqto-wmrf.5** (MCP Tool: a2ui_surface) - Not needed, use `oqtoctl a2ui` CLI instead
 - **EAVS** - For provider proxy, needs testing as single point of access
 
 ## Open Questions

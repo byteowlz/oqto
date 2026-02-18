@@ -1,7 +1,7 @@
 /**
- * Canonical protocol types for Octo agent communication.
+ * Canonical protocol types for Oqto agent communication.
  *
- * These types mirror the Rust `octo-protocol` crate. The Rust types are the
+ * These types mirror the Rust `oqto-protocol` crate. The Rust types are the
  * source of truth; this file is kept in sync manually.
  *
  * The frontend speaks only the canonical protocol. It does not know or care

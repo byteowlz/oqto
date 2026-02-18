@@ -1,8 +1,8 @@
-# OCTO_MAIN.md - Main Chat Architecture Specification
+# OQTO_MAIN.md - Main Chat Architecture Specification
 
 > **ARCHIVED DOCUMENT** - This document describes the historical implementation using OpenCode as the agent runtime. The current architecture uses **Pi** as the primary harness via the canonical protocol. See [AGENTS.md](../../AGENTS.md) for current documentation.
 
-This document defines the architecture for Octo's Main Chat - a persistent AI assistant that maintains context and personality across sessions.
+This document defines the architecture for Oqto's Main Chat - a persistent AI assistant that maintains context and personality across sessions.
 
 **Epic**: workspace-vmu2  
 **Status**: Archived - Historical Reference
@@ -18,24 +18,24 @@ This document defines the architecture for Octo's Main Chat - a persistent AI as
 - [x] **workspace-rr3j** - First-start setup flow (name prompt, directory creation)
 - [x] **workspace-u73l** - Frontend session threading (continuous conversation view)
 - [x] **workspace-pnwb** - History injection on session start (noReply context)
-- [x] **octo-bvw0** - Single opencode per user with directory scoping
+- [x] **oqto-bvw0** - Single opencode per user with directory scoping
 
 ### Open Tasks
 | ID | Priority | Title |
 |----|----------|-------|
-| octo-gfsk | P2 | Personality templates |
+| oqto-gfsk | P2 | Personality templates |
 | workspace-o6a7 | P2 | mmry integration |
-| octo-7fms | P2 | Enhanced compaction |
+| oqto-7fms | P2 | Enhanced compaction |
 | workspace-4eyc | P2 | JSONL export and backup |
-| octo-a9mc | P3 | skdlr heartbeat integration |
-| octo-a9ds | P3 | Agent coordination via mailz |
-| octo-h975 | P4 | Message visibility filtering |
+| oqto-a9mc | P3 | skdlr heartbeat integration |
+| oqto-a9ds | P3 | Agent coordination via mailz |
+| oqto-h975 | P4 | Message visibility filtering |
 
 ---
 
 ## Overview
 
-Main Chat is the primary conversational interface in Octo. Unlike regular sessions (which are project-scoped and disposable), Main Chat is:
+Main Chat is the primary conversational interface in Oqto. Unlike regular sessions (which are project-scoped and disposable), Main Chat is:
 
 - **Persistent**: Maintains memory across sessions via mmry
 - **Personality-driven**: Has a consistent identity defined in PERSONALITY.md
@@ -52,12 +52,12 @@ Main Chat will use **Pi** (from clawdbot/pi-mono) as the agent runtime. This is 
 
 ```
                           ┌──────────────────────────┐
-                          │      Octo Frontend       │
+                          │      Oqto Frontend       │
                           │   (React + WebSocket)    │
                           └───────────┬──────────────┘
                                       │
                           ┌───────────▼──────────────┐
-                          │      Octo Backend        │
+                          │      Oqto Backend        │
                           │   (Rust API Server)      │
                           ├──────────────────────────┤
                           │   Main Chat Service      │
@@ -272,7 +272,7 @@ Main Chat uses **Pi** (from [badlogic/pi-mono](https://github.com/badlogic/pi-mo
 
 ```
 ┌─────────────────┐     WebSocket      ┌─────────────────┐
-│  Octo Frontend  │◄──────────────────►│  Octo Backend   │
+│  Oqto Frontend  │◄──────────────────►│  Oqto Backend   │
 │  (React)        │                    │  (Rust)         │
 └─────────────────┘                    └────────┬────────┘
                                                 │
@@ -451,7 +451,7 @@ Main Chat can receive periodic heartbeats for proactive behavior:
 # skdlr schedule
 [heartbeat]
 schedule = "0 */4 * * *"  # Every 4 hours
-command = "octo main-chat heartbeat"
+command = "oqto main-chat heartbeat"
 ```
 
 On heartbeat, the agent can:
@@ -468,7 +468,7 @@ Main Chat can create schedules via skdlr:
 # Via tool
 skdlr add "morning-briefing" \
   --schedule "0 9 * * *" \
-  --command "octo main-chat run --prompt 'Good morning briefing'"
+  --command "oqto main-chat run --prompt 'Good morning briefing'"
 ```
 
 ---
@@ -497,19 +497,19 @@ Main Chat has a convenient CLI for delegating tasks to full OpenCode sessions:
 
 ```bash
 # Spawn a session in a project directory
-octo spawn /path/to/project "Implement the feature described in TASK.md"
+oqto spawn /path/to/project "Implement the feature described in TASK.md"
 
 # Spawn and wait for completion
-octo spawn /path/to/project "Fix the failing tests" --wait
+oqto spawn /path/to/project "Fix the failing tests" --wait
 
 # Spawn with specific model
-octo spawn /path/to/project "Review code" --model anthropic/claude-sonnet-4-5
+oqto spawn /path/to/project "Review code" --model anthropic/claude-sonnet-4-5
 
 # List spawned sessions
-octo spawn --list
+oqto spawn --list
 
 # Check status of a spawned session
-octo spawn --status <session-id>
+oqto spawn --status <session-id>
 ```
 
 The CLI wraps the OpenCode API and handles:
@@ -609,10 +609,10 @@ Core infrastructure is in place:
 - [x] First-start setup flow (workspace-rr3j)
 - [x] Frontend session threading (workspace-u73l)
 - [x] History injection on session start (workspace-pnwb)
-- [x] Single opencode per user with directory scoping (octo-bvw0)
+- [x] Single opencode per user with directory scoping (oqto-bvw0)
 
 ### Phase 2: Personality & Templates [P2]
-**trx**: octo-gfsk
+**trx**: oqto-gfsk
 - [ ] Create PERSONALITY.md template (merge SOUL + IDENTITY concepts)
 - [ ] Create USER.md template
 - [ ] Update AGENTS.md template with mmry instructions
@@ -627,7 +627,7 @@ Core infrastructure is in place:
 - [ ] Category-based memory retrieval
 
 ### Phase 4: Compaction Enhancement [P2]
-**trx**: octo-7fms
+**trx**: oqto-7fms
 - [ ] Implement observation masking (Phase 1: cheap, zero tokens)
 - [ ] Enhanced 8-section summary generation (Phase 2: LLM-based)
 - [ ] Auto-extract [decision], [handoff], [insight] tags
@@ -645,21 +645,21 @@ Core infrastructure is in place:
 - [ ] Optional: daily backup rotation (configurable)
 
 ### Phase 6: Scheduling & Heartbeats [P3]
-**trx**: octo-a9mc
+**trx**: oqto-a9mc
 - [ ] Integrate skdlr for periodic heartbeats
 - [ ] Heartbeat handler in main-chat-plugin.ts
 - [ ] Proactive check routines (pending tasks, recent memories)
 - [ ] `HEARTBEAT_OK` response when nothing to report
 
 ### Phase 7: Agent Coordination [P3]
-**trx**: octo-a9ds
+**trx**: oqto-a9ds
 - [ ] mailz integration for agent-to-agent messaging
 - [ ] File reservation via mailz
-- [ ] `octo spawn` CLI for convenient session delegation
+- [ ] `oqto spawn` CLI for convenient session delegation
 - [ ] Track spawned sessions and inject results on completion
 
 ### Phase 8: Message Visibility [P4]
-**trx**: octo-h975
+**trx**: oqto-h975
 - [ ] Frontend filtering to collapse tool messages by default
 - [ ] Verbose mode toggle in UI
 - [ ] Expand/collapse controls for tool details
@@ -718,21 +718,21 @@ Main Chat is successful when:
 - workspace-rr3j - First-start setup flow
 - workspace-u73l - Frontend session threading
 - workspace-pnwb - History injection on session start
-- octo-bvw0 - Single opencode per user with directory scoping
+- oqto-bvw0 - Single opencode per user with directory scoping
 
 ### Open Tasks
 | ID | Priority | Title |
 |----|----------|-------|
-| **octo-gfsk** | P2 | Personality templates (PERSONALITY.md, USER.md, enhanced AGENTS.md) |
+| **oqto-gfsk** | P2 | Personality templates (PERSONALITY.md, USER.md, enhanced AGENTS.md) |
 | **workspace-o6a7** | P2 | mmry integration |
-| **octo-7fms** | P2 | Enhanced compaction (observation masking, 8-section summary) |
+| **oqto-7fms** | P2 | Enhanced compaction (observation masking, 8-section summary) |
 | **workspace-4eyc** | P2 | JSONL export and backup |
-| **octo-a9mc** | P3 | skdlr heartbeat integration |
-| **octo-a9ds** | P3 | Agent coordination via mailz |
-| **octo-h975** | P4 | Message visibility filtering (hide tools by default) |
+| **oqto-a9mc** | P3 | skdlr heartbeat integration |
+| **oqto-a9ds** | P3 | Agent coordination via mailz |
+| **oqto-h975** | P4 | Message visibility filtering (hide tools by default) |
 
 ### Related Epics
-- **workspace-gg16** - Integrate mmry memory system into Octo frontend
+- **workspace-gg16** - Integrate mmry memory system into Oqto frontend
 - **workspace-5pmk** - Tauri Desktop & Mobile App
 
 ---

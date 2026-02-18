@@ -94,7 +94,7 @@ const asyncNoop = async () => null;
 const asyncNoopVoid = async () => {};
 const asyncNoopBool = async () => false;
 
-const CHAT_HISTORY_CACHE_KEY = "octo:chatHistoryCache:v2";
+const CHAT_HISTORY_CACHE_KEY = "oqto:chatHistoryCache:v2";
 const CHAT_HISTORY_CACHE_MAX_CHARS = 2_000_000;
 const CHAT_HISTORY_PREFETCH_DEBOUNCE_MS = 2000;
 const RUNNER_SESSIONS_POLL_MS = 5000;
@@ -188,7 +188,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 		// effect will only override this if the saved ID doesn't exist in
 		// the session list (e.g. deleted session).
 		try {
-			return localStorage.getItem("octo:lastChatSessionId") || null;
+			return localStorage.getItem("oqto:lastChatSessionId") || null;
 		} catch {
 			return null;
 		}
@@ -201,9 +201,9 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 				if (typeof window !== "undefined") {
 					try {
 						if (newId?.trim()) {
-							localStorage.setItem("octo:lastChatSessionId", newId);
+							localStorage.setItem("oqto:lastChatSessionId", newId);
 						} else {
-							localStorage.removeItem("octo:lastChatSessionId");
+							localStorage.removeItem("oqto:lastChatSessionId");
 						}
 					} catch {
 						// Ignore localStorage errors
@@ -317,7 +317,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 			);
 
 			for (const session of optimistic) {
-				// hstry now returns the Octo session ID (platform_id) as the
+				// hstry now returns the Oqto session ID (platform_id) as the
 				// session id, so byId.has() matches directly -- no cross-ID
 				// dedup needed.
 				if (byId.has(session.id)) {
@@ -348,7 +348,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 			const byId = new Map(history.map((s) => [s.id, s]));
 
 			for (const session of runnerSessions) {
-				// hstry now returns platform_id (Octo ID) as the session id,
+				// hstry now returns platform_id (Oqto ID) as the session id,
 				// so a direct match is sufficient.
 				if (byId.has(session.session_id)) continue;
 

@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2034
-# Octo Archiso Profile Definition
-# Build with: sudo mkarchiso -v -w /tmp/archiso-tmp -o ~/octo-iso .
+# Oqto Archiso Profile Definition
+# Build with: sudo mkarchiso -v -w /tmp/archiso-tmp -o ~/oqto-iso .
 
-iso_name="octo-arch"
-iso_label="OCTO_$(date --date="@${SOURCE_DATE_EPOCH:-$(date +%s)}" +%Y%m)"
-iso_publisher="Octo <https://github.com/byteowlz/octo>"
-iso_application="Octo AI Agent Platform"
+iso_name="oqto-arch"
+iso_label="OQTO_$(date --date="@${SOURCE_DATE_EPOCH:-$(date +%s)}" +%Y%m)"
+iso_publisher="Oqto <https://github.com/byteowlz/oqto>"
+iso_application="Oqto AI Agent Platform"
 iso_version="$(date --date="@${SOURCE_DATE_EPOCH:-$(date +%s)}" +%Y.%m.%d)"
 install_dir="arch"
 buildmodes=('iso')
@@ -21,15 +21,15 @@ file_permissions=(
   ["/root"]="0:0:750"
   ["/root/.automated_script.sh"]="0:0:755"
   # Scripts
-  ["/usr/local/bin/octo-install"]="0:0:755"
-  ["/usr/local/bin/octo-setup"]="0:0:755"
-  ["/usr/local/bin/octo-first-boot"]="0:0:755"
-  # Core Octo binaries
-  ["/usr/local/bin/octo"]="0:0:755"
-  ["/usr/local/bin/octoctl"]="0:0:755"
-  ["/usr/local/bin/octo-runner"]="0:0:755"
-  ["/usr/local/bin/octo-files"]="0:0:755"
-  ["/usr/local/bin/octo-sandbox"]="0:0:755"
+  ["/usr/local/bin/oqto-install"]="0:0:755"
+  ["/usr/local/bin/oqto-setup"]="0:0:755"
+  ["/usr/local/bin/oqto-first-boot"]="0:0:755"
+  # Core Oqto binaries
+  ["/usr/local/bin/oqto"]="0:0:755"
+  ["/usr/local/bin/oqtoctl"]="0:0:755"
+  ["/usr/local/bin/oqto-runner"]="0:0:755"
+  ["/usr/local/bin/oqto-files"]="0:0:755"
+  ["/usr/local/bin/oqto-sandbox"]="0:0:755"
   ["/usr/local/bin/pi-bridge"]="0:0:755"
   # Agent tools
   ["/usr/local/bin/mmry"]="0:0:755"

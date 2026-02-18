@@ -1,0 +1,25 @@
+{
+  "name": "oqto-browserd",
+  "version": "0.1.0",
+  "description": "Oqto native Playwright browser daemon",
+  "type": "module",
+  "bin": {
+    "oqto-browserd": "./bin/oqto-browserd.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "bun run src/index.ts -- --daemon",
+    "typecheck": "tsc --noEmit",
+    "format": "prettier --write 'src/**/*.ts'",
+    "format:check": "prettier --check 'src/**/*.ts'"
+  },
+  "dependencies": {
+    "playwright": "^1.57.0",
+    "ws": "^8.19.0"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.1",
+    "prettier": "^3.7.4",
+    "typescript": "^5.9.3"
+  }
+}

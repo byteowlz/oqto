@@ -8,7 +8,7 @@ When viewing an existing chat session, the session history in the sidebar would 
 
 The issue occurred because:
 
-1. User filters sessions by clicking on a project (e.g., "octo") in the sidebar
+1. User filters sessions by clicking on a project (e.g., "oqto") in the sidebar
 2. This sets `selectedProjectKey` state to filter the session list
 3. User clicks on a session from the filtered list
 4. The session opens in the main view, but `selectedProjectKey` is NOT cleared
