@@ -324,6 +324,8 @@ export function useModelSelection(
 		const modelId = modelRef.slice(separatorIndex + 1);
 		try {
 			await getWsManager().agentSetModel(sid, provider, modelId);
+			// Switch confirmed -- update state and persist
+			setSelectedModelRef(modelRef);
 			const settingsWorkspacePath = wp ?? undefined;
 			await updateSettingsValues(
 				"pi-agent",
@@ -338,6 +340,10 @@ export function useModelSelection(
 			persistModelSelection(modelRef);
 		} catch (err) {
 			console.error("Failed to apply pending model:", err);
+			// Revert localStorage to the actual model if we had persisted
+			// the pending one eagerly (e.g. before a page reload).
+			// The config.model_changed event will correct selectedModelRef
+			// if/when a successful switch happens later.
 		}
 	};
 
@@ -381,16 +387,18 @@ export function useModelSelection(
 				return;
 			}
 
-			await persistSelection(provider, modelId, modelRef);
-
 			const manager = getWsManager();
 			if (!manager.isSessionReady(effectiveSessionId)) {
+				// Session not ready yet -- queue the switch and persist
+				// so the pending model survives page reloads.
 				setPendingModelRef(modelRef);
+				await persistSelection(provider, modelId, modelRef);
 				return;
 			}
 
 			if (isIdle) {
-				// Apply immediately if idle
+				// Show optimistic switch indicator
+				const previousModelRef = selectedModelRef;
 				setSelectedModelRef(modelRef);
 				setIsSwitching(true);
 				try {
@@ -399,6 +407,8 @@ export function useModelSelection(
 						provider,
 						modelId,
 					);
+					// Only persist after confirmed success
+					await persistSelection(provider, modelId, modelRef);
 				} catch (err) {
 					console.error("Failed to switch model:", err);
 					const message = err instanceof Error ? err.message : String(err);
@@ -407,17 +417,25 @@ export function useModelSelection(
 						message.includes("PiSessionNotFound") ||
 						message.includes("Response channel closed")
 					) {
+						// Session gone -- queue for when it comes back and
+						// persist so the pending model survives reloads.
 						setPendingModelRef(modelRef);
+						await persistSelection(provider, modelId, modelRef);
+					} else {
+						// Model switch failed (e.g. model not found) -- revert
+						setSelectedModelRef(previousModelRef);
 					}
 				} finally {
 					setIsSwitching(false);
 				}
 			} else {
-				// Queue for after streaming completes
+				// Queue for after streaming completes and persist so the
+				// pending model survives page reloads.
 				setPendingModelRef(modelRef);
+				await persistSelection(provider, modelId, modelRef);
 			}
 		},
-		[isIdle, effectiveSessionId, persistSelection],
+		[isIdle, effectiveSessionId, persistSelection, selectedModelRef],
 	);
 
 	const cycleModel = useCallback(async () => {
