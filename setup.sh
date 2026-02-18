@@ -2423,8 +2423,8 @@ select_models_for_provider() {
 
   # Check if eavs supports the 'models' subcommand (>= 0.5.4)
   if ! eavs models list "$provider" --json >/dev/null 2>&1; then
-    log_warn "eavs model catalog not available (upgrade eavs to >= 0.5.4 for model selection)"
-    log_info "Skipping model selection for $provider -- all catalog models will be available"
+    log_warn "eavs model catalog not available (upgrade eavs to >= 0.5.4 for model selection)" >&2
+    log_info "Skipping model selection for $provider -- all catalog models will be available" >&2
     echo ""
     return
   fi
@@ -2434,7 +2434,7 @@ select_models_for_provider() {
   catalog_json=$(eavs models list "$provider" --json 2>/dev/null) || true
 
   if [[ -z "$catalog_json" || "$catalog_json" == "[]" || "$catalog_json" == "null" ]]; then
-    log_warn "No models found in catalog for $provider. Skipping model selection."
+    log_warn "No models found in catalog for $provider. Skipping model selection." >&2
     echo ""
     return
   fi
@@ -2458,7 +2458,7 @@ select_models_for_provider() {
   ' 2>/dev/null) || true
 
   if [[ -z "$model_lines" ]]; then
-    log_warn "Failed to parse model catalog for $provider"
+    log_warn "Failed to parse model catalog for $provider" >&2
     echo ""
     return
   fi
@@ -2478,17 +2478,17 @@ select_models_for_provider() {
   local default_csv
   default_csv=$(echo "$default_ids" | paste -sd',' -)
 
-  echo
-  echo "  Select models for $provider ($total_count available, newest first):"
-  echo "  [R]=reasoning  Costs per 1M tokens  Pre-selected: top $DEFAULT_MODEL_COUNT newest"
-  echo
+  echo >&2
+  echo "  Select models for $provider ($total_count available, newest first):" >&2
+  echo "  [R]=reasoning  Costs per 1M tokens  Pre-selected: top $DEFAULT_MODEL_COUNT newest" >&2
+  echo >&2
 
   local selected_ids=""
 
   if [[ "$NONINTERACTIVE" == "true" ]]; then
     # Non-interactive: just use the top N
     selected_ids="$default_ids"
-    log_info "Auto-selected top $DEFAULT_MODEL_COUNT models for $provider"
+    log_info "Auto-selected top $DEFAULT_MODEL_COUNT models for $provider" >&2
   elif command -v gum >/dev/null 2>&1; then
     # gum filter: fuzzy search + multi-select (best UX)
     # --selected expects full display lines, build CSV of the default lines
@@ -2523,19 +2523,19 @@ select_models_for_provider() {
 
   # Fallback: simple numbered list if no TUI tool or nothing selected
   if [[ -z "$selected_ids" && "$NONINTERACTIVE" != "true" ]]; then
-    echo "  Available models:"
+    echo "  Available models:" >&2
     local i=1
     while IFS=$'\t' read -r mid name cost ctx reasoning rel; do
       local marker=" "
       if echo "$default_ids" | grep -qx "$mid"; then
         marker="*"
       fi
-      printf "  %s %2d) %-40s  %s  %-12s  ctx=%-6s  %s\n" "$marker" "$i" "$mid" "$reasoning" "$cost" "$ctx" "$rel"
+      printf "  %s %2d) %-40s  %s  %-12s  ctx=%-6s  %s\n" "$marker" "$i" "$mid" "$reasoning" "$cost" "$ctx" "$rel" >&2
       i=$((i + 1))
     done <<<"$model_lines"
-    echo
-    echo "  Enter model numbers to select (comma/space separated, * = pre-selected)."
-    echo "  Press Enter to accept defaults (top $DEFAULT_MODEL_COUNT)."
+    echo >&2
+    echo "  Enter model numbers to select (comma/space separated, * = pre-selected)." >&2
+    echo "  Press Enter to accept defaults (top $DEFAULT_MODEL_COUNT)." >&2
     local selection
     read -r -p "  Selection: " selection
 
@@ -2558,7 +2558,7 @@ select_models_for_provider() {
   fi
 
   if [[ -z "$selected_ids" ]]; then
-    log_warn "No models selected for $provider"
+    log_warn "No models selected for $provider" >&2
     echo ""
     return
   fi
@@ -2588,7 +2588,7 @@ cost = { input = \(.cost.input // 0), output = \(.cost.output // 0), cache_read 
 
   local selected_count
   selected_count=$(echo "$selected_ids" | grep -c '.' || echo 0)
-  log_success "Selected $selected_count models for $provider"
+  log_success "Selected $selected_count models for $provider" >&2
   echo "$toml_output"
 }
 
