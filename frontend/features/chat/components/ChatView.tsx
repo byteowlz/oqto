@@ -87,6 +87,7 @@ import {
 	type ChangeEvent,
 	type KeyboardEvent,
 	memo,
+	startTransition,
 	useCallback,
 	useEffect,
 	useLayoutEffect,
@@ -269,15 +270,29 @@ export function ChatView({
 		onMessageComplete: handleMessageComplete,
 		onTitleChanged: updateChatSessionTitleLocal,
 	});
-	// Draft persistence - restore from localStorage on mount
-	const [input, setInput] = useState(() => {
+	// Draft persistence - restore from localStorage on mount.
+	// Input value lives in a ref (never in React state) so that
+	// keystrokes never trigger a React render of this large component.
+	// The textarea uses defaultValue and is fully uncontrolled.
+	const inputInitialValue = useMemo(() => {
 		if (typeof window === "undefined") return "";
 		try {
 			return localStorage.getItem(draftStorageKey) || "";
 		} catch {
 			return "";
 		}
-	});
+	}, [draftStorageKey]);
+	const inputValueRef = useRef(inputInitialValue);
+	// Lightweight state only for send-button enabled/disabled
+	const [canSendInput, setCanSendInput] = useState(!!inputInitialValue.trim());
+	// Helper to imperatively set the textarea value and sync ref
+	const setInput = useCallback((value: string) => {
+		inputValueRef.current = value;
+		if (inputRef.current) {
+			inputRef.current.value = value;
+		}
+		startTransition(() => setCanSendInput(!!value.trim()));
+	}, []);
 	const [fileAttachments, setFileAttachments] = useState<FileAttachment[]>([]);
 
 	// Consume pending file attachment from external source (e.g. canvas)
@@ -562,11 +577,12 @@ export function ChatView({
 			<div className="h-10 bg-muted/20" />
 		</div>
 	);
-	const slashQuery = useMemo(() => parseSlashInput(input), [input]);
+	// Slash query stored in ref -- updated synchronously in handleInputChange
+	const slashQueryRef = useRef(parseSlashInput(inputValueRef.current));
 
 	const enqueueMessage = useCallback(
 		(rawText?: string) => {
-			const trimmed = (rawText ?? input).trim();
+			const trimmed = (rawText ?? inputValueRef.current).trim();
 			if (!trimmed) return;
 
 			if (fileAttachments.length > 0) {
@@ -605,7 +621,7 @@ export function ChatView({
 				inputRef.current.style.height = "auto";
 			}
 		},
-		[draftStorageKey, fileAttachments.length, input],
+		[draftStorageKey, fileAttachments.length, setInput],
 	);
 	const builtInCommands = useMemo<SlashCommand[]>(() => {
 		const commands: SlashCommand[] = [
@@ -704,8 +720,9 @@ const gaugeTokens = contextTokenCount;
 	const dictation = useDictation({
 		config: voiceConfig,
 		onTranscript: useCallback((text: string) => {
-			setInput((prev) => (prev ? `${prev} ${text}` : text));
-		}, []),
+			const prev = inputValueRef.current;
+			setInput(prev ? `${prev} ${text}` : text);
+		}, [setInput]),
 		vadTimeoutMs: features?.voice?.vad_timeout_ms,
 		autoSendOnFinal: true,
 		autoSendDelayMs: 50,
@@ -943,33 +960,12 @@ const gaugeTokens = contextTokenCount;
 	}, []);
 
 	// Auto-resize is now handled inline in handleInputChange for better performance.
-	// This effect is only needed for programmatic input changes (e.g., dictation, file select).
-	const lastInputLengthRef = useRef(input.length);
+	// This effect only handles dictation mode changes.
 	useEffect(() => {
-		// Keep the textarea stable during dictation; the DictationOverlay shows the transcript.
-		if (dictation.isActive) {
-			lastInputLengthRef.current = input.length;
-			if (inputRef.current) {
-				inputRef.current.style.height = "36px";
-			}
-			return;
+		if (dictation.isActive && inputRef.current) {
+			inputRef.current.style.height = "36px";
 		}
-
-		// Only resize if the input changed programmatically (not via typing, which is handled inline)
-		const currentLength = input.length;
-		const lastLength = lastInputLengthRef.current;
-		// Skip if this is likely a single character change (typing)
-		if (Math.abs(currentLength - lastLength) <= 1) {
-			lastInputLengthRef.current = currentLength;
-			return;
-		}
-		lastInputLengthRef.current = currentLength;
-		const textarea = inputRef.current;
-		if (textarea) {
-			textarea.style.height = "auto";
-			textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`;
-		}
-	}, [dictation.isActive, input]);
+	}, [dictation.isActive]);
 
 	// Handle file upload
 	const handleFileUpload = useCallback(
@@ -1028,6 +1024,7 @@ const gaugeTokens = contextTokenCount;
 			if (separatorIndex <= 0 || separatorIndex === value.length - 1) return;
 			const provider = value.slice(0, separatorIndex);
 			const modelId = value.slice(separatorIndex + 1);
+			const previousModelRef = selectedModelRef;
 			setSelectedModelRef(value);
 			setIsSwitchingModel(true);
 			try {
@@ -1041,11 +1038,13 @@ const gaugeTokens = contextTokenCount;
 				await refresh();
 			} catch (err) {
 				console.error("Failed to switch model:", err);
+				// Revert optimistic update on failure
+				setSelectedModelRef(previousModelRef);
 			} finally {
 				setIsSwitchingModel(false);
 			}
 		},
-		[canSwitchModel, piState?.sessionId, refresh, selectedSessionId],
+		[canSwitchModel, piState?.sessionId, refresh, selectedModelRef, selectedSessionId],
 	);
 
 	const runSlashCommand = useCallback(
@@ -1198,15 +1197,13 @@ const gaugeTokens = contextTokenCount;
 
 	const handleSend = useCallback(
 		async (mode: "prompt" | "steer" | "follow_up" = "steer") => {
-			const trimmed = input.trim();
+			const trimmed = inputValueRef.current.trim();
 			if (!trimmed && fileAttachments.length === 0) return;
 
-			if (slashQuery.isSlash && builtInCommandNames.has(slashQuery.command)) {
+			const sq = slashQueryRef.current;
+			if (sq.isSlash && builtInCommandNames.has(sq.command)) {
 				try {
-					const result = await runSlashCommand(
-						slashQuery.command,
-						slashQuery.args,
-					);
+					const result = await runSlashCommand(sq.command, sq.args);
 					if (result.handled) {
 						if (result.clearInput) {
 							setInput("");
@@ -1245,7 +1242,7 @@ const gaugeTokens = contextTokenCount;
 				message = `${fileRefs}\n\n${trimmed}`;
 			}
 
-			const draftInput = input;
+			const draftInput = inputValueRef.current;
 			const draftAttachments = fileAttachments;
 			const hasHistory =
 				messages.length > 0 || (piState?.messageCount ?? 0) > 0;
@@ -1301,21 +1298,19 @@ const gaugeTokens = contextTokenCount;
 			builtInCommandNames,
 			draftStorageKey,
 			fileAttachments,
-			input,
 			messages.length,
 			onMessageSent,
 			piState?.messageCount,
 			runSlashCommand,
 			selectedSessionId,
 			send,
-			slashQuery.command,
-			slashQuery.args,
-			slashQuery.isSlash,
+			setInput,
 		],
 	);
 
 	const handleQueueIntent = useCallback(() => {
-		if (slashQuery.isSlash && builtInCommandNames.has(slashQuery.command)) {
+		const sq = slashQueryRef.current;
+		if (sq.isSlash && builtInCommandNames.has(sq.command)) {
 			handleSend("steer");
 			return;
 		}
@@ -1324,8 +1319,6 @@ const gaugeTokens = contextTokenCount;
 		builtInCommandNames,
 		enqueueMessage,
 		handleSend,
-		slashQuery.command,
-		slashQuery.isSlash,
 	]);
 
 	const messagesRef = useRef(messages);
@@ -1417,7 +1410,8 @@ const gaugeTokens = contextTokenCount;
 
 	const handleKeyDown = useCallback(
 		(e: KeyboardEvent<HTMLTextAreaElement>) => {
-			if (showSlashPopup && slashQuery.isSlash && !slashQuery.args) {
+			const sq = slashQueryRef.current;
+			if (showSlashPopup && sq.isSlash && !sq.args) {
 				if (
 					["ArrowDown", "ArrowUp", "Enter", "Tab", "Escape"].includes(e.key)
 				) {
@@ -1451,7 +1445,6 @@ const gaugeTokens = contextTokenCount;
 			handleSend,
 			showFileMentionPopup,
 			showSlashPopup,
-			slashQuery,
 		],
 	);
 
@@ -1459,7 +1452,10 @@ const gaugeTokens = contextTokenCount;
 		(e: ChangeEvent<HTMLTextAreaElement>) => {
 			const textarea = e.target;
 			const value = textarea.value;
-			setInput(value);
+
+			// Update ref and slash query synchronously -- no React renders
+			inputValueRef.current = value;
+			slashQueryRef.current = parseSlashInput(value);
 			setCommandError(null);
 
 			// Keep textarea stable during dictation to avoid reflow storms.
@@ -1487,24 +1483,31 @@ const gaugeTokens = contextTokenCount;
 				}
 			}, 300);
 
-			if (value.startsWith("/")) {
-				setShowSlashPopup(true);
-				setShowFileMentionPopup(false);
-				setFileMentionQuery("");
-				return;
-			}
+			// Defer all React state updates to avoid blocking typing
+			requestAnimationFrame(() => {
+				startTransition(() => {
+					setCanSendInput(!!value.trim());
 
-			setShowSlashPopup(false);
+					if (value.startsWith("/")) {
+						setShowSlashPopup(true);
+						setShowFileMentionPopup(false);
+						setFileMentionQuery("");
+						return;
+					}
 
-			// Show file mention popup when typing @
-			const atMatch = value.match(/@[^\s]*$/);
-			if (atMatch) {
-				setShowFileMentionPopup(true);
-				setFileMentionQuery(atMatch[1]);
-			} else {
-				setShowFileMentionPopup(false);
-				setFileMentionQuery("");
-			}
+					setShowSlashPopup(false);
+
+					// Show file mention popup when typing @
+					const atMatch = value.match(/@[^\s]*$/);
+					if (atMatch) {
+						setShowFileMentionPopup(true);
+						setFileMentionQuery(atMatch[1]);
+					} else {
+						setShowFileMentionPopup(false);
+						setFileMentionQuery("");
+					}
+				});
+			});
 		},
 		[draftStorageKey, dictation.isActive],
 	);
@@ -1550,11 +1553,12 @@ const gaugeTokens = contextTokenCount;
 	const handleFileSelect = useCallback((file: FileAttachment) => {
 		setFileAttachments((prev) => [...prev, file]);
 		// Remove the @query from input
-		setInput((prev) => prev.replace(/@[^\s]*$/, ""));
+		const newValue = inputValueRef.current.replace(/@[^\s]*$/, "");
+		setInput(newValue);
 		setShowFileMentionPopup(false);
 		setFileMentionQuery("");
 		inputRef.current?.focus();
-	}, []);
+	}, [setInput]);
 
 	const handleStop = useCallback(async () => {
 		await abort();
@@ -1841,7 +1845,7 @@ const gaugeTokens = contextTokenCount;
 					<button
 						type="button"
 						onClick={handleScrollToBottom}
-						className="absolute bottom-3 right-4 z-10 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-primary text-primary-foreground text-xs shadow-md hover:bg-primary/90 transition-colors"
+						className="absolute bottom-3 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-primary text-primary-foreground text-xs shadow-md hover:bg-primary/90 transition-colors"
 						title="Jump to bottom"
 					>
 						<svg
@@ -1910,11 +1914,12 @@ const gaugeTokens = contextTokenCount;
 					>
 						<SlashCommandPopup
 							commands={slashCommands}
-							query={slashQuery.command}
-							isOpen={showSlashPopup && slashQuery.isSlash && !slashQuery.args}
+							query={slashQueryRef.current.command}
+							isOpen={showSlashPopup && slashQueryRef.current.isSlash && !slashQueryRef.current.args}
 							onSelect={(cmd) => {
+								const sq = slashQueryRef.current;
 								if (builtInCommandNames.has(cmd.name)) {
-									runSlashCommand(cmd.name, slashQuery.args)
+									runSlashCommand(cmd.name, sq.args)
 										.then((result) => {
 											if (result.clearInput) {
 												setInput("");
@@ -1936,8 +1941,8 @@ const gaugeTokens = contextTokenCount;
 									return;
 								}
 
-								if (slashQuery.args.trim()) {
-									send(`/${cmd.name} ${slashQuery.args.trim()}`)
+								if (sq.args.trim()) {
+									send(`/${cmd.name} ${sq.args.trim()}`)
 										.then(() => {
 											setInput("");
 											setFileAttachments([]);
@@ -2066,7 +2071,7 @@ const gaugeTokens = contextTokenCount;
 						{hasVoice && dictation.isActive ? (
 							<DictationOverlay
 								open
-								value={input}
+								value={inputValueRef.current}
 								liveTranscript={dictation.liveTranscript}
 								placeholder={t.speakNow}
 								vadProgress={dictation.vadProgress}
@@ -2132,7 +2137,7 @@ const gaugeTokens = contextTokenCount;
 								enterKeyHint="send"
 								data-form-type="other"
 								placeholder={t.inputPlaceholder}
-								value={input}
+								defaultValue={inputInitialValue}
 								onChange={handleInputChange}
 								onKeyDown={handleKeyDown}
 								onPaste={(e) => {
@@ -2225,7 +2230,7 @@ const gaugeTokens = contextTokenCount;
 						onPointerUp={handleSendPointerUp}
 						onPointerCancel={handleSendPointerUp}
 						onPointerLeave={handleSendPointerLeave}
-						disabled={!input.trim() && fileAttachments.length === 0}
+						disabled={!canSendInput && fileAttachments.length === 0}
 						className="flex-shrink-0 h-8 px-2 flex items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed transition-colors bg-transparent hover:bg-transparent"
 						variant="ghost"
 						size="icon"
