@@ -17,7 +17,7 @@ use log::{debug, error, info, warn};
 use serde::Serialize;
 use uuid::Uuid;
 
-use crate::agent_browser::{AgentBrowserConfig, AgentBrowserManager};
+use crate::agent_browser::{AgentBrowserConfig, AgentBrowserManager, browser_session_name};
 
 #[derive(Debug, Clone)]
 pub enum BrowserAction {
@@ -1228,19 +1228,21 @@ impl SessionService {
     }
 
     async fn start_agent_browser_daemon(&self, session: &Session) {
-        if let Err(err) = self.agent_browser.ensure_session(&session.id).await {
+        let browser_session_id = browser_session_name(&session.id);
+        if let Err(err) = self.agent_browser.ensure_session(&browser_session_id).await {
             warn!(
-                "Failed to start agent-browser daemon for session {}: {}",
-                session.id, err
+                "Failed to start agent-browser daemon for session {} (browser session {}): {}",
+                session.id, browser_session_id, err
             );
         }
     }
 
     async fn stop_agent_browser_daemon(&self, session_id: &str) {
-        if let Err(err) = self.agent_browser.stop_session(session_id).await {
+        let browser_session_id = browser_session_name(session_id);
+        if let Err(err) = self.agent_browser.stop_session(&browser_session_id).await {
             warn!(
-                "Failed to stop agent-browser daemon for session {}: {}",
-                session_id, err
+                "Failed to stop agent-browser daemon for session {} (browser session {}): {}",
+                session_id, browser_session_id, err
             );
         }
     }
