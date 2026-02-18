@@ -1473,6 +1473,21 @@ install_rust_tool() {
   tmpdir=$(mktemp -d)
   trap "rm -rf '$tmpdir'" RETURN
 
+  # Special-case ignr to avoid native-tls by forcing rustls-tls
+  if [[ "$tool" == "ignr" && -z "$pkg" ]]; then
+    log_info "Installing ignr with rustls-tls (avoids OpenSSL)"
+    local ignr_dir="$tmpdir/src"
+    if git clone --depth 1 "${BYTEOWLZ_GITHUB}/${repo}.git" "$ignr_dir" 2>/dev/null; then
+      perl -pi -e 's/reqwest = \{ version = "0\.12", features = \["blocking"\] \}/reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }/' "$ignr_dir/Cargo.toml"
+      if cargo install --path "$ignr_dir" --root "$tmpdir" 2>&1 | tail -5; then
+        if [[ -x "$tmpdir/bin/$tool" ]]; then
+          install_binary_global "$tmpdir/bin/$tool" "$tool"
+          return 0
+        fi
+      fi
+    fi
+  fi
+
   # Build cargo install args
   local -a cargo_args=(--git "${BYTEOWLZ_GITHUB}/${repo}.git" --root "$tmpdir")
   if [[ -n "$pkg" ]]; then
