@@ -50,22 +50,22 @@
     },
     {
       "id": "9",
-      "content": "Update backend pi_translator.rs to match new status keys",
-      "status": "in_progress",
+      "content": "Update backend: octo_protocol -> oqto_protocol, status keys",
+      "status": "completed",
       "priority": "high"
     },
     {
       "id": "10",
       "content": "Update backend pi_manager.rs references",
-      "status": "pending",
+      "status": "completed",
       "priority": "high"
     },
     {
       "id": "11",
       "content": "Build and test backend after changes",
-      "status": "pending",
+      "status": "completed",
       "priority": "high"
     }
   ],
-  "updated_at": "2026-02-18T18:27:58.098Z"
+  "updated_at": "2026-02-18T18:30:41.311Z"
 }

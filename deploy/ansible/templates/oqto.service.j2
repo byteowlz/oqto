@@ -4,14 +4,14 @@
 [Unit]
 Description=Oqto Control Plane Server
 After=network.target
-{% if octo_mode == "multi" %}
+{% if oqto_mode == "multi" %}
 Wants=oqto-agent@.service
 {% endif %}
 
 [Service]
 Type=simple
-User={{ octo_user }}
-Group={{ octo_group }}
+User={{ oqto_user }}
+Group={{ oqto_group }}
 
 # Working directory
 WorkingDirectory=/var/lib/oqto
@@ -28,7 +28,7 @@ RuntimeDirectoryMode=0755
 ConfigurationDirectory=oqto
 
 # Main process
-{% if octo_backend == "local" %}
+{% if oqto_backend == "local" %}
 ExecStart=/usr/local/bin/oqto serve --local-mode
 {% else %}
 ExecStart=/usr/local/bin/oqto serve

@@ -21,8 +21,8 @@ all:
     admin_ssh_key: "ssh-ed25519 AAAA... your-key-here"
 
     # Oqto configuration
-    octo_mode: single        # single or multi
-    octo_backend: local      # local or container
+    oqto_mode: single        # single or multi
+    oqto_backend: local      # local or container
 
     # SSH configuration
     ssh_port: 22
