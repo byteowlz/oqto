@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Octo connects to your control plane on the local network.</string>
+	<string>Oqto connects to your control plane on the local network.</string>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_http._tcp</string>

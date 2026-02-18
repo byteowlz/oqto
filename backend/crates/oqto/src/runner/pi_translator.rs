@@ -8,24 +8,24 @@
 //! ## Design Rules
 //!
 //! 1. `agent_start`/`agent_end` are authoritative idle/working transitions.
-//! 2. Extension `setStatus` (via `octo_phase`) only refines phase WITHIN working state.
+//! 2. Extension `setStatus` (via `oqto_phase`) only refines phase WITHIN working state.
 //! 3. Native events (tool_execution_start, auto_compaction_start) also refine phase.
 //! 4. One Pi event can produce 0..N canonical events (returned as `Vec`).
 //! 5. The translator is stateful: it holds a `SessionState` and a current message ID.
 
 use serde_json::Value;
 
-use octo_protocol::Part;
-use octo_protocol::events::{
+use oqto_protocol::Part;
+use oqto_protocol::events::{
     AgentPhase, CommandResponse, CompactReason, EventPayload, InputRequest, NotifyLevel,
     ToolCallInfo,
 };
-use octo_protocol::messages::{Message, Role, StopReason, Usage};
+use oqto_protocol::messages::{Message, Role, StopReason, Usage};
 
 use crate::pi::{
     AgentMessage, AssistantMessageEvent, ContentBlock, ExtensionUiRequest, ImageSource, PiEvent,
 };
-use octo_protocol::runner::SessionState;
+use oqto_protocol::runner::SessionState;
 
 // ============================================================================
 // Translator
@@ -416,13 +416,13 @@ impl PiTranslator {
     // -- Extension UI events --
 
     fn on_extension_ui(&mut self, req: &ExtensionUiRequest) -> Vec<EventPayload> {
-        // Check if this is an octo_phase status update from our bridge extension.
+        // Check if this is an oqto_phase status update from our bridge extension.
         if req.method == "setStatus" {
             if let Some(ref key) = req.status_key {
-                if key == "octo_phase" {
-                    return self.on_octo_phase_status(req.status_text.as_deref());
+                if key == "oqto_phase" {
+                    return self.on_oqto_phase_status(req.status_text.as_deref());
                 }
-                if key == "octo_title_changed" {
+                if key == "oqto_title_changed" {
                     return self.on_title_changed(req.status_text.as_deref());
                 }
             }
@@ -472,7 +472,7 @@ impl PiTranslator {
                 }]
             }
             "setStatus" => {
-                // Non-octo_phase status updates pass through as Status events.
+                // Non-oqto_phase status updates pass through as Status events.
                 vec![EventPayload::Status {
                     key: req.status_key.clone().unwrap_or_default(),
                     text: req.status_text.clone(),
@@ -482,7 +482,7 @@ impl PiTranslator {
         }
     }
 
-    fn on_octo_phase_status(&mut self, status_text: Option<&str>) -> Vec<EventPayload> {
+    fn on_oqto_phase_status(&mut self, status_text: Option<&str>) -> Vec<EventPayload> {
         match status_text {
             Some(text) if !text.is_empty() => {
                 if let Some((phase, detail)) = AgentPhase::from_extension_status(text) {
@@ -958,7 +958,7 @@ mod tests {
     }
 
     #[test]
-    fn test_extension_octo_phase() {
+    fn test_extension_oqto_phase() {
         let mut t = PiTranslator::new();
         t.translate(&PiEvent::AgentStart);
 
@@ -969,7 +969,7 @@ mod tests {
             message: None,
             options: None,
             timeout: None,
-            status_key: Some("octo_phase".to_string()),
+            status_key: Some("oqto_phase".to_string()),
             status_text: Some("tool_running:bash".to_string()),
             widget_key: None,
             widget_lines: None,
@@ -1002,7 +1002,7 @@ mod tests {
             message: None,
             options: None,
             timeout: None,
-            status_key: Some("octo_phase".to_string()),
+            status_key: Some("oqto_phase".to_string()),
             status_text: Some("generating".to_string()),
             widget_key: None,
             widget_lines: None,
