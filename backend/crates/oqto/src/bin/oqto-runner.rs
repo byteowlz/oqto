@@ -12,12 +12,12 @@
 //! [local]
 //! fileserver_binary = "oqto-files"
 //! ttyd_binary = "ttyd"
-//! workspace_dir = "~/projects"
+//! workspace_dir = "~/oqto"
 //!
 //! [runner]
 //! # Runner-specific settings
 //! runner_id = "workstation-1"
-//! pi_sessions_dir = "~/.local/share/pi/sessions"
+//! pi_sessions_dir = "~/.pi/agent/sessions"
 //! memories_dir = "~/.local/share/mmry"
 //! ```
 //!
@@ -117,7 +117,7 @@ impl Default for LocalSection {
         Self {
             fileserver_binary: "oqto-files".to_string(),
             ttyd_binary: "ttyd".to_string(),
-            workspace_dir: "~/projects".to_string(),
+            workspace_dir: "~/oqto".to_string(),
         }
     }
 }
@@ -223,7 +223,7 @@ impl RunnerUserConfig {
                 .runner
                 .pi_sessions_dir
                 .map(|p| Self::expand_path(&p, &home))
-                .unwrap_or_else(|| data_dir.join("pi").join("sessions")),
+                .unwrap_or_else(|| PathBuf::from(&home).join(".pi").join("agent").join("sessions")),
             memories_dir: config_file
                 .runner
                 .memories_dir
