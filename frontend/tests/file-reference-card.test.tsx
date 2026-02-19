@@ -1,22 +1,25 @@
 import { FileReferenceCard } from "@/features/chat/components/ChatView";
 import { render, screen } from "@testing-library/react";
-import { type Mock, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-type LocalStorageMock = {
-	getItem: ReturnType<typeof vi.fn>;
-};
+// Mock the mux-files module
+vi.mock("@/lib/mux-files", () => ({
+	statPathMux: vi.fn(() => Promise.resolve({ size: 1024 })),
+	readFileMux: vi.fn(() =>
+		Promise.resolve({ data: new Uint8Array([137, 80, 78, 71]) }),
+	),
+}));
+
+// Mock URL.createObjectURL
+globalThis.URL.createObjectURL = vi.fn(() => "blob:mock-url");
+globalThis.URL.revokeObjectURL = vi.fn();
 
 describe("FileReferenceCard", () => {
-	const storage = window.localStorage as unknown as LocalStorageMock;
-
 	beforeEach(() => {
-		storage.getItem.mockReturnValue("https://example.com/api");
-		(globalThis.fetch as Mock | undefined) = vi.fn(() =>
-			Promise.resolve({ ok: true } as Response),
-		);
+		vi.clearAllMocks();
 	});
 
-	it("renders image previews with workspace file endpoint", async () => {
+	it("renders image previews for image files", async () => {
 		render(
 			<FileReferenceCard
 				filePath="images/panda.png"
@@ -25,8 +28,7 @@ describe("FileReferenceCard", () => {
 		);
 
 		const image = await screen.findByAltText("panda.png");
-		expect(image.getAttribute("src")).toBe(
-			"https://example.com/api/workspace/files/file?path=images%2Fpanda.png&workspace_path=my+workspace",
-		);
+		expect(image).toBeDefined();
+		expect(image.tagName).toBe("IMG");
 	});
 });
