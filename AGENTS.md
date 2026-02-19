@@ -310,6 +310,27 @@ just gen-types        # Generate TypeScript types from Rust structs
 
 ---
 
+## Admin Scripts
+
+Administrative scripts for managing users, EAVS keys, Pi configuration, skills, and bootstrap documents live in `scripts/admin/`. They are invoked via `oqto-admin` or `just admin` recipes.
+
+```bash
+just admin help                          # Show all admin commands
+just admin-status                        # Show user provisioning status
+just admin-eavs --all                    # Provision EAVS keys for all users
+just admin-eavs --sync-models --all      # Regenerate models.json for all users
+just admin-sync-pi --all                 # Sync Pi config (models, settings, AGENTS.md)
+just admin-skills --list                 # List available skills
+just admin-skills --install <name> --all # Install a skill for all users
+just admin-templates --sync              # Sync templates from remote repo
+just admin-templates --deploy --all      # Deploy bootstrap docs to all users
+just admin-sync-all                      # Full sync: eavs + pi config + skills
+```
+
+See `scripts/admin/README.md` for full documentation.
+
+---
+
 ## External Dependencies
 
 Oqto depends on several external tools and services. Version tracking is maintained in `dependencies.toml`.
