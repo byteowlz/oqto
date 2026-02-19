@@ -18,7 +18,7 @@ pub mod ws_multiplexed;
 // Re-export error types for external use
 #[allow(unused_imports)]
 pub use error::{ApiError, ApiResult, ErrorResponse};
-pub use routes::create_router_with_config;
+pub use routes::{create_admin_router_with_config, create_router_with_config};
 pub use state::{
     AppState, MmryState, SessionUiState, TemplatesRepoType, TemplatesState, VisualizerVoiceState,
     VoiceState,

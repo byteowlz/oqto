@@ -1074,6 +1074,13 @@ install_pi_extensions_all_users() {
 # Shell Tools Installation
 # ==============================================================================
 
+ensure_fdfind_symlink() {
+  if command_exists fdfind && ! command_exists fd; then
+    sudo ln -sf "$(command -v fdfind)" /usr/local/bin/fd
+    log_success "Created fd -> fdfind symlink"
+  fi
+}
+
 install_shell_tools() {
   log_step "Installing shell tools"
 
@@ -1092,6 +1099,7 @@ install_shell_tools() {
       tools_to_install+=("fd")
     else
       log_success "fd already installed (as fdfind)"
+      ensure_fdfind_symlink
     fi
   else
     log_success "fd already installed: $(fd --version | head -1)"
@@ -1821,6 +1829,28 @@ install_agntz() {
   download_or_build_tool agntz
 }
 
+install_typst_from_cargo() {
+  if ! command_exists cargo; then
+    log_warn "Cargo not available; cannot install typst"
+    return 1
+  fi
+
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  trap "rm -rf '$tmpdir'" RETURN
+
+  if cargo install typst-cli --locked --root "$tmpdir" 2>&1 | tail -3; then
+    if [[ -x "$tmpdir/bin/typst" ]]; then
+      sudo install -m 755 "$tmpdir/bin/typst" "${TOOLS_INSTALL_DIR}/typst"
+      log_success "typst installed"
+      return 0
+    fi
+  fi
+
+  log_warn "typst cargo install failed"
+  return 1
+}
+
 install_typst() {
   # typst is a dependency of tmpltr (document generation)
   if command_exists typst; then
@@ -1844,7 +1874,7 @@ install_typst() {
 
   if [[ -z "$target" ]]; then
     log_warn "No pre-built typst for ${os}-${arch}, trying cargo install..."
-    cargo install typst-cli 2>&1 | tail -3
+    install_typst_from_cargo
     return $?
   fi
 
@@ -1863,7 +1893,7 @@ install_typst() {
     fi
   else
     log_warn "Failed to download typst, trying cargo install..."
-    cargo install typst-cli 2>&1 | tail -3
+    install_typst_from_cargo
   fi
   rm -rf "$tmpdir"
 }
@@ -1884,6 +1914,19 @@ install_slidev() {
     log_warn "Neither bun nor npm found, cannot install slidev"
     return 1
   fi
+
+  local slidev_path=""
+  if command_exists slidev; then
+    slidev_path="$(command -v slidev)"
+  elif [[ -x "$HOME/.bun/bin/slidev" ]]; then
+    slidev_path="$HOME/.bun/bin/slidev"
+  fi
+
+  if [[ -n "$slidev_path" && "$slidev_path" != "${TOOLS_INSTALL_DIR}/slidev" ]]; then
+    sudo install -m 755 "$slidev_path" "${TOOLS_INSTALL_DIR}/slidev"
+    log_success "Installed slidev to ${TOOLS_INSTALL_DIR}/slidev"
+  fi
+
   log_success "slidev installed"
 }
 
