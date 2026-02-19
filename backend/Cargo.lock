@@ -2614,155 +2614,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "octo"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "axum",
- "axum-extra",
- "axum-test",
- "base64",
- "bcrypt",
- "chrono",
- "clap",
- "clap_complete",
- "comrak",
- "config",
- "dashmap",
- "dirs 5.0.1",
- "env_logger",
- "fork",
- "fuser",
- "futures",
- "glob",
- "hstry-core",
- "http-body-util",
- "hyper",
- "hyper-util",
- "jsonwebtoken",
- "libc",
- "log",
- "nanoid",
- "notify-rust",
- "octo-files",
- "octo-protocol",
- "once_cell",
- "prost",
- "rand 0.9.2",
- "regex",
- "reqwest",
- "reqwest-eventsource",
- "rustix",
- "serde",
- "serde_json",
- "serde_yaml",
- "shellexpand",
- "sqlx",
- "syntect",
- "tempfile",
- "thiserror 2.0.18",
- "tokio",
- "tokio-stream",
- "tokio-tungstenite 0.26.2",
- "tokio-util",
- "toml 0.8.23",
- "tonic",
- "tower",
- "tower-http",
- "tracing",
- "tracing-subscriber",
- "ts-rs",
- "urlencoding",
- "uuid",
-]
-
-[[package]]
-name = "octo-browser"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "dirs 5.0.1",
- "serde",
- "serde_json",
- "uuid",
-]
-
-[[package]]
-name = "octo-files"
-version = "0.1.0"
-dependencies = [
- "axum",
- "bytes",
- "clap",
- "futures",
- "mime_guess",
- "notify",
- "serde",
- "serde_json",
- "syntect",
- "tempfile",
- "thiserror 2.0.18",
- "tokio",
- "tokio-util",
- "toml 0.8.23",
- "tower",
- "tower-http",
- "tracing",
- "tracing-subscriber",
- "walkdir",
- "zip",
-]
-
-[[package]]
-name = "octo-protocol"
-version = "0.1.0"
-dependencies = [
- "hstry-core",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "octo-scaffold"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "dirs-next",
- "serde",
- "serde_json",
- "shellexpand",
- "thiserror 2.0.18",
- "tokio",
- "toml 0.8.23",
- "tracing",
- "tracing-subscriber",
- "walkdir",
-]
-
-[[package]]
-name = "octo-setup"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "dirs 5.0.1",
- "serde",
- "shellexpand",
- "toml 0.8.23",
-]
-
-[[package]]
-name = "octo-usermgr"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "once_cell"
 version = "1.21.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2851,6 +2702,156 @@ name = "option-ext"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
+
+[[package]]
+name = "oqto"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum",
+ "axum-extra",
+ "axum-test",
+ "base64",
+ "bcrypt",
+ "chrono",
+ "clap",
+ "clap_complete",
+ "comrak",
+ "config",
+ "dashmap",
+ "dirs 5.0.1",
+ "env_logger",
+ "fork",
+ "fuser",
+ "futures",
+ "glob",
+ "hstry-core",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "jsonwebtoken",
+ "libc",
+ "log",
+ "nanoid",
+ "notify-rust",
+ "once_cell",
+ "oqto-files",
+ "oqto-protocol",
+ "prost",
+ "rand 0.9.2",
+ "regex",
+ "reqwest",
+ "reqwest-eventsource",
+ "rustix",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "shellexpand",
+ "sqlx",
+ "syntect",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-stream",
+ "tokio-tungstenite 0.26.2",
+ "tokio-util",
+ "toml 0.8.23",
+ "tonic",
+ "tower",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber",
+ "ts-rs",
+ "urlencoding",
+ "uuid",
+]
+
+[[package]]
+name = "oqto-browser"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "dirs 5.0.1",
+ "rustix",
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
+name = "oqto-files"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "bytes",
+ "clap",
+ "futures",
+ "mime_guess",
+ "notify",
+ "serde",
+ "serde_json",
+ "syntect",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "toml 0.8.23",
+ "tower",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber",
+ "walkdir",
+ "zip",
+]
+
+[[package]]
+name = "oqto-protocol"
+version = "0.1.0"
+dependencies = [
+ "hstry-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "oqto-scaffold"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "dirs-next",
+ "serde",
+ "serde_json",
+ "shellexpand",
+ "thiserror 2.0.18",
+ "tokio",
+ "toml 0.8.23",
+ "tracing",
+ "tracing-subscriber",
+ "walkdir",
+]
+
+[[package]]
+name = "oqto-setup"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "dirs 5.0.1",
+ "serde",
+ "shellexpand",
+ "toml 0.8.23",
+]
+
+[[package]]
+name = "oqto-usermgr"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "ordered-multimap"

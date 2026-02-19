@@ -66,13 +66,68 @@ reload-fast:
     ./scripts/fast-reload.sh
 
 # Install all dependencies and binaries
-install:
+install-all:
     cd frontend && bun install
     cd backend/crates/oqto-browserd && bun install && bun run build
     cd backend && cargo install --path crates/oqto
     cd backend && cargo install --path crates/oqto --bin oqto-runner
     cd backend && cargo install --path crates/oqto-files
     cd ../hstry && cargo install --path crates/hstry-cli || echo "hstry build failed, skipping"
+
+# Install a specific crate by name (e.g. just install oqto-browser)
+# Available: oqto, oqto-files, oqto-browser, oqto-scaffold, oqto-setup, oqto-usermgr
+install crate:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    case "{{crate}}" in
+        oqto)
+            cd backend && cargo install --path crates/oqto
+            ;;
+        oqto-runner)
+            cd backend && cargo install --path crates/oqto --bin oqto-runner
+            ;;
+        oqtoctl)
+            cd backend && cargo install --path crates/oqto --bin oqtoctl
+            ;;
+        oqto-sandbox)
+            cd backend && cargo install --path crates/oqto --bin oqto-sandbox
+            ;;
+        pi-bridge)
+            cd backend && cargo install --path crates/oqto --bin pi-bridge
+            ;;
+        oqto-files)
+            cd backend && cargo install --path crates/oqto-files
+            ;;
+        oqto-browser)
+            (cd backend/crates/oqto-browserd && bun install && bun run build && bunx playwright install --with-deps chromium)
+            cd backend && cargo install --path crates/oqto-browser
+            ;;
+        oqto-scaffold)
+            cd backend && cargo install --path crates/oqto-scaffold
+            ;;
+        oqto-setup)
+            cd backend && cargo install --path crates/oqto-setup
+            ;;
+        oqto-usermgr)
+            cd backend && cargo install --path crates/oqto-usermgr
+            ;;
+        *)
+            echo "Unknown crate: {{crate}}"
+            echo ""
+            echo "Available crates:"
+            echo "  oqto           - Main backend server"
+            echo "  oqto-runner    - Multi-user process daemon"
+            echo "  oqtoctl        - CLI for server management"
+            echo "  oqto-sandbox   - Sandbox wrapper"
+            echo "  pi-bridge      - HTTP/WebSocket bridge for Pi"
+            echo "  oqto-files     - File access server"
+            echo "  oqto-browser   - Browser CLI + daemon"
+            echo "  oqto-scaffold  - Project scaffolding"
+            echo "  oqto-setup     - Setup utility"
+            echo "  oqto-usermgr   - User management"
+            exit 1
+            ;;
+    esac
 
 # Install binaries + systemd unit system-wide (Linux).
 #
@@ -89,7 +144,7 @@ install-system:
     # Prompt for sudo once up-front
     sudo -v
 
-    just install
+    just install-all
     
     # Install sldr binaries (as current user, not sudo - avoids rustup issues with root)
     cd ../sldr && cargo install --path crates/sldr-cli && cargo install --path crates/sldr-server
