@@ -73,7 +73,7 @@ struct Args {
 
     /// Oqto server URL for prompts
     #[arg(long, default_value = "http://localhost:8080")]
-    octo_server: String,
+    oqto_server: String,
 
     /// Run in foreground (don't daemonize)
     #[arg(short, long)]
@@ -117,7 +117,7 @@ struct GuardedFs {
     config: GuardConfig,
 
     /// Oqto server URL for prompts
-    octo_server: String,
+    oqto_server: String,
 
     /// Inode to entry mapping
     inodes: RwLock<HashMap<u64, InodeEntry>>,
@@ -139,7 +139,7 @@ struct GuardedFs {
 }
 
 impl GuardedFs {
-    fn new(config: GuardConfig, octo_server: String, runtime: tokio::runtime::Handle) -> Self {
+    fn new(config: GuardConfig, oqto_server: String, runtime: tokio::runtime::Handle) -> Self {
         // Compile policy patterns
         let policy_patterns: Vec<(Pattern, GuardPolicy)> = config
             .policy
@@ -151,7 +151,7 @@ impl GuardedFs {
 
         let mut fs = Self {
             config,
-            octo_server,
+            oqto_server,
             inodes: RwLock::new(HashMap::new()),
             path_to_inode: RwLock::new(HashMap::new()),
             next_inode: RwLock::new(FUSE_ROOT_ID + 1),
@@ -357,7 +357,7 @@ impl GuardedFs {
             info!("Requesting approval for {} access to {:?}", operation, path);
 
             match client
-                .post(format!("{}/internal/prompt", self.octo_server))
+                .post(format!("{}/internal/prompt", self.oqto_server))
                 .json(&body)
                 .send()
                 .await
@@ -649,7 +649,7 @@ fn main() -> Result<()> {
         .build()?;
 
     // Create filesystem
-    let fs = GuardedFs::new(guard_config, args.octo_server, runtime.handle().clone());
+    let fs = GuardedFs::new(guard_config, args.oqto_server, runtime.handle().clone());
 
     // Build mount options
     let mut options = vec![

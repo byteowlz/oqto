@@ -7,7 +7,7 @@
 //! this daemon which strictly validates all inputs.
 //!
 //! Protocol: newline-delimited JSON over unix socket.
-//!   Request:  {"cmd": "create-user", "args": {"username": "octo_foo", "uid": 2000, ...}}
+//!   Request:  {"cmd": "create-user", "args": {"username": "oqto_foo", "uid": 2000, ...}}
 //!   Response: {"ok": true} or {"ok": false, "error": "message"}
 //!
 //! Security invariants:

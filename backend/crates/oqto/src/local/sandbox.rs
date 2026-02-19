@@ -1005,18 +1005,18 @@ impl SandboxConfig {
         // SECURITY: Always bind .oqto/ as read-only to prevent agents from
         // modifying their own sandbox configuration. This is applied AFTER
         // the workspace bind, so it takes precedence.
-        let octo_dir = workspace.join(".oqto");
-        if octo_dir.exists() {
-            let octo_dir_str = octo_dir.to_string_lossy().to_string();
+        let oqto_dir = workspace.join(".oqto");
+        if oqto_dir.exists() {
+            let oqto_dir_str = oqto_dir.to_string_lossy().to_string();
             args.push("--ro-bind".to_string());
-            args.push(octo_dir_str.clone());
-            args.push(octo_dir_str);
-            debug!("Bound .oqto/ as read-only: {:?}", octo_dir);
+            args.push(oqto_dir_str.clone());
+            args.push(oqto_dir_str);
+            debug!("Bound .oqto/ as read-only: {:?}", oqto_dir);
         } else {
             // If .oqto/ doesn't exist, mount an empty tmpfs to prevent creation
             // This blocks: mkdir .oqto && echo "enabled=false" > .oqto/sandbox.toml
             args.push("--tmpfs".to_string());
-            args.push(octo_dir.to_string_lossy().to_string());
+            args.push(oqto_dir.to_string_lossy().to_string());
             debug!("Mounted empty tmpfs at .oqto/ to prevent creation");
         }
 

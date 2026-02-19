@@ -628,13 +628,13 @@ pub(crate) async fn provision_eavs_for_user(
     eavs_client: &crate::eavs::EavsClient,
     linux_users: &crate::local::LinuxUsersConfig,
     linux_username: &str,
-    octo_user_id: &str,
+    oqto_user_id: &str,
 ) -> anyhow::Result<String> {
     use crate::eavs::CreateKeyRequest;
 
     // 1. Create virtual key with oauth_user binding
     let key_req =
-        CreateKeyRequest::new(format!("oqto-user-{}", octo_user_id)).oauth_user(octo_user_id);
+        CreateKeyRequest::new(format!("oqto-user-{}", oqto_user_id)).oauth_user(oqto_user_id);
 
     let key_resp = eavs_client
         .create_key(key_req)

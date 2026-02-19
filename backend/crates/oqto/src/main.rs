@@ -2080,12 +2080,12 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         .saturating_mul(1024 * 1024);
 
     // Create settings services
-    let octo_schema: serde_json::Value =
+    let oqto_schema: serde_json::Value =
         serde_json::from_str(include_str!("../examples/backend.config.schema.json"))
             .expect("Failed to parse embedded oqto schema");
 
-    let octo_config_dir = default_config_dir()?;
-    let settings_oqto = settings::SettingsService::new(octo_schema, octo_config_dir, "config.toml")
+    let oqto_config_dir = default_config_dir()?;
+    let settings_oqto = settings::SettingsService::new(oqto_schema, oqto_config_dir, "config.toml")
         .context("Failed to create oqto settings service")?;
 
     // Create mmry settings service if mmry is enabled

@@ -477,7 +477,7 @@ impl SessionService {
         } else {
             // Multi-user mode: connect to user's runner socket.
             // Convert platform user_id (e.g., "hansgerd-u469") to Linux username
-            // (e.g., "octo_hansgerd-u469") using the configured prefix.
+            // (e.g., "oqto_hansgerd-u469") using the configured prefix.
             let linux_user = if let Some(ref prefix) = self.config.linux_user_prefix {
                 let sanitized = crate::local::linux_users::sanitize_username(user_id);
                 if crate::local::linux_users::user_exists(&sanitized) {
