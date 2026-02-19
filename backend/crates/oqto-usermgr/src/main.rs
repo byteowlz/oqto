@@ -862,27 +862,58 @@ fn cmd_setup_user_shell(args: &serde_json::Value) -> Response {
 /// Errors are logged but non-fatal -- the user will still work with
 /// a bare zsh prompt if dotfile creation fails.
 fn write_user_dotfiles(home: &str, username: &str, group: &str) {
-    let zshrc_path = format!("{home}/.zshrc");
-    let starship_dir = format!("{home}/.config");
-    let starship_path = format!("{starship_dir}/starship.toml");
+    let dotfiles_src = std::path::Path::new("/usr/share/oqto/oqto-templates/dotfiles");
 
-    // .zshrc
-    if let Err(e) = std::fs::write(&zshrc_path, ZSHRC_CONTENT) {
-        eprintln!("warning: writing {zshrc_path}: {e}");
+    if dotfiles_src.is_dir() {
+        // Copy dotfiles from templates repo
+        if let Err(e) = copy_dir_recursive(dotfiles_src, std::path::Path::new(home)) {
+            eprintln!("warning: copying dotfiles from templates: {e}");
+        }
+    } else {
+        // Fall back to hardcoded dotfiles
+        eprintln!("info: dotfiles template dir not found, using built-in defaults");
+        let zshrc_path = format!("{home}/.zshrc");
+        if let Err(e) = std::fs::write(&zshrc_path, ZSHRC_CONTENT) {
+            eprintln!("warning: writing {zshrc_path}: {e}");
+        }
+
+        let starship_dir = format!("{home}/.config/starship");
+        if let Err(e) = std::fs::create_dir_all(&starship_dir) {
+            eprintln!("warning: creating {starship_dir}: {e}");
+        }
+        let starship_path = format!("{starship_dir}/starship.toml");
+        if let Err(e) = std::fs::write(&starship_path, STARSHIP_TOML) {
+            eprintln!("warning: writing {starship_path}: {e}");
+        }
     }
 
-    // starship.toml
-    if let Err(e) = std::fs::create_dir_all(&starship_dir) {
-        eprintln!("warning: creating {starship_dir}: {e}");
-    }
-    if let Err(e) = std::fs::write(&starship_path, STARSHIP_TOML) {
-        eprintln!("warning: writing {starship_path}: {e}");
-    }
-
-    // chown both to the user
+    // chown the entire home to the user
     let owner = format!("{username}:{group}");
-    let _ = run_cmd("/usr/bin/chown", &[&owner, &zshrc_path]);
-    let _ = run_cmd("/usr/bin/chown", &["-R", &owner, &starship_dir]);
+    let _ = run_cmd("/usr/bin/chown", &["-R", &owner, home]);
+}
+
+/// Recursively copy all files from src into dst, merging with existing directories.
+fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+
+        if file_type.is_dir() {
+            std::fs::create_dir_all(&dst_path)?;
+            copy_dir_recursive(&src_path, &dst_path)?;
+        } else {
+            // Only copy if destination doesn't exist (don't overwrite user customizations)
+            if !dst_path.exists() {
+                if let Some(parent) = dst_path.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::copy(&src_path, &dst_path)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 const ZSHRC_CONTENT: &str = r#"# Oqto platform shell configuration
