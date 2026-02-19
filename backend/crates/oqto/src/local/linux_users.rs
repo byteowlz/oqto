@@ -80,7 +80,7 @@ impl LinuxUsersConfig {
     ///
     /// Projects use a different prefix to distinguish them from user accounts:
     /// - User: oqto_alice
-    /// - Project: octo_proj_myproject
+    /// - Project: oqto_proj_myproject
     pub fn project_username(&self, project_id: &str) -> String {
         format!(
             "{}{}{}",
@@ -526,7 +526,7 @@ impl LinuxUsersConfig {
 
             // User exists and is verified - ensure runner is running
             self.ensure_group()?;
-            self.ensure_octo_runner_running(linux_username, uid)
+            self.ensure_oqto_runner_running(linux_username, uid)
                 .with_context(|| format!("ensuring oqto-runner for user '{}'", linux_username))?;
 
             return Ok((uid, linux_username.to_string()));
@@ -542,7 +542,7 @@ impl LinuxUsersConfig {
         // Ensure the per-user oqto-runner daemon is enabled and started.
         // This is required for multi-user components that must run as the target Linux user
         // (e.g. per-user mmry instances, Pi runner mode).
-        self.ensure_octo_runner_running(&username, uid)
+        self.ensure_oqto_runner_running(&username, uid)
             .with_context(|| {
                 format!("starting oqto-runner for user '{}' (uid={})", username, uid)
             })?;
@@ -551,7 +551,7 @@ impl LinuxUsersConfig {
     }
 
     /// Ensure the per-user oqto-runner daemon is enabled and started.
-    fn ensure_octo_runner_running(&self, username: &str, uid: u32) -> Result<()> {
+    fn ensure_oqto_runner_running(&self, username: &str, uid: u32) -> Result<()> {
         let base_dir = Path::new("/run/oqto/runner-sockets");
         if !base_dir.exists() {
             anyhow::bail!(
@@ -1378,10 +1378,10 @@ mod tests {
     fn test_linux_username() {
         let config = LinuxUsersConfig::default();
         assert_eq!(config.linux_username("alice"), "oqto_alice");
-        assert_eq!(config.linux_username("Bob"), "octo_bob");
+        assert_eq!(config.linux_username("Bob"), "oqto_bob");
         assert_eq!(
             config.linux_username("user@example.com"),
-            "octo_user_example_com"
+            "oqto_user_example_com"
         );
     }
 

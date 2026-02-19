@@ -218,8 +218,8 @@
             "prefix": {
               "type": "string",
               "description": "Prefix for created Linux usernames (e.g., 'octo_' creates users like 'octo_alice').",
-              "default": "octo_",
-              "examples": ["octo_", "ws_", "dev_"]
+              "default": "oqto_",
+              "examples": ["oqto_", "ws_", "dev_"]
             },
             "uid_start": {
               "type": "integer",

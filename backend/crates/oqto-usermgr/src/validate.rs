@@ -224,12 +224,12 @@ mod tests {
 
     #[test]
     fn username_valid_with_hyphen() {
-        assert!(validate_username("octo_hans-gerd").is_ok());
+        assert!(validate_username("oqto_hans-gerd").is_ok());
     }
 
     #[test]
     fn username_valid_with_digits() {
-        assert!(validate_username("octo_user123").is_ok());
+        assert!(validate_username("oqto_user123").is_ok());
     }
 
     #[test]
@@ -239,7 +239,7 @@ mod tests {
 
     #[test]
     fn username_valid_underscore() {
-        assert!(validate_username("octo_my_user").is_ok());
+        assert!(validate_username("oqto_my_user").is_ok());
     }
 
     #[test]
@@ -264,59 +264,59 @@ mod tests {
 
     #[test]
     fn username_reject_uppercase() {
-        assert!(validate_username("octo_Admin").is_err());
+        assert!(validate_username("oqto_Admin").is_err());
     }
 
     #[test]
     fn username_reject_spaces() {
-        assert!(validate_username("octo_my user").is_err());
+        assert!(validate_username("oqto_my user").is_err());
     }
 
     #[test]
     fn username_reject_special_chars() {
-        assert!(validate_username("octo_user;whoami").is_err());
-        assert!(validate_username("octo_user$HOME").is_err());
-        assert!(validate_username("octo_user`id`").is_err());
-        assert!(validate_username("octo_user|cat").is_err());
-        assert!(validate_username("octo_user&bg").is_err());
-        assert!(validate_username("octo_user>file").is_err());
-        assert!(validate_username("octo_user<file").is_err());
-        assert!(validate_username("octo_user(parens)").is_err());
-        assert!(validate_username("octo_user'quote").is_err());
-        assert!(validate_username("octo_user\"dquote").is_err());
+        assert!(validate_username("oqto_user;whoami").is_err());
+        assert!(validate_username("oqto_user$HOME").is_err());
+        assert!(validate_username("oqto_user`id`").is_err());
+        assert!(validate_username("oqto_user|cat").is_err());
+        assert!(validate_username("oqto_user&bg").is_err());
+        assert!(validate_username("oqto_user>file").is_err());
+        assert!(validate_username("oqto_user<file").is_err());
+        assert!(validate_username("oqto_user(parens)").is_err());
+        assert!(validate_username("oqto_user'quote").is_err());
+        assert!(validate_username("oqto_user\"dquote").is_err());
     }
 
     #[test]
     fn username_reject_path_traversal() {
-        assert!(validate_username("octo_../etc/passwd").is_err());
+        assert!(validate_username("oqto_../etc/passwd").is_err());
     }
 
     #[test]
     fn username_reject_null_byte() {
-        assert!(validate_username("octo_user\0evil").is_err());
+        assert!(validate_username("oqto_user\0evil").is_err());
     }
 
     #[test]
     fn username_reject_newline() {
-        assert!(validate_username("octo_user\nevil").is_err());
+        assert!(validate_username("oqto_user\nevil").is_err());
     }
 
     #[test]
     fn username_reject_too_long() {
-        let long_name = format!("octo_{}", "a".repeat(28)); // 33 chars total
+        let long_name = format!("oqto_{}", "a".repeat(28)); // 33 chars total
         assert!(validate_username(&long_name).is_err());
     }
 
     #[test]
     fn username_accept_max_length() {
-        let name = format!("octo_{}", "a".repeat(27)); // exactly 32 chars
+        let name = format!("oqto_{}", "a".repeat(27)); // exactly 32 chars
         assert!(validate_username(&name).is_ok());
     }
 
     #[test]
     fn username_reject_unicode() {
-        assert!(validate_username("octo_u\u{0308}ser").is_err()); // umlaut
-        assert!(validate_username("octo_\u{200B}user").is_err()); // zero-width space
+        assert!(validate_username("oqto_u\u{0308}ser").is_err()); // umlaut
+        assert!(validate_username("oqto_\u{200B}user").is_err()); // zero-width space
     }
 
     // ===== Group validation =====
@@ -527,7 +527,7 @@ mod tests {
     #[test]
     fn owner_valid() {
         assert!(validate_owner("oqto_admin:oqto").is_ok());
-        assert!(validate_owner("octo_user-a1b2:oqto").is_ok());
+        assert!(validate_owner("oqto_user-a1b2:oqto").is_ok());
     }
 
     #[test]
@@ -646,10 +646,10 @@ mod tests {
     #[test]
     fn injection_username_shell_escape() {
         // Attempts to inject shell commands via username
-        assert!(validate_username("octo_$(whoami)").is_err());
-        assert!(validate_username("octo_`id`").is_err());
-        assert!(validate_username("octo_;rm -rf /").is_err());
-        assert!(validate_username("octo_|cat /etc/shadow").is_err());
+        assert!(validate_username("oqto_$(whoami)").is_err());
+        assert!(validate_username("oqto_`id`").is_err());
+        assert!(validate_username("oqto_;rm -rf /").is_err());
+        assert!(validate_username("oqto_|cat /etc/shadow").is_err());
     }
 
     #[test]

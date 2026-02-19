@@ -84,7 +84,7 @@ struct Args {
 
     /// Oqto server URL for prompts (default: http://localhost:8080)
     #[arg(long, default_value = "http://localhost:8080")]
-    octo_server: String,
+    oqto_server: String,
 
     /// Profile name to use from config
     #[arg(short, long, default_value = "development")]
@@ -108,11 +108,11 @@ struct SshPolicy {
     /// Prompt for unknown hosts
     prompt_unknown: bool,
     /// Oqto server URL for prompts
-    octo_server: String,
+    oqto_server: String,
 }
 
 impl SshPolicy {
-    fn from_config(config: &SshProxyConfig, octo_server: &str) -> Self {
+    fn from_config(config: &SshProxyConfig, oqto_server: &str) -> Self {
         let allowed_hosts = config
             .allowed_hosts
             .iter()
@@ -123,7 +123,7 @@ impl SshPolicy {
             allowed_hosts,
             allowed_keys: config.allowed_keys.clone(),
             prompt_unknown: config.prompt_unknown,
-            octo_server: octo_server.to_string(),
+            oqto_server: oqto_server.to_string(),
         }
     }
 
@@ -179,7 +179,7 @@ impl SshPolicy {
         info!("Requesting approval for SSH to {} from oqto server", host);
 
         let response = client
-            .post(format!("{}/internal/prompt", self.octo_server))
+            .post(format!("{}/internal/prompt", self.oqto_server))
             .json(&body)
             .send()
             .await
@@ -401,7 +401,7 @@ fn main() -> Result<()> {
     info!("  Prompt unknown: {}", ssh_config.prompt_unknown);
 
     // Create policy (used in handle_client, created per-connection for thread safety)
-    let _policy = SshPolicy::from_config(&ssh_config, &args.octo_server);
+    let _policy = SshPolicy::from_config(&ssh_config, &args.oqto_server);
     drop(_policy); // Just validate config parses correctly
 
     // Remove existing socket
@@ -437,7 +437,7 @@ fn main() -> Result<()> {
         match stream {
             Ok(client) => {
                 let upstream = upstream_path.clone();
-                let policy_clone = SshPolicy::from_config(&ssh_config, &args.octo_server);
+                let policy_clone = SshPolicy::from_config(&ssh_config, &args.oqto_server);
                 let handle_clone = handle.clone();
                 let dry_run = args.dry_run;
 

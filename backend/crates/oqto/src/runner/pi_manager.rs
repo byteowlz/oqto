@@ -2333,7 +2333,7 @@ impl PiSessionManager {
                                             let client = client.clone();
                                             let old = old_eid.clone();
                                             let new_id = pi_sid.to_string();
-                                            let octo_session_id = session_id.clone();
+                                            let oqto_session_id = session_id.clone();
                                             let runner_id = runner_id.clone();
                                             let work_dir = work_dir.clone();
                                             tokio::spawn(async move {
@@ -2342,7 +2342,7 @@ impl PiSessionManager {
                                                         &client,
                                                         &old,
                                                         &new_id,
-                                                        &octo_session_id,
+                                                        &oqto_session_id,
                                                         &runner_id,
                                                         &work_dir,
                                                     )
@@ -2367,14 +2367,14 @@ impl PiSessionManager {
                                     if let Some(ref client) = hstry_client {
                                         let client = client.clone();
                                         let eid = hstry_external_id.read().await.clone();
-                                        let octo_session_id = session_id.clone();
+                                        let oqto_session_id = session_id.clone();
                                         let runner_id = runner_id.clone();
                                         let work_dir = work_dir.clone();
                                         tokio::spawn(async move {
                                             if let Err(e) = Self::ensure_hstry_conversation(
                                                 &client,
                                                 &eid,
-                                                &octo_session_id,
+                                                &oqto_session_id,
                                                 &runner_id,
                                                 &work_dir,
                                             )
@@ -3036,7 +3036,7 @@ impl PiSessionManager {
     async fn ensure_hstry_conversation(
         client: &HstryClient,
         hstry_external_id: &str,
-        octo_session_id: &str,
+        oqto_session_id: &str,
         runner_id: &str,
         work_dir: &PathBuf,
     ) -> Result<()> {
@@ -3044,7 +3044,7 @@ impl PiSessionManager {
             let metadata_json = build_metadata_json(
                 client,
                 hstry_external_id,
-                octo_session_id,
+                oqto_session_id,
                 runner_id,
                 work_dir,
                 None,
@@ -3060,7 +3060,7 @@ impl PiSessionManager {
                     Some(metadata_json),
                     None,
                     Some("pi".to_string()),
-                    Some(octo_session_id.to_string()),
+                    Some(oqto_session_id.to_string()),
                 )
                 .await;
             return Ok(());
@@ -3073,7 +3073,7 @@ impl PiSessionManager {
         let metadata_json = build_metadata_json(
             client,
             hstry_external_id,
-            octo_session_id,
+            oqto_session_id,
             runner_id,
             work_dir,
             None,
@@ -3104,7 +3104,7 @@ impl PiSessionManager {
                 Some(now_ms),
                 Some("pi".to_string()),
                 readable_id,
-                Some(octo_session_id.to_string()),
+                Some(oqto_session_id.to_string()),
             )
             .await?;
 
@@ -3115,7 +3115,7 @@ impl PiSessionManager {
         client: &HstryClient,
         old_external_id: &str,
         new_external_id: &str,
-        octo_session_id: &str,
+        oqto_session_id: &str,
         runner_id: &str,
         work_dir: &PathBuf,
     ) -> Result<()> {
@@ -3155,7 +3155,7 @@ impl PiSessionManager {
         let metadata_json = build_metadata_json(
             client,
             old_external_id,
-            octo_session_id,
+            oqto_session_id,
             runner_id,
             work_dir,
             None,
@@ -3184,7 +3184,7 @@ impl PiSessionManager {
                 old_conv.updated_at_ms,
                 Some("pi".to_string()),
                 readable_id,
-                Some(octo_session_id.to_string()),
+                Some(oqto_session_id.to_string()),
             )
             .await?;
 
@@ -3200,12 +3200,12 @@ impl PiSessionManager {
     /// Persist messages to hstry via gRPC.
     ///
     /// `hstry_external_id` is the key used in hstry (Pi's native session ID when
-    /// known, otherwise Oqto's UUID as a fallback). `octo_session_id` is always
+    /// known, otherwise Oqto's UUID as a fallback). `oqto_session_id` is always
     /// Oqto's UUID, stored in metadata for reverse mapping.
     async fn persist_to_hstry_grpc(
         client: &HstryClient,
         hstry_external_id: &str,
-        octo_session_id: &str,
+        oqto_session_id: &str,
         runner_id: &str,
         messages: &[AgentMessage],
         work_dir: &PathBuf,
@@ -3222,7 +3222,7 @@ impl PiSessionManager {
         let metadata_json = build_metadata_json(
             client,
             hstry_external_id,
-            octo_session_id,
+            oqto_session_id,
             runner_id,
             work_dir,
             stats_delta,
@@ -3299,7 +3299,7 @@ impl PiSessionManager {
                             Some(metadata_json.clone()),
                             readable_id.clone(),
                             Some("pi".to_string()),
-                            Some(octo_session_id.to_string()),
+                            Some(oqto_session_id.to_string()),
                         )
                         .await;
                 }
@@ -3322,17 +3322,17 @@ impl PiSessionManager {
                         Some(now_ms),
                         Some("pi".to_string()),
                         readable_id,
-                        Some(octo_session_id.to_string()),
+                        Some(oqto_session_id.to_string()),
                     )
                     .await?;
             }
         }
 
         info!(
-            "Persisted {} messages to hstry (external_id='{}', octo_session='{}')",
+            "Persisted {} messages to hstry (external_id='{}', oqto_session='{}')",
             messages.len(),
             hstry_external_id,
-            octo_session_id,
+            oqto_session_id,
         );
 
         Ok(())
@@ -3590,12 +3590,12 @@ fn compute_stats_delta(messages: &[AgentMessage]) -> Option<StatsDelta> {
 /// Build metadata JSON for hstry conversation.
 ///
 /// `hstry_external_id` is the key in hstry (Pi native ID or Oqto UUID).
-/// `octo_session_id` is always Oqto's UUID -- stored in metadata so we can
+/// `oqto_session_id` is always Oqto's UUID -- stored in metadata so we can
 /// always map between the two identifiers.
 async fn build_metadata_json(
     client: &HstryClient,
     hstry_external_id: &str,
-    octo_session_id: &str,
+    oqto_session_id: &str,
     runner_id: &str,
     work_dir: &PathBuf,
     delta: Option<StatsDelta>,
@@ -3614,8 +3614,8 @@ async fn build_metadata_json(
 
     // Always store the Oqto session ID so we can map back from Pi native ID
     metadata.insert(
-        "octo_session_id".to_string(),
-        serde_json::Value::String(octo_session_id.to_string()),
+        "oqto_session_id".to_string(),
+        serde_json::Value::String(oqto_session_id.to_string()),
     );
     metadata.insert(
         "workdir".to_string(),

@@ -44,7 +44,7 @@ pub(crate) fn get_runner_for_user(
     // Need runner socket pattern for multi-user mode
     let pattern = state.runner_socket_pattern.as_ref()?;
 
-    // The socket path uses the linux_username (e.g., octo_hansgerd-vyon),
+    // The socket path uses the linux_username (e.g., oqto_hansgerd-vyon),
     // not the platform user_id (e.g., hansgerd-vYoN).
     let effective_user = if let Some(ref lu) = state.linux_users {
         lu.linux_username(user_id)

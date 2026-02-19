@@ -2233,7 +2233,7 @@ async fn handle_user(client: &OqtoClient, command: UserCommand, json: bool) -> R
             let user_id = generate_user_id(&username);
 
             // Derive Linux username the same way the backend does:
-            // octo_{sanitize(user_id)} -- unless explicitly overridden
+            // oqto_{sanitize(user_id)} -- unless explicitly overridden
             let linux_username = if let Some(ref explicit) = linux_user {
                 explicit.clone()
             } else {
@@ -2715,7 +2715,7 @@ fn get_runner_status(username: &str) -> String {
 /// 4. Returns the eavs key ID
 async fn provision_eavs_for_user(
     linux_username: &str,
-    octo_username: &str,
+    oqto_username: &str,
     eavs_url: &str,
     master_key: Option<&str>,
     budget: Option<f64>,
@@ -2755,8 +2755,8 @@ async fn provision_eavs_for_user(
         println!("Creating eavs virtual key...");
     }
 
-    let mut key_req = CreateKeyRequest::new(format!("oqto-user-{}", octo_username))
-        .oauth_user(octo_username);
+    let mut key_req = CreateKeyRequest::new(format!("oqto-user-{}", oqto_username))
+        .oauth_user(oqto_username);
     if let Some(budget_usd) = budget {
         key_req = key_req.permissions(KeyPermissions::with_budget(budget_usd));
     }
