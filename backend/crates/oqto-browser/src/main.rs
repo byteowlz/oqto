@@ -27,6 +27,10 @@ struct Cli {
     #[arg(long)]
     json: bool,
 
+    /// Disable automatic daemon startup (for managed environments)
+    #[arg(long, env = "OQTO_BROWSER_NO_AUTO_START")]
+    no_auto_start: bool,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -307,11 +311,13 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     let timeout = Duration::from_secs(cli.timeout_secs);
     let output_json = cli.json;
+    let auto_start = !cli.no_auto_start;
 
     let response = match cli.command {
         Command::Open { url, wait_until } | Command::Navigate { url, wait_until } => send_command(
             &cli.session,
             timeout,
+            auto_start,
             ActionPayload {
                 action: "navigate",
                 data: NavigatePayload { url, wait_until },
@@ -325,6 +331,7 @@ fn main() -> Result<()> {
         } => send_command(
             &cli.session,
             timeout,
+            auto_start,
             ActionPayload {
                 action: "click",
                 data: ClickPayload {
@@ -338,6 +345,7 @@ fn main() -> Result<()> {
         Command::Fill { selector, value } => send_command(
             &cli.session,
             timeout,
+            auto_start,
             ActionPayload {
                 action: "fill",
                 data: FillPayload { selector, value },
@@ -351,6 +359,7 @@ fn main() -> Result<()> {
         } => send_command(
             &cli.session,
             timeout,
+            auto_start,
             ActionPayload {
                 action: "type",
                 data: TypePayload {
@@ -370,6 +379,7 @@ fn main() -> Result<()> {
         } => send_command(
             &cli.session,
             timeout,
+            auto_start,
             ActionPayload {
                 action: "snapshot",
                 data: serde_json::json!({
@@ -384,6 +394,7 @@ fn main() -> Result<()> {
         Command::Eval { script } => send_command(
             &cli.session,
             timeout,
+            auto_start,
             ActionPayload {
                 action: "evaluate",
                 data: EvalPayload { script },
@@ -402,6 +413,7 @@ fn main() -> Result<()> {
             send_command(
                 &cli.session,
                 timeout,
+            auto_start,
                 ActionPayload {
                     action: "wait",
                     data: WaitPayload {
@@ -420,6 +432,7 @@ fn main() -> Result<()> {
         } => send_command(
             &cli.session,
             timeout,
+            auto_start,
             ActionPayload {
                 action: "screenshot",
                 data: serde_json::json!({
@@ -433,6 +446,7 @@ fn main() -> Result<()> {
         Command::Back => send_command(
             &cli.session,
             timeout,
+            auto_start,
             ActionPayload {
                 action: "back",
                 data: serde_json::json!({}),
@@ -441,6 +455,7 @@ fn main() -> Result<()> {
         Command::Forward => send_command(
             &cli.session,
             timeout,
+            auto_start,
             ActionPayload {
                 action: "forward",
                 data: serde_json::json!({}),
@@ -449,6 +464,7 @@ fn main() -> Result<()> {
         Command::Reload => send_command(
             &cli.session,
             timeout,
+            auto_start,
             ActionPayload {
                 action: "reload",
                 data: serde_json::json!({}),
@@ -457,6 +473,7 @@ fn main() -> Result<()> {
         Command::Url => send_command(
             &cli.session,
             timeout,
+            auto_start,
             ActionPayload {
                 action: "url",
                 data: serde_json::json!({}),
@@ -465,6 +482,7 @@ fn main() -> Result<()> {
         Command::Title => send_command(
             &cli.session,
             timeout,
+            auto_start,
             ActionPayload {
                 action: "title",
                 data: serde_json::json!({}),
@@ -473,6 +491,7 @@ fn main() -> Result<()> {
         Command::Console { clear } => send_command(
             &cli.session,
             timeout,
+            auto_start,
             ActionPayload {
                 action: "console",
                 data: serde_json::json!({ "clear": clear }),
@@ -481,6 +500,7 @@ fn main() -> Result<()> {
         Command::Errors { clear } => send_command(
             &cli.session,
             timeout,
+            auto_start,
             ActionPayload {
                 action: "errors",
                 data: serde_json::json!({ "clear": clear }),
@@ -489,6 +509,7 @@ fn main() -> Result<()> {
         Command::Press { key } => send_command(
             &cli.session,
             timeout,
+            auto_start,
             ActionPayload {
                 action: "press",
                 data: serde_json::json!({ "key": key }),
@@ -497,6 +518,7 @@ fn main() -> Result<()> {
         Command::Dblclick { selector, delay_ms } => send_command(
             &cli.session,
             timeout,
+            auto_start,
             ActionPayload {
                 action: "dblclick",
                 data: serde_json::json!({ "selector": selector, "delay": delay_ms }),
@@ -505,6 +527,7 @@ fn main() -> Result<()> {
         Command::Hover { selector } => send_command(
             &cli.session,
             timeout,
+            auto_start,
             ActionPayload {
                 action: "hover",
                 data: serde_json::json!({ "selector": selector }),
@@ -513,6 +536,7 @@ fn main() -> Result<()> {
         Command::Focus { selector } => send_command(
             &cli.session,
             timeout,
+            auto_start,
             ActionPayload {
                 action: "focus",
                 data: serde_json::json!({ "selector": selector }),
@@ -521,6 +545,7 @@ fn main() -> Result<()> {
         Command::Check { selector } => send_command(
             &cli.session,
             timeout,
+            auto_start,
             ActionPayload {
                 action: "check",
                 data: serde_json::json!({ "selector": selector }),
@@ -529,6 +554,7 @@ fn main() -> Result<()> {
         Command::Uncheck { selector } => send_command(
             &cli.session,
             timeout,
+            auto_start,
             ActionPayload {
                 action: "uncheck",
                 data: serde_json::json!({ "selector": selector }),
@@ -537,6 +563,7 @@ fn main() -> Result<()> {
         Command::Select { selector, values } => send_command(
             &cli.session,
             timeout,
+            auto_start,
             ActionPayload {
                 action: "select",
                 data: serde_json::json!({ "selector": selector, "values": values }),
@@ -545,6 +572,7 @@ fn main() -> Result<()> {
         Command::Drag { source, target } => send_command(
             &cli.session,
             timeout,
+            auto_start,
             ActionPayload {
                 action: "drag",
                 data: serde_json::json!({ "source": source, "target": target }),
@@ -553,6 +581,7 @@ fn main() -> Result<()> {
         Command::Upload { selector, files } => send_command(
             &cli.session,
             timeout,
+            auto_start,
             ActionPayload {
                 action: "upload",
                 data: serde_json::json!({ "selector": selector, "files": files }),
@@ -561,6 +590,7 @@ fn main() -> Result<()> {
         Command::Download { selector, path } => send_command(
             &cli.session,
             timeout,
+            auto_start,
             ActionPayload {
                 action: "download",
                 data: serde_json::json!({ "selector": selector, "path": path }),
@@ -573,6 +603,7 @@ fn main() -> Result<()> {
         } => send_command(
             &cli.session,
             timeout,
+            auto_start,
             ActionPayload {
                 action: "scroll",
                 data: serde_json::json!({
@@ -585,6 +616,7 @@ fn main() -> Result<()> {
         Command::Scrollintoview { selector } => send_command(
             &cli.session,
             timeout,
+            auto_start,
             ActionPayload {
                 action: "scrollintoview",
                 data: serde_json::json!({ "selector": selector }),
@@ -593,6 +625,7 @@ fn main() -> Result<()> {
         Command::Highlight { selector } => send_command(
             &cli.session,
             timeout,
+            auto_start,
             ActionPayload {
                 action: "highlight",
                 data: serde_json::json!({ "selector": selector }),
@@ -601,6 +634,7 @@ fn main() -> Result<()> {
         Command::Pdf { path } => send_command(
             &cli.session,
             timeout,
+            auto_start,
             ActionPayload {
                 action: "pdf",
                 data: serde_json::json!({ "path": path }),
@@ -609,6 +643,7 @@ fn main() -> Result<()> {
         Command::Content => send_command(
             &cli.session,
             timeout,
+            auto_start,
             ActionPayload {
                 action: "content",
                 data: serde_json::json!({}),
@@ -617,6 +652,7 @@ fn main() -> Result<()> {
         Command::Close => send_command(
             &cli.session,
             timeout,
+            auto_start,
             ActionPayload {
                 action: "close",
                 data: serde_json::json!({}),
@@ -625,7 +661,7 @@ fn main() -> Result<()> {
         Command::Install { browser, deps } => {
             return run_playwright_install(browser.as_deref(), deps);
         }
-        Command::Raw { json } => send_raw(&cli.session, timeout, &json)?,
+        Command::Raw { json } => send_raw(&cli.session, timeout, auto_start, &json)?,
         Command::Generic {
             action,
             json,
@@ -634,7 +670,7 @@ fn main() -> Result<()> {
         } => {
             let payload = build_generic_payload(&action, json, file, &arg)?;
             let payload_str = serde_json::to_string(&payload)?;
-            send_raw(&cli.session, timeout, &payload_str)?
+            send_raw(&cli.session, timeout, auto_start, &payload_str)?
         }
     };
 
@@ -1002,10 +1038,32 @@ fn find_browserd_dir() -> Result<PathBuf> {
         }
     }
 
+    // Dev checkout: walk up from cwd (handles `cargo install` where binary is in ~/.cargo/bin)
+    if let Ok(cwd) = std::env::current_dir() {
+        let mut dir = cwd.as_path();
+        for _ in 0..10 {
+            // Check both "backend/crates/oqto-browserd" (from repo root)
+            // and "crates/oqto-browserd" (from backend/)
+            for subpath in [
+                "backend/crates/oqto-browserd",
+                "crates/oqto-browserd",
+            ] {
+                let candidate = dir.join(subpath);
+                if candidate.join("node_modules").exists() {
+                    return Ok(candidate);
+                }
+            }
+            match dir.parent() {
+                Some(parent) => dir = parent,
+                None => break,
+            }
+        }
+    }
+
     Err(anyhow!(
         "Cannot find oqto-browserd installation.\n\
          Checked /usr/local/lib/oqto-browserd and dev checkout paths.\n\
-         Run 'just install' to build oqto-browserd, or set OQTO_BROWSERD_DIR."
+         Run 'just install oqto-browser' to build it, or set OQTO_BROWSERD_DIR."
     ))
 }
 
@@ -1121,16 +1179,17 @@ fn parse_arg_value(value: &str) -> Value {
 fn send_command<T: Serialize>(
     session: &str,
     timeout: Duration,
+    auto_start: bool,
     payload: ActionPayload<'_, T>,
 ) -> Result<ResponsePayload> {
     let id = Uuid::new_v4().to_string();
     let command = CommandPayload { id, payload };
     let json = serde_json::to_string(&command)?;
-    send_raw(session, timeout, &json)
+    send_raw(session, timeout, auto_start, &json)
 }
 
-fn send_raw(session: &str, timeout: Duration, json: &str) -> Result<ResponsePayload> {
-    let mut conn = connect(session, timeout)?;
+fn send_raw(session: &str, timeout: Duration, auto_start: bool, json: &str) -> Result<ResponsePayload> {
+    let mut conn = connect(session, timeout, auto_start)?;
     let mut line = json.to_string();
     if !line.ends_with('\n') {
         line.push('\n');
@@ -1153,7 +1212,29 @@ fn send_raw(session: &str, timeout: Duration, json: &str) -> Result<ResponsePayl
     Ok(response)
 }
 
-fn connect(session: &str, timeout: Duration) -> Result<Connection> {
+fn connect(session: &str, timeout: Duration, auto_start: bool) -> Result<Connection> {
+    // Try to connect directly first; if the socket doesn't exist and auto-start
+    // is enabled, launch the daemon. In managed environments (runner/sandbox),
+    // auto-start should be disabled via --no-auto-start or OQTO_BROWSER_NO_AUTO_START
+    // since the runner manages daemon lifecycles.
+    match try_connect(session, timeout) {
+        Ok(conn) => Ok(conn),
+        Err(first_err) => {
+            if !auto_start {
+                return Err(first_err.context(
+                    "Daemon not running. In managed mode, the runner starts the daemon.\n\
+                     For local use, remove --no-auto-start / unset OQTO_BROWSER_NO_AUTO_START.",
+                ));
+            }
+            ensure_daemon_running(session)?;
+            try_connect(session, timeout)
+                .context("Failed to connect to daemon after starting it")
+        }
+    }
+}
+
+/// Attempt a single connection to the daemon socket/port.
+fn try_connect(session: &str, timeout: Duration) -> Result<Connection> {
     #[cfg(unix)]
     {
         let path = socket_path(session);
@@ -1182,6 +1263,104 @@ fn connect(session: &str, timeout: Duration) -> Result<Connection> {
             .context("Failed to set write timeout")?;
         return Ok(Connection::Tcp(stream));
     }
+}
+
+/// Start the oqto-browserd daemon if it isn't already running, then wait for
+/// the socket to appear (up to 10 seconds).
+fn ensure_daemon_running(session: &str) -> Result<()> {
+    // Check if already running via pidfile
+    let session_dir = agent_browser_session_dir(session);
+    let pid_file = session_dir.join(format!("{session}.pid"));
+    if pid_file.exists() {
+        if let Ok(pid_str) = std::fs::read_to_string(&pid_file) {
+            if let Ok(pid) = pid_str.trim().parse::<i32>() {
+                // Check if process is alive using safe rustix wrapper
+                #[cfg(unix)]
+                {
+                    use rustix::process::{Pid, test_kill_process};
+                    if let Some(pid) = Pid::from_raw(pid) {
+                        if test_kill_process(pid).is_ok() {
+                            // Process exists but socket might not be ready yet
+                            return wait_for_socket(session, Duration::from_secs(10));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let browserd_dir = find_browserd_dir()?;
+    let entry_point = browserd_dir.join("dist").join("index.js");
+    if !entry_point.exists() {
+        return Err(anyhow!(
+            "oqto-browserd not built. Run 'just install oqto-browser' to build it."
+        ));
+    }
+
+    // Resolve node/bun binary
+    let node = which_node()?;
+
+    eprintln!("Starting oqto-browserd daemon (session: {session})...");
+
+    process::Command::new(&node)
+        .arg(&entry_point)
+        .arg("--daemon")
+        .env("OQTO_BROWSER_DAEMON", "1")
+        .env("AGENT_BROWSER_SESSION", session)
+        .stdin(process::Stdio::null())
+        .stdout(process::Stdio::null())
+        .stderr(process::Stdio::null())
+        .spawn()
+        .with_context(|| {
+            format!(
+                "Failed to spawn oqto-browserd via {} {}",
+                node.display(),
+                entry_point.display()
+            )
+        })?;
+
+    wait_for_socket(session, Duration::from_secs(10))
+}
+
+/// Wait for the daemon socket file to appear.
+fn wait_for_socket(session: &str, timeout: Duration) -> Result<()> {
+    let sock = socket_path(session);
+    let deadline = std::time::Instant::now() + timeout;
+
+    // Ensure the socket directory exists
+    if let Some(parent) = sock.parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
+
+    while std::time::Instant::now() < deadline {
+        if sock.exists() {
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+
+    Err(anyhow!(
+        "Timed out waiting for oqto-browserd socket at {}",
+        sock.display()
+    ))
+}
+
+/// Find a node or bun binary to run the daemon.
+fn which_node() -> Result<PathBuf> {
+    // Prefer bun, then node
+    for name in ["bun", "node"] {
+        if let Ok(output) = process::Command::new("which").arg(name).output() {
+            if output.status.success() {
+                let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !path.is_empty() {
+                    return Ok(PathBuf::from(path));
+                }
+            }
+        }
+    }
+    Err(anyhow!(
+        "Neither 'bun' nor 'node' found in PATH. Install one to run oqto-browserd."
+    ))
 }
 
 /// Resolve the base directory for agent-browser session socket directories.
