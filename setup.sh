@@ -3834,6 +3834,13 @@ update_tools() {
     [ignr]=ignr
   )
 
+  # Package names for multi-binary repos (binary -> cargo package)
+  local -A PACKAGES=(
+    [hstry]=hstry-cli
+    [trx]=trx-cli
+    [mmry]=mmry-cli
+  )
+
   local upgraded=0
 
   for tool in "${!TOOLS[@]}"; do
@@ -3857,7 +3864,8 @@ update_tools() {
     fi
 
     log_info "Upgrading $tool: $current_version -> $target_version"
-    download_or_build_tool "$tool" "$repo"
+    local pkg="${PACKAGES[$tool]:-}"
+    download_or_build_tool "$tool" "$repo" "$pkg"
     ((upgraded++)) || true
   done
 
@@ -5631,6 +5639,10 @@ ensure_octo_system_user() {
     "${OQTO_HOME}/.local/state"
   sudo chown -R oqto:oqto "$OQTO_HOME"
 
+  # Create /var/lib/oqto for service data (referenced by systemd ReadWritePaths)
+  sudo mkdir -p /var/lib/oqto/.local/share/oqto
+  sudo chown -R oqto:oqto /var/lib/oqto
+
   log_success "Created oqto system user (home: $OQTO_HOME)"
 }
 
@@ -5817,8 +5829,12 @@ EOF
 
   sudo systemctl daemon-reload
   sudo systemctl enable oqto-usermgr
-  sudo systemctl start oqto-usermgr
-  log_success "oqto-usermgr service installed and started"
+  if sudo systemctl start oqto-usermgr; then
+    log_success "oqto-usermgr service installed and started"
+  else
+    log_error "oqto-usermgr failed to start. Check: sudo journalctl -xeu oqto-usermgr.service"
+    return 1
+  fi
 }
 
 install_runner_socket_dirs() {
