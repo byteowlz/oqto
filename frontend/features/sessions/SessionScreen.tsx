@@ -409,6 +409,10 @@ export const SessionScreen = memo(function SessionScreen() {
 	}, []);
 	const [tasksSubTab, setTasksSubTab] = useState<"todos" | "planner">("todos");
 	const [latestTodos, setLatestTodos] = useState<TodoItem[]>([]);
+	const openTodoCount = useMemo(
+		() => latestTodos.filter((t) => t.status === "pending" || t.status === "in_progress").length,
+		[latestTodos],
+	);
 	const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(false);
 	const [isSearchOpen, setIsSearchOpen] = useState(false);
 	const [tokenUsage, setTokenUsage] = useState({
@@ -597,9 +601,9 @@ export const SessionScreen = memo(function SessionScreen() {
 					<div className="flex items-center justify-center gap-1.5">
 						<ListTodo className="w-3.5 h-3.5" />
 						<span>Todos</span>
-						{latestTodos.length > 0 && (
+						{openTodoCount > 0 && (
 							<span className="text-[10px] px-1.5 py-0.5 bg-muted rounded-full">
-								{latestTodos.length}
+								{openTodoCount}
 							</span>
 						)}
 					</div>
@@ -745,7 +749,7 @@ export const SessionScreen = memo(function SessionScreen() {
 								view="tasks"
 								icon={ListTodo}
 								label={locale === "de" ? "Aufgaben" : "Tasks"}
-								badge={latestTodos.length}
+								badge={openTodoCount}
 							/>
 							<TabButton
 								activeView={activeView}
@@ -1028,7 +1032,7 @@ export const SessionScreen = memo(function SessionScreen() {
 									view="tasks"
 									icon={ListTodo}
 									label="Tasks"
-									badge={latestTodos.length}
+									badge={openTodoCount}
 								/>
 								<CollapsedTabButton
 									activeView={activeView}
@@ -1115,7 +1119,7 @@ export const SessionScreen = memo(function SessionScreen() {
 										view="tasks"
 										icon={ListTodo}
 										label="Tasks"
-										badge={latestTodos.length}
+										badge={openTodoCount}
 										hideLabel
 									/>
 									<TabButton
