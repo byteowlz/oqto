@@ -1,59 +1,47 @@
 {
   "todos": [
     {
-      "id": "1",
-      "content": "Design admin scripts architecture",
+      "id": "a9db1ccf",
+      "content": "Replace setup.sh provider loop with eavs setup add --batch",
       "status": "completed",
       "priority": "high"
     },
     {
-      "id": "2",
-      "content": "Create scripts/admin/ directory with oqto-admin wrapper",
+      "id": "6df95ccb",
+      "content": "Fix prompt_input in eavs to read from /dev/tty (terminal issue)",
       "status": "completed",
       "priority": "high"
     },
     {
-      "id": "3",
-      "content": "Implement eavs-provision (single user + all users)",
-      "status": "completed",
-      "priority": "high"
-    },
-    {
-      "id": "4",
-      "content": "Implement sync-pi-config (update models.json, settings for users)",
-      "status": "completed",
-      "priority": "high"
-    },
-    {
-      "id": "5",
-      "content": "Implement manage-skills (install/update/list skills for users)",
-      "status": "completed",
-      "priority": "high"
-    },
-    {
-      "id": "6",
-      "content": "Implement manage-templates (sync/update bootstrap docs)",
-      "status": "completed",
-      "priority": "high"
-    },
-    {
-      "id": "7",
-      "content": "Add just recipes for admin tasks",
+      "id": "ac152f8e",
+      "content": "Fix prompt_input_required to retry instead of crash on empty",
       "status": "completed",
       "priority": "medium"
     },
     {
-      "id": "8",
-      "content": "Write documentation",
+      "id": "5ad37244",
+      "content": "Keep oqto.setup.toml custom providers via --import flag",
       "status": "completed",
       "priority": "medium"
     },
     {
-      "id": "9",
-      "content": "Commit and file trx",
+      "id": "208f6713",
+      "content": "Extract CONFIGURED_PROVIDERS from config file after eavs setup",
       "status": "completed",
       "priority": "medium"
+    },
+    {
+      "id": "bd424460",
+      "content": "Model shortlist selection after provider setup",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "id": "11baf2bf",
+      "content": "Push eavs + octo repos (SSH key issue in sandbox)",
+      "status": "pending",
+      "priority": "low"
     }
   ],
-  "updated_at": "2026-02-19T13:26:16.367Z"
+  "updated_at": "2026-02-19T14:19:12.110Z"
 }
