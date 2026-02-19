@@ -2801,53 +2801,13 @@ api_key = \"env:${env_var_name}\"
     fi
   done
 
-  # Add custom providers interactively
+  # Custom providers: delegate to eavs interactive wizard.
+  # We write the base config first so eavs can append to it.
+  local _want_custom_providers="false"
   if [[ "$NONINTERACTIVE" != "true" ]]; then
-    while confirm "Add a custom provider (Azure/OpenAI-compatible/Foundry/etc.)?" "n"; do
-      local raw_name
-      raw_name=$(prompt_input "Provider name (used in config)" "foundry")
-      local cp_name
-      cp_name=$(sanitize_provider_name "$raw_name")
-      if [[ -z "$cp_name" ]]; then
-        log_warn "Provider name must include letters or numbers"
-        continue
-      fi
-      if [[ " ${CONFIGURED_PROVIDERS} " =~ " ${cp_name} " ]]; then
-        log_warn "Provider '${cp_name}' already configured"
-        continue
-      fi
-
-      local cp_type
-      cp_type=$(prompt_choice "Provider type" "microsoft-foundry" "azure" "openai-compatible" "foundry" "azure-foundry" "ai-foundry" "custom")
-      if [[ "$cp_type" == "custom" ]]; then
-        cp_type=$(prompt_input "Provider type (see eavs schema)" "openai-compatible")
-      fi
-
-      local default_env_name
-      default_env_name=$(echo "$cp_name" | tr '[:lower:]-' '[:upper:]_')
-      default_env_name="CUSTOM_${default_env_name}_API_KEY"
-
-      local cp_api_key
-      cp_api_key=$(prompt_input "API key (leave empty to set later; stored as env:${default_env_name})")
-      if [[ -z "$cp_api_key" ]]; then
-        cp_api_key="env:${default_env_name}"
-      fi
-
-      local cp_base_url
-      cp_base_url=$(prompt_input "Base URL (leave empty for provider default)")
-
-      local cp_deployment=""
-      local cp_api_version=""
-      if [[ "$cp_type" =~ ^(azure|microsoft-foundry|foundry|azure-foundry|ai-foundry)$ ]]; then
-        cp_deployment=$(prompt_input "Deployment (Azure/Foundry, optional)")
-        cp_api_version=$(prompt_input "API version (Azure/Foundry, optional)")
-      fi
-
-      local cp_test_model
-      cp_test_model=$(prompt_input "Test model (optional, used for eavs setup test)")
-
-      append_custom_provider "$cp_name" "$cp_type" "$cp_base_url" "$cp_api_key" "$cp_deployment" "$cp_api_version" "" "" "" "$cp_test_model" "true"
-    done
+    if confirm "Add a custom provider (Azure AI Foundry, Bedrock, Ollama, etc.)?" "n"; then
+      _want_custom_providers="true"
+    fi
   fi
 
   # Add custom providers from oqto.setup.toml (if any)
@@ -2959,6 +2919,22 @@ EOF
   log_success "EAVS config written to $eavs_config_file"
   if [[ -n "$first_provider" ]]; then
     log_success "Default provider: $first_provider"
+  fi
+
+  # Custom providers: delegate to eavs interactive wizard now that the
+  # config file exists. eavs setup add appends providers to the file.
+  if [[ "$_want_custom_providers" == "true" ]]; then
+    log_info "Launching eavs provider wizard..."
+    log_info "The wizard will guide you through provider setup (type, API key, base URL, etc.)"
+    echo ""
+    if [[ "$SELECTED_USER_MODE" == "single" ]]; then
+      eavs setup add --config "$eavs_config_file" || log_warn "eavs setup add failed (you can add providers later)"
+    else
+      sudo -u oqto eavs setup add --config "$eavs_config_file" </dev/tty || log_warn "eavs setup add failed (you can add providers later)"
+      sudo chown -R oqto:oqto "$eavs_config_dir" 2>/dev/null
+    fi
+    echo ""
+    log_info "You can add more providers anytime with: eavs setup add --config $eavs_config_file"
   fi
 }
 
