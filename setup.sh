@@ -1468,6 +1468,16 @@ setup_onboarding_templates_repo() {
   sudo cp -r "$temp_clone_dir" "$target_path"
   sudo chmod -R a+rX "$target_path" >/dev/null 2>&1 || true
 
+  # The oqto service runs as user 'oqto' and needs to git pull updates.
+  # Either chown so oqto owns it, or mark as safe.directory.
+  if id oqto &>/dev/null; then
+    sudo chown -R oqto:oqto "$target_path"
+    # Also mark parent dirs as safe in case oqto user runs git operations
+    local templates_parent
+    templates_parent=$(dirname "$target_path")
+    sudo -u oqto git config --global --add safe.directory "$target_path" 2>/dev/null || true
+  fi
+
   log_success "Onboarding templates installed"
 }
 
