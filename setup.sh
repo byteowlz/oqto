@@ -24,7 +24,7 @@ TEMPLATES_DIR="${SCRIPT_DIR}/templates"
 # Use SSH for private repos (allows SSH key authentication)
 ONBOARDING_TEMPLATES_REPO_DEFAULT="https://github.com/byteowlz/oqto-templates.git"
 EXTERNAL_REPOS_DIR_DEFAULT="/usr/local/share/oqto/external-repos"
-ONBOARDING_TEMPLATES_PATH_DEFAULT="/usr/share/oqto/oqto-templates/dotfiles_users/"
+ONBOARDING_TEMPLATES_PATH_DEFAULT="/usr/share/oqto/oqto-templates/"
 PROJECT_TEMPLATES_PATH_DEFAULT="/usr/share/oqto/oqto-templates/agents/"
 
 # Default values (can be overridden by environment variables)
@@ -1461,7 +1461,7 @@ setup_onboarding_templates_repo() {
     fi
   fi
 
-  # Copy to target with sudo (system location)
+  # Install the repo clone to the target path
   log_info "Installing templates to $target_path..."
   sudo mkdir -p "$(dirname "$target_path")"
   sudo rm -rf "$target_path"
@@ -1469,12 +1469,8 @@ setup_onboarding_templates_repo() {
   sudo chmod -R a+rX "$target_path" >/dev/null 2>&1 || true
 
   # The oqto service runs as user 'oqto' and needs to git pull updates.
-  # Either chown so oqto owns it, or mark as safe.directory.
   if id oqto &>/dev/null; then
     sudo chown -R oqto:oqto "$target_path"
-    # Also mark parent dirs as safe in case oqto user runs git operations
-    local templates_parent
-    templates_parent=$(dirname "$target_path")
     sudo -u oqto git config --global --add safe.directory "$target_path" 2>/dev/null || true
   fi
 
@@ -4553,7 +4549,7 @@ sync_enabled = true
 sync_interval_seconds = 300
 use_embedded_fallback = true
 branch = "main"
-subdirectory = "onboarding"
+subdirectory = "agents/main"
 EOF
 
   cat >>"$config_file" <<EOF

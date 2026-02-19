@@ -274,7 +274,7 @@ pub async fn bootstrap_onboarding(
                 serde_json::Value::String(meta_json),
             );
             files.insert(
-                "ONBOARD.md".into(),
+                "BOOTSTRAP.md".into(),
                 serde_json::Value::String(templates.onboard.clone()),
             );
             files.insert(
@@ -307,7 +307,7 @@ pub async fn bootstrap_onboarding(
                 ApiError::Internal(format!("Failed to write workspace metadata: {e}"))
             })?;
 
-            write_if_missing(&workspace_path.join("ONBOARD.md"), &templates.onboard)?;
+            write_if_missing(&workspace_path.join("BOOTSTRAP.md"), &templates.onboard)?;
             write_if_missing(
                 &workspace_path.join("PERSONALITY.md"),
                 &templates.personality,

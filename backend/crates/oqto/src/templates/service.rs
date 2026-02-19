@@ -12,7 +12,7 @@ use super::config::{OnboardingTemplatesConfig, TemplatePreset, UserTemplateOverr
 
 /// Embedded fallback templates (compiled into binary).
 mod embedded {
-    pub const ONBOARD: &str = include_str!("embedded/ONBOARD.md");
+    pub const ONBOARD: &str = include_str!("embedded/BOOTSTRAP.md");
     pub const PERSONALITY: &str = include_str!("embedded/PERSONALITY.md");
     pub const USER: &str = include_str!("embedded/USER.md");
     pub const AGENTS: &str = include_str!("embedded/AGENTS.md");
@@ -30,7 +30,7 @@ pub enum TemplateType {
 impl TemplateType {
     pub fn filename(&self) -> &'static str {
         match self {
-            TemplateType::Onboard => "ONBOARD.md",
+            TemplateType::Onboard => "BOOTSTRAP.md",
             TemplateType::Personality => "PERSONALITY.md",
             TemplateType::User => "USER.md",
             TemplateType::Agents => "AGENTS.md",
