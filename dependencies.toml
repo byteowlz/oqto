@@ -18,6 +18,7 @@ mailz = "0.1.0"
 sx = "2.1.0"
 scrpr = "1.1.0"
 tmpltr = "0.3.0"
+sldr = "0.2.0"
 ignr = "0.1.0"
 
 # Optional: Voice mode
@@ -27,3 +28,5 @@ kokorox = "0.2.2"
 [external]
 # Not byteowlz, but required for Oqto
 pi = "latest"  # From npm: `bun install -g @mariozechner/pi-coding-agent`
+typst = "latest"  # Required by tmpltr: https://github.com/typst/typst
+slidev = "latest"  # Required by sldr: https://sli.dev
