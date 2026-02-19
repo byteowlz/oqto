@@ -90,6 +90,11 @@ impl OnboardingTemplatesService {
         &self.templates_dir
     }
 
+    /// Get the subdirectory within the templates dir.
+    pub fn subdirectory(&self) -> &str {
+        &self.config.subdirectory
+    }
+
     /// Check if using local path (no git sync).
     pub fn is_local(&self) -> bool {
         self.config.local_path.is_some()

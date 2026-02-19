@@ -223,7 +223,7 @@ pub async fn bootstrap_onboarding(
     // not just whether the directory has any entries. A partially-created workspace
     // (e.g., empty main/ dir from a failed attempt) should be re-initialized.
     let workspace_already_initialized =
-        workspace_path.join(".workspace.json").exists();
+        workspace_path.join(".oqto").join("workspace.toml").exists();
 
     let templates_service = state.onboarding_templates.as_ref().ok_or_else(|| {
         ApiError::ServiceUnavailable("Onboarding templates not configured".into())
@@ -246,7 +246,7 @@ pub async fn bootstrap_onboarding(
         bootstrap_pending: Some(true),
     };
 
-    let meta_json = serde_json::to_string_pretty(&meta)
+    let meta_toml = toml::to_string_pretty(&meta)
         .map_err(|e| ApiError::Internal(format!("Failed to serialize workspace meta: {e}")))?;
 
     // In multi-user mode, create workspace via usermgr (runs as root, sets ownership).
@@ -267,12 +267,18 @@ pub async fn bootstrap_onboarding(
                 .to_str()
                 .ok_or_else(|| ApiError::Internal("invalid workspace path".into()))?;
 
-            // Build file map for usermgr
+            // Copy the entire template directory (includes .pi/skills/ etc.),
+            // then overlay the workspace metadata and any resolved template overrides.
+            let template_src = templates_service
+                .templates_dir()
+                .join(&templates_service.subdirectory());
             let mut files = serde_json::Map::new();
             files.insert(
-                ".workspace.json".into(),
-                serde_json::Value::String(meta_json),
+                ".oqto/workspace.toml".into(),
+                serde_json::Value::String(meta_toml.clone()),
             );
+            // Only include resolved templates if they differ from what's in the template dir
+            // (i.e., language overrides or preset overrides were applied)
             files.insert(
                 "BOOTSTRAP.md".into(),
                 serde_json::Value::String(templates.onboard.clone()),
@@ -295,25 +301,37 @@ pub async fn bootstrap_onboarding(
                 serde_json::json!({
                     "username": linux_username,
                     "path": ws_str,
+                    "template_src": template_src.to_string_lossy(),
                     "files": files,
                 }),
             )
             .map_err(|e| ApiError::Internal(format!("Failed to create workspace: {e}")))?;
         } else {
-            std::fs::create_dir_all(&workspace_path)
-                .map_err(|e| ApiError::Internal(format!("Failed to create workspace: {e}")))?;
+            // Single-user: copy template dir then overlay files
+            let template_src = templates_service
+                .templates_dir()
+                .join(&templates_service.subdirectory());
+            if template_src.is_dir() {
+                copy_dir_all(&template_src, &workspace_path)
+                    .map_err(|e| ApiError::Internal(format!("Failed to copy template: {e}")))?;
+            } else {
+                std::fs::create_dir_all(&workspace_path)
+                    .map_err(|e| ApiError::Internal(format!("Failed to create workspace: {e}")))?;
+            }
 
             write_workspace_meta(&workspace_path, &meta).map_err(|e| {
                 ApiError::Internal(format!("Failed to write workspace metadata: {e}"))
             })?;
 
-            write_if_missing(&workspace_path.join("BOOTSTRAP.md"), &templates.onboard)?;
-            write_if_missing(
-                &workspace_path.join("PERSONALITY.md"),
-                &templates.personality,
-            )?;
-            write_if_missing(&workspace_path.join("USER.md"), &templates.user)?;
-            write_if_missing(&workspace_path.join("AGENTS.md"), &templates.agents)?;
+            // Write resolved templates (may have language/preset overrides)
+            std::fs::write(workspace_path.join("BOOTSTRAP.md"), &templates.onboard)
+                .map_err(|e| ApiError::Internal(format!("write BOOTSTRAP.md: {e}")))?;
+            std::fs::write(workspace_path.join("PERSONALITY.md"), &templates.personality)
+                .map_err(|e| ApiError::Internal(format!("write PERSONALITY.md: {e}")))?;
+            std::fs::write(workspace_path.join("USER.md"), &templates.user)
+                .map_err(|e| ApiError::Internal(format!("write USER.md: {e}")))?;
+            std::fs::write(workspace_path.join("AGENTS.md"), &templates.agents)
+                .map_err(|e| ApiError::Internal(format!("write AGENTS.md: {e}")))?;
         }
     } else {
         tracing::info!(
@@ -452,6 +470,22 @@ fn pick_bootstrap_greeting(language: Option<&str>) -> (&'static str, &'static st
         .copied()
         .unwrap_or(BOOTSTRAP_GREETINGS_EN[0]);
     (message, "Welcome")
+}
+
+/// Recursively copy a directory tree, creating destination dirs as needed.
+fn copy_dir_all(src: &FsPath, dst: &FsPath) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        let dst_path = dst.join(entry.file_name());
+        if file_type.is_dir() {
+            copy_dir_all(&entry.path(), &dst_path)?;
+        } else {
+            std::fs::copy(entry.path(), &dst_path)?;
+        }
+    }
+    Ok(())
 }
 
 fn write_if_missing(path: &FsPath, contents: &str) -> Result<(), ApiError> {

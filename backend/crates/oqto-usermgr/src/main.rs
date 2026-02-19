@@ -780,15 +780,36 @@ fn cmd_create_workspace(args: &serde_json::Value) -> Response {
         return Response::error(format!("mkdir: {e}"));
     }
 
-    // Write files if provided
+    // Copy template directory if provided (includes .pi/skills/ etc.)
+    if let Some(template_src) = args.get("template_src").and_then(|v| v.as_str()) {
+        let src = std::path::Path::new(template_src);
+        if src.is_dir() {
+            // Use cp -a to preserve directory structure including dotfiles
+            if let Err(e) = run_cmd("/bin/cp", &["-a", &format!("{}/.", template_src), path]) {
+                eprintln!("warning: copying template dir: {e}");
+            }
+        }
+    }
+
+    // Write/overlay files if provided (overwrites templates with resolved versions)
     if let Some(files) = args.get("files").and_then(|f| f.as_object()) {
         for (name, content) in files {
-            // Sanitize filename: no slashes, no dots-only, no control chars
-            if name.contains('/') || name.contains('\0') || name == "." || name == ".." {
+            // Validate filename: no null bytes, no traversal components
+            if name.contains('\0') || name == "." || name == ".." {
                 return Response::error(format!("invalid filename: {name}"));
+            }
+            // Reject path traversal
+            if name.split('/').any(|c| c == ".." || c.is_empty()) {
+                return Response::error(format!("invalid filename (traversal): {name}"));
             }
             if let Some(text) = content.as_str() {
                 let file_path = format!("{path}/{name}");
+                // Create parent directories for nested paths like .oqto/workspace.toml
+                if let Some(parent) = std::path::Path::new(&file_path).parent() {
+                    if let Err(e) = std::fs::create_dir_all(parent) {
+                        return Response::error(format!("creating dir for {file_path}: {e}"));
+                    }
+                }
                 if let Err(e) = std::fs::write(&file_path, text) {
                     return Response::error(format!("writing {file_path}: {e}"));
                 }
