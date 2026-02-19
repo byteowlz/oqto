@@ -652,7 +652,13 @@ impl PiSessionManager {
         let stderr = child.stderr.take();
 
         // Create channels
-        let (event_tx, _) = broadcast::channel::<PiEventWrapper>(256);
+        // Per-session event broadcast. Each subscriber (browser tab) gets its
+        // own receiver. If a subscriber falls behind (e.g., browser tab in
+        // background, backend stalled on heavy query), its receiver gets
+        // Lagged(n) and the runner emits stream.resync_required.
+        // 1024 gives ~3-5 seconds of burst capacity during fast text_delta
+        // streaming before lag occurs.
+        let (event_tx, _) = broadcast::channel::<PiEventWrapper>(1024);
         let (cmd_tx, cmd_rx) = mpsc::channel::<PiSessionCommand>(32);
 
         // Shared state for the session

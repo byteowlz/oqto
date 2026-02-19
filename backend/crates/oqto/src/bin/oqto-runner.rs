@@ -723,10 +723,7 @@ impl Runner {
                 // For RPC processes, set up background stdout reader
                 let (stdout_buffer, stdout_tx, reader_handle) = if is_rpc {
                     let buffer = Arc::new(Mutex::new(StdoutBuffer::new()));
-                    // 2048 gives ~5-10 seconds of burst capacity during fast streaming.
-                    // If a subscriber still can't keep up, RecvError::Lagged triggers
-                    // a resync_required event instead of silently losing data.
-                    let (tx, _) = broadcast::channel::<StdoutEvent>(2048);
+                    let (tx, _) = broadcast::channel::<StdoutEvent>(256);
 
                     // Take stdout from the child
                     let stdout = child.stdout.take();
