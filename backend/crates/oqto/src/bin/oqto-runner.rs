@@ -723,7 +723,10 @@ impl Runner {
                 // For RPC processes, set up background stdout reader
                 let (stdout_buffer, stdout_tx, reader_handle) = if is_rpc {
                     let buffer = Arc::new(Mutex::new(StdoutBuffer::new()));
-                    let (tx, _) = broadcast::channel::<StdoutEvent>(256);
+                    // 2048 gives ~5-10 seconds of burst capacity during fast streaming.
+                    // If a subscriber still can't keep up, RecvError::Lagged triggers
+                    // a resync_required event instead of silently losing data.
+                    let (tx, _) = broadcast::channel::<StdoutEvent>(2048);
 
                     // Take stdout from the child
                     let stdout = child.stdout.take();
@@ -3138,10 +3141,33 @@ impl Runner {
                 }
                 Err(broadcast::error::RecvError::Lagged(n)) => {
                     warn!(
-                        "Pi subscription lagged, missed {} events for {}",
+                        "Pi subscription lagged, missed {} events for session {}",
                         n, session_id
                     );
-                    // Continue receiving
+                    // Emit a resync_required event so the client knows to
+                    // refetch state+messages instead of trusting the delta stream.
+                    let resync_event = oqto_protocol::events::Event {
+                        session_id: session_id.to_string(),
+                        runner_id: String::new(),
+                        ts: chrono::Utc::now().timestamp_millis(),
+                        payload: oqto_protocol::events::EventPayload::StreamResyncRequired {
+                            dropped_count: n as u64,
+                            reason: format!(
+                                "broadcast subscriber lagged, missed {} events",
+                                n
+                            ),
+                        },
+                    };
+                    let resp = RunnerResponse::PiEvent(resync_event);
+                    let json = serde_json::to_string(&resp).unwrap();
+                    if writer
+                        .write_all(format!("{}\n", json).as_bytes())
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                    // Continue receiving -- the client will resync
                 }
                 Err(broadcast::error::RecvError::Closed) => {
                     // Session ended

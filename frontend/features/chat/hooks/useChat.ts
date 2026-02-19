@@ -939,6 +939,39 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 				}
 
 				// -- Agent error --
+				// -- Resync required (runner detected dropped events) --
+				case "stream.resync_required": {
+					const droppedCount = (event.dropped_count as number) ?? 0;
+					const reason = (event.reason as string) ?? "unknown";
+					console.warn(
+						`[useChat] Resync required for session ${event.session_id}: dropped=${droppedCount} reason=${reason}`,
+					);
+
+					// Flush any in-progress streaming state
+					{
+						const finalSnapshot = streamingThrottleRef.current.flush();
+						if (finalSnapshot) {
+							applyThrottledSnapshot(finalSnapshot);
+						}
+						streamingThrottleRef.current.reset();
+						if (throttleFlushTimerRef.current) {
+							clearInterval(throttleFlushTimerRef.current);
+							throttleFlushTimerRef.current = null;
+						}
+					}
+
+					// Trigger resync: fetch fresh state + messages from the
+					// runner to rebuild the timeline from scratch.
+					const resyncSessionId =
+						event.session_id ?? activeSessionIdRef.current;
+					if (resyncSessionId) {
+						const manager = getWsManager();
+						manager.agentGetState(resyncSessionId);
+						void fetchHistoryMessages(resyncSessionId);
+					}
+					break;
+				}
+
 				case "agent.error": {
 					const wasInFlight = sendInFlightRef.current;
 					sendInFlightRef.current = false;
