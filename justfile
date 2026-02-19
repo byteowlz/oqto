@@ -536,3 +536,32 @@ release version:
     echo ""
     echo "Released v$new_version"
     echo "Run 'git push && git push --tags' to publish"
+
+# =============================================================================
+# VM Deployment Testing (Proxmox)
+# =============================================================================
+
+# Run VM deployment tests on Proxmox
+vm-test *ARGS:
+    cd scripts && ./test-vm-deployment.sh {{ARGS}}
+
+# List available VM test scenarios
+vm-test-list:
+    cd scripts && ./test-vm-deployment.sh --list
+
+# Prepare cloud images for VM testing
+vm-test-prepare:
+    cd scripts && ./test-vm-deployment.sh --prepare-images
+
+# Run a specific VM test scenario (e.g., just vm-test-scenario ubuntu-24-04-local-single)
+vm-test-scenario name:
+    cd scripts && ./test-vm-deployment.sh --scenario {{name}}
+
+# Clean up all VM test instances
+vm-test-cleanup:
+    cd scripts && ./test-vm-deployment.sh --cleanup-all
+
+# Convert oqto.setup.toml to vm.tests.toml format
+vm-convert-config setup_file:
+    cd scripts && ./convert-setup-toml.sh {{setup_file}}
+
