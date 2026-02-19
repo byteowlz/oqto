@@ -3938,14 +3938,100 @@ update_models_json() {
   fi
 }
 
-build_octo() {
-  log_step "Building Oqto components"
+# Download pre-built oqto binaries and frontend from GitHub releases.
+# Returns 0 on success, 1 if download fails (caller should fall back to source build).
+download_oqto_release() {
+  local target
+  target=$(get_release_target)
+  if [[ -z "$target" ]]; then
+    log_info "Could not detect platform target"
+    return 1
+  fi
 
-  cd "$SCRIPT_DIR"
+  # Determine version: use git tag if we're on one, otherwise latest release
+  local version=""
+  if git describe --tags --exact-match HEAD 2>/dev/null | grep -q '^v'; then
+    version=$(git describe --tags --exact-match HEAD 2>/dev/null)
+  fi
+  if [[ -z "$version" ]]; then
+    # Try to get latest release tag from GitHub
+    version=$(curl -fsSL "https://api.github.com/repos/byteowlz/oqto/releases/latest" 2>/dev/null \
+      | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')
+  fi
+  if [[ -z "$version" ]]; then
+    log_info "Could not determine release version"
+    return 1
+  fi
 
-  # Clean up stale directories from octo->oqto rename that confuse workspace
-  rm -rf backend/crates/octo-browserd backend/crates/octo-browser backend/crates/octo 2>/dev/null || true
+  log_info "Downloading oqto $version for $target..."
 
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  local base_url="https://github.com/byteowlz/oqto/releases/download/${version}"
+
+  # Download backend binaries
+  local backend_tarball="oqto-${version}-${target}.tar.gz"
+  if ! curl -fsSL "${base_url}/${backend_tarball}" -o "$tmpdir/backend.tar.gz" 2>/dev/null; then
+    log_info "Backend release not found at ${base_url}/${backend_tarball}"
+    rm -rf "$tmpdir"
+    return 1
+  fi
+
+  # Download frontend
+  local frontend_tarball="oqto-frontend-${version}.tar.gz"
+  if ! curl -fsSL "${base_url}/${frontend_tarball}" -o "$tmpdir/frontend.tar.gz" 2>/dev/null; then
+    log_info "Frontend release not found at ${base_url}/${frontend_tarball}"
+    rm -rf "$tmpdir"
+    return 1
+  fi
+
+  # Extract backend
+  tar xzf "$tmpdir/backend.tar.gz" -C "$tmpdir"
+  local backend_dir="$tmpdir/oqto-${version}-${target}"
+  if [[ ! -d "$backend_dir/bin" ]]; then
+    log_warn "Release tarball missing bin/ directory"
+    rm -rf "$tmpdir"
+    return 1
+  fi
+
+  # Install backend binaries
+  local installed=0
+  for bin in "$backend_dir"/bin/*; do
+    if [[ -x "$bin" ]]; then
+      local name
+      name=$(basename "$bin")
+      sudo install -m 755 "$bin" "${TOOLS_INSTALL_DIR}/${name}"
+      log_success "${name} installed from release"
+      installed=$((installed + 1))
+    fi
+  done
+
+  if [[ $installed -eq 0 ]]; then
+    log_warn "No binaries found in release"
+    rm -rf "$tmpdir"
+    return 1
+  fi
+
+  # Extract and deploy frontend
+  tar xzf "$tmpdir/frontend.tar.gz" -C "$tmpdir"
+  local frontend_dir="$tmpdir/oqto-frontend-${version}"
+  if [[ -d "$frontend_dir/dist" ]]; then
+    local frontend_deploy="/var/www/oqto"
+    sudo mkdir -p "$frontend_deploy"
+    sudo rsync -a --delete "$frontend_dir/dist/" "$frontend_deploy/"
+    sudo chown -R root:root "$frontend_deploy"
+    log_success "Frontend deployed from release to ${frontend_deploy}"
+  else
+    log_warn "Frontend dist not found in release, will build from source"
+  fi
+
+  rm -rf "$tmpdir"
+  log_success "oqto $version installed from GitHub release ($installed binaries)"
+  return 0
+}
+
+# Build oqto backend and frontend from source.
+build_oqto_from_source() {
   # Build backend (includes oqto, oqto-runner, oqto-sandbox, pi-bridge binaries)
   log_info "Building backend..."
   if ! (cd backend && cargo build --release); then
@@ -3971,6 +4057,26 @@ build_octo() {
     return 1
   fi
   log_success "Frontend built"
+}
+
+build_octo() {
+  log_step "Building Oqto components"
+
+  cd "$SCRIPT_DIR"
+
+  # Clean up stale directories from octo->oqto rename that confuse workspace
+  rm -rf backend/crates/octo-browserd backend/crates/octo-browser backend/crates/octo 2>/dev/null || true
+
+  # Try downloading pre-built release binaries from GitHub
+  local used_release=false
+  if download_oqto_release; then
+    log_success "Using pre-built release binaries"
+    used_release=true
+  else
+    # Fall back to building from source
+    log_info "No pre-built release available, building from source..."
+    build_oqto_from_source
+  fi
 
   # Build and install agent browser daemon
   log_info "Building agent browser daemon..."
@@ -3996,41 +4102,44 @@ build_octo() {
     log_warn "oqto-browserd not found, skipping agent browser setup"
   fi
 
-  # Install binaries to /usr/local/bin (globally accessible)
-  log_info "Installing binaries to ${TOOLS_INSTALL_DIR}..."
+  # When built from source, install binaries and deploy frontend
+  if [[ "$used_release" != "true" ]]; then
+    # Install binaries to /usr/local/bin (globally accessible)
+    log_info "Installing binaries to ${TOOLS_INSTALL_DIR}..."
 
-  local release_dir="$SCRIPT_DIR/backend/target/release"
-  for bin in oqto oqtoctl oqto-runner pi-bridge oqto-sandbox oqto-setup oqto-usermgr; do
-    if [[ -f "${release_dir}/${bin}" ]]; then
-      sudo install -m 755 "${release_dir}/${bin}" "${TOOLS_INSTALL_DIR}/${bin}"
-      # Remove stale copies from ~/.cargo/bin to avoid PATH precedence issues
-      if [[ -f "$HOME/.cargo/bin/${bin}" ]]; then
-        rm -f "$HOME/.cargo/bin/${bin}"
-        hash -d "$bin" 2>/dev/null || true
-        log_info "Removed stale ${bin} from ~/.cargo/bin"
+    local release_dir="$SCRIPT_DIR/backend/target/release"
+    for bin in oqto oqtoctl oqto-runner pi-bridge oqto-sandbox oqto-setup oqto-usermgr; do
+      if [[ -f "${release_dir}/${bin}" ]]; then
+        sudo install -m 755 "${release_dir}/${bin}" "${TOOLS_INSTALL_DIR}/${bin}"
+        # Remove stale copies from ~/.cargo/bin to avoid PATH precedence issues
+        if [[ -f "$HOME/.cargo/bin/${bin}" ]]; then
+          rm -f "$HOME/.cargo/bin/${bin}"
+          hash -d "$bin" 2>/dev/null || true
+          log_info "Removed stale ${bin} from ~/.cargo/bin"
+        fi
+        log_success "${bin} installed"
       fi
-      log_success "${bin} installed"
+    done
+
+    if [[ -f "$SCRIPT_DIR/backend/target/release/oqto-files" ]]; then
+      sudo install -m 755 "$SCRIPT_DIR/backend/target/release/oqto-files" "${TOOLS_INSTALL_DIR}/oqto-files"
+      log_success "oqto-files installed"
     fi
-  done
 
-  if [[ -f "$SCRIPT_DIR/backend/target/release/oqto-files" ]]; then
-    sudo install -m 755 "$SCRIPT_DIR/backend/target/release/oqto-files" "${TOOLS_INSTALL_DIR}/oqto-files"
-    log_success "oqto-files installed"
-  fi
+    log_success "Binaries installed to ${TOOLS_INSTALL_DIR}"
 
-  log_success "Binaries installed to ${TOOLS_INSTALL_DIR}"
-
-  # Deploy frontend static files
-  local frontend_dist="$SCRIPT_DIR/frontend/dist"
-  local frontend_deploy="/var/www/oqto"
-  if [[ -d "$frontend_dist" ]]; then
-    log_info "Deploying frontend to ${frontend_deploy}..."
-    sudo mkdir -p "$frontend_deploy"
-    sudo rsync -a --delete "$frontend_dist/" "$frontend_deploy/"
-    sudo chown -R root:root "$frontend_deploy"
-    log_success "Frontend deployed to ${frontend_deploy}"
-  else
-    log_warn "Frontend dist not found, skipping deployment"
+    # Deploy frontend static files
+    local frontend_dist="$SCRIPT_DIR/frontend/dist"
+    local frontend_deploy="/var/www/oqto"
+    if [[ -d "$frontend_dist" ]]; then
+      log_info "Deploying frontend to ${frontend_deploy}..."
+      sudo mkdir -p "$frontend_deploy"
+      sudo rsync -a --delete "$frontend_dist/" "$frontend_deploy/"
+      sudo chown -R root:root "$frontend_deploy"
+      log_success "Frontend deployed to ${frontend_deploy}"
+    else
+      log_warn "Frontend dist not found, skipping deployment"
+    fi
   fi
 
   # Restart running services so they pick up the new binaries
