@@ -2599,264 +2599,31 @@ configure_eavs() {
     log_info "Using saved EAVS master key"
   fi
 
-  echo
-  echo "EAVS needs at least one LLM provider to route agent requests."
-  echo "You can add more providers later by editing: $eavs_config_file"
-  echo
+  # Write master key to env file
+  _eavs_env_append "EAVS_MASTER_KEY=${EAVS_MASTER_KEY}"
 
-  # Ensure the eavs model catalog is downloaded/up-to-date for model selection
-  log_info "Updating model catalog from models.dev..."
-  eavs models update >/dev/null 2>&1 || true
-
-  # Collect provider configs (including model shortlists)
-  local providers_toml=""
-  local first_provider=""
-  local has_any_provider="false"
-  # Track configured providers for testing later
-  CONFIGURED_PROVIDERS=""
-
-  sanitize_provider_name() {
-    local name="$1"
-    name=$(echo "$name" | tr '[:space:]' '-' | tr -cd '[:alnum:]_-')
-    echo "$name"
-  }
-
-  append_custom_provider() {
-    local cp_name="$1"
-    local cp_type="$2"
-    local cp_base_url="$3"
-    local cp_api_key="$4"
-    local cp_deployment="$5"
-    local cp_api_version="$6"
-    local cp_aws_region="$7"
-    local cp_gcp_project="$8"
-    local cp_gcp_location="$9"
-    local cp_test_model="${10}"
-    local cp_allow_missing_env="${11:-false}"
-
-    local cp_api_key_ref=""
-    if [[ -n "$cp_api_key" ]]; then
-      if [[ "$cp_api_key" == env:* ]]; then
-        local env_name="${cp_api_key#env:}"
-        local env_val="${!env_name:-}"
-        if [[ -z "$env_val" && "$cp_allow_missing_env" != "true" ]]; then
-          if [[ "$NONINTERACTIVE" != "true" ]]; then
-            env_val=$(prompt_input "  ${cp_name} API key (env:${env_name})")
-          fi
-        fi
-        if [[ -n "$env_val" ]]; then
-          if [[ "$SELECTED_USER_MODE" == "single" ]]; then
-            echo "${env_name}=${env_val}" >>"${eavs_env_file}"
-          else
-            echo "${env_name}=${env_val}" | sudo tee -a "${eavs_env_file}" >/dev/null
-          fi
-          cp_api_key_ref="env:${env_name}"
-        else
-          cp_api_key_ref="env:${env_name}"
-          log_warn "Missing ${env_name} for provider '${cp_name}'"
-        fi
-      else
-        local safe_name
-        safe_name=$(echo "$cp_name" | tr '[:lower:]-' '[:upper:]_')
-        local env_name="CUSTOM_${safe_name}_API_KEY"
-        if [[ "$SELECTED_USER_MODE" == "single" ]]; then
-          echo "${env_name}=${cp_api_key}" >>"${eavs_env_file}"
-        else
-          echo "${env_name}=${cp_api_key}" | sudo tee -a "${eavs_env_file}" >/dev/null
-        fi
-        cp_api_key_ref="env:${env_name}"
-      fi
-    fi
-
-    providers_toml+="
-[providers.${cp_name}]
-"
-    if [[ -n "$cp_type" ]]; then
-      providers_toml+="type = \"${cp_type}\"\n"
-    fi
-    if [[ -n "$cp_base_url" ]]; then
-      providers_toml+="base_url = \"${cp_base_url}\"\n"
-    fi
-    if [[ -n "$cp_api_key_ref" ]]; then
-      providers_toml+="api_key = \"${cp_api_key_ref}\"\n"
-    fi
-    if [[ -n "$cp_deployment" ]]; then
-      providers_toml+="deployment = \"${cp_deployment}\"\n"
-    fi
-    if [[ -n "$cp_api_version" ]]; then
-      providers_toml+="api_version = \"${cp_api_version}\"\n"
-    fi
-    if [[ -n "$cp_aws_region" ]]; then
-      providers_toml+="aws_region = \"${cp_aws_region}\"\n"
-    fi
-    if [[ -n "$cp_gcp_project" ]]; then
-      providers_toml+="gcp_project = \"${cp_gcp_project}\"\n"
-    fi
-    if [[ -n "$cp_gcp_location" ]]; then
-      providers_toml+="gcp_location = \"${cp_gcp_location}\"\n"
-    fi
-    if [[ -n "$cp_test_model" ]]; then
-      providers_toml+="test_model = \"${cp_test_model}\"\n"
-    fi
-
-    has_any_provider="true"
-    CONFIGURED_PROVIDERS="${CONFIGURED_PROVIDERS} ${cp_name}"
-    if [[ -z "$first_provider" ]]; then
-      first_provider="$cp_name"
-    fi
-  }
-
-  # Ask about each major provider
-  for provider_name in anthropic openai google openrouter groq mistral; do
-    local env_var_name=""
-    local provider_type=""
-    local display_name=""
-    local signup_url=""
-
-    case "$provider_name" in
-    anthropic)
-      env_var_name="ANTHROPIC_API_KEY"
-      provider_type="anthropic"
-      display_name="Anthropic (Claude)"
-      signup_url="https://console.anthropic.com/"
-      ;;
-    openai)
-      env_var_name="OPENAI_API_KEY"
-      provider_type="openai"
-      display_name="OpenAI (GPT)"
-      signup_url="https://platform.openai.com/api-keys"
-      ;;
-    google)
-      env_var_name="GEMINI_API_KEY"
-      provider_type="google"
-      display_name="Google (Gemini)"
-      signup_url="https://aistudio.google.com/app/apikey"
-      ;;
-    openrouter)
-      env_var_name="OPENROUTER_API_KEY"
-      provider_type="openrouter"
-      display_name="OpenRouter"
-      signup_url="https://openrouter.ai/keys"
-      ;;
-    groq)
-      env_var_name="GROQ_API_KEY"
-      provider_type="groq"
-      display_name="Groq"
-      signup_url="https://console.groq.com/keys"
-      ;;
-    mistral)
-      env_var_name="MISTRAL_API_KEY"
-      provider_type="mistral"
-      display_name="Mistral AI"
-      signup_url="https://console.mistral.ai/"
-      ;;
-    esac
-
-    # Check if key exists in environment
-    local existing_key=""
-    existing_key="${!env_var_name:-}"
-    local should_configure="false"
-
-    if [[ -n "$existing_key" ]]; then
-      log_info "Found $env_var_name in environment"
-      if confirm "Configure $display_name (key found in env)?"; then
-        should_configure="true"
-      fi
-    else
-      if confirm "Configure $display_name?" "n"; then
-        echo "  Get your API key from: $signup_url"
-        local api_key
-        api_key=$(prompt_input "  $display_name API key")
-        if [[ -n "$api_key" ]]; then
-          # Store key in env file, reference via env: syntax in config
-          if [[ "$SELECTED_USER_MODE" == "single" ]]; then
-            echo "${env_var_name}=${api_key}" >>"${eavs_env_file}"
-          else
-            echo "${env_var_name}=${api_key}" | sudo tee -a "${eavs_env_file}" >/dev/null
-          fi
-          should_configure="true"
-        fi
-      fi
-    fi
-
-    if [[ "$should_configure" == "true" ]]; then
-      # Provider base config
-      providers_toml+="
-[providers.${provider_name}]
-type = \"${provider_type}\"
-api_key = \"env:${env_var_name}\"
-"
-      # Let user pick models from the live eavs catalog.
-      # Call directly (not in $()) so interactive TUI tools (gum/fzf) have
-      # access to /dev/tty. The function sets _SELECT_MODELS_RESULT.
-      _SELECT_MODELS_RESULT=""
-      select_models_for_provider "$provider_name"
-      providers_toml+="$_SELECT_MODELS_RESULT"
-
-      has_any_provider="true"
-      CONFIGURED_PROVIDERS="${CONFIGURED_PROVIDERS} ${provider_name}"
-      if [[ -z "$first_provider" ]]; then
-        first_provider="$provider_name"
-      fi
+  # Seed env file with any API keys already in the shell environment.
+  # eavs setup add --batch --env-file will pick these up.
+  local known_env_vars=(
+    OPENAI_API_KEY ANTHROPIC_API_KEY GEMINI_API_KEY GOOGLE_API_KEY
+    MISTRAL_API_KEY GROQ_API_KEY XAI_API_KEY OPENROUTER_API_KEY
+    CEREBRAS_API_KEY DEEPSEEK_API_KEY
+  )
+  for var in "${known_env_vars[@]}"; do
+    if [[ -n "${!var:-}" ]]; then
+      _eavs_env_append "${var}=${!var}"
     fi
   done
 
-  # Custom providers: delegate to eavs interactive wizard.
-  # We write the base config first so eavs can append to it.
-  local _want_custom_providers="false"
-  if [[ "$NONINTERACTIVE" != "true" ]]; then
-    if confirm "Add a custom provider (Azure AI Foundry, Bedrock, Ollama, etc.)?" "n"; then
-      _want_custom_providers="true"
-    fi
+  # Lock down env file permissions
+  if [[ "$SELECTED_USER_MODE" == "single" ]]; then
+    chmod 600 "${eavs_env_file}"
+  else
+    sudo chmod 600 "${eavs_env_file}"
   fi
 
-  # Add custom providers from oqto.setup.toml (if any)
-  if [[ ${#CUSTOM_PROVIDERS[@]} -gt 0 ]]; then
-    for cp_key in "${CUSTOM_PROVIDERS[@]}"; do
-      local cp_name
-      cp_name=$(sanitize_provider_name "$cp_key")
-      if [[ -z "$cp_name" ]]; then
-        log_warn "Skipping custom provider with invalid name: ${cp_key}"
-        continue
-      fi
-      if [[ " ${CONFIGURED_PROVIDERS} " =~ " ${cp_name} " ]]; then
-        log_warn "Provider '${cp_name}' already configured"
-        continue
-      fi
-
-      local cp_type="${CP_TYPE[$cp_key]}"
-      local cp_base_url="${CP_BASE_URL[$cp_key]}"
-      local cp_api_key="${CP_API_KEY[$cp_key]}"
-      local cp_deployment="${CP_DEPLOYMENT[$cp_key]}"
-      local cp_api_version="${CP_API_VERSION[$cp_key]}"
-      local cp_aws_region="${CP_AWS_REGION[$cp_key]}"
-      local cp_gcp_project="${CP_GCP_PROJECT[$cp_key]}"
-      local cp_gcp_location="${CP_GCP_LOCATION[$cp_key]}"
-      local cp_test_model="${CP_TEST_MODEL[$cp_key]}"
-
-      append_custom_provider "$cp_name" "$cp_type" "$cp_base_url" "$cp_api_key" "$cp_deployment" "$cp_api_version" "$cp_aws_region" "$cp_gcp_project" "$cp_gcp_location" "$cp_test_model"
-    done
-  fi
-
-  if [[ "$has_any_provider" != "true" ]]; then
-    log_warn "No providers configured. EAVS will start but agents cannot use any LLM."
-    log_info "Add providers later: edit $eavs_config_file"
-  fi
-
-  # Set first provider as default (EAVS routes requests to "default" when
-  # no X-Provider header is sent)
-  local default_provider_toml=""
-  if [[ -n "$first_provider" ]]; then
-    local first_type first_key
-    first_type=$(grep "^type = " <<<"$providers_toml" | head -1 | cut -d'"' -f2)
-    first_key=$(grep "^api_key = " <<<"$providers_toml" | head -1 | cut -d'"' -f2)
-    default_provider_toml="[providers.default]
-type = \"${first_type}\"
-api_key = \"${first_key}\"
-"
-  fi
-
-  # Write eavs config
+  # Write base eavs config (server, keys, logging -- no providers).
+  # eavs setup add will append provider sections to this file.
   local config_content
   config_content=$(
     cat <<EOF
@@ -2869,14 +2636,6 @@ api_key = \"${first_key}\"
 [server]
 host = "127.0.0.1"
 port = ${EAVS_PORT}
-
-# --- Providers ---
-# API key values support: "env:VAR_NAME", "keychain:account", or literal strings.
-# Add providers with: eavs secret set <name>  (stores in system keychain)
-# Then use: api_key = "keychain:<name>"
-
-${default_provider_toml}
-${providers_toml}
 
 [logging]
 default = "stdout"
@@ -2905,36 +2664,140 @@ EOF
 
   if [[ "$SELECTED_USER_MODE" == "single" ]]; then
     echo "$config_content" >"$eavs_config_file"
-    # Append master key to env file
-    echo "EAVS_MASTER_KEY=${EAVS_MASTER_KEY}" >>"${eavs_env_file}"
-    chmod 600 "${eavs_env_file}"
   else
     echo "$config_content" | sudo tee "$eavs_config_file" >/dev/null
-    echo "EAVS_MASTER_KEY=${EAVS_MASTER_KEY}" | sudo tee -a "${eavs_env_file}" >/dev/null
-    sudo chmod 600 "${eavs_env_file}"
-    # Owned by oqto - same user that runs the eavs service
     sudo chown -R oqto:oqto "$eavs_config_dir" "$eavs_data_dir"
   fi
 
-  log_success "EAVS config written to $eavs_config_file"
-  if [[ -n "$first_provider" ]]; then
-    log_success "Default provider: $first_provider"
+  log_success "EAVS base config written to $eavs_config_file"
+
+  # Build import file from oqto.setup.toml custom providers (if any).
+  # These are pre-configured providers that get imported non-interactively
+  # before the interactive batch wizard runs.
+  local import_file=""
+  if [[ ${#CUSTOM_PROVIDERS[@]} -gt 0 ]]; then
+    import_file=$(mktemp /tmp/eavs-import-XXXXXX.toml)
+    for cp_key in "${CUSTOM_PROVIDERS[@]}"; do
+      local cp_name
+      cp_name=$(echo "$cp_key" | tr '[:space:]' '-' | tr -cd '[:alnum:]_-')
+      [[ -z "$cp_name" ]] && continue
+
+      # Write API key value to env file if it's a literal (not env: ref)
+      local cp_api_key="${CP_API_KEY[$cp_key]}"
+      local cp_api_key_ref=""
+      if [[ -n "$cp_api_key" ]]; then
+        if [[ "$cp_api_key" == env:* ]]; then
+          local env_name="${cp_api_key#env:}"
+          local env_val="${!env_name:-}"
+          if [[ -n "$env_val" ]]; then
+            _eavs_env_append "${env_name}=${env_val}"
+          fi
+          cp_api_key_ref="env:${env_name}"
+        else
+          local safe_name
+          safe_name=$(echo "$cp_name" | tr '[:lower:]-' '[:upper:]_')
+          local env_name="CUSTOM_${safe_name}_API_KEY"
+          _eavs_env_append "${env_name}=${cp_api_key}"
+          cp_api_key_ref="env:${env_name}"
+        fi
+      fi
+
+      # Write provider section to import file
+      echo "" >>"$import_file"
+      echo "[providers.${cp_name}]" >>"$import_file"
+      [[ -n "${CP_TYPE[$cp_key]}" ]] && echo "type = \"${CP_TYPE[$cp_key]}\"" >>"$import_file"
+      [[ -n "${CP_BASE_URL[$cp_key]}" ]] && echo "base_url = \"${CP_BASE_URL[$cp_key]}\"" >>"$import_file"
+      [[ -n "$cp_api_key_ref" ]] && echo "api_key = \"${cp_api_key_ref}\"" >>"$import_file"
+      [[ -n "${CP_DEPLOYMENT[$cp_key]}" ]] && echo "deployment = \"${CP_DEPLOYMENT[$cp_key]}\"" >>"$import_file"
+      [[ -n "${CP_API_VERSION[$cp_key]}" ]] && echo "api_version = \"${CP_API_VERSION[$cp_key]}\"" >>"$import_file"
+      [[ -n "${CP_AWS_REGION[$cp_key]}" ]] && echo "aws_region = \"${CP_AWS_REGION[$cp_key]}\"" >>"$import_file"
+      [[ -n "${CP_GCP_PROJECT[$cp_key]}" ]] && echo "gcp_project = \"${CP_GCP_PROJECT[$cp_key]}\"" >>"$import_file"
+      [[ -n "${CP_GCP_LOCATION[$cp_key]}" ]] && echo "gcp_location = \"${CP_GCP_LOCATION[$cp_key]}\"" >>"$import_file"
+      [[ -n "${CP_TEST_MODEL[$cp_key]}" ]] && echo "test_model = \"${CP_TEST_MODEL[$cp_key]}\"" >>"$import_file"
+    done
   fi
 
-  # Custom providers: delegate to eavs interactive wizard now that the
-  # config file exists. eavs setup add appends providers to the file.
-  if [[ "$_want_custom_providers" == "true" ]]; then
-    log_info "Launching eavs provider wizard..."
-    log_info "The wizard will guide you through provider setup (type, API key, base URL, etc.)"
-    echo ""
-    if [[ "$SELECTED_USER_MODE" == "single" ]]; then
-      eavs setup add --config "$eavs_config_file" || log_warn "eavs setup add failed (you can add providers later)"
-    else
-      sudo -u oqto eavs setup add --config "$eavs_config_file" </dev/tty || log_warn "eavs setup add failed (you can add providers later)"
-      sudo chown -R oqto:oqto "$eavs_config_dir" 2>/dev/null
-    fi
-    echo ""
-    log_info "You can add more providers anytime with: eavs setup add --config $eavs_config_file"
+  # Ensure the eavs model catalog is downloaded/up-to-date for model selection
+  log_info "Updating model catalog from models.dev..."
+  eavs models update >/dev/null 2>&1 || true
+
+  echo
+  echo "EAVS provider setup -- all provider configuration is handled by eavs."
+  echo "Batch mode will detect API keys from the environment, then offer to"
+  echo "add custom providers (Azure AI Foundry, Bedrock, Ollama, etc.)."
+  echo
+
+  # Build eavs setup add command with flags
+  local eavs_add_args=(setup add --batch --config "$eavs_config_file" --env-file "$eavs_env_file")
+  if [[ -n "$import_file" ]]; then
+    eavs_add_args+=(--import "$import_file")
+  fi
+
+  # Run eavs setup add --batch. It will:
+  #   1. Import providers from --import file (oqto.setup.toml custom providers)
+  #   2. Load --env-file and scan for known API keys (OPENAI_API_KEY, etc.)
+  #   3. Ask to confirm each detected key
+  #   4. Offer to add custom providers interactively
+  #   5. Set the default provider
+  if [[ "$SELECTED_USER_MODE" == "single" ]]; then
+    eavs "${eavs_add_args[@]}" </dev/tty || log_warn "eavs setup add failed (you can add providers later with: eavs setup add --config $eavs_config_file)"
+  else
+    sudo -u oqto eavs "${eavs_add_args[@]}" </dev/tty || log_warn "eavs setup add failed (you can add providers later)"
+    sudo chown -R oqto:oqto "$eavs_config_dir" 2>/dev/null
+  fi
+
+  # Clean up temp import file
+  [[ -n "$import_file" ]] && rm -f "$import_file"
+
+  echo
+  log_info "You can add more providers anytime with: eavs setup add --config $eavs_config_file"
+
+  # Extract configured providers from the resulting config for testing
+  # and model selection. Parse [providers.NAME] sections, skip "default".
+  CONFIGURED_PROVIDERS=""
+  local provider_names
+  provider_names=$(grep -oP '^\[providers\.(?!default)\K[^\]]+' "$eavs_config_file" 2>/dev/null) || true
+  if [[ -n "$provider_names" ]]; then
+    CONFIGURED_PROVIDERS=$(echo "$provider_names" | tr '\n' ' ')
+    CONFIGURED_PROVIDERS="${CONFIGURED_PROVIDERS% }"
+  fi
+
+  if [[ -z "${CONFIGURED_PROVIDERS// }" ]]; then
+    log_warn "No providers configured. EAVS will start but agents cannot use any LLM."
+    return
+  fi
+
+  log_success "Configured providers: $CONFIGURED_PROVIDERS"
+
+  # Offer model shortlist selection for each configured provider.
+  # This adds [[providers.<name>.models]] entries to the config for
+  # export adapters (Pi, Codex, etc.) to pick up.
+  if [[ "$NONINTERACTIVE" != "true" ]]; then
+    for provider_name in $CONFIGURED_PROVIDERS; do
+      _SELECT_MODELS_RESULT=""
+      select_models_for_provider "$provider_name"
+      if [[ -n "$_SELECT_MODELS_RESULT" ]]; then
+        # Append model shortlist to the config file
+        if [[ "$SELECTED_USER_MODE" == "single" ]]; then
+          echo "$_SELECT_MODELS_RESULT" >>"$eavs_config_file"
+        else
+          echo "$_SELECT_MODELS_RESULT" | sudo tee -a "$eavs_config_file" >/dev/null
+        fi
+      fi
+    done
+  fi
+}
+
+# Helper: append a line to the eavs env file (handles single/multi user mode)
+_eavs_env_append() {
+  local line="$1"
+  local eavs_env_file
+  if [[ "$SELECTED_USER_MODE" == "single" ]]; then
+    eavs_env_file="${XDG_CONFIG_HOME}/eavs/env"
+    echo "$line" >>"$eavs_env_file"
+  else
+    eavs_env_file="${OQTO_HOME}/.config/eavs/env"
+    echo "$line" | sudo tee -a "$eavs_env_file" >/dev/null
   fi
 }
 
