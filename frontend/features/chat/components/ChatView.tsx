@@ -321,6 +321,7 @@ export function ChatView({
 	const initialScrollDoneRef = useRef(false);
 
 	// Consume pending chat input from external source (e.g. browser "Send to chat")
+	// biome-ignore lint/correctness/useExhaustiveDependencies: setInput is stable setState
 	useEffect(() => {
 		if (pendingChatInput) {
 			setInput(pendingChatInput);
@@ -332,6 +333,7 @@ export function ChatView({
 		}
 	}, [pendingChatInput, onPendingChatInputConsumed]);
 
+	// biome-ignore lint/correctness/useExhaustiveDependencies: setInput is stable setState
 	useEffect(() => {
 		if (typeof window === "undefined") return;
 		try {
@@ -363,7 +365,12 @@ export function ChatView({
 			parsed.title || piState.sessionName,
 			parsed.readable_id,
 		);
-	}, [piState?.sessionName, piState?.sessionId, selectedSessionId, updateChatSessionTitleLocal]);
+	}, [
+		piState?.sessionName,
+		piState?.sessionId,
+		selectedSessionId,
+		updateChatSessionTitleLocal,
+	]);
 	useEffect(() => {
 		if (isStreaming || isAwaitingResponse) {
 			setSendPending(false);
@@ -555,8 +562,7 @@ export function ChatView({
 	const displayError = commandError ?? error;
 	const historyPending =
 		messages.length === 0 && (piState?.messageCount ?? 0) > 0;
-	const showSkeleton =
-		messages.length === 0 && !displayError && historyPending;
+	const showSkeleton = messages.length === 0 && !displayError && historyPending;
 
 	const ChatSkeleton = (
 		<div className="flex-1 flex flex-col gap-4 min-h-0 animate-pulse">
@@ -670,40 +676,40 @@ export function ChatView({
 		});
 	}, [availableModels, modelQuery]);
 	// Calculate current context window size from message content.
-// Pi's usage fields are cumulative session totals, not current context.
-const contextTokenCount = useMemo(() => {
-	// Find last compaction - only count messages after it
-	let lastCompactionIndex = -1;
-	for (let i = messages.length - 1; i >= 0; i--) {
-		if (messages[i].parts.some((p) => p.type === "compaction")) {
-			lastCompactionIndex = i;
-			break;
+	// Pi's usage fields are cumulative session totals, not current context.
+	const contextTokenCount = useMemo(() => {
+		// Find last compaction - only count messages after it
+		let lastCompactionIndex = -1;
+		for (let i = messages.length - 1; i >= 0; i--) {
+			if (messages[i].parts.some((p) => p.type === "compaction")) {
+				lastCompactionIndex = i;
+				break;
+			}
 		}
-	}
 
-	// Estimate tokens from text content (rough approximation: 4 chars ≈ 1 token)
-	let inputTokens = 0;
-	let outputTokens = 0;
-	const startIndex = lastCompactionIndex >= 0 ? lastCompactionIndex + 1 : 0;
+		// Estimate tokens from text content (rough approximation: 4 chars ≈ 1 token)
+		let inputTokens = 0;
+		let outputTokens = 0;
+		const startIndex = lastCompactionIndex >= 0 ? lastCompactionIndex + 1 : 0;
 
-	for (let i = startIndex; i < messages.length; i++) {
-		const msg = messages[i];
-		for (const part of msg.parts) {
-			if (part.type === "text" && part.text) {
-				const estimatedTokens = Math.ceil(part.text.length / 4);
-				if (msg.role === "user") {
-					inputTokens += estimatedTokens;
-				} else if (msg.role === "assistant") {
-					outputTokens += estimatedTokens;
+		for (let i = startIndex; i < messages.length; i++) {
+			const msg = messages[i];
+			for (const part of msg.parts) {
+				if (part.type === "text" && part.text) {
+					const estimatedTokens = Math.ceil(part.text.length / 4);
+					if (msg.role === "user") {
+						inputTokens += estimatedTokens;
+					} else if (msg.role === "assistant") {
+						outputTokens += estimatedTokens;
+					}
 				}
 			}
 		}
-	}
-	return { inputTokens, outputTokens };
-}, [messages]);
+		return { inputTokens, outputTokens };
+	}, [messages]);
 
-// Use content-based estimate for current context window
-const gaugeTokens = contextTokenCount;
+	// Use content-based estimate for current context window
+	const gaugeTokens = contextTokenCount;
 
 	// Report token usage to parent when it changes
 	useEffect(() => {
@@ -719,10 +725,13 @@ const gaugeTokens = contextTokenCount;
 	// Dictation hook
 	const dictation = useDictation({
 		config: voiceConfig,
-		onTranscript: useCallback((text: string) => {
-			const prev = inputValueRef.current;
-			setInput(prev ? `${prev} ${text}` : text);
-		}, [setInput]),
+		onTranscript: useCallback(
+			(text: string) => {
+				const prev = inputValueRef.current;
+				setInput(prev ? `${prev} ${text}` : text);
+			},
+			[setInput],
+		),
 		vadTimeoutMs: features?.voice?.vad_timeout_ms,
 		autoSendOnFinal: true,
 		autoSendDelayMs: 50,
@@ -784,6 +793,7 @@ const gaugeTokens = contextTokenCount;
 		};
 	}, [isConnected, piState, selectedSessionId]);
 
+	// biome-ignore lint/correctness/useExhaustiveDependencies: contextWindowLimit is stable
 	const refreshStats = useCallback(async () => {
 		const targetSessionId = selectedSessionId ?? piState?.sessionId ?? null;
 		if (!targetSessionId) return;
@@ -801,7 +811,12 @@ const gaugeTokens = contextTokenCount;
 							}
 						: null;
 			if (tokens) {
-				console.log("[Pi stats] tokens:", tokens, "contextWindow:", contextWindowLimit);
+				console.log(
+					"[Pi stats] tokens:",
+					tokens,
+					"contextWindow:",
+					contextWindowLimit,
+				);
 				setSessionTokens({
 					input: tokens.input ?? 0,
 					output: tokens.output ?? 0,
@@ -878,6 +893,7 @@ const gaugeTokens = contextTokenCount;
 
 	// Auto-scroll when messages change (new message, streaming token update,
 	// tool call result). Only scrolls if user hasn't manually scrolled up.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: setBusyForEvent is stable callback
 	useEffect(() => {
 		if (!initialScrollDoneRef.current) return;
 		if (!isUserScrolledRef.current) {
@@ -891,7 +907,9 @@ const gaugeTokens = contextTokenCount;
 	useEffect(() => {
 		const container = messagesContainerRef.current;
 		if (!container) return;
-		const mark = () => { userInitiatedScrollRef.current = true; };
+		const mark = () => {
+			userInitiatedScrollRef.current = true;
+		};
 		container.addEventListener("wheel", mark, { passive: true });
 		container.addEventListener("touchstart", mark, { passive: true });
 		container.addEventListener("pointerdown", mark, { passive: true });
@@ -931,7 +949,9 @@ const gaugeTokens = contextTokenCount;
 		// Load more when near top
 		if (container.scrollTop < 100 && visibleCount < messages.length) {
 			const prevScrollHeight = container.scrollHeight;
-			setVisibleCount((prev) => Math.min(prev + LOAD_MORE_COUNT, messages.length));
+			setVisibleCount((prev) =>
+				Math.min(prev + LOAD_MORE_COUNT, messages.length),
+			);
 			requestAnimationFrame(() => {
 				container.scrollTop = container.scrollHeight - prevScrollHeight;
 			});
@@ -941,7 +961,9 @@ const gaugeTokens = contextTokenCount;
 		if (!userInitiatedScrollRef.current) return;
 		userInitiatedScrollRef.current = false;
 
-		const atBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 80;
+		const atBottom =
+			container.scrollHeight - container.scrollTop - container.clientHeight <
+			80;
 		setIsUserScrolled(!atBottom);
 		isUserScrolledRef.current = !atBottom;
 		if (atBottom) {
@@ -1046,9 +1068,16 @@ const gaugeTokens = contextTokenCount;
 				setIsSwitchingModel(false);
 			}
 		},
-		[canSwitchModel, piState?.sessionId, refresh, selectedModelRef, selectedSessionId],
+		[
+			canSwitchModel,
+			piState?.sessionId,
+			refresh,
+			selectedModelRef,
+			selectedSessionId,
+		],
 	);
 
+	// biome-ignore lint/correctness/useExhaustiveDependencies: messages dep intentionally omitted
 	const runSlashCommand = useCallback(
 		async (command: string, args: string) => {
 			setCommandError(null);
@@ -1317,11 +1346,7 @@ const gaugeTokens = contextTokenCount;
 			return;
 		}
 		enqueueMessage();
-	}, [
-		builtInCommandNames,
-		enqueueMessage,
-		handleSend,
-	]);
+	}, [builtInCommandNames, enqueueMessage, handleSend]);
 
 	const messagesRef = useRef(messages);
 	messagesRef.current = messages;
@@ -1442,12 +1467,7 @@ const gaugeTokens = contextTokenCount;
 				setShowSlashPopup(false);
 			}
 		},
-		[
-			handleQueueIntent,
-			handleSend,
-			showFileMentionPopup,
-			showSlashPopup,
-		],
+		[handleQueueIntent, handleSend, showFileMentionPopup, showSlashPopup],
 	);
 
 	const handleInputChange = useCallback(
@@ -1552,15 +1572,18 @@ const gaugeTokens = contextTokenCount;
 		clearLongPress();
 	}, [clearLongPress]);
 
-	const handleFileSelect = useCallback((file: FileAttachment) => {
-		setFileAttachments((prev) => [...prev, file]);
-		// Remove the @query from input
-		const newValue = inputValueRef.current.replace(/@[^\s]*$/, "");
-		setInput(newValue);
-		setShowFileMentionPopup(false);
-		setFileMentionQuery("");
-		inputRef.current?.focus();
-	}, [setInput]);
+	const handleFileSelect = useCallback(
+		(file: FileAttachment) => {
+			setFileAttachments((prev) => [...prev, file]);
+			// Remove the @query from input
+			const newValue = inputValueRef.current.replace(/@[^\s]*$/, "");
+			setInput(newValue);
+			setShowFileMentionPopup(false);
+			setFileMentionQuery("");
+			inputRef.current?.focus();
+		},
+		[setInput],
+	);
 
 	const handleStop = useCallback(async () => {
 		await abort();
@@ -1712,132 +1735,131 @@ const gaugeTokens = contextTokenCount;
 					data-spotlight="chat-timeline"
 				>
 					<div>
-					{showSkeleton && ChatSkeleton}
+						{showSkeleton && ChatSkeleton}
 
-					{!showSkeleton &&
-						messages.length === 0 &&
-						!sendPending &&
-						!isStreaming &&
-						!isAwaitingResponse && (
-							<div className="flex items-center gap-2 text-sm text-muted-foreground">
-								<span>{t.noMessages}</span>
+						{!showSkeleton &&
+							messages.length === 0 &&
+							!sendPending &&
+							!isStreaming &&
+							!isAwaitingResponse && (
+								<div className="flex items-center gap-2 text-sm text-muted-foreground">
+									<span>{t.noMessages}</span>
+								</div>
+							)}
+
+						{/* Load more indicator */}
+						{messages.length > visibleCount && (
+							<div className="text-center text-xs text-muted-foreground py-2">
+								{messages.length - visibleCount} older messages...
 							</div>
 						)}
 
-					{/* Load more indicator */}
-					{messages.length > visibleCount && (
-						<div className="text-center text-xs text-muted-foreground py-2">
-							{messages.length - visibleCount} older messages...
-						</div>
-					)}
+						{/* Only render the last visibleCount messages for performance */}
+						{!showSkeleton &&
+							(() => {
+								const visibleMessages = messages.slice(-visibleCount);
+								const grouped = groupMessages(visibleMessages);
+								const lastGroup = grouped[grouped.length - 1];
+								const activeSessionKey = selectedSessionId ?? null;
+								const isWorking =
+									isStreaming ||
+									isAwaitingResponse ||
+									(sendPending &&
+										!!sendPendingSessionId &&
+										sendPendingSessionId === activeSessionKey);
+								const needsPendingAssistant =
+									isWorking && (!lastGroup || lastGroup.role === "user");
+								const groupsToRender = needsPendingAssistant
+									? [
+											...grouped,
+											{
+												role: "assistant" as const,
+												messages: [
+													{
+														id: "pending-assistant",
+														role: "assistant" as const,
+														parts: [],
+														timestamp: Date.now(),
+														isStreaming: true,
+													},
+												],
+											},
+										]
+									: grouped;
 
-					{/* Only render the last visibleCount messages for performance */}
-					{!showSkeleton &&
-						(() => {
-							const visibleMessages = messages.slice(-visibleCount);
-							const grouped = groupMessages(visibleMessages);
-							const lastGroup = grouped[grouped.length - 1];
-							const activeSessionKey = selectedSessionId ?? null;
-							const isWorking =
-								isStreaming ||
-								isAwaitingResponse ||
-								(sendPending &&
-									!!sendPendingSessionId &&
-									sendPendingSessionId === activeSessionKey);
-							const needsPendingAssistant =
-								isWorking && (!lastGroup || lastGroup.role === "user");
-							const groupsToRender = needsPendingAssistant
-								? [
-										...grouped,
-										{
-											role: "assistant" as const,
-											messages: [
-												{
-													id: "pending-assistant",
-													role: "assistant" as const,
-													parts: [],
-													timestamp: Date.now(),
-													isStreaming: true,
-												},
-											],
-										},
-									]
-								: grouped;
+								return groupsToRender.map((group, groupIndex) => {
+									const groupSurfaces = group.messages.flatMap(
+										(m) => surfacesByMessageId.get(m.id) ?? [],
+									);
+									const groupMessageId = group.messages[0]?.id;
+									// Check if this is the last assistant group
+									const isLastAssistantGroup =
+										group.role === "assistant" &&
+										!groupsToRender
+											.slice(groupIndex + 1)
+											.some((g) => g.role === "assistant");
 
-							return groupsToRender.map((group, groupIndex) => {
-								const groupSurfaces = group.messages.flatMap(
-									(m) => surfacesByMessageId.get(m.id) ?? [],
-								);
-								const groupMessageId = group.messages[0]?.id;
-								// Check if this is the last assistant group
-								const isLastAssistantGroup =
-									group.role === "assistant" &&
-									!groupsToRender
-										.slice(groupIndex + 1)
-										.some((g) => g.role === "assistant");
-
-								// Detect model change: compare this assistant group's model
-								// to the previous assistant group's model
-								let modelChangeDivider: React.ReactNode = null;
-								if (group.role === "assistant") {
-									const thisModel = getGroupModelRef(group);
-									if (thisModel) {
-										// Find previous assistant group
-										for (let i = groupIndex - 1; i >= 0; i--) {
-											if (groupsToRender[i].role === "assistant") {
-												const prevModel = getGroupModelRef(groupsToRender[i]);
-												if (prevModel && prevModel !== thisModel) {
-													modelChangeDivider = (
-														<ModelChangeDivider modelRef={thisModel} />
-													);
+									// Detect model change: compare this assistant group's model
+									// to the previous assistant group's model
+									let modelChangeDivider: React.ReactNode = null;
+									if (group.role === "assistant") {
+										const thisModel = getGroupModelRef(group);
+										if (thisModel) {
+											// Find previous assistant group
+											for (let i = groupIndex - 1; i >= 0; i--) {
+												if (groupsToRender[i].role === "assistant") {
+													const prevModel = getGroupModelRef(groupsToRender[i]);
+													if (prevModel && prevModel !== thisModel) {
+														modelChangeDivider = (
+															<ModelChangeDivider modelRef={thisModel} />
+														);
+													}
+													break;
 												}
-												break;
 											}
 										}
 									}
-								}
 
-								return (
-									<div
-										key={`${groupMessageId ?? `${group.role}-${groupIndex}`}-${groupIndex}`}
-										className={groupIndex > 0 ? "mt-4 sm:mt-6" : ""}
-									>
-										{modelChangeDivider}
-										<MessageGroupCard
-											group={group}
-											assistantName={assistantName}
-											tempIdLabel={tempIdLabel}
-											workspacePath={workspacePath}
-											locale={locale}
-											a2uiSurfaces={groupSurfaces}
-											onA2UIAction={handleA2UIAction}
-											messageId={groupMessageId}
-											showWorkingIndicator={isWorking && isLastAssistantGroup}
-										/>
-									</div>
-								);
-							});
-						})()}
+									return (
+										<div
+											key={`${groupMessageId ?? `${group.role}-${groupIndex}`}-${groupIndex}`}
+											className={groupIndex > 0 ? "mt-4 sm:mt-6" : ""}
+										>
+											{modelChangeDivider}
+											<MessageGroupCard
+												group={group}
+												assistantName={assistantName}
+												tempIdLabel={tempIdLabel}
+												workspacePath={workspacePath}
+												locale={locale}
+												a2uiSurfaces={groupSurfaces}
+												onA2UIAction={handleA2UIAction}
+												messageId={groupMessageId}
+												showWorkingIndicator={isWorking && isLastAssistantGroup}
+											/>
+										</div>
+									);
+								});
+							})()}
 
-					{/* Orphaned A2UI surfaces (no valid anchor) */}
-					{orphanedSurfaces.length > 0 && (
-						<div className="space-y-2 mt-4">
-							{orphanedSurfaces.map((surface) => (
-								<A2UICallCard
-									key={surface.surfaceId}
-									surfaceId={surface.surfaceId}
-									messages={surface.messages}
-									blocking={surface.blocking}
-									requestId={surface.requestId}
-									answered={surface.answered}
-									answeredAction={surface.answeredAction}
-									answeredAt={surface.answeredAt}
-									onAction={handleA2UIAction}
-								/>
-							))}
-						</div>
-					)}
-
+						{/* Orphaned A2UI surfaces (no valid anchor) */}
+						{orphanedSurfaces.length > 0 && (
+							<div className="space-y-2 mt-4">
+								{orphanedSurfaces.map((surface) => (
+									<A2UICallCard
+										key={surface.surfaceId}
+										surfaceId={surface.surfaceId}
+										messages={surface.messages}
+										blocking={surface.blocking}
+										requestId={surface.requestId}
+										answered={surface.answered}
+										answeredAction={surface.answeredAction}
+										answeredAt={surface.answeredAt}
+										onAction={handleA2UIAction}
+									/>
+								))}
+							</div>
+						)}
 					</div>
 					<div ref={messagesEndRef} />
 				</div>
@@ -1917,7 +1939,11 @@ const gaugeTokens = contextTokenCount;
 						<SlashCommandPopup
 							commands={slashCommands}
 							query={slashQueryRef.current.command}
-							isOpen={showSlashPopup && slashQueryRef.current.isSlash && !slashQueryRef.current.args}
+							isOpen={
+								showSlashPopup &&
+								slashQueryRef.current.isSlash &&
+								!slashQueryRef.current.args
+							}
 							onSelect={(cmd) => {
 								const sq = slashQueryRef.current;
 								if (builtInCommandNames.has(cmd.name)) {
@@ -3122,11 +3148,7 @@ function PiPartRenderer({
 						b.type === "tool_use"
 					) {
 						const inner =
-							"content" in b
-								? b.content
-								: "output" in b
-									? b.output
-									: undefined;
+							"content" in b ? b.content : "output" in b ? b.output : undefined;
 						if (inner !== undefined) {
 							return formatToolResultOutput(inner) ?? null;
 						}
@@ -3194,7 +3216,9 @@ function PiPartRenderer({
 					<summary className="cursor-pointer hover:text-foreground list-none [&::-webkit-details-marker]:hidden [&::marker]:content-['']">
 						{locale === "de" ? "Gedanken" : "Thinking"}
 					</summary>
-					<pre className="mt-1 whitespace-pre-wrap font-mono text-xs">{stripAnsi(((part as { text?: string }).text ?? "").trim())}</pre>
+					<pre className="mt-1 whitespace-pre-wrap font-mono text-xs">
+						{stripAnsi(((part as { text?: string }).text ?? "").trim())}
+					</pre>
 				</details>
 			);
 

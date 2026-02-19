@@ -84,7 +84,7 @@ pub fn validate_group(group: &str) -> Result<(), String> {
 
 /// Validate a UID is in the allowed range.
 pub fn validate_uid(uid: u32) -> Result<(), String> {
-    if uid < UID_MIN || uid > UID_MAX {
+    if !(UID_MIN..=UID_MAX).contains(&uid) {
         return Err(format!(
             "UID {uid} out of allowed range ({UID_MIN}-{UID_MAX})"
         ));
@@ -174,9 +174,7 @@ pub fn validate_gecos(gecos: &str) -> Result<(), String> {
 pub fn validate_owner(owner: &str) -> Result<(), String> {
     let parts: Vec<&str> = owner.split(':').collect();
     if parts.len() != 2 {
-        return Err(format!(
-            "owner must be in user:group format, got '{owner}'"
-        ));
+        return Err(format!("owner must be in user:group format, got '{owner}'"));
     }
     validate_username(parts[0])?;
     validate_group(parts[1])?;
@@ -375,7 +373,10 @@ mod tests {
     #[test]
     fn shell_valid_all() {
         for shell in ALLOWED_SHELLS {
-            assert!(validate_shell(shell).is_ok(), "shell {shell} should be valid");
+            assert!(
+                validate_shell(shell).is_ok(),
+                "shell {shell} should be valid"
+            );
         }
     }
 
@@ -395,11 +396,7 @@ mod tests {
     fn path_valid_runner_socket() {
         let prefixes = &["/run/oqto/runner-sockets/", "/home/oqto_"];
         assert!(validate_path("/run/oqto/runner-sockets/oqto_admin", prefixes).is_ok());
-        assert!(validate_path(
-            "/run/oqto/runner-sockets/octo_user-a1b2",
-            prefixes
-        )
-        .is_ok());
+        assert!(validate_path("/run/oqto/runner-sockets/octo_user-a1b2", prefixes).is_ok());
     }
 
     #[test]
@@ -578,67 +575,73 @@ mod tests {
 
     #[test]
     fn create_user_valid() {
-        assert!(validate_create_user(
-            "oqto_admin-a1b2",
-            2000,
-            "oqto",
-            "/bin/bash",
-            "Oqto platform user admin-a1b2"
-        )
-        .is_ok());
+        assert!(
+            validate_create_user(
+                "oqto_admin-a1b2",
+                2000,
+                "oqto",
+                "/bin/bash",
+                "Oqto platform user admin-a1b2"
+            )
+            .is_ok()
+        );
     }
 
     #[test]
     fn create_user_rejects_each_field() {
         // Bad username
-        assert!(validate_create_user(
-            "root",
-            2000,
-            "oqto",
-            "/bin/bash",
-            "Oqto platform user root"
-        )
-        .is_err());
+        assert!(
+            validate_create_user("root", 2000, "oqto", "/bin/bash", "Oqto platform user root")
+                .is_err()
+        );
 
         // Bad UID
-        assert!(validate_create_user(
-            "oqto_admin",
-            0,
-            "oqto",
-            "/bin/bash",
-            "Oqto platform user admin"
-        )
-        .is_err());
+        assert!(
+            validate_create_user(
+                "oqto_admin",
+                0,
+                "oqto",
+                "/bin/bash",
+                "Oqto platform user admin"
+            )
+            .is_err()
+        );
 
         // Bad group
-        assert!(validate_create_user(
-            "oqto_admin",
-            2000,
-            "root",
-            "/bin/bash",
-            "Oqto platform user admin"
-        )
-        .is_err());
+        assert!(
+            validate_create_user(
+                "oqto_admin",
+                2000,
+                "root",
+                "/bin/bash",
+                "Oqto platform user admin"
+            )
+            .is_err()
+        );
 
         // Bad shell
-        assert!(validate_create_user(
-            "oqto_admin",
-            2000,
-            "oqto",
-            "/tmp/evil",
-            "Oqto platform user admin"
-        )
-        .is_err());
+        assert!(
+            validate_create_user(
+                "oqto_admin",
+                2000,
+                "oqto",
+                "/tmp/evil",
+                "Oqto platform user admin"
+            )
+            .is_err()
+        );
 
         // Bad GECOS
-        assert!(validate_create_user(
-            "oqto_admin",
-            2000,
-            "oqto",
-            "/bin/bash",
-            "evil:0:0::/root:/bin/bash"
-        )
-        .is_err());
+        assert!(
+            validate_create_user(
+                "oqto_admin",
+                2000,
+                "oqto",
+                "/bin/bash",
+                "evil:0:0::/root:/bin/bash"
+            )
+            .is_err()
+        );
     }
 
     // ===== Injection attack patterns =====

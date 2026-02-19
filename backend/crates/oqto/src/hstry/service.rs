@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use tokio::process::Command;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 /// Configuration for the hstry service manager.
 #[derive(Debug, Clone)]
@@ -50,12 +50,11 @@ impl HstryServiceManager {
         }
 
         let port_path = hstry_core::paths::service_port_path();
-        if port_path.exists() {
-            if let Ok(content) = std::fs::read_to_string(&port_path) {
-                if content.trim().parse::<u16>().is_ok() {
-                    return true;
-                }
-            }
+        if port_path.exists()
+            && let Ok(content) = std::fs::read_to_string(&port_path)
+            && content.trim().parse::<u16>().is_ok()
+        {
+            return true;
         }
 
         false

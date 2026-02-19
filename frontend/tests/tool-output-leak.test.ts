@@ -164,14 +164,14 @@ describe("tool output leak from hstry imports", () => {
 			{
 				role: "assistant",
 				content:
-					'I\'ll help you test something related to "opus". Let me first check what opus refers to in the codebase to understand what you\'d like to test.',
+					"I'll help you test something related to \"opus\". Let me first check what opus refers to in the codebase to understand what you'd like to test.",
 				parts_json: JSON.stringify([
 					{
 						text: 'The user is saying "test opus". This is a very brief request...',
 						type: "thinking",
 					},
 					{
-						text: 'I\'ll help you test something related to "opus". Let me first check what opus refers to in the codebase to understand what you\'d like to test.',
+						text: "I'll help you test something related to \"opus\". Let me first check what opus refers to in the codebase to understand what you'd like to test.",
 						type: "text",
 					},
 					{
@@ -269,9 +269,7 @@ describe("tool output leak from hstry imports", () => {
 				if (p.type === "tool_result") return `tool_result:${p.name}`;
 				return p.type;
 			});
-			console.log(
-				`Message role=${msg.role} parts=[${partSummary.join(", ")}]`,
-			);
+			console.log(`Message role=${msg.role} parts=[${partSummary.join(", ")}]`);
 		}
 
 		// Check that no text contains tool output
@@ -343,7 +341,8 @@ describe("tool output leak from hstry imports", () => {
 						id: "p6",
 						toolCallId: "call_abc123",
 						name: "bash",
-						output: "./frontend/node_modules/typescript/lib/diagnosticMessages.json\n./deploy/container/skel/.config/opencode/opencode.json",
+						output:
+							"./frontend/node_modules/typescript/lib/diagnosticMessages.json\n./deploy/container/skel/.config/opencode/opencode.json",
 						isError: false,
 					},
 				],
@@ -388,7 +387,7 @@ describe("tool output leak from hstry imports", () => {
 			{
 				role: "assistant",
 				content: [
-					{ type: "text", text: 'I\'ll help you test.' },
+					{ type: "text", text: "I'll help you test." },
 					{
 						type: "tool_call",
 						id: "call_abc123",

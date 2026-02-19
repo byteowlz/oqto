@@ -301,6 +301,7 @@ fn generate_prompt_id() -> String {
 /// WebSocket message for prompt updates.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[allow(clippy::large_enum_variant)]
 pub enum PromptMessage {
     /// New prompt created
     Created { prompt: Prompt },

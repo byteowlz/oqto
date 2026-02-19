@@ -17,15 +17,15 @@ use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
 
 #[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
-#[cfg(unix)]
-use std::os::unix::io::AsRawFd;
-#[cfg(unix)]
 use hyper::server::conn::http1;
 #[cfg(unix)]
 use hyper_util::rt::TokioIo;
 #[cfg(unix)]
 use hyper_util::service::TowerToHyperService;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+#[cfg(unix)]
+use std::os::unix::io::AsRawFd;
 #[cfg(unix)]
 use tokio::net::{UnixListener, UnixStream};
 
@@ -84,7 +84,7 @@ async fn async_invite_codes(ctx: RuntimeContext, cmd: InviteCodesCommand) -> Res
 fn try_main() -> Result<()> {
     let cli = Cli::parse();
 
-    let mut ctx = RuntimeContext::new(cli.common.clone())?;
+    let ctx = RuntimeContext::new(cli.common.clone())?;
     ctx.init_logging()?;
     debug!("resolved paths: {:#?}", ctx.paths);
 
@@ -1507,8 +1507,8 @@ async fn handle_invite_codes(ctx: &RuntimeContext, cmd: InviteCodesCommand) -> R
                 println!("{}", serde_json::to_string_pretty(&output)?);
             } else {
                 println!(
-                    "{:<16} {:<12} {:>5}/{:<5} {:>8} {}",
-                    "ID", "CODE", "USED", "MAX", "VALID", "EXPIRES"
+                    "{:<16} {:<12} {:>5}/{:<5} {:>8} EXPIRES",
+                    "ID", "CODE", "USED", "MAX", "VALID"
                 );
                 println!("{}", "-".repeat(70));
                 for code in &codes {
@@ -1569,8 +1569,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     let old_db_path = ctx.paths.data_dir.join("sessions.db");
     if old_db_path.exists() && !db_path.exists() {
         info!("Migrating database: sessions.db -> oqto.db");
-        std::fs::rename(&old_db_path, &db_path)
-            .context("renaming sessions.db to oqto.db")?;
+        std::fs::rename(&old_db_path, &db_path).context("renaming sessions.db to oqto.db")?;
         // Also rename WAL/SHM files if they exist
         let _ = std::fs::rename(
             old_db_path.with_extension("db-wal"),
@@ -1721,9 +1720,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
 
         info!(
             "Local runtime ready: fileserver={}, ttyd={}, workspace={}",
-            local_config.fileserver_binary,
-            local_config.ttyd_binary,
-            local_config.workspace_dir
+            local_config.fileserver_binary, local_config.ttyd_binary, local_config.workspace_dir
         );
 
         if local_config.single_user {
@@ -1764,7 +1761,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     // User data path: CLI overrides config, config overrides default.
     // In local mode, default to the standard data directory (~/.local/share/oqto)
     // so that Main Chat workspace paths are properly allowed.
-    let user_data_path = if cmd.user_data_path != std::path::PathBuf::from("./data") {
+    let user_data_path = if cmd.user_data_path != std::path::Path::new("./data") {
         // CLI explicitly set
         cmd.user_data_path.clone()
     } else if let Some(ref config_path) = ctx.config.container.user_data_path {
@@ -2285,21 +2282,24 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     }
 
     // Initialize EAVS client if configured
-    if let Some(ref eavs_config) = ctx.config.eavs {
-        if eavs_config.enabled {
-            if let Some(ref master_key) = eavs_config.master_key {
-                match eavs::EavsClient::new(&eavs_config.base_url, master_key) {
-                    Ok(client) => {
-                        info!("EAVS client initialized at {}", eavs_config.base_url);
-                        state = state.with_eavs_client(client);
-                    }
-                    Err(e) => {
-                        warn!("Failed to create EAVS client: {}. User eavs provisioning disabled.", e);
-                    }
+    if let Some(ref eavs_config) = ctx.config.eavs
+        && eavs_config.enabled
+    {
+        if let Some(ref master_key) = eavs_config.master_key {
+            match eavs::EavsClient::new(&eavs_config.base_url, master_key) {
+                Ok(client) => {
+                    info!("EAVS client initialized at {}", eavs_config.base_url);
+                    state = state.with_eavs_client(client);
                 }
-            } else {
-                debug!("EAVS master_key not configured, user provisioning disabled");
+                Err(e) => {
+                    warn!(
+                        "Failed to create EAVS client: {}. User eavs provisioning disabled.",
+                        e
+                    );
+                }
             }
+        } else {
+            debug!("EAVS master_key not configured, user provisioning disabled");
         }
     }
 
@@ -2634,7 +2634,7 @@ fn default_admin_socket_path() -> Option<String> {
         if cfg!(target_os = "macos") {
             return Some("/tmp/oqtoctl.sock".to_string());
         }
-        return Some("/run/oqto/oqtoctl.sock".to_string());
+        Some("/run/oqto/oqtoctl.sock".to_string())
     }
 
     #[cfg(not(unix))]

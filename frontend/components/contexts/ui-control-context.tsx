@@ -233,10 +233,7 @@ export function UIControlProvider({
 						navigate(event.path, event.replace);
 						break;
 					case "ui.session":
-						switchSession(
-							event.session_id,
-							event.mode as "main" | "pi",
-						);
+						switchSession(event.session_id, event.mode as "main" | "pi");
 						break;
 					case "ui.view":
 						switchView(event.view as SessionView);

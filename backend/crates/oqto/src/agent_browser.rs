@@ -91,21 +91,21 @@ impl AgentBrowserManager {
                 None => continue,
             };
             let pid_file = path.join(format!("{}.pid", session_name));
-            if let Ok(contents) = std::fs::read_to_string(&pid_file) {
-                if let Ok(pid) = contents.trim().parse::<i32>() {
-                    #[cfg(unix)]
-                    {
-                        // Check if process exists before killing
-                        unsafe {
-                            if libc::kill(pid, 0) == 0 {
-                                log::info!(
-                                    "Killing stale browser daemon pid={} session={}",
-                                    pid,
-                                    session_name
-                                );
-                                libc::kill(pid, libc::SIGTERM);
-                                killed += 1;
-                            }
+            if let Ok(contents) = std::fs::read_to_string(&pid_file)
+                && let Ok(pid) = contents.trim().parse::<i32>()
+            {
+                #[cfg(unix)]
+                {
+                    // Check if process exists before killing
+                    unsafe {
+                        if libc::kill(pid, 0) == 0 {
+                            log::info!(
+                                "Killing stale browser daemon pid={} session={}",
+                                pid,
+                                session_name
+                            );
+                            libc::kill(pid, libc::SIGTERM);
+                            killed += 1;
                         }
                     }
                 }

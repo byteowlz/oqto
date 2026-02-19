@@ -112,9 +112,11 @@ strip = true
 # Workspace-wide clippy linting configuration
 # These rules are enforced across all crates to maintain code quality
 [workspace.lints.rust]
-unsafe_code = "warn"
-# These will become errors after all warnings are fixed
-# unused = "deny"
+# Library crate exposes pub items consumed by multiple binaries (oqto, oqto-runner,
+# oqtoctl). The compiler cannot see cross-binary usage, so dead_code and
+# unused_imports produce false positives. Keep these at allow.
+dead_code = "allow"
+unused_imports = "allow"
 
 [workspace.lints.clippy]
 # Style and correctness

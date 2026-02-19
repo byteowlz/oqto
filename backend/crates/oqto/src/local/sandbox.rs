@@ -823,7 +823,7 @@ impl SandboxConfig {
     /// Expand ~ to home directory for a specific user.
     /// If username is None, uses the current user's home directory.
     fn expand_home_for_user(path: &str, username: Option<&str>) -> PathBuf {
-        if path.starts_with("~/") {
+        if let Some(rest) = path.strip_prefix("~/") {
             let home = if let Some(user) = username {
                 Self::get_user_home(user)
             } else {
@@ -831,7 +831,7 @@ impl SandboxConfig {
             };
 
             if let Some(home) = home {
-                let expanded = home.join(&path[2..]);
+                let expanded = home.join(rest);
                 debug!(
                     "Expanded path '{}' to '{}' for user {:?}",
                     path,

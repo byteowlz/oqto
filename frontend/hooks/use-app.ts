@@ -37,7 +37,8 @@ export function useApp() {
 			setSelectedWorkspaceSessionId: session.setSelectedWorkspaceSessionId,
 			selectedWorkspaceSession: session.selectedWorkspaceSession,
 			selectedWorkspaceOverviewPath: session.selectedWorkspaceOverviewPath,
-			setSelectedWorkspaceOverviewPath: session.setSelectedWorkspaceOverviewPath,
+			setSelectedWorkspaceOverviewPath:
+				session.setSelectedWorkspaceOverviewPath,
 			chatHistory: session.chatHistory,
 			selectedChatSessionId: session.selectedChatSessionId,
 			setSelectedChatSessionId: session.setSelectedChatSessionId,

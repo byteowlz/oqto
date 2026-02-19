@@ -493,10 +493,7 @@ export function normalizeMessages(
 					const indexById = tcId ? toolCallIndexById.get(tcId) : undefined;
 					const indexByName = resolvePendingByName(part.name);
 					const targetIndex = indexById ?? indexByName;
-					if (
-						targetIndex !== undefined &&
-						targetIndex !== display.length - 1
-					) {
+					if (targetIndex !== undefined && targetIndex !== display.length - 1) {
 						// Check if this tool result has already been added to target message
 						const existingResults =
 							toolResultsByMessageIndex.get(targetIndex) || new Set<string>();

@@ -250,10 +250,7 @@ pub async fn bootstrap_onboarding(
 
     // In multi-user mode, create workspace via usermgr (runs as root, sets ownership).
     // In single-user mode, write directly.
-    let is_multi_user = state
-        .linux_users
-        .as_ref()
-        .is_some_and(|lu| lu.enabled);
+    let is_multi_user = state.linux_users.as_ref().is_some_and(|lu| lu.enabled);
 
     // Only create workspace files if not already initialized.
     // This makes bootstrap idempotent: if workspace exists (e.g., from a previous
@@ -271,11 +268,26 @@ pub async fn bootstrap_onboarding(
 
             // Build file map for usermgr
             let mut files = serde_json::Map::new();
-            files.insert(".workspace.json".into(), serde_json::Value::String(meta_json));
-            files.insert("ONBOARD.md".into(), serde_json::Value::String(templates.onboard.clone()));
-            files.insert("PERSONALITY.md".into(), serde_json::Value::String(templates.personality.clone()));
-            files.insert("USER.md".into(), serde_json::Value::String(templates.user.clone()));
-            files.insert("AGENTS.md".into(), serde_json::Value::String(templates.agents.clone()));
+            files.insert(
+                ".workspace.json".into(),
+                serde_json::Value::String(meta_json),
+            );
+            files.insert(
+                "ONBOARD.md".into(),
+                serde_json::Value::String(templates.onboard.clone()),
+            );
+            files.insert(
+                "PERSONALITY.md".into(),
+                serde_json::Value::String(templates.personality.clone()),
+            );
+            files.insert(
+                "USER.md".into(),
+                serde_json::Value::String(templates.user.clone()),
+            );
+            files.insert(
+                "AGENTS.md".into(),
+                serde_json::Value::String(templates.agents.clone()),
+            );
 
             crate::local::linux_users::usermgr_request(
                 "create-workspace",
@@ -290,8 +302,9 @@ pub async fn bootstrap_onboarding(
             std::fs::create_dir_all(&workspace_path)
                 .map_err(|e| ApiError::Internal(format!("Failed to create workspace: {e}")))?;
 
-            write_workspace_meta(&workspace_path, &meta)
-                .map_err(|e| ApiError::Internal(format!("Failed to write workspace metadata: {e}")))?;
+            write_workspace_meta(&workspace_path, &meta).map_err(|e| {
+                ApiError::Internal(format!("Failed to write workspace metadata: {e}"))
+            })?;
 
             write_if_missing(&workspace_path.join("ONBOARD.md"), &templates.onboard)?;
             write_if_missing(

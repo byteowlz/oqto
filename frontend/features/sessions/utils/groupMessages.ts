@@ -2,9 +2,7 @@ import type { MessageWithParts } from "@/features/sessions/api";
 import type { MessageGroup } from "@/features/sessions/types";
 
 // Group consecutive messages from the same role (and session for default chat threads).
-export function groupMessages(
-	messages: MessageWithParts[],
-): MessageGroup[] {
+export function groupMessages(messages: MessageWithParts[]): MessageGroup[] {
 	const groups: MessageGroup[] = [];
 	let currentGroup: MessageGroup | null = null;
 

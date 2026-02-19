@@ -9,15 +9,15 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
+import {
+	WorkspaceOverviewForm,
+	type WorkspaceOverviewValues,
+} from "@/features/sessions/components/WorkspaceOverviewForm";
+import type { PiModelInfo } from "@/lib/api/default-chat";
 import type { ProjectTemplateEntry } from "@/lib/control-plane-client";
 import { cn } from "@/lib/utils";
 import { Loader2 } from "lucide-react";
 import { memo } from "react";
-import {
-	WorkspaceOverviewForm,
-	 type WorkspaceOverviewValues,
-} from "@/features/sessions/components/WorkspaceOverviewForm";
-import type { PiModelInfo } from "@/lib/api/default-chat";
 
 export interface NewProjectDialogProps {
 	open: boolean;
@@ -174,7 +174,9 @@ export const NewProjectDialog = memo(function NewProjectDialog({
 						</div>
 						{settingsLoading ? (
 							<div className="text-sm text-muted-foreground">
-								{locale === "de" ? "Lade Einstellungen..." : "Loading settings..."}
+								{locale === "de"
+									? "Lade Einstellungen..."
+									: "Loading settings..."}
 							</div>
 						) : (
 							<div className="border border-border rounded p-3">

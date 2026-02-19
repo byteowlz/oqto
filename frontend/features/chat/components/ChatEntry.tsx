@@ -850,11 +850,10 @@ export function ChatEntry({
 
 										const emptyTitle =
 											locale === "de" ? "Neue Sitzung" : "New Session";
-										const displayTitle =
-											session.title || emptyTitle;
+										const displayTitle = session.title || emptyTitle;
 
 										const tempId = getTempIdFromSession(session);
-									const tempIdLabel = formatTempId(tempId);
+										const tempIdLabel = formatTempId(tempId);
 
 										const formattedDate = formatSessionDate(
 											new Date(session.started_at).getTime(),
@@ -908,7 +907,9 @@ export function ChatEntry({
 														}
 													>
 														<Copy className="w-4 h-4 mr-2" />
-														{locale === "de" ? "Temp-ID kopieren" : "Copy Temp ID"}
+														{locale === "de"
+															? "Temp-ID kopieren"
+															: "Copy Temp ID"}
 													</ContextMenuItem>
 													<ContextMenuSeparator />
 													<ContextMenuItem
@@ -1086,7 +1087,9 @@ function SessionTimeline({
 									)}
 								>
 									{displayTitle}
-									{tempIdLabel && <span className="ml-1 opacity-60">[{tempIdLabel}]</span>}
+									{tempIdLabel && (
+										<span className="ml-1 opacity-60">[{tempIdLabel}]</span>
+									)}
 								</span>
 							</div>
 						</button>

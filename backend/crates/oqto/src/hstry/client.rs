@@ -317,11 +317,11 @@ async fn try_connect_channel() -> Result<Channel> {
     #[cfg(unix)]
     {
         let socket_path = hstry_core::paths::service_socket_path();
-        if socket_path.exists() {
-            if let Ok(client) = try_connect_unix(&socket_path).await {
-                tracing::debug!("Connected to hstry via Unix socket");
-                return Ok(client);
-            }
+        if socket_path.exists()
+            && let Ok(client) = try_connect_unix(&socket_path).await
+        {
+            tracing::debug!("Connected to hstry via Unix socket");
+            return Ok(client);
         }
     }
 

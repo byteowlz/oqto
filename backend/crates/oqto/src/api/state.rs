@@ -15,7 +15,6 @@ use tracing::{debug, warn};
 use crate::hstry::HstryClient;
 use crate::local::UserSldrManager;
 
-
 use super::a2ui::PendingA2uiRequests;
 
 use crate::auth::AuthState;

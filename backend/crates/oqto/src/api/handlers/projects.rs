@@ -248,89 +248,86 @@ fn read_template_defaults(template_dir: &std::path::Path) -> Option<ProjectTempl
     let mut has_any = false;
 
     let workspace_meta_path = template_dir.join(".oqto").join("workspace.toml");
-    if let Ok(contents) = fs::read_to_string(workspace_meta_path) {
-        if let Ok(meta) = toml::from_str::<WorkspaceMeta>(&contents) {
-            if let Some(name) = meta.display_name {
-                let trimmed = name.trim().to_string();
-                if !trimmed.is_empty() {
-                    defaults.display_name = Some(trimmed);
-                    has_any = true;
-                }
-            }
+    if let Ok(contents) = fs::read_to_string(workspace_meta_path)
+        && let Ok(meta) = toml::from_str::<WorkspaceMeta>(&contents)
+        && let Some(name) = meta.display_name
+    {
+        let trimmed = name.trim().to_string();
+        if !trimmed.is_empty() {
+            defaults.display_name = Some(trimmed);
+            has_any = true;
         }
     }
 
     let sandbox_path = template_dir.join(".oqto").join("sandbox.toml");
-    if let Ok(contents) = fs::read_to_string(sandbox_path) {
-        if let Ok(file) = toml::from_str::<SandboxConfigFile>(&contents) {
-            if !file.profile.trim().is_empty() {
-                defaults.sandbox_profile = Some(file.profile.trim().to_string());
-                has_any = true;
-            }
-        }
+    if let Ok(contents) = fs::read_to_string(sandbox_path)
+        && let Ok(file) = toml::from_str::<SandboxConfigFile>(&contents)
+        && !file.profile.trim().is_empty()
+    {
+        defaults.sandbox_profile = Some(file.profile.trim().to_string());
+        has_any = true;
     }
 
     let pi_settings_path = template_dir.join(".pi").join("settings.json");
-    if let Ok(contents) = fs::read_to_string(pi_settings_path) {
-        if let Ok(value) = serde_json::from_str::<Value>(&contents) {
-            defaults.default_provider = value
-                .get("defaultProvider")
-                .and_then(|v| v.as_str())
-                .map(|v| v.to_string());
-            defaults.default_model = value
-                .get("defaultModel")
-                .and_then(|v| v.as_str())
-                .map(|v| v.to_string());
+    if let Ok(contents) = fs::read_to_string(pi_settings_path)
+        && let Ok(value) = serde_json::from_str::<Value>(&contents)
+    {
+        defaults.default_provider = value
+            .get("defaultProvider")
+            .and_then(|v| v.as_str())
+            .map(|v| v.to_string());
+        defaults.default_model = value
+            .get("defaultModel")
+            .and_then(|v| v.as_str())
+            .map(|v| v.to_string());
 
-            if defaults.default_provider.is_some() || defaults.default_model.is_some() {
+        if defaults.default_provider.is_some() || defaults.default_model.is_some() {
+            has_any = true;
+        }
+
+        let skills_paths = read_settings_paths(&value, "skills");
+        let extensions_paths = read_settings_paths(&value, "extensions");
+        let global_skills_dir = expand_path(GLOBAL_PI_SKILLS_DIR).ok();
+        let global_extensions_dir = expand_path(GLOBAL_PI_EXTENSIONS_DIR).ok();
+
+        if global_skills_dir
+            .as_ref()
+            .map(|global| paths_contain(&skills_paths, global))
+            .unwrap_or(false)
+        {
+            defaults.skills_mode = Some("all".to_string());
+            has_any = true;
+        } else {
+            let template_skills_dir = template_dir.join(".pi").join("skills");
+            if template_skills_dir.exists()
+                || skills_paths
+                    .iter()
+                    .any(|path| path.to_string_lossy().ends_with(".pi/skills"))
+            {
+                defaults.skills_mode = Some("custom".to_string());
+                defaults.skills = list_dir_entries(&template_skills_dir, true).unwrap_or_default();
                 has_any = true;
             }
+        }
 
-            let skills_paths = read_settings_paths(&value, "skills");
-            let extensions_paths = read_settings_paths(&value, "extensions");
-            let global_skills_dir = expand_path(GLOBAL_PI_SKILLS_DIR).ok();
-            let global_extensions_dir = expand_path(GLOBAL_PI_EXTENSIONS_DIR).ok();
-
-            if global_skills_dir
-                .as_ref()
-                .map(|global| paths_contain(&skills_paths, global))
-                .unwrap_or(false)
+        if global_extensions_dir
+            .as_ref()
+            .map(|global| paths_contain(&extensions_paths, global))
+            .unwrap_or(false)
+        {
+            defaults.extensions_mode = Some("all".to_string());
+            has_any = true;
+        } else {
+            let template_extensions_dir = template_dir.join(".pi").join("extensions");
+            if template_extensions_dir.exists()
+                || extensions_paths
+                    .iter()
+                    .any(|path| path.to_string_lossy().ends_with(".pi/extensions"))
             {
-                defaults.skills_mode = Some("all".to_string());
+                defaults.extensions_mode = Some("custom".to_string());
+                defaults.extensions =
+                    list_dir_entries(&template_extensions_dir, false).unwrap_or_default();
                 has_any = true;
-            } else {
-                let template_skills_dir = template_dir.join(".pi").join("skills");
-                if template_skills_dir.exists()
-                    || skills_paths
-                        .iter()
-                        .any(|path| path.to_string_lossy().ends_with(".pi/skills"))
-                {
-                    defaults.skills_mode = Some("custom".to_string());
-                    defaults.skills =
-                        list_dir_entries(&template_skills_dir, true).unwrap_or_default();
-                    has_any = true;
-                }
-            }
-
-            if global_extensions_dir
-                .as_ref()
-                .map(|global| paths_contain(&extensions_paths, global))
-                .unwrap_or(false)
-            {
-                defaults.extensions_mode = Some("all".to_string());
-                has_any = true;
-            } else {
-                let template_extensions_dir = template_dir.join(".pi").join("extensions");
-                if template_extensions_dir.exists()
-                    || extensions_paths
-                        .iter()
-                        .any(|path| path.to_string_lossy().ends_with(".pi/extensions"))
-                {
-                    defaults.extensions_mode = Some("custom".to_string());
-                    defaults.extensions =
-                        list_dir_entries(&template_extensions_dir, false).unwrap_or_default();
-                    has_any = true;
-                }
             }
         }
     }
@@ -387,12 +384,12 @@ pub async fn list_workspace_dirs(
     let target = root.join(&rel_path);
 
     // Auto-create workspace root for the user if it doesn't exist yet.
-    if !target.exists() {
-        if let Err(e) = std::fs::create_dir_all(&target) {
-            tracing::warn!("Could not create workspace directory {:?}: {}", target, e);
-            // Return empty list instead of 500 when the directory can't be created.
-            return Ok(Json(Vec::new()));
-        }
+    if !target.exists()
+        && let Err(e) = std::fs::create_dir_all(&target)
+    {
+        tracing::warn!("Could not create workspace directory {:?}: {}", target, e);
+        // Return empty list instead of 500 when the directory can't be created.
+        return Ok(Json(Vec::new()));
     }
 
     let entries = std::fs::read_dir(&target)
@@ -1065,7 +1062,7 @@ fn list_dir_entries(path: &Path, directories_only: bool) -> Result<Vec<String>, 
         if directories_only && !file_type.is_dir() {
             continue;
         }
-        if !directories_only && !(file_type.is_dir() || file_type.is_file()) {
+        if !(directories_only || file_type.is_dir() || file_type.is_file()) {
             continue;
         }
         let name = entry.file_name().to_string_lossy().to_string();

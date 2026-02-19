@@ -138,16 +138,11 @@ function SyncResultRow({ result }: { result: SyncUserConfigResult }) {
 }
 
 export function ModelsPanel() {
-	const {
-		data: eavsData,
-		isLoading,
-		error,
-		refetch,
-	} = useEavsProviders();
+	const { data: eavsData, isLoading, error, refetch } = useEavsProviders();
 	const syncMutation = useSyncUserConfigs();
-	const [syncResults, setSyncResults] = useState<
-		SyncUserConfigResult[] | null
-	>(null);
+	const [syncResults, setSyncResults] = useState<SyncUserConfigResult[] | null>(
+		null,
+	);
 
 	const handleSyncAll = async () => {
 		setSyncResults(null);
@@ -162,7 +157,12 @@ export function ModelsPanel() {
 					<h2 className="text-xs font-semibold text-muted-foreground tracking-wider">
 						MODEL PROVIDERS
 					</h2>
-					<Button variant="ghost" size="sm" onClick={() => refetch()} className="h-7">
+					<Button
+						variant="ghost"
+						size="sm"
+						onClick={() => refetch()}
+						className="h-7"
+					>
 						<RefreshCw className="w-3 h-3" />
 					</Button>
 				</div>

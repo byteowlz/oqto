@@ -1,7 +1,7 @@
-import { type SearchMode } from "@/components/search";
+import type { SearchMode } from "@/components/search";
 import { Button } from "@/components/ui/button";
-import type { ChatSession, HstrySearchHit } from "@/lib/control-plane-client";
 import type { AgentInfo } from "@/lib/agent-client";
+import type { ChatSession, HstrySearchHit } from "@/lib/control-plane-client";
 import { formatSessionDate } from "@/lib/session-utils";
 import { cn } from "@/lib/utils";
 import {

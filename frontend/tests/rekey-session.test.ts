@@ -25,7 +25,7 @@
  * 6. isReKeyDuringStreaming check may incorrectly think this is a rekey during stream
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Mock implementations for testing
 describe("Session Rekeying", () => {
@@ -119,7 +119,11 @@ describe("Session Rekeying", () => {
 			const activeSessionId = "completely-different-session";
 
 			// Simulate the fix: clear the rekey ref when session ID changes
-			if (previousId && previousId !== activeSessionId && rekeyedFromRef.current === previousId) {
+			if (
+				previousId &&
+				previousId !== activeSessionId &&
+				rekeyedFromRef.current === previousId
+			) {
 				rekeyedFromRef.current = null;
 			}
 

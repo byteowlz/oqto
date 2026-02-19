@@ -43,7 +43,7 @@ impl MarkdownCache {
         if self.entries.len() >= self.max_entries {
             // Remove oldest entries
             let mut entries: Vec<_> = self.entries.iter().map(|(k, (_, t))| (*k, *t)).collect();
-            entries.sort_by(|a, b| a.1.cmp(&b.1));
+            entries.sort_by_key(|a| a.1);
 
             for (key, _) in entries.into_iter().take(self.max_entries / 4) {
                 self.entries.remove(&key);

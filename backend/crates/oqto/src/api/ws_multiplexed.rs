@@ -410,6 +410,7 @@ pub struct TrxIssueUpdate {
 /// `WsEvent::Agent` as canonical `oqto_protocol::events::Event` values.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "channel", rename_all = "snake_case")]
+#[allow(clippy::large_enum_variant)]
 pub enum WsEvent {
     /// Canonical agent events (streaming, state, command responses, delegation, etc.).
     /// Serializes as `{"channel": "agent", "session_id": ..., "event": ..., ...}`.
@@ -700,10 +701,10 @@ async fn handle_multiplexed_ws(socket: WebSocket, state: AppState, user_id: Stri
 
     // Send connected event
     let connected_event = WsEvent::System(SystemWsEvent::Connected);
-    if let Ok(json) = serde_json::to_string(&connected_event) {
-        if ws_sender.send(Message::Text(json.into())).await.is_err() {
-            return;
-        }
+    if let Ok(json) = serde_json::to_string(&connected_event)
+        && ws_sender.send(Message::Text(json.into())).await.is_err()
+    {
+        return;
     }
 
     info!("Multiplexed WebSocket connected for user {}", user_id);
@@ -750,17 +751,17 @@ async fn handle_multiplexed_ws(socket: WebSocket, state: AppState, user_id: Stri
     // Runner client is resolved lazily on first command, not at connect time.
     // The runner may still be starting when the WebSocket connects.
     let runner_client: std::sync::Arc<tokio::sync::Mutex<Option<RunnerClient>>> =
-        std::sync::Arc::new(tokio::sync::Mutex::new(
-            runner_client_for_user(&state, &user_id),
-        ));
+        std::sync::Arc::new(tokio::sync::Mutex::new(runner_client_for_user(
+            &state, &user_id,
+        )));
 
     // Spawn task to forward events from channel to WebSocket
     let event_writer = tokio::spawn(async move {
         while let Some(event) = event_rx.recv().await {
-            if let Ok(json) = serde_json::to_string(&event) {
-                if ws_sender.send(Message::Text(json.into())).await.is_err() {
-                    break;
-                }
+            if let Ok(json) = serde_json::to_string(&event)
+                && ws_sender.send(Message::Text(json.into())).await.is_err()
+            {
+                break;
             }
         }
     });
@@ -1100,7 +1101,7 @@ async fn handle_agent_command(
             let cwd = config
                 .cwd
                 .as_ref()
-                .map(|s| std::path::PathBuf::from(s))
+                .map(std::path::PathBuf::from)
                 .unwrap_or_else(|| std::path::PathBuf::from("/"));
 
             {
@@ -1128,11 +1129,10 @@ async fn handle_agent_command(
                 .await
             };
 
-            if continue_session.is_some() {
+            if let Some(ref cs) = continue_session {
                 debug!(
                     "agent session.create: found session file for {}: {:?}",
-                    session_id,
-                    continue_session.as_ref().unwrap()
+                    session_id, cs
                 );
             }
 
@@ -2900,7 +2900,7 @@ async fn handle_terminal_command(
             }
 
             let terminal_id = terminal_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-            let mut state_guard = conn_state.lock().await;
+            let state_guard = conn_state.lock().await;
             if state_guard.terminal_sessions.contains_key(&terminal_id) {
                 info!("Terminal already exists: {}", terminal_id);
                 return Some(WsEvent::Terminal(TerminalWsEvent::Opened {
@@ -3366,7 +3366,7 @@ mod tests {
 
     #[test]
     fn test_serialize_canonical_agent_event() {
-        use oqto_protocol::events::{AgentPhase, EventPayload};
+        use oqto_protocol::events::EventPayload;
 
         let event = WsEvent::Agent(oqto_protocol::events::Event {
             session_id: "ses_abc".into(),

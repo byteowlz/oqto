@@ -57,6 +57,12 @@ pub struct PiTranslator {
     streaming_occurred: bool,
 }
 
+impl Default for PiTranslator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PiTranslator {
     pub fn new() -> Self {
         Self {
@@ -417,14 +423,14 @@ impl PiTranslator {
 
     fn on_extension_ui(&mut self, req: &ExtensionUiRequest) -> Vec<EventPayload> {
         // Check if this is an oqto_phase status update from our bridge extension.
-        if req.method == "setStatus" {
-            if let Some(ref key) = req.status_key {
-                if key == "oqto_phase" {
-                    return self.on_oqto_phase_status(req.status_text.as_deref());
-                }
-                if key == "oqto_title_changed" {
-                    return self.on_title_changed(req.status_text.as_deref());
-                }
+        if req.method == "setStatus"
+            && let Some(ref key) = req.status_key
+        {
+            if key == "oqto_phase" {
+                return self.on_oqto_phase_status(req.status_text.as_deref());
+            }
+            if key == "oqto_title_changed" {
+                return self.on_title_changed(req.status_text.as_deref());
             }
         }
 
@@ -627,29 +633,26 @@ pub fn pi_response_to_canonical(
     cmd_name: &str,
 ) -> EventPayload {
     // Special case: set_thinking_level emits ConfigThinkingLevelChanged event
-    if cmd_name == "set_thinking_level" {
-        if let Some(data) = &pi_response.data {
-            if let Some(level) = data.get("level") {
-                let level_str = level.as_str().unwrap_or("").to_string();
-                return EventPayload::ConfigThinkingLevelChanged { level: level_str };
-            }
-        }
+    if cmd_name == "set_thinking_level"
+        && let Some(data) = &pi_response.data
+        && let Some(level) = data.get("level")
+    {
+        let level_str = level.as_str().unwrap_or("").to_string();
+        return EventPayload::ConfigThinkingLevelChanged { level: level_str };
     }
 
     // Special case: set_model emits ConfigModelChanged event
-    if cmd_name == "set_model" {
-        if let Some(data) = &pi_response.data {
-            if let Some(model) = data.get("model") {
-                if let Some(provider) = data.get("provider") {
-                    let model_id = model.as_str().unwrap_or("").to_string();
-                    let provider_str = provider.as_str().unwrap_or("").to_string();
-                    return EventPayload::ConfigModelChanged {
-                        provider: provider_str,
-                        model_id: model_id,
-                    };
-                }
-            }
-        }
+    if cmd_name == "set_model"
+        && let Some(data) = &pi_response.data
+        && let Some(model) = data.get("model")
+        && let Some(provider) = data.get("provider")
+    {
+        let model_id = model.as_str().unwrap_or("").to_string();
+        let provider_str = provider.as_str().unwrap_or("").to_string();
+        return EventPayload::ConfigModelChanged {
+            provider: provider_str,
+            model_id,
+        };
     }
 
     // Default: wrap as CommandResponse
@@ -821,10 +824,10 @@ fn extract_text_content(content: &Value) -> Option<String> {
             let texts: Vec<String> = blocks
                 .iter()
                 .filter_map(|b| {
-                    if let Some(obj) = b.as_object() {
-                        if obj.get("type").and_then(|t| t.as_str()) == Some("text") {
-                            return obj.get("text").and_then(|t| t.as_str()).map(String::from);
-                        }
+                    if let Some(obj) = b.as_object()
+                        && obj.get("type").and_then(|t| t.as_str()) == Some("text")
+                    {
+                        return obj.get("text").and_then(|t| t.as_str()).map(String::from);
                     }
                     None
                 })

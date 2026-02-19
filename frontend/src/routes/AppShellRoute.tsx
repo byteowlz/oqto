@@ -9,7 +9,10 @@ import { useCurrentUser, useLogout } from "@/hooks/use-auth";
 import { useCommandPalette } from "@/hooks/use-command-palette";
 import { setChatPrefetchLimit } from "@/lib/app-settings";
 import type { HstrySearchHit } from "@/lib/control-plane-client";
-import { bootstrapOnboarding, getSettingsValues } from "@/lib/control-plane-client";
+import {
+	bootstrapOnboarding,
+	getSettingsValues,
+} from "@/lib/control-plane-client";
 import { cn } from "@/lib/utils";
 import { Clock, PanelLeftClose, PanelRightClose } from "lucide-react";
 import { useTheme } from "next-themes";
@@ -26,7 +29,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import "@/apps";
 import { UIControlProvider } from "@/components/contexts/ui-control-context";
 
-import { type SearchMode } from "@/components/search";
+import type { SearchMode } from "@/components/search";
 import {
 	DeleteConfirmDialog,
 	MobileHeader,
@@ -84,7 +87,9 @@ const AppShell = memo(function AppShell() {
 	);
 	const [sessionSearch, setSessionSearch] = useState("");
 	const deferredSearch = useDeferredValue(sessionSearch);
-	const [searchMode, setSearchMode] = useState<"sessions" | "messages">("sessions");
+	const [searchMode, setSearchMode] = useState<"sessions" | "messages">(
+		"sessions",
+	);
 	const [bootstrapOpen, setBootstrapOpen] = useState(false);
 	const [bootstrapName, setBootstrapName] = useState("");
 	const [bootstrapError, setBootstrapError] = useState<string | null>(null);
@@ -268,7 +273,12 @@ const AppShell = memo(function AppShell() {
 		if (projects.length === 0 && chatHistory.length === 0) {
 			setBootstrapOpen(true);
 		}
-	}, [bootstrapReady, bootstrapSubmitting, projects.length, chatHistory.length]);
+	}, [
+		bootstrapReady,
+		bootstrapSubmitting,
+		projects.length,
+		chatHistory.length,
+	]);
 
 	const handleBootstrapOpenChange = useCallback(
 		(open: boolean) => {
@@ -369,6 +379,7 @@ const AppShell = memo(function AppShell() {
 		setSelectedProjectKey(null);
 	}, []);
 
+	// biome-ignore lint/correctness/useExhaustiveDependencies: setSelectedProjectKey is stable setState
 	const handleSessionClick = useCallback(
 		(sessionId: string) => {
 			setSelectedWorkspaceOverviewPath(null);
@@ -389,6 +400,7 @@ const AppShell = memo(function AppShell() {
 		],
 	);
 
+	// biome-ignore lint/correctness/useExhaustiveDependencies: setSelectedProjectKey is stable setState
 	const handleSearchResultClick = useCallback(
 		(hit: HstrySearchHit) => {
 			setSessionSearch("");
@@ -718,11 +730,7 @@ const AppShell = memo(function AppShell() {
 					>
 						{!sidebarState.sidebarCollapsed && (
 							<img
-								src={
-									isDark
-										? "/oqto_logo_white.svg"
-										: "/oqto_logo_black.svg"
-								}
+								src={isDark ? "/oqto_logo_white.svg" : "/oqto_logo_black.svg"}
 								alt="OQTO"
 								width={200}
 								height={60}

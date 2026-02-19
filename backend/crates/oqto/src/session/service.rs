@@ -33,13 +33,9 @@ impl BrowserAction {
             "back" => Some(Self::Back),
             "forward" => Some(Self::Forward),
             "reload" => Some(Self::Reload),
-            _ => {
-                if let Some(scheme) = action.strip_prefix("color_scheme:") {
-                    Some(Self::ColorScheme(scheme.to_string()))
-                } else {
-                    None
-                }
-            }
+            _ => action
+                .strip_prefix("color_scheme:")
+                .map(|scheme| Self::ColorScheme(scheme.to_string())),
         }
     }
 }
@@ -64,11 +60,7 @@ const DEFAULT_BASE_PORT: i64 = 41820;
 
 #[async_trait]
 trait SessionReadiness: Send + Sync {
-    async fn wait_for_session_services(
-        &self,
-        fileserver_port: u16,
-        ttyd_port: u16,
-    ) -> Result<()>;
+    async fn wait_for_session_services(&self, fileserver_port: u16, ttyd_port: u16) -> Result<()>;
 }
 
 #[derive(Debug, Default)]
@@ -76,11 +68,7 @@ struct HttpSessionReadiness;
 
 #[async_trait]
 impl SessionReadiness for HttpSessionReadiness {
-    async fn wait_for_session_services(
-        &self,
-        fileserver_port: u16,
-        ttyd_port: u16,
-    ) -> Result<()> {
+    async fn wait_for_session_services(&self, fileserver_port: u16, ttyd_port: u16) -> Result<()> {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(5))
             .build()
@@ -1202,7 +1190,6 @@ impl SessionService {
         &self,
         session: &Session,
         eavs_virtual_key: Option<&str>,
-        
     ) -> Result<()> {
         debug!(
             "Starting session {} in {:?} mode",
@@ -1210,14 +1197,8 @@ impl SessionService {
         );
 
         let result = match session.runtime_mode {
-            RuntimeMode::Container => {
-                self.start_container_mode(session, eavs_virtual_key)
-                    .await
-            }
-            RuntimeMode::Local => {
-                self.start_local_mode(session, eavs_virtual_key)
-                    .await
-            }
+            RuntimeMode::Container => self.start_container_mode(session, eavs_virtual_key).await,
+            RuntimeMode::Local => self.start_local_mode(session, eavs_virtual_key).await,
         };
 
         if result.is_ok() {
@@ -1255,7 +1236,6 @@ impl SessionService {
         &self,
         session: &Session,
         eavs_virtual_key: Option<&str>,
-        
     ) -> Result<()> {
         let runtime = self
             .container_runtime()
@@ -1361,10 +1341,7 @@ impl SessionService {
         // This avoids clients receiving 502s due to fixed-delay startup races.
         if let Err(e) = self
             .readiness
-            .wait_for_session_services(
-                session.fileserver_port as u16,
-                session.ttyd_port as u16,
-            )
+            .wait_for_session_services(session.fileserver_port as u16, session.ttyd_port as u16)
             .await
         {
             // Best-effort cleanup: stop/remove the container, then surface the error.
@@ -1397,7 +1374,6 @@ impl SessionService {
         &self,
         session: &Session,
         eavs_virtual_key: Option<&str>,
-        
     ) -> Result<()> {
         let runner = self.runner_for_user(&session.user_id)?;
 
@@ -1628,10 +1604,7 @@ impl SessionService {
         self.resume_session_with_readiness(session_id).await
     }
 
-    async fn resume_session_with_readiness(
-        &self,
-        session_id: &str,
-    ) -> Result<Session> {
+    async fn resume_session_with_readiness(&self, session_id: &str) -> Result<Session> {
         let mut session = self
             .repo
             .get(session_id)
@@ -1681,9 +1654,7 @@ impl SessionService {
         }
 
         // Wrap the resume logic to ensure we mark as failed on error
-        let result = self
-            .resume_session_inner(&mut session, session_id)
-            .await;
+        let result = self.resume_session_inner(&mut session, session_id).await;
 
         if let Err(ref e) = result {
             error!("Failed to resume session {}: {:?}", session_id, e);
@@ -1816,11 +1787,7 @@ impl SessionService {
                     );
                     let cleared =
                         local_runtime.clear_ports(&[agent_port, fileserver_port, ttyd_port]);
-                    if local_runtime.check_ports_available(
-                        agent_port,
-                        fileserver_port,
-                        ttyd_port,
-                    ) {
+                    if local_runtime.check_ports_available(agent_port, fileserver_port, ttyd_port) {
                         info!(
                             "Cleared {} orphan process(es), ports now available for session {}",
                             cleared, session_id
@@ -2164,10 +2131,7 @@ impl SessionService {
                 RuntimeMode::Container => {
                     if let Some(ref container_id) = session.container_id {
                         if let Some(runtime) = self.container_runtime() {
-                            match runtime.container_state_status(container_id).await {
-                                Ok(Some(status)) if status == "running" => true,
-                                _ => false,
-                            }
+                            matches!(runtime.container_state_status(container_id).await, Ok(Some(status)) if status == "running")
                         } else {
                             false
                         }
@@ -2417,7 +2381,7 @@ impl SessionService {
                 let service = self.clone();
                 let session_id = session.id.clone();
                 let container_id_owned = container_id.to_string();
-                let agent_port = session.agent_port as u16;
+                let _agent_port = session.agent_port as u16;
                 let fileserver_port = session.fileserver_port as u16;
                 let ttyd_port = session.ttyd_port as u16;
 
@@ -2953,9 +2917,7 @@ impl SessionService {
             .find_latest_stopped_for_workspace(user_id, workspace_path)
             .await?
         {
-            let resumed = self
-                .resume_session_with_readiness(&session.id)
-                .await?;
+            let resumed = self.resume_session_with_readiness(&session.id).await?;
             if resumed.status != SessionStatus::Failed {
                 return Ok(resumed);
             }

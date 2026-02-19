@@ -95,17 +95,12 @@ export function MobileKeyboardToolbar({
 	const modifierButtonClass = (mod: ModifierKey) =>
 		cn(
 			"text-xs font-mono",
-			activeModifier === mod
-				? "bg-primary text-primary-foreground"
-				: "",
+			activeModifier === mod ? "bg-primary text-primary-foreground" : "",
 		);
 
 	return (
 		<div
-			className={cn(
-				"flex items-center gap-1 px-2 py-1.5",
-				className,
-			)}
+			className={cn("flex items-center gap-1 px-2 py-1.5", className)}
 			// Prevent focus loss when tapping buttons
 			onMouseDown={(e) => e.preventDefault()}
 			onTouchStart={(e) => e.preventDefault()}

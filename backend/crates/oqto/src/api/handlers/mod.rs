@@ -40,8 +40,6 @@ pub use chat::{
 };
 pub use feedback::create_feedback;
 
-pub(crate) use chat::get_runner_for_user;
-
 // Project handlers and types
 pub use projects::{
     apply_workspace_pi_resources, create_project_from_template, get_project_logo,
@@ -67,13 +65,8 @@ pub use auth::{change_password, dev_login, get_me, login, logout, register, upda
 
 // Settings handlers and types
 pub use settings::{
-    get_settings_schema, get_settings_values, reload_settings,
-    update_settings_values,
+    get_settings_schema, get_settings_values, reload_settings, update_settings_values,
 };
-
-
-
-
 
 // Invite code handlers and types
 pub use invites::{

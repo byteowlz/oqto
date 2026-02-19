@@ -165,11 +165,13 @@ export const SidebarSessions = memo(function SidebarSessions({
 }: SidebarSessionsProps) {
 	// Local state for uncontrolled mode
 	const [localSessionSearch, setLocalSessionSearch] = useState("");
-	const [localSearchMode, setLocalSearchMode] = useState<SearchMode>("sessions");
+	const [localSearchMode, setLocalSearchMode] =
+		useState<SearchMode>("sessions");
 
 	// Use controlled or local state
 	const sessionSearch = controlledSessionSearch ?? localSessionSearch;
-	const setSessionSearch = controlledOnSessionSearchChange ?? setLocalSessionSearch;
+	const setSessionSearch =
+		controlledOnSessionSearchChange ?? setLocalSessionSearch;
 	const searchMode = controlledSearchMode ?? localSearchMode;
 	const setSearchMode = controlledOnSearchModeChange ?? setLocalSearchMode;
 
@@ -201,6 +203,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 	);
 
 	// Keyboard shortcut: Ctrl+Shift+F to toggle search mode
+	// biome-ignore lint/correctness/useExhaustiveDependencies: setSearchMode is a stable setState
 	useEffect(() => {
 		const handleKeyDown = (e: KeyboardEvent) => {
 			if (e.key === "f" && (e.metaKey || e.ctrlKey) && e.shiftKey) {
@@ -552,7 +555,6 @@ export const SidebarSessions = memo(function SidebarSessions({
 							({filteredSessions.length}
 							{deferredSearch ? `/${chatHistory.length}` : ""})
 						</span>
-
 					</div>
 					<div className="flex items-center gap-1">
 						<button
@@ -683,9 +685,9 @@ export const SidebarSessions = memo(function SidebarSessions({
 									className="border-b border-sidebar-border/50 last:border-b-0"
 								>
 									{/* Project header */}
-										<ContextMenu>
-											<ContextMenuTrigger className="contents">
-													<div className="flex items-center gap-1 px-1 py-1.5 group">
+									<ContextMenu>
+										<ContextMenuTrigger className="contents">
+											<div className="flex items-center gap-1 px-1 py-1.5 group">
 												<button
 													type="button"
 													onClick={() => toggleProjectExpanded(project.key)}
@@ -711,7 +713,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 													type="button"
 													onClick={() => toggleProjectExpanded(project.key)}
 													className="flex-1 flex items-center gap-1.5 text-left hover:bg-sidebar-accent/50 px-1 py-0.5 -mx-1"
-														>
+												>
 													{isProjectPinned && (
 														<Pin
 															className={cn(
@@ -742,7 +744,9 @@ export const SidebarSessions = memo(function SidebarSessions({
 													<>
 														<button
 															type="button"
-															onClick={() => onProjectOverview(project.directory as string)}
+															onClick={() =>
+																onProjectOverview(project.directory as string)
+															}
 															className={cn(
 																"text-muted-foreground hover:text-primary hover:bg-sidebar-accent opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity",
 																sizeClasses.buttonSize,
@@ -757,7 +761,9 @@ export const SidebarSessions = memo(function SidebarSessions({
 														</button>
 														<button
 															type="button"
-															onClick={() => onNewChatInProject(project.directory as string)}
+															onClick={() =>
+																onNewChatInProject(project.directory as string)
+															}
 															className={cn(
 																"text-muted-foreground hover:text-primary hover:bg-sidebar-accent opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity",
 																sizeClasses.buttonSize,
@@ -774,12 +780,13 @@ export const SidebarSessions = memo(function SidebarSessions({
 												) : null}
 											</div>
 										</ContextMenuTrigger>
-											<ContextMenuContent>
-
+										<ContextMenuContent>
 											{project.directory && (
 												<>
 													<ContextMenuItem
-														onClick={() => onNewChatInProject(project.directory as string)}
+														onClick={() =>
+															onNewChatInProject(project.directory as string)
+														}
 													>
 														<Plus className="w-4 h-4 mr-2" />
 														{locale === "de" ? "Neue Sitzung" : "New Session"}
@@ -939,13 +946,13 @@ export const SidebarSessions = memo(function SidebarSessions({
 																	{tempId && (
 																		<ContextMenuItem
 																			onClick={() => {
-																				navigator.clipboard.writeText(
-																					tempId,
-																				);
+																				navigator.clipboard.writeText(tempId);
 																			}}
 																		>
 																			<Copy className="w-4 h-4 mr-2" />
-																			{locale === "de" ? "Temp-ID kopieren" : "Copy Temp ID"}
+																			{locale === "de"
+																				? "Temp-ID kopieren"
+																				: "Copy Temp ID"}
 																		</ContextMenuItem>
 																	)}
 																	<ContextMenuItem
@@ -1007,7 +1014,8 @@ export const SidebarSessions = memo(function SidebarSessions({
 																				selectedSessionIds.has(child.id);
 																			const childTempId =
 																				getTempIdFromSession(child);
-												const childTempIdLabel = formatTempId(childTempId);
+																			const childTempIdLabel =
+																				formatTempId(childTempId);
 																			const childFormattedDate =
 																				child.updated_at
 																					? formatSessionDate(child.updated_at)
@@ -1078,8 +1086,10 @@ export const SidebarSessions = memo(function SidebarSessions({
 																						>
 																							<Copy className="w-4 h-4 mr-2" />
 																							{childTempIdLabel
-															? `${locale === "de" ? "Temp-ID kopieren" : "Copy Temp ID"} (${childTempIdLabel})`
-															: locale === "de" ? "Temp-ID kopieren" : "Copy Temp ID"}
+																								? `${locale === "de" ? "Temp-ID kopieren" : "Copy Temp ID"} (${childTempIdLabel})`
+																								: locale === "de"
+																									? "Temp-ID kopieren"
+																									: "Copy Temp ID"}
 																						</ContextMenuItem>
 																						<ContextMenuItem
 																							onClick={() => {

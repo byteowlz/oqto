@@ -66,11 +66,19 @@ const treeInFlight = new Map<string, Promise<FileNode[]>>();
 const INITIAL_DEPTH = 2;
 const LAZY_LOAD_DEPTH = 2;
 
-function getTreeCacheKey(workspaceKey: string, path: string, depth = INITIAL_DEPTH): string {
+function getTreeCacheKey(
+	workspaceKey: string,
+	path: string,
+	depth = INITIAL_DEPTH,
+): string {
 	return `${workspaceKey}:${path}:${depth}`;
 }
 
-function getCachedTree(workspaceKey: string, path: string, depth = INITIAL_DEPTH): FileNode[] | null {
+function getCachedTree(
+	workspaceKey: string,
+	path: string,
+	depth = INITIAL_DEPTH,
+): FileNode[] | null {
 	const key = getTreeCacheKey(workspaceKey, path, depth);
 	const entry = treeCache.get(key);
 	if (!entry) return null;
@@ -127,7 +135,7 @@ function mergeChildrenIntoTree(
 		if (node.path === parentPath) {
 			return { ...node, children };
 		}
-		if (node.children && parentPath.startsWith(node.path + "/")) {
+		if (node.children && parentPath.startsWith(`${node.path}/`)) {
 			return {
 				...node,
 				children: mergeChildrenIntoTree(node.children, parentPath, children),
@@ -390,7 +398,11 @@ export function FileTreeView({
 			setLoading(true);
 			setError("");
 			try {
-				const data = await fetchFileTree(normalizedWorkspacePath, path, INITIAL_DEPTH);
+				const data = await fetchFileTree(
+					normalizedWorkspacePath,
+					path,
+					INITIAL_DEPTH,
+				);
 				// Cache the result
 				setCachedTree(cacheKey, path, data, INITIAL_DEPTH);
 				setTree(data);
@@ -1159,7 +1171,8 @@ const DestinationPickerDialog = memo(function DestinationPickerDialog({
 				<DialogHeader>
 					<DialogTitle>{title}</DialogTitle>
 					<DialogDescription>
-						Select a destination for <span className="font-medium text-foreground">{fileName}</span>
+						Select a destination for{" "}
+						<span className="font-medium text-foreground">{fileName}</span>
 					</DialogDescription>
 				</DialogHeader>
 
@@ -1607,42 +1620,42 @@ function TreeRow({
 					)}
 				</button>
 			</FileContextMenu>
-			{isDir && isExpanded && (
-				sortedChildren.length > 0 ? (
-				<ul>
-					{sortedChildren.map((child) => (
-						<TreeRow
-							key={child.path}
-							node={child}
-							level={level + 1}
-							expanded={expanded}
-							onToggle={onToggle}
-							onSelectFile={onSelectFile}
-							selectedFiles={selectedFiles}
-							onNavigateToFolder={onNavigateToFolder}
-							onDownload={onDownload}
-							onDelete={onDelete}
-							onRename={onRename}
-							onCopy={onCopy}
-							onMove={onMove}
-							renamingPath={renamingPath}
-							onRenameConfirm={onRenameConfirm}
-							onRenameCancel={onRenameCancel}
-							onOpenInCanvas={onOpenInCanvas}
-							loadingDirs={loadingDirs}
-						/>
-					))}
-				</ul>
+			{isDir &&
+				isExpanded &&
+				(sortedChildren.length > 0 ? (
+					<ul>
+						{sortedChildren.map((child) => (
+							<TreeRow
+								key={child.path}
+								node={child}
+								level={level + 1}
+								expanded={expanded}
+								onToggle={onToggle}
+								onSelectFile={onSelectFile}
+								selectedFiles={selectedFiles}
+								onNavigateToFolder={onNavigateToFolder}
+								onDownload={onDownload}
+								onDelete={onDelete}
+								onRename={onRename}
+								onCopy={onCopy}
+								onMove={onMove}
+								renamingPath={renamingPath}
+								onRenameConfirm={onRenameConfirm}
+								onRenameCancel={onRenameCancel}
+								onOpenInCanvas={onOpenInCanvas}
+								loadingDirs={loadingDirs}
+							/>
+						))}
+					</ul>
 				) : isLoading ? (
-				<div
-					className="flex items-center gap-2 py-1.5 text-xs text-muted-foreground"
-					style={{ paddingLeft: `${(level + 1) * 16 + 8}px` }}
-				>
-					<Loader2 className="w-3 h-3 animate-spin" />
-					Loading...
-				</div>
-				) : null
-			)}
+					<div
+						className="flex items-center gap-2 py-1.5 text-xs text-muted-foreground"
+						style={{ paddingLeft: `${(level + 1) * 16 + 8}px` }}
+					>
+						<Loader2 className="w-3 h-3 animate-spin" />
+						Loading...
+					</div>
+				) : null)}
 		</li>
 	);
 }

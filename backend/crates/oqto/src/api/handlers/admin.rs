@@ -273,7 +273,7 @@ pub async fn sync_user_configs(
             error: None,
         };
 
-        let ensure_result = if let (Some(ref linux_username), Some(linux_uid)) =
+        let ensure_result = if let (Some(linux_username), Some(linux_uid)) =
             (user.linux_username.as_ref(), user.linux_uid)
         {
             linux_users.ensure_user_with_verification(
@@ -290,10 +290,9 @@ pub async fn sync_user_configs(
                 result.runner_configured = true;
                 result.linux_username = Some(linux_username.clone());
 
-                if user.linux_username.as_deref() != Some(linux_username.as_str())
-                    || user.linux_uid != Some(uid as i64)
-                {
-                    if let Err(e) = state
+                if (user.linux_username.as_deref() != Some(linux_username.as_str())
+                    || user.linux_uid != Some(uid as i64))
+                    && let Err(e) = state
                         .users
                         .update_user(
                             &user.id,
@@ -304,13 +303,12 @@ pub async fn sync_user_configs(
                             },
                         )
                         .await
-                    {
-                        warn!(
-                            user_id = %user.id,
-                            error = %e,
-                            "Failed to store linux_username/uid in database"
-                        );
-                    }
+                {
+                    warn!(
+                        user_id = %user.id,
+                        error = %e,
+                        "Failed to store linux_username/uid in database"
+                    );
                 }
 
                 // Provision shell dotfiles (zsh + starship)
@@ -349,13 +347,7 @@ pub async fn sync_user_configs(
 
                 // Sync EAVS models.json (regenerates from current eavs catalog, no key rotation)
                 if let Some(ref eavs_client) = state.eavs_client {
-                    match sync_eavs_models_json(
-                        eavs_client,
-                        linux_users,
-                        &linux_username,
-                    )
-                    .await
-                    {
+                    match sync_eavs_models_json(eavs_client, linux_users, &linux_username).await {
                         Ok(()) => {
                             result.eavs_configured = true;
                         }
@@ -446,21 +438,22 @@ pub async fn create_user(
                     );
                 }
 
-                if state.mmry.enabled && !state.mmry.single_user {
-                    if let Err(e) = linux_users.ensure_mmry_config_for_user(
+                if state.mmry.enabled
+                    && !state.mmry.single_user
+                    && let Err(e) = linux_users.ensure_mmry_config_for_user(
                         &actual_linux_username,
                         uid,
                         &state.mmry.host_service_url,
                         state.mmry.host_api_key.as_deref(),
                         &state.mmry.default_model,
                         state.mmry.dimension,
-                    ) {
-                        warn!(
-                            user_id = %user.id,
-                            error = %e,
-                            "Failed to update mmry config for user"
-                        );
-                    }
+                    )
+                {
+                    warn!(
+                        user_id = %user.id,
+                        error = %e,
+                        "Failed to update mmry config for user"
+                    );
                 }
 
                 // Provision shell dotfiles (zsh + starship)
@@ -521,13 +514,8 @@ pub async fn create_user(
     }
 
     // Provision EAVS virtual key and write Pi models.json if eavs client is available
-    if let (Some(eavs_client), Some(linux_users)) =
-        (&state.eavs_client, &state.linux_users)
-    {
-        let linux_username = user
-            .linux_username
-            .as_deref()
-            .unwrap_or(&user.id);
+    if let (Some(eavs_client), Some(linux_users)) = (&state.eavs_client, &state.linux_users) {
+        let linux_username = user.linux_username.as_deref().unwrap_or(&user.id);
 
         match provision_eavs_for_user(eavs_client, linux_users, linux_username, &user.id).await {
             Ok(key_id) => {
