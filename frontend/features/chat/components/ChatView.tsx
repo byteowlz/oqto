@@ -873,16 +873,16 @@ const gaugeTokens = contextTokenCount;
 		isUserScrolledRef.current = isUserScrolled;
 	}, [isUserScrolled]);
 
-	// Auto-scroll: after every render, if not user-scrolled, pin to bottom.
-	// useEffect (not useLayoutEffect) so it runs after paint — by then
-	// handleScroll has already updated isUserScrolledRef if the user scrolled,
-	// so we never race and snap back over a real user scroll.
+	// Auto-scroll when messages change (new message, streaming token update,
+	// tool call result). Only scrolls if user hasn't manually scrolled up.
+	// Watches the `messages` array reference — useChat returns a new array on
+	// every update, so this covers both new messages and streaming content.
 	useEffect(() => {
 		if (!initialScrollDoneRef.current) return;
 		if (!isUserScrolledRef.current) {
 			scrollToBottom();
 		}
-	});
+	}, [messages, scrollToBottom]);
 
 	// Update isUserScrolled from real user scroll events only.
 	// wheel/touch/pointer events on the container set userInitiatedScrollRef
