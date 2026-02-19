@@ -820,11 +820,14 @@ const gaugeTokens = contextTokenCount;
 		return () => clearTimeout(timer);
 	}, [isConnected, isStreaming, messages.length, refreshStats]);
 
-	// Discrete sessions: selection switches message dataset (no scrolling needed)
+	// Discrete sessions: reset scroll state only when switching to a different session.
+	const prevSessionIdRef = useRef(selectedSessionId);
 	useEffect(() => {
 		if (!selectedSessionId) return;
-		// Ensure we don't auto-scroll to bottom when user is navigating sessions
+		if (selectedSessionId === prevSessionIdRef.current) return;
+		prevSessionIdRef.current = selectedSessionId;
 		setIsUserScrolled(false);
+		isUserScrolledRef.current = false;
 	}, [selectedSessionId]);
 
 	// Scroll to message when scrollToMessageId changes (from search results)
@@ -875,8 +878,6 @@ const gaugeTokens = contextTokenCount;
 
 	// Auto-scroll when messages change (new message, streaming token update,
 	// tool call result). Only scrolls if user hasn't manually scrolled up.
-	// Watches the `messages` array reference — useChat returns a new array on
-	// every update, so this covers both new messages and streaming content.
 	useEffect(() => {
 		if (!initialScrollDoneRef.current) return;
 		if (!isUserScrolledRef.current) {
