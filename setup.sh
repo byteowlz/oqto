@@ -272,6 +272,88 @@ clear_steps() {
   rm -f "$SETUP_STEPS_FILE"
 }
 
+# Load oqto.setup.toml config file and set environment variables.
+# This is a simple TOML parser that handles the flat structure generated
+# by the web configurator at oqto.dev/setup.
+load_setup_config() {
+  local config_file="$1"
+  local current_section=""
+
+  while IFS= read -r line; do
+    # Strip comments and whitespace
+    line="${line%%#*}"
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    [[ -z "$line" ]] && continue
+
+    # Section header
+    if [[ "$line" =~ ^\[([a-z_]+)\]$ ]]; then
+      current_section="${BASH_REMATCH[1]}"
+      continue
+    fi
+
+    # Key = value
+    if [[ "$line" =~ ^([a-z_]+)[[:space:]]*=[[:space:]]*(.+)$ ]]; then
+      local key="${BASH_REMATCH[1]}"
+      local val="${BASH_REMATCH[2]}"
+
+      # Strip quotes from string values
+      val="${val#\"}"
+      val="${val%\"}"
+
+      case "${current_section}.${key}" in
+        deployment.user_mode)       OQTO_USER_MODE="$val"; SELECTED_USER_MODE="$val" ;;
+        deployment.backend_mode)    OQTO_BACKEND_MODE="$val"; SELECTED_BACKEND_MODE="$val" ;;
+        deployment.container_runtime) OQTO_CONTAINER_RUNTIME="$val" ;;
+        deployment.workspace_dir)   WORKSPACE_DIR="$val" ;;
+        network.log_level)          OQTO_LOG_LEVEL="$val" ;;
+        network.caddy)              [[ "$val" == "true" ]] && SETUP_CADDY="yes" && OQTO_SETUP_CADDY="yes" ;;
+        network.domain)             DOMAIN="$val"; OQTO_DOMAIN="$val" ;;
+        admin.username)             ADMIN_USERNAME="$val" ;;
+        admin.email)                ADMIN_EMAIL="$val" ;;
+        providers.enabled)
+          # Parse TOML array: ["anthropic", "openai"]
+          val="${val#[}"
+          val="${val%]}"
+          CONFIGURED_PROVIDERS=""
+          local IFS=','
+          for provider in $val; do
+            provider="${provider#"${provider%%[![:space:]]*}"}"
+            provider="${provider%"${provider##*[![:space:]]}"}"
+            provider="${provider#\"}"
+            provider="${provider%\"}"
+            [[ -n "$provider" ]] && CONFIGURED_PROVIDERS="${CONFIGURED_PROVIDERS} ${provider}"
+          done
+          CONFIGURED_PROVIDERS="${CONFIGURED_PROVIDERS# }"
+          ;;
+        tools.install_all)
+          if [[ "$val" == "true" ]]; then
+            INSTALL_ALL_TOOLS="true"
+            INSTALL_MMRY="true"
+            OQTO_INSTALL_AGENT_TOOLS="yes"
+          fi
+          ;;
+        tools.searxng)              [[ "$val" == "true" ]] && INSTALL_SEARXNG="true" ;;
+        hardening.enabled)
+          if [[ "$val" == "true" ]]; then
+            OQTO_HARDEN_SERVER="yes"
+          else
+            OQTO_HARDEN_SERVER="no"
+          fi
+          ;;
+        hardening.ssh_port)         OQTO_SSH_PORT="$val" ;;
+        hardening.firewall)         [[ "$val" == "true" ]] && OQTO_SETUP_FIREWALL="yes" || OQTO_SETUP_FIREWALL="no" ;;
+        hardening.fail2ban)         [[ "$val" == "true" ]] && OQTO_SETUP_FAIL2BAN="yes" || OQTO_SETUP_FAIL2BAN="no" ;;
+        hardening.ssh_hardening)    [[ "$val" == "true" ]] && OQTO_HARDEN_SSH="yes" || OQTO_HARDEN_SSH="no" ;;
+        hardening.auto_updates)     [[ "$val" == "true" ]] && OQTO_SETUP_AUTO_UPDATES="yes" || OQTO_SETUP_AUTO_UPDATES="no" ;;
+        hardening.kernel_security)  [[ "$val" == "true" ]] && OQTO_HARDEN_KERNEL="yes" || OQTO_HARDEN_KERNEL="no" ;;
+      esac
+    fi
+  done < "$config_file"
+
+  log_success "Config loaded: mode=${SELECTED_USER_MODE:-single}, providers=${CONFIGURED_PROVIDERS:-none}"
+}
+
 # Run a step with verification: skip only if both marked done AND verify passes
 # Usage: verify_or_rerun "step_name" "description" "verify_cmd" install_func
 verify_or_rerun() {
@@ -1697,8 +1779,78 @@ install_agntz() {
   download_or_build_tool agntz
 }
 
+install_typst() {
+  # typst is a dependency of tmpltr (document generation)
+  if command_exists typst; then
+    log_success "typst already installed: $(typst --version 2>/dev/null | head -1)"
+    return 0
+  fi
+
+  log_info "Installing typst..."
+  local arch
+  arch=$(uname -m)
+  local os
+  os=$(uname -s | tr '[:upper:]' '[:lower:]')
+
+  local target=""
+  case "${os}-${arch}" in
+    linux-x86_64)  target="x86_64-unknown-linux-musl" ;;
+    linux-aarch64) target="aarch64-unknown-linux-musl" ;;
+    darwin-x86_64) target="x86_64-apple-darwin" ;;
+    darwin-arm64)  target="aarch64-apple-darwin" ;;
+  esac
+
+  if [[ -z "$target" ]]; then
+    log_warn "No pre-built typst for ${os}-${arch}, trying cargo install..."
+    cargo install typst-cli 2>&1 | tail -3
+    return $?
+  fi
+
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  local url="https://github.com/typst/typst/releases/latest/download/typst-${target}.tar.xz"
+  if curl -fsSL "$url" -o "$tmpdir/typst.tar.xz" 2>/dev/null; then
+    tar -xf "$tmpdir/typst.tar.xz" -C "$tmpdir"
+    local bin
+    bin=$(find "$tmpdir" -name "typst" -type f | head -1)
+    if [[ -n "$bin" ]]; then
+      sudo install -m 755 "$bin" "${TOOLS_INSTALL_DIR}/typst"
+      log_success "typst installed"
+    else
+      log_warn "typst binary not found in archive"
+    fi
+  else
+    log_warn "Failed to download typst, trying cargo install..."
+    cargo install typst-cli 2>&1 | tail -3
+  fi
+  rm -rf "$tmpdir"
+}
+
+install_slidev() {
+  # slidev is a dependency of sldr (presentation tool)
+  if command_exists slidev; then
+    log_success "slidev already installed"
+    return 0
+  fi
+
+  log_info "Installing slidev (sli.dev)..."
+  if command_exists bun; then
+    bun install -g @slidev/cli 2>&1 | tail -3
+  elif command_exists npm; then
+    npm install -g @slidev/cli 2>&1 | tail -3
+  else
+    log_warn "Neither bun nor npm found, cannot install slidev"
+    return 1
+  fi
+  log_success "slidev installed"
+}
+
 install_all_agent_tools() {
   log_step "Installing agent tools"
+
+  # External dependencies for agent tools
+  install_typst
+  install_slidev
 
   # Core tools (Rust) - tries pre-built GitHub release first, falls back to cargo
   # Multi-binary repos need the 3rd arg (package hint) for cargo fallback
@@ -1708,6 +1860,7 @@ install_all_agent_tools() {
   download_or_build_tool mmry mmry mmry-cli
   download_or_build_tool mmry-service mmry mmry-service
   download_or_build_tool tmpltr
+  download_or_build_tool sldr sldr sldr-cli
   download_or_build_tool ignr
 
   # Core tools (Go) - tries pre-built GitHub release first, falls back to go install
@@ -1728,7 +1881,8 @@ select_agent_tools() {
   echo "    sx      - Web search via local SearXNG instance"
   echo
   echo -e "  ${BOLD}Additional tools:${NC}"
-  echo "    tmpltr  - Document generation from templates"
+  echo "    tmpltr  - Document generation from templates (requires typst)"
+  echo "    sldr    - Modular presentations (requires slidev/sli.dev)"
   echo "    ignr    - Gitignore generation"
   echo "    trx     - Issue/task tracking"
   echo
@@ -5826,7 +5980,7 @@ print_summary() {
   echo
 
   echo "  Agent tools:"
-  for tool in agntz mmry scrpr sx tmpltr ignr; do
+  for tool in agntz mmry scrpr sx tmpltr sldr ignr typst slidev; do
     printf "    %-14s " "$tool:"
     echo -e "$(check_bin "$tool")"
   done
@@ -6220,6 +6374,14 @@ main() {
       OQTO_INSTALL_AGENT_TOOLS="no"
       shift
       ;;
+    --config)
+      SETUP_CONFIG_FILE="$2"
+      shift 2
+      ;;
+    --config=*)
+      SETUP_CONFIG_FILE="${1#*=}"
+      shift
+      ;;
     *)
       log_error "Unknown option: $1"
       show_help
@@ -6227,6 +6389,17 @@ main() {
       ;;
     esac
   done
+
+  # Load config file if specified (oqto.setup.toml)
+  if [[ -n "${SETUP_CONFIG_FILE:-}" ]]; then
+    if [[ ! -f "$SETUP_CONFIG_FILE" ]]; then
+      log_error "Config file not found: $SETUP_CONFIG_FILE"
+      exit 1
+    fi
+    log_info "Loading config from: $SETUP_CONFIG_FILE"
+    load_setup_config "$SETUP_CONFIG_FILE"
+    NONINTERACTIVE="true"
+  fi
 
   echo
   echo -e "${BOLD}${CYAN}"
