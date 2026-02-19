@@ -1,0 +1,129 @@
+#!/usr/bin/env bash
+# oqto-admin - Administrative task runner for Oqto platform
+#
+# Usage: oqto-admin <command> [options]
+#
+# This script must be run as the server admin user (the user running oqto).
+# It provides convenience wrappers around common admin operations that
+# would otherwise require manual API calls or multiple steps.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Colors (only when stdout is a terminal)
+if [[ -t 1 ]]; then
+    RED='\033[0;31m'
+    GREEN='\033[0;32m'
+    YELLOW='\033[0;33m'
+    BLUE='\033[0;34m'
+    BOLD='\033[1m'
+    DIM='\033[2m'
+    RESET='\033[0m'
+else
+    RED='' GREEN='' YELLOW='' BLUE='' BOLD='' DIM='' RESET=''
+fi
+
+log_info()  { echo -e "${GREEN}[INFO]${RESET} $*"; }
+log_warn()  { echo -e "${YELLOW}[WARN]${RESET} $*" >&2; }
+log_error() { echo -e "${RED}[ERROR]${RESET} $*" >&2; }
+log_step()  { echo -e "${BLUE}  -->  ${RESET}$*"; }
+
+usage() {
+    cat <<EOF
+${BOLD}oqto-admin${RESET} - Administrative tasks for the Oqto platform
+
+${BOLD}USAGE${RESET}
+    oqto-admin <command> [options]
+
+${BOLD}COMMANDS${RESET}
+    ${BOLD}eavs-provision${RESET}      Provision EAVS API keys for users
+    ${BOLD}sync-pi-config${RESET}      Sync Pi configuration (models.json, settings) to users
+    ${BOLD}manage-skills${RESET}       Install, update, or list Pi skills for users
+    ${BOLD}manage-templates${RESET}    Manage onboarding/bootstrap document templates
+    ${BOLD}sync-all${RESET}            Run full sync: eavs + pi config + skills for all users
+    ${BOLD}user-status${RESET}         Show detailed provisioning status for users
+    ${BOLD}help${RESET}                Show this help message
+
+${BOLD}EXAMPLES${RESET}
+    oqto-admin eavs-provision --all
+    oqto-admin eavs-provision --user alice
+    oqto-admin sync-pi-config --all
+    oqto-admin manage-skills --install canvas-design --all
+    oqto-admin manage-skills --list
+    oqto-admin manage-templates --sync
+    oqto-admin sync-all
+    oqto-admin user-status
+
+${BOLD}REQUIREMENTS${RESET}
+    Must be run as the server admin user (the user running oqto).
+    Requires: oqtoctl, jq, curl
+    For multi-user operations: sudo or oqto-usermgr daemon
+
+${BOLD}ENVIRONMENT${RESET}
+    OQTO_SERVER_URL     Backend API URL (default: http://localhost:8080/api)
+    OQTO_ADMIN_SOCKET   Admin socket path (default: /run/oqto/oqtoctl.sock)
+    OQTO_CONFIG         Path to oqto config file
+    EAVS_MASTER_KEY     EAVS admin API key (reads from config if not set)
+    EAVS_URL            EAVS base URL (reads from config if not set)
+
+EOF
+    exit 0
+}
+
+# Check required tools
+check_deps() {
+    local missing=()
+    for cmd in jq curl; do
+        if ! command -v "$cmd" &>/dev/null; then
+            missing+=("$cmd")
+        fi
+    done
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        log_error "Missing required tools: ${missing[*]}"
+        log_error "Install them and try again."
+        exit 1
+    fi
+}
+
+# Dispatch to subcommand
+main() {
+    if [[ $# -eq 0 ]]; then
+        usage
+    fi
+
+    check_deps
+
+    local cmd="$1"
+    shift
+
+    case "$cmd" in
+        eavs-provision)
+            exec "$SCRIPT_DIR/eavs-provision.sh" "$@"
+            ;;
+        sync-pi-config)
+            exec "$SCRIPT_DIR/sync-pi-config.sh" "$@"
+            ;;
+        manage-skills)
+            exec "$SCRIPT_DIR/manage-skills.sh" "$@"
+            ;;
+        manage-templates)
+            exec "$SCRIPT_DIR/manage-templates.sh" "$@"
+            ;;
+        sync-all)
+            exec "$SCRIPT_DIR/sync-all.sh" "$@"
+            ;;
+        user-status)
+            exec "$SCRIPT_DIR/user-status.sh" "$@"
+            ;;
+        help|--help|-h)
+            usage
+            ;;
+        *)
+            log_error "Unknown command: $cmd"
+            echo ""
+            usage
+            ;;
+    esac
+}
+
+main "$@"

@@ -565,3 +565,35 @@ vm-test-cleanup:
 vm-convert-config setup_file:
     cd scripts && ./convert-setup-toml.sh {{setup_file}}
 
+# =============================================================================
+# Admin Tasks
+# =============================================================================
+
+# Run oqto-admin (wrapper for all admin tasks)
+admin *ARGS:
+    ./scripts/admin/oqto-admin {{ARGS}}
+
+# Show user provisioning status
+admin-status *ARGS:
+    ./scripts/admin/oqto-admin user-status {{ARGS}}
+
+# Provision EAVS keys for users (--all or --user <name>)
+admin-eavs *ARGS:
+    ./scripts/admin/oqto-admin eavs-provision {{ARGS}}
+
+# Sync Pi configuration to users (--all or --user <name>)
+admin-sync-pi *ARGS:
+    ./scripts/admin/oqto-admin sync-pi-config {{ARGS}}
+
+# Manage skills for users (--list, --install <name>, --update)
+admin-skills *ARGS:
+    ./scripts/admin/oqto-admin manage-skills {{ARGS}}
+
+# Manage bootstrap document templates (--sync, --list, --deploy)
+admin-templates *ARGS:
+    ./scripts/admin/oqto-admin manage-templates {{ARGS}}
+
+# Full sync: eavs + pi config + skills for all users
+admin-sync-all *ARGS:
+    ./scripts/admin/oqto-admin sync-all {{ARGS}}
+
