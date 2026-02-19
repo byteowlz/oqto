@@ -2615,6 +2615,97 @@ configure_eavs() {
   # Track configured providers for testing later
   CONFIGURED_PROVIDERS=""
 
+  sanitize_provider_name() {
+    local name="$1"
+    name=$(echo "$name" | tr '[:space:]' '-' | tr -cd '[:alnum:]_-')
+    echo "$name"
+  }
+
+  append_custom_provider() {
+    local cp_name="$1"
+    local cp_type="$2"
+    local cp_base_url="$3"
+    local cp_api_key="$4"
+    local cp_deployment="$5"
+    local cp_api_version="$6"
+    local cp_aws_region="$7"
+    local cp_gcp_project="$8"
+    local cp_gcp_location="$9"
+    local cp_test_model="${10}"
+    local cp_allow_missing_env="${11:-false}"
+
+    local cp_api_key_ref=""
+    if [[ -n "$cp_api_key" ]]; then
+      if [[ "$cp_api_key" == env:* ]]; then
+        local env_name="${cp_api_key#env:}"
+        local env_val="${!env_name:-}"
+        if [[ -z "$env_val" && "$cp_allow_missing_env" != "true" ]]; then
+          if [[ "$NONINTERACTIVE" != "true" ]]; then
+            env_val=$(prompt_input "  ${cp_name} API key (env:${env_name})")
+          fi
+        fi
+        if [[ -n "$env_val" ]]; then
+          if [[ "$SELECTED_USER_MODE" == "single" ]]; then
+            echo "${env_name}=${env_val}" >>"${eavs_env_file}"
+          else
+            echo "${env_name}=${env_val}" | sudo tee -a "${eavs_env_file}" >/dev/null
+          fi
+          cp_api_key_ref="env:${env_name}"
+        else
+          cp_api_key_ref="env:${env_name}"
+          log_warn "Missing ${env_name} for provider '${cp_name}'"
+        fi
+      else
+        local safe_name
+        safe_name=$(echo "$cp_name" | tr '[:lower:]-' '[:upper:]_')
+        local env_name="CUSTOM_${safe_name}_API_KEY"
+        if [[ "$SELECTED_USER_MODE" == "single" ]]; then
+          echo "${env_name}=${cp_api_key}" >>"${eavs_env_file}"
+        else
+          echo "${env_name}=${cp_api_key}" | sudo tee -a "${eavs_env_file}" >/dev/null
+        fi
+        cp_api_key_ref="env:${env_name}"
+      fi
+    fi
+
+    providers_toml+="
+[providers.${cp_name}]
+"
+    if [[ -n "$cp_type" ]]; then
+      providers_toml+="type = \"${cp_type}\"\n"
+    fi
+    if [[ -n "$cp_base_url" ]]; then
+      providers_toml+="base_url = \"${cp_base_url}\"\n"
+    fi
+    if [[ -n "$cp_api_key_ref" ]]; then
+      providers_toml+="api_key = \"${cp_api_key_ref}\"\n"
+    fi
+    if [[ -n "$cp_deployment" ]]; then
+      providers_toml+="deployment = \"${cp_deployment}\"\n"
+    fi
+    if [[ -n "$cp_api_version" ]]; then
+      providers_toml+="api_version = \"${cp_api_version}\"\n"
+    fi
+    if [[ -n "$cp_aws_region" ]]; then
+      providers_toml+="aws_region = \"${cp_aws_region}\"\n"
+    fi
+    if [[ -n "$cp_gcp_project" ]]; then
+      providers_toml+="gcp_project = \"${cp_gcp_project}\"\n"
+    fi
+    if [[ -n "$cp_gcp_location" ]]; then
+      providers_toml+="gcp_location = \"${cp_gcp_location}\"\n"
+    fi
+    if [[ -n "$cp_test_model" ]]; then
+      providers_toml+="test_model = \"${cp_test_model}\"\n"
+    fi
+
+    has_any_provider="true"
+    CONFIGURED_PROVIDERS="${CONFIGURED_PROVIDERS} ${cp_name}"
+    if [[ -z "$first_provider" ]]; then
+      first_provider="$cp_name"
+    fi
+  }
+
   # Ask about each major provider
   for provider_name in anthropic openai google openrouter groq mistral; do
     local env_var_name=""
@@ -2710,91 +2801,80 @@ api_key = \"env:${env_var_name}\"
     fi
   done
 
+  # Add custom providers interactively
+  if [[ "$NONINTERACTIVE" != "true" ]]; then
+    while confirm "Add a custom provider (Azure/OpenAI-compatible/Foundry/etc.)?" "n"; do
+      local raw_name
+      raw_name=$(prompt_input "Provider name (used in config)" "foundry")
+      local cp_name
+      cp_name=$(sanitize_provider_name "$raw_name")
+      if [[ -z "$cp_name" ]]; then
+        log_warn "Provider name must include letters or numbers"
+        continue
+      fi
+      if [[ " ${CONFIGURED_PROVIDERS} " =~ " ${cp_name} " ]]; then
+        log_warn "Provider '${cp_name}' already configured"
+        continue
+      fi
+
+      local cp_type
+      cp_type=$(prompt_choice "Provider type" "microsoft-foundry" "azure" "openai-compatible" "foundry" "azure-foundry" "ai-foundry" "custom")
+      if [[ "$cp_type" == "custom" ]]; then
+        cp_type=$(prompt_input "Provider type (see eavs schema)" "openai-compatible")
+      fi
+
+      local default_env_name
+      default_env_name=$(echo "$cp_name" | tr '[:lower:]-' '[:upper:]_')
+      default_env_name="CUSTOM_${default_env_name}_API_KEY"
+
+      local cp_api_key
+      cp_api_key=$(prompt_input "API key (leave empty to set later; stored as env:${default_env_name})")
+      if [[ -z "$cp_api_key" ]]; then
+        cp_api_key="env:${default_env_name}"
+      fi
+
+      local cp_base_url
+      cp_base_url=$(prompt_input "Base URL (leave empty for provider default)")
+
+      local cp_deployment=""
+      local cp_api_version=""
+      if [[ "$cp_type" =~ ^(azure|microsoft-foundry|foundry|azure-foundry|ai-foundry)$ ]]; then
+        cp_deployment=$(prompt_input "Deployment (Azure/Foundry, optional)")
+        cp_api_version=$(prompt_input "API version (Azure/Foundry, optional)")
+      fi
+
+      local cp_test_model
+      cp_test_model=$(prompt_input "Test model (optional, used for eavs setup test)")
+
+      append_custom_provider "$cp_name" "$cp_type" "$cp_base_url" "$cp_api_key" "$cp_deployment" "$cp_api_version" "" "" "" "$cp_test_model" "true"
+    done
+  fi
+
   # Add custom providers from oqto.setup.toml (if any)
   if [[ ${#CUSTOM_PROVIDERS[@]} -gt 0 ]]; then
-    for cp_name in "${CUSTOM_PROVIDERS[@]}"; do
-      local cp_type="${CP_TYPE[$cp_name]}"
-      local cp_base_url="${CP_BASE_URL[$cp_name]}"
-      local cp_api_key="${CP_API_KEY[$cp_name]}"
-      local cp_deployment="${CP_DEPLOYMENT[$cp_name]}"
-      local cp_api_version="${CP_API_VERSION[$cp_name]}"
-      local cp_aws_region="${CP_AWS_REGION[$cp_name]}"
-      local cp_gcp_project="${CP_GCP_PROJECT[$cp_name]}"
-      local cp_gcp_location="${CP_GCP_LOCATION[$cp_name]}"
-      local cp_test_model="${CP_TEST_MODEL[$cp_name]}"
-
-      # Resolve API key env var if provided
-      local cp_api_key_ref=""
-      if [[ -n "$cp_api_key" ]]; then
-        if [[ "$cp_api_key" == env:* ]]; then
-          local env_name="${cp_api_key#env:}"
-          local env_val="${!env_name:-}"
-          if [[ -z "$env_val" ]]; then
-            if [[ "$NONINTERACTIVE" != "true" ]]; then
-              env_val=$(prompt_input "  ${cp_name} API key (env:${env_name})")
-            fi
-          fi
-          if [[ -n "$env_val" ]]; then
-            if [[ "$SELECTED_USER_MODE" == "single" ]]; then
-              echo "${env_name}=${env_val}" >>"${eavs_env_file}"
-            else
-              echo "${env_name}=${env_val}" | sudo tee -a "${eavs_env_file}" >/dev/null
-            fi
-            cp_api_key_ref="env:${env_name}"
-          else
-            cp_api_key_ref="env:${env_name}"
-            log_warn "Missing ${env_name} for provider '${cp_name}'"
-          fi
-        else
-          # Direct key provided (discouraged), write to env file with generated name
-          local safe_name
-          safe_name=$(echo "$cp_name" | tr '[:lower:]-' '[:upper:]_')
-          local env_name="CUSTOM_${safe_name}_API_KEY"
-          if [[ "$SELECTED_USER_MODE" == "single" ]]; then
-            echo "${env_name}=${cp_api_key}" >>"${eavs_env_file}"
-          else
-            echo "${env_name}=${cp_api_key}" | sudo tee -a "${eavs_env_file}" >/dev/null
-          fi
-          cp_api_key_ref="env:${env_name}"
-        fi
+    for cp_key in "${CUSTOM_PROVIDERS[@]}"; do
+      local cp_name
+      cp_name=$(sanitize_provider_name "$cp_key")
+      if [[ -z "$cp_name" ]]; then
+        log_warn "Skipping custom provider with invalid name: ${cp_key}"
+        continue
+      fi
+      if [[ " ${CONFIGURED_PROVIDERS} " =~ " ${cp_name} " ]]; then
+        log_warn "Provider '${cp_name}' already configured"
+        continue
       fi
 
-      providers_toml+="
-[providers.${cp_name}]
-"
-      if [[ -n "$cp_type" ]]; then
-        providers_toml+="type = \"${cp_type}\"\n"
-      fi
-      if [[ -n "$cp_base_url" ]]; then
-        providers_toml+="base_url = \"${cp_base_url}\"\n"
-      fi
-      if [[ -n "$cp_api_key_ref" ]]; then
-        providers_toml+="api_key = \"${cp_api_key_ref}\"\n"
-      fi
-      if [[ -n "$cp_deployment" ]]; then
-        providers_toml+="deployment = \"${cp_deployment}\"\n"
-      fi
-      if [[ -n "$cp_api_version" ]]; then
-        providers_toml+="api_version = \"${cp_api_version}\"\n"
-      fi
-      if [[ -n "$cp_aws_region" ]]; then
-        providers_toml+="aws_region = \"${cp_aws_region}\"\n"
-      fi
-      if [[ -n "$cp_gcp_project" ]]; then
-        providers_toml+="gcp_project = \"${cp_gcp_project}\"\n"
-      fi
-      if [[ -n "$cp_gcp_location" ]]; then
-        providers_toml+="gcp_location = \"${cp_gcp_location}\"\n"
-      fi
-      if [[ -n "$cp_test_model" ]]; then
-        providers_toml+="test_model = \"${cp_test_model}\"\n"
-      fi
+      local cp_type="${CP_TYPE[$cp_key]}"
+      local cp_base_url="${CP_BASE_URL[$cp_key]}"
+      local cp_api_key="${CP_API_KEY[$cp_key]}"
+      local cp_deployment="${CP_DEPLOYMENT[$cp_key]}"
+      local cp_api_version="${CP_API_VERSION[$cp_key]}"
+      local cp_aws_region="${CP_AWS_REGION[$cp_key]}"
+      local cp_gcp_project="${CP_GCP_PROJECT[$cp_key]}"
+      local cp_gcp_location="${CP_GCP_LOCATION[$cp_key]}"
+      local cp_test_model="${CP_TEST_MODEL[$cp_key]}"
 
-      has_any_provider="true"
-      CONFIGURED_PROVIDERS="${CONFIGURED_PROVIDERS} ${cp_name}"
-      if [[ -z "$first_provider" ]]; then
-        first_provider="$cp_name"
-      fi
+      append_custom_provider "$cp_name" "$cp_type" "$cp_base_url" "$cp_api_key" "$cp_deployment" "$cp_api_version" "$cp_aws_region" "$cp_gcp_project" "$cp_gcp_location" "$cp_test_model"
     done
   fi
 
@@ -3099,12 +3179,65 @@ test_eavs_providers() {
     eavs_env_file="${OQTO_HOME}/.config/eavs/env"
   fi
 
+  if [[ -z "${CONFIGURED_PROVIDERS// }" ]]; then
+    log_warn "No providers configured. Skipping provider tests."
+    return 0
+  fi
+
+  read_env_file() {
+    if [[ "$SELECTED_USER_MODE" == "single" ]]; then
+      cat "$eavs_env_file" 2>/dev/null || true
+    else
+      sudo cat "$eavs_env_file" 2>/dev/null || true
+    fi
+  }
+
+  get_provider_api_key_ref() {
+    local provider_name="$1"
+    awk -v p="$provider_name" '
+      $0 ~ "^\\[providers\\."p"\\]" {in=1; next}
+      $0 ~ "^\\[providers\\." && $0 !~ "^\\[providers\\."p"\\]" {in=0}
+      in && $0 ~ "^api_key" {
+        sub(/^[^=]*= */, "", $0)
+        gsub(/\"/, "", $0)
+        print $0
+        exit
+      }
+    ' "$eavs_config_file" 2>/dev/null
+  }
+
+  get_env_value() {
+    local env_name="$1"
+    local env_val="${!env_name:-}"
+    if [[ -n "$env_val" ]]; then
+      echo "$env_val"
+      return
+    fi
+    read_env_file | sed -n "s/^${env_name}=//p" | head -1
+  }
+
   local any_success="false"
   local any_failure="false"
+  local summary_lines=()
 
   for provider in $CONFIGURED_PROVIDERS; do
     [[ -z "$provider" ]] && continue
     echo -n "  Testing ${provider}... "
+
+    local api_key_ref
+    api_key_ref=$(get_provider_api_key_ref "$provider")
+    if [[ "$api_key_ref" == env:* ]]; then
+      local env_name="${api_key_ref#env:}"
+      local env_val
+      env_val=$(get_env_value "$env_name")
+      if [[ -z "$env_val" ]]; then
+        echo -e "${YELLOW}SKIPPED${NC}"
+        echo "    Missing env var ${env_name} for ${provider}"
+        summary_lines+=("${provider}|SKIPPED|Missing env var ${env_name}")
+        any_failure="true"
+        continue
+      fi
+    fi
 
     # Source the env file so eavs setup test can resolve env: keys.
     # Redirect stdin from /dev/null so eavs doesn't try to prompt for input.
@@ -3133,6 +3266,7 @@ test_eavs_providers() {
 
     if echo "$test_result" | grep -qE '"success"[[:space:]]*:[[:space:]]*true|test successful'; then
       echo -e "${GREEN}OK${NC}"
+      summary_lines+=("${provider}|OK|")
       any_success="true"
     else
       echo -e "${RED}FAILED${NC}"
@@ -3142,7 +3276,18 @@ test_eavs_providers() {
       if [[ -n "$err_hint" ]]; then
         echo "    $err_hint"
       fi
+      summary_lines+=("${provider}|FAILED|${err_hint}")
       any_failure="true"
+    fi
+  done
+
+  echo
+  log_info "Provider test summary:"
+  for entry in "${summary_lines[@]}"; do
+    IFS='|' read -r provider status detail <<<"$entry"
+    printf "  %-20s %s\n" "$provider" "$status"
+    if [[ -n "$detail" ]]; then
+      echo "    ${detail}"
     fi
   done
 

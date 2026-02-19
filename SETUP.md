@@ -685,15 +685,17 @@ Key configuration sections:
 ## EAVS Setup and Models
 
 EAVS is the LLM proxy that routes agent requests to providers (Anthropic, OpenAI, Google, etc.).
+EAVS is required for Oqto; setup.sh always installs and configures it.
 
 ### What setup.sh does
 
 During setup, the script:
 1. **Configures providers** -- asks which LLM providers you want (Anthropic, OpenAI, Google, etc.) and stores API keys in the eavs env file
-2. **Adds curated model shortlists** -- each provider gets a hand-picked set of the best models so users see a manageable selection (not the full 2800+ models.dev catalog)
-3. **Tests connections** -- validates each provider by making a real API call via `eavs setup test`
-4. **Generates models.json** -- queries the running eavs `/providers/detail` API and generates Pi-compatible `~/.pi/agent/models.json` so users have models available immediately
-5. **Provisions user keys** -- creates virtual API keys with rate limits and budgets
+2. **Adds custom providers** -- prompts for custom types like Microsoft Foundry, Azure, or other OpenAI-compatible endpoints
+3. **Adds curated model shortlists** -- each provider gets a hand-picked set of the best models so users see a manageable selection (not the full 2800+ models.dev catalog)
+4. **Tests connections** -- validates each provider by making a real API call via `eavs setup test` and prints a per-provider summary
+5. **Generates models.json** -- queries the running eavs `/providers/detail` API and generates Pi-compatible `~/.pi/agent/models.json` so users have models available immediately
+6. **Provisions user keys** -- creates virtual API keys with rate limits and budgets
 
 ### Regenerating models.json
 
@@ -707,6 +709,26 @@ If you add or change providers after setup, regenerate models.json:
 ### Post-Setup Provider Changes
 
 After `setup.sh` configures EAVS, you may need to add or change providers.
+
+### Custom Providers (Microsoft Foundry / Azure)
+
+Example config for Azure AI Foundry or Microsoft Foundry:
+
+```toml
+[providers.foundry]
+type = "microsoft-foundry"
+base_url = "https://<resource>.openai.azure.com/openai"
+api_key = "env:FOUNDRY_API_KEY"
+deployment = "gpt-4o"
+api_version = "2024-02-15-preview"
+test_model = "gpt-4o"
+```
+
+After editing the config, re-run provider tests and regenerate models:
+
+```bash
+./setup.sh --redo eavs_test,eavs_models
+```
 
 ### Configuration Files
 
