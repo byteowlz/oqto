@@ -2,6 +2,15 @@
 
 ## Open
 
+### [oqto-q4ae] setup.sh must guarantee hstry is running and accessible for every provisioned user (P1, bug)
+Production shows 500 on /api/chat-history with 'Chat history service not configured for this user.' for wismut-vCmT. Root cause: get_runner_for_user() returns None in multi-user mode, which is a hard error. The setup process needs to:
+
+1. Verify hstry binary is installed and accessible
+2. Verify per-user hstry config exists (~/.config/hstry/config.toml)
+3. Verify per-user systemd service is created, enabled, and started
+...
+
+
 ### [oqto-mvdv] Streaming reliability: backpressure handling, reconnect resync, and delta coalescing (P1, epic)
 Our WebSocket layer (ws-manager.ts) assumes a perfect connection. Pi-mobile (https://github.com/ayagmar/pi-mobile) demonstrates several transport reliability patterns we lack that cause real user-facing issues: silent message loss under backpressure, corrupted UI after reconnect, excessive re-renders during fast streaming, and no cross-device drift detection.
 
@@ -1539,7 +1548,7 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
 - [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
 - [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
