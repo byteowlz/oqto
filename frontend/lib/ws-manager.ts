@@ -99,6 +99,18 @@ const MAX_RECONNECT_DELAY_MS = 30000;
 const PING_INTERVAL_MS = 30000;
 const CONNECT_TIMEOUT_MS = 10000;
 
+// Backpressure detection: if more than this many messages are queued
+// in the internal dispatch buffer without being consumed, we consider
+// the connection backpressured and trigger a controlled reconnect.
+const INBOUND_BACKPRESSURE_HIGH_WATER = 512;
+// Close code used when we intentionally close due to backpressure.
+const BACKPRESSURE_CLOSE_CODE = 4013;
+const BACKPRESSURE_CLOSE_REASON = "inbound backpressure";
+
+// Resync: delay after reconnect before triggering resync to allow
+// session.create responses to arrive first.
+const RESYNC_DELAY_MS = 300;
+
 // ============================================================================
 // WebSocket Connection Manager
 // ============================================================================
@@ -151,6 +163,28 @@ class WsConnectionManager {
 	private requestIdCounter = 0;
 	// Pending request callbacks (id -> resolve)
 	private pendingRequests: Map<string, (event: WsEvent) => void> = new Map();
+
+	// --- Connection epoch: monotonically increasing counter incremented on
+	// every connect/reconnect/disconnect. All async post-reconnect operations
+	// check this to discard stale callbacks from previous connection cycles.
+	private connectionEpoch = 0;
+
+	// --- Backpressure detection ---
+	private inboundQueueDepth = 0;
+	private inboundReceivedCount = 0;
+	private inboundDroppedCount = 0;
+	private inboundBackpressureReconnects = 0;
+	// Flag to prevent multiple backpressure closes in a single connection
+	private backpressureTriggered = false;
+
+	// --- Resync after reconnect ---
+	// Handlers called after reconnect with full state+messages for active sessions.
+	// Map<sessionId, handler>
+	private resyncHandlers: Map<
+		string,
+		(sessionId: string, state: unknown, messages: unknown[]) => void
+	> = new Map();
+	private resyncTimeout: ReturnType<typeof setTimeout> | null = null;
 
 	// ========================================================================
 	// Public API
@@ -257,6 +291,47 @@ class WsConnectionManager {
 		throw new Error(errMsg);
 	}
 
+	/** Get the current connection epoch (monotonically increasing). */
+	get epoch(): number {
+		return this.connectionEpoch;
+	}
+
+	/** Get inbound diagnostics for debugging. */
+	getInboundDiagnostics(): {
+		received: number;
+		dropped: number;
+		backpressureReconnects: number;
+		currentQueueDepth: number;
+	} {
+		return {
+			received: this.inboundReceivedCount,
+			dropped: this.inboundDroppedCount,
+			backpressureReconnects: this.inboundBackpressureReconnects,
+			currentQueueDepth: this.inboundQueueDepth,
+		};
+	}
+
+	/**
+	 * Register a resync handler for a session. Called after reconnect with
+	 * fresh state and messages fetched from the runner.
+	 */
+	onResync(
+		sessionId: string,
+		handler: (sessionId: string, state: unknown, messages: unknown[]) => void,
+	): () => void {
+		this.resyncHandlers.set(sessionId, handler);
+		return () => {
+			if (this.resyncHandlers.get(sessionId) === handler) {
+				this.resyncHandlers.delete(sessionId);
+			}
+		};
+	}
+
+	/** Remove resync handler for a session. */
+	removeResync(sessionId: string): void {
+		this.resyncHandlers.delete(sessionId);
+	}
+
 	/** Check if connected */
 	get isConnected(): boolean {
 		return this.connectionState === "connected";
@@ -274,16 +349,22 @@ class WsConnectionManager {
 			return;
 		}
 
-		console.log("[ws-mux] Connecting to WebSocket...");
+		this.connectionEpoch++;
+		console.log(
+			`[ws-mux] Connecting to WebSocket... (epoch=${this.connectionEpoch})`,
+		);
 		this.setConnectionState("connecting");
 		this.createWebSocket();
 	}
 
 	/** Disconnect from the WebSocket server */
 	disconnect(): void {
+		this.connectionEpoch++;
 		this.clearReconnectTimeout();
 		this.clearPingInterval();
+		this.clearResyncTimeout();
 		this.setConnectionState("disconnected");
+		this.cancelPendingRequests();
 
 		if (this.ws) {
 			this.ws.onclose = null; // Prevent reconnection
@@ -600,6 +681,7 @@ class WsConnectionManager {
 		this.pendingSubscriptions.delete(sessionId);
 		this.pendingMessages.delete(sessionId);
 		this.agentSessionHandlers.delete(sessionId);
+		this.resyncHandlers.delete(sessionId);
 
 		this.send({
 			channel: "agent",
@@ -659,10 +741,7 @@ class WsConnectionManager {
 	 * This updates Pi's internal session name so auto-generated titles
 	 * are replaced with the user's choice.
 	 */
-	async agentSetSessionName(
-		sessionId: string,
-		name: string,
-	): Promise<void> {
+	async agentSetSessionName(sessionId: string, name: string): Promise<void> {
 		try {
 			const event = await this.sendAndWait(
 				{
@@ -824,10 +903,20 @@ class WsConnectionManager {
 
 		console.log("[ws-mux] Connecting to", wsUrl);
 
+		// Reset per-connection backpressure state
+		this.inboundQueueDepth = 0;
+		this.backpressureTriggered = false;
+		const connectEpoch = this.connectionEpoch;
+
 		this.ws = new WebSocket(wsUrl);
 
 		this.ws.onopen = () => {
-			console.log("[ws-mux] Connected!");
+			// Stale connection from a previous epoch -- discard
+			if (this.connectionEpoch !== connectEpoch) {
+				this.ws?.close(1000, "Stale connection");
+				return;
+			}
+			console.log(`[ws-mux] Connected! (epoch=${connectEpoch})`);
 			this.reconnectAttempt = 0;
 			this.setConnectionState("connected");
 			this.startPingInterval();
@@ -899,11 +988,38 @@ class WsConnectionManager {
 					this.pendingMessages.size,
 				);
 			}
+
+			// Schedule resync for active sessions after reconnect.
+			// We wait a short delay for session.create responses to arrive
+			// before fetching state+messages.
+			if (this.resyncHandlers.size > 0) {
+				this.scheduleResync(connectEpoch);
+			}
 		};
 
-		this.ws.onmessage = (event) => {
+		this.ws.onmessage = (wsEvent) => {
+			this.inboundReceivedCount++;
+			this.inboundQueueDepth++;
+
+			// Backpressure detection: if the queue depth exceeds the high-water
+			// mark, we're consuming messages slower than they arrive. Rather than
+			// silently dropping events (which causes permanent UI corruption),
+			// trigger a controlled reconnect that will resync state cleanly.
+			if (
+				this.inboundQueueDepth > INBOUND_BACKPRESSURE_HIGH_WATER &&
+				!this.backpressureTriggered
+			) {
+				this.backpressureTriggered = true;
+				this.inboundBackpressureReconnects++;
+				console.warn(
+					`[ws-mux] Inbound buffer saturated (depth=${this.inboundQueueDepth}); closing WebSocket to force deterministic resync`,
+				);
+				this.ws?.close(BACKPRESSURE_CLOSE_CODE, BACKPRESSURE_CLOSE_REASON);
+				return;
+			}
+
 			try {
-				const data = JSON.parse(event.data) as WsEvent;
+				const data = JSON.parse(wsEvent.data) as WsEvent;
 				const recordEvent = (evt: WsEvent) => {
 					const base: WsTraceEntry = {
 						ts: Date.now(),
@@ -934,7 +1050,10 @@ class WsConnectionManager {
 				}
 				this.handleEvent(data);
 			} catch (err) {
-				console.warn("[ws-mux] Failed to parse message:", err, event.data);
+				console.warn("[ws-mux] Failed to parse message:", err, wsEvent.data);
+			} finally {
+				// Decrement queue depth after processing (even on error)
+				this.inboundQueueDepth = Math.max(0, this.inboundQueueDepth - 1);
 			}
 		};
 
@@ -942,13 +1061,22 @@ class WsConnectionManager {
 			console.error("[ws-mux] WebSocket error:", event);
 		};
 
-		this.ws.onclose = (event) => {
-			console.log("[ws-mux] Connection closed:", event.code, event.reason);
+		this.ws.onclose = (closeEvent) => {
+			const isBackpressure = closeEvent.code === BACKPRESSURE_CLOSE_CODE;
+			console.log(
+				`[ws-mux] Connection closed: ${closeEvent.code} ${closeEvent.reason}${isBackpressure ? " (backpressure-triggered)" : ""}`,
+			);
+			this.logInboundDiagnostics(
+				`close:${closeEvent.code}:${closeEvent.reason}`,
+			);
 			this.ws = null;
 			this.clearPingInterval();
+			this.cancelPendingRequests();
 
-			if (event.code !== 1000) {
-				// Abnormal close, attempt reconnection
+			if (closeEvent.code !== 1000 || isBackpressure) {
+				// Abnormal close or backpressure-triggered, attempt reconnection.
+				// Increment epoch so stale callbacks from this connection are discarded.
+				this.connectionEpoch++;
 				this.scheduleReconnect();
 			} else {
 				this.setConnectionState("disconnected");
@@ -1201,6 +1329,133 @@ class WsConnectionManager {
 			clearInterval(this.pingInterval);
 			this.pingInterval = null;
 		}
+	}
+
+	/** Cancel all pending request/response callbacks. */
+	private cancelPendingRequests(): void {
+		// Resolve with a synthetic error event so waiters don't hang forever.
+		// We don't reject because some callers don't expect rejection.
+		for (const [id, callback] of this.pendingRequests) {
+			try {
+				callback({
+					channel: "system",
+					type: "error",
+					error: "Connection lost",
+					id,
+				} as unknown as WsEvent);
+			} catch {
+				// ignore handler errors during cleanup
+			}
+		}
+		this.pendingRequests.clear();
+	}
+
+	/** Clear resync timeout. */
+	private clearResyncTimeout(): void {
+		if (this.resyncTimeout) {
+			clearTimeout(this.resyncTimeout);
+			this.resyncTimeout = null;
+		}
+	}
+
+	/** Log inbound diagnostics for debugging. */
+	private logInboundDiagnostics(reason: string): void {
+		console.log(
+			`[ws-mux] ws_inbound_diagnostics reason=${reason} ` +
+				`received=${this.inboundReceivedCount} ` +
+				`dropped=${this.inboundDroppedCount} ` +
+				`backpressureReconnects=${this.inboundBackpressureReconnects} ` +
+				`epoch=${this.connectionEpoch}`,
+		);
+	}
+
+	/**
+	 * Schedule a resync for all sessions that have registered resync handlers.
+	 * Waits for sessions to become ready, then fetches state + messages.
+	 */
+	private scheduleResync(expectedEpoch: number): void {
+		this.clearResyncTimeout();
+
+		this.resyncTimeout = setTimeout(async () => {
+			this.resyncTimeout = null;
+
+			// Epoch check: if the connection has changed since we scheduled,
+			// this resync is stale -- discard it.
+			if (this.connectionEpoch !== expectedEpoch) {
+				console.log(
+					`[ws-mux] Resync skipped: epoch changed (expected=${expectedEpoch}, current=${this.connectionEpoch})`,
+				);
+				return;
+			}
+
+			const sessionIds = Array.from(this.resyncHandlers.keys()).filter((id) =>
+				this.agentSessionHandlers.has(id),
+			);
+
+			if (sessionIds.length === 0) return;
+
+			console.log(
+				`[ws-mux] Resyncing ${sessionIds.length} session(s) after reconnect (epoch=${expectedEpoch})`,
+			);
+
+			for (const sessionId of sessionIds) {
+				// Re-check epoch before each session resync
+				if (this.connectionEpoch !== expectedEpoch) {
+					console.log("[ws-mux] Resync aborted: epoch changed mid-resync");
+					return;
+				}
+
+				const handler = this.resyncHandlers.get(sessionId);
+				if (!handler) continue;
+
+				try {
+					// Fetch state
+					const stateEvent = await this.sendAndWait(
+						{
+							channel: "agent",
+							session_id: sessionId,
+							cmd: "get_state",
+						},
+						10000,
+					);
+
+					// Epoch check after async wait
+					if (this.connectionEpoch !== expectedEpoch) return;
+
+					const stateResp = this.extractCommandResponse(stateEvent);
+					const stateData = stateResp?.success ? stateResp.data : null;
+
+					// Fetch messages
+					const msgsEvent = await this.sendAndWait(
+						{
+							channel: "agent",
+							session_id: sessionId,
+							cmd: "get_messages",
+						},
+						10000,
+					);
+
+					// Epoch check after async wait
+					if (this.connectionEpoch !== expectedEpoch) return;
+
+					const msgsResp = this.extractCommandResponse(msgsEvent);
+					let messages: unknown[] = [];
+					if (msgsResp?.success && msgsResp.data) {
+						const data = msgsResp.data as { messages?: unknown[] };
+						messages = data.messages ?? [];
+					}
+
+					// Deliver resync snapshot
+					handler(sessionId, stateData, messages);
+					console.log(
+						`[ws-mux] Resync complete for session ${sessionId}: ` +
+							`state=${stateData ? "ok" : "null"}, messages=${messages.length}`,
+					);
+				} catch (err) {
+					console.warn(`[ws-mux] Resync failed for session ${sessionId}:`, err);
+				}
+			}
+		}, RESYNC_DELAY_MS);
 	}
 }
 

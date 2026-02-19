@@ -31,6 +31,10 @@ import {
 	isPendingSessionId,
 	normalizeWorkspacePath,
 } from "@/lib/session-utils";
+import {
+	type StreamingThrottle,
+	createStreamingThrottle,
+} from "@/lib/streaming-throttle";
 import { getWsManager } from "@/lib/ws-manager";
 import type { AgentWsEvent, WsMuxConnectionState } from "@/lib/ws-mux-types";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -60,6 +64,12 @@ import type {
 } from "./types";
 
 const BATCH_FLUSH_INTERVAL_MS = 50;
+
+// Streaming delta coalescing interval. During fast streaming, text_delta and
+// thinking_delta events arrive much faster than React can usefully re-render.
+// We coalesce intermediate accumulated snapshots and emit at this cadence.
+// Inspired by pi-mobile's UiUpdateThrottler (80ms text, 100ms tools).
+const TEXT_DELTA_THROTTLE_MS = 80;
 
 function isPiDebugEnabled(): boolean {
 	if (!import.meta.env.DEV) return false;
@@ -247,13 +257,23 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 	const onTitleChangedRef = useRef(onTitleChanged);
 	onTitleChangedRef.current = onTitleChanged;
 
-
 	// Batched update state
 	const batchedUpdateRef = useRef({
 		rafId: null as number | null,
 		lastFlushTime: 0,
 		pendingUpdate: false,
 	});
+
+	// Streaming delta throttle: coalesces high-frequency text/thinking deltas.
+	// The throttle stores the full accumulated DisplayMessage snapshot and only
+	// emits at TEXT_DELTA_THROTTLE_MS intervals. A flush timer ensures pending
+	// coalesced updates are delivered even if no new delta arrives.
+	const streamingThrottleRef = useRef<StreamingThrottle<DisplayMessage>>(
+		createStreamingThrottle(TEXT_DELTA_THROTTLE_MS),
+	);
+	const throttleFlushTimerRef = useRef<ReturnType<typeof setInterval> | null>(
+		null,
+	);
 
 	// Generate unique message ID
 	const nextMessageId = useCallback(() => {
@@ -394,6 +414,63 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 		}
 	}, [flushStreamingUpdate]);
 
+	/**
+	 * Apply a coalesced streaming message snapshot to React state.
+	 * Used by the throttle when it decides to emit.
+	 */
+	const applyThrottledSnapshot = useCallback((snapshot: DisplayMessage) => {
+		setMessages((prev) => {
+			const idx = prev.findIndex((m) => m.id === snapshot.id);
+			if (idx >= 0) {
+				const updated = [...prev];
+				updated[idx] = {
+					...snapshot,
+					parts: snapshot.parts.map((p) => ({ ...p })),
+				};
+				return updated;
+			}
+			return prev;
+		});
+	}, []);
+
+	/**
+	 * Offer a streaming message to the throttle. If the throttle decides
+	 * to emit immediately, apply to React state. Otherwise the periodic
+	 * flush timer will pick it up.
+	 */
+	const throttledStreamingUpdate = useCallback(
+		(currentMsg: DisplayMessage) => {
+			const throttle = streamingThrottleRef.current;
+			// Create a shallow snapshot for the throttle
+			const snapshot = {
+				...currentMsg,
+				parts: currentMsg.parts.map((p) => ({ ...p })),
+			};
+			const immediate = throttle.offer(snapshot);
+			if (immediate) {
+				applyThrottledSnapshot(immediate);
+			}
+			// Ensure flush timer is running
+			if (!throttleFlushTimerRef.current) {
+				throttleFlushTimerRef.current = setInterval(() => {
+					const ready = streamingThrottleRef.current.drainReady();
+					if (ready) {
+						applyThrottledSnapshot(ready);
+					}
+					// Stop timer when nothing is pending
+					if (
+						!streamingThrottleRef.current.hasPending() &&
+						throttleFlushTimerRef.current
+					) {
+						clearInterval(throttleFlushTimerRef.current);
+						throttleFlushTimerRef.current = null;
+					}
+				}, TEXT_DELTA_THROTTLE_MS);
+			}
+		},
+		[applyThrottledSnapshot],
+	);
+
 	const fetchHistoryMessages = useCallback(
 		async (sessionId: string) => {
 			try {
@@ -507,7 +584,8 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 							text: delta,
 						});
 					}
-					scheduleStreamingUpdate();
+					// Coalesce through throttle instead of scheduling every delta
+					throttledStreamingUpdate(currentMsg);
 					setIsAwaitingResponse(false);
 					break;
 				}
@@ -527,7 +605,8 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 							text: delta,
 						});
 					}
-					scheduleStreamingUpdate();
+					// Coalesce through throttle instead of scheduling every delta
+					throttledStreamingUpdate(currentMsg);
 					setIsAwaitingResponse(false);
 					break;
 				}
@@ -652,6 +731,18 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 						event.session_id ?? activeSessionIdRef.current,
 						false,
 					);
+					// Flush any coalesced deltas from the throttle
+					{
+						const finalSnapshot = streamingThrottleRef.current.flush();
+						if (finalSnapshot) {
+							applyThrottledSnapshot(finalSnapshot);
+						}
+						streamingThrottleRef.current.reset();
+						if (throttleFlushTimerRef.current) {
+							clearInterval(throttleFlushTimerRef.current);
+							throttleFlushTimerRef.current = null;
+						}
+					}
 					// Cancel pending batched update
 					const batch = batchedUpdateRef.current;
 					if (batch.rafId !== null) {
@@ -693,6 +784,19 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 
 				// -- Message complete (canonical full message) --
 				case "stream.message_end": {
+					// Flush any coalesced deltas before finalizing the message
+					{
+						const finalSnapshot = streamingThrottleRef.current.flush();
+						if (finalSnapshot && streamingMessageRef.current) {
+							// Apply the flushed content to the streaming message
+							streamingMessageRef.current.parts = finalSnapshot.parts;
+						}
+						streamingThrottleRef.current.reset();
+						if (throttleFlushTimerRef.current) {
+							clearInterval(throttleFlushTimerRef.current);
+							throttleFlushTimerRef.current = null;
+						}
+					}
 					// If no streaming message exists, this message_end is for a
 					// non-assistant message (user echo or tool result) that was
 					// already skipped in message_start. Nothing to finalize.
@@ -778,6 +882,18 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 						event.session_id ?? activeSessionIdRef.current,
 						false,
 					);
+					// Flush any remaining coalesced deltas
+					{
+						const finalSnapshot = streamingThrottleRef.current.flush();
+						if (finalSnapshot) {
+							applyThrottledSnapshot(finalSnapshot);
+						}
+						streamingThrottleRef.current.reset();
+						if (throttleFlushTimerRef.current) {
+							clearInterval(throttleFlushTimerRef.current);
+							throttleFlushTimerRef.current = null;
+						}
+					}
 					setIsStreaming(false);
 					isStreamingRef.current = false;
 					setIsAwaitingResponse(false);
@@ -1189,9 +1305,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 							}
 							// Clear the force sync flag - we've applied it
 							if (forceSync) {
-								forceMessageSyncRef.current.delete(
-									event.session_id ?? "",
-								);
+								forceMessageSyncRef.current.delete(event.session_id ?? "");
 							}
 							if (resp.success && resp.data) {
 								const data = resp.data as { messages?: RawMessage[] };
@@ -1295,10 +1409,12 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 		},
 		[
 			appendPartToMessage,
+			applyThrottledSnapshot,
 			ensureAssistantMessage,
 			fetchHistoryMessages,
 			nextMessageId,
 			scheduleStreamingUpdate,
+			throttledStreamingUpdate,
 			setBusyForEvent,
 			onMessageComplete,
 			onError,
@@ -1689,6 +1805,61 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 			{ create: false },
 		);
 
+		// Register resync handler: after a reconnect, ws-manager will fetch
+		// fresh state+messages and call this handler to rebuild the timeline
+		// from scratch rather than trying to merge stale local state.
+		const unsubscribeResync = manager.onResync(
+			activeSessionId,
+			(_sessionId, stateData, serverMessages) => {
+				console.log(
+					`[useChat] Resync received for ${_sessionId}: ` +
+						`state=${stateData ? "ok" : "null"}, messages=${serverMessages.length}`,
+				);
+
+				// Apply state
+				if (stateData) {
+					const nextState = stateData as AgentState;
+					setState(nextState);
+					if (nextState?.isStreaming === true) {
+						setIsStreaming(true);
+						isStreamingRef.current = true;
+					} else {
+						setIsStreaming(false);
+						isStreamingRef.current = false;
+						setIsAwaitingResponse(false);
+						if (streamingMessageRef.current) {
+							streamingMessageRef.current.isStreaming = false;
+							streamingMessageRef.current = null;
+						}
+					}
+				}
+
+				// Rebuild messages from scratch
+				if (serverMessages.length > 0) {
+					const displayMessages = normalizeMessages(
+						serverMessages as RawMessage[],
+						`resync-${_sessionId}`,
+					);
+					if (displayMessages.length > 0) {
+						// Replace local messages entirely with server truth
+						setMessages(displayMessages);
+						messageIdRef.current = getMaxMessageId(displayMessages);
+						const lastAssistant = [...displayMessages]
+							.reverse()
+							.find((msg) => msg.role === "assistant");
+						lastAssistantMessageIdRef.current = lastAssistant?.id ?? null;
+					}
+				}
+
+				// Reset throttle state since we just rebuilt everything
+				streamingThrottleRef.current.reset();
+				if (throttleFlushTimerRef.current) {
+					clearInterval(throttleFlushTimerRef.current);
+					throttleFlushTimerRef.current = null;
+				}
+			},
+		);
+
 		if (isPiDebugEnabled()) {
 			console.debug("[useChat] Subscribed to session:", activeSessionId);
 		}
@@ -1814,6 +1985,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 				unsubscribeRef.current();
 				unsubscribeRef.current = null;
 			}
+			unsubscribeResync();
 		};
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [activeSessionId, resolvedStorageKeyPrefix, getSessionConfig]);
@@ -1849,6 +2021,17 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 			!isStreaming,
 		);
 	}, [activeSessionId, isStreaming, messages, resolvedStorageKeyPrefix]);
+
+	// Cleanup throttle flush timer on unmount
+	useEffect(() => {
+		return () => {
+			if (throttleFlushTimerRef.current) {
+				clearInterval(throttleFlushTimerRef.current);
+				throttleFlushTimerRef.current = null;
+			}
+			streamingThrottleRef.current.reset();
+		};
+	}, []);
 
 	return {
 		state,

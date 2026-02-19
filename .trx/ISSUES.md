@@ -2,6 +2,33 @@
 
 ## Open
 
+### [oqto-mvdv.2] Deterministic resync after reconnect for active sessions (P1, task)
+After every WebSocket reconnect, fetch fresh state + messages for each actively-viewed session and rebuild the conversation from scratch, rather than trying to merge stale local state with incoming events.
+
+## What to implement
+
+1. After reconnect + re-subscribe completes, for each session the user is actively viewing:
+...
+
+
+### [oqto-mvdv.1] Backpressure detection and controlled reconnect in ws-manager.ts (P1, task)
+Add backpressure detection to WsConnectionManager. When the inbound message buffer saturates (messages arriving faster than React can consume them), trigger a controlled WebSocket close with code 1013 and force a full reconnect + resync cycle rather than silently dropping events.
+
+## What to implement
+
+1. Track inbound message counts: received, dropped, backpressure-triggered reconnects (for diagnostics)
+...
+
+
+### [oqto-mvdv] Streaming reliability: backpressure handling, reconnect resync, and delta coalescing (P1, epic)
+Our WebSocket layer (ws-manager.ts) assumes a perfect connection. Pi-mobile (https://github.com/ayagmar/pi-mobile) demonstrates several transport reliability patterns we lack that cause real user-facing issues: silent message loss under backpressure, corrupted UI after reconnect, excessive re-renders during fast streaming, and no cross-device drift detection.
+
+This epic addresses the foundational transport reliability gap between Octo and pi-mobile's approach. The core philosophy: assume the connection will break, and design every layer around recovery.
+
+## Current Problems
+...
+
+
 ### [octo-nqg8.9] Replace unsafe env::set_var in octo-runner and test code (P1, task)
 Two categories of unsafe env::set_var/remove_var:
 
@@ -902,7 +929,6 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
-- [oqto-hgrs] oqto-browser: auto-start browserd daemon and per-crate install recipes (closed 2026-02-19)
 - [octo-k8z1.8] Session management: Browser lifecycle (start/stop with session) (closed 2026-02-17)
 - [octo-k8z1.5] Frontend: Add browser tab to central pane view switcher (closed 2026-02-17)
 - [octo-k8z1.2] Backend: WebSocket proxy for screencast stream (closed 2026-02-17)
@@ -1508,7 +1534,7 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
 - [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
-- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
 - [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
+- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
