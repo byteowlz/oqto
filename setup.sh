@@ -60,6 +60,11 @@ PROJECT_TEMPLATES_PATH_DEFAULT="/usr/share/oqto/oqto-templates/agents/"
 INSTALL_MMRY="false"
 INSTALL_ALL_TOOLS="false"
 
+# Custom provider definitions from oqto.setup.toml
+CUSTOM_PROVIDERS=()
+# shellcheck disable=SC2034
+declare -A CP_TYPE CP_BASE_URL CP_API_KEY CP_DEPLOYMENT CP_API_VERSION CP_AWS_REGION CP_GCP_PROJECT CP_GCP_LOCATION CP_TEST_MODEL
+
 # LLM provider configuration (set during generate_config)
 LLM_PROVIDER=""
 LLM_API_KEY_SET="false"
@@ -287,6 +292,8 @@ load_setup_config() {
   local config_file="$1"
   local current_section=""
 
+  local current_provider=""
+
   while IFS= read -r line; do
     # Strip comments and whitespace
     line="${line%%#*}"
@@ -297,6 +304,17 @@ load_setup_config() {
     # Section header
     if [[ "$line" =~ ^\[([a-z_]+)\]$ ]]; then
       current_section="${BASH_REMATCH[1]}"
+      current_provider=""
+      continue
+    fi
+
+    # Custom provider section: [providers.<name>]
+    if [[ "$line" =~ ^\[providers\.([a-zA-Z0-9_-]+)\]$ ]]; then
+      current_section="providers.custom"
+      current_provider="${BASH_REMATCH[1]}"
+      if [[ ! " ${CUSTOM_PROVIDERS[*]} " =~ " ${current_provider} " ]]; then
+        CUSTOM_PROVIDERS+=("${current_provider}")
+      fi
       continue
     fi
 
@@ -308,6 +326,22 @@ load_setup_config() {
       # Strip quotes from string values
       val="${val#\"}"
       val="${val%\"}"
+
+      # Custom provider fields
+      if [[ "$current_section" == "providers.custom" && -n "$current_provider" ]]; then
+        case "$key" in
+          type) CP_TYPE["$current_provider"]="$val" ;;
+          base_url) CP_BASE_URL["$current_provider"]="$val" ;;
+          api_key) CP_API_KEY["$current_provider"]="$val" ;;
+          deployment) CP_DEPLOYMENT["$current_provider"]="$val" ;;
+          api_version) CP_API_VERSION["$current_provider"]="$val" ;;
+          aws_region) CP_AWS_REGION["$current_provider"]="$val" ;;
+          gcp_project) CP_GCP_PROJECT["$current_provider"]="$val" ;;
+          gcp_location) CP_GCP_LOCATION["$current_provider"]="$val" ;;
+          test_model) CP_TEST_MODEL["$current_provider"]="$val" ;;
+        esac
+        continue
+      fi
 
       case "${current_section}.${key}" in
         deployment.user_mode)       OQTO_USER_MODE="$val"; SELECTED_USER_MODE="$val" ;;
@@ -2633,6 +2667,94 @@ api_key = \"env:${env_var_name}\"
     fi
   done
 
+  # Add custom providers from oqto.setup.toml (if any)
+  if [[ ${#CUSTOM_PROVIDERS[@]} -gt 0 ]]; then
+    for cp_name in "${CUSTOM_PROVIDERS[@]}"; do
+      local cp_type="${CP_TYPE[$cp_name]}"
+      local cp_base_url="${CP_BASE_URL[$cp_name]}"
+      local cp_api_key="${CP_API_KEY[$cp_name]}"
+      local cp_deployment="${CP_DEPLOYMENT[$cp_name]}"
+      local cp_api_version="${CP_API_VERSION[$cp_name]}"
+      local cp_aws_region="${CP_AWS_REGION[$cp_name]}"
+      local cp_gcp_project="${CP_GCP_PROJECT[$cp_name]}"
+      local cp_gcp_location="${CP_GCP_LOCATION[$cp_name]}"
+      local cp_test_model="${CP_TEST_MODEL[$cp_name]}"
+
+      # Resolve API key env var if provided
+      local cp_api_key_ref=""
+      if [[ -n "$cp_api_key" ]]; then
+        if [[ "$cp_api_key" == env:* ]]; then
+          local env_name="${cp_api_key#env:}"
+          local env_val="${!env_name:-}"
+          if [[ -z "$env_val" ]]; then
+            if [[ "$NONINTERACTIVE" != "true" ]]; then
+              env_val=$(prompt_input "  ${cp_name} API key (env:${env_name})")
+            fi
+          fi
+          if [[ -n "$env_val" ]]; then
+            if [[ "$SELECTED_USER_MODE" == "single" ]]; then
+              echo "${env_name}=${env_val}" >>"${eavs_env_file}"
+            else
+              echo "${env_name}=${env_val}" | sudo tee -a "${eavs_env_file}" >/dev/null
+            fi
+            cp_api_key_ref="env:${env_name}"
+          else
+            cp_api_key_ref="env:${env_name}"
+            log_warn "Missing ${env_name} for provider '${cp_name}'"
+          fi
+        else
+          # Direct key provided (discouraged), write to env file with generated name
+          local safe_name
+          safe_name=$(echo "$cp_name" | tr '[:lower:]-' '[:upper:]_')
+          local env_name="CUSTOM_${safe_name}_API_KEY"
+          if [[ "$SELECTED_USER_MODE" == "single" ]]; then
+            echo "${env_name}=${cp_api_key}" >>"${eavs_env_file}"
+          else
+            echo "${env_name}=${cp_api_key}" | sudo tee -a "${eavs_env_file}" >/dev/null
+          fi
+          cp_api_key_ref="env:${env_name}"
+        fi
+      fi
+
+      providers_toml+="
+[providers.${cp_name}]
+"
+      if [[ -n "$cp_type" ]]; then
+        providers_toml+="type = \"${cp_type}\"\n"
+      fi
+      if [[ -n "$cp_base_url" ]]; then
+        providers_toml+="base_url = \"${cp_base_url}\"\n"
+      fi
+      if [[ -n "$cp_api_key_ref" ]]; then
+        providers_toml+="api_key = \"${cp_api_key_ref}\"\n"
+      fi
+      if [[ -n "$cp_deployment" ]]; then
+        providers_toml+="deployment = \"${cp_deployment}\"\n"
+      fi
+      if [[ -n "$cp_api_version" ]]; then
+        providers_toml+="api_version = \"${cp_api_version}\"\n"
+      fi
+      if [[ -n "$cp_aws_region" ]]; then
+        providers_toml+="aws_region = \"${cp_aws_region}\"\n"
+      fi
+      if [[ -n "$cp_gcp_project" ]]; then
+        providers_toml+="gcp_project = \"${cp_gcp_project}\"\n"
+      fi
+      if [[ -n "$cp_gcp_location" ]]; then
+        providers_toml+="gcp_location = \"${cp_gcp_location}\"\n"
+      fi
+      if [[ -n "$cp_test_model" ]]; then
+        providers_toml+="test_model = \"${cp_test_model}\"\n"
+      fi
+
+      has_any_provider="true"
+      CONFIGURED_PROVIDERS="${CONFIGURED_PROVIDERS} ${cp_name}"
+      if [[ -z "$first_provider" ]]; then
+        first_provider="$cp_name"
+      fi
+    done
+  fi
+
   if [[ "$has_any_provider" != "true" ]]; then
     log_warn "No providers configured. EAVS will start but agents cannot use any LLM."
     log_info "Add providers later: edit $eavs_config_file"
@@ -2805,34 +2927,54 @@ select_models_for_provider() {
     log_info "Auto-selected top $DEFAULT_MODEL_COUNT models for $provider"
   elif command -v gum >/dev/null 2>&1; then
     # gum filter: fuzzy search + multi-select (best UX)
-    # --selected expects full display lines, build CSV of the default lines
-    local default_display_csv=""
+    # Write display lines to temp file to avoid pipe/subshell TTY issues
+    local tmpfile
+    tmpfile=$(mktemp)
+    echo "$display_lines" > "$tmpfile"
+
+    # Build --selected flag with default lines (use * to select all defaults)
+    local selected_tmpfile
+    selected_tmpfile=$(mktemp)
+
+    # Use gum with file redirection to avoid subshell TTY issues
+    # Pass defaults via GUM_FILTER_SELECTED env var to avoid CSV parsing issues
+    local default_display_lines=""
     local line_num=0
     while IFS= read -r dline; do
       line_num=$((line_num + 1))
       if [[ $line_num -le $DEFAULT_MODEL_COUNT ]]; then
-        if [[ -n "$default_display_csv" ]]; then
-          default_display_csv+=","
+        if [[ -n "$default_display_lines" ]]; then
+          default_display_lines+="\n"
         fi
-        default_display_csv+="$dline"
+        default_display_lines+="$dline"
       fi
     done <<<"$display_lines"
 
-    selected_ids=$(echo "$display_lines" |
-      gum filter --no-limit \
-        --header="Select models for $provider (tab=toggle, enter=confirm)" \
-        --placeholder="Type to filter..." \
-        --selected="$default_display_csv" \
-        --height=20 2>/dev/null |
-      awk '{print $1}') || true
+    # Export defaults as newline-separated (gum uses GUM_FILTER_SELECTED env var)
+    GUM_FILTER_SELECTED="$default_ids" gum filter --no-limit \
+      --header="Select models for $provider (tab=toggle, enter=confirm)" \
+      --placeholder="Type to filter..." \
+      --height=20 < "$tmpfile" > "$selected_tmpfile" 2>/dev/null || true
+
+    selected_ids=$(awk '{print $1}' "$selected_tmpfile" 2>/dev/null) || true
+    rm -f "$tmpfile" "$selected_tmpfile"
   elif command -v fzf >/dev/null 2>&1; then
     # fzf: fuzzy search + multi-select (good fallback)
-    selected_ids=$(echo "$display_lines" |
-      fzf --multi \
-        --header="Select models for $provider (tab=toggle, enter=confirm)" \
-        --height=20 \
-        --reverse 2>/dev/null |
-      awk '{print $1}') || true
+    # Use temp file to avoid subshell TTY issues
+    local tmpfile
+    tmpfile=$(mktemp)
+    echo "$display_lines" > "$tmpfile"
+
+    local selected_tmpfile
+    selected_tmpfile=$(mktemp)
+
+    fzf --multi \
+      --header="Select models for $provider (tab=toggle, enter=confirm)" \
+      --height=20 \
+      --reverse < "$tmpfile" > "$selected_tmpfile" 2>/dev/null || true
+
+    selected_ids=$(awk '{print $1}' "$selected_tmpfile" 2>/dev/null) || true
+    rm -f "$tmpfile" "$selected_tmpfile"
   fi
 
   # Fallback: simple numbered list if no TUI tool or nothing selected
