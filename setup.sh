@@ -48,6 +48,14 @@ PROJECT_TEMPLATES_PATH_DEFAULT="/usr/share/oqto/oqto-templates/agents/"
 : "${OQTO_SETUP_AUTO_UPDATES:=yes}" # Enable automatic security updates
 : "${OQTO_HARDEN_KERNEL:=yes}"      # Apply kernel security parameters
 
+# Additional env vars for web configurator (oqto.dev/setup)
+: "${OQTO_PROVIDERS:=}"              # comma-separated: anthropic,openai,google
+: "${OQTO_TOOLS:=}"                  # comma-separated tool list (when not --all-tools)
+: "${OQTO_INSTALL_ALL_TOOLS:=}"      # yes or no - install all agent tools
+: "${OQTO_WORKSPACE_DIR:=}"          # workspace directory override
+: "${OQTO_ADMIN_USER:=}"             # admin username (default: admin)
+: "${OQTO_ADMIN_EMAIL:=}"            # admin email
+
 # Agent tools installation tracking
 INSTALL_MMRY="false"
 INSTALL_ALL_TOOLS="false"
@@ -6399,6 +6407,37 @@ main() {
     log_info "Loading config from: $SETUP_CONFIG_FILE"
     load_setup_config "$SETUP_CONFIG_FILE"
     NONINTERACTIVE="true"
+  fi
+
+  # Apply env vars from web configurator (oqto.dev/setup deploy command)
+  if [[ -n "$OQTO_PROVIDERS" ]]; then
+    CONFIGURED_PROVIDERS="${OQTO_PROVIDERS//,/ }"
+  fi
+  if [[ "$OQTO_INSTALL_ALL_TOOLS" == "yes" ]]; then
+    INSTALL_ALL_TOOLS="true"
+    INSTALL_MMRY="true"
+  fi
+  if [[ -n "$OQTO_WORKSPACE_DIR" ]]; then
+    WORKSPACE_DIR="$OQTO_WORKSPACE_DIR"
+  fi
+  if [[ -n "$OQTO_ADMIN_USER" ]]; then
+    ADMIN_USERNAME="$OQTO_ADMIN_USER"
+  fi
+  if [[ -n "$OQTO_ADMIN_EMAIL" ]]; then
+    ADMIN_EMAIL="$OQTO_ADMIN_EMAIL"
+  fi
+  # Map OQTO_USER_MODE to internal variable
+  if [[ -n "$OQTO_USER_MODE" ]]; then
+    SELECTED_USER_MODE="$OQTO_USER_MODE"
+  fi
+  if [[ -n "$OQTO_BACKEND_MODE" ]]; then
+    SELECTED_BACKEND_MODE="$OQTO_BACKEND_MODE"
+  fi
+  if [[ -n "$OQTO_SETUP_CADDY" && "$OQTO_SETUP_CADDY" == "yes" ]]; then
+    SETUP_CADDY="yes"
+    if [[ -n "$OQTO_DOMAIN" ]]; then
+      DOMAIN="$OQTO_DOMAIN"
+    fi
   fi
 
   echo
