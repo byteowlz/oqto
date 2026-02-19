@@ -1,0 +1,53 @@
+{
+  "todos": [
+    {
+      "id": "1",
+      "content": "Analyze event pipeline (Pi -> runner -> backend -> frontend)",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "2",
+      "content": "Runner: emit stream.resync_required on broadcast Lagged + increase buffer to 2048",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "3",
+      "content": "Protocol: add StreamResyncRequired event variant",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "4",
+      "content": "Frontend: handle stream.resync_required -> refetch state+messages",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "5",
+      "content": "Frontend: remove misplaced client-side backpressure detection",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "6",
+      "content": "Frontend: connection epoch gating (correct placement)",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "7",
+      "content": "Frontend: delta coalescing via StreamingThrottle (correct placement)",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "8",
+      "content": "Frontend: deterministic resync on reconnect (correct placement)",
+      "status": "completed",
+      "priority": "high"
+    }
+  ],
+  "updated_at": "2026-02-19T05:09:42.159Z"
+}
