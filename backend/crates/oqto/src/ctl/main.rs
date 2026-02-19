@@ -269,9 +269,9 @@ enum SandboxCommand {
 
 #[derive(Debug, Subcommand)]
 enum UserCommand {
-    /// Create a new user with Linux user and runner provisioning
+    /// Create a new user (via oqto API -- handles Linux user, runner, eavs)
     Create {
-        /// Oqto username (will also be Linux username if not specified)
+        /// Oqto username
         username: String,
         /// Email address
         #[arg(long, short)]
@@ -282,27 +282,9 @@ enum UserCommand {
         /// User role (user, admin)
         #[arg(long, short, default_value = "user")]
         role: String,
-        /// Linux username (defaults to Oqto username)
-        #[arg(long)]
-        linux_user: Option<String>,
-        /// Skip Linux user creation (use existing user)
-        #[arg(long)]
-        no_linux_user: bool,
-        /// Skip runner setup
-        #[arg(long)]
-        no_runner: bool,
-        /// Provision eavs virtual key and generate Pi models.json
-        #[arg(long)]
-        eavs: bool,
-        /// Eavs server URL
-        #[arg(long, default_value = "http://127.0.0.1:3033", env = "EAVS_URL")]
-        eavs_url: String,
-        /// Eavs master key for admin API
-        #[arg(long, env = "EAVS_MASTER_KEY")]
-        eavs_master_key: Option<String>,
-        /// Budget limit in USD for the eavs key (default: unlimited)
-        #[arg(long)]
-        eavs_budget: Option<f64>,
+        /// Password (prompted if not provided)
+        #[arg(long, short)]
+        password: Option<String>,
     },
     /// List all users
     List {
@@ -1695,91 +1677,55 @@ async fn handle_user(client: &OqtoClient, command: UserCommand, json: bool) -> R
             email,
             display_name,
             role,
-            linux_user,
-            no_linux_user,
-            no_runner,
-            eavs,
-            eavs_url,
-            eavs_master_key,
-            eavs_budget,
+            password,
         } => {
-            let linux_username = linux_user.as_deref().unwrap_or(&username);
-
             // Validate role
-            let _role = match role.to_lowercase().as_str() {
+            let role = match role.to_lowercase().as_str() {
                 "user" | "admin" => role.to_lowercase(),
                 _ => anyhow::bail!("Invalid role: {}. Must be 'user' or 'admin'", role),
             };
 
-            if !no_linux_user {
-                create_linux_user(linux_username, json)?;
+            // Create user via the oqto API -- this handles everything:
+            // DB record, Linux user (via oqto-usermgr), runner setup, eavs provisioning.
+            if !json {
+                eprintln!("Creating user via oqto API...");
             }
 
-            // Setup runner if not skipped
-            if !no_runner && !no_linux_user {
-                setup_runner_for_user(linux_username, json)?;
-            }
+            let body = serde_json::json!({
+                "username": username,
+                "email": email,
+                "password": password,
+                "display_name": display_name.as_deref().unwrap_or(&username),
+                "role": role,
+            });
 
-            // Provision eavs key and generate models.json
-            let mut eavs_key_id = None;
-            if eavs {
-                match provision_eavs_for_user(
-                    linux_username,
-                    &username,
-                    &eavs_url,
-                    eavs_master_key.as_deref(),
-                    eavs_budget,
-                    json,
-                )
-                .await
-                {
-                    Ok(key_id) => {
-                        eavs_key_id = Some(key_id);
+            let response = client.post_json("/admin/users", &body).await?;
+            let status = response.status();
+            let body_text = response.text().await.unwrap_or_default();
+
+            if status.is_success() {
+                if json {
+                    println!("{body_text}");
+                } else {
+                    let user: serde_json::Value =
+                        serde_json::from_str(&body_text).unwrap_or_default();
+                    println!("User created:");
+                    println!("  Username:       {}", user["username"].as_str().unwrap_or(&username));
+                    println!("  Email:          {}", user["email"].as_str().unwrap_or(&email));
+                    println!("  Role:           {}", user["role"].as_str().unwrap_or(&role));
+                    if let Some(lu) = user["linux_username"].as_str() {
+                        println!("  Linux user:     {lu}");
                     }
-                    Err(e) => {
-                        if !json {
-                            eprintln!("Warning: Failed to provision eavs: {:?}", e);
-                        }
-                    }
+                    println!("  ID:             {}", user["id"].as_str().unwrap_or("?"));
                 }
-            }
-
-            // Create Oqto user via API
-            // For now, just print what would be done - actual API call would need the server running
-            if json {
-                let result = serde_json::json!({
-                    "status": "created",
-                    "username": username,
-                    "email": email,
-                    "display_name": display_name.as_deref().unwrap_or(&username),
-                    "role": role,
-                    "linux_username": if no_linux_user { None } else { Some(linux_username) },
-                    "runner_setup": !no_runner && !no_linux_user,
-                    "eavs_key_id": eavs_key_id,
-                });
-                println!("{}", serde_json::to_string_pretty(&result)?);
             } else {
-                println!("\nUser provisioning complete:");
-                println!("  Oqto username: {}", username);
-                println!("  Email: {}", email);
-                println!(
-                    "  Display name: {}",
-                    display_name.as_deref().unwrap_or(&username)
-                );
-                println!("  Role: {}", role);
-                if !no_linux_user {
-                    println!("  Linux user: {}", linux_username);
-                }
-                if !no_runner && !no_linux_user {
-                    println!("  Runner: configured");
-                }
-                if let Some(ref key_id) = eavs_key_id {
-                    println!("  Eavs key: {}", key_id);
-                    println!("  Pi models.json: generated");
-                }
-                println!(
-                    "\nNote: Run the Oqto server and use the API to create the database user record."
-                );
+                let err: serde_json::Value =
+                    serde_json::from_str(&body_text).unwrap_or_default();
+                let msg = err["error"]
+                    .as_str()
+                    .or_else(|| err["message"].as_str())
+                    .unwrap_or(&body_text);
+                anyhow::bail!("Failed to create user (HTTP {status}): {msg}");
             }
         }
 
