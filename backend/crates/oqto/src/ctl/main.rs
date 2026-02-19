@@ -1699,7 +1699,7 @@ async fn handle_user(client: &OqtoClient, command: UserCommand, json: bool) -> R
                 "role": role,
             });
 
-            let response = client.post_json("/admin/users", &body).await?;
+            let response = client.post_json("/api/admin/users", &body).await?;
             let status = response.status();
             let body_text = response.text().await.unwrap_or_default();
 
