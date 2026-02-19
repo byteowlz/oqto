@@ -2916,7 +2916,7 @@ select_models_for_provider() {
 
   echo
   echo "  Select models for $provider ($total_count available, newest first):"
-  echo "  [R]=reasoning  Costs per 1M tokens  Pre-selected: top $DEFAULT_MODEL_COUNT newest"
+  echo "  [R]=reasoning  Costs per 1M tokens  Defaults: top $DEFAULT_MODEL_COUNT newest"
   echo
 
   local selected_ids=""
@@ -2928,32 +2928,17 @@ select_models_for_provider() {
   elif command -v gum >/dev/null 2>&1; then
     # gum filter: fuzzy search + multi-select (best UX)
     # Write display lines to temp file to avoid pipe/subshell TTY issues
-    local tmpfile
+    local tmpfile selected_tmpfile
     tmpfile=$(mktemp)
+    selected_tmpfile=$(mktemp)
     echo "$display_lines" > "$tmpfile"
 
-    # Build --selected flag with default lines (use * to select all defaults)
-    local selected_tmpfile
-    selected_tmpfile=$(mktemp)
-
-    # Use gum with file redirection to avoid subshell TTY issues
-    # Pass defaults via GUM_FILTER_SELECTED env var to avoid CSV parsing issues
-    local default_display_lines=""
-    local line_num=0
-    while IFS= read -r dline; do
-      line_num=$((line_num + 1))
-      if [[ $line_num -le $DEFAULT_MODEL_COUNT ]]; then
-        if [[ -n "$default_display_lines" ]]; then
-          default_display_lines+="\n"
-        fi
-        default_display_lines+="$dline"
-      fi
-    done <<<"$display_lines"
-
-    # Export defaults as newline-separated (gum uses GUM_FILTER_SELECTED env var)
-    GUM_FILTER_SELECTED="$default_ids" gum filter --no-limit \
-      --header="Select models for $provider (tab=toggle, enter=confirm)" \
-      --placeholder="Type to filter..." \
+    # Use gum with file redirection to avoid subshell TTY issues.
+    # Note: Pre-selection is skipped because --selected CSV parsing breaks
+    # when display lines contain commas. Models are already sorted newest-first.
+    gum filter --no-limit \
+      --header="Select models for $provider (tab=toggle, enter=confirm, ctrl+c=cancel)" \
+      --placeholder="Type to filter... (top $DEFAULT_MODEL_COUNT are recommended)" \
       --height=20 < "$tmpfile" > "$selected_tmpfile" 2>/dev/null || true
 
     selected_ids=$(awk '{print $1}' "$selected_tmpfile" 2>/dev/null) || true
