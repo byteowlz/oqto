@@ -1,0 +1,364 @@
+# VM Deployment Testing Framework
+
+Automated testing of Oqto deployment methods on fresh VMs in Proxmox.
+
+> **Note:** Oqto is now a **public repository**: https://github.com/byteowlz/oqto  
+> No SSH keys are required for cloning - the test framework defaults to `git-clone` mode for the cleanest, most reproducible tests.
+
+## Overview
+
+This framework tests the `setup.sh` deployment approach across different Linux distributions and configurations. Each test creates a fresh VM, runs the full setup process, verifies the installation, and reports results.
+
+## Quick Start
+
+1. **Copy and configure test settings:**
+   ```bash
+   cd scripts
+   cp vm.tests.toml.example vm.tests.toml
+   # Edit vm.tests.toml with your settings
+   ```
+
+2. **Set up API keys (from environment):**
+   ```bash
+   export OPENAI_API_KEY="sk-..."
+   export ANTHROPIC_API_KEY="sk-ant-..."
+   ```
+
+3. **Prepare cloud images (one-time):**
+   ```bash
+   ./test-vm-deployment.sh --prepare-images
+   ```
+
+4. **Run all tests:**
+   ```bash
+   ./test-vm-deployment.sh
+   ```
+
+5. **Run a specific scenario:**
+   ```bash
+   ./test-vm-deployment.sh --scenario ubuntu-24-04-local-single
+   ```
+
+## Configuration
+
+### vm.tests.toml Structure
+
+```toml
+# Proxmox connection
+[proxmox]
+host = "wismut"
+ssh_user = "root"
+storage = "local-lvm"
+
+# VM defaults
+[vm]
+vm_id_start = 9000
+memory = 4096
+cores = 2
+disk_size = "20G"
+
+# Test scenarios
+[[scenario]]
+name = "ubuntu-24-04-local-single"
+distro = "ubuntu-24.04"
+backend_mode = "local"
+user_mode = "single"
+
+# LLM providers (reads from environment)
+[providers.openai]
+enabled = true
+type = "openai"
+api_key = "env:OPENAI_API_KEY"
+```
+
+### Environment Variables for API Keys
+
+The framework reads API keys from environment variables to avoid secrets in config files:
+
+| Variable | Description |
+|----------|-------------|
+| `OPENAI_API_KEY` | OpenAI API key |
+| `ANTHROPIC_API_KEY` | Anthropic API key |
+| `GEMINI_API_KEY` | Google Gemini API key |
+| `AZURE_OPENAI_KEY` | Azure OpenAI key |
+| `AWS_ACCESS_KEY_ID` | AWS Access Key |
+| `AWS_SECRET_ACCESS_KEY` | AWS Secret Key |
+
+### Supported Distributions
+
+| Distro | Cloud Image | Notes |
+|--------|-------------|-------|
+| Ubuntu 24.04 | `ubuntu-24.04` | Primary target, full support |
+| Ubuntu 22.04 | `ubuntu-22.04` | LTS support |
+| Debian 12 | `debian-12` | Bookworm, stable |
+| Debian 11 | `debian-11` | Bullseye, older stable |
+| Arch Linux | `arch` | Rolling release |
+| Fedora 40 | `fedora-40` | Latest Fedora |
+
+## Test Scenarios
+
+Scenarios define a specific deployment configuration to test:
+
+```toml
+[[scenario]]
+name = "ubuntu-24-04-container-multi"
+description = "Ubuntu with containers and multi-user"
+distro = "ubuntu-24.04"
+backend_mode = "container"    # local or container
+user_mode = "multi"           # single or multi
+container_runtime = "docker"  # docker or podman (container mode only)
+production = false            # production or dev mode
+```
+
+### Common Scenarios
+
+1. **Ubuntu 24.04 Local Single** - Standard local deployment
+2. **Ubuntu 24.04 Container Single** - Docker/Podman containers
+3. **Debian 12 Local Multi** - Multi-user mode
+4. **Arch Local Single** - Rolling release testing
+
+## Commands
+
+```bash
+# List available scenarios
+./test-vm-deployment.sh --list
+
+# Download cloud images
+./test-vm-deployment.sh --prepare-images
+
+# Run all scenarios
+./test-vm-deployment.sh
+
+# Run single scenario
+./test-vm-deployment.sh --scenario NAME
+
+# Clean up all test VMs
+./test-vm-deployment.sh --cleanup-all
+
+# Show help
+./test-vm-deployment.sh --help
+```
+
+## How It Works
+
+```
+┌─────────────────┐     ┌──────────────┐     ┌─────────────┐
+│  Read Config    │────▶│ Create VM    │────▶│ Start VM    │
+│  vm.tests.toml  │     │ (cloud-init) │     │ (wait boot) │
+└─────────────────┘     └──────────────┘     └──────┬──────┘
+                                                    │
+┌─────────────────┐     ┌──────────────┐     ┌──────▼──────┐
+│  Print Report   │◀────│  Verify      │◀────│  Deploy     │
+│  (results)      │     │  Services    │     │  setup.sh   │
+└─────────────────┘     └──────────────┘     └─────────────┘
+```
+
+### VM Creation Process
+
+1. Download official cloud images (QCOW2) from distro repositories
+2. Create VM template on Proxmox with configured specs
+3. Inject cloud-init data (SSH key, user, network)
+4. Start VM and wait for cloud-init to complete
+5. Detect IP address via QEMU guest agent
+
+### Deployment Process
+
+1. Copy `setup.sh` and generated `oqto.setup.toml` to VM
+2. Copy entire Oqto source code for building
+3. Run `setup.sh --config oqto.setup.toml` with non-interactive mode
+4. Wait for completion (services installed, built, and started)
+
+### Verification Steps
+
+- Check systemd services: `oqto`, `hstry`
+- Verify API responds on port 8080
+- Confirm agent tools: `agntz`, `mmry`, `trx`
+- Check `oqtoctl` availability
+
+## Integration with oqto-website
+
+The framework can use setup configurations generated by the oqto-website configurator:
+
+```bash
+# Generate config from oqto-website, save as oqto.setup.toml
+# Then convert to vm.tests.toml format:
+
+./scripts/convert-setup-toml.sh oqto.setup.toml >> scripts/vm.tests.toml
+```
+
+## Troubleshooting
+
+### VM Won't Start
+
+```bash
+# Check VM status on Proxmox
+ssh proxmox "qm status <vm_id>"
+
+# View VM console
+ssh proxmox "qm start <vm_id> && sleep 5 && qm terminal <vm_id>"
+
+# Check cloud-init logs
+ssh ubuntu@<vm_ip> "sudo cat /var/log/cloud-init.log"
+```
+
+### Setup Fails
+
+```bash
+# SSH into the test VM
+ssh ubuntu@<vm_ip>
+
+# Check setup logs
+sudo journalctl -u oqto-setup -n 100
+
+# View setup.sh output
+sudo cat /tmp/setup.log
+```
+
+### Connection Issues
+
+1. Ensure SSH key is added to ssh-agent:
+   ```bash
+   ssh-add ~/.ssh/id_rsa
+   ```
+
+2. Test Proxmox connection:
+   ```bash
+   ssh proxmox "echo 'OK'"
+   ```
+
+3. Verify VM network:
+   ```bash
+   ssh proxmox "qm guest cmd <vm_id> network-get-interfaces"
+   ```
+
+## Test Results
+
+Results are printed in a summary table:
+
+```
+Scenario                                 Result          Duration   Notes
+--------------------------------------------------------------------------------
+ubuntu-24-04-local-single                PASSED          245s       
+ubuntu-24-04-container-single            PASSED          312s       
+debian-12-local-multi                    FAILED          180s       Setup failed
+```
+
+Failed VMs are kept (if `keep_failed_vms = true`) for debugging. Successful VMs are destroyed (if `cleanup_after_test = true`).
+
+## Source Code Deployment Modes
+
+The framework supports multiple ways to get the Oqto source code onto the test VM:
+
+### Mode: `local-copy` (default)
+Copy local working directory to VM. Fastest for local development.
+- ✅ Fast - no network transfer
+- ✅ Tests your current uncommitted changes
+- ❌ Requires rsync or tar
+- ❌ Excludes .git by default
+
+```toml
+[source]
+mode = "local-copy"
+excludes = ".git target node_modules"
+```
+
+### Mode: `local-sync`
+Sync local directory with rsync, preserving .git directory.
+- ✅ Can test specific commits/branches
+- ✅ Version info available in VM
+- ❌ Requires rsync
+- ❌ Slightly slower due to .git
+
+```toml
+[source]
+mode = "local-sync"
+```
+
+### Mode: `git-clone`
+Clone from GitHub on the VM. Best for CI/ reproducible tests.
+- ✅ Clean, reproducible state
+- ✅ Tests actual clone experience
+- ✅ Works with any branch/tag
+- ✅ **Oqto is now public - no SSH needed!**
+- ❌ Requires network on VM
+- ❌ Slower (download)
+
+```toml
+[source]
+mode = "git-clone"
+repo = "git@github.com:byteowlz/oqto.git"
+ref = "main"  # branch, tag, or commit
+forward_ssh_agent = false  # optional now that Oqto is public
+```
+
+### Mode: `git-fresh`
+Clone fresh each time (delete previous clone).
+- ✅ Most isolated, guaranteed clean state
+- ✅ Tests full clone from scratch
+- ❌ Slowest option
+- ❌ No caching between runs
+
+```toml
+[source]
+mode = "git-fresh"
+repo = "git@github.com:byteowlz/oqto.git"
+ref = "v1.0.0"  # test specific release
+```
+
+### SSH Agent Forwarding (Optional)
+
+SSH agent forwarding is only needed if you have **private dependencies** in your test setup.
+
+```bash
+# Only needed for private repos
+ eval "$(ssh-agent -s)"
+ ssh-add ~/.ssh/id_rsa
+
+# Set forwarding in config
+[source]
+forward_ssh_agent = true
+```
+
+```yaml
+# .github/workflows/vm-tests.yml example
+test-vm-deployment:
+  runs-on: ubuntu-latest
+  steps:
+    - uses: actions/checkout@v3
+    
+    - name: Setup SSH
+      run: |
+        mkdir -p ~/.ssh
+        echo "$PROXMOX_SSH_KEY" > ~/.ssh/proxmox
+        chmod 600 ~/.ssh/proxmox
+        cat >> ~/.ssh/config << EOF
+        Host proxmox
+          HostName $PROXMOX_HOST
+          User root
+          IdentityFile ~/.ssh/proxmox
+        EOF
+    
+    - name: Run VM Tests
+      env:
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      run: |
+        cp scripts/vm.tests.toml.example scripts/vm.tests.toml
+        ./scripts/test-vm-deployment.sh --scenario ubuntu-24-04-local-single
+```
+
+## Next Steps
+
+After setup.sh testing is complete, the framework can be extended for:
+
+- **Ansible deployment testing** - Test `deploy/ansible/` playbook
+- **Container mode testing** - Test Docker/Podman deployments
+- **Upgrade testing** - Test upgrades from previous versions
+- **Load testing** - Performance tests on deployed systems
+
+## Related Files
+
+- `vm.tests.toml` - Test configuration (not committed, create from example)
+- `vm.tests.toml.example` - Example configuration template
+- `test-vm-deployment.sh` - Main test script
+- `convert-setup-toml.sh` - Convert oqto-website configs (optional helper)
+- `../oqto-website/public/setup.html` - Web-based config generator

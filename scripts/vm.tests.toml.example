@@ -1,0 +1,173 @@
+# VM Deployment Test Configuration for Oqto
+# Copy to vm.tests.toml and customize for your environment
+
+# =============================================================================
+# Proxmox Connection
+# =============================================================================
+[proxmox]
+host = "wismut"                          # Proxmox node name or IP
+ssh_user = "root"                        # SSH user for Proxmox (needs root)
+storage = "local-lvm"                    # Storage for VM disks
+iso_storage = "local"                    # Storage for ISOs and cloud images
+network_bridge = "vmbr0"                 # Network bridge for VMs
+
+# =============================================================================
+# VM Configuration
+# =============================================================================
+[vm]
+# Test VM settings
+vm_id_start = 9000                       # Starting VM ID for test VMs (to avoid conflicts)
+memory = 4096                            # MB RAM per VM
+cores = 2                                # CPU cores per VM
+disk_size = "20G"                        # Disk size for test VMs
+
+# SSH key for accessing test VMs (will be injected via cloud-init)
+# Leave empty to use current user's ~/.ssh/id_rsa.pub
+ssh_public_key = ""
+
+# Default user for cloud-init VMs
+default_user = "ubuntu"
+
+# =============================================================================
+# Test Scenarios
+# =============================================================================
+[[scenario]]
+name = "ubuntu-24-04-local-single"
+description = "Ubuntu 24.04 with local backend, single-user mode"
+distro = "ubuntu-24.04"
+backend_mode = "local"
+user_mode = "single"
+container_runtime = ""
+production = false
+
+[[scenario]]
+name = "ubuntu-24-04-container-single"
+description = "Ubuntu 24.04 with container backend, single-user mode"
+distro = "ubuntu-24.04"
+backend_mode = "container"
+user_mode = "single"
+container_runtime = "docker"
+production = false
+
+[[scenario]]
+name = "debian-12-local-multi"
+description = "Debian 12 with local backend, multi-user mode"
+distro = "debian-12"
+backend_mode = "local"
+user_mode = "multi"
+container_runtime = ""
+production = false
+
+[[scenario]]
+name = "arch-local-single"
+description = "Arch Linux with local backend, single-user mode"
+distro = "arch"
+backend_mode = "local"
+user_mode = "single"
+container_runtime = ""
+production = false
+
+# =============================================================================
+# Deployment Configuration (injected into oqto.setup.toml)
+# =============================================================================
+[deployment]
+# Admin user for oqto
+admin_username = "admin"
+admin_email = "admin@example.com"
+
+# Oqto settings
+workspace_dir = "/home/oqto"
+log_level = "info"
+
+# Development mode (no auth required)
+dev_mode = true
+
+# Domain configuration (for production tests)
+domain = ""
+setup_caddy = false
+
+# Hardening (for production tests)
+harden_server = false
+ssh_port = 22
+setup_firewall = true
+setup_fail2ban = true
+harden_ssh = false
+auto_updates = true
+harden_kernel = false
+
+# =============================================================================
+# LLM Provider Configuration
+# These are injected as environment variables during setup
+# DO NOT COMMIT REAL API KEYS - use .env file or environment variables
+# =============================================================================
+[providers.openai]
+enabled = true
+type = "openai"
+base_url = ""
+api_key = "env:OPENAI_API_KEY"         # Reads from environment variable
+deployment = ""
+
+[providers.anthropic]
+enabled = false
+type = "anthropic"
+base_url = ""
+api_key = "env:ANTHROPIC_API_KEY"
+
+[providers.gemini]
+enabled = false
+type = "google"
+base_url = ""
+api_key = "env:GEMINI_API_KEY"
+
+# =============================================================================
+# Test Settings
+# =============================================================================
+[test]
+# Timeout settings (in seconds)
+vm_boot_timeout = 120
+setup_timeout = 600                      # 10 minutes for setup.sh
+health_check_timeout = 60
+cleanup_after_test = true                # Auto-cleanup VMs after test
+keep_failed_vms = true                   # Keep VMs for debugging on failure
+
+# What to verify after deployment
+verify_services = ["oqto", "hstry"]
+check_ports = [8080]
+run_smoke_tests = true
+
+# =============================================================================
+# Cloud Images (URLs for downloading)
+# =============================================================================
+[cloud_images]
+ubuntu_24_04 = "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img"
+ubuntu_22_04 = "https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img"
+debian_12 = "https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-generic-amd64.qcow2"
+debian_11 = "https://cloud.debian.org/images/cloud/bullseye/latest/debian-11-generic-amd64.qcow2"
+arch = "https://geo.mirror.pkgbuild.com/images/latest/Arch-Linux-x86_64-cloudimg.qcow2"
+fedora_40 = "https://download.fedoraproject.org/pub/fedora/linux/releases/40/Cloud/x86_64/images/Fedora-Cloud-Base-Generic.x86_64-40-1.14.qcow2"
+
+# =============================================================================
+# Source Code Configuration
+# How the oqto source code gets to the test VM
+# =============================================================================
+[source]
+# Mode: local-copy, local-sync, git-clone, git-fresh
+# - local-copy: Copy local files (default, fastest for local dev)
+# - local-sync: Copy with rsync, includes .git for version info
+# - git-clone: Clone from git repo (cleanest test)
+# - git-fresh: Clone fresh each time (most isolated)
+mode = "git-clone"
+
+# Git repository URL (for git-clone and git-fresh modes)
+# Oqto is now public: https://github.com/byteowlz/oqto
+repo = "git@github.com:byteowlz/oqto.git"
+
+# Git ref to checkout (branch, tag, or commit)
+ref = "main"
+
+# SSH agent forwarding (for private repos - not needed for Oqto anymore!)
+# Set to true if you need to clone other private dependencies
+forward_ssh_agent = false
+
+# Excludes for local-copy mode (space-separated patterns)
+excludes = ".git target node_modules *.log"
