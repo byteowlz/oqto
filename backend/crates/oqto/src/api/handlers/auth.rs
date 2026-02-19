@@ -13,6 +13,7 @@ use crate::auth::{AuthError, CurrentUser};
 use crate::user::{CreateUserRequest, UpdateUserRequest, UserInfo as DbUserInfo};
 
 use crate::api::error::{ApiError, ApiResult};
+use crate::api::handlers::admin::provision_eavs_for_user;
 use crate::api::state::AppState;
 
 /// Login request for dev mode.
@@ -342,6 +343,33 @@ pub async fn register(
             .await
     {
         warn!(user_id = %user.id, error = %e, "Failed to allocate user mmry port");
+    }
+
+    // Provision EAVS virtual key and write Pi models.json if eavs client is available
+    if let (Some(eavs_client), Some(linux_users)) =
+        (&state.eavs_client, &state.linux_users)
+    {
+        let linux_username = user
+            .linux_username
+            .as_deref()
+            .unwrap_or(&user.id);
+
+        match provision_eavs_for_user(eavs_client, linux_users, linux_username, &user.id).await {
+            Ok(key_id) => {
+                info!(
+                    user_id = %user.id,
+                    eavs_key_id = %key_id,
+                    "Provisioned EAVS key and models.json"
+                );
+            }
+            Err(e) => {
+                warn!(
+                    user_id = %user.id,
+                    error = ?e,
+                    "Failed to provision EAVS (non-fatal)"
+                );
+            }
+        }
     }
 
     // Generate JWT token for the new user

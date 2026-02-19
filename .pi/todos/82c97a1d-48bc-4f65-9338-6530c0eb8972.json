@@ -1,0 +1,59 @@
+{
+  "todos": [
+    {
+      "id": "1",
+      "content": "Design admin scripts architecture",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "id": "2",
+      "content": "Create scripts/admin/ directory with oqto-admin wrapper",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "id": "3",
+      "content": "Implement eavs-provision (single user + all users)",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "id": "4",
+      "content": "Implement sync-pi-config (update models.json, settings for users)",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "id": "5",
+      "content": "Implement manage-skills (install/update/list skills for users)",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "id": "6",
+      "content": "Implement manage-templates (sync/update bootstrap docs)",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "id": "7",
+      "content": "Add just recipes for admin tasks",
+      "status": "pending",
+      "priority": "medium"
+    },
+    {
+      "id": "8",
+      "content": "Write documentation",
+      "status": "pending",
+      "priority": "medium"
+    },
+    {
+      "id": "9",
+      "content": "Commit and file trx",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ],
+  "updated_at": "2026-02-19T13:18:00.820Z"
+}
