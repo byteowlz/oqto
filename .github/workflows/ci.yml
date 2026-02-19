@@ -41,7 +41,7 @@ jobs:
       - name: Install native deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y libssl-dev pkg-config
+          sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
 
       - name: Check
         working-directory: backend
@@ -79,7 +79,7 @@ jobs:
       - name: Install native deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y libssl-dev pkg-config
+          sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
 
       - name: Test
         working-directory: backend
