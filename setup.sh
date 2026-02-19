@@ -22,7 +22,7 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TEMPLATES_DIR="${SCRIPT_DIR}/templates"
 # Use SSH for private repos (allows SSH key authentication)
-ONBOARDING_TEMPLATES_REPO_DEFAULT="git@github.com:byteowlz/oqto-templates.git"
+ONBOARDING_TEMPLATES_REPO_DEFAULT="https://github.com/byteowlz/oqto-templates.git"
 EXTERNAL_REPOS_DIR_DEFAULT="/usr/local/share/oqto/external-repos"
 ONBOARDING_TEMPLATES_PATH_DEFAULT="/usr/share/oqto/oqto-templates/dotfiles_users/"
 PROJECT_TEMPLATES_PATH_DEFAULT="/usr/share/oqto/oqto-templates/agents/"
