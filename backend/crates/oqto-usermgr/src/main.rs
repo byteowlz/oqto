@@ -540,7 +540,7 @@ WantedBy=default.target
     let runner_service = format!(
         r#"[Unit]
 Description=Oqto Runner - Process isolation daemon
-Wants=hstry.service mmry.service
+Requires=hstry.service mmry.service
 After=hstry.service mmry.service
 
 [Service]
@@ -708,6 +708,36 @@ WantedBy=default.target
                 "oqto-usermgr: runner socket ready after {}ms: {socket_path}",
                 i * 500
             );
+
+            // Verify critical services are actually running for this user
+            for svc in ["hstry", "mmry"] {
+                let svc_unit = format!("{svc}.service");
+                match run_user_systemctl(&["is-active", &svc_unit]) {
+                    Ok(_) => {
+                        eprintln!("oqto-usermgr: {svc} confirmed active for {username}");
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "oqto-usermgr: WARNING: {svc} not active for {username}: {e}"
+                        );
+                        // Try to start it explicitly
+                        if let Err(e2) = run_user_systemctl(&["start", &svc_unit]) {
+                            return Response::error(format!(
+                                "runner socket ready but {svc} failed to start: {e2}"
+                            ));
+                        }
+                        // Give it a moment
+                        std::thread::sleep(std::time::Duration::from_secs(1));
+                        if let Err(e3) = run_user_systemctl(&["is-active", &svc_unit]) {
+                            return Response::error(format!(
+                                "{svc} failed to start for {username}: {e3}"
+                            ));
+                        }
+                        eprintln!("oqto-usermgr: {svc} recovered for {username}");
+                    }
+                }
+            }
+
             return Response::success();
         }
         std::thread::sleep(std::time::Duration::from_millis(500));
