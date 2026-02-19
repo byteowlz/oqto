@@ -5692,8 +5692,9 @@ ExecStart=/usr/local/bin/oqto-usermgr
 Restart=on-failure
 RestartSec=3
 RuntimeDirectory=oqto
-RuntimeDirectoryMode=0755
+RuntimeDirectoryMode=0775
 RuntimeDirectoryPreserve=yes
+ExecStartPost=/bin/chgrp oqto /run/oqto
 ProtectSystem=strict
 ReadWritePaths=/etc
 ReadWritePaths=/home
@@ -5720,7 +5721,7 @@ install_runner_socket_dirs() {
   local tmpfiles_conf="/etc/tmpfiles.d/oqto-runner.conf"
 
   sudo tee "$tmpfiles_conf" >/dev/null <<'EOF'
-d /run/oqto 0755 oqto oqto -
+d /run/oqto 0775 root oqto -
 d /run/oqto/runner-sockets 2770 root oqto -
 EOF
 
