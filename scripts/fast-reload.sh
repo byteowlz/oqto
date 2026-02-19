@@ -22,7 +22,7 @@ nohup /usr/local/bin/oqto serve >/tmp/oqto-serve.log 2>&1 &
 
 # Restart runner
 sudo pkill -f "/usr/local/bin/oqto-runner --socket /run/oqto/runner-sockets/$(id -un)/oqto-runner.sock" || true
-mkdir -p "/run/oqto/runner-sockets/$(id -un)"
+sudo install -d -m 0755 -o "$(id -un)" -g "$(id -gn)" "/run/oqto/runner-sockets/$(id -un)"
 nohup /usr/local/bin/oqto-runner --socket "/run/oqto/runner-sockets/$(id -un)/oqto-runner.sock" >/tmp/oqto-runner.log 2>&1 &
 
 echo "oqto binaries installed and services restarted"
