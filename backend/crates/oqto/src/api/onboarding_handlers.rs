@@ -217,12 +217,13 @@ pub async fn bootstrap_onboarding(
         .filter(|lang| !lang.is_empty());
 
     let workspace_root = state.sessions.for_user(user.id()).workspace_root();
-    let workspace_already_initialized = workspace_root.exists()
-        && std::fs::read_dir(&workspace_root)
-            .map(|mut entries| entries.next().is_some())
-            .unwrap_or(false);
-
     let workspace_path = workspace_root.join("main");
+
+    // Check if workspace is actually initialized by looking for the metadata file,
+    // not just whether the directory has any entries. A partially-created workspace
+    // (e.g., empty main/ dir from a failed attempt) should be re-initialized.
+    let workspace_already_initialized =
+        workspace_path.join(".workspace.json").exists();
 
     let templates_service = state.onboarding_templates.as_ref().ok_or_else(|| {
         ApiError::ServiceUnavailable("Onboarding templates not configured".into())
