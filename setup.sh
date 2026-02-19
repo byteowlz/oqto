@@ -6774,8 +6774,9 @@ BANNER
     exit 1
   }
 
-  # Create admin user in database
-  run_step "admin_user_db" "Admin user in database" create_admin_user_db
+  # Create admin user in database (always verify -- the user may have been
+  # lost if the DB was recreated, even though the step ran before)
+  run_step_always "admin_user_db" "Admin user in database" create_admin_user_db
 
   # Start all services
   start_all_services
