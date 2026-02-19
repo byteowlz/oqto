@@ -1697,8 +1697,78 @@ install_agntz() {
   download_or_build_tool agntz
 }
 
+install_typst() {
+  # typst is a dependency of tmpltr (document generation)
+  if command_exists typst; then
+    log_success "typst already installed: $(typst --version 2>/dev/null | head -1)"
+    return 0
+  fi
+
+  log_info "Installing typst..."
+  local arch
+  arch=$(uname -m)
+  local os
+  os=$(uname -s | tr '[:upper:]' '[:lower:]')
+
+  local target=""
+  case "${os}-${arch}" in
+    linux-x86_64)  target="x86_64-unknown-linux-musl" ;;
+    linux-aarch64) target="aarch64-unknown-linux-musl" ;;
+    darwin-x86_64) target="x86_64-apple-darwin" ;;
+    darwin-arm64)  target="aarch64-apple-darwin" ;;
+  esac
+
+  if [[ -z "$target" ]]; then
+    log_warn "No pre-built typst for ${os}-${arch}, trying cargo install..."
+    cargo install typst-cli 2>&1 | tail -3
+    return $?
+  fi
+
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  local url="https://github.com/typst/typst/releases/latest/download/typst-${target}.tar.xz"
+  if curl -fsSL "$url" -o "$tmpdir/typst.tar.xz" 2>/dev/null; then
+    tar -xf "$tmpdir/typst.tar.xz" -C "$tmpdir"
+    local bin
+    bin=$(find "$tmpdir" -name "typst" -type f | head -1)
+    if [[ -n "$bin" ]]; then
+      sudo install -m 755 "$bin" "${TOOLS_INSTALL_DIR}/typst"
+      log_success "typst installed"
+    else
+      log_warn "typst binary not found in archive"
+    fi
+  else
+    log_warn "Failed to download typst, trying cargo install..."
+    cargo install typst-cli 2>&1 | tail -3
+  fi
+  rm -rf "$tmpdir"
+}
+
+install_slidev() {
+  # slidev is a dependency of sldr (presentation tool)
+  if command_exists slidev; then
+    log_success "slidev already installed"
+    return 0
+  fi
+
+  log_info "Installing slidev (sli.dev)..."
+  if command_exists bun; then
+    bun install -g @slidev/cli 2>&1 | tail -3
+  elif command_exists npm; then
+    npm install -g @slidev/cli 2>&1 | tail -3
+  else
+    log_warn "Neither bun nor npm found, cannot install slidev"
+    return 1
+  fi
+  log_success "slidev installed"
+}
+
 install_all_agent_tools() {
   log_step "Installing agent tools"
+
+  # External dependencies for agent tools
+  install_typst
+  install_slidev
 
   # Core tools (Rust) - tries pre-built GitHub release first, falls back to cargo
   # Multi-binary repos need the 3rd arg (package hint) for cargo fallback
@@ -1708,6 +1778,7 @@ install_all_agent_tools() {
   download_or_build_tool mmry mmry mmry-cli
   download_or_build_tool mmry-service mmry mmry-service
   download_or_build_tool tmpltr
+  download_or_build_tool sldr sldr sldr-cli
   download_or_build_tool ignr
 
   # Core tools (Go) - tries pre-built GitHub release first, falls back to go install
@@ -1728,7 +1799,8 @@ select_agent_tools() {
   echo "    sx      - Web search via local SearXNG instance"
   echo
   echo -e "  ${BOLD}Additional tools:${NC}"
-  echo "    tmpltr  - Document generation from templates"
+  echo "    tmpltr  - Document generation from templates (requires typst)"
+  echo "    sldr    - Modular presentations (requires slidev/sli.dev)"
   echo "    ignr    - Gitignore generation"
   echo "    trx     - Issue/task tracking"
   echo
@@ -5826,7 +5898,7 @@ print_summary() {
   echo
 
   echo "  Agent tools:"
-  for tool in agntz mmry scrpr sx tmpltr ignr; do
+  for tool in agntz mmry scrpr sx tmpltr sldr ignr typst slidev; do
     printf "    %-14s " "$tool:"
     echo -e "$(check_bin "$tool")"
   done
