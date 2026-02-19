@@ -9,7 +9,7 @@
 //! - Persistence to hstry on AgentEnd
 
 use std::collections::{HashMap, VecDeque};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -334,6 +334,7 @@ struct PiSession {
     /// Pending response waiters (shared with reader task).
     pending_responses: PendingResponses,
     /// Pending client_id for the next prompt (shared between command and reader tasks).
+    #[allow(dead_code)]
     pending_client_id: PendingClientId,
     /// Handle to the background reader task.
     _reader_handle: tokio::task::JoinHandle<()>,
@@ -452,45 +453,40 @@ impl PiSessionManager {
             let mut found =
                 crate::pi::session_files::find_session_file(&session_id, Some(&config.cwd));
             // No match -- resolve Pi native ID via hstry and retry
-            if found.is_none() {
-                if let Some(ref client) = self.hstry_client {
-                    match client.get_conversation(&session_id, None).await {
-                        Ok(Some(conv)) => {
-                            let pi_id = conv.external_id;
-                            if !pi_id.is_empty() && pi_id != session_id {
-                                debug!(
-                                    "Resolved Pi native ID for '{}' -> '{}' via hstry",
-                                    session_id, pi_id
-                                );
-                                found = crate::pi::session_files::find_session_file(
-                                    &pi_id,
-                                    Some(&config.cwd),
-                                );
-                            }
-                        }
-                        Ok(None) => {
+            if found.is_none()
+                && let Some(ref client) = self.hstry_client
+            {
+                match client.get_conversation(&session_id, None).await {
+                    Ok(Some(conv)) => {
+                        let pi_id = conv.external_id;
+                        if !pi_id.is_empty() && pi_id != session_id {
                             debug!(
-                                "No hstry conversation found for session '{}'",
-                                session_id
+                                "Resolved Pi native ID for '{}' -> '{}' via hstry",
+                                session_id, pi_id
+                            );
+                            found = crate::pi::session_files::find_session_file(
+                                &pi_id,
+                                Some(&config.cwd),
                             );
                         }
-                        Err(e) => {
-                            warn!(
-                                "Failed to resolve Pi native ID for '{}': {}",
-                                session_id, e
-                            );
-                        }
+                    }
+                    Ok(None) => {
+                        debug!("No hstry conversation found for session '{}'", session_id);
+                    }
+                    Err(e) => {
+                        warn!("Failed to resolve Pi native ID for '{}': {}", session_id, e);
                     }
                 }
             }
             found
         };
 
-        if continue_session.is_some() && config.continue_session.is_none() {
+        if let Some(ref cs) = continue_session
+            && config.continue_session.is_none()
+        {
             info!(
                 "Auto-discovered Pi session file for '{}': {:?}",
-                session_id,
-                continue_session.as_ref().unwrap()
+                session_id, cs
             );
         }
 
@@ -1218,24 +1214,24 @@ impl PiSessionManager {
                     let trimmed = value.trim();
                     (!trimmed.is_empty()).then_some(trimmed.to_string())
                 })
-                .or_else(|| {
+                .or({
                     // Try to resolve workdir from the session via hstry (blocking-safe
                     // because we're already in an async context)
                     None
                 });
 
-            if let Some(ref wd) = resolved_workdir {
-                if let Some(models) = self.get_cached_models_for_workdir(wd).await {
-                    return Ok(models);
-                }
+            if let Some(ref wd) = resolved_workdir
+                && let Some(models) = self.get_cached_models_for_workdir(wd).await
+            {
+                return Ok(models);
             }
 
             // Try hstry lookup to find workdir
             let hstry_workdir = self.resolve_workdir_from_hstry(session_id).await;
-            if let Some(ref wd) = hstry_workdir {
-                if let Some(models) = self.get_cached_models_for_workdir(wd).await {
-                    return Ok(models);
-                }
+            if let Some(ref wd) = hstry_workdir
+                && let Some(models) = self.get_cached_models_for_workdir(wd).await
+            {
+                return Ok(models);
             }
 
             // No cache hit — spawn ephemeral Pi to fetch models
@@ -2277,9 +2273,6 @@ impl PiSessionManager {
         // queuing multiple get_messages requests.
         let mut incremental_persist_in_flight = false;
 
-        // Runner ID for canonical event envelopes.
-        let runner_id = runner_id;
-
         while let Ok(Some(line)) = reader.next_line().await {
             if line.trim().is_empty() {
                 continue;
@@ -2308,147 +2301,139 @@ impl PiSessionManager {
 
                     // Intercept get_state responses to capture Pi's native session
                     // ID and sync session title to hstry.
-                    if response.id.as_deref() == Some("get_state") {
-                        if let Some(ref data) = response.data {
-                            // Capture Pi's native session ID from the JSONL header.
-                            // This is the authoritative external_id for hstry -- the
-                            // same ID that hstry's adapter sync will use when importing
-                            // the JSONL file, so using it here prevents duplicates.
-                            if let Some(pi_sid) = data.get("sessionId").and_then(|v| v.as_str()) {
-                                if !pi_sid.is_empty() && !pi_native_id_known {
-                                    pi_native_id_known = true;
-                                    let old_eid = hstry_external_id.read().await.clone();
-                                    *hstry_external_id.write().await = pi_sid.to_string();
-                                    info!(
-                                        "Pi[{}] native session ID: {} (hstry external_id: {} -> {})",
-                                        session_id, pi_sid, old_eid, pi_sid
-                                    );
+                    if response.id.as_deref() == Some("get_state")
+                        && let Some(ref data) = response.data
+                    {
+                        // Capture Pi's native session ID from the JSONL header.
+                        // This is the authoritative external_id for hstry -- the
+                        // same ID that hstry's adapter sync will use when importing
+                        // the JSONL file, so using it here prevents duplicates.
+                        if let Some(pi_sid) = data.get("sessionId").and_then(|v| v.as_str())
+                            && !pi_sid.is_empty()
+                            && !pi_native_id_known
+                        {
+                            pi_native_id_known = true;
+                            let old_eid = hstry_external_id.read().await.clone();
+                            *hstry_external_id.write().await = pi_sid.to_string();
+                            info!(
+                                "Pi[{}] native session ID: {} (hstry external_id: {} -> {})",
+                                session_id, pi_sid, old_eid, pi_sid
+                            );
 
-                                    // If we already wrote to hstry under the old Oqto UUID
-                                    // (AgentEnd fired before get_state -- unlikely due to
-                                    // proactive get_state but defensive), delete the stale
-                                    // record so the next persist creates it correctly.
-                                    if old_eid != pi_sid {
-                                        if let Some(ref client) = hstry_client {
-                                            let client = client.clone();
-                                            let old = old_eid.clone();
-                                            let new_id = pi_sid.to_string();
-                                            let oqto_session_id = session_id.clone();
-                                            let runner_id = runner_id.clone();
-                                            let work_dir = work_dir.clone();
-                                            tokio::spawn(async move {
-                                                if let Err(e) =
-                                                    Self::migrate_hstry_conversation_on_rekey(
-                                                        &client,
-                                                        &old,
-                                                        &new_id,
-                                                        &oqto_session_id,
-                                                        &runner_id,
-                                                        &work_dir,
-                                                    )
-                                                    .await
-                                                {
-                                                    warn!(
-                                                        "Failed to migrate hstry conversation {} -> {}: {}",
-                                                        old, new_id, e
-                                                    );
-                                                }
-                                            });
-                                        }
+                            // If we already wrote to hstry under the old Oqto UUID
+                            // (AgentEnd fired before get_state -- unlikely due to
+                            // proactive get_state but defensive), delete the stale
+                            // record so the next persist creates it correctly.
+                            if old_eid != pi_sid
+                                && let Some(ref client) = hstry_client
+                            {
+                                let client = client.clone();
+                                let old = old_eid.clone();
+                                let new_id = pi_sid.to_string();
+                                let oqto_session_id = session_id.clone();
+                                let runner_id = runner_id.clone();
+                                let work_dir = work_dir.clone();
+                                tokio::spawn(async move {
+                                    if let Err(e) = Self::migrate_hstry_conversation_on_rekey(
+                                        &client,
+                                        &old,
+                                        &new_id,
+                                        &oqto_session_id,
+                                        &runner_id,
+                                        &work_dir,
+                                    )
+                                    .await
+                                    {
+                                        warn!(
+                                            "Failed to migrate hstry conversation {} -> {}: {}",
+                                            old, new_id, e
+                                        );
                                     }
-
-                                    if pi_sid != session_id {
-                                        session_aliases
-                                            .write()
-                                            .await
-                                            .insert(pi_sid.to_string(), session_id.clone());
-                                    }
-
-                                    if let Some(ref client) = hstry_client {
-                                        let client = client.clone();
-                                        let eid = hstry_external_id.read().await.clone();
-                                        let oqto_session_id = session_id.clone();
-                                        let runner_id = runner_id.clone();
-                                        let work_dir = work_dir.clone();
-                                        tokio::spawn(async move {
-                                            if let Err(e) = Self::ensure_hstry_conversation(
-                                                &client,
-                                                &eid,
-                                                &oqto_session_id,
-                                                &runner_id,
-                                                &work_dir,
-                                            )
-                                            .await
-                                            {
-                                                warn!(
-                                                    "Pi[{}] failed to ensure hstry conversation: {}",
-                                                    eid, e
-                                                );
-                                            }
-                                        });
-                                    }
-                                }
+                                });
                             }
 
-                            // Pi's auto-rename extension sets sessionName to:
-                            //   "<workspace>: <title> [readable-id]"
-                            // We parse it to extract the clean title and persist it.
+                            if pi_sid != session_id {
+                                session_aliases
+                                    .write()
+                                    .await
+                                    .insert(pi_sid.to_string(), session_id.clone());
+                            }
+
                             if let Some(ref client) = hstry_client {
-                                if let Some(raw_name) =
-                                    data.get("sessionName").and_then(|v| v.as_str())
-                                {
-                                    if !raw_name.is_empty() {
-                                        let parsed =
-                                            crate::pi::session_parser::ParsedTitle::parse(raw_name);
-                                        let clean_title = parsed.display_title().to_string();
-                                        if !clean_title.is_empty()
-                                            && last_synced_title != clean_title
-                                        {
-                                            last_synced_title = clean_title.clone();
-
-                                            // Broadcast title change to frontend immediately
-                                            let title_event = CanonicalEvent {
-                                                session_id: session_id.clone(),
-                                                runner_id: runner_id.clone(),
-                                                ts: chrono::Utc::now().timestamp_millis(),
-                                                payload: oqto_protocol::events::EventPayload::SessionTitleChanged {
-                                                    title: clean_title.clone(),
-                                                    readable_id: parsed.readable_id.map(|s| s.to_string()),
-                                                },
-                                            };
-                                            let _ = event_tx.send(title_event);
-
-                                            let client = client.clone();
-                                            let eid = hstry_external_id.read().await.clone();
-                                            tokio::spawn(async move {
-                                                if let Err(e) = client
-                                                    .update_conversation(
-                                                        &eid,
-                                                        Some(clean_title.clone()),
-                                                        None,
-                                                        None,
-                                                        None,
-                                                        None,
-                                                        None,
-                                                        Some("pi".to_string()),
-                                                        None, // platform_id already set on creation
-                                                    )
-                                                    .await
-                                                {
-                                                    warn!(
-                                                        "Pi[{}] failed to sync title to hstry: {}",
-                                                        eid, e
-                                                    );
-                                                } else {
-                                                    debug!(
-                                                        "Pi[{}] synced title to hstry: '{}'",
-                                                        eid, clean_title
-                                                    );
-                                                }
-                                            });
-                                        }
+                                let client = client.clone();
+                                let eid = hstry_external_id.read().await.clone();
+                                let oqto_session_id = session_id.clone();
+                                let runner_id = runner_id.clone();
+                                let work_dir = work_dir.clone();
+                                tokio::spawn(async move {
+                                    if let Err(e) = Self::ensure_hstry_conversation(
+                                        &client,
+                                        &eid,
+                                        &oqto_session_id,
+                                        &runner_id,
+                                        &work_dir,
+                                    )
+                                    .await
+                                    {
+                                        warn!(
+                                            "Pi[{}] failed to ensure hstry conversation: {}",
+                                            eid, e
+                                        );
                                     }
-                                }
+                                });
+                            }
+                        }
+
+                        // Pi's auto-rename extension sets sessionName to:
+                        //   "<workspace>: <title> [readable-id]"
+                        // We parse it to extract the clean title and persist it.
+                        if let Some(ref client) = hstry_client
+                            && let Some(raw_name) = data.get("sessionName").and_then(|v| v.as_str())
+                            && !raw_name.is_empty()
+                        {
+                            let parsed = crate::pi::session_parser::ParsedTitle::parse(raw_name);
+                            let clean_title = parsed.display_title().to_string();
+                            if !clean_title.is_empty() && last_synced_title != clean_title {
+                                last_synced_title = clean_title.clone();
+
+                                // Broadcast title change to frontend immediately
+                                let title_event = CanonicalEvent {
+                                    session_id: session_id.clone(),
+                                    runner_id: runner_id.clone(),
+                                    ts: chrono::Utc::now().timestamp_millis(),
+                                    payload:
+                                        oqto_protocol::events::EventPayload::SessionTitleChanged {
+                                            title: clean_title.clone(),
+                                            readable_id: parsed.readable_id.map(|s| s.to_string()),
+                                        },
+                                };
+                                let _ = event_tx.send(title_event);
+
+                                let client = client.clone();
+                                let eid = hstry_external_id.read().await.clone();
+                                tokio::spawn(async move {
+                                    if let Err(e) = client
+                                        .update_conversation(
+                                            &eid,
+                                            Some(clean_title.clone()),
+                                            None,
+                                            None,
+                                            None,
+                                            None,
+                                            None,
+                                            Some("pi".to_string()),
+                                            None, // platform_id already set on creation
+                                        )
+                                        .await
+                                    {
+                                        warn!("Pi[{}] failed to sync title to hstry: {}", eid, e);
+                                    } else {
+                                        debug!(
+                                            "Pi[{}] synced title to hstry: '{}'",
+                                            eid, clean_title
+                                        );
+                                    }
+                                });
                             }
                         }
                     }
@@ -2458,54 +2443,46 @@ impl PiSessionManager {
                     if response.id.as_deref() == Some("_incremental_persist") {
                         incremental_persist_in_flight = false;
                         if response.success {
-                            if let Some(ref data) = response.data {
-                                if let Some(msgs_val) = data.get("messages") {
-                                    match serde_json::from_value::<Vec<AgentMessage>>(
-                                        msgs_val.clone(),
-                                    ) {
-                                        Ok(messages) if !messages.is_empty() => {
-                                            if let Some(ref client) = hstry_client {
-                                                let client = client.clone();
-                                                let eid =
-                                                    hstry_external_id.read().await.clone();
-                                                let sid = session_id.clone();
-                                                let rid = runner_id.clone();
-                                                let wd = work_dir.clone();
-                                                tokio::spawn(async move {
-                                                    if let Err(e) =
-                                                        Self::persist_to_hstry_grpc(
-                                                            &client,
-                                                            &eid,
-                                                            &sid,
-                                                            &rid,
-                                                            &messages,
-                                                            &wd,
-                                                            None, // no client_id for incremental
-                                                        )
-                                                        .await
-                                                    {
-                                                        warn!(
-                                                            "Pi[{}] incremental hstry persist failed: {}",
-                                                            sid, e
-                                                        );
-                                                    } else {
-                                                        debug!(
-                                                            "Pi[{}] incremental hstry persist: {} messages (eid={})",
-                                                            sid,
-                                                            messages.len(),
-                                                            eid,
-                                                        );
-                                                    }
-                                                });
-                                            }
+                            if let Some(ref data) = response.data
+                                && let Some(msgs_val) = data.get("messages")
+                            {
+                                match serde_json::from_value::<Vec<AgentMessage>>(msgs_val.clone())
+                                {
+                                    Ok(messages) if !messages.is_empty() => {
+                                        if let Some(ref client) = hstry_client {
+                                            let client = client.clone();
+                                            let eid = hstry_external_id.read().await.clone();
+                                            let sid = session_id.clone();
+                                            let rid = runner_id.clone();
+                                            let wd = work_dir.clone();
+                                            tokio::spawn(async move {
+                                                if let Err(e) = Self::persist_to_hstry_grpc(
+                                                    &client, &eid, &sid, &rid, &messages, &wd,
+                                                    None, // no client_id for incremental
+                                                )
+                                                .await
+                                                {
+                                                    warn!(
+                                                        "Pi[{}] incremental hstry persist failed: {}",
+                                                        sid, e
+                                                    );
+                                                } else {
+                                                    debug!(
+                                                        "Pi[{}] incremental hstry persist: {} messages (eid={})",
+                                                        sid,
+                                                        messages.len(),
+                                                        eid,
+                                                    );
+                                                }
+                                            });
                                         }
-                                        Ok(_) => {} // empty messages, skip
-                                        Err(e) => {
-                                            warn!(
-                                                "Pi[{}] failed to parse incremental persist messages: {}",
-                                                session_id, e
-                                            );
-                                        }
+                                    }
+                                    Ok(_) => {} // empty messages, skip
+                                    Err(e) => {
+                                        warn!(
+                                            "Pi[{}] failed to parse incremental persist messages: {}",
+                                            session_id, e
+                                        );
                                     }
                                 }
                             }
@@ -2598,36 +2575,34 @@ impl PiSessionManager {
                 let _ = event_tx.send(canonical_event);
 
                 // Sync title changes to hstry immediately
-                if let oqto_protocol::events::EventPayload::SessionTitleChanged {
-                    title,
-                    ..
-                } = payload
+                if let oqto_protocol::events::EventPayload::SessionTitleChanged { title, .. } =
+                    payload
+                    && !title.is_empty()
+                    && last_synced_title != *title
                 {
-                    if !title.is_empty() && last_synced_title != *title {
-                        last_synced_title = title.clone();
-                        if let Some(ref client) = hstry_client {
-                            let client = client.clone();
-                            let eid = hstry_external_id.read().await.clone();
-                            let clean_title = title.clone();
-                            tokio::spawn(async move {
-                                if let Err(e) = client
-                                    .update_conversation(
-                                        &eid,
-                                        Some(clean_title),
-                                        None,
-                                        None,
-                                        None,
-                                        None,
-                                        None,
-                                        Some("pi".to_string()),
-                                        None,
-                                    )
-                                    .await
-                                {
-                                    warn!("Failed to sync title to hstry: {}", e);
-                                }
-                            });
-                        }
+                    last_synced_title = title.clone();
+                    if let Some(ref client) = hstry_client {
+                        let client = client.clone();
+                        let eid = hstry_external_id.read().await.clone();
+                        let clean_title = title.clone();
+                        tokio::spawn(async move {
+                            if let Err(e) = client
+                                .update_conversation(
+                                    &eid,
+                                    Some(clean_title),
+                                    None,
+                                    None,
+                                    None,
+                                    None,
+                                    None,
+                                    Some("pi".to_string()),
+                                    None,
+                                )
+                                .await
+                            {
+                                warn!("Failed to sync title to hstry: {}", e);
+                            }
+                        });
                     }
                 }
             }
@@ -2651,7 +2626,10 @@ impl PiSessionManager {
                         );
                         incremental_persist_in_flight = false;
                     } else {
-                        debug!("Pi[{}] triggered incremental hstry persist on TurnEnd", session_id);
+                        debug!(
+                            "Pi[{}] triggered incremental hstry persist on TurnEnd",
+                            session_id
+                        );
                     }
                 }
             }
@@ -2745,7 +2723,10 @@ impl PiSessionManager {
                     let current_state = *state.read().await;
                     let pi_cmd = if matches!(
                         current_state,
-                        PiSessionState::Idle | PiSessionState::Starting | PiSessionState::Stopping | PiSessionState::Aborting
+                        PiSessionState::Idle
+                            | PiSessionState::Starting
+                            | PiSessionState::Stopping
+                            | PiSessionState::Aborting
                     ) {
                         debug!(
                             "Session '{}' is in {:?}, routing steer as prompt",
@@ -2774,7 +2755,10 @@ impl PiSessionManager {
                     let current_state = *state.read().await;
                     let pi_cmd = if matches!(
                         current_state,
-                        PiSessionState::Idle | PiSessionState::Starting | PiSessionState::Stopping | PiSessionState::Aborting
+                        PiSessionState::Idle
+                            | PiSessionState::Starting
+                            | PiSessionState::Stopping
+                            | PiSessionState::Aborting
                     ) {
                         debug!(
                             "Session '{}' is in {:?}, routing follow_up as prompt",
@@ -3038,7 +3022,7 @@ impl PiSessionManager {
         hstry_external_id: &str,
         oqto_session_id: &str,
         runner_id: &str,
-        work_dir: &PathBuf,
+        work_dir: &Path,
     ) -> Result<()> {
         if let Ok(Some(_)) = client.get_conversation(hstry_external_id, None).await {
             let metadata_json = build_metadata_json(
@@ -3117,7 +3101,7 @@ impl PiSessionManager {
         new_external_id: &str,
         oqto_session_id: &str,
         runner_id: &str,
-        work_dir: &PathBuf,
+        work_dir: &Path,
     ) -> Result<()> {
         if old_external_id == new_external_id {
             return Ok(());
@@ -3208,7 +3192,7 @@ impl PiSessionManager {
         oqto_session_id: &str,
         runner_id: &str,
         messages: &[AgentMessage],
-        work_dir: &PathBuf,
+        work_dir: &Path,
         client_id: Option<String>,
     ) -> Result<()> {
         use crate::hstry::agent_message_to_proto_with_client_id;
@@ -3491,12 +3475,12 @@ fn read_jsonl_session_name(path: PathBuf) -> Result<Option<String>> {
 
 async fn resolve_jsonl_message_indices(
     session_id: &str,
-    work_dir: &PathBuf,
+    work_dir: &Path,
     messages: &[AgentMessage],
 ) -> Option<Vec<Option<i32>>> {
     let session_file = crate::pi::session_files::find_session_file_async(
         session_id.to_string(),
-        Some(work_dir.clone()),
+        Some(work_dir.to_path_buf()),
     )
     .await?;
 
@@ -3545,10 +3529,10 @@ async fn fetch_last_hstry_idx(client: &HstryClient, session_id: &str) -> Option<
     }
 }
 
-async fn resolve_jsonl_session_title(session_id: &str, work_dir: &PathBuf) -> Option<String> {
+async fn resolve_jsonl_session_title(session_id: &str, work_dir: &Path) -> Option<String> {
     let session_file = crate::pi::session_files::find_session_file_async(
         session_id.to_string(),
-        Some(work_dir.clone()),
+        Some(work_dir.to_path_buf()),
     )
     .await?;
 
@@ -3597,19 +3581,17 @@ async fn build_metadata_json(
     hstry_external_id: &str,
     oqto_session_id: &str,
     runner_id: &str,
-    work_dir: &PathBuf,
+    work_dir: &Path,
     delta: Option<StatsDelta>,
 ) -> Result<String> {
     let mut metadata = serde_json::Map::new();
 
-    if let Ok(Some(conversation)) = client.get_conversation(hstry_external_id, None).await {
-        if !conversation.metadata_json.trim().is_empty() {
-            if let Ok(serde_json::Value::Object(existing)) =
-                serde_json::from_str::<serde_json::Value>(&conversation.metadata_json)
-            {
-                metadata = existing;
-            }
-        }
+    if let Ok(Some(conversation)) = client.get_conversation(hstry_external_id, None).await
+        && !conversation.metadata_json.trim().is_empty()
+        && let Ok(serde_json::Value::Object(existing)) =
+            serde_json::from_str::<serde_json::Value>(&conversation.metadata_json)
+    {
+        metadata = existing;
     }
 
     // Always store the Oqto session ID so we can map back from Pi native ID

@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { useApp } from "@/hooks/use-app";
+import { fetchAgents } from "@/lib/agent-client";
 import {
 	type PermissionAction,
 	type PermissionConfig,
@@ -24,7 +25,6 @@ import {
 	restartWorkspaceSession,
 	saveWorkspaceConfig,
 } from "@/lib/control-plane-client";
-import { fetchAgents } from "@/lib/agent-client";
 import { cn } from "@/lib/utils";
 import {
 	AlertCircle,

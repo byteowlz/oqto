@@ -140,9 +140,8 @@ fn handle_connection(stream: std::os::unix::net::UnixStream) {
             Err(e) => Response::error(format!("invalid request: {e}")),
         };
 
-        let mut resp_json = serde_json::to_string(&response).unwrap_or_else(|_| {
-            r#"{"ok":false,"error":"serialization failed"}"#.to_string()
-        });
+        let mut resp_json = serde_json::to_string(&response)
+            .unwrap_or_else(|_| r#"{"ok":false,"error":"serialization failed"}"#.to_string());
         resp_json.push('\n');
 
         if let Err(e) = writer.write_all(resp_json.as_bytes()) {
@@ -219,10 +218,9 @@ fn cmd_create_group(args: &serde_json::Value) -> Response {
     if let Ok(status) = Command::new("/usr/bin/getent")
         .args(["group", group])
         .status()
+        && status.success()
     {
-        if status.success() {
-            return Response::success();
-        }
+        return Response::success();
     }
 
     match run_cmd("/usr/sbin/groupadd", &[group]) {
@@ -497,9 +495,8 @@ fn cmd_setup_user_runner(args: &serde_json::Value) -> Response {
     // Construct a PATH that includes the user's local bin dirs and system paths.
     // Systemd user services run with a minimal environment, so tools like bun/node
     // (needed by hstry) won't be found without an explicit PATH.
-    let user_path = format!(
-        "{home}/.bun/bin:{home}/.cargo/bin:{home}/.local/bin:/usr/local/bin:/usr/bin:/bin"
-    );
+    let user_path =
+        format!("{home}/.bun/bin:{home}/.cargo/bin:{home}/.local/bin:/usr/local/bin:/usr/bin:/bin");
 
     // Service file contents -- all constructed server-side, never from client input.
     // hstry and mmry run as simple foreground services.
@@ -771,7 +768,10 @@ fn cmd_create_workspace(args: &serde_json::Value) -> Response {
 
     // Chown everything to the user
     let group = "oqto";
-    if let Err(e) = run_cmd("/usr/bin/chown", &["-R", &format!("{username}:{group}"), path]) {
+    if let Err(e) = run_cmd(
+        "/usr/bin/chown",
+        &["-R", &format!("{username}:{group}"), path],
+    ) {
         return Response::error(format!("chown: {e}"));
     }
     if let Err(e) = run_cmd("/usr/bin/chmod", &["2770", path]) {
@@ -792,10 +792,7 @@ fn cmd_setup_user_shell(args: &serde_json::Value) -> Response {
         Ok(u) => u,
         Err(r) => return r,
     };
-    let group = args
-        .get("group")
-        .and_then(|v| v.as_str())
-        .unwrap_or("oqto");
+    let group = args.get("group").and_then(|v| v.as_str()).unwrap_or("oqto");
     let shell = args
         .get("shell")
         .and_then(|v| v.as_str())

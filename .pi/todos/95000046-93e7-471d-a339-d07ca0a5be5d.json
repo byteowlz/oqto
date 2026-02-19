@@ -1,0 +1,29 @@
+{
+  "todos": [
+    {
+      "id": "6f11b536",
+      "content": "Fix clippy: manual range contains in oqto-usermgr/src/validate.rs:87",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "323031d3",
+      "content": "Fix clippy: unused import SenderType in oqto-protocol/src/messages.rs:10",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "c7401ccd",
+      "content": "Fix clippy: sort_by -> sort_by_key in oqto-files/src/handlers.rs:848",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "01c1e727",
+      "content": "Verify fix with remote-build clippy",
+      "status": "in_progress",
+      "priority": "high"
+    }
+  ],
+  "updated_at": "2026-02-19T15:30:57.902Z"
+}

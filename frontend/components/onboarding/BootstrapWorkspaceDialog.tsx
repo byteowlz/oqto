@@ -52,9 +52,7 @@ export function BootstrapWorkspaceDialog({
 						<Input
 							id="workspace-name"
 							placeholder={
-								locale === "de"
-									? "z.B. Hauptprojekt"
-									: "e.g. Main project"
+								locale === "de" ? "z.B. Hauptprojekt" : "e.g. Main project"
 							}
 							value={name}
 							onChange={(e) => onNameChange(e.target.value)}

@@ -1,5 +1,6 @@
 //! Repository layer for chat history - handles file and database operations.
 
+use std::cmp::Reverse;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -563,8 +564,6 @@ fn conversation_proto_to_session(conv: &hstry_core::service::proto::Conversation
     }
 }
 
-
-
 fn parse_stats_from_metadata(metadata_json: &str) -> Option<ChatSessionStats> {
     if metadata_json.trim().is_empty() {
         return None;
@@ -749,7 +748,7 @@ pub fn list_sessions_from_dir(legacy_dir: &Path) -> Result<Vec<ChatSession>> {
     }
 
     // Sort by updated_at descending (most recent first)
-    sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    sessions.sort_by_key(|s| Reverse(s.updated_at));
 
     tracing::info!("Found {} sessions in {:?}", sessions.len(), session_dir);
 
@@ -922,7 +921,7 @@ pub async fn get_session_messages_parallel(
     }
 
     // Sort by created_at ascending (chronological order)
-    messages.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+    messages.sort_by_key(|a| a.created_at);
 
     tracing::debug!(
         "Loaded {} messages for session {} using parallel I/O",
@@ -1047,7 +1046,7 @@ pub fn get_session_messages_from_dir(
     }
 
     // Sort by created_at ascending (chronological order)
-    messages.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+    messages.sort_by_key(|a| a.created_at);
 
     tracing::debug!(
         "Loaded {} messages for session {} from {:?}",

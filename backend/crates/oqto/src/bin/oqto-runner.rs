@@ -288,6 +288,7 @@ struct Args {
 
 /// Session state tracked by the runner.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct SessionState {
     /// Session ID.
     id: String,
@@ -1290,10 +1291,7 @@ impl Runner {
                     agent_port: None,
                     fileserver_port: Some(s.fileserver_port),
                     ttyd_port: Some(s.ttyd_port),
-                    pids: Some(format!(
-                        "{},{}",
-                        s.fileserver_id, s.ttyd_id
-                    )),
+                    pids: Some(format!("{},{}", s.fileserver_id, s.ttyd_id)),
                     created_at: chrono::Utc::now().to_rfc3339(), // TODO: track actual time
                     started_at: Some(chrono::Utc::now().to_rfc3339()),
                     last_activity_at: None,
@@ -1313,10 +1311,7 @@ impl Runner {
             agent_port: None,
             fileserver_port: Some(s.fileserver_port),
             ttyd_port: Some(s.ttyd_port),
-            pids: Some(format!(
-                "{},{}",
-                s.fileserver_id, s.ttyd_id
-            )),
+            pids: Some(format!("{},{}", s.fileserver_id, s.ttyd_id)),
             created_at: chrono::Utc::now().to_rfc3339(),
             started_at: Some(chrono::Utc::now().to_rfc3339()),
             last_activity_at: None,
@@ -3148,11 +3143,8 @@ impl Runner {
                         runner_id: String::new(),
                         ts: chrono::Utc::now().timestamp_millis(),
                         payload: oqto_protocol::events::EventPayload::StreamResyncRequired {
-                            dropped_count: n as u64,
-                            reason: format!(
-                                "broadcast subscriber lagged, missed {} events",
-                                n
-                            ),
+                            dropped_count: n,
+                            reason: format!("broadcast subscriber lagged, missed {} events", n),
                         },
                     };
                     let resp = RunnerResponse::PiEvent(resync_event);
@@ -3348,14 +3340,14 @@ impl Runner {
     /// Run the daemon, listening on the given socket path.
     async fn run(&self, socket_path: &PathBuf) -> Result<()> {
         // Verify parent directory exists (created by oqto-usermgr, not by us)
-        if let Some(parent) = socket_path.parent() {
-            if !parent.exists() {
-                anyhow::bail!(
-                    "socket directory {:?} does not exist. \
+        if let Some(parent) = socket_path.parent()
+            && !parent.exists()
+        {
+            anyhow::bail!(
+                "socket directory {:?} does not exist. \
                      It should be created by oqto-usermgr before the runner starts.",
-                    parent
-                );
-            }
+                parent
+            );
         }
 
         // Remove existing socket file
@@ -3553,7 +3545,6 @@ async fn main() -> Result<()> {
 
     // CLI args override config file
     let binaries = SessionBinaries {
-
         fileserver: args
             .fileserver_binary
             .unwrap_or(user_config.fileserver_binary.clone()),

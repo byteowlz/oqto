@@ -51,12 +51,12 @@ import {
 	Group,
 	Circle as KonvaCircle,
 	Image as KonvaImage,
+	Star as KonvaStar,
 	Layer,
 	Line,
 	Rect,
 	RegularPolygon,
 	Stage,
-	Star as KonvaStar,
 	Text,
 	Transformer,
 } from "react-konva";
@@ -86,13 +86,29 @@ type Tool =
 // --- Font definitions ---
 const FONT_FAMILIES = [
 	{ name: "Impact", value: "Impact", category: "meme" as const },
-	{ name: "Comic Sans MS", value: "'Comic Sans MS', cursive", category: "meme" as const },
+	{
+		name: "Comic Sans MS",
+		value: "'Comic Sans MS', cursive",
+		category: "meme" as const,
+	},
 	{ name: "Arial", value: "Arial, sans-serif", category: "sans" as const },
-	{ name: "Helvetica", value: "Helvetica, Arial, sans-serif", category: "sans" as const },
+	{
+		name: "Helvetica",
+		value: "Helvetica, Arial, sans-serif",
+		category: "sans" as const,
+	},
 	{ name: "Verdana", value: "Verdana, sans-serif", category: "sans" as const },
 	{ name: "Georgia", value: "Georgia, serif", category: "serif" as const },
-	{ name: "Times New Roman", value: "'Times New Roman', serif", category: "serif" as const },
-	{ name: "Courier New", value: "'Courier New', monospace", category: "mono" as const },
+	{
+		name: "Times New Roman",
+		value: "'Times New Roman', serif",
+		category: "serif" as const,
+	},
+	{
+		name: "Courier New",
+		value: "'Courier New', monospace",
+		category: "mono" as const,
+	},
 ] as const;
 
 type FontCategory = "meme" | "sans" | "serif" | "mono";
@@ -106,8 +122,16 @@ const FONT_CATEGORY_LABELS: Record<FontCategory, string> = {
 
 // --- Preset colors ---
 const PRESET_COLORS = [
-	"#ff0000", "#ff6600", "#ffff00", "#00ff00", "#0000ff",
-	"#ff00ff", "#00ffff", "#ffffff", "#000000", "#808080",
+	"#ff0000",
+	"#ff6600",
+	"#ffff00",
+	"#00ff00",
+	"#0000ff",
+	"#ff00ff",
+	"#00ffff",
+	"#ffffff",
+	"#000000",
+	"#808080",
 ] as const;
 
 // --- Meme template definitions ---
@@ -133,16 +157,32 @@ const MEME_TEMPLATES: MemeTemplate[] = [
 		backgroundColor: "#1a1a2e",
 		elements: [
 			{
-				type: "text", x: 300, y: 40, text: "TOP TEXT",
-				fontSize: 48, fontFamily: "Impact", fontStyle: "normal",
-				fill: "#ffffff", textStroke: "#000000", textStrokeWidth: 3,
-				align: "center", width: 560,
+				type: "text",
+				x: 300,
+				y: 40,
+				text: "TOP TEXT",
+				fontSize: 48,
+				fontFamily: "Impact",
+				fontStyle: "normal",
+				fill: "#ffffff",
+				textStroke: "#000000",
+				textStrokeWidth: 3,
+				align: "center",
+				width: 560,
 			},
 			{
-				type: "text", x: 300, y: 520, text: "BOTTOM TEXT",
-				fontSize: 48, fontFamily: "Impact", fontStyle: "normal",
-				fill: "#ffffff", textStroke: "#000000", textStrokeWidth: 3,
-				align: "center", width: 560,
+				type: "text",
+				x: 300,
+				y: 520,
+				text: "BOTTOM TEXT",
+				fontSize: 48,
+				fontFamily: "Impact",
+				fontStyle: "normal",
+				fill: "#ffffff",
+				textStroke: "#000000",
+				textStrokeWidth: 3,
+				align: "center",
+				width: 560,
 			},
 		],
 	},
@@ -155,12 +195,74 @@ const MEME_TEMPLATES: MemeTemplate[] = [
 		height: 600,
 		backgroundColor: "#f5f5f5",
 		elements: [
-			{ type: "line", x: 0, y: 300, points: [0, 0, 600, 0], stroke: "#333", strokeWidth: 3 },
-			{ type: "line", x: 300, y: 0, points: [0, 0, 0, 600], stroke: "#333", strokeWidth: 3 },
-			{ type: "text", x: 150, y: 130, text: "NAH", fontSize: 36, fontFamily: "Impact", fill: "#cc3333", textStroke: "#000000", textStrokeWidth: 1, align: "center", width: 260, fontStyle: "normal" },
-			{ type: "text", x: 450, y: 100, text: "Something boring", fontSize: 24, fontFamily: "Arial, sans-serif", fill: "#333", align: "center", width: 260, fontStyle: "normal" },
-			{ type: "text", x: 150, y: 430, text: "YES", fontSize: 36, fontFamily: "Impact", fill: "#33aa33", textStroke: "#000000", textStrokeWidth: 1, align: "center", width: 260, fontStyle: "normal" },
-			{ type: "text", x: 450, y: 400, text: "Something awesome", fontSize: 24, fontFamily: "Arial, sans-serif", fill: "#333", align: "center", width: 260, fontStyle: "normal" },
+			{
+				type: "line",
+				x: 0,
+				y: 300,
+				points: [0, 0, 600, 0],
+				stroke: "#333",
+				strokeWidth: 3,
+			},
+			{
+				type: "line",
+				x: 300,
+				y: 0,
+				points: [0, 0, 0, 600],
+				stroke: "#333",
+				strokeWidth: 3,
+			},
+			{
+				type: "text",
+				x: 150,
+				y: 130,
+				text: "NAH",
+				fontSize: 36,
+				fontFamily: "Impact",
+				fill: "#cc3333",
+				textStroke: "#000000",
+				textStrokeWidth: 1,
+				align: "center",
+				width: 260,
+				fontStyle: "normal",
+			},
+			{
+				type: "text",
+				x: 450,
+				y: 100,
+				text: "Something boring",
+				fontSize: 24,
+				fontFamily: "Arial, sans-serif",
+				fill: "#333",
+				align: "center",
+				width: 260,
+				fontStyle: "normal",
+			},
+			{
+				type: "text",
+				x: 150,
+				y: 430,
+				text: "YES",
+				fontSize: 36,
+				fontFamily: "Impact",
+				fill: "#33aa33",
+				textStroke: "#000000",
+				textStrokeWidth: 1,
+				align: "center",
+				width: 260,
+				fontStyle: "normal",
+			},
+			{
+				type: "text",
+				x: 450,
+				y: 400,
+				text: "Something awesome",
+				fontSize: 24,
+				fontFamily: "Arial, sans-serif",
+				fill: "#333",
+				align: "center",
+				width: 260,
+				fontStyle: "normal",
+			},
 		],
 	},
 	{
@@ -172,13 +274,80 @@ const MEME_TEMPLATES: MemeTemplate[] = [
 		height: 800,
 		backgroundColor: "#ffffff",
 		elements: [
-			{ type: "line", x: 0, y: 200, points: [0, 0, 600, 0], stroke: "#ccc", strokeWidth: 2 },
-			{ type: "line", x: 0, y: 400, points: [0, 0, 600, 0], stroke: "#ccc", strokeWidth: 2 },
-			{ type: "line", x: 0, y: 600, points: [0, 0, 600, 0], stroke: "#ccc", strokeWidth: 2 },
-			{ type: "text", x: 300, y: 80, text: "Normal idea", fontSize: 28, fontFamily: "Arial, sans-serif", fill: "#333", align: "center", width: 560, fontStyle: "normal" },
-			{ type: "text", x: 300, y: 280, text: "Better idea", fontSize: 28, fontFamily: "Arial, sans-serif", fill: "#333", align: "center", width: 560, fontStyle: "normal" },
-			{ type: "text", x: 300, y: 480, text: "Galaxy brain idea", fontSize: 28, fontFamily: "Arial, sans-serif", fill: "#333", align: "center", width: 560, fontStyle: "normal" },
-			{ type: "text", x: 300, y: 680, text: "TRANSCENDENT", fontSize: 32, fontFamily: "Impact", fill: "#ff6600", textStroke: "#000000", textStrokeWidth: 1, align: "center", width: 560, fontStyle: "normal" },
+			{
+				type: "line",
+				x: 0,
+				y: 200,
+				points: [0, 0, 600, 0],
+				stroke: "#ccc",
+				strokeWidth: 2,
+			},
+			{
+				type: "line",
+				x: 0,
+				y: 400,
+				points: [0, 0, 600, 0],
+				stroke: "#ccc",
+				strokeWidth: 2,
+			},
+			{
+				type: "line",
+				x: 0,
+				y: 600,
+				points: [0, 0, 600, 0],
+				stroke: "#ccc",
+				strokeWidth: 2,
+			},
+			{
+				type: "text",
+				x: 300,
+				y: 80,
+				text: "Normal idea",
+				fontSize: 28,
+				fontFamily: "Arial, sans-serif",
+				fill: "#333",
+				align: "center",
+				width: 560,
+				fontStyle: "normal",
+			},
+			{
+				type: "text",
+				x: 300,
+				y: 280,
+				text: "Better idea",
+				fontSize: 28,
+				fontFamily: "Arial, sans-serif",
+				fill: "#333",
+				align: "center",
+				width: 560,
+				fontStyle: "normal",
+			},
+			{
+				type: "text",
+				x: 300,
+				y: 480,
+				text: "Galaxy brain idea",
+				fontSize: 28,
+				fontFamily: "Arial, sans-serif",
+				fill: "#333",
+				align: "center",
+				width: 560,
+				fontStyle: "normal",
+			},
+			{
+				type: "text",
+				x: 300,
+				y: 680,
+				text: "TRANSCENDENT",
+				fontSize: 32,
+				fontFamily: "Impact",
+				fill: "#ff6600",
+				textStroke: "#000000",
+				textStrokeWidth: 1,
+				align: "center",
+				width: 560,
+				fontStyle: "normal",
+			},
 		],
 	},
 	{
@@ -190,9 +359,40 @@ const MEME_TEMPLATES: MemeTemplate[] = [
 		height: 750,
 		backgroundColor: "#000000",
 		elements: [
-			{ type: "rect", x: 40, y: 40, width: 520, height: 520, stroke: "#444", strokeWidth: 2, fill: "#222" },
-			{ type: "text", x: 300, y: 600, text: "MOTIVATION", fontSize: 42, fontFamily: "Georgia, serif", fill: "#ffffff", align: "center", width: 520, fontStyle: "normal" },
-			{ type: "text", x: 300, y: 670, text: "If you can dream it, you can meme it", fontSize: 18, fontFamily: "Georgia, serif", fontStyle: "italic", fill: "#cccccc", align: "center", width: 480 },
+			{
+				type: "rect",
+				x: 40,
+				y: 40,
+				width: 520,
+				height: 520,
+				stroke: "#444",
+				strokeWidth: 2,
+				fill: "#222",
+			},
+			{
+				type: "text",
+				x: 300,
+				y: 600,
+				text: "MOTIVATION",
+				fontSize: 42,
+				fontFamily: "Georgia, serif",
+				fill: "#ffffff",
+				align: "center",
+				width: 520,
+				fontStyle: "normal",
+			},
+			{
+				type: "text",
+				x: 300,
+				y: 670,
+				text: "If you can dream it, you can meme it",
+				fontSize: 18,
+				fontFamily: "Georgia, serif",
+				fontStyle: "italic",
+				fill: "#cccccc",
+				align: "center",
+				width: 480,
+			},
 		],
 	},
 	{
@@ -204,8 +404,30 @@ const MEME_TEMPLATES: MemeTemplate[] = [
 		height: 600,
 		backgroundColor: "#667eea",
 		elements: [
-			{ type: "text", x: 300, y: 240, text: "Your bold\nstatement here", fontSize: 52, fontFamily: "Helvetica, Arial, sans-serif", fontStyle: "bold", fill: "#ffffff", align: "center", width: 500 },
-			{ type: "text", x: 300, y: 440, text: "Supporting text goes here", fontSize: 20, fontFamily: "Helvetica, Arial, sans-serif", fill: "#ffffffcc", align: "center", width: 460, fontStyle: "normal" },
+			{
+				type: "text",
+				x: 300,
+				y: 240,
+				text: "Your bold\nstatement here",
+				fontSize: 52,
+				fontFamily: "Helvetica, Arial, sans-serif",
+				fontStyle: "bold",
+				fill: "#ffffff",
+				align: "center",
+				width: 500,
+			},
+			{
+				type: "text",
+				x: 300,
+				y: 440,
+				text: "Supporting text goes here",
+				fontSize: 20,
+				fontFamily: "Helvetica, Arial, sans-serif",
+				fill: "#ffffffcc",
+				align: "center",
+				width: 460,
+				fontStyle: "normal",
+			},
 		],
 	},
 	{
@@ -217,7 +439,20 @@ const MEME_TEMPLATES: MemeTemplate[] = [
 		height: 400,
 		backgroundColor: "#ffcc00",
 		elements: [
-			{ type: "text", x: 300, y: 340, text: "THIS IS FINE", fontSize: 42, fontFamily: "Impact", fill: "#ffffff", textStroke: "#000000", textStrokeWidth: 3, align: "center", width: 560, fontStyle: "normal" },
+			{
+				type: "text",
+				x: 300,
+				y: 340,
+				text: "THIS IS FINE",
+				fontSize: 42,
+				fontFamily: "Impact",
+				fill: "#ffffff",
+				textStroke: "#000000",
+				textStrokeWidth: 3,
+				align: "center",
+				width: 560,
+				fontStyle: "normal",
+			},
 		],
 	},
 	{
@@ -229,11 +464,64 @@ const MEME_TEMPLATES: MemeTemplate[] = [
 		height: 600,
 		backgroundColor: "#f0f0f0",
 		elements: [
-			{ type: "line", x: 300, y: 0, points: [0, 0, 0, 600], stroke: "#ccc", strokeWidth: 2 },
-			{ type: "line", x: 600, y: 0, points: [0, 0, 0, 600], stroke: "#ccc", strokeWidth: 2 },
-			{ type: "text", x: 150, y: 530, text: "Panel 1", fontSize: 24, fontFamily: "Impact", fill: "#ffffff", textStroke: "#000000", textStrokeWidth: 2, align: "center", width: 260, fontStyle: "normal" },
-			{ type: "text", x: 450, y: 530, text: "Panel 2", fontSize: 24, fontFamily: "Impact", fill: "#ffffff", textStroke: "#000000", textStrokeWidth: 2, align: "center", width: 260, fontStyle: "normal" },
-			{ type: "text", x: 750, y: 530, text: "Panel 3", fontSize: 24, fontFamily: "Impact", fill: "#ffffff", textStroke: "#000000", textStrokeWidth: 2, align: "center", width: 260, fontStyle: "normal" },
+			{
+				type: "line",
+				x: 300,
+				y: 0,
+				points: [0, 0, 0, 600],
+				stroke: "#ccc",
+				strokeWidth: 2,
+			},
+			{
+				type: "line",
+				x: 600,
+				y: 0,
+				points: [0, 0, 0, 600],
+				stroke: "#ccc",
+				strokeWidth: 2,
+			},
+			{
+				type: "text",
+				x: 150,
+				y: 530,
+				text: "Panel 1",
+				fontSize: 24,
+				fontFamily: "Impact",
+				fill: "#ffffff",
+				textStroke: "#000000",
+				textStrokeWidth: 2,
+				align: "center",
+				width: 260,
+				fontStyle: "normal",
+			},
+			{
+				type: "text",
+				x: 450,
+				y: 530,
+				text: "Panel 2",
+				fontSize: 24,
+				fontFamily: "Impact",
+				fill: "#ffffff",
+				textStroke: "#000000",
+				textStrokeWidth: 2,
+				align: "center",
+				width: 260,
+				fontStyle: "normal",
+			},
+			{
+				type: "text",
+				x: 750,
+				y: 530,
+				text: "Panel 3",
+				fontSize: 24,
+				fontFamily: "Impact",
+				fill: "#ffffff",
+				textStroke: "#000000",
+				textStrokeWidth: 2,
+				align: "center",
+				width: 260,
+				fontStyle: "normal",
+			},
 		],
 	},
 	{
@@ -245,10 +533,52 @@ const MEME_TEMPLATES: MemeTemplate[] = [
 		height: 500,
 		backgroundColor: "#ffffff",
 		elements: [
-			{ type: "rect", x: 0, y: 0, width: 400, height: 500, stroke: "transparent", strokeWidth: 0, fill: "#1a1a2e" },
-			{ type: "text", x: 200, y: 60, text: "Option A", fontSize: 36, fontFamily: "Helvetica, Arial, sans-serif", fontStyle: "bold", fill: "#ffffff", align: "center", width: 340 },
-			{ type: "text", x: 600, y: 60, text: "Option B", fontSize: 36, fontFamily: "Helvetica, Arial, sans-serif", fontStyle: "bold", fill: "#1a1a2e", align: "center", width: 340 },
-			{ type: "text", x: 400, y: 220, text: "VS", fontSize: 32, fontFamily: "Impact", fill: "#ff6600", align: "center", width: 80, fontStyle: "normal" },
+			{
+				type: "rect",
+				x: 0,
+				y: 0,
+				width: 400,
+				height: 500,
+				stroke: "transparent",
+				strokeWidth: 0,
+				fill: "#1a1a2e",
+			},
+			{
+				type: "text",
+				x: 200,
+				y: 60,
+				text: "Option A",
+				fontSize: 36,
+				fontFamily: "Helvetica, Arial, sans-serif",
+				fontStyle: "bold",
+				fill: "#ffffff",
+				align: "center",
+				width: 340,
+			},
+			{
+				type: "text",
+				x: 600,
+				y: 60,
+				text: "Option B",
+				fontSize: 36,
+				fontFamily: "Helvetica, Arial, sans-serif",
+				fontStyle: "bold",
+				fill: "#1a1a2e",
+				align: "center",
+				width: 340,
+			},
+			{
+				type: "text",
+				x: 400,
+				y: 220,
+				text: "VS",
+				fontSize: 32,
+				fontFamily: "Impact",
+				fill: "#ff6600",
+				align: "center",
+				width: 80,
+				fontStyle: "normal",
+			},
 		],
 	},
 	{
@@ -260,9 +590,40 @@ const MEME_TEMPLATES: MemeTemplate[] = [
 		height: 300,
 		backgroundColor: "#16213e",
 		elements: [
-			{ type: "rect", x: 0, y: 0, width: 6, height: 300, stroke: "transparent", strokeWidth: 0, fill: "#3ba77c" },
-			{ type: "text", x: 450, y: 100, text: "BIG ANNOUNCEMENT", fontSize: 52, fontFamily: "Impact", fill: "#ffffff", align: "center", width: 800, fontStyle: "normal" },
-			{ type: "text", x: 450, y: 200, text: "Details about the thing", fontSize: 20, fontFamily: "Arial, sans-serif", fill: "#8892b0", align: "center", width: 700, fontStyle: "normal" },
+			{
+				type: "rect",
+				x: 0,
+				y: 0,
+				width: 6,
+				height: 300,
+				stroke: "transparent",
+				strokeWidth: 0,
+				fill: "#3ba77c",
+			},
+			{
+				type: "text",
+				x: 450,
+				y: 100,
+				text: "BIG ANNOUNCEMENT",
+				fontSize: 52,
+				fontFamily: "Impact",
+				fill: "#ffffff",
+				align: "center",
+				width: 800,
+				fontStyle: "normal",
+			},
+			{
+				type: "text",
+				x: 450,
+				y: 200,
+				text: "Details about the thing",
+				fontSize: 20,
+				fontFamily: "Arial, sans-serif",
+				fill: "#8892b0",
+				align: "center",
+				width: 700,
+				fontStyle: "normal",
+			},
 		],
 	},
 	{
@@ -586,7 +947,11 @@ const AnnotationShape = memo(function AnnotationShape({
 					fontFamily={annotation.fontFamily ?? "Arial, sans-serif"}
 					fontStyle={annotation.fontStyle ?? "normal"}
 					fill={annotation.fill}
-					stroke={annotation.textStroke && annotation.textStroke !== "transparent" ? annotation.textStroke : undefined}
+					stroke={
+						annotation.textStroke && annotation.textStroke !== "transparent"
+							? annotation.textStroke
+							: undefined
+					}
 					strokeWidth={annotation.textStrokeWidth ?? 0}
 					align={annotation.align ?? "left"}
 					lineHeight={1.2}
@@ -647,14 +1012,20 @@ export const CanvasView = memo(function CanvasView({
 	// Canvas state - initialize from cache if available
 	const [tool, setTool] = useState<Tool>(cached?.tool ?? "select");
 	const [color, setColor] = useState(cached?.color ?? "#ff0000");
-	const [fillColor, setFillColor] = useState(cached?.fillColor ?? "transparent");
+	const [fillColor, setFillColor] = useState(
+		cached?.fillColor ?? "transparent",
+	);
 	const [strokeWidth, setStrokeWidth] = useState(cached?.strokeWidth ?? 3);
 	const [fontSize, setFontSize] = useState(cached?.fontSize ?? 48);
 	const [fontFamily, setFontFamily] = useState(cached?.fontFamily ?? "Impact");
 	const [fontStyle, setFontStyle] = useState(cached?.fontStyle ?? "normal");
 	const [textStroke, setTextStroke] = useState(cached?.textStroke ?? "#000000");
-	const [textStrokeWidth, setTextStrokeWidth] = useState(cached?.textStrokeWidth ?? 2);
-	const [canvasBackgroundOverride, setCanvasBackgroundOverride] = useState<string | null>(cached?.canvasBackgroundOverride ?? null);
+	const [textStrokeWidth, setTextStrokeWidth] = useState(
+		cached?.textStrokeWidth ?? 2,
+	);
+	const [canvasBackgroundOverride, setCanvasBackgroundOverride] = useState<
+		string | null
+	>(cached?.canvasBackgroundOverride ?? null);
 	const [showTemplates, setShowTemplates] = useState(false);
 	const [annotations, setAnnotations] = useState<Annotation[]>(
 		cached?.annotations ?? [],
@@ -792,7 +1163,8 @@ export const CanvasView = memo(function CanvasView({
 		return () => observer.disconnect();
 	}, []);
 
-	const canvasBackgroundColor = canvasBackgroundOverride ?? (isDarkMode ? "#2d312f" : "#ffffff");
+	const canvasBackgroundColor =
+		canvasBackgroundOverride ?? (isDarkMode ? "#2d312f" : "#ffffff");
 
 	// Detect when initialImagePath changes (e.g., "Open in Canvas" with a new file)
 	// and reset canvas state to load the new image
@@ -1016,23 +1388,29 @@ export const CanvasView = memo(function CanvasView({
 	}, [addToHistory]);
 
 	// Load a meme template
-	const loadTemplate = useCallback((template: MemeTemplate) => {
-		const newAnnotations: Annotation[] = template.elements.map((el) => ({
-			...el,
-			id: generateId(),
-		} as Annotation));
-		setAnnotations(newAnnotations);
-		addToHistory(newAnnotations);
-		setSelectedId(null);
-		setBackgroundImage(null);
-		setBackgroundImageSrc(null);
-		setCanvasBackgroundOverride(template.backgroundColor);
-		setBackgroundSize({ width: template.width, height: template.height });
-		setImageCache(new Map());
-		setShowTemplates(false);
-		setScale(1);
-		setPosition({ x: 0, y: 0 });
-	}, [addToHistory]);
+	const loadTemplate = useCallback(
+		(template: MemeTemplate) => {
+			const newAnnotations: Annotation[] = template.elements.map(
+				(el) =>
+					({
+						...el,
+						id: generateId(),
+					}) as Annotation,
+			);
+			setAnnotations(newAnnotations);
+			addToHistory(newAnnotations);
+			setSelectedId(null);
+			setBackgroundImage(null);
+			setBackgroundImageSrc(null);
+			setCanvasBackgroundOverride(template.backgroundColor);
+			setBackgroundSize({ width: template.width, height: template.height });
+			setImageCache(new Map());
+			setShowTemplates(false);
+			setScale(1);
+			setPosition({ x: 0, y: 0 });
+		},
+		[addToHistory],
+	);
 
 	// Zoom controls
 	const zoomIn = useCallback(() => {
@@ -1094,7 +1472,12 @@ export const CanvasView = memo(function CanvasView({
 						type: "line",
 						x: 0,
 						y: 0,
-						points: [adjustedPos.x, adjustedPos.y, adjustedPos.x, adjustedPos.y],
+						points: [
+							adjustedPos.x,
+							adjustedPos.y,
+							adjustedPos.x,
+							adjustedPos.y,
+						],
 						stroke: color,
 						strokeWidth,
 					});
@@ -1201,9 +1584,19 @@ export const CanvasView = memo(function CanvasView({
 				}
 			}
 		},
-		[tool, color, fillColor, strokeWidth, scale, position, annotations, deleteAnnotation],
+		[
+			tool,
+			color,
+			fillColor,
+			strokeWidth,
+			scale,
+			position,
+			annotations,
+			deleteAnnotation,
+		],
 	);
 
+	// biome-ignore lint/correctness/useExhaustiveDependencies: tool is stable ref
 	const handleMouseMove = useCallback(
 		(e: Konva.KonvaEventObject<MouseEvent | TouchEvent>) => {
 			if (!isDrawing || !currentAnnotation) return;
@@ -1236,7 +1629,11 @@ export const CanvasView = memo(function CanvasView({
 					} else {
 						setCurrentAnnotation({
 							...currentAnnotation,
-							points: [...currentAnnotation.points, adjustedPos.x, adjustedPos.y],
+							points: [
+								...currentAnnotation.points,
+								adjustedPos.x,
+								adjustedPos.y,
+							],
 						});
 					}
 					break;
@@ -1326,7 +1723,17 @@ export const CanvasView = memo(function CanvasView({
 		addAnnotation(annotation);
 		setTextInputPosition(null);
 		setTextInput("");
-	}, [textInputPosition, textInput, color, fontSize, fontFamily, fontStyle, textStroke, textStrokeWidth, addAnnotation]);
+	}, [
+		textInputPosition,
+		textInput,
+		color,
+		fontSize,
+		fontFamily,
+		fontStyle,
+		textStroke,
+		textStrokeWidth,
+		addAnnotation,
+	]);
 
 	// Save canvas as image
 	const saveAsImage = useCallback(async () => {
@@ -1487,21 +1894,93 @@ export const CanvasView = memo(function CanvasView({
 			<div className="flex-shrink-0 border-b border-border bg-muted/30">
 				{/* Row 1: All drawing tools in one line with separator groups */}
 				<div className="flex items-center gap-px p-1">
-					<ToolButton tool="select" currentTool={tool} onSelect={setTool} icon={MousePointer2} title="Select (V)" />
-					<ToolButton tool="pan" currentTool={tool} onSelect={setTool} icon={Hand} title="Pan (H)" />
+					<ToolButton
+						tool="select"
+						currentTool={tool}
+						onSelect={setTool}
+						icon={MousePointer2}
+						title="Select (V)"
+					/>
+					<ToolButton
+						tool="pan"
+						currentTool={tool}
+						onSelect={setTool}
+						icon={Hand}
+						title="Pan (H)"
+					/>
 					<div className="w-px h-[18px] bg-border mx-[3px]" />
-					<ToolButton tool="pencil" currentTool={tool} onSelect={setTool} icon={Pencil} title="Pencil (P)" />
-					<ToolButton tool="line" currentTool={tool} onSelect={setTool} icon={Minus} title="Line (L)" />
-					<ToolButton tool="arrow" currentTool={tool} onSelect={setTool} icon={ArrowRight} title="Arrow (A)" />
+					<ToolButton
+						tool="pencil"
+						currentTool={tool}
+						onSelect={setTool}
+						icon={Pencil}
+						title="Pencil (P)"
+					/>
+					<ToolButton
+						tool="line"
+						currentTool={tool}
+						onSelect={setTool}
+						icon={Minus}
+						title="Line (L)"
+					/>
+					<ToolButton
+						tool="arrow"
+						currentTool={tool}
+						onSelect={setTool}
+						icon={ArrowRight}
+						title="Arrow (A)"
+					/>
 					<div className="w-px h-[18px] bg-border mx-[3px]" />
-					<ToolButton tool="rect" currentTool={tool} onSelect={setTool} icon={Square} title="Rectangle (R)" />
-					<ToolButton tool="circle" currentTool={tool} onSelect={setTool} icon={Circle} title="Circle (C)" />
-					<ToolButton tool="triangle" currentTool={tool} onSelect={setTool} icon={Triangle} title="Triangle" />
-					<ToolButton tool="star" currentTool={tool} onSelect={setTool} icon={Star} title="Star" />
+					<ToolButton
+						tool="rect"
+						currentTool={tool}
+						onSelect={setTool}
+						icon={Square}
+						title="Rectangle (R)"
+					/>
+					<ToolButton
+						tool="circle"
+						currentTool={tool}
+						onSelect={setTool}
+						icon={Circle}
+						title="Circle (C)"
+					/>
+					<ToolButton
+						tool="triangle"
+						currentTool={tool}
+						onSelect={setTool}
+						icon={Triangle}
+						title="Triangle"
+					/>
+					<ToolButton
+						tool="star"
+						currentTool={tool}
+						onSelect={setTool}
+						icon={Star}
+						title="Star"
+					/>
 					<div className="w-px h-[18px] bg-border mx-[3px]" />
-					<ToolButton tool="text" currentTool={tool} onSelect={setTool} icon={Type} title="Text (T)" />
-					<ToolButton tool="highlighter" currentTool={tool} onSelect={setTool} icon={Highlighter} title="Highlighter" />
-					<ToolButton tool="eraser" currentTool={tool} onSelect={setTool} icon={Eraser} title="Eraser (E)" />
+					<ToolButton
+						tool="text"
+						currentTool={tool}
+						onSelect={setTool}
+						icon={Type}
+						title="Text (T)"
+					/>
+					<ToolButton
+						tool="highlighter"
+						currentTool={tool}
+						onSelect={setTool}
+						icon={Highlighter}
+						title="Highlighter"
+					/>
+					<ToolButton
+						tool="eraser"
+						currentTool={tool}
+						onSelect={setTool}
+						icon={Eraser}
+						title="Eraser (E)"
+					/>
 				</div>
 
 				{/* Row 2: Colors + stroke | undo/redo | zoom | actions */}
@@ -1509,39 +1988,119 @@ export const CanvasView = memo(function CanvasView({
 					{/* Stroke color */}
 					<Popover>
 						<PopoverTrigger asChild>
-							<button type="button" className="w-[18px] h-[18px] rounded-[3px] border-2 border-[#555] cursor-pointer flex-shrink-0" style={{ backgroundColor: color }} title="Stroke color" />
+							<button
+								type="button"
+								className="w-[18px] h-[18px] rounded-[3px] border-2 border-[#555] cursor-pointer flex-shrink-0"
+								style={{ backgroundColor: color }}
+								title="Stroke color"
+							/>
 						</PopoverTrigger>
 						<PopoverContent className="w-auto p-2" align="start">
 							<div className="grid grid-cols-5 gap-1 mb-2">
 								{PRESET_COLORS.map((c) => (
-									<button type="button" key={c} onClick={() => setColor(c)} className={cn("w-6 h-6 rounded border", color === c ? "ring-2 ring-primary ring-offset-1" : "border-border")} style={{ backgroundColor: c }} />
+									<button
+										type="button"
+										key={c}
+										onClick={() => setColor(c)}
+										className={cn(
+											"w-6 h-6 rounded border",
+											color === c
+												? "ring-2 ring-primary ring-offset-1"
+												: "border-border",
+										)}
+										style={{ backgroundColor: c }}
+									/>
 								))}
 							</div>
-							<input type="color" value={color} onChange={(e) => setColor(e.target.value)} className="w-full h-7 cursor-pointer" />
+							<input
+								type="color"
+								value={color}
+								onChange={(e) => setColor(e.target.value)}
+								className="w-full h-7 cursor-pointer"
+							/>
 						</PopoverContent>
 					</Popover>
 					{/* Fill color */}
 					<Popover>
 						<PopoverTrigger asChild>
-							<button type="button" className="w-[18px] h-[18px] rounded-[3px] border-2 border-[#555] cursor-pointer flex-shrink-0 flex items-center justify-center" style={{ backgroundColor: fillColor === "transparent" ? "transparent" : fillColor }} title="Fill color">
+							<button
+								type="button"
+								className="w-[18px] h-[18px] rounded-[3px] border-2 border-[#555] cursor-pointer flex-shrink-0 flex items-center justify-center"
+								style={{
+									backgroundColor:
+										fillColor === "transparent" ? "transparent" : fillColor,
+								}}
+								title="Fill color"
+							>
 								{fillColor === "transparent" && (
-									<svg width="10" height="10" viewBox="0 0 10 10"><line x1="0" y1="10" x2="10" y2="0" stroke="#ff0000" strokeWidth="2" /></svg>
+									// biome-ignore lint/a11y/noSvgWithoutTitle: decorative SVG -- in expression context
+									<svg width="10" height="10" viewBox="0 0 10 10">
+										<line
+											x1="0"
+											y1="10"
+											x2="10"
+											y2="0"
+											stroke="#ff0000"
+											strokeWidth="2"
+										/>
+									</svg>
 								)}
 							</button>
 						</PopoverTrigger>
 						<PopoverContent className="w-auto p-2" align="start">
 							<div className="grid grid-cols-5 gap-1 mb-2">
-								<button type="button" onClick={() => setFillColor("transparent")} className={cn("w-6 h-6 rounded border flex items-center justify-center", fillColor === "transparent" ? "ring-2 ring-primary ring-offset-1" : "border-border")} title="No fill">
-									<svg width="10" height="10" viewBox="0 0 10 10"><line x1="0" y1="10" x2="10" y2="0" stroke="#ff0000" strokeWidth="2" /></svg>
+								<button
+									type="button"
+									onClick={() => setFillColor("transparent")}
+									className={cn(
+										"w-6 h-6 rounded border flex items-center justify-center",
+										fillColor === "transparent"
+											? "ring-2 ring-primary ring-offset-1"
+											: "border-border",
+									)}
+									title="No fill"
+								>
+									{/* biome-ignore lint/a11y/noSvgWithoutTitle: decorative SVG */}
+									<svg width="10" height="10" viewBox="0 0 10 10">
+										<line
+											x1="0"
+											y1="10"
+											x2="10"
+											y2="0"
+											stroke="#ff0000"
+											strokeWidth="2"
+										/>
+									</svg>
 								</button>
 								{PRESET_COLORS.slice(0, 9).map((c) => (
-									<button type="button" key={c} onClick={() => setFillColor(c)} className={cn("w-6 h-6 rounded border", fillColor === c ? "ring-2 ring-primary ring-offset-1" : "border-border")} style={{ backgroundColor: c }} />
+									<button
+										type="button"
+										key={c}
+										onClick={() => setFillColor(c)}
+										className={cn(
+											"w-6 h-6 rounded border",
+											fillColor === c
+												? "ring-2 ring-primary ring-offset-1"
+												: "border-border",
+										)}
+										style={{ backgroundColor: c }}
+									/>
 								))}
 							</div>
-							<input type="color" value={fillColor === "transparent" ? "#ffffff" : fillColor} onChange={(e) => setFillColor(e.target.value)} className="w-full h-7 cursor-pointer" />
+							<input
+								type="color"
+								value={fillColor === "transparent" ? "#ffffff" : fillColor}
+								onChange={(e) => setFillColor(e.target.value)}
+								className="w-full h-7 cursor-pointer"
+							/>
 						</PopoverContent>
 					</Popover>
-					<select value={strokeWidth} onChange={(e) => setStrokeWidth(Number(e.target.value))} className="h-[22px] text-[10px] bg-background border border-border rounded-[3px] px-1" title="Stroke width">
+					<select
+						value={strokeWidth}
+						onChange={(e) => setStrokeWidth(Number(e.target.value))}
+						className="h-[22px] text-[10px] bg-background border border-border rounded-[3px] px-1"
+						title="Stroke width"
+					>
 						<option value={1}>1px</option>
 						<option value={2}>2px</option>
 						<option value={3}>3px</option>
@@ -1550,86 +2109,272 @@ export const CanvasView = memo(function CanvasView({
 						<option value={12}>12px</option>
 					</select>
 					<div className="w-px h-4 bg-border" />
-					<Button type="button" variant="ghost" size="sm" onClick={undo} disabled={historyIndex <= 0} className="h-[22px] w-[22px] p-0" title="Undo (Ctrl+Z)"><Undo2 className="w-3 h-3" /></Button>
-					<Button type="button" variant="ghost" size="sm" onClick={redo} disabled={historyIndex >= history.length - 1} className="h-[22px] w-[22px] p-0" title="Redo (Ctrl+Y)"><Redo2 className="w-3 h-3" /></Button>
-					<Button type="button" variant="ghost" size="sm" onClick={clearAll} className="h-[22px] w-[22px] p-0" title="Clear all"><Trash2 className="w-3 h-3" /></Button>
+					<Button
+						type="button"
+						variant="ghost"
+						size="sm"
+						onClick={undo}
+						disabled={historyIndex <= 0}
+						className="h-[22px] w-[22px] p-0"
+						title="Undo (Ctrl+Z)"
+					>
+						<Undo2 className="w-3 h-3" />
+					</Button>
+					<Button
+						type="button"
+						variant="ghost"
+						size="sm"
+						onClick={redo}
+						disabled={historyIndex >= history.length - 1}
+						className="h-[22px] w-[22px] p-0"
+						title="Redo (Ctrl+Y)"
+					>
+						<Redo2 className="w-3 h-3" />
+					</Button>
+					<Button
+						type="button"
+						variant="ghost"
+						size="sm"
+						onClick={clearAll}
+						className="h-[22px] w-[22px] p-0"
+						title="Clear all"
+					>
+						<Trash2 className="w-3 h-3" />
+					</Button>
 					<div className="w-px h-4 bg-border" />
-					<Button type="button" variant="ghost" size="sm" onClick={zoomOut} className="h-[22px] w-[22px] p-0" title="Zoom out"><ZoomOut className="w-3 h-3" /></Button>
-					<button type="button" onClick={resetZoom} className="text-[10px] min-w-[30px] text-center text-muted-foreground tabular-nums" title="Reset zoom">{Math.round(scale * 100)}%</button>
-					<Button type="button" variant="ghost" size="sm" onClick={zoomIn} className="h-[22px] w-[22px] p-0" title="Zoom in"><ZoomIn className="w-3 h-3" /></Button>
+					<Button
+						type="button"
+						variant="ghost"
+						size="sm"
+						onClick={zoomOut}
+						className="h-[22px] w-[22px] p-0"
+						title="Zoom out"
+					>
+						<ZoomOut className="w-3 h-3" />
+					</Button>
+					<button
+						type="button"
+						onClick={resetZoom}
+						className="text-[10px] min-w-[30px] text-center text-muted-foreground tabular-nums"
+						title="Reset zoom"
+					>
+						{Math.round(scale * 100)}%
+					</button>
+					<Button
+						type="button"
+						variant="ghost"
+						size="sm"
+						onClick={zoomIn}
+						className="h-[22px] w-[22px] p-0"
+						title="Zoom in"
+					>
+						<ZoomIn className="w-3 h-3" />
+					</Button>
 					<div className="flex-1" />
 					<Popover open={showTemplates} onOpenChange={setShowTemplates}>
 						<PopoverTrigger asChild>
-							<Button type="button" variant="ghost" size="sm" className="h-[22px] w-[22px] p-0" title="Templates"><LayoutTemplate className="w-3 h-3" /></Button>
+							<Button
+								type="button"
+								variant="ghost"
+								size="sm"
+								className="h-[22px] w-[22px] p-0"
+								title="Templates"
+							>
+								<LayoutTemplate className="w-3 h-3" />
+							</Button>
 						</PopoverTrigger>
 						<PopoverContent className="w-72 p-0" align="end">
-							<div className="px-3 py-2 border-b"><h4 className="text-sm font-medium">Meme Templates</h4></div>
+							<div className="px-3 py-2 border-b">
+								<h4 className="text-sm font-medium">Meme Templates</h4>
+							</div>
 							<div className="max-h-72 overflow-y-auto p-1.5 grid gap-0.5">
 								{MEME_TEMPLATES.map((tmpl) => (
-									<button type="button" key={tmpl.id} onClick={() => loadTemplate(tmpl)} className="text-left rounded-md border px-2 py-1.5 hover:bg-muted/50 transition-colors">
+									<button
+										type="button"
+										key={tmpl.id}
+										onClick={() => loadTemplate(tmpl)}
+										className="text-left rounded-md border px-2 py-1.5 hover:bg-muted/50 transition-colors"
+									>
 										<div className="flex items-center gap-2">
-											<div className="w-8 h-6 rounded border flex-shrink-0" style={{ backgroundColor: tmpl.backgroundColor }} />
+											<div
+												className="w-8 h-6 rounded border flex-shrink-0"
+												style={{ backgroundColor: tmpl.backgroundColor }}
+											/>
 											<div className="min-w-0 flex-1">
-												<div className="text-xs font-medium truncate">{tmpl.name}</div>
-												<div className="text-[10px] text-muted-foreground truncate">{tmpl.description}</div>
+												<div className="text-xs font-medium truncate">
+													{tmpl.name}
+												</div>
+												<div className="text-[10px] text-muted-foreground truncate">
+													{tmpl.description}
+												</div>
 											</div>
-											<span className="text-[9px] px-1 py-0.5 rounded bg-muted text-muted-foreground flex-shrink-0">{tmpl.category}</span>
+											<span className="text-[9px] px-1 py-0.5 rounded bg-muted text-muted-foreground flex-shrink-0">
+												{tmpl.category}
+											</span>
 										</div>
 									</button>
 								))}
 							</div>
 						</PopoverContent>
 					</Popover>
-					<input ref={fileInputRef} type="file" accept="image/*" onChange={handleFileUpload} className="hidden" />
-					<Button type="button" variant="ghost" size="sm" onClick={() => fileInputRef.current?.click()} className="h-[22px] w-[22px] p-0" title="Upload image"><Upload className="w-3 h-3" /></Button>
-					<Button type="button" variant="ghost" size="sm" onClick={saveAsImage} className="h-[22px] w-[22px] p-0" title="Export as PNG"><Download className="w-3 h-3" /></Button>
+					<input
+						ref={fileInputRef}
+						type="file"
+						accept="image/*"
+						onChange={handleFileUpload}
+						className="hidden"
+					/>
+					<Button
+						type="button"
+						variant="ghost"
+						size="sm"
+						onClick={() => fileInputRef.current?.click()}
+						className="h-[22px] w-[22px] p-0"
+						title="Upload image"
+					>
+						<Upload className="w-3 h-3" />
+					</Button>
+					<Button
+						type="button"
+						variant="ghost"
+						size="sm"
+						onClick={saveAsImage}
+						className="h-[22px] w-[22px] p-0"
+						title="Export as PNG"
+					>
+						<Download className="w-3 h-3" />
+					</Button>
 					{workspacePath && (
 						<>
-							<Button type="button" variant="ghost" size="sm" onClick={saveToWorkspace} className="h-[22px] w-[22px] p-0" title="Save to workspace"><Save className="w-3 h-3" /></Button>
+							<Button
+								type="button"
+								variant="ghost"
+								size="sm"
+								onClick={saveToWorkspace}
+								className="h-[22px] w-[22px] p-0"
+								title="Save to workspace"
+							>
+								<Save className="w-3 h-3" />
+							</Button>
 							{onSaveAndAddToChat && (
-								<Button type="button" variant="ghost" size="sm" onClick={saveAndAddToChat} className="h-[22px] w-[22px] p-0" title="Save & add to chat"><MessageSquarePlus className="w-3 h-3" /></Button>
+								<Button
+									type="button"
+									variant="ghost"
+									size="sm"
+									onClick={saveAndAddToChat}
+									className="h-[22px] w-[22px] p-0"
+									title="Save & add to chat"
+								>
+									<MessageSquarePlus className="w-3 h-3" />
+								</Button>
 							)}
 						</>
 					)}
 				</div>
 
 				{/* Row 3 (conditional): Text controls */}
-				{(tool === "text" || (selectedId && annotations.find((a) => a.id === selectedId)?.type === "text")) && (
+				{(tool === "text" ||
+					(selectedId &&
+						annotations.find((a) => a.id === selectedId)?.type === "text")) && (
 					<div className="flex items-center gap-[3px] px-1.5 pb-1.5 border-t border-white/[0.04]">
 						<Select value={fontFamily} onValueChange={setFontFamily}>
-							<SelectTrigger className="h-[22px] w-24 text-[10px]"><SelectValue /></SelectTrigger>
+							<SelectTrigger className="h-[22px] w-24 text-[10px]">
+								<SelectValue />
+							</SelectTrigger>
 							<SelectContent>
-								{(["meme", "sans", "serif", "mono"] as FontCategory[]).map((cat) => {
-									const fonts = FONT_FAMILIES.filter((f) => f.category === cat);
-									return (
-										<SelectGroup key={cat}>
-											<SelectLabel className="text-xs">{FONT_CATEGORY_LABELS[cat]}</SelectLabel>
-											{fonts.map((f) => (
-												<SelectItem key={f.value} value={f.value}>
-													<span style={{ fontFamily: f.value }}>{f.name}</span>
-												</SelectItem>
-											))}
-										</SelectGroup>
-									);
-								})}
+								{(["meme", "sans", "serif", "mono"] as FontCategory[]).map(
+									(cat) => {
+										const fonts = FONT_FAMILIES.filter(
+											(f) => f.category === cat,
+										);
+										return (
+											<SelectGroup key={cat}>
+												<SelectLabel className="text-xs">
+													{FONT_CATEGORY_LABELS[cat]}
+												</SelectLabel>
+												{fonts.map((f) => (
+													<SelectItem key={f.value} value={f.value}>
+														<span style={{ fontFamily: f.value }}>
+															{f.name}
+														</span>
+													</SelectItem>
+												))}
+											</SelectGroup>
+										);
+									},
+								)}
 							</SelectContent>
 						</Select>
-						<select value={fontSize} onChange={(e) => setFontSize(Number(e.target.value))} className="h-[22px] text-[10px] bg-background border border-border rounded-[3px] px-1" title="Font size">
-							<option value={16}>16</option><option value={20}>20</option><option value={24}>24</option>
-							<option value={32}>32</option><option value={36}>36</option><option value={48}>48</option>
-							<option value={64}>64</option><option value={72}>72</option><option value={96}>96</option>
+						<select
+							value={fontSize}
+							onChange={(e) => setFontSize(Number(e.target.value))}
+							className="h-[22px] text-[10px] bg-background border border-border rounded-[3px] px-1"
+							title="Font size"
+						>
+							<option value={16}>16</option>
+							<option value={20}>20</option>
+							<option value={24}>24</option>
+							<option value={32}>32</option>
+							<option value={36}>36</option>
+							<option value={48}>48</option>
+							<option value={64}>64</option>
+							<option value={72}>72</option>
+							<option value={96}>96</option>
 						</select>
-						<Button type="button" variant={fontStyle.includes("bold") ? "default" : "ghost"} size="sm" className="h-[22px] w-[22px] p-0" title="Bold" onClick={() => { const b = fontStyle.includes("bold"); const i = fontStyle.includes("italic"); if (b && i) setFontStyle("italic"); else if (b) setFontStyle("normal"); else if (i) setFontStyle("bold italic"); else setFontStyle("bold"); }}>
+						<Button
+							type="button"
+							variant={fontStyle.includes("bold") ? "default" : "ghost"}
+							size="sm"
+							className="h-[22px] w-[22px] p-0"
+							title="Bold"
+							onClick={() => {
+								const b = fontStyle.includes("bold");
+								const i = fontStyle.includes("italic");
+								if (b && i) setFontStyle("italic");
+								else if (b) setFontStyle("normal");
+								else if (i) setFontStyle("bold italic");
+								else setFontStyle("bold");
+							}}
+						>
 							<Bold className="w-3 h-3" />
 						</Button>
-						<Button type="button" variant={fontStyle.includes("italic") ? "default" : "ghost"} size="sm" className="h-[22px] w-[22px] p-0" title="Italic" onClick={() => { const b = fontStyle.includes("bold"); const i = fontStyle.includes("italic"); if (i && b) setFontStyle("bold"); else if (i) setFontStyle("normal"); else if (b) setFontStyle("bold italic"); else setFontStyle("italic"); }}>
+						<Button
+							type="button"
+							variant={fontStyle.includes("italic") ? "default" : "ghost"}
+							size="sm"
+							className="h-[22px] w-[22px] p-0"
+							title="Italic"
+							onClick={() => {
+								const b = fontStyle.includes("bold");
+								const i = fontStyle.includes("italic");
+								if (i && b) setFontStyle("bold");
+								else if (i) setFontStyle("normal");
+								else if (b) setFontStyle("bold italic");
+								else setFontStyle("italic");
+							}}
+						>
 							<Italic className="w-3 h-3" />
 						</Button>
 						<div className="w-px h-4 bg-border" />
-						<input type="color" value={textStroke} onChange={(e) => setTextStroke(e.target.value)} className="w-[18px] h-[18px] rounded-[3px] cursor-pointer border-0 p-0" title="Text outline color" />
-						<select value={textStrokeWidth} onChange={(e) => setTextStrokeWidth(Number(e.target.value))} className="h-[22px] text-[10px] bg-background border border-border rounded-[3px] px-1 w-9" title="Outline width">
-							<option value={0}>0</option><option value={1}>1</option><option value={2}>2</option>
-							<option value={3}>3</option><option value={4}>4</option><option value={5}>5</option>
+						<input
+							type="color"
+							value={textStroke}
+							onChange={(e) => setTextStroke(e.target.value)}
+							className="w-[18px] h-[18px] rounded-[3px] cursor-pointer border-0 p-0"
+							title="Text outline color"
+						/>
+						<select
+							value={textStrokeWidth}
+							onChange={(e) => setTextStrokeWidth(Number(e.target.value))}
+							className="h-[22px] text-[10px] bg-background border border-border rounded-[3px] px-1 w-9"
+							title="Outline width"
+						>
+							<option value={0}>0</option>
+							<option value={1}>1</option>
+							<option value={2}>2</option>
+							<option value={3}>3</option>
+							<option value={4}>4</option>
+							<option value={5}>5</option>
 						</select>
 					</div>
 				)}
@@ -1746,30 +2491,32 @@ export const CanvasView = memo(function CanvasView({
 				</Stage>
 
 				{/* Floating delete button for selected item (mobile-friendly) */}
-				{selectedId && !textInputPosition && (() => {
-					const ann = annotations.find((a) => a.id === selectedId);
-					if (!ann) return null;
-					// Compute screen position: annotation pos * scale + pan offset
-					const screenX = ann.x * scale + position.x;
-					const screenY = ann.y * scale + position.y;
-					return (
-						<button
-							type="button"
-							onClick={() => {
-								deleteAnnotation(selectedId);
-								setSelectedId(null);
-							}}
-							className="absolute z-40 flex items-center justify-center w-7 h-7 rounded-full bg-destructive text-destructive-foreground shadow-lg hover:bg-destructive/90 transition-colors"
-							style={{
-								left: screenX - 14,
-								top: screenY - 32,
-							}}
-							title="Delete selected"
-						>
-							<Trash2 className="w-3.5 h-3.5" />
-						</button>
-					);
-				})()}
+				{selectedId &&
+					!textInputPosition &&
+					(() => {
+						const ann = annotations.find((a) => a.id === selectedId);
+						if (!ann) return null;
+						// Compute screen position: annotation pos * scale + pan offset
+						const screenX = ann.x * scale + position.x;
+						const screenY = ann.y * scale + position.y;
+						return (
+							<button
+								type="button"
+								onClick={() => {
+									deleteAnnotation(selectedId);
+									setSelectedId(null);
+								}}
+								className="absolute z-40 flex items-center justify-center w-7 h-7 rounded-full bg-destructive text-destructive-foreground shadow-lg hover:bg-destructive/90 transition-colors"
+								style={{
+									left: screenX - 14,
+									top: screenY - 32,
+								}}
+								title="Delete selected"
+							>
+								<Trash2 className="w-3.5 h-3.5" />
+							</button>
+						);
+					})()}
 
 				{/* Direct text input overlay - styled to match canvas rendering */}
 				{textInputPosition && (
@@ -1804,7 +2551,10 @@ export const CanvasView = memo(function CanvasView({
 							fontWeight: fontStyle.includes("bold") ? "bold" : "normal",
 							fontStyle: fontStyle.includes("italic") ? "italic" : "normal",
 							color,
-							WebkitTextStroke: textStrokeWidth > 0 ? `${textStrokeWidth * scale}px ${textStroke}` : undefined,
+							WebkitTextStroke:
+								textStrokeWidth > 0
+									? `${textStrokeWidth * scale}px ${textStroke}`
+									: undefined,
 							paintOrder: textStrokeWidth > 0 ? "stroke fill" : undefined,
 							lineHeight: 1.2,
 							minWidth: `${Math.max(60, 200 * scale)}px`,

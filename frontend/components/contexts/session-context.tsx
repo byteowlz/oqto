@@ -162,7 +162,8 @@ function SessionContextComposer({ children }: { children: ReactNode }) {
 			setSelectedWorkspaceSessionId: workspace.setSelectedWorkspaceSessionId,
 			selectedWorkspaceSession: workspace.selectedWorkspaceSession,
 			selectedWorkspaceOverviewPath: workspace.selectedWorkspaceOverviewPath,
-			setSelectedWorkspaceOverviewPath: workspace.setSelectedWorkspaceOverviewPath,
+			setSelectedWorkspaceOverviewPath:
+				workspace.setSelectedWorkspaceOverviewPath,
 			projects: workspace.projects,
 			startProjectSession: workspace.startProjectSession,
 			projectDefaultAgents: workspace.projectDefaultAgents,

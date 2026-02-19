@@ -567,10 +567,7 @@ impl LinuxUsersConfig {
         // Fast path: if socket exists AND is connectable, everything is healthy.
         if expected_socket.exists() {
             if let Ok(_stream) = std::os::unix::net::UnixStream::connect(&expected_socket) {
-                debug!(
-                    "oqto-runner socket healthy: {}",
-                    expected_socket.display()
-                );
+                debug!("oqto-runner socket healthy: {}", expected_socket.display());
                 return Ok(());
             }
             debug!(
@@ -700,8 +697,12 @@ impl LinuxUsersConfig {
             let temp_file = format!("/tmp/mmry-config-{}.toml", uid);
             let config_path_str = config_path.to_string_lossy().to_string();
             std::fs::write(&temp_file, output).context("writing temp mmry config")?;
-            run_privileged_command(self.use_sudo, "/usr/bin/cp", &[&temp_file, &config_path_str])
-                .context("copying mmry config")?;
+            run_privileged_command(
+                self.use_sudo,
+                "/usr/bin/cp",
+                &[&temp_file, &config_path_str],
+            )
+            .context("copying mmry config")?;
             run_privileged_command(
                 self.use_sudo,
                 "/usr/bin/chown",
@@ -728,10 +729,10 @@ impl LinuxUsersConfig {
         let mut used_uids = std::collections::HashSet::new();
         for line in passwd.lines() {
             let parts: Vec<&str> = line.split(':').collect();
-            if parts.len() >= 3 {
-                if let Ok(uid) = parts[2].parse::<u32>() {
-                    used_uids.insert(uid);
-                }
+            if parts.len() >= 3
+                && let Ok(uid) = parts[2].parse::<u32>()
+            {
+                used_uids.insert(uid);
             }
         }
 
@@ -772,15 +773,14 @@ impl LinuxUsersConfig {
         let path = format!("{}/{}", dir, filename);
 
         if is_root {
-            std::fs::create_dir_all(dir)
-                .with_context(|| format!("creating directory {}", dir))?;
-            std::fs::write(&path, content)
-                .with_context(|| format!("writing {}", path))?;
+            std::fs::create_dir_all(dir).with_context(|| format!("creating directory {}", dir))?;
+            std::fs::write(&path, content).with_context(|| format!("writing {}", path))?;
             // chown to user
-            run_privileged_command(false, "/usr/bin/chown", &[
-                &format!("{}:{}", linux_username, self.group),
-                &path,
-            ])?;
+            run_privileged_command(
+                false,
+                "/usr/bin/chown",
+                &[&format!("{}:{}", linux_username, self.group), &path],
+            )?;
         } else {
             // Write to temp file, then copy into place with correct ownership
             let temp = format!("/tmp/oqto-file-{}-{}", linux_username, filename);
@@ -788,10 +788,11 @@ impl LinuxUsersConfig {
                 .with_context(|| format!("writing temp file {}", temp))?;
             run_privileged_command(self.use_sudo, "/bin/mkdir", &["-p", dir])?;
             run_privileged_command(self.use_sudo, "/usr/bin/cp", &[&temp, &path])?;
-            run_privileged_command(self.use_sudo, "/usr/bin/chown", &[
-                &format!("{}:{}", linux_username, self.group),
-                &path,
-            ])?;
+            run_privileged_command(
+                self.use_sudo,
+                "/usr/bin/chown",
+                &[&format!("{}:{}", linux_username, self.group), &path],
+            )?;
             let _ = std::fs::remove_file(&temp);
         }
         Ok(())
@@ -977,10 +978,6 @@ fn get_user_home(username: &str) -> Result<Option<PathBuf>> {
     }
 }
 
-/// Find the oqto-runner binary.
-///
-/// Searches in common locations and PATH.
-
 /// Get the GECOS field (comment) of a Linux user.
 /// Used to verify which platform user_id owns a Linux account.
 fn get_user_gecos(username: &str) -> Result<Option<String>> {
@@ -1135,7 +1132,10 @@ fn try_usermgr(cmd: &str, args: &[&str]) -> Option<Result<()>> {
         }
         "mkdir" | "/bin/mkdir" if args.first() == Some(&"-p") => {
             let path = args.get(1)?;
-            Some(usermgr_request("mkdir", serde_json::json!({ "path": path })))
+            Some(usermgr_request(
+                "mkdir",
+                serde_json::json!({ "path": path }),
+            ))
         }
         "chown" | "/usr/bin/chown" => {
             if args.first() == Some(&"-R") && args.len() == 3 {
@@ -1178,13 +1178,12 @@ fn try_usermgr(cmd: &str, args: &[&str]) -> Option<Result<()>> {
             if let Some(uid_str) = args[1]
                 .strip_prefix("user@")
                 .and_then(|s| s.strip_suffix(".service"))
+                && let Ok(uid) = uid_str.parse::<u32>()
             {
-                if let Ok(uid) = uid_str.parse::<u32>() {
-                    return Some(usermgr_request(
-                        "start-user-service",
-                        serde_json::json!({ "uid": uid }),
-                    ));
-                }
+                return Some(usermgr_request(
+                    "start-user-service",
+                    serde_json::json!({ "uid": uid }),
+                ));
             }
             None
         }

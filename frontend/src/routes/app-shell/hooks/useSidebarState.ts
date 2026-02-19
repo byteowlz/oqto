@@ -25,21 +25,19 @@ export function useSidebarState(): SidebarState {
 	);
 
 	// Expanded state for project groups in sidebar (persisted to localStorage)
-	const [expandedProjects, setExpandedProjects] = useState<Set<string>>(
-		() => {
-			if (typeof window === "undefined") return new Set<string>();
-			try {
-				const stored = localStorage.getItem("oqto:expandedProjects");
-				if (stored) {
-					const parsed = JSON.parse(stored);
-					if (Array.isArray(parsed)) return new Set<string>(parsed);
-				}
-			} catch {
-				localStorage.removeItem("oqto:expandedProjects");
+	const [expandedProjects, setExpandedProjects] = useState<Set<string>>(() => {
+		if (typeof window === "undefined") return new Set<string>();
+		try {
+			const stored = localStorage.getItem("oqto:expandedProjects");
+			if (stored) {
+				const parsed = JSON.parse(stored);
+				if (Array.isArray(parsed)) return new Set<string>(parsed);
 			}
-			return new Set<string>();
-		},
-	);
+		} catch {
+			localStorage.removeItem("oqto:expandedProjects");
+		}
+		return new Set<string>();
+	});
 
 	// Persist expanded projects to localStorage
 	useEffect(() => {

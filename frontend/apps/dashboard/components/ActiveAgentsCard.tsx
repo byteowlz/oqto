@@ -6,8 +6,8 @@ import {
 	CardHeader,
 	CardTitle,
 } from "@/components/ui/card";
-import type { ChatSession } from "@/lib/control-plane-client";
 import type { AgentInfo } from "@/lib/agent-client";
+import type { ChatSession } from "@/lib/control-plane-client";
 import { formatSessionDate } from "@/lib/session-utils";
 import { cn } from "@/lib/utils";
 import type { WorkspaceSession } from "@/lib/workspace-session";

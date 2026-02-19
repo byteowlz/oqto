@@ -603,17 +603,14 @@ async function fetchEavsProviders(): Promise<EavsProvidersResponse> {
 async function syncUserConfigs(
 	userId?: string,
 ): Promise<SyncUserConfigsResponse> {
-	const res = await fetch(
-		controlPlaneApiUrl("/api/admin/users/sync-configs"),
-		{
-			method: "POST",
-			headers: {
-				...getAuthHeaders(),
-				"Content-Type": "application/json",
-			},
-			body: JSON.stringify(userId ? { user_id: userId } : {}),
+	const res = await fetch(controlPlaneApiUrl("/api/admin/users/sync-configs"), {
+		method: "POST",
+		headers: {
+			...getAuthHeaders(),
+			"Content-Type": "application/json",
 		},
-	);
+		body: JSON.stringify(userId ? { user_id: userId } : {}),
+	});
 	if (!res.ok) {
 		const text = await res.text();
 		throw new Error(text || `HTTP ${res.status}`);

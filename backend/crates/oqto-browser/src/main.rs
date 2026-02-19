@@ -413,7 +413,7 @@ fn main() -> Result<()> {
             send_command(
                 &cli.session,
                 timeout,
-            auto_start,
+                auto_start,
                 ActionPayload {
                     action: "wait",
                     data: WaitPayload {
@@ -869,20 +869,20 @@ fn print_clean_output(data: &Option<Value>) {
 
     // boolean queries
     for key in ["visible", "enabled", "checked"] {
-        if let Some(val) = obj.get(key) {
-            if let Some(b) = val.as_bool() {
-                println!("{b}");
-                return;
-            }
+        if let Some(val) = obj.get(key)
+            && let Some(b) = val.as_bool()
+        {
+            println!("{b}");
+            return;
         }
     }
 
     // count
-    if let Some(count) = obj.get("count") {
-        if let Some(n) = count.as_u64() {
-            println!("{n}");
-            return;
-        }
+    if let Some(count) = obj.get("count")
+        && let Some(n) = count.as_u64()
+    {
+        println!("{n}");
+        return;
     }
 
     // box (boundingbox)
@@ -969,10 +969,10 @@ fn print_clean_output(data: &Option<Value>) {
     }
 
     // Fallback: print data as compact JSON if non-empty
-    if !obj.is_empty() {
-        if let Ok(s) = serde_json::to_string(data) {
-            println!("{s}");
-        }
+    if !obj.is_empty()
+        && let Ok(s) = serde_json::to_string(data)
+    {
+        println!("{s}");
     }
 }
 
@@ -1044,10 +1044,7 @@ fn find_browserd_dir() -> Result<PathBuf> {
         for _ in 0..10 {
             // Check both "backend/crates/oqto-browserd" (from repo root)
             // and "crates/oqto-browserd" (from backend/)
-            for subpath in [
-                "backend/crates/oqto-browserd",
-                "crates/oqto-browserd",
-            ] {
+            for subpath in ["backend/crates/oqto-browserd", "crates/oqto-browserd"] {
                 let candidate = dir.join(subpath);
                 if candidate.join("node_modules").exists() {
                     return Ok(candidate);
@@ -1188,7 +1185,12 @@ fn send_command<T: Serialize>(
     send_raw(session, timeout, auto_start, &json)
 }
 
-fn send_raw(session: &str, timeout: Duration, auto_start: bool, json: &str) -> Result<ResponsePayload> {
+fn send_raw(
+    session: &str,
+    timeout: Duration,
+    auto_start: bool,
+    json: &str,
+) -> Result<ResponsePayload> {
     let mut conn = connect(session, timeout, auto_start)?;
     let mut line = json.to_string();
     if !line.ends_with('\n') {
@@ -1227,8 +1229,7 @@ fn connect(session: &str, timeout: Duration, auto_start: bool) -> Result<Connect
                 ));
             }
             ensure_daemon_running(session)?;
-            try_connect(session, timeout)
-                .context("Failed to connect to daemon after starting it")
+            try_connect(session, timeout).context("Failed to connect to daemon after starting it")
         }
     }
 }
@@ -1271,20 +1272,19 @@ fn ensure_daemon_running(session: &str) -> Result<()> {
     // Check if already running via pidfile
     let session_dir = agent_browser_session_dir(session);
     let pid_file = session_dir.join(format!("{session}.pid"));
-    if pid_file.exists() {
-        if let Ok(pid_str) = std::fs::read_to_string(&pid_file) {
-            if let Ok(pid) = pid_str.trim().parse::<i32>() {
-                // Check if process is alive using safe rustix wrapper
-                #[cfg(unix)]
-                {
-                    use rustix::process::{Pid, test_kill_process};
-                    if let Some(pid) = Pid::from_raw(pid) {
-                        if test_kill_process(pid).is_ok() {
-                            // Process exists but socket might not be ready yet
-                            return wait_for_socket(session, Duration::from_secs(10));
-                        }
-                    }
-                }
+    if pid_file.exists()
+        && let Ok(pid_str) = std::fs::read_to_string(&pid_file)
+        && let Ok(pid) = pid_str.trim().parse::<i32>()
+    {
+        // Check if process is alive using safe rustix wrapper
+        #[cfg(unix)]
+        {
+            use rustix::process::{Pid, test_kill_process};
+            if let Some(pid) = Pid::from_raw(pid)
+                && test_kill_process(pid).is_ok()
+            {
+                // Process exists but socket might not be ready yet
+                return wait_for_socket(session, Duration::from_secs(10));
             }
         }
     }
@@ -1349,12 +1349,12 @@ fn wait_for_socket(session: &str, timeout: Duration) -> Result<()> {
 fn which_node() -> Result<PathBuf> {
     // Prefer bun, then node
     for name in ["bun", "node"] {
-        if let Ok(output) = process::Command::new("which").arg(name).output() {
-            if output.status.success() {
-                let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                if !path.is_empty() {
-                    return Ok(PathBuf::from(path));
-                }
+        if let Ok(output) = process::Command::new("which").arg(name).output()
+            && output.status.success()
+        {
+            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !path.is_empty() {
+                return Ok(PathBuf::from(path));
             }
         }
     }
@@ -1380,9 +1380,7 @@ fn agent_browser_base_dir() -> PathBuf {
         return PathBuf::from(dir);
     }
     if let Ok(state_dir) = std::env::var("XDG_STATE_HOME") {
-        return PathBuf::from(state_dir)
-            .join("oqto")
-            .join("agent-browser");
+        return PathBuf::from(state_dir).join("oqto").join("agent-browser");
     }
     if let Some(home) = dirs::home_dir() {
         return home

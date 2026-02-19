@@ -60,18 +60,16 @@ export function useModelSelection(
 		[_normalizedWorkspacePath],
 	);
 
-	const [availableModels, setAvailableModels] = useState<PiModelInfo[]>(
-		() => {
-			if (!modelCacheKey) return [];
-			try {
-				const cached = localStorage.getItem(modelCacheKey);
-				if (cached) return JSON.parse(cached) as PiModelInfo[];
-			} catch {
-				// ignore
-			}
-			return [];
-		},
-	);
+	const [availableModels, setAvailableModels] = useState<PiModelInfo[]>(() => {
+		if (!modelCacheKey) return [];
+		try {
+			const cached = localStorage.getItem(modelCacheKey);
+			if (cached) return JSON.parse(cached) as PiModelInfo[];
+		} catch {
+			// ignore
+		}
+		return [];
+	});
 	const [selectedModelRef, setSelectedModelRef] = useState<string | null>(null);
 	const [pendingModelRef, setPendingModelRef] = useState<string | null>(null);
 	const [isSwitching, setIsSwitching] = useState(false);
@@ -136,6 +134,7 @@ export function useModelSelection(
 	]);
 
 	// Load available models - fetches once per session, retries if Pi not ready yet
+	// biome-ignore lint/correctness/useExhaustiveDependencies: availableModels.length is stable
 	useEffect(() => {
 		let active = true;
 		let retryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -156,10 +155,7 @@ export function useModelSelection(
 			if (attempt === 0 && availableModels.length === 0) setLoading(true);
 
 			getWsManager()
-				.agentGetAvailableModels(
-					targetSessionId,
-					workdir ?? undefined,
-				)
+				.agentGetAvailableModels(targetSessionId, workdir ?? undefined)
 				.then((result) => {
 					if (!active) return;
 					const models = (result as PiModelInfo[]) ?? [];
@@ -177,10 +173,7 @@ export function useModelSelection(
 					// Cache to localStorage for instant display on next load
 					if (models.length > 0 && modelCacheKey) {
 						try {
-							localStorage.setItem(
-								modelCacheKey,
-								JSON.stringify(models),
-							);
+							localStorage.setItem(modelCacheKey, JSON.stringify(models));
 						} catch {
 							// ignore quota errors
 						}
@@ -402,11 +395,7 @@ export function useModelSelection(
 				setSelectedModelRef(modelRef);
 				setIsSwitching(true);
 				try {
-					await manager.agentSetModel(
-						effectiveSessionId,
-						provider,
-						modelId,
-					);
+					await manager.agentSetModel(effectiveSessionId, provider, modelId);
 					// Only persist after confirmed success
 					await persistSelection(provider, modelId, modelRef);
 				} catch (err) {

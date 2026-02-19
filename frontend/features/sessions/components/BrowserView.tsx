@@ -13,7 +13,16 @@ import {
 	startBrowser,
 } from "@/lib/control-plane-client";
 import { cn } from "@/lib/utils";
-import { ArrowLeft, ArrowRight, Globe, Loader2, Maximize2, MessageSquare, Minimize2, RefreshCw } from "lucide-react";
+import {
+	ArrowLeft,
+	ArrowRight,
+	Globe,
+	Loader2,
+	Maximize2,
+	MessageSquare,
+	Minimize2,
+	RefreshCw,
+} from "lucide-react";
 import { useTheme } from "next-themes";
 import {
 	type KeyboardEvent,
@@ -89,7 +98,14 @@ function mapMouseButton(button: number): "left" | "right" | "middle" | "none" {
 	return "none";
 }
 
-export function BrowserView({ sessionId, workspacePath, className, onSendToChat, onExpand, onCollapse }: BrowserViewProps) {
+export function BrowserView({
+	sessionId,
+	workspacePath,
+	className,
+	onSendToChat,
+	onExpand,
+	onCollapse,
+}: BrowserViewProps) {
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
 	const containerRef = useRef<HTMLDivElement | null>(null);
 	const socketRef = useRef<WebSocket | null>(null);
@@ -145,13 +161,13 @@ export function BrowserView({ sessionId, workspacePath, className, onSendToChat,
 			`Use \`oqto-browser --session ${browserSessionId}\` to interact with it.`,
 			"",
 			"Quick reference:",
-			"  oqto-browser --session " + browserSessionId + " snapshot -i    # list interactive elements",
-			"  oqto-browser --session " + browserSessionId + " click @e1      # click element by ref",
-			"  oqto-browser --session " + browserSessionId + " fill @e2 \"text\" # fill input",
-			"  oqto-browser --session " + browserSessionId + " press Enter    # press key",
-			"  oqto-browser --session " + browserSessionId + " screenshot /tmp/shot.png",
-			"  oqto-browser --session " + browserSessionId + " open <url>     # navigate",
-			"  oqto-browser --session " + browserSessionId + " eval \"JS\"      # run JS in page",
+			`  oqto-browser --session ${browserSessionId} snapshot -i    # list interactive elements`,
+			`  oqto-browser --session ${browserSessionId} click @e1      # click element by ref`,
+			`  oqto-browser --session ${browserSessionId} fill @e2 "text" # fill input`,
+			`  oqto-browser --session ${browserSessionId} press Enter    # press key`,
+			`  oqto-browser --session ${browserSessionId} screenshot /tmp/shot.png`,
+			`  oqto-browser --session ${browserSessionId} open <url>     # navigate`,
+			`  oqto-browser --session ${browserSessionId} eval "JS"      # run JS in page`,
 		].join("\n");
 		onSendToChat(cmd);
 	}, [browserSessionId, onSendToChat]);
@@ -499,6 +515,7 @@ export function BrowserView({ sessionId, workspacePath, className, onSendToChat,
 	// - wheel: React registers as passive, preventing preventDefault()
 	// - beforeinput: block contentEditable from inserting text into the canvas DOM
 	// - paste: forward clipboard text to the remote browser instead
+	// biome-ignore lint/correctness/useExhaustiveDependencies: mapClientToDevice is stable
 	useEffect(() => {
 		const canvas = canvasRef.current;
 		if (!canvas) return;
@@ -663,7 +680,9 @@ export function BrowserView({ sessionId, workspacePath, className, onSendToChat,
 					<Input
 						value={urlInput}
 						onChange={(event) => setUrlInput(event.target.value)}
-						placeholder={isConnected ? "Enter URL" : "Enter URL to start browser"}
+						placeholder={
+							isConnected ? "Enter URL" : "Enter URL to start browser"
+						}
 						disabled={launching}
 						className="h-8 text-xs font-mono"
 					/>
@@ -716,7 +735,11 @@ export function BrowserView({ sessionId, workspacePath, className, onSendToChat,
 					onPointerCancel={handlePointerUp}
 					onKeyDown={handleKeyDown}
 					onKeyUp={handleKeyUp}
-					style={{ touchAction: "none", caretColor: "transparent", userSelect: "none" }}
+					style={{
+						touchAction: "none",
+						caretColor: "transparent",
+						userSelect: "none",
+					}}
 				/>
 				{connectionState !== "connected" && (
 					<div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/30">

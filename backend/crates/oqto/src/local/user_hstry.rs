@@ -11,7 +11,7 @@
 use anyhow::{Context, Result};
 use log::{debug, info, warn};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -199,7 +199,7 @@ impl UserHstryManager {
     }
 
     /// Wait for hstry socket to become available.
-    async fn wait_for_socket_ready(socket_path: &PathBuf) -> bool {
+    async fn wait_for_socket_ready(socket_path: &Path) -> bool {
         use tokio::time::{Duration, Instant, sleep};
 
         let deadline = Instant::now() + Duration::from_secs(5);

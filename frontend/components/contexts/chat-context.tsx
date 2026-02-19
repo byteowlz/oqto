@@ -5,12 +5,9 @@ import {
 	listChatHistory,
 	updateChatSession,
 } from "@/lib/api";
-import {
-	createPiSessionId,
-	normalizeWorkspacePath,
-} from "@/lib/session-utils";
-import type { WsMuxConnectionState } from "@/lib/ws-mux-types";
+import { createPiSessionId, normalizeWorkspacePath } from "@/lib/session-utils";
 import { getWsManager } from "@/lib/ws-manager";
+import type { WsMuxConnectionState } from "@/lib/ws-mux-types";
 import {
 	type ReactNode,
 	createContext,
@@ -306,9 +303,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 	const mergeOptimisticSessions = useCallback(
 		(history: ChatSession[]) => {
 			if (optimisticChatSessionsRef.current.size === 0) return history;
-			const optimistic = Array.from(
-				optimisticChatSessionsRef.current.values(),
-			);
+			const optimistic = Array.from(optimisticChatSessionsRef.current.values());
 			const byId = new Map(history.map((s) => [s.id, s]));
 			const byReadable = new Map(
 				history
@@ -354,8 +349,11 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 
 				const resolvedPath = normalizeWorkspacePath(session.cwd);
 				const derivedProjectName = resolvedPath
-					? (resolvedPath.replace(/\\/g, "/").split("/").filter(Boolean).pop() ??
-							null)
+					? (resolvedPath
+							.replace(/\\/g, "/")
+							.split("/")
+							.filter(Boolean)
+							.pop() ?? null)
 					: null;
 				const timestamp = session.last_activity || Date.now();
 
@@ -422,7 +420,8 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 	const refreshChatHistory = useCallback(async () => {
 		const now = Date.now();
 		if (prefetchInFlightRef.current) {
-			if (isPiDebugEnabled()) console.debug("[chat-context] refreshChatHistory skipped: in-flight");
+			if (isPiDebugEnabled())
+				console.debug("[chat-context] refreshChatHistory skipped: in-flight");
 			return;
 		}
 		// Bypass debounce when there's an active error (user clicking Retry)
@@ -431,7 +430,8 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 			!hasError &&
 			now - lastPrefetchRef.current < CHAT_HISTORY_PREFETCH_DEBOUNCE_MS
 		) {
-			if (isPiDebugEnabled()) console.debug("[chat-context] refreshChatHistory skipped: debounce");
+			if (isPiDebugEnabled())
+				console.debug("[chat-context] refreshChatHistory skipped: debounce");
 			return;
 		}
 		prefetchInFlightRef.current = true;
@@ -444,20 +444,25 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 			const merged = mergeRunnerSessions(mergeOptimisticSessions(normalized));
 			const withActive = mergeActiveSessions(merged);
 			if (isPiDebugEnabled()) {
-				console.debug("[chat-context] refreshChatHistory: fetched", history.length,
-					"sessions in", Math.round(t1 - t0) + "ms, total",
-					Math.round(performance.now() - t0) + "ms");
+				console.debug(
+					"[chat-context] refreshChatHistory: fetched",
+					history.length,
+					"sessions in",
+					`${Math.round(t1 - t0)}ms, total`,
+					`${Math.round(performance.now() - t0)}ms`,
+				);
 			}
 			// Preserve titles for sessions that were manually renamed by the user.
 			// The runner may have overwritten hstry with an auto-generated title
 			// between the user's rename and this refresh.
 			const manualTitles = manuallyRenamedRef.current;
-			const final_ = manualTitles.size > 0
-				? withActive.map((s) => {
-						const manualTitle = manualTitles.get(s.id);
-						return manualTitle ? { ...s, title: manualTitle } : s;
-					})
-				: withActive;
+			const final_ =
+				manualTitles.size > 0
+					? withActive.map((s) => {
+							const manualTitle = manualTitles.get(s.id);
+							return manualTitle ? { ...s, title: manualTitle } : s;
+						})
+					: withActive;
 			setChatHistory(final_);
 			setChatHistoryError(null);
 			writeCachedChatHistory(final_);
@@ -469,7 +474,12 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 		} finally {
 			prefetchInFlightRef.current = false;
 		}
-	}, [mergeActiveSessions, mergeOptimisticSessions, mergeRunnerSessions, normalizeHistory]);
+	}, [
+		mergeActiveSessions,
+		mergeOptimisticSessions,
+		mergeRunnerSessions,
+		normalizeHistory,
+	]);
 
 	useEffect(() => {
 		refreshChatHistory();
@@ -527,10 +537,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 				}
 			} catch (err) {
 				if (isPiDebugEnabled()) {
-					console.debug(
-						"[chat-context] Could not list active sessions:",
-						err,
-					);
+					console.debug("[chat-context] Could not list active sessions:", err);
 				}
 			}
 		};
@@ -624,8 +631,6 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 		[selectedChatSessionId, setSelectedChatSessionId],
 	);
 
-
-
 	const updateChatSessionTitleLocal = useCallback(
 		(sessionId: string, title: string, readableId?: string | null) => {
 			if (!title.trim()) return;
@@ -636,8 +641,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 					console.debug(
 						"[chat-context] Ignoring auto-title for manually renamed session:",
 						sessionId,
-						"auto:", title,
-						"manual:", manuallyRenamedRef.current.get(sessionId),
+						"auto:",
+						title,
+						"manual:",
+						manuallyRenamedRef.current.get(sessionId),
 					);
 				}
 				return;

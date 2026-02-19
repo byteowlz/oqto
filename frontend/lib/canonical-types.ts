@@ -222,7 +222,13 @@ export type NotifyLevel = "info" | "warning" | "error";
 /** State of an active Pi session on the runner. */
 export type ActivePiSession = {
 	session_id: string;
-	state: "starting" | "idle" | "streaming" | "compacting" | "aborting" | "stopping";
+	state:
+		| "starting"
+		| "idle"
+		| "streaming"
+		| "compacting"
+		| "aborting"
+		| "stopping";
 	cwd: string;
 	provider?: string;
 	model?: string;

@@ -1,3 +1,5 @@
+import type { WorkspaceOverviewValues } from "@/features/sessions/components/WorkspaceOverviewForm";
+import type { PiModelInfo } from "@/lib/api/default-chat";
 import {
 	type CreateProjectFromTemplateRequest,
 	type ProjectTemplateEntry,
@@ -5,17 +7,15 @@ import {
 	createProjectFromTemplate,
 	getWorkspacePiResources,
 	getWorkspaceSandbox,
+	listProjectTemplates,
+	listWorkspaceDirectories,
 	updateSettingsValues,
 	updateWorkspaceMeta,
 	updateWorkspaceSandbox,
-	listProjectTemplates,
-	listWorkspaceDirectories,
 } from "@/lib/control-plane-client";
-import type { PiModelInfo } from "@/lib/api/default-chat";
 import type { ProjectLogo } from "@/lib/control-plane-client";
 import { getWsManager } from "@/lib/ws-manager";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { WorkspaceOverviewValues } from "@/features/sessions/components/WorkspaceOverviewForm";
 
 export interface WorkspaceDirectory {
 	name: string;
@@ -189,8 +189,9 @@ export function useProjectActions(
 
 	const selectedTemplate = useMemo(
 		() =>
-			projectTemplates.find((template) => template.path === selectedTemplatePath) ??
-			null,
+			projectTemplates.find(
+				(template) => template.path === selectedTemplatePath,
+			) ?? null,
 		[projectTemplates, selectedTemplatePath],
 	);
 
@@ -246,7 +247,9 @@ export function useProjectActions(
 	useEffect(() => {
 		if (!newProjectDialogOpen) return;
 		if (selectedTemplatePath === lastTemplatePathRef.current) return;
-		const nextValues = buildSettingsFromDefaults(selectedTemplate?.defaults ?? null);
+		const nextValues = buildSettingsFromDefaults(
+			selectedTemplate?.defaults ?? null,
+		);
 		setNewProjectSettings(nextValues);
 		lastTemplatePathRef.current = selectedTemplatePath;
 	}, [

@@ -2,6 +2,7 @@
 
 import { useApp } from "@/hooks/use-app";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { formatTempId, getTempIdFromSession } from "@/lib/session-utils";
 import { useCallback, useMemo, useState } from "react";
 import {
 	BuiltinCardRenderer,
@@ -11,7 +12,6 @@ import {
 	DashboardSidebar,
 	QueryCard,
 } from "./components";
-import { formatTempId, getTempIdFromSession } from "@/lib/session-utils";
 import { useDashboardData } from "./hooks";
 import { getTranslations } from "./translations";
 import type {

@@ -28,6 +28,7 @@ use super::ws_multiplexed;
 
 /// Authentication mode for API routers.
 #[derive(Clone)]
+#[allow(clippy::large_enum_variant)]
 pub enum AuthMode {
     /// Standard JWT/cookie authentication.
     Jwt,
@@ -278,7 +279,6 @@ fn create_router_with_config_and_auth(
             "/admin/invite-codes/{code_id}/revoke",
             post(handlers::revoke_invite_code),
         )
-
         // Chat history routes (reads from disk, reads from hstry)
         .route("/chat-history", get(handlers::list_chat_history))
         .route(
@@ -333,7 +333,8 @@ fn create_router_with_config_and_auth(
         // TRX (issue tracking) now uses mux-only channel
         .with_state(state.clone());
 
-    let protected_routes = apply_auth_layers(protected_routes, state.clone(), auth_state, auth_mode);
+    let protected_routes =
+        apply_auth_layers(protected_routes, state.clone(), auth_state, auth_mode);
 
     // Public routes (no authentication)
     let public_routes = Router::new()
@@ -424,13 +425,16 @@ fn apply_auth_layers(
         AuthMode::Jwt => router.layer(middleware::from_fn_with_state(auth_state, auth_middleware)),
         AuthMode::Admin(admin_user) => {
             let admin_user = admin_user.clone();
-            router.layer(middleware::from_fn(move |mut req: axum::http::Request<axum::body::Body>, next: axum::middleware::Next| {
-                let admin_user = admin_user.clone();
-                async move {
-                    req.extensions_mut().insert(admin_user);
-                    next.run(req).await
-                }
-            }))
+            router.layer(middleware::from_fn(
+                move |mut req: axum::http::Request<axum::body::Body>,
+                      next: axum::middleware::Next| {
+                    let admin_user = admin_user.clone();
+                    async move {
+                        req.extensions_mut().insert(admin_user);
+                        next.run(req).await
+                    }
+                },
+            ))
         }
     }
 }
@@ -460,7 +464,6 @@ fn build_cors_layer(state: &AppState) -> CorsLayer {
         header::ACCEPT,
         header::ORIGIN,
         header::COOKIE,
-
     ];
 
     if allowed_origins.is_empty() {

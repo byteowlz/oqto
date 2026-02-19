@@ -1,5 +1,6 @@
 //! Service layer for chat history - business logic, caching, and search.
 
+use std::cmp::Reverse;
 use std::collections::HashMap;
 use std::env;
 use std::path::PathBuf;
@@ -135,7 +136,7 @@ pub async fn get_session_messages_async(session_id: &str) -> Result<Vec<ChatMess
         // Prune old entries (keep max 50)
         if cache.len() > 50 {
             let mut entries: Vec<_> = cache.iter().map(|(k, (_, t))| (k.clone(), *t)).collect();
-            entries.sort_by(|a, b| b.1.cmp(&a.1)); // Sort by time descending
+            entries.sort_by_key(|e| Reverse(e.1));
             for (key, _) in entries.into_iter().skip(50) {
                 cache.remove(&key);
             }
@@ -232,7 +233,7 @@ pub async fn get_session_messages_via_grpc_cached(
         // Prune old entries (keep max 50)
         if cache.len() > 50 {
             let mut entries: Vec<_> = cache.iter().map(|(k, (_, t))| (k.clone(), *t)).collect();
-            entries.sort_by(|a, b| b.1.cmp(&a.1));
+            entries.sort_by_key(|e| Reverse(e.1));
             for (key, _) in entries.into_iter().skip(50) {
                 cache.remove(&key);
             }

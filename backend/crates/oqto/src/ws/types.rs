@@ -405,8 +405,6 @@ pub enum MessagePart {
 // Internal Types
 // ============================================================================
 
-
-
 #[cfg(test)]
 mod tests_a2ui {
     use super::*;

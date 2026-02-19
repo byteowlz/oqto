@@ -82,9 +82,11 @@ const TrxView = lazy(() =>
 	})),
 );
 const WorkspaceOverviewPanel = lazy(() =>
-	import("@/features/sessions/components/WorkspaceOverviewPanel").then((mod) => ({
-		default: mod.WorkspaceOverviewPanel,
-	})),
+	import("@/features/sessions/components/WorkspaceOverviewPanel").then(
+		(mod) => ({
+			default: mod.WorkspaceOverviewPanel,
+		}),
+	),
 );
 const PreviewView = lazy(() =>
 	import("@/features/sessions/components/PreviewView").then((mod) => ({
@@ -396,21 +398,43 @@ export const SessionScreen = memo(function SessionScreen() {
 	const [activeView, setActiveViewRaw] = useState<ViewKey>(() => {
 		try {
 			const cached = localStorage.getItem("oqto:rightSidebarView");
-			if (cached && ["chat", "overview", "tasks", "files", "canvas", "memories", "terminal", "browser", "settings"].includes(cached)) {
+			if (
+				cached &&
+				[
+					"chat",
+					"overview",
+					"tasks",
+					"files",
+					"canvas",
+					"memories",
+					"terminal",
+					"browser",
+					"settings",
+				].includes(cached)
+			) {
 				return cached as ViewKey;
 			}
-		} catch { /* ignore */ }
+		} catch {
+			/* ignore */
+		}
 		// Mobile: chat is a tab, so default to it. Desktop: chat is always visible, default to files.
 		return window.innerWidth < 768 ? "chat" : "files";
 	});
 	const setActiveView = useCallback((view: ViewKey) => {
 		setActiveViewRaw(view);
-		try { localStorage.setItem("oqto:rightSidebarView", view); } catch { /* ignore */ }
+		try {
+			localStorage.setItem("oqto:rightSidebarView", view);
+		} catch {
+			/* ignore */
+		}
 	}, []);
 	const [tasksSubTab, setTasksSubTab] = useState<"todos" | "planner">("todos");
 	const [latestTodos, setLatestTodos] = useState<TodoItem[]>([]);
 	const openTodoCount = useMemo(
-		() => latestTodos.filter((t) => t.status === "pending" || t.status === "in_progress").length,
+		() =>
+			latestTodos.filter(
+				(t) => t.status === "pending" || t.status === "in_progress",
+			).length,
 		[latestTodos],
 	);
 	const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(false);
@@ -428,7 +452,8 @@ export const SessionScreen = memo(function SessionScreen() {
 		filename: string;
 		type: "file";
 	} | null>(null);
-	const [fileTreeState, setFileTreeState] = useState<FileTreeState>(initialFileTreeState);
+	const [fileTreeState, setFileTreeState] =
+		useState<FileTreeState>(initialFileTreeState);
 	const [pendingChatInput, setPendingChatInput] = useState<string | null>(null);
 
 	const handlePreviewFile = useCallback((filePath: string) => {
@@ -439,11 +464,13 @@ export const SessionScreen = memo(function SessionScreen() {
 		setPreviewFilePath(null);
 	}, []);
 
+	// biome-ignore lint/correctness/useExhaustiveDependencies: setActiveView is stable setState
 	const handleSendToChat = useCallback((text: string) => {
 		setPendingChatInput(text);
 		setActiveView("chat");
 	}, []);
 
+	// biome-ignore lint/correctness/useExhaustiveDependencies: setActiveView is stable setState
 	const handleOpenInCanvas = useCallback((filePath: string) => {
 		setActiveView("canvas");
 	}, []);
@@ -511,6 +538,7 @@ export const SessionScreen = memo(function SessionScreen() {
 		};
 	}, []);
 
+	// biome-ignore lint/correctness/useExhaustiveDependencies: setActiveView is stable setState
 	useEffect(() => {
 		if (!isMobileLayout) return;
 		if (normalizedOverviewPath) {
@@ -812,7 +840,7 @@ export const SessionScreen = memo(function SessionScreen() {
 						)}
 					>
 						{activeView === "chat" && chatPanel}
-									{activeView === "overview" && overviewPanel}
+						{activeView === "overview" && overviewPanel}
 						<div
 							className={cn(
 								"h-full flex flex-col",
@@ -852,7 +880,10 @@ export const SessionScreen = memo(function SessionScreen() {
 						{activeView === "canvas" && (
 							<div className="flex-1 min-h-0">
 								<Suspense fallback={viewLoadingFallback}>
-									<CanvasView workspacePath={normalizedWorkspacePath} onSaveAndAddToChat={handleCanvasSaveAndAddToChat} />
+									<CanvasView
+										workspacePath={normalizedWorkspacePath}
+										onSaveAndAddToChat={handleCanvasSaveAndAddToChat}
+									/>
 								</Suspense>
 							</div>
 						)}
@@ -881,12 +912,7 @@ export const SessionScreen = memo(function SessionScreen() {
 								)}
 							</div>
 						)}
-						<div
-							className={cn(
-								"h-full",
-								activeView !== "browser" && "hidden",
-							)}
-						>
+						<div className={cn("h-full", activeView !== "browser" && "hidden")}>
 							<Suspense fallback={viewLoadingFallback}>
 								<BrowserView
 									sessionId={selectedChatSessionId}
@@ -917,7 +943,9 @@ export const SessionScreen = memo(function SessionScreen() {
 						{expandedView === "canvas" ? (
 							<div className="flex-1 min-h-0 flex flex-col -m-4 xl:-m-6">
 								<div className="flex items-center justify-between px-3 py-1.5 border-b border-border bg-muted/30">
-									<span className="text-sm font-medium text-muted-foreground">Canvas</span>
+									<span className="text-sm font-medium text-muted-foreground">
+										Canvas
+									</span>
 									<button
 										type="button"
 										onClick={() => setExpandedView(null)}
@@ -929,7 +957,10 @@ export const SessionScreen = memo(function SessionScreen() {
 								</div>
 								<div className="flex-1 min-h-0">
 									<Suspense fallback={viewLoadingFallback}>
-										<CanvasView workspacePath={normalizedWorkspacePath} onSaveAndAddToChat={handleCanvasSaveAndAddToChat} />
+										<CanvasView
+											workspacePath={normalizedWorkspacePath}
+											onSaveAndAddToChat={handleCanvasSaveAndAddToChat}
+										/>
 									</Suspense>
 								</div>
 							</div>
@@ -960,7 +991,9 @@ export const SessionScreen = memo(function SessionScreen() {
 										type="button"
 										onClick={() => setIsSearchOpen((prev) => !prev)}
 										className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted/50 rounded transition-colors"
-										title={isSearchOpen ? "Close search (Esc)" : "Search (Ctrl+F)"}
+										title={
+											isSearchOpen ? "Close search (Esc)" : "Search (Ctrl+F)"
+										}
 									>
 										{isSearchOpen ? (
 											<X className="w-4 h-4" />
@@ -973,7 +1006,9 @@ export const SessionScreen = memo(function SessionScreen() {
 										onClick={() => setRightSidebarCollapsed((prev) => !prev)}
 										className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted/50 rounded transition-colors"
 										title={
-											rightSidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"
+											rightSidebarCollapsed
+												? "Expand sidebar"
+												: "Collapse sidebar"
 										}
 									>
 										{rightSidebarCollapsed ? (
@@ -989,7 +1024,8 @@ export const SessionScreen = memo(function SessionScreen() {
 											sessionId={selectedChatSessionId ?? undefined}
 											onResultSelect={({ lineNumber, messageId }) => {
 												const target =
-													messageId ?? (lineNumber ? `line-${lineNumber}` : null);
+													messageId ??
+													(lineNumber ? `line-${lineNumber}` : null);
 												if (target) setScrollToMessageId(target);
 											}}
 											isOpen={isSearchOpen}
@@ -1236,7 +1272,10 @@ export const SessionScreen = memo(function SessionScreen() {
 											</div>
 											<div className="flex-1 min-h-0">
 												<Suspense fallback={viewLoadingFallback}>
-													<CanvasView workspacePath={normalizedWorkspacePath} onSaveAndAddToChat={handleCanvasSaveAndAddToChat} />
+													<CanvasView
+														workspacePath={normalizedWorkspacePath}
+														onSaveAndAddToChat={handleCanvasSaveAndAddToChat}
+													/>
 												</Suspense>
 											</div>
 										</div>

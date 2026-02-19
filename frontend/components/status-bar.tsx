@@ -1,7 +1,7 @@
 "use client";
 
-import { ModelQuickSwitcher } from "@/components/model-quick-switcher";
 import { useSelectedChat } from "@/components/contexts";
+import { ModelQuickSwitcher } from "@/components/model-quick-switcher";
 import { useApp } from "@/hooks/use-app";
 import { useCurrentUser } from "@/hooks/use-auth";
 import { controlPlaneApiUrl, getAuthHeaders } from "@/lib/control-plane-client";
@@ -49,7 +49,8 @@ async function fetchAdminStats(): Promise<AdminStats> {
 
 export function StatusBar() {
 	const { data: user } = useCurrentUser();
-	const { workspaceSessions, selectedChatSessionId, runnerSessionCount } = useApp();
+	const { workspaceSessions, selectedChatSessionId, runnerSessionCount } =
+		useApp();
 	const { selectedChatFromHistory } = useSelectedChat();
 
 	const isAdmin = (user?.role ?? "").toLowerCase() === "admin";
@@ -181,7 +182,10 @@ class ModelSwitcherErrorBoundary extends Component<
 	render() {
 		if (this.state.error) {
 			return (
-				<span className="text-[10px] text-red-400" title={this.state.error.message}>
+				<span
+					className="text-[10px] text-red-400"
+					title={this.state.error.message}
+				>
 					model switcher error
 				</span>
 			);
@@ -190,7 +194,9 @@ class ModelSwitcherErrorBoundary extends Component<
 	}
 }
 
-function ModelQuickSwitcherSafe(props: Parameters<typeof ModelQuickSwitcher>[0]) {
+function ModelQuickSwitcherSafe(
+	props: Parameters<typeof ModelQuickSwitcher>[0],
+) {
 	return (
 		<ModelSwitcherErrorBoundary>
 			<ModelQuickSwitcher {...props} />

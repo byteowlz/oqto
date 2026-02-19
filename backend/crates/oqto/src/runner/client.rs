@@ -1285,6 +1285,7 @@ impl PiSubscription {
 
 /// Event from a Pi subscription.
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
 pub enum PiSubscriptionEvent {
     /// A canonical event from the session (translated from Pi native events).
     Event(oqto_protocol::events::Event),

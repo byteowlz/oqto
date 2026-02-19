@@ -9,11 +9,11 @@ use std::process::ExitCode;
 
 use anyhow::{Context, Result, anyhow};
 use clap::{Parser, Subcommand};
-use reqwest::StatusCode;
 use http_body_util::{BodyExt, Full};
 use hyper::body::Bytes;
 use hyper_util::client::legacy::Client as HyperClient;
 use hyper_util::rt::TokioExecutor;
+use reqwest::StatusCode;
 
 #[cfg(unix)]
 use hyperlocal::{UnixConnector, Uri as UnixUri};
@@ -679,6 +679,7 @@ impl OqtoResponse {
     }
 }
 
+#[allow(clippy::large_enum_variant)]
 enum OqtoTransport {
     Http {
         base_url: String,
@@ -717,9 +718,7 @@ impl OqtoClient {
             let use_admin_socket = admin_socket_requested || base_url == DEFAULT_SERVER_URL;
             let can_use_admin_socket = auth_token.is_none()
                 && use_admin_socket
-                && socket_path
-                    .as_ref()
-                    .is_some_and(|path| path.exists());
+                && socket_path.as_ref().is_some_and(|path| path.exists());
 
             if can_use_admin_socket {
                 let socket_path = socket_path.expect("admin socket path");
@@ -859,7 +858,8 @@ impl OqtoClient {
             #[cfg(unix)]
             OqtoTransport::Unix { .. } => {
                 let payload = serde_json::to_vec(body).context("serializing JSON")?;
-                self.request_unix(hyper::Method::POST, path, Some(payload)).await
+                self.request_unix(hyper::Method::POST, path, Some(payload))
+                    .await
             }
         }
     }
@@ -935,7 +935,10 @@ async fn handle_status(client: &OqtoClient, json: bool) -> Result<()> {
 
     if response.status().is_success() {
         if json {
-            println!(r#"{{"status": "ok", "server": "{}"}}"#, client.display_url());
+            println!(
+                r#"{{"status": "ok", "server": "{}"}}"#,
+                client.display_url()
+            );
         } else {
             println!("Server is running at {}", client.display_url());
         }
@@ -1947,17 +1950,25 @@ async fn handle_user(client: &OqtoClient, command: UserCommand, json: bool) -> R
                     let user: serde_json::Value =
                         serde_json::from_str(&body_text).unwrap_or_default();
                     println!("User created:");
-                    println!("  Username:       {}", user["username"].as_str().unwrap_or(&username));
-                    println!("  Email:          {}", user["email"].as_str().unwrap_or(&email));
-                    println!("  Role:           {}", user["role"].as_str().unwrap_or(&role));
+                    println!(
+                        "  Username:       {}",
+                        user["username"].as_str().unwrap_or(&username)
+                    );
+                    println!(
+                        "  Email:          {}",
+                        user["email"].as_str().unwrap_or(&email)
+                    );
+                    println!(
+                        "  Role:           {}",
+                        user["role"].as_str().unwrap_or(&role)
+                    );
                     if let Some(lu) = user["linux_username"].as_str() {
                         println!("  Linux user:     {lu}");
                     }
                     println!("  ID:             {}", user["id"].as_str().unwrap_or("?"));
                 }
             } else {
-                let err: serde_json::Value =
-                    serde_json::from_str(&body_text).unwrap_or_default();
+                let err: serde_json::Value = serde_json::from_str(&body_text).unwrap_or_default();
                 let msg = err["error"]
                     .as_str()
                     .or_else(|| err["message"].as_str())
@@ -2183,9 +2194,7 @@ async fn handle_user(client: &OqtoClient, command: UserCommand, json: bool) -> R
 
         UserCommand::SyncConfigs { user } => {
             let body = serde_json::json!({ "user_id": user });
-            let response = client
-                .post_json("/admin/users/sync-configs", &body)
-                .await?;
+            let response = client.post_json("/admin/users/sync-configs", &body).await?;
 
             if !response.status().is_success() {
                 anyhow::bail!("Server returned error: {}", response.status().as_u16());
@@ -2260,7 +2269,11 @@ async fn handle_user(client: &OqtoClient, command: UserCommand, json: bool) -> R
                 display_name.as_deref(),
                 database.as_deref(),
                 &user_id,
-                if no_linux_user { None } else { Some(&linux_username) },
+                if no_linux_user {
+                    None
+                } else {
+                    Some(&linux_username)
+                },
                 json,
             )
             .await?;
@@ -2721,9 +2734,7 @@ async fn provision_eavs_for_user(
     budget: Option<f64>,
     json_output: bool,
 ) -> Result<String> {
-    use oqto::eavs::{
-        generate_pi_models_json, CreateKeyRequest, EavsClient, KeyPermissions,
-    };
+    use oqto::eavs::{CreateKeyRequest, EavsClient, KeyPermissions, generate_pi_models_json};
 
     let eavs_base = eavs_url.trim_end_matches('/');
     let eavs = EavsClient::new(eavs_base, master_key.unwrap_or(""))
@@ -2755,8 +2766,8 @@ async fn provision_eavs_for_user(
         println!("Creating eavs virtual key...");
     }
 
-    let mut key_req = CreateKeyRequest::new(format!("oqto-user-{}", oqto_username))
-        .oauth_user(oqto_username);
+    let mut key_req =
+        CreateKeyRequest::new(format!("oqto-user-{}", oqto_username)).oauth_user(oqto_username);
     if let Some(budget_usd) = budget {
         key_req = key_req.permissions(KeyPermissions::with_budget(budget_usd));
     }
@@ -2808,7 +2819,11 @@ fn write_file_as_user(username: &str, path: &str, content: &str) -> Result<()> {
             .status()
             .with_context(|| format!("Failed to create directory {}", parent.display()))?;
         if !status.success() {
-            anyhow::bail!("Failed to create directory {} for {}", parent.display(), username);
+            anyhow::bail!(
+                "Failed to create directory {} for {}",
+                parent.display(),
+                username
+            );
         }
     }
 

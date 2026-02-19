@@ -1,5 +1,6 @@
 //! Chat history handlers.
 
+use std::cmp::Reverse;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
@@ -84,7 +85,7 @@ pub(crate) fn get_runner_for_user(
 
 fn merge_duplicate_sessions(mut sessions: Vec<ChatSession>) -> Vec<ChatSession> {
     // Keep newest sessions first so we can prefer the freshest metadata.
-    sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    sessions.sort_by_key(|s| Reverse(s.updated_at));
 
     let mut by_id: HashMap<String, ChatSession> = HashMap::new();
     let mut by_source: HashMap<String, String> = HashMap::new();
@@ -166,7 +167,7 @@ fn merge_duplicate_sessions(mut sessions: Vec<ChatSession>) -> Vec<ChatSession> 
     }
 
     let mut merged: Vec<ChatSession> = by_id.into_values().collect();
-    merged.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    merged.sort_by_key(|s| Reverse(s.updated_at));
     merged
 }
 
@@ -237,20 +238,21 @@ pub async fn list_chat_history(
         ));
     }
 
-    if sessions.is_empty() && !multi_user {
-        if let Some(hstry) = state.hstry.as_ref() {
-            match crate::history::repository::list_sessions_via_grpc(hstry).await {
-                Ok(found) => {
-                    sessions = found;
-                }
-                Err(e) => {
-                    tracing::error!("Failed to list sessions via hstry gRPC: {}", e);
-                    return Err(ApiError::service_unavailable(format!(
-                        "Chat history service (hstry) is not reachable: {}. \
+    if sessions.is_empty()
+        && !multi_user
+        && let Some(hstry) = state.hstry.as_ref()
+    {
+        match crate::history::repository::list_sessions_via_grpc(hstry).await {
+            Ok(found) => {
+                sessions = found;
+            }
+            Err(e) => {
+                tracing::error!("Failed to list sessions via hstry gRPC: {}", e);
+                return Err(ApiError::service_unavailable(format!(
+                    "Chat history service (hstry) is not reachable: {}. \
                      Try restarting it with: hstry service start",
-                        e
-                    )));
-                }
+                    e
+                )));
             }
         }
     }
@@ -268,7 +270,7 @@ pub async fn list_chat_history(
         sessions.retain(|s| !s.is_child);
     }
 
-    sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    sessions.sort_by_key(|s| Reverse(s.updated_at));
 
     if let Some(limit) = query.limit {
         sessions.truncate(limit);
@@ -636,7 +638,7 @@ pub async fn list_chat_history_grouped(
     let mut result: Vec<GroupedChatHistory> = grouped
         .into_iter()
         .map(|(workspace_path, mut sessions)| {
-            sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+            sessions.sort_by_key(|s| Reverse(s.updated_at));
             if let Some(limit) = query.limit {
                 sessions.truncate(limit);
             }
@@ -653,11 +655,7 @@ pub async fn list_chat_history_grouped(
         .filter(|g| !g.sessions.is_empty())
         .collect();
 
-    result.sort_by(|a, b| {
-        let a_updated = a.sessions.first().map(|s| s.updated_at).unwrap_or(0);
-        let b_updated = b.sessions.first().map(|s| s.updated_at).unwrap_or(0);
-        b_updated.cmp(&a_updated)
-    });
+    result.sort_by_key(|g| Reverse(g.sessions.first().map(|s| s.updated_at).unwrap_or(0)));
 
     debug!(user_id = %user.id(), count = result.len(), source = source, "Listed grouped chat history");
     Ok(Json(result))

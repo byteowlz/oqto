@@ -162,5 +162,3 @@ fn get_settings_service(state: &AppState, app: &str) -> ApiResult<Arc<SettingsSe
     }
     .ok_or_else(|| ApiError::not_found(format!("Settings for app '{}' not found", app)))
 }
-
-

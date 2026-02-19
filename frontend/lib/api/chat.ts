@@ -5,8 +5,8 @@
 
 import type {
 	AgentMessage,
-	MessageWithParts,
 	MessagePart,
+	MessageWithParts,
 } from "../agent-client";
 import { authFetch, controlPlaneApiUrl, readApiError } from "./client";
 
@@ -221,9 +221,7 @@ export async function getChatMessages(
 // ============================================================================
 
 /** Convert a ChatMessage (from disk) to MessageWithParts (for rendering) */
-export function convertChatMessageToAgent(
-	msg: ChatMessage,
-): MessageWithParts {
+export function convertChatMessageToAgent(msg: ChatMessage): MessageWithParts {
 	// Convert parts
 	const parts: MessagePart[] = msg.parts.map((part) => ({
 		id: part.id,

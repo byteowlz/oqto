@@ -23,6 +23,7 @@ use super::state::AppState;
 
 /// Request to start a new delegated session.
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct StartDelegateRequest {
     /// Project directory for the session.
     pub directory: String,
@@ -34,6 +35,7 @@ pub struct StartDelegateRequest {
 
 /// Request to send a prompt to an existing session.
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct PromptRequest {
     /// The prompt to send.
     pub prompt: String,
@@ -41,6 +43,7 @@ pub struct PromptRequest {
 
 /// Query parameters for messages endpoint.
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct MessagesQuery {
     /// Maximum number of messages to return.
     #[serde(default = "default_limit")]

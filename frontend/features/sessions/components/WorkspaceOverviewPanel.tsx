@@ -12,7 +12,10 @@ import {
 import type { PiModelInfo } from "@/lib/api/default-chat";
 import { getWsManager } from "@/lib/ws-manager";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { WorkspaceOverviewForm, type WorkspaceOverviewValues } from "./WorkspaceOverviewForm";
+import {
+	WorkspaceOverviewForm,
+	type WorkspaceOverviewValues,
+} from "./WorkspaceOverviewForm";
 
 export interface WorkspaceOverviewPanelProps {
 	workspacePath: string;
@@ -67,17 +70,19 @@ export function WorkspaceOverviewPanel({
 					.catch(() => [] as PiModelInfo[]),
 			]);
 
-			const defaultProvider = settings["defaultProvider"]?.value as
+			const defaultProvider = settings.defaultProvider?.value as
 				| string
 				| undefined;
-			const defaultModel = settings["defaultModel"]?.value as string | undefined;
+			const defaultModel = settings.defaultModel?.value as string | undefined;
 			const modelRef =
 				defaultProvider && defaultModel
 					? `${defaultProvider}/${defaultModel}`
 					: null;
 
 			const skills = resources.skills.map((skill) => skill.name);
-			const extensions = resources.extensions.map((extension) => extension.name);
+			const extensions = resources.extensions.map(
+				(extension) => extension.name,
+			);
 			const selectedSkills = resources.skills
 				.filter((skill) => skill.selected)
 				.map((skill) => skill.name)
@@ -90,9 +95,9 @@ export function WorkspaceOverviewPanel({
 			const nextValues: WorkspaceOverviewValues = {
 				displayName: meta.display_name ?? "",
 				sandboxProfile: sandbox.profile || "development",
-				defaultModelRef: modelRef || (models[0]
-					? `${models[0].provider}/${models[0].id}`
-					: null),
+				defaultModelRef:
+					modelRef ||
+					(models[0] ? `${models[0].provider}/${models[0].id}` : null),
 				skillsMode: resources.skills_mode,
 				extensionsMode: resources.extensions_mode,
 				selectedSkills,
@@ -133,7 +138,10 @@ export function WorkspaceOverviewPanel({
 				});
 			}
 
-			if (values.defaultModelRef && values.defaultModelRef !== initial.defaultModelRef) {
+			if (
+				values.defaultModelRef &&
+				values.defaultModelRef !== initial.defaultModelRef
+			) {
 				const [provider, model] = values.defaultModelRef.split("/");
 				if (provider && model) {
 					await updateSettingsValues(

@@ -146,9 +146,7 @@ function TimelineDot({
 				>
 					<div className="font-medium">
 						{displayTitle}
-						{tempIdLabel && (
-							<span className="opacity-60">[{tempIdLabel}]</span>
-						)}
+						{tempIdLabel && <span className="opacity-60">[{tempIdLabel}]</span>}
 					</div>
 					<div className="text-muted-foreground">{formattedDate}</div>
 					{session.message_count > 0 && (

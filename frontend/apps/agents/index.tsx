@@ -5,12 +5,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { useApp } from "@/hooks/use-app";
-import { fileserverProxyBaseUrl } from "@/lib/control-plane-client";
 import {
 	type AgentInfo,
 	fetchAgents,
 	sendPartsAsync,
 } from "@/lib/agent-client";
+import { fileserverProxyBaseUrl } from "@/lib/control-plane-client";
 import { cn } from "@/lib/utils";
 import { Save, Search } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";

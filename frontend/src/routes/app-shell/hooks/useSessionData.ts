@@ -3,10 +3,7 @@ import type {
 	HstrySearchHit,
 	ProjectLogo,
 } from "@/lib/control-plane-client";
-import {
-	formatSessionDate,
-	getTempIdFromSession,
-} from "@/lib/session-utils";
+import { formatSessionDate, getTempIdFromSession } from "@/lib/session-utils";
 import { useCallback, useMemo } from "react";
 import type { SessionHierarchy, SessionsByProject } from "../SidebarSessions";
 import type { WorkspaceDirectory } from "./useProjectActions";
@@ -334,8 +331,14 @@ export function useSessionData({
 
 			let comparison = 0;
 			if (projectSortBy === "date") {
-				const aLatest = Math.max(...a.sessions.map((s) => s.updated_at ?? 0), 0);
-				const bLatest = Math.max(...b.sessions.map((s) => s.updated_at ?? 0), 0);
+				const aLatest = Math.max(
+					...a.sessions.map((s) => s.updated_at ?? 0),
+					0,
+				);
+				const bLatest = Math.max(
+					...b.sessions.map((s) => s.updated_at ?? 0),
+					0,
+				);
 				comparison = bLatest - aLatest;
 			} else if (projectSortBy === "name") {
 				comparison = a.name.localeCompare(b.name);

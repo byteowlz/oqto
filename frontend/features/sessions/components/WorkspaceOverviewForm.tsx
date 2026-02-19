@@ -79,7 +79,7 @@ export function WorkspaceOverviewForm({
 				nextMode === "custom" && values.selectedSkills.length === 0
 					? [...availableSkills]
 					: values.selectedSkills;
-				update({ skillsMode: nextMode, selectedSkills: selected });
+			update({ skillsMode: nextMode, selectedSkills: selected });
 			return;
 		}
 		const selected =
@@ -89,10 +89,7 @@ export function WorkspaceOverviewForm({
 		update({ extensionsMode: nextMode, selectedExtensions: selected });
 	};
 
-	const toggleSelection = (
-		key: "skills" | "extensions",
-		item: string,
-	) => {
+	const toggleSelection = (key: "skills" | "extensions", item: string) => {
 		if (key === "skills") {
 			const set = new Set(values.selectedSkills);
 			if (set.has(item)) {
@@ -138,14 +135,13 @@ export function WorkspaceOverviewForm({
 			<div className="grid grid-cols-1 md:grid-cols-3 gap-2">
 				{items.length === 0 && (
 					<div className="text-xs text-muted-foreground">
-						{locale === "de"
-							? "Keine Einträge gefunden"
-							: "No entries found"}
+						{locale === "de" ? "Keine Einträge gefunden" : "No entries found"}
 					</div>
 				)}
 				{items.map((item) => {
 					const checked = mode === "all" || selected.includes(item);
 					return (
+						// biome-ignore lint/a11y/noLabelWithoutControl: label is associated via htmlFor
 						<label
 							key={item}
 							className={cn(
@@ -209,16 +205,12 @@ export function WorkspaceOverviewForm({
 				</p>
 				<Select
 					value={selectedModelValue}
-					onValueChange={(value) =>
-						update({ defaultModelRef: value || null })
-					}
+					onValueChange={(value) => update({ defaultModelRef: value || null })}
 				>
 					<SelectTrigger>
 						<SelectValue
 							placeholder={
-								locale === "de"
-									? "Modell auswählen"
-									: "Select model"
+								locale === "de" ? "Modell auswählen" : "Select model"
 							}
 						/>
 					</SelectTrigger>

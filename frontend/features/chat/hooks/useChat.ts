@@ -471,6 +471,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 		[applyThrottledSnapshot],
 	);
 
+	// biome-ignore lint/correctness/useExhaustiveDependencies: mergeServerMessages/normalizeMessages are stable refs
 	const fetchHistoryMessages = useCallback(
 		async (sessionId: string) => {
 			try {
@@ -1753,6 +1754,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 	// frequently-changing callback refs. We use handleAgentEventRef (a stable
 	// ref) to dispatch events. This prevents the effect from re-running during
 	// streaming (which would reset streamingMessageRef and lose the user message).
+	// biome-ignore lint/correctness/useExhaustiveDependencies: stable deps intentionally omitted
 	useEffect(() => {
 		// Unsubscribe from previous session
 		if (unsubscribeRef.current) {

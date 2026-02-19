@@ -121,7 +121,9 @@ export const ChatInputArea = memo(
 		const [showFileMentionPopup, setShowFileMentionPopup] = useState(false);
 		const [fileMentionQuery, setFileMentionQuery] = useState("");
 
-		const [fileAttachments, setFileAttachments] = useState<FileAttachment[]>([]);
+		const [fileAttachments, setFileAttachments] = useState<FileAttachment[]>(
+			[],
+		);
 		const [pendingUploads, setPendingUploads] = useState<PendingUpload[]>([]);
 		const [isUploading, setIsUploading] = useState(false);
 
@@ -185,7 +187,8 @@ export const ChatInputArea = memo(
 		const popupRafRef = useRef<number | null>(null);
 
 		const scheduleDeferredUpdates = useCallback((value: string) => {
-			if (popupRafRef.current !== null) cancelAnimationFrame(popupRafRef.current);
+			if (popupRafRef.current !== null)
+				cancelAnimationFrame(popupRafRef.current);
 			popupRafRef.current = requestAnimationFrame(() => {
 				popupRafRef.current = null;
 				startTransition(() => {
@@ -257,7 +260,12 @@ export const ChatInputArea = memo(
 				// Defer all React state updates
 				scheduleDeferredUpdates(value);
 			},
-			[dictation.isActive, resizeTextarea, notifyDraft, scheduleDeferredUpdates],
+			[
+				dictation.isActive,
+				resizeTextarea,
+				notifyDraft,
+				scheduleDeferredUpdates,
+			],
 		);
 
 		// ---------------------------------------------------------------
@@ -265,7 +273,11 @@ export const ChatInputArea = memo(
 		// ---------------------------------------------------------------
 		const handleSend = useCallback(() => {
 			const text = messageInputRef.current.trim();
-			if (!text && pendingUploads.length === 0 && fileAttachments.length === 0) {
+			if (
+				!text &&
+				pendingUploads.length === 0 &&
+				fileAttachments.length === 0
+			) {
 				return;
 			}
 
@@ -292,12 +304,16 @@ export const ChatInputArea = memo(
 			(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
 				const sq = slashQueryRef.current;
 				if (showSlashPopup && sq.isSlash && !sq.args) {
-					if (["ArrowDown", "ArrowUp", "Enter", "Tab", "Escape"].includes(e.key)) {
+					if (
+						["ArrowDown", "ArrowUp", "Enter", "Tab", "Escape"].includes(e.key)
+					) {
 						return;
 					}
 				}
 				if (showFileMentionPopup) {
-					if (["ArrowDown", "ArrowUp", "Enter", "Tab", "Escape"].includes(e.key)) {
+					if (
+						["ArrowDown", "ArrowUp", "Enter", "Tab", "Escape"].includes(e.key)
+					) {
 						return;
 					}
 				}
@@ -343,11 +359,15 @@ export const ChatInputArea = memo(
 					if (item.kind === "file") {
 						const file = item.getAsFile();
 						if (file) {
-							const isGenericName = /^image\.(png|gif|jpg|jpeg|webp)$/i.test(file.name);
+							const isGenericName = /^image\.(png|gif|jpg|jpeg|webp)$/i.test(
+								file.name,
+							);
 							if (isGenericName) {
 								const ext = file.name.split(".").pop() || "png";
 								const uniqueName = `pasted-image-${Date.now()}-${imageIndex++}.${ext}`;
-								const renamedFile = new File([file], uniqueName, { type: file.type });
+								const renamedFile = new File([file], uniqueName, {
+									type: file.type,
+								});
 								files.push(renamedFile);
 							} else {
 								files.push(file);
@@ -449,7 +469,11 @@ export const ChatInputArea = memo(
 						<SlashCommandPopup
 							commands={slashCommands}
 							query={slashQueryRef.current.command}
-							isOpen={showSlashPopup && slashQueryRef.current.isSlash && !slashQueryRef.current.args}
+							isOpen={
+								showSlashPopup &&
+								slashQueryRef.current.isSlash &&
+								!slashQueryRef.current.args
+							}
 							onSelect={handleSlashCommandSelect}
 						/>
 

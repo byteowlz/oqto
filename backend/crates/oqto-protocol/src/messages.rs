@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use hstry_core::parts::{Part, Sender, SenderType};
+use hstry_core::parts::{Part, Sender};
 
 /// A conversation message. Stored in hstry, rendered by the frontend.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -140,7 +140,7 @@ pub struct Usage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hstry_core::parts::Part;
+    use hstry_core::parts::{Part, SenderType};
 
     #[test]
     fn test_message_serialization() {

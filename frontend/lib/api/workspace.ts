@@ -5,15 +5,18 @@
 import { authFetch, controlPlaneApiUrl, readApiError } from "./client";
 import type {
 	WorkspaceMeta,
-	WorkspaceSandboxConfig,
 	WorkspacePiResources,
 	WorkspacePiResourcesUpdate,
+	WorkspaceSandboxConfig,
 } from "./types";
 
 export async function getWorkspaceMeta(
 	workspacePath: string,
 ): Promise<WorkspaceMeta> {
-	const url = new URL(controlPlaneApiUrl("/api/workspace/meta"), window.location.origin);
+	const url = new URL(
+		controlPlaneApiUrl("/api/workspace/meta"),
+		window.location.origin,
+	);
 	url.searchParams.set("workspace_path", workspacePath);
 	const res = await authFetch(url.toString(), {
 		cache: "no-store",
@@ -27,7 +30,10 @@ export async function updateWorkspaceMeta(
 	workspacePath: string,
 	payload: WorkspaceMeta,
 ): Promise<WorkspaceMeta> {
-	const url = new URL(controlPlaneApiUrl("/api/workspace/meta"), window.location.origin);
+	const url = new URL(
+		controlPlaneApiUrl("/api/workspace/meta"),
+		window.location.origin,
+	);
 	url.searchParams.set("workspace_path", workspacePath);
 	const res = await authFetch(url.toString(), {
 		method: "PATCH",
@@ -42,7 +48,10 @@ export async function updateWorkspaceMeta(
 export async function getWorkspaceSandbox(
 	workspacePath: string,
 ): Promise<WorkspaceSandboxConfig> {
-	const url = new URL(controlPlaneApiUrl("/api/workspace/sandbox"), window.location.origin);
+	const url = new URL(
+		controlPlaneApiUrl("/api/workspace/sandbox"),
+		window.location.origin,
+	);
 	url.searchParams.set("workspace_path", workspacePath);
 	const res = await authFetch(url.toString(), {
 		cache: "no-store",
@@ -56,7 +65,10 @@ export async function updateWorkspaceSandbox(
 	workspacePath: string,
 	payload: { profile: string },
 ): Promise<WorkspaceSandboxConfig> {
-	const url = new URL(controlPlaneApiUrl("/api/workspace/sandbox"), window.location.origin);
+	const url = new URL(
+		controlPlaneApiUrl("/api/workspace/sandbox"),
+		window.location.origin,
+	);
 	url.searchParams.set("workspace_path", workspacePath);
 	const res = await authFetch(url.toString(), {
 		method: "PATCH",
@@ -87,12 +99,15 @@ export async function getWorkspacePiResources(
 export async function applyWorkspacePiResources(
 	payload: WorkspacePiResourcesUpdate,
 ): Promise<WorkspacePiResources> {
-	const res = await authFetch(controlPlaneApiUrl("/api/workspace/pi-resources"), {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify(payload),
-		credentials: "include",
-	});
+	const res = await authFetch(
+		controlPlaneApiUrl("/api/workspace/pi-resources"),
+		{
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(payload),
+			credentials: "include",
+		},
+	);
 	if (!res.ok) throw new Error(await readApiError(res));
 	return res.json();
 }

@@ -4,8 +4,8 @@ import { MarkdownRenderer } from "@/components/data-display";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import {
-	type MessageWithParts,
 	type AgentSession,
+	type MessageWithParts,
 	createSession,
 	fetchMessages,
 	fetchSessions,
