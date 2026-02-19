@@ -4341,7 +4341,7 @@ ${runner_socket_line}
 
 [local.linux_users]
 enabled = $linux_users_enabled
-prefix = "octo_"
+prefix = "oqto_"
 uid_start = 2000
 group = "oqto"
 shell = "/bin/zsh"
@@ -4522,7 +4522,7 @@ setup_linux_user_isolation() {
   log_step "Setting up Linux user isolation"
 
   local octo_group="oqto"
-  local user_prefix="octo_"
+  local user_prefix="oqto_"
   local server_user
 
   # Determine who will run the backend:
