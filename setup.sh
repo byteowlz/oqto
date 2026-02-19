@@ -272,6 +272,88 @@ clear_steps() {
   rm -f "$SETUP_STEPS_FILE"
 }
 
+# Load oqto.setup.toml config file and set environment variables.
+# This is a simple TOML parser that handles the flat structure generated
+# by the web configurator at oqto.dev/setup.
+load_setup_config() {
+  local config_file="$1"
+  local current_section=""
+
+  while IFS= read -r line; do
+    # Strip comments and whitespace
+    line="${line%%#*}"
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    [[ -z "$line" ]] && continue
+
+    # Section header
+    if [[ "$line" =~ ^\[([a-z_]+)\]$ ]]; then
+      current_section="${BASH_REMATCH[1]}"
+      continue
+    fi
+
+    # Key = value
+    if [[ "$line" =~ ^([a-z_]+)[[:space:]]*=[[:space:]]*(.+)$ ]]; then
+      local key="${BASH_REMATCH[1]}"
+      local val="${BASH_REMATCH[2]}"
+
+      # Strip quotes from string values
+      val="${val#\"}"
+      val="${val%\"}"
+
+      case "${current_section}.${key}" in
+        deployment.user_mode)       OQTO_USER_MODE="$val"; SELECTED_USER_MODE="$val" ;;
+        deployment.backend_mode)    OQTO_BACKEND_MODE="$val"; SELECTED_BACKEND_MODE="$val" ;;
+        deployment.container_runtime) OQTO_CONTAINER_RUNTIME="$val" ;;
+        deployment.workspace_dir)   WORKSPACE_DIR="$val" ;;
+        network.log_level)          OQTO_LOG_LEVEL="$val" ;;
+        network.caddy)              [[ "$val" == "true" ]] && SETUP_CADDY="yes" && OQTO_SETUP_CADDY="yes" ;;
+        network.domain)             DOMAIN="$val"; OQTO_DOMAIN="$val" ;;
+        admin.username)             ADMIN_USERNAME="$val" ;;
+        admin.email)                ADMIN_EMAIL="$val" ;;
+        providers.enabled)
+          # Parse TOML array: ["anthropic", "openai"]
+          val="${val#[}"
+          val="${val%]}"
+          CONFIGURED_PROVIDERS=""
+          local IFS=','
+          for provider in $val; do
+            provider="${provider#"${provider%%[![:space:]]*}"}"
+            provider="${provider%"${provider##*[![:space:]]}"}"
+            provider="${provider#\"}"
+            provider="${provider%\"}"
+            [[ -n "$provider" ]] && CONFIGURED_PROVIDERS="${CONFIGURED_PROVIDERS} ${provider}"
+          done
+          CONFIGURED_PROVIDERS="${CONFIGURED_PROVIDERS# }"
+          ;;
+        tools.install_all)
+          if [[ "$val" == "true" ]]; then
+            INSTALL_ALL_TOOLS="true"
+            INSTALL_MMRY="true"
+            OQTO_INSTALL_AGENT_TOOLS="yes"
+          fi
+          ;;
+        tools.searxng)              [[ "$val" == "true" ]] && INSTALL_SEARXNG="true" ;;
+        hardening.enabled)
+          if [[ "$val" == "true" ]]; then
+            OQTO_HARDEN_SERVER="yes"
+          else
+            OQTO_HARDEN_SERVER="no"
+          fi
+          ;;
+        hardening.ssh_port)         OQTO_SSH_PORT="$val" ;;
+        hardening.firewall)         [[ "$val" == "true" ]] && OQTO_SETUP_FIREWALL="yes" || OQTO_SETUP_FIREWALL="no" ;;
+        hardening.fail2ban)         [[ "$val" == "true" ]] && OQTO_SETUP_FAIL2BAN="yes" || OQTO_SETUP_FAIL2BAN="no" ;;
+        hardening.ssh_hardening)    [[ "$val" == "true" ]] && OQTO_HARDEN_SSH="yes" || OQTO_HARDEN_SSH="no" ;;
+        hardening.auto_updates)     [[ "$val" == "true" ]] && OQTO_SETUP_AUTO_UPDATES="yes" || OQTO_SETUP_AUTO_UPDATES="no" ;;
+        hardening.kernel_security)  [[ "$val" == "true" ]] && OQTO_HARDEN_KERNEL="yes" || OQTO_HARDEN_KERNEL="no" ;;
+      esac
+    fi
+  done < "$config_file"
+
+  log_success "Config loaded: mode=${SELECTED_USER_MODE:-single}, providers=${CONFIGURED_PROVIDERS:-none}"
+}
+
 # Run a step with verification: skip only if both marked done AND verify passes
 # Usage: verify_or_rerun "step_name" "description" "verify_cmd" install_func
 verify_or_rerun() {
@@ -6292,6 +6374,14 @@ main() {
       OQTO_INSTALL_AGENT_TOOLS="no"
       shift
       ;;
+    --config)
+      SETUP_CONFIG_FILE="$2"
+      shift 2
+      ;;
+    --config=*)
+      SETUP_CONFIG_FILE="${1#*=}"
+      shift
+      ;;
     *)
       log_error "Unknown option: $1"
       show_help
@@ -6299,6 +6389,17 @@ main() {
       ;;
     esac
   done
+
+  # Load config file if specified (oqto.setup.toml)
+  if [[ -n "${SETUP_CONFIG_FILE:-}" ]]; then
+    if [[ ! -f "$SETUP_CONFIG_FILE" ]]; then
+      log_error "Config file not found: $SETUP_CONFIG_FILE"
+      exit 1
+    fi
+    log_info "Loading config from: $SETUP_CONFIG_FILE"
+    load_setup_config "$SETUP_CONFIG_FILE"
+    NONINTERACTIVE="true"
+  fi
 
   echo
   echo -e "${BOLD}${CYAN}"
