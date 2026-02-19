@@ -239,6 +239,18 @@ pub enum EventPayload {
     /// Persisted count (after hstry write).
     Persisted { message_count: u64 },
 
+    // -- Transport reliability --
+    /// The event stream lagged and events were dropped. The client should
+    /// refetch state and messages to rebuild its timeline from scratch.
+    /// Emitted by the runner when a broadcast subscriber falls behind.
+    #[serde(rename = "stream.resync_required")]
+    StreamResyncRequired {
+        /// How many events were dropped.
+        dropped_count: u64,
+        /// Human-readable reason.
+        reason: String,
+    },
+
     // -- Delegation --
     /// Delegation to another session started.
     #[serde(rename = "delegate.start")]

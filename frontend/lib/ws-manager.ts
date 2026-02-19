@@ -99,14 +99,6 @@ const MAX_RECONNECT_DELAY_MS = 30000;
 const PING_INTERVAL_MS = 30000;
 const CONNECT_TIMEOUT_MS = 10000;
 
-// Backpressure detection: if more than this many messages are queued
-// in the internal dispatch buffer without being consumed, we consider
-// the connection backpressured and trigger a controlled reconnect.
-const INBOUND_BACKPRESSURE_HIGH_WATER = 512;
-// Close code used when we intentionally close due to backpressure.
-const BACKPRESSURE_CLOSE_CODE = 4013;
-const BACKPRESSURE_CLOSE_REASON = "inbound backpressure";
-
 // Resync: delay after reconnect before triggering resync to allow
 // session.create responses to arrive first.
 const RESYNC_DELAY_MS = 300;
@@ -169,13 +161,8 @@ class WsConnectionManager {
 	// check this to discard stale callbacks from previous connection cycles.
 	private connectionEpoch = 0;
 
-	// --- Backpressure detection ---
-	private inboundQueueDepth = 0;
+	// --- Inbound diagnostics ---
 	private inboundReceivedCount = 0;
-	private inboundDroppedCount = 0;
-	private inboundBackpressureReconnects = 0;
-	// Flag to prevent multiple backpressure closes in a single connection
-	private backpressureTriggered = false;
 
 	// --- Resync after reconnect ---
 	// Handlers called after reconnect with full state+messages for active sessions.
@@ -299,15 +286,9 @@ class WsConnectionManager {
 	/** Get inbound diagnostics for debugging. */
 	getInboundDiagnostics(): {
 		received: number;
-		dropped: number;
-		backpressureReconnects: number;
-		currentQueueDepth: number;
 	} {
 		return {
 			received: this.inboundReceivedCount,
-			dropped: this.inboundDroppedCount,
-			backpressureReconnects: this.inboundBackpressureReconnects,
-			currentQueueDepth: this.inboundQueueDepth,
 		};
 	}
 
@@ -903,9 +884,6 @@ class WsConnectionManager {
 
 		console.log("[ws-mux] Connecting to", wsUrl);
 
-		// Reset per-connection backpressure state
-		this.inboundQueueDepth = 0;
-		this.backpressureTriggered = false;
 		const connectEpoch = this.connectionEpoch;
 
 		this.ws = new WebSocket(wsUrl);
@@ -999,24 +977,6 @@ class WsConnectionManager {
 
 		this.ws.onmessage = (wsEvent) => {
 			this.inboundReceivedCount++;
-			this.inboundQueueDepth++;
-
-			// Backpressure detection: if the queue depth exceeds the high-water
-			// mark, we're consuming messages slower than they arrive. Rather than
-			// silently dropping events (which causes permanent UI corruption),
-			// trigger a controlled reconnect that will resync state cleanly.
-			if (
-				this.inboundQueueDepth > INBOUND_BACKPRESSURE_HIGH_WATER &&
-				!this.backpressureTriggered
-			) {
-				this.backpressureTriggered = true;
-				this.inboundBackpressureReconnects++;
-				console.warn(
-					`[ws-mux] Inbound buffer saturated (depth=${this.inboundQueueDepth}); closing WebSocket to force deterministic resync`,
-				);
-				this.ws?.close(BACKPRESSURE_CLOSE_CODE, BACKPRESSURE_CLOSE_REASON);
-				return;
-			}
 
 			try {
 				const data = JSON.parse(wsEvent.data) as WsEvent;
@@ -1051,9 +1011,6 @@ class WsConnectionManager {
 				this.handleEvent(data);
 			} catch (err) {
 				console.warn("[ws-mux] Failed to parse message:", err, wsEvent.data);
-			} finally {
-				// Decrement queue depth after processing (even on error)
-				this.inboundQueueDepth = Math.max(0, this.inboundQueueDepth - 1);
 			}
 		};
 
@@ -1062,9 +1019,8 @@ class WsConnectionManager {
 		};
 
 		this.ws.onclose = (closeEvent) => {
-			const isBackpressure = closeEvent.code === BACKPRESSURE_CLOSE_CODE;
 			console.log(
-				`[ws-mux] Connection closed: ${closeEvent.code} ${closeEvent.reason}${isBackpressure ? " (backpressure-triggered)" : ""}`,
+				`[ws-mux] Connection closed: ${closeEvent.code} ${closeEvent.reason}`,
 			);
 			this.logInboundDiagnostics(
 				`close:${closeEvent.code}:${closeEvent.reason}`,
@@ -1073,8 +1029,8 @@ class WsConnectionManager {
 			this.clearPingInterval();
 			this.cancelPendingRequests();
 
-			if (closeEvent.code !== 1000 || isBackpressure) {
-				// Abnormal close or backpressure-triggered, attempt reconnection.
+			if (closeEvent.code !== 1000) {
+				// Abnormal close, attempt reconnection.
 				// Increment epoch so stale callbacks from this connection are discarded.
 				this.connectionEpoch++;
 				this.scheduleReconnect();
@@ -1361,11 +1317,7 @@ class WsConnectionManager {
 	/** Log inbound diagnostics for debugging. */
 	private logInboundDiagnostics(reason: string): void {
 		console.log(
-			`[ws-mux] ws_inbound_diagnostics reason=${reason} ` +
-				`received=${this.inboundReceivedCount} ` +
-				`dropped=${this.inboundDroppedCount} ` +
-				`backpressureReconnects=${this.inboundBackpressureReconnects} ` +
-				`epoch=${this.connectionEpoch}`,
+			`[ws-mux] ws_inbound_diagnostics reason=${reason} received=${this.inboundReceivedCount} epoch=${this.connectionEpoch}`,
 		);
 	}
 
