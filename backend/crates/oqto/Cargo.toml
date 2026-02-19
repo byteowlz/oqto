@@ -74,6 +74,7 @@ tower.workspace = true
 tower-http.workspace = true
 hyper.workspace = true
 hyper-util.workspace = true
+hyperlocal.workspace = true
 http-body-util.workspace = true
 
 # Database

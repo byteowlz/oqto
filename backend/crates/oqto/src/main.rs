@@ -16,6 +16,19 @@ use log::{LevelFilter, debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+#[cfg(unix)]
+use std::os::unix::io::AsRawFd;
+#[cfg(unix)]
+use hyper::server::conn::http1;
+#[cfg(unix)]
+use hyper_util::rt::TokioIo;
+#[cfg(unix)]
+use hyper_util::service::TowerToHyperService;
+#[cfg(unix)]
+use tokio::net::{UnixListener, UnixStream};
+
 mod agent_browser;
 
 mod api;
@@ -493,12 +506,16 @@ struct AppConfig {
 struct ServerConfig {
     /// Maximum file upload size in megabytes (default: 100).
     max_upload_size_mb: usize,
+    /// Optional admin Unix socket path for local CLI access.
+    admin_socket_path: Option<String>,
 }
 
 impl Default for ServerConfig {
     fn default() -> Self {
+        let admin_socket_path = default_admin_socket_path();
         Self {
             max_upload_size_mb: 100,
+            admin_socket_path,
         }
     }
 }
@@ -2289,8 +2306,28 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     // Create router - all API routes are served under /api prefix only.
     // This is the single source of truth for routing. All clients (frontend,
     // internal services, containers) must use /api/* paths.
+    let admin_state = state.clone();
     let api_router = api::create_router_with_config(state, ctx.config.server.max_upload_size_mb);
     let app = axum::Router::new().nest("/api", api_router);
+
+    #[cfg(unix)]
+    if let Some(ref socket_path) = ctx.config.server.admin_socket_path {
+        let admin_user = admin_socket_user();
+        let admin_router = api::create_admin_router_with_config(
+            admin_state,
+            ctx.config.server.max_upload_size_mb,
+            admin_user,
+        );
+        let admin_app = axum::Router::new().nest("/api", admin_router);
+        if let Err(err) = spawn_admin_socket_server(PathBuf::from(socket_path), admin_app).await {
+            warn!("Failed to start admin socket server: {err:?}");
+        }
+    }
+
+    #[cfg(not(unix))]
+    if ctx.config.server.admin_socket_path.is_some() {
+        warn!("Admin socket path configured but Unix sockets are not supported on this OS");
+    }
 
     // Bind and serve
     let addr: SocketAddr = format!("{}:{}", cmd.host, cmd.port)
@@ -2364,6 +2401,124 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     Ok(())
 }
 
+#[cfg(unix)]
+fn admin_socket_user() -> auth::CurrentUser {
+    let now = chrono::Utc::now().timestamp();
+    auth::CurrentUser {
+        claims: auth::Claims {
+            sub: "admin-socket".to_string(),
+            iss: Some("oqto-admin-socket".to_string()),
+            aud: None,
+            exp: now + 60 * 60 * 24 * 365,
+            iat: Some(now),
+            nbf: None,
+            jti: None,
+            email: Some("admin-socket@localhost".to_string()),
+            name: Some("Admin Socket".to_string()),
+            preferred_username: Some("admin-socket".to_string()),
+            roles: vec![auth::Role::Admin.to_string()],
+            role: Some(auth::Role::Admin.to_string()),
+        },
+    }
+}
+
+#[cfg(unix)]
+async fn spawn_admin_socket_server(socket_path: PathBuf, app: axum::Router) -> Result<()> {
+    let server_uid = unsafe { libc::geteuid() };
+
+    if let Some(parent) = socket_path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("creating admin socket directory {parent:?}"))?;
+    }
+
+    if socket_path.exists() {
+        fs::remove_file(&socket_path)
+            .with_context(|| format!("removing stale admin socket {socket_path:?}"))?;
+    }
+
+    let listener = UnixListener::bind(&socket_path)
+        .with_context(|| format!("binding admin socket {socket_path:?}"))?;
+    fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o600))
+        .with_context(|| format!("setting permissions on {socket_path:?}"))?;
+
+    info!("Admin socket listening on {:?}", socket_path);
+
+    tokio::spawn(async move {
+        if let Err(err) = run_admin_socket_server(listener, app, server_uid as u32).await {
+            warn!("Admin socket server stopped: {err:?}");
+        }
+    });
+
+    Ok(())
+}
+
+#[cfg(unix)]
+async fn run_admin_socket_server(
+    listener: UnixListener,
+    app: axum::Router,
+    server_uid: u32,
+) -> Result<()> {
+    loop {
+        let (stream, _) = listener.accept().await?;
+        let peer_uid = match unix_peer_uid(&stream) {
+            Ok(uid) => uid,
+            Err(err) => {
+                warn!("Failed to read admin socket peer uid: {err:?}");
+                continue;
+            }
+        };
+
+        if !(peer_uid == 0 || peer_uid == server_uid) {
+            warn!(
+                "Rejected admin socket connection from uid {} (expected 0 or {})",
+                peer_uid, server_uid
+            );
+            continue;
+        }
+
+        let app = app.clone();
+        tokio::spawn(async move {
+            let io = TokioIo::new(stream);
+            let service = TowerToHyperService::new(app);
+            if let Err(err) = http1::Builder::new().serve_connection(io, service).await {
+                warn!("Admin socket connection failed: {err:?}");
+            }
+        });
+    }
+}
+
+#[cfg(unix)]
+fn unix_peer_uid(stream: &UnixStream) -> Result<u32> {
+    #[cfg(target_os = "linux")]
+    {
+        let fd = stream.as_raw_fd();
+        let mut ucred = libc::ucred {
+            pid: 0,
+            uid: 0,
+            gid: 0,
+        };
+        let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+        let rc = unsafe {
+            libc::getsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                libc::SO_PEERCRED,
+                &mut ucred as *mut _ as *mut _,
+                &mut len,
+            )
+        };
+        if rc != 0 {
+            return Err(anyhow!("failed to read unix peer credentials"));
+        }
+        Ok(ucred.uid)
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        Ok(unsafe { libc::geteuid() } as u32)
+    }
+}
+
 /// Stop all running sessions during shutdown.
 async fn shutdown_all_sessions(session_service: &session::SessionService) -> Result<()> {
     let sessions = session_service.list_sessions().await?;
@@ -2427,6 +2582,11 @@ fn load_or_init_config(paths: &mut AppPaths, common: &CommonOpts) -> Result<AppC
         config.logging.audit_file = Some(expanded.display().to_string());
     }
 
+    if let Some(ref socket) = config.server.admin_socket_path {
+        let expanded = expand_str_path(socket)?;
+        config.server.admin_socket_path = Some(expanded.display().to_string());
+    }
+
     Ok(config)
 }
 
@@ -2466,6 +2626,21 @@ fn expand_path(path: PathBuf) -> Result<PathBuf> {
 fn expand_str_path(text: &str) -> Result<PathBuf> {
     let expanded = shellexpand::full(text).context("expanding path")?;
     Ok(PathBuf::from(expanded.to_string()))
+}
+
+fn default_admin_socket_path() -> Option<String> {
+    #[cfg(unix)]
+    {
+        if cfg!(target_os = "macos") {
+            return Some("/tmp/oqtoctl.sock".to_string());
+        }
+        return Some("/run/oqto/oqtoctl.sock".to_string());
+    }
+
+    #[cfg(not(unix))]
+    {
+        None
+    }
 }
 
 fn default_config_dir() -> Result<PathBuf> {

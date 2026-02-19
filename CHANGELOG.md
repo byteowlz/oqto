@@ -78,6 +78,8 @@ All notable changes to this project will be documented in this file.
 - Trx view now disables the hide-closed filter when viewing closed issues so completed items can be listed.
 - Pi list_sessions now returns the resolved session ID (Pi native ID when known) to avoid reattach mismatches.
 - Linux user ownership now accepts sanitized GECOS fields without a colon to avoid login failures after chfn.
+- Setup now installs typst and slidev globally and ensures fd is available when only fdfind is installed.
+- Added an admin Unix socket for oqtoctl with peer-credential checks and automatic CLI fallback for local root access.
 
 ### Security
 

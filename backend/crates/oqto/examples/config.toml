@@ -15,6 +15,12 @@ audit_enabled = true
 # Optional path for audit log output; defaults to $XDG_STATE_HOME/oqto/audit.log.jsonl
 # audit_file = "$XDG_STATE_HOME/oqto/audit.log.jsonl"
 
+[server]
+# Maximum file upload size in megabytes (default: 100)
+max_upload_size_mb = 100
+# Admin Unix socket for local CLI access (root/oqto only)
+admin_socket_path = "/run/oqto/oqtoctl.sock"
+
 [runtime]
 # Override the worker pool size; defaults to logical CPU count when unset.
 # parallelism = 8

@@ -4,12 +4,22 @@
 //! including container management, image refresh, and housekeeping.
 
 use std::io::{self, IsTerminal, Read, Write};
+use std::path::PathBuf;
 use std::process::ExitCode;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use clap::{Parser, Subcommand};
+use reqwest::StatusCode;
+use http_body_util::{BodyExt, Full};
+use hyper::body::Bytes;
+use hyper_util::client::legacy::Client as HyperClient;
+use hyper_util::rt::TokioExecutor;
 
-const DEFAULT_SERVER_URL: &str = "http://localhost:8080";
+#[cfg(unix)]
+use hyperlocal::{UnixConnector, Uri as UnixUri};
+
+const DEFAULT_SERVER_URL: &str = "http://localhost:8080/api";
+const DEFAULT_ADMIN_SOCKET: &str = "/run/oqto/oqtoctl.sock";
 
 fn main() -> ExitCode {
     if let Err(err) = try_main() {
@@ -22,7 +32,7 @@ fn main() -> ExitCode {
 #[tokio::main]
 async fn try_main() -> Result<()> {
     let cli = Cli::parse();
-    let client = OqtoClient::new(&cli.server);
+    let client = OqtoClient::new(&cli.server, cli.admin_socket.as_deref())?;
 
     match cli.command {
         Command::Status => handle_status(&client, cli.json).await,
@@ -66,6 +76,10 @@ struct Cli {
     /// Path to Oqto config file (auto-detected if not set)
     #[arg(long, short = 'c', env = "OQTO_CONFIG", global = true)]
     config: Option<String>,
+
+    /// Admin socket path for local root access
+    #[arg(long, env = "OQTO_ADMIN_SOCKET", global = true)]
+    admin_socket: Option<String>,
 
     #[command(subcommand)]
     command: Command,
@@ -641,21 +655,133 @@ enum UiCommand {
     },
 }
 
+#[cfg(unix)]
+type UnixClient = HyperClient<UnixConnector, Full<Bytes>>;
+
+/// HTTP response wrapper for oqtoctl.
+struct OqtoResponse {
+    status: StatusCode,
+    body: Bytes,
+}
+
+impl OqtoResponse {
+    fn status(&self) -> StatusCode {
+        self.status
+    }
+
+    async fn text(&self) -> Result<String> {
+        let text = String::from_utf8(self.body.to_vec()).context("decoding response body")?;
+        Ok(text)
+    }
+
+    async fn json<T: serde::de::DeserializeOwned>(&self) -> Result<T> {
+        serde_json::from_slice(&self.body).context("decoding JSON response")
+    }
+}
+
+enum OqtoTransport {
+    Http {
+        base_url: String,
+        client: reqwest::Client,
+    },
+    #[cfg(unix)]
+    Unix {
+        socket_path: PathBuf,
+        base_path: String,
+        client: UnixClient,
+    },
+}
+
 /// HTTP client for communicating with Oqto server
 struct OqtoClient {
-    base_url: String,
-    client: reqwest::Client,
+    transport: OqtoTransport,
     dev_user: Option<String>,
     auth_token: Option<String>,
 }
 
 impl OqtoClient {
-    fn new(base_url: &str) -> Self {
-        Self {
-            base_url: base_url.trim_end_matches('/').to_string(),
-            client: reqwest::Client::new(),
-            dev_user: std::env::var("OQTO_DEV_USER").ok(),
-            auth_token: std::env::var("OQTO_AUTH_TOKEN").ok(),
+    fn new(base_url: &str, admin_socket: Option<&str>) -> Result<Self> {
+        let base_url = base_url.trim_end_matches('/').to_string();
+        let auth_token = std::env::var("OQTO_AUTH_TOKEN").ok();
+        let dev_user = std::env::var("OQTO_DEV_USER").ok();
+
+        #[cfg(unix)]
+        {
+            let admin_socket_env = std::env::var("OQTO_ADMIN_SOCKET").ok();
+            let admin_socket_requested = admin_socket.is_some() || admin_socket_env.is_some();
+            let socket_path = admin_socket
+                .map(PathBuf::from)
+                .or_else(|| admin_socket_env.map(PathBuf::from))
+                .or_else(|| Some(PathBuf::from(DEFAULT_ADMIN_SOCKET)));
+
+            let use_admin_socket = admin_socket_requested || base_url == DEFAULT_SERVER_URL;
+            let can_use_admin_socket = auth_token.is_none()
+                && use_admin_socket
+                && socket_path
+                    .as_ref()
+                    .is_some_and(|path| path.exists());
+
+            if can_use_admin_socket {
+                let socket_path = socket_path.expect("admin socket path");
+                let base_path = base_path_from_url(&base_url)?;
+                let client = HyperClient::builder(TokioExecutor::new()).build(UnixConnector);
+
+                return Ok(Self {
+                    transport: OqtoTransport::Unix {
+                        socket_path,
+                        base_path,
+                        client,
+                    },
+                    dev_user,
+                    auth_token,
+                });
+            }
+        }
+
+        Ok(Self {
+            transport: OqtoTransport::Http {
+                base_url,
+                client: reqwest::Client::new(),
+            },
+            dev_user,
+            auth_token,
+        })
+    }
+
+    fn display_url(&self) -> String {
+        match &self.transport {
+            OqtoTransport::Http { base_url, .. } => base_url.clone(),
+            #[cfg(unix)]
+            OqtoTransport::Unix { socket_path, .. } => {
+                format!("unix://{}", socket_path.display())
+            }
+        }
+    }
+
+    fn http_base_url(&self) -> Option<&str> {
+        match &self.transport {
+            OqtoTransport::Http { base_url, .. } => Some(base_url.as_str()),
+            #[cfg(unix)]
+            OqtoTransport::Unix { .. } => None,
+        }
+    }
+
+    fn http_client(&self) -> Option<&reqwest::Client> {
+        match &self.transport {
+            OqtoTransport::Http { client, .. } => Some(client),
+            #[cfg(unix)]
+            OqtoTransport::Unix { .. } => None,
+        }
+    }
+
+    fn is_admin_socket(&self) -> bool {
+        #[cfg(unix)]
+        {
+            matches!(self.transport, OqtoTransport::Unix { .. })
+        }
+        #[cfg(not(unix))]
+        {
+            false
         }
     }
 
@@ -669,40 +795,138 @@ impl OqtoClient {
         }
     }
 
-    async fn get(&self, path: &str) -> Result<reqwest::Response> {
-        let url = format!("{}{}", self.base_url, path);
-        self.with_auth_headers(self.client.get(&url))
-            .send()
-            .await
-            .context("sending request to server")
+    async fn get(&self, path: &str) -> Result<OqtoResponse> {
+        match &self.transport {
+            OqtoTransport::Http { base_url, client } => {
+                let url = format!("{}{}", base_url, path);
+                let response = self
+                    .with_auth_headers(client.get(&url))
+                    .send()
+                    .await
+                    .context("sending request to server")?;
+                response_to_oqto(response).await
+            }
+            #[cfg(unix)]
+            OqtoTransport::Unix { .. } => self.request_unix(hyper::Method::GET, path, None).await,
+        }
     }
 
-    async fn post(&self, path: &str) -> Result<reqwest::Response> {
-        let url = format!("{}{}", self.base_url, path);
-        self.with_auth_headers(self.client.post(&url))
-            .send()
-            .await
-            .context("sending request to server")
+    async fn post(&self, path: &str) -> Result<OqtoResponse> {
+        match &self.transport {
+            OqtoTransport::Http { base_url, client } => {
+                let url = format!("{}{}", base_url, path);
+                let response = self
+                    .with_auth_headers(client.post(&url))
+                    .send()
+                    .await
+                    .context("sending request to server")?;
+                response_to_oqto(response).await
+            }
+            #[cfg(unix)]
+            OqtoTransport::Unix { .. } => self.request_unix(hyper::Method::POST, path, None).await,
+        }
     }
 
-    async fn delete(&self, path: &str) -> Result<reqwest::Response> {
-        let url = format!("{}{}", self.base_url, path);
-        self.with_auth_headers(self.client.delete(&url))
-            .send()
-            .await
-            .context("sending request to server")
+    async fn delete(&self, path: &str) -> Result<OqtoResponse> {
+        match &self.transport {
+            OqtoTransport::Http { base_url, client } => {
+                let url = format!("{}{}", base_url, path);
+                let response = self
+                    .with_auth_headers(client.delete(&url))
+                    .send()
+                    .await
+                    .context("sending request to server")?;
+                response_to_oqto(response).await
+            }
+            #[cfg(unix)]
+            OqtoTransport::Unix { .. } => {
+                self.request_unix(hyper::Method::DELETE, path, None).await
+            }
+        }
     }
 
-    async fn post_json<T: serde::Serialize>(
+    async fn post_json<T: serde::Serialize>(&self, path: &str, body: &T) -> Result<OqtoResponse> {
+        match &self.transport {
+            OqtoTransport::Http { base_url, client } => {
+                let url = format!("{}{}", base_url, path);
+                let response = self
+                    .with_auth_headers(client.post(&url).json(body))
+                    .send()
+                    .await
+                    .context("sending request to server")?;
+                response_to_oqto(response).await
+            }
+            #[cfg(unix)]
+            OqtoTransport::Unix { .. } => {
+                let payload = serde_json::to_vec(body).context("serializing JSON")?;
+                self.request_unix(hyper::Method::POST, path, Some(payload)).await
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    async fn request_unix(
         &self,
+        method: hyper::Method,
         path: &str,
-        body: &T,
-    ) -> Result<reqwest::Response> {
-        let url = format!("{}{}", self.base_url, path);
-        self.with_auth_headers(self.client.post(&url).json(body))
-            .send()
+        body: Option<Vec<u8>>,
+    ) -> Result<OqtoResponse> {
+        let (socket_path, base_path, client) = match &self.transport {
+            OqtoTransport::Unix {
+                socket_path,
+                base_path,
+                client,
+            } => (socket_path, base_path, client),
+            _ => return Err(anyhow!("unix transport not configured")),
+        };
+
+        let full_path = format!("{}{}", base_path, path);
+        let uri: hyper::Uri = UnixUri::new(socket_path, &full_path).into();
+
+        let body = body.unwrap_or_default();
+        let mut builder = hyper::Request::builder().method(method).uri(uri);
+        if !body.is_empty() {
+            builder = builder.header("content-type", "application/json");
+        }
+        let request = builder
+            .body(Full::new(Bytes::from(body)))
+            .context("building unix request")?;
+
+        let response = client
+            .request(request)
             .await
-            .context("sending request to server")
+            .context("sending unix request")?;
+        oqto_response_from_hyper(response).await
+    }
+}
+
+async fn response_to_oqto(response: reqwest::Response) -> Result<OqtoResponse> {
+    let status = response.status();
+    let body = response.bytes().await.context("reading response body")?;
+    Ok(OqtoResponse { status, body })
+}
+
+#[cfg(unix)]
+async fn oqto_response_from_hyper(
+    response: hyper::Response<hyper::body::Incoming>,
+) -> Result<OqtoResponse> {
+    let status = response.status();
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .context("reading unix response body")?
+        .to_bytes();
+    Ok(OqtoResponse { status, body })
+}
+
+fn base_path_from_url(base_url: &str) -> Result<String> {
+    let parsed = reqwest::Url::parse(base_url).context("parsing server URL")?;
+    let path = parsed.path().trim_end_matches('/');
+    if path.is_empty() {
+        Ok(String::new())
+    } else {
+        Ok(path.to_string())
     }
 }
 
@@ -711,9 +935,9 @@ async fn handle_status(client: &OqtoClient, json: bool) -> Result<()> {
 
     if response.status().is_success() {
         if json {
-            println!(r#"{{"status": "ok", "server": "{}"}}"#, client.base_url);
+            println!(r#"{{"status": "ok", "server": "{}"}}"#, client.display_url());
         } else {
-            println!("Server is running at {}", client.base_url);
+            println!("Server is running at {}", client.display_url());
         }
     } else {
         if json {
@@ -747,12 +971,25 @@ async fn handle_ask(
     });
 
     if stream {
+        if client.is_admin_socket() {
+            return Err(anyhow!(
+                "Streaming is not supported over the admin Unix socket. Run without --stream."
+            ));
+        }
+
         // Use SSE streaming
         use futures::StreamExt;
         use reqwest_eventsource::{Event, EventSource};
 
-        let url = format!("{}/api/agents/ask", client.base_url);
-        let mut request = client.client.post(&url).json(&body);
+        let base_url = client
+            .http_base_url()
+            .ok_or_else(|| anyhow!("HTTP client not available"))?;
+        let http_client = client
+            .http_client()
+            .ok_or_else(|| anyhow!("HTTP client not available"))?;
+
+        let url = format!("{}/agents/ask", base_url);
+        let mut request = http_client.post(&url).json(&body);
         request = client.with_auth_headers(request);
 
         let mut es = EventSource::new(request)?;
@@ -801,7 +1038,7 @@ async fn handle_ask(
         }
     } else {
         // Non-streaming: wait for complete response
-        let response = client.post_json("/api/agents/ask", &body).await?;
+        let response = client.post_json("/agents/ask", &body).await?;
 
         if response.status().is_success() {
             let result: serde_json::Value = response.json().await?;
@@ -875,11 +1112,11 @@ async fn handle_sessions(
 ) -> Result<()> {
     let path = match query {
         Some(q) => format!(
-            "/api/agents/sessions?q={}&limit={}",
+            "/agents/sessions?q={}&limit={}",
             urlencoding::encode(q),
             limit
         ),
-        None => format!("/api/agents/sessions?limit={}", limit),
+        None => format!("/agents/sessions?limit={}", limit),
     };
 
     let response = client.get(&path).await?;
@@ -1699,7 +1936,7 @@ async fn handle_user(client: &OqtoClient, command: UserCommand, json: bool) -> R
                 "role": role,
             });
 
-            let response = client.post_json("/api/admin/users", &body).await?;
+            let response = client.post_json("/admin/users", &body).await?;
             let status = response.status();
             let body_text = response.text().await.unwrap_or_default();
 
@@ -1947,7 +2184,7 @@ async fn handle_user(client: &OqtoClient, command: UserCommand, json: bool) -> R
         UserCommand::SyncConfigs { user } => {
             let body = serde_json::json!({ "user_id": user });
             let response = client
-                .post_json("/api/admin/users/sync-configs", &body)
+                .post_json("/admin/users/sync-configs", &body)
                 .await?;
 
             if !response.status().is_success() {

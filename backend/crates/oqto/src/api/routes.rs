@@ -11,7 +11,7 @@ use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, TraceLayer};
 use tracing::Level;
 
-use crate::auth::auth_middleware;
+use crate::auth::{CurrentUser, auth_middleware};
 
 use super::a2ui as a2ui_handlers;
 use super::audit;
@@ -26,8 +26,34 @@ use super::ws_multiplexed;
 // Note: handlers module now provides all public handlers via re-exports in handlers/mod.rs
 // Routes continue to use `handlers::function_name` - no changes needed
 
+/// Authentication mode for API routers.
+#[derive(Clone)]
+pub enum AuthMode {
+    /// Standard JWT/cookie authentication.
+    Jwt,
+    /// Admin override for trusted local sockets.
+    Admin(CurrentUser),
+}
+
 /// Create the application router with configurable max upload size.
 pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> Router {
+    create_router_with_config_and_auth(state, max_upload_size_mb, AuthMode::Jwt)
+}
+
+/// Create an admin router that injects a trusted admin user.
+pub fn create_admin_router_with_config(
+    state: AppState,
+    max_upload_size_mb: usize,
+    admin_user: CurrentUser,
+) -> Router {
+    create_router_with_config_and_auth(state, max_upload_size_mb, AuthMode::Admin(admin_user))
+}
+
+fn create_router_with_config_and_auth(
+    state: AppState,
+    max_upload_size_mb: usize,
+    auth_mode: AuthMode,
+) -> Router {
     // CORS configuration - use specific origins from config
     let cors = build_cors_layer(&state);
     let max_body_size = max_upload_size_mb * 1024 * 1024;
@@ -305,15 +331,9 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
         // CodexBar usage (optional, requires codexbar on PATH)
         .route("/codexbar/usage", get(handlers::codexbar_usage))
         // TRX (issue tracking) now uses mux-only channel
-        .layer(middleware::from_fn_with_state(
-            state.clone(),
-            audit::audit_middleware,
-        ))
-        .layer(middleware::from_fn_with_state(
-            auth_state.clone(),
-            auth_middleware,
-        ))
         .with_state(state.clone());
+
+    let protected_routes = apply_auth_layers(protected_routes, state.clone(), auth_state, auth_mode);
 
     // Public routes (no authentication)
     let public_routes = Router::new()
@@ -387,6 +407,32 @@ pub fn create_router_with_config(state: AppState, max_upload_size_mb: usize) -> 
         ))
         .layer(cors)
         .layer(trace_layer)
+}
+
+fn apply_auth_layers(
+    router: Router,
+    state: AppState,
+    auth_state: crate::auth::AuthState,
+    auth_mode: AuthMode,
+) -> Router {
+    let router = router.layer(middleware::from_fn_with_state(
+        state,
+        audit::audit_middleware,
+    ));
+
+    match auth_mode {
+        AuthMode::Jwt => router.layer(middleware::from_fn_with_state(auth_state, auth_middleware)),
+        AuthMode::Admin(admin_user) => {
+            let admin_user = admin_user.clone();
+            router.layer(middleware::from_fn(move |mut req: axum::http::Request<axum::body::Body>, next: axum::middleware::Next| {
+                let admin_user = admin_user.clone();
+                async move {
+                    req.extensions_mut().insert(admin_user);
+                    next.run(req).await
+                }
+            }))
+        }
+    }
 }
 
 /// Build the CORS layer based on configuration.

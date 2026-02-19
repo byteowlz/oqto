@@ -90,6 +90,26 @@
       },
       "additionalProperties": false
     },
+    "server": {
+      "type": "object",
+      "description": "Server configuration",
+      "x-scope": "admin",
+      "x-category": "Infrastructure",
+      "properties": {
+        "max_upload_size_mb": {
+          "type": "integer",
+          "description": "Maximum file upload size in megabytes",
+          "minimum": 1,
+          "default": 100
+        },
+        "admin_socket_path": {
+          "type": "string",
+          "description": "Admin Unix socket path for local CLI access",
+          "examples": ["/run/oqto/oqtoctl.sock", "/tmp/oqtoctl.sock"]
+        }
+      },
+      "additionalProperties": false
+    },
     "container": {
       "type": "object",
       "description": "Container runtime configuration",
