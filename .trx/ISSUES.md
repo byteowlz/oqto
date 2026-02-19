@@ -2,24 +2,6 @@
 
 ## Open
 
-### [oqto-mvdv.2] Deterministic resync after reconnect for active sessions (P1, task)
-After every WebSocket reconnect, fetch fresh state + messages for each actively-viewed session and rebuild the conversation from scratch, rather than trying to merge stale local state with incoming events.
-
-## What to implement
-
-1. After reconnect + re-subscribe completes, for each session the user is actively viewing:
-...
-
-
-### [oqto-mvdv.1] Backpressure detection and controlled reconnect in ws-manager.ts (P1, task)
-Add backpressure detection to WsConnectionManager. When the inbound message buffer saturates (messages arriving faster than React can consume them), trigger a controlled WebSocket close with code 1013 and force a full reconnect + resync cycle rather than silently dropping events.
-
-## What to implement
-
-1. Track inbound message counts: received, dropped, backpressure-triggered reconnects (for diagnostics)
-...
-
-
 ### [oqto-mvdv] Streaming reliability: backpressure handling, reconnect resync, and delta coalescing (P1, epic)
 Our WebSocket layer (ws-manager.ts) assumes a perfect connection. Pi-mobile (https://github.com/ayagmar/pi-mobile) demonstrates several transport reliability patterns we lack that cause real user-facing issues: silent message loss under backpressure, corrupted UI after reconnect, excessive re-renders during fast streaming, and no cross-device drift detection.
 
@@ -253,6 +235,15 @@ Convert synchronous imports in apps/index.ts to React.lazy() imports. Currently 
 Location: frontend/apps/index.ts:1-56
 
 Implementation:
+...
+
+
+### [oqto-mvdv.4] Session freshness fingerprinting for cross-device drift detection (P2, task)
+Add session freshness polling to detect when the session file has been modified outside Octo's knowledge (e.g., by another browser tab or direct Pi CLI usage). Poll a fingerprint (mtime + size + entry count + tail hash) every ~4 seconds and warn the user when stale state is detected.
+
+## Reference
+Pi-mobile polls bridge_get_session_freshness every 4s with a 90s grace window for local mutations. On mismatch, shows 'Sync now' warning.
+
 ...
 
 
@@ -786,6 +777,15 @@ Enable multiple platform users to access the same project/workspace with proper 
 ...
 
 
+### [oqto-mvdv.5] WebSocket performance budget tracking and diagnostics (P3, task)
+Add performance budget tracking for key streaming metrics:
+- TTFT (prompt send to first text_delta): target 1200ms
+- Reconnect-to-resync latency: target 2000ms
+- Messages-per-second throughput during streaming
+- Inbound queue depth high-water mark per session
+...
+
+
 ### [octo-34f0] Migrate generate_pi_models_json to eavs API endpoint (P3, chore)
 The octo backend has a duplicate of the Pi models.json generation logic in backend/crates/octo/src/eavs/mod.rs. Now that eavs has 'eavs models export pi' (and the export module), the octo backend should call an eavs API endpoint (e.g. GET /providers/export/pi) instead of duplicating the format logic. This would be a new API endpoint in eavs that returns the same JSON as the CLI command.
 
@@ -929,6 +929,9 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [oqto-mvdv.3] Delta coalescing for streaming text/thinking updates (closed 2026-02-19)
+- [oqto-mvdv.2] Deterministic resync after reconnect for active sessions (closed 2026-02-19)
+- [oqto-mvdv.1] Backpressure detection and controlled reconnect in ws-manager.ts (closed 2026-02-19)
 - [octo-k8z1.8] Session management: Browser lifecycle (start/stop with session) (closed 2026-02-17)
 - [octo-k8z1.5] Frontend: Add browser tab to central pane view switcher (closed 2026-02-17)
 - [octo-k8z1.2] Backend: WebSocket proxy for screencast stream (closed 2026-02-17)
@@ -1534,7 +1537,7 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
 - [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
 - [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
 - [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
