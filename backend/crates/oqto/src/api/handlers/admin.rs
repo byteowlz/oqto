@@ -624,7 +624,7 @@ pub async fn get_user_stats(
 ///
 /// Creates a virtual key bound to the user via oauth_user, queries provider
 /// details for model catalog, generates models.json, and writes eavs.env.
-async fn provision_eavs_for_user(
+pub(crate) async fn provision_eavs_for_user(
     eavs_client: &crate::eavs::EavsClient,
     linux_users: &crate::local::LinuxUsersConfig,
     linux_username: &str,
@@ -660,7 +660,7 @@ async fn provision_eavs_for_user(
 ///
 /// This is safe to call repeatedly -- it only regenerates models.json,
 /// it does NOT create or rotate eavs keys.
-async fn sync_eavs_models_json(
+pub(crate) async fn sync_eavs_models_json(
     eavs_client: &crate::eavs::EavsClient,
     linux_users: &crate::local::LinuxUsersConfig,
     linux_username: &str,
