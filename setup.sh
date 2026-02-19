@@ -6715,6 +6715,11 @@ BANNER
     fi
   fi
 
+  # Upgrade all installed tools to versions in dependencies.toml.
+  # verify_or_rerun only checks if a binary exists, not its version.
+  # This ensures re-runs always pick up version bumps (eavs, hstry, agntz, etc.).
+  update_tools
+
   # EAVS (LLM proxy)
   verify_or_rerun "eavs_install" "EAVS install" "command -v eavs" install_eavs
   run_step "eavs_configure" "EAVS configure" configure_eavs
