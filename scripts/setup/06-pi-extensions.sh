@@ -102,8 +102,9 @@ install_pi_extensions_for_user() {
     rm -rf "$dest_dir"
     cp -r "$src_dir" "$dest_dir"
 
-    # Remove files that should not be in the install target
-    rm -f "$dest_dir/package.json" "$dest_dir/install.sh"
+    # Remove install script (not needed at runtime); keep package.json
+    # (Pi reads "pi.extensions" from it to find the entry point)
+    rm -f "$dest_dir/install.sh"
 
     log_success "Installed $ext_name extension"
     ((installed++)) || true
