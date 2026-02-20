@@ -1,4 +1,5 @@
 import { zodResolver } from "@hookform/resolvers/zod";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
@@ -32,6 +33,27 @@ import {
 import { isTauri } from "@/lib/tauri-fetch-polyfill";
 import { useQueryClient } from "@tanstack/react-query";
 
+/**
+ * Detect the backend API URL.
+ *
+ * Priority:
+ *   1. Previously stored value in localStorage
+ *   2. VITE_CONTROL_PLANE_URL build-time env
+ *   3. For Tauri: empty (user must provide)
+ *   4. For browser: current origin + "/api" (works behind Caddy reverse proxy)
+ */
+function detectBackendUrl(): string {
+	const stored = getControlPlaneBaseUrl();
+	if (stored) return stored;
+	// In Tauri there's no reverse proxy -- user must configure
+	if (isTauri()) return "";
+	// Browser: same-origin /api works behind Caddy
+	if (typeof window !== "undefined") {
+		return `${window.location.origin}/api`;
+	}
+	return "";
+}
+
 const loginSchema = z.object({
 	username: z.string().min(1, "Username is required"),
 	password: z.string().min(1, "Password is required"),
@@ -46,114 +68,41 @@ export function LoginPage() {
 	const [searchParams] = useSearchParams();
 	const redirectTo = searchParams.get("redirect") || "/";
 	const [error, setError] = useState<string | null>(null);
-	const [debugInfo, setDebugInfo] = useState<string | null>(null);
 	const [isLoading, setIsLoading] = useState(false);
-	const [isTesting, setIsTesting] = useState(false);
+	// Show backend URL field by default in Tauri (no reverse proxy) or when
+	// nothing was auto-detected
+	const [showAdvanced, setShowAdvanced] = useState(isTauri());
 
 	const form = useForm<LoginFormData>({
 		resolver: zodResolver(loginSchema),
 		defaultValues: {
 			username: "",
 			password: "",
-			backendUrl: getControlPlaneBaseUrl(),
+			backendUrl: detectBackendUrl(),
 		},
 	});
 
-	async function testConnection() {
-		setIsTesting(true);
-		setDebugInfo(null);
-		setError(null);
-
-		const backendUrl = form.getValues("backendUrl").trim();
-		const username = form.getValues("username");
-		const password = form.getValues("password");
-
-		if (!backendUrl) {
-			setError("Enter a backend URL first");
-			setIsTesting(false);
-			return;
-		}
-
-		setControlPlaneBaseUrl(backendUrl);
-
-		try {
-			// Test 1: Features endpoint
-			setDebugInfo("1. Testing features...");
-			const featuresUrl = `${backendUrl}/features`;
-			const featuresRes = await fetch(featuresUrl);
-			setDebugInfo(
-				`1. Features: ${featuresRes.status} ${featuresRes.ok ? "OK" : "FAIL"}`,
-			);
-
-			// Test 2: Login if credentials provided
-			if (username && password) {
-				setDebugInfo((prev) => `${prev}\n2. Testing login...`);
-				const loginUrl = `${backendUrl}/auth/login`;
-				const loginRes = await fetch(loginUrl, {
-					method: "POST",
-					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({ username, password }),
-				});
-				const loginData = await loginRes.json();
-				setDebugInfo(
-					(prev) =>
-						`${prev}\n2. Login: ${loginRes.status}, token: ${loginData.token ? "YES" : "NO"}`,
-				);
-
-				if (loginData.token) {
-					// Test 3: /me with token
-					setDebugInfo((prev) => `${prev}\n3. Testing /me with token...`);
-					const meRes = await fetch(`${backendUrl}/me`, {
-						headers: { Authorization: `Bearer ${loginData.token}` },
-					});
-					const meData = await meRes.json();
-					setDebugInfo(
-						(prev) =>
-							`${prev}\n3. /me: ${meRes.status}, data: ${JSON.stringify(meData).slice(0, 100)}`,
-					);
-				}
-			} else {
-				setDebugInfo((prev) => `${prev}\n2. Skipped login (no credentials)`);
-			}
-		} catch (err) {
-			setError(
-				`Test failed: ${err instanceof Error ? err.message : String(err)}`,
-			);
-		} finally {
-			setIsTesting(false);
-		}
-	}
-
 	async function onSubmit(data: LoginFormData) {
 		setError(null);
-		setDebugInfo(null);
 		setIsLoading(true);
 
 		const backendUrl = data.backendUrl.trim();
 		setControlPlaneBaseUrl(backendUrl ? backendUrl : null);
 
 		try {
-			setDebugInfo("Logging in...");
 			const result = await login({
 				username: data.username,
 				password: data.password,
 			});
-			setDebugInfo(
-				`Login success! Token: ${result.token ? "yes" : "no"}, User: ${result.user?.name || "?"}`,
-			);
 
 			// Seed the auth cache to avoid a redirect loop while /me refreshes
 			queryClient.setQueryData(authKeys.me(), result.user);
-
-			// Invalidate auth cache so RequireAuth refetches /me with the new token
 			await queryClient.invalidateQueries({ queryKey: authKeys.all });
 
-			setDebugInfo(`Navigating to: ${redirectTo}`);
 			navigate(redirectTo, { replace: true });
 		} catch (err) {
 			const msg = err instanceof Error ? err.message : "Login failed";
 			setError(msg);
-			setDebugInfo(`Error: ${msg}`);
 		} finally {
 			setIsLoading(false);
 		}
@@ -215,40 +164,42 @@ export function LoginPage() {
 							)}
 						/>
 
-						<FormField
-							control={form.control}
-							name="backendUrl"
-							render={({ field }) => (
-								<FormItem>
-									<FormLabel>Backend URL</FormLabel>
-									<FormControl>
-										<Input
-											placeholder="http://localhost:8080"
-											autoComplete="url"
-											disabled={isLoading}
-											{...field}
-										/>
-									</FormControl>
-									<FormMessage />
-								</FormItem>
+						<div>
+							<button
+								type="button"
+								className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+								onClick={() => setShowAdvanced((v) => !v)}
+							>
+								{showAdvanced ? (
+									<ChevronDown className="h-3 w-3" />
+								) : (
+									<ChevronRight className="h-3 w-3" />
+								)}
+								Advanced
+							</button>
+							{showAdvanced && (
+								<div className="mt-2">
+									<FormField
+										control={form.control}
+										name="backendUrl"
+										render={({ field }) => (
+											<FormItem>
+												<FormLabel>Backend URL</FormLabel>
+												<FormControl>
+													<Input
+														placeholder="https://your-server.com/api"
+														autoComplete="url"
+														disabled={isLoading}
+														{...field}
+													/>
+												</FormControl>
+												<FormMessage />
+											</FormItem>
+										)}
+									/>
+								</div>
 							)}
-						/>
-
-						<Button
-							type="button"
-							variant="outline"
-							className="w-full"
-							disabled={isTesting}
-							onClick={testConnection}
-						>
-							{isTesting ? "Testing..." : "Test Connection"}
-						</Button>
-
-						{debugInfo && (
-							<pre className="text-xs bg-muted p-2 rounded overflow-auto max-h-32">
-								{debugInfo}
-							</pre>
-						)}
+						</div>
 
 						<Button type="submit" className="w-full" disabled={isLoading}>
 							{isLoading ? "Signing in..." : "Sign in"}
