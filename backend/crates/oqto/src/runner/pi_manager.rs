@@ -2539,7 +2539,7 @@ impl PiSessionManager {
                                     .await
                                     {
                                         warn!(
-                                            "Pi[{}] failed to ensure hstry conversation: {}",
+                                            "Pi[{}] failed to ensure hstry conversation: {:?}",
                                             eid, e
                                         );
                                     }
@@ -2626,7 +2626,7 @@ impl PiSessionManager {
                                                 .await
                                                 {
                                                     warn!(
-                                                        "Pi[{}] incremental hstry persist failed: {}",
+                                                        "Pi[{}] incremental hstry persist failed: {:?}",
                                                         sid, e
                                                     );
                                                 } else {
@@ -2813,7 +2813,7 @@ impl PiSessionManager {
                     )
                     .await
                     {
-                        warn!("Pi[{}] failed to persist to hstry: {}", session_id, e);
+                        warn!("Pi[{}] failed to persist to hstry: {:?}", session_id, e);
                     } else {
                         debug!(
                             "Pi[{}] persisted {} messages to hstry (external_id={})",

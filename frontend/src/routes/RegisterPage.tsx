@@ -23,7 +23,9 @@ import {
 	FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import { authKeys } from "@/hooks/use-auth";
 import { register } from "@/lib/control-plane-client";
+import { useQueryClient } from "@tanstack/react-query";
 
 const registerSchema = z
 	.object({
@@ -50,6 +52,7 @@ type RegisterFormData = z.infer<typeof registerSchema>;
 
 export function RegisterPage() {
 	const navigate = useNavigate();
+	const queryClient = useQueryClient();
 	const [error, setError] = useState<string | null>(null);
 	const [isLoading, setIsLoading] = useState(false);
 
@@ -70,13 +73,20 @@ export function RegisterPage() {
 		setIsLoading(true);
 
 		try {
-			await register({
+			const result = await register({
 				username: data.username,
 				email: data.email,
 				password: data.password,
 				invite_code: data.inviteCode,
 				display_name: data.displayName || undefined,
 			});
+
+			// Seed the auth cache so RequireAuth doesn't redirect to login
+			if (result.user) {
+				queryClient.setQueryData(authKeys.me(), result.user);
+			}
+			await queryClient.invalidateQueries({ queryKey: authKeys.all });
+
 			navigate("/", { replace: true });
 		} catch (err) {
 			setError(err instanceof Error ? err.message : "Registration failed");

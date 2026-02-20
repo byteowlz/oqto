@@ -409,9 +409,12 @@ pub async fn list_workspace_dirs(
             }
             // Return absolute path for proper session creation
             let logo = find_project_logo(&path, &name);
-            let abs_path = path.canonicalize().unwrap_or(path);
+            let abs_path = path.canonicalize().unwrap_or(path.clone());
+            // Use display_name from .oqto/workspace.toml if available
+            let display_name = crate::workspace::meta::workspace_display_name(&path)
+                .unwrap_or(name);
             dirs.push(WorkspaceDirEntry {
-                name,
+                name: display_name,
                 path: abs_path.to_string_lossy().to_string(),
                 entry_type: "directory".to_string(),
                 logo,
