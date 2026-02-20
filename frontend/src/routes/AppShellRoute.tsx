@@ -162,6 +162,28 @@ const AppShell = memo(function AppShell() {
 		sidebarState.toggleProjectExpanded,
 	]);
 
+	// Auto-create a session in the first workspace when the user has no
+	// sessions at all (e.g. fresh account). This ensures the sidebar is never
+	// just an empty folder -- there's always a chat ready to go.
+	const autoCreatedRef = useRef(false);
+	useEffect(() => {
+		if (autoCreatedRef.current) return;
+		if (chatHistory.length > 0) return;
+		if (selectedChatSessionId) return;
+		if (projectActions.workspaceDirectories.length === 0) return;
+		autoCreatedRef.current = true;
+
+		const defaultDir = projectActions.workspaceDirectories[0];
+		if (defaultDir?.path) {
+			void createNewChat(defaultDir.path);
+		}
+	}, [
+		chatHistory.length,
+		selectedChatSessionId,
+		projectActions.workspaceDirectories,
+		createNewChat,
+	]);
+
 	const { open: commandPaletteOpen, setOpen: setCommandPaletteOpen } =
 		useCommandPalette();
 
