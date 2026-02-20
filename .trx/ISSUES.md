@@ -2,6 +2,15 @@
 
 ## Open
 
+### [oqto-n7zc] setup.sh: fix full user provisioning pipeline (pi, eavs, models, runner) (P0, epic)
+setup.sh must correctly provision everything for a new platform user on a fresh install:
+
+1. Pi installation: install pi-coding-agent system-wide with a bun wrapper that works for all users (not hardcoded to installer's HOME)
+2. Eavs config: always generate proper config under oqto user with [keys] enabled, master key, and env file
+3. Per-user provisioning on login/creation:
+...
+
+
 ### [oqto-q4ae] setup.sh must guarantee hstry is running and accessible for every provisioned user (P1, bug)
 Production shows 500 on /api/chat-history with 'Chat history service not configured for this user.' for wismut-vCmT. Root cause: get_runner_for_user() returns None in multi-user mode, which is a hard error. The setup process needs to:
 
@@ -1549,6 +1558,6 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
 - [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
-- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
 - [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
+- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
