@@ -392,6 +392,9 @@ pub struct PiSessionManager {
     /// Cached model lists per workdir (populated when any session in that workdir fetches models).
     /// Key: canonical workdir path, Value: list of available models as JSON.
     model_cache: RwLock<HashMap<String, serde_json::Value>>,
+    /// Last observed mtime of ~/.pi/agent/models.json. Used to invalidate the
+    /// model_cache when the file is updated (e.g., after admin syncs models).
+    models_json_mtime: RwLock<Option<std::time::SystemTime>>,
     /// Map Pi native session IDs back to the runner session key.
     session_aliases: Arc<RwLock<HashMap<String, String>>>,
 }
@@ -415,6 +418,7 @@ impl PiSessionManager {
             hstry_client,
             creating: tokio::sync::Mutex::new(std::collections::HashSet::new()),
             model_cache: RwLock::new(model_cache),
+            models_json_mtime: RwLock::new(None),
             session_aliases: Arc::new(RwLock::new(HashMap::new())),
         })
     }
@@ -1220,8 +1224,14 @@ impl PiSessionManager {
 
             Ok(models_array)
         } else {
-            // No live session — try workdir cache first, then hstry lookup,
-            // then read models.json directly from disk
+            // No live session — check if models.json changed since last read,
+            // then try cache, then read from disk.
+            // Invalidate cache when the admin syncs models (file mtime changes).
+            if self.models_json_changed().await {
+                info!("models.json changed on disk, invalidating model cache");
+                self.model_cache.write().await.clear();
+            }
+
             let resolved_workdir = workdir
                 .and_then(|value| {
                     let trimmed = value.trim();
@@ -1248,13 +1258,11 @@ impl PiSessionManager {
             }
 
             // No cache hit — read models.json directly from disk.
-            // This avoids spawning an ephemeral Pi process (fragile, slow, env-sensitive)
-            // and instead reads the models.json that oqto provisioned via eavs.
             let target_workdir = resolved_workdir
                 .or(hstry_workdir)
                 .unwrap_or_else(|| self.config.default_cwd.to_string_lossy().to_string());
 
-            let models = self.load_models_from_disk();
+            let models = self.load_models_from_disk().await;
             if models.as_array().is_some_and(|a| !a.is_empty()) {
                 {
                     let mut cache = self.model_cache.write().await;
@@ -1375,6 +1383,21 @@ impl PiSessionManager {
         }
     }
 
+    /// Check if ~/.pi/agent/models.json has been modified since we last read it.
+    async fn models_json_changed(&self) -> bool {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+        let models_path = PathBuf::from(&home).join(".pi/agent/models.json");
+        let current_mtime = std::fs::metadata(&models_path)
+            .and_then(|m| m.modified())
+            .ok();
+        let stored = *self.models_json_mtime.read().await;
+        match (stored, current_mtime) {
+            (None, _) => false, // First call — not a change, cache may be from disk
+            (Some(_), None) => true, // File disappeared
+            (Some(old), Some(new)) => new != old,
+        }
+    }
+
     /// Read models directly from ~/.pi/agent/models.json.
     ///
     /// This replaces the old ephemeral Pi spawn approach. The models.json file is
@@ -1382,9 +1405,16 @@ impl PiSessionManager {
     /// lists. Reading it directly is instant, reliable, and avoids all the
     /// fragility of spawning a bun/Pi process (wrong HOME, missing env vars,
     /// permission errors, timeouts).
-    fn load_models_from_disk(&self) -> serde_json::Value {
+    async fn load_models_from_disk(&self) -> serde_json::Value {
         let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
         let models_path = PathBuf::from(&home).join(".pi/agent/models.json");
+
+        // Track mtime for cache invalidation
+        if let Ok(meta) = std::fs::metadata(&models_path) {
+            if let Ok(mtime) = meta.modified() {
+                *self.models_json_mtime.write().await = Some(mtime);
+            }
+        }
 
         let content = match std::fs::read_to_string(&models_path) {
             Ok(c) => c,
