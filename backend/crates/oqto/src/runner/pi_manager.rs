@@ -72,8 +72,20 @@ impl Default for PiManagerConfig {
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from(&home).join(".local").join("state"));
 
+        // Prefer /usr/local/bin/pi (wrapper that sets PI_PACKAGE_DIR and uses bun)
+        // over ~/.bun/bin/pi (symlink with #!/usr/bin/env node shebang that fails
+        // when node is not installed).
+        let pi_binary = {
+            let system_pi = PathBuf::from("/usr/local/bin/pi");
+            if system_pi.exists() {
+                system_pi
+            } else {
+                PathBuf::from(&home).join(".bun/bin/pi")
+            }
+        };
+
         Self {
-            pi_binary: PathBuf::from(home.clone()).join(".bun/bin/pi"),
+            pi_binary,
             default_cwd: PathBuf::from(&home).join("projects"),
             idle_timeout_secs: 300, // 5 minutes
             cleanup_interval_secs: 60,
@@ -1209,7 +1221,7 @@ impl PiSessionManager {
             Ok(models_array)
         } else {
             // No live session — try workdir cache first, then hstry lookup,
-            // then spawn an ephemeral Pi to fetch models
+            // then read models.json directly from disk
             let resolved_workdir = workdir
                 .and_then(|value| {
                     let trimmed = value.trim();
@@ -1235,34 +1247,26 @@ impl PiSessionManager {
                 return Ok(models);
             }
 
-            // No cache hit — spawn ephemeral Pi to fetch models
+            // No cache hit — read models.json directly from disk.
+            // This avoids spawning an ephemeral Pi process (fragile, slow, env-sensitive)
+            // and instead reads the models.json that oqto provisioned via eavs.
             let target_workdir = resolved_workdir
                 .or(hstry_workdir)
                 .unwrap_or_else(|| self.config.default_cwd.to_string_lossy().to_string());
 
-            match self.fetch_models_ephemeral(&target_workdir).await {
-                Ok(models) => {
-                    if models.as_array().is_some_and(|a| !a.is_empty()) {
-                        {
-                            let mut cache = self.model_cache.write().await;
-                            cache.insert(target_workdir.clone(), models.clone());
-                        }
-                        Self::persist_model_cache_to_disk(
-                            self.config.model_cache_dir.as_deref(),
-                            &target_workdir,
-                            &models,
-                        );
-                    }
-                    Ok(models)
+            let models = self.load_models_from_disk();
+            if models.as_array().is_some_and(|a| !a.is_empty()) {
+                {
+                    let mut cache = self.model_cache.write().await;
+                    cache.insert(target_workdir.clone(), models.clone());
                 }
-                Err(e) => {
-                    warn!(
-                        "Ephemeral model fetch failed for '{}': {}",
-                        target_workdir, e
-                    );
-                    Ok(serde_json::Value::Array(vec![]))
-                }
+                Self::persist_model_cache_to_disk(
+                    self.config.model_cache_dir.as_deref(),
+                    &target_workdir,
+                    &models,
+                );
             }
+            Ok(models)
         }
     }
 
@@ -1371,138 +1375,72 @@ impl PiSessionManager {
         }
     }
 
-    /// Spawn an ephemeral Pi RPC process to fetch models for a workdir.
-    /// Used when the cache is empty for a workdir and no live session exists.
-    async fn fetch_models_ephemeral(&self, workdir: &str) -> Result<serde_json::Value> {
-        // Validate workdir exists before spawning
-        let workdir_path = std::path::Path::new(workdir);
-        if !workdir_path.is_dir() {
-            anyhow::bail!("Workdir '{}' does not exist", workdir);
-        }
-
-        info!(
-            "Spawning ephemeral Pi process to fetch models for '{}'",
-            workdir
-        );
-
-        let mut cmd = Command::new(&self.config.pi_binary);
-        cmd.args(["--mode", "rpc", "--no-session"])
-            .current_dir(workdir)
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped());
-
-        // Load per-user eavs.env so Pi can authenticate against the eavs proxy.
-        // Without this, Pi cannot resolve provider API keys from models.json.
+    /// Read models directly from ~/.pi/agent/models.json.
+    ///
+    /// This replaces the old ephemeral Pi spawn approach. The models.json file is
+    /// provisioned by oqto via eavs and contains provider configs with full model
+    /// lists. Reading it directly is instant, reliable, and avoids all the
+    /// fragility of spawning a bun/Pi process (wrong HOME, missing env vars,
+    /// permission errors, timeouts).
+    fn load_models_from_disk(&self) -> serde_json::Value {
         let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-        let eavs_env_path = format!("{}/.config/oqto/eavs.env", home);
-        if let Ok(contents) = std::fs::read_to_string(&eavs_env_path) {
-            for line in contents.lines() {
-                let line = line.trim();
-                if line.is_empty() || line.starts_with('#') {
-                    continue;
-                }
-                if let Some((key, value)) = line.split_once('=') {
-                    cmd.env(key.trim(), value.trim());
+        let models_path = PathBuf::from(&home).join(".pi/agent/models.json");
+
+        let content = match std::fs::read_to_string(&models_path) {
+            Ok(c) => c,
+            Err(e) => {
+                warn!("Could not read models.json at {}: {}", models_path.display(), e);
+                return serde_json::Value::Array(vec![]);
+            }
+        };
+
+        let config: serde_json::Value = match serde_json::from_str(&content) {
+            Ok(v) => v,
+            Err(e) => {
+                warn!("Failed to parse models.json: {}", e);
+                return serde_json::Value::Array(vec![]);
+            }
+        };
+
+        // models.json has { "providers": { "name": { "api": ..., "models": [...] } } }
+        // Flatten all provider models into a single array that the frontend expects.
+        let mut all_models = Vec::new();
+
+        if let Some(providers) = config.get("providers").and_then(|p| p.as_object()) {
+            for (provider_name, provider_config) in providers {
+                let api = provider_config.get("api").and_then(|a| a.as_str()).unwrap_or("openai-completions");
+                let base_url = provider_config.get("baseUrl").and_then(|u| u.as_str()).unwrap_or("");
+                let api_key_env = provider_config.get("apiKey").and_then(|k| k.as_str()).unwrap_or("");
+
+                if let Some(models) = provider_config.get("models").and_then(|m| m.as_array()) {
+                    for model in models {
+                        // Each model in models.json already has id, name, reasoning,
+                        // contextWindow, maxTokens, cost, etc. We add provider metadata
+                        // so the frontend can display and route correctly.
+                        let mut enriched = model.clone();
+                        if let Some(obj) = enriched.as_object_mut() {
+                            obj.entry("provider".to_string())
+                                .or_insert_with(|| serde_json::Value::String(provider_name.clone()));
+                            obj.entry("api".to_string())
+                                .or_insert_with(|| serde_json::Value::String(api.to_string()));
+                            obj.entry("baseUrl".to_string())
+                                .or_insert_with(|| serde_json::Value::String(base_url.to_string()));
+                            obj.entry("apiKeyEnv".to_string())
+                                .or_insert_with(|| serde_json::Value::String(api_key_env.to_string()));
+                        }
+                        all_models.push(enriched);
+                    }
                 }
             }
         }
 
-        let mut child = cmd
-            .spawn()
-            .context("Failed to spawn ephemeral Pi process")?;
-        let mut stdin = child.stdin.take().context("No stdin on ephemeral Pi")?;
-        let stdout = child.stdout.take().context("No stdout on ephemeral Pi")?;
-        let stderr = child.stderr.take().context("No stderr on ephemeral Pi")?;
+        if all_models.is_empty() {
+            info!("No models found in {}", models_path.display());
+        } else {
+            info!("Loaded {} models from {}", all_models.len(), models_path.display());
+        }
 
-        // Spawn a task to collect stderr for diagnostics
-        let stderr_task = tokio::spawn(async move {
-            let mut stderr_reader = BufReader::new(stderr);
-            let mut buf = String::new();
-            let _ = tokio::io::AsyncReadExt::read_to_string(&mut stderr_reader, &mut buf).await;
-            buf
-        });
-
-        let mut reader = BufReader::new(stdout).lines();
-
-        // Wait for Pi to emit at least one line (it outputs extension_ui_request events
-        // during init before it's ready to accept commands)
-        let result = tokio::time::timeout(Duration::from_secs(30), async {
-            let mut got_first_line = false;
-            loop {
-                let line = reader
-                    .next_line()
-                    .await
-                    .context("Failed to read from ephemeral Pi")?;
-                let Some(line) = line else {
-                    anyhow::bail!("Ephemeral Pi stdout closed without response");
-                };
-                let trimmed = line.trim();
-                if trimmed.is_empty() {
-                    continue;
-                }
-
-                // Once we see the first output, Pi is initializing. Send our command
-                // after the first line so Pi's stdin reader is ready.
-                if !got_first_line {
-                    got_first_line = true;
-                    let pi_cmd = PiCommand::GetAvailableModels {
-                        id: Some("ephemeral_get_models".to_string()),
-                    };
-                    Self::write_command(&mut stdin, &pi_cmd).await?;
-                }
-
-                match PiMessage::parse(trimmed) {
-                    Ok(PiMessage::Response(resp)) => {
-                        if resp.id.as_deref() == Some("ephemeral_get_models") {
-                            if resp.success {
-                                if let Some(data) = resp.data {
-                                    let models = if let Some(inner) = data.get("models") {
-                                        inner.clone()
-                                    } else if data.is_array() {
-                                        data
-                                    } else {
-                                        serde_json::Value::Array(vec![])
-                                    };
-                                    return Ok(models);
-                                }
-                            } else {
-                                let err_msg =
-                                    resp.error.unwrap_or_else(|| "unknown error".to_string());
-                                anyhow::bail!("Ephemeral Pi get_models failed: {}", err_msg);
-                            }
-                        }
-                    }
-                    Ok(PiMessage::Event(_)) => {
-                        // Ignore events (extension_ui_request, session_ready, etc.)
-                    }
-                    Err(e) => {
-                        debug!("Ephemeral Pi: failed to parse line: {}", e);
-                    }
-                }
-            }
-        })
-        .await
-        .map_err(|_| {
-            // On timeout, try to collect stderr for diagnostics
-            let stderr_hint = stderr_task
-                .now_or_never()
-                .and_then(|r| r.ok())
-                .unwrap_or_default();
-            let stderr_snippet = if stderr_hint.is_empty() {
-                String::new()
-            } else {
-                // Truncate to first 500 chars for log readability
-                let truncated: String = stderr_hint.chars().take(500).collect();
-                format!(" (stderr: {})", truncated.trim())
-            };
-            anyhow::anyhow!("Timeout waiting for ephemeral Pi models{}", stderr_snippet)
-        })??;
-
-        // Kill the ephemeral process
-        let _ = child.kill().await;
-
-        Ok(result)
+        serde_json::Value::Array(all_models)
     }
 
     /// Get session statistics.
