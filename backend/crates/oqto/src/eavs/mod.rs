@@ -37,9 +37,15 @@ impl EavsApi for EavsClient {
 ///
 /// Creates one Pi provider per eavs provider, each pointing at eavs
 /// with the correct path-prefix routing and Pi API type.
+///
+/// `api_key` is the user's eavs virtual key. It is embedded directly in
+/// models.json so Pi can authenticate against the local eavs proxy without
+/// needing an environment variable. The key is only valid on 127.0.0.1 so
+/// there is no security concern embedding it in the file.
 pub fn generate_pi_models_json(
     providers: &[ProviderDetail],
     eavs_base_url: &str,
+    api_key: Option<&str>,
 ) -> serde_json::Value {
     let mut pi_providers = serde_json::Map::new();
     let base = eavs_base_url.trim_end_matches('/');
@@ -84,11 +90,14 @@ pub fn generate_pi_models_json(
             })
             .collect();
 
-        // Build provider entry with all fields Pi needs
+        // Build provider entry with all fields Pi needs.
+        // Use the actual eavs virtual key if provided, otherwise fall back to
+        // the env var name (Pi resolves it via process.env).
+        let key_value = api_key.unwrap_or("EAVS_API_KEY");
         let mut pi_provider = serde_json::json!({
             "baseUrl": base_url,
             "api": pi_api,
-            "apiKey": "EAVS_API_KEY",
+            "apiKey": key_value,
             "models": models,
         });
 

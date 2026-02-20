@@ -2781,8 +2781,8 @@ async fn provision_eavs_for_user(
         println!("  Key created: {} ({})", key_resp.key_id, key_resp.key);
     }
 
-    // 3. Generate models.json
-    let models_json = generate_pi_models_json(&providers, eavs_base);
+    // 3. Generate models.json (embed the virtual key directly so Pi doesn't need env vars)
+    let models_json = generate_pi_models_json(&providers, eavs_base, Some(&key_resp.key));
 
     // 4. Write to user's home directory
     let home = get_user_home(linux_username)?;

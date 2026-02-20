@@ -638,8 +638,9 @@ pub(crate) async fn provision_eavs_for_user(
     // 640 so the oqto service user (in the shared group) can read it for env injection
     linux_users.chmod_file(linux_username, &format!("{}/eavs.env", env_dir), "640")?;
 
-    // 3. Regenerate models.json from current catalog
-    sync_eavs_models_json(eavs_client, linux_users, linux_username).await?;
+    // 3. Regenerate models.json from current catalog (embed the key directly)
+    sync_eavs_models_json_with_key(eavs_client, linux_users, linux_username, &key_resp.key)
+        .await?;
 
     Ok(key_resp.key_id)
 }
@@ -647,11 +648,38 @@ pub(crate) async fn provision_eavs_for_user(
 /// Regenerate Pi models.json from the current eavs model catalog.
 ///
 /// This is safe to call repeatedly -- it only regenerates models.json,
-/// it does NOT create or rotate eavs keys.
+/// it does NOT create or rotate eavs keys. Reads the user's eavs virtual
+/// key from `~/.config/oqto/eavs.env` so the key is embedded directly in
+/// models.json (Pi uses it as a literal API key).
 pub(crate) async fn sync_eavs_models_json(
     eavs_client: &crate::eavs::EavsClient,
     linux_users: &crate::local::LinuxUsersConfig,
     linux_username: &str,
+) -> anyhow::Result<()> {
+    // Read eavs key from the user's eavs.env file
+    let home = linux_users.get_user_home(linux_username)?;
+    let eavs_env_path = format!("{}/.config/oqto/eavs.env", home);
+    let api_key = read_eavs_key_from_env(&eavs_env_path);
+
+    sync_eavs_models_json_inner(eavs_client, linux_users, linux_username, api_key.as_deref())
+        .await
+}
+
+/// Same as `sync_eavs_models_json` but with the key already in hand (avoids re-reading eavs.env).
+async fn sync_eavs_models_json_with_key(
+    eavs_client: &crate::eavs::EavsClient,
+    linux_users: &crate::local::LinuxUsersConfig,
+    linux_username: &str,
+    api_key: &str,
+) -> anyhow::Result<()> {
+    sync_eavs_models_json_inner(eavs_client, linux_users, linux_username, Some(api_key)).await
+}
+
+async fn sync_eavs_models_json_inner(
+    eavs_client: &crate::eavs::EavsClient,
+    linux_users: &crate::local::LinuxUsersConfig,
+    linux_username: &str,
+    api_key: Option<&str>,
 ) -> anyhow::Result<()> {
     use crate::eavs::generate_pi_models_json;
 
@@ -661,7 +689,7 @@ pub(crate) async fn sync_eavs_models_json(
         .map_err(|e| anyhow::anyhow!("Failed to query eavs providers: {}", e))?;
 
     let eavs_base = eavs_client.base_url();
-    let models_json = generate_pi_models_json(&providers, eavs_base);
+    let models_json = generate_pi_models_json(&providers, eavs_base, api_key);
     let models_content = serde_json::to_string_pretty(&models_json)?;
 
     let home = linux_users.get_user_home(linux_username)?;
@@ -669,6 +697,22 @@ pub(crate) async fn sync_eavs_models_json(
     linux_users.write_file_as_user(linux_username, &pi_dir, "models.json", &models_content)?;
 
     Ok(())
+}
+
+/// Read the EAVS_API_KEY value from an eavs.env file.
+/// Returns None if the file doesn't exist or the key isn't found.
+fn read_eavs_key_from_env(path: &str) -> Option<String> {
+    let contents = std::fs::read_to_string(path).ok()?;
+    for line in contents.lines() {
+        let line = line.trim();
+        if let Some(value) = line.strip_prefix("EAVS_API_KEY=") {
+            let value = value.trim();
+            if !value.is_empty() {
+                return Some(value.to_string());
+            }
+        }
+    }
+    None
 }
 
 // ============================================================================
