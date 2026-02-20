@@ -782,26 +782,46 @@ impl LinuxUsersConfig {
                 &[&format!("{}:{}", linux_username, self.group), &path],
             )?;
         } else {
-            // Write to temp file, then copy into place with correct ownership
-            let temp = format!("/tmp/oqto-file-{}-{}", linux_username, filename);
-            std::fs::write(&temp, content)
-                .with_context(|| format!("writing temp file {}", temp))?;
-            run_privileged_command(self.use_sudo, "/bin/mkdir", &["-p", dir])?;
-            run_privileged_command(self.use_sudo, "/usr/bin/cp", &[&temp, &path])?;
-            run_privileged_command(
-                self.use_sudo,
-                "/usr/bin/chown",
-                &[&format!("{}:{}", linux_username, self.group), &path],
-            )?;
-            let _ = std::fs::remove_file(&temp);
+            // Delegate to oqto-usermgr (runs as root) via write-file command.
+            // The path must be relative to the user's home directory.
+            let home = self.get_user_home(linux_username)?;
+            let full_path = format!("{}/{}", dir, filename);
+            let rel_path = full_path
+                .strip_prefix(&format!("{}/", home))
+                .with_context(|| format!("path {} is not under home {}", full_path, home))?;
+
+            usermgr_request(
+                "write-file",
+                serde_json::json!({
+                    "username": linux_username,
+                    "path": rel_path,
+                    "content": content,
+                    "group": self.group,
+                }),
+            )
+            .with_context(|| format!("write-file {} via oqto-usermgr", rel_path))?;
         }
         Ok(())
     }
 
     /// Set file permissions on a path owned by a user.
-    pub fn chmod_file(&self, _linux_username: &str, path: &str, mode: &str) -> Result<()> {
-        run_privileged_command(self.use_sudo, "/usr/bin/chmod", &[mode, path])
-            .with_context(|| format!("chmod {} {}", mode, path))
+    pub fn chmod_file(&self, linux_username: &str, path: &str, mode: &str) -> Result<()> {
+        let is_root = geteuid().is_root();
+        if is_root {
+            run_privileged_command(false, "/usr/bin/chmod", &[mode, path])
+                .with_context(|| format!("chmod {} {}", mode, path))
+        } else {
+            // Delegate to usermgr
+            usermgr_request(
+                "chmod",
+                serde_json::json!({
+                    "username": linux_username,
+                    "path": path,
+                    "mode": mode,
+                }),
+            )
+            .with_context(|| format!("chmod {} {} via oqto-usermgr", mode, path))
+        }
     }
 
     /// Provision shell dotfiles (zsh + starship) for a platform user.

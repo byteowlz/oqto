@@ -165,6 +165,7 @@ fn dispatch(req: &Request) -> Response {
         "setup-user-runner" => cmd_setup_user_runner(&req.args),
         "create-workspace" => cmd_create_workspace(&req.args),
         "setup-user-shell" => cmd_setup_user_shell(&req.args),
+        "write-file" => cmd_write_file(&req.args),
         "ping" => Response::success(),
         other => Response::error(format!("unknown command: {other}")),
     }
@@ -870,6 +871,80 @@ fn cmd_setup_user_shell(args: &serde_json::Value) -> Response {
     }
 
     write_user_dotfiles(&home, username, group);
+
+    Response::success()
+}
+
+/// Write a file to a user's home directory.
+///
+/// Required args: username, path (relative to home), content
+/// Optional args: group (default: "oqto"), mode (default: "0644")
+///
+/// Creates parent directories as needed. File is owned by username:group.
+fn cmd_write_file(args: &serde_json::Value) -> Response {
+    let username = match get_str(args, "username") {
+        Ok(u) => u,
+        Err(r) => return r,
+    };
+    let rel_path = match get_str(args, "path") {
+        Ok(p) => p,
+        Err(r) => return r,
+    };
+    let content = match get_str(args, "content") {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    let group = args.get("group").and_then(|v| v.as_str()).unwrap_or("oqto");
+    let mode = args.get("mode").and_then(|v| v.as_str()).unwrap_or("0644");
+
+    if let Err(e) = validate_username(username) {
+        return Response::error(e);
+    }
+    if let Err(e) = validate_group(group) {
+        return Response::error(e);
+    }
+
+    // Prevent path traversal
+    if rel_path.contains("..") || rel_path.starts_with('/') {
+        return Response::error("path must be relative and cannot contain '..'".to_string());
+    }
+
+    let home = format!("/home/{username}");
+    if !std::path::Path::new(&home).exists() {
+        return Response::error(format!("home directory does not exist: {home}"));
+    }
+
+    let full_path = format!("{home}/{rel_path}");
+
+    // Create parent directories
+    if let Some(parent) = std::path::Path::new(&full_path).parent() {
+        if !parent.exists() {
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                return Response::error(format!("mkdir {}: {e}", parent.display()));
+            }
+            // chown the created directories
+            let _ = run_cmd(
+                "/usr/bin/chown",
+                &["-R", &format!("{username}:{group}"), &parent.to_string_lossy()],
+            );
+        }
+    }
+
+    // Write the file
+    if let Err(e) = std::fs::write(&full_path, content) {
+        return Response::error(format!("write {full_path}: {e}"));
+    }
+
+    // Set ownership and permissions
+    if let Err(e) = run_cmd(
+        "/usr/bin/chown",
+        &[&format!("{username}:{group}"), &full_path],
+    ) {
+        return Response::error(format!("chown: {e}"));
+    }
+    if let Err(e) = run_cmd("/usr/bin/chmod", &[mode, &full_path]) {
+        return Response::error(format!("chmod: {e}"));
+    }
 
     Response::success()
 }

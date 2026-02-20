@@ -1,0 +1,23 @@
+{
+  "todos": [
+    {
+      "id": "c7074899",
+      "content": "Fix prepare-release-repo.sh to use env vars instead of hardcoded PII",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "b18854f9",
+      "content": "Rewrite git history to remove PII from the script",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "6063203c",
+      "content": "Force push cleaned history",
+      "status": "in_progress",
+      "priority": "high"
+    }
+  ],
+  "updated_at": "2026-02-20T07:52:56.716Z"
+}
