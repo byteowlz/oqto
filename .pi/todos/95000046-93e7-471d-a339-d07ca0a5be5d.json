@@ -2,28 +2,34 @@
   "todos": [
     {
       "id": "1",
-      "content": "Backend + Frontend: admin provider management",
+      "content": "Backend + Frontend: admin provider management (add/delete/sync)",
       "status": "completed",
       "priority": "high"
     },
     {
       "id": "2",
-      "content": "Deployed to octo-azure, ready for testing",
+      "content": "Fix ephemeral Pi model fetch timeout",
       "status": "completed",
       "priority": "high"
     },
     {
       "id": "3",
-      "content": "Fix ephemeral Pi model fetch (eavs.env + timeout not killing sessions)",
+      "content": "Deploy fixes to octo-azure",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "4",
+      "content": "Push commits to GitHub (SSH key needed)",
       "status": "pending",
       "priority": "medium"
     },
     {
-      "id": "4",
-      "content": "Push all commits to GitHub",
+      "id": "5",
+      "content": "Update provider form for Azure AI Foundry (api_version, compat, deployment fields)",
       "status": "pending",
       "priority": "medium"
     }
   ],
-  "updated_at": "2026-02-20T12:43:21.360Z"
+  "updated_at": "2026-02-20T13:34:55.599Z"
 }

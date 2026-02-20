@@ -1,7 +1,33 @@
 "use client";
 
+import {
+	AlertDialog,
+	AlertDialogAction,
+	AlertDialogCancel,
+	AlertDialogContent,
+	AlertDialogDescription,
+	AlertDialogFooter,
+	AlertDialogHeader,
+	AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+	Dialog,
+	DialogContent,
+	DialogFooter,
+	DialogHeader,
+	DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@/components/ui/select";
 import {
 	type EavsProviderSummary,
 	type SyncAllModelsResponse,
@@ -32,18 +58,21 @@ const PROVIDER_TYPES = [
 	{ value: "openrouter", label: "OpenRouter" },
 	{ value: "mistral", label: "Mistral" },
 	{ value: "xai", label: "xAI (Grok)" },
-	{ value: "bedrock", label: "AWS Bedrock" },
 	{ value: "azure", label: "Azure OpenAI" },
-	{ value: "ollama", label: "Ollama (local)" },
+	{ value: "openai-responses", label: "OpenAI Responses API" },
 	{ value: "openai-compatible", label: "OpenAI-compatible" },
+	{ value: "bedrock", label: "AWS Bedrock" },
+	{ value: "ollama", label: "Ollama (local)" },
 ];
 
 function AddProviderDialog({
-	onClose,
+	open,
+	onOpenChange,
 	onSubmit,
 	isPending,
 }: {
-	onClose: () => void;
+	open: boolean;
+	onOpenChange: (open: boolean) => void;
 	onSubmit: (data: {
 		name: string;
 		type: string;
@@ -65,77 +94,80 @@ function AddProviderDialog({
 			api_key: apiKey || undefined,
 			base_url: baseUrl || undefined,
 		});
+		setName("");
+		setType("openai");
+		setApiKey("");
+		setBaseUrl("");
 	};
 
 	return (
-		<div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-			<div className="bg-card border border-border p-6 w-full max-w-md">
-				<h3 className="text-sm font-semibold mb-4">Add Provider</h3>
-				<form onSubmit={handleSubmit} className="space-y-3">
-					<div>
-						<label className="text-xs text-muted-foreground block mb-1">
-							Provider Name
-						</label>
-						<input
-							type="text"
+		<Dialog open={open} onOpenChange={onOpenChange}>
+			<DialogContent>
+				<DialogHeader>
+					<DialogTitle>Add Provider</DialogTitle>
+				</DialogHeader>
+				<form onSubmit={handleSubmit} className="space-y-4">
+					<div className="space-y-2">
+						<Label htmlFor="provider-name">Provider Name</Label>
+						<Input
+							id="provider-name"
 							value={name}
 							onChange={(e) => setName(e.target.value)}
 							placeholder="e.g. anthropic, my-openai"
-							className="w-full px-3 py-2 text-sm bg-background border border-border focus:outline-none focus:ring-1 focus:ring-ring"
 							required
 						/>
 					</div>
-					<div>
-						<label className="text-xs text-muted-foreground block mb-1">
-							Type
-						</label>
-						<select
-							value={type_}
-							onChange={(e) => setType(e.target.value)}
-							className="w-full px-3 py-2 text-sm bg-background border border-border focus:outline-none focus:ring-1 focus:ring-ring"
-						>
-							{PROVIDER_TYPES.map((t) => (
-								<option key={t.value} value={t.value}>
-									{t.label}
-								</option>
-							))}
-						</select>
+					<div className="space-y-2">
+						<Label>Type</Label>
+						<Select value={type_} onValueChange={setType}>
+							<SelectTrigger className="w-full">
+								<SelectValue placeholder="Select provider type" />
+							</SelectTrigger>
+							<SelectContent>
+								{PROVIDER_TYPES.map((t) => (
+									<SelectItem key={t.value} value={t.value}>
+										{t.label}
+									</SelectItem>
+								))}
+							</SelectContent>
+						</Select>
 					</div>
-					<div>
-						<label className="text-xs text-muted-foreground block mb-1">
-							API Key
-						</label>
-						<input
+					<div className="space-y-2">
+						<Label htmlFor="provider-key">API Key</Label>
+						<Input
+							id="provider-key"
 							type="password"
 							value={apiKey}
 							onChange={(e) => setApiKey(e.target.value)}
 							placeholder="sk-..."
-							className="w-full px-3 py-2 text-sm bg-background border border-border focus:outline-none focus:ring-1 focus:ring-ring font-mono"
+							className="font-mono"
 						/>
 					</div>
-					<div>
-						<label className="text-xs text-muted-foreground block mb-1">
+					<div className="space-y-2">
+						<Label htmlFor="provider-url">
 							Base URL{" "}
-							<span className="text-muted-foreground/60">(optional)</span>
-						</label>
-						<input
+							<span className="text-muted-foreground font-normal">
+								(optional)
+							</span>
+						</Label>
+						<Input
+							id="provider-url"
 							type="url"
 							value={baseUrl}
 							onChange={(e) => setBaseUrl(e.target.value)}
 							placeholder="https://api.example.com/v1"
-							className="w-full px-3 py-2 text-sm bg-background border border-border focus:outline-none focus:ring-1 focus:ring-ring font-mono"
+							className="font-mono"
 						/>
 					</div>
-					<div className="flex justify-end gap-2 pt-2">
+					<DialogFooter>
 						<Button
 							type="button"
-							variant="ghost"
-							size="sm"
-							onClick={onClose}
+							variant="outline"
+							onClick={() => onOpenChange(false)}
 						>
 							Cancel
 						</Button>
-						<Button type="submit" size="sm" disabled={!name || isPending}>
+						<Button type="submit" disabled={!name || isPending}>
 							{isPending ? (
 								<RefreshCw className="w-3 h-3 mr-1 animate-spin" />
 							) : (
@@ -143,26 +175,71 @@ function AddProviderDialog({
 							)}
 							Add Provider
 						</Button>
-					</div>
+					</DialogFooter>
 				</form>
-			</div>
-		</div>
+			</DialogContent>
+		</Dialog>
+	);
+}
+
+function DeleteProviderDialog({
+	providerName,
+	open,
+	onOpenChange,
+	onConfirm,
+	isPending,
+}: {
+	providerName: string;
+	open: boolean;
+	onOpenChange: (open: boolean) => void;
+	onConfirm: () => void;
+	isPending: boolean;
+}) {
+	return (
+		<AlertDialog open={open} onOpenChange={onOpenChange}>
+			<AlertDialogContent>
+				<AlertDialogHeader>
+					<AlertDialogTitle>Delete Provider</AlertDialogTitle>
+					<AlertDialogDescription>
+						This will remove the provider{" "}
+						<span className="font-mono font-semibold text-foreground">
+							{providerName}
+						</span>{" "}
+						from the EAVS configuration and delete its API key. This action
+						cannot be undone.
+					</AlertDialogDescription>
+				</AlertDialogHeader>
+				<AlertDialogFooter>
+					<AlertDialogCancel disabled={isPending}>Cancel</AlertDialogCancel>
+					<AlertDialogAction
+						onClick={onConfirm}
+						disabled={isPending}
+						className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+					>
+						{isPending ? (
+							<RefreshCw className="w-3 h-3 mr-1 animate-spin" />
+						) : (
+							<Trash2 className="w-3 h-3 mr-1" />
+						)}
+						Delete Provider
+					</AlertDialogAction>
+				</AlertDialogFooter>
+			</AlertDialogContent>
+		</AlertDialog>
 	);
 }
 
 function ProviderCard({
 	provider,
 	onDelete,
-	isDeleting,
 }: {
 	provider: EavsProviderSummary;
 	onDelete: (name: string) => void;
-	isDeleting: boolean;
 }) {
 	const [expanded, setExpanded] = useState(false);
 
 	return (
-		<div className="border border-border">
+		<div className="border border-border rounded-md">
 			<div className="flex items-center">
 				<button
 					type="button"
@@ -202,7 +279,6 @@ function ProviderCard({
 					variant="ghost"
 					size="sm"
 					onClick={() => onDelete(provider.name)}
-					disabled={isDeleting}
 					className="h-8 w-8 p-0 mr-2 text-muted-foreground hover:text-destructive"
 					title={`Delete ${provider.name}`}
 				>
@@ -250,6 +326,7 @@ export function ModelsPanel() {
 	const deleteMutation = useDeleteEavsProvider();
 	const syncModelsMutation = useSyncAllModels();
 	const [showAddDialog, setShowAddDialog] = useState(false);
+	const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
 	const [syncResult, setSyncResult] = useState<SyncAllModelsResponse | null>(
 		null,
 	);
@@ -264,9 +341,10 @@ export function ModelsPanel() {
 		setShowAddDialog(false);
 	};
 
-	const handleDelete = async (name: string) => {
-		if (!window.confirm(`Delete provider "${name}"?`)) return;
-		await deleteMutation.mutateAsync(name);
+	const handleDeleteConfirm = async () => {
+		if (!deleteTarget) return;
+		await deleteMutation.mutateAsync(deleteTarget);
+		setDeleteTarget(null);
 	};
 
 	const handleSyncModels = async () => {
@@ -277,7 +355,7 @@ export function ModelsPanel() {
 
 	if (error) {
 		return (
-			<div className="bg-card border border-border">
+			<div className="bg-card border border-border rounded-md">
 				<div className="border-b border-border px-4 py-3 flex items-center justify-between">
 					<h2 className="text-xs font-semibold text-muted-foreground tracking-wider">
 						MODEL PROVIDERS
@@ -302,7 +380,7 @@ export function ModelsPanel() {
 	return (
 		<div className="space-y-4">
 			{/* Providers */}
-			<div className="bg-card border border-border">
+			<div className="bg-card border border-border rounded-md">
 				<div className="border-b border-border px-4 py-3 flex items-center justify-between">
 					<div className="flex items-center gap-3">
 						<h2 className="text-xs font-semibold text-muted-foreground tracking-wider">
@@ -344,8 +422,7 @@ export function ModelsPanel() {
 							<ProviderCard
 								key={provider.name}
 								provider={provider}
-								onDelete={handleDelete}
-								isDeleting={deleteMutation.isPending}
+								onDelete={setDeleteTarget}
 							/>
 						))}
 					</div>
@@ -363,7 +440,7 @@ export function ModelsPanel() {
 			</div>
 
 			{/* Sync Models Section */}
-			<div className="bg-card border border-border">
+			<div className="bg-card border border-border rounded-md">
 				<div className="border-b border-border px-4 py-3 flex items-center justify-between">
 					<div>
 						<h2 className="text-xs font-semibold text-muted-foreground tracking-wider">
@@ -427,13 +504,23 @@ export function ModelsPanel() {
 			</div>
 
 			{/* Add Provider Dialog */}
-			{showAddDialog && (
-				<AddProviderDialog
-					onClose={() => setShowAddDialog(false)}
-					onSubmit={handleAddProvider}
-					isPending={upsertMutation.isPending}
-				/>
-			)}
+			<AddProviderDialog
+				open={showAddDialog}
+				onOpenChange={setShowAddDialog}
+				onSubmit={handleAddProvider}
+				isPending={upsertMutation.isPending}
+			/>
+
+			{/* Delete Confirmation Dialog */}
+			<DeleteProviderDialog
+				providerName={deleteTarget ?? ""}
+				open={deleteTarget !== null}
+				onOpenChange={(open) => {
+					if (!open) setDeleteTarget(null);
+				}}
+				onConfirm={handleDeleteConfirm}
+				isPending={deleteMutation.isPending}
+			/>
 		</div>
 	);
 }
