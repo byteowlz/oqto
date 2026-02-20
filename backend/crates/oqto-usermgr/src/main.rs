@@ -166,6 +166,7 @@ fn dispatch(req: &Request) -> Response {
         "create-workspace" => cmd_create_workspace(&req.args),
         "setup-user-shell" => cmd_setup_user_shell(&req.args),
         "write-file" => cmd_write_file(&req.args),
+        "restart-service" => cmd_restart_service(&req.args),
         "ping" => Response::success(),
         other => Response::error(format!("unknown command: {other}")),
     }
@@ -947,6 +948,28 @@ fn cmd_write_file(args: &serde_json::Value) -> Response {
     }
 
     Response::success()
+}
+
+/// Restart a system service. Only whitelisted services are allowed.
+fn cmd_restart_service(args: &serde_json::Value) -> Response {
+    let service = match get_str(args, "service") {
+        Ok(s) => s,
+        Err(r) => return r,
+    };
+
+    // Whitelist: only allow restarting specific services
+    const ALLOWED_SERVICES: &[&str] = &["eavs", "eavs.service"];
+    if !ALLOWED_SERVICES.contains(&service) {
+        return Response::error(format!(
+            "service '{}' is not in the allowed list: {:?}",
+            service, ALLOWED_SERVICES
+        ));
+    }
+
+    match run_cmd("/usr/bin/systemctl", &["restart", service]) {
+        Ok(_) => Response::success(),
+        Err(e) => Response::error(format!("systemctl restart {}: {}", service, e)),
+    }
 }
 
 // ============================================================================

@@ -959,31 +959,18 @@ fn remove_toml_section(content: &str, section: &str) -> String {
     result
 }
 
-/// Restart the eavs systemd service.
+/// Restart the eavs systemd service via oqto-usermgr (which runs as root).
 async fn restart_eavs_service() -> Result<(), ApiError> {
-    // Try system service first, then user service
-    let output = tokio::process::Command::new("systemctl")
-        .args(["restart", "eavs"])
-        .output()
-        .await
-        .map_err(|e| ApiError::Internal(format!("Failed to run systemctl: {e}")))?;
-
-    if !output.status.success() {
-        // Try user service
-        let output2 = tokio::process::Command::new("systemctl")
-            .args(["--user", "restart", "eavs"])
-            .output()
-            .await
-            .map_err(|e| ApiError::Internal(format!("Failed to run systemctl --user: {e}")))?;
-
-        if !output2.status.success() {
-            let stderr = String::from_utf8_lossy(&output2.stderr);
-            return Err(ApiError::Internal(format!(
-                "Failed to restart eavs service: {}",
-                stderr.trim()
-            )));
-        }
-    }
+    // Use usermgr daemon to restart the service (it runs as root)
+    tokio::task::spawn_blocking(|| {
+        crate::local::linux_users::usermgr_request(
+            "restart-service",
+            serde_json::json!({"service": "eavs"}),
+        )
+    })
+    .await
+    .map_err(|e| ApiError::Internal(format!("Task join error: {e}")))?
+    .map_err(|e| ApiError::Internal(format!("Failed to restart eavs: {e}")))?;
 
     // Wait a moment for eavs to start
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
