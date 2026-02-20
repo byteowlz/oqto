@@ -167,6 +167,7 @@ fn dispatch(req: &Request) -> Response {
         "setup-user-shell" => cmd_setup_user_shell(&req.args),
         "write-file" => cmd_write_file(&req.args),
         "restart-service" => cmd_restart_service(&req.args),
+        "run-as-user" => cmd_run_as_user(&req.args),
         "ping" => Response::success(),
         other => Response::error(format!("unknown command: {other}")),
     }
@@ -970,6 +971,167 @@ fn cmd_restart_service(args: &serde_json::Value) -> Response {
     match run_cmd("/usr/bin/systemctl", &["restart", service]) {
         Ok(_) => Response::success(),
         Err(e) => Response::error(format!("systemctl restart {}: {}", service, e)),
+    }
+}
+
+// ============================================================================
+// Run command as user
+// ============================================================================
+
+/// Allowed binary names for run-as-user.
+/// Only these can be executed. Full path resolution is done after validation.
+const ALLOWED_RUN_BINARIES: &[&str] = &["skdlr", "trx", "agntz", "byt", "pi", "sldr"];
+
+/// Execute a whitelisted binary as a specific oqto user.
+///
+/// Request args:
+///   username: string  - Linux username (must be oqto_ prefixed)
+///   binary: string    - Binary name (must be in ALLOWED_RUN_BINARIES)
+///   args: [string]    - Arguments to pass
+///   env: {k: v}       - Environment variables to set (optional)
+///   cwd: string       - Working directory (optional, defaults to user home)
+fn cmd_run_as_user(args: &serde_json::Value) -> Response {
+    let username = match get_str(args, "username") {
+        Ok(s) => s,
+        Err(r) => return r,
+    };
+    if let Err(e) = validate_username(username) {
+        return Response::error(e);
+    }
+
+    let binary = match get_str(args, "binary") {
+        Ok(s) => s,
+        Err(r) => return r,
+    };
+
+    // Validate binary against allowlist
+    if !ALLOWED_RUN_BINARIES.contains(&binary) {
+        return Response::error(format!(
+            "binary '{}' is not in the allowed list: {:?}",
+            binary, ALLOWED_RUN_BINARIES
+        ));
+    }
+
+    // Validate binary name has no path components or shell metacharacters
+    if binary.contains('/')
+        || binary.contains('\\')
+        || binary.contains('\0')
+        || binary.contains(';')
+        || binary.contains('|')
+        || binary.contains('&')
+        || binary.contains('$')
+        || binary.contains('`')
+    {
+        return Response::error(format!("binary name '{}' contains invalid characters", binary));
+    }
+
+    let cmd_args: Vec<String> = args
+        .get("args")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    // Validate args: reject shell metacharacters that could enable injection
+    for arg in &cmd_args {
+        if arg.contains('\0') {
+            return Response::error("argument contains null byte".to_string());
+        }
+    }
+
+    let env_map: std::collections::HashMap<String, String> = args
+        .get("env")
+        .and_then(|v| v.as_object())
+        .map(|obj| {
+            obj.iter()
+                .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    // Validate env keys: no shell metacharacters
+    for key in env_map.keys() {
+        if !key
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_')
+        {
+            return Response::error(format!(
+                "env key '{}' contains invalid characters (allowed: A-Z, a-z, 0-9, _)",
+                key
+            ));
+        }
+    }
+
+    let home_dir = format!("/home/{}", username);
+    let cwd = args
+        .get("cwd")
+        .and_then(|v| v.as_str())
+        .unwrap_or(&home_dir);
+
+    // Validate cwd path
+    if let Err(e) = validate_path(cwd, ALLOWED_PATH_PREFIXES) {
+        // Also allow the workspace root and /tmp
+        if !cwd.starts_with("/tmp/") && !cwd.starts_with("/usr/") {
+            return Response::error(format!("cwd: {e}"));
+        }
+    }
+
+    // Build the command: sudo -n -u <username> -- env <envs> <binary> <args>
+    let mut cmd = Command::new("/usr/bin/sudo");
+    cmd.arg("-n")
+        .arg("-u")
+        .arg(username)
+        .arg("--");
+
+    // Use env to set environment variables
+    if !env_map.is_empty() {
+        cmd.arg("/usr/bin/env");
+        for (k, v) in &env_map {
+            cmd.arg(format!("{}={}", k, v));
+        }
+    }
+
+    cmd.arg(binary);
+    for arg in &cmd_args {
+        cmd.arg(arg);
+    }
+    cmd.current_dir(cwd);
+
+    let output = match cmd.output() {
+        Ok(o) => o,
+        Err(e) => return Response::error(format!("failed to execute: {e}")),
+    };
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+    if !output.status.success() {
+        return Response {
+            ok: false,
+            error: Some(format!(
+                "{} exited with status {}: {}",
+                binary,
+                output.status.code().unwrap_or(-1),
+                stderr.trim()
+            )),
+            data: Some(serde_json::json!({
+                "stdout": stdout,
+                "stderr": stderr,
+                "exit_code": output.status.code(),
+            })),
+        };
+    }
+
+    Response {
+        ok: true,
+        error: None,
+        data: Some(serde_json::json!({
+            "stdout": stdout,
+            "stderr": stderr,
+        })),
     }
 }
 

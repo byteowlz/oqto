@@ -1036,6 +1036,14 @@ const USERMGR_SOCKET: &str = "/run/oqto/usermgr.sock";
 
 /// Send a JSON request to the oqto-usermgr daemon and return the response.
 pub fn usermgr_request(cmd: &str, args: serde_json::Value) -> Result<()> {
+    usermgr_request_with_data(cmd, args).map(|_| ())
+}
+
+/// Send a request to oqto-usermgr and return the response data (if any).
+pub fn usermgr_request_with_data(
+    cmd: &str,
+    args: serde_json::Value,
+) -> Result<Option<serde_json::Value>> {
     use std::io::{BufRead, BufReader, Write};
     use std::os::unix::net::UnixStream;
 
@@ -1069,7 +1077,7 @@ pub fn usermgr_request(cmd: &str, args: serde_json::Value) -> Result<()> {
         serde_json::from_str(&response_str).context("parsing oqto-usermgr response")?;
 
     if response.get("ok").and_then(|v| v.as_bool()) == Some(true) {
-        Ok(())
+        Ok(response.get("data").cloned())
     } else {
         let error = response
             .get("error")

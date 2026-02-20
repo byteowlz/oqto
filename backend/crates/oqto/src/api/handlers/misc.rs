@@ -208,20 +208,22 @@ async fn exec_skdlr_command(
 ) -> Result<String, ApiError> {
     let bin = resolve_skdlr_bin(workspace_root);
     let skdlr_config = PathBuf::from("/etc/oqto/skdlr-agent.toml");
-    let mut full_args: Vec<&str> = Vec::new();
+    let mut full_args: Vec<String> = Vec::new();
 
     if skdlr_config.exists() {
-        full_args.push("--config");
+        full_args.push("--config".to_string());
         full_args.push(
             skdlr_config
                 .to_str()
-                .unwrap_or("/etc/oqto/skdlr-agent.toml"),
+                .unwrap_or("/etc/oqto/skdlr-agent.toml")
+                .to_string(),
         );
     }
 
-    full_args.extend_from_slice(args);
+    full_args.extend(args.iter().map(|s| s.to_string()));
 
-    let output = if let Some(linux_users) = linux_users.filter(|cfg| cfg.enabled) {
+    if let Some(linux_users) = linux_users.filter(|cfg| cfg.enabled) {
+        // Multi-user mode: delegate to usermgr (runs as root, can sudo)
         let linux_username = linux_users.linux_username(user_id);
         let home_dir = linux_users
             .get_home_dir(user_id)
@@ -230,43 +232,69 @@ async fn exec_skdlr_command(
         let xdg_config = home_dir.join(".config");
         let xdg_data = home_dir.join(".local/share");
 
-        let mut cmd = Command::new("sudo");
-        cmd.arg("-n")
-            .arg("-u")
-            .arg(&linux_username)
-            .arg("--")
-            .arg("env")
-            .arg("SKDLR_OQTO_MODE=1")
-            .arg(format!("XDG_CONFIG_HOME={}", xdg_config.display()))
-            .arg(format!("XDG_DATA_HOME={}", xdg_data.display()))
-            .arg(bin)
-            .args(&full_args)
-            .current_dir(workspace_root);
+        let bin_name = bin
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("skdlr")
+            .to_string();
 
-        cmd.output()
-            .await
-            .map_err(|e| ApiError::internal(format!("Failed to execute skdlr: {}", e)))?
+        let env = serde_json::json!({
+            "SKDLR_OQTO_MODE": "1",
+            "XDG_CONFIG_HOME": xdg_config.to_string_lossy(),
+            "XDG_DATA_HOME": xdg_data.to_string_lossy(),
+        });
+
+        let cwd = workspace_root.to_string_lossy().to_string();
+
+        let result = tokio::task::spawn_blocking(move || {
+            crate::local::linux_users::usermgr_request_with_data(
+                "run-as-user",
+                serde_json::json!({
+                    "username": linux_username,
+                    "binary": bin_name,
+                    "args": full_args,
+                    "env": env,
+                    "cwd": cwd,
+                }),
+            )
+        })
+        .await
+        .map_err(|e| ApiError::internal(format!("Task join error: {e}")))?
+        .map_err(|e| ApiError::internal(format!("skdlr command failed: {e}")))?;
+
+        // Extract stdout from response data
+        let stdout = result
+            .as_ref()
+            .and_then(|d| d.get("stdout"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        Ok(stdout)
     } else {
+        // Single-user mode: run directly
         let mut cmd = Command::new(bin);
         if skdlr_config.exists() {
             cmd.env("SKDLR_OQTO_MODE", "1");
         }
-        cmd.args(&full_args)
-            .current_dir(workspace_root)
+        cmd.args(full_args.iter().map(String::as_str))
+            .current_dir(workspace_root);
+
+        let output = cmd
             .output()
             .await
-            .map_err(|e| ApiError::internal(format!("Failed to execute skdlr: {}", e)))?
-    };
+            .map_err(|e| ApiError::internal(format!("Failed to execute skdlr: {}", e)))?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(ApiError::internal(format!(
-            "skdlr command failed: {}",
-            stderr
-        )));
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(ApiError::internal(format!(
+                "skdlr command failed: {}",
+                stderr
+            )));
+        }
+
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
     }
-
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
 fn parse_skdlr_list(output: &str) -> Vec<SchedulerEntry> {
