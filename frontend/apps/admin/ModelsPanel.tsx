@@ -4,61 +4,211 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
 	type EavsProviderSummary,
-	type SyncUserConfigResult,
+	type SyncAllModelsResponse,
+	useDeleteEavsProvider,
 	useEavsProviders,
-	useSyncUserConfigs,
+	useSyncAllModels,
+	useUpsertEavsProvider,
 } from "@/hooks/use-admin";
 import {
 	AlertTriangle,
 	Check,
 	ChevronDown,
 	ChevronRight,
+	Plus,
 	RefreshCw,
 	Server,
+	Trash2,
 	X,
 	Zap,
 } from "lucide-react";
 import { useState } from "react";
 
-function ProviderCard({ provider }: { provider: EavsProviderSummary }) {
+const PROVIDER_TYPES = [
+	{ value: "openai", label: "OpenAI" },
+	{ value: "anthropic", label: "Anthropic" },
+	{ value: "google", label: "Google (Gemini)" },
+	{ value: "groq", label: "Groq" },
+	{ value: "openrouter", label: "OpenRouter" },
+	{ value: "mistral", label: "Mistral" },
+	{ value: "xai", label: "xAI (Grok)" },
+	{ value: "bedrock", label: "AWS Bedrock" },
+	{ value: "azure", label: "Azure OpenAI" },
+	{ value: "ollama", label: "Ollama (local)" },
+	{ value: "openai-compatible", label: "OpenAI-compatible" },
+];
+
+function AddProviderDialog({
+	onClose,
+	onSubmit,
+	isPending,
+}: {
+	onClose: () => void;
+	onSubmit: (data: {
+		name: string;
+		type: string;
+		api_key?: string;
+		base_url?: string;
+	}) => void;
+	isPending: boolean;
+}) {
+	const [name, setName] = useState("");
+	const [type_, setType] = useState("openai");
+	const [apiKey, setApiKey] = useState("");
+	const [baseUrl, setBaseUrl] = useState("");
+
+	const handleSubmit = (e: React.FormEvent) => {
+		e.preventDefault();
+		onSubmit({
+			name: name.toLowerCase().replace(/\s+/g, "-"),
+			type: type_,
+			api_key: apiKey || undefined,
+			base_url: baseUrl || undefined,
+		});
+	};
+
+	return (
+		<div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+			<div className="bg-card border border-border p-6 w-full max-w-md">
+				<h3 className="text-sm font-semibold mb-4">Add Provider</h3>
+				<form onSubmit={handleSubmit} className="space-y-3">
+					<div>
+						<label className="text-xs text-muted-foreground block mb-1">
+							Provider Name
+						</label>
+						<input
+							type="text"
+							value={name}
+							onChange={(e) => setName(e.target.value)}
+							placeholder="e.g. anthropic, my-openai"
+							className="w-full px-3 py-2 text-sm bg-background border border-border focus:outline-none focus:ring-1 focus:ring-ring"
+							required
+						/>
+					</div>
+					<div>
+						<label className="text-xs text-muted-foreground block mb-1">
+							Type
+						</label>
+						<select
+							value={type_}
+							onChange={(e) => setType(e.target.value)}
+							className="w-full px-3 py-2 text-sm bg-background border border-border focus:outline-none focus:ring-1 focus:ring-ring"
+						>
+							{PROVIDER_TYPES.map((t) => (
+								<option key={t.value} value={t.value}>
+									{t.label}
+								</option>
+							))}
+						</select>
+					</div>
+					<div>
+						<label className="text-xs text-muted-foreground block mb-1">
+							API Key
+						</label>
+						<input
+							type="password"
+							value={apiKey}
+							onChange={(e) => setApiKey(e.target.value)}
+							placeholder="sk-..."
+							className="w-full px-3 py-2 text-sm bg-background border border-border focus:outline-none focus:ring-1 focus:ring-ring font-mono"
+						/>
+					</div>
+					<div>
+						<label className="text-xs text-muted-foreground block mb-1">
+							Base URL{" "}
+							<span className="text-muted-foreground/60">(optional)</span>
+						</label>
+						<input
+							type="url"
+							value={baseUrl}
+							onChange={(e) => setBaseUrl(e.target.value)}
+							placeholder="https://api.example.com/v1"
+							className="w-full px-3 py-2 text-sm bg-background border border-border focus:outline-none focus:ring-1 focus:ring-ring font-mono"
+						/>
+					</div>
+					<div className="flex justify-end gap-2 pt-2">
+						<Button
+							type="button"
+							variant="ghost"
+							size="sm"
+							onClick={onClose}
+						>
+							Cancel
+						</Button>
+						<Button type="submit" size="sm" disabled={!name || isPending}>
+							{isPending ? (
+								<RefreshCw className="w-3 h-3 mr-1 animate-spin" />
+							) : (
+								<Plus className="w-3 h-3 mr-1" />
+							)}
+							Add Provider
+						</Button>
+					</div>
+				</form>
+			</div>
+		</div>
+	);
+}
+
+function ProviderCard({
+	provider,
+	onDelete,
+	isDeleting,
+}: {
+	provider: EavsProviderSummary;
+	onDelete: (name: string) => void;
+	isDeleting: boolean;
+}) {
 	const [expanded, setExpanded] = useState(false);
 
 	return (
 		<div className="border border-border">
-			<button
-				type="button"
-				onClick={() => setExpanded(!expanded)}
-				className="w-full flex items-center justify-between px-4 py-3 hover:bg-muted/30 transition-colors"
-			>
-				<div className="flex items-center gap-3">
-					<Server className="w-4 h-4 text-muted-foreground" />
-					<div className="text-left">
-						<div className="text-sm font-medium text-foreground">
-							{provider.name}
-						</div>
-						<div className="text-xs text-muted-foreground">
-							{provider.type}
-							{provider.pi_api ? ` (${provider.pi_api})` : ""}
+			<div className="flex items-center">
+				<button
+					type="button"
+					onClick={() => setExpanded(!expanded)}
+					className="flex-1 flex items-center justify-between px-4 py-3 hover:bg-muted/30 transition-colors"
+				>
+					<div className="flex items-center gap-3">
+						<Server className="w-4 h-4 text-muted-foreground" />
+						<div className="text-left">
+							<div className="text-sm font-medium text-foreground">
+								{provider.name}
+							</div>
+							<div className="text-xs text-muted-foreground">
+								{provider.type}
+								{provider.pi_api ? ` (${provider.pi_api})` : ""}
+							</div>
 						</div>
 					</div>
-				</div>
-				<div className="flex items-center gap-2">
-					<Badge
-						variant={provider.has_api_key ? "default" : "outline"}
-						className="text-[10px]"
-					>
-						{provider.has_api_key ? "configured" : "no key"}
-					</Badge>
-					<Badge variant="secondary" className="text-[10px]">
-						{provider.model_count} models
-					</Badge>
-					{expanded ? (
-						<ChevronDown className="w-4 h-4 text-muted-foreground" />
-					) : (
-						<ChevronRight className="w-4 h-4 text-muted-foreground" />
-					)}
-				</div>
-			</button>
+					<div className="flex items-center gap-2">
+						<Badge
+							variant={provider.has_api_key ? "default" : "outline"}
+							className="text-[10px]"
+						>
+							{provider.has_api_key ? "configured" : "no key"}
+						</Badge>
+						<Badge variant="secondary" className="text-[10px]">
+							{provider.model_count} models
+						</Badge>
+						{expanded ? (
+							<ChevronDown className="w-4 h-4 text-muted-foreground" />
+						) : (
+							<ChevronRight className="w-4 h-4 text-muted-foreground" />
+						)}
+					</div>
+				</button>
+				<Button
+					variant="ghost"
+					size="sm"
+					onClick={() => onDelete(provider.name)}
+					disabled={isDeleting}
+					className="h-8 w-8 p-0 mr-2 text-muted-foreground hover:text-destructive"
+					title={`Delete ${provider.name}`}
+				>
+					<Trash2 className="w-3.5 h-3.5" />
+				</Button>
+			</div>
 			{expanded && provider.models.length > 0 && (
 				<div className="border-t border-border px-4 py-2 max-h-64 overflow-y-auto">
 					<table className="w-full text-xs">
@@ -94,60 +244,35 @@ function ProviderCard({ provider }: { provider: EavsProviderSummary }) {
 	);
 }
 
-function SyncResultRow({ result }: { result: SyncUserConfigResult }) {
-	return (
-		<tr className="border-b border-border/50 text-xs">
-			<td className="py-2 px-3 font-medium text-foreground">
-				{result.user_id}
-			</td>
-			<td className="py-2 px-3 text-muted-foreground">
-				{result.linux_username || "-"}
-			</td>
-			<td className="py-2 px-3">
-				{result.eavs_configured ? (
-					<Check className="w-3.5 h-3.5 text-green-500" />
-				) : (
-					<X className="w-3.5 h-3.5 text-muted-foreground" />
-				)}
-			</td>
-			<td className="py-2 px-3">
-				{result.shell_configured ? (
-					<Check className="w-3.5 h-3.5 text-green-500" />
-				) : (
-					<X className="w-3.5 h-3.5 text-muted-foreground" />
-				)}
-			</td>
-			<td className="py-2 px-3">
-				{result.runner_configured ? (
-					<Check className="w-3.5 h-3.5 text-green-500" />
-				) : (
-					<X className="w-3.5 h-3.5 text-muted-foreground" />
-				)}
-			</td>
-			<td className="py-2 px-3">
-				{result.error ? (
-					<span className="text-destructive truncate max-w-[200px] inline-block">
-						{result.error}
-					</span>
-				) : (
-					<span className="text-green-500">OK</span>
-				)}
-			</td>
-		</tr>
-	);
-}
-
 export function ModelsPanel() {
 	const { data: eavsData, isLoading, error, refetch } = useEavsProviders();
-	const syncMutation = useSyncUserConfigs();
-	const [syncResults, setSyncResults] = useState<SyncUserConfigResult[] | null>(
+	const upsertMutation = useUpsertEavsProvider();
+	const deleteMutation = useDeleteEavsProvider();
+	const syncModelsMutation = useSyncAllModels();
+	const [showAddDialog, setShowAddDialog] = useState(false);
+	const [syncResult, setSyncResult] = useState<SyncAllModelsResponse | null>(
 		null,
 	);
 
-	const handleSyncAll = async () => {
-		setSyncResults(null);
-		const result = await syncMutation.mutateAsync(undefined);
-		setSyncResults(result.results);
+	const handleAddProvider = async (data: {
+		name: string;
+		type: string;
+		api_key?: string;
+		base_url?: string;
+	}) => {
+		await upsertMutation.mutateAsync(data);
+		setShowAddDialog(false);
+	};
+
+	const handleDelete = async (name: string) => {
+		if (!window.confirm(`Delete provider "${name}"?`)) return;
+		await deleteMutation.mutateAsync(name);
+	};
+
+	const handleSyncModels = async () => {
+		setSyncResult(null);
+		const result = await syncModelsMutation.mutateAsync();
+		setSyncResult(result);
 	};
 
 	if (error) {
@@ -198,6 +323,14 @@ export function ModelsPanel() {
 						>
 							<RefreshCw className="w-3 h-3" />
 						</Button>
+						<Button
+							size="sm"
+							onClick={() => setShowAddDialog(true)}
+							className="h-7"
+						>
+							<Plus className="w-3 h-3 mr-1" />
+							Add Provider
+						</Button>
 					</div>
 				</div>
 
@@ -208,13 +341,17 @@ export function ModelsPanel() {
 				) : eavsData && eavsData.providers.length > 0 ? (
 					<div className="p-3 space-y-2">
 						{eavsData.providers.map((provider) => (
-							<ProviderCard key={provider.name} provider={provider} />
+							<ProviderCard
+								key={provider.name}
+								provider={provider}
+								onDelete={handleDelete}
+								isDeleting={deleteMutation.isPending}
+							/>
 						))}
 					</div>
 				) : (
 					<div className="p-8 text-center text-sm text-muted-foreground">
-						No providers configured. Add providers to EAVS to enable model
-						access.
+						No providers configured. Click "Add Provider" to get started.
 					</div>
 				)}
 
@@ -225,7 +362,7 @@ export function ModelsPanel() {
 				)}
 			</div>
 
-			{/* Sync Section */}
+			{/* Sync Models Section */}
 			<div className="bg-card border border-border">
 				<div className="border-b border-border px-4 py-3 flex items-center justify-between">
 					<div>
@@ -233,57 +370,70 @@ export function ModelsPanel() {
 							DEPLOY MODELS TO USERS
 						</h2>
 						<p className="text-xs text-muted-foreground mt-1">
-							Sync the current provider catalog to all users' models.json
+							After adding or changing providers, sync models.json to all users
 						</p>
 					</div>
 					<Button
 						size="sm"
-						onClick={handleSyncAll}
-						disabled={syncMutation.isPending}
+						onClick={handleSyncModels}
+						disabled={syncModelsMutation.isPending}
 						className="h-7"
 					>
-						{syncMutation.isPending ? (
+						{syncModelsMutation.isPending ? (
 							<RefreshCw className="w-3 h-3 mr-1 animate-spin" />
 						) : (
 							<RefreshCw className="w-3 h-3 mr-1" />
 						)}
-						Sync All Users
+						Sync Models to All Users
 					</Button>
 				</div>
 
-				{syncMutation.error && (
+				{syncModelsMutation.error && (
 					<div className="p-3 text-sm text-destructive flex items-center gap-2">
 						<AlertTriangle className="w-4 h-4" />
-						{syncMutation.error instanceof Error
-							? syncMutation.error.message
+						{syncModelsMutation.error instanceof Error
+							? syncModelsMutation.error.message
 							: "Sync failed"}
 					</div>
 				)}
 
-				{syncResults && syncResults.length > 0 && (
-					<div className="p-3 overflow-x-auto">
-						<table className="w-full">
-							<thead>
-								<tr className="border-b border-border text-xs text-muted-foreground">
-									<th className="text-left py-2 px-3 font-medium">User</th>
-									<th className="text-left py-2 px-3 font-medium">
-										Linux User
-									</th>
-									<th className="text-left py-2 px-3 font-medium">Models</th>
-									<th className="text-left py-2 px-3 font-medium">Shell</th>
-									<th className="text-left py-2 px-3 font-medium">Runner</th>
-									<th className="text-left py-2 px-3 font-medium">Status</th>
-								</tr>
-							</thead>
-							<tbody>
-								{syncResults.map((result) => (
-									<SyncResultRow key={result.user_id} result={result} />
+				{syncResult && (
+					<div className="p-3">
+						<div className="flex items-center gap-2 text-sm">
+							{syncResult.ok ? (
+								<Check className="w-4 h-4 text-green-500" />
+							) : (
+								<AlertTriangle className="w-4 h-4 text-amber-500" />
+							)}
+							<span>
+								Synced {syncResult.synced} of {syncResult.total} users
+							</span>
+						</div>
+						{syncResult.errors.length > 0 && (
+							<div className="mt-2 space-y-1">
+								{syncResult.errors.map((err) => (
+									<div
+										key={err}
+										className="text-xs text-destructive flex items-center gap-1"
+									>
+										<X className="w-3 h-3" />
+										{err}
+									</div>
 								))}
-							</tbody>
-						</table>
+							</div>
+						)}
 					</div>
 				)}
 			</div>
+
+			{/* Add Provider Dialog */}
+			{showAddDialog && (
+				<AddProviderDialog
+					onClose={() => setShowAddDialog(false)}
+					onSubmit={handleAddProvider}
+					isPending={upsertMutation.isPending}
+				/>
+			)}
 		</div>
 	);
 }

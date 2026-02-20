@@ -323,6 +323,17 @@ pub struct AppState {
     pub feedback: crate::feedback::FeedbackConfig,
     /// EAVS client for LLM proxy integration (user provisioning, model catalog).
     pub eavs_client: Option<Arc<crate::eavs::EavsClient>>,
+    /// Paths to eavs config files (for admin provider management).
+    pub eavs_config: Option<EavsConfigPaths>,
+}
+
+/// Paths to eavs configuration files for admin provider management.
+#[derive(Debug, Clone)]
+pub struct EavsConfigPaths {
+    /// Path to eavs config.toml.
+    pub config_path: std::path::PathBuf,
+    /// Path to eavs env file (API keys).
+    pub env_path: std::path::PathBuf,
 }
 
 impl AppState {
@@ -367,7 +378,13 @@ impl AppState {
             audit_logger: None,
             feedback: crate::feedback::FeedbackConfig::default(),
             eavs_client: None,
+            eavs_config: None,
         }
+    }
+
+    pub fn with_eavs_config(mut self, paths: EavsConfigPaths) -> Self {
+        self.eavs_config = Some(paths);
+        self
     }
 
     pub fn with_feedback_config(mut self, config: crate::feedback::FeedbackConfig) -> Self {

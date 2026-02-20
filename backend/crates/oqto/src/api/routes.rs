@@ -268,6 +268,18 @@ fn create_router_with_config_and_auth(
         // EAVS / Model management
         .route("/admin/eavs/providers", get(handlers::list_eavs_providers))
         .route(
+            "/admin/eavs/providers",
+            post(handlers::upsert_eavs_provider),
+        )
+        .route(
+            "/admin/eavs/providers/{name}",
+            delete(handlers::delete_eavs_provider),
+        )
+        .route(
+            "/admin/eavs/sync-models",
+            post(handlers::sync_all_models),
+        )
+        .route(
             "/admin/invite-codes/{code_id}",
             get(handlers::get_invite_code),
         )

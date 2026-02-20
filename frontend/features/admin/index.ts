@@ -55,6 +55,11 @@ export {
 	type EavsProvidersResponse,
 	type SyncUserConfigResult,
 	type SyncUserConfigsResponse,
+	type UpsertEavsProviderRequest,
+	type SyncAllModelsResponse,
 	useEavsProviders,
 	useSyncUserConfigs,
+	useUpsertEavsProvider,
+	useDeleteEavsProvider,
+	useSyncAllModels,
 } from "./hooks";

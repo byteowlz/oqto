@@ -635,3 +635,108 @@ export function useSyncUserConfigs() {
 		},
 	});
 }
+
+// ============================================================================
+// EAVS Provider Management
+// ============================================================================
+
+export type UpsertEavsProviderRequest = {
+	name: string;
+	type: string;
+	api_key?: string;
+	base_url?: string;
+};
+
+export type SyncAllModelsResponse = {
+	ok: boolean;
+	synced: number;
+	total: number;
+	errors: string[];
+};
+
+async function upsertEavsProvider(
+	request: UpsertEavsProviderRequest,
+): Promise<{ ok: boolean; provider: string }> {
+	const res = await fetch(controlPlaneApiUrl("/api/admin/eavs/providers"), {
+		method: "POST",
+		headers: {
+			...getAuthHeaders(),
+			"Content-Type": "application/json",
+		},
+		body: JSON.stringify(request),
+	});
+	if (!res.ok) {
+		const text = await res.text();
+		throw new Error(text || `HTTP ${res.status}`);
+	}
+	return res.json();
+}
+
+async function deleteEavsProvider(
+	name: string,
+): Promise<{ ok: boolean; deleted: string }> {
+	const res = await fetch(
+		controlPlaneApiUrl(`/api/admin/eavs/providers/${encodeURIComponent(name)}`),
+		{
+			method: "DELETE",
+			headers: getAuthHeaders(),
+		},
+	);
+	if (!res.ok) {
+		const text = await res.text();
+		throw new Error(text || `HTTP ${res.status}`);
+	}
+	return res.json();
+}
+
+async function syncAllModels(): Promise<SyncAllModelsResponse> {
+	const res = await fetch(controlPlaneApiUrl("/api/admin/eavs/sync-models"), {
+		method: "POST",
+		headers: {
+			...getAuthHeaders(),
+			"Content-Type": "application/json",
+		},
+	});
+	if (!res.ok) {
+		const text = await res.text();
+		throw new Error(text || `HTTP ${res.status}`);
+	}
+	return res.json();
+}
+
+export function useUpsertEavsProvider() {
+	const queryClient = useQueryClient();
+	return useMutation({
+		mutationFn: (request: UpsertEavsProviderRequest) =>
+			upsertEavsProvider(request),
+		onSuccess: () => {
+			queryClient.invalidateQueries({
+				queryKey: adminKeys.eavsProviders(),
+			});
+		},
+	});
+}
+
+export function useDeleteEavsProvider() {
+	const queryClient = useQueryClient();
+	return useMutation({
+		mutationFn: (name: string) => deleteEavsProvider(name),
+		onSuccess: () => {
+			queryClient.invalidateQueries({
+				queryKey: adminKeys.eavsProviders(),
+			});
+		},
+	});
+}
+
+export function useSyncAllModels() {
+	const queryClient = useQueryClient();
+	return useMutation({
+		mutationFn: () => syncAllModels(),
+		onSuccess: () => {
+			queryClient.invalidateQueries({
+				queryKey: adminKeys.eavsProviders(),
+			});
+		},
+	});
+}

@@ -626,6 +626,13 @@ struct EavsConfig {
     container_url: Option<String>,
     /// Master key for EAVS admin operations.
     master_key: Option<String>,
+    /// Path to the eavs config.toml file.
+    /// Used by admin API to add/remove providers.
+    /// Defaults to ~/.config/eavs/config.toml (or ~oqto/.config/eavs/config.toml in multi-user).
+    config_path: Option<String>,
+    /// Path to the eavs env file (contains provider API keys).
+    /// Defaults to ~/.config/eavs/env (or ~oqto/.config/eavs/env in multi-user).
+    env_path: Option<String>,
     /// Default session budget limit in USD.
     default_session_budget_usd: Option<f64>,
     /// Default session rate limit in requests per minute.
@@ -2285,6 +2292,24 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     if let Some(ref eavs_config) = ctx.config.eavs
         && eavs_config.enabled
     {
+        // Resolve eavs config paths for admin provider management
+        let eavs_config_path = eavs_config.config_path.clone().unwrap_or_else(|| {
+            let home = std::env::var("OQTO_HOME")
+                .or_else(|_| std::env::var("HOME"))
+                .unwrap_or_else(|_| "/tmp".to_string());
+            format!("{}/.config/eavs/config.toml", home)
+        });
+        let eavs_env_path = eavs_config.env_path.clone().unwrap_or_else(|| {
+            let home = std::env::var("OQTO_HOME")
+                .or_else(|_| std::env::var("HOME"))
+                .unwrap_or_else(|_| "/tmp".to_string());
+            format!("{}/.config/eavs/env", home)
+        });
+        state = state.with_eavs_config(api::EavsConfigPaths {
+            config_path: std::path::PathBuf::from(eavs_config_path),
+            env_path: std::path::PathBuf::from(eavs_env_path),
+        });
+
         if let Some(ref master_key) = eavs_config.master_key {
             match eavs::EavsClient::new(&eavs_config.base_url, master_key) {
                 Ok(client) => {

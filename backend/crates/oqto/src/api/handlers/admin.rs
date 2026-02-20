@@ -740,3 +740,252 @@ pub struct EavsModelSummary {
     pub name: String,
     pub reasoning: bool,
 }
+
+// ============================================================================
+// EAVS Provider Management (Admin)
+// ============================================================================
+
+/// Request to add or update an eavs provider.
+#[derive(Debug, Deserialize)]
+pub struct UpsertEavsProviderRequest {
+    /// Provider name (used as key in config, e.g. "anthropic", "openai").
+    pub name: String,
+    /// Provider type (e.g. "openai", "anthropic", "google", "groq").
+    #[serde(rename = "type")]
+    pub type_: String,
+    /// API key value (stored in env file, referenced as env: in config).
+    pub api_key: Option<String>,
+    /// Custom base URL (if not using provider default).
+    pub base_url: Option<String>,
+}
+
+/// Add or update a provider in the eavs config.
+///
+/// Writes the provider section to eavs config.toml and the API key to the env file,
+/// then restarts the eavs service so changes take effect.
+#[instrument(skip(state, _user, request))]
+pub async fn upsert_eavs_provider(
+    State(state): State<AppState>,
+    RequireAdmin(_user): RequireAdmin,
+    Json(request): Json<UpsertEavsProviderRequest>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let eavs_paths = state
+        .eavs_config
+        .as_ref()
+        .ok_or_else(|| ApiError::ServiceUnavailable("EAVS config paths not configured.".into()))?;
+
+    let config_path = &eavs_paths.config_path;
+    let env_path = &eavs_paths.env_path;
+
+    // Validate provider name
+    if request.name.is_empty()
+        || !request
+            .name
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+    {
+        return Err(ApiError::bad_request(
+            "Provider name must be alphanumeric with - or _",
+        ));
+    }
+
+    // Read existing config
+    let config_content = tokio::fs::read_to_string(config_path)
+        .await
+        .map_err(|e| ApiError::Internal(format!("Failed to read eavs config: {e}")))?;
+
+    // Build the provider section
+    let env_key_name = format!(
+        "{}_API_KEY",
+        request.name.to_uppercase().replace('-', "_")
+    );
+    let mut provider_toml = format!(
+        "\n[providers.{}]\ntype = \"{}\"\n",
+        request.name, request.type_
+    );
+    if let Some(ref api_key) = request.api_key {
+        provider_toml.push_str(&format!("api_key = \"env:{}\"\n", env_key_name));
+
+        // Write API key to env file
+        let mut env_content = tokio::fs::read_to_string(env_path)
+            .await
+            .unwrap_or_default();
+        // Remove existing key if present
+        env_content = env_content
+            .lines()
+            .filter(|l| !l.starts_with(&format!("{}=", env_key_name)))
+            .collect::<Vec<_>>()
+            .join("\n");
+        if !env_content.ends_with('\n') && !env_content.is_empty() {
+            env_content.push('\n');
+        }
+        env_content.push_str(&format!("{}={}\n", env_key_name, api_key));
+        tokio::fs::write(env_path, &env_content)
+            .await
+            .map_err(|e| ApiError::Internal(format!("Failed to write eavs env: {e}")))?;
+    }
+    if let Some(ref base_url) = request.base_url {
+        provider_toml.push_str(&format!("base_url = \"{}\"\n", base_url));
+    }
+
+    // Remove existing provider section if it exists, then append new one
+    let new_config = remove_toml_section(&config_content, &format!("providers.{}", request.name));
+    let new_config = format!("{}\n{}", new_config.trim_end(), provider_toml);
+
+    tokio::fs::write(config_path, &new_config)
+        .await
+        .map_err(|e| ApiError::Internal(format!("Failed to write eavs config: {e}")))?;
+
+    // Restart eavs service
+    restart_eavs_service().await?;
+
+    Ok(Json(
+        serde_json::json!({"ok": true, "provider": request.name}),
+    ))
+}
+
+/// Delete a provider from the eavs config.
+#[instrument(skip(state, _user))]
+pub async fn delete_eavs_provider(
+    State(state): State<AppState>,
+    RequireAdmin(_user): RequireAdmin,
+    Path(name): Path<String>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let eavs_paths = state
+        .eavs_config
+        .as_ref()
+        .ok_or_else(|| ApiError::ServiceUnavailable("EAVS config paths not configured.".into()))?;
+
+    let config_path = &eavs_paths.config_path;
+    let env_path = &eavs_paths.env_path;
+
+    // Read and modify config
+    let config_content = tokio::fs::read_to_string(config_path)
+        .await
+        .map_err(|e| ApiError::Internal(format!("Failed to read eavs config: {e}")))?;
+
+    let new_config = remove_toml_section(&config_content, &format!("providers.{}", name));
+
+    tokio::fs::write(config_path, &new_config)
+        .await
+        .map_err(|e| ApiError::Internal(format!("Failed to write eavs config: {e}")))?;
+
+    // Also remove API key from env file
+    let env_key_name = format!("{}_API_KEY", name.to_uppercase().replace('-', "_"));
+    if let Ok(env_content) = tokio::fs::read_to_string(env_path).await {
+        let new_env: String = env_content
+            .lines()
+            .filter(|l| !l.starts_with(&format!("{}=", env_key_name)))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let _ = tokio::fs::write(env_path, format!("{}\n", new_env.trim_end())).await;
+    }
+
+    // Restart eavs service
+    restart_eavs_service().await?;
+
+    Ok(Json(serde_json::json!({"ok": true, "deleted": name})))
+}
+
+/// Sync (regenerate) models.json for all users.
+#[instrument(skip(state, _user))]
+pub async fn sync_all_models(
+    State(state): State<AppState>,
+    RequireAdmin(_user): RequireAdmin,
+) -> ApiResult<Json<serde_json::Value>> {
+    let eavs_client = state
+        .eavs_client
+        .as_ref()
+        .ok_or_else(|| ApiError::ServiceUnavailable("EAVS is not configured.".into()))?;
+
+    let linux_users = state
+        .linux_users
+        .as_ref()
+        .ok_or_else(|| ApiError::bad_request("Linux user isolation is not enabled."))?;
+
+    let users = state
+        .users
+        .list_users(crate::user::UserListQuery::default())
+        .await?;
+
+    let mut synced = 0;
+    let mut errors = Vec::new();
+
+    for user in &users {
+        if let Some(ref linux_username) = user.linux_username {
+            match sync_eavs_models_json(
+                eavs_client.as_ref(),
+                linux_users,
+                linux_username,
+            )
+            .await
+            {
+                Ok(()) => synced += 1,
+                Err(e) => errors.push(format!("{}: {}", user.id, e)),
+            }
+        }
+    }
+
+    Ok(Json(serde_json::json!({
+        "ok": errors.is_empty(),
+        "synced": synced,
+        "total": users.len(),
+        "errors": errors,
+    })))
+}
+
+/// Remove a [section.name] block from a TOML string.
+/// Removes from the section header until the next section header or end of file.
+fn remove_toml_section(content: &str, section: &str) -> String {
+    let header = format!("[{}]", section);
+    let mut result = String::new();
+    let mut skipping = false;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed == header {
+            skipping = true;
+            continue;
+        }
+        // A new section header ends the skip
+        if skipping && trimmed.starts_with('[') && trimmed.ends_with(']') {
+            skipping = false;
+        }
+        if !skipping {
+            result.push_str(line);
+            result.push('\n');
+        }
+    }
+    result
+}
+
+/// Restart the eavs systemd service.
+async fn restart_eavs_service() -> Result<(), ApiError> {
+    // Try system service first, then user service
+    let output = tokio::process::Command::new("systemctl")
+        .args(["restart", "eavs"])
+        .output()
+        .await
+        .map_err(|e| ApiError::Internal(format!("Failed to run systemctl: {e}")))?;
+
+    if !output.status.success() {
+        // Try user service
+        let output2 = tokio::process::Command::new("systemctl")
+            .args(["--user", "restart", "eavs"])
+            .output()
+            .await
+            .map_err(|e| ApiError::Internal(format!("Failed to run systemctl --user: {e}")))?;
+
+        if !output2.status.success() {
+            let stderr = String::from_utf8_lossy(&output2.stderr);
+            return Err(ApiError::Internal(format!(
+                "Failed to restart eavs service: {}",
+                stderr.trim()
+            )));
+        }
+    }
+
+    // Wait a moment for eavs to start
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    Ok(())
+}
