@@ -26,6 +26,17 @@ use std::process::Command;
 
 const SOCKET_PATH: &str = "/run/oqto/usermgr.sock";
 
+/// System-wide Pi extensions source directory (cloned by setup.sh).
+const PI_EXTENSIONS_DIR: &str = "/usr/share/oqto/pi-agent-extensions";
+
+/// Default extensions to install for new users.
+const PI_DEFAULT_EXTENSIONS: &[&str] = &[
+    "auto-rename",
+    "oqto-bridge",
+    "oqto-todos",
+    "custom-context-files",
+];
+
 /// Allowed path prefixes for mkdir/chown/chmod operations.
 const ALLOWED_PATH_PREFIXES: &[&str] = &["/run/oqto/runner-sockets/", "/home/oqto_"];
 
@@ -165,6 +176,7 @@ fn dispatch(req: &Request) -> Response {
         "setup-user-runner" => cmd_setup_user_runner(&req.args),
         "create-workspace" => cmd_create_workspace(&req.args),
         "setup-user-shell" => cmd_setup_user_shell(&req.args),
+        "install-pi-extensions" => cmd_install_pi_extensions(&req.args),
         "write-file" => cmd_write_file(&req.args),
         "restart-service" => cmd_restart_service(&req.args),
         "run-as-user" => cmd_run_as_user(&req.args),
@@ -875,6 +887,71 @@ fn cmd_setup_user_shell(args: &serde_json::Value) -> Response {
 
     write_user_dotfiles(&home, username, group);
 
+    Response::success()
+}
+
+/// Install Pi extensions from the system-wide source into a user's
+/// ~/.pi/agent/extensions/ directory.
+///
+/// Required args: username
+/// Optional args: group (default: "oqto")
+///
+/// Copies each extension in PI_DEFAULT_EXTENSIONS from PI_EXTENSIONS_DIR
+/// into the user's home. Skips missing extensions with a warning.
+fn cmd_install_pi_extensions(args: &serde_json::Value) -> Response {
+    let username = match get_str(args, "username") {
+        Ok(u) => u,
+        Err(r) => return r,
+    };
+    let group = args.get("group").and_then(|v| v.as_str()).unwrap_or("oqto");
+
+    if let Err(e) = validate_username(username) {
+        return Response::error(e);
+    }
+
+    let home = format!("/home/{username}");
+    if !std::path::Path::new(&home).exists() {
+        return Response::error(format!("home directory does not exist: {home}"));
+    }
+
+    let src_root = std::path::Path::new(PI_EXTENSIONS_DIR);
+    if !src_root.is_dir() {
+        return Response::error(format!(
+            "Pi extensions source not found: {PI_EXTENSIONS_DIR}. Run setup.sh to install."
+        ));
+    }
+
+    let dest_root = format!("{home}/.pi/agent/extensions");
+    if let Err(e) = std::fs::create_dir_all(&dest_root) {
+        return Response::error(format!("creating {dest_root}: {e}"));
+    }
+
+    let mut installed = 0u32;
+    for ext_name in PI_DEFAULT_EXTENSIONS {
+        let src_dir = src_root.join(ext_name);
+        if !src_dir.is_dir() || !src_dir.join("index.ts").exists() {
+            eprintln!("warning: extension not found in repo: {ext_name}");
+            continue;
+        }
+
+        let dest_dir = format!("{dest_root}/{ext_name}");
+        // Remove old version if present
+        let _ = std::fs::remove_dir_all(&dest_dir);
+
+        if let Err(e) = copy_dir_recursive(&src_dir, &std::path::Path::new(&dest_dir)) {
+            eprintln!("warning: copying extension {ext_name}: {e}");
+            continue;
+        }
+        // Remove install script (not needed at runtime); keep package.json
+        let _ = std::fs::remove_file(format!("{dest_dir}/install.sh"));
+        installed += 1;
+    }
+
+    // chown extensions to the user
+    let owner = format!("{username}:{group}");
+    let _ = run_cmd("/usr/bin/chown", &["-R", &owner, &dest_root]);
+
+    eprintln!("info: installed {installed} Pi extensions for {username}");
     Response::success()
 }
 

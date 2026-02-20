@@ -839,6 +839,18 @@ impl LinuxUsersConfig {
         )
         .with_context(|| format!("setup shell for {linux_username}"))
     }
+
+    /// Install Pi extensions from the system-wide source directory.
+    pub fn install_pi_extensions(&self, linux_username: &str) -> Result<()> {
+        usermgr_request(
+            "install-pi-extensions",
+            serde_json::json!({
+                "username": linux_username,
+                "group": self.group,
+            }),
+        )
+        .with_context(|| format!("install Pi extensions for {linux_username}"))
+    }
 }
 
 fn ensure_toml_table<'a>(value: &'a mut TomlValue, key: &str) -> &'a mut toml::value::Table {

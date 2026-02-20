@@ -71,6 +71,13 @@ install_pi_extensions() {
   local ext_source
   ext_source=$(clone_pi_extensions_repo) || return 1
 
+  # Copy to system-wide location so usermgr can install for new users at
+  # registration time (usermgr reads from /usr/share/oqto/pi-agent-extensions/).
+  local system_dir="/usr/share/oqto/pi-agent-extensions"
+  sudo mkdir -p "$system_dir"
+  sudo rsync -a --delete --exclude='.git' "$ext_source/" "$system_dir/"
+  log_info "Synced extensions to $system_dir"
+
   # Install for current user
   install_pi_extensions_for_user "$HOME" "$ext_source"
 

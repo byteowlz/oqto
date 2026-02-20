@@ -287,6 +287,15 @@ pub async fn register(
                     );
                 }
 
+                // Install Pi extensions from system-wide source
+                if let Err(e) = linux_users.install_pi_extensions(&actual_linux_username) {
+                    warn!(
+                        user_id = %user.id,
+                        error = ?e,
+                        "Failed to install Pi extensions (non-fatal)"
+                    );
+                }
+
                 info!(
                     user_id = %user.id,
                     linux_user = %actual_linux_username,
