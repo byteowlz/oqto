@@ -74,7 +74,17 @@ const TYPES_NEED_API_VERSION = ["azure"];
 // Types that support deployment
 const TYPES_NEED_DEPLOYMENT = ["azure"];
 
-type ModelEntry = { id: string; name: string; reasoning: boolean };
+type ModelEntry = {
+	id: string;
+	name: string;
+	reasoning: boolean;
+	input?: string[];
+	context_window?: number;
+	max_tokens?: number;
+	cost_input?: number;
+	cost_output?: number;
+	cost_cache_read?: number;
+};
 
 // -- Model list editor (inline in the provider form) --
 function ModelListEditor({
@@ -87,6 +97,47 @@ function ModelListEditor({
 	const [newId, setNewId] = useState("");
 	const [newName, setNewName] = useState("");
 	const [newReasoning, setNewReasoning] = useState(false);
+	const [newContextWindow, setNewContextWindow] = useState("");
+	const [newMaxTokens, setNewMaxTokens] = useState("");
+	const [newCostInput, setNewCostInput] = useState("");
+	const [newCostOutput, setNewCostOutput] = useState("");
+	const [lookupLoading, setLookupLoading] = useState(false);
+	const [expanded, setExpanded] = useState<string | null>(null);
+
+	// Auto-fill from models.dev catalog when model ID is entered
+	const lookupModel = useCallback(async (modelId: string) => {
+		if (!modelId.trim()) return;
+		setLookupLoading(true);
+		try {
+			const { catalogLookup } = await import("@/features/admin/hooks/useAdmin");
+			const results = await catalogLookup(modelId.trim());
+			if (results.length > 0) {
+				const m = results[0];
+				setNewName((prev) => prev || m.name);
+				setNewReasoning(m.reasoning);
+				setNewContextWindow(
+					m.context_window > 0 ? String(m.context_window) : "",
+				);
+				setNewMaxTokens(m.max_tokens > 0 ? String(m.max_tokens) : "");
+				setNewCostInput(m.cost.input > 0 ? String(m.cost.input) : "");
+				setNewCostOutput(m.cost.output > 0 ? String(m.cost.output) : "");
+			}
+		} catch {
+			// silently ignore lookup failures
+		} finally {
+			setLookupLoading(false);
+		}
+	}, []);
+
+	const resetForm = useCallback(() => {
+		setNewId("");
+		setNewName("");
+		setNewReasoning(false);
+		setNewContextWindow("");
+		setNewMaxTokens("");
+		setNewCostInput("");
+		setNewCostOutput("");
+	}, []);
 
 	const addModel = useCallback(() => {
 		const id = newId.trim();
@@ -94,12 +145,30 @@ function ModelListEditor({
 		if (models.some((m) => m.id === id)) return;
 		onChange([
 			...models,
-			{ id, name: newName.trim() || id, reasoning: newReasoning },
+			{
+				id,
+				name: newName.trim() || id,
+				reasoning: newReasoning,
+				input: ["text"],
+				context_window: Number.parseInt(newContextWindow) || 0,
+				max_tokens: Number.parseInt(newMaxTokens) || 0,
+				cost_input: Number.parseFloat(newCostInput) || 0,
+				cost_output: Number.parseFloat(newCostOutput) || 0,
+			},
 		]);
-		setNewId("");
-		setNewName("");
-		setNewReasoning(false);
-	}, [models, newId, newName, newReasoning, onChange]);
+		resetForm();
+	}, [
+		models,
+		newId,
+		newName,
+		newReasoning,
+		newContextWindow,
+		newMaxTokens,
+		newCostInput,
+		newCostOutput,
+		onChange,
+		resetForm,
+	]);
 
 	const removeModel = useCallback(
 		(id: string) => {
@@ -107,6 +176,15 @@ function ModelListEditor({
 		},
 		[models, onChange],
 	);
+
+	const fmtCtx = (n?: number) => {
+		if (!n) return "-";
+		if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+		if (n >= 1_000) return `${(n / 1_000).toFixed(0)}K`;
+		return String(n);
+	};
+
+	const fmtCost = (n?: number) => (n && n > 0 ? `$${n}` : "-");
 
 	return (
 		<div className="space-y-2">
@@ -124,8 +202,15 @@ function ModelListEditor({
 							<tr className="bg-muted/30 text-muted-foreground">
 								<th className="text-left py-1.5 px-2 font-medium">Model ID</th>
 								<th className="text-left py-1.5 px-2 font-medium">Name</th>
-								<th className="text-left py-1.5 px-2 font-medium w-16">
-									Reasoning
+								<th className="text-left py-1.5 px-2 font-medium w-14">Ctx</th>
+								<th className="text-left py-1.5 px-2 font-medium w-14">
+									$/M in
+								</th>
+								<th className="text-left py-1.5 px-2 font-medium w-14">
+									$/M out
+								</th>
+								<th className="text-left py-1.5 px-2 font-medium w-12">
+									<Zap className="w-3 h-3 inline" />
 								</th>
 								<th className="w-8" />
 							</tr>
@@ -134,10 +219,26 @@ function ModelListEditor({
 							{models.map((model) => (
 								<tr
 									key={model.id}
-									className="border-t border-border/50 text-foreground"
+									className="border-t border-border/50 text-foreground cursor-pointer hover:bg-muted/20"
+									onClick={() =>
+										setExpanded(expanded === model.id ? null : model.id)
+									}
+									onKeyDown={(e) => {
+										if (e.key === "Enter" || e.key === " ")
+											setExpanded(expanded === model.id ? null : model.id);
+									}}
 								>
 									<td className="py-1 px-2 font-mono">{model.id}</td>
 									<td className="py-1 px-2">{model.name}</td>
+									<td className="py-1 px-2 text-muted-foreground">
+										{fmtCtx(model.context_window)}
+									</td>
+									<td className="py-1 px-2 text-muted-foreground">
+										{fmtCost(model.cost_input)}
+									</td>
+									<td className="py-1 px-2 text-muted-foreground">
+										{fmtCost(model.cost_output)}
+									</td>
 									<td className="py-1 px-2 text-center">
 										{model.reasoning ? (
 											<Zap className="w-3 h-3 text-amber-500 inline" />
@@ -148,7 +249,10 @@ function ModelListEditor({
 									<td className="py-1 px-1">
 										<button
 											type="button"
-											onClick={() => removeModel(model.id)}
+											onClick={(e) => {
+												e.stopPropagation();
+												removeModel(model.id);
+											}}
 											className="text-muted-foreground hover:text-destructive p-0.5"
 										>
 											<X className="w-3 h-3" />
@@ -161,54 +265,102 @@ function ModelListEditor({
 				</div>
 			)}
 
-			<div className="flex gap-2 items-end">
-				<div className="flex-1">
-					<Input
-						value={newId}
-						onChange={(e) => setNewId(e.target.value)}
-						placeholder="model-id"
-						className="h-8 text-xs font-mono"
-						onKeyDown={(e) => {
-							if (e.key === "Enter") {
-								e.preventDefault();
-								addModel();
-							}
-						}}
-					/>
+			{/* Add model row */}
+			<div className="space-y-1.5">
+				<div className="flex gap-2 items-end">
+					<div className="flex-1">
+						<Input
+							value={newId}
+							onChange={(e) => setNewId(e.target.value)}
+							onBlur={() => lookupModel(newId)}
+							placeholder="model-id (Tab to auto-fill from models.dev)"
+							className="h-8 text-xs font-mono"
+							onKeyDown={(e) => {
+								if (e.key === "Enter") {
+									e.preventDefault();
+									addModel();
+								}
+								if (e.key === "Tab" && newId.trim() && !newName) {
+									e.preventDefault();
+									lookupModel(newId);
+								}
+							}}
+						/>
+					</div>
+					<div className="flex-1">
+						<Input
+							value={newName}
+							onChange={(e) => setNewName(e.target.value)}
+							placeholder={lookupLoading ? "Looking up..." : "Display name"}
+							className="h-8 text-xs"
+							onKeyDown={(e) => {
+								if (e.key === "Enter") {
+									e.preventDefault();
+									addModel();
+								}
+							}}
+						/>
+					</div>
+					<Button
+						type="button"
+						variant="outline"
+						size="sm"
+						className="h-8 px-2"
+						onClick={addModel}
+						disabled={!newId.trim()}
+					>
+						<Plus className="w-3 h-3" />
+					</Button>
 				</div>
-				<div className="flex-1">
-					<Input
-						value={newName}
-						onChange={(e) => setNewName(e.target.value)}
-						placeholder="Display name"
-						className="h-8 text-xs"
-						onKeyDown={(e) => {
-							if (e.key === "Enter") {
-								e.preventDefault();
-								addModel();
-							}
-						}}
-					/>
+
+				{/* Expanded fields (context, cost, etc.) */}
+				<div className="flex gap-2 items-end">
+					<div className="w-24">
+						<Label className="text-[10px] text-muted-foreground">Context</Label>
+						<Input
+							value={newContextWindow}
+							onChange={(e) => setNewContextWindow(e.target.value)}
+							placeholder="128000"
+							className="h-7 text-xs"
+						/>
+					</div>
+					<div className="w-24">
+						<Label className="text-[10px] text-muted-foreground">Max out</Label>
+						<Input
+							value={newMaxTokens}
+							onChange={(e) => setNewMaxTokens(e.target.value)}
+							placeholder="16384"
+							className="h-7 text-xs"
+						/>
+					</div>
+					<div className="w-20">
+						<Label className="text-[10px] text-muted-foreground">$/M in</Label>
+						<Input
+							value={newCostInput}
+							onChange={(e) => setNewCostInput(e.target.value)}
+							placeholder="0.0"
+							className="h-7 text-xs"
+						/>
+					</div>
+					<div className="w-20">
+						<Label className="text-[10px] text-muted-foreground">$/M out</Label>
+						<Input
+							value={newCostOutput}
+							onChange={(e) => setNewCostOutput(e.target.value)}
+							placeholder="0.0"
+							className="h-7 text-xs"
+						/>
+					</div>
+					<label className="flex items-center gap-1 text-xs text-muted-foreground cursor-pointer whitespace-nowrap pb-1">
+						<input
+							type="checkbox"
+							checked={newReasoning}
+							onChange={(e) => setNewReasoning(e.target.checked)}
+							className="rounded"
+						/>
+						Reasoning
+					</label>
 				</div>
-				<label className="flex items-center gap-1 text-xs text-muted-foreground cursor-pointer whitespace-nowrap">
-					<input
-						type="checkbox"
-						checked={newReasoning}
-						onChange={(e) => setNewReasoning(e.target.checked)}
-						className="rounded"
-					/>
-					Reasoning
-				</label>
-				<Button
-					type="button"
-					variant="outline"
-					size="sm"
-					className="h-8 px-2"
-					onClick={addModel}
-					disabled={!newId.trim()}
-				>
-					<Plus className="w-3 h-3" />
-				</Button>
 			</div>
 		</div>
 	);

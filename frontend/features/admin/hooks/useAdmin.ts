@@ -640,6 +640,19 @@ export function useSyncUserConfigs() {
 // EAVS Provider Management
 // ============================================================================
 
+export type UpsertModelEntry = {
+	id: string;
+	name: string;
+	reasoning: boolean;
+	input?: string[];
+	context_window?: number;
+	max_tokens?: number;
+	cost_input?: number;
+	cost_output?: number;
+	cost_cache_read?: number;
+	compat?: Record<string, unknown>;
+};
+
 export type UpsertEavsProviderRequest = {
 	name: string;
 	type: string;
@@ -647,7 +660,7 @@ export type UpsertEavsProviderRequest = {
 	base_url?: string;
 	api_version?: string;
 	deployment?: string;
-	models?: { id: string; name: string; reasoning: boolean }[];
+	models?: UpsertModelEntry[];
 };
 
 export type SyncAllModelsResponse = {
@@ -742,4 +755,30 @@ export function useSyncAllModels() {
 			});
 		},
 	});
+}
+
+// ---------------------------------------------------------------------------
+// Catalog lookup -- auto-fill model metadata from models.dev
+// ---------------------------------------------------------------------------
+
+export type CatalogModelInfo = {
+	id: string;
+	name: string;
+	provider: string;
+	reasoning: boolean;
+	input: string[];
+	context_window: number;
+	max_tokens: number;
+	cost: { input: number; output: number; cache_read: number };
+};
+
+export async function catalogLookup(
+	modelId: string,
+): Promise<CatalogModelInfo[]> {
+	const url = controlPlaneApiUrl(
+		`/api/admin/eavs/catalog-lookup?model_id=${encodeURIComponent(modelId)}`,
+	);
+	const res = await fetch(url, { headers: getAuthHeaders() });
+	if (!res.ok) return [];
+	return res.json();
 }

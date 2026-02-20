@@ -130,6 +130,11 @@ impl EavsClient {
         &self.base_url
     }
 
+    /// Get the master key for admin API calls.
+    pub fn master_key(&self) -> &str {
+        &self.master_key
+    }
+
     /// Get usage history for a key.
     pub async fn get_usage(&self, key_id_or_hash: &str) -> EavsResult<Vec<UsageRecord>> {
         let url = format!("{}/admin/keys/{}/usage", self.base_url, key_id_or_hash);

@@ -774,6 +774,20 @@ pub struct UpsertModelEntry {
     pub name: String,
     #[serde(default)]
     pub reasoning: bool,
+    #[serde(default)]
+    pub input: Vec<String>,
+    #[serde(default)]
+    pub context_window: u64,
+    #[serde(default)]
+    pub max_tokens: u64,
+    #[serde(default)]
+    pub cost_input: f64,
+    #[serde(default)]
+    pub cost_output: f64,
+    #[serde(default)]
+    pub cost_cache_read: f64,
+    #[serde(default)]
+    pub compat: std::collections::HashMap<String, serde_json::Value>,
 }
 
 /// Add or update a provider in the eavs config.
@@ -855,11 +869,44 @@ pub async fn upsert_eavs_provider(
     for model in &request.models {
         provider_toml.push_str(&format!(
             "\n[[providers.{}.models]]\nid = \"{}\"\nname = \"{}\"\nreasoning = {}\n",
-            request.name,
-            model.id,
-            model.name,
-            model.reasoning,
+            request.name, model.id, model.name, model.reasoning,
         ));
+        // Input modalities
+        if !model.input.is_empty() {
+            let input_str = model
+                .input
+                .iter()
+                .map(|s| format!("\"{}\"", s))
+                .collect::<Vec<_>>()
+                .join(", ");
+            provider_toml.push_str(&format!("input = [{}]\n", input_str));
+        }
+        // Context window / max tokens
+        if model.context_window > 0 {
+            provider_toml.push_str(&format!("context_window = {}\n", model.context_window));
+        }
+        if model.max_tokens > 0 {
+            provider_toml.push_str(&format!("max_tokens = {}\n", model.max_tokens));
+        }
+        // Cost (inline table)
+        if model.cost_input > 0.0 || model.cost_output > 0.0 || model.cost_cache_read > 0.0 {
+            provider_toml.push_str(&format!(
+                "cost = {{ input = {}, output = {}, cache_read = {} }}\n",
+                model.cost_input, model.cost_output, model.cost_cache_read,
+            ));
+        }
+        // Compat flags (inline table)
+        if !model.compat.is_empty() {
+            let compat_entries: Vec<String> = model
+                .compat
+                .iter()
+                .map(|(k, v)| format!("{} = {}", k, v))
+                .collect();
+            provider_toml.push_str(&format!(
+                "compat = {{ {} }}\n",
+                compat_entries.join(", ")
+            ));
+        }
     }
 
     // Remove existing provider section if it exists, then append new one
@@ -1043,4 +1090,63 @@ async fn restart_eavs_service() -> Result<(), ApiError> {
     // Wait a moment for eavs to start
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Catalog lookup -- proxy to eavs /catalog/lookup
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+pub struct CatalogLookupQuery {
+    pub model_id: String,
+    pub provider: Option<String>,
+}
+
+/// `GET /api/admin/eavs/catalog-lookup?model_id=...`
+///
+/// Proxies to eavs's `/catalog/lookup` endpoint to look up model metadata
+/// from models.dev. Used by the admin UI to auto-fill cost, context window,
+/// etc. when adding models to a provider.
+pub async fn catalog_lookup(
+    State(state): State<AppState>,
+    RequireAdmin(_user): RequireAdmin,
+    Query(query): Query<CatalogLookupQuery>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let eavs = state
+        .eavs_client
+        .as_ref()
+        .ok_or_else(|| ApiError::ServiceUnavailable("EAVS is not configured.".into()))?;
+
+    let mut url = format!("{}/catalog/lookup?model_id={}", eavs.base_url(), urlencoding::encode(&query.model_id));
+    if let Some(ref provider) = query.provider {
+        url.push_str(&format!("&provider={}", urlencoding::encode(provider)));
+    }
+
+    let client = reqwest::Client::new();
+    let mut req = client.get(&url);
+    let key = eavs.master_key();
+    if !key.is_empty() {
+        req = req.header("Authorization", format!("Bearer {}", key));
+    }
+
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| ApiError::Internal(format!("Failed to query eavs catalog: {e}")))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(ApiError::Internal(format!(
+            "Eavs catalog lookup failed ({}): {}",
+            status, body
+        )));
+    }
+
+    let data: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| ApiError::Internal(format!("Failed to parse eavs catalog response: {e}")))?;
+
+    Ok(Json(data))
 }

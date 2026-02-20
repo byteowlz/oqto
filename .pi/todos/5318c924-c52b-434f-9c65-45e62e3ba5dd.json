@@ -3,13 +3,13 @@
     {
       "id": "9af1e608",
       "content": "CRITICAL: Fix cross-user session visibility — users can see other users' sessions",
-      "status": "in_progress",
+      "status": "completed",
       "priority": "high"
     },
     {
       "id": "07793591",
       "content": "Audit all session/chat query paths for user filtering",
-      "status": "pending",
+      "status": "completed",
       "priority": "high"
     },
     {
@@ -25,5 +25,5 @@
       "priority": "medium"
     }
   ],
-  "updated_at": "2026-02-20T18:51:16.901Z"
+  "updated_at": "2026-02-20T18:58:11.066Z"
 }
