@@ -65,9 +65,9 @@ pub fn generate_pi_models_json(
                     "input": m.cost.input,
                     "output": m.cost.output,
                     "cacheRead": m.cost.cache_read,
-                    "cacheWrite": 0
+                    "cacheWrite": m.cost.input  // default cacheWrite = input cost
                 });
-                serde_json::json!({
+                let mut model_obj = serde_json::json!({
                     "id": m.id,
                     "name": if m.name.is_empty() { &m.id } else { &m.name },
                     "reasoning": m.reasoning,
@@ -75,16 +75,29 @@ pub fn generate_pi_models_json(
                     "contextWindow": m.context_window,
                     "maxTokens": m.max_tokens,
                     "cost": cost_obj
-                })
+                });
+                // Add compat flags if present (e.g., supportsDeveloperRole)
+                if !m.compat.is_empty() {
+                    model_obj["compat"] = serde_json::json!(m.compat);
+                }
+                model_obj
             })
             .collect();
 
-        let pi_provider = serde_json::json!({
+        // Build provider entry with all fields Pi needs
+        let mut pi_provider = serde_json::json!({
             "baseUrl": base_url,
             "api": pi_api,
             "apiKey": "EAVS_API_KEY",
             "models": models,
         });
+
+        // Add custom headers if the provider requires them (e.g., Azure api-key).
+        // The eavs proxy injects the real values; here we use the virtual key
+        // placeholder so Pi sends it and eavs can authenticate the request.
+        if !provider.headers.is_empty() {
+            pi_provider["headers"] = serde_json::json!(provider.headers);
+        }
 
         let pi_name = format!("eavs-{}", provider.name);
         pi_providers.insert(pi_name, pi_provider);

@@ -1257,12 +1257,38 @@ impl PiSessionManager {
                 return Ok(models);
             }
 
-            // No cache hit — read models.json directly from disk.
+            // No cache hit — read models from two sources and merge:
+            //  1. models.json on disk (eavs-provisioned, instant)
+            //  2. Ephemeral Pi RPC (user OAuth/API key models, best-effort)
             let target_workdir = resolved_workdir
                 .or(hstry_workdir)
                 .unwrap_or_else(|| self.config.default_cwd.to_string_lossy().to_string());
 
-            let models = self.load_models_from_disk().await;
+            let disk_models = self.load_models_from_disk().await;
+
+            // Best-effort: try ephemeral Pi to pick up user-authenticated models
+            // (OAuth logins, personal API keys in auth.json). Short timeout — if
+            // Pi fails, the eavs-provisioned models are still returned.
+            let pi_models = match tokio::time::timeout(
+                Duration::from_secs(15),
+                self.fetch_models_ephemeral(&target_workdir),
+            )
+            .await
+            {
+                Ok(Ok(m)) => m,
+                Ok(Err(e)) => {
+                    debug!("Ephemeral Pi model fetch failed (non-fatal): {}", e);
+                    serde_json::Value::Array(vec![])
+                }
+                Err(_) => {
+                    debug!("Ephemeral Pi model fetch timed out (non-fatal)");
+                    serde_json::Value::Array(vec![])
+                }
+            };
+
+            // Merge: disk models first, then Pi models that aren't already present
+            let models = Self::merge_model_lists(&disk_models, &pi_models);
+
             if models.as_array().is_some_and(|a| !a.is_empty()) {
                 {
                     let mut cache = self.model_cache.write().await;
@@ -1471,6 +1497,135 @@ impl PiSessionManager {
         }
 
         serde_json::Value::Array(all_models)
+    }
+
+    /// Merge two model arrays. Models from `primary` take precedence; models
+    /// from `secondary` are appended only if their `id` is not already present.
+    fn merge_model_lists(
+        primary: &serde_json::Value,
+        secondary: &serde_json::Value,
+    ) -> serde_json::Value {
+        let primary_arr = primary.as_array().cloned().unwrap_or_default();
+        let secondary_arr = secondary.as_array().cloned().unwrap_or_default();
+
+        if secondary_arr.is_empty() {
+            return serde_json::Value::Array(primary_arr);
+        }
+
+        let seen: std::collections::HashSet<String> = primary_arr
+            .iter()
+            .filter_map(|m| m.get("id").and_then(|id| id.as_str()).map(String::from))
+            .collect();
+
+        let mut merged = primary_arr;
+        for model in secondary_arr {
+            if let Some(id) = model.get("id").and_then(|id| id.as_str()) {
+                if !seen.contains(id) {
+                    merged.push(model);
+                }
+            }
+        }
+        serde_json::Value::Array(merged)
+    }
+
+    /// Spawn an ephemeral Pi RPC process to fetch the full model list.
+    ///
+    /// This picks up user-authenticated models (OAuth logins via `pi auth`,
+    /// personal API keys) that are not in the admin-provisioned models.json.
+    /// Called best-effort with a timeout — failure is non-fatal.
+    async fn fetch_models_ephemeral(&self, workdir: &str) -> Result<serde_json::Value> {
+        let workdir_path = std::path::Path::new(workdir);
+        if !workdir_path.is_dir() {
+            anyhow::bail!("Workdir '{}' does not exist", workdir);
+        }
+
+        debug!("Spawning ephemeral Pi to fetch user-authenticated models for '{}'", workdir);
+
+        let mut cmd = Command::new(&self.config.pi_binary);
+        cmd.args(["--mode", "rpc", "--no-session"])
+            .current_dir(workdir)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+
+        // Load eavs.env so Pi can resolve the eavs proxy key
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+        let eavs_env_path = format!("{}/.config/oqto/eavs.env", home);
+        if let Ok(contents) = std::fs::read_to_string(&eavs_env_path) {
+            for line in contents.lines() {
+                let line = line.trim();
+                if line.is_empty() || line.starts_with('#') {
+                    continue;
+                }
+                if let Some((key, value)) = line.split_once('=') {
+                    cmd.env(key.trim(), value.trim());
+                }
+            }
+        }
+
+        let mut child = cmd
+            .spawn()
+            .context("Failed to spawn ephemeral Pi process")?;
+        let mut stdin = child.stdin.take().context("No stdin on ephemeral Pi")?;
+        let stdout = child.stdout.take().context("No stdout on ephemeral Pi")?;
+
+        let mut reader = BufReader::new(stdout).lines();
+
+        let result: Result<serde_json::Value> = async {
+            let mut got_first_line = false;
+            loop {
+                let line = reader
+                    .next_line()
+                    .await
+                    .context("Failed to read from ephemeral Pi")?;
+                let Some(line) = line else {
+                    anyhow::bail!("Ephemeral Pi stdout closed without response");
+                };
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+
+                if !got_first_line {
+                    got_first_line = true;
+                    let pi_cmd = PiCommand::GetAvailableModels {
+                        id: Some("ephemeral_get_models".to_string()),
+                    };
+                    Self::write_command(&mut stdin, &pi_cmd).await?;
+                }
+
+                match PiMessage::parse(trimmed) {
+                    Ok(PiMessage::Response(resp)) => {
+                        if resp.id.as_deref() == Some("ephemeral_get_models") {
+                            if resp.success {
+                                if let Some(data) = resp.data {
+                                    let models = if let Some(inner) = data.get("models") {
+                                        inner.clone()
+                                    } else if data.is_array() {
+                                        data
+                                    } else {
+                                        serde_json::Value::Array(vec![])
+                                    };
+                                    return Ok(models);
+                                }
+                            } else {
+                                let err_msg =
+                                    resp.error.unwrap_or_else(|| "unknown error".to_string());
+                                anyhow::bail!("Ephemeral Pi get_models failed: {}", err_msg);
+                            }
+                        }
+                    }
+                    Ok(PiMessage::Event(_)) => {}
+                    Err(e) => {
+                        debug!("Ephemeral Pi: failed to parse line: {}", e);
+                    }
+                }
+            }
+        }
+        .await;
+
+        let _ = child.kill().await;
+        result
     }
 
     /// Get session statistics.

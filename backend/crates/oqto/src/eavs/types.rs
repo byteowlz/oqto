@@ -263,6 +263,13 @@ pub struct ProviderDetail {
     pub oauth: bool,
     /// Whether the provider has a resolved API key
     pub has_api_key: bool,
+    /// Custom headers the provider requires (e.g., Azure `api-key`).
+    /// Values are placeholders ("EAVS_API_KEY"), not actual secrets.
+    #[serde(default)]
+    pub headers: std::collections::HashMap<String, String>,
+    /// API version string (Azure providers)
+    #[serde(default)]
+    pub api_version: Option<String>,
     /// Model list (shortlist or full catalog)
     pub models: Vec<ProviderModel>,
 }
@@ -283,6 +290,9 @@ pub struct ProviderModel {
     pub max_tokens: u64,
     #[serde(default)]
     pub cost: ProviderModelCost,
+    /// Compatibility flags for Pi (e.g., supportsDeveloperRole)
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub compat: std::collections::HashMap<String, serde_json::Value>,
 }
 
 /// Cost per million tokens.
