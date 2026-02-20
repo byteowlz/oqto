@@ -595,6 +595,34 @@ WantedBy=default.target
         }
     }
 
+    // 2b. Ensure hstry config has service enabled.
+    //     hstry defaults to `enabled = false` on first run, but we manage
+    //     it via systemd so the gRPC service must be listening.
+    let hstry_config_dir = format!("{home}/.config/hstry");
+    let _ = std::fs::create_dir_all(&hstry_config_dir);
+    let hstry_config_path = format!("{hstry_config_dir}/config.toml");
+    let hstry_db_path = format!("{home}/.local/share/hstry/hstry.db");
+    let _ = std::fs::create_dir_all(format!("{home}/.local/share/hstry"));
+    if std::path::Path::new(&hstry_config_path).exists() {
+        // Patch existing: flip enabled = false -> true
+        if let Ok(content) = std::fs::read_to_string(&hstry_config_path) {
+            if content.contains("enabled = false") {
+                let patched = content.replace("enabled = false", "enabled = true");
+                let _ = std::fs::write(&hstry_config_path, patched);
+            }
+        }
+    } else {
+        // Write minimal config with service enabled
+        let hstry_config = format!(
+            "database = \"{hstry_db_path}\"\n\
+             \n\
+             [service]\n\
+             enabled = true\n\
+             transport = \"tcp\"\n"
+        );
+        let _ = std::fs::write(&hstry_config_path, hstry_config);
+    }
+
     // 3. Set ownership of .config tree
     let config_dir = format!("{home}/.config");
     if let Err(e) = run_cmd(
@@ -603,6 +631,12 @@ WantedBy=default.target
     ) {
         return Response::error(format!("chown {config_dir}: {e}"));
     }
+    // Also chown the data dir (hstry db)
+    let data_dir = format!("{home}/.local/share/hstry");
+    let _ = run_cmd(
+        "/usr/bin/chown",
+        &["-R", &format!("{username}:{group}"), &data_dir],
+    );
 
     // 4. Create per-user socket directory
     //    Also ensure the parent /run/oqto/runner-sockets/ has correct ownership.
