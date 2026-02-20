@@ -293,10 +293,17 @@ export function useSessionData({
 			}
 		>();
 
-		// First, add all workspace directories (even those without sessions)
+		// First, add all workspace directories (even those without sessions).
+		// Key by the last path segment to match projectKeyForSession() which
+		// extracts the basename from session.workspace_path.
 		for (const directory of workspaceDirectories) {
-			groups.set(directory.path, {
-				key: directory.path,
+			const normalized = directory.path
+				.replace(/\\/g, "/")
+				.replace(/\/+$/, "");
+			const parts = normalized.split("/").filter(Boolean);
+			const key = parts[parts.length - 1] ?? directory.path;
+			groups.set(key, {
+				key,
 				name: directory.name,
 				directory: directory.path,
 				sessions: [],

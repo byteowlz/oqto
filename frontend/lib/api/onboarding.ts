@@ -64,8 +64,6 @@ export type BootstrapOnboardingRequest = {
 
 export type BootstrapOnboardingResponse = {
 	workspace_path: string;
-	session_id: string;
-	message: string;
 };
 
 // ============================================================================

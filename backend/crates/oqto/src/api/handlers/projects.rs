@@ -403,6 +403,10 @@ pub async fn list_workspace_dirs(
         let path = entry.path();
         if path.is_dir() {
             let name = entry.file_name().to_str().unwrap_or_default().to_string();
+            // Skip hidden directories (e.g. .git, .oqto, .pi)
+            if name.starts_with('.') {
+                continue;
+            }
             // Return absolute path for proper session creation
             let logo = find_project_logo(&path, &name);
             let abs_path = path.canonicalize().unwrap_or(path);

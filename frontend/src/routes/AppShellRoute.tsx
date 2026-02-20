@@ -295,15 +295,22 @@ const AppShell = memo(function AppShell() {
 		setBootstrapSubmitting(true);
 		setBootstrapError(null);
 		try {
-			const response = await bootstrapOnboarding({
+			await bootstrapOnboarding({
 				display_name: bootstrapName.trim(),
 				language: locale,
 			});
 			setBootstrapOpen(false);
 			setBootstrapName("");
 			setSelectedWorkspaceOverviewPath(null);
-			setSelectedChatSessionId(response.session_id);
-			await Promise.all([refreshChatHistory(), refreshWorkspaceSessions()]);
+			// Don't select a fake session -- just refresh workspace dirs so the
+			// new workspace appears in the sidebar. User starts chatting by
+			// clicking on it or creating a new session.
+			setSelectedChatSessionId(null);
+			await Promise.all([
+				refreshChatHistory(),
+				refreshWorkspaceSessions(),
+				projectActions.refreshWorkspaceDirectories(),
+			]);
 			setActiveAppId("sessions");
 		} catch (err) {
 			setBootstrapError(
@@ -321,6 +328,7 @@ const AppShell = memo(function AppShell() {
 		setActiveAppId,
 		setSelectedChatSessionId,
 		setSelectedWorkspaceOverviewPath,
+		projectActions.refreshWorkspaceDirectories,
 	]);
 
 	// Load settings
