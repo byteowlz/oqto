@@ -48,7 +48,7 @@ import {
 	X,
 	Zap,
 } from "lucide-react";
-import { useState } from "react";
+import { useCallback, useState } from "react";
 
 const PROVIDER_TYPES = [
 	{ value: "openai", label: "OpenAI" },
@@ -65,11 +65,169 @@ const PROVIDER_TYPES = [
 	{ value: "ollama", label: "Ollama (local)" },
 ];
 
-function AddProviderDialog({
+// Types that typically need a base_url
+const TYPES_NEED_BASE_URL = [
+	"azure",
+	"openai-compatible",
+	"ollama",
+	"bedrock",
+];
+
+// Types that support api_version
+const TYPES_NEED_API_VERSION = ["azure"];
+
+// Types that support deployment
+const TYPES_NEED_DEPLOYMENT = ["azure"];
+
+type ModelEntry = { id: string; name: string; reasoning: boolean };
+
+// -- Model list editor (inline in the provider form) --
+function ModelListEditor({
+	models,
+	onChange,
+}: {
+	models: ModelEntry[];
+	onChange: (models: ModelEntry[]) => void;
+}) {
+	const [newId, setNewId] = useState("");
+	const [newName, setNewName] = useState("");
+	const [newReasoning, setNewReasoning] = useState(false);
+
+	const addModel = useCallback(() => {
+		const id = newId.trim();
+		if (!id) return;
+		if (models.some((m) => m.id === id)) return;
+		onChange([
+			...models,
+			{ id, name: newName.trim() || id, reasoning: newReasoning },
+		]);
+		setNewId("");
+		setNewName("");
+		setNewReasoning(false);
+	}, [models, newId, newName, newReasoning, onChange]);
+
+	const removeModel = useCallback(
+		(id: string) => {
+			onChange(models.filter((m) => m.id !== id));
+		},
+		[models, onChange],
+	);
+
+	return (
+		<div className="space-y-2">
+			<Label>
+				Models{" "}
+				<span className="text-muted-foreground font-normal">
+					(optional shortlist -- leave empty to use provider defaults)
+				</span>
+			</Label>
+
+			{models.length > 0 && (
+				<div className="border border-border rounded-md overflow-hidden">
+					<table className="w-full text-xs">
+						<thead>
+							<tr className="bg-muted/30 text-muted-foreground">
+								<th className="text-left py-1.5 px-2 font-medium">
+									Model ID
+								</th>
+								<th className="text-left py-1.5 px-2 font-medium">Name</th>
+								<th className="text-left py-1.5 px-2 font-medium w-16">
+									Reasoning
+								</th>
+								<th className="w-8" />
+							</tr>
+						</thead>
+						<tbody>
+							{models.map((model) => (
+								<tr
+									key={model.id}
+									className="border-t border-border/50 text-foreground"
+								>
+									<td className="py-1 px-2 font-mono">{model.id}</td>
+									<td className="py-1 px-2">{model.name}</td>
+									<td className="py-1 px-2 text-center">
+										{model.reasoning ? (
+											<Zap className="w-3 h-3 text-amber-500 inline" />
+										) : (
+											"-"
+										)}
+									</td>
+									<td className="py-1 px-1">
+										<button
+											type="button"
+											onClick={() => removeModel(model.id)}
+											className="text-muted-foreground hover:text-destructive p-0.5"
+										>
+											<X className="w-3 h-3" />
+										</button>
+									</td>
+								</tr>
+							))}
+						</tbody>
+					</table>
+				</div>
+			)}
+
+			<div className="flex gap-2 items-end">
+				<div className="flex-1">
+					<Input
+						value={newId}
+						onChange={(e) => setNewId(e.target.value)}
+						placeholder="model-id"
+						className="h-8 text-xs font-mono"
+						onKeyDown={(e) => {
+							if (e.key === "Enter") {
+								e.preventDefault();
+								addModel();
+							}
+						}}
+					/>
+				</div>
+				<div className="flex-1">
+					<Input
+						value={newName}
+						onChange={(e) => setNewName(e.target.value)}
+						placeholder="Display name"
+						className="h-8 text-xs"
+						onKeyDown={(e) => {
+							if (e.key === "Enter") {
+								e.preventDefault();
+								addModel();
+							}
+						}}
+					/>
+				</div>
+				<label className="flex items-center gap-1 text-xs text-muted-foreground cursor-pointer whitespace-nowrap">
+					<input
+						type="checkbox"
+						checked={newReasoning}
+						onChange={(e) => setNewReasoning(e.target.checked)}
+						className="rounded"
+					/>
+					Reasoning
+				</label>
+				<Button
+					type="button"
+					variant="outline"
+					size="sm"
+					className="h-8 px-2"
+					onClick={addModel}
+					disabled={!newId.trim()}
+				>
+					<Plus className="w-3 h-3" />
+				</Button>
+			</div>
+		</div>
+	);
+}
+
+// -- Add/Edit Provider Dialog --
+function ProviderDialog({
 	open,
 	onOpenChange,
 	onSubmit,
 	isPending,
+	initial,
 }: {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
@@ -78,45 +236,81 @@ function AddProviderDialog({
 		type: string;
 		api_key?: string;
 		base_url?: string;
+		api_version?: string;
+		deployment?: string;
+		models: ModelEntry[];
 	}) => void;
 	isPending: boolean;
+	initial?: {
+		name: string;
+		type: string;
+		models: ModelEntry[];
+	};
 }) {
-	const [name, setName] = useState("");
-	const [type_, setType] = useState("openai");
+	const isEdit = !!initial;
+	const [name, setName] = useState(initial?.name ?? "");
+	const [type_, setType] = useState(initial?.type ?? "openai");
 	const [apiKey, setApiKey] = useState("");
 	const [baseUrl, setBaseUrl] = useState("");
+	const [apiVersion, setApiVersion] = useState("");
+	const [deployment, setDeployment] = useState("");
+	const [models, setModels] = useState<ModelEntry[]>(initial?.models ?? []);
+
+	const resetForm = useCallback(() => {
+		if (!initial) {
+			setName("");
+			setType("openai");
+			setApiKey("");
+			setBaseUrl("");
+			setApiVersion("");
+			setDeployment("");
+			setModels([]);
+		}
+	}, [initial]);
 
 	const handleSubmit = (e: React.FormEvent) => {
 		e.preventDefault();
 		onSubmit({
-			name: name.toLowerCase().replace(/\s+/g, "-"),
+			name: isEdit ? name : name.toLowerCase().replace(/\s+/g, "-"),
 			type: type_,
 			api_key: apiKey || undefined,
 			base_url: baseUrl || undefined,
+			api_version: apiVersion || undefined,
+			deployment: deployment || undefined,
+			models,
 		});
-		setName("");
-		setType("openai");
-		setApiKey("");
-		setBaseUrl("");
+		resetForm();
 	};
+
+	const showBaseUrl =
+		TYPES_NEED_BASE_URL.includes(type_) || baseUrl.length > 0;
+	const showApiVersion = TYPES_NEED_API_VERSION.includes(type_);
+	const showDeployment = TYPES_NEED_DEPLOYMENT.includes(type_);
 
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
-			<DialogContent>
+			<DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
 				<DialogHeader>
-					<DialogTitle>Add Provider</DialogTitle>
+					<DialogTitle>
+						{isEdit ? `Edit ${initial.name}` : "Add Provider"}
+					</DialogTitle>
 				</DialogHeader>
 				<form onSubmit={handleSubmit} className="space-y-4">
+					{/* Name */}
 					<div className="space-y-2">
 						<Label htmlFor="provider-name">Provider Name</Label>
 						<Input
 							id="provider-name"
 							value={name}
 							onChange={(e) => setName(e.target.value)}
-							placeholder="e.g. anthropic, my-openai"
+							placeholder="e.g. anthropic, azure-eastus"
 							required
+							disabled={isEdit}
+							className={isEdit ? "opacity-50" : ""}
 						/>
 					</div>
+
+					{/* Type */}
 					<div className="space-y-2">
 						<Label>Type</Label>
 						<Select value={type_} onValueChange={setType}>
@@ -132,33 +326,88 @@ function AddProviderDialog({
 							</SelectContent>
 						</Select>
 					</div>
+
+					{/* API Key */}
 					<div className="space-y-2">
-						<Label htmlFor="provider-key">API Key</Label>
+						<Label htmlFor="provider-key">
+							API Key
+							{isEdit && (
+								<span className="text-muted-foreground font-normal">
+									{" "}
+									(leave blank to keep existing)
+								</span>
+							)}
+						</Label>
 						<Input
 							id="provider-key"
 							type="password"
 							value={apiKey}
 							onChange={(e) => setApiKey(e.target.value)}
-							placeholder="sk-..."
+							placeholder={isEdit ? "(unchanged)" : "sk-..."}
 							className="font-mono"
 						/>
 					</div>
+
+					{/* Base URL */}
 					<div className="space-y-2">
 						<Label htmlFor="provider-url">
 							Base URL{" "}
-							<span className="text-muted-foreground font-normal">
-								(optional)
-							</span>
+							{!showBaseUrl && (
+								<span className="text-muted-foreground font-normal">
+									(auto-detected from type)
+								</span>
+							)}
+							{showBaseUrl && (
+								<span className="text-muted-foreground font-normal">
+									(required for {type_})
+								</span>
+							)}
 						</Label>
 						<Input
 							id="provider-url"
-							type="url"
 							value={baseUrl}
 							onChange={(e) => setBaseUrl(e.target.value)}
 							placeholder="https://api.example.com/v1"
 							className="font-mono"
 						/>
 					</div>
+
+					{/* API Version (Azure) */}
+					{showApiVersion && (
+						<div className="space-y-2">
+							<Label htmlFor="provider-api-version">API Version</Label>
+							<Input
+								id="provider-api-version"
+								value={apiVersion}
+								onChange={(e) => setApiVersion(e.target.value)}
+								placeholder="2024-12-01-preview"
+								className="font-mono"
+							/>
+						</div>
+					)}
+
+					{/* Deployment (Azure) */}
+					{showDeployment && (
+						<div className="space-y-2">
+							<Label htmlFor="provider-deployment">
+								Deployment Name{" "}
+								<span className="text-muted-foreground font-normal">
+									(optional -- defaults to model name)
+								</span>
+							</Label>
+							<Input
+								id="provider-deployment"
+								value={deployment}
+								onChange={(e) => setDeployment(e.target.value)}
+								placeholder="my-gpt4-deployment"
+								className="font-mono"
+							/>
+						</div>
+					)}
+
+					{/* Models shortlist */}
+					<ModelListEditor models={models} onChange={setModels} />
+
 					<DialogFooter>
 						<Button
 							type="button"
@@ -170,10 +419,12 @@ function AddProviderDialog({
 						<Button type="submit" disabled={!name || isPending}>
 							{isPending ? (
 								<RefreshCw className="w-3 h-3 mr-1 animate-spin" />
+							) : isEdit ? (
+								<Check className="w-3 h-3 mr-1" />
 							) : (
 								<Plus className="w-3 h-3 mr-1" />
 							)}
-							Add Provider
+							{isEdit ? "Save Changes" : "Add Provider"}
 						</Button>
 					</DialogFooter>
 				</form>
@@ -232,9 +483,11 @@ function DeleteProviderDialog({
 function ProviderCard({
 	provider,
 	onDelete,
+	onEdit,
 }: {
 	provider: EavsProviderSummary;
 	onDelete: (name: string) => void;
+	onEdit: (provider: EavsProviderSummary) => void;
 }) {
 	const [expanded, setExpanded] = useState(false);
 
@@ -275,15 +528,25 @@ function ProviderCard({
 						)}
 					</div>
 				</button>
-				<Button
-					variant="ghost"
-					size="sm"
-					onClick={() => onDelete(provider.name)}
-					className="h-8 w-8 p-0 mr-2 text-muted-foreground hover:text-destructive"
-					title={`Delete ${provider.name}`}
-				>
-					<Trash2 className="w-3.5 h-3.5" />
-				</Button>
+				<div className="flex items-center mr-2 gap-1">
+					<Button
+						variant="ghost"
+						size="sm"
+						onClick={() => onEdit(provider)}
+						className="h-8 px-2 text-xs text-muted-foreground hover:text-foreground"
+					>
+						Edit
+					</Button>
+					<Button
+						variant="ghost"
+						size="sm"
+						onClick={() => onDelete(provider.name)}
+						className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
+						title={`Delete ${provider.name}`}
+					>
+						<Trash2 className="w-3.5 h-3.5" />
+					</Button>
+				</div>
 			</div>
 			{expanded && provider.models.length > 0 && (
 				<div className="border-t border-border px-4 py-2 max-h-64 overflow-y-auto">
@@ -316,6 +579,12 @@ function ProviderCard({
 					</table>
 				</div>
 			)}
+			{expanded && provider.models.length === 0 && (
+				<div className="border-t border-border px-4 py-3 text-xs text-muted-foreground">
+					No model shortlist configured -- using provider defaults from
+					models.dev catalog.
+				</div>
+			)}
 		</div>
 	);
 }
@@ -326,19 +595,26 @@ export function ModelsPanel() {
 	const deleteMutation = useDeleteEavsProvider();
 	const syncModelsMutation = useSyncAllModels();
 	const [showAddDialog, setShowAddDialog] = useState(false);
+	const [editTarget, setEditTarget] = useState<EavsProviderSummary | null>(
+		null,
+	);
 	const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
 	const [syncResult, setSyncResult] = useState<SyncAllModelsResponse | null>(
 		null,
 	);
 
-	const handleAddProvider = async (data: {
+	const handleUpsertProvider = async (data: {
 		name: string;
 		type: string;
 		api_key?: string;
 		base_url?: string;
+		api_version?: string;
+		deployment?: string;
+		models: ModelEntry[];
 	}) => {
 		await upsertMutation.mutateAsync(data);
 		setShowAddDialog(false);
+		setEditTarget(null);
 	};
 
 	const handleDeleteConfirm = async () => {
@@ -423,6 +699,7 @@ export function ModelsPanel() {
 								key={provider.name}
 								provider={provider}
 								onDelete={setDeleteTarget}
+								onEdit={setEditTarget}
 							/>
 						))}
 					</div>
@@ -504,12 +781,33 @@ export function ModelsPanel() {
 			</div>
 
 			{/* Add Provider Dialog */}
-			<AddProviderDialog
+			<ProviderDialog
 				open={showAddDialog}
 				onOpenChange={setShowAddDialog}
-				onSubmit={handleAddProvider}
+				onSubmit={handleUpsertProvider}
 				isPending={upsertMutation.isPending}
 			/>
+
+			{/* Edit Provider Dialog */}
+			{editTarget && (
+				<ProviderDialog
+					open={true}
+					onOpenChange={(open) => {
+						if (!open) setEditTarget(null);
+					}}
+					onSubmit={handleUpsertProvider}
+					isPending={upsertMutation.isPending}
+					initial={{
+						name: editTarget.name,
+						type: editTarget.type,
+						models: editTarget.models.map((m) => ({
+							id: m.id,
+							name: m.name,
+							reasoning: m.reasoning,
+						})),
+					}}
+				/>
+			)}
 
 			{/* Delete Confirmation Dialog */}
 			<DeleteProviderDialog

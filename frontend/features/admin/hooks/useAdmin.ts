@@ -645,6 +645,9 @@ export type UpsertEavsProviderRequest = {
 	type: string;
 	api_key?: string;
 	base_url?: string;
+	api_version?: string;
+	deployment?: string;
+	models?: { id: string; name: string; reasoning: boolean }[];
 };
 
 export type SyncAllModelsResponse = {

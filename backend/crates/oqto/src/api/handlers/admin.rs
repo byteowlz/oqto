@@ -757,6 +757,23 @@ pub struct UpsertEavsProviderRequest {
     pub api_key: Option<String>,
     /// Custom base URL (if not using provider default).
     pub base_url: Option<String>,
+    /// API version (primarily for Azure).
+    pub api_version: Option<String>,
+    /// Azure deployment name.
+    pub deployment: Option<String>,
+    /// Curated model shortlist for this provider.
+    #[serde(default)]
+    pub models: Vec<UpsertModelEntry>,
+}
+
+/// A model entry in the provider shortlist for upsert.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct UpsertModelEntry {
+    pub id: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub reasoning: bool,
 }
 
 /// Add or update a provider in the eavs config.
@@ -827,9 +844,30 @@ pub async fn upsert_eavs_provider(
     if let Some(ref base_url) = request.base_url {
         provider_toml.push_str(&format!("base_url = \"{}\"\n", base_url));
     }
+    if let Some(ref api_version) = request.api_version {
+        provider_toml.push_str(&format!("api_version = \"{}\"\n", api_version));
+    }
+    if let Some(ref deployment) = request.deployment {
+        provider_toml.push_str(&format!("deployment = \"{}\"\n", deployment));
+    }
+
+    // Write model shortlist entries
+    for model in &request.models {
+        provider_toml.push_str(&format!(
+            "\n[[providers.{}.models]]\nid = \"{}\"\nname = \"{}\"\nreasoning = {}\n",
+            request.name,
+            model.id,
+            model.name,
+            model.reasoning,
+        ));
+    }
 
     // Remove existing provider section if it exists, then append new one
-    let new_config = remove_toml_section(&config_content, &format!("providers.{}", request.name));
+    // Also remove any [[providers.NAME.models]] array entries
+    let mut new_config =
+        remove_toml_section(&config_content, &format!("providers.{}", request.name));
+    // Remove leftover [[providers.NAME.models]] entries that survive the section removal
+    new_config = remove_toml_array_entries(&new_config, &format!("providers.{}.models", request.name));
     let new_config = format!("{}\n{}", new_config.trim_end(), provider_toml);
 
     tokio::fs::write(config_path, &new_config)
@@ -913,6 +951,10 @@ pub async fn sync_all_models(
 
     for user in &users {
         if let Some(ref linux_username) = user.linux_username {
+            // Skip users without a valid oqto_ prefix (e.g. legacy admin/dev entries)
+            if !linux_username.starts_with("oqto_") {
+                continue;
+            }
             match sync_eavs_models_json(
                 eavs_client.as_ref(),
                 linux_users,
@@ -938,6 +980,32 @@ pub async fn sync_all_models(
 /// Removes from the section header until the next section header or end of file.
 fn remove_toml_section(content: &str, section: &str) -> String {
     let header = format!("[{}]", section);
+    let array_prefix = format!("[[{}.", section);
+    let mut result = String::new();
+    let mut skipping = false;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed == header || trimmed.starts_with(&array_prefix) {
+            skipping = true;
+            continue;
+        }
+        // A new section header ends the skip (but not array entries of the same section)
+        if skipping && trimmed.starts_with('[') && !trimmed.starts_with(&array_prefix) {
+            skipping = false;
+        }
+        if !skipping {
+            result.push_str(line);
+            result.push('\n');
+        }
+    }
+    result
+}
+
+/// Remove leftover TOML array-of-table entries ([[section]]) that might
+/// survive a section removal (e.g., [[providers.NAME.models]]).
+fn remove_toml_array_entries(content: &str, array_name: &str) -> String {
+    let header = format!("[[{}]]", array_name);
     let mut result = String::new();
     let mut skipping = false;
 
@@ -947,8 +1015,8 @@ fn remove_toml_section(content: &str, section: &str) -> String {
             skipping = true;
             continue;
         }
-        // A new section header ends the skip
-        if skipping && trimmed.starts_with('[') && trimmed.ends_with(']') {
+        // A new section or array header ends the skip
+        if skipping && trimmed.starts_with('[') {
             skipping = false;
         }
         if !skipping {
