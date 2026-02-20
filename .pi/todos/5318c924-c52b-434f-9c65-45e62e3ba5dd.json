@@ -1,65 +1,29 @@
 {
   "todos": [
     {
-      "id": "1",
-      "content": "Replace ephemeral Pi model fetch with direct models.json reading",
-      "status": "completed",
+      "id": "9af1e608",
+      "content": "CRITICAL: Fix cross-user session visibility — users can see other users' sessions",
+      "status": "in_progress",
       "priority": "high"
     },
     {
-      "id": "2",
-      "content": "Deploy updated binaries to octo-azure",
-      "status": "completed",
+      "id": "07793591",
+      "content": "Audit all session/chat query paths for user filtering",
+      "status": "pending",
       "priority": "high"
     },
     {
-      "id": "3",
-      "content": "Register eavs models for foundry-wg provider (19 curated models)",
-      "status": "completed",
-      "priority": "high"
-    },
-    {
-      "id": "4",
-      "content": "Sync models.json for users",
-      "status": "completed",
-      "priority": "high"
-    },
-    {
-      "id": "5",
-      "content": "Verify model selector works in frontend",
-      "status": "completed",
-      "priority": "high"
-    },
-    {
-      "id": "6",
-      "content": "Fix runner-sockets dir permissions (tmpfiles.d + chgrp)",
-      "status": "completed",
-      "priority": "high"
-    },
-    {
-      "id": "7",
-      "content": "Push all commits to GitHub (needs SSH key passphrase)",
+      "id": "b45c6f1f",
+      "content": "Test end-to-end chat with the model",
       "status": "pending",
       "priority": "medium"
     },
     {
-      "id": "8",
-      "content": "Verify terminal, files, and chat panels work",
-      "status": "completed",
-      "priority": "high"
-    },
-    {
-      "id": "9",
-      "content": "Fix: New Session from sidebar Workspace group has null workspace_path -> Loading chat stuck",
+      "id": "f7431b0e",
+      "content": "Push commits to GitHub",
       "status": "pending",
       "priority": "medium"
-    },
-    {
-      "id": "10",
-      "content": "File trx issue for workspace-less session bug",
-      "status": "pending",
-      "priority": "low"
     }
   ],
-  "updated_at": "2026-02-20T17:49:17.646Z"
+  "updated_at": "2026-02-20T18:51:16.901Z"
 }

@@ -10,6 +10,49 @@ import { isTauri } from "@/lib/tauri-fetch-polyfill";
 // ============================================================================
 
 const AUTH_TOKEN_KEY = "oqto:authToken";
+const CURRENT_USER_KEY = "oqto:currentUserId";
+
+// All localStorage keys that hold user-specific data.
+// SECURITY: These MUST be cleared on user switch to prevent cross-user data
+// leakage. When adding new per-user localStorage keys, add them here too.
+const USER_DATA_KEYS = [
+	"oqto:chatHistoryCache:v2",
+	"oqto:lastChatSessionId",
+	"oqto:defaultChatCurrentSessionId",
+	"oqto:projectDefaultAgents",
+	"defaultChatWorkspacePath",
+	"workspaceSessionId",
+];
+
+/**
+ * Clear all user-specific localStorage data.
+ * Called on login (when user identity changes) and logout to prevent
+ * one user's cached sessions/state from leaking to another user.
+ */
+export function clearUserSessionData(): void {
+	if (typeof window === "undefined") return;
+	for (const key of USER_DATA_KEYS) {
+		localStorage.removeItem(key);
+	}
+}
+
+/**
+ * Track which user is logged in so we can detect user switches and
+ * clear stale data that belonged to the previous user.
+ */
+export function setCurrentUserId(userId: string | null): void {
+	if (typeof window === "undefined") return;
+	if (userId) {
+		const previous = localStorage.getItem(CURRENT_USER_KEY);
+		if (previous && previous !== userId) {
+			// User switched -- nuke all cached data from previous user
+			clearUserSessionData();
+		}
+		localStorage.setItem(CURRENT_USER_KEY, userId);
+	} else {
+		localStorage.removeItem(CURRENT_USER_KEY);
+	}
+}
 
 export function getAuthToken(): string | null {
 	if (typeof window === "undefined") return null;
@@ -30,6 +73,9 @@ export function setAuthToken(token: string | null): void {
 		// eslint-disable-next-line unicorn/no-document-cookie -- CookieStore is not widely supported.
 		document.cookie =
 			"auth_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+		// Clear user identity + cached data on logout
+		clearUserSessionData();
+		localStorage.removeItem(CURRENT_USER_KEY);
 	}
 }
 

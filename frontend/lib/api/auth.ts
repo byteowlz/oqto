@@ -9,6 +9,7 @@ import {
 	getAuthHeaders,
 	readApiError,
 	setAuthToken,
+	setCurrentUserId,
 } from "./client";
 import type {
 	LoginRequest,
@@ -36,6 +37,11 @@ export async function login(request: LoginRequest): Promise<LoginResponse> {
 			const res = await fetch(url, options);
 			if (!res.ok) throw new Error(await readApiError(res));
 			const data: LoginResponse = await res.json();
+			// Track user identity BEFORE setting token -- this detects user
+			// switches and clears the previous user's cached data.
+			if (data.user?.id) {
+				setCurrentUserId(data.user.id);
+			}
 			// Store token for Tauri/mobile
 			if (data.token) {
 				setAuthToken(data.token);
@@ -82,6 +88,10 @@ export async function register(
 			const res = await fetch(url, options);
 			if (!res.ok) throw new Error(await readApiError(res));
 			const data: RegisterResponse = await res.json();
+			// Track user identity BEFORE setting token
+			if (data.user?.id) {
+				setCurrentUserId(data.user.id);
+			}
 			// Store token for Tauri/mobile
 			if (data.token) {
 				setAuthToken(data.token);

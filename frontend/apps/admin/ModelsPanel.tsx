@@ -66,12 +66,7 @@ const PROVIDER_TYPES = [
 ];
 
 // Types that typically need a base_url
-const TYPES_NEED_BASE_URL = [
-	"azure",
-	"openai-compatible",
-	"ollama",
-	"bedrock",
-];
+const TYPES_NEED_BASE_URL = ["azure", "openai-compatible", "ollama", "bedrock"];
 
 // Types that support api_version
 const TYPES_NEED_API_VERSION = ["azure"];
@@ -127,9 +122,7 @@ function ModelListEditor({
 					<table className="w-full text-xs">
 						<thead>
 							<tr className="bg-muted/30 text-muted-foreground">
-								<th className="text-left py-1.5 px-2 font-medium">
-									Model ID
-								</th>
+								<th className="text-left py-1.5 px-2 font-medium">Model ID</th>
 								<th className="text-left py-1.5 px-2 font-medium">Name</th>
 								<th className="text-left py-1.5 px-2 font-medium w-16">
 									Reasoning
@@ -282,8 +275,7 @@ function ProviderDialog({
 		resetForm();
 	};
 
-	const showBaseUrl =
-		TYPES_NEED_BASE_URL.includes(type_) || baseUrl.length > 0;
+	const showBaseUrl = TYPES_NEED_BASE_URL.includes(type_) || baseUrl.length > 0;
 	const showApiVersion = TYPES_NEED_API_VERSION.includes(type_);
 	const showDeployment = TYPES_NEED_DEPLOYMENT.includes(type_);
 
