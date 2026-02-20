@@ -157,7 +157,10 @@ pub async fn register(
         .invites
         .try_consume_atomic(&request.invite_code, "pending") // Use "pending" as placeholder
         .await
-        .map_err(|e| ApiError::bad_request(e.to_string()))?;
+        .map_err(|e| {
+            tracing::error!("Invite code consumption failed: {e:#}");
+            ApiError::bad_request(format!("{e:#}"))
+        })?;
 
     // SECURITY: In multi-user mode, generate a user_id that won't collide with existing
     // Linux users BEFORE creating the DB user. This avoids the need for rollback.
@@ -226,6 +229,8 @@ pub async fn register(
 
     // SECURITY: Create Linux user if multi-user isolation is enabled.
     // Since we pre-generated a unique ID, this should succeed unless there's a system error.
+    // Track the linux username for later use (eavs provisioning etc.)
+    let mut resolved_linux_username: Option<String> = None;
     if let Some(ref linux_users) = state.linux_users {
         match linux_users.ensure_user_with_verification(
             &user.id,
@@ -233,6 +238,7 @@ pub async fn register(
             user.linux_uid.map(|u| u as u32),
         ) {
             Ok((uid, actual_linux_username)) => {
+                resolved_linux_username = Some(actual_linux_username.clone());
                 // Store both linux_username and linux_uid for verification
                 // UID is immutable by non-root, unlike GECOS which users can change via chfn
                 if let Err(e) = state
@@ -349,7 +355,10 @@ pub async fn register(
 
     // Provision EAVS virtual key and write Pi models.json if eavs client is available
     if let (Some(eavs_client), Some(linux_users)) = (&state.eavs_client, &state.linux_users) {
-        let linux_username = user.linux_username.as_deref().unwrap_or(&user.id);
+        let linux_username = resolved_linux_username
+            .as_deref()
+            .or(user.linux_username.as_deref())
+            .unwrap_or(&user.id);
 
         match provision_eavs_for_user(eavs_client, linux_users, linux_username, &user.id).await {
             Ok(key_id) => {

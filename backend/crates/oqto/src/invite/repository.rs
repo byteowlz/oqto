@@ -267,24 +267,26 @@ impl InviteCodeRepository {
     /// - Ok(invite_code_id) if the code was successfully consumed
     /// - Err with appropriate message if code is invalid, expired, or exhausted
     #[instrument(skip(self))]
-    pub async fn try_consume_atomic(&self, code: &str, user_id: &str) -> Result<String> {
+    pub async fn try_consume_atomic(&self, code: &str, _user_id: &str) -> Result<String> {
         // Atomically try to consume the invite code.
         // The WHERE clause ensures we only update if:
         // 1. The code exists
         // 2. uses_remaining > 0
         // 3. Either not expired OR no expiry set
+        //
+        // NOTE: We do NOT set used_by here because the user hasn't been
+        // created yet — the column has a FOREIGN KEY constraint on users(id).
+        // used_by is set later via update_used_by() after user creation.
         let result = sqlx::query(
             r#"
             UPDATE invite_codes
             SET uses_remaining = uses_remaining - 1,
-                used_by = ?,
                 last_used_at = datetime('now')
             WHERE code = ?
               AND uses_remaining > 0
               AND (expires_at IS NULL OR expires_at > datetime('now'))
             "#,
         )
-        .bind(user_id)
         .bind(code)
         .execute(&self.pool)
         .await

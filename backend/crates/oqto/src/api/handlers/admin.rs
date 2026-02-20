@@ -635,8 +635,13 @@ pub(crate) async fn provision_eavs_for_user(
     let env_content = format!("EAVS_API_KEY={}\nEAVS_URL={}\n", key_resp.key, eavs_base);
     let env_dir = format!("{}/.config/oqto", home);
     linux_users.write_file_as_user(linux_username, &env_dir, "eavs.env", &env_content)?;
-    // 640 so the oqto service user (in the shared group) can read it for env injection
-    linux_users.chmod_file(linux_username, &format!("{}/eavs.env", env_dir), "640")?;
+    // 640 so the oqto service user (in the shared group) can read it for env injection.
+    // Non-fatal: file still works with default perms, just slightly more permissive.
+    if let Err(e) =
+        linux_users.chmod_file(linux_username, &format!("{}/eavs.env", env_dir), "640")
+    {
+        tracing::warn!("chmod eavs.env failed (non-fatal): {e}");
+    }
 
     // 3. Regenerate models.json from current catalog (embed the key directly)
     sync_eavs_models_json_with_key(eavs_client, linux_users, linux_username, &key_resp.key)
