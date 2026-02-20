@@ -507,51 +507,95 @@ pub async fn create_project_from_template(
     }
 
     let workspace_root = state.sessions.for_user(user.id()).workspace_root();
-
-    // Auto-create workspace root for the user if it doesn't exist yet.
-    if !workspace_root.exists() {
-        fs::create_dir_all(&workspace_root).map_err(|e| {
-            ApiError::internal(format!(
-                "Failed to create workspace directory {:?}: {}",
-                workspace_root, e
-            ))
-        })?;
-    }
-
     let target_dir = workspace_root.join(&project_rel);
-    if target_dir.exists() {
-        return Err(ApiError::bad_request("project path already exists"));
-    }
 
-    copy_template_dir(&template_dir, &target_dir)?;
+    // In multi-user mode, delegate to usermgr (runs as root, can write to user homes).
+    let is_multi_user = state.linux_users.as_ref().is_some_and(|lu| lu.enabled);
+    if is_multi_user {
+        let linux_username = state
+            .linux_users
+            .as_ref()
+            .unwrap()
+            .linux_username(user.id());
+        let target_str = target_dir
+            .to_str()
+            .ok_or_else(|| ApiError::internal("invalid target path"))?;
+
+        crate::local::linux_users::usermgr_request(
+            "create-workspace",
+            serde_json::json!({
+                "username": linux_username,
+                "path": target_str,
+                "template_src": template_dir.to_string_lossy(),
+            }),
+        )
+        .map_err(|e| ApiError::internal(format!("Failed to create project dir: {e}")))?;
+    } else {
+        // Single-user mode: create directly.
+        if !workspace_root.exists() {
+            fs::create_dir_all(&workspace_root).map_err(|e| {
+                ApiError::internal(format!(
+                    "Failed to create workspace directory {:?}: {}",
+                    workspace_root, e
+                ))
+            })?;
+        }
+
+        if target_dir.exists() {
+            return Err(ApiError::bad_request("project path already exists"));
+        }
+
+        copy_template_dir(&template_dir, &target_dir)?;
+    }
 
     // Initialize git repo.
-    // We capture stdout/stderr for diagnosis, because failures here are usually environment/
-    // permission related and should be actionable.
-    let git_init_output = Command::new("git")
-        .arg("init")
-        .arg("--branch")
-        .arg("main")
-        .current_dir(&target_dir)
-        .output()
-        .await;
-
-    match git_init_output {
-        Ok(output) if output.status.success() => {
-            tracing::info!(
-                project_path = %target_dir.display(),
-                stdout = %String::from_utf8_lossy(&output.stdout),
-                stderr = %String::from_utf8_lossy(&output.stderr),
-                "git init succeeded"
-            );
+    // In multi-user mode, run git as the target user via usermgr.
+    // In single-user mode, run directly.
+    if is_multi_user {
+        let linux_username = state
+            .linux_users
+            .as_ref()
+            .unwrap()
+            .linux_username(user.id());
+        let target_str = target_dir.to_string_lossy().to_string();
+        // Best-effort git init via run-as-user
+        if let Err(e) = crate::local::linux_users::usermgr_request(
+            "run-as-user",
+            serde_json::json!({
+                "username": linux_username,
+                "binary": "git",
+                "args": ["init", "-b", "main"],
+                "cwd": target_str,
+            }),
+        ) {
+            tracing::warn!("git init via usermgr failed (non-fatal): {e}");
+        } else {
+            tracing::info!(project_path = %target_dir.display(), "git init succeeded via usermgr");
         }
-        Ok(output) => {
-            // Log as much context as possible.
-            let uid = unsafe { libc::geteuid() };
-            let gid = unsafe { libc::getegid() };
-            let home = std::env::var("HOME").unwrap_or_default();
-            let path = std::env::var("PATH").unwrap_or_default();
-            tracing::error!(
+    } else {
+        let git_init_output = Command::new("git")
+            .arg("init")
+            .arg("-b")
+            .arg("main")
+            .current_dir(&target_dir)
+            .output()
+            .await;
+
+        match git_init_output {
+            Ok(output) if output.status.success() => {
+                tracing::info!(
+                    project_path = %target_dir.display(),
+                    stdout = %String::from_utf8_lossy(&output.stdout),
+                    stderr = %String::from_utf8_lossy(&output.stderr),
+                    "git init succeeded"
+                );
+            }
+            Ok(output) => {
+                let uid = unsafe { libc::geteuid() };
+                let gid = unsafe { libc::getegid() };
+                let home = std::env::var("HOME").unwrap_or_default();
+                let path = std::env::var("PATH").unwrap_or_default();
+                tracing::error!(
                 project_path = %target_dir.display(),
                 exit_code = ?output.status.code(),
                 uid,
@@ -563,20 +607,21 @@ pub async fn create_project_from_template(
                 "git init failed"
             );
         }
-        Err(e) => {
-            let uid = unsafe { libc::geteuid() };
-            let gid = unsafe { libc::getegid() };
-            let home = std::env::var("HOME").unwrap_or_default();
-            let path = std::env::var("PATH").unwrap_or_default();
-            tracing::error!(
-                project_path = %target_dir.display(),
-                uid,
-                gid,
-                home = %home,
-                path = %path,
-                error = %e,
-                "failed to spawn git init"
-            );
+            Err(e) => {
+                let uid = unsafe { libc::geteuid() };
+                let gid = unsafe { libc::getegid() };
+                let home = std::env::var("HOME").unwrap_or_default();
+                let path = std::env::var("PATH").unwrap_or_default();
+                tracing::error!(
+                    project_path = %target_dir.display(),
+                    uid,
+                    gid,
+                    home = %home,
+                    path = %path,
+                    error = %e,
+                    "failed to spawn git init"
+                );
+            }
         }
     }
 

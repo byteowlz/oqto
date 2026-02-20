@@ -980,7 +980,7 @@ fn cmd_restart_service(args: &serde_json::Value) -> Response {
 
 /// Allowed binary names for run-as-user.
 /// Only these can be executed. Full path resolution is done after validation.
-const ALLOWED_RUN_BINARIES: &[&str] = &["skdlr", "trx", "agntz", "byt", "pi", "sldr"];
+const ALLOWED_RUN_BINARIES: &[&str] = &["skdlr", "trx", "agntz", "byt", "pi", "sldr", "git"];
 
 /// Execute a whitelisted binary as a specific oqto user.
 ///
