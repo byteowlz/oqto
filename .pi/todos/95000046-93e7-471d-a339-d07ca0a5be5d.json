@@ -2,28 +2,28 @@
   "todos": [
     {
       "id": "1",
-      "content": "Backend: add/update/delete provider + sync-models + restart-eavs endpoints",
-      "status": "in_progress",
+      "content": "Backend + Frontend: admin provider management",
+      "status": "completed",
       "priority": "high"
     },
     {
       "id": "2",
-      "content": "Frontend: Admin providers page with add/edit/delete/sync",
-      "status": "pending",
+      "content": "Deployed to octo-azure, ready for testing",
+      "status": "completed",
       "priority": "high"
     },
     {
       "id": "3",
-      "content": "Build, deploy, test end-to-end",
+      "content": "Fix ephemeral Pi model fetch (eavs.env + timeout not killing sessions)",
       "status": "pending",
-      "priority": "high"
+      "priority": "medium"
     },
     {
       "id": "4",
-      "content": "Fix ephemeral Pi model fetch (eavs.env + timeout not killing sessions)",
+      "content": "Push all commits to GitHub",
       "status": "pending",
       "priority": "medium"
     }
   ],
-  "updated_at": "2026-02-20T12:27:31.503Z"
+  "updated_at": "2026-02-20T12:43:21.360Z"
 }

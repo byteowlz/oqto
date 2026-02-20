@@ -52,10 +52,21 @@ ensure_bun_and_pi_global() {
     # Install all dependencies into the system-wide copy so bun can resolve them
     (cd "$pi_system_dir" && sudo /usr/local/bin/bun install --frozen-lockfile 2>/dev/null || sudo /usr/local/bin/bun install 2>/dev/null) || true
 
-    # Create wrapper that uses the system-wide copy
+    # Create wrapper that uses the system-wide copy.
+    # PI_PACKAGE_DIR tells Pi where to find themes, examples, package.json.
+    # Prefer user's bun (installed per-user by provisioning) over system bun.
     sudo tee /usr/local/bin/pi >/dev/null <<'PIEOF'
 #!/usr/bin/env bash
-exec /usr/local/bin/bun run /usr/local/lib/pi-coding-agent/dist/cli.js "$@"
+PI_PKG="/usr/local/lib/pi-coding-agent"
+if [ ! -f "$PI_PKG/dist/cli.js" ]; then
+  echo "Error: pi-coding-agent not found at $PI_PKG" >&2
+  exit 1
+fi
+BUN="${HOME}/.bun/bin/bun"
+[ -x "$BUN" ] || BUN="/usr/local/bin/bun"
+[ -x "$BUN" ] || { echo "Error: bun not found" >&2; exit 1; }
+export PI_PACKAGE_DIR="$PI_PKG"
+exec "$BUN" "$PI_PKG/dist/cli.js" "$@"
 PIEOF
     sudo chmod 755 /usr/local/bin/pi
     log_success "pi installed system-wide: $(/usr/local/bin/pi --version 2>/dev/null || echo 'installed')"

@@ -17,6 +17,7 @@ use std::time::{Duration, Instant};
 use std::os::unix::fs::PermissionsExt;
 
 use anyhow::{Context, Result};
+use futures::FutureExt;
 use chrono::DateTime;
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
@@ -1389,7 +1390,7 @@ impl PiSessionManager {
             .current_dir(workdir)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null());
+            .stderr(std::process::Stdio::piped());
 
         // Load per-user eavs.env so Pi can authenticate against the eavs proxy.
         // Without this, Pi cannot resolve provider API keys from models.json.
@@ -1412,6 +1413,15 @@ impl PiSessionManager {
             .context("Failed to spawn ephemeral Pi process")?;
         let mut stdin = child.stdin.take().context("No stdin on ephemeral Pi")?;
         let stdout = child.stdout.take().context("No stdout on ephemeral Pi")?;
+        let stderr = child.stderr.take().context("No stderr on ephemeral Pi")?;
+
+        // Spawn a task to collect stderr for diagnostics
+        let stderr_task = tokio::spawn(async move {
+            let mut stderr_reader = BufReader::new(stderr);
+            let mut buf = String::new();
+            let _ = tokio::io::AsyncReadExt::read_to_string(&mut stderr_reader, &mut buf).await;
+            buf
+        });
 
         let mut reader = BufReader::new(stdout).lines();
 
@@ -1473,7 +1483,21 @@ impl PiSessionManager {
             }
         })
         .await
-        .map_err(|_| anyhow::anyhow!("Timeout waiting for ephemeral Pi models"))??;
+        .map_err(|_| {
+            // On timeout, try to collect stderr for diagnostics
+            let stderr_hint = stderr_task
+                .now_or_never()
+                .and_then(|r| r.ok())
+                .unwrap_or_default();
+            let stderr_snippet = if stderr_hint.is_empty() {
+                String::new()
+            } else {
+                // Truncate to first 500 chars for log readability
+                let truncated: String = stderr_hint.chars().take(500).collect();
+                format!(" (stderr: {})", truncated.trim())
+            };
+            anyhow::anyhow!("Timeout waiting for ephemeral Pi models{}", stderr_snippet)
+        })??;
 
         // Kill the ephemeral process
         let _ = child.kill().await;

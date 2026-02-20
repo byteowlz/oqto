@@ -553,6 +553,7 @@ RestartSec=5
 Environment=RUST_LOG=info
 Environment=PATH={user_path}
 Environment=HOME={home}
+Environment=PI_PACKAGE_DIR=/usr/local/lib/pi-coding-agent
 # systemd waits up to 30s for READY=1 before declaring failure
 TimeoutStartSec=30
 
