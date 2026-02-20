@@ -181,23 +181,69 @@ async fn exec_trx_command(
     // Validate workspace path before executing command
     let validated_path = validate_workspace_path(state, user_id, workspace_path).await?;
 
-    let output = Command::new("trx")
-        .args(args)
-        .arg("--json")
-        .current_dir(&validated_path)
-        .output()
+    let mut full_args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+    full_args.push("--json".to_string());
+
+    if let Some(linux_users) = state.linux_users.as_ref().filter(|cfg| cfg.enabled) {
+        // Multi-user mode: delegate to usermgr (oqto runs with NoNewPrivileges)
+        let linux_username = linux_users.linux_username(user_id);
+        let home_dir = linux_users
+            .get_home_dir(user_id)
+            .map_err(|e| ApiError::internal(format!("Failed to resolve linux user home: {e}")))?
+            .unwrap_or_else(|| PathBuf::from(format!("/home/{}", linux_username)));
+        let xdg_config = home_dir.join(".config");
+        let xdg_data = home_dir.join(".local/share");
+
+        let cwd = validated_path.to_string_lossy().to_string();
+
+        let env = serde_json::json!({
+            "XDG_CONFIG_HOME": xdg_config.to_string_lossy(),
+            "XDG_DATA_HOME": xdg_data.to_string_lossy(),
+        });
+
+        let result = tokio::task::spawn_blocking(move || {
+            crate::local::linux_users::usermgr_request_with_data(
+                "run-as-user",
+                serde_json::json!({
+                    "username": linux_username,
+                    "binary": "trx",
+                    "args": full_args,
+                    "env": env,
+                    "cwd": cwd,
+                }),
+            )
+        })
         .await
-        .map_err(|e| ApiError::internal(format!("Failed to execute trx: {}", e)))?;
+        .map_err(|e| ApiError::internal(format!("Task join error: {e}")))?
+        .map_err(|e| ApiError::internal(format!("trx command failed: {e}")))?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(ApiError::internal(format!(
-            "trx command failed: {}",
-            stderr
-        )));
+        let stdout = result
+            .as_ref()
+            .and_then(|d| d.get("stdout"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        Ok(stdout)
+    } else {
+        // Single-user mode: run directly
+        let output = Command::new("trx")
+            .args(full_args.iter().map(String::as_str))
+            .current_dir(&validated_path)
+            .output()
+            .await
+            .map_err(|e| ApiError::internal(format!("Failed to execute trx: {}", e)))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(ApiError::internal(format!(
+                "trx command failed: {}",
+                stderr
+            )));
+        }
+
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
     }
-
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
 /// List TRX issues for a workspace.
@@ -363,20 +409,53 @@ pub async fn sync_trx(
     user: CurrentUser,
     Query(query): Query<TrxWorkspaceQuery>,
 ) -> ApiResult<Json<serde_json::Value>> {
-    // Validate workspace path before executing command
+    // Note: trx sync doesn't have JSON output -- use exec_trx_command without --json
+    // We pass "sync" and the handler appends --json, but trx sync ignores unknown flags
+    // so this is safe. Alternatively, call it directly for single-user.
     let validated_path = validate_workspace_path(&state, user.id(), &query.workspace_path).await?;
 
-    // Note: trx sync doesn't have JSON output, so we just check for success
-    let output = Command::new("trx")
-        .args(["sync"])
-        .current_dir(&validated_path)
-        .output()
-        .await
-        .map_err(|e| ApiError::internal(format!("Failed to execute trx sync: {}", e)))?;
+    if let Some(linux_users) = state.linux_users.as_ref().filter(|cfg| cfg.enabled) {
+        let linux_username = linux_users.linux_username(user.id());
+        let home_dir = linux_users
+            .get_home_dir(user.id())
+            .map_err(|e| ApiError::internal(format!("Failed to resolve linux user home: {e}")))?
+            .unwrap_or_else(|| PathBuf::from(format!("/home/{}", linux_username)));
+        let xdg_config = home_dir.join(".config");
+        let xdg_data = home_dir.join(".local/share");
+        let cwd = validated_path.to_string_lossy().to_string();
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(ApiError::internal(format!("trx sync failed: {}", stderr)));
+        let env = serde_json::json!({
+            "XDG_CONFIG_HOME": xdg_config.to_string_lossy(),
+            "XDG_DATA_HOME": xdg_data.to_string_lossy(),
+        });
+
+        tokio::task::spawn_blocking(move || {
+            crate::local::linux_users::usermgr_request(
+                "run-as-user",
+                serde_json::json!({
+                    "username": linux_username,
+                    "binary": "trx",
+                    "args": ["sync"],
+                    "env": env,
+                    "cwd": cwd,
+                }),
+            )
+        })
+        .await
+        .map_err(|e| ApiError::internal(format!("Task join error: {e}")))?
+        .map_err(|e| ApiError::internal(format!("trx sync failed: {e}")))?;
+    } else {
+        let output = Command::new("trx")
+            .args(["sync"])
+            .current_dir(&validated_path)
+            .output()
+            .await
+            .map_err(|e| ApiError::internal(format!("Failed to execute trx sync: {}", e)))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(ApiError::internal(format!("trx sync failed: {}", stderr)));
+        }
     }
 
     info!("TRX synced");

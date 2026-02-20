@@ -2,34 +2,40 @@
   "todos": [
     {
       "id": "1",
-      "content": "Backend + Frontend: admin provider management (add/delete/sync)",
+      "content": "Fix oqto UI components for provider management",
       "status": "completed",
       "priority": "high"
     },
     {
       "id": "2",
-      "content": "Fix ephemeral Pi model fetch timeout",
+      "content": "Fix skdlr NoNewPrivileges sudo error via usermgr delegation",
       "status": "completed",
       "priority": "high"
     },
     {
       "id": "3",
-      "content": "Deploy fixes to octo-azure",
+      "content": "Deploy fixed binaries to octo-azure",
       "status": "completed",
       "priority": "high"
     },
     {
       "id": "4",
-      "content": "Push commits to GitHub (SSH key needed)",
+      "content": "Install skdlr system-wide on octo-azure (/usr/local/bin/)",
       "status": "pending",
       "priority": "medium"
     },
     {
       "id": "5",
-      "content": "Update provider form for Azure AI Foundry (api_version, compat, deployment fields)",
+      "content": "Push all commits to GitHub (SSH key needed)",
       "status": "pending",
       "priority": "medium"
+    },
+    {
+      "id": "6",
+      "content": "Audit other sudo calls in oqto for NoNewPrivileges issues (linux_users.rs run_as_user, user_hstry, user_mmry)",
+      "status": "pending",
+      "priority": "low"
     }
   ],
-  "updated_at": "2026-02-20T13:34:55.599Z"
+  "updated_at": "2026-02-20T13:53:45.428Z"
 }
