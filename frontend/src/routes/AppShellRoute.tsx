@@ -792,7 +792,9 @@ const AppShell = memo(function AppShell() {
 						</div>
 					)}
 
-					{!sidebarState.sidebarCollapsed && chatHistory.length > 0 && (
+					{!sidebarState.sidebarCollapsed &&
+					(chatHistory.length > 0 ||
+						projectActions.workspaceDirectories.length > 0) && (
 						<>
 							<div className="w-full px-4">
 								<div className="h-px w-full bg-primary/50" />
