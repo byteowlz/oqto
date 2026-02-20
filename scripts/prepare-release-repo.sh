@@ -20,8 +20,11 @@ set -euo pipefail
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGET_DIR="${1:-$(dirname "$SOURCE_DIR")/oqto-release}"
 
-NOREPLY_EMAIL="redacted@users.noreply.github.com"
-AUTHOR_NAME="REDACTED"
+# Configure these for your environment, or set as env vars before running
+: "${RELEASE_AUTHOR_NAME:=$(git config user.name)}"
+: "${RELEASE_AUTHOR_EMAIL:=$(git config user.email)}"
+NOREPLY_EMAIL="$RELEASE_AUTHOR_EMAIL"
+AUTHOR_NAME="$RELEASE_AUTHOR_NAME"
 
 echo "=== Oqto Release Repo Preparation ==="
 echo "Source:  $SOURCE_DIR"
@@ -60,14 +63,11 @@ echo "    Cloned $(git rev-list --count HEAD) commits on 'main'"
 echo ""
 echo ">>> Step 2: Rewriting all author/committer identities ..."
 
+# Build mailmap dynamically: map ALL existing emails to the target identity
 MAILMAP_FILE=$(mktemp /tmp/oqto-mailmap.XXXXXX)
-cat > "$MAILMAP_FILE" <<EOF
-$AUTHOR_NAME <$NOREPLY_EMAIL> <redacted@example.com>
-$AUTHOR_NAME <$NOREPLY_EMAIL> <redacted@example.com>
-$AUTHOR_NAME <$NOREPLY_EMAIL> <redacted@users.noreply.github.com>
-$AUTHOR_NAME <$NOREPLY_EMAIL> <redacted@example.com>
-$AUTHOR_NAME <$NOREPLY_EMAIL> REDACTED <redacted@example.com>
-EOF
+git log --format="%an <%ae>" | sort -u | while IFS= read -r identity; do
+    echo "$AUTHOR_NAME <$NOREPLY_EMAIL> $identity" >> "$MAILMAP_FILE"
+done
 
 git filter-repo --mailmap "$MAILMAP_FILE" --force
 rm -f "$MAILMAP_FILE"
