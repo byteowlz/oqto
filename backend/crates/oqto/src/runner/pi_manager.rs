@@ -1391,6 +1391,22 @@ impl PiSessionManager {
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::null());
 
+        // Load per-user eavs.env so Pi can authenticate against the eavs proxy.
+        // Without this, Pi cannot resolve provider API keys from models.json.
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+        let eavs_env_path = format!("{}/.config/oqto/eavs.env", home);
+        if let Ok(contents) = std::fs::read_to_string(&eavs_env_path) {
+            for line in contents.lines() {
+                let line = line.trim();
+                if line.is_empty() || line.starts_with('#') {
+                    continue;
+                }
+                if let Some((key, value)) = line.split_once('=') {
+                    cmd.env(key.trim(), value.trim());
+                }
+            }
+        }
+
         let mut child = cmd
             .spawn()
             .context("Failed to spawn ephemeral Pi process")?;

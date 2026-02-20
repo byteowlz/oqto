@@ -9,19 +9,19 @@
     {
       "id": "2",
       "content": "Fix eavs config generation (always regenerate with [keys] enabled)",
-      "status": "in_progress",
+      "status": "completed",
       "priority": "high"
     },
     {
       "id": "3",
       "content": "Add per-user eavs key + models.json provisioning to usermgr",
-      "status": "in_progress",
+      "status": "completed",
       "priority": "high"
     },
     {
       "id": "4",
       "content": "Build, deploy to octo-azure, re-run setup.sh and test",
-      "status": "pending",
+      "status": "completed",
       "priority": "high"
     },
     {
@@ -31,5 +31,5 @@
       "priority": "medium"
     }
   ],
-  "updated_at": "2026-02-20T08:00:22.648Z"
+  "updated_at": "2026-02-20T08:11:27.847Z"
 }
