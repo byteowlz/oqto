@@ -642,10 +642,11 @@ fn runner_client_for_user(state: &AppState, user_id: &str) -> Option<RunnerClien
             .map(|lu| lu.linux_username(user_id))
             .unwrap_or_else(|| user_id.to_string());
 
-        // Use for_user_with_pattern which handles both {user} and {uid} placeholders
+        // Use for_user_with_pattern which handles both {user} and {uid} placeholders.
+        // Don't pre-check socket existence — the runner client retries on
+        // transient connection failures during service restarts.
         match RunnerClient::for_user_with_pattern(&linux_username, pattern) {
-            Ok(c) if c.socket_path().exists() => return Some(c),
-            Ok(_) => {}
+            Ok(c) => return Some(c),
             Err(e) => {
                 warn!("Failed to create runner client for user {}: {}", user_id, e);
             }

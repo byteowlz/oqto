@@ -76,7 +76,49 @@ impl RunnerClient {
     }
 
     /// Send a request and receive a response.
+    ///
+    /// Retries transient connection failures (socket not found, permission
+    /// denied, connection refused) up to 3 times with 500ms backoff. This
+    /// handles brief unavailability during service restarts.
     async fn request(&self, req: &RunnerRequest) -> Result<RunnerResponse> {
+        let max_retries = 3;
+        let mut last_err = None;
+
+        for attempt in 0..=max_retries {
+            if attempt > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(500 * attempt as u64)).await;
+            }
+
+            match self.request_once(req).await {
+                Ok(resp) => return Ok(resp),
+                Err(e) => {
+                    let is_transient = e.chain().any(|cause| {
+                        let msg = cause.to_string();
+                        msg.contains("Connection refused")
+                            || msg.contains("No such file")
+                            || msg.contains("Permission denied")
+                            || msg.contains("connecting to runner")
+                    });
+                    if is_transient && attempt < max_retries {
+                        tracing::debug!(
+                            attempt = attempt + 1,
+                            socket = %self.socket_path.display(),
+                            error = %e,
+                            "Runner connection failed, retrying"
+                        );
+                        last_err = Some(e);
+                        continue;
+                    }
+                    return Err(e);
+                }
+            }
+        }
+
+        Err(last_err.unwrap_or_else(|| anyhow::anyhow!("runner request failed")))
+    }
+
+    /// Single attempt to send a request and receive a response.
+    async fn request_once(&self, req: &RunnerRequest) -> Result<RunnerResponse> {
         let mut stream = UnixStream::connect(&self.socket_path)
             .await
             .with_context(|| format!("connecting to runner at {:?}", self.socket_path))?;
