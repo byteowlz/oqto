@@ -32,7 +32,54 @@ function setupStorageRecovery() {
 	window.addEventListener("unhandledrejection", recover, { once: true });
 }
 
+/**
+ * SECURITY: Ensure localStorage belongs to the currently authenticated user.
+ *
+ * On every page load, decode the JWT from localStorage and compare the user
+ * ID against the stored `oqto:currentUserId`. If they don't match, nuke
+ * ALL localStorage except the auth token itself. This catches stale data
+ * from a previous user even when old cached JavaScript is running.
+ */
+function enforceUserIsolation() {
+	if (typeof window === "undefined") return;
+	try {
+		const token = localStorage.getItem("oqto:authToken");
+		if (!token) return; // Not logged in, nothing to leak
+
+		// Decode JWT payload (middle segment, base64url)
+		const parts = token.split(".");
+		if (parts.length < 2) return;
+		const payload = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+		const decoded = JSON.parse(atob(payload));
+		const jwtUserId = decoded.sub || decoded.preferred_username;
+		if (!jwtUserId) return;
+
+		const storedUserId = localStorage.getItem("oqto:currentUserId");
+		if (storedUserId === jwtUserId) return; // Same user, all good
+
+		// User mismatch or no stored user ID -- clear everything except token
+		const keysToRemove: string[] = [];
+		for (let i = 0; i < localStorage.length; i++) {
+			const key = localStorage.key(i);
+			if (key && key !== "oqto:authToken" && key !== "oqto:currentUserId") {
+				keysToRemove.push(key);
+			}
+		}
+		for (const key of keysToRemove) {
+			localStorage.removeItem(key);
+		}
+		// Set the correct user ID so this doesn't re-trigger
+		localStorage.setItem("oqto:currentUserId", jwtUserId);
+	} catch {
+		// If JWT decode fails, clear everything to be safe
+		const token = localStorage.getItem("oqto:authToken");
+		localStorage.clear();
+		if (token) localStorage.setItem("oqto:authToken", token);
+	}
+}
+
 setupStorageRecovery();
+enforceUserIsolation();
 initI18n();
 
 const container = document.getElementById("root");
