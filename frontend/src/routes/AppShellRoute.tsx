@@ -1,7 +1,7 @@
 import { AppProvider, useOnboarding } from "@/components/app-context";
 import { CommandPalette } from "@/components/command-palette";
 import { useChatContext } from "@/components/contexts";
-import { BootstrapWorkspaceDialog } from "@/components/onboarding/BootstrapWorkspaceDialog";
+
 import { StatusBar } from "@/components/status-bar";
 import { Button } from "@/components/ui/button";
 import { useApp } from "@/hooks/use-app";
@@ -90,8 +90,6 @@ const AppShell = memo(function AppShell() {
 	const [searchMode, setSearchMode] = useState<"sessions" | "messages">(
 		"sessions",
 	);
-	const [bootstrapOpen, setBootstrapOpen] = useState(false);
-	const [bootstrapName, setBootstrapName] = useState("");
 	const [bootstrapError, setBootstrapError] = useState<string | null>(null);
 	const [bootstrapSubmitting, setBootstrapSubmitting] = useState(false);
 	const [bootstrapReady, setBootstrapReady] = useState(false);
@@ -290,60 +288,47 @@ const AppShell = memo(function AppShell() {
 		return () => window.clearTimeout(timer);
 	}, []);
 
+	// Auto-bootstrap: when a new user has no workspaces, automatically create
+	// one using the username as display name. No dialog prompt needed -- the
+	// agent can rename it during bootstrap if configured to do so.
 	useEffect(() => {
 		if (!bootstrapReady || bootstrapSubmitting) return;
-		if (projects.length === 0 && chatHistory.length === 0) {
-			setBootstrapOpen(true);
-		}
+		if (projects.length > 0 || chatHistory.length > 0) return;
+		if (!currentUser?.name) return;
+
+		setBootstrapSubmitting(true);
+		setBootstrapError(null);
+
+		const displayName = currentUser.name.charAt(0).toUpperCase() + currentUser.name.slice(1);
+
+		bootstrapOnboarding({
+			display_name: displayName,
+			language: locale,
+		})
+			.then(async () => {
+				setSelectedWorkspaceOverviewPath(null);
+				setSelectedChatSessionId(null);
+				await Promise.all([
+					refreshChatHistory(),
+					refreshWorkspaceSessions(),
+					projectActions.refreshWorkspaceDirectories(),
+				]);
+				setActiveAppId("sessions");
+			})
+			.catch((err) => {
+				setBootstrapError(
+					err instanceof Error ? err.message : "Failed to bootstrap workspace",
+				);
+			})
+			.finally(() => {
+				setBootstrapSubmitting(false);
+			});
 	}, [
 		bootstrapReady,
 		bootstrapSubmitting,
 		projects.length,
 		chatHistory.length,
-	]);
-
-	const handleBootstrapOpenChange = useCallback(
-		(open: boolean) => {
-			if (!open && projects.length === 0 && chatHistory.length === 0) {
-				return;
-			}
-			setBootstrapOpen(open);
-		},
-		[chatHistory.length, projects.length],
-	);
-
-	const handleBootstrapSubmit = useCallback(async () => {
-		if (!bootstrapName.trim() || bootstrapSubmitting) return;
-		setBootstrapSubmitting(true);
-		setBootstrapError(null);
-		try {
-			await bootstrapOnboarding({
-				display_name: bootstrapName.trim(),
-				language: locale,
-			});
-			setBootstrapOpen(false);
-			setBootstrapName("");
-			setSelectedWorkspaceOverviewPath(null);
-			// Don't select a fake session -- just refresh workspace dirs so the
-			// new workspace appears in the sidebar. User starts chatting by
-			// clicking on it or creating a new session.
-			setSelectedChatSessionId(null);
-			await Promise.all([
-				refreshChatHistory(),
-				refreshWorkspaceSessions(),
-				projectActions.refreshWorkspaceDirectories(),
-			]);
-			setActiveAppId("sessions");
-		} catch (err) {
-			setBootstrapError(
-				err instanceof Error ? err.message : "Failed to bootstrap workspace",
-			);
-		} finally {
-			setBootstrapSubmitting(false);
-		}
-	}, [
-		bootstrapName,
-		bootstrapSubmitting,
+		currentUser?.name,
 		locale,
 		refreshChatHistory,
 		refreshWorkspaceSessions,
@@ -942,17 +927,6 @@ const AppShell = memo(function AppShell() {
 				<CommandPalette
 					open={commandPaletteOpen}
 					onOpenChange={setCommandPaletteOpen}
-				/>
-
-				<BootstrapWorkspaceDialog
-					open={bootstrapOpen}
-					onOpenChange={handleBootstrapOpenChange}
-					name={bootstrapName}
-					onNameChange={setBootstrapName}
-					onSubmit={handleBootstrapSubmit}
-					loading={bootstrapSubmitting}
-					error={bootstrapError}
-					locale={locale}
 				/>
 
 				<RenameSessionDialog

@@ -610,8 +610,10 @@ pub async fn get_user_stats(
 
 /// Provision an EAVS virtual key and Pi models.json for a new user.
 ///
-/// Creates a virtual key bound to the user via oauth_user, queries provider
-/// details for model catalog, generates models.json, and writes eavs.env.
+/// Creates a virtual key for the user (no oauth_user binding -- that would
+/// route all requests through OAuth, which only works for providers that
+/// support it like Anthropic/OpenAI Codex). The key is a plain proxy key
+/// that uses the provider's master API key.
 pub(crate) async fn provision_eavs_for_user(
     eavs_client: &crate::eavs::EavsClient,
     linux_users: &crate::local::LinuxUsersConfig,
@@ -620,9 +622,8 @@ pub(crate) async fn provision_eavs_for_user(
 ) -> anyhow::Result<String> {
     use crate::eavs::CreateKeyRequest;
 
-    // 1. Create virtual key with oauth_user binding
-    let key_req =
-        CreateKeyRequest::new(format!("oqto-user-{}", oqto_user_id)).oauth_user(oqto_user_id);
+    // 1. Create virtual key (no oauth_user -- uses provider's master API key)
+    let key_req = CreateKeyRequest::new(format!("oqto-user-{}", oqto_user_id));
 
     let key_resp = eavs_client
         .create_key(key_req)
