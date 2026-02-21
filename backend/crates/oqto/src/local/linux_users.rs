@@ -694,25 +694,18 @@ impl LinuxUsersConfig {
             std::fs::write(&config_path, output)
                 .with_context(|| format!("writing {}", config_path.display()))?;
         } else {
-            let temp_file = format!("/tmp/mmry-config-{}.toml", uid);
+            // Use usermgr write-file to avoid sudo (NoNewPrivileges blocks sudo)
             let config_path_str = config_path.to_string_lossy().to_string();
-            std::fs::write(&temp_file, output).context("writing temp mmry config")?;
-            run_privileged_command(
-                self.use_sudo,
-                "/usr/bin/cp",
-                &[&temp_file, &config_path_str],
+            usermgr_request(
+                "write-file",
+                serde_json::json!({
+                    "username": linux_username,
+                    "path": config_path_str,
+                    "content": output,
+                    "group": self.group,
+                }),
             )
-            .context("copying mmry config")?;
-            run_privileged_command(
-                self.use_sudo,
-                "/usr/bin/chown",
-                &[
-                    &format!("{}:{}", linux_username, self.group),
-                    &config_path_str,
-                ],
-            )
-            .context("chown mmry config")?;
-            let _ = std::fs::remove_file(&temp_file);
+            .context("writing mmry config via usermgr")?;
         }
 
         Ok(())

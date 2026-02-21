@@ -387,6 +387,87 @@ pub async fn register(
         }
     }
 
+    // Create the default "main" workspace so the user lands in a ready-to-use state.
+    if let Some(ref linux_users) = state.linux_users {
+        let linux_username = resolved_linux_username
+            .as_deref()
+            .or(user.linux_username.as_deref())
+            .unwrap_or(&user.id);
+
+        let workspace_path = format!(
+            "/home/{linux_username}/oqto/main"
+        );
+
+        // Resolve templates for workspace content
+        let mut template_files = serde_json::Map::new();
+
+        // Workspace metadata
+        let meta_toml = format!(
+            "display_name = \"{}\"\npinned = true\n",
+            user.display_name.replace('"', "\\\"")
+        );
+        template_files.insert(
+            ".oqto/workspace.toml".into(),
+            serde_json::Value::String(meta_toml),
+        );
+
+        // Copy template directory if onboarding templates are configured
+        let template_src = state
+            .onboarding_templates
+            .as_ref()
+            .map(|t| t.templates_dir().join(t.subdirectory()));
+
+        // Resolve template overrides (AGENTS.md, BOOTSTRAP.md, etc.)
+        if let Some(ref templates_service) = state.onboarding_templates {
+            match templates_service.resolve(None).await {
+                Ok(templates) => {
+                    template_files.insert(
+                        "BOOTSTRAP.md".into(),
+                        serde_json::Value::String(templates.onboard),
+                    );
+                    template_files.insert(
+                        "PERSONALITY.md".into(),
+                        serde_json::Value::String(templates.personality),
+                    );
+                    template_files.insert(
+                        "USER.md".into(),
+                        serde_json::Value::String(templates.user),
+                    );
+                    template_files.insert(
+                        "AGENTS.md".into(),
+                        serde_json::Value::String(templates.agents),
+                    );
+                }
+                Err(e) => {
+                    warn!(user_id = %user.id, error = ?e, "Failed to resolve templates (non-fatal)");
+                }
+            }
+        }
+
+        let mut create_args = serde_json::json!({
+            "username": linux_username,
+            "path": workspace_path,
+            "files": template_files,
+        });
+
+        if let Some(ref src) = template_src {
+            if src.is_dir() {
+                create_args["template_src"] = serde_json::Value::String(
+                    src.to_string_lossy().into_owned(),
+                );
+            }
+        }
+
+        match crate::local::linux_users::usermgr_request("create-workspace", create_args) {
+            Ok(_) => {
+                info!(user_id = %user.id, "Created default workspace for new user");
+            }
+            Err(e) => {
+                warn!(user_id = %user.id, error = ?e, "Failed to create default workspace (non-fatal)");
+            }
+        }
+    }
+
     // Generate JWT token for the new user
     let token = state.auth.generate_token(
         &user.id,

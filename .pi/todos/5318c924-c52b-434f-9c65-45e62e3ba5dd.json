@@ -5,7 +5,25 @@
       "content": "Push release.yml with oqto-browser added (needs workflow token scope)",
       "status": "pending",
       "priority": "medium"
+    },
+    {
+      "id": "introspection-move",
+      "content": "Moved introspection extension into pi-agent-extensions repo",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "introspection-extensions",
+      "content": "Added extensions discovery to introspection (self_reflection tool + /self command)",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "introspection-deploy",
+      "content": "Deployed introspection to all users on octo-azure",
+      "status": "completed",
+      "priority": "high"
     }
   ],
-  "updated_at": "2026-02-21T12:45:13.240Z"
+  "updated_at": "2026-02-21T12:54:40.391Z"
 }
