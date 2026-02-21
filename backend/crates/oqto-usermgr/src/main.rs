@@ -739,15 +739,39 @@ WantedBy=default.target
         return Response::error(format!("start {user_service}: {e}"));
     }
 
-    // Give the user's systemd instance time to initialize
-    std::thread::sleep(std::time::Duration::from_millis(500));
-
-    // 6. Daemon-reload + enable all services + start oqto-runner
-    //    Starting oqto-runner pulls in hstry and mmry via Requires= dependency.
-    //    Type=notify on runner means `systemctl start` blocks until READY=1.
+    // 6. Wait for the user's systemd instance to fully initialize.
+    //    After `systemctl start user@{uid}.service`, the D-Bus socket at
+    //    /run/user/{uid}/bus may not exist yet. We must wait for it before
+    //    running daemon-reload, otherwise systemctl --user commands will fail
+    //    with "Unit oqto-runner.service not found" because the service files
+    //    we wrote in step 2 were never loaded.
     let machine_arg = format!("{username}@.host");
     let runtime_dir = format!("/run/user/{uid}");
     let bus = format!("unix:path={runtime_dir}/bus");
+    let bus_socket = format!("{runtime_dir}/bus");
+
+    {
+        let max_wait = 30; // seconds
+        let mut waited = 0;
+        while !std::path::Path::new(&bus_socket).exists() && waited < max_wait {
+            std::thread::sleep(std::time::Duration::from_millis(250));
+            waited += 1;
+            if waited % 4 == 0 {
+                eprintln!(
+                    "oqto-usermgr: waiting for user systemd bus socket ({waited}s/4 elapsed)..."
+                );
+            }
+        }
+        if !std::path::Path::new(&bus_socket).exists() {
+            return Response::error(format!(
+                "user systemd bus socket {bus_socket} did not appear after {max_wait}s"
+            ));
+        }
+    }
+
+    // Daemon-reload + enable all services + start oqto-runner.
+    //    Starting oqto-runner pulls in hstry and mmry via Requires= dependency.
+    //    Type=notify on runner means `systemctl start` blocks until READY=1.
 
     // Helper: run systemctl as the target user. Try --machine first, fall back to runuser.
     let run_user_systemctl = |args: &[&str]| -> Result<String, String> {
@@ -782,8 +806,24 @@ WantedBy=default.target
     };
 
     // Always daemon-reload so updated service files take effect.
-    if let Err(e) = run_user_systemctl(&["daemon-reload"]) {
-        eprintln!("oqto-usermgr: daemon-reload failed: {e}");
+    // Retry a few times — the user systemd instance may still be settling.
+    let mut reload_ok = false;
+    for attempt in 1..=5 {
+        match run_user_systemctl(&["daemon-reload"]) {
+            Ok(_) => {
+                reload_ok = true;
+                break;
+            }
+            Err(e) => {
+                eprintln!(
+                    "oqto-usermgr: daemon-reload attempt {attempt}/5 failed: {e}"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            }
+        }
+    }
+    if !reload_ok {
+        return Response::error("daemon-reload failed after 5 attempts".to_string());
     }
 
     // Enable all three services

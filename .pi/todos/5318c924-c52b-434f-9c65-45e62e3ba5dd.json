@@ -56,16 +56,22 @@
     },
     {
       "id": "56851f42",
-      "content": "Deploy SearXNG on octo-azure (oqto-6e9v)",
-      "status": "pending",
+      "content": "SearXNG was already deployed — configured sx to use it (127.0.0.1:8888)",
+      "status": "completed",
       "priority": "medium"
     },
     {
       "id": "4dfa9f29",
-      "content": "Streaming cutoff investigation - needs reproducible case",
-      "status": "pending",
+      "content": "Streaming pipeline verified end-to-end: Azure->eavs->Pi->runner->WS->frontend all correct. No cutoff bug found.",
+      "status": "completed",
       "priority": "medium"
+    },
+    {
+      "id": "13c296ed",
+      "content": "Fix Pi extension loading: NODE_PATH in wrapper for jiti resolution",
+      "status": "completed",
+      "priority": "high"
     }
   ],
-  "updated_at": "2026-02-21T09:50:00.723Z"
+  "updated_at": "2026-02-21T10:30:55.463Z"
 }
