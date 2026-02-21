@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import {
 	WorkspaceOverviewForm,
+	type ResourceEntry,
 	type WorkspaceOverviewValues,
 } from "@/features/sessions/components/WorkspaceOverviewForm";
 import type { PiModelInfo } from "@/lib/api/default-chat";
@@ -39,7 +40,7 @@ export interface NewProjectDialogProps {
 	onProjectSettingsChange: (values: WorkspaceOverviewValues) => void;
 	availableModels: PiModelInfo[];
 	availableSkills: string[];
-	availableExtensions: string[];
+	availableExtensions: ResourceEntry[];
 	sandboxProfiles: string[];
 	settingsLoading: boolean;
 	onSubmit: () => void;

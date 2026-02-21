@@ -1,4 +1,7 @@
-import type { WorkspaceOverviewValues } from "@/features/sessions/components/WorkspaceOverviewForm";
+import type {
+	ResourceEntry,
+	WorkspaceOverviewValues,
+} from "@/features/sessions/components/WorkspaceOverviewForm";
 import type { PiModelInfo } from "@/lib/api/default-chat";
 import {
 	type CreateProjectFromTemplateRequest,
@@ -50,7 +53,7 @@ export interface ProjectActionsState {
 	// Settings options
 	availableModels: PiModelInfo[];
 	availableSkills: string[];
-	availableExtensions: string[];
+	availableExtensions: ResourceEntry[];
 	sandboxProfiles: string[];
 	settingsLoading: boolean;
 
@@ -101,7 +104,7 @@ export function useProjectActions(
 
 	const [availableModels, setAvailableModels] = useState<PiModelInfo[]>([]);
 	const [availableSkills, setAvailableSkills] = useState<string[]>([]);
-	const [availableExtensions, setAvailableExtensions] = useState<string[]>([]);
+	const [availableExtensions, setAvailableExtensions] = useState<ResourceEntry[]>([]);
 	const [sandboxProfiles, setSandboxProfiles] = useState<string[]>([]);
 	const [settingsLoading, setSettingsLoading] = useState(false);
 	const lastTemplatePathRef = useRef<string | null>(null);
@@ -169,7 +172,12 @@ export function useProjectActions(
 					.catch(() => [] as PiModelInfo[]),
 			]);
 			setAvailableSkills(resources.skills.map((skill) => skill.name));
-			setAvailableExtensions(resources.extensions.map((ext) => ext.name));
+			setAvailableExtensions(
+				resources.extensions.map((ext) => ({
+					name: ext.name,
+					mandatory: ext.mandatory,
+				})),
+			);
 			setSandboxProfiles(sandbox.profiles);
 			setAvailableModels(models);
 		} catch (err) {
@@ -232,7 +240,9 @@ export function useProjectActions(
 				next.extensionsMode === "custom" &&
 				next.selectedExtensions.length === 0
 			) {
-				next.selectedExtensions = [...availableExtensions];
+				next.selectedExtensions = availableExtensions
+					.filter((ext) => !ext.mandatory)
+					.map((ext) => ext.name);
 			}
 
 			if (!next.defaultModelRef && availableModels[0]) {
@@ -281,7 +291,9 @@ export function useProjectActions(
 			) {
 				next = {
 					...next,
-					selectedExtensions: [...availableExtensions],
+					selectedExtensions: availableExtensions
+						.filter((ext) => !ext.mandatory)
+						.map((ext) => ext.name),
 				};
 			}
 			return next;

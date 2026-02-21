@@ -21,6 +21,11 @@ export type WorkspaceOverviewValues = {
 	selectedExtensions: string[];
 };
 
+export type ResourceEntry = {
+	name: string;
+	mandatory?: boolean;
+};
+
 export interface WorkspaceOverviewFormProps {
 	locale: string;
 	workspacePathLabel: string;
@@ -28,7 +33,7 @@ export interface WorkspaceOverviewFormProps {
 	availableModels: PiModelInfo[];
 	sandboxProfiles: string[];
 	availableSkills: string[];
-	availableExtensions: string[];
+	availableExtensions: ResourceEntry[];
 	onChange: (values: WorkspaceOverviewValues) => void;
 	onSave?: () => void;
 	saving?: boolean;
@@ -70,36 +75,40 @@ export function WorkspaceOverviewForm({
 			label: `${model.name} (${model.provider})`,
 		}));
 
-	const handleModeToggle = (
-		key: "skills" | "extensions",
-		nextMode: "all" | "custom",
-	) => {
-		if (key === "skills") {
-			const selected =
-				nextMode === "custom" && values.selectedSkills.length === 0
-					? [...availableSkills]
-					: values.selectedSkills;
-			update({ skillsMode: nextMode, selectedSkills: selected });
-			return;
-		}
+	const mandatoryExtensions = availableExtensions.filter(
+		(ext) => ext.mandatory,
+	);
+	const optionalExtensions = availableExtensions.filter(
+		(ext) => !ext.mandatory,
+	);
+
+	const handleSkillsModeToggle = (nextMode: "all" | "custom") => {
+		const selected =
+			nextMode === "custom" && values.selectedSkills.length === 0
+				? [...availableSkills]
+				: values.selectedSkills;
+		update({ skillsMode: nextMode, selectedSkills: selected });
+	};
+
+	const handleExtensionsModeToggle = (nextMode: "all" | "custom") => {
 		const selected =
 			nextMode === "custom" && values.selectedExtensions.length === 0
-				? [...availableExtensions]
+				? optionalExtensions.map((ext) => ext.name)
 				: values.selectedExtensions;
 		update({ extensionsMode: nextMode, selectedExtensions: selected });
 	};
 
-	const toggleSelection = (key: "skills" | "extensions", item: string) => {
-		if (key === "skills") {
-			const set = new Set(values.selectedSkills);
-			if (set.has(item)) {
-				set.delete(item);
-			} else {
-				set.add(item);
-			}
-			update({ selectedSkills: Array.from(set).sort() });
-			return;
+	const toggleSkill = (item: string) => {
+		const set = new Set(values.selectedSkills);
+		if (set.has(item)) {
+			set.delete(item);
+		} else {
+			set.add(item);
 		}
+		update({ selectedSkills: Array.from(set).sort() });
+	};
+
+	const toggleExtension = (item: string) => {
 		const set = new Set(values.selectedExtensions);
 		if (set.has(item)) {
 			set.delete(item);
@@ -109,8 +118,7 @@ export function WorkspaceOverviewForm({
 		update({ selectedExtensions: Array.from(set).sort() });
 	};
 
-	const renderResourceList = (
-		key: "skills" | "extensions",
+	const renderSkillsList = (
 		items: string[],
 		mode: "all" | "custom",
 		selected: string[],
@@ -120,14 +128,14 @@ export function WorkspaceOverviewForm({
 				<Button
 					variant={mode === "all" ? "default" : "outline"}
 					size="sm"
-					onClick={() => handleModeToggle(key, "all")}
+					onClick={() => handleSkillsModeToggle("all")}
 				>
 					{modeLabel("all", locale)}
 				</Button>
 				<Button
 					variant={mode === "custom" ? "default" : "outline"}
 					size="sm"
-					onClick={() => handleModeToggle(key, "custom")}
+					onClick={() => handleSkillsModeToggle("custom")}
 				>
 					{modeLabel("custom", locale)}
 				</Button>
@@ -135,7 +143,7 @@ export function WorkspaceOverviewForm({
 			<div className="grid grid-cols-1 md:grid-cols-3 gap-2">
 				{items.length === 0 && (
 					<div className="text-xs text-muted-foreground">
-						{locale === "de" ? "Keine Einträge gefunden" : "No entries found"}
+						{locale === "de" ? "Keine Eintraege gefunden" : "No entries found"}
 					</div>
 				)}
 				{items.map((item) => {
@@ -152,7 +160,7 @@ export function WorkspaceOverviewForm({
 							<Checkbox
 								checked={checked}
 								onCheckedChange={() =>
-									mode === "custom" && toggleSelection(key, item)
+									mode === "custom" && toggleSkill(item)
 								}
 								disabled={mode === "all"}
 							/>
@@ -161,6 +169,88 @@ export function WorkspaceOverviewForm({
 					);
 				})}
 			</div>
+		</div>
+	);
+
+	const renderExtensionsList = () => (
+		<div className="space-y-3">
+			{/* Mandatory platform extensions -- always active */}
+			{mandatoryExtensions.length > 0 && (
+				<div className="space-y-1.5">
+					<div className="text-[11px] text-muted-foreground">
+						{locale === "de"
+							? "Plattform (immer aktiv)"
+							: "Platform (always active)"}
+					</div>
+					<div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+						{mandatoryExtensions.map((ext) => (
+							// biome-ignore lint/a11y/noLabelWithoutControl: label is associated via htmlFor
+							<label
+								key={ext.name}
+								className="flex items-center gap-2 rounded border border-border px-2 py-1 text-sm opacity-60"
+							>
+								<Checkbox checked={true} disabled={true} />
+								<span className="truncate">{ext.name}</span>
+							</label>
+						))}
+					</div>
+				</div>
+			)}
+			{/* Optional extensions -- toggleable */}
+			{optionalExtensions.length > 0 && (
+				<div className="space-y-1.5">
+					<div className="text-[11px] text-muted-foreground">
+						{locale === "de" ? "Zusaetzlich" : "Additional"}
+					</div>
+					<div className="flex items-center gap-2">
+						<Button
+							variant={
+								values.extensionsMode === "all" ? "default" : "outline"
+							}
+							size="sm"
+							onClick={() => handleExtensionsModeToggle("all")}
+						>
+							{modeLabel("all", locale)}
+						</Button>
+						<Button
+							variant={
+								values.extensionsMode === "custom" ? "default" : "outline"
+							}
+							size="sm"
+							onClick={() => handleExtensionsModeToggle("custom")}
+						>
+							{modeLabel("custom", locale)}
+						</Button>
+					</div>
+					<div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+						{optionalExtensions.map((ext) => {
+							const checked =
+								values.extensionsMode === "all" ||
+								values.selectedExtensions.includes(ext.name);
+							return (
+								// biome-ignore lint/a11y/noLabelWithoutControl: label is associated via htmlFor
+								<label
+									key={ext.name}
+									className={cn(
+										"flex items-center gap-2 rounded border border-border px-2 py-1 text-sm",
+										values.extensionsMode === "all" && "opacity-60",
+									)}
+								>
+									<Checkbox
+										checked={checked}
+										onCheckedChange={() =>
+											values.extensionsMode === "custom" &&
+											toggleExtension(ext.name)
+										}
+										disabled={values.extensionsMode === "all"}
+									/>
+									<span className="truncate">{ext.name}</span>
+								</label>
+							);
+						})}
+					</div>
+				</div>
+			)}
 		</div>
 	);
 
@@ -257,8 +347,7 @@ export function WorkspaceOverviewForm({
 				<div className="text-xs uppercase text-muted-foreground">
 					{locale === "de" ? "Skills" : "Skills"}
 				</div>
-				{renderResourceList(
-					"skills",
+				{renderSkillsList(
 					availableSkills,
 					values.skillsMode,
 					values.selectedSkills,
@@ -269,12 +358,7 @@ export function WorkspaceOverviewForm({
 				<div className="text-xs uppercase text-muted-foreground">
 					{locale === "de" ? "Extensions" : "Extensions"}
 				</div>
-				{renderResourceList(
-					"extensions",
-					availableExtensions,
-					values.extensionsMode,
-					values.selectedExtensions,
-				)}
+				{renderExtensionsList()}
 			</div>
 
 			{error && <div className="text-sm text-destructive">{error}</div>}

@@ -173,6 +173,8 @@ export type WorkspaceSandboxConfig = {
 export type WorkspacePiResourceEntry = {
 	name: string;
 	selected: boolean;
+	/** Platform-default resources that cannot be deactivated. */
+	mandatory?: boolean;
 };
 
 export type WorkspacePiResources = {

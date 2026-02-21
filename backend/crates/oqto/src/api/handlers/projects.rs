@@ -696,6 +696,9 @@ pub struct WorkspaceSandboxUpdateRequest {
 pub struct PiResourceEntry {
     pub name: String,
     pub selected: bool,
+    /// Platform-default resources are mandatory and cannot be deactivated.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub mandatory: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -941,18 +944,17 @@ pub async fn get_workspace_pi_resources(
             } else {
                 selected_skills.contains(name)
             },
+            mandatory: false,
         })
         .collect();
 
+    // All global/platform extensions are mandatory -- they cannot be deactivated.
     let extensions = global_extensions
         .iter()
         .map(|name| PiResourceEntry {
             name: name.clone(),
-            selected: if extensions_mode == "all" {
-                true
-            } else {
-                selected_extensions.contains(name)
-            },
+            selected: true,
+            mandatory: true,
         })
         .collect();
 

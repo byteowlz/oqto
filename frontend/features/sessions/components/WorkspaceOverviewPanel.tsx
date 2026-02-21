@@ -14,6 +14,7 @@ import { getWsManager } from "@/lib/ws-manager";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
 	WorkspaceOverviewForm,
+	type ResourceEntry,
 	type WorkspaceOverviewValues,
 } from "./WorkspaceOverviewForm";
 
@@ -46,7 +47,7 @@ export function WorkspaceOverviewPanel({
 	const [values, setValues] = useState<WorkspaceOverviewValues>(emptyValues);
 	const [availableModels, setAvailableModels] = useState<PiModelInfo[]>([]);
 	const [availableSkills, setAvailableSkills] = useState<string[]>([]);
-	const [availableExtensions, setAvailableExtensions] = useState<string[]>([]);
+	const [availableExtensions, setAvailableExtensions] = useState<ResourceEntry[]>([]);
 	const [sandboxProfiles, setSandboxProfiles] = useState<string[]>([]);
 	const [loading, setLoading] = useState(true);
 	const [saving, setSaving] = useState(false);
@@ -80,8 +81,11 @@ export function WorkspaceOverviewPanel({
 					: null;
 
 			const skills = resources.skills.map((skill) => skill.name);
-			const extensions = resources.extensions.map(
-				(extension) => extension.name,
+			const extensions: ResourceEntry[] = resources.extensions.map(
+				(extension) => ({
+					name: extension.name,
+					mandatory: extension.mandatory,
+				}),
 			);
 			const selectedSkills = resources.skills
 				.filter((skill) => skill.selected)
