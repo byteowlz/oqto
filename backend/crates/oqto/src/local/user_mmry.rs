@@ -268,7 +268,25 @@ impl UserMmryManager {
 
         let linux_username = (self.linux_username_for_user_id)(user_id);
 
-        // First, check if mmry is already running for this user with HTTP enabled
+        // First, try the expected port (systemd-managed mmry)
+        let expected_port = self.port_for_user(user_id).await?;
+        if Self::wait_for_port_ready(expected_port).await {
+            info!(
+                "Found systemd-managed mmry for user {} on port {}",
+                user_id, expected_port
+            );
+            state.instances.insert(
+                user_id.to_string(),
+                UserMmryInstance {
+                    port: expected_port,
+                    session_count: 1,
+                    pinned_count: 0,
+                },
+            );
+            return Ok(expected_port);
+        }
+
+        // Fallback: check via mmry CLI
         if let Some(http_port) =
             Self::check_existing_mmry_service(&self.config.mmry_binary, &linux_username)
         {
@@ -385,7 +403,27 @@ impl UserMmryManager {
 
         let linux_username = (self.linux_username_for_user_id)(user_id);
 
-        // First, check if mmry is already running for this user
+        // First, check if mmry is already running for this user.
+        // Try the expected port directly (systemd-managed mmry has external API
+        // on a deterministic port: base_port + user_offset).
+        let expected_port = self.port_for_user(user_id).await?;
+        if Self::wait_for_port_ready(expected_port).await {
+            info!(
+                "Found systemd-managed mmry for user {} on expected port {}",
+                user_id, expected_port
+            );
+            state.instances.insert(
+                user_id.to_string(),
+                UserMmryInstance {
+                    port: expected_port,
+                    session_count: 0,
+                    pinned_count: 1,
+                },
+            );
+            return Ok(expected_port);
+        }
+
+        // Fallback: check via mmry CLI (works when running as same user)
         if let Some(existing_port) =
             Self::check_existing_mmry_service(&self.config.mmry_binary, &linux_username)
         {

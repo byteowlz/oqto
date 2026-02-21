@@ -1,0 +1,29 @@
+{
+  "todos": [
+    {
+      "id": "c2526859",
+      "content": "Rewrite SKILL.md with current Oqto architecture",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "f8ee5bac",
+      "content": "Rewrite references/api.md with current routes",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "a729b0c6",
+      "content": "Rewrite references/cli.md with current binaries",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "f226d2a7",
+      "content": "Rewrite references/configuration.md with current config",
+      "status": "completed",
+      "priority": "high"
+    }
+  ],
+  "updated_at": "2026-02-21T07:49:39.838Z"
+}

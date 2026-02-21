@@ -626,11 +626,13 @@ WantedBy=default.target
     //     Per-user mmry connects to the central embeddings server (port 8091)
     //     instead of loading the model locally. service.enabled = true so the
     //     gRPC service stays running for the runner.
+    //     External API port = 48000 + (uid - 2000) so the backend can find it.
     let mmry_config_dir = format!("{home}/.config/mmry");
     let _ = std::fs::create_dir_all(&mmry_config_dir);
     let mmry_config_path = format!("{mmry_config_dir}/config.toml");
     let mmry_data_dir = format!("{home}/.local/share/mmry");
     let _ = std::fs::create_dir_all(format!("{mmry_data_dir}/stores"));
+    let mmry_api_port = 48000 + (uid - 2000);
     if !std::path::Path::new(&mmry_config_path).exists() {
         let mmry_config = format!(
             "[database]\n\
@@ -660,7 +662,9 @@ WantedBy=default.target
              preload_models = false\n\
              \n\
              [external_api]\n\
-             enable = false\n\
+             enable = true\n\
+             host = \"127.0.0.1\"\n\
+             port = {mmry_api_port}\n\
              \n\
              [search]\n\
              default_limit = 10\n\
