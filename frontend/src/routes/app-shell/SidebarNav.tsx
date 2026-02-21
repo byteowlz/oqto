@@ -15,6 +15,7 @@ export interface SidebarNavProps {
 	sidebarCollapsed: boolean;
 	isDark: boolean;
 	isAdmin?: boolean;
+	username?: string;
 	onToggleApp: (appId: string) => void;
 	onToggleLocale: () => void;
 	onToggleTheme: () => void;
@@ -35,6 +36,7 @@ export const SidebarNav = memo(function SidebarNav({
 	sidebarCollapsed,
 	isDark,
 	isAdmin,
+	username,
 	onToggleApp,
 	onToggleLocale,
 	onToggleTheme,
@@ -45,6 +47,11 @@ export const SidebarNav = memo(function SidebarNav({
 			className={`w-full ${sidebarCollapsed ? "px-2 pb-3" : "px-5 pb-4"} mt-auto pt-3`}
 		>
 			<div className="h-px w-full bg-primary/50 mb-3" />
+			{username && !sidebarCollapsed && (
+				<div className="mb-2 px-1 text-xs text-muted-foreground truncate" title={username}>
+					{username}
+				</div>
+			)}
 			<div
 				className={`flex items-center ${sidebarCollapsed ? "flex-col gap-2" : `justify-center ${isAdmin ? "gap-1" : "gap-2"}`}`}
 			>

@@ -880,6 +880,7 @@ const AppShell = memo(function AppShell() {
 						sidebarCollapsed={sidebarState.sidebarCollapsed}
 						isDark={isDark}
 						isAdmin={isAdmin}
+						username={currentUser?.name}
 						onToggleApp={toggleApp}
 						onToggleLocale={toggleLocale}
 						onToggleTheme={toggleTheme}

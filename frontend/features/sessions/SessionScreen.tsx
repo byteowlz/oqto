@@ -464,10 +464,11 @@ export const SessionScreen = memo(function SessionScreen() {
 		setPreviewFilePath(null);
 	}, []);
 
-	// biome-ignore lint/correctness/useExhaustiveDependencies: setActiveView is stable setState
 	const handleSendToChat = useCallback((text: string) => {
 		setPendingChatInput(text);
-		setActiveView("chat");
+		// Don't switch activeView -- on desktop the chat is always visible in the
+		// left panel.  On mobile switching to "chat" would hide the browser
+		// (causing a black screen until the user clicks the browser icon again).
 	}, []);
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: setActiveView is stable setState
