@@ -1,0 +1,253 @@
+{
+	"$id": "https://buildwithpi.ai/schemas/models.schema.json",
+	"title": "Pi Coding Agent Models Configuration",
+	"description": "Custom models and provider configuration (~/.pi/agent/models.json)",
+	"additionalProperties": false,
+	"type": "object",
+	"required": [
+		"providers"
+	],
+	"properties": {
+		"$schema": {
+			"description": "JSON Schema reference",
+			"type": "string"
+		},
+		"providers": {
+			"description": "Provider configurations keyed by provider name",
+			"type": "object",
+			"patternProperties": {
+				"^(.*)$": {
+					"additionalProperties": false,
+					"type": "object",
+					"properties": {
+						"baseUrl": {
+							"minLength": 1,
+							"description": "Base URL for API requests",
+							"type": "string"
+						},
+						"apiKey": {
+							"minLength": 1,
+							"description": "API key, env var name, or shell command (prefix with !). E.g., 'OPENAI_API_KEY' or '!op read ...'",
+							"type": "string"
+						},
+						"api": {
+							"minLength": 1,
+							"description": "Default API type for all models. E.g., 'openai-chat-stream', 'anthropic-stream'",
+							"type": "string"
+						},
+						"headers": {
+							"description": "Custom headers for all models. Values can be env var names or shell commands (prefix with !)",
+							"type": "object",
+							"patternProperties": {
+								"^(.*)$": {
+									"type": "string"
+								}
+							}
+						},
+						"authHeader": {
+							"description": "Add Authorization: Bearer header with resolved apiKey (default: false)",
+							"type": "boolean"
+						},
+						"models": {
+							"description": "Custom model definitions",
+							"type": "array",
+							"items": {
+								"additionalProperties": false,
+								"type": "object",
+								"required": [
+									"id",
+									"name",
+									"reasoning",
+									"input",
+									"cost",
+									"contextWindow",
+									"maxTokens"
+								],
+								"properties": {
+									"id": {
+										"minLength": 1,
+										"description": "Model ID (e.g., 'gpt-4o')",
+										"type": "string"
+									},
+									"name": {
+										"minLength": 1,
+										"description": "Display name (e.g., 'GPT-4o')",
+										"type": "string"
+									},
+									"api": {
+										"minLength": 1,
+										"description": "API type (overrides provider-level api). E.g., 'openai-chat-stream', 'anthropic-stream'",
+										"type": "string"
+									},
+									"reasoning": {
+										"description": "Whether the model supports extended thinking/reasoning",
+										"type": "boolean"
+									},
+									"input": {
+										"description": "Supported input modalities",
+										"type": "array",
+										"items": {
+											"anyOf": [
+												{
+													"const": "text",
+													"type": "string"
+												},
+												{
+													"const": "image",
+													"type": "string"
+												}
+											]
+										}
+									},
+									"cost": {
+										"additionalProperties": false,
+										"type": "object",
+										"required": [
+											"input",
+											"output",
+											"cacheRead",
+											"cacheWrite"
+										],
+										"properties": {
+											"input": {
+												"description": "Cost per million input tokens in USD",
+												"type": "number"
+											},
+											"output": {
+												"description": "Cost per million output tokens in USD",
+												"type": "number"
+											},
+											"cacheRead": {
+												"description": "Cost per million cached input tokens in USD",
+												"type": "number"
+											},
+											"cacheWrite": {
+												"description": "Cost per million cache write tokens in USD",
+												"type": "number"
+											}
+										}
+									},
+									"contextWindow": {
+										"minimum": 1,
+										"description": "Maximum context window size in tokens",
+										"type": "number"
+									},
+									"maxTokens": {
+										"minimum": 1,
+										"description": "Maximum output tokens",
+										"type": "number"
+									},
+									"headers": {
+										"description": "Custom headers for this model (overrides provider headers)",
+										"type": "object",
+										"patternProperties": {
+											"^(.*)$": {
+												"type": "string"
+											}
+										}
+									},
+									"compat": {
+										"description": "OpenAI API compatibility settings",
+										"anyOf": [
+											{
+												"additionalProperties": false,
+												"type": "object",
+												"properties": {
+													"supportsStore": {
+														"description": "Supports store parameter",
+														"type": "boolean"
+													},
+													"supportsDeveloperRole": {
+														"description": "Supports developer role messages",
+														"type": "boolean"
+													},
+													"supportsReasoningEffort": {
+														"description": "Supports reasoning_effort parameter",
+														"type": "boolean"
+													},
+													"supportsUsageInStreaming": {
+														"description": "Reports usage in streaming responses",
+														"type": "boolean"
+													},
+													"maxTokensField": {
+														"description": "Which field to use for max tokens",
+														"anyOf": [
+															{
+																"const": "max_completion_tokens",
+																"type": "string"
+															},
+															{
+																"const": "max_tokens",
+																"type": "string"
+															}
+														]
+													},
+													"requiresToolResultName": {
+														"description": "Requires name field in tool results",
+														"type": "boolean"
+													},
+													"requiresAssistantAfterToolResult": {
+														"description": "Requires assistant message after tool result",
+														"type": "boolean"
+													},
+													"requiresThinkingAsText": {
+														"description": "Requires thinking content as text",
+														"type": "boolean"
+													},
+													"requiresMistralToolIds": {
+														"description": "Requires Mistral-style tool IDs",
+														"type": "boolean"
+													},
+													"thinkingFormat": {
+														"description": "Thinking block format",
+														"anyOf": [
+															{
+																"const": "openai",
+																"type": "string"
+															},
+															{
+																"const": "zai",
+																"type": "string"
+															}
+														]
+													},
+													"openRouterRouting": {
+														"additionalProperties": false,
+														"type": "object",
+														"properties": {
+															"only": {
+																"description": "Only use these providers",
+																"type": "array",
+																"items": {
+																	"type": "string"
+																}
+															},
+															"order": {
+																"description": "Prefer providers in this order",
+																"type": "array",
+																"items": {
+																	"type": "string"
+																}
+															}
+														}
+													}
+												}
+											},
+											{
+												"additionalProperties": false,
+												"description": "Reserved for future use",
+												"type": "object",
+												"properties": {}
+											}
+										]
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	},
+	"$schema": "http://json-schema.org/draft-07/schema#"
+}

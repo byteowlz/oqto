@@ -2119,29 +2119,13 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     };
 
     // Create Pi agent settings services (settings.json + models.json)
-    let pi_schema_root = PathBuf::from("/home/wismut/byteowlz/schemas/pi-agent");
-    let pi_settings_schema = std::fs::read_to_string(pi_schema_root.join("settings.schema.json"))
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_else(|| {
-            serde_json::json!({
-                "$schema": "http://json-schema.org/draft-07/schema#",
-                "title": "Pi Agent Settings",
-                "type": "object",
-                "properties": {}
-            })
-        });
-    let pi_models_schema = std::fs::read_to_string(pi_schema_root.join("models.schema.json"))
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_else(|| {
-            serde_json::json!({
-                "$schema": "http://json-schema.org/draft-07/schema#",
-                "title": "Pi Agent Models",
-                "type": "object",
-                "properties": {}
-            })
-        });
+    // Schemas are embedded at compile time so they work on any deployment.
+    let pi_settings_schema: serde_json::Value =
+        serde_json::from_str(include_str!("../schemas/pi-agent/settings.schema.json"))
+            .expect("embedded pi-agent settings schema must be valid JSON");
+    let pi_models_schema: serde_json::Value =
+        serde_json::from_str(include_str!("../schemas/pi-agent/models.schema.json"))
+            .expect("embedded pi-agent models schema must be valid JSON");
 
     let pi_config_dir = dirs::home_dir()
         .map(|home| home.join(".pi").join("agent"))

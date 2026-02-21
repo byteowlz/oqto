@@ -694,13 +694,22 @@ impl LinuxUsersConfig {
             std::fs::write(&config_path, output)
                 .with_context(|| format!("writing {}", config_path.display()))?;
         } else {
-            // Use usermgr write-file to avoid sudo (NoNewPrivileges blocks sudo)
-            let config_path_str = config_path.to_string_lossy().to_string();
+            // Use usermgr write-file to avoid sudo (NoNewPrivileges blocks sudo).
+            // write-file expects a path relative to /home/{username}/.
+            let home_prefix = format!("/home/{}/", linux_username);
+            let rel_path = config_path
+                .to_string_lossy()
+                .strip_prefix(&home_prefix)
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| {
+                    // Fallback: use .config/mmry/config.toml directly
+                    ".config/mmry/config.toml".to_string()
+                });
             usermgr_request(
                 "write-file",
                 serde_json::json!({
                     "username": linux_username,
-                    "path": config_path_str,
+                    "path": rel_path,
                     "content": output,
                     "group": self.group,
                 }),

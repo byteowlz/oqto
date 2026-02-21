@@ -3,27 +3,27 @@
     {
       "id": "1",
       "content": "Fix usermgr deadlock: add per-connection threading or timeouts",
-      "status": "in_progress",
+      "status": "completed",
       "priority": "high"
     },
     {
       "id": "2",
       "content": "Investigate duplicate leonardo-Y_n7 user ID (stale JWT, not in DB)",
-      "status": "pending",
+      "status": "completed",
       "priority": "medium"
     },
     {
       "id": "3",
       "content": "Fix MemoriesView chunk hash mismatch (stale deploy, needs cache headers)",
-      "status": "pending",
+      "status": "completed",
       "priority": "medium"
     },
     {
       "id": "4",
       "content": "Deploy fixes to octo-azure",
-      "status": "pending",
+      "status": "completed",
       "priority": "high"
     }
   ],
-  "updated_at": "2026-02-21T13:45:42.322Z"
+  "updated_at": "2026-02-21T13:55:15.272Z"
 }

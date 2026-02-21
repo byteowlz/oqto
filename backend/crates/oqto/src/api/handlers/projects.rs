@@ -888,8 +888,9 @@ pub async fn get_workspace_pi_resources(
         .await
         .map_err(|e| ApiError::bad_request(format!("Invalid workspace path: {}", e)))?;
 
-    let global_skills_dir = expand_path(GLOBAL_PI_SKILLS_DIR)?;
-    let global_extensions_dir = expand_path(GLOBAL_PI_EXTENSIONS_DIR)?;
+    let global_skills_dir = expand_path_for_user(GLOBAL_PI_SKILLS_DIR, &state, user.id())?;
+    let global_extensions_dir =
+        expand_path_for_user(GLOBAL_PI_EXTENSIONS_DIR, &state, user.id())?;
 
     let settings_value = read_pi_settings_value(&workspace_root.join(".pi"));
     let skills_paths = settings_value
@@ -975,8 +976,9 @@ pub async fn apply_workspace_pi_resources(
         .await
         .map_err(|e| ApiError::bad_request(format!("Invalid workspace path: {}", e)))?;
 
-    let global_skills_dir = expand_path(GLOBAL_PI_SKILLS_DIR)?;
-    let global_extensions_dir = expand_path(GLOBAL_PI_EXTENSIONS_DIR)?;
+    let global_skills_dir = expand_path_for_user(GLOBAL_PI_SKILLS_DIR, &state, user.id())?;
+    let global_extensions_dir =
+        expand_path_for_user(GLOBAL_PI_EXTENSIONS_DIR, &state, user.id())?;
 
     let skills_mode = normalize_mode(&request.skills_mode)?;
     let extensions_mode = normalize_mode(&request.extensions_mode)?;
@@ -1055,6 +1057,32 @@ fn expand_path(path: &str) -> Result<PathBuf, ApiError> {
     let expanded = shellexpand::full(path)
         .map_err(|e| ApiError::internal(format!("Failed to expand path {}: {}", path, e)))?;
     Ok(PathBuf::from(expanded.as_ref()))
+}
+
+/// Expand a path like `~/.pi/agent/skills` relative to a specific user's home.
+/// In multi-user mode, `~` must resolve to the user's home, not the backend's.
+fn expand_path_for_user(
+    path: &str,
+    state: &AppState,
+    user_id: &str,
+) -> Result<PathBuf, ApiError> {
+    if let Some(ref lu) = state.linux_users {
+        if lu.enabled {
+            let linux_username = lu.linux_username(user_id);
+            let user_home = format!("/home/{}", linux_username);
+            // Replace ~ with user's home
+            let expanded = if path.starts_with("~/") {
+                format!("{}{}", user_home, &path[1..])
+            } else if path == "~" {
+                user_home
+            } else {
+                path.to_string()
+            };
+            return Ok(PathBuf::from(expanded));
+        }
+    }
+    // Single-user mode: use default expansion
+    expand_path(path)
 }
 
 fn read_pi_settings_value(config_dir: &Path) -> Option<Value> {
