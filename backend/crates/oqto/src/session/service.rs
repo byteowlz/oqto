@@ -1461,15 +1461,21 @@ impl SessionService {
             );
         }
 
-        // Agent-browser: tell the oqto-browser CLI where to find daemon sockets
-        // and prevent it from auto-starting its own daemon (the backend manages that).
+        // Agent-browser: tell the CLI where managed daemon sockets live (for user-
+        // initiated "send to chat" flow) and set PLAYWRIGHT_BROWSERS_PATH so the
+        // agent can also auto-start its own browser daemon when needed.
         if self.config.agent_browser.enabled {
             use crate::agent_browser::agent_browser_base_dir;
             env.insert(
                 "AGENT_BROWSER_SOCKET_DIR_BASE".to_string(),
                 agent_browser_base_dir().display().to_string(),
             );
-            env.insert("OQTO_BROWSER_NO_AUTO_START".to_string(), "true".to_string());
+            // Let the agent auto-start its own browser daemon for agent-initiated browsing.
+            // Managed daemons (user-initiated via BrowserView) use AGENT_BROWSER_SOCKET_DIR_BASE.
+            env.insert(
+                "PLAYWRIGHT_BROWSERS_PATH".to_string(),
+                "/usr/local/share/playwright-browsers".to_string(),
+            );
         }
 
         let workspace_path = PathBuf::from(&session.workspace_path);
