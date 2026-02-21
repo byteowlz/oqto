@@ -60,22 +60,28 @@ pub async fn dev_login(
             AuthError::Internal(format!("Failed to initialize user runtime: {e:#}"))
         })?;
 
-        if state.mmry.enabled
-            && !state.mmry.single_user
-            && let Err(e) = linux_users.ensure_mmry_config_for_user(
+        if state.mmry.enabled && !state.mmry.single_user {
+            let mmry_port = state
+                .users
+                .ensure_mmry_port(&user.id, state.mmry.user_base_port, state.mmry.user_port_range)
+                .await
+                .ok()
+                .map(|p| p as u16);
+            if let Err(e) = linux_users.ensure_mmry_config_for_user(
                 &linux_username,
                 uid,
                 &state.mmry.host_service_url,
                 state.mmry.host_api_key.as_deref(),
                 &state.mmry.default_model,
                 state.mmry.dimension,
-            )
-        {
-            warn!(
-                user_id = %user.id,
-                error = %e,
-                "Failed to update mmry config for user"
-            );
+                mmry_port,
+            ) {
+                warn!(
+                    user_id = %user.id,
+                    error = %e,
+                    "Failed to update mmry config for user"
+                );
+            }
         }
     }
 
@@ -260,22 +266,28 @@ pub async fn register(
                     );
                 }
 
-                if state.mmry.enabled
-                    && !state.mmry.single_user
-                    && let Err(e) = linux_users.ensure_mmry_config_for_user(
+                if state.mmry.enabled && !state.mmry.single_user {
+                    let mmry_port = state
+                        .users
+                        .ensure_mmry_port(&user.id, state.mmry.user_base_port, state.mmry.user_port_range)
+                        .await
+                        .ok()
+                        .map(|p| p as u16);
+                    if let Err(e) = linux_users.ensure_mmry_config_for_user(
                         &actual_linux_username,
                         uid,
                         &state.mmry.host_service_url,
                         state.mmry.host_api_key.as_deref(),
                         &state.mmry.default_model,
                         state.mmry.dimension,
-                    )
-                {
-                    warn!(
-                        user_id = %user.id,
-                        error = %e,
-                        "Failed to update mmry config for user"
-                    );
+                        mmry_port,
+                    ) {
+                        warn!(
+                            user_id = %user.id,
+                            error = %e,
+                            "Failed to update mmry config for user"
+                        );
+                    }
                 }
 
                 // Provision shell dotfiles (zsh + starship)
@@ -616,22 +628,28 @@ pub async fn login(
                             );
                         }
 
-                        if state.mmry.enabled
-                            && !state.mmry.single_user
-                            && let Err(e) = linux_users.ensure_mmry_config_for_user(
+                        if state.mmry.enabled && !state.mmry.single_user {
+                            let mmry_port = state
+                                .users
+                                .ensure_mmry_port(&db_user.id, state.mmry.user_base_port, state.mmry.user_port_range)
+                                .await
+                                .ok()
+                                .map(|p| p as u16);
+                            if let Err(e) = linux_users.ensure_mmry_config_for_user(
                                 &actual_linux_username,
                                 uid,
                                 &state.mmry.host_service_url,
                                 state.mmry.host_api_key.as_deref(),
                                 &state.mmry.default_model,
                                 state.mmry.dimension,
-                            )
-                        {
-                            warn!(
-                                user_id = %db_user.id,
-                                error = %e,
-                                "Failed to update mmry config for user"
-                            );
+                                mmry_port,
+                            ) {
+                                warn!(
+                                    user_id = %db_user.id,
+                                    error = %e,
+                                    "Failed to update mmry config for user"
+                                );
+                            }
                         }
                     }
                     Err(e) => {
@@ -671,22 +689,28 @@ pub async fn login(
                             ApiError::internal(format!("Failed to initialize user runtime: {e}"))
                         })?;
 
-                    if state.mmry.enabled
-                        && !state.mmry.single_user
-                        && let Err(e) = linux_users.ensure_mmry_config_for_user(
+                    if state.mmry.enabled && !state.mmry.single_user {
+                        let mmry_port = state
+                            .users
+                            .ensure_mmry_port(&dev_user.id, state.mmry.user_base_port, state.mmry.user_port_range)
+                            .await
+                            .ok()
+                            .map(|p| p as u16);
+                        if let Err(e) = linux_users.ensure_mmry_config_for_user(
                             &linux_username,
                             uid,
                             &state.mmry.host_service_url,
                             state.mmry.host_api_key.as_deref(),
                             &state.mmry.default_model,
                             state.mmry.dimension,
-                        )
-                    {
-                        warn!(
-                            user_id = %dev_user.id,
-                            error = %e,
-                            "Failed to update mmry config for user"
-                        );
+                            mmry_port,
+                        ) {
+                            warn!(
+                                user_id = %dev_user.id,
+                                error = %e,
+                                "Failed to update mmry config for user"
+                            );
+                        }
                     }
                 }
 

@@ -612,11 +612,12 @@ impl LinuxUsersConfig {
     pub fn ensure_mmry_config_for_user(
         &self,
         linux_username: &str,
-        uid: u32,
+        _uid: u32,
         host_service_url: &str,
         host_api_key: Option<&str>,
         default_model: &str,
         dimension: u16,
+        mmry_port: Option<u16>,
     ) -> Result<()> {
         if host_service_url.trim().is_empty() {
             return Ok(());
@@ -681,6 +682,15 @@ impl LinuxUsersConfig {
         );
         remote.insert("max_batch_size".to_string(), TomlValue::Integer(64));
         remote.insert("required".to_string(), TomlValue::Boolean(true));
+
+        // Set external_api port from DB-allocated port (not UID-based calculation).
+        // This must match the port the runner uses when spawning mmry via env var override.
+        if let Some(port) = mmry_port {
+            let external_api = ensure_toml_table(&mut parsed, "external_api");
+            external_api.insert("enable".to_string(), TomlValue::Boolean(true));
+            external_api.insert("host".to_string(), TomlValue::String("127.0.0.1".to_string()));
+            external_api.insert("port".to_string(), TomlValue::Integer(i64::from(port)));
+        }
 
         let output = format!(
             "# @schema ./config.schema.json\n{}",
