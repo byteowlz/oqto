@@ -57,7 +57,8 @@ function enforceUserIsolation() {
 		const storedUserId = localStorage.getItem("oqto:currentUserId");
 		if (storedUserId === jwtUserId) return; // Same user, all good
 
-		// User mismatch or no stored user ID -- clear everything except token
+		// User mismatch -- clear everything except token, set correct user,
+		// and RELOAD so React starts fresh with no stale state in memory.
 		const keysToRemove: string[] = [];
 		for (let i = 0; i < localStorage.length; i++) {
 			const key = localStorage.key(i);
@@ -68,13 +69,16 @@ function enforceUserIsolation() {
 		for (const key of keysToRemove) {
 			localStorage.removeItem(key);
 		}
-		// Set the correct user ID so this doesn't re-trigger
 		localStorage.setItem("oqto:currentUserId", jwtUserId);
+		// Force full reload so React components don't use stale in-memory state
+		window.location.reload();
+		return; // unreachable, but satisfies control flow
 	} catch {
-		// If JWT decode fails, clear everything to be safe
+		// If JWT decode fails, clear everything to be safe and reload
 		const token = localStorage.getItem("oqto:authToken");
 		localStorage.clear();
 		if (token) localStorage.setItem("oqto:authToken", token);
+		window.location.reload();
 	}
 }
 
