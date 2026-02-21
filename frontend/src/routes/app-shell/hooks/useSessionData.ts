@@ -254,7 +254,10 @@ export function useSessionData({
 			}
 		}
 
-		if (!entries.has("workspace")) {
+		// Only add a fallback "Workspace" group in single-user/local mode
+		// (no workspace directories). In multi-user mode, all sessions belong
+		// to a real workspace directory -- orphaned sessions are ignored.
+		if (!entries.has("workspace") && workspaceDirectories.length === 0) {
 			entries.set("workspace", {
 				key: "workspace",
 				name: locale === "de" ? "Arbeitsbereich" : "Workspace",
@@ -311,9 +314,14 @@ export function useSessionData({
 			});
 		}
 
-		// Then, add sessions to their respective projects
+		// Then, add sessions to their respective projects.
+		// Skip orphaned sessions (key="workspace") when real workspace dirs exist
+		// -- they have no valid path and can't be opened.
 		for (const session of filteredSessions) {
 			const key = projectKeyForSession(session);
+			if (key === "workspace" && workspaceDirectories.length > 0) {
+				continue;
+			}
 			const name = projectLabelForSession(session);
 			const existing = groups.get(key);
 			if (existing) {
