@@ -1055,9 +1055,11 @@ pub fn usermgr_request_with_data(
     let mut stream = UnixStream::connect(USERMGR_SOCKET)
         .with_context(|| format!("connecting to oqto-usermgr at {USERMGR_SOCKET}"))?;
 
-    // Set timeout to avoid hanging forever
+    // Set timeout to avoid hanging forever.
+    // setup-user-runner can take up to ~45s (30s Type=notify start + 10s socket wait + overhead),
+    // so we use a generous read timeout.
     stream
-        .set_read_timeout(Some(std::time::Duration::from_secs(30)))
+        .set_read_timeout(Some(std::time::Duration::from_secs(60)))
         .ok();
     stream
         .set_write_timeout(Some(std::time::Duration::from_secs(10)))

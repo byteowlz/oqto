@@ -102,7 +102,17 @@ fn main() {
 
     for stream in listener.incoming() {
         match stream {
-            Ok(stream) => handle_connection(stream),
+            Ok(stream) => {
+                // Spawn a thread per connection so one slow command
+                // (e.g. setup-user-runner waiting for Type=notify READY=1)
+                // cannot block other requests.
+                std::thread::spawn(move || {
+                    // Set a read timeout so a stuck client can't hold the thread forever
+                    let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(120)));
+                    let _ = stream.set_write_timeout(Some(std::time::Duration::from_secs(30)));
+                    handle_connection(stream);
+                });
+            }
             Err(e) => eprintln!("oqto-usermgr: accept error: {e}"),
         }
     }
@@ -190,20 +200,74 @@ fn dispatch(req: &Request) -> Response {
 // --- Helpers ---
 
 fn run_cmd(cmd: &str, args: &[&str]) -> Result<String, String> {
-    let output = Command::new(cmd)
+    run_cmd_timeout(cmd, args, std::time::Duration::from_secs(60))
+}
+
+fn run_cmd_timeout(
+    cmd: &str,
+    args: &[&str],
+    timeout: std::time::Duration,
+) -> Result<String, String> {
+    let mut child = Command::new(cmd)
         .args(args)
-        .output()
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
         .map_err(|e| format!("failed to execute {cmd}: {e}"))?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!(
-            "{cmd} failed (exit {}): {}",
-            output.status.code().unwrap_or(-1),
-            stderr.trim()
-        ));
+    let pid = child.id();
+    let deadline = std::time::Instant::now() + timeout;
+
+    // Poll with short sleeps to implement timeout without platform-specific APIs
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let stdout = child
+                    .stdout
+                    .take()
+                    .map(|mut s| {
+                        let mut buf = String::new();
+                        std::io::Read::read_to_string(&mut s, &mut buf).ok();
+                        buf
+                    })
+                    .unwrap_or_default();
+                let stderr = child
+                    .stderr
+                    .take()
+                    .map(|mut s| {
+                        let mut buf = String::new();
+                        std::io::Read::read_to_string(&mut s, &mut buf).ok();
+                        buf
+                    })
+                    .unwrap_or_default();
+
+                if !status.success() {
+                    return Err(format!(
+                        "{cmd} failed (exit {}): {}",
+                        status.code().unwrap_or(-1),
+                        stderr.trim()
+                    ));
+                }
+                return Ok(stdout);
+            }
+            Ok(None) => {
+                if std::time::Instant::now() >= deadline {
+                    eprintln!(
+                        "oqto-usermgr: killing timed-out process {cmd} (pid {pid}) after {}s",
+                        timeout.as_secs()
+                    );
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(format!(
+                        "{cmd} timed out after {}s",
+                        timeout.as_secs()
+                    ));
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            Err(e) => return Err(format!("waiting for {cmd}: {e}")),
+        }
     }
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
 fn get_str<'a>(args: &'a serde_json::Value, key: &str) -> Result<&'a str, Response> {
@@ -483,6 +547,19 @@ fn cmd_setup_user_runner(args: &serde_json::Value) -> Response {
 
     // Derive the socket path from the validated username (never from client input)
     let socket_path = format!("/run/oqto/runner-sockets/{username}/oqto-runner.sock");
+
+    // Fast path: if runner socket exists and is connectable, skip the full setup.
+    // This avoids expensive daemon-reload + restart on every login when the runner
+    // is already healthy.
+    if std::path::Path::new(&socket_path).exists() {
+        if let Ok(conn) = std::os::unix::net::UnixStream::connect(&socket_path) {
+            drop(conn);
+            eprintln!("oqto-usermgr: runner already running for {username} (fast path)");
+            return Response::success();
+        }
+        // Socket exists but not connectable -- stale socket, fall through to full setup
+        eprintln!("oqto-usermgr: stale socket for {username}, doing full setup");
+    }
 
     // Construct service file content server-side
     // Service file contents are constructed after home dir is resolved (below),

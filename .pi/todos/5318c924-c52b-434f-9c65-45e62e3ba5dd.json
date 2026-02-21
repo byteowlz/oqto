@@ -1,29 +1,29 @@
 {
   "todos": [
     {
-      "id": "release-yml",
-      "content": "Push release.yml with oqto-browser added (needs workflow token scope)",
+      "id": "1",
+      "content": "Fix usermgr deadlock: add per-connection threading or timeouts",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "id": "2",
+      "content": "Investigate duplicate leonardo-Y_n7 user ID (stale JWT, not in DB)",
       "status": "pending",
       "priority": "medium"
     },
     {
-      "id": "introspection-move",
-      "content": "Moved introspection extension into pi-agent-extensions repo",
-      "status": "completed",
-      "priority": "high"
+      "id": "3",
+      "content": "Fix MemoriesView chunk hash mismatch (stale deploy, needs cache headers)",
+      "status": "pending",
+      "priority": "medium"
     },
     {
-      "id": "introspection-extensions",
-      "content": "Added extensions discovery to introspection (self_reflection tool + /self command)",
-      "status": "completed",
-      "priority": "high"
-    },
-    {
-      "id": "introspection-deploy",
-      "content": "Deployed introspection to all users on octo-azure",
-      "status": "completed",
+      "id": "4",
+      "content": "Deploy fixes to octo-azure",
+      "status": "pending",
       "priority": "high"
     }
   ],
-  "updated_at": "2026-02-21T12:54:40.391Z"
+  "updated_at": "2026-02-21T13:45:42.322Z"
 }
