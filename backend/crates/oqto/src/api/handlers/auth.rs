@@ -376,6 +376,67 @@ pub async fn register(
                     eavs_key_id = %key_id,
                     "Provisioned EAVS key and models.json"
                 );
+
+                // Write settings.json with default provider/model from eavs catalog.
+                // Without this, Pi doesn't know which model to use and the model selector
+                // shows empty. Read the models.json we just wrote to extract the first
+                // provider and model.
+                if let Ok(home) = linux_users.get_user_home(linux_username) {
+                    let models_path =
+                        std::path::PathBuf::from(&home).join(".pi/agent/models.json");
+                    if let Ok(content) = std::fs::read_to_string(&models_path) {
+                        if let Ok(config) = serde_json::from_str::<serde_json::Value>(&content) {
+                            if let Some(providers) =
+                                config.get("providers").and_then(|p| p.as_object())
+                            {
+                                // Take the first provider and its first model
+                                if let Some((provider_name, provider_config)) = providers.iter().next()
+                                {
+                                    if let Some(first_model) = provider_config
+                                        .get("models")
+                                        .and_then(|m| m.as_array())
+                                        .and_then(|a| a.first())
+                                        .and_then(|m| m.get("id"))
+                                        .and_then(|id| id.as_str())
+                                    {
+                                        let settings = serde_json::json!({
+                                            "defaultProvider": provider_name,
+                                            "defaultModel": first_model,
+                                        });
+                                        let settings_str =
+                                            serde_json::to_string_pretty(&settings)
+                                                .unwrap_or_default();
+                                        let rel_path = ".pi/agent/settings.json";
+                                        if let Err(e) =
+                                            crate::local::linux_users::usermgr_request(
+                                                "write-file",
+                                                serde_json::json!({
+                                                    "username": linux_username,
+                                                    "path": rel_path,
+                                                    "content": settings_str,
+                                                    "group": "oqto",
+                                                }),
+                                            )
+                                        {
+                                            warn!(
+                                                user_id = %user.id,
+                                                error = ?e,
+                                                "Failed to write Pi settings.json (non-fatal)"
+                                            );
+                                        } else {
+                                            info!(
+                                                user_id = %user.id,
+                                                provider = %provider_name,
+                                                model = %first_model,
+                                                "Wrote default Pi settings.json"
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
             Err(e) => {
                 warn!(
