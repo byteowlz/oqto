@@ -375,7 +375,7 @@ build_octo() {
     log_info "Installing binaries to ${TOOLS_INSTALL_DIR}..."
 
     local release_dir="$SCRIPT_DIR/backend/target/release"
-    for bin in oqto oqtoctl oqto-runner pi-bridge oqto-sandbox oqto-setup oqto-usermgr; do
+    for bin in oqto oqtoctl oqto-runner oqto-browser pi-bridge oqto-sandbox oqto-setup oqto-usermgr; do
       if [[ -f "${release_dir}/${bin}" ]]; then
         sudo install -m 755 "${release_dir}/${bin}" "${TOOLS_INSTALL_DIR}/${bin}"
         # Remove stale copies from ~/.cargo/bin to avoid PATH precedence issues

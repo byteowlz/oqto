@@ -329,6 +329,11 @@ github_arg = "--github"
 private_arg = "--private"
 description_arg = "--description"
 
+[mmry]
+enabled = true
+user_base_port = 48000
+user_port_range = 1000
+
 [agent_browser]
 enabled = true
 binary = "/usr/local/lib/oqto-browserd/bin/oqto-browserd.js"
