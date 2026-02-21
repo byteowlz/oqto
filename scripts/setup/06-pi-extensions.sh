@@ -10,6 +10,7 @@ PI_EXTENSIONS_REPO="https://github.com/byteowlz/pi-agent-extensions.git"
 # pi-agent-extensions justfile.
 PI_DEFAULT_EXTENSIONS=(
   "auto-rename"
+  "introspection"
   "oqto-bridge"
   "oqto-todos"
   "custom-context-files"

@@ -32,6 +32,7 @@ const PI_EXTENSIONS_DIR: &str = "/usr/share/oqto/pi-agent-extensions";
 /// Default extensions to install for new users.
 const PI_DEFAULT_EXTENSIONS: &[&str] = &[
     "auto-rename",
+    "introspection",
     "oqto-bridge",
     "oqto-todos",
     "custom-context-files",

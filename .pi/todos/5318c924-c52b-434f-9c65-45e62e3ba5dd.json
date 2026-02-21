@@ -1,59 +1,11 @@
 {
   "todos": [
     {
-      "id": "030ee1d9",
-      "content": "oqto-browser binary missing from install list in 12-update.sh",
-      "status": "completed",
-      "priority": "high"
-    },
-    {
-      "id": "a45b8141",
-      "content": "Check: usermgr creates per-user hstry/mmry configs with correct settings",
-      "status": "in_progress",
-      "priority": "high"
-    },
-    {
-      "id": "320168ae",
-      "content": "Check: usermgr deploys oqto-browser skill (not agent-browser)",
-      "status": "in_progress",
-      "priority": "high"
-    },
-    {
-      "id": "e9f1c639",
-      "content": "Check: usermgr sets correct socket dir perms (750 not 700)",
-      "status": "in_progress",
-      "priority": "medium"
-    },
-    {
-      "id": "5c4b378a",
-      "content": "Check: oqto.service has PLAYWRIGHT_BROWSERS_PATH env",
-      "status": "completed",
-      "priority": "medium"
-    },
-    {
-      "id": "6edbf54d",
-      "content": "Check: config.toml has [agent_browser] section",
-      "status": "completed",
-      "priority": "medium"
-    },
-    {
-      "id": "04691d06",
-      "content": "Check: templates repo is cloned and has correct skill set",
-      "status": "completed",
-      "priority": "medium"
-    },
-    {
-      "id": "c5baa8c7",
-      "content": "Check: eavs keys created without oauth_user (Rust code fixed)",
-      "status": "completed",
-      "priority": "high"
-    },
-    {
-      "id": "4f232fbd",
-      "content": "Check: auto-bootstrap creates workspace without dialog prompt",
-      "status": "completed",
+      "id": "release-yml",
+      "content": "Push release.yml with oqto-browser added (needs workflow token scope)",
+      "status": "pending",
       "priority": "medium"
     }
   ],
-  "updated_at": "2026-02-21T12:41:51.684Z"
+  "updated_at": "2026-02-21T12:45:13.240Z"
 }
