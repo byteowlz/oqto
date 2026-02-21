@@ -995,6 +995,7 @@ const AppShell = memo(function AppShell() {
 						sessionDialogs.handleConfirmRenameProject(
 							newName,
 							refreshChatHistory,
+							projectActions.refreshWorkspaceDirectories,
 						)
 					}
 					locale={locale}

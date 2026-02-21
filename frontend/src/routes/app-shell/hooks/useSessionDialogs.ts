@@ -46,6 +46,7 @@ export interface SessionDialogsState {
 	handleConfirmRenameProject: (
 		newName: string,
 		refreshChatHistory?: () => Promise<void>,
+		refreshWorkspaceDirectories?: () => Promise<void>,
 	) => Promise<void>;
 }
 
@@ -156,16 +157,21 @@ export function useSessionDialogs(): SessionDialogsState {
 	);
 
 	const handleConfirmRenameProject = useCallback(
-		async (newName: string, refreshChatHistory?: () => Promise<void>) => {
+		async (
+			newName: string,
+			refreshChatHistory?: () => Promise<void>,
+			refreshWorkspaceDirectories?: () => Promise<void>,
+		) => {
 			if (targetProjectKey && newName.trim()) {
 				try {
 					await updateWorkspaceMeta(targetProjectKey, {
 						display_name: newName.trim(),
 					});
-					// Refresh sidebar to show new name
-					if (refreshChatHistory) {
-						await refreshChatHistory();
-					}
+					// Refresh both workspace directories (for group name) and chat history
+					await Promise.all([
+						refreshWorkspaceDirectories?.(),
+						refreshChatHistory?.(),
+					]);
 				} catch (e) {
 					console.error("[handleConfirmRenameProject] Failed:", e);
 				}
