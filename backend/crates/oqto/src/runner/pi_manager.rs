@@ -929,7 +929,17 @@ impl PiSessionManager {
                 session_id: id,
                 hstry_id,
                 state: current_state,
-                last_activity: last_activity.elapsed().as_millis() as i64,
+                last_activity: {
+                    // Convert Instant to Unix timestamp in milliseconds.
+                    // last_activity is an Instant of when the activity happened;
+                    // elapsed() gives duration since then. Subtract from now.
+                    let now_ms = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis() as i64;
+                    let elapsed_ms = last_activity.elapsed().as_millis() as i64;
+                    now_ms - elapsed_ms
+                },
                 subscriber_count,
                 cwd,
                 provider,

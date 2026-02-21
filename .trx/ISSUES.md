@@ -267,6 +267,12 @@ Implementation:
 ...
 
 
+### [oqto-y475] Active Session from 1970: timestamp display bug for sessions without proper created_at (P2, bug)
+
+### [oqto-f1fw] Configure exa MCP for Pi on octo-azure (install extension, set API key) (P2, task)
+
+### [oqto-6e9v] Deploy SearXNG on octo-azure and configure sx for all users (P2, task)
+
 ### [oqto-mvdv.4] Session freshness fingerprinting for cross-device drift detection (P2, task)
 Add session freshness polling to detect when the session file has been modified outside Octo's knowledge (e.g., by another browser tab or direct Pi CLI usage). Poll a fingerprint (mtime + size + entry count + tail hash) every ~4 seconds and warn the user when stale state is detected.
 

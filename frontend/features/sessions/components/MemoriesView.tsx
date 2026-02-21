@@ -42,7 +42,7 @@ interface Memory {
 
 type RawMemory = Partial<Memory> & {
 	text?: string;
-	memory?: string;
+	memory?: string | Record<string, unknown>;
 	data?: { content?: string };
 	metadata?: Record<string, unknown> | null;
 	tags?: string[] | null;
@@ -51,10 +51,12 @@ type RawMemory = Partial<Memory> & {
 };
 
 function normalizeMemory(raw: RawMemory): Memory {
+	// Safely extract content: raw.memory might be a string OR a nested object
+	const memoryField = typeof raw.memory === "string" ? raw.memory : undefined;
 	return {
 		id: raw.id ?? "",
 		memory_type: raw.memory_type ?? "text",
-		content: raw.content ?? raw.text ?? raw.memory ?? raw.data?.content ?? "",
+		content: raw.content ?? raw.text ?? memoryField ?? raw.data?.content ?? "",
 		metadata: raw.metadata ?? {},
 		importance: raw.importance ?? 0,
 		expires_at: raw.expires_at,
@@ -198,8 +200,12 @@ async function addMemory(
 		const text = await res.text();
 		throw new Error(`Failed to add memory: ${text || res.statusText}`);
 	}
-	const data = (await res.json()) as RawMemory;
-	return normalizeMemory(data);
+	const data = (await res.json()) as { memory?: RawMemory } & RawMemory;
+	// mmry returns { memory: { ... } } — unwrap if present
+	const raw = data.memory && typeof data.memory === "object" && "id" in data.memory
+		? data.memory
+		: data;
+	return normalizeMemory(raw);
 }
 
 async function deleteMemory(
@@ -247,8 +253,12 @@ async function updateMemory(
 	if (!res.ok) {
 		throw new Error(`Failed to update memory: ${res.statusText}`);
 	}
-	const data = (await res.json()) as RawMemory;
-	return normalizeMemory(data);
+	const data = (await res.json()) as { memory?: RawMemory } & RawMemory;
+	// mmry returns { memory: { ... } } — unwrap if present
+	const raw = data.memory && typeof data.memory === "object" && "id" in data.memory
+		? data.memory
+		: data;
+	return normalizeMemory(raw);
 }
 
 function MemoryCard({
