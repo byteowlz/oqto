@@ -701,7 +701,48 @@ async fn sync_eavs_models_json_inner(
     let pi_dir = format!("{}/.pi/agent", home);
     linux_users.write_file_as_user(linux_username, &pi_dir, "models.json", &models_content)?;
 
+    // Generate auto-rename.json with the first available model so the
+    // auto-rename extension can generate LLM-based session titles.
+    if let Some(first_model) = extract_first_model(&models_json) {
+        let auto_rename = serde_json::json!({
+            "enabled": true,
+            "model": {
+                "provider": first_model.0,
+                "id": first_model.1,
+            },
+            "prefixCommand": "basename $(git rev-parse --show-toplevel 2>/dev/null || pwd)",
+            "maxNameLength": 60
+        });
+        let auto_rename_content = serde_json::to_string_pretty(&auto_rename)
+            .unwrap_or_default();
+        if !auto_rename_content.is_empty() {
+            // Best-effort: don't fail provisioning if this doesn't work
+            let _ = linux_users.write_file_as_user(
+                linux_username,
+                &pi_dir,
+                "auto-rename.json",
+                &auto_rename_content,
+            );
+        }
+    }
+
     Ok(())
+}
+
+/// Extract the first (provider, model_id) from a Pi models.json value.
+/// Used to configure auto-rename with an available model.
+fn extract_first_model(models_json: &serde_json::Value) -> Option<(String, String)> {
+    let providers = models_json.get("providers")?.as_object()?;
+    for (provider_name, provider_val) in providers {
+        if let Some(models) = provider_val.get("models").and_then(|m| m.as_array()) {
+            if let Some(first) = models.first() {
+                if let Some(id) = first.get("id").and_then(|v| v.as_str()) {
+                    return Some((provider_name.clone(), id.to_string()));
+                }
+            }
+        }
+    }
+    None
 }
 
 /// Read the EAVS_API_KEY value from an eavs.env file.
