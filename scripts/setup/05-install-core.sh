@@ -66,6 +66,8 @@ BUN="${HOME}/.bun/bin/bun"
 [ -x "$BUN" ] || BUN="/usr/local/bin/bun"
 [ -x "$BUN" ] || { echo "Error: bun not found" >&2; exit 1; }
 export PI_PACKAGE_DIR="$PI_PKG"
+# Ensure Pi's node_modules is in the resolution path for extensions
+export NODE_PATH="$PI_PKG/node_modules${NODE_PATH:+:$NODE_PATH}"
 exec "$BUN" "$PI_PKG/dist/cli.js" "$@"
 PIEOF
     sudo chmod 755 /usr/local/bin/pi

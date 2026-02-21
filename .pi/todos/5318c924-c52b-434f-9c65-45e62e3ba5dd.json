@@ -1,59 +1,71 @@
 {
   "todos": [
     {
-      "id": "01c8f024",
+      "id": "eb8c7f87",
       "content": "Fix 1970 timestamp: runner last_activity was elapsed, not Unix ms",
       "status": "completed",
       "priority": "high"
     },
     {
-      "id": "b7806c72",
+      "id": "bec5eba4",
       "content": "Fix memory panel crash: unwrap mmry {memory: {...}} wrapper",
       "status": "completed",
       "priority": "high"
     },
     {
-      "id": "93bca290",
+      "id": "389886d3",
+      "content": "Fix memory creation: re-add POST /v1/memories to mmry, fix proxy path",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "291aa267",
       "content": "Runner: filter foreign workspace sessions in list_sessions",
       "status": "completed",
       "priority": "high"
     },
     {
-      "id": "ee9203ca",
-      "content": "Deploy exa MCP config (mcp.json) for all users",
+      "id": "072a7bc8",
+      "content": "Deploy exa MCP config (mcp.json) for all users + templates",
       "status": "completed",
       "priority": "medium"
     },
     {
-      "id": "6f9ab9e1",
-      "content": "Fix workspace.toml permission (group-writable)",
+      "id": "acc3b87c",
+      "content": "Fix workspace.toml permissions (group-writable) + usermgr chmod g+w",
       "status": "completed",
       "priority": "medium"
     },
     {
-      "id": "eb632497",
-      "content": "Kill wrong-cwd Pi process, clean leaked hstry entries",
+      "id": "c88b393a",
+      "content": "Sidebar refresh after workspace rename (no page reload needed)",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "id": "ce54ad5c",
+      "content": "Fix runner-sockets ownership (root:oqto) + restart hansgerd/peter runners",
       "status": "completed",
       "priority": "high"
     },
     {
-      "id": "9f40186c",
+      "id": "42e389a1",
+      "content": "Clear bootstrap_pending for wismut workspace",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "id": "56851f42",
       "content": "Deploy SearXNG on octo-azure (oqto-6e9v)",
       "status": "pending",
       "priority": "medium"
     },
     {
-      "id": "a5fde185",
-      "content": "Investigate streaming cutoff — may be model/eavs timeout",
+      "id": "4dfa9f29",
+      "content": "Streaming cutoff investigation - needs reproducible case",
       "status": "pending",
       "priority": "medium"
-    },
-    {
-      "id": "e2579fff",
-      "content": "User needs hard refresh to get new frontend + clear stale localStorage",
-      "status": "pending",
-      "priority": "high"
     }
   ],
-  "updated_at": "2026-02-21T09:32:04.815Z"
+  "updated_at": "2026-02-21T09:50:00.723Z"
 }
