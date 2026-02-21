@@ -341,7 +341,7 @@ pub async fn proxy_mmry_add(
         state.http_client.clone(),
         req,
         &target_url,
-        "v1/agents/memories",
+        "v1/memories",
         store.as_deref(),
     )
     .await
@@ -427,7 +427,7 @@ pub async fn proxy_mmry_add_for_workspace(
         state.http_client.clone(),
         req,
         &target_url,
-        "v1/agents/memories",
+        "v1/memories",
         store.as_deref(),
     )
     .await
