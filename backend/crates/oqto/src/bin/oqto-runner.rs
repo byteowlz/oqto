@@ -1971,6 +1971,19 @@ impl Runner {
             let readable_id = readable_id.unwrap_or_default();
             let updated_at_ms = updated_at.unwrap_or(created_at) * 1000;
 
+            // SECURITY: Only return sessions whose workspace belongs to this user.
+            // Leaked cross-user sessions in hstry must never be exposed.
+            if let Ok(home) = std::env::var("HOME") {
+                if !workspace_path.starts_with(&home) && workspace_path != "global" {
+                    tracing::warn!(
+                        workspace = %workspace_path,
+                        home = %home,
+                        "Filtering out session with foreign workspace path"
+                    );
+                    continue;
+                }
+            }
+
             sessions.push(WorkspaceChatSessionInfo {
                 id: session_id,
                 readable_id,
