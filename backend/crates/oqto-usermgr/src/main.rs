@@ -939,6 +939,10 @@ fn cmd_create_workspace(args: &serde_json::Value) -> Response {
     if let Err(e) = run_cmd("/usr/bin/chmod", &["2770", path]) {
         return Response::error(format!("chmod: {e}"));
     }
+    // Make files group-writable so the oqto backend can update workspace metadata
+    if let Err(e) = run_cmd("/usr/bin/chmod", &["-R", "g+w", path]) {
+        return Response::error(format!("chmod g+w: {e}"));
+    }
 
     Response::success()
 }
