@@ -1461,6 +1461,17 @@ impl SessionService {
             );
         }
 
+        // Agent-browser: tell the oqto-browser CLI where to find daemon sockets
+        // and prevent it from auto-starting its own daemon (the backend manages that).
+        if self.config.agent_browser.enabled {
+            use crate::agent_browser::agent_browser_base_dir;
+            env.insert(
+                "AGENT_BROWSER_SOCKET_DIR_BASE".to_string(),
+                agent_browser_base_dir().display().to_string(),
+            );
+            env.insert("OQTO_BROWSER_NO_AUTO_START".to_string(), "true".to_string());
+        }
+
         let workspace_path = PathBuf::from(&session.workspace_path);
 
         info!(

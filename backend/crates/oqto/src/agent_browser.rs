@@ -237,8 +237,9 @@ impl AgentBrowserManager {
             );
         }
         #[cfg(unix)]
+        // 0o750: owner rwx, group rx (so oqto group members can access the socket)
         if let Err(err) =
-            std::fs::set_permissions(&socket_dir, std::fs::Permissions::from_mode(0o700))
+            std::fs::set_permissions(&socket_dir, std::fs::Permissions::from_mode(0o750))
         {
             log::warn!(
                 "Failed to set permissions for agent-browser socket dir {}: {}",
@@ -312,7 +313,7 @@ impl AgentBrowserManager {
 /// directory, so socket files created by oqto-browserd on the host are never
 /// visible to the Pi agent inside the sandbox.  XDG_STATE_HOME is on a real
 /// filesystem and bind-mounts correctly.
-fn agent_browser_base_dir() -> std::path::PathBuf {
+pub fn agent_browser_base_dir() -> std::path::PathBuf {
     if let Ok(dir) = std::env::var("AGENT_BROWSER_SOCKET_DIR_BASE") {
         return std::path::PathBuf::from(dir);
     }
