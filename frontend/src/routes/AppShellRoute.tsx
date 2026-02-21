@@ -991,7 +991,12 @@ const AppShell = memo(function AppShell() {
 					open={sessionDialogs.renameProjectDialogOpen}
 					onOpenChange={sessionDialogs.setRenameProjectDialogOpen}
 					initialValue={sessionDialogs.renameProjectInitialValue}
-					onConfirm={sessionDialogs.handleConfirmRenameProject}
+					onConfirm={(newName) =>
+						sessionDialogs.handleConfirmRenameProject(
+							newName,
+							refreshChatHistory,
+						)
+					}
 					locale={locale}
 				/>
 

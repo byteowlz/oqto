@@ -1,4 +1,5 @@
 import type { ChatSession } from "@/lib/control-plane-client";
+import { updateWorkspaceMeta } from "@/lib/api/workspace";
 import { getDisplayPiTitle, normalizeWorkspacePath } from "@/lib/session-utils";
 import { useCallback, useState } from "react";
 
@@ -42,7 +43,10 @@ export interface SessionDialogsState {
 		chatHistory: ChatSession[],
 		deleteChatSession: (sessionId: string) => Promise<boolean>,
 	) => Promise<void>;
-	handleConfirmRenameProject: (newName: string) => Promise<void>;
+	handleConfirmRenameProject: (
+		newName: string,
+		refreshChatHistory?: () => Promise<void>,
+	) => Promise<void>;
 }
 
 export function useSessionDialogs(): SessionDialogsState {
@@ -152,15 +156,19 @@ export function useSessionDialogs(): SessionDialogsState {
 	);
 
 	const handleConfirmRenameProject = useCallback(
-		async (newName: string) => {
+		async (newName: string, refreshChatHistory?: () => Promise<void>) => {
 			if (targetProjectKey && newName.trim()) {
-				// TODO: Implement project rename via backend API
-				console.log(
-					"[handleConfirmRenameProject] Would rename project:",
-					targetProjectKey,
-					"to:",
-					newName.trim(),
-				);
+				try {
+					await updateWorkspaceMeta(targetProjectKey, {
+						display_name: newName.trim(),
+					});
+					// Refresh sidebar to show new name
+					if (refreshChatHistory) {
+						await refreshChatHistory();
+					}
+				} catch (e) {
+					console.error("[handleConfirmRenameProject] Failed:", e);
+				}
 			}
 			setRenameProjectDialogOpen(false);
 			setTargetProjectKey("");
