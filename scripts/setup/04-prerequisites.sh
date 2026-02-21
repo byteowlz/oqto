@@ -120,6 +120,24 @@ install_system_prerequisites() {
     pkgs+=("zsh")
   fi
 
+  # ffmpeg is needed for audio/video processing (voice mode, media previews)
+  if ! command_exists ffmpeg; then
+    case "$OS_DISTRO" in
+    arch | manjaro | endeavouros) pkgs+=("ffmpeg") ;;
+    *) pkgs+=("ffmpeg") ;;
+    esac
+  fi
+
+  # ImageMagick is needed for image processing (thumbnails, conversions)
+  if ! command_exists convert && ! command_exists magick; then
+    case "$OS_DISTRO" in
+    arch | manjaro | endeavouros) pkgs+=("imagemagick") ;;
+    debian | ubuntu | pop | linuxmint) pkgs+=("imagemagick") ;;
+    fedora | centos | rhel | rocky | alma*) pkgs+=("ImageMagick") ;;
+    opensuse*) pkgs+=("ImageMagick") ;;
+    esac
+  fi
+
   # starship prompt for a nice terminal experience
   if ! command_exists starship; then
     log_info "Installing starship prompt..."
