@@ -2,28 +2,40 @@
   "todos": [
     {
       "id": "1",
-      "content": "Fix usermgr deadlock: add per-connection threading or timeouts",
+      "content": "Fix usermgr deadlock: per-connection threading + fast-path",
       "status": "completed",
       "priority": "high"
     },
     {
       "id": "2",
-      "content": "Investigate duplicate leonardo-Y_n7 user ID (stale JWT, not in DB)",
+      "content": "Fix Pi settings schema (embedded at compile time)",
       "status": "completed",
-      "priority": "medium"
+      "priority": "high"
     },
     {
       "id": "3",
-      "content": "Fix MemoriesView chunk hash mismatch (stale deploy, needs cache headers)",
+      "content": "Fix skills/extensions discovery (user home resolution)",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "4",
+      "content": "Fix mmry config write (relative path for usermgr)",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "5",
+      "content": "Fix Caddy cache headers (no-cache index.html, immutable assets)",
       "status": "completed",
       "priority": "medium"
     },
     {
-      "id": "4",
-      "content": "Deploy fixes to octo-azure",
+      "id": "6",
+      "content": "Deploy all fixes to octo-azure",
       "status": "completed",
       "priority": "high"
     }
   ],
-  "updated_at": "2026-02-21T13:55:15.272Z"
+  "updated_at": "2026-02-21T14:06:33.218Z"
 }

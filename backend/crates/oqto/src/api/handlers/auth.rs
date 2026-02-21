@@ -401,11 +401,9 @@ pub async fn register(
         // Resolve templates for workspace content
         let mut template_files = serde_json::Map::new();
 
-        // Workspace metadata
-        let meta_toml = format!(
-            "display_name = \"{}\"\npinned = true\n",
-            user.display_name.replace('"', "\\\"")
-        );
+        // Workspace metadata — default name is "Main", not the user's display name.
+        // The agent or user can rename it later via .oqto/workspace.toml.
+        let meta_toml = "display_name = \"Main\"\npinned = true\n".to_string();
         template_files.insert(
             ".oqto/workspace.toml".into(),
             serde_json::Value::String(meta_toml),
