@@ -12,26 +12,28 @@ import { isTauri } from "@/lib/tauri-fetch-polyfill";
 const AUTH_TOKEN_KEY = "oqto:authToken";
 const CURRENT_USER_KEY = "oqto:currentUserId";
 
-// All localStorage keys that hold user-specific data.
-// SECURITY: These MUST be cleared on user switch to prevent cross-user data
-// leakage. When adding new per-user localStorage keys, add them here too.
-const USER_DATA_KEYS = [
-	"oqto:chatHistoryCache:v2",
-	"oqto:lastChatSessionId",
-	"oqto:defaultChatCurrentSessionId",
-	"oqto:projectDefaultAgents",
-	"defaultChatWorkspacePath",
-	"workspaceSessionId",
-];
+// Keys that must NOT be cleared on user switch (identity + connection config).
+const PRESERVED_KEYS = new Set([AUTH_TOKEN_KEY, CURRENT_USER_KEY]);
 
 /**
  * Clear all user-specific localStorage data.
  * Called on login (when user identity changes) and logout to prevent
  * one user's cached sessions/state from leaking to another user.
+ *
+ * SECURITY: Uses a deny-by-default approach -- clears ALL localStorage keys
+ * except the auth token and user identity. This prevents leaks when new
+ * per-user keys are added without updating a whitelist.
  */
 export function clearUserSessionData(): void {
 	if (typeof window === "undefined") return;
-	for (const key of USER_DATA_KEYS) {
+	const keysToRemove: string[] = [];
+	for (let i = 0; i < localStorage.length; i++) {
+		const key = localStorage.key(i);
+		if (key && !PRESERVED_KEYS.has(key)) {
+			keysToRemove.push(key);
+		}
+	}
+	for (const key of keysToRemove) {
 		localStorage.removeItem(key);
 	}
 }
