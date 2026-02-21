@@ -2334,6 +2334,14 @@ function groupMessages(messages: DisplayMessage[]): MessageGroup[] {
 			if (!hasText) continue;
 		}
 
+		// Tool messages are always grouped with the preceding assistant message.
+		// This ensures tool_results are in the same group as their tool_calls
+		// so the segment builder can match them up.
+		if (message.role === "tool" && current?.role === "assistant") {
+			current.messages.push(message);
+			continue;
+		}
+
 		if (!current || current.role !== message.role) {
 			current = { role: message.role, messages: [message] };
 			groups.push(current);
