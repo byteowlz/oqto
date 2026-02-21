@@ -180,6 +180,7 @@ fn dispatch(req: &Request) -> Response {
         "write-file" => cmd_write_file(&req.args),
         "restart-service" => cmd_restart_service(&req.args),
         "run-as-user" => cmd_run_as_user(&req.args),
+        "fix-socket-dir" => cmd_fix_socket_dir(&req.args),
         "ping" => Response::success(),
         other => Response::error(format!("unknown command: {other}")),
     }
@@ -1099,6 +1100,54 @@ const ALLOWED_RUN_BINARIES: &[&str] = &["skdlr", "trx", "agntz", "byt", "pi", "s
 ///   args: [string]    - Arguments to pass
 ///   env: {k: v}       - Environment variables to set (optional)
 ///   cwd: string       - Working directory (optional, defaults to user home)
+/// Fix ownership of a user's runner socket directory.
+/// Ensures it is owned by the user with group 'oqto' and mode 2770.
+/// Called by the backend when it can't connect to a runner socket.
+fn cmd_fix_socket_dir(args: &serde_json::Value) -> Response {
+    let username = match get_str(args, "username") {
+        Ok(s) => s,
+        Err(r) => return r,
+    };
+
+    if !username.starts_with("oqto_") {
+        return Response::error("username must start with oqto_");
+    }
+    if let Err(e) = validate_username(username) {
+        return Response::error(format!("invalid username: {e}"));
+    }
+
+    let socket_dir = format!("/run/oqto/runner-sockets/{username}");
+    let group = "oqto";
+
+    // Create if missing
+    if let Err(e) = run_cmd("/bin/mkdir", &["-p", &socket_dir]) {
+        return Response::error(format!("mkdir {socket_dir}: {e}"));
+    }
+    if let Err(e) = run_cmd(
+        "/usr/bin/chown",
+        &[&format!("{username}:{group}"), &socket_dir],
+    ) {
+        return Response::error(format!("chown {socket_dir}: {e}"));
+    }
+    if let Err(e) = run_cmd("/usr/bin/chmod", &["2770", &socket_dir]) {
+        return Response::error(format!("chmod {socket_dir}: {e}"));
+    }
+
+    // Also fix any socket files inside
+    if let Ok(entries) = std::fs::read_dir(&socket_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let path_str = path.to_string_lossy();
+            let _ = run_cmd(
+                "/usr/bin/chown",
+                &[&format!("{username}:{group}"), &path_str],
+            );
+        }
+    }
+
+    Response::success()
+}
+
 fn cmd_run_as_user(args: &serde_json::Value) -> Response {
     let username = match get_str(args, "username") {
         Ok(s) => s,

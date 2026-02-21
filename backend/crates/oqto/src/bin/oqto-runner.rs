@@ -3339,15 +3339,20 @@ impl Runner {
 
     /// Run the daemon, listening on the given socket path.
     async fn run(&self, socket_path: &PathBuf) -> Result<()> {
-        // Verify parent directory exists (created by oqto-usermgr, not by us)
-        if let Some(parent) = socket_path.parent()
-            && !parent.exists()
-        {
-            anyhow::bail!(
-                "socket directory {:?} does not exist. \
-                     It should be created by oqto-usermgr before the runner starts.",
-                parent
-            );
+        // Ensure the socket directory exists.
+        // Normally created by oqto-usermgr, but we create it ourselves if missing
+        // (e.g. after systemd restart). The parent dir has SGID group oqto, mode 2770,
+        // so our new dir inherits group oqto -- which lets the oqto backend traverse it.
+        if let Some(parent) = socket_path.parent() {
+            if !parent.exists() {
+                info!("Socket directory {:?} does not exist, creating", parent);
+                std::fs::create_dir_all(parent)
+                    .with_context(|| format!("creating socket directory {:?}", parent))?;
+            }
+            // Ensure correct permissions (SGID + rwxrwx---)
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o2770))
+                .with_context(|| format!("chmod socket dir {:?}", parent))?;
         }
 
         // Remove existing socket file

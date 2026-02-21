@@ -56,20 +56,48 @@ pub(crate) fn get_runner_for_user(
     match crate::runner::client::RunnerClient::for_user_with_pattern(&effective_user, pattern) {
         Ok(client) => {
             let socket_path = client.socket_path();
-            if socket_path.exists() {
-                tracing::debug!(
-                    user_id = %user_id,
-                    socket = %socket_path.display(),
-                    "Using runner for chat history"
-                );
-                Some(client)
-            } else {
-                tracing::debug!(
-                    user_id = %user_id,
-                    socket = %socket_path.display(),
-                    "Runner socket not found, using direct access"
-                );
-                None
+
+            // Check if socket is accessible. If stat fails with EACCES,
+            // the socket dir likely has wrong ownership (e.g. root:root
+            // after systemd restart). Ask usermgr to fix it.
+            match std::fs::metadata(socket_path) {
+                Ok(_) => {
+                    tracing::debug!(
+                        user_id = %user_id,
+                        socket = %socket_path.display(),
+                        "Using runner for chat history"
+                    );
+                    Some(client)
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                    tracing::warn!(
+                        user_id = %user_id,
+                        socket = %socket_path.display(),
+                        "Runner socket permission denied, requesting fix from usermgr"
+                    );
+                    // Best-effort: ask usermgr to fix the socket dir
+                    if let Err(fix_err) = crate::local::linux_users::usermgr_request(
+                        "fix-socket-dir",
+                        serde_json::json!({ "username": effective_user }),
+                    ) {
+                        tracing::error!(error = %fix_err, "usermgr fix-socket-dir failed");
+                    } else if std::fs::metadata(socket_path).is_ok() {
+                        tracing::info!(
+                            user_id = %user_id,
+                            "Socket dir fixed, runner available"
+                        );
+                        return Some(client);
+                    }
+                    None
+                }
+                Err(_) => {
+                    tracing::debug!(
+                        user_id = %user_id,
+                        socket = %socket_path.display(),
+                        "Runner socket not found, using direct access"
+                    );
+                    None
+                }
             }
         }
         Err(e) => {
