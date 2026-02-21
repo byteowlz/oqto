@@ -1,41 +1,47 @@
 {
   "todos": [
     {
-      "id": "1",
-      "content": "Fix usermgr deadlock: per-connection threading + fast-path",
+      "id": "mmry-port-fix",
+      "content": "Fix mmry config port mismatch with DB-allocated port",
       "status": "completed",
       "priority": "high"
     },
     {
-      "id": "2",
-      "content": "Fix Pi settings schema (embedded at compile time)",
+      "id": "mmry-restart",
+      "content": "Kill conflicting mmry instances, sync all configs to DB ports",
       "status": "completed",
       "priority": "high"
     },
     {
-      "id": "3",
-      "content": "Fix skills/extensions discovery (user home resolution)",
+      "id": "runner-socket-perms",
+      "content": "Fix runner-sockets dir ownership (root:oqto not root:root)",
       "status": "completed",
       "priority": "high"
     },
     {
-      "id": "4",
-      "content": "Fix mmry config write (relative path for usermgr)",
+      "id": "deploy-backend",
+      "content": "Build & deploy updated oqto + oqto-usermgr to octo-azure",
       "status": "completed",
       "priority": "high"
     },
     {
-      "id": "5",
-      "content": "Fix Caddy cache headers (no-cache index.html, immutable assets)",
+      "id": "test-streaming",
+      "content": "Verify streaming works for non-wismut users (horst, wurstfabrik)",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "test-memories",
+      "content": "Verify memories panel works (no more 503)",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "commit-push",
+      "content": "Commit and push mmry port fix",
       "status": "completed",
       "priority": "medium"
-    },
-    {
-      "id": "6",
-      "content": "Deploy all fixes to octo-azure",
-      "status": "completed",
-      "priority": "high"
     }
   ],
-  "updated_at": "2026-02-21T14:06:33.218Z"
+  "updated_at": "2026-02-21T18:32:38.967Z"
 }

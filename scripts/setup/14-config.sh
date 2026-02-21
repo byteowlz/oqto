@@ -334,6 +334,28 @@ enabled = true
 user_base_port = 48000
 user_port_range = 1000
 
+[voice]
+enabled = ${VOICE_ENABLED:-false}
+stt_url = "${VOICE_STT_URL:-ws://127.0.0.1:8765}"
+tts_url = "${VOICE_TTS_URL:-ws://127.0.0.1:8766}"
+vad_timeout_ms = 1500
+default_voice = "af_heart"
+default_speed = 1.0
+auto_language_detect = true
+tts_muted = false
+continuous_mode = true
+default_visualizer = "orb"
+interrupt_word_count = 2
+interrupt_backoff_ms = 5000
+
+[voice.visualizer_voices.orb]
+voice = "af_heart"
+speed = 1.0
+
+[voice.visualizer_voices.kitt]
+voice = "am_adam"
+speed = 1.1
+
 [agent_browser]
 enabled = true
 binary = "/usr/local/lib/oqto-browserd/bin/oqto-browserd.js"

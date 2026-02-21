@@ -40,6 +40,11 @@ PROJECT_TEMPLATES_PATH_DEFAULT="/usr/share/oqto/oqto-templates/agents/"
 : "${OQTO_ADMIN_USER:=}"             # admin username (default: admin)
 : "${OQTO_ADMIN_EMAIL:=}"            # admin email
 
+# Voice services (eaRS STT + kokorox TTS)
+: "${VOICE_ENABLED:=false}"           # true or false
+: "${VOICE_STT_URL:=ws://127.0.0.1:8765}"  # eaRS WebSocket URL
+: "${VOICE_TTS_URL:=ws://127.0.0.1:8766}"  # kokorox WebSocket URL
+
 # Agent tools installation tracking
 INSTALL_MMRY="false"
 INSTALL_ALL_TOOLS="false"
