@@ -4,6 +4,7 @@
  */
 
 import { isTauri } from "@/lib/tauri-fetch-polyfill";
+import { destroyWsManager } from "@/lib/ws-manager";
 
 // ============================================================================
 // Token Storage (for Tauri/mobile where cookies don't work)
@@ -49,6 +50,11 @@ export function setCurrentUserId(userId: string | null): void {
 		if (previous && previous !== userId) {
 			// User switched -- nuke all cached data from previous user
 			clearUserSessionData();
+			// CRITICAL: Destroy the WebSocket connection so it reconnects
+			// with the new user's auth token. Without this, the old WS
+			// remains authenticated as the previous user and all commands
+			// (session.create, prompt, etc.) go to the wrong runner.
+			destroyWsManager();
 		}
 		localStorage.setItem(CURRENT_USER_KEY, userId);
 	} else {
@@ -78,6 +84,8 @@ export function setAuthToken(token: string | null): void {
 		// Clear user identity + cached data on logout
 		clearUserSessionData();
 		localStorage.removeItem(CURRENT_USER_KEY);
+		// Destroy WebSocket so it doesn't keep sending with old credentials
+		destroyWsManager();
 	}
 }
 
