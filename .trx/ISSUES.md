@@ -11,6 +11,8 @@ setup.sh must correctly provision everything for a new platform user on a fresh 
 ...
 
 
+### [oqto-c6n3] Refactor: route all mux file operations through oqto-files instead of RunnerUserPlane (P1, task)
+
 ### [oqto-fr2f] Admin UI: manage eavs providers and sync models.json (P1, feature)
 Add admin interface for managing LLM providers:
 
@@ -804,6 +806,8 @@ Enable multiple platform users to access the same project/workspace with proper 
 ...
 
 
+### [oqto-v9g0] Files panel shows stale file tree when switching between sessions in same workspace (P3, bug)
+
 ### [oqto-mvdv.5] WebSocket performance budget tracking and diagnostics (P3, task)
 Add performance budget tracking for key streaming metrics:
 - TTFT (prompt send to first text_delta): target 1200ms
@@ -1567,6 +1571,6 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
 - [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
 - [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
 - [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )

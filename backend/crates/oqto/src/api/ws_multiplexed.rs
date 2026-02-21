@@ -852,6 +852,52 @@ async fn handle_multiplexed_ws(socket: WebSocket, state: AppState, user_id: Stri
     info!("Multiplexed WebSocket closed for user {}", user_id);
 }
 
+/// Check that a workspace path belongs to the requesting user.
+/// In multi-user mode, the workspace_path MUST be under the user's home directory.
+/// Returns an error WsEvent if validation fails, None if OK.
+fn validate_workspace_path_for_user(
+    workspace_path: Option<&str>,
+    user_id: &str,
+    state: &AppState,
+) -> Option<WsEvent> {
+    let path = match workspace_path {
+        Some(p) if !p.is_empty() => p,
+        _ => return None, // No path to validate
+    };
+
+    // Only enforce in multi-user mode with linux_users configured
+    let lu = match state.linux_users.as_ref() {
+        Some(lu) => lu,
+        None => return None,
+    };
+
+    let linux_username = lu.linux_username(user_id);
+    let user_home = format!("/home/{linux_username}");
+
+    // Canonicalize to prevent path traversal (e.g., /home/user_a/../user_b/)
+    let canonical = match std::path::Path::new(path).canonicalize() {
+        Ok(c) => c,
+        Err(_) => {
+            // Path doesn't exist on disk — still check the string prefix
+            std::path::PathBuf::from(path)
+        }
+    };
+
+    if !canonical.starts_with(&user_home) {
+        error!(
+            user_id = %user_id,
+            workspace_path = %path,
+            expected_prefix = %user_home,
+            "SECURITY: workspace path does not belong to user"
+        );
+        return Some(WsEvent::System(SystemWsEvent::Error {
+            error: "Access denied: workspace path does not belong to this user".to_string(),
+        }));
+    }
+
+    None
+}
+
 /// Handle a WebSocket command and return an optional response event.
 async fn handle_ws_command(
     cmd: WsCommand,
@@ -860,6 +906,16 @@ async fn handle_ws_command(
     runner_client: Option<&RunnerClient>,
     conn_state: Arc<tokio::sync::Mutex<WsConnectionState>>,
 ) -> Option<WsEvent> {
+    // SECURITY: Validate workspace paths belong to this user before processing
+    {
+        let (_, _, workspace_path) = ws_command_summary(&cmd);
+        if let Some(err_event) =
+            validate_workspace_path_for_user(workspace_path.as_deref(), user_id, state)
+        {
+            return Some(err_event);
+        }
+    }
+
     if let Some(logger) = state.audit_logger.as_ref() {
         let (label, session_id, workspace_path) = ws_command_summary(&cmd);
         logger
@@ -2153,18 +2209,33 @@ async fn handle_files_command(
         .as_ref()
         .map(|lu| lu.linux_username(user_id))
         .unwrap_or_else(|| user_id.to_string());
+    let is_multi_user = state.linux_users.is_some();
     let user_plane: Arc<dyn crate::user_plane::UserPlane> =
         if let Some(pattern) = state.runner_socket_pattern.as_deref() {
             match RunnerUserPlane::for_user_with_pattern(&linux_username, pattern) {
                 Ok(plane) => Arc::new(plane),
                 Err(err) => {
-                    warn!(
-                        "Failed to create RunnerUserPlane for {}: {:#}, falling back to direct",
+                    // SECURITY: In multi-user mode, NEVER fall back to DirectUserPlane.
+                    // DirectUserPlane runs as the oqto system user which has access to
+                    // ALL user workspaces. We must only access files through the
+                    // per-user runner.
+                    error!(
+                        "Failed to create RunnerUserPlane for {}: {:#}",
                         linux_username, err
                     );
-                    Arc::new(DirectUserPlane::new(&workspace_root))
+                    return Some(WsEvent::Files(FilesWsEvent::Error {
+                        id,
+                        error: "File access unavailable: user runner not reachable".to_string(),
+                    }));
                 }
             }
+        } else if is_multi_user {
+            // Multi-user mode without runner socket pattern — configuration error.
+            error!("Multi-user mode without runner_socket_pattern configured");
+            return Some(WsEvent::Files(FilesWsEvent::Error {
+                id,
+                error: "File access not configured for multi-user mode".to_string(),
+            }));
         } else {
             Arc::new(DirectUserPlane::new(&workspace_root))
         };
@@ -2589,6 +2660,21 @@ async fn resolve_terminal_session(
     }
 
     let workspace_path = workspace_path.ok_or_else(|| "workspace_path is required".to_string())?;
+
+    // SECURITY: Validate workspace_path belongs to this user in multi-user mode
+    if let Some(lu) = state.linux_users.as_ref() {
+        let linux_username = lu.linux_username(user_id);
+        let user_home = format!("/home/{linux_username}");
+        let canonical = std::path::Path::new(workspace_path)
+            .canonicalize()
+            .unwrap_or_else(|_| std::path::PathBuf::from(workspace_path));
+        if !canonical.starts_with(&user_home) {
+            return Err(format!(
+                "Access denied: workspace path does not belong to user"
+            ));
+        }
+    }
+
     let session = state
         .sessions
         .for_user(user_id)
