@@ -519,7 +519,6 @@ fn cmd_setup_user_runner(args: &serde_json::Value) -> Response {
     let hstry_service = format!(
         r#"[Unit]
 Description=Oqto Chat History Service
-After=default.target
 
 [Service]
 Type=simple
@@ -537,7 +536,6 @@ WantedBy=default.target
     let mmry_service = format!(
         r#"[Unit]
 Description=Oqto Memory Service
-After=default.target
 
 [Service]
 Type=simple
