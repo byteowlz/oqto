@@ -1367,7 +1367,7 @@ fn write_user_dotfiles(home: &str, username: &str, group: &str) {
     let dotfiles_src = std::path::Path::new("/usr/share/oqto/oqto-templates/dotfiles");
 
     if dotfiles_src.is_dir() {
-        // Copy dotfiles from templates repo
+        // Copy dotfiles from templates repo (includes ~/.pi/agent/AGENTS.md etc.)
         if let Err(e) = copy_dir_recursive(dotfiles_src, std::path::Path::new(home)) {
             eprintln!("warning: copying dotfiles from templates: {e}");
         }
@@ -1386,6 +1386,17 @@ fn write_user_dotfiles(home: &str, username: &str, group: &str) {
         let starship_path = format!("{starship_dir}/starship.toml");
         if let Err(e) = std::fs::write(&starship_path, STARSHIP_TOML) {
             eprintln!("warning: writing {starship_path}: {e}");
+        }
+    }
+
+    // Deploy global skills from the templates skills pool to ~/.pi/agent/skills/
+    let skills_src = std::path::Path::new("/usr/share/oqto/oqto-templates/skills");
+    let skills_dest = std::path::Path::new(home).join(".pi/agent/skills");
+    if skills_src.is_dir() {
+        if let Err(e) = std::fs::create_dir_all(&skills_dest) {
+            eprintln!("warning: creating skills dir: {e}");
+        } else if let Err(e) = copy_dir_recursive(skills_src, &skills_dest) {
+            eprintln!("warning: copying skills from templates: {e}");
         }
     }
 
