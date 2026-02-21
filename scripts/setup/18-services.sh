@@ -167,6 +167,9 @@ EOF
     # Install oqto-usermgr service (privileged user management daemon)
     install_usermgr_service
 
+    # Install central mmry embeddings server (shared by all users)
+    install_mmry_central_service
+
     # Ensure runner socket base directory exists at boot
     install_runner_socket_dirs
 
@@ -178,6 +181,78 @@ EOF
       log_info "Check status with: sudo systemctl status oqto"
       log_info "View logs with: sudo journalctl -u oqto -f"
     fi
+  fi
+}
+
+install_mmry_central_service() {
+  # Central mmry-service runs as the oqto system user.
+  # It loads the embeddings model once and serves it to all per-user mmry
+  # instances via the external HTTP API on port 8091.
+  log_info "Installing central mmry-service (embeddings server)..."
+
+  local mmry_home="$OQTO_HOME"
+  local mmry_config_dir="${mmry_home}/.config/mmry"
+  local mmry_data_dir="${mmry_home}/.local/share/mmry"
+
+  sudo mkdir -p "$mmry_config_dir" "$mmry_data_dir/stores"
+
+  sudo tee "$mmry_config_dir/config.toml" >/dev/null <<EOF
+[database]
+path = "${mmry_data_dir}/memories.db"
+
+[stores]
+directory = "${mmry_data_dir}/stores"
+default = "default"
+
+[embeddings]
+enabled = true
+model = "Xenova/all-MiniLM-L6-v2"
+backend = "fastembed"
+dimension = 384
+batch_size = 32
+
+[service]
+enabled = true
+auto_start = true
+idle_timeout_seconds = 0
+preload_models = true
+
+[external_api]
+enable = true
+host = "127.0.0.1"
+port = 8091
+require_api_key = false
+EOF
+
+  sudo chown -R oqto:oqto "$mmry_config_dir" "$mmry_data_dir"
+
+  local service_file="/etc/systemd/system/mmry-central.service"
+  sudo tee "$service_file" >/dev/null <<EOF
+[Unit]
+Description=Central mmry embeddings server
+After=network.target
+
+[Service]
+Type=simple
+User=oqto
+Group=oqto
+ExecStart=/usr/local/bin/mmry-service
+Restart=on-failure
+RestartSec=5
+Environment=HOME=${mmry_home}
+Environment=RUST_LOG=mmry=info
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+  sudo systemctl daemon-reload
+  sudo systemctl enable mmry-central
+  if sudo systemctl start mmry-central; then
+    log_success "mmry-central service installed and started (port 8091)"
+  else
+    log_error "mmry-central failed to start. Check: sudo journalctl -xeu mmry-central.service"
+    return 1
   fi
 }
 

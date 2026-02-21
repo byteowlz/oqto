@@ -622,6 +622,64 @@ WantedBy=default.target
         let _ = std::fs::write(&hstry_config_path, hstry_config);
     }
 
+    // 2c. Ensure mmry config exists with remote embeddings.
+    //     Per-user mmry connects to the central embeddings server (port 8091)
+    //     instead of loading the model locally. service.enabled = true so the
+    //     gRPC service stays running for the runner.
+    let mmry_config_dir = format!("{home}/.config/mmry");
+    let _ = std::fs::create_dir_all(&mmry_config_dir);
+    let mmry_config_path = format!("{mmry_config_dir}/config.toml");
+    let mmry_data_dir = format!("{home}/.local/share/mmry");
+    let _ = std::fs::create_dir_all(format!("{mmry_data_dir}/stores"));
+    if !std::path::Path::new(&mmry_config_path).exists() {
+        let mmry_config = format!(
+            "[database]\n\
+             path = \"{mmry_data_dir}/memories.db\"\n\
+             \n\
+             [stores]\n\
+             directory = \"{mmry_data_dir}/stores\"\n\
+             default = \"default\"\n\
+             \n\
+             [embeddings]\n\
+             enabled = false\n\
+             model = \"Xenova/all-MiniLM-L6-v2\"\n\
+             backend = \"fastembed\"\n\
+             dimension = 384\n\
+             batch_size = 32\n\
+             \n\
+             [embeddings.remote]\n\
+             base_url = \"http://127.0.0.1:8091\"\n\
+             request_timeout_seconds = 30\n\
+             max_batch_size = 64\n\
+             required = true\n\
+             \n\
+             [service]\n\
+             enabled = true\n\
+             auto_start = true\n\
+             idle_timeout_seconds = 0\n\
+             preload_models = false\n\
+             \n\
+             [external_api]\n\
+             enable = false\n\
+             \n\
+             [search]\n\
+             default_limit = 10\n\
+             similarity_threshold = 0.7\n\
+             mode = \"hybrid\"\n\
+             rerank_enabled = false\n\
+             \n\
+             [memory]\n\
+             default_category = \"default\"\n\
+             auto_dedupe = true\n"
+        );
+        let _ = std::fs::write(&mmry_config_path, mmry_config);
+    }
+    // Chown mmry data dir
+    let _ = run_cmd(
+        "/usr/bin/chown",
+        &["-R", &format!("{username}:{group}"), &mmry_data_dir],
+    );
+
     // 3. Set ownership of .config tree
     let config_dir = format!("{home}/.config");
     if let Err(e) = run_cmd(
