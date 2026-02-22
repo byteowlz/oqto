@@ -923,6 +923,14 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 									void fetchHistoryMessages(sessionId);
 								}
 							}, 100);
+
+							// Delayed hstry sync: the runner persists messages to hstry
+							// asynchronously after AgentEnd. Fetch after a short delay
+							// to ensure the full history is available for session restore
+							// and switching. This is a merge, not a replace.
+							setTimeout(() => {
+								void fetchHistoryMessages(sessionId);
+							}, 3000);
 						}
 					}
 					break;
@@ -1869,15 +1877,17 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 					}
 				}
 
-				// Rebuild messages from scratch
+				// For messages, merge Pi's live window with local state rather than
+				// replacing. Pi's get_messages only returns the current context window
+				// (not the full history), so replacing would discard earlier turns.
+				// Also fetch from hstry for the complete history.
 				if (serverMessages.length > 0) {
 					const displayMessages = normalizeMessages(
 						serverMessages as RawMessage[],
 						`resync-${_sessionId}`,
 					);
 					if (displayMessages.length > 0) {
-						// Replace local messages entirely with server truth
-						setMessages(displayMessages);
+						setMessages((prev) => mergeServerMessages(prev, displayMessages));
 						messageIdRef.current = getMaxMessageId(displayMessages);
 						const lastAssistant = [...displayMessages]
 							.reverse()
@@ -1892,6 +1902,10 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 					clearInterval(throttleFlushTimerRef.current);
 					throttleFlushTimerRef.current = null;
 				}
+
+				// Also fetch full history from hstry to fill in messages
+				// that Pi's context window may have compacted away.
+				void fetchHistoryMessages(_sessionId);
 			},
 		);
 
