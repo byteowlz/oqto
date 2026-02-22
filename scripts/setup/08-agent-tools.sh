@@ -448,16 +448,27 @@ install_slidev() {
     return 1
   fi
 
-  local slidev_path=""
-  if command_exists slidev; then
-    slidev_path="$(command -v slidev)"
-  elif [[ -x "$HOME/.bun/bin/slidev" ]]; then
-    slidev_path="$HOME/.bun/bin/slidev"
+  # Create a wrapper script that invokes slidev via bun, since the upstream
+  # shebang uses #!/usr/bin/env node which may not be installed.
+  local slidev_mjs=""
+  if [[ -x "$HOME/.bun/bin/slidev" ]]; then
+    slidev_mjs=$(readlink -f "$HOME/.bun/bin/slidev" 2>/dev/null)
   fi
 
-  if [[ -n "$slidev_path" && "$slidev_path" != "${TOOLS_INSTALL_DIR}/slidev" ]]; then
-    sudo install -m 755 "$slidev_path" "${TOOLS_INSTALL_DIR}/slidev"
-    log_success "Installed slidev to ${TOOLS_INSTALL_DIR}/slidev"
+  if [[ -n "$slidev_mjs" && -f "$slidev_mjs" ]]; then
+    local bun_bin
+    bun_bin=$(command -v bun)
+    sudo tee "${TOOLS_INSTALL_DIR}/slidev" >/dev/null <<WRAPPER
+#!/usr/bin/env bash
+exec "$bun_bin" "$slidev_mjs" "\$@"
+WRAPPER
+    sudo chmod 755 "${TOOLS_INSTALL_DIR}/slidev"
+    log_success "Installed slidev wrapper to ${TOOLS_INSTALL_DIR}/slidev"
+  elif command_exists slidev; then
+    log_success "slidev available at $(command -v slidev)"
+  else
+    log_warn "slidev installed but could not create global wrapper"
+    return 1
   fi
 
   log_success "slidev installed"

@@ -382,9 +382,9 @@ BANNER
 
   # Install dependencies
   if [[ "$OQTO_INSTALL_DEPS" == "yes" ]]; then
-    # Shell tools - verify key binaries exist, not just that the step ran
+    # Shell tools - verify all expected binaries exist, not just that the step ran
     verify_or_rerun "shell_tools" "Shell tools" \
-      "command -v tmux && command -v rg && (command -v fd || command -v fdfind)" \
+      "command -v tmux && command -v rg && (command -v fd || command -v fdfind) && command -v yazi && command -v zoxide" \
       install_shell_tools
 
     if [[ "$SELECTED_BACKEND_MODE" == "local" ]]; then
@@ -406,7 +406,9 @@ BANNER
       fi
 
       if [[ "$INSTALL_MMRY" == "true" || "$INSTALL_ALL_TOOLS" == "true" ]]; then
-        run_step "agent_tools" "Agent tools" install_agent_tools_selected
+        verify_or_rerun "agent_tools" "Agent tools" \
+          "command -v mmry && command -v scrpr && command -v sx && command -v tmpltr && command -v sldr && command -v ignr" \
+          install_agent_tools_selected
       fi
 
       if [[ "$INSTALL_ALL_TOOLS" == "true" ]] || command_exists sx; then
