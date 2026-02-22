@@ -502,5 +502,3 @@ BANNER
   # Summary
   print_summary
 }
-
-main "$@"
