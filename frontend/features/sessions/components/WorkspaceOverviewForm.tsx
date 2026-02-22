@@ -159,9 +159,7 @@ export function WorkspaceOverviewForm({
 						>
 							<Checkbox
 								checked={checked}
-								onCheckedChange={() =>
-									mode === "custom" && toggleSkill(item)
-								}
+								onCheckedChange={() => mode === "custom" && toggleSkill(item)}
 								disabled={mode === "all"}
 							/>
 							<span className="truncate">{item}</span>
@@ -204,9 +202,7 @@ export function WorkspaceOverviewForm({
 					</div>
 					<div className="flex items-center gap-2">
 						<Button
-							variant={
-								values.extensionsMode === "all" ? "default" : "outline"
-							}
+							variant={values.extensionsMode === "all" ? "default" : "outline"}
 							size="sm"
 							onClick={() => handleExtensionsModeToggle("all")}
 						>

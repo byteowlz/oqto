@@ -13,8 +13,8 @@ import type { PiModelInfo } from "@/lib/api/default-chat";
 import { getWsManager } from "@/lib/ws-manager";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-	WorkspaceOverviewForm,
 	type ResourceEntry,
+	WorkspaceOverviewForm,
 	type WorkspaceOverviewValues,
 } from "./WorkspaceOverviewForm";
 
@@ -47,7 +47,9 @@ export function WorkspaceOverviewPanel({
 	const [values, setValues] = useState<WorkspaceOverviewValues>(emptyValues);
 	const [availableModels, setAvailableModels] = useState<PiModelInfo[]>([]);
 	const [availableSkills, setAvailableSkills] = useState<string[]>([]);
-	const [availableExtensions, setAvailableExtensions] = useState<ResourceEntry[]>([]);
+	const [availableExtensions, setAvailableExtensions] = useState<
+		ResourceEntry[]
+	>([]);
 	const [sandboxProfiles, setSandboxProfiles] = useState<string[]>([]);
 	const [loading, setLoading] = useState(true);
 	const [saving, setSaving] = useState(false);

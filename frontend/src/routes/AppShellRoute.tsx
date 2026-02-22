@@ -299,7 +299,8 @@ const AppShell = memo(function AppShell() {
 		setBootstrapSubmitting(true);
 		setBootstrapError(null);
 
-		const displayName = currentUser.name.charAt(0).toUpperCase() + currentUser.name.slice(1);
+		const displayName =
+			currentUser.name.charAt(0).toUpperCase() + currentUser.name.slice(1);
 
 		bootstrapOnboarding({
 			display_name: displayName,
@@ -800,65 +801,65 @@ const AppShell = memo(function AppShell() {
 					)}
 
 					{!sidebarState.sidebarCollapsed &&
-					(chatHistory.length > 0 ||
-						projectActions.workspaceDirectories.length > 0) && (
-						<>
-							<div className="w-full px-4">
-								<div className="h-px w-full bg-primary/50" />
-							</div>
-							<div
-								className="w-full px-1.5 mt-2 flex-1 min-h-0 flex flex-col overflow-x-hidden"
-								data-spotlight="session-list"
-							>
-								<SidebarSessions
-									locale={locale}
-									chatHistory={chatHistory}
-									sessionHierarchy={sessionData.sessionHierarchy}
-									sessionsByProject={sessionData.sessionsByProject}
-									filteredSessions={sessionData.filteredSessions}
-									selectedChatSessionId={selectedChatSessionId}
-									busySessions={busySessions}
-									runnerSessionCount={runnerSessionCount}
-									expandedSessions={sidebarState.expandedSessions}
-									toggleSessionExpanded={sidebarState.toggleSessionExpanded}
-									expandedProjects={sidebarState.expandedProjects}
-									toggleProjectExpanded={sidebarState.toggleProjectExpanded}
-									pinnedSessions={sidebarState.pinnedSessions}
-									togglePinSession={sidebarState.togglePinSession}
-									pinnedProjects={sidebarState.pinnedProjects}
-									togglePinProject={sidebarState.togglePinProject}
-									projectSortBy={projectActions.projectSortBy}
-									setProjectSortBy={projectActions.setProjectSortBy}
-									projectSortAsc={projectActions.projectSortAsc}
-									setProjectSortAsc={projectActions.setProjectSortAsc}
-									selectedProjectLabel={sessionData.selectedProjectLabel}
-									onNewChat={handleNewChat}
-									onNewProject={() =>
-										projectActions.setNewProjectDialogOpen(true)
-									}
-									onProjectClear={handleProjectClear}
-									onProjectOverview={handleProjectOverview}
-									onSessionClick={handleSessionClick}
-									onNewChatInProject={handleNewChatInProject}
-									onPinSession={sidebarState.togglePinSession}
-									onRenameSession={(id) =>
-										sessionDialogs.handleRenameSession(id, chatHistory)
-									}
-									onDeleteSession={handleDeleteSession}
-									onBulkDeleteSessions={handleBulkDeleteSessions}
-									onPinProject={sidebarState.togglePinProject}
-									onRenameProject={sessionDialogs.handleRenameProject}
-									onDeleteProject={sessionDialogs.handleDeleteProject}
-									onSearchResultClick={handleSearchResultClick}
-									messageSearchExtraHits={messageSearchExtraHits}
-									sessionSearch={sessionSearch}
-									onSessionSearchChange={setSessionSearch}
-									searchMode={searchMode}
-									onSearchModeChange={setSearchMode}
-								/>
-							</div>
-						</>
-					)}
+						(chatHistory.length > 0 ||
+							projectActions.workspaceDirectories.length > 0) && (
+							<>
+								<div className="w-full px-4">
+									<div className="h-px w-full bg-primary/50" />
+								</div>
+								<div
+									className="w-full px-1.5 mt-2 flex-1 min-h-0 flex flex-col overflow-x-hidden"
+									data-spotlight="session-list"
+								>
+									<SidebarSessions
+										locale={locale}
+										chatHistory={chatHistory}
+										sessionHierarchy={sessionData.sessionHierarchy}
+										sessionsByProject={sessionData.sessionsByProject}
+										filteredSessions={sessionData.filteredSessions}
+										selectedChatSessionId={selectedChatSessionId}
+										busySessions={busySessions}
+										runnerSessionCount={runnerSessionCount}
+										expandedSessions={sidebarState.expandedSessions}
+										toggleSessionExpanded={sidebarState.toggleSessionExpanded}
+										expandedProjects={sidebarState.expandedProjects}
+										toggleProjectExpanded={sidebarState.toggleProjectExpanded}
+										pinnedSessions={sidebarState.pinnedSessions}
+										togglePinSession={sidebarState.togglePinSession}
+										pinnedProjects={sidebarState.pinnedProjects}
+										togglePinProject={sidebarState.togglePinProject}
+										projectSortBy={projectActions.projectSortBy}
+										setProjectSortBy={projectActions.setProjectSortBy}
+										projectSortAsc={projectActions.projectSortAsc}
+										setProjectSortAsc={projectActions.setProjectSortAsc}
+										selectedProjectLabel={sessionData.selectedProjectLabel}
+										onNewChat={handleNewChat}
+										onNewProject={() =>
+											projectActions.setNewProjectDialogOpen(true)
+										}
+										onProjectClear={handleProjectClear}
+										onProjectOverview={handleProjectOverview}
+										onSessionClick={handleSessionClick}
+										onNewChatInProject={handleNewChatInProject}
+										onPinSession={sidebarState.togglePinSession}
+										onRenameSession={(id) =>
+											sessionDialogs.handleRenameSession(id, chatHistory)
+										}
+										onDeleteSession={handleDeleteSession}
+										onBulkDeleteSessions={handleBulkDeleteSessions}
+										onPinProject={sidebarState.togglePinProject}
+										onRenameProject={sessionDialogs.handleRenameProject}
+										onDeleteProject={sessionDialogs.handleDeleteProject}
+										onSearchResultClick={handleSearchResultClick}
+										messageSearchExtraHits={messageSearchExtraHits}
+										sessionSearch={sessionSearch}
+										onSessionSearchChange={setSessionSearch}
+										searchMode={searchMode}
+										onSearchModeChange={setSearchMode}
+									/>
+								</div>
+							</>
+						)}
 
 					{sidebarState.sidebarCollapsed && chatHistory.length > 0 && (
 						<div className="w-full px-2 mt-4">

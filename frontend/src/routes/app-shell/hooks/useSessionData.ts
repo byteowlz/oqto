@@ -300,9 +300,7 @@ export function useSessionData({
 		// Key by the last path segment to match projectKeyForSession() which
 		// extracts the basename from session.workspace_path.
 		for (const directory of workspaceDirectories) {
-			const normalized = directory.path
-				.replace(/\\/g, "/")
-				.replace(/\/+$/, "");
+			const normalized = directory.path.replace(/\\/g, "/").replace(/\/+$/, "");
 			const parts = normalized.split("/").filter(Boolean);
 			const key = parts[parts.length - 1] ?? directory.path;
 			groups.set(key, {

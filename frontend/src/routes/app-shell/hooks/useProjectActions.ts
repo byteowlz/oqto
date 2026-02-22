@@ -104,7 +104,9 @@ export function useProjectActions(
 
 	const [availableModels, setAvailableModels] = useState<PiModelInfo[]>([]);
 	const [availableSkills, setAvailableSkills] = useState<string[]>([]);
-	const [availableExtensions, setAvailableExtensions] = useState<ResourceEntry[]>([]);
+	const [availableExtensions, setAvailableExtensions] = useState<
+		ResourceEntry[]
+	>([]);
 	const [sandboxProfiles, setSandboxProfiles] = useState<string[]>([]);
 	const [settingsLoading, setSettingsLoading] = useState(false);
 	const lastTemplatePathRef = useRef<string | null>(null);

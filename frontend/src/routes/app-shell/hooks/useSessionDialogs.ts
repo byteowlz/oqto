@@ -1,5 +1,5 @@
-import type { ChatSession } from "@/lib/control-plane-client";
 import { updateWorkspaceMeta } from "@/lib/api/workspace";
+import type { ChatSession } from "@/lib/control-plane-client";
 import { getDisplayPiTitle, normalizeWorkspacePath } from "@/lib/session-utils";
 import { useCallback, useState } from "react";
 

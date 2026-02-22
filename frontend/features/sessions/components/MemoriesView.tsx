@@ -184,28 +184,32 @@ async function addMemory(
 	importance?: number,
 	storeName?: string | null,
 ): Promise<Memory> {
-	const res = await authFetch(workspaceMemoriesUrl(workspacePath, "", storeName), {
-		method: "POST",
-		credentials: "include",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({
-			content,
-			text: content,
-			memory: content,
-			category: category || "general",
-			tags: tags || [],
-			importance: importance || 5,
-		}),
-	});
+	const res = await authFetch(
+		workspaceMemoriesUrl(workspacePath, "", storeName),
+		{
+			method: "POST",
+			credentials: "include",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				content,
+				text: content,
+				memory: content,
+				category: category || "general",
+				tags: tags || [],
+				importance: importance || 5,
+			}),
+		},
+	);
 	if (!res.ok) {
 		const text = await res.text();
 		throw new Error(`Failed to add memory: ${text || res.statusText}`);
 	}
 	const data = (await res.json()) as { memory?: RawMemory } & RawMemory;
 	// mmry returns { memory: { ... } } — unwrap if present
-	const raw = data.memory && typeof data.memory === "object" && "id" in data.memory
-		? data.memory
-		: data;
+	const raw =
+		data.memory && typeof data.memory === "object" && "id" in data.memory
+			? data.memory
+			: data;
 	return normalizeMemory(raw);
 }
 
@@ -256,9 +260,10 @@ async function updateMemory(
 	}
 	const data = (await res.json()) as { memory?: RawMemory } & RawMemory;
 	// mmry returns { memory: { ... } } — unwrap if present
-	const raw = data.memory && typeof data.memory === "object" && "id" in data.memory
-		? data.memory
-		: data;
+	const raw =
+		data.memory && typeof data.memory === "object" && "id" in data.memory
+			? data.memory
+			: data;
 	return normalizeMemory(raw);
 }
 

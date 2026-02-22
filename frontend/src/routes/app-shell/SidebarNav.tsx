@@ -48,7 +48,10 @@ export const SidebarNav = memo(function SidebarNav({
 		>
 			<div className="h-px w-full bg-primary/50 mb-3" />
 			{username && !sidebarCollapsed && (
-				<div className="mb-2 px-1 text-xs text-muted-foreground truncate" title={username}>
+				<div
+					className="mb-2 px-1 text-xs text-muted-foreground truncate"
+					title={username}
+				>
 					{username}
 				</div>
 			)}

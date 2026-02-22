@@ -369,7 +369,12 @@ export function FileTreeView({
 	const cacheKey = normalizedWorkspacePath ?? null;
 
 	const loadTree = useCallback(
-		async (path: string, preserveState = false, skipCache = false, silent = false) => {
+		async (
+			path: string,
+			preserveState = false,
+			skipCache = false,
+			silent = false,
+		) => {
 			if (!normalizedWorkspacePath || !cacheKey) return;
 			const requestKey = getTreeCacheKey(cacheKey, path, INITIAL_DEPTH);
 			const now = Date.now();

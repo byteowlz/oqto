@@ -10,8 +10,8 @@ import {
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import {
-	WorkspaceOverviewForm,
 	type ResourceEntry,
+	WorkspaceOverviewForm,
 	type WorkspaceOverviewValues,
 } from "@/features/sessions/components/WorkspaceOverviewForm";
 import type { PiModelInfo } from "@/lib/api/default-chat";

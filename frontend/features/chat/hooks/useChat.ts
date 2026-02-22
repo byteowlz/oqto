@@ -923,8 +923,6 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 									void fetchHistoryMessages(sessionId);
 								}
 							}, 100);
-
-
 						}
 					}
 					break;
