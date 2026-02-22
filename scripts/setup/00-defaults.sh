@@ -83,6 +83,11 @@ dev_user_email=""
 OQTO_CONFIG_DIR="${XDG_CONFIG_HOME}/oqto"
 OQTO_DATA_DIR="${XDG_DATA_HOME}/oqto"
 
+# Playwright browser path (single source of truth for all tools)
+# Single-user: user-local; Multi-user: system-wide (set in build_octo)
+BROWSERD_DEPLOY_DIR=""
+PW_BROWSERS_DIR=""
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'

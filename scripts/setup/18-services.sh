@@ -70,6 +70,7 @@ TimeoutStartSec=30
 Environment=RUST_LOG=info
 Environment=PATH=%h/.bun/bin:%h/.cargo/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 Environment=HOME=%h
+Environment=PLAYWRIGHT_BROWSERS_PATH=${PW_BROWSERS_DIR:-$HOME/.local/share/playwright-browsers}
 
 [Install]
 WantedBy=default.target
@@ -105,6 +106,19 @@ WantedBy=default.target
 EOF
 
     log_success "Service file created: $service_file"
+
+    # Export PLAYWRIGHT_BROWSERS_PATH in shell profile so all tools
+    # (slidev, playwright CLI, agent browser, etc.) find the same browsers.
+    local pw_path="${PW_BROWSERS_DIR:-$HOME/.local/share/playwright-browsers}"
+    local pw_export="export PLAYWRIGHT_BROWSERS_PATH=\"$pw_path\""
+    for rc_file in "$HOME/.zshrc" "$HOME/.bashrc"; do
+      if [[ -f "$rc_file" ]] && ! grep -q 'PLAYWRIGHT_BROWSERS_PATH' "$rc_file"; then
+        echo "" >> "$rc_file"
+        echo "# Playwright browsers (shared by oqto, slidev, etc.)" >> "$rc_file"
+        echo "$pw_export" >> "$rc_file"
+        log_info "Added PLAYWRIGHT_BROWSERS_PATH to $(basename "$rc_file")"
+      fi
+    done
 
     # Enable linger so services start at boot without login
     if command_exists loginctl; then
