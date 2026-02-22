@@ -2735,7 +2735,40 @@ impl PiSessionManager {
                 pending_hstry_client_id = client_id;
             }
 
-            // Translate Pi event to canonical events and broadcast each one
+            // Persist to hstry on AgentEnd BEFORE broadcasting canonical events.
+            // This ensures hstry has the complete history before the frontend
+            // receives agent.idle and potentially fetches/switches sessions.
+            if matches!(pi_event, PiEvent::AgentEnd { .. }) && !pending_messages.is_empty() {
+                if let Some(ref client) = hstry_client {
+                    let eid = hstry_external_id.read().await.clone();
+                    let client_id = pending_hstry_client_id.take();
+                    if let Err(e) = Self::persist_to_hstry_grpc(
+                        client,
+                        &eid,
+                        &session_id,
+                        &runner_id,
+                        &pending_messages,
+                        &work_dir,
+                        client_id,
+                    )
+                    .await
+                    {
+                        warn!("Pi[{}] failed to persist to hstry: {:?}", session_id, e);
+                    } else {
+                        debug!(
+                            "Pi[{}] persisted {} messages to hstry (external_id={})",
+                            session_id,
+                            pending_messages.len(),
+                            eid,
+                        );
+                    }
+                }
+                pending_messages.clear();
+            }
+
+            // Translate Pi event to canonical events and broadcast each one.
+            // For AgentEnd, hstry is already persisted above so the frontend
+            // can safely read history on agent.idle.
             let canonical_payloads = translator.translate(&pi_event);
             let ts = chrono::Utc::now().timestamp_millis();
             for payload in &canonical_payloads {
@@ -2807,40 +2840,13 @@ impl PiSessionManager {
                 }
             }
 
-            // Persist to hstry on AgentEnd
-            if matches!(pi_event, PiEvent::AgentEnd { .. }) && !pending_messages.is_empty() {
-                if let Some(ref client) = hstry_client {
-                    let eid = hstry_external_id.read().await.clone();
-                    let client_id = pending_hstry_client_id.take();
-                    if let Err(e) = Self::persist_to_hstry_grpc(
-                        client,
-                        &eid,
-                        &session_id,
-                        &runner_id,
-                        &pending_messages,
-                        &work_dir,
-                        client_id,
-                    )
-                    .await
-                    {
-                        warn!("Pi[{}] failed to persist to hstry: {:?}", session_id, e);
-                    } else {
-                        debug!(
-                            "Pi[{}] persisted {} messages to hstry (external_id={})",
-                            session_id,
-                            pending_messages.len(),
-                            eid,
-                        );
-                    }
-                }
-                pending_messages.clear();
-
-                // Title updates primarily arrive via the auto-rename extension's
-                // setStatus("oqto_title_changed", name) which the translator
-                // converts to a SessionTitleChanged canonical event. As a
-                // fallback for older extension versions or if the extension
-                // event was missed, probe get_state after a delay to catch
-                // the title from Pi's state.
+            // Title updates primarily arrive via the auto-rename extension's
+            // setStatus("oqto_title_changed", name) which the translator
+            // converts to a SessionTitleChanged canonical event. As a
+            // fallback for older extension versions or if the extension
+            // event was missed, probe get_state after a delay to catch
+            // the title from Pi's state.
+            if matches!(pi_event, PiEvent::AgentEnd { .. }) {
                 let probe_cmd_tx = cmd_tx.clone();
                 tokio::spawn(async move {
                     tokio::time::sleep(Duration::from_secs(3)).await;
