@@ -3,6 +3,7 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { authFetch } from "@/lib/api/client";
 import { controlPlaneApiUrl } from "@/lib/control-plane-client";
 import { cn } from "@/lib/utils";
 import {
@@ -125,7 +126,7 @@ async function fetchMemories(
 	url.searchParams.set("limit", limit.toString());
 	url.searchParams.set("offset", offset.toString());
 
-	const res = await fetch(url.toString(), {
+	const res = await authFetch(url.toString(), {
 		credentials: "include",
 	});
 	if (!res.ok) {
@@ -155,7 +156,7 @@ async function searchMemories(
 	limit = 50,
 	storeName?: string | null,
 ): Promise<Memory[]> {
-	const res = await fetch(
+	const res = await authFetch(
 		workspaceMemoriesUrl(workspacePath, "/search", storeName),
 		{
 			method: "POST",
@@ -183,7 +184,7 @@ async function addMemory(
 	importance?: number,
 	storeName?: string | null,
 ): Promise<Memory> {
-	const res = await fetch(workspaceMemoriesUrl(workspacePath, "", storeName), {
+	const res = await authFetch(workspaceMemoriesUrl(workspacePath, "", storeName), {
 		method: "POST",
 		credentials: "include",
 		headers: { "Content-Type": "application/json" },
@@ -213,7 +214,7 @@ async function deleteMemory(
 	memoryId: string,
 	storeName?: string | null,
 ): Promise<void> {
-	const res = await fetch(
+	const res = await authFetch(
 		workspaceMemoriesUrl(workspacePath, `/${memoryId}`, storeName),
 		{
 			method: "DELETE",
@@ -234,7 +235,7 @@ async function updateMemory(
 	importance?: number,
 	storeName?: string | null,
 ): Promise<Memory> {
-	const res = await fetch(
+	const res = await authFetch(
 		workspaceMemoriesUrl(workspacePath, `/${memoryId}`, storeName),
 		{
 			method: "PUT",
