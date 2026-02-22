@@ -6,16 +6,21 @@
 # Works regardless of whether setup is running inside tmux or not.
 start_frontend_dev_server() {
   local frontend_dir="$SCRIPT_DIR/frontend"
+
+  # Install dependencies first
+  log_info "Installing frontend dependencies..."
+  (cd "$frontend_dir" && bun install) 2>&1 | tail -3
+
   local frontend_cmd="cd '$frontend_dir' && exec bun dev"
 
-  # Kill any existing frontend window to avoid duplicates
+  # Find a tmux session to attach the window to
   local session_name=""
   if [[ -n "${TMUX:-}" ]]; then
     # We're inside tmux -- get current session name
     session_name=$(tmux display-message -p '#{session_name}' 2>/dev/null)
-  elif tmux list-sessions -F '#{session_name}' 2>/dev/null | head -1 | read -r name; then
-    # Not inside tmux but a server is running -- use the first session
-    session_name="$name"
+  else
+    # Not inside tmux -- grab the first available session
+    session_name=$(tmux list-sessions -F '#{session_name}' 2>/dev/null | head -1)
   fi
 
   if [[ -n "$session_name" ]]; then
