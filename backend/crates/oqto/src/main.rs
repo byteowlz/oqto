@@ -2344,6 +2344,17 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         }
     }
 
+    // In single-user mode, ensure ~/.pi/agent/models.json exists.
+    // Without it, Pi cannot discover any models and sessions fail to start.
+    // This runs at every startup so models.json stays current with eavs config.
+    if !multi_user {
+        if let Some(ref eavs_config) = ctx.config.eavs
+            && eavs_config.enabled
+        {
+            ensure_pi_models_json(&eavs_config.base_url).await;
+        }
+    }
+
     // Create router - all API routes are served under /api prefix only.
     // This is the single source of truth for routing. All clients (frontend,
     // internal services, containers) must use /api/* paths.
@@ -2759,5 +2770,223 @@ impl fmt::Display for AppPaths {
             self.data_dir.display(),
             self.state_dir.display()
         )
+    }
+}
+
+/// Ensure `~/.pi/agent/models.json` (and `settings.json`) exist in single-user mode.
+///
+/// Queries the local eavs `/providers/detail` endpoint (no auth required) and
+/// generates the Pi models.json from the live provider catalog. Also creates a
+/// default `settings.json` if missing so the model selector works on first boot.
+///
+/// This replaces the setup.sh-only generation path and ensures models.json
+/// stays current even if eavs providers change after initial setup.
+async fn ensure_pi_models_json(eavs_base_url: &str) {
+    use tracing::{debug, info, warn};
+
+    let pi_dir = match dirs::home_dir() {
+        Some(home) => home.join(".pi").join("agent"),
+        None => {
+            warn!("Cannot determine home directory for Pi models.json generation");
+            return;
+        }
+    };
+
+    let models_path = pi_dir.join("models.json");
+
+    // Always regenerate so models stay current with eavs config changes.
+    // This is cheap (single HTTP call + JSON transform).
+    let base = eavs_base_url.trim_end_matches('/');
+    let url = format!("{}/providers/detail", base);
+
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            debug!("Failed to build HTTP client for eavs: {}", e);
+            return;
+        }
+    };
+
+    let response = match client.get(&url).send().await {
+        Ok(r) => r,
+        Err(e) => {
+            if models_path.exists() {
+                debug!(
+                    "eavs not reachable ({}), using existing models.json",
+                    e
+                );
+            } else {
+                warn!(
+                    "eavs not reachable at {} and no models.json exists. \
+                     Agents will not have any models available.",
+                    base
+                );
+            }
+            return;
+        }
+    };
+
+    if !response.status().is_success() {
+        warn!(
+            "eavs /providers/detail returned {}, skipping models.json generation",
+            response.status()
+        );
+        return;
+    }
+
+    let providers: Vec<eavs::ProviderDetail> = match response.json().await {
+        Ok(p) => p,
+        Err(e) => {
+            warn!("Failed to parse eavs provider details: {}", e);
+            return;
+        }
+    };
+
+    if providers.is_empty() {
+        debug!("eavs returned no providers, skipping models.json generation");
+        return;
+    }
+
+    // Read the user's eavs API key from ~/.config/oqto/eavs.env if it exists.
+    // Fall back to no key (Pi will need EAVS_API_KEY env var or eavs won't
+    // require auth in single-user setups without virtual keys).
+    let api_key = read_eavs_api_key();
+
+    let models_json = eavs::generate_pi_models_json(&providers, base, api_key.as_deref());
+
+    // Check if content actually changed to avoid unnecessary writes
+    if models_path.exists() {
+        if let Ok(existing) = std::fs::read_to_string(&models_path) {
+            if let Ok(existing_json) = serde_json::from_str::<serde_json::Value>(&existing) {
+                if existing_json == models_json {
+                    debug!("models.json is up to date");
+                    ensure_pi_settings_json(&pi_dir, &models_json);
+                    return;
+                }
+            }
+        }
+    }
+
+    // Write models.json
+    if let Err(e) = std::fs::create_dir_all(&pi_dir) {
+        warn!("Failed to create ~/.pi/agent directory: {}", e);
+        return;
+    }
+
+    let content = match serde_json::to_string_pretty(&models_json) {
+        Ok(c) => c,
+        Err(e) => {
+            warn!("Failed to serialize models.json: {}", e);
+            return;
+        }
+    };
+
+    match std::fs::write(&models_path, &content) {
+        Ok(()) => {
+            let model_count: usize = models_json
+                .get("providers")
+                .and_then(|p| p.as_object())
+                .map(|providers| {
+                    providers
+                        .values()
+                        .filter_map(|v| v.get("models").and_then(|m| m.as_array()))
+                        .map(|a| a.len())
+                        .sum()
+                })
+                .unwrap_or(0);
+            info!(
+                "Generated models.json with {} models at {}",
+                model_count,
+                models_path.display()
+            );
+        }
+        Err(e) => {
+            warn!("Failed to write models.json: {}", e);
+            return;
+        }
+    }
+
+    // Also ensure settings.json exists with sensible defaults
+    ensure_pi_settings_json(&pi_dir, &models_json);
+}
+
+/// Read the EAVS_API_KEY from ~/.config/oqto/eavs.env or the eavs config.
+fn read_eavs_api_key() -> Option<String> {
+    // Try oqto's eavs.env first
+    let oqto_env = dirs::config_dir()
+        .or_else(|| dirs::home_dir().map(|h| h.join(".config")))
+        .map(|c| c.join("oqto").join("eavs.env"));
+
+    if let Some(path) = oqto_env {
+        if let Ok(contents) = std::fs::read_to_string(&path) {
+            for line in contents.lines() {
+                if let Some(value) = line.trim().strip_prefix("EAVS_API_KEY=") {
+                    let value = value.trim();
+                    if !value.is_empty() {
+                        return Some(value.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    // Fall back to EAVS_API_KEY environment variable
+    std::env::var("EAVS_API_KEY").ok()
+}
+
+/// Ensure `~/.pi/agent/settings.json` exists with a default provider/model.
+///
+/// Without settings.json, Pi does not know which model to use and the model
+/// selector shows empty. We pick the first provider+model from models.json.
+fn ensure_pi_settings_json(pi_dir: &std::path::Path, models_json: &serde_json::Value) {
+    use tracing::{debug, info, warn};
+
+    let settings_path = pi_dir.join("settings.json");
+    if settings_path.exists() {
+        debug!("settings.json already exists");
+        return;
+    }
+
+    // Extract first provider and model from models.json
+    let (provider, model_id) = match models_json
+        .get("providers")
+        .and_then(|p| p.as_object())
+        .and_then(|providers| {
+            providers.iter().find_map(|(name, val)| {
+                val.get("models")
+                    .and_then(|m| m.as_array())
+                    .and_then(|models| models.first())
+                    .and_then(|m| m.get("id").and_then(|id| id.as_str()))
+                    .map(|id| (name.clone(), id.to_string()))
+            })
+        }) {
+        Some(pair) => pair,
+        None => {
+            debug!("No models found in models.json, skipping settings.json generation");
+            return;
+        }
+    };
+
+    let settings = serde_json::json!({
+        "defaultProvider": provider,
+        "defaultModel": model_id,
+    });
+
+    match serde_json::to_string_pretty(&settings) {
+        Ok(content) => match std::fs::write(&settings_path, content) {
+            Ok(()) => {
+                info!(
+                    "Generated settings.json (provider={}, model={}) at {}",
+                    provider,
+                    model_id,
+                    settings_path.display()
+                );
+            }
+            Err(e) => warn!("Failed to write settings.json: {}", e),
+        },
+        Err(e) => warn!("Failed to serialize settings.json: {}", e),
     }
 }
