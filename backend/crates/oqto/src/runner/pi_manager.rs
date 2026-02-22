@@ -106,7 +106,16 @@ impl Default for PiManagerConfig {
 struct ModelCacheEntry {
     workdir: String,
     models: serde_json::Value,
+    /// Unix timestamp (seconds) when this cache entry was written.
+    /// Entries older than [`MODEL_CACHE_TTL`] are ignored on load.
+    #[serde(default)]
+    cached_at: u64,
 }
+
+/// How long a persisted model cache entry stays valid (1 hour).
+/// After this, the entry is discarded and models are re-fetched from
+/// models.json + ephemeral Pi so new provider models are picked up.
+const MODEL_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(3600);
 
 // ============================================================================
 // Session Configuration (per-session)
@@ -390,8 +399,8 @@ pub struct PiSessionManager {
     /// `contains_key` check and each spawn a separate Pi process.
     creating: tokio::sync::Mutex<std::collections::HashSet<String>>,
     /// Cached model lists per workdir (populated when any session in that workdir fetches models).
-    /// Key: canonical workdir path, Value: list of available models as JSON.
-    model_cache: RwLock<HashMap<String, serde_json::Value>>,
+    /// Key: canonical workdir path, Value: (models JSON, unix timestamp when cached).
+    model_cache: RwLock<HashMap<String, (serde_json::Value, u64)>>,
     /// Last observed mtime of ~/.pi/agent/models.json. Used to invalidate the
     /// model_cache when the file is updated (e.g., after admin syncs models).
     models_json_mtime: RwLock<Option<std::time::SystemTime>>,
@@ -1223,9 +1232,13 @@ impl PiSessionManager {
 
             // Cache by workdir so dead sessions can still list models, and persist to disk
             if models_array.as_array().is_some_and(|a| !a.is_empty()) {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
                 {
                     let mut cache = self.model_cache.write().await;
-                    cache.insert(workdir.clone(), models_array.clone());
+                    cache.insert(workdir.clone(), (models_array.clone(), now));
                 }
                 Self::persist_model_cache_to_disk(
                     self.config.model_cache_dir.as_deref(),
@@ -1302,9 +1315,13 @@ impl PiSessionManager {
             let models = Self::merge_model_lists(&disk_models, &pi_models);
 
             if models.as_array().is_some_and(|a| !a.is_empty()) {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
                 {
                     let mut cache = self.model_cache.write().await;
-                    cache.insert(target_workdir.clone(), models.clone());
+                    cache.insert(target_workdir.clone(), (models.clone(), now));
                 }
                 Self::persist_model_cache_to_disk(
                     self.config.model_cache_dir.as_deref(),
@@ -1332,9 +1349,19 @@ impl PiSessionManager {
     }
 
     /// Get cached models for a specific workdir (called directly by runner for dead sessions).
+    /// Returns `None` if the entry is expired (older than [`MODEL_CACHE_TTL`]).
     pub async fn get_cached_models_for_workdir(&self, workdir: &str) -> Option<serde_json::Value> {
         let cache = self.model_cache.read().await;
-        cache.get(workdir).cloned()
+        if let Some((models, cached_at)) = cache.get(workdir) {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            if now.saturating_sub(*cached_at) <= MODEL_CACHE_TTL.as_secs() {
+                return Some(models.clone());
+            }
+        }
+        None
     }
 
     // ========================================================================
@@ -1353,7 +1380,7 @@ impl PiSessionManager {
     /// Load all persisted model cache files from disk.
     fn load_model_cache_from_disk(
         cache_dir: Option<&std::path::Path>,
-    ) -> HashMap<String, serde_json::Value> {
+    ) -> HashMap<String, (serde_json::Value, u64)> {
         let Some(dir) = cache_dir else {
             return HashMap::new();
         };
@@ -1361,18 +1388,38 @@ impl PiSessionManager {
         let Ok(entries) = std::fs::read_dir(dir) else {
             return map;
         };
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+
         for entry in entries.flatten() {
             let path = entry.path();
             if path.extension().is_some_and(|e| e == "json") {
                 match std::fs::read_to_string(&path) {
                     Ok(contents) => match serde_json::from_str::<ModelCacheEntry>(&contents) {
                         Ok(entry) => {
+                            // Skip expired entries (cached_at == 0 means legacy
+                            // entry without timestamp -- treat as expired).
+                            let age_secs = now.saturating_sub(entry.cached_at);
+                            if entry.cached_at == 0
+                                || age_secs > MODEL_CACHE_TTL.as_secs()
+                            {
+                                info!(
+                                    "Skipping expired model cache for '{}' (age {}s)",
+                                    entry.workdir, age_secs
+                                );
+                                // Clean up stale file
+                                let _ = std::fs::remove_file(&path);
+                                continue;
+                            }
                             info!(
-                                "Loaded cached models for workdir '{}' ({} models)",
+                                "Loaded cached models for workdir '{}' ({} models, age {}s)",
                                 entry.workdir,
-                                entry.models.as_array().map(|a| a.len()).unwrap_or(0)
+                                entry.models.as_array().map(|a| a.len()).unwrap_or(0),
+                                age_secs,
                             );
-                            map.insert(entry.workdir, entry.models);
+                            map.insert(entry.workdir, (entry.models, entry.cached_at));
                         }
                         Err(e) => {
                             warn!("Failed to parse model cache file {:?}: {}", path, e);
@@ -1405,9 +1452,14 @@ impl PiSessionManager {
         }
         let filename = Self::model_cache_filename(workdir);
         let path = dir.join(filename);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
         let entry = ModelCacheEntry {
             workdir: workdir.to_string(),
             models: models.clone(),
+            cached_at: now,
         };
         match serde_json::to_string_pretty(&entry) {
             Ok(json) => {
