@@ -69,6 +69,51 @@ clear_steps() {
   rm -f "$SETUP_STEPS_FILE"
 }
 
+# Decode a setup URL from oqto.dev/setup into a TOML config file.
+# The URL fragment (#...) contains the config as URL-safe base64.
+# Usage: decode_setup_url "https://oqto.dev/setup#..." "/tmp/oqto.setup.toml"
+decode_setup_url() {
+  local url="$1"
+  local output_file="$2"
+
+  # Extract the fragment (everything after #)
+  local fragment="${url##*#}"
+  if [[ -z "$fragment" || "$fragment" == "$url" ]]; then
+    log_error "URL has no fragment (#). Expected a URL from oqto.dev/setup"
+    log_error "Example: https://oqto.dev/setup#WyRzY2hlbWEi..."
+    return 1
+  fi
+
+  # URL-safe base64 to standard base64: replace - with +, _ with /
+  local b64="${fragment//-/+}"
+  b64="${b64//_//}"
+
+  # Add padding if needed
+  local pad=$(( 4 - ${#b64} % 4 ))
+  if [[ $pad -lt 4 ]]; then
+    local i
+    for (( i=0; i<pad; i++ )); do
+      b64="${b64}="
+    done
+  fi
+
+  # Decode
+  local decoded
+  decoded=$(echo "$b64" | base64 -d 2>/dev/null) || {
+    log_error "Failed to decode URL fragment. Is this a valid oqto.dev/setup URL?"
+    return 1
+  }
+
+  # Sanity check: should look like TOML
+  if [[ "$decoded" != *"["* ]]; then
+    log_error "Decoded content does not look like a valid TOML config"
+    return 1
+  fi
+
+  echo "$decoded" > "$output_file"
+  log_success "Decoded setup config from URL to $output_file"
+}
+
 # Load oqto.setup.toml config file and set environment variables.
 # This is a simple TOML parser that handles the flat structure generated
 # by the web configurator at oqto.dev/setup.

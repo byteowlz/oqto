@@ -47,10 +47,10 @@ function detectBackendUrl(): string {
 	if (stored) return stored;
 	// In Tauri there's no reverse proxy -- user must configure
 	if (isTauri()) return "";
-	// Browser: same-origin /api works behind Caddy
-	if (typeof window !== "undefined") {
-		return `${window.location.origin}/api`;
-	}
+	// In dev mode (Vite), the dev server proxies /api to the backend.
+	// Don't set a base URL — relative paths work through the proxy.
+	if (import.meta.env.DEV) return "";
+	// Production: same-origin /api works behind Caddy/reverse proxy
 	return "";
 }
 

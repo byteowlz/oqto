@@ -69,7 +69,7 @@ export default defineConfig(({ mode }) => {
 			},
 			host: true,
 			port: 3000,
-			allowedHosts: ["archlinux"],
+			allowedHosts: true,
 			proxy: {
 				"^/c/[^/]+/api": {
 					target: caddyUrl,

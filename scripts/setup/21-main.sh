@@ -34,6 +34,10 @@ Options:
   --domain <domain>     Set domain and enable Caddy reverse proxy
                         Example: --domain oqto.example.com
   
+  --from-url <url>      Load config from an oqto.dev/setup URL.
+                        The URL fragment contains the config as base64.
+                        Example: --from-url 'https://oqto.dev/setup#WyRzY2...'
+  
   --ssh-port <port>     Set SSH port for hardening (default: 22)
   
   Disable specific hardening features (use with --production):
@@ -124,6 +128,9 @@ Examples:
 
   # Production but keep password SSH auth (for initial setup)
   ./setup.sh --production --domain oqto.example.com --no-ssh-hardening
+
+  # Deploy from a pre-configured oqto.dev/setup URL
+  ./setup.sh --from-url 'https://oqto.dev/setup#WyRzY2hlbWEi...'
 
   # Multi-user container setup on Linux
   OQTO_USER_MODE=multi OQTO_BACKEND_MODE=container ./setup.sh --production
@@ -253,6 +260,14 @@ main() {
       SETUP_CONFIG_FILE="${1#*=}"
       shift
       ;;
+    --from-url)
+      SETUP_FROM_URL="$2"
+      shift 2
+      ;;
+    --from-url=*)
+      SETUP_FROM_URL="${1#*=}"
+      shift
+      ;;
     *)
       log_error "Unknown option: $1"
       show_help
@@ -260,6 +275,17 @@ main() {
       ;;
     esac
   done
+
+  # Decode setup URL if specified (oqto.dev/setup#...)
+  if [[ -n "${SETUP_FROM_URL:-}" ]]; then
+    local url_config_file
+    url_config_file="$(mktemp /tmp/oqto-setup-XXXXXX.toml)"
+    if ! decode_setup_url "$SETUP_FROM_URL" "$url_config_file"; then
+      rm -f "$url_config_file"
+      exit 1
+    fi
+    SETUP_CONFIG_FILE="$url_config_file"
+  fi
 
   # Load config file if specified (oqto.setup.toml)
   if [[ -n "${SETUP_CONFIG_FILE:-}" ]]; then

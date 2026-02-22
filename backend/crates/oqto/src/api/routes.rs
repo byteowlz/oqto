@@ -484,14 +484,17 @@ fn build_cors_layer(state: &AppState) -> CorsLayer {
 
     if allowed_origins.is_empty() {
         if dev_mode {
-            // In dev mode with no configured origins, allow any origin
-            tracing::warn!("CORS: No origins configured in dev mode, allowing any origin");
+            // In dev mode with no configured origins, mirror the request Origin.
+            // allow_origin(any()) is incompatible with allow_credentials(true),
+            // so we use AllowOrigin::mirror_request() which echoes back the
+            // request's Origin header — equivalent to "allow any" but compatible
+            // with credentials.
+            tracing::warn!("CORS: No origins configured in dev mode, mirroring request origin");
             CorsLayer::new()
-                .allow_origin(AllowOrigin::any())
+                .allow_origin(AllowOrigin::mirror_request())
                 .allow_methods(methods)
                 .allow_headers(headers)
-            // Note: allow_credentials(true) is incompatible with allow_origin(any())
-            // For dev mode this is acceptable
+                .allow_credentials(true)
         } else {
             // In production with no configured origins, deny all cross-origin requests
             tracing::warn!(
