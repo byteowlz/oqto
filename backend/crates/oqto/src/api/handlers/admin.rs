@@ -1026,7 +1026,7 @@ pub async fn upsert_eavs_provider(
         .map_err(|e| ApiError::Internal(format!("Failed to write eavs config: {e}")))?;
 
     // Restart eavs service
-    restart_eavs_service().await?;
+    restart_eavs_service(state.mmry.single_user).await?;
 
     Ok(Json(
         serde_json::json!({"ok": true, "provider": request.name}),
@@ -1071,7 +1071,7 @@ pub async fn delete_eavs_provider(
     }
 
     // Restart eavs service
-    restart_eavs_service().await?;
+    restart_eavs_service(state.mmry.single_user).await?;
 
     Ok(Json(serde_json::json!({"ok": true, "deleted": name})))
 }
@@ -1179,17 +1179,31 @@ fn remove_toml_array_entries(content: &str, array_name: &str) -> String {
 }
 
 /// Restart the eavs systemd service via oqto-usermgr (which runs as root).
-async fn restart_eavs_service() -> Result<(), ApiError> {
-    // Use usermgr daemon to restart the service (it runs as root)
-    tokio::task::spawn_blocking(|| {
-        crate::local::linux_users::usermgr_request(
-            "restart-service",
-            serde_json::json!({"service": "eavs"}),
-        )
-    })
-    .await
-    .map_err(|e| ApiError::Internal(format!("Task join error: {e}")))?
-    .map_err(|e| ApiError::Internal(format!("Failed to restart eavs: {e}")))?;
+async fn restart_eavs_service(single_user: bool) -> Result<(), ApiError> {
+    if single_user {
+        // Single-user mode: restart the user systemd service directly
+        let output = tokio::process::Command::new("systemctl")
+            .args(["--user", "restart", "eavs"])
+            .output()
+            .await
+            .map_err(|e| ApiError::Internal(format!("Failed to run systemctl: {e}")))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            tracing::warn!("eavs restart via systemctl --user failed: {}", stderr);
+            // Not fatal — eavs may be running in a tmux pane or manually
+        }
+    } else {
+        // Multi-user mode: use usermgr daemon to restart (it runs as root)
+        tokio::task::spawn_blocking(|| {
+            crate::local::linux_users::usermgr_request(
+                "restart-service",
+                serde_json::json!({"service": "eavs"}),
+            )
+        })
+        .await
+        .map_err(|e| ApiError::Internal(format!("Task join error: {e}")))?
+        .map_err(|e| ApiError::Internal(format!("Failed to restart eavs: {e}")))?;
+    }
 
     // Wait a moment for eavs to start
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
