@@ -64,6 +64,11 @@ check_prerequisites() {
   fi
 
   # Rust toolchain
+  # Source cargo env if cargo exists but isn't in PATH (e.g. pre-existing install)
+  if ! command_exists cargo && [[ -f "$HOME/.cargo/env" ]]; then
+    # shellcheck source=/dev/null
+    source "$HOME/.cargo/env"
+  fi
   if ! command_exists cargo; then
     log_warn "Rust toolchain not found"
     if confirm "Install Rust via rustup?"; then
@@ -76,6 +81,11 @@ check_prerequisites() {
   fi
 
   # Bun (for frontend and pi)
+  # Source bun env if bun exists but isn't in PATH
+  if ! command_exists bun && [[ -d "$HOME/.bun/bin" ]]; then
+    export BUN_INSTALL="$HOME/.bun"
+    export PATH="$BUN_INSTALL/bin:$PATH"
+  fi
   if ! command_exists bun || ! bun --version >/dev/null 2>&1; then
     log_warn "Bun not found or broken"
     if confirm "Install Bun?"; then

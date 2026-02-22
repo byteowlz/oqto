@@ -2,6 +2,35 @@
 # Summary and Next Steps
 # ==============================================================================
 
+# Start the frontend dev server in a tmux window.
+# Works regardless of whether setup is running inside tmux or not.
+start_frontend_dev_server() {
+  local frontend_dir="$SCRIPT_DIR/frontend"
+  local frontend_cmd="cd '$frontend_dir' && exec bun dev"
+
+  # Kill any existing frontend window to avoid duplicates
+  local session_name=""
+  if [[ -n "${TMUX:-}" ]]; then
+    # We're inside tmux -- get current session name
+    session_name=$(tmux display-message -p '#{session_name}' 2>/dev/null)
+  elif tmux list-sessions -F '#{session_name}' 2>/dev/null | head -1 | read -r name; then
+    # Not inside tmux but a server is running -- use the first session
+    session_name="$name"
+  fi
+
+  if [[ -n "$session_name" ]]; then
+    # Kill stale frontend window if it exists
+    tmux kill-window -t "${session_name}:frontend" 2>/dev/null || true
+    # Create new window in the existing session
+    tmux new-window -t "$session_name" -n "frontend" -d "$frontend_cmd"
+    log_success "Frontend dev server started in tmux window 'frontend' (session '$session_name')"
+  else
+    # No tmux server running at all -- start a detached session
+    tmux new-session -d -s oqto -n "frontend" "$frontend_cmd"
+    log_success "Frontend dev server started in new tmux session 'oqto' window 'frontend'"
+  fi
+}
+
 start_all_services() {
   log_step "Starting services"
 
@@ -119,25 +148,7 @@ print(data.decode().strip())
 
   # In dev mode, start the frontend dev server in a tmux window
   if [[ "$PRODUCTION_MODE" != "true" && -d "$SCRIPT_DIR/frontend" ]]; then
-    local frontend_dir="$SCRIPT_DIR/frontend"
-    # Kill any existing frontend dev server
-    if tmux has-session 2>/dev/null; then
-      tmux kill-window -t "frontend" 2>/dev/null || true
-    fi
-    # Start in a new tmux window (works whether or not we're inside tmux)
-    if [[ -n "${TMUX:-}" ]]; then
-      # Inside tmux: create a new window in the current session
-      tmux new-window -n "frontend" -d "cd '$frontend_dir' && bun dev"
-      log_success "Frontend dev server started in tmux window 'frontend'"
-    elif tmux has-session -t oqto 2>/dev/null; then
-      # Outside tmux but oqto session exists: add a window
-      tmux new-window -t oqto -n "frontend" -d "cd '$frontend_dir' && bun dev"
-      log_success "Frontend dev server started in tmux session 'oqto' window 'frontend'"
-    else
-      # No tmux session: create one
-      tmux new-session -d -s oqto -n "frontend" "cd '$frontend_dir' && bun dev"
-      log_success "Frontend dev server started in new tmux session 'oqto' window 'frontend'"
-    fi
+    start_frontend_dev_server
   fi
 
   log_success "All services started"
@@ -396,7 +407,7 @@ print_summary() {
     echo "     # Or use the admin interface"
     echo
   else
-    if tmux list-windows -F '#{window_name}' 2>/dev/null | grep -q '^frontend$'; then
+    if tmux list-windows -a -F '#{window_name}' 2>/dev/null | grep -q '^frontend$'; then
       echo "  $step. Frontend dev server is running (tmux window 'frontend')"
       echo "     Switch to it:  tmux select-window -t frontend"
     else
