@@ -2,6 +2,24 @@
 
 ## Open
 
+### [oqto-29e1] Stability: hstry gRPC high-availability with local spool fallback (P0, epic)
+hstry is currently a single point of failure. If the hstry gRPC service becomes unavailable, all message persistence fails with no graceful degradation. This is especially critical for long-running agent sessions where losing message history is unacceptable.
+
+## Problem Statement
+
+From AGENTS.md: "All chat history access goes through hstry's gRPC API - no raw SQLite access from oqto." This creates a hard dependency on hstry availability.
+...
+
+
+### [oqto-e067] Security: Implement runner mTLS authentication and attestation (P0, epic)
+Runner registration currently uses a simple runner_id with no cryptographic verification. This allows potential runner impersonation attacks where a malicious process could register as a legitimate runner and intercept or manipulate agent sessions.
+
+## Requirements
+
+1. Implement mTLS between runner and backend
+...
+
+
 ### [oqto-n7zc] setup.sh: fix full user provisioning pipeline (pi, eavs, models, runner) (P0, epic)
 setup.sh must correctly provision everything for a new platform user on a fresh install:
 
@@ -10,6 +28,45 @@ setup.sh must correctly provision everything for a new platform user on a fresh 
 3. Per-user provisioning on login/creation:
 ...
 
+
+### [oqto-cxxr] Security: Defense-in-depth sandboxing with seccomp-bpf fallback (P1, feature)
+Current sandboxing relies solely on bwrap (bubblewrap). This is a single point of failure—if bwrap has vulnerabilities or is not available, agents run completely unsandboxed. Additionally, bwrap requires elevated privileges (setuid) which is a security risk itself.
+
+## Current State
+
+- Primary: bwrap with configurable profiles
+...
+
+
+### [oqto-fezg] Stability: Circuit breaker and backpressure for WebSocket connections (P1, feature)
+The frontend uses a single multiplexed WebSocket for all communication. Without circuit breakers or backpressure, temporary backend slowdowns can cascade into frontend unresponsiveness or reconnection storms.
+
+## Current Behavior
+
+- No explicit backpressure on event stream
+...
+
+
+### [oqto-35fg] Scalability: PostgreSQL backend for hstry beyond SQLite limits (P1, epic)
+hstry uses SQLite which has fundamental scaling limits. Current design supports tens to low-hundreds of users. Enterprise deployments require 1000+ concurrent users with high message throughput.
+
+## SQLite Limitations
+
+- Write contention: ~1-5K writes/sec max
+...
+
+
+### [oqto-8f14] Scalability: Protocol versioning for canonical protocol evolution (P1, feature)
+The canonical protocol (docs/design/canonical-protocol.md) currently has no versioning mechanism. Adding new Part types, Event variants, or Command payloads will break older runners or frontends. This blocks safe protocol evolution.
+
+## Requirements
+
+1. Version Negotiation
+...
+
+
+### [oqto-q3qf] oqto should call usermgr to respawn dead runners before connecting (P1, bug)
+In multi-user mode, runner_for_user() just connects to the socket without checking if the runner is alive. If the runner dies (e.g. pkill, OOM, user systemd crash), oqto returns 'connecting to runner at ...' errors forever. It should call usermgr setup-user-runner to respawn first if the socket is stale or missing.
 
 ### [oqto-y05n] Browser-side STT via Moonshine WASM — eliminate server-side eaRS for voice mode (P1, feature)
 
@@ -268,6 +325,12 @@ Location: frontend/apps/index.ts:1-56
 Implementation:
 ...
 
+
+### [oqto-5ym1] Pi does not recover from hung LLM streams (no stream timeout) (P2, bug)
+When an upstream LLM provider (e.g. Kimi-K2.5) drops a streaming connection mid-response without sending [DONE] or an error, Pi hangs indefinitely in its event loop. The TCP connection closes but Pi never detects the stream ended. Observed on octo-azure where Kimi dropped reasoning_content mid-token. Pi should implement a stream inactivity timeout (e.g. 120s with no chunks) and surface it as an error so the user can retry.
+
+### [oqto-pdxp] User systemd session not resilient to runner kills in multi-user mode (P2, bug)
+When runners are killed via pkill from an SSH session, the SSH session exit can also terminate user@UID.service, preventing the runner's systemd Restart=always from working. The runner stays dead with a stale socket. Linger is enabled but user@UID has no way to auto-start without a login or explicit systemctl start. Consider: 1) usermgr health-checking runner sockets periodically, 2) oqto calling ensure_runner before connecting.
 
 ### [oqto-mvdv.4] Session freshness fingerprinting for cross-device drift detection (P2, task)
 Add session freshness polling to detect when the session file has been modified outside Octo's knowledge (e.g., by another browser tab or direct Pi CLI usage). Poll a fingerprint (mtime + size + entry count + tail hash) every ~4 seconds and warn the user when stale state is detected.
@@ -1577,7 +1640,7 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
 - [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
