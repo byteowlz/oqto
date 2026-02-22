@@ -834,7 +834,7 @@ export function FileTreeView({
 				</button>
 
 				{/* Breadcrumbs */}
-				<div className="flex-1 flex items-center gap-1 overflow-x-auto text-sm ml-2">
+				<div className="flex-1 flex items-center gap-1 overflow-x-auto scrollbar-none [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden text-sm ml-2">
 					{breadcrumbs.map((crumb, index) => (
 						<span
 							key={crumb.path}

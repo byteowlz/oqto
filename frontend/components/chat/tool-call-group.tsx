@@ -134,7 +134,7 @@ export function ToolCallGroup({
 				<div className="flex-1 overflow-hidden">
 					<div
 						ref={scrollRef}
-						className="flex items-center gap-1 overflow-x-auto"
+						className="flex items-center gap-1 overflow-x-auto scrollbar-none [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
 					>
 						{iconButtons}
 					</div>
