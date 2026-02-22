@@ -3446,22 +3446,22 @@ impl PiSessionManager {
         };
 
         if skip_messages {
-            // Only update metadata (stats, title, etc.), don't touch messages
-            if stats_delta.is_some() || readable_id.is_some() || title.is_some() {
-                let _ = client
-                    .update_conversation(
-                        hstry_external_id,
-                        title,
-                        Some(work_dir.to_string_lossy().to_string()),
-                        None,
-                        None,
-                        Some(metadata_json),
-                        readable_id,
-                        Some("pi".to_string()),
-                        Some(oqto_session_id.to_string()),
-                    )
-                    .await;
-            }
+            // Update metadata (stats, title, platform_id, etc.), don't touch messages.
+            // Always call update to ensure platform_id is set even when no other
+            // metadata has changed.
+            let _ = client
+                .update_conversation(
+                    hstry_external_id,
+                    title,
+                    Some(work_dir.to_string_lossy().to_string()),
+                    None,
+                    None,
+                    Some(metadata_json),
+                    readable_id,
+                    Some("pi".to_string()),
+                    Some(oqto_session_id.to_string()),
+                )
+                .await;
             return Ok(());
         }
 
@@ -3495,21 +3495,23 @@ impl PiSessionManager {
             .await
         {
             Ok(_) => {
-                if stats_delta.is_some() || readable_id.is_some() || title.is_some() {
-                    let _ = client
-                        .update_conversation(
-                            hstry_external_id,
-                            title.clone(),
-                            Some(work_dir.to_string_lossy().to_string()),
-                            None,
-                            None,
-                            Some(metadata_json.clone()),
-                            readable_id.clone(),
-                            Some("pi".to_string()),
-                            Some(oqto_session_id.to_string()),
-                        )
-                        .await;
-                }
+                // Always update metadata after appending messages to ensure
+                // platform_id (oqto session ID) is set in hstry. Without this,
+                // conversations created by hstry's own JSONL sync lack the
+                // platform_id, causing duplicate sessions in the frontend.
+                let _ = client
+                    .update_conversation(
+                        hstry_external_id,
+                        title.clone(),
+                        Some(work_dir.to_string_lossy().to_string()),
+                        None,
+                        None,
+                        Some(metadata_json.clone()),
+                        readable_id.clone(),
+                        Some("pi".to_string()),
+                        Some(oqto_session_id.to_string()),
+                    )
+                    .await;
             }
             Err(_) => {
                 // Conversation doesn't exist yet -- create it with WriteConversation
