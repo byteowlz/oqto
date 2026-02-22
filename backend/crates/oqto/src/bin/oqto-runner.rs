@@ -23,9 +23,14 @@
 //!
 //! ## Security Model
 //!
-//! The runner loads its sandbox configuration from a **trusted location**
-//! (`/etc/oqto/sandbox.toml`) that is owned by root. This ensures that even
-//! if the main oqto server is compromised, it cannot weaken sandbox restrictions.
+//! The runner loads sandbox configuration from (in order):
+//!   1. `--sandbox-config <path>` (CLI override)
+//!   2. `/etc/oqto/sandbox.toml` (system-wide, root-owned -- multi-user production)
+//!   3. `~/.config/oqto/sandbox.toml` (user-level -- single-user / dev setups)
+//!
+//! In multi-user production, the system config is owned by root so compromised
+//! agents cannot weaken sandbox restrictions. In single-user mode, the user
+//! config avoids requiring sudo.
 //!
 //! ## Usage
 //!
@@ -264,7 +269,7 @@ struct Args {
     socket: Option<PathBuf>,
 
     /// Path to sandbox config file.
-    /// Defaults to /etc/oqto/sandbox.toml (system-wide, trusted).
+    /// Defaults to /etc/oqto/sandbox.toml, then ~/.config/oqto/sandbox.toml.
     #[arg(long)]
     sandbox_config: Option<PathBuf>,
 
@@ -3500,42 +3505,63 @@ async fn main() -> Result<()> {
             }
         }
     } else {
-        // Load from system config (trusted, root-owned)
-        let config_path = std::path::Path::new("/etc/oqto/sandbox.toml");
-        if !config_path.exists() {
-            None
-        } else {
+        // Try loading sandbox config from multiple locations:
+        //   1. /etc/oqto/sandbox.toml  -- system-wide, root-owned (multi-user production)
+        //   2. ~/.config/oqto/sandbox.toml -- user-level (single-user / dev setups)
+        let system_path = std::path::Path::new("/etc/oqto/sandbox.toml");
+        let user_path = std::env::var("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| {
+                let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+                PathBuf::from(home).join(".config")
+            })
+            .join("oqto")
+            .join("sandbox.toml");
+
+        let candidates: &[&std::path::Path] = &[system_path, &user_path];
+        let mut loaded = None;
+
+        for config_path in candidates {
+            if !config_path.exists() {
+                continue;
+            }
             match std::fs::read_to_string(config_path) {
                 Ok(contents) => match toml::from_str::<SandboxConfig>(&contents) {
                     Ok(config) => {
                         if config.enabled {
                             info!(
-                                "Loaded system sandbox config from {}, profile='{}'",
-                                "/etc/oqto/sandbox.toml", config.profile
+                                "Loaded sandbox config from {}, profile='{}'",
+                                config_path.display(),
+                                config.profile
                             );
-                            Some(config)
+                            loaded = Some(config);
                         } else {
-                            info!("System sandbox config exists but is disabled (enabled=false)");
-                            None
+                            info!(
+                                "Sandbox config at {} exists but is disabled (enabled=false)",
+                                config_path.display()
+                            );
                         }
+                        break;
                     }
                     Err(e) => {
                         warn!(
-                            "Failed to parse system sandbox config: {}. Sandboxing disabled.",
+                            "Failed to parse sandbox config {}: {}. Trying next.",
+                            config_path.display(),
                             e
                         );
-                        None
                     }
                 },
                 Err(e) => {
                     warn!(
-                        "Failed to read system sandbox config: {}. Sandboxing disabled.",
+                        "Failed to read sandbox config {}: {}. Trying next.",
+                        config_path.display(),
                         e
                     );
-                    None
                 }
             }
         }
+
+        loaded
     };
 
     if sandbox_config.is_some() {
