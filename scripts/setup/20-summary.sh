@@ -91,7 +91,10 @@ print(data.decode().strip())
       fi
     done
   else
+    # Single-user: start runner first (oqto backend depends on it)
     start_svc eavs "$is_user_service"
+    start_svc oqto-runner "$is_user_service"
+    sleep 2
     start_svc oqto "$is_user_service"
   fi
 
@@ -107,6 +110,8 @@ print(data.decode().strip())
 
   # Restart oqto to pick up any config changes from this setup run
   if [[ "$is_user_service" == "true" ]]; then
+    systemctl --user restart oqto-runner &>/dev/null || true
+    sleep 2
     systemctl --user restart oqto &>/dev/null || true
   else
     sudo systemctl restart oqto &>/dev/null || true
@@ -153,6 +158,7 @@ print_summary() {
   fi
 
   echo -e "  EAVS (LLM):     $(check_service_status eavs "$is_user_service")"
+  echo -e "  Oqto runner:    $(check_service_status oqto-runner "$is_user_service")"
   echo -e "  Oqto backend:   $(check_service_status oqto "$is_user_service")"
 
   if [[ "$SETUP_CADDY" == "yes" ]]; then
@@ -267,8 +273,6 @@ print_summary() {
   echo -e "    pi:            $(check_bin pi)"
   if [[ "$SELECTED_BACKEND_MODE" == "local" ]]; then
     echo -e "    ttyd:          $(check_bin ttyd)"
-  fi
-  if [[ "$SELECTED_USER_MODE" == "multi" && "$OS" == "linux" ]]; then
     echo -e "    oqto-runner:   $(check_bin oqto-runner)"
   fi
   if [[ "$SELECTED_BACKEND_MODE" == "container" ]]; then
@@ -324,6 +328,7 @@ print_summary() {
 
   if [[ "$OS" == "linux" ]]; then
     service_needs_start eavs && need_start+=("eavs")
+    service_needs_start oqto-runner && need_start+=("oqto-runner")
     service_needs_start oqto && need_start+=("oqto")
     if [[ "$SETUP_CADDY" == "yes" ]]; then
       service_needs_start caddy && need_start+=("caddy")

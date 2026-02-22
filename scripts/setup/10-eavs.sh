@@ -895,6 +895,12 @@ install_eavs_service() {
     local service_dir="$HOME/.config/systemd/user"
     mkdir -p "$service_dir"
 
+    # Find eavs binary
+    local eavs_bin="/usr/local/bin/eavs"
+    [[ -x "$HOME/.cargo/bin/eavs" ]] && eavs_bin="$HOME/.cargo/bin/eavs"
+    [[ -x "$HOME/.local/bin/eavs" ]] && eavs_bin="$HOME/.local/bin/eavs"
+    command_exists eavs && eavs_bin="$(command -v eavs)"
+
     cat >"${service_dir}/eavs.service" <<EOF
 [Unit]
 Description=EAVS LLM Proxy
@@ -902,8 +908,9 @@ After=default.target
 
 [Service]
 Type=simple
+Environment=PATH=%h/.cargo/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 EnvironmentFile=-${eavs_config_dir}/env
-ExecStart=/usr/local/bin/eavs serve
+ExecStart=${eavs_bin} serve
 Restart=on-failure
 RestartSec=5
 

@@ -418,6 +418,12 @@ build_octo() {
     sudo systemctl restart oqto
     log_success "oqto restarted with new binary"
   elif systemctl --user is-active --quiet oqto 2>/dev/null; then
+    # Single-user mode: restart runner first, then backend
+    if systemctl --user is-active --quiet oqto-runner 2>/dev/null; then
+      systemctl --user restart oqto-runner
+      sleep 2
+      log_success "oqto-runner restarted with new binary"
+    fi
     systemctl --user restart oqto
     log_success "oqto restarted with new binary"
   fi

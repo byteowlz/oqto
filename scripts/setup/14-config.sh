@@ -202,6 +202,8 @@ fileserver_binary = "oqto-files"
 ttyd_binary = "ttyd"
 workspace_dir = "$WORKSPACE_DIR"
 single_user = $([[ "$SELECTED_USER_MODE" == "single" ]] && echo "true" || echo "false")
+cleanup_on_startup = true
+stop_sessions_on_shutdown = true
 ${runner_socket_line}
 
 [local.linux_users]
@@ -314,11 +316,33 @@ EOF
 
   # runner_socket_pattern is added inline in the [local] block above
 
+  # Runner config (used by oqto-runner daemon)
+  if [[ "$SELECTED_BACKEND_MODE" == "local" ]]; then
+    cat >>"$config_file" <<EOF
+
+[runner]
+pi_sessions_dir = "~/.pi/agent/sessions"
+memories_dir = "~/.local/share/mmry"
+EOF
+  fi
+
+  # hstry (chat history) config
+  cat >>"$config_file" <<EOF
+
+[hstry]
+enabled = true
+binary = "hstry"
+EOF
+
   cat >>"$config_file" <<EOF
 
 [sessions]
 auto_attach = "off"
 auto_attach_scan = true
+autoresume = true
+max_concurrent_sessions = 20
+idle_timeout_minutes = 30
+idle_check_interval_seconds = 300
 
 [scaffold]
 binary = "byt"
