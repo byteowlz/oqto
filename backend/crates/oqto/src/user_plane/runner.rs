@@ -40,6 +40,19 @@ impl RunnerUserPlane {
             username, pattern,
         )?))
     }
+
+    /// Create a runner user-plane using the default socket path.
+    ///
+    /// Verifies the socket exists before returning. Used in single-user mode
+    /// to opportunistically route through the runner when available.
+    pub fn new_default() -> Result<Self> {
+        let client = RunnerClient::default();
+        let path = client.socket_path();
+        if !path.exists() {
+            anyhow::bail!("runner socket not found at {:?}", path);
+        }
+        Ok(Self::new(client))
+    }
 }
 
 /// Create a runner user-plane using the default socket path.

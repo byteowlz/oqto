@@ -2237,7 +2237,17 @@ async fn handle_files_command(
                 error: "File access not configured for multi-user mode".to_string(),
             }));
         } else {
-            Arc::new(DirectUserPlane::new(&workspace_root))
+            // Single-user mode: try the default runner socket first, fall back to direct.
+            match RunnerUserPlane::new_default() {
+                Ok(plane) => Arc::new(plane),
+                Err(err) => {
+                    warn!(
+                        "Runner not available in single-user mode, falling back to direct: {:#}",
+                        err
+                    );
+                    Arc::new(DirectUserPlane::new(&workspace_root))
+                }
+            }
         };
 
     fn build_tree<'a>(
