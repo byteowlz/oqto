@@ -62,6 +62,14 @@ impl AuthState {
             config.jwt_secret = Some(resolved);
         }
 
+        // In dev mode, auto-generate a JWT secret if none is configured.
+        // This prevents "no JWT secret configured" errors at login time.
+        if config.dev_mode && config.jwt_secret.is_none() {
+            let generated = AuthConfig::generate_jwt_secret();
+            tracing::info!("Dev mode: auto-generated JWT secret (not persisted)");
+            config.jwt_secret = Some(generated);
+        }
+
         let decoding_key = config
             .jwt_secret
             .as_ref()
