@@ -241,16 +241,10 @@ EOF
 dev_mode = $OQTO_DEV_MODE
 EOF
 
-  # Add JWT secret for production mode (uncommented)
-  if [[ "$PRODUCTION_MODE" == "true" ]]; then
-    cat >>"$config_file" <<EOF
+  # Always include JWT secret — required for signing auth tokens
+  cat >>"$config_file" <<EOF
 jwt_secret = "$jwt_secret"
 EOF
-  else
-    cat >>"$config_file" <<EOF
-# jwt_secret = "$jwt_secret"
-EOF
-  fi
 
   # Add CORS origins if configured
   if [[ -n "$allowed_origins" ]]; then
