@@ -74,6 +74,25 @@ function getTreeCacheKey(
 	return `${workspaceKey}:${path}:${depth}`;
 }
 
+/**
+ * Clear all tree cache entries for a given workspace.
+ * Call this after any mutation operation to ensure fresh data on next fetch.
+ */
+function clearTreeCache(workspaceKey?: string): void {
+	if (workspaceKey) {
+		// Clear only cache entries for the specific workspace
+		const prefix = `${workspaceKey}:`;
+		for (const key of treeCache.keys()) {
+			if (key.startsWith(prefix)) {
+				treeCache.delete(key);
+			}
+		}
+	} else {
+		// Clear all cache
+		treeCache.clear();
+	}
+}
+
 function getCachedTree(
 	workspaceKey: string,
 	path: string,
@@ -591,6 +610,8 @@ export function FileTreeView({
 					currentPath === "." ? file.name : `${currentPath}/${file.name}`;
 				await uploadFileMux(normalizedWorkspacePath, destPath, file);
 			}
+			// Clear cache and refresh to show new files immediately
+			clearTreeCache(cacheKey);
 			await refreshTree();
 		} catch (err) {
 			setError(err instanceof Error ? err.message : "Upload failed");
@@ -629,6 +650,8 @@ export function FileTreeView({
 
 		try {
 			await deletePathMux(normalizedWorkspacePath, path, true);
+			// Clear cache and refresh to show changes immediately
+			clearTreeCache(cacheKey);
 			await refreshTree();
 			// Clear selection if deleted file was selected
 			if (selectedFiles.has(path)) {
@@ -649,6 +672,8 @@ export function FileTreeView({
 			for (const path of selectedFiles) {
 				await deletePathMux(normalizedWorkspacePath, path, true);
 			}
+			// Clear cache and refresh to show changes immediately
+			clearTreeCache(cacheKey);
 			await refreshTree();
 			updateState({ selectedFiles: new Set() });
 		} catch (err) {
@@ -665,6 +690,8 @@ export function FileTreeView({
 				if (!target || target === path) return;
 				try {
 					await copyPathMux(normalizedWorkspacePath, path, target, false);
+					// Clear cache and refresh to show changes immediately
+					clearTreeCache(cacheKey);
 					await refreshTree();
 				} catch (err) {
 					setError(err instanceof Error ? err.message : "Copy failed");
@@ -682,6 +709,8 @@ export function FileTreeView({
 				if (!target || target === path) return;
 				try {
 					await movePathMux(normalizedWorkspacePath, path, target, false);
+					// Clear cache and refresh to show changes immediately
+					clearTreeCache(cacheKey);
 					await refreshTree();
 				} catch (err) {
 					setError(err instanceof Error ? err.message : "Move failed");
@@ -705,6 +734,8 @@ export function FileTreeView({
 				const folderPath =
 					currentPath === "." ? name : `${currentPath}/${name}`;
 				await createDirectoryMux(normalizedWorkspacePath, folderPath, true);
+				// Clear cache and refresh to show new folder immediately
+				clearTreeCache(cacheKey);
 				await refreshTree();
 			} catch (err) {
 				setError(err instanceof Error ? err.message : "Create folder failed");
@@ -745,6 +776,8 @@ export function FileTreeView({
 				const newPath = pathParts.join("/");
 
 				await renamePathMux(normalizedWorkspacePath, renamingPath, newPath);
+				// Clear cache and refresh to show renamed file immediately
+				clearTreeCache(cacheKey);
 				await refreshTree();
 			} catch (err) {
 				setError(err instanceof Error ? err.message : "Rename failed");

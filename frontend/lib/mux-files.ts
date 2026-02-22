@@ -27,6 +27,26 @@ function getCachedTree(key: string): FileTreeNode[] | null {
 	return entry.entries;
 }
 
+/**
+ * Clear all tree cache entries for a given workspace.
+ * Call this after any mutation operation (write, delete, rename, etc.) to ensure
+ * the next tree fetch returns fresh data.
+ */
+export function clearTreeCache(workspacePath?: string): void {
+	if (workspacePath) {
+		// Clear only cache entries for the specific workspace
+		const prefix = `${workspacePath}:`;
+		for (const key of treeCache.keys()) {
+			if (key.startsWith(prefix)) {
+				treeCache.delete(key);
+			}
+		}
+	} else {
+		// Clear all cache
+		treeCache.clear();
+	}
+}
+
 function arrayBufferToBase64(buffer: ArrayBuffer): string {
 	let binary = "";
 	const bytes = new Uint8Array(buffer);
@@ -130,6 +150,7 @@ export async function writeFileMux(
 	})) as FilesWsEvent;
 
 	if (response.type === "write_result") {
+		clearTreeCache(workspacePath);
 		return;
 	}
 	throw new Error("Failed to write file");
@@ -150,6 +171,7 @@ export async function deletePathMux(
 	})) as FilesWsEvent;
 
 	if (response.type === "delete_result") {
+		clearTreeCache(workspacePath);
 		return;
 	}
 	throw new Error("Failed to delete path");
@@ -188,6 +210,7 @@ export async function createDirectoryMux(
 	})) as FilesWsEvent;
 
 	if (response.type === "create_directory_result") {
+		clearTreeCache(workspacePath);
 		return;
 	}
 	throw new Error("Failed to create directory");
@@ -208,6 +231,7 @@ export async function renamePathMux(
 	})) as FilesWsEvent;
 
 	if (response.type === "rename_result") {
+		clearTreeCache(workspacePath);
 		return;
 	}
 	throw new Error("Failed to rename path");
@@ -230,6 +254,7 @@ export async function copyPathMux(
 	})) as FilesWsEvent;
 
 	if (response.type === "copy_result") {
+		clearTreeCache(workspacePath);
 		return;
 	}
 	throw new Error("Failed to copy path");
@@ -252,6 +277,7 @@ export async function movePathMux(
 	})) as FilesWsEvent;
 
 	if (response.type === "move_result") {
+		clearTreeCache(workspacePath);
 		return;
 	}
 	throw new Error("Failed to move path");
