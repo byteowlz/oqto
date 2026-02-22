@@ -1,0 +1,41 @@
+# hstry - Chat History Service (User Service)
+#
+# Per-user chat history daemon that provides gRPC API for reading/writing
+# chat history. Required by oqto-runner for session persistence.
+#
+# hstry uses `service run` for foreground operation (suitable for systemd)
+# vs `service start` which self-daemonizes (unsuitable for systemd).
+#
+# Installation (per-user):
+#   mkdir -p ~/.config/systemd/user
+#   cp hstry.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now hstry
+#
+# For multi-user deployments, enable lingering so the service starts at boot:
+#   sudo loginctl enable-linger <username>
+#
+# System-wide installation (all users get it automatically):
+#   sudo install -Dm644 hstry.service /usr/lib/systemd/user/hstry.service
+#   sudo systemctl daemon-reload
+
+[Unit]
+Description=hstry Chat History Service
+Documentation=https://github.com/byteowlz/hstry
+Before=oqto-runner.service
+
+[Service]
+Type=simple
+# Uses ExecSearchPath to find hstry binary in standard locations
+ExecSearchPath=/usr/local/bin
+ExecSearchPath=%h/.cargo/bin
+ExecSearchPath=%h/.local/bin
+ExecStart=hstry service run
+Restart=on-failure
+RestartSec=5
+Environment=RUST_LOG=info
+Environment=PATH=%h/.bun/bin:%h/.cargo/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=HOME=%h
+
+[Install]
+WantedBy=default.target

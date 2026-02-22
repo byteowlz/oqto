@@ -1,0 +1,42 @@
+# eavs - LLM Proxy Service (User Service)
+#
+# Per-user LLM proxy that provides multi-provider routing, virtual API keys,
+# OAuth credential management, and cost tracking. Pi connects to eavs for
+# all LLM API requests.
+#
+# eavs uses `serve` for foreground operation (suitable for systemd)
+# vs `service start` which self-daemonizes (unsuitable for systemd).
+#
+# Installation (per-user):
+#   mkdir -p ~/.config/systemd/user
+#   cp eavs.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now eavs
+#
+# For multi-user deployments, enable lingering so the service starts at boot:
+#   sudo loginctl enable-linger <username>
+#
+# System-wide installation (all users get it automatically):
+#   sudo install -Dm644 eavs.service /usr/lib/systemd/user/eavs.service
+#   sudo systemctl daemon-reload
+
+[Unit]
+Description=eavs LLM Proxy Service
+Documentation=https://github.com/byteowlz/eavs
+Before=oqto-runner.service oqto.service
+
+[Service]
+Type=simple
+# Uses PATH to find eavs binary: /usr/local/bin/ (install-system) or ~/.cargo/bin/ (dev)
+ExecSearchPath=/usr/local/bin
+ExecSearchPath=%h/.cargo/bin
+ExecSearchPath=%h/.local/bin
+ExecStart=eavs serve
+Restart=on-failure
+RestartSec=5
+Environment=RUST_LOG=info
+Environment=PATH=%h/.cargo/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=HOME=%h
+
+[Install]
+WantedBy=default.target

@@ -21,7 +21,8 @@
 [Unit]
 Description=Oqto Runner - Process runner for multi-user isolation
 Documentation=https://github.com/byteowlz/oqto
-After=default.target
+After=hstry.service mmry.service eavs.service
+Wants=hstry.service mmry.service eavs.service
 
 [Service]
 Type=simple

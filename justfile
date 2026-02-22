@@ -162,6 +162,8 @@ install-system:
     sudo usermod -a -G oqto "$(id -un)" || true
 
     sudo install -Dm644 deploy/systemd/oqto-runner.service /usr/lib/systemd/user/oqto-runner.service
+    sudo install -Dm644 deploy/systemd/hstry.service /usr/lib/systemd/user/hstry.service
+    sudo install -Dm644 deploy/systemd/eavs.service /usr/lib/systemd/user/eavs.service
     sudo install -Dm644 deploy/systemd/oqto-runner.tmpfiles.conf /usr/lib/tmpfiles.d/oqto-runner.conf
     sudo systemd-tmpfiles --create /usr/lib/tmpfiles.d/oqto-runner.conf || true
     sudo systemctl daemon-reload || true
@@ -173,7 +175,7 @@ install-system:
     #
     # Prefer copying from ~/.cargo/bin (freshly updated by `just install`) so updates
     # are not blocked by PATH precedence.
-    for bin in trx mmry mmry-service agntz hstry skdlr oqto oqto-runner oqto-files sldr sldr-server; do
+    for bin in trx mmry mmry-service agntz hstry skdlr oqto oqto-runner oqto-files sldr sldr-server eavs; do
       src="$HOME/.cargo/bin/$bin"
       if [[ ! -x "$src" ]]; then
         src="$(command -v "$bin" || true)"
