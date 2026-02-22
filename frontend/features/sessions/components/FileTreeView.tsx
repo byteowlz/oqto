@@ -369,7 +369,7 @@ export function FileTreeView({
 	const cacheKey = normalizedWorkspacePath ?? null;
 
 	const loadTree = useCallback(
-		async (path: string, preserveState = false, skipCache = false) => {
+		async (path: string, preserveState = false, skipCache = false, silent = false) => {
 			if (!normalizedWorkspacePath || !cacheKey) return;
 			const requestKey = getTreeCacheKey(cacheKey, path, INITIAL_DEPTH);
 			const now = Date.now();
@@ -395,8 +395,10 @@ export function FileTreeView({
 				}
 			}
 
-			setLoading(true);
-			setError("");
+			if (!silent) {
+				setLoading(true);
+				setError("");
+			}
 			try {
 				const data = await fetchFileTree(
 					normalizedWorkspacePath,
@@ -409,12 +411,15 @@ export function FileTreeView({
 				if (!preserveState) {
 					updateState({ currentPath: path });
 				}
+				if (!silent) setError("");
 			} catch (err) {
-				setError(
-					err instanceof Error ? err.message : "Unable to load file tree",
-				);
+				if (!silent) {
+					setError(
+						err instanceof Error ? err.message : "Unable to load file tree",
+					);
+				}
 			} finally {
-				setLoading(false);
+				if (!silent) setLoading(false);
 			}
 		},
 		[normalizedWorkspacePath, updateState, cacheKey],
@@ -468,6 +473,21 @@ export function FileTreeView({
 		if (!normalizedWorkspacePath) return;
 		loadTreeRef.current(currentPath, true);
 	}, [currentPath, normalizedWorkspacePath]);
+
+	// Auto-refresh the file tree periodically so new files created by agents
+	// appear without manual interaction. Uses a 5s interval, skips if the
+	// tab is hidden or a load is already in progress.
+	useEffect(() => {
+		if (!normalizedWorkspacePath) return;
+		const interval = setInterval(() => {
+			if (document.hidden) return;
+			// preserveState=true: keep expanded dirs
+			// skipCache=true: force fresh data from backend
+			// silent=true: no loading spinner or error flash
+			loadTreeRef.current(currentPath, true, true, true);
+		}, 5000);
+		return () => clearInterval(interval);
+	}, [normalizedWorkspacePath, currentPath]);
 
 	/** Find a node in the tree by path. */
 	const findNode = useCallback(
