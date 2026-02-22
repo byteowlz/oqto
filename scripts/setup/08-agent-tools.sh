@@ -157,6 +157,48 @@ install_binary_global() {
   log_success "$tool installed to ${TOOLS_INSTALL_DIR}/${tool}"
 }
 
+# Install hstry adapters system-wide so all platform users can sync history.
+# Adapters are TypeScript files that parse various chat formats (pi, claude, etc.)
+# Installed to /usr/local/share/hstry/adapters/ which is referenced in per-user configs.
+install_hstry_adapters() {
+  local adapters_dest="/usr/local/share/hstry/adapters"
+
+  # If adapters already exist with the pi adapter, skip
+  if [[ -d "$adapters_dest" && -f "$adapters_dest/pi/adapter.ts" ]]; then
+    log_info "hstry adapters already installed"
+    return 0
+  fi
+
+  local version
+  version=$(get_dep_version hstry)
+  local tag="v${version:-main}"
+
+  log_info "Installing hstry adapters..."
+  local tmpdir
+  tmpdir=$(mktemp -d)
+
+  if curl -fsSL "https://github.com/byteowlz/hstry/archive/refs/tags/${tag}.tar.gz" |
+    tar xz -C "$tmpdir" --strip-components=1 "*/adapters" 2>/dev/null; then
+    sudo mkdir -p "$adapters_dest"
+    sudo cp -r "$tmpdir/adapters/"* "$adapters_dest/"
+    sudo chmod -R a+rX "$adapters_dest"
+    log_success "hstry adapters installed to $adapters_dest"
+  else
+    # Try main branch as fallback
+    if curl -fsSL "https://github.com/byteowlz/hstry/archive/refs/heads/main.tar.gz" |
+      tar xz -C "$tmpdir" --strip-components=1 "*/adapters" 2>/dev/null; then
+      sudo mkdir -p "$adapters_dest"
+      sudo cp -r "$tmpdir/adapters/"* "$adapters_dest/"
+      sudo chmod -R a+rX "$adapters_dest"
+      log_success "hstry adapters installed from main branch"
+    else
+      log_warn "Could not fetch hstry adapters. 'hstry sync' for pi sessions will not work."
+    fi
+  fi
+
+  rm -rf "$tmpdir"
+}
+
 # Install a Rust tool from crates.io, GitHub, or local source.
 # Installs to /usr/local/bin so all users can access it.
 install_rust_tool() {
@@ -432,6 +474,7 @@ install_all_agent_tools() {
   # Multi-binary repos need the 3rd arg (package hint) for cargo fallback
   download_or_build_tool hstry hstry hstry-cli
   download_or_build_tool hstry-tui hstry hstry-tui
+  install_hstry_adapters
   download_or_build_tool agntz
   download_or_build_tool mmry mmry mmry-cli
   download_or_build_tool mmry-service mmry mmry-service

@@ -698,15 +698,60 @@ WantedBy=default.target
             }
         }
     } else {
-        // Write minimal config with service enabled
+        // Write config with service enabled, system-wide adapters, and pi source
+        let pi_sessions_path = format!("{home}/.pi/agent/sessions");
         let hstry_config = format!(
             "database = \"{hstry_db_path}\"\n\
+             adapter_paths = [\"/usr/local/share/hstry/adapters\"]\n\
              \n\
              [service]\n\
              enabled = true\n\
-             transport = \"tcp\"\n"
+             transport = \"tcp\"\n\
+             \n\
+             [[sources]]\n\
+             id = \"pi\"\n\
+             adapter = \"pi\"\n\
+             path = \"{pi_sessions_path}\"\n\
+             auto_sync = true\n"
         );
         let _ = std::fs::write(&hstry_config_path, hstry_config);
+    }
+
+    // Ensure existing hstry configs have the system-wide adapter path and pi source.
+    // This patches configs from older setups that are missing them.
+    if let Ok(content) = std::fs::read_to_string(&hstry_config_path) {
+        let mut patched = content.clone();
+        let needs_write;
+
+        // Add adapter_paths if missing
+        if !patched.contains("adapter_paths") {
+            // Insert after the database line
+            patched = patched.replace(
+                &format!("database = \"{hstry_db_path}\""),
+                &format!(
+                    "database = \"{hstry_db_path}\"\n\
+                     adapter_paths = [\"/usr/local/share/hstry/adapters\"]"
+                ),
+            );
+        }
+
+        // Add pi source if missing
+        if !patched.contains("adapter = \"pi\"") {
+            let pi_sessions_path = format!("{home}/.pi/agent/sessions");
+            patched.push_str(&format!(
+                "\n\
+                 [[sources]]\n\
+                 id = \"pi\"\n\
+                 adapter = \"pi\"\n\
+                 path = \"{pi_sessions_path}\"\n\
+                 auto_sync = true\n"
+            ));
+        }
+
+        needs_write = patched != content;
+        if needs_write {
+            let _ = std::fs::write(&hstry_config_path, patched);
+        }
     }
 
     // 2c. Ensure mmry config exists with remote embeddings.
@@ -719,6 +764,9 @@ WantedBy=default.target
     let mmry_config_path = format!("{mmry_config_dir}/config.toml");
     let mmry_data_dir = format!("{home}/.local/share/mmry");
     let _ = std::fs::create_dir_all(format!("{mmry_data_dir}/stores"));
+    // mmry-service writes PID/port files to the state dir
+    let mmry_state_dir = format!("{home}/.local/state/mmry");
+    let _ = std::fs::create_dir_all(&mmry_state_dir);
     let mmry_api_port = 48000 + (uid - 2000);
     if !std::path::Path::new(&mmry_config_path).exists() {
         let mmry_config = format!(
@@ -765,13 +813,17 @@ WantedBy=default.target
         );
         let _ = std::fs::write(&mmry_config_path, mmry_config);
     }
-    // Chown mmry data dir
+    // Chown mmry data and state dirs
     let _ = run_cmd(
         "/usr/bin/chown",
         &["-R", &format!("{username}:{group}"), &mmry_data_dir],
     );
+    let _ = run_cmd(
+        "/usr/bin/chown",
+        &["-R", &format!("{username}:{group}"), &mmry_state_dir],
+    );
 
-    // 3. Set ownership of .config tree
+    // 3. Set ownership of .config and .local trees
     let config_dir = format!("{home}/.config");
     if let Err(e) = run_cmd(
         "/usr/bin/chown",
@@ -779,11 +831,10 @@ WantedBy=default.target
     ) {
         return Response::error(format!("chown {config_dir}: {e}"));
     }
-    // Also chown the data dir (hstry db)
-    let data_dir = format!("{home}/.local/share/hstry");
+    let local_dir = format!("{home}/.local");
     let _ = run_cmd(
         "/usr/bin/chown",
-        &["-R", &format!("{username}:{group}"), &data_dir],
+        &["-R", &format!("{username}:{group}"), &local_dir],
     );
 
     // 4. Create per-user socket directory
@@ -967,8 +1018,27 @@ WantedBy=default.target
                         // Give it a moment
                         std::thread::sleep(std::time::Duration::from_secs(1));
                         if let Err(e3) = run_user_systemctl(&["is-active", &svc_unit]) {
+                            // Capture journal logs for diagnostics
+                            let logs = run_user_systemctl(&[
+                                "status", &svc_unit, "--no-pager", "-l",
+                            ])
+                            .unwrap_or_default();
+                            let journal = Command::new("/sbin/runuser")
+                                .args(["-u", username, "--"])
+                                .arg("env")
+                                .arg(format!("XDG_RUNTIME_DIR={runtime_dir}"))
+                                .arg(format!("DBUS_SESSION_BUS_ADDRESS={bus}"))
+                                .arg("journalctl")
+                                .args(["--user", "-u", &svc_unit, "-n", "20", "--no-pager"])
+                                .output()
+                                .ok()
+                                .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+                                .unwrap_or_default();
+                            eprintln!(
+                                "oqto-usermgr: {svc} status for {username}:\n{logs}\n--- journal ---\n{journal}"
+                            );
                             return Response::error(format!(
-                                "{svc} failed to start for {username}: {e3}"
+                                "{svc} failed to start for {username}: {e3}\n--- status ---\n{logs}\n--- journal ---\n{journal}"
                             ));
                         }
                         eprintln!("oqto-usermgr: {svc} recovered for {username}");

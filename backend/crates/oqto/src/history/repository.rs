@@ -25,6 +25,11 @@ pub fn default_legacy_data_dir() -> PathBuf {
 }
 
 /// Default hstry database path, if it exists.
+///
+/// Resolution order:
+/// 1. `OQTO_HSTRY_DB` env var (explicit override)
+/// 2. `database` field from hstry config file (`~/.config/hstry/config.toml`)
+/// 3. Default path: `~/.local/share/hstry/hstry.db`
 pub fn hstry_db_path() -> Option<PathBuf> {
     if let Ok(path) = std::env::var("OQTO_HSTRY_DB") {
         let path = PathBuf::from(path);
@@ -32,6 +37,14 @@ pub fn hstry_db_path() -> Option<PathBuf> {
             return Some(path);
         }
     }
+
+    // Try reading the database path from hstry config
+    if let Some(path) = hstry_db_path_from_config() {
+        if path.exists() {
+            return Some(path);
+        }
+    }
+
     let default = dirs::data_local_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("hstry")
@@ -41,6 +54,20 @@ pub fn hstry_db_path() -> Option<PathBuf> {
     } else {
         None
     }
+}
+
+/// Read the database path from the hstry config file.
+fn hstry_db_path_from_config() -> Option<PathBuf> {
+    let config_dir = std::env::var("XDG_CONFIG_HOME")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| dirs::home_dir().map(|h| h.join(".config")))?;
+    let config_path = config_dir.join("hstry").join("config.toml");
+    let content = std::fs::read_to_string(&config_path).ok()?;
+    let parsed: toml::Value = content.parse().ok()?;
+    let db_str = parsed.get("database")?.as_str()?;
+    Some(PathBuf::from(db_str))
 }
 
 /// Extract project name from workspace path.

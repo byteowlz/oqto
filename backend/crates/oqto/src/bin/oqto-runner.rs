@@ -3586,7 +3586,14 @@ async fn main() -> Result<()> {
         default_cwd: user_config.workspace_dir.clone(),
         idle_timeout_secs: 300, // 5 minutes
         cleanup_interval_secs: 60,
-        hstry_db_path: oqto::history::hstry_db_path(),
+        hstry_db_path: {
+            let db_path = oqto::history::hstry_db_path();
+            match &db_path {
+                Some(p) => info!("hstry DB found: {}", p.display()),
+                None => warn!("hstry DB not found -- chat history persistence disabled"),
+            }
+            db_path
+        },
         sandbox_config: sandbox_config.clone(),
         runner_id: user_config.runner_id.clone(),
         model_cache_dir: Some(state_dir.join("oqto").join("model-cache")),

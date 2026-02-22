@@ -16,6 +16,41 @@ check_prerequisites() {
     missing+=("curl")
   fi
 
+  # Build essentials — cc/gcc linker is required by Rust and many native deps
+  if ! command_exists cc && ! command_exists gcc; then
+    log_info "Installing build tools (C compiler required by Rust linker)..."
+    case "$OS_DISTRO" in
+    arch | manjaro | endeavouros) sudo pacman -S --noconfirm base-devel ;;
+    debian | ubuntu | pop | linuxmint) apt_update_once; sudo apt-get install -y build-essential ;;
+    fedora | centos | rhel | rocky | alma*) sudo dnf groupinstall -y "Development Tools" ;;
+    opensuse*) sudo zypper install -y -t pattern devel_basis ;;
+    *) log_warn "Please install a C compiler (gcc/cc) manually" ;;
+    esac
+    # Verify installation succeeded
+    if ! command_exists cc && ! command_exists gcc; then
+      log_error "Failed to install C compiler. Rust crate compilation will fail."
+      missing+=("cc (C compiler)")
+    fi
+  fi
+
+  # Ensure cc exists — some distros only install gcc without a cc symlink
+  if command_exists gcc && ! command_exists cc; then
+    sudo ln -sf "$(command -v gcc)" /usr/local/bin/cc
+    log_info "Created cc -> gcc symlink"
+  fi
+
+  # unzip is required by the Bun installer — install before Bun check
+  if ! command_exists unzip; then
+    log_info "Installing unzip (required by Bun installer)..."
+    case "$OS_DISTRO" in
+    arch | manjaro | endeavouros) sudo pacman -S --noconfirm unzip ;;
+    debian | ubuntu | pop | linuxmint) apt_update_once; sudo apt-get install -y unzip ;;
+    fedora | centos | rhel | rocky | alma*) sudo dnf install -y unzip ;;
+    opensuse*) sudo zypper install -y unzip ;;
+    *) log_warn "Please install unzip manually" ;;
+    esac
+  fi
+
   # Rust toolchain
   if ! command_exists cargo; then
     log_warn "Rust toolchain not found"

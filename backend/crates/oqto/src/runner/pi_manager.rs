@@ -404,9 +404,11 @@ impl PiSessionManager {
     pub fn new(config: PiManagerConfig) -> Arc<Self> {
         let (shutdown_tx, _) = broadcast::channel(1);
 
-        // Create hstry client if not explicitly disabled via hstry_db_path=None.
-        // The actual gRPC connection is established lazily on first use.
-        let hstry_client = config.hstry_db_path.as_ref().map(|_| HstryClient::new());
+        // Always create the hstry gRPC client. The connection is established lazily.
+        // Previously this was gated on hstry_db_path existing, but the DB file may not
+        // exist yet at runner startup (race with hstry service). The gRPC client streams
+        // data to the hstry service which creates the DB independently.
+        let hstry_client = Some(HstryClient::new());
 
         // Load persisted model cache from disk
         let model_cache = Self::load_model_cache_from_disk(config.model_cache_dir.as_deref());
