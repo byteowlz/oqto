@@ -250,6 +250,33 @@ install_system_prerequisites() {
 
   if command_exists bwrap; then
     log_success "bubblewrap (bwrap) installed"
+    # Ubuntu 24.04+ restricts unprivileged user namespaces via AppArmor.
+    # bwrap needs user namespaces to create sandboxes, so we must create
+    # an AppArmor profile that grants the userns permission.
+    if [[ -f /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]]; then
+      local restrict
+      restrict=$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null || echo "0")
+      if [[ "$restrict" == "1" ]]; then
+        if [[ ! -f /etc/apparmor.d/bwrap ]]; then
+          log_info "AppArmor restricts unprivileged user namespaces -- creating bwrap profile..."
+          sudo tee /etc/apparmor.d/bwrap >/dev/null <<'APPARMOR'
+abi <abi/4.0>,
+include <tunables/global>
+
+profile bwrap /usr/bin/bwrap flags=(unconfined) {
+  userns,
+
+  # Site-specific additions and overrides.
+  include if exists <local/bwrap>
+}
+APPARMOR
+          sudo apparmor_parser -r /etc/apparmor.d/bwrap
+          log_success "AppArmor bwrap profile installed"
+        else
+          log_success "AppArmor bwrap profile already exists"
+        fi
+      fi
+    fi
   else
     log_warn "bubblewrap (bwrap) not installed. Pi sandboxing will be disabled."
   fi

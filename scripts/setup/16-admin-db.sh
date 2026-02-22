@@ -2,12 +2,56 @@
 # Admin User Database Setup
 # ==============================================================================
 
+# Deactivate well-known dev-mode users (dev/dev, admin/admin@localhost) that
+# may exist from a previous development setup. In production these are a
+# security risk because their passwords are trivially guessable.
+_deactivate_dev_users() {
+  local db_path=""
+  if [[ "${SELECTED_USER_MODE:-}" == "multi" ]]; then
+    db_path="/home/oqto/.local/share/oqto/oqto.db"
+  else
+    local data_dir="${XDG_DATA_HOME:-$HOME/.local/share}"
+    db_path="${data_dir}/oqto/oqto.db"
+  fi
+
+  [[ -f "$db_path" ]] || return 0
+  command_exists sqlite3 || return 0
+
+  local run_prefix=()
+  if [[ "${SELECTED_USER_MODE:-}" == "multi" ]]; then
+    run_prefix=(sudo)
+  fi
+
+  # Deactivate known dev users and clear their password hashes
+  local dev_count
+  dev_count=$("${run_prefix[@]}" sqlite3 "$db_path" \
+    "SELECT COUNT(*) FROM users WHERE is_active = 1 AND (
+       (username = 'dev' AND email = 'dev@localhost')
+       OR (username = 'admin' AND email = 'admin@localhost')
+     )" 2>/dev/null || echo "0")
+
+  if [[ "$dev_count" -gt 0 ]]; then
+    log_info "Deactivating $dev_count dev-mode user(s) from previous setup..."
+    "${run_prefix[@]}" sqlite3 "$db_path" "
+      UPDATE users SET is_active = 0, password_hash = NULL
+      WHERE (username = 'dev' AND email = 'dev@localhost')
+         OR (username = 'admin' AND email = 'admin@localhost');
+    " 2>/dev/null
+    log_success "Dev-mode users deactivated (security hardening)"
+  fi
+}
+
 create_admin_user_db() {
   if [[ "$PRODUCTION_MODE" != "true" ]]; then
     return 0
   fi
 
-  log_step "Creating admin user"
+  log_step "Creating admin user (production mode)"
+
+  # Deactivate any dev-mode users that may exist from a previous dev setup.
+  # In production, only explicitly created users with secure credentials
+  # should be active. The default dev/admin users use well-known passwords.
+  _deactivate_dev_users
 
   local admin_user="${ADMIN_USERNAME:-}"
   local admin_email="${ADMIN_EMAIL:-}"
