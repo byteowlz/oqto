@@ -924,13 +924,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 								}
 							}, 100);
 
-							// Delayed hstry sync: the runner persists messages to hstry
-							// asynchronously after AgentEnd. Fetch after a short delay
-							// to ensure the full history is available for session restore
-							// and switching. This is a merge, not a replace.
-							setTimeout(() => {
-								void fetchHistoryMessages(sessionId);
-							}, 3000);
+
 						}
 					}
 					break;

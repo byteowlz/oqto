@@ -2,76 +2,34 @@
   "todos": [
     {
       "id": "1",
-      "content": "Stop all existing oqto/hstry/mmry/eavs processes",
+      "content": "Fix message loss on WS reconnect and after agent turns",
       "status": "completed",
       "priority": "high"
     },
     {
       "id": "2",
-      "content": "Clean up old config, DB, state",
+      "content": "Persist to hstry BEFORE broadcasting agent.idle (backend)",
       "status": "completed",
       "priority": "high"
     },
     {
       "id": "3",
-      "content": "Build fresh binaries (remote-build)",
+      "content": "Merge instead of replace on WS resync (frontend)",
       "status": "completed",
       "priority": "high"
     },
     {
       "id": "4",
-      "content": "Write clean single-user config.toml",
-      "status": "completed",
-      "priority": "high"
-    },
-    {
-      "id": "5",
-      "content": "Set up hstry for wismut user",
-      "status": "completed",
-      "priority": "high"
-    },
-    {
-      "id": "6",
-      "content": "Set up mmry for wismut user",
-      "status": "completed",
-      "priority": "high"
-    },
-    {
-      "id": "7",
-      "content": "Set up eavs with providers",
-      "status": "completed",
-      "priority": "high"
-    },
-    {
-      "id": "8",
-      "content": "Generate models.json for Pi",
-      "status": "completed",
-      "priority": "high"
-    },
-    {
-      "id": "9",
-      "content": "Install Pi extensions",
+      "content": "Delayed hstry fetch after agent.idle (frontend)",
       "status": "completed",
       "priority": "medium"
     },
     {
-      "id": "10",
-      "content": "Start oqto in single-user mode",
-      "status": "completed",
-      "priority": "high"
-    },
-    {
-      "id": "11",
-      "content": "Build frontend and serve",
-      "status": "completed",
-      "priority": "high"
-    },
-    {
-      "id": "12",
-      "content": "End-to-end test: login, chat, files, terminal",
+      "id": "5",
+      "content": "Deploy to archlinux VM and octo-azure",
       "status": "completed",
       "priority": "high"
     }
   ],
-  "updated_at": "2026-02-21T22:20:56.355Z"
+  "updated_at": "2026-02-22T08:13:41.520Z"
 }
