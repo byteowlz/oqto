@@ -3421,6 +3421,48 @@ impl PiSessionManager {
         // Convert messages to proto format.
         // Use AppendMessages if the conversation likely exists (most common case),
         // falling back to WriteConversation if not found.
+        // Guard against compaction: if Pi's message count is fewer than what's
+        // already in hstry, a context compaction happened. Don't overwrite the
+        // complete history with the truncated context window — only update
+        // metadata/stats.
+        let existing_max_idx = fetch_last_hstry_idx(client, hstry_external_id).await;
+        let skip_messages = if let Some(max_idx) = existing_max_idx {
+            let existing_count = (max_idx + 1) as usize;
+            if messages.len() < existing_count {
+                info!(
+                    "Skipping hstry message persist: Pi has {} messages but hstry already has {} \
+                     (context compaction detected). Updating metadata only.",
+                    messages.len(),
+                    existing_count,
+                );
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
+        if skip_messages {
+            // Only update metadata (stats, title, etc.), don't touch messages
+            if stats_delta.is_some() || readable_id.is_some() || title.is_some() {
+                let _ = client
+                    .update_conversation(
+                        hstry_external_id,
+                        title,
+                        Some(work_dir.to_string_lossy().to_string()),
+                        None,
+                        None,
+                        Some(metadata_json),
+                        readable_id,
+                        Some("pi".to_string()),
+                        Some(oqto_session_id.to_string()),
+                    )
+                    .await;
+            }
+            return Ok(());
+        }
+
         let last_user_idx = messages
             .iter()
             .rposition(|msg| matches!(msg.role.as_str(), "user" | "human"));
