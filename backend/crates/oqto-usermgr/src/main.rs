@@ -68,6 +68,14 @@ impl Response {
         }
     }
 
+    fn success_with_data(data: serde_json::Value) -> Self {
+        Self {
+            ok: true,
+            error: None,
+            data: Some(data),
+        }
+    }
+
     fn error(msg: impl Into<String>) -> Self {
         Self {
             ok: false,
@@ -192,6 +200,7 @@ fn dispatch(req: &Request) -> Response {
         "restart-service" => cmd_restart_service(&req.args),
         "run-as-user" => cmd_run_as_user(&req.args),
         "fix-socket-dir" => cmd_fix_socket_dir(&req.args),
+        "verify-socket-dirs" => cmd_verify_socket_dirs(&req.args),
         "ping" => Response::success(),
         other => Response::error(format!("unknown command: {other}")),
     }
@@ -1300,6 +1309,12 @@ fn cmd_fix_socket_dir(args: &serde_json::Value) -> Response {
         return Response::error(format!("invalid username: {e}"));
     }
 
+    // Always fix the parent dir chain first — this is the #1 cause of runner failures.
+    // Without correct parent ownership, runners can't even traverse to their subdirectory.
+    if let Err(e) = fix_socket_base_dirs() {
+        return Response::error(format!("fixing base dirs: {e}"));
+    }
+
     let socket_dir = format!("/run/oqto/runner-sockets/{username}");
     let group = "oqto";
 
@@ -1330,6 +1345,124 @@ fn cmd_fix_socket_dir(args: &serde_json::Value) -> Response {
     }
 
     Response::success()
+}
+
+/// Verify and fix all runner socket directories.
+/// Called by oqto backend on startup to prevent the recurring ownership regression.
+fn cmd_verify_socket_dirs(_args: &serde_json::Value) -> Response {
+    // 1. Fix base directory chain
+    if let Err(e) = fix_socket_base_dirs() {
+        return Response::error(format!("fixing base dirs: {e}"));
+    }
+
+    let base = "/run/oqto/runner-sockets";
+    let group = "oqto";
+    let mut fixed = Vec::new();
+
+    // 2. Fix all per-user subdirectories
+    let entries = match std::fs::read_dir(base) {
+        Ok(e) => e,
+        Err(e) => return Response::error(format!("reading {base}: {e}")),
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let dirname = match path.file_name().and_then(|n| n.to_str()) {
+            Some(n) if n.starts_with("oqto_") => n.to_string(),
+            _ => continue,
+        };
+
+        // Check ownership
+        let meta = match std::fs::metadata(&path) {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+
+        use std::os::unix::fs::MetadataExt;
+        let current_uid = meta.uid();
+        let current_gid = meta.gid();
+
+        // Look up expected UID
+        let expected_uid = unsafe {
+            let cname = std::ffi::CString::new(dirname.as_bytes()).unwrap();
+            let pw = libc::getpwnam(cname.as_ptr());
+            if pw.is_null() {
+                continue; // user doesn't exist, skip
+            }
+            (*pw).pw_uid
+        };
+
+        let oqto_gid = unsafe {
+            let cname = std::ffi::CString::new("oqto").unwrap();
+            let gr = libc::getgrnam(cname.as_ptr());
+            if gr.is_null() {
+                0 // fallback, shouldn't happen
+            } else {
+                (*gr).gr_gid
+            }
+        };
+
+        if current_uid != expected_uid || current_gid != oqto_gid {
+            let path_str = path.to_string_lossy();
+            let _ = run_cmd(
+                "/usr/bin/chown",
+                &[&format!("{dirname}:{group}"), &path_str],
+            );
+            let _ = run_cmd("/usr/bin/chmod", &["2770", &path_str]);
+            fixed.push(dirname.clone());
+
+            // Also fix socket files inside
+            if let Ok(subentries) = std::fs::read_dir(&path) {
+                for subentry in subentries.flatten() {
+                    let spath = subentry.path();
+                    let spath_str = spath.to_string_lossy();
+                    let _ = run_cmd(
+                        "/usr/bin/chown",
+                        &[&format!("{dirname}:{group}"), &spath_str],
+                    );
+                }
+            }
+        }
+    }
+
+    if fixed.is_empty() {
+        Response::success()
+    } else {
+        eprintln!(
+            "oqto-usermgr: fixed socket dir ownership for {} user(s): {}",
+            fixed.len(),
+            fixed.join(", ")
+        );
+        Response::success_with_data(serde_json::json!({
+            "fixed": fixed,
+            "count": fixed.len(),
+        }))
+    }
+}
+
+/// Ensure /run/oqto/ and /run/oqto/runner-sockets/ have correct ownership.
+/// This is the single most common cause of runner failures after reboots.
+fn fix_socket_base_dirs() -> Result<(), String> {
+    // /run/oqto/
+    let run_oqto = "/run/oqto";
+    let _ = run_cmd("/bin/mkdir", &["-p", run_oqto]);
+    run_cmd("/usr/bin/chown", &["root:oqto", run_oqto])
+        .map_err(|e| format!("chown {run_oqto}: {e}"))?;
+    run_cmd("/usr/bin/chmod", &["0775", run_oqto])
+        .map_err(|e| format!("chmod {run_oqto}: {e}"))?;
+
+    // /run/oqto/runner-sockets/
+    let sockets_base = "/run/oqto/runner-sockets";
+    let _ = run_cmd("/bin/mkdir", &["-p", sockets_base]);
+    run_cmd("/usr/bin/chown", &["root:oqto", sockets_base])
+        .map_err(|e| format!("chown {sockets_base}: {e}"))?;
+    run_cmd("/usr/bin/chmod", &["2770", sockets_base])
+        .map_err(|e| format!("chmod {sockets_base}: {e}"))?;
+
+    Ok(())
 }
 
 fn cmd_run_as_user(args: &serde_json::Value) -> Response {

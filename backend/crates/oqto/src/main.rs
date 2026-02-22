@@ -2235,6 +2235,38 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     // Initialize hstry (chat history) service
     let multi_user = ctx.config.local.linux_users.enabled && !ctx.config.local.single_user;
     if multi_user {
+        // Verify runner socket directory ownership on startup.
+        // This prevents the recurring issue where /run/oqto/runner-sockets/ reverts
+        // to root:root after reboots, making ALL runner connections fail.
+        match local::linux_users::usermgr_request_with_data(
+            "verify-socket-dirs",
+            serde_json::json!({}),
+        ) {
+            Ok(data) => {
+                if let Some(count) = data
+                    .as_ref()
+                    .and_then(|d| d.get("count"))
+                    .and_then(serde_json::Value::as_u64)
+                {
+                    if count > 0 {
+                        warn!(
+                            "Fixed runner socket ownership for {} user(s) on startup",
+                            count
+                        );
+                    } else {
+                        info!("Runner socket directories OK");
+                    }
+                } else {
+                    info!("Runner socket directories verified");
+                }
+            }
+            Err(e) => {
+                warn!(
+                    "Failed to verify runner socket dirs via usermgr (non-fatal): {e:#}"
+                );
+            }
+        }
+
         info!("Skipping shared hstry client in multi-user mode (per-user hstry via runner)");
     } else if ctx.config.hstry.enabled {
         // Always auto-start hstry daemon and connect.

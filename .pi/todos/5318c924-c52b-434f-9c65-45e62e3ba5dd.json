@@ -1,47 +1,77 @@
 {
   "todos": [
     {
-      "id": "mmry-port-fix",
-      "content": "Fix mmry config port mismatch with DB-allocated port",
+      "id": "1",
+      "content": "Stop all existing oqto/hstry/mmry/eavs processes",
       "status": "completed",
       "priority": "high"
     },
     {
-      "id": "mmry-restart",
-      "content": "Kill conflicting mmry instances, sync all configs to DB ports",
+      "id": "2",
+      "content": "Clean up old config, DB, state",
       "status": "completed",
       "priority": "high"
     },
     {
-      "id": "runner-socket-perms",
-      "content": "Fix runner-sockets dir ownership (root:oqto not root:root)",
+      "id": "3",
+      "content": "Build fresh binaries (remote-build)",
       "status": "completed",
       "priority": "high"
     },
     {
-      "id": "deploy-backend",
-      "content": "Build & deploy updated oqto + oqto-usermgr to octo-azure",
+      "id": "4",
+      "content": "Write clean single-user config.toml",
       "status": "completed",
       "priority": "high"
     },
     {
-      "id": "test-streaming",
-      "content": "Verify streaming works for non-wismut users (horst, wurstfabrik)",
+      "id": "5",
+      "content": "Set up hstry for wismut user",
       "status": "completed",
       "priority": "high"
     },
     {
-      "id": "test-memories",
-      "content": "Verify memories panel works (no more 503)",
+      "id": "6",
+      "content": "Set up mmry for wismut user",
       "status": "completed",
       "priority": "high"
     },
     {
-      "id": "commit-push",
-      "content": "Commit and push mmry port fix",
+      "id": "7",
+      "content": "Set up eavs with providers",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "8",
+      "content": "Generate models.json for Pi",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "9",
+      "content": "Install Pi extensions",
       "status": "completed",
       "priority": "medium"
+    },
+    {
+      "id": "10",
+      "content": "Start oqto in single-user mode",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "11",
+      "content": "Build frontend and serve",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "12",
+      "content": "End-to-end test: login, chat, files, terminal",
+      "status": "completed",
+      "priority": "high"
     }
   ],
-  "updated_at": "2026-02-21T18:32:38.967Z"
+  "updated_at": "2026-02-21T22:20:56.355Z"
 }

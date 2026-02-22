@@ -1,0 +1,65 @@
+{
+  "todos": [
+    {
+      "id": "1",
+      "content": "Add DeepSeek and Cerebras providers to the LLM Providers section",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "id": "2",
+      "content": "Add Voice Mode section (eaRS STT + kokorox TTS)",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "id": "3",
+      "content": "Add Agent Browser section (oqto-browserd, headed/headless)",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "id": "4",
+      "content": "Add trx to install_all_agent_tools in setup.sh (website has it, setup doesn't install it)",
+      "status": "pending",
+      "priority": "medium"
+    },
+    {
+      "id": "5",
+      "content": "Add VOICE_ENABLED, VOICE_STT_URL, VOICE_TTS_URL env vars to deploy command generator",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "id": "6",
+      "content": "Add agent_browser config output to TOML generator",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "id": "7",
+      "content": "Add voice config output to TOML generator",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "id": "8",
+      "content": "Update Google provider desc from 'Gemini 2.5 Pro, Flash' to current models",
+      "status": "pending",
+      "priority": "low"
+    },
+    {
+      "id": "9",
+      "content": "Add mmry section to generated TOML",
+      "status": "pending",
+      "priority": "medium"
+    },
+    {
+      "id": "10",
+      "content": "Add scaffold section to generated TOML (or keep default)",
+      "status": "pending",
+      "priority": "low"
+    }
+  ],
+  "updated_at": "2026-02-21T22:15:19.836Z"
+}
