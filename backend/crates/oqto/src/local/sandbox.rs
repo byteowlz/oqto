@@ -907,6 +907,19 @@ impl SandboxConfig {
         }
         debug!("Added system directories as read-only binds");
 
+        // DNS resolver: on systemd-resolved systems, /etc/resolv.conf is a
+        // symlink to /run/systemd/resolve/stub-resolv.conf.  The --ro-bind
+        // for /etc does NOT follow symlinks that point outside /etc, so DNS
+        // breaks inside the sandbox.  Bind the resolve directory so the
+        // symlink target is reachable.
+        let resolve_dir = Path::new("/run/systemd/resolve");
+        if resolve_dir.exists() {
+            args.push("--ro-bind".to_string());
+            args.push(resolve_dir.to_string_lossy().to_string());
+            args.push(resolve_dir.to_string_lossy().to_string());
+            debug!("Bound /run/systemd/resolve for DNS resolution");
+        }
+
         // /proc (needed for many tools)
         args.push("--proc".to_string());
         args.push("/proc".to_string());
