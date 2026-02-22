@@ -372,6 +372,7 @@ function ProviderDialog({
 	onOpenChange,
 	onSubmit,
 	isPending,
+	error,
 	initial,
 }: {
 	open: boolean;
@@ -386,6 +387,7 @@ function ProviderDialog({
 		models: ModelEntry[];
 	}) => void;
 	isPending: boolean;
+	error?: Error | null;
 	initial?: {
 		name: string;
 		type: string;
@@ -551,6 +553,13 @@ function ProviderDialog({
 
 					{/* Models shortlist */}
 					<ModelListEditor models={models} onChange={setModels} />
+
+					{error && (
+						<div className="text-sm text-destructive flex items-center gap-2">
+							<AlertTriangle className="w-4 h-4 shrink-0" />
+							{error.message}
+						</div>
+					)}
 
 					<DialogFooter>
 						<Button
@@ -756,15 +765,24 @@ export function ModelsPanel() {
 		deployment?: string;
 		models: ModelEntry[];
 	}) => {
-		await upsertMutation.mutateAsync(data);
-		setShowAddDialog(false);
-		setEditTarget(null);
+		try {
+			await upsertMutation.mutateAsync(data);
+			setShowAddDialog(false);
+			setEditTarget(null);
+		} catch (err) {
+			// Error is surfaced via upsertMutation.error in the UI
+			console.error("Failed to upsert provider:", err);
+		}
 	};
 
 	const handleDeleteConfirm = async () => {
 		if (!deleteTarget) return;
-		await deleteMutation.mutateAsync(deleteTarget);
-		setDeleteTarget(null);
+		try {
+			await deleteMutation.mutateAsync(deleteTarget);
+			setDeleteTarget(null);
+		} catch (err) {
+			console.error("Failed to delete provider:", err);
+		}
 	};
 
 	const handleSyncModels = async () => {
@@ -930,6 +948,7 @@ export function ModelsPanel() {
 				onOpenChange={setShowAddDialog}
 				onSubmit={handleUpsertProvider}
 				isPending={upsertMutation.isPending}
+				error={upsertMutation.error ?? null}
 			/>
 
 			{/* Edit Provider Dialog */}
@@ -941,6 +960,7 @@ export function ModelsPanel() {
 					}}
 					onSubmit={handleUpsertProvider}
 					isPending={upsertMutation.isPending}
+					error={upsertMutation.error ?? null}
 					initial={{
 						name: editTarget.name,
 						type: editTarget.type,
