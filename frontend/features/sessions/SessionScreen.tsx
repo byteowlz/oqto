@@ -940,7 +940,7 @@ export const SessionScreen = memo(function SessionScreen() {
 			{/* Desktop layout */}
 			{!isMobileLayout && (
 				<div className="hidden lg:flex flex-1 min-h-0 gap-4 items-start">
-					<div className="flex-[3] min-w-0 bg-card border border-border p-4 xl:p-6 flex flex-col min-h-0 h-full relative">
+					<div className="flex-1 min-w-0 bg-card border border-border p-4 xl:p-6 flex flex-col min-h-0 h-full relative">
 						{expandedView === "canvas" ? (
 							<div className="flex-1 min-h-0 flex flex-col -m-4 xl:-m-6">
 								<div className="flex items-center justify-between px-3 py-1.5 border-b border-border bg-muted/30">
@@ -1052,10 +1052,10 @@ export const SessionScreen = memo(function SessionScreen() {
 
 					<div
 						className={cn(
-							"bg-card border border-border flex flex-col min-h-0 h-full transition-all duration-200",
+							"bg-card border border-border flex flex-col min-h-0 h-full transition-[width,min-width,max-width] duration-200 overflow-hidden",
 							rightSidebarCollapsed
-								? "w-12 items-center"
-								: "flex-[2] min-w-[320px] max-w-[420px]",
+								? "w-12 min-w-[48px] max-w-[48px] items-center"
+								: "w-[360px] min-w-[320px] max-w-[420px] flex-shrink-0",
 						)}
 					>
 						{rightSidebarCollapsed ? (
