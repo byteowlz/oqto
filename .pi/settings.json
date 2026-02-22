@@ -1,4 +1,4 @@
 {
-  "defaultModel": "claude-opus-4-6",
-  "defaultProvider": "anthropic"
+  "defaultModel": "GLM-4.7",
+  "defaultProvider": "Z-AI"
 }
