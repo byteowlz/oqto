@@ -382,7 +382,7 @@ speed = 1.1
 
 [agent_browser]
 enabled = true
-binary = "/usr/local/lib/oqto-browserd/bin/oqto-browserd.js"
+binary = "${BROWSERD_DEPLOY_DIR:-$HOME/.local/lib/oqto-browserd}/bin/oqto-browserd.js"
 headed = false
 stream_port_base = 30000
 stream_port_range = 10000

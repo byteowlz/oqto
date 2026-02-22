@@ -350,20 +350,43 @@ build_octo() {
   local browserd_dir="$SCRIPT_DIR/backend/crates/oqto-browserd"
   if [[ -d "$browserd_dir" ]]; then
     (cd "$browserd_dir" && bun install && bun run build)
-    local browserd_deploy="/usr/local/lib/oqto-browserd"
-    sudo mkdir -p "$browserd_deploy/bin" "$browserd_deploy/dist"
-    sudo cp "$browserd_dir/bin/oqto-browserd.js" "$browserd_deploy/bin/"
-    sudo cp "$browserd_dir/dist/"*.js "$browserd_deploy/dist/"
-    sudo cp "$browserd_dir/package.json" "$browserd_deploy/"
-    (cd "$browserd_deploy" && sudo bun install --production)
-    # Install Playwright browsers to a shared location accessible by all users
-    local pw_browsers="/usr/local/share/playwright-browsers"
-    sudo mkdir -p "$pw_browsers"
-    sudo chmod 755 "$pw_browsers"
-    log_info "Installing Playwright chromium to $pw_browsers..."
-    sudo PLAYWRIGHT_BROWSERS_PATH="$pw_browsers" npx --yes playwright install --with-deps chromium 2>/dev/null ||
-      sudo PLAYWRIGHT_BROWSERS_PATH="$pw_browsers" bunx playwright install --with-deps chromium 2>/dev/null ||
-      log_warn "Playwright browser install failed - agent browser may not work"
+
+    if [[ "${SELECTED_USER_MODE:-single}" == "single" ]]; then
+      # Single-user: install to user-local dirs (no sudo needed)
+      local browserd_deploy="$HOME/.local/lib/oqto-browserd"
+      mkdir -p "$browserd_deploy/bin" "$browserd_deploy/dist"
+      cp "$browserd_dir/bin/oqto-browserd.js" "$browserd_deploy/bin/"
+      cp "$browserd_dir/dist/"*.js "$browserd_deploy/dist/"
+      cp "$browserd_dir/package.json" "$browserd_deploy/"
+      (cd "$browserd_deploy" && bun install --production)
+
+      local pw_browsers="$HOME/.local/share/playwright-browsers"
+      mkdir -p "$pw_browsers"
+      log_info "Installing Playwright chromium to $pw_browsers..."
+      PLAYWRIGHT_BROWSERS_PATH="$pw_browsers" bunx playwright install chromium 2>/dev/null ||
+        log_warn "Playwright browser install failed - agent browser may not work"
+    else
+      # Multi-user: install system-wide (shared by all platform users)
+      local browserd_deploy="/usr/local/lib/oqto-browserd"
+      sudo mkdir -p "$browserd_deploy/bin" "$browserd_deploy/dist"
+      sudo cp "$browserd_dir/bin/oqto-browserd.js" "$browserd_deploy/bin/"
+      sudo cp "$browserd_dir/dist/"*.js "$browserd_deploy/dist/"
+      sudo cp "$browserd_dir/package.json" "$browserd_deploy/"
+      (cd "$browserd_deploy" && sudo bun install --production)
+
+      local pw_browsers="/usr/local/share/playwright-browsers"
+      sudo mkdir -p "$pw_browsers"
+      sudo chmod 755 "$pw_browsers"
+      log_info "Installing Playwright chromium to $pw_browsers..."
+      sudo PLAYWRIGHT_BROWSERS_PATH="$pw_browsers" npx --yes playwright install --with-deps chromium 2>/dev/null ||
+        sudo PLAYWRIGHT_BROWSERS_PATH="$pw_browsers" bunx playwright install --with-deps chromium 2>/dev/null ||
+        log_warn "Playwright browser install failed - agent browser may not work"
+    fi
+
+    # Export for config generation
+    BROWSERD_DEPLOY_DIR="$browserd_deploy"
+    PW_BROWSERS_DIR="$pw_browsers"
+
     log_success "Agent browser daemon installed to $browserd_deploy"
   else
     log_warn "oqto-browserd not found, skipping agent browser setup"

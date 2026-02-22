@@ -93,7 +93,7 @@ Type=simple
 Environment=RUST_LOG=$OQTO_LOG_LEVEL
 Environment=PATH=%h/.bun/bin:%h/.cargo/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 Environment=HOME=%h
-Environment=PLAYWRIGHT_BROWSERS_PATH=/usr/local/share/playwright-browsers
+Environment=PLAYWRIGHT_BROWSERS_PATH=${PW_BROWSERS_DIR:-$HOME/.local/share/playwright-browsers}
 EnvironmentFile=-$OQTO_CONFIG_DIR/env
 ExecStart=${oqto_bin} serve --local-mode
 TimeoutStopSec=30
