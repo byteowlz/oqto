@@ -611,7 +611,7 @@ Description=Oqto Chat History Service
 [Service]
 Type=simple
 ExecStart=/usr/local/bin/hstry service run
-Restart=on-failure
+Restart=always
 RestartSec=3
 Environment=PATH={user_path}
 Environment=HOME={home}
@@ -628,7 +628,7 @@ Description=Oqto Memory Service
 [Service]
 Type=simple
 ExecStart=/usr/local/bin/mmry-service
-Restart=on-failure
+Restart=always
 RestartSec=3
 Environment=PATH={user_path}
 Environment=HOME={home}

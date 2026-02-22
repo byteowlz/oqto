@@ -49,7 +49,53 @@ install_service_linux() {
     [[ -x "$HOME/.cargo/bin/oqto" ]] && oqto_bin="$HOME/.cargo/bin/oqto"
     [[ -x "$HOME/.cargo/bin/oqto-runner" ]] && oqto_runner_bin="$HOME/.cargo/bin/oqto-runner"
 
-    # 1. oqto-runner service (session management, hstry writes, process isolation)
+    # 1. hstry service (chat history)
+    local hstry_bin="/usr/local/bin/hstry"
+    [[ -x "$HOME/.local/bin/hstry" ]] && hstry_bin="$HOME/.local/bin/hstry"
+    [[ -x "$HOME/.cargo/bin/hstry" ]] && hstry_bin="$HOME/.cargo/bin/hstry"
+
+    local hstry_service="$service_dir/hstry.service"
+    cat >"$hstry_service" <<EOF
+[Unit]
+Description=Oqto Chat History Service
+
+[Service]
+Type=simple
+ExecStart=${hstry_bin} service run
+Restart=always
+RestartSec=3
+Environment=PATH=%h/.bun/bin:%h/.cargo/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=HOME=%h
+
+[Install]
+WantedBy=default.target
+EOF
+    log_success "hstry service file created: $hstry_service"
+
+    # 2. mmry service (memory/embeddings)
+    local mmry_bin="/usr/local/bin/mmry"
+    [[ -x "$HOME/.local/bin/mmry" ]] && mmry_bin="$HOME/.local/bin/mmry"
+    [[ -x "$HOME/.cargo/bin/mmry" ]] && mmry_bin="$HOME/.cargo/bin/mmry"
+
+    local mmry_service="$service_dir/mmry.service"
+    cat >"$mmry_service" <<EOF
+[Unit]
+Description=Oqto Memory Service
+
+[Service]
+Type=simple
+ExecStart=${mmry_bin} service run
+Restart=always
+RestartSec=3
+Environment=PATH=%h/.bun/bin:%h/.cargo/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=HOME=%h
+
+[Install]
+WantedBy=default.target
+EOF
+    log_success "mmry service file created: $mmry_service"
+
+    # 3. oqto-runner service (session management, hstry writes, process isolation)
     local runner_service="$service_dir/oqto-runner.service"
     cat >"$runner_service" <<EOF
 # Oqto Runner - Process isolation daemon
@@ -58,8 +104,8 @@ install_service_linux() {
 
 [Unit]
 Description=Oqto Runner - Process isolation daemon
-After=hstry.service
-Wants=hstry.service
+After=hstry.service mmry.service
+Wants=hstry.service mmry.service
 
 [Service]
 Type=notify
@@ -127,12 +173,14 @@ EOF
 
     if confirm "Enable and start services now?"; then
       systemctl --user daemon-reload
-      systemctl --user enable oqto-runner oqto
+      systemctl --user enable hstry mmry oqto-runner oqto
+      systemctl --user start hstry mmry
+      sleep 2
       systemctl --user start oqto-runner
       sleep 2
       systemctl --user start oqto
       log_success "Services enabled and started"
-      log_info "Check status with: systemctl --user status oqto-runner oqto"
+      log_info "Check status with: systemctl --user status hstry mmry oqto-runner oqto"
       log_info "View logs with: journalctl --user -u oqto -f"
     else
       log_info "To enable manually:"
@@ -295,7 +343,7 @@ Type=simple
 User=oqto
 Group=oqto
 ExecStart=/usr/local/bin/mmry-service
-Restart=on-failure
+Restart=always
 RestartSec=5
 Environment=HOME=${mmry_home}
 Environment=RUST_LOG=mmry=info
