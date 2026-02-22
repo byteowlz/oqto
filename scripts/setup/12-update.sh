@@ -394,29 +394,39 @@ build_octo() {
 
   # When built from source, install binaries and deploy frontend
   if [[ "$used_release" != "true" ]]; then
-    # Install binaries to /usr/local/bin (globally accessible)
-    log_info "Installing binaries to ${TOOLS_INSTALL_DIR}..."
-
     local release_dir="$SCRIPT_DIR/backend/target/release"
-    for bin in oqto oqtoctl oqto-runner oqto-browser pi-bridge oqto-sandbox oqto-setup oqto-usermgr; do
-      if [[ -f "${release_dir}/${bin}" ]]; then
-        sudo install -m 755 "${release_dir}/${bin}" "${TOOLS_INSTALL_DIR}/${bin}"
-        # Remove stale copies from ~/.cargo/bin to avoid PATH precedence issues
-        if [[ -f "$HOME/.cargo/bin/${bin}" ]]; then
-          rm -f "$HOME/.cargo/bin/${bin}"
-          hash -d "$bin" 2>/dev/null || true
-          log_info "Removed stale ${bin} from ~/.cargo/bin"
-        fi
-        log_success "${bin} installed"
-      fi
-    done
 
-    if [[ -f "$SCRIPT_DIR/backend/target/release/oqto-files" ]]; then
-      sudo install -m 755 "$SCRIPT_DIR/backend/target/release/oqto-files" "${TOOLS_INSTALL_DIR}/oqto-files"
-      log_success "oqto-files installed"
+    if [[ "${SELECTED_USER_MODE:-single}" == "single" ]]; then
+      # Single-user: install to ~/.local/bin (no sudo needed)
+      local bin_dir="$HOME/.local/bin"
+      mkdir -p "$bin_dir"
+      log_info "Installing binaries to ${bin_dir}..."
+
+      for bin in oqto oqtoctl oqto-runner oqto-browser oqto-files oqto-setup; do
+        if [[ -f "${release_dir}/${bin}" ]]; then
+          install -m 755 "${release_dir}/${bin}" "${bin_dir}/${bin}"
+          log_success "${bin} installed"
+        fi
+      done
+    else
+      # Multi-user: install to /usr/local/bin (globally accessible)
+      log_info "Installing binaries to ${TOOLS_INSTALL_DIR}..."
+
+      for bin in oqto oqtoctl oqto-runner oqto-browser pi-bridge oqto-sandbox oqto-setup oqto-usermgr oqto-files; do
+        if [[ -f "${release_dir}/${bin}" ]]; then
+          sudo install -m 755 "${release_dir}/${bin}" "${TOOLS_INSTALL_DIR}/${bin}"
+          # Remove stale copies from ~/.cargo/bin to avoid PATH precedence issues
+          if [[ -f "$HOME/.cargo/bin/${bin}" ]]; then
+            rm -f "$HOME/.cargo/bin/${bin}"
+            hash -d "$bin" 2>/dev/null || true
+            log_info "Removed stale ${bin} from ~/.cargo/bin"
+          fi
+          log_success "${bin} installed"
+        fi
+      done
     fi
 
-    log_success "Binaries installed to ${TOOLS_INSTALL_DIR}"
+    log_success "Binaries installed"
 
     # Deploy frontend static files
     local frontend_dist="$SCRIPT_DIR/frontend/dist"

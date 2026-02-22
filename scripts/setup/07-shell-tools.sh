@@ -403,6 +403,28 @@ setup_onboarding_templates_repo() {
   fi
 
   log_success "Onboarding templates installed"
+
+  # Deploy global skills from templates to user's Pi agent skills dir.
+  # In multi-user mode, usermgr handles this at registration time.
+  # In single-user mode, we do it here.
+  if [[ "${SELECTED_USER_MODE:-single}" == "single" ]]; then
+    local skills_src="$target_path/skills"
+    local skills_dest="$HOME/.pi/agent/skills"
+    if [[ -d "$skills_src" ]]; then
+      mkdir -p "$skills_dest"
+      log_info "Deploying global skills from templates..."
+      # Copy each skill dir, don't overwrite existing customized skills
+      for skill_dir in "$skills_src"/*/; do
+        local skill_name
+        skill_name=$(basename "$skill_dir")
+        if [[ ! -d "$skills_dest/$skill_name" ]]; then
+          cp -r "$skill_dir" "$skills_dest/$skill_name"
+          log_info "  Installed skill: $skill_name"
+        fi
+      done
+      log_success "Global skills deployed"
+    fi
+  fi
 }
 
 update_external_repos() {
