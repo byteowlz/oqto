@@ -2446,21 +2446,25 @@ const MessageGroupCard = memo(function MessageGroupCard({
 		? new Date(group.messages[0].timestamp)
 		: null;
 
-	// Flatten parts in order, preserve timestamps by message
+	// Flatten parts in order, preserve message-array ordering.
+	// The primary sort key is the message index (msgIndex), NOT the wall-clock
+	// timestamp.  Timestamps from hstry (created_at) can be non-monotonic when
+	// messages are persisted out of chronological order (e.g. batched writes).
+	// Using them as a sort key reorders messages incorrectly.
 	type TimedPart = {
 		key: string;
 		part: DisplayPart;
+		/** Sort order: msgIndex * 1e6 + partIndex preserves array order. */
 		timestamp: number;
 	};
 
 	const timedParts: TimedPart[] = [];
 	for (const [msgIndex, message] of group.messages.entries()) {
-		const base = message.timestamp || Date.now();
 		for (const [partIndex, part] of message.parts.entries()) {
 			timedParts.push({
 				key: `${message.id}-${msgIndex}-${part.type}-${partIndex}`,
 				part,
-				timestamp: base + msgIndex * 100 + partIndex,
+				timestamp: msgIndex * 1_000_000 + partIndex,
 			});
 		}
 	}
@@ -2585,12 +2589,15 @@ const MessageGroupCard = memo(function MessageGroupCard({
 	}
 	flushText();
 
-	for (const surface of a2uiSurfaces) {
+	// A2UI surfaces are appended after all message parts.
+	// Give them indices that sort after regular parts.
+	const surfaceBase = (group.messages.length + 1) * 1_000_000;
+	for (const [surfIdx, surface] of a2uiSurfaces.entries()) {
 		segments.push({
 			key: `a2ui-${surface.surfaceId}`,
 			type: "a2ui",
 			surface,
-			timestamp: surface.createdAt.getTime(),
+			timestamp: surfaceBase + surfIdx,
 		});
 	}
 
