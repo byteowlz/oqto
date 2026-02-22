@@ -394,7 +394,12 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 		});
 	}, []);
 
-	// Schedule batched update
+	// Schedule batched update.
+	// Uses setTimeout instead of requestAnimationFrame so updates are not
+	// stalled when the browser tab is in the background or the main thread
+	// is busy with layout/paint.  rAF callbacks can be deferred indefinitely
+	// by the browser, causing the streaming output to appear "stuck" and
+	// then suddenly catch up in a burst.
 	const scheduleStreamingUpdate = useCallback(() => {
 		const batch = batchedUpdateRef.current;
 		batch.pendingUpdate = true;
@@ -403,14 +408,16 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 
 		const elapsed = Date.now() - batch.lastFlushTime;
 		if (elapsed >= BATCH_FLUSH_INTERVAL_MS) {
-			batch.rafId = requestAnimationFrame(flushStreamingUpdate);
+			// Use a microtask-like delay (0ms setTimeout) for immediate flush
+			batch.rafId = window.setTimeout(flushStreamingUpdate, 0) as unknown as number;
 		} else {
 			const delay = BATCH_FLUSH_INTERVAL_MS - elapsed;
-			setTimeout(() => {
-				if (batch.pendingUpdate && batch.rafId === null) {
-					batch.rafId = requestAnimationFrame(flushStreamingUpdate);
+			batch.rafId = window.setTimeout(() => {
+				batch.rafId = null;
+				if (batch.pendingUpdate) {
+					flushStreamingUpdate();
 				}
-			}, delay);
+			}, delay) as unknown as number;
 		}
 	}, [flushStreamingUpdate]);
 
@@ -747,7 +754,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 					// Cancel pending batched update
 					const batch = batchedUpdateRef.current;
 					if (batch.rafId !== null) {
-						cancelAnimationFrame(batch.rafId);
+						clearTimeout(batch.rafId);
 						batch.rafId = null;
 					}
 					batch.pendingUpdate = false;
@@ -862,7 +869,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 					// the finalized message.
 					const endBatch = batchedUpdateRef.current;
 					if (endBatch.rafId !== null) {
-						cancelAnimationFrame(endBatch.rafId);
+						clearTimeout(endBatch.rafId);
 						endBatch.rafId = null;
 					}
 					endBatch.pendingUpdate = false;
