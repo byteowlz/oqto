@@ -471,8 +471,11 @@ export const SessionScreen = memo(function SessionScreen() {
 		// (causing a black screen until the user clicks the browser icon again).
 	}, []);
 
+	const [canvasImagePath, setCanvasImagePath] = useState<string | null>(null);
+
 	// biome-ignore lint/correctness/useExhaustiveDependencies: setActiveView is stable setState
 	const handleOpenInCanvas = useCallback((filePath: string) => {
+		setCanvasImagePath(filePath);
 		setActiveView("canvas");
 	}, []);
 
@@ -840,7 +843,9 @@ export const SessionScreen = memo(function SessionScreen() {
 							activeView === "chat" && "pb-0",
 						)}
 					>
-						{activeView === "chat" && chatPanel}
+						<div className={cn("h-full flex flex-col", activeView !== "chat" && "hidden")}>
+							{chatPanel}
+						</div>
 						{activeView === "overview" && overviewPanel}
 						<div
 							className={cn(
@@ -882,9 +887,10 @@ export const SessionScreen = memo(function SessionScreen() {
 							<div className="flex-1 min-h-0">
 								<Suspense fallback={viewLoadingFallback}>
 									<CanvasView
-										workspacePath={normalizedWorkspacePath}
-										onSaveAndAddToChat={handleCanvasSaveAndAddToChat}
-									/>
+											workspacePath={normalizedWorkspacePath}
+											initialImagePath={canvasImagePath}
+											onSaveAndAddToChat={handleCanvasSaveAndAddToChat}
+										/>
 								</Suspense>
 							</div>
 						)}
@@ -960,6 +966,7 @@ export const SessionScreen = memo(function SessionScreen() {
 									<Suspense fallback={viewLoadingFallback}>
 										<CanvasView
 											workspacePath={normalizedWorkspacePath}
+											initialImagePath={canvasImagePath}
 											onSaveAndAddToChat={handleCanvasSaveAndAddToChat}
 										/>
 									</Suspense>
@@ -1274,9 +1281,10 @@ export const SessionScreen = memo(function SessionScreen() {
 											<div className="flex-1 min-h-0">
 												<Suspense fallback={viewLoadingFallback}>
 													<CanvasView
-														workspacePath={normalizedWorkspacePath}
-														onSaveAndAddToChat={handleCanvasSaveAndAddToChat}
-													/>
+											workspacePath={normalizedWorkspacePath}
+											initialImagePath={canvasImagePath}
+											onSaveAndAddToChat={handleCanvasSaveAndAddToChat}
+										/>
 												</Suspense>
 											</div>
 										</div>

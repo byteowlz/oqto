@@ -1414,17 +1414,31 @@ export const CanvasView = memo(function CanvasView({
 
 	// Zoom controls
 	const zoomIn = useCallback(() => {
-		setScale((prev) => Math.min(prev * 1.2, 5));
+		setScale((prev) => Math.min(prev * 1.2, 10));
 	}, []);
 
 	const zoomOut = useCallback(() => {
-		setScale((prev) => Math.max(prev / 1.2, 0.1));
+		setScale((prev) => Math.max(prev / 1.2, 0.01));
 	}, []);
 
 	const resetZoom = useCallback(() => {
 		setScale(1);
 		setPosition({ x: 0, y: 0 });
 	}, []);
+
+	const fitToView = useCallback(() => {
+		const cw = backgroundImage ? backgroundSize.width : 800;
+		const ch = backgroundImage ? backgroundSize.height : 600;
+		if (cw <= 0 || ch <= 0) return;
+		const padding = 40;
+		const availW = containerSize.width - padding * 2;
+		const availH = containerSize.height - padding * 2;
+		const fitScale = Math.min(availW / cw, availH / ch, 1);
+		const offsetX = (containerSize.width - cw * fitScale) / 2;
+		const offsetY = (containerSize.height - ch * fitScale) / 2;
+		setScale(fitScale);
+		setPosition({ x: offsetX, y: offsetY });
+	}, [backgroundImage, backgroundSize, containerSize]);
 
 	// Mouse/touch handlers
 	const handleMouseDown = useCallback(
@@ -1877,6 +1891,21 @@ export const CanvasView = memo(function CanvasView({
 		return () => window.removeEventListener("resize", updateSize);
 	}, []);
 
+	// Auto-fit when a new background image is loaded that exceeds container
+	const prevBgRef = useRef<HTMLImageElement | null>(null);
+	useEffect(() => {
+		if (backgroundImage && backgroundImage !== prevBgRef.current) {
+			prevBgRef.current = backgroundImage;
+			// Only auto-fit if the image is larger than the container
+			if (
+				backgroundSize.width > containerSize.width ||
+				backgroundSize.height > containerSize.height
+			) {
+				fitToView();
+			}
+		}
+	}, [backgroundImage, backgroundSize, containerSize, fitToView]);
+
 	// Calculate canvas size
 	const canvasWidth = backgroundImage
 		? backgroundSize.width
@@ -2169,6 +2198,16 @@ export const CanvasView = memo(function CanvasView({
 						title="Zoom in"
 					>
 						<ZoomIn className="w-3 h-3" />
+					</Button>
+					<Button
+						type="button"
+						variant="ghost"
+						size="sm"
+						onClick={fitToView}
+						className="h-[22px] px-1.5 text-[10px]"
+						title="Fit to view"
+					>
+						Fit
 					</Button>
 					<div className="flex-1" />
 					<Popover open={showTemplates} onOpenChange={setShowTemplates}>
