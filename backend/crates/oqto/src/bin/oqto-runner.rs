@@ -182,32 +182,59 @@ impl RunnerUserConfig {
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from(&home).join(".local").join("share"));
 
-        // Resolve pi binary: config value, then PATH lookup, then bun fallback
+        // Resolve pi binary: use the system-wide install at /usr/local/bin/pi
+        // (installed by setup.sh). If the config specifies an absolute path, use
+        // that instead. Never rely on PATH order — per-user bun installs can
+        // shadow the system copy and silently serve outdated versions.
         let pi_binary = {
             let configured = &config_file.pi.executable;
             if configured.contains('/') {
-                // Absolute or relative path - use as-is
+                // Absolute path in config - use as-is
                 configured.clone()
             } else {
-                // Bare name - resolve via which/PATH
-                match std::process::Command::new("which").arg(configured).output() {
-                    Ok(output) if output.status.success() => {
-                        String::from_utf8_lossy(&output.stdout).trim().to_string()
-                    }
-                    _ => {
-                        // Fallback to ~/.bun/bin/pi
-                        let fallback = PathBuf::from(&home).join(".bun/bin/pi");
-                        warn!(
-                            "Could not resolve '{}' in PATH, falling back to {}",
-                            configured,
-                            fallback.display()
-                        );
-                        fallback.to_string_lossy().to_string()
+                // Prefer system-wide installs over per-user bun installs.
+                // Per-user bun installs can go stale and silently serve old
+                // model lists / miss features.
+                let system_paths = [
+                    "/usr/local/bin/pi", // setup.sh install location
+                    "/usr/bin/pi",       // npm -g / pacman install location
+                ];
+                let system_pi = system_paths
+                    .iter()
+                    .find(|p| PathBuf::from(p).exists())
+                    .map(|p| p.to_string());
+
+                if let Some(path) = system_pi {
+                    path
+                } else {
+                    // No system install — fall back to PATH lookup
+                    match std::process::Command::new("which").arg(configured).output() {
+                        Ok(output) if output.status.success() => {
+                            String::from_utf8_lossy(&output.stdout).trim().to_string()
+                        }
+                        _ => {
+                            warn!(
+                                "Pi not found at system paths or in PATH. Run setup.sh to install."
+                            );
+                            configured.clone()
+                        }
                     }
                 }
             }
         };
-        info!("Pi binary: {}", pi_binary);
+
+        // Log Pi version at startup for diagnostics
+        let pi_version = std::process::Command::new(&pi_binary)
+            .arg("--version")
+            .output()
+            .ok()
+            .and_then(|o| {
+                o.status
+                    .success()
+                    .then(|| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            })
+            .unwrap_or_else(|| "unknown".to_string());
+        info!("Pi binary: {} (v{})", pi_binary, pi_version);
 
         let runner_id = config_file
             .runner

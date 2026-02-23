@@ -1,0 +1,17 @@
+{
+  "todos": [
+    {
+      "id": "1",
+      "content": "Diagnose why opus-4-6 model not showing in oqto frontend",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "2",
+      "content": "Fix stale models.json missing anthropic provider",
+      "status": "completed",
+      "priority": "high"
+    }
+  ],
+  "updated_at": "2026-02-22T19:08:21.902Z"
+}

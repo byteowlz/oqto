@@ -1,0 +1,35 @@
+{
+  "todos": [
+    {
+      "id": "1",
+      "content": "Build release binary with platform_id fix",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "2",
+      "content": "Deploy to archvm (this machine)",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "3",
+      "content": "Deploy to octo-azure (binary + AppArmor + sandbox verify)",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "4",
+      "content": "Verify bwrap sandbox actually works on both machines",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "176abb61",
+      "content": "BUG: oqto doesn't call usermgr to respawn dead runners - it just tries the socket and fails. Need ensure_runner call before connecting.",
+      "status": "pending",
+      "priority": "high"
+    }
+  ],
+  "updated_at": "2026-02-22T16:42:00.967Z"
+}

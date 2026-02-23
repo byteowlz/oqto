@@ -1,0 +1,17 @@
+{
+  "todos": [
+    {
+      "id": "trx-issues",
+      "content": "Create trx issues for architectural findings",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "roadmap",
+      "content": "Create ROADMAP.md with prioritized initiatives",
+      "status": "completed",
+      "priority": "high"
+    }
+  ],
+  "updated_at": "2026-02-22T18:53:54.032Z"
+}

@@ -599,3 +599,16 @@ admin-templates *ARGS:
 admin-sync-all *ARGS:
     ./scripts/admin/oqto-admin sync-all {{ARGS}}
 
+# Update Pi coding agent to latest version (system-wide)
+update-pi:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Updating Pi coding agent..."
+    bun install -g @mariozechner/pi-coding-agent@latest
+    # Re-run system-wide install from setup
+    source scripts/setup/05-install-core.sh
+    ensure_bun_and_pi_global
+    echo "Restarting oqto-runner..."
+    systemctl --user restart oqto-runner
+    echo "Done. Pi version: $(/usr/local/bin/pi --version 2>/dev/null)"
+
