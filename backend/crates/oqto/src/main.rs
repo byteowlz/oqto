@@ -2344,16 +2344,10 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         }
     }
 
-    // In single-user mode, ensure ~/.pi/agent/models.json exists.
-    // Without it, Pi cannot discover any models and sessions fail to start.
-    // This runs at every startup so models.json stays current with eavs config.
-    if !multi_user {
-        if let Some(ref eavs_config) = ctx.config.eavs
-            && eavs_config.enabled
-        {
-            ensure_pi_models_json(&eavs_config.base_url).await;
-        }
-    }
+    // models.json is managed manually:
+    //   - Initial generation: setup script (scripts/setup/)
+    //   - Updates: admin panel "Sync Models to All Users" or `just admin-eavs --sync-models`
+    // The backend never auto-generates or overwrites models.json.
 
     // Create router - all API routes are served under /api prefix only.
     // This is the single source of truth for routing. All clients (frontend,
@@ -2773,14 +2767,15 @@ impl fmt::Display for AppPaths {
     }
 }
 
-/// Ensure `~/.pi/agent/models.json` (and `settings.json`) exist in single-user mode.
+/// Bootstrap `~/.pi/agent/models.json` (and `settings.json`) in single-user mode.
+///
+/// Only called when models.json does not exist yet (first-time setup).
+/// After initial generation, the admin controls models.json via the admin
+/// panel "Sync Models to All Users" button or `just admin-eavs --sync-models`.
 ///
 /// Queries the local eavs `/providers/detail` endpoint (no auth required) and
 /// generates the Pi models.json from the live provider catalog. Also creates a
 /// default `settings.json` if missing so the model selector works on first boot.
-///
-/// This replaces the setup.sh-only generation path and ensures models.json
-/// stays current even if eavs providers change after initial setup.
 async fn ensure_pi_models_json(eavs_base_url: &str) {
     use tracing::{debug, info, warn};
 
@@ -2794,8 +2789,7 @@ async fn ensure_pi_models_json(eavs_base_url: &str) {
 
     let models_path = pi_dir.join("models.json");
 
-    // Always regenerate so models stay current with eavs config changes.
-    // This is cheap (single HTTP call + JSON transform).
+    // Generate models.json from eavs providers (first-time bootstrap only).
     let base = eavs_base_url.trim_end_matches('/');
     let url = format!("{}/providers/detail", base);
 
