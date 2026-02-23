@@ -961,6 +961,20 @@ impl PiSessionManager {
         infos
     }
 
+    /// Return a snapshot of (oqto_session_id, pi_native_id) pairs for all live sessions.
+    /// Used by the runner to backfill platform_id in hstry when listing sessions.
+    pub async fn sessions_snapshot(&self) -> Vec<(String, String)> {
+        let sessions = self.sessions.read().await;
+        let mut pairs = Vec::new();
+        for (oqto_id, session) in sessions.iter() {
+            let eid = session.hstry_external_id.read().await.clone();
+            if !eid.is_empty() && eid != *oqto_id {
+                pairs.push((oqto_id.clone(), eid));
+            }
+        }
+        pairs
+    }
+
     /// Resolve the hstry external_id for a session.
     ///
     /// Returns Pi's native session ID if known, otherwise the Oqto UUID.
@@ -3531,10 +3545,12 @@ impl PiSessionManager {
         {
             Ok(_) => {
                 // Always update metadata after appending messages to ensure
-                // platform_id (oqto session ID) is set in hstry. Without this,
-                // conversations created by hstry's own JSONL sync lack the
-                // platform_id, causing duplicate sessions in the frontend.
-                let _ = client
+                // platform_id (oqto session ID) is set in hstry.
+                debug!(
+                    "Append succeeded for '{}', updating metadata with platform_id='{}'",
+                    hstry_external_id, oqto_session_id
+                );
+                match client
                     .update_conversation(
                         hstry_external_id,
                         title.clone(),
@@ -3546,10 +3562,21 @@ impl PiSessionManager {
                         Some("pi".to_string()),
                         Some(oqto_session_id.to_string()),
                     )
-                    .await;
+                    .await
+                {
+                    Ok(_) => debug!("update_conversation succeeded for '{}'", hstry_external_id),
+                    Err(e) => warn!(
+                        "update_conversation failed for '{}': {}",
+                        hstry_external_id, e
+                    ),
+                }
             }
-            Err(_) => {
+            Err(e) => {
                 // Conversation doesn't exist yet -- create it with WriteConversation
+                debug!(
+                    "Append failed for '{}' ({}), creating via write_conversation with platform_id='{}'",
+                    hstry_external_id, e, oqto_session_id
+                );
                 let model = messages.iter().rev().find_map(|m| m.model.clone());
                 let provider = messages.iter().rev().find_map(|m| m.provider.clone());
 
