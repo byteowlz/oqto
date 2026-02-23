@@ -335,6 +335,9 @@ Implementation:
 ...
 
 
+### [oqto-1fck] Session duplication in frontend sidebar - platform_id not set in hstry (P2, bug)
+Sessions created from the oqto frontend appear duplicated in the sidebar. Root cause: when a Pi session is created via the runner, the hstry conversation entry gets external_id (Pi native ID) but platform_id (oqto session ID) is NULL. The merge_duplicate_sessions() dedup logic in chat.rs can't match the hstry entry with the runner's live session because they have different IDs. Example: oqto session oqto-2a079205 spawned Pi session 584ac6ee which hstry stores with readable_id=used-fort-save, but no platform_id linking back to the oqto ID.
+
 ### [oqto-5ym1] Pi does not recover from hung LLM streams (no stream timeout) (P2, bug)
 When an upstream LLM provider (e.g. Kimi-K2.5) drops a streaming connection mid-response without sending [DONE] or an error, Pi hangs indefinitely in its event loop. The TCP connection closes but Pi never detects the stream ended. Observed on octo-azure where Kimi dropped reasoning_content mid-token. Pi should implement a stream inactivity timeout (e.g. 120s with no chunks) and surface it as an error so the user can retry.
 
@@ -1650,6 +1653,6 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
 - [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
 - [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
 - [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )

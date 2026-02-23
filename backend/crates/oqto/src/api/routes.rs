@@ -303,7 +303,9 @@ fn create_router_with_config_and_auth(
         )
         .route(
             "/chat-history/{session_id}",
-            get(handlers::get_chat_session).patch(handlers::update_chat_session),
+            get(handlers::get_chat_session)
+                .patch(handlers::update_chat_session)
+                .delete(handlers::delete_chat_session),
         )
         .route(
             "/chat-history/{session_id}/messages",

@@ -544,6 +544,7 @@ impl Runner {
             // Session Lifecycle
             RunnerRequest::PiCreateSession(r) => self.pi_create_session(r).await,
             RunnerRequest::PiCloseSession(r) => self.pi_close_session(r).await,
+            RunnerRequest::PiDeleteSession(r) => self.pi_delete_session(r).await,
             RunnerRequest::PiNewSession(r) => self.pi_new_session(r).await,
             RunnerRequest::PiSwitchSession(r) => self.pi_switch_session(r).await,
             RunnerRequest::PiListSessions => self.pi_list_sessions().await,
@@ -2486,6 +2487,96 @@ impl Runner {
                 ErrorCode::PiSessionNotFound,
                 format!("Failed to close session: {}", e),
             ),
+        }
+    }
+
+    /// Delete a Pi session: close the process, remove from hstry, and delete the JSONL file.
+    async fn pi_delete_session(&self, req: PiDeleteSessionRequest) -> RunnerResponse {
+        info!("pi_delete_session: session_id={}", req.session_id);
+
+        // Resolve the hstry external_id before closing (the session knows its Pi native ID).
+        let hstry_external_id = self
+            .pi_manager
+            .hstry_external_id(&req.session_id)
+            .await;
+
+        // Close the Pi process (best-effort; may not be running).
+        let _ = self.pi_manager.close_session(&req.session_id).await;
+
+        // Delete from hstry via gRPC.
+        if let Some(hstry_client) = self.pi_manager.hstry_client() {
+            if let Err(e) = hstry_client.delete_conversation(&hstry_external_id).await {
+                warn!(
+                    "Failed to delete conversation from hstry for session {}: {}",
+                    req.session_id, e
+                );
+            }
+        }
+
+        // Delete from hstry via direct SQLite as well, trying both the oqto ID and the
+        // Pi native ID (covers cases where platform_id was not set).
+        if let Some(db_path) = oqto::history::hstry_db_path() {
+            if let Ok(pool) = oqto::history::repository::open_hstry_pool(&db_path).await {
+                // Delete by oqto session ID (platform_id) or Pi native ID (external_id)
+                let _ = sqlx::query(
+                    "DELETE FROM conversations WHERE source_id = 'pi' AND (external_id = ? OR platform_id = ? OR id = ?)"
+                )
+                .bind(&hstry_external_id)
+                .bind(&req.session_id)
+                .bind(&hstry_external_id)
+                .execute(&pool)
+                .await;
+
+                // Also try with the oqto session ID as external_id (in case it was stored that way)
+                if hstry_external_id != req.session_id {
+                    let _ = sqlx::query(
+                        "DELETE FROM conversations WHERE source_id = 'pi' AND (external_id = ? OR platform_id = ?)"
+                    )
+                    .bind(&req.session_id)
+                    .bind(&hstry_external_id)
+                    .execute(&pool)
+                    .await;
+                }
+            }
+        }
+
+        // Delete the Pi JSONL session file.
+        // Pi session files are at: ~/.pi/agent/sessions/--{safe_cwd}--/{timestamp}_{session_id}.jsonl
+        // We search for files matching the Pi native session ID.
+        let sessions_dir = dirs::home_dir()
+            .unwrap_or_default()
+            .join(".pi/agent/sessions");
+        if sessions_dir.is_dir() {
+            // The hstry_external_id is the Pi native session ID (UUID).
+            // Session files may be named like: {timestamp}_{session_id}.jsonl
+            if let Ok(entries) = std::fs::read_dir(&sessions_dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if !path.is_dir() {
+                        continue;
+                    }
+                    // Each subdirectory is a workspace-scoped session dir.
+                    if let Ok(files) = std::fs::read_dir(&path) {
+                        for file in files.flatten() {
+                            let fname = file.file_name();
+                            let fname_str = fname.to_string_lossy();
+                            if fname_str.contains(&hstry_external_id)
+                                && fname_str.ends_with(".jsonl")
+                            {
+                                info!(
+                                    "Deleting Pi session file: {}",
+                                    file.path().display()
+                                );
+                                let _ = std::fs::remove_file(file.path());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        RunnerResponse::PiSessionDeleted {
+            session_id: req.session_id,
         }
     }
 

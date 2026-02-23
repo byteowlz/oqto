@@ -874,6 +874,19 @@ impl RunnerClient {
         }
     }
 
+    /// Delete a Pi session: close the process, remove from hstry, delete JSONL file.
+    pub async fn pi_delete_session(&self, session_id: &str) -> Result<()> {
+        let req = RunnerRequest::PiDeleteSession(PiDeleteSessionRequest {
+            session_id: session_id.to_string(),
+        });
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::PiSessionDeleted { .. } | RunnerResponse::Ok => Ok(()),
+            _ => anyhow::bail!("unexpected response to pi_delete_session"),
+        }
+    }
+
     /// Start a new session within existing Pi process.
     pub async fn pi_new_session(
         &self,

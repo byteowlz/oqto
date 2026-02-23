@@ -47,6 +47,11 @@ pub enum CommandPayload {
     #[serde(rename = "session.close")]
     SessionClose,
 
+    /// Delete the session: close the agent process, remove from hstry,
+    /// and delete the Pi JSONL session file.
+    #[serde(rename = "session.delete")]
+    SessionDelete,
+
     /// Start a new session within existing agent process.
     #[serde(rename = "session.new")]
     SessionNew {

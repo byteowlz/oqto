@@ -7,6 +7,7 @@ use std::collections::HashSet;
 use axum::{
     Json,
     extract::{Path, Query, State},
+    http::StatusCode,
 };
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, instrument};
@@ -481,6 +482,62 @@ pub async fn update_chat_session(
                         err
                     )));
                 }
+            }
+        }
+    }
+
+    Err(ApiError::internal("hstry not configured"))
+}
+
+/// Delete a chat session from hstry.
+///
+/// Removes the conversation and all its messages from the history database.
+/// In multi-user mode, routes through the runner for user isolation.
+#[instrument(skip(state))]
+pub async fn delete_chat_session(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(session_id): Path<String>,
+) -> ApiResult<StatusCode> {
+    let multi_user = is_multi_user_mode(&state);
+
+    // In multi-user mode, use runner
+    if let Some(runner) = get_runner_for_user(&state, user.id()) {
+        match runner.pi_delete_session(&session_id).await {
+            Ok(()) => {
+                info!(session_id = %session_id, "Deleted chat session via runner");
+                return Ok(StatusCode::NO_CONTENT);
+            }
+            Err(e) => {
+                if multi_user {
+                    tracing::error!(
+                        user_id = %user.id(),
+                        session_id = %session_id,
+                        error = %e,
+                        "Runner failed to delete chat session in multi-user mode"
+                    );
+                    return Err(ApiError::internal("Chat history service unavailable."));
+                }
+            }
+        }
+    } else if multi_user {
+        return Err(ApiError::internal(
+            "Chat history service not configured for this user.",
+        ));
+    }
+
+    // Single-user mode: delete via hstry gRPC
+    if let Some(hstry) = state.hstry.as_ref() {
+        match hstry.delete_conversation(&session_id).await {
+            Ok(_) => {
+                info!(session_id = %session_id, "Deleted chat session");
+                return Ok(StatusCode::NO_CONTENT);
+            }
+            Err(err) => {
+                return Err(ApiError::internal(format!(
+                    "Failed to delete chat session: {}",
+                    err
+                )));
             }
         }
     }

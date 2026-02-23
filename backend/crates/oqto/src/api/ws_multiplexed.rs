@@ -952,6 +952,7 @@ fn ws_command_summary(cmd: &WsCommand) -> (String, Option<String>, Option<String
                     "agent.session_create"
                 }
                 oqto_protocol::commands::CommandPayload::SessionClose => "agent.session_close",
+                oqto_protocol::commands::CommandPayload::SessionDelete => "agent.session_delete",
                 oqto_protocol::commands::CommandPayload::SessionNew { .. } => "agent.session_new",
                 oqto_protocol::commands::CommandPayload::SessionSwitch { .. } => {
                     "agent.session_switch"
@@ -1300,6 +1301,33 @@ async fn handle_agent_command(
                     &session_id,
                     id,
                     "session.close",
+                    Err(e.to_string()),
+                )),
+            }
+        }
+
+        CommandPayload::SessionDelete => {
+            info!(
+                "agent session.delete: user={}, session_id={}",
+                user_id, session_id
+            );
+
+            let mut state_guard = conn_state.lock().await;
+            state_guard.subscribed_sessions.remove(&session_id);
+            state_guard.pi_subscriptions.remove(&session_id);
+            drop(state_guard);
+
+            match runner.pi_delete_session(&session_id).await {
+                Ok(()) => Some(agent_response(
+                    &session_id,
+                    id,
+                    "session.delete",
+                    Ok(None),
+                )),
+                Err(e) => Some(agent_response(
+                    &session_id,
+                    id,
+                    "session.delete",
                     Err(e.to_string()),
                 )),
             }

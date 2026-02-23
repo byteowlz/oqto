@@ -213,6 +213,8 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 	);
 
 	const [busySessions, setBusySessions] = useState<Set<string>>(new Set());
+	// Track deleted session IDs to prevent resurrection from hstry/runner polls.
+	const deletedSessionsRef = useRef<Set<string>>(new Set());
 	const [runnerSessions, setRunnerSessions] = useState<
 		Array<{
 			session_id: string;
@@ -343,6 +345,8 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 			const byId = new Map(history.map((s) => [s.id, s]));
 
 			for (const session of runnerSessions) {
+				// Skip sessions that were explicitly deleted
+				if (deletedSessionsRef.current.has(session.session_id)) continue;
 				// hstry now returns platform_id (Oqto ID) as the session id,
 				// so a direct match is sufficient.
 				if (byId.has(session.session_id)) continue;
@@ -438,7 +442,11 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 		lastPrefetchRef.current = now;
 		const t0 = performance.now();
 		try {
-			const history = await listChatHistory();
+			const rawHistory = await listChatHistory();
+			// Filter out sessions that were explicitly deleted in this page session
+			const history = deletedSessionsRef.current.size > 0
+				? rawHistory.filter((s) => !deletedSessionsRef.current.has(s.id))
+				: rawHistory;
 			const t1 = performance.now();
 			const normalized = normalizeHistory(history);
 			const merged = mergeRunnerSessions(mergeOptimisticSessions(normalized));
@@ -702,16 +710,27 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 	const deleteChatSession = useCallback(
 		async (sessionId: string) => {
 			try {
-				// Close the agent session via WS (if active)
-				try {
-					getWsManager().agentCloseSession(sessionId);
-				} catch {
-					// Session may not be active, that's fine
-				}
+				// Track as deleted to prevent resurrection from polls
+				deletedSessionsRef.current.add(sessionId);
+
+				// Optimistically remove from UI immediately
 				setChatHistory((prev) => prev.filter((s) => s.id !== sessionId));
 				if (selectedChatSessionId === sessionId) {
 					setSelectedChatSessionId(null);
 				}
+
+				// Delete via WS (closes agent + removes from hstry + deletes JSONL)
+				try {
+					const manager = getWsManager();
+					manager.send({
+						channel: "agent",
+						session_id: sessionId,
+						cmd: "session.delete",
+					});
+				} catch {
+					// Session may not be active, that's fine
+				}
+
 				return true;
 			} catch {
 				return false;

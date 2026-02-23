@@ -17,7 +17,7 @@
 //!
 //! ### Pi Session Management
 //! - PiCreateSession, PiPrompt, PiSteer, PiFollowUp, PiAbort, PiCompact
-//! - PiSubscribe, PiUnsubscribe, PiListSessions, PiGetState, PiCloseSession
+//! - PiSubscribe, PiUnsubscribe, PiListSessions, PiGetState, PiCloseSession, PiDeleteSession
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -142,6 +142,9 @@ pub enum RunnerRequest {
 
     /// Close a Pi session (stop the process).
     PiCloseSession(PiCloseSessionRequest),
+
+    /// Delete a Pi session: close the process, remove from hstry, and delete the JSONL file.
+    PiDeleteSession(PiDeleteSessionRequest),
 
     /// Start a new session within existing Pi process.
     PiNewSession(PiNewSessionRequest),
@@ -402,6 +405,12 @@ pub enum RunnerResponse {
     /// Pi session closed.
     PiSessionClosed {
         /// The session that was closed.
+        session_id: String,
+    },
+
+    /// Pi session deleted (closed + removed from hstry + JSONL file deleted).
+    PiSessionDeleted {
+        /// The session that was deleted.
         session_id: String,
     },
 
@@ -881,6 +890,13 @@ pub struct PiGetStateRequest {
 /// Request to close a Pi session.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PiCloseSessionRequest {
+    /// Session ID.
+    pub session_id: String,
+}
+
+/// Request to delete a Pi session (close + remove from hstry + delete JSONL file).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PiDeleteSessionRequest {
     /// Session ID.
     pub session_id: String,
 }
