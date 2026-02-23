@@ -439,6 +439,8 @@ impl PiSessionManager {
         self.hstry_client.as_ref()
     }
 
+
+
     /// Create a new session.
     ///
     /// Returns the **real** session ID assigned by Pi (which may differ from
@@ -959,20 +961,6 @@ impl PiSessionManager {
         }
 
         infos
-    }
-
-    /// Return a snapshot of (oqto_session_id, pi_native_id) pairs for all live sessions.
-    /// Used by the runner to backfill platform_id in hstry when listing sessions.
-    pub async fn sessions_snapshot(&self) -> Vec<(String, String)> {
-        let sessions = self.sessions.read().await;
-        let mut pairs = Vec::new();
-        for (oqto_id, session) in sessions.iter() {
-            let eid = session.hstry_external_id.read().await.clone();
-            if !eid.is_empty() && eid != *oqto_id {
-                pairs.push((oqto_id.clone(), eid));
-            }
-        }
-        pairs
     }
 
     /// Resolve the hstry external_id for a session.

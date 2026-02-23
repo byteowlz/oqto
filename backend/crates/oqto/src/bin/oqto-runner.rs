@@ -1994,34 +1994,9 @@ impl Runner {
             let model: Option<String> = row.get("model");
             let provider: Option<String> = row.get("provider");
 
-            // Prefer platform_id (Oqto session ID) over external_id (Pi native ID).
-            // If platform_id is missing, check if we know the mapping from live
-            // sessions and backfill it directly in SQLite.
-            let effective_platform_id = platform_id.filter(|s| !s.is_empty());
-            if effective_platform_id.is_none() {
-                if let Some(ref ext_id) = external_id {
-                    // Check if any live Pi session has this as its hstry external_id
-                    let sessions_guard = self.pi_manager.sessions_snapshot().await;
-                    for (oqto_id, pi_native_id) in &sessions_guard {
-                        if pi_native_id == ext_id {
-                            // Backfill platform_id directly in SQLite
-                            let _ = sqlx::query(
-                                "UPDATE conversations SET platform_id = ? WHERE id = ? AND (platform_id IS NULL OR platform_id = '')"
-                            )
-                            .bind(oqto_id)
-                            .bind(&id)
-                            .execute(&pool)
-                            .await;
-                            debug!(
-                                "Backfilled platform_id='{}' for conversation id='{}' (external_id='{}')",
-                                oqto_id, id, ext_id
-                            );
-                            break;
-                        }
-                    }
-                }
-            }
-            let session_id = effective_platform_id
+            // Prefer platform_id (Oqto session ID) over external_id (Pi native ID)
+            let session_id = platform_id
+                .filter(|s| !s.is_empty())
                 .or(external_id.clone())
                 .unwrap_or_else(|| id.clone());
             let workspace_path = workspace.unwrap_or_else(|| "global".to_string());
