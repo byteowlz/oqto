@@ -1189,8 +1189,45 @@ impl PiSessionManager {
             })
         };
 
-        if let Some((pending_responses, cmd_tx, workdir)) = session_info {
-            // Live session exists — ask Pi directly
+        // Invalidate cache when the admin syncs models (file mtime changes).
+        if self.models_json_changed().await {
+            info!("models.json changed on disk, invalidating model cache");
+            self.model_cache.write().await.clear();
+        }
+
+        // Resolve the workdir for caching.
+        let target_workdir = if let Some((_, _, ref wd)) = session_info {
+            wd.clone()
+        } else {
+            let resolved_workdir = workdir.and_then(|value| {
+                let trimmed = value.trim();
+                (!trimmed.is_empty()).then_some(trimmed.to_string())
+            });
+            let hstry_workdir = self.resolve_workdir_from_hstry(session_id).await;
+            resolved_workdir
+                .or(hstry_workdir)
+                .unwrap_or_else(|| self.config.default_cwd.to_string_lossy().to_string())
+        };
+
+        // Check cache — return immediately if fresh.
+        if let Some(models) = self.get_cached_models_for_workdir(&target_workdir).await {
+            return Ok(models);
+        }
+
+        // Cache miss or expired — build a fresh model list.
+        //
+        // We gather models from up to three sources and merge them:
+        //  1. Live session Pi (if one exists for this session)
+        //  2. models.json on disk (eavs-provisioned, instant)
+        //  3. Ephemeral Pi RPC (user OAuth/API key models, best-effort)
+        //
+        // Source 1 and 3 both come from Pi, but a live session's Pi process
+        // caches its model list at startup and never refreshes it. So a
+        // long-running session won't see newly released models. The ephemeral
+        // Pi spawns a fresh process that discovers the latest provider models.
+
+        // Source 1: live session
+        let session_models = if let Some((pending_responses, cmd_tx, _)) = session_info {
             let (tx, rx) = oneshot::channel();
             {
                 let mut pending = pending_responses.write().await;
@@ -1202,135 +1239,81 @@ impl PiSessionManager {
                 .await
                 .context("Failed to send GetAvailableModels command")?;
 
-            let response = tokio::time::timeout(Duration::from_secs(10), rx)
-                .await
-                .context("Timeout waiting for GetAvailableModels response")?
-                .context("Response channel closed")?;
-
-            if !response.success {
-                anyhow::bail!(
-                    "GetAvailableModels failed: {}",
-                    response
-                        .error
-                        .unwrap_or_else(|| "unknown error".to_string())
-                );
-            }
-
-            let data = response
-                .data
-                .ok_or_else(|| anyhow::anyhow!("GetAvailableModels response missing data"))?;
-
-            // Pi returns { "models": [...] }, extract the inner array
-            let models_array = if let Some(inner) = data.get("models") {
-                inner.clone()
-            } else if data.is_array() {
-                data.clone()
-            } else {
-                warn!("GetAvailableModels: unexpected data shape, returning empty");
-                serde_json::Value::Array(vec![])
-            };
-
-            // Cache by workdir so dead sessions can still list models, and persist to disk
-            if models_array.as_array().is_some_and(|a| !a.is_empty()) {
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0);
-                {
-                    let mut cache = self.model_cache.write().await;
-                    cache.insert(workdir.clone(), (models_array.clone(), now));
+            match tokio::time::timeout(Duration::from_secs(10), rx).await {
+                Ok(Ok(response)) if response.success => {
+                    let data = response.data.unwrap_or(serde_json::Value::Array(vec![]));
+                    if let Some(inner) = data.get("models") {
+                        inner.clone()
+                    } else if data.is_array() {
+                        data
+                    } else {
+                        serde_json::Value::Array(vec![])
+                    }
                 }
-                Self::persist_model_cache_to_disk(
-                    self.config.model_cache_dir.as_deref(),
-                    &workdir,
-                    &models_array,
-                );
-            }
-
-            Ok(models_array)
-        } else {
-            // No live session — check if models.json changed since last read,
-            // then try cache, then read from disk.
-            // Invalidate cache when the admin syncs models (file mtime changes).
-            if self.models_json_changed().await {
-                info!("models.json changed on disk, invalidating model cache");
-                self.model_cache.write().await.clear();
-            }
-
-            let resolved_workdir = workdir
-                .and_then(|value| {
-                    let trimmed = value.trim();
-                    (!trimmed.is_empty()).then_some(trimmed.to_string())
-                })
-                .or({
-                    // Try to resolve workdir from the session via hstry (blocking-safe
-                    // because we're already in an async context)
-                    None
-                });
-
-            if let Some(ref wd) = resolved_workdir
-                && let Some(models) = self.get_cached_models_for_workdir(wd).await
-            {
-                return Ok(models);
-            }
-
-            // Try hstry lookup to find workdir
-            let hstry_workdir = self.resolve_workdir_from_hstry(session_id).await;
-            if let Some(ref wd) = hstry_workdir
-                && let Some(models) = self.get_cached_models_for_workdir(wd).await
-            {
-                return Ok(models);
-            }
-
-            // No cache hit — read models from two sources and merge:
-            //  1. models.json on disk (eavs-provisioned, instant)
-            //  2. Ephemeral Pi RPC (user OAuth/API key models, best-effort)
-            let target_workdir = resolved_workdir
-                .or(hstry_workdir)
-                .unwrap_or_else(|| self.config.default_cwd.to_string_lossy().to_string());
-
-            let disk_models = self.load_models_from_disk().await;
-
-            // Best-effort: try ephemeral Pi to pick up user-authenticated models
-            // (OAuth logins, personal API keys in auth.json). Short timeout — if
-            // Pi fails, the eavs-provisioned models are still returned.
-            let pi_models = match tokio::time::timeout(
-                Duration::from_secs(15),
-                self.fetch_models_ephemeral(&target_workdir),
-            )
-            .await
-            {
-                Ok(Ok(m)) => m,
+                Ok(Ok(response)) => {
+                    warn!(
+                        "GetAvailableModels failed: {}",
+                        response.error.unwrap_or_else(|| "unknown".to_string())
+                    );
+                    serde_json::Value::Array(vec![])
+                }
                 Ok(Err(e)) => {
-                    debug!("Ephemeral Pi model fetch failed (non-fatal): {}", e);
+                    warn!("GetAvailableModels channel error: {}", e);
                     serde_json::Value::Array(vec![])
                 }
                 Err(_) => {
-                    debug!("Ephemeral Pi model fetch timed out (non-fatal)");
+                    warn!("GetAvailableModels timeout");
                     serde_json::Value::Array(vec![])
                 }
-            };
-
-            // Merge: disk models first, then Pi models that aren't already present
-            let models = Self::merge_model_lists(&disk_models, &pi_models);
-
-            if models.as_array().is_some_and(|a| !a.is_empty()) {
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0);
-                {
-                    let mut cache = self.model_cache.write().await;
-                    cache.insert(target_workdir.clone(), (models.clone(), now));
-                }
-                Self::persist_model_cache_to_disk(
-                    self.config.model_cache_dir.as_deref(),
-                    &target_workdir,
-                    &models,
-                );
             }
-            Ok(models)
+        } else {
+            serde_json::Value::Array(vec![])
+        };
+
+        // Source 2: models.json on disk
+        let disk_models = self.load_models_from_disk().await;
+
+        // Source 3: ephemeral Pi (picks up newly released provider models)
+        let pi_models = match tokio::time::timeout(
+            Duration::from_secs(15),
+            self.fetch_models_ephemeral(&target_workdir),
+        )
+        .await
+        {
+            Ok(Ok(m)) => m,
+            Ok(Err(e)) => {
+                debug!("Ephemeral Pi model fetch failed (non-fatal): {}", e);
+                serde_json::Value::Array(vec![])
+            }
+            Err(_) => {
+                debug!("Ephemeral Pi model fetch timed out (non-fatal)");
+                serde_json::Value::Array(vec![])
+            }
+        };
+
+        // Merge: ephemeral Pi is freshest, then session, then disk.
+        // Later sources only add models not already present.
+        let models = Self::merge_model_lists(
+            &Self::merge_model_lists(&pi_models, &session_models),
+            &disk_models,
+        );
+
+        if models.as_array().is_some_and(|a| !a.is_empty()) {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            {
+                let mut cache = self.model_cache.write().await;
+                cache.insert(target_workdir.clone(), (models.clone(), now));
+            }
+            Self::persist_model_cache_to_disk(
+                self.config.model_cache_dir.as_deref(),
+                &target_workdir,
+                &models,
+            );
         }
+        Ok(models)
     }
 
     /// Resolve the workdir for a session by looking it up in hstry.
