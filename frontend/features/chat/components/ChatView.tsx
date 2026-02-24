@@ -12,6 +12,7 @@ import {
 	getToolIcon,
 } from "@/components/chat";
 import { BrailleSpinner } from "@/components/common";
+import { getToolSummary } from "@/lib/tool-summaries";
 import { useChatContext } from "@/components/contexts/chat-context";
 import {
 	ContextWindowGauge,
@@ -3113,12 +3114,14 @@ const MessageGroupCard = memo(function MessageGroupCard({
 										}
 										return collapsed.map((entry, index) => {
 											const icon = getToolIcon(entry.toolName, entry.input);
+											const summary = getToolSummary(entry.toolName, entry.input, locale);
+											const baseLabel = summary ?? entry.toolName;
 											return {
 												id: `${entry.toolName}-${index}`,
 												label:
 													entry.count > 1
-														? `${entry.toolName} (${entry.count})`
-														: entry.toolName,
+														? `${baseLabel} (${entry.count})`
+														: baseLabel,
 												icon: (
 													<span className="relative inline-flex">
 														{icon}
@@ -3144,9 +3147,10 @@ const MessageGroupCard = memo(function MessageGroupCard({
 														| Record<string, unknown>
 														| undefined)
 												: undefined;
+										const summary = getToolSummary(toolName, input, locale);
 										return {
 											id: toolSegment.key,
-											label: toolName,
+											label: summary ?? toolName,
 											icon: getToolIcon(toolName, input),
 											render: () =>
 												verbosity === 1 ? null : (
