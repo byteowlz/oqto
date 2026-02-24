@@ -321,7 +321,15 @@ export function convertCanonicalMessageToDisplay(
 		typeof msg.created_at === "number" && msg.created_at > 0
 			? msg.created_at
 			: Date.now();
-	const usage = msg.usage as DisplayMessage["usage"] | undefined;
+	// Build usage from nested usage object or flat tokens_input/tokens_output fields
+	let usage = msg.usage as DisplayMessage["usage"] | undefined;
+	if (!usage && (msg.tokens_input || msg.tokens_output)) {
+		usage = {
+			input_tokens: msg.tokens_input ?? 0,
+			output_tokens: msg.tokens_output ?? 0,
+			cost_usd: msg.cost ?? undefined,
+		};
+	}
 
 	return {
 		id: typeof msg.id === "string" && msg.id ? msg.id : fallbackId,

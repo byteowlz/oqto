@@ -677,8 +677,70 @@ export function ChatView({
 	}, [availableModels, modelQuery]);
 	// Calculate current context window size from message content.
 	// Pi's usage fields are cumulative session totals, not current context.
+	// ── Pi session stats for context gauge ──
+	// Fetched once on session load, then updated from stream.message_end usage.
+	const [piSessionTokens, setPiSessionTokens] = useState<{
+		input: number;
+		output: number;
+	} | null>(null);
+
+	// Fetch Pi session stats when the active session changes
+	useEffect(() => {
+		if (!selectedSessionId) {
+			setPiSessionTokens(null);
+			return;
+		}
+		let cancelled = false;
+		const fetchStats = async () => {
+			try {
+				const stats = await getWsManager().agentGetSessionStats(
+					selectedSessionId,
+				);
+				if (cancelled) return;
+				if (stats && typeof stats === "object" && "tokens" in stats) {
+					const tokens = (
+						stats as { tokens?: { input?: number; output?: number } }
+					).tokens;
+					if (tokens) {
+						setPiSessionTokens({
+							input: tokens.input ?? 0,
+							output: tokens.output ?? 0,
+						});
+					}
+				}
+			} catch {
+				// Stats unavailable (session not running in Pi) - that's fine
+			}
+		};
+		void fetchStats();
+		return () => {
+			cancelled = true;
+		};
+	}, [selectedSessionId]);
+
 	const contextTokenCount = useMemo(() => {
-		// Find last compaction - only count messages after it
+		// Priority 1: Real usage from the last assistant message (set during streaming)
+		for (let i = messages.length - 1; i >= 0; i--) {
+			const msg = messages[i];
+			if (msg.role === "assistant" && msg.usage) {
+				const u = msg.usage;
+				const input = u.input_tokens ?? 0;
+				const output = u.output_tokens ?? 0;
+				if (input > 0 || output > 0) {
+					return { inputTokens: input, outputTokens: output };
+				}
+			}
+		}
+
+		// Priority 2: Pi session stats (fetched on session load)
+		if (piSessionTokens && (piSessionTokens.input > 0 || piSessionTokens.output > 0)) {
+			return {
+				inputTokens: piSessionTokens.input,
+				outputTokens: piSessionTokens.output,
+			};
+		}
+
+		// Priority 3: Fallback estimate from text content (4 chars ~ 1 token)
 		let lastCompactionIndex = -1;
 		for (let i = messages.length - 1; i >= 0; i--) {
 			if (messages[i].parts.some((p) => p.type === "compaction")) {
@@ -687,7 +749,6 @@ export function ChatView({
 			}
 		}
 
-		// Estimate tokens from text content (rough approximation: 4 chars ≈ 1 token)
 		let inputTokens = 0;
 		let outputTokens = 0;
 		const startIndex = lastCompactionIndex >= 0 ? lastCompactionIndex + 1 : 0;
@@ -695,20 +756,28 @@ export function ChatView({
 		for (let i = startIndex; i < messages.length; i++) {
 			const msg = messages[i];
 			for (const part of msg.parts) {
-				if (part.type === "text" && part.text) {
-					const estimatedTokens = Math.ceil(part.text.length / 4);
+				const text =
+					("text" in part ? (part as { text?: string }).text : null) ??
+					("tool_input" in part
+						? (part as { tool_input?: string }).tool_input
+						: null) ??
+					("output" in part
+						? (part as { output?: string }).output
+						: null) ??
+					"";
+				if (text) {
+					const estimatedTokens = Math.ceil(text.length / 4);
 					if (msg.role === "user") {
 						inputTokens += estimatedTokens;
-					} else if (msg.role === "assistant") {
+					} else {
 						outputTokens += estimatedTokens;
 					}
 				}
 			}
 		}
 		return { inputTokens, outputTokens };
-	}, [messages]);
+	}, [messages, piSessionTokens]);
 
-	// Use content-based estimate for current context window
 	const gaugeTokens = contextTokenCount;
 
 	// Report token usage to parent when it changes

@@ -157,6 +157,11 @@ export type RawMessage = {
 	/** Provider ID from hstry ChatMessage */
 	provider_id?: string | null;
 	provider?: string | null;
+	/** Token counts from runner/hstry (separate fields, not nested usage) */
+	tokens_input?: number | null;
+	tokens_output?: number | null;
+	tokens_reasoning?: number | null;
+	cost?: number | null;
 };
 
 /** Batched update state for token streaming - reduces per-token React updates */
