@@ -12,7 +12,7 @@ import type { Part, ToolStatus } from "@/lib/canonical-types";
 import type { DisplayMessage, DisplayPart, RawMessage } from "./types";
 
 const MESSAGE_ID_PATTERN = /^pi-msg-(\d+)$/;
-const MESSAGE_MATCH_WINDOW_MS = 120_000;
+
 
 // ============================================================================
 // Internal helpers
@@ -630,86 +630,43 @@ export function mergeServerMessages(
 	previous: DisplayMessage[],
 	serverMessages: DisplayMessage[],
 ): DisplayMessage[] {
-	// If the server returned fewer messages, merge incrementally.
-	if (serverMessages.length < previous.length && previous.length > 0) {
-		const result = [...previous];
-		for (const serverMsg of serverMessages) {
-			let matched = false;
-			for (let i = 0; i < result.length; i++) {
-				const local = result[i];
-				if (local.id === serverMsg.id) {
-					result[i] = serverMsg;
-					matched = true;
-					break;
-				}
-				if (
-					local.clientId &&
-					serverMsg.clientId &&
-					local.clientId === serverMsg.clientId
-				) {
-					result[i] = serverMsg;
-					matched = true;
-					break;
-				}
-			}
-			if (!matched) {
-				result.push(serverMsg);
-			}
-		}
-		return result;
-	}
+	// Server messages are authoritative for all persisted content.
+	// We only preserve local messages that represent in-flight state
+	// not yet in the server's response: optimistic user messages (with
+	// a clientId that the server doesn't know about yet) and the
+	// currently-streaming assistant message (isStreaming=true).
+	//
+	// Everything else comes from the server. This avoids ID-mismatch
+	// duplication (pi-msg-* vs history-* vs resync-* vs server-*).
+	if (serverMessages.length === 0) return previous;
 
-	const serverIds = new Set(serverMessages.map((m) => m.id));
 	const serverClientIds = new Set(
 		serverMessages.filter((m) => m.clientId).map((m) => m.clientId),
 	);
-	const serverEntries = serverMessages.map((message) => ({
-		fingerprint: messageFingerprint(message),
-		timestamp: message.timestamp ?? 0,
-	}));
-	const serverTextEntries = serverMessages.map((message) => ({
-		role: message.role,
-		text: messageTextSignature(message),
-		timestamp: message.timestamp ?? 0,
-	}));
-	const preserved = previous.filter((message) => {
-		if (!shouldPreserveLocalMessage(message)) return false;
-		if (serverIds.has(message.id)) return false;
 
-		if (message.clientId && serverClientIds.has(message.clientId)) {
-			return false;
+	const trailing: DisplayMessage[] = [];
+	for (let i = previous.length - 1; i >= 0; i--) {
+		const msg = previous[i];
+		// Keep streaming assistant message (actively being built by deltas)
+		if (msg.isStreaming) {
+			trailing.unshift(msg);
+			continue;
 		}
+		// Keep optimistic user messages not yet persisted to hstry
+		if (
+			msg.role === "user" &&
+			msg.clientId &&
+			!serverClientIds.has(msg.clientId)
+		) {
+			trailing.unshift(msg);
+			continue;
+		}
+		// Stop scanning once we hit a message that isn't in-flight.
+		// In-flight messages are always at the tail of the array.
+		break;
+	}
 
-		const localText = messageTextSignature(message);
-		if (localText) {
-			for (const server of serverTextEntries) {
-				if (server.role !== message.role) continue;
-				if (!server.text) continue;
-				if (server.text !== localText) continue;
-				const hasServerTs = server.timestamp != null && server.timestamp > 0;
-				const hasLocalTs = message.timestamp != null && message.timestamp > 0;
-				if (hasServerTs && hasLocalTs) {
-					const diff = Math.abs(server.timestamp - message.timestamp);
-					if (diff > MESSAGE_MATCH_WINDOW_MS) continue;
-				}
-				return false;
-			}
-		}
-
-		const localFingerprint = messageFingerprint(message);
-		for (const server of serverEntries) {
-			if (server.fingerprint !== localFingerprint) continue;
-			const hasServerTs = server.timestamp != null && server.timestamp > 0;
-			const hasLocalTs = message.timestamp != null && message.timestamp > 0;
-			if (hasServerTs && hasLocalTs) {
-				const diff = Math.abs(server.timestamp - message.timestamp);
-				if (diff > MESSAGE_MATCH_WINDOW_MS) continue;
-			}
-			return false;
-		}
-		return true;
-	});
-	return preserved.length > 0
-		? [...serverMessages, ...preserved]
+	return trailing.length > 0
+		? [...serverMessages, ...trailing]
 		: serverMessages;
 }
