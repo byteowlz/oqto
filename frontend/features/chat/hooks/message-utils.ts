@@ -630,16 +630,44 @@ export function mergeServerMessages(
 	previous: DisplayMessage[],
 	serverMessages: DisplayMessage[],
 ): DisplayMessage[] {
-	// Server messages are authoritative for all persisted content.
-	// We only preserve local messages that represent in-flight state
-	// not yet in the server's response: optimistic user messages (with
-	// a clientId that the server doesn't know about yet) and the
-	// currently-streaming assistant message (isStreaming=true).
-	//
-	// Everything else comes from the server. This avoids ID-mismatch
-	// duplication (pi-msg-* vs history-* vs resync-* vs server-*).
 	if (serverMessages.length === 0) return previous;
+	if (previous.length === 0) return serverMessages;
 
+	// When the server returns FEWER messages than local state, it's a
+	// partial view (e.g., Pi's context window after compaction). In
+	// this case, merge incrementally: keep all previous messages and
+	// update/append from the server set.
+	if (serverMessages.length < previous.length) {
+		const result = [...previous];
+		for (const serverMsg of serverMessages) {
+			let matched = false;
+			for (let i = 0; i < result.length; i++) {
+				const local = result[i];
+				if (local.id === serverMsg.id) {
+					result[i] = serverMsg;
+					matched = true;
+					break;
+				}
+				if (
+					local.clientId &&
+					serverMsg.clientId &&
+					local.clientId === serverMsg.clientId
+				) {
+					result[i] = serverMsg;
+					matched = true;
+					break;
+				}
+			}
+			if (!matched) {
+				result.push(serverMsg);
+			}
+		}
+		return result;
+	}
+
+	// Server has >= messages than local state: server is authoritative.
+	// Only preserve trailing in-flight local messages that the server
+	// doesn't know about yet (optimistic user msgs, streaming response).
 	const serverClientIds = new Set(
 		serverMessages.filter((m) => m.clientId).map((m) => m.clientId),
 	);

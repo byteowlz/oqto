@@ -211,37 +211,58 @@ describe("mergeServerMessages", () => {
 	});
 
 	describe("preserves in-flight streaming message", () => {
-		it("keeps streaming assistant message at tail", () => {
+		it("keeps streaming assistant message at tail (authoritative path)", () => {
 			const prev = [
 				textMsg("pi-msg-1", "user", "hello", { timestamp: now }),
 				{ ...textMsg("pi-msg-2", "assistant", "partial response", { timestamp: now }), isStreaming: true },
 			];
+			// Server has >= messages -> authoritative path
 			const server = [
 				textMsg("history-s1-0", "user", "hello", { timestamp: now }),
+				textMsg("history-s1-1", "assistant", "earlier reply", { timestamp: now }),
 			];
 			const result = mergeServerMessages(prev, server);
-			expect(result).toHaveLength(2);
+			expect(result).toHaveLength(3);
 			expect(result[0].id).toBe("history-s1-0");
-			expect(result[1].id).toBe("pi-msg-2");
-			expect(result[1].isStreaming).toBe(true);
+			expect(result[1].id).toBe("history-s1-1");
+			expect(result[2].id).toBe("pi-msg-2");
+			expect(result[2].isStreaming).toBe(true);
 		});
 
-		it("keeps optimistic user message + streaming response", () => {
+		it("keeps optimistic user message + streaming response (authoritative path)", () => {
 			const prev = [
 				textMsg("pi-msg-1", "user", "old msg", { timestamp: now }),
 				textMsg("pi-msg-2", "user", "new question", { timestamp: now, clientId: "c-new" }),
 				{ ...textMsg("pi-msg-3", "assistant", "thinking...", { timestamp: now }), isStreaming: true },
 			];
+			// Server has >= messages -> authoritative path
 			const server = [
 				textMsg("history-s1-0", "user", "old msg", { timestamp: now }),
 				textMsg("history-s1-1", "assistant", "old answer", { timestamp: now }),
+				textMsg("history-s1-2", "user", "some other msg", { timestamp: now }),
 			];
 			const result = mergeServerMessages(prev, server);
-			expect(result).toHaveLength(4);
+			expect(result).toHaveLength(5);
 			expect(result[0].id).toBe("history-s1-0");
 			expect(result[1].id).toBe("history-s1-1");
-			expect(result[2].id).toBe("pi-msg-2"); // optimistic user msg
-			expect(result[3].id).toBe("pi-msg-3"); // streaming
+			expect(result[2].id).toBe("history-s1-2");
+			expect(result[3].id).toBe("pi-msg-2"); // optimistic user msg
+			expect(result[4].id).toBe("pi-msg-3"); // streaming
+		});
+
+		it("keeps streaming message in incremental path too", () => {
+			const prev = [
+				textMsg("pi-msg-1", "user", "hello", { timestamp: now }),
+				{ ...textMsg("pi-msg-2", "assistant", "partial", { timestamp: now }), isStreaming: true },
+			];
+			// Server has fewer -> incremental path preserves everything
+			const server = [
+				textMsg("history-s1-0", "user", "hello", { timestamp: now }),
+			];
+			const result = mergeServerMessages(prev, server);
+			// Incremental: all prev kept + server appended (no ID match)
+			expect(result).toHaveLength(3);
+			expect(result.some((m) => m.isStreaming)).toBe(true);
 		});
 	});
 
@@ -331,14 +352,87 @@ describe("mergeServerMessages", () => {
 				// This IS at the tail and is in-flight
 				textMsg("pi-msg-3", "user", "new question", { timestamp: now, clientId: "c-new" }),
 			];
+			// Server has MORE messages than prev -> authoritative path
 			const server = [
-				textMsg("history-s1-0", "assistant", "different context", { timestamp: now }),
+				textMsg("history-s1-0", "user", "old question", { timestamp: now }),
+				textMsg("history-s1-1", "assistant", "old answer", { timestamp: now }),
+				textMsg("history-s1-2", "assistant", "different context", { timestamp: now }),
+				textMsg("history-s1-3", "assistant", "more context", { timestamp: now }),
 			];
 			const result = mergeServerMessages(prev, server);
-			// Server + only pi-msg-3 (tail in-flight)
-			expect(result).toHaveLength(2);
+			// Server (4) + only pi-msg-3 (tail in-flight)
+			expect(result).toHaveLength(5);
 			expect(result[0].id).toBe("history-s1-0");
-			expect(result[1].id).toBe("pi-msg-3");
+			expect(result[4].id).toBe("pi-msg-3");
+		});
+	});
+
+	describe("incremental merge (server has fewer messages = partial view)", () => {
+		it("preserves all previous messages when server returns partial window", () => {
+			// Simulates Pi's context window after compaction: only last 5 messages
+			// but local state has 10 from earlier streaming
+			const prev = [];
+			for (let i = 0; i < 10; i++) {
+				prev.push(textMsg(`pi-msg-${i}`, i % 2 === 0 ? "user" : "assistant", `msg ${i}`, { timestamp: now + i * 1000 }));
+			}
+			// Server returns only last 3 (partial context window)
+			const server = [
+				textMsg("server-7", "assistant", "msg 7 updated", { timestamp: now + 7000 }),
+				textMsg("server-8", "user", "msg 8 updated", { timestamp: now + 8000 }),
+				textMsg("server-9", "assistant", "msg 9 updated", { timestamp: now + 9000 }),
+			];
+			const result = mergeServerMessages(prev, server);
+			// All 10 original + 3 server (no ID match, so appended)
+			expect(result.length).toBeGreaterThanOrEqual(10);
+			// Original messages still present
+			expect(result.some((m) => m.id === "pi-msg-0")).toBe(true);
+			expect(result.some((m) => m.id === "pi-msg-5")).toBe(true);
+		});
+
+		it("updates existing messages by ID in incremental path", () => {
+			const prev = [
+				textMsg("s1", "user", "hello", { timestamp: now }),
+				textMsg("s2", "assistant", "old reply", { timestamp: now }),
+				textMsg("s3", "user", "followup", { timestamp: now }),
+			];
+			// Server has fewer -> incremental
+			const server = [
+				textMsg("s2", "assistant", "updated reply", { timestamp: now }),
+			];
+			const result = mergeServerMessages(prev, server);
+			expect(result).toHaveLength(3);
+			expect(result[1].parts[0]).toHaveProperty("text", "updated reply");
+		});
+
+		it("updates via clientId match in incremental path", () => {
+			const prev = [
+				textMsg("local-1", "user", "msg", { timestamp: now, clientId: "c1" }),
+				textMsg("local-2", "assistant", "response", { timestamp: now }),
+				textMsg("local-3", "user", "followup", { timestamp: now }),
+			];
+			const server = [
+				textMsg("confirmed-1", "user", "msg updated", { timestamp: now, clientId: "c1" }),
+			];
+			const result = mergeServerMessages(prev, server);
+			expect(result).toHaveLength(3);
+			expect(result[0].id).toBe("confirmed-1");
+		});
+
+		it("appends new server messages in incremental path", () => {
+			const prev = [
+				textMsg("s1", "user", "hello", { timestamp: now }),
+				textMsg("s2", "assistant", "response", { timestamp: now }),
+				textMsg("pi-msg-1", "user", "followup", { timestamp: now }),
+			];
+			const server = [
+				textMsg("s2", "assistant", "response updated", { timestamp: now }),
+			];
+			const result = mergeServerMessages(prev, server);
+			expect(result.some((m) => m.id === "s2")).toBe(true);
+			expect(result.some((m) => m.id === "pi-msg-1")).toBe(true);
+			// s2 was updated in place
+			const s2 = result.find((m) => m.id === "s2");
+			expect(s2?.parts[0]).toHaveProperty("text", "response updated");
 		});
 	});
 
