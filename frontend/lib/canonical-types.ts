@@ -335,6 +335,8 @@ export type EventPayload =
 			success: boolean;
 			will_retry: boolean;
 			error?: string;
+			summary?: string;
+			tokens_before?: number;
 	  }
 	// Config changes
 	| { event: "config.model_changed"; provider: string; model_id: string }

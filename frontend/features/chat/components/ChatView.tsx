@@ -718,6 +718,52 @@ export function ChatView({
 		};
 	}, [selectedSessionId]);
 
+	// Refresh stats after compaction completes (context window changes significantly)
+	const lastCompactionText = useMemo(() => {
+		for (let i = messages.length - 1; i >= 0; i--) {
+			for (const part of messages[i].parts) {
+				if (
+					part.type === "compaction" &&
+					"text" in part &&
+					(part as { text: string }).text !== "Compacting context..."
+				) {
+					return (part as { text: string }).text;
+				}
+			}
+		}
+		return null;
+	}, [messages]);
+
+	useEffect(() => {
+		if (!lastCompactionText || !selectedSessionId) return;
+		let cancelled = false;
+		const refreshStats = async () => {
+			try {
+				const stats = await getWsManager().agentGetSessionStats(
+					selectedSessionId,
+				);
+				if (cancelled) return;
+				if (stats && typeof stats === "object" && "tokens" in stats) {
+					const tokens = (
+						stats as { tokens?: { input?: number; output?: number } }
+					).tokens;
+					if (tokens) {
+						setPiSessionTokens({
+							input: tokens.input ?? 0,
+							output: tokens.output ?? 0,
+						});
+					}
+				}
+			} catch {
+				// Stats unavailable
+			}
+		};
+		void refreshStats();
+		return () => {
+			cancelled = true;
+		};
+	}, [lastCompactionText, selectedSessionId]);
+
 	const contextTokenCount = useMemo(() => {
 		// Priority 1: Real usage from the last assistant message (set during streaming)
 		for (let i = messages.length - 1; i >= 0; i--) {
@@ -2990,15 +3036,50 @@ const MessageGroupCard = memo(function MessageGroupCard({
 						);
 					}
 					if (segment.type === "compaction") {
+						const isLoading = segment.text === "Compacting context...";
 						return (
 							<div
 								key={segment.key}
 								className={cn(
-									"text-xs text-muted-foreground",
-									needsTopMargin && "mt-3",
+									"flex items-center gap-2 my-3 text-xs text-muted-foreground",
 								)}
 							>
-								{segment.text}
+								<div className="flex-1 h-px bg-border" />
+								<div className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-muted/50 border border-border/50">
+									{isLoading ? (
+										<svg
+											className="animate-spin h-3 w-3"
+											viewBox="0 0 24 24"
+											fill="none"
+										>
+											<circle
+												className="opacity-25"
+												cx="12"
+												cy="12"
+												r="10"
+												stroke="currentColor"
+												strokeWidth="4"
+											/>
+											<path
+												className="opacity-75"
+												fill="currentColor"
+												d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+											/>
+										</svg>
+									) : (
+										<svg
+											className="h-3 w-3"
+											viewBox="0 0 24 24"
+											fill="none"
+											stroke="currentColor"
+											strokeWidth="2"
+										>
+											<path d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9" />
+										</svg>
+									)}
+									<span>{segment.text}</span>
+								</div>
+								<div className="flex-1 h-px bg-border" />
 							</div>
 						);
 					}

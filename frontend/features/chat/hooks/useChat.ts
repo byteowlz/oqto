@@ -1082,21 +1082,68 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 
 				case "compact.end": {
 					const success = event.success as boolean;
-					if (!success) {
-						const errText = (event.error as string) || "Compaction failed";
-						const currentMsg = ensureAssistantMessage(false);
-						const part: DisplayPart = {
-							type: "error",
-							id: nextPartId(),
-							text: errText,
-						};
-						if (streamingMessageRef.current?.id === currentMsg.id) {
-							currentMsg.parts.push(part);
-							scheduleStreamingUpdate();
+					const summary = event.summary as string | undefined;
+					const tokensBefore = event.tokens_before as number | undefined;
+
+					// Replace the "Compacting context..." placeholder with result
+					const resultText = success
+						? (() => {
+								const parts: string[] = ["Context compacted"];
+								if (tokensBefore) {
+									const fmt = (n: number) =>
+										n >= 1000
+											? `${(n / 1000).toFixed(1)}K`
+											: n.toString();
+									parts[0] = `Context compacted (${fmt(tokensBefore)} tokens summarized)`;
+								}
+								return parts[0];
+							})()
+						: (event.error as string) || "Compaction failed";
+
+					const currentMsg = ensureAssistantMessage(false);
+					const part: DisplayPart = success
+						? {
+								type: "compaction",
+								id: nextPartId(),
+								text: resultText,
+							}
+						: {
+								type: "error",
+								id: nextPartId(),
+								text: resultText,
+							};
+
+					if (streamingMessageRef.current?.id === currentMsg.id) {
+						// Replace the "Compacting context..." part if it exists
+						const compactIdx = currentMsg.parts.findIndex(
+							(p) => p.type === "compaction" && p.text === "Compacting context...",
+						);
+						if (compactIdx >= 0) {
+							currentMsg.parts[compactIdx] = part;
 						} else {
-							appendPartToMessage(currentMsg.id, part);
+							currentMsg.parts.push(part);
 						}
+						scheduleStreamingUpdate();
+					} else {
+						// Replace in messages array
+						setMessages((prev) => {
+							const msgIdx = prev.findIndex((m) => m.id === currentMsg.id);
+							if (msgIdx < 0) return prev;
+							const msg = prev[msgIdx];
+							const compactIdx = msg.parts.findIndex(
+								(p) => p.type === "compaction" && p.text === "Compacting context...",
+							);
+							if (compactIdx >= 0) {
+								const next = [...prev];
+								const updatedParts = [...msg.parts];
+								updatedParts[compactIdx] = part;
+								next[msgIdx] = { ...msg, parts: updatedParts };
+								return next;
+							}
+							return prev;
+						});
 					}
+
 					break;
 				}
 

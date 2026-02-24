@@ -210,6 +210,12 @@ pub enum EventPayload {
         will_retry: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<String>,
+        /// Compaction summary text (what was preserved).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        summary: Option<String>,
+        /// Token count before compaction.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tokens_before: Option<u64>,
     },
 
     // -- Config changes --

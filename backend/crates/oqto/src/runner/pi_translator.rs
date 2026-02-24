@@ -23,7 +23,8 @@ use oqto_protocol::events::{
 use oqto_protocol::messages::{Message, Role, StopReason, Usage};
 
 use crate::pi::{
-    AgentMessage, AssistantMessageEvent, ContentBlock, ExtensionUiRequest, ImageSource, PiEvent,
+    AgentMessage, AssistantMessageEvent, CompactionResult, ContentBlock, ExtensionUiRequest,
+    ImageSource, PiEvent,
 };
 use oqto_protocol::runner::SessionState;
 
@@ -133,7 +134,11 @@ impl PiTranslator {
                 result,
                 aborted,
                 will_retry,
-            } => self.on_compaction_end(result.is_some() && !aborted, *will_retry),
+            } => self.on_compaction_end(
+                result.is_some() && !aborted,
+                *will_retry,
+                result.as_ref(),
+            ),
             PiEvent::AutoRetryStart {
                 attempt,
                 max_attempts,
@@ -544,13 +549,20 @@ impl PiTranslator {
         events
     }
 
-    fn on_compaction_end(&mut self, success: bool, will_retry: bool) -> Vec<EventPayload> {
+    fn on_compaction_end(
+        &mut self,
+        success: bool,
+        will_retry: bool,
+        result: Option<&CompactionResult>,
+    ) -> Vec<EventPayload> {
         let mut events = Vec::new();
 
         events.push(EventPayload::CompactEnd {
             success,
             will_retry,
             error: None,
+            summary: result.map(|r| r.summary.clone()),
+            tokens_before: result.map(|r| r.tokens_before),
         });
 
         // If not retrying, transition back to generating (still within agent working).
