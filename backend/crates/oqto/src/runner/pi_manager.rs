@@ -34,7 +34,7 @@ use crate::pi::{
 };
 use crate::runner::pi_translator::PiTranslator;
 use crate::runner::protocol::{PiSessionInfo, PiSessionState};
-use oqto_protocol::events::Event as CanonicalEvent;
+use oqto_protocol::events::{Event as CanonicalEvent, EventPayload};
 
 // ============================================================================
 // Configuration
@@ -347,8 +347,8 @@ struct PiSession {
     /// The external_id used in hstry for this session. Initially the Oqto UUID,
     /// updated to Pi's native session ID once known via `get_state`.
     hstry_external_id: HstryExternalId,
-    /// Last activity timestamp.
-    last_activity: Instant,
+    /// Last activity timestamp (shared with reader/command tasks).
+    last_activity: Arc<RwLock<Instant>>,
     /// Broadcast channel for events.
     event_tx: broadcast::Sender<PiEventWrapper>,
     /// Command sender to the session task.
@@ -759,7 +759,7 @@ impl PiSessionManager {
             process: child,
             state: Arc::clone(&state),
             hstry_external_id,
-            last_activity: Instant::now(),
+            last_activity: Arc::clone(&last_activity),
             event_tx,
             cmd_tx,
             pending_responses,
@@ -903,7 +903,7 @@ impl PiSessionManager {
             String,
             Arc<RwLock<String>>,
             Arc<RwLock<PiSessionState>>,
-            Instant,
+            Arc<RwLock<Instant>>,
             usize,
             PathBuf,
             Option<String>,
@@ -917,7 +917,7 @@ impl PiSessionManager {
                         s.id.clone(),
                         Arc::clone(&s.hstry_external_id),
                         Arc::clone(&s.state),
-                        s.last_activity,
+                        Arc::clone(&s.last_activity),
                         s.subscriber_count(),
                         s.config.cwd.clone(),
                         s.config.provider.clone(),
@@ -928,7 +928,7 @@ impl PiSessionManager {
         };
 
         let mut infos = Vec::with_capacity(snapshots.len());
-        for (id, external_id, state, last_activity, subscriber_count, cwd, provider, model) in
+        for (id, external_id, state, last_activity_arc, subscriber_count, cwd, provider, model) in
             snapshots
         {
             let current_state = *state.read().await;
@@ -946,6 +946,7 @@ impl PiSessionManager {
                     // Convert Instant to Unix timestamp in milliseconds.
                     // last_activity is an Instant of when the activity happened;
                     // elapsed() gives duration since then. Subtract from now.
+                    let last_activity = *last_activity_arc.read().await;
                     let now_ms = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap_or_default()
@@ -2398,7 +2399,12 @@ impl PiSessionManager {
         let now = Instant::now();
         let mut to_close = Vec::new();
 
-        let snapshots: Vec<(String, Arc<RwLock<PiSessionState>>, Instant, usize)> = {
+        // How long a session can stay in a non-idle state (Streaming,
+        // Aborting, Compacting, Starting) without any stdout activity
+        // before the watchdog forces it back to Idle.
+        let stuck_timeout = Duration::from_secs(60);
+
+        let snapshots: Vec<(String, Arc<RwLock<PiSessionState>>, Arc<RwLock<Instant>>, usize, broadcast::Sender<PiEventWrapper>)> = {
             let sessions = self.sessions.read().await;
             sessions
                 .iter()
@@ -2406,18 +2412,43 @@ impl PiSessionManager {
                     (
                         id.clone(),
                         Arc::clone(&session.state),
-                        session.last_activity,
+                        Arc::clone(&session.last_activity),
                         session.subscriber_count(),
+                        session.event_tx.clone(),
                     )
                 })
                 .collect()
         };
 
-        for (id, state, last_activity, subscriber_count) in snapshots {
+        for (id, state, last_activity_arc, subscriber_count, session_event_tx) in snapshots {
             let current_state = *state.read().await;
+            let last_activity = *last_activity_arc.read().await;
             let is_idle = current_state == PiSessionState::Idle;
             let no_subscribers = subscriber_count == 0;
             let timed_out = now.duration_since(last_activity) > idle_timeout;
+
+            // Watchdog: force-reset stuck non-idle sessions.
+            // If a session has been in a non-idle state for longer than
+            // stuck_timeout without any Pi stdout activity, it's stuck.
+            // Force it to Idle and broadcast agent.idle so the frontend
+            // clears the busy spinner.
+            if !is_idle && now.duration_since(last_activity) > stuck_timeout {
+                warn!(
+                    "Session '{}' stuck in {:?} for {:?} with no activity -- forcing to Idle",
+                    id,
+                    current_state,
+                    now.duration_since(last_activity)
+                );
+                *state.write().await = PiSessionState::Idle;
+                let idle_event = CanonicalEvent {
+                    session_id: id.clone(),
+                    runner_id: self.config.runner_id.clone(),
+                    ts: chrono::Utc::now().timestamp_millis(),
+                    payload: EventPayload::AgentIdle,
+                };
+                let _ = session_event_tx.send(idle_event);
+                continue; // Don't also close it -- let the user retry
+            }
 
             if is_idle && no_subscribers && timed_out {
                 info!(
