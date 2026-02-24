@@ -3015,7 +3015,8 @@ const MessageGroupCard = memo(function MessageGroupCard({
 										type: "thinking",
 										id: segment.key,
 										text: segment.text,
-									}}
+										__verbosity: verbosity,
+									} as DisplayPart}
 									locale={locale}
 									workspacePath={workspacePath}
 								/>
@@ -3375,17 +3376,60 @@ function PiPartRenderer({
 			);
 		}
 
-		case "thinking":
+		case "thinking": {
+			const thinkingText = stripAnsi(
+				((part as { text?: string }).text ?? "").trim(),
+			);
+			if (!thinkingText) return null;
+
+			const verbosityLevel =
+				typeof (part as Record<string, unknown>).__verbosity === "number"
+					? ((part as Record<string, unknown>).__verbosity as 1 | 2 | 3)
+					: 3;
+
+			// Verbosity 3 (verbose): open by default, full markdown
+			// Verbosity 2 (normal): collapsed, first-line preview
+			// Verbosity 1 (compact): collapsed, just "Thinking" label
+			const isOpen = verbosityLevel >= 3;
+			const firstLine =
+				verbosityLevel === 2
+					? thinkingText.split("\n")[0].slice(0, 120)
+					: null;
+			const summaryLabel = locale === "de" ? "Gedanken" : "Thinking";
+
 			return (
-				<details className="text-xs text-muted-foreground border-l-2 border-muted pl-2 my-2">
-					<summary className="cursor-pointer hover:text-foreground list-none [&::-webkit-details-marker]:hidden [&::marker]:content-['']">
-						{locale === "de" ? "Gedanken" : "Thinking"}
+				<details
+					open={isOpen}
+					className="group my-2 rounded-md border border-border/40 bg-muted/30"
+				>
+					<summary className="flex items-center gap-2 cursor-pointer select-none px-3 py-2 text-xs text-muted-foreground hover:text-foreground list-none [&::-webkit-details-marker]:hidden [&::marker]:content-['']">
+						<svg
+							className="h-3.5 w-3.5 shrink-0 transition-transform group-open:rotate-90"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							strokeWidth="2"
+							strokeLinecap="round"
+							strokeLinejoin="round"
+						>
+							<polyline points="9 18 15 12 9 6" />
+						</svg>
+						<span className="font-medium">{summaryLabel}</span>
+						{firstLine && (
+							<span className="truncate opacity-60 group-open:hidden">
+								-- {firstLine}
+							</span>
+						)}
 					</summary>
-					<pre className="mt-1 whitespace-pre-wrap font-mono text-xs">
-						{stripAnsi(((part as { text?: string }).text ?? "").trim())}
-					</pre>
+					<div className="px-3 pb-3 pt-1 text-xs text-muted-foreground leading-relaxed">
+						<MarkdownRenderer
+							content={thinkingText}
+							className="text-xs text-muted-foreground leading-relaxed [&_p]:text-muted-foreground [&_li]:text-muted-foreground [&_code]:text-muted-foreground"
+						/>
+					</div>
 				</details>
 			);
+		}
 
 		case "tool_call": {
 			const hasResult = Boolean(toolResult);
