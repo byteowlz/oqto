@@ -3505,6 +3505,7 @@ function TextWithFileReferences({
 	workspacePath?: string | null;
 	locale?: "en" | "de";
 }) {
+	const { t } = useTranslation();
 	// Strip ANSI escape codes and fix indentation before rendering.
 	// Some models (e.g. Kimi-K2.5) prefix text with 4+ spaces which CommonMark
 	// interprets as indented code blocks, causing plain text to render as <pre><code>.
