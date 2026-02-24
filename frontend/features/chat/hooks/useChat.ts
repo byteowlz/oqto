@@ -478,7 +478,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 		[applyThrottledSnapshot],
 	);
 
-	// biome-ignore lint/correctness/useExhaustiveDependencies: mergeServerMessages/normalizeMessages are stable refs
+	// biome-ignore lint/correctness/useExhaustiveDependencies: normalizeMessages is a stable ref
 	const fetchHistoryMessages = useCallback(
 		async (sessionId: string) => {
 			try {
@@ -489,7 +489,30 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 					`history-${sessionId}`,
 				);
 				if (displayMessages.length === 0) return;
-				setMessages((prev) => mergeServerMessages(prev, displayMessages));
+				// Replace messages entirely. hstry is the authoritative source
+				// for completed turns. Merging would keep stale local messages
+				// (pi-msg-* from streaming or localStorage cache) alongside the
+				// server versions, causing duplicates.
+				// Exception: if there's an active streaming message, append it
+				// so the in-progress response isn't lost.
+				setMessages((prev) => {
+					const streaming = streamingMessageRef.current;
+					if (streaming) {
+						// Also preserve the most recent local user message if it has
+						// a clientId (optimistic, not yet in hstry).
+						const optimisticUser = prev.find(
+							(m) =>
+								m.role === "user" &&
+								m.clientId &&
+								!displayMessages.some((s) => s.clientId === m.clientId),
+						);
+						const result = [...displayMessages];
+						if (optimisticUser) result.push(optimisticUser);
+						result.push(streaming);
+						return result;
+					}
+					return displayMessages;
+				});
 				messageIdRef.current = getMaxMessageId(displayMessages);
 				const lastAssistant = [...displayMessages]
 					.reverse()
@@ -508,7 +531,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 				}
 			}
 		},
-		[mergeServerMessages, normalizeMessages],
+		[normalizeMessages],
 	);
 
 	// ========================================================================
@@ -913,22 +936,18 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 					// incomplete (fetched mid-stream before all messages
 					// were persisted).
 					deferredServerMessagesRef.current = null;
-					// Refresh session state (stats, model info, etc.) but
-					// do NOT re-fetch messages unless we explicitly need
-					// to recover after a reattach. Pi's get_messages RPC
-					// only returns the current context window (not the full
-					// history), so the response would clobber earlier turns
-					// that are already in local state from streaming.
+					// Refresh session state and sync messages from hstry.
+					// The backend persists to hstry BEFORE broadcasting
+					// agent.idle, so hstry is guaranteed to have the
+					// complete turn. Replacing local state with hstry
+					// eliminates stale pi-msg-* duplicates from streaming.
 					{
 						const sessionId = activeSessionIdRef.current;
 						if (sessionId) {
 							setTimeout(() => {
 								const manager = getWsManager();
 								manager.agentGetState(sessionId);
-								if (forceMessageSyncRef.current.has(sessionId)) {
-									forceMessageSyncRef.current.delete(sessionId);
-									void fetchHistoryMessages(sessionId);
-								}
+								void fetchHistoryMessages(sessionId);
 							}, 100);
 						}
 					}
