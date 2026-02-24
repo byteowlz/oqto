@@ -1643,30 +1643,37 @@ impl PiSessionManager {
                     Self::write_command(&mut stdin, &pi_cmd).await?;
                 }
 
-                match PiMessage::parse(trimmed) {
-                    Ok(PiMessage::Response(resp)) => {
-                        if resp.id.as_deref() == Some("ephemeral_get_models") {
-                            if resp.success {
-                                if let Some(data) = resp.data {
-                                    let models = if let Some(inner) = data.get("models") {
-                                        inner.clone()
-                                    } else if data.is_array() {
-                                        data
-                                    } else {
-                                        serde_json::Value::Array(vec![])
-                                    };
-                                    return Ok(models);
+                for parse_result in PiMessage::parse_all(trimmed) {
+                    match parse_result {
+                        Ok(PiMessage::Response(resp)) => {
+                            if resp.id.as_deref() == Some("ephemeral_get_models") {
+                                if resp.success {
+                                    if let Some(data) = resp.data {
+                                        let models =
+                                            if let Some(inner) = data.get("models") {
+                                                inner.clone()
+                                            } else if data.is_array() {
+                                                data
+                                            } else {
+                                                serde_json::Value::Array(vec![])
+                                            };
+                                        return Ok(models);
+                                    }
+                                } else {
+                                    let err_msg = resp
+                                        .error
+                                        .unwrap_or_else(|| "unknown error".to_string());
+                                    anyhow::bail!(
+                                        "Ephemeral Pi get_models failed: {}",
+                                        err_msg
+                                    );
                                 }
-                            } else {
-                                let err_msg =
-                                    resp.error.unwrap_or_else(|| "unknown error".to_string());
-                                anyhow::bail!("Ephemeral Pi get_models failed: {}", err_msg);
                             }
                         }
-                    }
-                    Ok(PiMessage::Event(_)) => {}
-                    Err(e) => {
-                        debug!("Ephemeral Pi: failed to parse line: {}", e);
+                        Ok(PiMessage::Event(_)) => {}
+                        Err(e) => {
+                            debug!("Ephemeral Pi: failed to parse line: {}", e);
+                        }
                     }
                 }
             }
@@ -2493,13 +2500,21 @@ impl PiSessionManager {
             // Update last activity
             *last_activity.write().await = Instant::now();
 
-            // Parse the message
-            let msg = match PiMessage::parse(&line) {
+            // Parse the line. Pi may concatenate multiple JSON objects on a
+            // single line when its output buffer fills mid-write (e.g. at
+            // the 4096-byte boundary). parse_all handles this gracefully.
+            let parsed_messages = PiMessage::parse_all(&line);
+            if parsed_messages.is_empty() {
+                continue;
+            }
+
+            for parse_result in parsed_messages {
+            let msg = match parse_result {
                 Ok(m) => m,
                 Err(e) => {
                     warn!(
                         "Pi[{}] failed to parse message: {} - line: {}",
-                        session_id, e, line
+                        session_id, e, &line[..line.len().min(200)]
                     );
                     continue;
                 }
@@ -2892,6 +2907,7 @@ impl PiSessionManager {
                     let _ = probe_cmd_tx.send(PiSessionCommand::GetState).await;
                 });
             }
+            } // end for parse_result in parsed_messages
         }
 
         // Process exited -- broadcast error event

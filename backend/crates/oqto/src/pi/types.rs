@@ -709,4 +709,134 @@ impl PiMessage {
         let event: PiEvent = serde_json::from_value(value)?;
         Ok(PiMessage::Event(event))
     }
+
+    /// Parse a line that may contain one or more concatenated JSON objects.
+    ///
+    /// Pi sometimes flushes multiple JSON objects on a single line when the
+    /// output buffer fills up mid-write (e.g. `{...}{...}\n`). A plain
+    /// `serde_json::from_str` fails with "trailing characters" in that case.
+    /// This method uses `serde_json::StreamDeserializer` to yield every
+    /// valid object on the line.
+    pub fn parse_all(line: &str) -> Vec<Result<Self, String>> {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            return Vec::new();
+        }
+
+        // Fast path: try single parse first (vast majority of lines)
+        match Self::parse(trimmed) {
+            Ok(msg) => return vec![Ok(msg)],
+            Err(ref e) if !e.to_string().contains("trailing characters") => {
+                // Not a concatenation issue -- genuine parse error
+                return vec![Err(format!("{e}"))];
+            }
+            Err(_) => {} // trailing characters -- fall through to stream parse
+        }
+
+        // Slow path: multiple JSON objects concatenated on one line.
+        // Use StreamDeserializer to split them.
+        let stream =
+            serde_json::Deserializer::from_str(trimmed).into_iter::<serde_json::Value>();
+        let mut results = Vec::new();
+        for value_result in stream {
+            match value_result {
+                Ok(value) => {
+                    if let Some(msg_type) = value.get("type").and_then(|v| v.as_str()) {
+                        if msg_type == "response" {
+                            match serde_json::from_value::<PiResponse>(value) {
+                                Ok(resp) => results.push(Ok(PiMessage::Response(resp))),
+                                Err(e) => results.push(Err(format!("response parse: {e}"))),
+                            }
+                        } else {
+                            match serde_json::from_value::<PiEvent>(value) {
+                                Ok(evt) => results.push(Ok(PiMessage::Event(evt))),
+                                Err(e) => results.push(Err(format!("event parse: {e}"))),
+                            }
+                        }
+                    } else {
+                        match serde_json::from_value::<PiEvent>(value) {
+                            Ok(evt) => results.push(Ok(PiMessage::Event(evt))),
+                            Err(e) => results.push(Err(format!("event parse (no type): {e}"))),
+                        }
+                    }
+                }
+                Err(e) => {
+                    results.push(Err(format!("json stream: {e}")));
+                    break; // Stream deserializer can't recover from errors
+                }
+            }
+        }
+        results
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // A minimal valid MessageStart event (simplest PiEvent variant)
+    fn make_event() -> String {
+        r#"{"type":"message_start","message":{"role":"assistant","content":[{"type":"text","text":"hi"}]}}"#.to_string()
+    }
+
+    #[test]
+    fn test_parse_all_single_object() {
+        let line = make_event();
+        let results = PiMessage::parse_all(&line);
+        assert_eq!(results.len(), 1);
+        assert!(results[0].is_ok(), "Got: {:?}", results[0]);
+    }
+
+    #[test]
+    fn test_parse_all_concatenated_objects() {
+        // Simulate what Pi does when buffer fills at 4096 bytes
+        let obj = make_event();
+        let concat = format!("{obj}{obj}");
+
+        let results = PiMessage::parse_all(&concat);
+        assert_eq!(results.len(), 2, "Should parse both concatenated objects");
+        assert!(results[0].is_ok(), "First: {:?}", results[0]);
+        assert!(results[1].is_ok(), "Second: {:?}", results[1]);
+    }
+
+    #[test]
+    fn test_parse_all_empty() {
+        assert!(PiMessage::parse_all("").is_empty());
+        assert!(PiMessage::parse_all("   ").is_empty());
+    }
+
+    #[test]
+    fn test_parse_all_invalid_json() {
+        let results = PiMessage::parse_all("not json at all");
+        assert_eq!(results.len(), 1);
+        assert!(results[0].is_err());
+    }
+
+    #[test]
+    fn test_parse_all_response() {
+        let line = r#"{"type":"response","success":true,"id":"get_state","data":{"sessionId":"abc"}}"#;
+        let results = PiMessage::parse_all(line);
+        assert_eq!(results.len(), 1);
+        assert!(matches!(results[0], Ok(PiMessage::Response(_))));
+    }
+
+    #[test]
+    fn test_parse_all_three_objects() {
+        let obj = make_event();
+        let concat = format!("{obj}{obj}{obj}");
+        let results = PiMessage::parse_all(&concat);
+        assert_eq!(results.len(), 3);
+        assert!(results.iter().all(|r| r.is_ok()));
+    }
+
+    #[test]
+    fn test_parse_all_mixed_response_and_event() {
+        let event = make_event();
+        let response = r#"{"type":"response","success":true,"id":"test"}"#;
+        let concat = format!("{event}{response}");
+        let results = PiMessage::parse_all(&concat);
+        assert_eq!(results.len(), 2);
+        assert!(matches!(results[0], Ok(PiMessage::Event(_))));
+        assert!(matches!(results[1], Ok(PiMessage::Response(_))));
+    }
 }

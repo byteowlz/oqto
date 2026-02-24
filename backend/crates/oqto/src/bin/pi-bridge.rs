@@ -230,33 +230,46 @@ fn start_stdout_reader(stdout: tokio::process::ChildStdout, state: Arc<BridgeSta
             let display_line: String = line.chars().take(200).collect();
             debug!("Pi output: {}", display_line);
 
-            // Try to parse as JSON
-            match serde_json::from_str::<Value>(&line) {
-                Ok(value) => {
-                    // Check if it's a response (has "success" field)
-                    if value.get("success").is_some() {
-                        if let Some(id) = value.get("id").and_then(|v| v.as_str()) {
-                            let mut pending = state.pending_responses.write().await;
-                            if let Some(tx) = pending.remove(id) {
-                                let _ = tx.send(value.clone());
+            // Parse JSON objects from the line. Pi may concatenate multiple
+            // JSON objects on a single line when its output buffer fills mid-write.
+            let stream =
+                serde_json::Deserializer::from_str(&line).into_iter::<Value>();
+            let mut parsed_any = false;
+            for value_result in stream {
+                match value_result {
+                    Ok(value) => {
+                        parsed_any = true;
+                        // Check if it's a response (has "success" field)
+                        if value.get("success").is_some() {
+                            if let Some(id) = value.get("id").and_then(|v| v.as_str()) {
+                                let mut pending = state.pending_responses.write().await;
+                                if let Some(tx) = pending.remove(id) {
+                                    let _ = tx.send(value.clone());
+                                }
                             }
+                            // Also broadcast responses
+                            let _ = state.event_tx.send(PiMessage::Response(
+                                serde_json::from_value(value).unwrap_or(PiResponse {
+                                    success: false,
+                                    id: None,
+                                    data: None,
+                                    error: Some("parse error".to_string()),
+                                }),
+                            ));
+                        } else {
+                            // It's an event
+                            let _ = state.event_tx.send(PiMessage::Event(value));
                         }
-                        // Also broadcast responses
-                        let _ = state.event_tx.send(PiMessage::Response(
-                            serde_json::from_value(value).unwrap_or(PiResponse {
-                                success: false,
-                                id: None,
-                                data: None,
-                                error: Some("parse error".to_string()),
-                            }),
-                        ));
-                    } else {
-                        // It's an event
-                        let _ = state.event_tx.send(PiMessage::Event(value));
                     }
-                }
-                Err(e) => {
-                    warn!("Failed to parse Pi output: {:?}, line: {}", e, display_line);
+                    Err(e) => {
+                        if !parsed_any {
+                            warn!(
+                                "Failed to parse Pi output: {:?}, line: {}",
+                                e, display_line
+                            );
+                        }
+                        break;
+                    }
                 }
             }
         }
