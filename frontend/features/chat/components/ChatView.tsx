@@ -2531,6 +2531,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 	showWorkingIndicator?: boolean;
 }) {
 	const isUser = group.role === "user";
+	const { t } = useTranslation();
 	const { verbosity } = useChatVerbosity();
 	const createdAt = group.messages[0]?.timestamp
 		? new Date(group.messages[0].timestamp)
@@ -3221,6 +3222,7 @@ function PiPartRenderer({
 	collapsible?: boolean;
 	hideHeader?: boolean;
 }) {
+	const { t } = useTranslation();
 	const stripAnsi = (value: string): string => value.replace(ANSI_RE, "");
 
 	const formatToolResultOutput = (content: unknown): string | undefined => {
