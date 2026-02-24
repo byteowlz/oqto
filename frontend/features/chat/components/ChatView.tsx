@@ -3400,7 +3400,7 @@ function PiPartRenderer({
 			return (
 				<details
 					open={isOpen}
-					className="group my-2 rounded-md border border-border/40 bg-muted/30"
+					className="group my-2 border-l-2 border-border/60 bg-muted/20 pl-0"
 				>
 					<summary className="flex items-center gap-2 cursor-pointer select-none px-3 py-2 text-xs text-muted-foreground hover:text-foreground list-none [&::-webkit-details-marker]:hidden [&::marker]:content-['']">
 						<svg
