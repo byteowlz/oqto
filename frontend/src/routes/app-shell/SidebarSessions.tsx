@@ -61,6 +61,7 @@ import {
 	useRef,
 	useState,
 } from "react";
+import { useTranslation } from "react-i18next";
 
 export interface SessionsByProject {
 	key: string;
@@ -163,6 +164,8 @@ export const SidebarSessions = memo(function SidebarSessions({
 	searchMode: controlledSearchMode,
 	onSearchModeChange: controlledOnSearchModeChange,
 }: SidebarSessionsProps) {
+	const { t } = useTranslation();
+
 	// Local state for uncontrolled mode
 	const [localSessionSearch, setLocalSessionSearch] = useState("");
 	const [localSearchMode, setLocalSearchMode] =
@@ -390,13 +393,9 @@ export const SidebarSessions = memo(function SidebarSessions({
 				}}
 				locale={locale}
 				title={
-					locale === "de"
-						? pendingDeleteTitle
-							? `"${pendingDeleteTitle}" loschen?`
-							: "Chat loschen?"
-						: pendingDeleteTitle
-							? `Delete "${pendingDeleteTitle}"?`
-							: "Delete chat?"
+					pendingDeleteTitle
+						? t('sessions.deleteTitle', { title: pendingDeleteTitle })
+						: t('sessions.deleteChatTitle')
 				}
 			/>
 			<DeleteConfirmDialog
@@ -407,16 +406,8 @@ export const SidebarSessions = memo(function SidebarSessions({
 					handleBulkDelete();
 				}}
 				locale={locale}
-				title={
-					locale === "de"
-						? `${selectedSessionIds.size} Chats loschen?`
-						: `Delete ${selectedSessionIds.size} chats?`
-				}
-				description={
-					locale === "de"
-						? "Diese Aktion kann nicht ruckgangig gemacht werden. Alle ausgewahlten Chats werden dauerhaft geloscht."
-						: "This action cannot be undone. All selected chats will be permanently deleted."
-				}
+				title={t('sessions.bulkDeleteTitle', { count: selectedSessionIds.size })}
+				description={t('sessions.bulkDeleteDescription')}
 			/>
 			{/* Sticky header section - Search, Default Chat, Sessions header */}
 			<div className="flex-shrink-0 space-y-0.5 px-1">
@@ -448,14 +439,14 @@ export const SidebarSessions = memo(function SidebarSessions({
 								className={cn(searchMode === "sessions" && "bg-accent")}
 							>
 								<Search className="w-3.5 h-3.5 mr-2" />
-								{locale === "de" ? "Sitzungen filtern" : "Filter sessions"}
+								{t('sessions.filterSessions')}
 							</DropdownMenuItem>
 							<DropdownMenuItem
 								onClick={() => setSearchMode("messages")}
 								className={cn(searchMode === "messages" && "bg-accent")}
 							>
 								<MessageSquare className="w-3.5 h-3.5 mr-2" />
-								{locale === "de" ? "Nachrichten suchen" : "Search messages"}
+								{t('sessions.searchMessages')}
 							</DropdownMenuItem>
 							{searchMode === "messages" && (
 								<>
@@ -464,13 +455,13 @@ export const SidebarSessions = memo(function SidebarSessions({
 										onClick={() => setAgentFilter("all")}
 										className={cn(agentFilter === "all" && "bg-accent")}
 									>
-										{locale === "de" ? "Alle Agenten" : "All agents"}
+										{t('sessions.allAgents')}
 									</DropdownMenuItem>
 									<DropdownMenuItem
 										onClick={() => setAgentFilter("pi_agent")}
 										className={cn(agentFilter === "pi_agent" && "bg-accent")}
 									>
-										{locale === "de" ? "Nur Chat" : "Chat only"}
+										{t('sessions.chatOnly')}
 									</DropdownMenuItem>
 								</>
 							)}
@@ -480,12 +471,8 @@ export const SidebarSessions = memo(function SidebarSessions({
 						type="text"
 						placeholder={
 							searchMode === "messages"
-								? locale === "de"
-									? "Nachrichten durchsuchen..."
-									: "Search messages..."
-								: locale === "de"
-									? "Suchen..."
-									: "Search..."
+								? t('sessions.searchMessagesPlaceholder')
+								: t('sessions.searchPlaceholder')
 						}
 						value={sessionSearch}
 						onChange={(e) => setSessionSearch(e.target.value)}
@@ -521,7 +508,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 							className="h-6 px-2 text-xs"
 						>
 							<Trash2 className="w-3 h-3 mr-1" />
-							{locale === "de" ? "Loschen" : "Delete"}
+							{t('common.delete')}
 						</Button>
 						<Button
 							type="button"
@@ -529,7 +516,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 							size="sm"
 							onClick={() => setSelectedSessionIds(new Set())}
 							className="h-6 w-6 p-0"
-							title={locale === "de" ? "Auswahl loschen" : "Clear selection"}
+							title={t('sessions.clearSelection')}
 						>
 							<X className="w-3 h-3" />
 						</Button>
@@ -544,7 +531,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 								sizeClasses.headerText,
 							)}
 						>
-							{locale === "de" ? "Sitzungen" : "Sessions"}
+							{t('sessions.title')}
 						</span>
 						<span
 							className={cn(
@@ -564,7 +551,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 								"text-muted-foreground hover:text-foreground hover:bg-sidebar-accent rounded",
 								sizeClasses.buttonSize,
 							)}
-							title={locale === "de" ? "Neue Sitzung" : "New session"}
+							title={t('sessions.newSession')}
 						>
 							<Plus className={sizeClasses.iconSize} />
 						</button>
@@ -575,7 +562,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 								"text-muted-foreground hover:text-foreground hover:bg-sidebar-accent rounded",
 								sizeClasses.buttonSize,
 							)}
-							title={locale === "de" ? "Neues Projekt" : "New project"}
+							title={t('projects.newProject')}
 						>
 							<FolderPlus className={sizeClasses.iconSize} />
 						</button>
@@ -598,7 +585,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 										"text-muted-foreground hover:text-foreground hover:bg-sidebar-accent rounded",
 										sizeClasses.buttonSize,
 									)}
-									title={locale === "de" ? "Sortieren" : "Sort"}
+									title={t('sort.sort')}
 								>
 									{projectSortAsc ? (
 										<ArrowUp className={sizeClasses.iconSize} />
@@ -613,21 +600,21 @@ export const SidebarSessions = memo(function SidebarSessions({
 									className={cn(projectSortBy === "date" && "bg-accent")}
 								>
 									<Clock className="w-3.5 h-3.5 mr-2" />
-									{locale === "de" ? "Datum" : "Date"}
+									{t('sort.date')}
 								</DropdownMenuItem>
 								<DropdownMenuItem
 									onClick={() => setProjectSortBy("name")}
 									className={cn(projectSortBy === "name" && "bg-accent")}
 								>
 									<ArrowUpDown className="w-3.5 h-3.5 mr-2" />
-									{locale === "de" ? "Name" : "Name"}
+									{t('sort.name')}
 								</DropdownMenuItem>
 								<DropdownMenuItem
 									onClick={() => setProjectSortBy("sessions")}
 									className={cn(projectSortBy === "sessions" && "bg-accent")}
 								>
 									<MessageSquare className="w-3.5 h-3.5 mr-2" />
-									{locale === "de" ? "Anzahl" : "Count"}
+									{t('sort.count')}
 								</DropdownMenuItem>
 								<DropdownMenuSeparator />
 								<DropdownMenuItem
@@ -636,12 +623,12 @@ export const SidebarSessions = memo(function SidebarSessions({
 									{projectSortAsc ? (
 										<>
 											<ArrowDown className="w-3.5 h-3.5 mr-2" />
-											{locale === "de" ? "Absteigend" : "Descending"}
+											{t('sort.descending')}
 										</>
 									) : (
 										<>
 											<ArrowUp className="w-3.5 h-3.5 mr-2" />
-											{locale === "de" ? "Aufsteigend" : "Ascending"}
+											{t('sort.ascending')}
 										</>
 									)}
 								</DropdownMenuItem>
@@ -671,7 +658,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 									sizeClasses.sessionText,
 								)}
 							>
-								{locale === "de" ? "Keine Ergebnisse" : "No results"}
+								{t('common.noResults')}
 							</div>
 						)}
 						{sessionsByProject.map((project) => {
@@ -751,11 +738,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 																"text-muted-foreground hover:text-primary hover:bg-sidebar-accent opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity",
 																sizeClasses.buttonSize,
 															)}
-															title={
-																locale === "de"
-																	? "Workspace-Ubersicht"
-																	: "Workspace overview"
-															}
+															title={t('projects.workspaceOverview')}
 														>
 															<Settings className={sizeClasses.iconSize} />
 														</button>
@@ -768,11 +751,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 																"text-muted-foreground hover:text-primary hover:bg-sidebar-accent opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity",
 																sizeClasses.buttonSize,
 															)}
-															title={
-																locale === "de"
-																	? "Neuer Chat in diesem Projekt"
-																	: "New chat in this project"
-															}
+															title={t('projects.newChatInProject')}
 														>
 															<Plus className={sizeClasses.iconSize} />
 														</button>
@@ -789,7 +768,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 														}
 													>
 														<Plus className="w-4 h-4 mr-2" />
-														{locale === "de" ? "Neue Sitzung" : "New Session"}
+														{t('sessions.newSession')}
 													</ContextMenuItem>
 													<ContextMenuSeparator />
 												</>
@@ -799,12 +778,8 @@ export const SidebarSessions = memo(function SidebarSessions({
 											>
 												<Pin className="w-4 h-4 mr-2" />
 												{isProjectPinned
-													? locale === "de"
-														? "Lospinnen"
-														: "Unpin"
-													: locale === "de"
-														? "Anpinnen"
-														: "Pin"}
+													? t('projects.unpin')
+													: t('projects.pin')}
 											</ContextMenuItem>
 											<ContextMenuItem
 												onClick={() =>
@@ -812,7 +787,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 												}
 											>
 												<Pencil className="w-4 h-4 mr-2" />
-												{locale === "de" ? "Umbenennen" : "Rename"}
+												{t('common.rename')}
 											</ContextMenuItem>
 											<ContextMenuSeparator />
 											<ContextMenuItem
@@ -822,7 +797,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 												}
 											>
 												<Trash2 className="w-4 h-4 mr-2" />
-												{locale === "de" ? "Loschen" : "Delete"} (
+												{t('common.delete')} (
 												{project.sessions.length}{" "}
 												{project.sessions.length === 1 ? "chat" : "chats"})
 											</ContextMenuItem>
@@ -950,9 +925,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 																			}}
 																		>
 																			<Copy className="w-4 h-4 mr-2" />
-																			{locale === "de"
-																				? "Temp-ID kopieren"
-																				: "Copy Temp ID"}
+																			{t('sessions.copyTempId')}
 																		</ContextMenuItem>
 																	)}
 																	<ContextMenuItem
@@ -969,18 +942,14 @@ export const SidebarSessions = memo(function SidebarSessions({
 																	>
 																		<Pin className="w-4 h-4 mr-2" />
 																		{pinnedSessions.has(session.id)
-																			? locale === "de"
-																				? "Lospinnen"
-																				: "Unpin"
-																			: locale === "de"
-																				? "Anpinnen"
-																				: "Pin"}
+																			? t('projects.unpin')
+																			: t('projects.pin')}
 																	</ContextMenuItem>
 																	<ContextMenuItem
 																		onClick={() => onRenameSession(session.id)}
 																	>
 																		<Pencil className="w-4 h-4 mr-2" />
-																		{locale === "de" ? "Umbenennen" : "Rename"}
+																		{t('common.rename')}
 																	</ContextMenuItem>
 																	<ContextMenuSeparator />
 																	<ContextMenuItem
@@ -990,7 +959,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 																		}
 																	>
 																		<Trash2 className="w-4 h-4 mr-2" />
-																		{locale === "de" ? "Loschen" : "Delete"}
+																		{t('common.delete')}
 																	</ContextMenuItem>
 																</ContextMenuContent>
 															</ContextMenu>
@@ -1086,10 +1055,8 @@ export const SidebarSessions = memo(function SidebarSessions({
 																						>
 																							<Copy className="w-4 h-4 mr-2" />
 																							{childTempIdLabel
-																								? `${locale === "de" ? "Temp-ID kopieren" : "Copy Temp ID"} (${childTempIdLabel})`
-																								: locale === "de"
-																									? "Temp-ID kopieren"
-																									: "Copy Temp ID"}
+																								? `${t('sessions.copyTempId')} (${childTempIdLabel})`
+																								: t('sessions.copyTempId')}
 																						</ContextMenuItem>
 																						<ContextMenuItem
 																							onClick={() => {
@@ -1108,9 +1075,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 																							}
 																						>
 																							<Pencil className="w-4 h-4 mr-2" />
-																							{locale === "de"
-																								? "Umbenennen"
-																								: "Rename"}
+																							{t("common.rename")}
 																						</ContextMenuItem>
 																						<ContextMenuSeparator />
 																						<ContextMenuItem
@@ -1120,9 +1085,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 																							}
 																						>
 																							<Trash2 className="w-4 h-4 mr-2" />
-																							{locale === "de"
-																								? "Loschen"
-																								: "Delete"}
+																							{t("common.delete")}
 																						</ContextMenuItem>
 																					</ContextMenuContent>
 																				</ContextMenu>

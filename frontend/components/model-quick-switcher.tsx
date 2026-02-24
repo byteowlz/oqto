@@ -28,6 +28,7 @@ import { fuzzyMatch } from "@/lib/slash-commands";
 import { cn } from "@/lib/utils";
 import { Clock, Loader2 } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 interface ModelQuickSwitcherProps {
 	/** Locale for UI text */
@@ -46,6 +47,7 @@ export function ModelQuickSwitcher({
 	workspacePath,
 	className,
 }: ModelQuickSwitcherProps) {
+	const { t } = useTranslation();
 	const [open, setOpen] = useState(false);
 	const [searchQuery, setSearchQuery] = useState("");
 
@@ -105,15 +107,12 @@ export function ModelQuickSwitcher({
 	const provider = modelLabel.provider;
 
 	// Labels
-	const placeholder = locale === "de" ? "Modell suchen..." : "Search models...";
-	const emptyState = locale === "de" ? "Keine Treffer" : "No matches";
-	const loadingText = locale === "de" ? "Lade Modelle..." : "Loading models...";
-	const selectText = locale === "de" ? "Modell auswählen" : "Select a model";
-	const queueText =
-		locale === "de"
-			? "(Wird nach Abschluss angewendet)"
-			: "(Will apply after completion)";
-	const pendingText = locale === "de" ? "Ausstehend:" : "Pending:";
+	const placeholder = t("models.searchModels");
+	const emptyState = t("models.noMatches");
+	const loadingText = t("models.loadingModels");
+	const selectText = t("models.selectModel");
+	const queueText = t("models.queueText");
+	const pendingText = t("models.pendingLabel");
 
 	return (
 		<Popover open={open} onOpenChange={setOpen}>

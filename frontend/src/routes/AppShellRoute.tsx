@@ -25,6 +25,7 @@ import {
 	useRef,
 	useState,
 } from "react";
+import { useTranslation } from "react-i18next";
 import { useLocation, useNavigate } from "react-router-dom";
 import "@/apps";
 import { UIControlProvider } from "@/components/contexts/ui-control-context";
@@ -75,6 +76,7 @@ const AppShell = memo(function AppShell() {
 		refreshWorkspaceSessions,
 	} = useApp();
 
+	const { t } = useTranslation();
 	const { chatHistoryError } = useChatContext();
 
 	const location = useLocation();
@@ -782,9 +784,7 @@ const AppShell = memo(function AppShell() {
 						<div className="w-full px-3 mt-2">
 							<div className="bg-destructive/15 border border-destructive/30 rounded-md p-3 text-xs">
 								<div className="font-medium text-destructive mb-1">
-									{locale === "de"
-										? "Chat-Verlauf nicht erreichbar"
-										: "Chat history unavailable"}
+									{t('chat.chatHistoryUnavailable')}
 								</div>
 								<div className="text-muted-foreground mb-2 break-words">
 									{chatHistoryError}
@@ -794,7 +794,7 @@ const AppShell = memo(function AppShell() {
 									onClick={() => refreshChatHistory()}
 									className="text-xs text-primary hover:underline"
 								>
-									{locale === "de" ? "Erneut versuchen" : "Retry"}
+									{t('chat.retry')}
 								</button>
 							</div>
 						</div>
@@ -868,7 +868,7 @@ const AppShell = memo(function AppShell() {
 									type="button"
 									onClick={() => sidebarState.setSidebarCollapsed(false)}
 									className="w-full p-2 text-muted-foreground hover:text-foreground transition-colors"
-									title={locale === "de" ? "Verlauf anzeigen" : "Show history"}
+									title={t("sessions.showHistory")}
 								>
 									<Clock className="w-4 h-4 mx-auto" />
 								</button>
@@ -951,16 +951,8 @@ const AppShell = memo(function AppShell() {
 						)
 					}
 					locale={locale}
-					title={
-						locale === "de"
-							? `Projekt "${sessionDialogs.targetProjectName}" loschen?`
-							: `Delete project "${sessionDialogs.targetProjectName}"?`
-					}
-					description={
-						locale === "de"
-							? "Diese Aktion kann nicht ruckgangig gemacht werden. Alle Chats in diesem Projekt werden dauerhaft geloscht."
-							: "This action cannot be undone. All chats in this project will be permanently deleted."
-					}
+					title={t('projects.deleteProjectTitle', { name: sessionDialogs.targetProjectName })}
+					description={t('projects.deleteProjectDescription')}
 				/>
 
 				<RenameProjectDialog

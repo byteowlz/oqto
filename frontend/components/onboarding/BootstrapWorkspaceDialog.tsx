@@ -10,6 +10,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Loader2 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 export function BootstrapWorkspaceDialog({
 	open,
@@ -30,30 +31,27 @@ export function BootstrapWorkspaceDialog({
 	error: string | null;
 	locale: "en" | "de";
 }) {
+	const { t } = useTranslation();
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent>
 				<DialogHeader>
 					<DialogTitle>
-						{locale === "de" ? "Workspace benennen" : "Name your workspace"}
+						{t("dialogs.nameWorkspace")}
 					</DialogTitle>
 					<DialogDescription>
-						{locale === "de"
-							? "Geben Sie Ihrem ersten Workspace einen Anzeigenamen."
-							: "Give your first workspace a display name."}
+						{t("dialogs.nameWorkspaceDescription")}
 					</DialogDescription>
 				</DialogHeader>
 
 				<div className="grid gap-4 py-4">
 					<div className="grid gap-2">
 						<Label htmlFor="workspace-name">
-							{locale === "de" ? "Anzeigename" : "Display name"}
+							{t("dialogs.displayName")}
 						</Label>
 						<Input
 							id="workspace-name"
-							placeholder={
-								locale === "de" ? "z.B. Hauptprojekt" : "e.g. Main project"
-							}
+							placeholder={t("dialogs.displayNamePlaceholder")}
 							value={name}
 							onChange={(e) => onNameChange(e.target.value)}
 							onKeyDown={(e) => {
@@ -74,11 +72,11 @@ export function BootstrapWorkspaceDialog({
 						onClick={() => onOpenChange(false)}
 						disabled={loading}
 					>
-						{locale === "de" ? "Abbrechen" : "Cancel"}
+						{t("common.cancel")}
 					</Button>
 					<Button onClick={onSubmit} disabled={loading || !name.trim()}>
 						{loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-						{locale === "de" ? "Erstellen" : "Create"}
+						{t("common.create")}
 					</Button>
 				</DialogFooter>
 			</DialogContent>

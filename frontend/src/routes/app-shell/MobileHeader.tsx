@@ -9,6 +9,7 @@ import {
 } from "@/lib/session-utils";
 import { Menu, Plus } from "lucide-react";
 import { memo } from "react";
+import { useTranslation } from "react-i18next";
 
 const sidebarBg = "var(--sidebar, #181b1a)";
 
@@ -33,6 +34,8 @@ export const MobileHeader = memo(function MobileHeader({
 	onMenuOpen,
 	onNewChat,
 }: MobileHeaderProps) {
+	const { t } = useTranslation();
+
 	return (
 		<header
 			className="fixed top-0 left-0 right-0 flex items-center px-3 z-50 md:hidden h-[calc(3.5rem+env(safe-area-inset-top))]"
@@ -119,7 +122,7 @@ export const MobileHeader = memo(function MobileHeader({
 					type="button"
 					variant="ghost"
 					size="icon"
-					aria-label={locale === "de" ? "Neue Sitzung" : "New Session"}
+					aria-label={t('sessions.newSession')}
 					onClick={onNewChat}
 					className="text-muted-foreground hover:text-primary flex-shrink-0"
 				>

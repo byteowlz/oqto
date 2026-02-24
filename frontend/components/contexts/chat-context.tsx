@@ -19,7 +19,8 @@ import {
 	useRef,
 	useState,
 } from "react";
-import { useLocale } from "./ui-context";
+import { useTranslation } from "react-i18next";
+
 
 function isPiDebugEnabled(): boolean {
 	if (!import.meta.env.DEV) return false;
@@ -154,7 +155,7 @@ const defaultChatContext: ChatContextValue = {
 const ChatContext = createContext<ChatContextValue>(defaultChatContext);
 
 export function ChatProvider({ children }: { children: ReactNode }) {
-	const { locale } = useLocale();
+	const { t } = useTranslation();
 
 	const [chatHistory, setChatHistory] = useState<ChatSession[]>(() =>
 		readCachedChatHistory(),
@@ -364,7 +365,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 				byId.set(session.session_id, {
 					id: session.session_id,
 					readable_id: null,
-					title: locale === "de" ? "Aktive Sitzung" : "Active Session",
+					title: t("sessions.activeSession"),
 					parent_id: null,
 					workspace_path: resolvedPath ?? null,
 					project_name: derivedProjectName,
@@ -380,7 +381,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 
 			return Array.from(byId.values());
 		},
-		[locale, runnerSessions],
+		[t, runnerSessions],
 	);
 
 	const normalizeHistory = useCallback((history: ChatSession[]) => {
@@ -596,7 +597,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 			const session: ChatSession = {
 				id: optimisticId,
 				readable_id: null,
-				title: locale === "de" ? "Neue Sitzung" : "New Session",
+				title: t("sessions.newSession"),
 				parent_id: null,
 				workspace_path: resolvedPath ?? null,
 				project_name: derivedProjectName,
@@ -613,7 +614,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 			});
 			return optimisticId;
 		},
-		[locale, selectedChatSessionId],
+		[t, selectedChatSessionId],
 	);
 
 	const clearOptimisticChatSession = useCallback((sessionId: string) => {

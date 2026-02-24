@@ -18,48 +18,22 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useCallback, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 
 function SettingsHelpPanel({ locale }: { locale: "en" | "de" }) {
-	const t = {
-		en: {
-			title: "Settings Help",
-			description:
-				"Configure your Oqto workspace and memory service settings here.",
-			tips: [
-				"Changes are applied when you click Save",
-				"Click the reset button next to a field to restore its default value",
-				"Sensitive values like API keys are hidden by default",
-				"Settings marked as 'configured' have been customized",
-			],
-			categories: "Settings Categories",
-			categoryDesc:
-				"Settings are organized into collapsible sections. Click on a section header to expand or collapse it.",
-		},
-		de: {
-			title: "Einstellungen Hilfe",
-			description:
-				"Konfigurieren Sie hier Ihren Oqto-Arbeitsbereich und die Speicherdiensteinstellungen.",
-			tips: [
-				"Anderungen werden angewendet, wenn Sie auf Speichern klicken",
-				"Klicken Sie auf die Reset-Schaltflache neben einem Feld, um den Standardwert wiederherzustellen",
-				"Sensible Werte wie API-Schlussel sind standardmassig ausgeblendet",
-				"Als 'konfiguriert' markierte Einstellungen wurden angepasst",
-			],
-			categories: "Einstellungskategorien",
-			categoryDesc:
-				"Die Einstellungen sind in einklappbare Abschnitte unterteilt. Klicken Sie auf einen Abschnittskopf, um ihn ein- oder auszuklappen.",
-		},
-	}[locale];
+	const { t } = useTranslation();
+
+	const tips = t("settings.helpTips", { returnObjects: true }) as string[];
 
 	return (
 		<div className="h-full overflow-y-auto p-4 space-y-6">
 			<div>
 				<h3 className="text-sm font-semibold mb-2 flex items-center gap-2">
 					<Info className="w-4 h-4" />
-					{t.title}
+					{t("settings.helpTitle")}
 				</h3>
-				<p className="text-sm text-muted-foreground">{t.description}</p>
+				<p className="text-sm text-muted-foreground">{t("settings.helpDescription")}</p>
 			</div>
 
 			<div>
@@ -67,7 +41,7 @@ function SettingsHelpPanel({ locale }: { locale: "en" | "de" }) {
 					Tips
 				</h4>
 				<ul className="space-y-2">
-					{t.tips.map((tip) => (
+					{tips.map((tip) => (
 						<li
 							key={tip}
 							className="text-sm text-muted-foreground flex items-start gap-2"
@@ -81,42 +55,27 @@ function SettingsHelpPanel({ locale }: { locale: "en" | "de" }) {
 
 			<div>
 				<h4 className="text-xs font-medium uppercase text-muted-foreground mb-2">
-					{t.categories}
+					{t("settings.categories")}
 				</h4>
-				<p className="text-sm text-muted-foreground">{t.categoryDesc}</p>
+				<p className="text-sm text-muted-foreground">{t("settings.categoryDescription")}</p>
 			</div>
 		</div>
 	);
 }
 
 function ShortcutsPanel({ locale }: { locale: "en" | "de" }) {
-	const t = {
-		en: {
-			title: "Keyboard Shortcuts",
-			shortcuts: [
-				{ key: "Ctrl + S", desc: "Save changes" },
-				{ key: "Ctrl + K", desc: "Open command palette" },
-				{ key: "Escape", desc: "Close dialogs" },
-			],
-		},
-		de: {
-			title: "Tastenkurzel",
-			shortcuts: [
-				{ key: "Strg + S", desc: "Anderungen speichern" },
-				{ key: "Strg + K", desc: "Befehlspalette offnen" },
-				{ key: "Escape", desc: "Dialoge schliessen" },
-			],
-		},
-	}[locale];
+	const { t } = useTranslation();
+
+	const shortcuts = t("settings.shortcutsList", { returnObjects: true }) as Array<{ key: string; desc: string }>;
 
 	return (
 		<div className="h-full overflow-y-auto p-4 space-y-4">
 			<h3 className="text-sm font-semibold flex items-center gap-2">
 				<Keyboard className="w-4 h-4" />
-				{t.title}
+				{t("settings.shortcutsTitle")}
 			</h3>
 			<div className="space-y-2">
-				{t.shortcuts.map((shortcut) => (
+				{shortcuts.map((shortcut) => (
 					<div
 						key={shortcut.key}
 						className="flex items-center justify-between text-sm py-1.5 border-b border-border/50 last:border-0"
@@ -158,35 +117,13 @@ function TabButton({ active, onClick, icon: Icon, label }: TabButtonProps) {
 }
 
 function AccountPanel({ locale }: { locale: "en" | "de" }) {
+	const { t } = useTranslation();
 	const [currentPassword, setCurrentPassword] = useState("");
 	const [newPassword, setNewPassword] = useState("");
 	const [confirmPassword, setConfirmPassword] = useState("");
 	const [error, setError] = useState<string | null>(null);
 	const [success, setSuccess] = useState(false);
 	const [loading, setLoading] = useState(false);
-
-	const t = {
-		en: {
-			title: "Change Password",
-			current: "Current password",
-			new: "New password",
-			confirm: "Confirm new password",
-			submit: "Change password",
-			mismatch: "Passwords do not match",
-			tooShort: "Password must be at least 8 characters",
-			success: "Password changed successfully",
-		},
-		de: {
-			title: "Passwort andern",
-			current: "Aktuelles Passwort",
-			new: "Neues Passwort",
-			confirm: "Neues Passwort bestatigen",
-			submit: "Passwort andern",
-			mismatch: "Passworter stimmen nicht uberein",
-			tooShort: "Passwort muss mindestens 8 Zeichen lang sein",
-			success: "Passwort erfolgreich geandert",
-		},
-	}[locale];
 
 	const handleSubmit = useCallback(
 		async (e: React.FormEvent) => {
@@ -195,11 +132,11 @@ function AccountPanel({ locale }: { locale: "en" | "de" }) {
 			setSuccess(false);
 
 			if (newPassword !== confirmPassword) {
-				setError(t.mismatch);
+				setError(t("settings.passwordMismatch"));
 				return;
 			}
 			if (newPassword.length < 8) {
-				setError(t.tooShort);
+				setError(t("settings.passwordTooShort"));
 				return;
 			}
 
@@ -218,20 +155,20 @@ function AccountPanel({ locale }: { locale: "en" | "de" }) {
 				setLoading(false);
 			}
 		},
-		[currentPassword, newPassword, confirmPassword, t.mismatch, t.tooShort],
+		[currentPassword, newPassword, confirmPassword, t],
 	);
 
 	return (
 		<div className="h-full overflow-y-auto p-4 space-y-6">
 			<div>
-				<h3 className="text-sm font-semibold mb-4">{t.title}</h3>
+				<h3 className="text-sm font-semibold mb-4">{t("settings.changePassword")}</h3>
 				<form onSubmit={handleSubmit} className="space-y-3 max-w-sm">
 					<div>
 						<label
 							htmlFor="current-password"
 							className="text-xs text-muted-foreground block mb-1"
 						>
-							{t.current}
+							{t("settings.currentPassword")}
 						</label>
 						<input
 							id="current-password"
@@ -248,7 +185,7 @@ function AccountPanel({ locale }: { locale: "en" | "de" }) {
 							htmlFor="new-password"
 							className="text-xs text-muted-foreground block mb-1"
 						>
-							{t.new}
+							{t("settings.newPassword")}
 						</label>
 						<input
 							id="new-password"
@@ -266,7 +203,7 @@ function AccountPanel({ locale }: { locale: "en" | "de" }) {
 							htmlFor="confirm-password"
 							className="text-xs text-muted-foreground block mb-1"
 						>
-							{t.confirm}
+							{t("settings.confirmPassword")}
 						</label>
 						<input
 							id="confirm-password"
@@ -280,13 +217,13 @@ function AccountPanel({ locale }: { locale: "en" | "de" }) {
 						/>
 					</div>
 					{error && <p className="text-xs text-destructive">{error}</p>}
-					{success && <p className="text-xs text-primary">{t.success}</p>}
+					{success && <p className="text-xs text-primary">{t("settings.passwordSuccess")}</p>}
 					<button
 						type="submit"
 						disabled={loading}
 						className="px-4 py-1.5 text-sm bg-primary text-primary-foreground rounded hover:bg-primary/90 disabled:opacity-50 transition-colors"
 					>
-						{loading ? "..." : t.submit}
+						{loading ? "..." : t("settings.changePasswordSubmit")}
 					</button>
 				</form>
 			</div>
@@ -296,6 +233,7 @@ function AccountPanel({ locale }: { locale: "en" | "de" }) {
 
 export function SettingsApp() {
 	const { locale, setActiveAppId } = useApp();
+	const { t } = useTranslation();
 	const navigate = useNavigate();
 	const [mainTab, setMainTab] = useState<"oqto" | "mmry" | "account">("oqto");
 	const [sidebarTab, setSidebarTab] = useState<"help" | "shortcuts">("help");
@@ -312,25 +250,6 @@ export function SettingsApp() {
 		navigate("/sessions");
 	};
 
-	const t = {
-		en: {
-			octoTab: "Oqto",
-			mmryTab: "Memory",
-			accountTab: "Account",
-			help: "Help",
-			shortcuts: "Keys",
-			close: "Close",
-		},
-		de: {
-			octoTab: "Oqto",
-			mmryTab: "Speicher",
-			accountTab: "Konto",
-			help: "Hilfe",
-			shortcuts: "Tasten",
-			close: "Schliessen",
-		},
-	}[locale];
-
 	return (
 		<div className="flex flex-col h-full min-h-0 p-1 sm:p-4 md:p-6 gap-1 sm:gap-4">
 			{/* Mobile layout */}
@@ -344,7 +263,7 @@ export function SettingsApp() {
 								setMainTab("oqto");
 							}}
 							icon={Settings}
-							label={t.octoTab}
+							label={t("settings.oqtoTab")}
 						/>
 						<TabButton
 							active={mobileView === "mmry"}
@@ -353,7 +272,7 @@ export function SettingsApp() {
 								setMainTab("mmry");
 							}}
 							icon={Brain}
-							label={t.mmryTab}
+							label={t("settings.mmryTab")}
 						/>
 						<TabButton
 							active={mobileView === "account"}
@@ -362,7 +281,7 @@ export function SettingsApp() {
 								setMainTab("account");
 							}}
 							icon={User}
-							label={t.accountTab}
+							label={t("settings.accountTab")}
 						/>
 						<TabButton
 							active={mobileView === "help"}
@@ -371,7 +290,7 @@ export function SettingsApp() {
 								setSidebarTab("help");
 							}}
 							icon={HelpCircle}
-							label={t.help}
+							label={t("settings.help")}
 						/>
 						<TabButton
 							active={mobileView === "shortcuts"}
@@ -380,7 +299,7 @@ export function SettingsApp() {
 								setSidebarTab("shortcuts");
 							}}
 							icon={Keyboard}
-							label={t.shortcuts}
+							label={t("settings.shortcuts")}
 						/>
 					</div>
 				</div>
@@ -388,12 +307,10 @@ export function SettingsApp() {
 					<div className="flex items-start justify-center gap-3 text-center">
 						<div className="w-full">
 							<h1 className="text-xl font-bold text-foreground tracking-wider">
-								{locale === "de" ? "EINSTELLUNGEN" : "SETTINGS"}
+								{t("settings.title")}
 							</h1>
 							<p className="text-sm text-muted-foreground">
-								{locale === "de"
-									? "Konfiguriere deine Arbeitsumgebung"
-									: "Configure your workspace"}
+								{t("settings.subtitle")}
 							</p>
 						</div>
 					</div>
@@ -425,12 +342,10 @@ export function SettingsApp() {
 					<div className="flex items-start justify-between gap-3">
 						<div>
 							<h1 className="text-xl md:text-2xl font-bold text-foreground tracking-wider">
-								{locale === "de" ? "EINSTELLUNGEN" : "SETTINGS"}
+								{t("settings.title")}
 							</h1>
 							<p className="text-sm text-muted-foreground">
-								{locale === "de"
-									? "Konfiguriere deine Arbeitsumgebung"
-									: "Configure your workspace"}
+								{t("settings.subtitle")}
 							</p>
 						</div>
 						<div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -440,10 +355,10 @@ export function SettingsApp() {
 								size="sm"
 								onClick={handleClose}
 								className="items-center gap-1.5 text-muted-foreground hover:text-foreground"
-								aria-label={t.close}
+								aria-label={t("common.close")}
 							>
 								<X className="w-4 h-4" />
-								<span>{t.close}</span>
+								<span>{t("common.close")}</span>
 							</Button>
 							<button
 								type="button"
@@ -467,19 +382,19 @@ export function SettingsApp() {
 							active={mainTab === "oqto"}
 							onClick={() => setMainTab("oqto")}
 							icon={Settings}
-							label={t.octoTab}
+							label={t("settings.oqtoTab")}
 						/>
 						<TabButton
 							active={mainTab === "mmry"}
 							onClick={() => setMainTab("mmry")}
 							icon={Brain}
-							label={t.mmryTab}
+							label={t("settings.mmryTab")}
 						/>
 						<TabButton
 							active={mainTab === "account"}
 							onClick={() => setMainTab("account")}
 							icon={User}
-							label={t.accountTab}
+							label={t("settings.accountTab")}
 						/>
 					</div>
 
@@ -524,7 +439,7 @@ export function SettingsApp() {
 										? "bg-primary/15 text-foreground border border-primary"
 										: "text-muted-foreground border border-transparent hover:border-border hover:bg-muted/50",
 								)}
-								aria-label={t.help}
+								aria-label={t("settings.help")}
 							>
 								<HelpCircle className="w-4 h-4" />
 							</button>
@@ -540,7 +455,7 @@ export function SettingsApp() {
 										? "bg-primary/15 text-foreground border border-primary"
 										: "text-muted-foreground border border-transparent hover:border-border hover:bg-muted/50",
 								)}
-								aria-label={t.shortcuts}
+								aria-label={t("settings.shortcuts")}
 							>
 								<Keyboard className="w-4 h-4" />
 							</button>
@@ -558,7 +473,7 @@ export function SettingsApp() {
 												? "bg-primary/15 text-foreground border border-primary"
 												: "text-muted-foreground border border-transparent hover:border-border hover:bg-muted/50",
 										)}
-										title={t.help}
+										title={t("settings.help")}
 									>
 										<HelpCircle className="w-4 h-4" />
 									</button>
@@ -571,7 +486,7 @@ export function SettingsApp() {
 												? "bg-primary/15 text-foreground border border-primary"
 												: "text-muted-foreground border border-transparent hover:border-border hover:bg-muted/50",
 										)}
-										title={t.shortcuts}
+										title={t("settings.shortcuts")}
 									>
 										<Keyboard className="w-4 h-4" />
 									</button>

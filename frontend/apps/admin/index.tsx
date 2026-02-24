@@ -14,6 +14,7 @@ import {
 	X,
 } from "lucide-react";
 import { Suspense, lazy, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import { InviteCodesPanel } from "./InviteCodesPanel";
 import { MetricsPanel } from "./MetricsPanel";
@@ -58,7 +59,8 @@ const TerminalView = lazy(() =>
 );
 
 export function AdminApp() {
-	const { setActiveAppId, locale } = useApp();
+	const { setActiveAppId } = useApp();
+	const { t } = useTranslation();
 	const navigate = useNavigate();
 	const [activeSection, setActiveSection] = useState<
 		"overview" | "sessions" | "users" | "invites" | "models"
@@ -71,17 +73,14 @@ export function AdminApp() {
 	};
 
 	const labels = {
-		overview: locale === "de" ? "Ubersicht" : "Overview",
-		sessions: locale === "de" ? "Sessions" : "Sessions",
-		users: locale === "de" ? "Benutzer" : "Users",
-		invites: locale === "de" ? "Einladungen" : "Invite Codes",
-		models: locale === "de" ? "Modelle" : "Models",
-		close: locale === "de" ? "Schliessen" : "Close",
-		title: locale === "de" ? "ADMIN DASHBOARD" : "ADMIN DASHBOARD",
-		subtitle:
-			locale === "de"
-				? "Plattform-Monitoring und -Verwaltung"
-				: "Platform monitoring and management",
+		overview: t("admin.overview"),
+		sessions: t("admin.sessions"),
+		users: t("admin.users"),
+		invites: t("admin.inviteCodes"),
+		models: t("admin.models"),
+		close: t("common.close"),
+		title: t("admin.title"),
+		subtitle: t("admin.subtitle"),
 	};
 
 	const renderContent = () => {
@@ -256,7 +255,7 @@ export function AdminApp() {
 						<div className="flex flex-col h-full min-h-0">
 							<div className="px-4 py-3 border-b border-border">
 								<div className="text-xs uppercase tracking-wider text-muted-foreground">
-									{locale === "de" ? "Systemstatus" : "System status"}
+									{t("admin.systemStatus")}
 								</div>
 							</div>
 							<div className="flex-1 min-h-0 overflow-hidden">

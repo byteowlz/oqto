@@ -30,6 +30,7 @@ import {
 	SunMedium,
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 interface CommandPaletteProps {
 	open: boolean;
@@ -46,6 +47,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
 		createNewChat,
 	} = useApp();
 
+	const { t } = useTranslation();
 	const { startConversation, startDictation } = useVoiceCommandEmitter();
 
 	const [theme, setThemeState] = useState<"light" | "dark">("dark");
@@ -129,30 +131,22 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
 		<CommandDialog
 			open={open}
 			onOpenChange={onOpenChange}
-			title={locale === "de" ? "Befehlspalette" : "Command Palette"}
-			description={
-				locale === "de"
-					? "Suchen Sie nach einem Befehl..."
-					: "Search for a command..."
-			}
+			title={t("command.title")}
+			description={t("command.description")}
 			dataSpotlight="command-palette"
 		>
 			<CommandInput
-				placeholder={
-					locale === "de"
-						? "Befehl eingeben oder suchen..."
-						: "Type a command or search..."
-				}
+				placeholder={t("command.inputPlaceholder")}
 			/>
 			<CommandList>
 				<CommandEmpty>
-					{locale === "de" ? "Keine Ergebnisse gefunden." : "No results found."}
+					{t("command.noResults")}
 				</CommandEmpty>
 
-				<CommandGroup heading={locale === "de" ? "Aktionen" : "Actions"}>
+				<CommandGroup heading={t("command.actions")}>
 					<CommandItem onSelect={handleNewChat}>
 						<Plus className="mr-2 h-4 w-4" />
-						<span>{locale === "de" ? "Neue Sitzung" : "New Session"}</span>
+						<span>{t("sessions.newSession")}</span>
 						<CommandShortcut>N</CommandShortcut>
 					</CommandItem>
 					<CommandItem onSelect={toggleTheme}>
@@ -162,24 +156,20 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
 							<MoonStar className="mr-2 h-4 w-4" />
 						)}
 						<span>
-							{locale === "de"
-								? `Zu ${theme === "dark" ? "hellem" : "dunklem"} Modus wechseln`
-								: `Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+							{theme === "dark"
+								? t("command.switchToLight")
+								: t("command.switchToDark")}
 						</span>
 					</CommandItem>
 					<CommandItem onSelect={toggleLocale}>
 						<Globe2 className="mr-2 h-4 w-4" />
-						<span>
-							{locale === "de"
-								? "Sprache wechseln (EN)"
-								: "Change language (DE)"}
-						</span>
+						<span>{t("command.changeLanguageDE")}</span>
 					</CommandItem>
 				</CommandGroup>
 
 				<CommandSeparator />
 
-				<CommandGroup heading={locale === "de" ? "Sprache" : "Voice"}>
+				<CommandGroup heading={t("voice.voiceMode")}>
 					<CommandItem
 						onSelect={() => {
 							startConversation();
@@ -188,9 +178,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
 						}}
 					>
 						<AudioLines className="mr-2 h-4 w-4" />
-						<span>
-							{locale === "de" ? "Konversation starten" : "Start Conversation"}
-						</span>
+						<span>{t("voice.startConversation")}</span>
 						<CommandShortcut>
 							{formatShortcut(VOICE_SHORTCUTS.conversation)}
 						</CommandShortcut>
@@ -203,9 +191,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
 						}}
 					>
 						<Keyboard className="mr-2 h-4 w-4" />
-						<span>
-							{locale === "de" ? "Diktat starten" : "Start Dictation"}
-						</span>
+						<span>{t("voice.startDictation")}</span>
 						<CommandShortcut>
 							{formatShortcut(VOICE_SHORTCUTS.dictation)}
 						</CommandShortcut>
@@ -214,7 +200,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
 
 				<CommandSeparator />
 
-				<CommandGroup heading={locale === "de" ? "Navigation" : "Navigation"}>
+				<CommandGroup heading={t("command.navigation")}>
 					{apps.map((app) => {
 						const Icon = getAppIcon(app.id);
 						const label =

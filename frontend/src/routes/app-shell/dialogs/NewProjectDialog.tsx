@@ -19,6 +19,7 @@ import type { ProjectTemplateEntry } from "@/lib/control-plane-client";
 import { cn } from "@/lib/utils";
 import { Loader2 } from "lucide-react";
 import { memo } from "react";
+import { useTranslation } from "react-i18next";
 
 export interface NewProjectDialogProps {
 	open: boolean;
@@ -71,42 +72,38 @@ export const NewProjectDialog = memo(function NewProjectDialog({
 	settingsLoading,
 	onSubmit,
 }: NewProjectDialogProps) {
+	const { t } = useTranslation();
+
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent className="sm:max-w-xl max-h-[85vh] overflow-y-auto">
 				<DialogHeader>
 					<DialogTitle>
-						{locale === "de" ? "Neues Projekt" : "New project"}
+						{t("projects.newProject")}
 					</DialogTitle>
 					<DialogDescription>
-						{locale === "de"
-							? "Ein Template auswahlen und ein neues Projekt anlegen."
-							: "Pick a template and create a new project."}
+						{t("projects.newProjectDescription")}
 					</DialogDescription>
 				</DialogHeader>
 
 				<div className="space-y-4">
 					<div className="space-y-2">
 						<div className="text-xs uppercase text-muted-foreground">
-							{locale === "de" ? "Template" : "Template"}
+							{t("projects.template")}
 						</div>
 						{templatesLoading ? (
 							<div className="text-sm text-muted-foreground">
-								{locale === "de" ? "Lade Templates..." : "Loading templates..."}
+								{t("projects.loadingTemplates")}
 							</div>
 						) : templatesError ? (
 							<div className="text-sm text-destructive">{templatesError}</div>
 						) : !templatesConfigured ? (
 							<div className="text-sm text-muted-foreground">
-								{locale === "de"
-									? "Templates nicht konfiguriert. Setze [templates].repo_path in config.toml."
-									: "Templates not configured. Set [templates].repo_path in config.toml."}
+								{t("projects.templatesNotConfigured")}
 							</div>
 						) : projectTemplates.length === 0 ? (
 							<div className="text-sm text-muted-foreground">
-								{locale === "de"
-									? "Keine Templates gefunden."
-									: "No templates found."}
+								{t("projects.noTemplatesFound")}
 							</div>
 						) : (
 							<div className="grid gap-2">
@@ -141,25 +138,21 @@ export const NewProjectDialog = memo(function NewProjectDialog({
 
 					<div className="space-y-2">
 						<div className="text-xs uppercase text-muted-foreground">
-							{locale === "de" ? "Projektpfad" : "Project path"}
+							{t("projects.projectPath")}
 						</div>
 						<Input
 							value={newProjectPath}
 							onChange={(e) => onProjectPathChange(e.target.value)}
-							placeholder={
-								locale === "de" ? "z.B. client-app" : "e.g. client-app"
-							}
+							placeholder={t("projects.projectPathPlaceholder")}
 						/>
 						<div className="text-xs text-muted-foreground">
-							{locale === "de"
-								? "Relativ zum Workspace-Ordner."
-								: "Relative to the workspace root."}
+							{t("projects.projectPathDescription")}
 						</div>
 					</div>
 
 					<div className="flex items-center justify-between border border-border rounded px-3 py-2">
 						<div className="text-sm">
-							{locale === "de" ? "Geteiltes Projekt" : "Shared project"}
+							{t("projects.sharedProject")}
 						</div>
 						<Switch
 							checked={newProjectShared}
@@ -169,15 +162,11 @@ export const NewProjectDialog = memo(function NewProjectDialog({
 
 					<div className="space-y-2">
 						<div className="text-xs uppercase text-muted-foreground">
-							{locale === "de"
-								? "Workspace-Einstellungen"
-								: "Workspace settings"}
+							{t("projects.workspaceSettings")}
 						</div>
 						{settingsLoading ? (
 							<div className="text-sm text-muted-foreground">
-								{locale === "de"
-									? "Lade Einstellungen..."
-									: "Loading settings..."}
+								{t("projects.loadingSettings")}
 							</div>
 						) : (
 							<div className="border border-border rounded p-3">
@@ -186,9 +175,7 @@ export const NewProjectDialog = memo(function NewProjectDialog({
 									workspacePathLabel={
 										newProjectPath.trim().length > 0
 											? newProjectPath.trim()
-											: locale === "de"
-												? "Neues Projekt"
-												: "New project"
+											: t("projects.newProject")
 									}
 									values={newProjectSettings}
 									availableModels={availableModels}
@@ -213,7 +200,7 @@ export const NewProjectDialog = memo(function NewProjectDialog({
 						variant="outline"
 						onClick={() => onOpenChange(false)}
 					>
-						{locale === "de" ? "Abbrechen" : "Cancel"}
+						{t("common.cancel")}
 					</Button>
 					<Button
 						type="button"
@@ -223,12 +210,10 @@ export const NewProjectDialog = memo(function NewProjectDialog({
 						{newProjectSubmitting ? (
 							<>
 								<Loader2 className="w-4 h-4 mr-2 animate-spin" />
-								{locale === "de" ? "Erstelle..." : "Creating..."}
+								{t("projects.creating")}
 							</>
-						) : locale === "de" ? (
-							"Projekt erstellen"
 						) : (
-							"Create project"
+							t("projects.createProject")
 						)}
 					</Button>
 				</DialogFooter>

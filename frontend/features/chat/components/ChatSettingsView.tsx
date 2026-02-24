@@ -15,6 +15,7 @@ import { cn } from "@/lib/utils";
 import { getWsManager } from "@/lib/ws-manager";
 import { Loader2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 interface ChatSettingsViewProps {
 	className?: string;
@@ -29,6 +30,7 @@ export function ChatSettingsView({
 	sessionId,
 	workspacePath,
 }: ChatSettingsViewProps) {
+	const { t } = useTranslation();
 	const [availableModels, setAvailableModels] = useState<PiModelInfo[]>([]);
 	const [selectedModelRef, setSelectedModelRef] = useState<string | null>(null);
 	const [isSwitchingModel, setIsSwitchingModel] = useState(false);
@@ -158,7 +160,7 @@ export function ChatSettingsView({
 			{/* Header */}
 			<div className="flex items-center justify-between p-3 border-b border-border">
 				<span className="text-sm font-medium">
-					{locale === "de" ? "Chat Einstellungen" : "Chat Settings"}
+					{t('chat.settings')}
 				</span>
 			</div>
 
@@ -167,7 +169,7 @@ export function ChatSettingsView({
 				{/* Model selector */}
 				<div className="space-y-2">
 					<Label className="text-xs font-medium">
-						{locale === "de" ? "Modell" : "Model"}
+						{t('models.model')}
 					</Label>
 					<Select
 						value={selectedModelRef ?? undefined}
@@ -186,12 +188,8 @@ export function ChatSettingsView({
 							<SelectValue
 								placeholder={
 									isSwitchingModel
-										? locale === "de"
-											? "Wechsle Modell..."
-											: "Switching model..."
-										: locale === "de"
-											? "Modell auswahlen"
-											: "Select model"
+										? t('models.switchingModel')
+										: t('models.selectModel')
 								}
 							/>
 						</SelectTrigger>
@@ -204,26 +202,18 @@ export function ChatSettingsView({
 								<Input
 									value={modelQuery}
 									onChange={(e) => setModelQuery(e.target.value)}
-									placeholder={
-										locale === "de"
-											? "Modelle durchsuchen..."
-											: "Search models..."
-									}
-									aria-label={
-										locale === "de" ? "Modelle durchsuchen" : "Search models"
-									}
+									placeholder={t('models.searchModels')}
+									aria-label={t('models.searchModels')}
 									className="h-8 text-xs"
 								/>
 							</div>
 							{availableModels.length === 0 ? (
 								<SelectItem value="__none__" disabled>
-									{locale === "de"
-										? "Keine Modelle verfugbar"
-										: "No models available"}
+									{t('models.noModelsAvailable')}
 								</SelectItem>
 							) : filteredModels.length === 0 ? (
 								<SelectItem value="__no_results__" disabled>
-									{locale === "de" ? "Keine Treffer" : "No matches"}
+									{t('models.noMatches')}
 								</SelectItem>
 							) : (
 								filteredModels.map((model) => {
@@ -238,15 +228,11 @@ export function ChatSettingsView({
 						</SelectContent>
 					</Select>
 					<p className="text-[10px] text-muted-foreground">
-						{locale === "de"
-							? "Provider/Modell fur den Standardchat"
-							: "Provider/model for the default chat"}
+						{t('models.providerModelForChat')}
 					</p>
 					{!isIdle && (
 						<p className="text-[10px] text-muted-foreground">
-							{locale === "de"
-								? "Modellwechsel nur im Leerlauf möglich."
-								: "Model switching is only available when Pi is idle."}
+							{t('models.modelSwitchIdleOnly')}
 						</p>
 					)}
 				</div>

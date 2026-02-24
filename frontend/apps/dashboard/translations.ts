@@ -1,3 +1,9 @@
+// Dashboard translations have been moved to messages/en.json and messages/de.json
+// under the "dashboard" section. Use useTranslation() from react-i18next instead.
+//
+// This file is kept for backward compatibility but re-exports from i18n.
+import { i18n } from "@/lib/i18n";
+
 export type DashboardTranslations = {
 	title: string;
 	subtitle: string;
@@ -17,45 +23,23 @@ export type DashboardTranslations = {
 	notice: string;
 };
 
-const translations: Record<"de" | "en", DashboardTranslations> = {
-	de: {
-		title: "Dashboard",
-		subtitle: "Arbeitsstatus, Scheduler, TRX und Feeds auf einen Blick.",
-		stats: "Statusuebersicht",
-		scheduler: "Geplante Tasks",
-		workingAgents: "Aktive Agents",
-		trx: "TRX Ueberblick",
-		feeds: "Feeds",
-		addFeed: "Feed hinzufuegen",
-		reload: "Aktualisieren",
-		noTasks: "Keine Schedules gefunden.",
-		noAgents: "Keine aktiven Agents.",
-		noTrx: "Keine TRX-Issues.",
-		noFeeds: "Noch keine Feeds.",
-		layout: "Layout",
-		customCards: "Custom Cards",
-		notice: "Config in .oqto/ for the Default Chat workspace.",
-	},
-	en: {
-		title: "Dashboard",
-		subtitle: "Workspace status, scheduler, TRX, and feeds at a glance.",
-		stats: "Status Overview",
-		scheduler: "Scheduled Tasks",
-		workingAgents: "Working Agents",
-		trx: "TRX Overview",
-		feeds: "Feeds",
-		addFeed: "Add feed",
-		reload: "Refresh",
-		noTasks: "No schedules found.",
-		noAgents: "No active agents.",
-		noTrx: "No TRX issues yet.",
-		noFeeds: "No feeds added yet.",
-		layout: "Layout",
-		customCards: "Custom Cards",
-		notice: "Config lives in .oqto/ for the Default Chat workspace.",
-	},
-};
-
-export function getTranslations(locale: "de" | "en"): DashboardTranslations {
-	return translations[locale];
+export function getTranslations(_locale: "de" | "en"): DashboardTranslations {
+	return {
+		title: i18n.t("dashboard.title"),
+		subtitle: i18n.t("dashboard.subtitle"),
+		stats: i18n.t("dashboard.stats"),
+		scheduler: i18n.t("dashboard.scheduler"),
+		workingAgents: i18n.t("dashboard.workingAgents"),
+		trx: i18n.t("dashboard.trx"),
+		feeds: i18n.t("dashboard.feeds"),
+		addFeed: i18n.t("dashboard.addFeed"),
+		reload: i18n.t("dashboard.reload"),
+		noTasks: i18n.t("dashboard.noTasks"),
+		noAgents: i18n.t("dashboard.noAgents"),
+		noTrx: i18n.t("dashboard.noTrx"),
+		noFeeds: i18n.t("dashboard.noFeeds"),
+		layout: i18n.t("dashboard.layout"),
+		customCards: i18n.t("dashboard.customCards"),
+		notice: i18n.t("dashboard.notice"),
+	};
 }

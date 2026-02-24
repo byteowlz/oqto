@@ -17,6 +17,7 @@ import {
 	X,
 } from "lucide-react";
 import { memo } from "react";
+import { useTranslation } from "react-i18next";
 import {
 	type SessionHierarchy,
 	type SessionsByProject,
@@ -147,6 +148,8 @@ export const MobileMenu = memo(function MobileMenu({
 	searchMode,
 	onSearchModeChange,
 }: MobileMenuProps) {
+	const { t } = useTranslation();
+
 	return (
 		<div
 			className="fixed inset-0 z-50 flex flex-col md:hidden"
@@ -230,7 +233,7 @@ export const MobileMenu = memo(function MobileMenu({
 					<div className="flex-1 min-h-0 flex flex-col">
 						<div className="flex items-center justify-between gap-2 px-2 py-1.5">
 							<span className="text-xs uppercase tracking-wide text-muted-foreground">
-								{locale === "de" ? "Projekte" : "Projects"}
+								{t('nav.projects')}
 							</span>
 							<span className="text-xs text-muted-foreground/50">
 								({projectSummaries.length})
@@ -239,15 +242,13 @@ export const MobileMenu = memo(function MobileMenu({
 						<div className="flex-1 overflow-y-auto overflow-x-hidden space-y-2 px-1">
 							{projectSummaries.length === 0 ? (
 								<div className="text-sm text-muted-foreground/60 text-center py-6">
-									{locale === "de" ? "Noch keine Projekte" : "No projects yet"}
+									{t('sessions.noProjectsYet')}
 								</div>
 							) : (
 								projectSummaries.map((project) => {
 									const lastActiveLabel = project.lastActive
 										? formatSessionDate(project.lastActive)
-										: locale === "de"
-											? "Nie"
-											: "Never";
+										: t('common.never');
 									const defaultAgent = projectDefaultAgents[project.key];
 									return (
 										<div
@@ -272,11 +273,11 @@ export const MobileMenu = memo(function MobileMenu({
 												</div>
 												<div className="text-xs text-muted-foreground/60 mt-1">
 													{project.sessionCount}{" "}
-													{locale === "de" ? "Chats" : "chats"} ·{" "}
+													{t('sessions.chats')} ·{" "}
 													{lastActiveLabel}
 												</div>
 												<div className="text-xs text-muted-foreground/60 mt-0.5">
-													{locale === "de" ? "Standard-Agent" : "Default agent"}
+													{t('sessions.defaultAgent')}
 													: {defaultAgent || "-"}
 												</div>
 											</button>
@@ -292,9 +293,7 @@ export const MobileMenu = memo(function MobileMenu({
 													className="w-full text-xs bg-sidebar-accent/50 border border-sidebar-border rounded px-2 py-1"
 												>
 													<option value="">
-														{locale === "de"
-															? "Standard-Agent setzen"
-															: "Set default agent"}
+														{t('sessions.setDefaultAgent')}
 													</option>
 													{availableAgents.map((agent) => (
 														<option key={agent.id} value={agent.id}>
@@ -315,7 +314,7 @@ export const MobileMenu = memo(function MobileMenu({
 					<div className="flex-1 min-h-0 flex flex-col">
 						<div className="flex items-center justify-between gap-2 px-2 py-1.5">
 							<span className="text-xs uppercase tracking-wide text-muted-foreground">
-								{locale === "de" ? "Agenten" : "Agents"}
+								{t('sessions.agents')}
 							</span>
 							<Button
 								type="button"
@@ -324,15 +323,13 @@ export const MobileMenu = memo(function MobileMenu({
 								onClick={onClose}
 								className="text-xs"
 							>
-								{locale === "de" ? "Erstellen" : "Create"}
+								{t('common.create')}
 							</Button>
 						</div>
 						<div className="flex-1 overflow-y-auto overflow-x-hidden space-y-2 px-1">
 							{availableAgents.length === 0 ? (
 								<div className="text-sm text-muted-foreground/60 text-center py-6">
-									{locale === "de"
-										? "Keine Agenten gefunden"
-										: "No agents found"}
+									{t('sessions.noAgentsFound')}
 								</div>
 							) : (
 								availableAgents.map((agent) => (

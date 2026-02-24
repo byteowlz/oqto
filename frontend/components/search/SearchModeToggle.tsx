@@ -2,6 +2,7 @@
 
 import { cn } from "@/lib/utils";
 import { FolderOpen, MessageSquareText } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import type { AgentFilter, SearchMode } from "./SearchResults";
 
 interface SearchModeToggleProps {
@@ -13,21 +14,6 @@ interface SearchModeToggleProps {
 	className?: string;
 }
 
-const t = {
-	en: {
-		sessions: "Sessions",
-		messages: "Messages",
-		all: "All",
-		defaultChat: "Chat",
-	},
-	de: {
-		sessions: "Sitzungen",
-		messages: "Nachrichten",
-		all: "Alle",
-		defaultChat: "Chat",
-	},
-};
-
 export function SearchModeToggle({
 	mode,
 	onModeChange,
@@ -36,6 +22,7 @@ export function SearchModeToggle({
 	locale,
 	className,
 }: SearchModeToggleProps) {
+	const { t } = useTranslation();
 	return (
 		<div className={cn("flex items-center gap-1.5 flex-wrap", className)}>
 			{/* Mode toggle */}
@@ -52,7 +39,7 @@ export function SearchModeToggle({
 					title="Ctrl+Shift+F"
 				>
 					<FolderOpen className="w-3.5 h-3.5" />
-					{t[locale].sessions}
+					{t("search.sessions")}
 				</button>
 				<button
 					type="button"
@@ -66,7 +53,7 @@ export function SearchModeToggle({
 					title="Ctrl+Shift+F"
 				>
 					<MessageSquareText className="w-3.5 h-3.5" />
-					{t[locale].messages}
+					{t("search.messages")}
 				</button>
 			</div>
 
@@ -83,7 +70,7 @@ export function SearchModeToggle({
 								: "text-muted-foreground hover:text-foreground hover:bg-sidebar-accent",
 						)}
 					>
-						{t[locale].all}
+						{t("search.all")}
 					</button>
 					<button
 						type="button"
@@ -95,7 +82,7 @@ export function SearchModeToggle({
 								: "text-muted-foreground hover:text-foreground hover:bg-sidebar-accent",
 						)}
 					>
-						{t[locale].defaultChat}
+						{t("search.defaultChat")}
 					</button>
 				</div>
 			)}

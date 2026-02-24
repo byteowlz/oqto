@@ -9,6 +9,7 @@ import {
 	AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { memo } from "react";
+import { useTranslation } from "react-i18next";
 
 export interface DeleteConfirmDialogProps {
 	open: boolean;
@@ -27,26 +28,25 @@ export const DeleteConfirmDialog = memo(function DeleteConfirmDialog({
 	title,
 	description,
 }: DeleteConfirmDialogProps) {
+	const { t } = useTranslation();
+
 	return (
 		<AlertDialog open={open} onOpenChange={onOpenChange}>
 			<AlertDialogContent>
 				<AlertDialogHeader>
 					<AlertDialogTitle>
-						{title ?? (locale === "de" ? "Chat loschen?" : "Delete chat?")}
+						{title ?? t("sessions.deleteChatTitle")}
 					</AlertDialogTitle>
 					<AlertDialogDescription>
-						{description ??
-							(locale === "de"
-								? "Diese Aktion kann nicht ruckgangig gemacht werden. Der Chat wird dauerhaft geloscht."
-								: "This action cannot be undone. The chat will be permanently deleted.")}
+						{description ?? t("sessions.deleteChatDescription")}
 					</AlertDialogDescription>
 				</AlertDialogHeader>
 				<AlertDialogFooter>
 					<AlertDialogCancel>
-						{locale === "de" ? "Abbrechen" : "Cancel"}
+						{t("common.cancel")}
 					</AlertDialogCancel>
 					<AlertDialogAction onClick={onConfirm}>
-						{locale === "de" ? "Loschen" : "Delete"}
+						{t("common.delete")}
 					</AlertDialogAction>
 				</AlertDialogFooter>
 			</AlertDialogContent>

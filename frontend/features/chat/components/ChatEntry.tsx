@@ -52,6 +52,7 @@ import {
 	X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 export interface DefaultChatEntryProps {
 	/** Whether this entry is currently selected */
@@ -96,6 +97,7 @@ export function ChatEntry({
 	onFilterCountChange,
 	onTotalCountChange,
 }: DefaultChatEntryProps) {
+	const { t } = useTranslation();
 	const [assistantName, setAssistantName] = useState<string | null>(null);
 	const [assistantInfo, setAssistantInfo] =
 		useState<DefaultChatAssistantInfo | null>(null);
@@ -454,9 +456,7 @@ export function ChatEntry({
 		if (!resetName.trim()) return;
 		if (!resetNameIsValid) {
 			setResetError(
-				locale === "de"
-					? "Nur Buchstaben, Zahlen, Bindestriche und Unterstriche sind erlaubt."
-					: "Name can only contain letters, numbers, hyphens, and underscores.",
+				t("assistant.nameValidationError"),
 			);
 			return;
 		}
@@ -619,9 +619,7 @@ export function ChatEntry({
 			if (failures.length > 0) {
 				console.error("Failed to delete some sessions:", failures);
 				setBulkDeleteError(
-					locale === "de"
-						? "Einige Sitzungen konnten nicht geloscht werden."
-						: "Some sessions failed to delete.",
+					t("assistant.someSessionsFailedDelete"),
 				);
 				setSessions(previous);
 				setLatestSessionId(previous[0]?.id ?? null);
@@ -696,9 +694,7 @@ export function ChatEntry({
 				>
 					<Plus className="w-4 h-4" />
 					<span className="text-sm">
-						{locale === "de"
-							? "Standardchat einrichten"
-							: "Set up Default Chat"}
+						{t("assistant.setupDefaultChat")}
 					</span>
 				</button>
 
@@ -758,7 +754,7 @@ export function ChatEntry({
 									type="button"
 									onClick={handleNewSessionClick}
 									className="p-1 text-muted-foreground/60 hover:text-primary hover:bg-sidebar-accent transition-colors"
-									title={locale === "de" ? "Neue Sitzung" : "New session"}
+									title={t("sessions.newSession")}
 								>
 									<Plus className="w-3 h-3" />
 								</button>
@@ -776,7 +772,7 @@ export function ChatEntry({
 									}}
 								>
 									<Plus className="w-4 h-4 mr-2" />
-									{locale === "de" ? "Neue Sitzung" : "New Session"}
+									{t("sessions.newSession")}
 								</ContextMenuItem>
 								<div className="h-px bg-border my-1" />
 							</>
@@ -788,7 +784,7 @@ export function ChatEntry({
 							}}
 						>
 							<Settings className="w-4 h-4 mr-2" />
-							{locale === "de" ? "Einstellungen" : "Settings"}
+							{t("nav.settings")}
 						</ContextMenuItem>
 						<ContextMenuItem
 							onClick={() => {
@@ -797,7 +793,7 @@ export function ChatEntry({
 							}}
 						>
 							<Trash2 className="w-4 h-4 mr-2" />
-							{locale === "de" ? "Zurucksetzen" : "Reset"}
+							{t("common.reset")}
 						</ContextMenuItem>
 					</ContextMenuContent>
 				</ContextMenu>
@@ -825,7 +821,7 @@ export function ChatEntry({
 												className="h-6 px-2 text-xs text-destructive hover:text-destructive"
 											>
 												<Trash2 className="w-3 h-3 mr-1" />
-												{locale === "de" ? "Loschen" : "Delete"}
+												{t("common.delete")}
 											</Button>
 											<Button
 												type="button"
@@ -834,9 +830,7 @@ export function ChatEntry({
 												onClick={() => setSelectedSessionIds(new Set())}
 												className="h-6 w-6 p-0"
 												title={
-													locale === "de"
-														? "Auswahl loschen"
-														: "Clear selection"
+													t("sessions.clearSelection")
 												}
 											>
 												<X className="w-3 h-3" />
@@ -849,7 +843,7 @@ export function ChatEntry({
 										const isSelectedRow = selectedSessionIds.has(session.id);
 
 										const emptyTitle =
-											locale === "de" ? "Neue Sitzung" : "New Session";
+											t("sessions.newSession");
 										const displayTitle = session.title || emptyTitle;
 
 										const tempId = getTempIdFromSession(session);
@@ -907,16 +901,14 @@ export function ChatEntry({
 														}
 													>
 														<Copy className="w-4 h-4 mr-2" />
-														{locale === "de"
-															? "Temp-ID kopieren"
-															: "Copy Temp ID"}
+														{t("sessions.copyTempId")}
 													</ContextMenuItem>
 													<ContextMenuSeparator />
 													<ContextMenuItem
 														onClick={() => handleRenameSession(session)}
 													>
 														<Pencil className="w-4 h-4 mr-2" />
-														{locale === "de" ? "Umbenennen" : "Rename"}
+														{t("common.rename")}
 													</ContextMenuItem>
 													<ContextMenuSeparator />
 													<ContextMenuItem
@@ -924,7 +916,7 @@ export function ChatEntry({
 														className="text-destructive focus:text-destructive"
 													>
 														<Trash2 className="w-4 h-4 mr-2" />
-														{locale === "de" ? "Loschen" : "Delete"}
+														{t("common.delete")}
 													</ContextMenuItem>
 												</ContextMenuContent>
 											</ContextMenu>
@@ -985,14 +977,10 @@ export function ChatEntry({
 				<DialogContent>
 					<DialogHeader>
 						<DialogTitle>
-							{locale === "de"
-								? "Mehrere Sitzungen loschen"
-								: "Delete multiple sessions"}
+							{t("assistant.bulkDeleteTitle")}
 						</DialogTitle>
 						<DialogDescription>
-							{locale === "de"
-								? `Mochtest du ${selectedSessionIds.size} Sitzungen loschen?`
-								: `Delete ${selectedSessionIds.size} sessions?`}
+							{t("assistant.bulkDeleteDescription", { count: selectedSessionIds.size })}
 						</DialogDescription>
 					</DialogHeader>
 					{bulkDeleteError && (
@@ -1004,7 +992,7 @@ export function ChatEntry({
 							variant="ghost"
 							onClick={() => setShowBulkDeleteDialog(false)}
 						>
-							{locale === "de" ? "Abbrechen" : "Cancel"}
+							{t("common.cancel")}
 						</Button>
 						<Button
 							type="button"
@@ -1017,7 +1005,7 @@ export function ChatEntry({
 							) : (
 								<Trash2 className="w-4 h-4 mr-2" />
 							)}
-							{locale === "de" ? "Loschen" : "Delete"}
+							{t("common.delete")}
 						</Button>
 					</DialogFooter>
 				</DialogContent>
@@ -1121,37 +1109,31 @@ function CreateAssistantDialog({
 	locale: "en" | "de";
 	isRename: boolean;
 }) {
+	const { t } = useTranslation();
+
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent>
 				<DialogHeader>
 					<DialogTitle>
-						{locale === "de"
-							? "Benennen Sie Ihren Assistenten"
-							: "Name Your Assistant"}
+						{t("assistant.nameYourAssistant")}
 					</DialogTitle>
 					<DialogDescription>
 						{isRename
-							? locale === "de"
-								? "Aktualisieren Sie den Namen Ihres Assistenten."
-								: "Update your assistant name."
-							: locale === "de"
-								? "Geben Sie Ihrem KI-Assistenten einen Namen. Dieser wird verwendet, um Ihren persistenten Chat zu identifizieren."
-								: "Give your AI assistant a name. This will be used to identify your persistent chat across sessions."}
+							? t("assistant.updateAssistantDescription")
+							: t("assistant.createAssistantDescription")}
 					</DialogDescription>
 				</DialogHeader>
 
 				<div className="grid gap-4 py-4">
 					<div className="grid gap-2">
 						<Label htmlFor="assistant-name">
-							{locale === "de" ? "Assistentenname" : "Assistant Name"}
+							{t("assistant.assistantName")}
 						</Label>
 						<Input
 							id="assistant-name"
 							placeholder={
-								locale === "de"
-									? "z.B. jarvis, govnr, friday"
-									: "e.g., jarvis, govnr, friday"
+								t("assistant.assistantNamePlaceholder")
 							}
 							value={name}
 							onChange={(e) => onNameChange(e.target.value)}
@@ -1163,9 +1145,7 @@ function CreateAssistantDialog({
 							disabled={loading}
 						/>
 						<p className="text-xs text-muted-foreground">
-							{locale === "de"
-								? "Verwenden Sie Kleinbuchstaben, Zahlen, Bindestriche oder Unterstriche."
-								: "Use lowercase letters, numbers, hyphens, or underscores."}
+							{t("assistant.assistantNameHint")}
 						</p>
 					</div>
 
@@ -1178,17 +1158,13 @@ function CreateAssistantDialog({
 						onClick={() => onOpenChange(false)}
 						disabled={loading}
 					>
-						{locale === "de" ? "Abbrechen" : "Cancel"}
+						{t("common.cancel")}
 					</Button>
 					<Button onClick={onSubmit} disabled={loading || !name.trim()}>
 						{loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
 						{isRename
-							? locale === "de"
-								? "Speichern"
-								: "Save"
-							: locale === "de"
-								? "Erstellen"
-								: "Create"}
+							? t("common.save")
+							: t("common.create")}
 					</Button>
 				</DialogFooter>
 			</DialogContent>
@@ -1217,45 +1193,41 @@ function ResetAssistantDialog({
 	error: string | null;
 	locale: "en" | "de";
 }) {
+	const { t } = useTranslation();
+
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent>
 				<DialogHeader>
 					<DialogTitle>
-						{locale === "de"
-							? "Standardchat zurucksetzen"
-							: "Reset Default Chat"}
+						{t("assistant.resetDefaultChat")}
 					</DialogTitle>
 					<DialogDescription>
-						{locale === "de"
-							? "Dies loscht alle Standardchat-Daten und startet frisch. Geben Sie einen neuen Namen ein."
-							: "This deletes all Default Chat data and starts fresh. Enter a new name."}
+						{t("assistant.resetDescription")}
 					</DialogDescription>
 				</DialogHeader>
 
 				<div className="grid gap-4 py-4">
 					<div className="grid gap-2">
 						<Label htmlFor="default-chat-reset-name">
-							{locale === "de" ? "Neuer Name" : "New Name"}
+							{t("assistant.newName")}
 						</Label>
 						<Input
 							id="default-chat-reset-name"
 							value={name}
 							onChange={(e) => onNameChange(e.target.value)}
-							placeholder={locale === "de" ? "Name" : "Name"}
+							placeholder={t("common.name")}
 						/>
 					</div>
 					<p className="text-xs text-muted-foreground">
-						{locale === "de"
-							? "Erlaubt: a-z, A-Z, 0-9, -, _"
-							: "Allowed: a-z, A-Z, 0-9, -, _"}
+						{t("assistant.allowedChars")}
 					</p>
 					{error && <div className="text-sm text-destructive">{error}</div>}
 				</div>
 
 				<DialogFooter>
 					<Button variant="ghost" onClick={() => onOpenChange(false)}>
-						{locale === "de" ? "Abbrechen" : "Cancel"}
+						{t("common.cancel")}
 					</Button>
 					<Button
 						variant="destructive"
@@ -1263,12 +1235,8 @@ function ResetAssistantDialog({
 						disabled={loading || !name.trim() || !nameIsValid}
 					>
 						{loading
-							? locale === "de"
-								? "Zurucksetzen..."
-								: "Resetting..."
-							: locale === "de"
-								? "Zurucksetzen"
-								: "Reset"}
+							? t("common.resetting")
+							: t("common.reset")}
 					</Button>
 				</DialogFooter>
 			</DialogContent>
@@ -1295,28 +1263,28 @@ function RenameSessionDialog({
 	error: string | null;
 	locale: "en" | "de";
 }) {
+	const { t } = useTranslation();
+
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent>
 				<DialogHeader>
 					<DialogTitle>
-						{locale === "de" ? "Sitzung umbenennen" : "Rename Session"}
+						{t("dialogs.renameSession")}
 					</DialogTitle>
 					<DialogDescription>
-						{locale === "de"
-							? "Geben Sie einen neuen Titel fur diese Sitzung ein."
-							: "Enter a new title for this session."}
+						{t("dialogs.renameSessionDescription")}
 					</DialogDescription>
 				</DialogHeader>
 
 				<div className="grid gap-4 py-4">
 					<div className="grid gap-2">
 						<Label htmlFor="session-title">
-							{locale === "de" ? "Titel" : "Title"}
+							{t("common.title")}
 						</Label>
 						<Input
 							id="session-title"
-							placeholder={locale === "de" ? "Sitzungstitel" : "Session title"}
+							placeholder={t("dialogs.sessionTitle")}
 							value={title}
 							onChange={(e) => onTitleChange(e.target.value)}
 							onKeyDown={(e) => {
@@ -1337,11 +1305,11 @@ function RenameSessionDialog({
 						onClick={() => onOpenChange(false)}
 						disabled={loading}
 					>
-						{locale === "de" ? "Abbrechen" : "Cancel"}
+						{t("common.cancel")}
 					</Button>
 					<Button onClick={onSubmit} disabled={loading || !title.trim()}>
 						{loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-						{locale === "de" ? "Speichern" : "Save"}
+						{t("common.save")}
 					</Button>
 				</DialogFooter>
 			</DialogContent>
@@ -1366,32 +1334,28 @@ function DeleteSessionDialog({
 	error: string | null;
 	locale: "en" | "de";
 }) {
+	const { t } = useTranslation();
+
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent>
 				<DialogHeader>
 					<DialogTitle>
-						{locale === "de" ? "Sitzung loschen" : "Delete Session"}
+						{t("dialogs.deleteSession")}
 					</DialogTitle>
 					<DialogDescription>
-						{locale === "de"
-							? `Diese Sitzung wird entfernt: ${title}`
-							: `This will remove the session: ${title}`}
+						{t("dialogs.deleteSessionDescription", { title })}
 					</DialogDescription>
 				</DialogHeader>
 				{error && <div className="text-sm text-destructive">{error}</div>}
 				<DialogFooter>
 					<Button variant="outline" onClick={() => onOpenChange(false)}>
-						{locale === "de" ? "Abbrechen" : "Cancel"}
+						{t("common.cancel")}
 					</Button>
 					<Button variant="destructive" onClick={onSubmit} disabled={loading}>
 						{loading
-							? locale === "de"
-								? "Loschen..."
-								: "Deleting..."
-							: locale === "de"
-								? "Loschen"
-								: "Delete"}
+							? t("common.deleting")
+							: t("common.delete")}
 					</Button>
 				</DialogFooter>
 			</DialogContent>

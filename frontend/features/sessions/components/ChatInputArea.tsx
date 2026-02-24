@@ -40,6 +40,7 @@ import {
 	useRef,
 	useState,
 } from "react";
+import { useTranslation } from "react-i18next";
 
 export interface PendingUpload {
 	file: File;
@@ -105,6 +106,8 @@ export const ChatInputArea = memo(
 		},
 		ref,
 	) {
+		const { t } = useTranslation();
+
 		// ---------------------------------------------------------------
 		// Input value lives in a ref (never in React state) so that
 		// keystrokes never trigger a React render.  The textarea is
@@ -418,12 +421,11 @@ export const ChatInputArea = memo(
 		const canSend =
 			canSendState || pendingUploads.length > 0 || fileAttachments.length > 0;
 
-		const t = useMemo(
+		const translations = useMemo(
 			() => ({
-				inputPlaceholder:
-					locale === "de" ? "Nachricht eingeben..." : "Type a message...",
+				inputPlaceholder: t('chat.placeholder'),
 			}),
-			[locale],
+			[t],
 		);
 
 		return (
@@ -507,9 +509,7 @@ export const ChatInputArea = memo(
 							<DictationOverlay
 								value={messageInputRef.current}
 								liveTranscript={dictation.liveTranscript}
-								placeholder={
-									locale === "de" ? "Sprechen Sie..." : "Speak now..."
-								}
+								placeholder={t('chat.speakNow')}
 								vadProgress={dictation.vadProgress}
 								autoSend={dictation.autoSendEnabled}
 								onAutoSendChange={dictation.setAutoSendEnabled}
@@ -546,7 +546,7 @@ export const ChatInputArea = memo(
 								spellCheck={false}
 								enterKeyHint="send"
 								data-form-type="other"
-								placeholder={placeholder ?? t.inputPlaceholder}
+								placeholder={placeholder ?? translations.inputPlaceholder}
 								defaultValue={initialValue}
 								onChange={handleInputChange}
 								onKeyDown={handleInputKeyDown}

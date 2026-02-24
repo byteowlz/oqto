@@ -12,6 +12,7 @@ import {
 import type { PiModelInfo } from "@/lib/api/default-chat";
 import { getWsManager } from "@/lib/ws-manager";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
 	type ResourceEntry,
 	WorkspaceOverviewForm,
@@ -44,6 +45,7 @@ export function WorkspaceOverviewPanel({
 	locale,
 	onClose,
 }: WorkspaceOverviewPanelProps) {
+	const { t } = useTranslation();
 	const [values, setValues] = useState<WorkspaceOverviewValues>(emptyValues);
 	const [availableModels, setAvailableModels] = useState<PiModelInfo[]>([]);
 	const [availableSkills, setAvailableSkills] = useState<string[]>([]);
@@ -193,22 +195,20 @@ export function WorkspaceOverviewPanel({
 			<div className="flex-shrink-0 flex items-center justify-between border-b border-border pb-3 mb-4">
 				<div>
 					<div className="text-base font-semibold">
-						{locale === "de" ? "Workspace Overview" : "Workspace overview"}
+						{t('workspace.overview')}
 					</div>
 					<div className="text-xs text-muted-foreground">
-						{locale === "de"
-							? "Projektweite Einstellungen fur Pi"
-							: "Project-wide settings for Pi agent"}
+						{t('workspace.projectSettings')}
 					</div>
 				</div>
 				<Button variant="outline" size="sm" onClick={onClose}>
-					{locale === "de" ? "Zuruck" : "Back"}
+					{t('common.back')}
 				</Button>
 			</div>
 
 			{loading ? (
 				<div className="text-sm text-muted-foreground">
-					{locale === "de" ? "Lade..." : "Loading..."}
+					{t('common.loading')}
 				</div>
 			) : (
 				<div className="flex-1 min-h-0 overflow-y-auto">

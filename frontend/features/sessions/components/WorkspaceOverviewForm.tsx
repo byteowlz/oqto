@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/select";
 import type { PiModelInfo } from "@/lib/api/default-chat";
 import { cn } from "@/lib/utils";
+import { useTranslation } from "react-i18next";
 
 export type WorkspaceOverviewValues = {
 	displayName: string;
@@ -41,11 +42,6 @@ export interface WorkspaceOverviewFormProps {
 	showSave?: boolean;
 }
 
-const modeLabel = (mode: "all" | "custom", locale: string) => {
-	if (mode === "all") return locale === "de" ? "Alle" : "All";
-	return locale === "de" ? "Auswahl" : "Custom";
-};
-
 export function WorkspaceOverviewForm({
 	locale,
 	workspacePathLabel,
@@ -60,6 +56,13 @@ export function WorkspaceOverviewForm({
 	error,
 	showSave = true,
 }: WorkspaceOverviewFormProps) {
+	const { t } = useTranslation();
+
+	const modeLabel = (mode: "all" | "custom") => {
+		if (mode === "all") return t('workspace.all');
+		return t('workspace.custom');
+	};
+
 	const update = (patch: Partial<WorkspaceOverviewValues>) => {
 		onChange({ ...values, ...patch });
 	};
@@ -130,20 +133,20 @@ export function WorkspaceOverviewForm({
 					size="sm"
 					onClick={() => handleSkillsModeToggle("all")}
 				>
-					{modeLabel("all", locale)}
+					{modeLabel("all")}
 				</Button>
 				<Button
 					variant={mode === "custom" ? "default" : "outline"}
 					size="sm"
 					onClick={() => handleSkillsModeToggle("custom")}
 				>
-					{modeLabel("custom", locale)}
+					{modeLabel("custom")}
 				</Button>
 			</div>
 			<div className="grid grid-cols-1 md:grid-cols-3 gap-2">
 				{items.length === 0 && (
 					<div className="text-xs text-muted-foreground">
-						{locale === "de" ? "Keine Eintraege gefunden" : "No entries found"}
+						{t('common.noEntriesFound')}
 					</div>
 				)}
 				{items.map((item) => {
@@ -176,9 +179,7 @@ export function WorkspaceOverviewForm({
 			{mandatoryExtensions.length > 0 && (
 				<div className="space-y-1.5">
 					<div className="text-[11px] text-muted-foreground">
-						{locale === "de"
-							? "Plattform (immer aktiv)"
-							: "Platform (always active)"}
+						{t('workspace.platformAlwaysActive')}
 					</div>
 					<div className="grid grid-cols-1 md:grid-cols-3 gap-2">
 						{mandatoryExtensions.map((ext) => (
@@ -198,7 +199,7 @@ export function WorkspaceOverviewForm({
 			{optionalExtensions.length > 0 && (
 				<div className="space-y-1.5">
 					<div className="text-[11px] text-muted-foreground">
-						{locale === "de" ? "Zusaetzlich" : "Additional"}
+						{t('workspace.additional')}
 					</div>
 					<div className="flex items-center gap-2">
 						<Button
@@ -206,7 +207,7 @@ export function WorkspaceOverviewForm({
 							size="sm"
 							onClick={() => handleExtensionsModeToggle("all")}
 						>
-							{modeLabel("all", locale)}
+							{modeLabel("all")}
 						</Button>
 						<Button
 							variant={
@@ -215,7 +216,7 @@ export function WorkspaceOverviewForm({
 							size="sm"
 							onClick={() => handleExtensionsModeToggle("custom")}
 						>
-							{modeLabel("custom", locale)}
+							{modeLabel("custom")}
 						</Button>
 					</div>
 					<div className="grid grid-cols-1 md:grid-cols-3 gap-2">
@@ -260,7 +261,7 @@ export function WorkspaceOverviewForm({
 		<div className="space-y-6">
 			<div>
 				<div className="text-xs uppercase text-muted-foreground">
-					{locale === "de" ? "Arbeitsbereich" : "Workspace"}
+					{t('workspace.workspace')}
 				</div>
 				<div className="text-sm font-mono text-foreground/80">
 					{workspacePathLabel}
@@ -269,25 +270,23 @@ export function WorkspaceOverviewForm({
 
 			<div className="space-y-2">
 				<div className="text-xs uppercase text-muted-foreground">
-					{locale === "de" ? "Name" : "Name"}
+					{t('common.name')}
 				</div>
 				<Input
 					value={values.displayName}
 					onChange={(event) => update({ displayName: event.target.value })}
-					placeholder={locale === "de" ? "Projektname" : "Project name"}
+					placeholder={t('projects.projectName')}
 				/>
 			</div>
 
 			<div className="space-y-2">
 				<div className="flex items-center justify-between">
 					<div className="text-xs uppercase text-muted-foreground">
-						{locale === "de" ? "Pi Standardmodell" : "Pi Default Model"}
+						{t('workspace.piDefaultModel')}
 					</div>
 				</div>
 				<p className="text-[11px] text-muted-foreground">
-					{locale === "de"
-						? "Standardmodell für neue Pi-Sitzungen in diesem Workspace"
-						: "Default model for new Pi sessions in this workspace"}
+					{t('workspace.piDefaultModelDescription')}
 				</p>
 				<Select
 					value={selectedModelValue}
@@ -295,17 +294,13 @@ export function WorkspaceOverviewForm({
 				>
 					<SelectTrigger>
 						<SelectValue
-							placeholder={
-								locale === "de" ? "Modell auswählen" : "Select model"
-							}
+							placeholder={t('models.selectModel')}
 						/>
 					</SelectTrigger>
 					<SelectContent>
 						{modelOptions.length === 0 ? (
 							<div className="px-2 py-1.5 text-xs text-muted-foreground">
-								{locale === "de"
-									? "Keine Modelle verfügbar"
-									: "No models available"}
+								{t('models.noModelsAvailable')}
 							</div>
 						) : (
 							modelOptions.map((option) => (
@@ -320,7 +315,7 @@ export function WorkspaceOverviewForm({
 
 			<div className="space-y-2">
 				<div className="text-xs uppercase text-muted-foreground">
-					{locale === "de" ? "Sandbox-Profil" : "Sandbox profile"}
+					{t('workspace.sandboxProfile')}
 				</div>
 				<Select
 					value={values.sandboxProfile}
@@ -341,7 +336,7 @@ export function WorkspaceOverviewForm({
 
 			<div className="space-y-2">
 				<div className="text-xs uppercase text-muted-foreground">
-					{locale === "de" ? "Skills" : "Skills"}
+					{t('workspace.skills')}
 				</div>
 				{renderSkillsList(
 					availableSkills,
@@ -352,7 +347,7 @@ export function WorkspaceOverviewForm({
 
 			<div className="space-y-2">
 				<div className="text-xs uppercase text-muted-foreground">
-					{locale === "de" ? "Extensions" : "Extensions"}
+					{t('workspace.extensions')}
 				</div>
 				{renderExtensionsList()}
 			</div>
@@ -363,12 +358,8 @@ export function WorkspaceOverviewForm({
 				<div className="flex items-center justify-end">
 					<Button onClick={onSave} disabled={saving}>
 						{saving
-							? locale === "de"
-								? "Speichern..."
-								: "Saving..."
-							: locale === "de"
-								? "Speichern"
-								: "Save changes"}
+							? t('common.saving')
+							: t('workspace.saveChanges')}
 					</Button>
 				</div>
 			)}

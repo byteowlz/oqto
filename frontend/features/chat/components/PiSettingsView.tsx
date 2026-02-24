@@ -15,6 +15,7 @@ import { fuzzyMatch } from "@/lib/slash-commands";
 import { cn } from "@/lib/utils";
 import { Loader2 } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 export interface PiSettingsViewProps {
 	className?: string;
@@ -29,6 +30,7 @@ export function PiSettingsView({
 	sessionId,
 	workspacePath,
 }: PiSettingsViewProps) {
+	const { t } = useTranslation();
 	const { verbosity, setVerbosity } = useChatVerbosity();
 	const [modelQuery, setModelQuery] = useState("");
 
@@ -56,11 +58,8 @@ export function PiSettingsView({
 		});
 	}, [availableModels, modelQuery]);
 
-	const verbosityLabel = locale === "de" ? "Chat-Detailgrad" : "Chat verbosity";
-	const verbosityDescription =
-		locale === "de"
-			? "Steuert, wie detailliert Tool-Aufrufe angezeigt werden."
-			: "Controls how detailed tool call rendering is.";
+	const verbosityLabel = t('pi.chatVerbosity');
+	const verbosityDescription = t('pi.chatVerbosityDescription');
 
 	const handleModelChange = useCallback(
 		async (value: string) => {
@@ -77,18 +76,18 @@ export function PiSettingsView({
 		<div className={cn("flex flex-col h-full", className)}>
 			<div className="flex items-center justify-between p-3 border-b border-border">
 				<span className="text-sm font-medium">
-					{locale === "de" ? "Pi Einstellungen" : "Pi Settings"}
+					{t('pi.settings')}
 				</span>
 			</div>
 			<div className="flex-1 overflow-auto p-3 space-y-5">
 				<div className="space-y-2">
 					<Label className="text-xs font-medium">
-						{locale === "de" ? "Modell" : "Model"}
+						{t('models.model')}
 					</Label>
 					{loading ? (
 						<div className="flex items-center gap-2 text-xs text-muted-foreground">
 							<Loader2 className="h-4 w-4 animate-spin" />
-							{locale === "de" ? "Modelle laden..." : "Loading models..."}
+							{t('models.loadingModels')}
 						</div>
 					) : (
 						<Select
@@ -103,12 +102,8 @@ export function PiSettingsView({
 								<SelectValue
 									placeholder={
 										isSwitching
-											? locale === "de"
-												? "Wechsle Modell..."
-												: "Switching model..."
-											: locale === "de"
-												? "Modell auswählen"
-												: "Select model"
+											? t('models.switchingModel')
+											: t('models.selectModel')
 									}
 								/>
 							</SelectTrigger>
@@ -119,11 +114,7 @@ export function PiSettingsView({
 									onKeyDown={(e) => e.stopPropagation()}
 								>
 									<Input
-										placeholder={
-											locale === "de"
-												? "Modelle durchsuchen..."
-												: "Search models..."
-										}
+										placeholder={t('models.searchModels')}
 										value={modelQuery}
 										onChange={(e) => setModelQuery(e.target.value)}
 										className="h-8"
@@ -131,13 +122,11 @@ export function PiSettingsView({
 								</div>
 								{availableModels.length === 0 ? (
 									<div className="p-3 text-sm text-muted-foreground text-center">
-										{locale === "de"
-											? "Keine Modelle verfügbar"
-											: "No models available"}
+										{t('models.noModelsAvailable')}
 									</div>
 								) : filteredModels.length === 0 ? (
 									<div className="p-3 text-sm text-muted-foreground text-center">
-										{locale === "de" ? "Keine Treffer" : "No matches"}
+										{t('models.noMatches')}
 									</div>
 								) : (
 									filteredModels.map((model) => {
@@ -153,9 +142,7 @@ export function PiSettingsView({
 													</span>
 													{isPending && (
 														<span className="text-[10px] text-muted-foreground">
-															{locale === "de"
-																? "(Wird angewendet)"
-																: "(Pending)"}
+															{t('models.pending')}
 														</span>
 													)}
 												</div>
@@ -168,9 +155,7 @@ export function PiSettingsView({
 					)}
 					{pendingModelRef && (
 						<p className="text-[10px] text-muted-foreground">
-							{locale === "de"
-								? "Modellwechsel wird nach Abschluss angewendet."
-								: "Model change will apply after completion."}
+							{t('models.modelChangeAfterCompletion')}
 						</p>
 					)}
 				</div>
@@ -190,13 +175,13 @@ export function PiSettingsView({
 						</SelectTrigger>
 						<SelectContent>
 							<SelectItem value="1">
-								{locale === "de" ? "Minimal" : "Minimal"}
+								{t('pi.minimal')}
 							</SelectItem>
 							<SelectItem value="2">
-								{locale === "de" ? "Kompakt" : "Compact"}
+								{t('pi.compact')}
 							</SelectItem>
 							<SelectItem value="3">
-								{locale === "de" ? "Ausführlich" : "Verbose"}
+								{t('pi.verbose')}
 							</SelectItem>
 						</SelectContent>
 					</Select>

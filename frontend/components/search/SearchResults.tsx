@@ -8,6 +8,7 @@ import {
 import { cn } from "@/lib/utils";
 import { Bot, Loader2, MessageSquare, Search, User } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 export type SearchMode = "sessions" | "messages";
 // hstry indexes: pi and other adapters.
@@ -21,25 +22,6 @@ interface SearchResultsProps {
 	extraHits?: HstrySearchHit[];
 	className?: string;
 }
-
-const t = {
-	en: {
-		noResults: "No results found",
-		searching: "Searching...",
-		piAgent: "Chat",
-		user: "User",
-		assistant: "Assistant",
-		error: "Search failed",
-	},
-	de: {
-		noResults: "Keine Ergebnisse gefunden",
-		searching: "Suche...",
-		piAgent: "Chat",
-		user: "Benutzer",
-		assistant: "Assistent",
-		error: "Suche fehlgeschlagen",
-	},
-};
 
 function formatTimestamp(timestamp: number | undefined): string {
 	if (!timestamp) return "";
@@ -68,8 +50,8 @@ function formatTimestamp(timestamp: number | undefined): string {
 	}
 }
 
-function getAgentLabel(agent: string, locale: "en" | "de"): string {
-	if (agent === "pi_agent") return t[locale].piAgent;
+function getAgentLabel(agent: string, t: (key: string) => string): string {
+	if (agent === "pi_agent") return t("search.piAgent");
 	return agent;
 }
 
@@ -86,6 +68,7 @@ export function SearchResults({
 	extraHits,
 	className,
 }: SearchResultsProps) {
+	const { t } = useTranslation();
 	const [results, setResults] = useState<HstrySearchResponse | null>(null);
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
@@ -114,7 +97,7 @@ export function SearchResults({
 
 				setResults({ hits: allHits.slice(0, 50) });
 			} catch (err) {
-				setError(err instanceof Error ? err.message : t[locale].error);
+				setError(err instanceof Error ? err.message : t("search.error"));
 				setResults(null);
 			} finally {
 				setLoading(false);
@@ -122,14 +105,14 @@ export function SearchResults({
 		}, 300); // 300ms debounce
 
 		return () => clearTimeout(timer);
-	}, [query, agentFilter, locale]);
+	}, [query, agentFilter, t]);
 
 	if (loading) {
 		return (
 			<div className={cn("flex items-center justify-center py-8", className)}>
 				<Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
 				<span className="ml-2 text-sm text-muted-foreground">
-					{t[locale].searching}
+					{t("search.searching")}
 				</span>
 			</div>
 		);
@@ -168,7 +151,7 @@ export function SearchResults({
 					)}
 				>
 					<Search className="w-8 h-8 mx-auto mb-2 opacity-50" />
-					{t[locale].noResults}
+					{t("search.noResults")}
 				</div>
 			);
 		}
@@ -199,7 +182,7 @@ export function SearchResults({
 									getAgentColor(hit.agent),
 								)}
 							>
-								{getAgentLabel(hit.agent, locale)}
+								{getAgentLabel(hit.agent, t)}
 							</span>
 							{hit.role && (
 								<span className="text-[10px] text-muted-foreground">

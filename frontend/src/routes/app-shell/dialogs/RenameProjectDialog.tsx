@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { memo, useCallback, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 export interface RenameProjectDialogProps {
 	open: boolean;
@@ -25,6 +26,7 @@ export const RenameProjectDialog = memo(function RenameProjectDialog({
 	onConfirm,
 	locale,
 }: RenameProjectDialogProps) {
+	const { t } = useTranslation();
 	const [value, setValue] = useState(initialValue);
 
 	// Sync with initial value when dialog opens
@@ -43,18 +45,16 @@ export const RenameProjectDialog = memo(function RenameProjectDialog({
 			<DialogContent>
 				<DialogHeader>
 					<DialogTitle>
-						{locale === "de" ? "Projekt umbenennen" : "Rename project"}
+						{t("projects.renameProject")}
 					</DialogTitle>
 					<DialogDescription>
-						{locale === "de"
-							? "Geben Sie einen neuen Namen fur dieses Projekt ein."
-							: "Enter a new name for this project."}
+						{t("projects.renameDescription")}
 					</DialogDescription>
 				</DialogHeader>
 				<Input
 					value={value}
 					onChange={(e) => setValue(e.target.value)}
-					placeholder={locale === "de" ? "Projektname" : "Project name"}
+					placeholder={t("projects.projectName")}
 					onKeyDown={(e) => {
 						if (e.key === "Enter") {
 							handleConfirm();
@@ -67,10 +67,10 @@ export const RenameProjectDialog = memo(function RenameProjectDialog({
 						variant="outline"
 						onClick={() => onOpenChange(false)}
 					>
-						{locale === "de" ? "Abbrechen" : "Cancel"}
+						{t("common.cancel")}
 					</Button>
 					<Button type="button" onClick={handleConfirm}>
-						{locale === "de" ? "Speichern" : "Save"}
+						{t("common.save")}
 					</Button>
 				</DialogFooter>
 			</DialogContent>

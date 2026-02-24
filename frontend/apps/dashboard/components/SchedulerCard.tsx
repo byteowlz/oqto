@@ -6,6 +6,7 @@ import {
 	CardHeader,
 	CardTitle,
 } from "@/components/ui/card";
+import { i18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { RefreshCw, Trash2 } from "lucide-react";
 import { memo, useCallback, useState } from "react";
@@ -35,26 +36,26 @@ function StatusPill({ status }: { status: string }) {
 	);
 }
 
-function humanizeCron(cron: string, locale: "de" | "en"): string {
+function humanizeCron(cron: string, _locale: "de" | "en"): string {
 	const parts = cron.trim().split(/\s+/);
 	if (parts.length !== 5) return cron;
 	const [min, hour, dom, month, dow] = parts;
 
 	const t = {
-		runs: locale === "de" ? "Laeuft" : "Runs",
-		every: locale === "de" ? "jede" : "every",
-		at: locale === "de" ? "um" : "at",
-		minute: locale === "de" ? "Minute" : "minute",
-		minutes: locale === "de" ? "Minuten" : "minutes",
-		hour: locale === "de" ? "Stunde" : "hour",
-		hours: locale === "de" ? "Stunden" : "hours",
-		day: locale === "de" ? "Tag" : "day",
-		days: locale === "de" ? "Tage" : "days",
-		daily: locale === "de" ? "taeglich" : "daily",
-		weekly: locale === "de" ? "woechentlich" : "weekly",
-		monthly: locale === "de" ? "monatlich" : "monthly",
-		yearly: locale === "de" ? "jaehrlich" : "yearly",
-		on: locale === "de" ? "am" : "on",
+		runs: i18n.t("scheduler.runs"),
+		every: i18n.t("scheduler.every"),
+		at: i18n.t("scheduler.at"),
+		minute: i18n.t("scheduler.minute"),
+		minutes: i18n.t("scheduler.minutes"),
+		hour: i18n.t("scheduler.hour"),
+		hours: i18n.t("scheduler.hours"),
+		day: i18n.t("scheduler.day"),
+		days: i18n.t("scheduler.days"),
+		daily: i18n.t("scheduler.daily"),
+		weekly: i18n.t("scheduler.weekly"),
+		monthly: i18n.t("scheduler.monthly"),
+		yearly: i18n.t("scheduler.yearly"),
+		on: i18n.t("scheduler.on"),
 	};
 
 	const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];

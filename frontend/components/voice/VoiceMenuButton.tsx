@@ -15,6 +15,7 @@ import {
 	MessageSquare,
 	MicOff,
 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 export type VoiceMode = "conversation" | "dictation" | null;
 
@@ -60,27 +61,9 @@ export function VoiceMenuButton({
 	locale = "en",
 	className,
 }: VoiceMenuButtonProps) {
+	const { t } = useTranslation();
 	const isActive = activeMode !== null;
 	const isProcessing = voiceState === "processing";
-
-	const labels = {
-		en: {
-			conversation: "Conversation",
-			conversationDesc: "Full voice chat with AI",
-			dictation: "Dictation",
-			dictationDesc: "Speech to text input",
-			stop: "Stop",
-		},
-		de: {
-			conversation: "Konversation",
-			conversationDesc: "Vollständiger Sprachchat",
-			dictation: "Diktat",
-			dictationDesc: "Sprache zu Text",
-			stop: "Stoppen",
-		},
-	};
-
-	const t = labels[locale];
 
 	// When active, clicking the button stops the current mode
 	if (isActive) {
@@ -99,7 +82,7 @@ export function VoiceMenuButton({
 					disabled && "opacity-50 cursor-not-allowed",
 					className,
 				)}
-				title={t.stop}
+				title={t("voice.stop")}
 			>
 				{isProcessing ? (
 					<Loader2 className="size-4 animate-spin" />
@@ -123,7 +106,7 @@ export function VoiceMenuButton({
 						disabled && "opacity-50 cursor-not-allowed",
 						className,
 					)}
-					title={locale === "de" ? "Sprachmodus" : "Voice mode"}
+					title={t("voice.voiceMode")}
 				>
 					<AudioLines className="size-4" />
 				</button>
@@ -135,13 +118,13 @@ export function VoiceMenuButton({
 				>
 					<div className="flex w-full items-center">
 						<MessageSquare className="mr-2 size-4" />
-						<span className="font-medium">{t.conversation}</span>
+						<span className="font-medium">{t("voice.conversation")}</span>
 						<DropdownMenuShortcut>
 							{shortcuts.conversation}
 						</DropdownMenuShortcut>
 					</div>
 					<span className="text-xs text-muted-foreground pl-6">
-						{t.conversationDesc}
+						{t("voice.conversationDesc")}
 					</span>
 				</DropdownMenuItem>
 				<DropdownMenuItem
@@ -150,11 +133,11 @@ export function VoiceMenuButton({
 				>
 					<div className="flex w-full items-center">
 						<Keyboard className="mr-2 size-4" />
-						<span className="font-medium">{t.dictation}</span>
+						<span className="font-medium">{t("voice.dictation")}</span>
 						<DropdownMenuShortcut>{shortcuts.dictation}</DropdownMenuShortcut>
 					</div>
 					<span className="text-xs text-muted-foreground pl-6">
-						{t.dictationDesc}
+						{t("voice.dictationDesc")}
 					</span>
 				</DropdownMenuItem>
 			</DropdownMenuContent>

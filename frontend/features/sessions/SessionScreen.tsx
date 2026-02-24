@@ -50,6 +50,7 @@ import {
 	useMemo,
 	useState,
 } from "react";
+import { useTranslation } from "react-i18next";
 
 const BrowserView = lazy(() =>
 	import("@/features/sessions/components/BrowserView").then((mod) => ({
@@ -376,6 +377,7 @@ const EmptyWorkspacePanel = memo(function EmptyWorkspacePanel({
 });
 
 export const SessionScreen = memo(function SessionScreen() {
+	const { t } = useTranslation();
 	const {
 		locale,
 		chatHistory,
@@ -563,9 +565,7 @@ export const SessionScreen = memo(function SessionScreen() {
 
 	const headerTitle = selectedChatFromHistory
 		? getDisplayPiTitle(selectedChatFromHistory)
-		: locale === "de"
-			? "Chat"
-			: "Chat";
+		: "Chat";
 	const tempId = selectedChatFromHistory
 		? getTempIdFromSession(selectedChatFromHistory)
 		: null;
@@ -603,7 +603,7 @@ export const SessionScreen = memo(function SessionScreen() {
 		/>
 	) : (
 		<EmptyWorkspacePanel
-			label={locale === "de" ? "Lade Chat..." : "Loading chat..."}
+			label={t("chat.loadingChat")}
 		/>
 	);
 
@@ -660,7 +660,7 @@ export const SessionScreen = memo(function SessionScreen() {
 				<div className="flex-1 min-h-0 overflow-hidden">
 					<TodoListView
 						todos={latestTodos}
-						emptyMessage={locale === "de" ? "Keine Aufgaben" : "No tasks"}
+						emptyMessage={t("workspace.noTasks")}
 						fullHeight
 					/>
 				</div>
@@ -677,11 +677,7 @@ export const SessionScreen = memo(function SessionScreen() {
 						</Suspense>
 					) : (
 						<EmptyWorkspacePanel
-							label={
-								locale === "de"
-									? "Kein Arbeitsbereich für Planner"
-									: "No workspace for planner"
-							}
+							label={t('workspace.noWorkspaceForPlanner')}
 						/>
 					)}
 				</div>
@@ -729,7 +725,7 @@ export const SessionScreen = memo(function SessionScreen() {
 			<div className="min-w-0">
 				<div className="flex items-center gap-2">
 					<h1 className="text-base sm:text-lg font-semibold text-foreground tracking-wider truncate">
-						{locale === "de" ? "Workspace-Ubersicht" : "Workspace overview"}
+						{t("workspace.overview")}
 					</h1>
 				</div>
 				<div className="flex items-center gap-2 text-xs text-foreground/60 dark:text-muted-foreground">
@@ -764,7 +760,7 @@ export const SessionScreen = memo(function SessionScreen() {
 								onSelect={setActiveView}
 								view="chat"
 								icon={MessageSquare}
-								label={locale === "de" ? "Chat" : "Chat"}
+								label={t('chat.title')}
 							/>
 							{normalizedOverviewPath && (
 								<TabButton
@@ -772,7 +768,7 @@ export const SessionScreen = memo(function SessionScreen() {
 									onSelect={setActiveView}
 									view="overview"
 									icon={FolderKanban}
-									label={locale === "de" ? "Ubersicht" : "Overview"}
+									label={t("workspace.overview")}
 								/>
 							)}
 							<TabButton
@@ -780,7 +776,7 @@ export const SessionScreen = memo(function SessionScreen() {
 								onSelect={setActiveView}
 								view="tasks"
 								icon={ListTodo}
-								label={locale === "de" ? "Aufgaben" : "Tasks"}
+								label={t("workspace.noTasks").replace("Keine ", "").replace("No ", "")}
 								badge={openTodoCount}
 							/>
 							<TabButton
@@ -788,7 +784,7 @@ export const SessionScreen = memo(function SessionScreen() {
 								onSelect={setActiveView}
 								view="files"
 								icon={FileText}
-								label={locale === "de" ? "Dateien" : "Files"}
+								label={t("files.title")}
 							/>
 							<TabButton
 								activeView={activeView}
@@ -803,7 +799,7 @@ export const SessionScreen = memo(function SessionScreen() {
 									onSelect={setActiveView}
 									view="memories"
 									icon={Brain}
-									label={locale === "de" ? "Erinnerungen" : "Memories"}
+									label={t("nav.memories")}
 								/>
 							)}
 							<TabButton
@@ -811,7 +807,7 @@ export const SessionScreen = memo(function SessionScreen() {
 								onSelect={setActiveView}
 								view="terminal"
 								icon={Terminal}
-								label={locale === "de" ? "Terminal" : "Terminal"}
+								label={t("terminal.title")}
 							/>
 							<TabButton
 								activeView={activeView}
@@ -825,7 +821,7 @@ export const SessionScreen = memo(function SessionScreen() {
 								onSelect={setActiveView}
 								view="settings"
 								icon={Settings}
-								label={locale === "de" ? "Einstellungen" : "Settings"}
+								label={t("nav.settings")}
 							/>
 						</div>
 						<ContextWindowGauge
@@ -875,9 +871,7 @@ export const SessionScreen = memo(function SessionScreen() {
 							) : (
 								<EmptyWorkspacePanel
 									label={
-										locale === "de"
-											? "Kein Arbeitsbereich für Dateien"
-											: "No workspace for files"
+										t("workspace.noWorkspaceForFiles")
 									}
 								/>
 							)}
@@ -911,9 +905,7 @@ export const SessionScreen = memo(function SessionScreen() {
 								) : (
 									<EmptyWorkspacePanel
 										label={
-											locale === "de"
-												? "Kein Arbeitsbereich für Terminal"
-												: "No workspace for terminal"
+											t("workspace.noWorkspaceForTerminal")
 										}
 									/>
 								)}
@@ -991,7 +983,7 @@ export const SessionScreen = memo(function SessionScreen() {
 										type="button"
 										onClick={handleNewChat}
 										className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted/50 rounded transition-colors"
-										title={locale === "de" ? "Neue Sitzung" : "New Session"}
+										title={t("sessions.newSession")}
 									>
 										<Plus className="w-4 h-4" />
 									</button>
@@ -1046,7 +1038,7 @@ export const SessionScreen = memo(function SessionScreen() {
 								{sessionHeader}
 								{showEmptyChat ? (
 									<div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">
-										{locale === "de" ? "Keine Sitzungen" : "No sessions yet"}
+										{t("chat.noSessions")}
 									</div>
 								) : isOverviewActive ? (
 									overviewPanel
@@ -1146,7 +1138,7 @@ export const SessionScreen = memo(function SessionScreen() {
 								{sessionHeader}
 								{showEmptyChat ? (
 									<div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">
-										{locale === "de" ? "Keine Sitzungen" : "No sessions yet"}
+										{t("chat.noSessions")}
 									</div>
 								) : isOverviewActive ? (
 									overviewPanel
@@ -1243,9 +1235,7 @@ export const SessionScreen = memo(function SessionScreen() {
 											) : (
 												<EmptyWorkspacePanel
 													label={
-														locale === "de"
-															? "Kein Arbeitsbereich für Dateien"
-															: "No workspace for files"
+														t("workspace.noWorkspaceForFiles")
 													}
 												/>
 											)}
@@ -1308,9 +1298,7 @@ export const SessionScreen = memo(function SessionScreen() {
 											) : (
 												<EmptyWorkspacePanel
 													label={
-														locale === "de"
-															? "Kein Arbeitsbereich für Terminal"
-															: "No workspace for terminal"
+														t("workspace.noWorkspaceForTerminal")
 													}
 												/>
 											)}

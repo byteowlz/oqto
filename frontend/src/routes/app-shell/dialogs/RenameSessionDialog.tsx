@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { memo, useCallback, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 export interface RenameSessionDialogProps {
 	open: boolean;
@@ -25,6 +26,7 @@ export const RenameSessionDialog = memo(function RenameSessionDialog({
 	onConfirm,
 	locale,
 }: RenameSessionDialogProps) {
+	const { t } = useTranslation();
 	const [value, setValue] = useState(initialValue);
 
 	// Sync with initial value when dialog opens
@@ -43,18 +45,16 @@ export const RenameSessionDialog = memo(function RenameSessionDialog({
 			<DialogContent>
 				<DialogHeader>
 					<DialogTitle>
-						{locale === "de" ? "Chat umbenennen" : "Rename chat"}
+						{t("dialogs.renameChat")}
 					</DialogTitle>
 					<DialogDescription>
-						{locale === "de"
-							? "Geben Sie einen neuen Namen fur diesen Chat ein."
-							: "Enter a new name for this chat."}
+						{t("dialogs.renameChatDescription")}
 					</DialogDescription>
 				</DialogHeader>
 				<Input
 					value={value}
 					onChange={(e) => setValue(e.target.value)}
-					placeholder={locale === "de" ? "Chat-Titel" : "Chat title"}
+					placeholder={t("dialogs.chatTitle")}
 					onKeyDown={(e) => {
 						if (e.key === "Enter") {
 							handleConfirm();
@@ -67,10 +67,10 @@ export const RenameSessionDialog = memo(function RenameSessionDialog({
 						variant="outline"
 						onClick={() => onOpenChange(false)}
 					>
-						{locale === "de" ? "Abbrechen" : "Cancel"}
+						{t("common.cancel")}
 					</Button>
 					<Button type="button" onClick={handleConfirm}>
-						{locale === "de" ? "Speichern" : "Save"}
+						{t("common.save")}
 					</Button>
 				</DialogFooter>
 			</DialogContent>

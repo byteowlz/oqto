@@ -6,6 +6,7 @@ import { useSessionSearch } from "@/hooks/use-session-search";
 import { cn } from "@/lib/utils";
 import { ChevronDown, ChevronUp, Loader2, Search, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 export type ChatSearchBarProps = {
 	/** Session ID to search within */
@@ -24,24 +25,7 @@ export type ChatSearchBarProps = {
 	hideCloseButton?: boolean;
 };
 
-const translations = {
-	en: {
-		placeholder: "Search in conversation...",
-		noResults: "No results",
-		results: (count: number) => `${count} result${count !== 1 ? "s" : ""}`,
-		close: "Close search",
-		prev: "Previous result",
-		next: "Next result",
-	},
-	de: {
-		placeholder: "In Konversation suchen...",
-		noResults: "Keine Ergebnisse",
-		results: (count: number) => `${count} Ergebnis${count !== 1 ? "se" : ""}`,
-		close: "Suche schliessen",
-		prev: "Vorheriges Ergebnis",
-		next: "Nachstes Ergebnis",
-	},
-};
+// Translations moved to messages/en.json and messages/de.json under "search" section
 
 /**
  * Search bar component for searching within a chat session.
@@ -56,7 +40,7 @@ export function ChatSearchBar({
 	locale = "en",
 	hideCloseButton = false,
 }: ChatSearchBarProps) {
-	const t = translations[locale];
+	const { t } = useTranslation();
 	const inputRef = useRef<HTMLInputElement>(null);
 	const [currentResultIndex, setCurrentResultIndex] = useState(0);
 
@@ -155,7 +139,7 @@ export function ChatSearchBar({
 				value={query}
 				onChange={(e) => setQuery(e.target.value)}
 				onKeyDown={handleKeyDown}
-				placeholder={t.placeholder}
+				placeholder={t("search.placeholder")}
 				className="h-7 text-sm border-0 bg-transparent shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
 			/>
 
@@ -169,7 +153,7 @@ export function ChatSearchBar({
 							{currentResultIndex + 1}/{results.length}
 						</span>
 					) : (
-						<span>{t.noResults}</span>
+						<span>{t("search.noResults")}</span>
 					)}
 				</div>
 			)}
@@ -182,7 +166,7 @@ export function ChatSearchBar({
 						size="icon"
 						onClick={handlePrev}
 						className="h-6 w-6"
-						title={t.prev}
+						title={t("search.prev")}
 					>
 						<ChevronUp className="h-3 w-3" />
 					</Button>
@@ -191,7 +175,7 @@ export function ChatSearchBar({
 						size="icon"
 						onClick={handleNext}
 						className="h-6 w-6"
-						title={t.next}
+						title={t("search.next")}
 					>
 						<ChevronDown className="h-3 w-3" />
 					</Button>
@@ -205,7 +189,7 @@ export function ChatSearchBar({
 					size="icon"
 					onClick={handleClose}
 					className="h-6 w-6 flex-shrink-0"
-					title={t.close}
+					title={t("search.close")}
 				>
 					<X className="h-3 w-3" />
 				</Button>

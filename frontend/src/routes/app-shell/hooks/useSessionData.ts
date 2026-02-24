@@ -5,6 +5,7 @@ import type {
 } from "@/lib/control-plane-client";
 import { formatSessionDate, getTempIdFromSession } from "@/lib/session-utils";
 import { useCallback, useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import type { SessionHierarchy, SessionsByProject } from "../SidebarSessions";
 import type { WorkspaceDirectory } from "./useProjectActions";
 
@@ -59,6 +60,8 @@ export function useSessionData({
 	projectSortBy,
 	projectSortAsc,
 }: SessionDataInput): SessionDataOutput {
+	const { t } = useTranslation();
+
 	const dedupedChatHistory = useMemo(() => {
 		const byId = new Map<string, ChatSession>();
 		for (const session of chatHistory) {
@@ -144,9 +147,9 @@ export function useSessionData({
 				"projectID" in session ? session.projectID : null
 			)?.trim();
 			if (projectId) return projectId;
-			return locale === "de" ? "Arbeitsbereich" : "Workspace";
+			return t('workspace.workspace');
 		},
-		[locale],
+		[locale, t],
 	);
 
 	// Filter and sort sessions
@@ -260,7 +263,7 @@ export function useSessionData({
 		if (!entries.has("workspace") && workspaceDirectories.length === 0) {
 			entries.set("workspace", {
 				key: "workspace",
-				name: locale === "de" ? "Arbeitsbereich" : "Workspace",
+				name: t('workspace.workspace'),
 				sessionCount: 0,
 				lastActive: 0,
 			});
@@ -273,6 +276,7 @@ export function useSessionData({
 		sessionHierarchy.parentSessions,
 		workspaceDirectories,
 		locale,
+		t,
 	]);
 
 	const selectedProjectLabel = useMemo(() => {

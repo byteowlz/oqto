@@ -1,18 +1,11 @@
 /**
  * Generate a human-readable one-liner describing what a tool call is doing.
  * Pure pattern matching on tool name + arguments -- no LLM needed.
+ *
+ * Uses i18next for translations instead of inline locale ternaries.
  */
 
-type Locale = "en" | "de";
-
-type Translations = {
-	en: string;
-	de: string;
-};
-
-function t(translations: Translations, locale: Locale): string {
-	return translations[locale];
-}
+import { i18n } from "@/lib/i18n";
 
 function truncPath(path: string, max = 50): string {
 	if (path.length <= max) return path;
@@ -32,144 +25,103 @@ function truncStr(s: string, max = 60): string {
 
 type BashPattern = {
 	match: (cmd: string) => boolean;
-	summary: (cmd: string, locale: Locale) => string;
+	summary: (cmd: string) => string;
 };
 
 const bashPatterns: BashPattern[] = [
 	// Package managers
 	{
 		match: (cmd) => /\b(npm|yarn|pnpm|bun)\s+(install|add|i)\b/.test(cmd),
-		summary: (_cmd, locale) =>
-			t({ en: "Installing packages", de: "Pakete installieren" }, locale),
+		summary: () => i18n.t("tools.installingPackages"),
 	},
 	{
 		match: (cmd) => /\b(pip|uv)\s+(install|add)\b/.test(cmd),
-		summary: (_cmd, locale) =>
-			t(
-				{
-					en: "Installing Python packages",
-					de: "Python-Pakete installieren",
-				},
-				locale,
-			),
+		summary: () => i18n.t("tools.installingPythonPackages"),
 	},
 	{
 		match: (cmd) => /\bcargo\s+(install|add|build)\b/.test(cmd),
-		summary: (cmd, locale) => {
-			if (/\bbuild\b/.test(cmd))
-				return t({ en: "Building Rust project", de: "Rust-Projekt bauen" }, locale);
-			return t(
-				{ en: "Installing Rust packages", de: "Rust-Pakete installieren" },
-				locale,
-			);
+		summary: (cmd) => {
+			if (/\bbuild\b/.test(cmd)) return i18n.t("tools.buildingRustProject");
+			return i18n.t("tools.installingRustPackages");
 		},
 	},
 	// Git
 	{
 		match: (cmd) => /\bgit\s+clone\b/.test(cmd),
-		summary: (_cmd, locale) =>
-			t(
-				{ en: "Cloning git repository", de: "Git-Repository klonen" },
-				locale,
-			),
+		summary: () => i18n.t("tools.cloningGitRepo"),
 	},
 	{
 		match: (cmd) => /\bgit\s+pull\b/.test(cmd),
-		summary: (_cmd, locale) =>
-			t({ en: "Pulling latest changes", de: "Neueste Aenderungen holen" }, locale),
+		summary: () => i18n.t("tools.pullingLatestChanges"),
 	},
 	{
 		match: (cmd) => /\bgit\s+push\b/.test(cmd),
-		summary: (_cmd, locale) =>
-			t({ en: "Pushing changes", de: "Aenderungen pushen" }, locale),
+		summary: () => i18n.t("tools.pushingChanges"),
 	},
 	{
 		match: (cmd) => /\bgit\s+commit\b/.test(cmd),
-		summary: (_cmd, locale) =>
-			t({ en: "Committing changes", de: "Aenderungen committen" }, locale),
+		summary: () => i18n.t("tools.committingChanges"),
 	},
 	{
 		match: (cmd) => /\bgit\s+(status|diff|log)\b/.test(cmd),
-		summary: (cmd, locale) => {
-			if (/\bstatus\b/.test(cmd))
-				return t({ en: "Checking git status", de: "Git-Status pruefen" }, locale);
-			if (/\bdiff\b/.test(cmd))
-				return t({ en: "Showing changes", de: "Aenderungen anzeigen" }, locale);
-			return t({ en: "Viewing git log", de: "Git-Log anzeigen" }, locale);
+		summary: (cmd) => {
+			if (/\bstatus\b/.test(cmd)) return i18n.t("tools.checkingGitStatus");
+			if (/\bdiff\b/.test(cmd)) return i18n.t("tools.showingChanges");
+			return i18n.t("tools.viewingGitLog");
 		},
 	},
 	// Search
 	{
 		match: (cmd) => /\b(grep|rg|ag)\s/.test(cmd),
-		summary: (cmd, locale) => {
+		summary: (cmd) => {
 			const m = cmd.match(/(?:grep|rg|ag)\s+(?:-[^\s]*\s+)*['"]?([^'"|\s]+)/);
 			const query = m ? m[1] : null;
 			if (query) {
-				return t(
-					{
-						en: `Searching for '${truncStr(query, 30)}'`,
-						de: `Suche nach '${truncStr(query, 30)}'`,
-					},
-					locale,
-				);
+				return i18n.t("tools.searchingFor", { query: truncStr(query, 30) });
 			}
-			return t({ en: "Searching files", de: "Dateien durchsuchen" }, locale);
+			return i18n.t("tools.searchingFiles");
 		},
 	},
 	// Find
 	{
 		match: (cmd) => /\bfind\s/.test(cmd),
-		summary: (_cmd, locale) =>
-			t({ en: "Finding files", de: "Dateien suchen" }, locale),
+		summary: () => i18n.t("tools.findingFiles"),
 	},
 	// Directory listing
 	{
 		match: (cmd) => /\b(ls|dir|tree)\s/.test(cmd) || /^ls\s*$/.test(cmd.trim()),
-		summary: (_cmd, locale) =>
-			t({ en: "Listing files", de: "Dateien auflisten" }, locale),
+		summary: () => i18n.t("tools.listingFiles"),
 	},
 	// File operations
 	{
 		match: (cmd) => /\b(cat|head|tail|less|more)\s/.test(cmd),
-		summary: (cmd, locale) => {
+		summary: (cmd) => {
 			const m = cmd.match(/(?:cat|head|tail|less|more)\s+(.+?)(?:\s*[|;]|$)/);
 			const file = m ? truncPath(m[1].trim()) : null;
-			if (file)
-				return t(
-					{ en: `Reading ${file}`, de: `Lesen: ${file}` },
-					locale,
-				);
-			return t({ en: "Reading file", de: "Datei lesen" }, locale);
+			if (file) return i18n.t("tools.readingPath", { path: file });
+			return i18n.t("tools.readingFile");
 		},
 	},
 	{
 		match: (cmd) => /\bmkdir\b/.test(cmd),
-		summary: (_cmd, locale) =>
-			t(
-				{ en: "Creating directory", de: "Verzeichnis erstellen" },
-				locale,
-			),
+		summary: () => i18n.t("tools.creatingDirectory"),
 	},
 	{
 		match: (cmd) => /\b(rm|trash)\s/.test(cmd),
-		summary: (_cmd, locale) =>
-			t({ en: "Removing files", de: "Dateien entfernen" }, locale),
+		summary: () => i18n.t("tools.removingFiles"),
 	},
 	{
 		match: (cmd) => /\b(cp|rsync)\s/.test(cmd),
-		summary: (_cmd, locale) =>
-			t({ en: "Copying files", de: "Dateien kopieren" }, locale),
+		summary: () => i18n.t("tools.copyingFiles"),
 	},
 	{
 		match: (cmd) => /\bmv\s/.test(cmd),
-		summary: (_cmd, locale) =>
-			t({ en: "Moving files", de: "Dateien verschieben" }, locale),
+		summary: () => i18n.t("tools.movingFiles"),
 	},
 	// Build/compile
 	{
 		match: (cmd) => /\b(make|cmake|ninja)\b/.test(cmd),
-		summary: (_cmd, locale) =>
-			t({ en: "Building project", de: "Projekt bauen" }, locale),
+		summary: () => i18n.t("tools.buildingProject"),
 	},
 	// Test
 	{
@@ -177,105 +129,74 @@ const bashPatterns: BashPattern[] = [
 			/\b(test|jest|vitest|pytest|cargo\s+test|bun\s+test|npm\s+test)\b/.test(
 				cmd,
 			),
-		summary: (_cmd, locale) =>
-			t({ en: "Running tests", de: "Tests ausfuehren" }, locale),
+		summary: () => i18n.t("tools.runningTests"),
 	},
 	// Docker
 	{
 		match: (cmd) => /\b(docker|podman)\s/.test(cmd),
-		summary: (_cmd, locale) =>
-			t(
-				{ en: "Running container command", de: "Container-Befehl ausfuehren" },
-				locale,
-			),
+		summary: () => i18n.t("tools.runningContainerCommand"),
 	},
 	// curl/wget
 	{
 		match: (cmd) => /\b(curl|wget)\s/.test(cmd),
-		summary: (_cmd, locale) =>
-			t({ en: "Fetching URL", de: "URL abrufen" }, locale),
+		summary: () => i18n.t("tools.fetchingUrl"),
 	},
 	// Python
 	{
 		match: (cmd) => /\b(python3?|uv\s+run)\s/.test(cmd),
-		summary: (_cmd, locale) =>
-			t(
-				{ en: "Running Python script", de: "Python-Skript ausfuehren" },
-				locale,
-			),
+		summary: () => i18n.t("tools.runningPythonScript"),
 	},
 	// SSH/remote
 	{
 		match: (cmd) => /\bssh\s/.test(cmd),
-		summary: (_cmd, locale) =>
-			t({ en: "Running remote command", de: "Remote-Befehl ausfuehren" }, locale),
+		summary: () => i18n.t("tools.runningRemoteCommand"),
 	},
 	// systemctl
 	{
 		match: (cmd) => /\bsystemctl\s/.test(cmd),
-		summary: (_cmd, locale) =>
-			t({ en: "Managing service", de: "Dienst verwalten" }, locale),
+		summary: () => i18n.t("tools.managingService"),
 	},
 	// Web search tools
 	{
 		match: (cmd) => /\b(sx|exa-web-search|exa-code-context)\s/.test(cmd),
-		summary: (cmd, locale) => {
+		summary: (cmd) => {
 			const m = cmd.match(/(?:sx|exa-web-search|exa-code-context)\s+['"]([^'"]+)/);
 			const query = m ? m[1] : null;
-			if (query)
-				return t(
-					{
-						en: `Searching: ${truncStr(query, 40)}`,
-						de: `Suche: ${truncStr(query, 40)}`,
-					},
-					locale,
-				);
-			return t({ en: "Web search", de: "Websuche" }, locale);
+			if (query) return i18n.t("tools.searchingQuery", { query: truncStr(query, 40) });
+			return i18n.t("tools.webSearch");
 		},
 	},
 	// Scheduler
 	{
 		match: (cmd) => /\bskdlr\s/.test(cmd),
-		summary: (_cmd, locale) =>
-			t({ en: "Managing schedule", de: "Zeitplan verwalten" }, locale),
+		summary: () => i18n.t("tools.managingSchedule"),
 	},
 	// tmpltr/sldr
 	{
 		match: (cmd) => /\btmpltr\s/.test(cmd),
-		summary: (_cmd, locale) =>
-			t({ en: "Generating document", de: "Dokument generieren" }, locale),
+		summary: () => i18n.t("tools.generatingDocument"),
 	},
 	{
 		match: (cmd) => /\bsldr\s/.test(cmd),
-		summary: (_cmd, locale) =>
-			t(
-				{ en: "Building presentation", de: "Praesentation erstellen" },
-				locale,
-			),
+		summary: () => i18n.t("tools.buildingPresentation"),
 	},
 	// agntz memory
 	{
 		match: (cmd) => /\bagntz\s+memory\b/.test(cmd),
-		summary: (cmd, locale) => {
-			if (/\bsearch\b/.test(cmd))
-				return t({ en: "Searching memories", de: "Erinnerungen durchsuchen" }, locale);
-			if (/\badd\b/.test(cmd))
-				return t({ en: "Saving to memory", de: "In Erinnerung speichern" }, locale);
-			if (/\blist\b/.test(cmd))
-				return t({ en: "Listing memories", de: "Erinnerungen auflisten" }, locale);
-			return t({ en: "Memory operation", de: "Speicheroperation" }, locale);
+		summary: (cmd) => {
+			if (/\bsearch\b/.test(cmd)) return i18n.t("tools.searchingMemories");
+			if (/\badd\b/.test(cmd)) return i18n.t("tools.savingToMemory");
+			if (/\blist\b/.test(cmd)) return i18n.t("tools.listingMemories");
+			return i18n.t("tools.memoryOperation");
 		},
 	},
 ];
 
-function summarizeBash(
-	command: string,
-	locale: Locale,
-): string | null {
+function summarizeBash(command: string): string | null {
 	const cmd = command.trim();
 	for (const pattern of bashPatterns) {
 		if (pattern.match(cmd)) {
-			return pattern.summary(cmd, locale);
+			return pattern.summary(cmd);
 		}
 	}
 	// Fallback: show truncated command
@@ -283,11 +204,13 @@ function summarizeBash(
 }
 
 // -- Main entry point --
+// The locale parameter is kept for API compatibility but no longer used
+// internally. i18n.t() reads the current language from the i18n instance.
 
 export function getToolSummary(
 	toolName: string,
 	input: Record<string, unknown> | undefined,
-	locale: Locale,
+	_locale?: string,
 ): string | null {
 	const name = toolName.toLowerCase();
 
@@ -295,7 +218,7 @@ export function getToolSummary(
 		const cmd =
 			(input?.command as string) ?? (input?.cmd as string) ?? null;
 		if (cmd) {
-			const summary = summarizeBash(cmd, locale);
+			const summary = summarizeBash(cmd);
 			if (summary) return summary;
 			// Fallback: first meaningful part of command
 			const clean = cmd
@@ -309,106 +232,51 @@ export function getToolSummary(
 
 	if (name === "read") {
 		const path = (input?.path as string) ?? null;
-		if (path) {
-			return t(
-				{
-					en: `Reading ${truncPath(path)}`,
-					de: `Lesen: ${truncPath(path)}`,
-				},
-				locale,
-			);
-		}
+		if (path) return i18n.t("tools.readingPath", { path: truncPath(path) });
 	}
 
 	if (name === "write") {
 		const path = (input?.path as string) ?? null;
-		if (path) {
-			return t(
-				{
-					en: `Writing ${truncPath(path)}`,
-					de: `Schreiben: ${truncPath(path)}`,
-				},
-				locale,
-			);
-		}
+		if (path) return i18n.t("tools.writingPath", { path: truncPath(path) });
 	}
 
 	if (name === "edit") {
 		const path = (input?.path as string) ?? null;
-		if (path) {
-			return t(
-				{
-					en: `Editing ${truncPath(path)}`,
-					de: `Bearbeiten: ${truncPath(path)}`,
-				},
-				locale,
-			);
-		}
+		if (path) return i18n.t("tools.editingPath", { path: truncPath(path) });
 	}
 
 	if (name === "glob") {
 		const pattern = (input?.pattern as string) ?? null;
-		if (pattern) {
-			return t(
-				{
-					en: `Finding ${truncStr(pattern, 40)}`,
-					de: `Suche: ${truncStr(pattern, 40)}`,
-				},
-				locale,
-			);
-		}
+		if (pattern) return i18n.t("tools.findingPattern", { pattern: truncStr(pattern, 40) });
 	}
 
 	if (name === "grep") {
 		const pattern = (input?.pattern as string) ?? (input?.query as string) ?? null;
-		if (pattern) {
-			return t(
-				{
-					en: `Searching for '${truncStr(pattern, 30)}'`,
-					de: `Suche nach '${truncStr(pattern, 30)}'`,
-				},
-				locale,
-			);
-		}
+		if (pattern) return i18n.t("tools.searchingFor", { query: truncStr(pattern, 30) });
 	}
 
 	if (name === "todowrite" || name === "todo_write") {
-		return t(
-			{ en: "Updating task list", de: "Aufgabenliste aktualisieren" },
-			locale,
-		);
+		return i18n.t("tools.updatingTaskList");
 	}
 
 	if (name === "todoread" || name === "todo_read" || name === "todo") {
 		const action = (input?.action as string) ?? null;
-		if (action === "add")
-			return t({ en: "Adding task", de: "Aufgabe hinzufuegen" }, locale);
-		if (action === "update")
-			return t({ en: "Updating task", de: "Aufgabe aktualisieren" }, locale);
-		if (action === "remove")
-			return t({ en: "Removing task", de: "Aufgabe entfernen" }, locale);
-		return t(
-			{ en: "Managing tasks", de: "Aufgaben verwalten" },
-			locale,
-		);
+		if (action === "add") return i18n.t("tools.addingTask");
+		if (action === "update") return i18n.t("tools.updatingTask");
+		if (action === "remove") return i18n.t("tools.removingTask");
+		return i18n.t("tools.managingTasks");
 	}
 
 	if (name === "self_reflection" || name === "selfReflection") {
-		return t(
-			{ en: "Checking context", de: "Kontext pruefen" },
-			locale,
-		);
+		return i18n.t("tools.checkingContext");
 	}
 
 	if (name.includes("browser") || name.includes("screenshot")) {
-		return t(
-			{ en: "Browser interaction", de: "Browser-Interaktion" },
-			locale,
-		);
+		return i18n.t("tools.browserInteraction");
 	}
 
 	if (name.includes("search") || name.includes("web")) {
-		return t({ en: "Web search", de: "Websuche" }, locale);
+		return i18n.t("tools.webSearch");
 	}
 
 	// No summary available

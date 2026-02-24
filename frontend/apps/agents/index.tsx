@@ -14,6 +14,7 @@ import { fileserverProxyBaseUrl } from "@/lib/control-plane-client";
 import { cn } from "@/lib/utils";
 import { Save, Search } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 type AgentFormState = {
 	id: string;
@@ -140,32 +141,7 @@ export function AgentsApp() {
 	const [saving, setSaving] = useState(false);
 	const [startingAgentId, setStartingAgentId] = useState<string | null>(null);
 
-	const copy = useMemo(
-		() => ({
-			de: {
-				title: "Agenten",
-				subtitle: "Agenten erstellen und bearbeiten.",
-				search: "Agenten suchen",
-				noAgents: "Keine Agenten gefunden",
-				start: "Chat starten",
-				starting: "Starte...",
-				create: "Neu",
-				save: "Speichern",
-			},
-			en: {
-				title: "Agents",
-				subtitle: "Create and edit agents.",
-				search: "Search agents",
-				noAgents: "No agents found",
-				start: "Start chat",
-				starting: "Starting...",
-				create: "New",
-				save: "Save",
-			},
-		}),
-		[],
-	);
-	const t = copy[locale];
+	const { t } = useTranslation();
 
 	useEffect(() => {
 		if (!agentBaseUrl) return;
@@ -302,8 +278,8 @@ export function AgentsApp() {
 	return (
 		<div className="p-6 space-y-6">
 			<div>
-				<h1 className="text-2xl font-semibold">{t.title}</h1>
-				<p className="text-sm text-muted-foreground">{t.subtitle}</p>
+				<h1 className="text-2xl font-semibold">{t("agents.title")}</h1>
+				<p className="text-sm text-muted-foreground">{t("agents.subtitle")}</p>
 			</div>
 
 			<div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,0.7fr)]">
@@ -314,7 +290,7 @@ export function AgentsApp() {
 							<Input
 								value={search}
 								onChange={(event) => setSearch(event.target.value)}
-								placeholder={t.search}
+								placeholder={t("agents.search")}
 								className="pl-9"
 							/>
 						</div>
@@ -327,7 +303,7 @@ export function AgentsApp() {
 								setForm(emptyForm);
 							}}
 						>
-							{t.create}
+							{t("agents.create")}
 						</Button>
 					</div>
 
@@ -335,7 +311,7 @@ export function AgentsApp() {
 						{loading ? (
 							<div className="text-sm text-muted-foreground">Loading...</div>
 						) : filteredAgents.length === 0 ? (
-							<div className="text-sm text-muted-foreground">{t.noAgents}</div>
+							<div className="text-sm text-muted-foreground">{t("agents.noAgents")}</div>
 						) : (
 							filteredAgents.map((agent) => {
 								const isSelected = selectedAgentId === agent.id;
@@ -374,7 +350,7 @@ export function AgentsApp() {
 											onClick={() => handleStartChat(agent.id)}
 											disabled={isStarting}
 										>
-											{isStarting ? t.starting : t.start}
+											{isStarting ? t("agents.starting") : t("agents.start")}
 										</Button>
 									</div>
 								);
@@ -553,7 +529,7 @@ export function AgentsApp() {
 						className="self-start"
 					>
 						<Save className="w-4 h-4 mr-2" />
-						{t.save}
+						{t("agents.save")}
 					</Button>
 				</div>
 

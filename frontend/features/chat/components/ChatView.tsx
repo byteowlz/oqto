@@ -96,6 +96,7 @@ import {
 	useRef,
 	useState,
 } from "react";
+import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 
 // Strip ANSI escape codes from text content (tool output may contain them).
@@ -1723,30 +1724,7 @@ export function ChatView({
 	}, [dictation]);
 
 	const hasVoice = !!features?.voice;
-
-	const t = useMemo(
-		() =>
-			locale === "de"
-				? {
-						noMessages: "Noch keine Nachrichten",
-						inputPlaceholder: "Nachricht eingeben...",
-						send: "Senden",
-						agentWorking: "Agent arbeitet...",
-						stopAgent: "Agent stoppen",
-						uploadFile: "Datei hochladen",
-						speakNow: "Sprechen Sie...",
-					}
-				: {
-						noMessages: "No messages yet",
-						inputPlaceholder: "Type a message...",
-						send: "Send",
-						agentWorking: "Agent working...",
-						stopAgent: "Stop agent",
-						uploadFile: "Upload file",
-						speakNow: "Speak now...",
-					},
-		[locale],
-	);
+	const { t } = useTranslation();
 
 	const tempId = sessionMeta ? getTempIdFromSession(sessionMeta) : null;
 	const tempIdLabel = formatTempId(tempId);
@@ -1760,7 +1738,7 @@ export function ChatView({
 		if (sessionMeta?.title?.trim()) {
 			return getDisplayPiTitle(sessionMeta);
 		}
-		return assistantName?.trim() || (locale === "de" ? "Chat" : "Chat");
+		return assistantName?.trim() || t("chat.title");
 	})();
 
 	const modelLabel = currentModelInfo
@@ -1769,12 +1747,8 @@ export function ChatView({
 		: (currentModelRef ?? selectedModelRef ?? null);
 	const isWorking = isStreaming || isAwaitingResponse;
 	const statusLabel = isWorking
-		? locale === "de"
-			? "Arbeitet"
-			: "Working"
-		: locale === "de"
-			? "Bereit"
-			: "Idle";
+		? t("chat.working_label")
+		: t("chat.idle_label");
 
 	const SessionHeader = (
 		<div className="pb-3 mb-3 border-b border-border pr-10">
@@ -1859,7 +1833,7 @@ export function ChatView({
 							!isStreaming &&
 							!isAwaitingResponse && (
 								<div className="flex items-center gap-2 text-sm text-muted-foreground">
-									<span>{t.noMessages}</span>
+									<span>{t("chat.noMessages")}</span>
 								</div>
 							)}
 
@@ -2025,7 +1999,7 @@ export function ChatView({
 						onClick={() => fileInputRef.current?.click()}
 						disabled={isUploading}
 						className="flex-shrink-0 h-8 px-2 flex items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-						title={t.uploadFile}
+						title={t("chat.uploadFile")}
 					>
 						{isUploading ? (
 							<Loader2 className="size-4 animate-spin" />
@@ -2217,7 +2191,7 @@ export function ChatView({
 								open
 								value={inputValueRef.current}
 								liveTranscript={dictation.liveTranscript}
-								placeholder={t.speakNow}
+								placeholder={t("chat.speakNow")}
 								vadProgress={dictation.vadProgress}
 								autoSend={dictation.autoSendEnabled}
 								onAutoSendChange={dictation.setAutoSendEnabled}
@@ -2280,7 +2254,7 @@ export function ChatView({
 								spellCheck={false}
 								enterKeyHint="send"
 								data-form-type="other"
-								placeholder={t.inputPlaceholder}
+								placeholder={t("chat.placeholder")}
 								defaultValue={inputInitialValue}
 								onChange={handleInputChange}
 								onKeyDown={handleKeyDown}
@@ -2344,7 +2318,7 @@ export function ChatView({
 							className="stop-button-animated flex-shrink-0 h-8 px-2 flex items-center justify-center text-destructive hover:text-destructive/80 transition-colors bg-transparent hover:bg-transparent"
 							variant="ghost"
 							size="icon"
-							title={t.stopAgent}
+							title={t("chat.stopAgent")}
 						>
 							<span className="stop-button-ring" aria-hidden>
 								<svg viewBox="0 0 100 100" role="presentation">
@@ -2951,7 +2925,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 				{renderSegments.length === 0 && !isUser && showWorkingIndicator && (
 					<div className="flex items-center gap-3 text-muted-foreground text-sm">
 						<BrailleSpinner />
-						<span>{locale === "de" ? "Arbeitet..." : "Working..."}</span>
+						<span>{t("chat.working")}</span>
 					</div>
 				)}
 				{renderSegments.length === 0 && isUser && (
@@ -3221,7 +3195,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 						className="gap-2"
 					>
 						<Copy className="w-4 h-4" />
-						{locale === "de" ? "Alles kopieren" : "Copy all"}
+						{t("chat.copyAll")}
 					</ContextMenuItem>
 				)}
 			</ContextMenuContent>
@@ -3401,7 +3375,7 @@ function PiPartRenderer({
 				const raw = match ? match[0].trim() : thinkingText.split("\n")[0];
 				return raw.length > 140 ? `${raw.slice(0, 140)}...` : raw;
 			})();
-			const summaryLabel = locale === "de" ? "Gedanken" : "Thinking";
+			const summaryLabel = t("chat.thinking");
 
 			return (
 				<details
@@ -3569,7 +3543,7 @@ function TextWithFileReferences({
 					className="gap-2"
 				>
 					<Copy className="w-4 h-4" />
-					{locale === "de" ? "Kopieren" : "Copy"}
+					{t("chat.copy")}
 				</ContextMenuItem>
 			</ContextMenuContent>
 		</ContextMenu>
