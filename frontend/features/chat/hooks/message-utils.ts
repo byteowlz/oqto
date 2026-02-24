@@ -626,18 +626,30 @@ function messageTextSignature(message: DisplayMessage): string {
  * 2. id match: Direct ID match means the same message.
  * 3. content/fingerprint match: Same text content around the same time = same message.
  */
+/**
+ * Merge mode declares the caller's intent explicitly, rather than
+ * guessing from message counts.
+ *
+ * - "authoritative": server has the complete history (e.g., hstry).
+ *   Replaces local state entirely, preserving only trailing in-flight
+ *   messages (streaming + optimistic sends).
+ *
+ * - "partial": server has a subset (e.g., Pi's context window).
+ *   Keeps all local messages and updates/appends from the server set.
+ */
+export type MergeMode = "authoritative" | "partial";
+
 export function mergeServerMessages(
 	previous: DisplayMessage[],
 	serverMessages: DisplayMessage[],
+	mode: MergeMode = "partial",
 ): DisplayMessage[] {
 	if (serverMessages.length === 0) return previous;
 	if (previous.length === 0) return serverMessages;
 
-	// When the server returns FEWER messages than local state, it's a
-	// partial view (e.g., Pi's context window after compaction). In
-	// this case, merge incrementally: keep all previous messages and
-	// update/append from the server set.
-	if (serverMessages.length < previous.length) {
+	if (mode === "partial") {
+		// Keep all previous messages. Update any that match by ID or
+		// clientId; append the rest.
 		const result = [...previous];
 		for (const serverMsg of serverMessages) {
 			let matched = false;
@@ -665,9 +677,9 @@ export function mergeServerMessages(
 		return result;
 	}
 
-	// Server has >= messages than local state: server is authoritative.
-	// Only preserve trailing in-flight local messages that the server
-	// doesn't know about yet (optimistic user msgs, streaming response).
+	// mode === "authoritative"
+	// Server is the complete source of truth. Only preserve trailing
+	// in-flight local messages the server doesn't know about yet.
 	const serverClientIds = new Set(
 		serverMessages.filter((m) => m.clientId).map((m) => m.clientId),
 	);
@@ -675,12 +687,10 @@ export function mergeServerMessages(
 	const trailing: DisplayMessage[] = [];
 	for (let i = previous.length - 1; i >= 0; i--) {
 		const msg = previous[i];
-		// Keep streaming assistant message (actively being built by deltas)
 		if (msg.isStreaming) {
 			trailing.unshift(msg);
 			continue;
 		}
-		// Keep optimistic user messages not yet persisted to hstry
 		if (
 			msg.role === "user" &&
 			msg.clientId &&
@@ -689,8 +699,6 @@ export function mergeServerMessages(
 			trailing.unshift(msg);
 			continue;
 		}
-		// Stop scanning once we hit a message that isn't in-flight.
-		// In-flight messages are always at the tail of the array.
 		break;
 	}
 

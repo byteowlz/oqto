@@ -197,7 +197,7 @@ describe("mergeServerMessages", () => {
 				textMsg("history-s1-0", "user", "hello", { timestamp: now }),
 				textMsg("history-s1-1", "assistant", "world", { timestamp: now }),
 			];
-			const result = mergeServerMessages(prev, server);
+			const result = mergeServerMessages(prev, server, "authoritative");
 			expect(result).toHaveLength(2);
 			expect(result[0].id).toBe("history-s1-0");
 			expect(result[1].id).toBe("history-s1-1");
@@ -221,7 +221,7 @@ describe("mergeServerMessages", () => {
 				textMsg("history-s1-0", "user", "hello", { timestamp: now }),
 				textMsg("history-s1-1", "assistant", "earlier reply", { timestamp: now }),
 			];
-			const result = mergeServerMessages(prev, server);
+			const result = mergeServerMessages(prev, server, "authoritative");
 			expect(result).toHaveLength(3);
 			expect(result[0].id).toBe("history-s1-0");
 			expect(result[1].id).toBe("history-s1-1");
@@ -241,7 +241,7 @@ describe("mergeServerMessages", () => {
 				textMsg("history-s1-1", "assistant", "old answer", { timestamp: now }),
 				textMsg("history-s1-2", "user", "some other msg", { timestamp: now }),
 			];
-			const result = mergeServerMessages(prev, server);
+			const result = mergeServerMessages(prev, server, "authoritative");
 			expect(result).toHaveLength(5);
 			expect(result[0].id).toBe("history-s1-0");
 			expect(result[1].id).toBe("history-s1-1");
@@ -259,8 +259,8 @@ describe("mergeServerMessages", () => {
 			const server = [
 				textMsg("history-s1-0", "user", "hello", { timestamp: now }),
 			];
-			const result = mergeServerMessages(prev, server);
-			// Incremental: all prev kept + server appended (no ID match)
+			const result = mergeServerMessages(prev, server, "partial");
+			// Partial: all prev kept + server matched by ID (pi-msg-1 != history-s1-0, so appended)
 			expect(result).toHaveLength(3);
 			expect(result.some((m) => m.isStreaming)).toBe(true);
 		});
@@ -274,7 +274,7 @@ describe("mergeServerMessages", () => {
 			const server = [
 				textMsg("history-s1-0", "user", "earlier", { timestamp: now }),
 			];
-			const result = mergeServerMessages(prev, server);
+			const result = mergeServerMessages(prev, server, "authoritative");
 			expect(result).toHaveLength(2);
 			expect(result[1].id).toBe("pi-msg-1");
 		});
@@ -286,7 +286,7 @@ describe("mergeServerMessages", () => {
 			const server = [
 				textMsg("history-s1-0", "user", "my msg", { timestamp: now, clientId: "c-123" }),
 			];
-			const result = mergeServerMessages(prev, server);
+			const result = mergeServerMessages(prev, server, "authoritative");
 			expect(result).toHaveLength(1);
 			expect(result[0].id).toBe("history-s1-0");
 		});
@@ -304,7 +304,7 @@ describe("mergeServerMessages", () => {
 				textMsg("history-s1-0", "user", "hello world", { timestamp: now }),
 				textMsg("history-s1-1", "assistant", "I can help with that", { timestamp: now }),
 			];
-			const result = mergeServerMessages(prev, server);
+			const result = mergeServerMessages(prev, server, "authoritative");
 			expect(result).toHaveLength(2);
 			// Server versions win
 			expect(result[0].id).toBe("history-s1-0");
@@ -336,7 +336,7 @@ describe("mergeServerMessages", () => {
 					timestamp: now,
 				}),
 			];
-			const result = mergeServerMessages(prev, server);
+			const result = mergeServerMessages(prev, server, "authoritative");
 			expect(result).toHaveLength(1);
 			expect(result[0].id).toBe("history-s1-0");
 		});
@@ -359,7 +359,7 @@ describe("mergeServerMessages", () => {
 				textMsg("history-s1-2", "assistant", "different context", { timestamp: now }),
 				textMsg("history-s1-3", "assistant", "more context", { timestamp: now }),
 			];
-			const result = mergeServerMessages(prev, server);
+			const result = mergeServerMessages(prev, server, "authoritative");
 			// Server (4) + only pi-msg-3 (tail in-flight)
 			expect(result).toHaveLength(5);
 			expect(result[0].id).toBe("history-s1-0");
@@ -381,7 +381,7 @@ describe("mergeServerMessages", () => {
 				textMsg("server-8", "user", "msg 8 updated", { timestamp: now + 8000 }),
 				textMsg("server-9", "assistant", "msg 9 updated", { timestamp: now + 9000 }),
 			];
-			const result = mergeServerMessages(prev, server);
+			const result = mergeServerMessages(prev, server, "partial");
 			// All 10 original + 3 server (no ID match, so appended)
 			expect(result.length).toBeGreaterThanOrEqual(10);
 			// Original messages still present
@@ -399,7 +399,7 @@ describe("mergeServerMessages", () => {
 			const server = [
 				textMsg("s2", "assistant", "updated reply", { timestamp: now }),
 			];
-			const result = mergeServerMessages(prev, server);
+			const result = mergeServerMessages(prev, server, "partial");
 			expect(result).toHaveLength(3);
 			expect(result[1].parts[0]).toHaveProperty("text", "updated reply");
 		});
@@ -413,7 +413,7 @@ describe("mergeServerMessages", () => {
 			const server = [
 				textMsg("confirmed-1", "user", "msg updated", { timestamp: now, clientId: "c1" }),
 			];
-			const result = mergeServerMessages(prev, server);
+			const result = mergeServerMessages(prev, server, "partial");
 			expect(result).toHaveLength(3);
 			expect(result[0].id).toBe("confirmed-1");
 		});
@@ -427,7 +427,7 @@ describe("mergeServerMessages", () => {
 			const server = [
 				textMsg("s2", "assistant", "response updated", { timestamp: now }),
 			];
-			const result = mergeServerMessages(prev, server);
+			const result = mergeServerMessages(prev, server, "partial");
 			expect(result.some((m) => m.id === "s2")).toBe(true);
 			expect(result.some((m) => m.id === "pi-msg-1")).toBe(true);
 			// s2 was updated in place

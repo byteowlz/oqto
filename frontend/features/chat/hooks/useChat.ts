@@ -489,7 +489,9 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 					`history-${sessionId}`,
 				);
 				if (displayMessages.length === 0) return;
-				setMessages((prev) => mergeServerMessages(prev, displayMessages));
+				setMessages((prev) =>
+					mergeServerMessages(prev, displayMessages, "authoritative"),
+				);
 				messageIdRef.current = getMaxMessageId(displayMessages);
 				const lastAssistant = [...displayMessages]
 					.reverse()
@@ -1187,7 +1189,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 						);
 
 						if (displayMessages.length > 0) {
-							setMessages((prev) => mergeServerMessages(prev, displayMessages));
+							setMessages((prev) => mergeServerMessages(prev, displayMessages, "partial"));
 							messageIdRef.current = getMaxMessageId(displayMessages);
 							const lastAssistant = [...displayMessages]
 								.reverse()
@@ -1358,7 +1360,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 									);
 									if (displayMessages.length > 0) {
 										setMessages((prev) =>
-											mergeServerMessages(prev, displayMessages),
+											mergeServerMessages(prev, displayMessages, "partial"),
 										);
 										messageIdRef.current = getMaxMessageId(displayMessages);
 										const lastAssistant = [...displayMessages]
@@ -1886,7 +1888,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 						`resync-${_sessionId}`,
 					);
 					if (displayMessages.length > 0) {
-						setMessages((prev) => mergeServerMessages(prev, displayMessages));
+						setMessages((prev) => mergeServerMessages(prev, displayMessages, "partial"));
 						messageIdRef.current = getMaxMessageId(displayMessages);
 						const lastAssistant = [...displayMessages]
 							.reverse()
