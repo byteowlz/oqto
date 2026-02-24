@@ -1243,30 +1243,20 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 					switch (resp.cmd) {
 						case "session.create": {
 							if (resp.success) {
-								// Session created — load persisted messages only
-								// if we're not already streaming AND we don't
-								// have local optimistic messages. If the user
-								// just sent a message (via send()), messagesRef
-								// already contains the optimistic user message
-								// and isStreamingRef is true. Requesting
-								// get_messages now would return stale data from
-								// hstry (which doesn't have the user message
-								// yet) and overwrite the optimistic content.
-								const hasLocalMessages = messagesRef.current.length > 0;
-								const forceSync = forceMessageSyncRef.current.has(
-									event.session_id,
-								);
+								// Always fetch authoritative messages from hstry
+								// unless we're actively streaming. The localStorage
+								// cache is only a flash-of-content optimization;
+								// hstry is the source of truth and will replace it.
 								if (
 									!streamingMessageRef.current &&
 									!isStreamingRef.current &&
-									!sendInFlightRef.current &&
-									(!hasLocalMessages || forceSync)
+									!sendInFlightRef.current
 								) {
 									forceMessageSyncRef.current.delete(event.session_id);
 									void fetchHistoryMessages(event.session_id);
 									if (isPiDebugEnabled()) {
 										console.debug(
-											"[useChat] Session created, requesting messages:",
+											"[useChat] Session created, fetching history:",
 											event.session_id,
 										);
 									}
