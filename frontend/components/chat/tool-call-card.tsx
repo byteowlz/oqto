@@ -5,6 +5,7 @@ import {
 	MarkdownRenderer,
 } from "@/components/data-display/markdown-renderer";
 import type { MessagePart } from "@/lib/agent-client";
+import { getToolSummary } from "@/lib/tool-summaries";
 import { cn } from "@/lib/utils";
 import {
 	Bot,
@@ -861,8 +862,9 @@ export function ToolCallCard({
 
 	const toolName = tool || "Unknown Tool";
 	const status = state?.status;
-	const title = state?.title || toolName;
 	const input = state?.input;
+	const summary = getToolSummary(toolName, input as Record<string, unknown> | undefined);
+	const title = summary || state?.title || toolName;
 	const output = state?.output;
 	const duration = formatDuration(state?.time?.start, state?.time?.end);
 
