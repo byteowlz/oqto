@@ -403,18 +403,23 @@ export function normalizeMessages(
 
 		// --- Tool result messages (role=tool/toolResult) ---
 		if (role === "toolResult" || role === "tool") {
-			// For hstry messages, toolCallId lives inside parts_json, not on the message.
+			// For hstry messages, toolCallId lives inside parts_json or canonical parts,
+			// not on the top-level message.
 			let resolvedToolCallId = message.toolCallId || message.tool_call_id || "";
 			let resolvedToolName = message.toolName ?? message.tool_name;
 			let resolvedOutput: unknown = content;
 			let resolvedIsError = message.isError ?? message.is_error;
 
-			if (
-				!resolvedToolCallId &&
-				Array.isArray(parsedParts) &&
-				parsedParts.length > 0
-			) {
-				const firstResult = (parsedParts as Record<string, unknown>[]).find(
+			// Check parsed parts_json first, then canonical parts array
+			const partsToSearch =
+				Array.isArray(parsedParts) && parsedParts.length > 0
+					? parsedParts
+					: Array.isArray(canonicalParts) && canonicalParts.length > 0
+						? canonicalParts
+						: null;
+
+			if (!resolvedToolCallId && partsToSearch) {
+				const firstResult = (partsToSearch as Record<string, unknown>[]).find(
 					(p) => p.type === "tool_result",
 				);
 				if (firstResult) {

@@ -2173,6 +2173,7 @@ impl Runner {
                         text: part.text,
                         text_html: if req.render { part.text_html } else { None },
                         tool_name: part.tool_name,
+                        tool_call_id: part.tool_call_id,
                         tool_input: part.tool_input,
                         tool_output: part.tool_output,
                         tool_status: part.tool_status,

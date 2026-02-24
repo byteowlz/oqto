@@ -769,7 +769,7 @@ pub async fn get_chat_messages(
                                     text: p.text,
                                     text_html: p.text_html,
                                     tool_name: p.tool_name,
-                                    tool_call_id: None,
+                                    tool_call_id: p.tool_call_id,
                                     tool_input: p.tool_input,
                                     tool_output: p.tool_output,
                                     tool_status: p.tool_status,

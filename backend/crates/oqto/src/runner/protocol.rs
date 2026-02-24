@@ -1485,6 +1485,9 @@ pub struct ChatMessagePartProto {
     pub text_html: Option<String>,
     /// Tool name (for tool parts).
     pub tool_name: Option<String>,
+    /// Tool call ID linking tool_call to tool_result (for tool parts).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
     /// Tool input (for tool parts).
     pub tool_input: Option<serde_json::Value>,
     /// Tool output (for tool parts).

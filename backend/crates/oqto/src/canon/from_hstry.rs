@@ -345,6 +345,8 @@ fn parse_single_part(value: &Value, message_id: &str, idx: usize) -> Option<Cano
         "tool_call" => {
             let tool_call_id = obj
                 .get("toolCallId")
+                .or_else(|| obj.get("tool_call_id"))
+                .or_else(|| obj.get("id"))
                 .and_then(|v| v.as_str())?
                 .to_string();
             let name = obj.get("name").and_then(|v| v.as_str())?.to_string();
@@ -352,7 +354,7 @@ fn parse_single_part(value: &Value, message_id: &str, idx: usize) -> Option<Cano
                 id: part_id,
                 tool_call_id,
                 name,
-                input: obj.get("input").cloned(),
+                input: obj.get("input").or_else(|| obj.get("arguments")).cloned(),
                 status: obj
                     .get("status")
                     .and_then(|v| v.as_str())
@@ -365,6 +367,7 @@ fn parse_single_part(value: &Value, message_id: &str, idx: usize) -> Option<Cano
         "tool_result" => {
             let tool_call_id = obj
                 .get("toolCallId")
+                .or_else(|| obj.get("tool_call_id"))
                 .and_then(|v| v.as_str())?
                 .to_string();
             Some(CanonPart::ToolResult {
