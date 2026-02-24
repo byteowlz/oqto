@@ -401,9 +401,115 @@ fn cmd_delete_user(args: &serde_json::Value) -> Response {
         return Response::error(e);
     }
 
-    match run_cmd("/usr/sbin/userdel", &[username]) {
-        Ok(_) => Response::success(),
-        Err(e) => Response::error(e),
+    let uid = match get_user_uid(username) {
+        Some(uid) => uid,
+        None => {
+            // User doesn't exist on the system, nothing to clean up
+            return Response::success();
+        }
+    };
+
+    let runtime_dir = format!("/run/user/{uid}");
+    let bus = format!("unix:path={runtime_dir}/bus");
+    let machine_arg = format!("{username}@.host");
+
+    // Helper: run systemctl --user as the target user (best-effort)
+    let run_user_systemctl = |sctl_args: &[&str]| -> Result<String, String> {
+        let mut machine_args = vec!["--machine", &machine_arg, "--user"];
+        machine_args.extend_from_slice(sctl_args);
+        if let Ok(output) = run_cmd_timeout(
+            "/usr/bin/systemctl",
+            &machine_args,
+            std::time::Duration::from_secs(10),
+        ) {
+            return Ok(output);
+        }
+        // Fallback: runuser
+        let mut cmd = Command::new("/sbin/runuser");
+        cmd.args(["-u", username, "--"])
+            .arg("env")
+            .arg(format!("XDG_RUNTIME_DIR={runtime_dir}"))
+            .arg(format!("DBUS_SESSION_BUS_ADDRESS={bus}"))
+            .arg("systemctl")
+            .arg("--user");
+        for a in sctl_args {
+            cmd.arg(a);
+        }
+        let output = cmd.output().map_err(|e| format!("runuser: {e}"))?;
+        if output.status.success() {
+            Ok(String::from_utf8_lossy(&output.stdout).to_string())
+        } else {
+            Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+        }
+    };
+
+    let mut warnings: Vec<String> = Vec::new();
+
+    // 1. Stop user services (best-effort, they might not exist)
+    for svc in ["oqto-runner.service", "mmry.service", "hstry.service"] {
+        if let Err(e) = run_user_systemctl(&["stop", svc]) {
+            warnings.push(format!("stop {svc}: {e}"));
+        }
+    }
+
+    // 2. Disable linger (stops the user systemd instance from auto-starting)
+    if let Err(e) = run_cmd("/usr/bin/loginctl", &["disable-linger", username]) {
+        warnings.push(format!("disable-linger: {e}"));
+    }
+
+    // 3. Stop user systemd instance
+    let user_service = format!("user@{uid}.service");
+    if let Err(e) = run_cmd("/usr/bin/systemctl", &["stop", &user_service]) {
+        warnings.push(format!("stop {user_service}: {e}"));
+    }
+
+    // 4. Clean up runner socket directory
+    let socket_dir = format!("/run/oqto/runner-sockets/{username}");
+    if std::path::Path::new(&socket_dir).exists() {
+        if let Err(e) = run_cmd("/bin/rm", &["-rf", &socket_dir]) {
+            warnings.push(format!("rm {socket_dir}: {e}"));
+        }
+    }
+
+    // 5. Kill any remaining processes owned by this user
+    let _ = run_cmd("/usr/bin/pkill", &["-u", username]);
+    // Give processes a moment to exit
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    // Force kill stragglers
+    let _ = run_cmd("/usr/bin/pkill", &["-9", "-u", username]);
+    std::thread::sleep(std::time::Duration::from_millis(200));
+
+    // 6. Delete Linux user with home directory
+    match run_cmd("/usr/sbin/userdel", &["-r", username]) {
+        Ok(_) => {}
+        Err(e) => {
+            // If userdel -r fails (e.g., processes still running), try without -r
+            if let Err(e2) = run_cmd("/usr/sbin/userdel", &[username]) {
+                return Response::error(format!(
+                    "userdel failed: {e}; retry without -r: {e2}"
+                ));
+            }
+            // Home dir remains, try to remove it manually
+            let home = format!("/home/{username}");
+            if std::path::Path::new(&home).exists() {
+                if let Err(e3) = run_cmd("/bin/rm", &["-rf", &home]) {
+                    warnings.push(format!("rm home {home}: {e3}"));
+                }
+            }
+        }
+    }
+
+    if warnings.is_empty() {
+        Response::success()
+    } else {
+        // Return success with warnings in the data field
+        Response {
+            ok: true,
+            error: None,
+            data: Some(serde_json::json!({
+                "warnings": warnings,
+            })),
+        }
     }
 }
 
@@ -641,7 +747,7 @@ WantedBy=default.target
     let runner_service = format!(
         r#"[Unit]
 Description=Oqto Runner - Process isolation daemon
-Requires=hstry.service mmry.service
+Wants=hstry.service mmry.service
 After=hstry.service mmry.service
 
 [Service]

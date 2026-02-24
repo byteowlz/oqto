@@ -324,6 +324,14 @@ enum UserCommand {
         /// Username or user ID
         user: String,
     },
+    /// Delete a user (removes from DB + Linux user + services + home)
+    Delete {
+        /// Username or user ID
+        user: String,
+        /// Skip confirmation prompt
+        #[arg(long, short)]
+        force: bool,
+    },
     /// Sync per-user config files via the admin API
     SyncConfigs {
         /// Optional user ID to target
@@ -2224,6 +2232,58 @@ async fn handle_user(client: &OqtoClient, command: UserCommand, json: bool) -> R
                         println!("  {}: ok", user_id);
                     }
                 }
+            }
+        }
+
+        UserCommand::Delete { user, force } => {
+            // Resolve user to get details (try API first, fall back to system lookup)
+            let user_id = user.clone();
+
+            if !force {
+                eprintln!(
+                    "This will permanently delete user '{}' including:",
+                    user_id
+                );
+                eprintln!("  - Database record");
+                eprintln!("  - Linux user account");
+                eprintln!("  - Home directory and all files");
+                eprintln!("  - Running services (runner, hstry, mmry)");
+                eprint!("\nContinue? [y/N] ");
+                let mut input = String::new();
+                std::io::stdin().read_line(&mut input)?;
+                if !input.trim().eq_ignore_ascii_case("y") {
+                    eprintln!("Aborted.");
+                    return Ok(());
+                }
+            }
+
+            if !json {
+                eprintln!("Deleting user '{}'...", user_id);
+            }
+
+            // Call the admin API which handles both DB + Linux cleanup
+            let url = format!("/admin/users/{}", user_id);
+            let response = client.delete(&url).await?;
+            let status = response.status();
+
+            if status.is_success() {
+                if json {
+                    println!(
+                        "{}",
+                        serde_json::json!({"status": "deleted", "user": user_id})
+                    );
+                } else {
+                    println!("User '{}' deleted.", user_id);
+                }
+            } else {
+                let body_text = response.text().await.unwrap_or_default();
+                let err: serde_json::Value =
+                    serde_json::from_str(&body_text).unwrap_or_default();
+                let msg = err["error"]
+                    .as_str()
+                    .or_else(|| err["message"].as_str())
+                    .unwrap_or(&body_text);
+                anyhow::bail!("Failed to delete user (HTTP {status}): {msg}");
             }
         }
 

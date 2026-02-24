@@ -568,16 +568,50 @@ pub async fn update_user(
 }
 
 /// Delete a user (admin only).
+///
+/// In multi-user mode, also deletes the Linux user via oqto-usermgr.
+/// This stops user services (runner, hstry, mmry), disables linger,
+/// removes the home directory, and cleans up the runner socket.
 #[instrument(skip(state, _user))]
 pub async fn delete_user(
     State(state): State<AppState>,
     RequireAdmin(_user): RequireAdmin,
     Path(user_id): Path<String>,
 ) -> ApiResult<StatusCode> {
-    // Uses centralized From<anyhow::Error> conversion
+    // Look up the user first to get linux_username (needed for OS cleanup)
+    let user = state
+        .users
+        .get_user(&user_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("User not found: {user_id}")))?;
+    let linux_username = user.linux_username.clone();
+
+    // Delete from oqto DB first
     state.users.delete_user(&user_id).await?;
 
-    info!(user_id = %user_id, "Deleted user");
+    // In multi-user mode, clean up the Linux user + services
+    if let Some(ref linux_user) = linux_username {
+        let linux_user = linux_user.clone();
+        if let Err(e) = tokio::task::spawn_blocking(move || {
+            crate::local::linux_users::usermgr_request(
+                "delete-user",
+                serde_json::json!({"username": linux_user}),
+            )
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("Task join error: {e}"))?
+        {
+            // Log but don't fail -- the DB record is already gone
+            warn!(
+                user_id = %user_id,
+                linux_username = ?linux_username,
+                error = %e,
+                "Failed to delete Linux user (DB record already removed)"
+            );
+        }
+    }
+
+    info!(user_id = %user_id, linux_username = ?linux_username, "Deleted user");
     Ok(StatusCode::NO_CONTENT)
 }
 
