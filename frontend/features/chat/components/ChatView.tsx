@@ -3391,18 +3391,20 @@ function PiPartRenderer({
 			// Verbosity 2 (normal): collapsed, first-line preview
 			// Verbosity 1 (compact): collapsed, just "Thinking" label
 			const isOpen = verbosityLevel >= 3;
-			const firstLine =
-				verbosityLevel === 2
-					? thinkingText.split("\n")[0].slice(0, 120)
-					: null;
+			// Always show first sentence preview when collapsed
+			const firstSentence = (() => {
+				const match = thinkingText.match(/^[^\n.!?]*[.!?]?/);
+				const raw = match ? match[0].trim() : thinkingText.split("\n")[0];
+				return raw.length > 140 ? `${raw.slice(0, 140)}...` : raw;
+			})();
 			const summaryLabel = locale === "de" ? "Gedanken" : "Thinking";
 
 			return (
 				<details
 					open={isOpen}
-					className="group my-2 border-l-2 border-border/60 bg-muted/20 pl-0"
+					className="group my-2 border-l-2 border-primary/40 bg-muted/40 pl-0"
 				>
-					<summary className="flex items-center gap-2 cursor-pointer select-none px-3 py-2 text-xs text-muted-foreground hover:text-foreground list-none [&::-webkit-details-marker]:hidden [&::marker]:content-['']">
+					<summary className="flex items-center gap-2 cursor-pointer select-none px-3 py-2 text-xs text-foreground/70 hover:text-foreground list-none [&::-webkit-details-marker]:hidden [&::marker]:content-['']">
 						<svg
 							className="h-3.5 w-3.5 shrink-0 transition-transform group-open:rotate-90"
 							viewBox="0 0 24 24"
@@ -3415,16 +3417,16 @@ function PiPartRenderer({
 							<polyline points="9 18 15 12 9 6" />
 						</svg>
 						<span className="font-medium">{summaryLabel}</span>
-						{firstLine && (
+						{firstSentence && (
 							<span className="truncate opacity-60 group-open:hidden">
-								-- {firstLine}
+								-- {firstSentence}
 							</span>
 						)}
 					</summary>
-					<div className="px-3 pb-3 pt-1 text-xs text-muted-foreground leading-relaxed">
+					<div className="px-3 pb-3 pt-1 text-xs leading-relaxed">
 						<MarkdownRenderer
 							content={thinkingText}
-							className="text-xs text-muted-foreground leading-relaxed [&_p]:text-muted-foreground [&_li]:text-muted-foreground [&_code]:text-muted-foreground"
+							className="text-xs text-foreground/70 leading-relaxed [&_p]:text-foreground/70 [&_li]:text-foreground/70 [&_code]:text-foreground/60"
 						/>
 					</div>
 				</details>
