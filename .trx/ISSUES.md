@@ -2,8 +2,6 @@
 
 ## Open
 
-### [oqto-mjh6] Investigate and fix octo-todos Pi extension TUI crash (P0, bug)
-
 ### [oqto-s5bv] E2E streaming reliability test harness using mock provider (P0, epic)
 
 ### [oqto-a7b8] Enhance eavs mock provider with realistic streaming scenarios (tool calls, errors, multi-turn) (P0, epic)
@@ -36,8 +34,6 @@ setup.sh must correctly provision everything for a new platform user on a fresh 
 
 
 ### [oqto-pzya] Crash recovery: Pi stderr capture, session reconnect, auto-respawn with backoff (P1, epic)
-
-### [oqto-75xw] oqtoctl user management: set-password, disable/enable, set-role, sessions (P1, epic)
 
 ### [oqto-q8cf] Implement graceful shutdown for oqto updates and restarts (P1, feature)
 Currently, oqto lacks graceful shutdown for sessions during updates. When restarting oqto or oqto-runner, all agent sessions are terminated with SIGKILL, which abruptly interrupts active agent work.
@@ -1061,6 +1057,8 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [oqto-75xw] oqtoctl user management: set-password, disable/enable, set-role, sessions (closed 2026-02-25)
+- [oqto-mjh6] Investigate and fix octo-todos Pi extension TUI crash (closed 2026-02-25)
 - [oqto-6e9v] Deploy SearXNG on octo-azure and configure sx for all users (closed 2026-02-21)
 - [oqto-f1fw] Configure exa MCP for Pi on octo-azure (install extension, set API key) (closed 2026-02-21)
 - [oqto-y475] Active Session from 1970: timestamp display bug for sessions without proper created_at (closed 2026-02-21)
@@ -1675,6 +1673,6 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
 - [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
-- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
