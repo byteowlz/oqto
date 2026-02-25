@@ -332,6 +332,50 @@ enum UserCommand {
         #[arg(long, short)]
         force: bool,
     },
+    /// Change a user's password
+    SetPassword {
+        /// Username or user ID
+        user: String,
+        /// New password (prompted if not provided)
+        #[arg(long, short)]
+        password: Option<String>,
+    },
+    /// Change a user's role (user, admin)
+    SetRole {
+        /// Username or user ID
+        user: String,
+        /// New role
+        role: String,
+    },
+    /// Disable a user (prevents login, does not delete)
+    Disable {
+        /// Username or user ID
+        user: String,
+    },
+    /// Re-enable a disabled user
+    Enable {
+        /// Username or user ID
+        user: String,
+    },
+    /// Update a user's email address
+    SetEmail {
+        /// Username or user ID
+        user: String,
+        /// New email address
+        email: String,
+    },
+    /// Update a user's display name
+    SetDisplayName {
+        /// Username or user ID
+        user: String,
+        /// New display name
+        name: String,
+    },
+    /// Re-provision eavs key + models.json + runner for a user
+    Reprovision {
+        /// Username or user ID
+        user: String,
+    },
     /// Sync per-user config files via the admin API
     SyncConfigs {
         /// Optional user ID to target
@@ -867,6 +911,26 @@ impl OqtoClient {
             OqtoTransport::Unix { .. } => {
                 let payload = serde_json::to_vec(body).context("serializing JSON")?;
                 self.request_unix(hyper::Method::POST, path, Some(payload))
+                    .await
+            }
+        }
+    }
+
+    async fn put_json<T: serde::Serialize>(&self, path: &str, body: &T) -> Result<OqtoResponse> {
+        match &self.transport {
+            OqtoTransport::Http { base_url, client } => {
+                let url = format!("{}{}", base_url, path);
+                let response = self
+                    .with_auth_headers(client.put(&url).json(body))
+                    .send()
+                    .await
+                    .context("sending request to server")?;
+                response_to_oqto(response).await
+            }
+            #[cfg(unix)]
+            OqtoTransport::Unix { .. } => {
+                let payload = serde_json::to_vec(body).context("serializing JSON")?;
+                self.request_unix(hyper::Method::PUT, path, Some(payload))
                     .await
             }
         }
@@ -2200,6 +2264,195 @@ async fn handle_user(client: &OqtoClient, command: UserCommand, json: bool) -> R
             }
         }
 
+        UserCommand::SetPassword { user, password } => {
+            // Resolve user to ID first
+            let user_id = resolve_user_id(client, &user, json).await?;
+
+            let password = match password {
+                Some(p) => p,
+                None => {
+                    let pw = read_password_prompt("New password: ")?;
+                    if pw.is_empty() {
+                        anyhow::bail!("Password cannot be empty");
+                    }
+                    let confirm = read_password_prompt("Confirm password: ")?;
+                    if pw != confirm {
+                        anyhow::bail!("Passwords do not match");
+                    }
+                    pw
+                }
+            };
+
+            let body = serde_json::json!({ "password": password });
+            let response = client
+                .put_json(&format!("/admin/users/{}", user_id), &body)
+                .await?;
+            let status = response.status();
+
+            if status.is_success() {
+                if json {
+                    println!(
+                        "{}",
+                        serde_json::json!({"status": "updated", "user": user_id, "field": "password"})
+                    );
+                } else {
+                    println!("Password updated for '{}'.", user);
+                }
+            } else {
+                let body_text = response.text().await.unwrap_or_default();
+                anyhow::bail!("Failed to update password (HTTP {status}): {body_text}");
+            }
+        }
+
+        UserCommand::SetRole { user, role } => {
+            let role = match role.to_lowercase().as_str() {
+                "user" | "admin" => role.to_lowercase(),
+                _ => anyhow::bail!("Invalid role: {}. Must be 'user' or 'admin'", role),
+            };
+
+            let user_id = resolve_user_id(client, &user, json).await?;
+            let body = serde_json::json!({ "role": role });
+            let response = client
+                .put_json(&format!("/admin/users/{}", user_id), &body)
+                .await?;
+            let status = response.status();
+
+            if status.is_success() {
+                if json {
+                    println!(
+                        "{}",
+                        serde_json::json!({"status": "updated", "user": user_id, "role": role})
+                    );
+                } else {
+                    println!("Role updated to '{}' for '{}'.", role, user);
+                }
+            } else {
+                let body_text = response.text().await.unwrap_or_default();
+                anyhow::bail!("Failed to update role (HTTP {status}): {body_text}");
+            }
+        }
+
+        UserCommand::Disable { user } => {
+            let user_id = resolve_user_id(client, &user, json).await?;
+            let response = client
+                .post_json(
+                    &format!("/admin/users/{}/deactivate", user_id),
+                    &serde_json::json!({}),
+                )
+                .await?;
+            let status = response.status();
+
+            if status.is_success() {
+                if json {
+                    println!(
+                        "{}",
+                        serde_json::json!({"status": "disabled", "user": user_id})
+                    );
+                } else {
+                    println!("User '{}' disabled.", user);
+                }
+            } else {
+                let body_text = response.text().await.unwrap_or_default();
+                anyhow::bail!("Failed to disable user (HTTP {status}): {body_text}");
+            }
+        }
+
+        UserCommand::Enable { user } => {
+            let user_id = resolve_user_id(client, &user, json).await?;
+            let response = client
+                .post_json(
+                    &format!("/admin/users/{}/activate", user_id),
+                    &serde_json::json!({}),
+                )
+                .await?;
+            let status = response.status();
+
+            if status.is_success() {
+                if json {
+                    println!(
+                        "{}",
+                        serde_json::json!({"status": "enabled", "user": user_id})
+                    );
+                } else {
+                    println!("User '{}' enabled.", user);
+                }
+            } else {
+                let body_text = response.text().await.unwrap_or_default();
+                anyhow::bail!("Failed to enable user (HTTP {status}): {body_text}");
+            }
+        }
+
+        UserCommand::SetEmail { user, email } => {
+            let user_id = resolve_user_id(client, &user, json).await?;
+            let body = serde_json::json!({ "email": email });
+            let response = client
+                .put_json(&format!("/admin/users/{}", user_id), &body)
+                .await?;
+            let status = response.status();
+
+            if status.is_success() {
+                if json {
+                    println!(
+                        "{}",
+                        serde_json::json!({"status": "updated", "user": user_id, "email": email})
+                    );
+                } else {
+                    println!("Email updated to '{}' for '{}'.", email, user);
+                }
+            } else {
+                let body_text = response.text().await.unwrap_or_default();
+                anyhow::bail!("Failed to update email (HTTP {status}): {body_text}");
+            }
+        }
+
+        UserCommand::SetDisplayName { user, name } => {
+            let user_id = resolve_user_id(client, &user, json).await?;
+            let body = serde_json::json!({ "display_name": name });
+            let response = client
+                .put_json(&format!("/admin/users/{}", user_id), &body)
+                .await?;
+            let status = response.status();
+
+            if status.is_success() {
+                if json {
+                    println!(
+                        "{}",
+                        serde_json::json!({"status": "updated", "user": user_id, "display_name": name})
+                    );
+                } else {
+                    println!("Display name updated to '{}' for '{}'.", name, user);
+                }
+            } else {
+                let body_text = response.text().await.unwrap_or_default();
+                anyhow::bail!("Failed to update display name (HTTP {status}): {body_text}");
+            }
+        }
+
+        UserCommand::Reprovision { user } => {
+            let user_id = resolve_user_id(client, &user, json).await?;
+
+            if !json {
+                eprintln!("Re-provisioning eavs + configs for '{}'...", user);
+            }
+
+            // First sync configs (eavs key + models.json + runner)
+            let body = serde_json::json!({ "user_id": user_id });
+            let response = client.post_json("/admin/users/sync-configs", &body).await?;
+            let status = response.status();
+
+            if status.is_success() {
+                if json {
+                    let payload: serde_json::Value = response.json().await?;
+                    println!("{}", serde_json::to_string_pretty(&payload)?);
+                } else {
+                    println!("Re-provisioned '{}'.", user);
+                }
+            } else {
+                let body_text = response.text().await.unwrap_or_default();
+                anyhow::bail!("Failed to reprovision (HTTP {status}): {body_text}");
+            }
+        }
+
         UserCommand::SyncConfigs { user } => {
             let body = serde_json::json!({ "user_id": user });
             let response = client.post_json("/admin/users/sync-configs", &body).await?;
@@ -2240,10 +2493,7 @@ async fn handle_user(client: &OqtoClient, command: UserCommand, json: bool) -> R
             let user_id = user.clone();
 
             if !force {
-                eprintln!(
-                    "This will permanently delete user '{}' including:",
-                    user_id
-                );
+                eprintln!("This will permanently delete user '{}' including:", user_id);
                 eprintln!("  - Database record");
                 eprintln!("  - Linux user account");
                 eprintln!("  - Home directory and all files");
@@ -2277,8 +2527,7 @@ async fn handle_user(client: &OqtoClient, command: UserCommand, json: bool) -> R
                 }
             } else {
                 let body_text = response.text().await.unwrap_or_default();
-                let err: serde_json::Value =
-                    serde_json::from_str(&body_text).unwrap_or_default();
+                let err: serde_json::Value = serde_json::from_str(&body_text).unwrap_or_default();
                 let msg = err["error"]
                     .as_str()
                     .or_else(|| err["message"].as_str())
@@ -2607,7 +2856,43 @@ fn read_password_no_echo() -> Result<String> {
     anyhow::bail!("Password echo suppression not supported on this platform");
 }
 
-/// Generate a short random ID
+/// Resolve a username or user ID to a confirmed user ID.
+///
+/// Tries the input as a user ID first (GET /admin/users/{input}). If that
+/// fails with 404, lists all users and searches for a matching username.
+async fn resolve_user_id(client: &OqtoClient, user_or_id: &str, _json: bool) -> Result<String> {
+    // Try as user ID first
+    let response = client.get(&format!("/admin/users/{}", user_or_id)).await?;
+    if response.status().is_success() {
+        let body = response.text().await.unwrap_or_default();
+        if let Ok(user) = serde_json::from_str::<serde_json::Value>(&body) {
+            if let Some(id) = user["id"].as_str() {
+                return Ok(id.to_string());
+            }
+        }
+    }
+
+    // Try as username: list all users and find by username
+    let response = client.get("/admin/users").await?;
+    if response.status().is_success() {
+        let body = response.text().await.unwrap_or_default();
+        if let Ok(users) = serde_json::from_str::<Vec<serde_json::Value>>(&body) {
+            for user in &users {
+                if user["username"].as_str() == Some(user_or_id) {
+                    if let Some(id) = user["id"].as_str() {
+                        return Ok(id.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    anyhow::bail!(
+        "User '{}' not found. Provide a valid username or user ID.",
+        user_or_id
+    )
+}
+
 /// Generate a user ID from a username (e.g., "admin" -> "admin-x1y2").
 /// Mirrors UserRepository::generate_user_id for use in oqtoctl.
 fn generate_user_id(username: &str) -> String {
