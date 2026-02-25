@@ -56,6 +56,7 @@ import type {
 	AgentState,
 	DisplayMessage,
 	DisplayPart,
+	ErrorPart,
 	RawMessage,
 	SendMode,
 	SendOptions,
@@ -1050,16 +1051,108 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 						onMessageComplete?.(completedMessage);
 						streamingMessageRef.current = null;
 					} else {
-						const errorMessage: DisplayMessage = {
-							id: nextMessageId(),
-							role: "assistant",
-							parts: [{ type: "error", id: nextPartId(), text: errMsg }],
-							timestamp: Date.now(),
-							isStreaming: false,
-						};
-						setMessages((prev) => [...prev, errorMessage]);
-						onMessageComplete?.(errorMessage);
+						// No streaming message -- append error as the last
+						// assistant message's error part, or create a new one.
+						setMessages((prev) => {
+							// Try to attach error to the last assistant message
+							const lastIdx = [...prev]
+								.reverse()
+								.findIndex((m) => m.role === "assistant");
+							if (lastIdx >= 0) {
+								const realIdx = prev.length - 1 - lastIdx;
+								const msg = prev[realIdx];
+								const updated = [...prev];
+								updated[realIdx] = {
+									...msg,
+									parts: [
+										...msg.parts,
+										{
+											type: "error" as const,
+											id: nextPartId(),
+											text: errMsg,
+										},
+									],
+								};
+								return updated;
+							}
+							// Fallback: create standalone error message
+							return [
+								...prev,
+								{
+									id: nextMessageId(),
+									role: "assistant" as const,
+									parts: [{ type: "error" as const, id: nextPartId(), text: errMsg }],
+									timestamp: Date.now(),
+									isStreaming: false,
+								},
+							];
+						});
 					}
+					break;
+				}
+
+				// -- Retry progress --
+				case "retry.start": {
+					// During auto-retry, add an inline retry indicator to the
+					// last assistant message so the user sees progress.
+					const attempt = (event.attempt as number) ?? 1;
+					const maxAttempts = (event.max_attempts as number) ?? 3;
+					const retryError = (event.error as string) || "LLM error";
+					const retryText = `${retryError} -- retrying (${attempt}/${maxAttempts})...`;
+
+					setMessages((prev) => {
+						const lastIdx = [...prev]
+							.reverse()
+							.findIndex((m) => m.role === "assistant");
+						if (lastIdx < 0) return prev;
+						const realIdx = prev.length - 1 - lastIdx;
+						const msg = prev[realIdx];
+						// Replace any existing error/retry part, or add new one
+						const filteredParts = msg.parts.filter(
+							(p) => p.type !== "error",
+						);
+						const updated = [...prev];
+						updated[realIdx] = {
+							...msg,
+							parts: [
+								...filteredParts,
+								{
+									type: "error" as const,
+									id: nextPartId(),
+									text: retryText,
+									retrying: true,
+									retryAttempt: attempt,
+									retryMax: maxAttempts,
+								} satisfies ErrorPart,
+							],
+						};
+						return updated;
+					});
+					break;
+				}
+
+				case "retry.end": {
+					const retrySuccess = event.success as boolean;
+					if (retrySuccess) {
+						// Retry succeeded -- remove the retry indicator.
+						setMessages((prev) => {
+							const lastIdx = [...prev]
+								.reverse()
+								.findIndex((m) => m.role === "assistant");
+							if (lastIdx < 0) return prev;
+							const realIdx = prev.length - 1 - lastIdx;
+							const msg = prev[realIdx];
+							const filteredParts = msg.parts.filter(
+								(p) => !(p.type === "error" && (p as ErrorPart).retrying),
+							);
+							if (filteredParts.length === msg.parts.length) return prev;
+							const updated = [...prev];
+							updated[realIdx] = { ...msg, parts: filteredParts };
+							return updated;
+						});
+					}
+					// On failure, backend emits agent.error(recoverable=false)
+					// which is handled above.
 					break;
 				}
 

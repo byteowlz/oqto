@@ -2501,7 +2501,7 @@ type Segment =
 	  }
 	| { key: string; type: "thinking"; text: string; timestamp: number }
 	| { key: string; type: "compaction"; text: string; timestamp: number }
-	| { key: string; type: "error"; text: string; timestamp: number }
+	| { key: string; type: "error"; text: string; timestamp: number; retrying?: boolean; retryAttempt?: number; retryMax?: number }
 	| {
 			key: string;
 			type: "a2ui";
@@ -2663,11 +2663,15 @@ const MessageGroupCard = memo(function MessageGroupCard({
 				timestamp,
 			});
 		} else if (part.type === "error") {
+			const ep = part as { text?: string; retrying?: boolean; retryAttempt?: number; retryMax?: number };
 			segments.push({
 				key,
 				type: "error",
-				text: (part as { text?: string }).text ?? "",
+				text: ep.text ?? "",
 				timestamp,
+				retrying: ep.retrying,
+				retryAttempt: ep.retryAttempt,
+				retryMax: ep.retryMax,
 			});
 		} else if (part.type === "compaction") {
 			segments.push({
@@ -3000,15 +3004,40 @@ const MessageGroupCard = memo(function MessageGroupCard({
 						);
 					}
 					if (segment.type === "error") {
+						const isRetrying = segment.retrying;
 						return (
 							<div
 								key={segment.key}
 								className={cn(
-									"rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-600",
+									"rounded-md border px-3 py-2 text-sm flex items-center gap-2",
+									isRetrying
+										? "border-amber-500/30 bg-amber-500/10 text-amber-600"
+										: "border-red-500/30 bg-red-500/10 text-red-600",
 									needsTopMargin && "mt-3",
 								)}
 							>
-								{segment.text}
+								{isRetrying && (
+									<svg
+										className="animate-spin h-3.5 w-3.5 shrink-0"
+										viewBox="0 0 24 24"
+										fill="none"
+									>
+										<circle
+											className="opacity-25"
+											cx="12"
+											cy="12"
+											r="10"
+											stroke="currentColor"
+											strokeWidth="4"
+										/>
+										<path
+											className="opacity-75"
+											fill="currentColor"
+											d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+										/>
+									</svg>
+								)}
+								<span>{segment.text}</span>
 							</div>
 						);
 					}

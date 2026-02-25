@@ -56,6 +56,12 @@ pub struct PiTranslator {
     /// the redundant `Messages` event from `agent_end` when the frontend
     /// already received all content via streaming events.
     streaming_occurred: bool,
+
+    /// True when Pi is retrying a failed LLM request (between auto_retry_start
+    /// and auto_retry_end). During this period, agent_end/agent_start cycles
+    /// are suppressed to avoid flickering idle->working transitions on the
+    /// frontend.
+    in_retry_cycle: bool,
 }
 
 impl Default for PiTranslator {
@@ -72,6 +78,7 @@ impl PiTranslator {
             message_counter: 0,
             pending_client_id: None,
             streaming_occurred: false,
+            in_retry_cycle: false,
         }
     }
 
@@ -158,11 +165,28 @@ impl PiTranslator {
     // -- Lifecycle events --
 
     fn on_agent_start(&mut self) -> Vec<EventPayload> {
+        if self.in_retry_cycle {
+            // During retries, Pi emits agent_end -> agent_start for each attempt.
+            // Suppress the agent_start -> AgentWorking(Generating) event to avoid
+            // an idle->working flicker on the frontend. The retry.start event
+            // already emitted AgentWorking(Retrying).
+            return vec![];
+        }
         let event = self.state.on_agent_start();
         vec![event]
     }
 
     fn on_agent_end(&mut self, messages: &[AgentMessage]) -> Vec<EventPayload> {
+        if self.in_retry_cycle {
+            // During retries, suppress the agent_end -> AgentIdle transition
+            // to avoid flickering. The retry cycle will end with either
+            // retry.end(success) -> AgentWorking(Generating) or
+            // retry.end(failure) -> AgentError.
+            self.streaming_occurred = false;
+            self.current_message_id = None;
+            return vec![];
+        }
+
         let mut events = Vec::new();
 
         // Take the pending client_id - it should be attached to the last user message
@@ -356,6 +380,12 @@ impl PiTranslator {
         self.current_message_id = None;
 
         vec![EventPayload::StreamMessageEnd { message: canonical }]
+
+        // Note: when stopReason == "error", Pi follows up with auto_retry_start
+        // which transitions to AgentWorking(Retrying). If all retries fail,
+        // auto_retry_end emits AgentError(recoverable=false). The error
+        // information is also available in the canonical message's stop_reason
+        // and metadata.errorMessage fields for display purposes.
     }
 
     // -- Tool execution events --
@@ -579,6 +609,8 @@ impl PiTranslator {
         delay_ms: u64,
         error: &str,
     ) -> Vec<EventPayload> {
+        self.in_retry_cycle = true;
+
         let mut events = Vec::new();
 
         let phase_event = self.state.on_native_phase(AgentPhase::Retrying, None);
@@ -600,18 +632,31 @@ impl PiTranslator {
         attempt: u32,
         final_error: Option<String>,
     ) -> Vec<EventPayload> {
+        self.in_retry_cycle = false;
+
         let mut events = Vec::new();
 
         events.push(EventPayload::RetryEnd {
             success,
             attempt,
-            final_error,
+            final_error: final_error.clone(),
         });
 
-        // On success, back to generating. On failure, agent_end will handle it.
         if success {
+            // On success, back to generating.
             let phase_event = self.state.on_native_phase(AgentPhase::Generating, None);
             events.push(phase_event);
+        } else {
+            // All retries exhausted -- emit a non-recoverable error so the
+            // frontend surfaces it to the user. Without this, the error is
+            // silently swallowed and the agent just goes idle.
+            let error_text = final_error
+                .unwrap_or_else(|| "LLM request failed after all retries".to_string());
+            events.push(EventPayload::AgentError {
+                error: error_text,
+                recoverable: false,
+                phase: Some(AgentPhase::Generating),
+            });
         }
 
         events

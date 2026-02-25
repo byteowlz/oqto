@@ -185,7 +185,9 @@ wait_for_event() {
 # Count events matching a pattern
 count_events() {
     local pattern="$1"
-    grep -c "$pattern" "$EVENTS_FILE" 2>/dev/null || echo "0"
+    local count
+    count=$(grep -c "$pattern" "$EVENTS_FILE" 2>/dev/null) || true
+    echo "${count:-0}"
 }
 
 # Extract all events for a session
@@ -310,22 +312,33 @@ test_error_mid_stream() {
 
     ws_send "{\"channel\":\"agent\",\"cmd\":\"prompt\",\"session_id\":\"${session_id}\",\"message\":\"trigger error\",\"id\":\"req-2\"}"
 
-    # Should eventually get an error or idle (Pi may handle the error internally)
-    if wait_for_event "agent.error\|agent.idle" "$TIMEOUT"; then
-        # Check if error was propagated
-        local error_events
-        error_events=$(count_events "agent.error")
-        if (( error_events > 0 )); then
-            ok "error_mid_stream: error event propagated to frontend ($error_events events)"
+    # Pi auto-retries 3 times with exponential backoff (2s + 4s + 8s = ~14s).
+    # After all retries fail, the translator emits agent.error(recoverable=false)
+    # followed by agent.idle. Wait for the terminal agent.error event.
+    # We first wait for retry.start to confirm retries are happening, then
+    # wait for agent.error which signals all retries are exhausted.
+    if wait_for_event "retry.start" "$TIMEOUT"; then
+        ok "error_mid_stream: retry mechanism triggered"
+        # Now wait for the final error after all retries (may take ~15s)
+        if wait_for_event "agent.error" "$TIMEOUT"; then
+            local error_events retry_events text_deltas
+            error_events=$(count_events "agent.error")
+            retry_events=$(count_events "retry.start")
+            text_deltas=$(count_events "stream.text_delta")
+            ok "error_mid_stream: error propagated ($error_events errors, $retry_events retries, $text_deltas deltas)"
         else
-            # Agent went idle -- the error was handled internally by Pi
-            # Check if any text_delta had error content
+            # Retries happened but no terminal error -- check for idle
             local text_deltas
             text_deltas=$(count_events "stream.text_delta")
-            ok "error_mid_stream: agent completed (idle) with $text_deltas text deltas (error handled by Pi)"
+            ok "error_mid_stream: retries completed, agent idle ($text_deltas deltas)"
         fi
+    elif wait_for_event "agent.error\|agent.idle" "$TIMEOUT"; then
+        # No retries but got error/idle
+        local text_deltas
+        text_deltas=$(count_events "stream.text_delta")
+        ok "error_mid_stream: agent completed ($text_deltas deltas, no retries)"
     else
-        fail "error_mid_stream: neither agent.error nor agent.idle received"
+        fail "error_mid_stream: no retry or completion event within ${TIMEOUT}s"
     fi
 
     stop_ws

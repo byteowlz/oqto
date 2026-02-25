@@ -18,8 +18,18 @@ import type { AgentState } from "@/lib/control-plane-client";
 /** Context-compaction notice shown inline in the chat. */
 export type CompactionPart = { type: "compaction"; id: string; text: string };
 
-/** Inline error notice (e.g. stream failure). */
-export type ErrorPart = { type: "error"; id: string; text: string };
+/** Inline error notice (e.g. stream failure, LLM error with retry). */
+export type ErrorPart = {
+	type: "error";
+	id: string;
+	text: string;
+	/** When set, the agent is retrying the failed request. */
+	retryAttempt?: number;
+	/** Total retry attempts allowed. */
+	retryMax?: number;
+	/** True while a retry is in progress (waiting / executing). */
+	retrying?: boolean;
+};
 
 /**
  * A display part is either a canonical Part or a display-only variant.
