@@ -368,6 +368,11 @@ impl PiSession {
     fn subscriber_count(&self) -> usize {
         self.event_tx.receiver_count()
     }
+
+    /// Return the OS PID of the child process, if available.
+    fn child_pid(&self) -> Option<u32> {
+        self.process.id()
+    }
 }
 
 // ============================================================================
@@ -2400,14 +2405,17 @@ impl PiSessionManager {
         let now = Instant::now();
         let mut to_close = Vec::new();
 
-        // How long a session can stay in a non-idle state without any
-        // stdout activity before the watchdog forces it back to Idle.
-        //
-        // Streaming/Starting get a longer timeout because LLM responses
-        // can take minutes (cold starts, long reasoning, rate limit
-        // queues). Aborting/Compacting/Stopping should complete quickly.
-        let stuck_timeout_streaming = Duration::from_secs(300); // 5 min for LLM waits
-        let stuck_timeout_transient = Duration::from_secs(60);  // 1 min for abort/compact/stop
+        // After this many seconds of no stdout in a non-idle state, we
+        // send a GetState health check to Pi. If Pi is alive, it will
+        // respond and update last_activity, buying more time. If the
+        // process is dead or truly stuck, the next sweep will catch it.
+        let health_check_after = Duration::from_secs(90);
+        // After this many seconds, even with health checks, force-reset.
+        // This is the absolute maximum for transient states.
+        let hard_timeout_transient = Duration::from_secs(120);
+        // For streaming/starting (waiting on LLM), be more patient but
+        // still have a hard cap so users aren't stuck forever.
+        let hard_timeout_streaming = Duration::from_secs(600); // 10 min
 
         let snapshots: Vec<(
             String,
@@ -2415,6 +2423,8 @@ impl PiSessionManager {
             Arc<RwLock<Instant>>,
             usize,
             broadcast::Sender<PiEventWrapper>,
+            mpsc::Sender<PiSessionCommand>,
+            Option<u32>,
         )> = {
             let sessions = self.sessions.read().await;
             sessions
@@ -2426,59 +2436,102 @@ impl PiSessionManager {
                         Arc::clone(&session.last_activity),
                         session.subscriber_count(),
                         session.event_tx.clone(),
+                        session.cmd_tx.clone(),
+                        session.child_pid(),
                     )
                 })
                 .collect()
         };
 
-        for (id, state, last_activity_arc, subscriber_count, session_event_tx) in snapshots {
+        for (id, state, last_activity_arc, subscriber_count, session_event_tx, cmd_tx, child_pid) in snapshots {
             let current_state = *state.read().await;
             let last_activity = *last_activity_arc.read().await;
             let is_idle = current_state == PiSessionState::Idle;
             let no_subscribers = subscriber_count == 0;
             let timed_out = now.duration_since(last_activity) > idle_timeout;
-
-            // Watchdog: force-reset stuck non-idle sessions.
-            // Use a longer timeout for states where the LLM may legitimately
-            // be slow (Streaming, Starting) vs transient states that should
-            // resolve quickly (Aborting, Compacting, Stopping).
-            let timeout_for_state = match current_state {
-                PiSessionState::Streaming | PiSessionState::Starting => stuck_timeout_streaming,
-                _ => stuck_timeout_transient,
-            };
             let elapsed = now.duration_since(last_activity);
-            if !is_idle && elapsed > timeout_for_state {
-                warn!(
-                    "Session '{}' stuck in {:?} for {:?} with no activity -- forcing to Idle + error",
-                    id,
-                    current_state,
-                    elapsed,
-                );
-                *state.write().await = PiSessionState::Idle;
-                // Emit an error so the frontend shows what happened, not just
-                // a silent transition to idle.
-                let error_event = CanonicalEvent {
-                    session_id: id.clone(),
-                    runner_id: self.config.runner_id.clone(),
-                    ts: chrono::Utc::now().timestamp_millis(),
-                    payload: EventPayload::AgentError {
-                        error: format!(
-                            "No response from LLM for {}s -- request may have timed out",
-                            elapsed.as_secs()
-                        ),
-                        recoverable: true,
-                        phase: Some(AgentPhase::Generating),
-                    },
-                };
-                let _ = session_event_tx.send(error_event);
-                let idle_event = CanonicalEvent {
-                    session_id: id.clone(),
-                    runner_id: self.config.runner_id.clone(),
-                    ts: chrono::Utc::now().timestamp_millis(),
-                    payload: EventPayload::AgentIdle,
-                };
-                let _ = session_event_tx.send(idle_event);
-                continue; // Don't also close it -- let the user retry
+
+            if !is_idle {
+                // Step 1: Check if the Pi process is still alive.
+                // If it crashed, the stdout reader should have caught it already,
+                // but belt-and-suspenders: verify via kill(pid, 0).
+                if let Some(pid) = child_pid {
+                    let alive = unsafe { libc::kill(pid as i32, 0) } == 0;
+                    if !alive {
+                        warn!(
+                            "Session '{}' in {:?} but Pi process {} is dead -- forcing to Idle + error",
+                            id, current_state, pid,
+                        );
+                        *state.write().await = PiSessionState::Idle;
+                        let error_event = CanonicalEvent {
+                            session_id: id.clone(),
+                            runner_id: self.config.runner_id.clone(),
+                            ts: chrono::Utc::now().timestamp_millis(),
+                            payload: EventPayload::AgentError {
+                                error: "Agent process died unexpectedly".to_string(),
+                                recoverable: false,
+                                phase: Some(AgentPhase::Generating),
+                            },
+                        };
+                        let _ = session_event_tx.send(error_event);
+                        let idle_event = CanonicalEvent {
+                            session_id: id.clone(),
+                            runner_id: self.config.runner_id.clone(),
+                            ts: chrono::Utc::now().timestamp_millis(),
+                            payload: EventPayload::AgentIdle,
+                        };
+                        let _ = session_event_tx.send(idle_event);
+                        continue;
+                    }
+                }
+
+                // Step 2: If no stdout for >90s, send a GetState health check.
+                // Pi will respond with state data, which updates last_activity
+                // via the stdout reader. This proves Pi is alive and responsive.
+                if elapsed > health_check_after {
+                    let hard_timeout = match current_state {
+                        PiSessionState::Streaming | PiSessionState::Starting => hard_timeout_streaming,
+                        _ => hard_timeout_transient,
+                    };
+
+                    if elapsed > hard_timeout {
+                        // Hard timeout exceeded even after health checks.
+                        warn!(
+                            "Session '{}' stuck in {:?} for {:?} -- hard timeout, forcing to Idle + error",
+                            id, current_state, elapsed,
+                        );
+                        *state.write().await = PiSessionState::Idle;
+                        let error_event = CanonicalEvent {
+                            session_id: id.clone(),
+                            runner_id: self.config.runner_id.clone(),
+                            ts: chrono::Utc::now().timestamp_millis(),
+                            payload: EventPayload::AgentError {
+                                error: format!(
+                                    "No response for {}s -- request timed out. The agent process was still alive but no data was received.",
+                                    elapsed.as_secs()
+                                ),
+                                recoverable: true,
+                                phase: Some(AgentPhase::Generating),
+                            },
+                        };
+                        let _ = session_event_tx.send(error_event);
+                        let idle_event = CanonicalEvent {
+                            session_id: id.clone(),
+                            runner_id: self.config.runner_id.clone(),
+                            ts: chrono::Utc::now().timestamp_millis(),
+                            payload: EventPayload::AgentIdle,
+                        };
+                        let _ = session_event_tx.send(idle_event);
+                    } else {
+                        // Not yet at hard timeout -- send health check ping.
+                        debug!(
+                            "Session '{}' in {:?} for {:?} with no stdout -- sending health check",
+                            id, current_state, elapsed,
+                        );
+                        let _ = cmd_tx.try_send(PiSessionCommand::GetState);
+                    }
+                    continue;
+                }
             }
 
             if is_idle && no_subscribers && timed_out {
