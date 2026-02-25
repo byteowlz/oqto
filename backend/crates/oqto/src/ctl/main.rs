@@ -1997,6 +1997,25 @@ async fn handle_user(client: &OqtoClient, command: UserCommand, json: bool) -> R
                 _ => anyhow::bail!("Invalid role: {}. Must be 'user' or 'admin'", role),
             };
 
+            // Prompt for password if not provided via --password
+            let password = match password {
+                Some(p) => p,
+                None => {
+                    if json {
+                        anyhow::bail!("Password is required in JSON mode. Use --password");
+                    }
+                    let pw = read_password_prompt("Password: ")?;
+                    if pw.is_empty() {
+                        anyhow::bail!("Password cannot be empty");
+                    }
+                    let confirm = read_password_prompt("Confirm password: ")?;
+                    if pw != confirm {
+                        anyhow::bail!("Passwords do not match");
+                    }
+                    pw
+                }
+            };
+
             // Create user via the oqto API -- this handles everything:
             // DB record, Linux user (via oqto-usermgr), runner setup, eavs provisioning.
             if !json {
