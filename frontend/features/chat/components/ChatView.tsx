@@ -2593,7 +2593,7 @@ function ToolGutterIcon({
 				>
 					{primaryIcon}
 					{totalCount > 1 && (
-						<span className="absolute -top-0.5 -right-0.5 min-w-[14px] h-[14px] bg-muted-foreground/20 text-muted-foreground text-[9px] rounded-full flex items-center justify-center leading-none">
+						<span className="absolute top-0 right-0 min-w-[12px] h-[12px] bg-muted-foreground/20 text-muted-foreground text-[8px] rounded-full flex items-center justify-center leading-none">
 							{totalCount}
 						</span>
 					)}
