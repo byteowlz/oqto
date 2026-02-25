@@ -1616,20 +1616,8 @@ impl PiSessionManager {
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
 
-        // Load eavs.env so Pi can resolve the eavs proxy key
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-        let eavs_env_path = format!("{}/.config/oqto/eavs.env", home);
-        if let Ok(contents) = std::fs::read_to_string(&eavs_env_path) {
-            for line in contents.lines() {
-                let line = line.trim();
-                if line.is_empty() || line.starts_with('#') {
-                    continue;
-                }
-                if let Some((key, value)) = line.split_once('=') {
-                    cmd.env(key.trim(), value.trim());
-                }
-            }
-        }
+        // Eavs virtual keys are now embedded directly in models.json,
+        // so no env file loading is needed for ephemeral Pi spawns.
 
         let mut child = cmd
             .spawn()

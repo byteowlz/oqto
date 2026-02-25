@@ -91,9 +91,10 @@ pub fn generate_pi_models_json(
             .collect();
 
         // Build provider entry with all fields Pi needs.
-        // Use the actual eavs virtual key if provided, otherwise fall back to
-        // the env var name (Pi resolves it via process.env).
-        let key_value = api_key.unwrap_or("EAVS_API_KEY");
+        // Use the actual eavs virtual key if provided, otherwise use "not-needed"
+        // as a passthrough value. Keys are embedded directly in models.json so
+        // Pi can use them without env file indirection.
+        let key_value = api_key.unwrap_or("not-needed");
         let mut pi_provider = serde_json::json!({
             "baseUrl": base_url,
             "api": pi_api,

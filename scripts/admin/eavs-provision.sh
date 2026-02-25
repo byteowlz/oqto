@@ -122,12 +122,16 @@ get_provider_details() {
     curl -sf "${EAVS_BASE_URL}/providers/detail" 2>/dev/null
 }
 
-# Generate models.json from provider details
+# Generate models.json from provider details.
+# $1: providers JSON from eavs /providers/detail
+# $2: eavs base URL
+# $3: (optional) API key to embed. Defaults to "not-needed".
 generate_models_json() {
     local providers_json="$1"
     local eavs_base="$2"
+    local api_key="${3:-not-needed}"
 
-    echo "$providers_json" | jq --arg base "$eavs_base" '
+    echo "$providers_json" | jq --arg base "$eavs_base" --arg key "$api_key" '
     {
         providers: (
             [.[] | select(.name != "default" and .pi_api != null)] |
@@ -136,7 +140,7 @@ generate_models_json() {
                 value: {
                     baseUrl: ($base + "/" + .name + "/v1"),
                     api: .pi_api,
-                    apiKey: "EAVS_API_KEY",
+                    apiKey: $key,
                     models: [.models[] | {
                         id: .id,
                         name: (if .name == "" then .id else .name end),
@@ -192,15 +196,9 @@ provision_user() {
 
     log_step "Created EAVS key: $key_id"
 
-    # 2. Write eavs.env
-    local env_content="EAVS_API_KEY=${api_key}
-EAVS_URL=${EAVS_BASE_URL}"
-
-    write_file_as_user "$linux_username" "$home/.config/oqto" "eavs.env" "$env_content" "640"
-    log_step "Wrote eavs.env"
-
-    # 3. Generate and write models.json
-    sync_models_for_user "$user_id" "$linux_username" "$home"
+    # 2. Generate and write models.json with the key embedded directly.
+    # The apiKey field uses the literal virtual key (not an env var reference).
+    sync_models_for_user_with_key "$user_id" "$linux_username" "$home" "$api_key"
 
     log_ok "EAVS provisioned for $linux_username"
 }
@@ -244,21 +242,20 @@ rotate_user_key() {
     provision_user "$user_id" "$linux_username" "$home"
 }
 
-sync_models_for_user() {
+sync_models_for_user_with_key() {
     local user_id="$1"
     local linux_username="$2"
     local home="$3"
+    local api_key="$4"
 
-    # Get provider details
     local providers
     providers="$(get_provider_details)" || {
         log_fail "Could not fetch EAVS provider details"
         return 1
     }
 
-    # Generate models.json
     local models_json
-    models_json="$(generate_models_json "$providers" "$EAVS_BASE_URL")"
+    models_json="$(generate_models_json "$providers" "$EAVS_BASE_URL" "$api_key")"
 
     if $DRY_RUN; then
         log_step "[dry-run] Would write $home/.pi/agent/models.json"
@@ -267,6 +264,37 @@ sync_models_for_user() {
 
     write_file_as_user "$linux_username" "$home/.pi/agent" "models.json" "$models_json" "644"
     log_step "Updated models.json"
+}
+
+sync_models_for_user() {
+    local user_id="$1"
+    local linux_username="$2"
+    local home="$3"
+
+    # Read existing API key from models.json (preserved across regenerations).
+    # Falls back to legacy eavs.env, then "not-needed".
+    local api_key="not-needed"
+    local models_file="$home/.pi/agent/models.json"
+    if [[ -f "$models_file" ]]; then
+        local existing_key
+        existing_key="$(jq -r '[.providers // {} | to_entries[] | .value.apiKey // empty | select(. != "EAVS_API_KEY" and . != "not-needed" and (startswith("env:") | not))] | first // empty' "$models_file" 2>/dev/null)"
+        if [[ -n "$existing_key" ]]; then
+            api_key="$existing_key"
+        fi
+    fi
+    # Legacy fallback: read from eavs.env
+    if [[ "$api_key" == "not-needed" ]]; then
+        local eavs_env="$home/.config/oqto/eavs.env"
+        if [[ -f "$eavs_env" ]]; then
+            local env_key
+            env_key="$(grep '^EAVS_API_KEY=' "$eavs_env" 2>/dev/null | head -1 | cut -d= -f2-)"
+            if [[ -n "$env_key" ]]; then
+                api_key="$env_key"
+            fi
+        fi
+    fi
+
+    sync_models_for_user_with_key "$user_id" "$linux_username" "$home" "$api_key"
 }
 
 sync_models_only() {

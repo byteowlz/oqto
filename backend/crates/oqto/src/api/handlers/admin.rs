@@ -356,19 +356,57 @@ pub async fn sync_user_configs(
                     }
                 }
 
-                // Sync EAVS models.json (regenerates from current eavs catalog, no key rotation)
+                // Sync EAVS: provision virtual key if missing, then regenerate models.json.
                 if let Some(ref eavs_client) = state.eavs_client {
-                    match sync_eavs_models_json(eavs_client, linux_users, &linux_username).await {
-                        Ok(()) => {
-                            result.eavs_configured = true;
+                    let home = linux_users
+                        .get_user_home(&linux_username)
+                        .unwrap_or_default();
+                    let eavs_env_path = format!("{}/.config/oqto/eavs.env", home);
+                    let has_eavs_key = std::path::Path::new(&eavs_env_path).exists();
+
+                    if has_eavs_key {
+                        // Key exists, just sync models.json (no key rotation)
+                        match sync_eavs_models_json(eavs_client, linux_users, &linux_username)
+                            .await
+                        {
+                            Ok(()) => {
+                                result.eavs_configured = true;
+                            }
+                            Err(err) => {
+                                let msg = format!("eavs models.json sync failed: {err}");
+                                if let Some(ref mut existing) = result.error {
+                                    existing.push_str("; ");
+                                    existing.push_str(&msg);
+                                } else {
+                                    result.error = Some(msg);
+                                }
+                            }
                         }
-                        Err(err) => {
-                            let msg = format!("eavs models.json sync failed: {err}");
-                            if let Some(ref mut existing) = result.error {
-                                existing.push_str("; ");
-                                existing.push_str(&msg);
-                            } else {
-                                result.error = Some(msg);
+                    } else {
+                        // No eavs.env -- provision a new virtual key + write eavs.env + models.json
+                        match provision_eavs_for_user(
+                            eavs_client,
+                            linux_users,
+                            &linux_username,
+                            &user.id,
+                        )
+                        .await
+                        {
+                            Ok(_key_id) => {
+                                result.eavs_configured = true;
+                                info!(
+                                    user_id = %user.id,
+                                    "Provisioned missing EAVS key during sync-configs"
+                                );
+                            }
+                            Err(err) => {
+                                let msg = format!("eavs provisioning failed: {err}");
+                                if let Some(ref mut existing) = result.error {
+                                    existing.push_str("; ");
+                                    existing.push_str(&msg);
+                                } else {
+                                    result.error = Some(msg);
+                                }
                             }
                         }
                     }
@@ -685,20 +723,9 @@ pub(crate) async fn provision_eavs_for_user(
         .await
         .map_err(|e| anyhow::anyhow!("Failed to create eavs key: {}", e))?;
 
-    // 2. Write eavs.env with the new key
-    let home = linux_users.get_user_home(linux_username)?;
-    let eavs_base = eavs_client.base_url();
-    let env_content = format!("EAVS_API_KEY={}\nEAVS_URL={}\n", key_resp.key, eavs_base);
-    let env_dir = format!("{}/.config/oqto", home);
-    linux_users.write_file_as_user(linux_username, &env_dir, "eavs.env", &env_content)?;
-    // 640 so the oqto service user (in the shared group) can read it for env injection.
-    // Non-fatal: file still works with default perms, just slightly more permissive.
-    if let Err(e) = linux_users.chmod_file(linux_username, &format!("{}/eavs.env", env_dir), "640")
-    {
-        tracing::warn!("chmod eavs.env failed (non-fatal): {e}");
-    }
-
-    // 3. Regenerate models.json from current catalog (embed the key directly)
+    // 2. Write models.json with the virtual key embedded directly.
+    // The key is written as a literal value in the apiKey field so Pi uses it
+    // as a Bearer token when calling eavs. No eavs.env indirection needed.
     sync_eavs_models_json_with_key(eavs_client, linux_users, linux_username, &key_resp.key).await?;
 
     Ok(key_resp.key_id)
@@ -707,18 +734,22 @@ pub(crate) async fn provision_eavs_for_user(
 /// Regenerate Pi models.json from the current eavs model catalog.
 ///
 /// This is safe to call repeatedly -- it only regenerates models.json,
-/// it does NOT create or rotate eavs keys. Reads the user's eavs virtual
-/// key from `~/.config/oqto/eavs.env` so the key is embedded directly in
-/// models.json (Pi uses it as a literal API key).
+/// it does NOT create or rotate eavs keys. Reads the user's existing
+/// eavs virtual key from the current models.json so it can be preserved
+/// across regenerations.
 pub(crate) async fn sync_eavs_models_json(
     eavs_client: &crate::eavs::EavsClient,
     linux_users: &crate::local::LinuxUsersConfig,
     linux_username: &str,
 ) -> anyhow::Result<()> {
-    // Read eavs key from the user's eavs.env file
+    // Read existing eavs key from models.json (embedded in apiKey field).
+    // Fall back to legacy eavs.env for migration from older installs.
     let home = linux_users.get_user_home(linux_username)?;
-    let eavs_env_path = format!("{}/.config/oqto/eavs.env", home);
-    let api_key = read_eavs_key_from_env(&eavs_env_path);
+    let models_path = format!("{}/.pi/agent/models.json", home);
+    let api_key = read_eavs_key_from_models_json(&models_path).or_else(|| {
+        let eavs_env_path = format!("{}/.config/oqto/eavs.env", home);
+        read_eavs_key_from_env(&eavs_env_path)
+    });
 
     sync_eavs_models_json_inner(eavs_client, linux_users, linux_username, api_key.as_deref()).await
 }
@@ -799,6 +830,31 @@ fn extract_first_model(models_json: &serde_json::Value) -> Option<(String, Strin
 
 /// Read the EAVS_API_KEY value from an eavs.env file.
 /// Returns None if the file doesn't exist or the key isn't found.
+/// Read the eavs virtual key from an existing models.json.
+/// Looks for the first provider whose apiKey is a non-empty literal value
+/// (not "EAVS_API_KEY" or "env:..." references).
+fn read_eavs_key_from_models_json(path: &str) -> Option<String> {
+    let content = std::fs::read_to_string(path).ok()?;
+    let config: serde_json::Value = serde_json::from_str(&content).ok()?;
+    let providers = config.get("providers")?.as_object()?;
+    for (_name, provider) in providers {
+        if let Some(key) = provider.get("apiKey").and_then(|k| k.as_str()) {
+            let key = key.trim();
+            // Skip env var references and placeholder values
+            if !key.is_empty()
+                && key != "EAVS_API_KEY"
+                && !key.starts_with("env:")
+                && key != "not-needed"
+            {
+                return Some(key.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Read the eavs virtual key from a legacy eavs.env file.
+/// Used as fallback for migration from older installs.
 fn read_eavs_key_from_env(path: &str) -> Option<String> {
     let contents = std::fs::read_to_string(path).ok()?;
     for line in contents.lines() {

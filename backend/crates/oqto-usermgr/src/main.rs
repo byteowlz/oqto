@@ -86,6 +86,20 @@ impl Response {
 }
 
 fn main() {
+    // Refuse to run as non-root. The usermgr daemon must run as root to
+    // manage Linux users, chown files, and start per-user services.
+    // Running as a normal user would silently create a socket with wrong
+    // ownership, breaking the oqto backend's ability to connect.
+    let euid = unsafe { libc::geteuid() };
+    if euid != 0 {
+        eprintln!(
+            "oqto-usermgr: error: must run as root (current euid={}). \
+             This is a privileged daemon, not a CLI tool.",
+            euid
+        );
+        std::process::exit(1);
+    }
+
     eprintln!("oqto-usermgr: starting (pid {})", std::process::id());
 
     // Remove stale socket
@@ -131,9 +145,19 @@ fn set_socket_permissions() {
     // Only the oqto service user can connect -- NOT oqto_* platform users
     // (who share the oqto group but are different UIDs).
     use std::os::unix::fs::PermissionsExt;
-    let _ = std::fs::set_permissions(SOCKET_PATH, std::fs::Permissions::from_mode(0o600));
+    if let Err(e) =
+        std::fs::set_permissions(SOCKET_PATH, std::fs::Permissions::from_mode(0o600))
+    {
+        eprintln!("oqto-usermgr: warning: failed to set socket permissions: {e}");
+    }
     if let Some(uid) = get_user_uid("oqto") {
-        let _ = run_cmd("/usr/bin/chown", &[&format!("{uid}:0"), SOCKET_PATH]);
+        if let Err(e) = run_cmd("/usr/bin/chown", &[&format!("{uid}:0"), SOCKET_PATH]) {
+            eprintln!("oqto-usermgr: warning: failed to chown socket to oqto: {e}");
+        }
+    } else {
+        eprintln!(
+            "oqto-usermgr: warning: 'oqto' user not found, socket will be owned by root"
+        );
     }
 }
 
