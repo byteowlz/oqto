@@ -134,11 +134,7 @@ impl PiTranslator {
                 result,
                 aborted,
                 will_retry,
-            } => self.on_compaction_end(
-                result.is_some() && !aborted,
-                *will_retry,
-                result.as_ref(),
-            ),
+            } => self.on_compaction_end(result.is_some() && !aborted, *will_retry, result.as_ref()),
             PiEvent::AutoRetryStart {
                 attempt,
                 max_attempts,

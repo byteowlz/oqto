@@ -1,65 +1,47 @@
 {
   "todos": [
     {
-      "id": "65b5bac1",
-      "content": "Systemd services for hstry/eavs (auto-start)",
+      "id": "b131b7bc",
+      "content": "Fix mmry Requires→Wants in usermgr (done in code)",
       "status": "completed",
       "priority": "high"
     },
     {
-      "id": "c4527b94",
-      "content": "models.json auto-generation in single-user mode",
-      "status": "completed",
+      "id": "bc1be1da",
+      "content": "Enhance usermgr delete-user: stop services, kill processes, remove socket, remove home dir",
+      "status": "in_progress",
       "priority": "high"
     },
     {
-      "id": "6159ebb7",
-      "content": "bwrap sandbox enabled on archvm + octo-azure",
-      "status": "completed",
+      "id": "5371d0eb",
+      "content": "Wire admin delete_user handler to call usermgr delete-user for Linux cleanup",
+      "status": "pending",
       "priority": "high"
     },
     {
-      "id": "fb4ac89c",
-      "content": "Duplicate sessions (platform_id fix)",
-      "status": "completed",
-      "priority": "high"
-    },
-    {
-      "id": "6ea8841d",
-      "content": "AppArmor bwrap profile for Ubuntu 24.04",
-      "status": "completed",
-      "priority": "high"
-    },
-    {
-      "id": "629ac1c5",
-      "content": "DNS resolution in bwrap sandbox (bind /run/systemd/resolve)",
-      "status": "completed",
-      "priority": "high"
-    },
-    {
-      "id": "b796d05b",
-      "content": "Message ordering within groups (use array index, not timestamp)",
-      "status": "completed",
-      "priority": "high"
-    },
-    {
-      "id": "e84b4026",
-      "content": "Runner crash recovery (oqto-q3qf) - call usermgr before connecting",
+      "id": "350db9fd",
+      "content": "Add oqtoctl admin command for bulk cleanup of orphaned Linux users",
       "status": "pending",
       "priority": "medium"
     },
     {
-      "id": "8d2775c2",
-      "content": "Stream timeout for hung LLM providers (oqto-5ym1)",
+      "id": "ea421d7b",
+      "content": "Clean up orphaned users on octo-azure (peter, waldmensch, etc.)",
       "status": "pending",
       "priority": "medium"
     },
     {
-      "id": "9f3796bf",
-      "content": "Dev/admin users in production mode",
+      "id": "cb1c0dd6",
+      "content": "Update all existing runner services on octo-azure: Requires→Wants",
       "status": "pending",
-      "priority": "medium"
+      "priority": "high"
+    },
+    {
+      "id": "4c776ca8",
+      "content": "Build, deploy, test",
+      "status": "pending",
+      "priority": "high"
     }
   ],
-  "updated_at": "2026-02-22T20:34:19.391Z"
+  "updated_at": "2026-02-24T05:01:00.977Z"
 }

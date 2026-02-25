@@ -267,10 +267,7 @@ fn run_cmd_timeout(
                     );
                     let _ = child.kill();
                     let _ = child.wait();
-                    return Err(format!(
-                        "{cmd} timed out after {}s",
-                        timeout.as_secs()
-                    ));
+                    return Err(format!("{cmd} timed out after {}s", timeout.as_secs()));
                 }
                 std::thread::sleep(std::time::Duration::from_millis(100));
             }
@@ -485,9 +482,7 @@ fn cmd_delete_user(args: &serde_json::Value) -> Response {
         Err(e) => {
             // If userdel -r fails (e.g., processes still running), try without -r
             if let Err(e2) = run_cmd("/usr/sbin/userdel", &[username]) {
-                return Response::error(format!(
-                    "userdel failed: {e}; retry without -r: {e2}"
-                ));
+                return Response::error(format!("userdel failed: {e}; retry without -r: {e2}"));
             }
             // Home dir remains, try to remove it manually
             let home = format!("/home/{username}");
@@ -1059,9 +1054,7 @@ WantedBy=default.target
                 break;
             }
             Err(e) => {
-                eprintln!(
-                    "oqto-usermgr: daemon-reload attempt {attempt}/5 failed: {e}"
-                );
+                eprintln!("oqto-usermgr: daemon-reload attempt {attempt}/5 failed: {e}");
                 std::thread::sleep(std::time::Duration::from_millis(500));
             }
         }
@@ -1112,9 +1105,7 @@ WantedBy=default.target
                         eprintln!("oqto-usermgr: {svc} confirmed active for {username}");
                     }
                     Err(e) => {
-                        eprintln!(
-                            "oqto-usermgr: WARNING: {svc} not active for {username}: {e}"
-                        );
+                        eprintln!("oqto-usermgr: WARNING: {svc} not active for {username}: {e}");
                         // Try to start it explicitly
                         if let Err(e2) = run_user_systemctl(&["start", &svc_unit]) {
                             return Response::error(format!(
@@ -1125,10 +1116,9 @@ WantedBy=default.target
                         std::thread::sleep(std::time::Duration::from_secs(1));
                         if let Err(e3) = run_user_systemctl(&["is-active", &svc_unit]) {
                             // Capture journal logs for diagnostics
-                            let logs = run_user_systemctl(&[
-                                "status", &svc_unit, "--no-pager", "-l",
-                            ])
-                            .unwrap_or_default();
+                            let logs =
+                                run_user_systemctl(&["status", &svc_unit, "--no-pager", "-l"])
+                                    .unwrap_or_default();
                             let journal = Command::new("/sbin/runuser")
                                 .args(["-u", username, "--"])
                                 .arg("env")
@@ -1407,7 +1397,11 @@ fn cmd_write_file(args: &serde_json::Value) -> Response {
             // chown the created directories
             let _ = run_cmd(
                 "/usr/bin/chown",
-                &["-R", &format!("{username}:{group}"), &parent.to_string_lossy()],
+                &[
+                    "-R",
+                    &format!("{username}:{group}"),
+                    &parent.to_string_lossy(),
+                ],
             );
         }
     }
@@ -1627,8 +1621,7 @@ fn fix_socket_base_dirs() -> Result<(), String> {
     let _ = run_cmd("/bin/mkdir", &["-p", run_oqto]);
     run_cmd("/usr/bin/chown", &["root:oqto", run_oqto])
         .map_err(|e| format!("chown {run_oqto}: {e}"))?;
-    run_cmd("/usr/bin/chmod", &["0775", run_oqto])
-        .map_err(|e| format!("chmod {run_oqto}: {e}"))?;
+    run_cmd("/usr/bin/chmod", &["0775", run_oqto]).map_err(|e| format!("chmod {run_oqto}: {e}"))?;
 
     // /run/oqto/runner-sockets/
     let sockets_base = "/run/oqto/runner-sockets";
@@ -1673,7 +1666,10 @@ fn cmd_run_as_user(args: &serde_json::Value) -> Response {
         || binary.contains('$')
         || binary.contains('`')
     {
-        return Response::error(format!("binary name '{}' contains invalid characters", binary));
+        return Response::error(format!(
+            "binary name '{}' contains invalid characters",
+            binary
+        ));
     }
 
     let cmd_args: Vec<String> = args
@@ -1705,10 +1701,7 @@ fn cmd_run_as_user(args: &serde_json::Value) -> Response {
 
     // Validate env keys: no shell metacharacters
     for key in env_map.keys() {
-        if !key
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_')
-        {
+        if !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
             return Response::error(format!(
                 "env key '{}' contains invalid characters (allowed: A-Z, a-z, 0-9, _)",
                 key
@@ -1732,10 +1725,7 @@ fn cmd_run_as_user(args: &serde_json::Value) -> Response {
 
     // Build the command: sudo -n -u <username> -- env <envs> <binary> <args>
     let mut cmd = Command::new("/usr/bin/sudo");
-    cmd.arg("-n")
-        .arg("-u")
-        .arg(username)
-        .arg("--");
+    cmd.arg("-n").arg("-u").arg(username).arg("--");
 
     // Use env to set environment variables
     if !env_map.is_empty() {

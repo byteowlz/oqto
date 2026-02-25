@@ -2261,9 +2261,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
                 }
             }
             Err(e) => {
-                warn!(
-                    "Failed to verify runner socket dirs via usermgr (non-fatal): {e:#}"
-                );
+                warn!("Failed to verify runner socket dirs via usermgr (non-fatal): {e:#}");
             }
         }
 
@@ -2808,10 +2806,7 @@ async fn ensure_pi_models_json(eavs_base_url: &str) {
         Ok(r) => r,
         Err(e) => {
             if models_path.exists() {
-                debug!(
-                    "eavs not reachable ({}), using existing models.json",
-                    e
-                );
+                debug!("eavs not reachable ({}), using existing models.json", e);
             } else {
                 warn!(
                     "eavs not reachable at {} and no models.json exists. \

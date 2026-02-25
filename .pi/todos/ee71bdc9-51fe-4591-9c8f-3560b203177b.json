@@ -1,0 +1,47 @@
+{
+  "todos": [
+    {
+      "id": "1",
+      "content": "WS3: Fix octo-todos extension TUI crash",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "2",
+      "content": "WS4: oqtoctl user management (all commands)",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "3",
+      "content": "WS5: Pi stderr capture in crash events",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "4",
+      "content": "WS1: Eavs mock provider (in parallel -- you)",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "id": "5",
+      "content": "WS2: E2E streaming test harness (blocked on WS1)",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "id": "6",
+      "content": "WS5: Session reconnect command after crash",
+      "status": "pending",
+      "priority": "medium"
+    },
+    {
+      "id": "7",
+      "content": "WS5: Auto-respawn with backoff",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ],
+  "updated_at": "2026-02-25T08:05:39.064Z"
+}

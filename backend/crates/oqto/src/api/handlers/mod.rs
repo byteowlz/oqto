@@ -56,9 +56,9 @@ pub use admin::{
 
 // User management (admin)
 pub use admin::{
-    activate_user, catalog_lookup, create_user, deactivate_user, delete_eavs_provider,
-    delete_user, get_user, get_user_stats, list_eavs_providers, list_users, sync_all_models,
-    sync_user_configs, update_user, upsert_eavs_provider,
+    activate_user, catalog_lookup, create_user, deactivate_user, delete_eavs_provider, delete_user,
+    get_user, get_user_stats, list_eavs_providers, list_users, sync_all_models, sync_user_configs,
+    update_user, upsert_eavs_provider,
 };
 
 // Auth handlers and types

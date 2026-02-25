@@ -1,0 +1,77 @@
+{
+  "todos": [
+    {
+      "id": "043185e1",
+      "content": "Fix tamara can't get model to respond",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "fbe5d3aa",
+      "content": "Root cause: mmry port collision (48006) -> crash-loop -> runner killed every 3s",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "b1a2c6c2",
+      "content": "Requires->Wants in runner service template (usermgr)",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "37bbea25",
+      "content": "Enhanced delete-user: stops services, kills processes, removes home dir",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "13d8e64d",
+      "content": "oqtoctl user delete command added",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "id": "8989eacb",
+      "content": "Cleaned up 14 orphaned Linux users on octo-azure",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "fb5b74b7",
+      "content": "Fixed all runner service files Requires->Wants on octo-azure",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "7e7e3c79",
+      "content": "Deployed oqto + oqto-usermgr + oqtoctl to octo-azure",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "c600ca1f",
+      "content": "Fix dev/admin users in production mode",
+      "status": "pending",
+      "priority": "medium"
+    },
+    {
+      "id": "c0a2ad56",
+      "content": "Push commits to origin",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "id": "a5484e8c",
+      "content": "Fix message duplication (mergeServerMessages rewrite - server authoritative, only preserve trailing in-flight)",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "86797900",
+      "content": "Session watchdog: force-reset stuck non-idle sessions after 60s inactivity + fix last_activity tracking",
+      "status": "completed",
+      "priority": "high"
+    }
+  ],
+  "updated_at": "2026-02-24T08:16:21.287Z"
+}

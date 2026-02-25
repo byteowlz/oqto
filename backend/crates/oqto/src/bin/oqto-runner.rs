@@ -255,7 +255,12 @@ impl RunnerUserConfig {
                 .runner
                 .pi_sessions_dir
                 .map(|p| Self::expand_path(&p, &home))
-                .unwrap_or_else(|| PathBuf::from(&home).join(".pi").join("agent").join("sessions")),
+                .unwrap_or_else(|| {
+                    PathBuf::from(&home)
+                        .join(".pi")
+                        .join("agent")
+                        .join("sessions")
+                }),
             memories_dir: config_file
                 .runner
                 .memories_dir
@@ -2496,10 +2501,7 @@ impl Runner {
         info!("pi_delete_session: session_id={}", req.session_id);
 
         // Resolve the hstry external_id before closing (the session knows its Pi native ID).
-        let hstry_external_id = self
-            .pi_manager
-            .hstry_external_id(&req.session_id)
-            .await;
+        let hstry_external_id = self.pi_manager.hstry_external_id(&req.session_id).await;
 
         // Close the Pi process (best-effort; may not be running).
         let _ = self.pi_manager.close_session(&req.session_id).await;
@@ -2564,10 +2566,7 @@ impl Runner {
                             if fname_str.contains(&hstry_external_id)
                                 && fname_str.ends_with(".jsonl")
                             {
-                                info!(
-                                    "Deleting Pi session file: {}",
-                                    file.path().display()
-                                );
+                                info!("Deleting Pi session file: {}", file.path().display());
                                 let _ = std::fs::remove_file(file.path());
                             }
                         }

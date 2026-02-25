@@ -1,17 +1,35 @@
 {
   "todos": [
     {
-      "id": "1",
-      "content": "Diagnose why opus-4-6 model not showing in oqto frontend",
+      "id": "df9b59da",
+      "content": "Fix 'Add to canvas' for images - pass initialImagePath",
       "status": "completed",
       "priority": "high"
     },
     {
-      "id": "2",
-      "content": "Fix stale models.json missing anthropic provider",
+      "id": "3e089090",
+      "content": "Fix canvas image scaling - fit to view + auto-fit on load",
       "status": "completed",
       "priority": "high"
+    },
+    {
+      "id": "98dc9f73",
+      "content": "'Add to chat' image in expanded canvas - keep ChatView mounted",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "8a0158e6",
+      "content": "Verify session duplication fix on archvm",
+      "status": "pending",
+      "priority": "medium"
+    },
+    {
+      "id": "c83e6e46",
+      "content": "Frontend model picker preselect from .pi/settings.json (oqto-ejm7)",
+      "status": "pending",
+      "priority": "low"
     }
   ],
-  "updated_at": "2026-02-22T19:08:21.902Z"
+  "updated_at": "2026-02-23T15:39:19.749Z"
 }

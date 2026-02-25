@@ -275,14 +275,8 @@ fn create_router_with_config_and_auth(
             "/admin/eavs/providers/{name}",
             delete(handlers::delete_eavs_provider),
         )
-        .route(
-            "/admin/eavs/sync-models",
-            post(handlers::sync_all_models),
-        )
-        .route(
-            "/admin/eavs/catalog-lookup",
-            get(handlers::catalog_lookup),
-        )
+        .route("/admin/eavs/sync-models", post(handlers::sync_all_models))
+        .route("/admin/eavs/catalog-lookup", get(handlers::catalog_lookup))
         .route(
             "/admin/invite-codes/{code_id}",
             get(handlers::get_invite_code),

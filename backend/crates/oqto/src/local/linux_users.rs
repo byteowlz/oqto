@@ -688,7 +688,10 @@ impl LinuxUsersConfig {
         if let Some(port) = mmry_port {
             let external_api = ensure_toml_table(&mut parsed, "external_api");
             external_api.insert("enable".to_string(), TomlValue::Boolean(true));
-            external_api.insert("host".to_string(), TomlValue::String("127.0.0.1".to_string()));
+            external_api.insert(
+                "host".to_string(),
+                TomlValue::String("127.0.0.1".to_string()),
+            );
             external_api.insert("port".to_string(), TomlValue::Integer(i64::from(port)));
         }
 

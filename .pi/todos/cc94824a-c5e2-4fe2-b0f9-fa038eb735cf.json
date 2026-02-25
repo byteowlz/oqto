@@ -1,0 +1,53 @@
+{
+  "todos": [
+    {
+      "id": "1",
+      "content": "Add 'never' key to en.json and de.json",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "2",
+      "content": "Update useSessionData.ts with useTranslation",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "3",
+      "content": "Update MobileHeader.tsx with useTranslation",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "4",
+      "content": "Update MobileMenu.tsx with useTranslation",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "5",
+      "content": "Update AppShellRoute.tsx with useTranslation",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "6",
+      "content": "Update SidebarSessions.tsx with useTranslation",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "7",
+      "content": "Update SessionScreen.tsx with useTranslation",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "8",
+      "content": "Update ChatEntry.tsx with useTranslation",
+      "status": "completed",
+      "priority": "high"
+    }
+  ],
+  "updated_at": "2026-02-24T12:05:52.216Z"
+}

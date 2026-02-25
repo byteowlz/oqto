@@ -1,0 +1,41 @@
+{
+  "todos": [
+    {
+      "id": "1",
+      "content": "Create deploy/hosts.toml config file format",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "2",
+      "content": "Create scripts/deploy.sh main deployment script",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "3",
+      "content": "Add just deploy recipes to justfile",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "4",
+      "content": "Test deploy --dry-run against both hosts",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "id": "5",
+      "content": "Document in deploy/ README",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "id": "6",
+      "content": "Add memory about deploy system",
+      "status": "completed",
+      "priority": "low"
+    }
+  ],
+  "updated_at": "2026-02-25T08:05:59.052Z"
+}

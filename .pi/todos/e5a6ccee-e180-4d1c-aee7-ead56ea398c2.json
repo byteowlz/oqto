@@ -1,0 +1,149 @@
+{
+  "todos": [
+    {
+      "id": "prereq-1",
+      "content": "Install core system tools: git, curl",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "id": "prereq-2",
+      "content": "Install Rust toolchain (rustup)",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "id": "prereq-3",
+      "content": "Install Bun (JavaScript runtime for frontend)",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "id": "prereq-4",
+      "content": "(Container mode only) Install Docker or Podman",
+      "status": "pending",
+      "priority": "low"
+    },
+    {
+      "id": "build-1",
+      "content": "Build oqto backend: cd backend && cargo install --path .",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "id": "build-2",
+      "content": "Build fileserver: cd fileserver && cargo install --path .",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "id": "build-3",
+      "content": "Build frontend: cd frontend && bun install && bun run build",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "id": "runtime-1",
+      "content": "Install Pi agent: bun install -g @mariozechner/pi-coding-agent",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "id": "runtime-2",
+      "content": "Install ttyd (web terminal): package manager install",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "id": "eavs-1",
+      "content": "Install eavs (LLM proxy): cargo install --git https://github.com/byteowlz/eavs",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "id": "eavs-2",
+      "content": "Configure LLM providers (Anthropic, OpenAI, etc.) and API keys in eavs config",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "id": "eavs-3",
+      "content": "Test eavs provider connections and generate models.json",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "id": "hstry-1",
+      "content": "Install hstry (chat history): cargo install --git https://github.com/byteowlz/hstry",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "id": "config-1",
+      "content": "Generate oqto config: run ./setup.sh or manually create ~/.config/oqto/config.toml",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "id": "config-2",
+      "content": "Choose deployment mode: single-user local / multi-user / container",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "id": "auth-1",
+      "content": "Generate JWT secret (openssl rand -base64 48) and set in config",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "id": "auth-2",
+      "content": "Bootstrap admin user: oqtoctl user bootstrap -u admin -e admin@example.com -p <password>",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "id": "tools-1",
+      "content": "(Recommended) Install agent tools: agntz, mmry, trx",
+      "status": "pending",
+      "priority": "medium"
+    },
+    {
+      "id": "tools-2",
+      "content": "(Recommended) Install shell tools: tmux, fd, ripgrep, zoxide",
+      "status": "pending",
+      "priority": "medium"
+    },
+    {
+      "id": "prod-1",
+      "content": "(Production) Set up Caddy reverse proxy with HTTPS",
+      "status": "pending",
+      "priority": "low"
+    },
+    {
+      "id": "prod-2",
+      "content": "(Production) Enable server hardening: firewall, fail2ban, SSH hardening",
+      "status": "pending",
+      "priority": "low"
+    },
+    {
+      "id": "service-1",
+      "content": "Install systemd services (oqto, oqto-runner, eavs, hstry)",
+      "status": "pending",
+      "priority": "medium"
+    },
+    {
+      "id": "verify-1",
+      "content": "Verify all binaries: which oqto fileserver ttyd pi agntz",
+      "status": "pending",
+      "priority": "medium"
+    },
+    {
+      "id": "verify-2",
+      "content": "Start oqto server and frontend, access web UI at localhost:3000",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ],
+  "updated_at": "2026-02-23T14:50:43.786Z"
+}

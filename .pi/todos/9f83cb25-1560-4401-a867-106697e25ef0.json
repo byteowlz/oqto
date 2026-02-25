@@ -1,0 +1,41 @@
+{
+  "todos": [
+    {
+      "id": "1",
+      "content": "context-window-gauge.tsx - already had useTranslation, no changes needed",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "id": "2",
+      "content": "chat-context.tsx - replaced 2 locale ternaries with t() calls, removed unused useLocale",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "3",
+      "content": "BootstrapWorkspaceDialog.tsx - already had useTranslation, no changes needed",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "id": "4",
+      "content": "VoiceMenuButton.tsx - already had t() calls, no changes needed",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "5",
+      "content": "command-palette.tsx - replaced all locale ternaries with t() calls",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "6",
+      "content": "model-quick-switcher.tsx - replaced 6 label ternaries with t() calls",
+      "status": "completed",
+      "priority": "high"
+    }
+  ],
+  "updated_at": "2026-02-24T12:00:28.609Z"
+}

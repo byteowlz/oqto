@@ -1,0 +1,47 @@
+{
+  "todos": [
+    {
+      "id": "1",
+      "content": "admin/index.tsx - Replace labels object with t() calls",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "2",
+      "content": "SchedulerCard.tsx - Replace humanizeCron t object with i18n.t()",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "3",
+      "content": "settings/index.tsx - Replace inline translation objects with t() calls",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "4",
+      "content": "DeleteConfirmDialog.tsx - Replace locale ternaries with t()",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "5",
+      "content": "NewProjectDialog.tsx - Replace locale ternaries with t()",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "6",
+      "content": "RenameProjectDialog.tsx - Replace locale ternaries with t()",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "7",
+      "content": "RenameSessionDialog.tsx - Replace locale ternaries with t()",
+      "status": "completed",
+      "priority": "high"
+    }
+  ],
+  "updated_at": "2026-02-24T12:01:11.413Z"
+}

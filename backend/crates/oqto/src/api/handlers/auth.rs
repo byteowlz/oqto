@@ -63,7 +63,11 @@ pub async fn dev_login(
         if state.mmry.enabled && !state.mmry.single_user {
             let mmry_port = state
                 .users
-                .ensure_mmry_port(&user.id, state.mmry.user_base_port, state.mmry.user_port_range)
+                .ensure_mmry_port(
+                    &user.id,
+                    state.mmry.user_base_port,
+                    state.mmry.user_port_range,
+                )
                 .await
                 .ok()
                 .map(|p| p as u16);
@@ -269,7 +273,11 @@ pub async fn register(
                 if state.mmry.enabled && !state.mmry.single_user {
                     let mmry_port = state
                         .users
-                        .ensure_mmry_port(&user.id, state.mmry.user_base_port, state.mmry.user_port_range)
+                        .ensure_mmry_port(
+                            &user.id,
+                            state.mmry.user_base_port,
+                            state.mmry.user_port_range,
+                        )
                         .await
                         .ok()
                         .map(|p| p as u16);
@@ -394,15 +402,15 @@ pub async fn register(
                 // shows empty. Read the models.json we just wrote to extract the first
                 // provider and model.
                 if let Ok(home) = linux_users.get_user_home(linux_username) {
-                    let models_path =
-                        std::path::PathBuf::from(&home).join(".pi/agent/models.json");
+                    let models_path = std::path::PathBuf::from(&home).join(".pi/agent/models.json");
                     if let Ok(content) = std::fs::read_to_string(&models_path) {
                         if let Ok(config) = serde_json::from_str::<serde_json::Value>(&content) {
                             if let Some(providers) =
                                 config.get("providers").and_then(|p| p.as_object())
                             {
                                 // Take the first provider and its first model
-                                if let Some((provider_name, provider_config)) = providers.iter().next()
+                                if let Some((provider_name, provider_config)) =
+                                    providers.iter().next()
                                 {
                                     if let Some(first_model) = provider_config
                                         .get("models")
@@ -415,21 +423,18 @@ pub async fn register(
                                             "defaultProvider": provider_name,
                                             "defaultModel": first_model,
                                         });
-                                        let settings_str =
-                                            serde_json::to_string_pretty(&settings)
-                                                .unwrap_or_default();
+                                        let settings_str = serde_json::to_string_pretty(&settings)
+                                            .unwrap_or_default();
                                         let rel_path = ".pi/agent/settings.json";
-                                        if let Err(e) =
-                                            crate::local::linux_users::usermgr_request(
-                                                "write-file",
-                                                serde_json::json!({
-                                                    "username": linux_username,
-                                                    "path": rel_path,
-                                                    "content": settings_str,
-                                                    "group": "oqto",
-                                                }),
-                                            )
-                                        {
+                                        if let Err(e) = crate::local::linux_users::usermgr_request(
+                                            "write-file",
+                                            serde_json::json!({
+                                                "username": linux_username,
+                                                "path": rel_path,
+                                                "content": settings_str,
+                                                "group": "oqto",
+                                            }),
+                                        ) {
                                             warn!(
                                                 user_id = %user.id,
                                                 error = ?e,
@@ -467,9 +472,7 @@ pub async fn register(
             .or(user.linux_username.as_deref())
             .unwrap_or(&user.id);
 
-        let workspace_path = format!(
-            "/home/{linux_username}/oqto/main"
-        );
+        let workspace_path = format!("/home/{linux_username}/oqto/main");
 
         // Resolve templates for workspace content
         let mut template_files = serde_json::Map::new();
@@ -500,10 +503,8 @@ pub async fn register(
                         "PERSONALITY.md".into(),
                         serde_json::Value::String(templates.personality),
                     );
-                    template_files.insert(
-                        "USER.md".into(),
-                        serde_json::Value::String(templates.user),
-                    );
+                    template_files
+                        .insert("USER.md".into(), serde_json::Value::String(templates.user));
                     template_files.insert(
                         "AGENTS.md".into(),
                         serde_json::Value::String(templates.agents),
@@ -523,9 +524,8 @@ pub async fn register(
 
         if let Some(ref src) = template_src {
             if src.is_dir() {
-                create_args["template_src"] = serde_json::Value::String(
-                    src.to_string_lossy().into_owned(),
-                );
+                create_args["template_src"] =
+                    serde_json::Value::String(src.to_string_lossy().into_owned());
             }
         }
 
@@ -631,7 +631,11 @@ pub async fn login(
                         if state.mmry.enabled && !state.mmry.single_user {
                             let mmry_port = state
                                 .users
-                                .ensure_mmry_port(&db_user.id, state.mmry.user_base_port, state.mmry.user_port_range)
+                                .ensure_mmry_port(
+                                    &db_user.id,
+                                    state.mmry.user_base_port,
+                                    state.mmry.user_port_range,
+                                )
                                 .await
                                 .ok()
                                 .map(|p| p as u16);
@@ -692,7 +696,11 @@ pub async fn login(
                     if state.mmry.enabled && !state.mmry.single_user {
                         let mmry_port = state
                             .users
-                            .ensure_mmry_port(&dev_user.id, state.mmry.user_base_port, state.mmry.user_port_range)
+                            .ensure_mmry_port(
+                                &dev_user.id,
+                                state.mmry.user_base_port,
+                                state.mmry.user_port_range,
+                            )
                             .await
                             .ok()
                             .map(|p| p as u16);

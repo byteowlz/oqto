@@ -305,8 +305,11 @@ pub async fn bootstrap_onboarding(
             // Write resolved templates (may have language/preset overrides)
             std::fs::write(workspace_path.join("BOOTSTRAP.md"), &templates.onboard)
                 .map_err(|e| ApiError::Internal(format!("write BOOTSTRAP.md: {e}")))?;
-            std::fs::write(workspace_path.join("PERSONALITY.md"), &templates.personality)
-                .map_err(|e| ApiError::Internal(format!("write PERSONALITY.md: {e}")))?;
+            std::fs::write(
+                workspace_path.join("PERSONALITY.md"),
+                &templates.personality,
+            )
+            .map_err(|e| ApiError::Internal(format!("write PERSONALITY.md: {e}")))?;
             std::fs::write(workspace_path.join("USER.md"), &templates.user)
                 .map_err(|e| ApiError::Internal(format!("write USER.md: {e}")))?;
             std::fs::write(workspace_path.join("AGENTS.md"), &templates.agents)

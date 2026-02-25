@@ -1318,12 +1318,7 @@ async fn handle_agent_command(
             drop(state_guard);
 
             match runner.pi_delete_session(&session_id).await {
-                Ok(()) => Some(agent_response(
-                    &session_id,
-                    id,
-                    "session.delete",
-                    Ok(None),
-                )),
+                Ok(()) => Some(agent_response(&session_id, id, "session.delete", Ok(None))),
                 Err(e) => Some(agent_response(
                     &session_id,
                     id,

@@ -330,7 +330,11 @@ pub async fn sync_user_configs(
                 if state.mmry.enabled && !state.mmry.single_user {
                     let mmry_port = state
                         .users
-                        .ensure_mmry_port(&user.id, state.mmry.user_base_port, state.mmry.user_port_range)
+                        .ensure_mmry_port(
+                            &user.id,
+                            state.mmry.user_base_port,
+                            state.mmry.user_port_range,
+                        )
                         .await
                         .ok()
                         .map(|p| p as u16);
@@ -448,7 +452,11 @@ pub async fn create_user(
                 if state.mmry.enabled && !state.mmry.single_user {
                     let mmry_port = state
                         .users
-                        .ensure_mmry_port(&user.id, state.mmry.user_base_port, state.mmry.user_port_range)
+                        .ensure_mmry_port(
+                            &user.id,
+                            state.mmry.user_base_port,
+                            state.mmry.user_port_range,
+                        )
                         .await
                         .ok()
                         .map(|p| p as u16);
@@ -685,15 +693,13 @@ pub(crate) async fn provision_eavs_for_user(
     linux_users.write_file_as_user(linux_username, &env_dir, "eavs.env", &env_content)?;
     // 640 so the oqto service user (in the shared group) can read it for env injection.
     // Non-fatal: file still works with default perms, just slightly more permissive.
-    if let Err(e) =
-        linux_users.chmod_file(linux_username, &format!("{}/eavs.env", env_dir), "640")
+    if let Err(e) = linux_users.chmod_file(linux_username, &format!("{}/eavs.env", env_dir), "640")
     {
         tracing::warn!("chmod eavs.env failed (non-fatal): {e}");
     }
 
     // 3. Regenerate models.json from current catalog (embed the key directly)
-    sync_eavs_models_json_with_key(eavs_client, linux_users, linux_username, &key_resp.key)
-        .await?;
+    sync_eavs_models_json_with_key(eavs_client, linux_users, linux_username, &key_resp.key).await?;
 
     Ok(key_resp.key_id)
 }
@@ -714,8 +720,7 @@ pub(crate) async fn sync_eavs_models_json(
     let eavs_env_path = format!("{}/.config/oqto/eavs.env", home);
     let api_key = read_eavs_key_from_env(&eavs_env_path);
 
-    sync_eavs_models_json_inner(eavs_client, linux_users, linux_username, api_key.as_deref())
-        .await
+    sync_eavs_models_json_inner(eavs_client, linux_users, linux_username, api_key.as_deref()).await
 }
 
 /// Same as `sync_eavs_models_json` but with the key already in hand (avoids re-reading eavs.env).
@@ -761,8 +766,7 @@ async fn sync_eavs_models_json_inner(
             "prefixCommand": "basename $(git rev-parse --show-toplevel 2>/dev/null || pwd)",
             "maxNameLength": 60
         });
-        let auto_rename_content = serde_json::to_string_pretty(&auto_rename)
-            .unwrap_or_default();
+        let auto_rename_content = serde_json::to_string_pretty(&auto_rename).unwrap_or_default();
         if !auto_rename_content.is_empty() {
             // Best-effort: don't fail provisioning if this doesn't work
             let _ = linux_users.write_file_as_user(
@@ -964,10 +968,7 @@ pub async fn upsert_eavs_provider(
         .map_err(|e| ApiError::Internal(format!("Failed to read eavs config: {e}")))?;
 
     // Build the provider section
-    let env_key_name = format!(
-        "{}_API_KEY",
-        request.name.to_uppercase().replace('-', "_")
-    );
+    let env_key_name = format!("{}_API_KEY", request.name.to_uppercase().replace('-', "_"));
     let mut provider_toml = format!(
         "\n[providers.{}]\ntype = \"{}\"\n",
         request.name, request.type_
@@ -1040,10 +1041,7 @@ pub async fn upsert_eavs_provider(
                 .iter()
                 .map(|(k, v)| format!("{} = {}", k, v))
                 .collect();
-            provider_toml.push_str(&format!(
-                "compat = {{ {} }}\n",
-                compat_entries.join(", ")
-            ));
+            provider_toml.push_str(&format!("compat = {{ {} }}\n", compat_entries.join(", ")));
         }
     }
 
@@ -1052,7 +1050,8 @@ pub async fn upsert_eavs_provider(
     let mut new_config =
         remove_toml_section(&config_content, &format!("providers.{}", request.name));
     // Remove leftover [[providers.NAME.models]] entries that survive the section removal
-    new_config = remove_toml_array_entries(&new_config, &format!("providers.{}.models", request.name));
+    new_config =
+        remove_toml_array_entries(&new_config, &format!("providers.{}.models", request.name));
     let new_config = format!("{}\n{}", new_config.trim_end(), provider_toml);
 
     tokio::fs::write(config_path, &new_config)
@@ -1140,13 +1139,7 @@ pub async fn sync_all_models(
             if !linux_username.starts_with("oqto_") {
                 continue;
             }
-            match sync_eavs_models_json(
-                eavs_client.as_ref(),
-                linux_users,
-                linux_username,
-            )
-            .await
-            {
+            match sync_eavs_models_json(eavs_client.as_ref(), linux_users, linux_username).await {
                 Ok(()) => synced += 1,
                 Err(e) => errors.push(format!("{}: {}", user.id, e)),
             }
@@ -1269,7 +1262,11 @@ pub async fn catalog_lookup(
         .as_ref()
         .ok_or_else(|| ApiError::ServiceUnavailable("EAVS is not configured.".into()))?;
 
-    let mut url = format!("{}/catalog/lookup?model_id={}", eavs.base_url(), urlencoding::encode(&query.model_id));
+    let mut url = format!(
+        "{}/catalog/lookup?model_id={}",
+        eavs.base_url(),
+        urlencoding::encode(&query.model_id)
+    );
     if let Some(ref provider) = query.provider {
         url.push_str(&format!("&provider={}", urlencoding::encode(provider)));
     }

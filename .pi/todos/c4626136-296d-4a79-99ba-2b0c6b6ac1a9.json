@@ -1,0 +1,47 @@
+{
+  "todos": [
+    {
+      "id": "1",
+      "content": "Add chat.settings key to en.json and de.json",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "2",
+      "content": "Update ChatSettingsView.tsx with useTranslation",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "3",
+      "content": "Update PiSettingsView.tsx with useTranslation",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "4",
+      "content": "Update ChatInputArea.tsx with useTranslation",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "5",
+      "content": "Update WorkspaceOverviewForm.tsx with useTranslation",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "6",
+      "content": "Update WorkspaceOverviewPanel.tsx with useTranslation",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "7",
+      "content": "Verify build passes",
+      "status": "completed",
+      "priority": "high"
+    }
+  ],
+  "updated_at": "2026-02-24T12:02:06.481Z"
+}

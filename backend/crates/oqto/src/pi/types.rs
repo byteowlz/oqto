@@ -735,8 +735,7 @@ impl PiMessage {
 
         // Slow path: multiple JSON objects concatenated on one line.
         // Use StreamDeserializer to split them.
-        let stream =
-            serde_json::Deserializer::from_str(trimmed).into_iter::<serde_json::Value>();
+        let stream = serde_json::Deserializer::from_str(trimmed).into_iter::<serde_json::Value>();
         let mut results = Vec::new();
         for value_result in stream {
             match value_result {
@@ -814,7 +813,8 @@ mod tests {
 
     #[test]
     fn test_parse_all_response() {
-        let line = r#"{"type":"response","success":true,"id":"get_state","data":{"sessionId":"abc"}}"#;
+        let line =
+            r#"{"type":"response","success":true,"id":"get_state","data":{"sessionId":"abc"}}"#;
         let results = PiMessage::parse_all(line);
         assert_eq!(results.len(), 1);
         assert!(matches!(results[0], Ok(PiMessage::Response(_))));

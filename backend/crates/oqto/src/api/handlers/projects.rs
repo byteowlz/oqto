@@ -411,8 +411,8 @@ pub async fn list_workspace_dirs(
             let logo = find_project_logo(&path, &name);
             let abs_path = path.canonicalize().unwrap_or(path.clone());
             // Use display_name from .oqto/workspace.toml if available
-            let display_name = crate::workspace::meta::workspace_display_name(&path)
-                .unwrap_or(name);
+            let display_name =
+                crate::workspace::meta::workspace_display_name(&path).unwrap_or(name);
             dirs.push(WorkspaceDirEntry {
                 name: display_name,
                 path: abs_path.to_string_lossy().to_string(),
@@ -599,17 +599,17 @@ pub async fn create_project_from_template(
                 let home = std::env::var("HOME").unwrap_or_default();
                 let path = std::env::var("PATH").unwrap_or_default();
                 tracing::error!(
-                project_path = %target_dir.display(),
-                exit_code = ?output.status.code(),
-                uid,
-                gid,
-                home = %home,
-                path = %path,
-                stdout = %String::from_utf8_lossy(&output.stdout),
-                stderr = %String::from_utf8_lossy(&output.stderr),
-                "git init failed"
-            );
-        }
+                    project_path = %target_dir.display(),
+                    exit_code = ?output.status.code(),
+                    uid,
+                    gid,
+                    home = %home,
+                    path = %path,
+                    stdout = %String::from_utf8_lossy(&output.stdout),
+                    stderr = %String::from_utf8_lossy(&output.stderr),
+                    "git init failed"
+                );
+            }
             Err(e) => {
                 let uid = unsafe { libc::geteuid() };
                 let gid = unsafe { libc::getegid() };
@@ -892,8 +892,7 @@ pub async fn get_workspace_pi_resources(
         .map_err(|e| ApiError::bad_request(format!("Invalid workspace path: {}", e)))?;
 
     let global_skills_dir = expand_path_for_user(GLOBAL_PI_SKILLS_DIR, &state, user.id())?;
-    let global_extensions_dir =
-        expand_path_for_user(GLOBAL_PI_EXTENSIONS_DIR, &state, user.id())?;
+    let global_extensions_dir = expand_path_for_user(GLOBAL_PI_EXTENSIONS_DIR, &state, user.id())?;
 
     let settings_value = read_pi_settings_value(&workspace_root.join(".pi"));
     let skills_paths = settings_value
@@ -979,8 +978,7 @@ pub async fn apply_workspace_pi_resources(
         .map_err(|e| ApiError::bad_request(format!("Invalid workspace path: {}", e)))?;
 
     let global_skills_dir = expand_path_for_user(GLOBAL_PI_SKILLS_DIR, &state, user.id())?;
-    let global_extensions_dir =
-        expand_path_for_user(GLOBAL_PI_EXTENSIONS_DIR, &state, user.id())?;
+    let global_extensions_dir = expand_path_for_user(GLOBAL_PI_EXTENSIONS_DIR, &state, user.id())?;
 
     let skills_mode = normalize_mode(&request.skills_mode)?;
     let extensions_mode = normalize_mode(&request.extensions_mode)?;
@@ -1063,11 +1061,7 @@ fn expand_path(path: &str) -> Result<PathBuf, ApiError> {
 
 /// Expand a path like `~/.pi/agent/skills` relative to a specific user's home.
 /// In multi-user mode, `~` must resolve to the user's home, not the backend's.
-fn expand_path_for_user(
-    path: &str,
-    state: &AppState,
-    user_id: &str,
-) -> Result<PathBuf, ApiError> {
+fn expand_path_for_user(path: &str, state: &AppState, user_id: &str) -> Result<PathBuf, ApiError> {
     if let Some(ref lu) = state.linux_users {
         if lu.enabled {
             let linux_username = lu.linux_username(user_id);

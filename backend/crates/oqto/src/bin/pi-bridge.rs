@@ -232,8 +232,7 @@ fn start_stdout_reader(stdout: tokio::process::ChildStdout, state: Arc<BridgeSta
 
             // Parse JSON objects from the line. Pi may concatenate multiple
             // JSON objects on a single line when its output buffer fills mid-write.
-            let stream =
-                serde_json::Deserializer::from_str(&line).into_iter::<Value>();
+            let stream = serde_json::Deserializer::from_str(&line).into_iter::<Value>();
             let mut parsed_any = false;
             for value_result in stream {
                 match value_result {
@@ -263,10 +262,7 @@ fn start_stdout_reader(stdout: tokio::process::ChildStdout, state: Arc<BridgeSta
                     }
                     Err(e) => {
                         if !parsed_any {
-                            warn!(
-                                "Failed to parse Pi output: {:?}, line: {}",
-                                e, display_line
-                            );
+                            warn!("Failed to parse Pi output: {:?}, line: {}", e, display_line);
                         }
                         break;
                     }

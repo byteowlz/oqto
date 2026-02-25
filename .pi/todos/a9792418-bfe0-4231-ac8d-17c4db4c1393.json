@@ -1,0 +1,47 @@
+{
+  "todos": [
+    {
+      "id": "d007db3d",
+      "content": "Add tool_call_id to ChatMessagePartProto in runner/protocol.rs",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "40e2ea45",
+      "content": "Wire tool_call_id through oqto-runner.rs when building ChatMessagePartProto",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "492f14ee",
+      "content": "Fix chat.rs handler to use p.tool_call_id instead of None",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "a6312f51",
+      "content": "Fix normalizeMessages to also check canonicalParts for toolCallId",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "de1b0fd6",
+      "content": "Remove debug logging from message-utils.ts",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "id": "3905c00a",
+      "content": "Build backend and frontend, run tests",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "26d8b739",
+      "content": "Visual verification in browser",
+      "status": "completed",
+      "priority": "high"
+    }
+  ],
+  "updated_at": "2026-02-24T13:33:06.475Z"
+}
