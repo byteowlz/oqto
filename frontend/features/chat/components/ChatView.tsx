@@ -485,15 +485,19 @@ export function ChatView({
 		return { surfacesByMessageId: map, orphanedSurfaces: orphaned };
 	}, [a2uiSurfaces, messages]);
 
-	// Extract todos from messages and notify parent
+	// Extract todos from messages and notify parent.
+	// Scans all messages in reverse to find the most recent todo tool call
+	// or result. Both TodoWrite (input.todos) and incremental Todo actions
+	// (tool_result output with todos array) are checked so that updates
+	// via Todo add/update/remove are reflected immediately.
 	useEffect(() => {
 		if (!onTodosChange) return;
 
-		// Go through all messages in reverse to find the most recent todowrite
 		for (let i = messages.length - 1; i >= 0; i--) {
 			const msg = messages[i];
 			for (let j = msg.parts.length - 1; j >= 0; j--) {
 				const part = msg.parts[j];
+				// Check tool_call input (TodoWrite sends full list as input)
 				if (
 					part.type === "tool_call" &&
 					part.name?.toLowerCase().includes("todo")
@@ -501,6 +505,26 @@ export function ChatView({
 					const input = part.input as Record<string, unknown> | undefined;
 					if (input?.todos && Array.isArray(input.todos)) {
 						onTodosChange(input.todos as TodoItem[]);
+						return;
+					}
+				}
+				// Check tool_result output (Todo add/update/remove returns
+				// the full updated list in the result output)
+				if (
+					part.type === "tool_result" &&
+					part.name?.toLowerCase().includes("todo")
+				) {
+					const output = part.output as Record<string, unknown> | string | undefined;
+					// Output can be a JSON string (from the extension's text content)
+					// or already parsed as an object.
+					let parsed: Record<string, unknown> | undefined;
+					if (typeof output === "string") {
+						try { parsed = JSON.parse(output); } catch { /* not JSON */ }
+					} else if (output && typeof output === "object") {
+						parsed = output;
+					}
+					if (parsed?.todos && Array.isArray(parsed.todos)) {
+						onTodosChange(parsed.todos as TodoItem[]);
 						return;
 					}
 				}
