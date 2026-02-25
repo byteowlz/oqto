@@ -2,6 +2,33 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.3.14 - 2026-02-25
+
+### Added
+
+- Minimal mode (verbosity=1) tool call gutter: tool calls shown as small icons in a right-side gutter column, vertically centered with the triggering text. Click opens popover listing each tool with a summary.
+- Deploy system: `just deploy` with `deploy/hosts.toml` config for multi-host deployment (archvm, octo-azure, zbook).
+- E2E streaming reliability test harness (`scripts/e2e-streaming-test.sh`) with 6 scenarios.
+- Error propagation from LLM through full pipeline to frontend: retry indicators (amber spinner), terminal errors (red box).
+- Active health check watchdog: process liveness via `kill(pid, 0)`, GetState ping after 90s idle, hard timeouts (10min streaming, 2min transient).
+
+### Changed
+
+- Eavs virtual API keys now embedded directly in `models.json` `apiKey` field, eliminating `eavs.env` indirection.
+- Dashboard stat card: icon moved to left side, reduced padding, allows label wrapping to prevent text/icon overlap.
+- Todo panel now checks both `tool_call` input and `tool_result` output for todos, fixing updates from incremental `Todo` tool.
+- Tool descriptions and AGENTS.md instruct agents to keep todo list status current (in_progress/completed).
+- `sync-configs` now auto-provisions eavs keys for users who don't have them.
+
+### Fixed
+
+- New user registration without eavs: writes `settings.json` and copies admin's `models.json` template as fallback.
+- Auto-creates initial chat session for users with 0 sessions.
+- `oqto-usermgr` refuses to run as non-root (prevents socket ownership corruption).
+- No empty row for leading tool calls in minimal gutter mode.
+- Watchdog no longer silently resets sessions to idle -- emits AgentError with context.
+- `oqtoctl user create` prompts for password when not provided via `--password`.
+
 ## Unreleased
 
 ### Added

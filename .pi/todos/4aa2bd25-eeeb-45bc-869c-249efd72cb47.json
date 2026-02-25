@@ -1,0 +1,35 @@
+{
+  "todos": [
+    {
+      "id": "1",
+      "content": "Understand sandbox, runner, and agent process model",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "2",
+      "content": "Study Oqto frontend design system (colors, typography, components)",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "3",
+      "content": "Study how oqtoctl a2ui and existing CLIs communicate with backend",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "4",
+      "content": "Research visual-explainer and pi-design-deck",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "5",
+      "content": "Revise design document with full vision",
+      "status": "completed",
+      "priority": "high"
+    }
+  ],
+  "updated_at": "2026-02-25T15:45:40.678Z"
+}

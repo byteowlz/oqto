@@ -2,40 +2,52 @@
   "todos": [
     {
       "id": "1",
-      "content": "Create deploy/hosts.toml config file format",
+      "content": "Eavs keys embedded in models.json (no eavs.env)",
       "status": "completed",
       "priority": "high"
     },
     {
       "id": "2",
-      "content": "Create scripts/deploy.sh main deployment script",
+      "content": "octo-azure: backend + frontend deployed",
       "status": "completed",
       "priority": "high"
     },
     {
       "id": "3",
-      "content": "Add just deploy recipes to justfile",
+      "content": "Minimal mode: right gutter for tool icons",
       "status": "completed",
       "priority": "high"
     },
     {
       "id": "4",
-      "content": "Test deploy --dry-run against both hosts",
+      "content": "Todo panel: also check tool_result output",
       "status": "completed",
       "priority": "medium"
     },
     {
       "id": "5",
-      "content": "Document in deploy/ README",
+      "content": "Todo discipline: instructions in AGENTS.md + tool descriptions",
       "status": "completed",
       "priority": "medium"
     },
     {
       "id": "6",
-      "content": "Add memory about deploy system",
+      "content": "Watchdog: 3-tier health check (pid check + GetState ping + hard timeout)",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "7",
+      "content": "Zbook: install new binaries + frontend (needs sudo)",
+      "status": "pending",
+      "priority": "medium"
+    },
+    {
+      "id": "8",
+      "content": "Disk cleanup: freed 38GB by removing local target dirs",
       "status": "completed",
       "priority": "low"
     }
   ],
-  "updated_at": "2026-02-25T08:05:59.052Z"
+  "updated_at": "2026-02-25T15:53:55.017Z"
 }
