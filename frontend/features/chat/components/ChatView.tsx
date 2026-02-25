@@ -2854,6 +2854,14 @@ const MessageGroupCard = memo(function MessageGroupCard({
 				}
 			};
 
+			// Tool group waiting to be attached to the next content segment.
+			let pendingToolGroup: {
+				key: string;
+				type: "tool_group";
+				segments: typeof toolBuffer;
+				timestamp: number;
+			} | null = null;
+
 			const attachToolGroup = () => {
 				if (toolBuffer.length === 0) return;
 				const tg = {
@@ -2868,9 +2876,18 @@ const MessageGroupCard = memo(function MessageGroupCard({
 				if (last) {
 					(last as RenderSegment & { _toolGroup?: typeof tg })._toolGroup = tg;
 				} else {
-					// No preceding segment -- push as standalone
-					grouped.push(tg);
+					// No preceding segment -- attach to the next one
+					pendingToolGroup = tg;
 				}
+			};
+
+			const pushSegment = (seg: RenderSegment) => {
+				// Attach any pending (leading) tool group to this segment
+				if (pendingToolGroup) {
+					(seg as RenderSegment & { _toolGroup?: typeof pendingToolGroup })._toolGroup = pendingToolGroup;
+					pendingToolGroup = null;
+				}
+				grouped.push(seg);
 			};
 
 			for (const segment of normalizedSegments) {
@@ -2892,10 +2909,11 @@ const MessageGroupCard = memo(function MessageGroupCard({
 				// Non-thinking, non-tool segment: flush pending items
 				flushThinkingOnly();
 				attachToolGroup();
-				grouped.push(segment);
+				pushSegment(segment);
 			}
 			flushThinkingOnly();
 			attachToolGroup();
+			// Discard any remaining pendingToolGroup (no content to attach to)
 			return grouped;
 		}
 		if (verbosity !== 2) return normalizedSegments;
@@ -3230,18 +3248,10 @@ const MessageGroupCard = memo(function MessageGroupCard({
 						);
 					}
 					if (segment.type === "tool_group") {
-						// Minimal mode: standalone tool_group (no preceding segment to attach to).
-						// Render as a gutter icon on its own row.
-						if (verbosity === 1) {
-							return (
-								<div key={segment.key} className="flex justify-end">
-									<ToolGutterIcon
-										toolGroup={segment}
-										locale={locale}
-									/>
-								</div>
-							);
-						}
+						// At verbosity=1 tool_groups are attached to adjacent segments
+						// via _toolGroup, so standalone ones should not appear.
+						// Skip them silently to avoid empty rows.
+						if (verbosity === 1) return null;
 						const toolItems = segment.segments.map((toolSegment) => {
 							const toolName =
 								toolSegment.type === "tool_call"
