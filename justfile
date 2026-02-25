@@ -540,6 +540,34 @@ release version:
     echo "Run 'git push && git push --tags' to publish"
 
 # =============================================================================
+# Deployment
+# =============================================================================
+
+# Deploy to all configured hosts (build + upload + restart)
+deploy *ARGS:
+    ./scripts/deploy.sh {{ARGS}}
+
+# Deploy to a specific host only
+deploy-host name *ARGS:
+    ./scripts/deploy.sh --host {{name}} {{ARGS}}
+
+# Deploy without rebuilding (use existing artifacts)
+deploy-quick *ARGS:
+    ./scripts/deploy.sh --skip-build {{ARGS}}
+
+# Deploy only backend binaries (skip frontend)
+deploy-backend *ARGS:
+    ./scripts/deploy.sh --skip-frontend {{ARGS}}
+
+# Deploy only frontend (skip backend binaries)
+deploy-frontend *ARGS:
+    ./scripts/deploy.sh --skip-backend {{ARGS}}
+
+# Show what deploy would do without doing it
+deploy-dry-run *ARGS:
+    ./scripts/deploy.sh --dry-run {{ARGS}}
+
+# =============================================================================
 # VM Deployment Testing (Proxmox)
 # =============================================================================
 

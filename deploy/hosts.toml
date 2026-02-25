@@ -1,0 +1,38 @@
+# Oqto Deployment Hosts
+#
+# Each [[host]] entry defines a target machine for `just deploy`.
+# SSH aliases from ~/.ssh/config are used for connectivity.
+#
+# Fields:
+#   name       - Human-readable label (used in logs and --host filtering)
+#   ssh        - SSH alias or user@host (must be reachable via `ssh <value>`)
+#   mode       - "local" (single-user, no multi-user runners) or "multi-user"
+#   user       - SSH user that owns the deployment (runs sudo for installs)
+#   frontend   - Whether to deploy frontend assets (requires web_root)
+#   web_root   - Absolute path where frontend dist is served from
+#   binaries   - List of binaries to deploy (installed to /usr/local/bin)
+#   services   - Systemd user services to restart after deploy
+#   local      - If true, this is the local machine (no SSH, no binary upload)
+
+[[host]]
+name = "archvm"
+ssh = "localhost"
+local = true
+mode = "local"
+user = "wismut"
+frontend = true
+web_root = "/var/www/oqto"
+binaries = ["oqto", "oqto-runner", "oqto-files"]
+services = ["oqto", "oqto-runner"]
+
+[[host]]
+name = "octo-azure"
+ssh = "octo-azure"
+mode = "multi-user"
+user = "tommy"
+frontend = true
+web_root = "/var/www/oqto"
+binaries = ["oqto", "oqto-runner", "oqto-files", "oqto-sandbox", "oqto-usermgr"]
+services = ["oqto"]
+# After deploying binaries in multi-user mode, per-user runners are restarted
+# by the script automatically (they pick up the new binary on next spawn).
