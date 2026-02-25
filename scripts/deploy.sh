@@ -164,8 +164,9 @@ if ! $SKIP_BUILD; then
 
     if ! $SKIP_BACKEND; then
         log "Building backend binaries (remote-build)..."
-        run bash -c "cd '$ROOT_DIR/backend' && remote-build build --release -p oqto --bin oqto --bin oqto-runner --bin oqto-sandbox --bin oqto-usermgr"
+        run bash -c "cd '$ROOT_DIR/backend' && remote-build build --release -p oqto --bin oqto --bin oqto-runner --bin oqto-sandbox"
         run bash -c "cd '$ROOT_DIR/backend' && remote-build build --release -p oqto-files --bin oqto-files"
+        run bash -c "cd '$ROOT_DIR/backend' && remote-build build --release -p oqto-usermgr --bin oqto-usermgr"
     fi
 
     if ! $SKIP_FRONTEND; then

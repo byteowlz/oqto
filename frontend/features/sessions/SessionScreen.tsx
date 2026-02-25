@@ -48,6 +48,7 @@ import {
 	useCallback,
 	useEffect,
 	useMemo,
+	useRef,
 	useState,
 } from "react";
 import { useTranslation } from "react-i18next";
@@ -544,6 +545,25 @@ export const SessionScreen = memo(function SessionScreen() {
 		};
 	}, []);
 
+	// Auto-create a chat session when the user has no sessions at all.
+	// This ensures new users get an immediate chat experience without
+	// having to find and click the "+" button.
+	const autoCreatedRef = useRef(false);
+	useEffect(() => {
+		if (autoCreatedRef.current) return;
+		if (!featuresLoaded) return;
+		if (chatHistory.length > 0 || selectedChatSessionId) return;
+		if (!normalizedWorkspacePath) return;
+		autoCreatedRef.current = true;
+		void createNewChat(normalizedWorkspacePath);
+	}, [
+		chatHistory.length,
+		createNewChat,
+		featuresLoaded,
+		normalizedWorkspacePath,
+		selectedChatSessionId,
+	]);
+
 	// biome-ignore lint/correctness/useExhaustiveDependencies: setActiveView is stable setState
 	useEffect(() => {
 		if (!isMobileLayout) return;
@@ -602,9 +622,7 @@ export const SessionScreen = memo(function SessionScreen() {
 			onPendingChatInputConsumed={() => setPendingChatInput(null)}
 		/>
 	) : (
-		<EmptyWorkspacePanel
-			label={t("chat.loadingChat")}
-		/>
+		<EmptyWorkspacePanel label={t("chat.loadingChat")} />
 	);
 
 	const overviewPanel = normalizedOverviewPath ? (
@@ -676,9 +694,7 @@ export const SessionScreen = memo(function SessionScreen() {
 							/>
 						</Suspense>
 					) : (
-						<EmptyWorkspacePanel
-							label={t('workspace.noWorkspaceForPlanner')}
-						/>
+						<EmptyWorkspacePanel label={t("workspace.noWorkspaceForPlanner")} />
 					)}
 				</div>
 			)}
@@ -760,7 +776,7 @@ export const SessionScreen = memo(function SessionScreen() {
 								onSelect={setActiveView}
 								view="chat"
 								icon={MessageSquare}
-								label={t('chat.title')}
+								label={t("chat.title")}
 							/>
 							{normalizedOverviewPath && (
 								<TabButton
@@ -776,7 +792,9 @@ export const SessionScreen = memo(function SessionScreen() {
 								onSelect={setActiveView}
 								view="tasks"
 								icon={ListTodo}
-								label={t("workspace.noTasks").replace("Keine ", "").replace("No ", "")}
+								label={t("workspace.noTasks")
+									.replace("Keine ", "")
+									.replace("No ", "")}
 								badge={openTodoCount}
 							/>
 							<TabButton
@@ -839,7 +857,12 @@ export const SessionScreen = memo(function SessionScreen() {
 							activeView === "chat" && "pb-0",
 						)}
 					>
-						<div className={cn("h-full flex flex-col", activeView !== "chat" && "hidden")}>
+						<div
+							className={cn(
+								"h-full flex flex-col",
+								activeView !== "chat" && "hidden",
+							)}
+						>
 							{chatPanel}
 						</div>
 						{activeView === "overview" && overviewPanel}
@@ -870,9 +893,7 @@ export const SessionScreen = memo(function SessionScreen() {
 								</Suspense>
 							) : (
 								<EmptyWorkspacePanel
-									label={
-										t("workspace.noWorkspaceForFiles")
-									}
+									label={t("workspace.noWorkspaceForFiles")}
 								/>
 							)}
 						</div>
@@ -881,10 +902,10 @@ export const SessionScreen = memo(function SessionScreen() {
 							<div className="flex-1 min-h-0">
 								<Suspense fallback={viewLoadingFallback}>
 									<CanvasView
-											workspacePath={normalizedWorkspacePath}
-											initialImagePath={canvasImagePath}
-											onSaveAndAddToChat={handleCanvasSaveAndAddToChat}
-										/>
+										workspacePath={normalizedWorkspacePath}
+										initialImagePath={canvasImagePath}
+										onSaveAndAddToChat={handleCanvasSaveAndAddToChat}
+									/>
 								</Suspense>
 							</div>
 						)}
@@ -904,9 +925,7 @@ export const SessionScreen = memo(function SessionScreen() {
 									</Suspense>
 								) : (
 									<EmptyWorkspacePanel
-										label={
-											t("workspace.noWorkspaceForTerminal")
-										}
+										label={t("workspace.noWorkspaceForTerminal")}
 									/>
 								)}
 							</div>
@@ -1234,9 +1253,7 @@ export const SessionScreen = memo(function SessionScreen() {
 												</Suspense>
 											) : (
 												<EmptyWorkspacePanel
-													label={
-														t("workspace.noWorkspaceForFiles")
-													}
+													label={t("workspace.noWorkspaceForFiles")}
 												/>
 											)}
 										</div>
@@ -1271,10 +1288,10 @@ export const SessionScreen = memo(function SessionScreen() {
 											<div className="flex-1 min-h-0">
 												<Suspense fallback={viewLoadingFallback}>
 													<CanvasView
-											workspacePath={normalizedWorkspacePath}
-											initialImagePath={canvasImagePath}
-											onSaveAndAddToChat={handleCanvasSaveAndAddToChat}
-										/>
+														workspacePath={normalizedWorkspacePath}
+														initialImagePath={canvasImagePath}
+														onSaveAndAddToChat={handleCanvasSaveAndAddToChat}
+													/>
 												</Suspense>
 											</div>
 										</div>
@@ -1297,9 +1314,7 @@ export const SessionScreen = memo(function SessionScreen() {
 												</Suspense>
 											) : (
 												<EmptyWorkspacePanel
-													label={
-														t("workspace.noWorkspaceForTerminal")
-													}
+													label={t("workspace.noWorkspaceForTerminal")}
 												/>
 											)}
 										</div>

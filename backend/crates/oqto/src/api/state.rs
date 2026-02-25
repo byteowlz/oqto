@@ -325,6 +325,15 @@ pub struct AppState {
     pub eavs_client: Option<Arc<crate::eavs::EavsClient>>,
     /// Paths to eavs config files (for admin provider management).
     pub eavs_config: Option<EavsConfigPaths>,
+    /// Default Pi provider from config (e.g., "anthropic"). Used as fallback when
+    /// eavs is not configured and settings.json needs to be written for new users.
+    pub pi_default_provider: Option<String>,
+    /// Default Pi model from config (e.g., "claude-sonnet-4-20250514"). Used as fallback
+    /// when eavs is not configured.
+    pub pi_default_model: Option<String>,
+    /// Path to a reference models.json to copy to new users when eavs is not configured.
+    /// Typically the admin user's ~/.pi/agent/models.json.
+    pub pi_models_template_path: Option<std::path::PathBuf>,
 }
 
 /// Paths to eavs configuration files for admin provider management.
@@ -379,6 +388,9 @@ impl AppState {
             feedback: crate::feedback::FeedbackConfig::default(),
             eavs_client: None,
             eavs_config: None,
+            pi_default_provider: None,
+            pi_default_model: None,
+            pi_models_template_path: None,
         }
     }
 
@@ -463,6 +475,19 @@ impl AppState {
     /// Set the EAVS client for LLM proxy integration.
     pub fn with_eavs_client(mut self, client: crate::eavs::EavsClient) -> Self {
         self.eavs_client = Some(Arc::new(client));
+        self
+    }
+
+    /// Set default Pi provider/model from config (used when eavs is not configured).
+    pub fn with_pi_defaults(
+        mut self,
+        provider: Option<String>,
+        model: Option<String>,
+        models_template: Option<std::path::PathBuf>,
+    ) -> Self {
+        self.pi_default_provider = provider;
+        self.pi_default_model = model;
+        self.pi_models_template_path = models_template;
         self
     }
 }

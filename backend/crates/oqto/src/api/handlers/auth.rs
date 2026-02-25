@@ -382,7 +382,10 @@ pub async fn register(
         warn!(user_id = %user.id, error = %e, "Failed to allocate user mmry port");
     }
 
-    // Provision EAVS virtual key and write Pi models.json if eavs client is available
+    // Provision EAVS virtual key and write Pi models.json + settings.json.
+    // Track whether settings.json was written so we can fall back to config defaults.
+    let mut pi_settings_written = false;
+
     if let (Some(eavs_client), Some(linux_users)) = (&state.eavs_client, &state.linux_users) {
         let linux_username = resolved_linux_username
             .as_deref()
@@ -441,6 +444,7 @@ pub async fn register(
                                                 "Failed to write Pi settings.json (non-fatal)"
                                             );
                                         } else {
+                                            pi_settings_written = true;
                                             info!(
                                                 user_id = %user.id,
                                                 provider = %provider_name,
@@ -461,6 +465,89 @@ pub async fn register(
                     error = ?e,
                     "Failed to provision EAVS (non-fatal)"
                 );
+            }
+        }
+    }
+
+    // Fallback: if eavs was not configured (or failed), still write Pi config files
+    // so the new user has a working model selection and can start chatting.
+    if !pi_settings_written {
+        if let Some(ref linux_users) = state.linux_users {
+            let linux_username = resolved_linux_username
+                .as_deref()
+                .or(user.linux_username.as_deref())
+                .unwrap_or(&user.id);
+
+            // Write settings.json from oqto config defaults
+            if let (Some(provider), Some(model)) =
+                (&state.pi_default_provider, &state.pi_default_model)
+            {
+                let settings = serde_json::json!({
+                    "defaultProvider": provider,
+                    "defaultModel": model,
+                });
+                let settings_str =
+                    serde_json::to_string_pretty(&settings).unwrap_or_default();
+                if let Err(e) = crate::local::linux_users::usermgr_request(
+                    "write-file",
+                    serde_json::json!({
+                        "username": linux_username,
+                        "path": ".pi/agent/settings.json",
+                        "content": settings_str,
+                        "group": "oqto",
+                    }),
+                ) {
+                    warn!(
+                        user_id = %user.id,
+                        error = ?e,
+                        "Failed to write fallback Pi settings.json (non-fatal)"
+                    );
+                } else {
+                    info!(
+                        user_id = %user.id,
+                        provider = %provider,
+                        model = %model,
+                        "Wrote Pi settings.json from config defaults (no eavs)"
+                    );
+                }
+            }
+
+            // Copy models.json from admin user template if available
+            if let Some(ref template_path) = state.pi_models_template_path {
+                if template_path.exists() {
+                    match std::fs::read_to_string(template_path) {
+                        Ok(content) => {
+                            if let Err(e) = crate::local::linux_users::usermgr_request(
+                                "write-file",
+                                serde_json::json!({
+                                    "username": linux_username,
+                                    "path": ".pi/agent/models.json",
+                                    "content": content,
+                                    "group": "oqto",
+                                }),
+                            ) {
+                                warn!(
+                                    user_id = %user.id,
+                                    error = ?e,
+                                    "Failed to copy models.json template (non-fatal)"
+                                );
+                            } else {
+                                info!(
+                                    user_id = %user.id,
+                                    template = %template_path.display(),
+                                    "Copied models.json template to new user"
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            warn!(
+                                user_id = %user.id,
+                                error = ?e,
+                                "Failed to read models.json template (non-fatal)"
+                            );
+                        }
+                    }
+                }
             }
         }
     }

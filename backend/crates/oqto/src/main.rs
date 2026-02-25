@@ -2342,6 +2342,33 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         }
     }
 
+    // Pi default provider/model from config. Used during registration to write
+    // settings.json (and optionally models.json) for new users when eavs is not configured.
+    {
+        let models_template = if !single_user {
+            // In multi-user mode, use the admin user's models.json as a template for new users.
+            let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+            let template_path = std::path::PathBuf::from(&home).join(".pi/agent/models.json");
+            if template_path.exists() {
+                info!(
+                    "Using {} as models.json template for new users",
+                    template_path.display()
+                );
+                Some(template_path)
+            } else {
+                debug!("No models.json template found at {}", template_path.display());
+                None
+            }
+        } else {
+            None
+        };
+        state = state.with_pi_defaults(
+            ctx.config.pi.default_provider.clone(),
+            ctx.config.pi.default_model.clone(),
+            models_template,
+        );
+    }
+
     // models.json is managed manually:
     //   - Initial generation: setup script (scripts/setup/)
     //   - Updates: admin panel "Sync Models to All Users" or `just admin-eavs --sync-models`
