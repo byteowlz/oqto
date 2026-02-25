@@ -9,10 +9,16 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@/components/ui/select";
+import { Slider } from "@/components/ui/slider";
 import { useModelSelection } from "@/hooks/use-model-selection";
 import { type ChatVerbosity, useChatVerbosity } from "@/lib/chat-verbosity";
 import { fuzzyMatch } from "@/lib/slash-commands";
 import { cn } from "@/lib/utils";
+import {
+	type TTSSettings,
+	loadTTSSettings,
+	saveTTSSettings,
+} from "@/features/voice/hooks/useTTS";
 import { Loader2 } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -33,6 +39,27 @@ export function PiSettingsView({
 	const { t } = useTranslation();
 	const { verbosity, setVerbosity } = useChatVerbosity();
 	const [modelQuery, setModelQuery] = useState("");
+	const [ttsSettings, setTtsSettings] = useState<TTSSettings>(loadTTSSettings);
+
+	const handleTtsVoiceChange = useCallback(
+		(e: React.ChangeEvent<HTMLInputElement>) => {
+			const voice = e.target.value;
+			const updated = { ...ttsSettings, voice };
+			setTtsSettings(updated);
+			saveTTSSettings(updated);
+		},
+		[ttsSettings],
+	);
+
+	const handleTtsSpeedChange = useCallback(
+		(value: number[]) => {
+			const speed = Math.max(0.5, Math.min(2.0, value[0]));
+			const updated = { ...ttsSettings, speed };
+			setTtsSettings(updated);
+			saveTTSSettings(updated);
+		},
+		[ttsSettings],
+	);
 
 	const {
 		availableModels,
@@ -187,6 +214,47 @@ export function PiSettingsView({
 					</Select>
 					<p className="text-[10px] text-muted-foreground">
 						{verbosityDescription}
+					</p>
+				</div>
+
+				{/* Read Aloud (TTS) settings */}
+				<div className="space-y-3">
+					<Label className="text-xs font-medium text-muted-foreground">
+						{t('pi.readAloud', 'Read Aloud')}
+					</Label>
+
+					<div className="space-y-1.5">
+						<Label className="text-[11px] text-muted-foreground">
+							{t('pi.ttsVoice', 'Voice')}
+						</Label>
+						<Input
+							value={ttsSettings.voice}
+							onChange={handleTtsVoiceChange}
+							placeholder="af_heart"
+							className="h-8 text-xs"
+						/>
+					</div>
+
+					<div className="space-y-1.5">
+						<div className="flex items-center justify-between">
+							<Label className="text-[11px] text-muted-foreground">
+								{t('pi.ttsSpeed', 'Speed')}
+							</Label>
+							<span className="text-[11px] text-muted-foreground tabular-nums">
+								{ttsSettings.speed.toFixed(1)}x
+							</span>
+						</div>
+						<Slider
+							value={[ttsSettings.speed]}
+							onValueChange={handleTtsSpeedChange}
+							min={0.5}
+							max={2.0}
+							step={0.1}
+						/>
+					</div>
+
+					<p className="text-[10px] text-muted-foreground">
+						{t('pi.ttsDescription', 'Voice and speed for the Read Aloud button on messages.')}
 					</p>
 				</div>
 			</div>

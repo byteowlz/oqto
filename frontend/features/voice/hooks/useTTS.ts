@@ -13,20 +13,20 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 export type TTSState = "idle" | "connecting" | "speaking" | "error";
 
-const TTS_SETTINGS_KEY = "oqto-tts-read-aloud-settings";
+export const TTS_SETTINGS_KEY = "oqto-tts-read-aloud-settings";
 
 export interface TTSSettings {
 	voice: string;
 	speed: number;
 }
 
-const DEFAULT_TTS_SETTINGS: TTSSettings = {
+export const DEFAULT_TTS_SETTINGS: TTSSettings = {
 	voice: "af_heart",
 	speed: 1.3,
 };
 
 /** Load TTS settings from localStorage */
-function loadTTSSettings(): TTSSettings {
+export function loadTTSSettings(): TTSSettings {
 	if (typeof window === "undefined") return DEFAULT_TTS_SETTINGS;
 	try {
 		const stored = localStorage.getItem(TTS_SETTINGS_KEY);
@@ -40,7 +40,7 @@ function loadTTSSettings(): TTSSettings {
 }
 
 /** Save TTS settings to localStorage */
-function saveTTSSettings(settings: TTSSettings) {
+export function saveTTSSettings(settings: TTSSettings) {
 	if (typeof window === "undefined") return;
 	try {
 		localStorage.setItem(TTS_SETTINGS_KEY, JSON.stringify(settings));

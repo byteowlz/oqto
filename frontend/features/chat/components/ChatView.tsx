@@ -3022,7 +3022,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 		>
 			<div
 				className={cn(
-					"compact-header flex items-center gap-1 sm:gap-2 px-2 sm:px-3 py-1.5 sm:py-2 border-b",
+					"compact-header flex items-center gap-1 sm:gap-2 px-2 sm:px-3 py-1.5 sm:py-2 border-b overflow-hidden",
 					isUser ? "border-primary/30 dark:border-primary/20" : "border-border",
 				)}
 			>
@@ -3032,21 +3032,16 @@ const MessageGroupCard = memo(function MessageGroupCard({
 					<Bot className="w-3 h-3 sm:w-4 sm:h-4 text-primary flex-shrink-0" />
 				)}
 				{isUser ? (
-					<span className="text-sm font-medium text-foreground">You</span>
+					<span className="text-sm font-medium text-foreground truncate min-w-0">You</span>
 				) : (
-					<span className="text-sm font-medium text-foreground">
+					<span className="text-sm font-medium text-foreground truncate min-w-0">
 						{assistantDisplayName}
-						{tempIdLabel && (
-							<span className="text-[9px] text-muted-foreground/70 ml-1">
-								[{tempIdLabel}]
-							</span>
-						)}
 					</span>
 				)}
 				{group.messages.length > 1 && (
 					<span
 						className={cn(
-							"text-[9px] sm:text-[10px] px-1 border leading-none",
+							"text-[9px] sm:text-[10px] px-1 border leading-none flex-shrink-0",
 							isUser
 								? "border-primary/30 text-primary"
 								: "border-border text-muted-foreground",
@@ -3057,10 +3052,13 @@ const MessageGroupCard = memo(function MessageGroupCard({
 				)}
 				<div className="flex-1" />
 				{!isUser && allTextContent && (
-					<ReadAloudButton text={allTextContent} className="ml-1" />
+					<>
+						<ReadAloudButton text={allTextContent} className="ml-1 hidden sm:inline-flex flex-shrink-0" />
+						<ReadAloudButton text={allTextContent} className="ml-1 sm:hidden flex-shrink-0" compact />
+					</>
 				)}
 				{createdAt && !Number.isNaN(createdAt.getTime()) && (
-					<span className="text-[9px] sm:text-[10px] text-foreground/50 dark:text-muted-foreground leading-none sm:leading-normal ml-2">
+					<span className="text-[9px] sm:text-[10px] text-foreground/50 dark:text-muted-foreground leading-none sm:leading-normal ml-2 flex-shrink-0">
 						{createdAt.toLocaleTimeString([], {
 							hour: "2-digit",
 							minute: "2-digit",
@@ -3078,7 +3076,13 @@ const MessageGroupCard = memo(function MessageGroupCard({
 				)}
 			</div>
 
-			<div className="px-2 sm:px-4 py-2 sm:py-3 group space-y-2 overflow-hidden">
+			<div className={cn(
+				"relative px-2 sm:px-4 py-2 sm:py-3 group space-y-2 overflow-hidden",
+				!isUser && verbosity === 1 && "pr-12 sm:pr-16",
+			)}>
+				{!isUser && verbosity === 1 && (
+					<div className="absolute top-2 bottom-2 right-[2.25rem] sm:right-[2.75rem] w-px bg-border/40" />
+				)}
 				{renderSegments.length === 0 && !isUser && showWorkingIndicator && (
 					<div className="flex items-center gap-3 text-muted-foreground text-sm">
 						<BrailleSpinner />
@@ -3112,9 +3116,9 @@ const MessageGroupCard = memo(function MessageGroupCard({
 							return content;
 						}
 						return (
-							<div key={key} className="flex items-center gap-1">
-								<div className="flex-1 min-w-0">{content}</div>
-								<div className="shrink-0 self-center">
+							<div key={key} className="relative">
+								{content}
+								<div className="absolute right-[-2.625rem] sm:right-[-3.375rem] top-0 bottom-0 flex items-center">
 									<ToolGutterIcon
 										toolGroup={attachedToolGroup}
 										locale={locale}

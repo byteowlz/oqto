@@ -84,10 +84,9 @@ const CodeBlockWithTheme = memo(function CodeBlockWithTheme({
 	if (isInline) {
 		return (
 			<code
-				className="px-1.5 py-0.5 rounded text-sm font-mono"
+				className="px-1 py-0.5 rounded text-[0.85em] font-mono text-foreground/90 whitespace-nowrap break-keep"
 				style={{
-					backgroundColor: "var(--code-bg)",
-					color: "var(--code-success)",
+					backgroundColor: "var(--code-inline-bg)",
 				}}
 			>
 				{children}
@@ -97,11 +96,11 @@ const CodeBlockWithTheme = memo(function CodeBlockWithTheme({
 
 	return (
 		<div
-			className="relative group my-3 overflow-hidden"
+			className="relative group my-3 overflow-hidden rounded-sm"
 			style={{ borderColor: "var(--code-border)", borderWidth: "1px" }}
 		>
 			<div
-				className="flex items-center justify-between px-3 py-2"
+				className="flex items-center justify-between px-3 py-1.5"
 				style={{
 					backgroundColor: "var(--code-bg)",
 					borderBottomColor: "var(--code-border)",
@@ -171,7 +170,7 @@ const markdownComponents: Components = {
 		);
 	},
 	p({ children }) {
-		return <p className="mb-3 last:mb-0 leading-relaxed">{children}</p>;
+		return <p className="mb-3 last:mb-0 leading-relaxed text-justify">{children}</p>;
 	},
 	h1({ children }) {
 		return (
@@ -212,7 +211,7 @@ const markdownComponents: Components = {
 		return (
 			<li className="flex items-start gap-2 text-foreground leading-relaxed">
 				<span className="text-foreground/70 shrink-0">{marker}</span>
-				<span className="[&>p]:m-0 [&>p]:inline">{children}</span>
+				<span className="[&>p]:m-0 [&>p]:inline text-justify">{children}</span>
 			</li>
 		);
 	},
