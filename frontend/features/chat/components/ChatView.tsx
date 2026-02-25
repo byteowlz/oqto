@@ -3090,89 +3090,90 @@ const MessageGroupCard = memo(function MessageGroupCard({
 						);
 					}
 					if (segment.type === "tool_group") {
-						const toolItems =
-							verbosity === 1
-								? (() => {
-										const collapsed: Array<{
-											toolName: string;
-											count: number;
-											input?: Record<string, unknown>;
-										}> = [];
-										for (const toolSegment of segment.segments) {
-											const toolName =
-												toolSegment.type === "tool_call"
-													? toolSegment.part.name
-													: toolSegment.part.name || "result";
-											const input =
-												toolSegment.type === "tool_call"
-													? (toolSegment.part.input as
-															| Record<string, unknown>
-															| undefined)
-													: undefined;
-											const last = collapsed[collapsed.length - 1];
-											if (last && last.toolName === toolName) {
-												last.count += 1;
-												continue;
-											}
-											collapsed.push({ toolName, count: 1, input });
-										}
-										return collapsed.map((entry, index) => {
-											const icon = getToolIcon(entry.toolName, entry.input);
-											const summary = getToolSummary(entry.toolName, entry.input, locale);
-											const baseLabel = summary ?? entry.toolName;
-											return {
-												id: `${entry.toolName}-${index}`,
-												label:
-													entry.count > 1
-														? `${baseLabel} (${entry.count})`
-														: baseLabel,
-												icon: (
-													<span className="relative inline-flex">
-														{icon}
-														{entry.count > 1 && (
-															<span className="absolute -top-0.5 -right-0.5 w-3 h-3 bg-pink-500 text-white text-[8px] rounded-[2px] flex items-center justify-center border border-background">
-																{entry.count}
-															</span>
-														)}
+						// Minimal mode: inline tool icons instead of a bordered bar
+						if (verbosity === 1) {
+							const collapsed: Array<{
+								toolName: string;
+								count: number;
+								input?: Record<string, unknown>;
+							}> = [];
+							for (const toolSegment of segment.segments) {
+								const toolName =
+									toolSegment.type === "tool_call"
+										? toolSegment.part.name
+										: toolSegment.part.name || "result";
+								const input =
+									toolSegment.type === "tool_call"
+										? (toolSegment.part.input as
+												| Record<string, unknown>
+												| undefined)
+										: undefined;
+								const last = collapsed[collapsed.length - 1];
+								if (last && last.toolName === toolName) {
+									last.count += 1;
+									continue;
+								}
+								collapsed.push({ toolName, count: 1, input });
+							}
+							return (
+								<div
+									key={segment.key}
+									className="-mt-1.5 flex items-center gap-0.5 flex-wrap"
+								>
+									{collapsed.map((entry, index) => {
+										const icon = getToolIcon(entry.toolName, entry.input);
+										const summary = getToolSummary(entry.toolName, entry.input, locale);
+										const label = summary ?? entry.toolName;
+										return (
+											<span
+												key={`${entry.toolName}-${index}`}
+												title={entry.count > 1 ? `${label} (${entry.count})` : label}
+												className="inline-flex items-center gap-0.5 px-1 py-0.5 rounded-sm text-muted-foreground/80 hover:text-muted-foreground transition-colors"
+											>
+												{icon}
+												{entry.count > 1 && (
+													<span className="text-[10px] tabular-nums opacity-70">
+														{entry.count}
 													</span>
-												),
-												render: () => null,
-											};
-										});
-									})()
-								: segment.segments.map((toolSegment) => {
-										const toolName =
+												)}
+											</span>
+										);
+									})}
+								</div>
+							);
+						}
+						const toolItems = segment.segments.map((toolSegment) => {
+							const toolName =
+								toolSegment.type === "tool_call"
+									? toolSegment.part.name
+									: toolSegment.part.name || "result";
+							const input =
+								toolSegment.type === "tool_call"
+									? (toolSegment.part.input as
+											| Record<string, unknown>
+											| undefined)
+									: undefined;
+							const summary = getToolSummary(toolName, input, locale);
+							return {
+								id: toolSegment.key,
+								label: summary ?? toolName,
+								icon: getToolIcon(toolName, input),
+								render: () => (
+									<PiPartRenderer
+										part={toolSegment.part}
+										toolResult={
 											toolSegment.type === "tool_call"
-												? toolSegment.part.name
-												: toolSegment.part.name || "result";
-										const input =
-											toolSegment.type === "tool_call"
-												? (toolSegment.part.input as
-														| Record<string, unknown>
-														| undefined)
-												: undefined;
-										const summary = getToolSummary(toolName, input, locale);
-										return {
-											id: toolSegment.key,
-											label: summary ?? toolName,
-											icon: getToolIcon(toolName, input),
-											render: () =>
-												verbosity === 1 ? null : (
-													<PiPartRenderer
-														part={toolSegment.part}
-														toolResult={
-															toolSegment.type === "tool_call"
-																? toolSegment.toolResult
-																: undefined
-														}
-														locale={locale}
-														workspacePath={workspacePath}
-														collapsible={false}
-														hideHeader={verbosity === 2}
-													/>
-												),
-										};
-									});
+												? toolSegment.toolResult
+												: undefined
+										}
+										locale={locale}
+										workspacePath={workspacePath}
+										collapsible={false}
+										hideHeader={verbosity === 2}
+									/>
+								),
+							};
+						});
 						return (
 							<div
 								key={segment.key}
@@ -3180,9 +3181,8 @@ const MessageGroupCard = memo(function MessageGroupCard({
 							>
 								<ToolCallGroup
 									key={`${segment.key}-verbosity-${verbosity}`}
-									mode={verbosity === 1 ? "bar" : "tabs"}
+									mode="tabs"
 									items={toolItems}
-									disableInteraction={verbosity === 1}
 								/>
 							</div>
 						);

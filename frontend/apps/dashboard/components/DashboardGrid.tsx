@@ -9,7 +9,7 @@ import type {
 	DashboardRegistryCard,
 } from "../types";
 
-const GRID_ROW_HEIGHT_REM = 14;
+const GRID_ROW_HEIGHT_REM = 13;
 
 const CARD_SPAN_OPTIONS: { value: DashboardCardSpan; label: string }[] = [
 	{ value: 3, label: "1x" },
