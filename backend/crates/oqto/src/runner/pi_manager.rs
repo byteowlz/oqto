@@ -34,7 +34,7 @@ use crate::pi::{
 };
 use crate::runner::pi_translator::PiTranslator;
 use crate::runner::protocol::{PiSessionInfo, PiSessionState};
-use oqto_protocol::events::{Event as CanonicalEvent, EventPayload};
+use oqto_protocol::events::{AgentPhase, Event as CanonicalEvent, EventPayload};
 
 // ============================================================================
 // Configuration
@@ -2400,10 +2400,14 @@ impl PiSessionManager {
         let now = Instant::now();
         let mut to_close = Vec::new();
 
-        // How long a session can stay in a non-idle state (Streaming,
-        // Aborting, Compacting, Starting) without any stdout activity
-        // before the watchdog forces it back to Idle.
-        let stuck_timeout = Duration::from_secs(60);
+        // How long a session can stay in a non-idle state without any
+        // stdout activity before the watchdog forces it back to Idle.
+        //
+        // Streaming/Starting get a longer timeout because LLM responses
+        // can take minutes (cold starts, long reasoning, rate limit
+        // queues). Aborting/Compacting/Stopping should complete quickly.
+        let stuck_timeout_streaming = Duration::from_secs(300); // 5 min for LLM waits
+        let stuck_timeout_transient = Duration::from_secs(60);  // 1 min for abort/compact/stop
 
         let snapshots: Vec<(
             String,
@@ -2435,18 +2439,38 @@ impl PiSessionManager {
             let timed_out = now.duration_since(last_activity) > idle_timeout;
 
             // Watchdog: force-reset stuck non-idle sessions.
-            // If a session has been in a non-idle state for longer than
-            // stuck_timeout without any Pi stdout activity, it's stuck.
-            // Force it to Idle and broadcast agent.idle so the frontend
-            // clears the busy spinner.
-            if !is_idle && now.duration_since(last_activity) > stuck_timeout {
+            // Use a longer timeout for states where the LLM may legitimately
+            // be slow (Streaming, Starting) vs transient states that should
+            // resolve quickly (Aborting, Compacting, Stopping).
+            let timeout_for_state = match current_state {
+                PiSessionState::Streaming | PiSessionState::Starting => stuck_timeout_streaming,
+                _ => stuck_timeout_transient,
+            };
+            let elapsed = now.duration_since(last_activity);
+            if !is_idle && elapsed > timeout_for_state {
                 warn!(
-                    "Session '{}' stuck in {:?} for {:?} with no activity -- forcing to Idle",
+                    "Session '{}' stuck in {:?} for {:?} with no activity -- forcing to Idle + error",
                     id,
                     current_state,
-                    now.duration_since(last_activity)
+                    elapsed,
                 );
                 *state.write().await = PiSessionState::Idle;
+                // Emit an error so the frontend shows what happened, not just
+                // a silent transition to idle.
+                let error_event = CanonicalEvent {
+                    session_id: id.clone(),
+                    runner_id: self.config.runner_id.clone(),
+                    ts: chrono::Utc::now().timestamp_millis(),
+                    payload: EventPayload::AgentError {
+                        error: format!(
+                            "No response from LLM for {}s -- request may have timed out",
+                            elapsed.as_secs()
+                        ),
+                        recoverable: true,
+                        phase: Some(AgentPhase::Generating),
+                    },
+                };
+                let _ = session_event_tx.send(error_event);
                 let idle_event = CanonicalEvent {
                     session_id: id.clone(),
                     runner_id: self.config.runner_id.clone(),
