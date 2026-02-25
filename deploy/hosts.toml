@@ -22,7 +22,7 @@ mode = "local"
 user = "wismut"
 frontend = true
 web_root = "/var/www/oqto"
-binaries = ["oqto", "oqto-runner", "oqto-files"]
+binaries = ["oqto", "oqto-runner", "oqto-files", "oqto-sandbox", "oqto-usermgr"]
 services = ["oqto", "oqto-runner"]
 
 [[host]]
@@ -36,3 +36,12 @@ binaries = ["oqto", "oqto-runner", "oqto-files", "oqto-sandbox", "oqto-usermgr"]
 services = ["oqto"]
 # After deploying binaries in multi-user mode, per-user runners are restarted
 # by the script automatically (they pick up the new binary on next spawn).
+[[host]]
+name = "zbook"
+ssh = "zbook"
+mode = "multi-user"
+user = "tommy"
+frontend = true
+web_root = "/var/www/oqto"
+binaries = ["oqto", "oqto-runner", "oqto-files", "oqto-sandbox", "oqto-usermgr"]
+services = ["oqto", "oqto-runner"]
