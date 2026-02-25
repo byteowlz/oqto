@@ -3052,10 +3052,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 				)}
 				<div className="flex-1" />
 				{!isUser && allTextContent && (
-					<>
-						<ReadAloudButton text={allTextContent} className="ml-1 hidden sm:inline-flex flex-shrink-0" />
-						<ReadAloudButton text={allTextContent} className="ml-1 sm:hidden flex-shrink-0" compact />
-					</>
+					<ReadAloudButton text={allTextContent} className="ml-1 flex-shrink-0" />
 				)}
 				{createdAt && !Number.isNaN(createdAt.getTime()) && (
 					<span className="text-[9px] sm:text-[10px] text-foreground/50 dark:text-muted-foreground leading-none sm:leading-normal ml-2 flex-shrink-0">

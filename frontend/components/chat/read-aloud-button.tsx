@@ -2,6 +2,7 @@
  * Read Aloud Button component for TTS playback of text content.
  * Supports paragraph navigation (prev/next).
  * Voice settings (voice, speed) are configured in the Chat Settings sidebar.
+ * Responsive: compact (icon-only) on mobile, full controls on desktop.
  */
 
 import { useTTSWithParagraphs } from "@/hooks/use-tts";
@@ -20,13 +21,17 @@ interface ReadAloudButtonProps {
 	text: string;
 	/** Additional CSS classes */
 	className?: string;
-	/** Compact mode (icon only, no navigation) */
+	/** Force compact mode (icon only, no navigation) */
 	compact?: boolean;
 }
 
 /**
  * Button to read text aloud using TTS with paragraph navigation.
  * Voice/speed settings are managed in the Chat Settings sidebar.
+ *
+ * By default renders responsively: icon-only on mobile (< sm),
+ * full controls with navigation on desktop (>= sm).
+ * Pass compact={true} to force icon-only mode at all sizes.
  */
 export function ReadAloudButton({
 	text,
@@ -60,6 +65,14 @@ export function ReadAloudButton({
 	const isDisabled = !text.trim() || isConnecting;
 	const showNavigation = totalParagraphs > 1;
 
+	const icon = isConnecting ? (
+		<Loader2 className="w-3.5 h-3.5 animate-spin" />
+	) : isActive ? (
+		<Square className="w-3.5 h-3.5 fill-current" />
+	) : (
+		<Volume2 className="w-3.5 h-3.5" />
+	);
+
 	if (compact) {
 		return (
 			<button
@@ -72,47 +85,46 @@ export function ReadAloudButton({
 				)}
 				title={isActive ? "Stop reading" : "Read aloud"}
 			>
-				{isConnecting ? (
-					<Loader2 className="w-3.5 h-3.5 animate-spin" />
-				) : isActive ? (
-					<Square className="w-3.5 h-3.5 fill-current" />
-				) : (
-					<Volume2 className="w-3.5 h-3.5" />
-				)}
+				{icon}
 			</button>
 		);
 	}
 
+	// Responsive: compact on mobile, full on desktop
 	return (
 		<div className={cn("inline-flex items-center gap-0.5", className)}>
-			{/* Previous paragraph button */}
+			{/* Mobile: icon-only button */}
+			<button
+				type="button"
+				onClick={handleClick}
+				disabled={isDisabled}
+				className="sm:hidden inline-flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50 disabled:cursor-not-allowed p-1"
+				title={isActive ? "Stop reading" : "Read aloud"}
+			>
+				{icon}
+			</button>
+
+			{/* Desktop: full controls */}
 			{showNavigation && (
 				<button
 					type="button"
 					onClick={previousParagraph}
 					disabled={!hasPrevious || isConnecting}
-					className="inline-flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors disabled:opacity-30 disabled:cursor-not-allowed p-1"
+					className="hidden sm:inline-flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors disabled:opacity-30 disabled:cursor-not-allowed p-1"
 					title="Previous paragraph"
 				>
 					<ChevronLeft className="w-3.5 h-3.5" />
 				</button>
 			)}
 
-			{/* Main play/stop button */}
 			<button
 				type="button"
 				onClick={handleClick}
 				disabled={isDisabled}
-				className="inline-flex items-center justify-center gap-1.5 text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50 disabled:cursor-not-allowed px-2 py-1 text-xs"
+				className="hidden sm:inline-flex items-center justify-center gap-1.5 text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50 disabled:cursor-not-allowed px-2 py-1 text-xs"
 				title={isActive ? "Stop reading" : "Read aloud"}
 			>
-				{isConnecting ? (
-					<Loader2 className="w-3.5 h-3.5 animate-spin" />
-				) : isActive ? (
-					<Square className="w-3.5 h-3.5 fill-current" />
-				) : (
-					<Volume2 className="w-3.5 h-3.5" />
-				)}
+				{icon}
 				<span>
 					{isActive
 						? showNavigation
@@ -124,13 +136,12 @@ export function ReadAloudButton({
 				</span>
 			</button>
 
-			{/* Next paragraph button */}
 			{showNavigation && (
 				<button
 					type="button"
 					onClick={nextParagraph}
 					disabled={!hasNext || isConnecting}
-					className="inline-flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors disabled:opacity-30 disabled:cursor-not-allowed p-1"
+					className="hidden sm:inline-flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors disabled:opacity-30 disabled:cursor-not-allowed p-1"
 					title="Next paragraph"
 				>
 					<ChevronRight className="w-3.5 h-3.5" />
