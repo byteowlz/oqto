@@ -10,7 +10,8 @@ Oqto is a self-hosted platform for managing AI coding agents. Supports local mod
 
 - Keep this document up to date. Whenever we change functionality or the architecture, we need to also update it in here so that subsequent sessions are always aware of the current status.
 - Don't keep legacy alive. This project is still in it's infancy and there is 0 need for any backward compatibility. Remove any dead or legacy code you encounter without breaking the current system. If you stumble upon parts of the system that can be deprecated, suggest how we could best do this
-- Document your work: Use trx cli for epics, features, bugs etc. Use agntz memory for documenting learnings along the way. Future sessions have access to both. Your todo list is ephemeral, it's like a status bar for the current session. Use it accordingly.
+- Document your work: Use trx cli for epics, features, bugs etc. Use agntz memory for documenting learnings along the way. Future sessions have access to both.
+- **Todo list discipline**: Your todo list is a real-time status bar the user watches. At the start of a task, create todos with `TodoWrite`. As you work, **always** update the list: set tasks to `in_progress` when you start them and `completed` when you finish them. Do not leave completed tasks as `pending`. Rewrite the full list after each significant step.
 - Oqto is made up of many separate tools that we are building in parallel. If you encounter bugs or potential improvements, file trx in the respective repos (e.g. ../mmry etc)
 - During development, use the agent-browser for end to end debugging. You can use wismut:dev to log in. The frontend is accessible under localhost:3000
 
