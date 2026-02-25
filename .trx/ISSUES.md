@@ -2,10 +2,6 @@
 
 ## Open
 
-### [oqto-s5bv] E2E streaming reliability test harness using mock provider (P0, epic)
-
-### [oqto-a7b8] Enhance eavs mock provider with realistic streaming scenarios (tool calls, errors, multi-turn) (P0, epic)
-
 ### [oqto-29e1] Stability: hstry gRPC high-availability with local spool fallback (P0, epic)
 hstry is currently a single point of failure. If the hstry gRPC service becomes unavailable, all message persistence fails with no graceful degradation. This is especially critical for long-running agent sessions where losing message history is unacceptable.
 
@@ -1057,6 +1053,8 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [oqto-a7b8] Enhance eavs mock provider with realistic streaming scenarios (tool calls, errors, multi-turn) (closed 2026-02-25)
+- [oqto-s5bv] E2E streaming reliability test harness using mock provider (closed 2026-02-25)
 - [oqto-75xw] oqtoctl user management: set-password, disable/enable, set-role, sessions (closed 2026-02-25)
 - [oqto-mjh6] Investigate and fix octo-todos Pi extension TUI crash (closed 2026-02-25)
 - [oqto-6e9v] Deploy SearXNG on octo-azure and configure sx for all users (closed 2026-02-21)
@@ -1672,7 +1670,7 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
 - [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
