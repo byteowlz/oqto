@@ -1427,12 +1427,14 @@ export const CanvasView = memo(function CanvasView({
 	}, []);
 
 	const fitToView = useCallback(() => {
+		if (containerSize.width <= 0 || containerSize.height <= 0) return;
 		const cw = backgroundImage ? backgroundSize.width : 800;
 		const ch = backgroundImage ? backgroundSize.height : 600;
 		if (cw <= 0 || ch <= 0) return;
 		const padding = 40;
 		const availW = containerSize.width - padding * 2;
 		const availH = containerSize.height - padding * 2;
+		if (availW <= 0 || availH <= 0) return;
 		const fitScale = Math.min(availW / cw, availH / ch, 1);
 		const offsetX = (containerSize.width - cw * fitScale) / 2;
 		const offsetY = (containerSize.height - ch * fitScale) / 2;
@@ -1870,23 +1872,30 @@ export const CanvasView = memo(function CanvasView({
 		return () => window.removeEventListener("keydown", handleKeyDown);
 	}, [selectedId, deleteAnnotation, undo, redo, textInputPosition]);
 
-	// Container size
+	// Container size - start at 0 so Stage is not rendered until measured
 	const [containerSize, setContainerSize] = useState({
-		width: 800,
-		height: 600,
+		width: 0,
+		height: 0,
 	});
 
 	useEffect(() => {
+		const el = containerRef.current;
+		if (!el) return;
+
 		const updateSize = () => {
-			if (containerRef.current) {
-				setContainerSize({
-					width: containerRef.current.offsetWidth,
-					height: containerRef.current.offsetHeight,
-				});
-			}
+			setContainerSize({
+				width: el.offsetWidth,
+				height: el.offsetHeight,
+			});
 		};
 
 		updateSize();
+
+		if (typeof ResizeObserver !== "undefined") {
+			const ro = new ResizeObserver(updateSize);
+			ro.observe(el);
+			return () => ro.disconnect();
+		}
 		window.addEventListener("resize", updateSize);
 		return () => window.removeEventListener("resize", updateSize);
 	}, []);
@@ -1906,13 +1915,13 @@ export const CanvasView = memo(function CanvasView({
 		}
 	}, [backgroundImage, backgroundSize, containerSize, fitToView]);
 
-	// Calculate canvas size
+	// Calculate canvas size (use container size or background size, whichever is available)
 	const canvasWidth = backgroundImage
 		? backgroundSize.width
-		: containerSize.width;
+		: containerSize.width || 800;
 	const canvasHeight = backgroundImage
 		? backgroundSize.height
-		: containerSize.height;
+		: containerSize.height || 600;
 
 	return (
 		<div
@@ -2425,7 +2434,7 @@ export const CanvasView = memo(function CanvasView({
 				className="flex-1 overflow-hidden relative"
 				style={{ backgroundColor: canvasBackgroundColor }}
 			>
-				<Stage
+				{containerSize.width > 0 && containerSize.height > 0 && <Stage
 					ref={stageRef}
 					width={containerSize.width}
 					height={containerSize.height}
@@ -2527,7 +2536,7 @@ export const CanvasView = memo(function CanvasView({
 							/>
 						)}
 					</Layer>
-				</Stage>
+				</Stage>}
 
 				{/* Floating delete button for selected item (mobile-friendly) */}
 				{selectedId &&
