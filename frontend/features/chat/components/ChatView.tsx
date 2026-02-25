@@ -27,6 +27,11 @@ import {
 	ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { Input } from "@/components/ui/input";
+import {
+	Popover,
+	PopoverContent,
+	PopoverTrigger,
+} from "@/components/ui/popover";
 import { DictationOverlay } from "@/components/voice";
 import {
 	VoiceMenuButton,
@@ -2509,6 +2514,98 @@ type Segment =
 			timestamp: number;
 	  };
 
+/** Gutter icon for collapsed tool calls in minimal mode (verbosity=1).
+ *  Shows a single collapsed icon; click opens a popover listing each tool + summary. */
+function ToolGutterIcon({
+	toolGroup,
+	locale,
+}: {
+	toolGroup: {
+		key: string;
+		type: "tool_group";
+		segments: Array<
+			| Extract<Segment, { type: "tool_call" }>
+			| Extract<Segment, { type: "tool_result_only" }>
+		>;
+		timestamp: number;
+	};
+	locale: "en" | "de";
+}) {
+	// Collapse consecutive identical tools
+	const collapsed: Array<{
+		toolName: string;
+		count: number;
+		input?: Record<string, unknown>;
+	}> = [];
+	for (const seg of toolGroup.segments) {
+		const toolName =
+			seg.type === "tool_call" ? seg.part.name : seg.part.name || "result";
+		const input =
+			seg.type === "tool_call"
+				? (seg.part.input as Record<string, unknown> | undefined)
+				: undefined;
+		const last = collapsed[collapsed.length - 1];
+		if (last && last.toolName === toolName) {
+			last.count += 1;
+			continue;
+		}
+		collapsed.push({ toolName, count: 1, input });
+	}
+
+	// Pick the most representative icon (first entry)
+	const primaryIcon = getToolIcon(
+		collapsed[0]?.toolName ?? "tool",
+		collapsed[0]?.input,
+	);
+	const totalCount = toolGroup.segments.length;
+
+	return (
+		<Popover>
+			<PopoverTrigger asChild>
+				<button
+					type="button"
+					className="relative flex items-center justify-center w-6 h-6 rounded hover:bg-muted transition-colors text-muted-foreground/60 hover:text-muted-foreground"
+					title={`${totalCount} tool call${totalCount !== 1 ? "s" : ""}`}
+				>
+					{primaryIcon}
+					{totalCount > 1 && (
+						<span className="absolute -top-0.5 -right-0.5 min-w-[14px] h-[14px] bg-muted-foreground/20 text-muted-foreground text-[9px] rounded-full flex items-center justify-center leading-none">
+							{totalCount}
+						</span>
+					)}
+				</button>
+			</PopoverTrigger>
+			<PopoverContent
+				side="left"
+				align="start"
+				className="w-64 p-2"
+			>
+				<div className="space-y-1">
+					{collapsed.map((entry, i) => {
+						const icon = getToolIcon(entry.toolName, entry.input);
+						const summary = getToolSummary(entry.toolName, entry.input, locale);
+						const label = summary ?? entry.toolName;
+						return (
+							<div
+								key={`${entry.toolName}-${i}`}
+								className="flex items-start gap-2 px-1.5 py-1 rounded text-xs text-muted-foreground"
+							>
+								<span className="shrink-0 mt-0.5">{icon}</span>
+								<span className="leading-snug">
+									{label}
+									{entry.count > 1 && (
+										<span className="ml-1 opacity-60">x{entry.count}</span>
+									)}
+								</span>
+							</div>
+						);
+					})}
+				</div>
+			</PopoverContent>
+		</Popover>
+	);
+}
+
 const MessageGroupCard = memo(function MessageGroupCard({
 	group,
 	assistantName,
@@ -2743,7 +2840,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 			let thinkingKey: string | null = null;
 			let thinkingTimestamp = 0;
 
-			const flushRun = () => {
+			const flushThinkingOnly = () => {
 				if (thinkingBuffer.length > 0) {
 					grouped.push({
 						key: thinkingKey ?? `thinking-${grouped.length}`,
@@ -2755,14 +2852,24 @@ const MessageGroupCard = memo(function MessageGroupCard({
 					thinkingKey = null;
 					thinkingTimestamp = 0;
 				}
-				if (toolBuffer.length > 0) {
-					grouped.push({
-						key: `tool-group-${toolBuffer[0].key}`,
-						type: "tool_group",
-						segments: toolBuffer,
-						timestamp: toolBuffer[0].timestamp,
-					});
-					toolBuffer = [];
+			};
+
+			const attachToolGroup = () => {
+				if (toolBuffer.length === 0) return;
+				const tg = {
+					key: `tool-group-${toolBuffer[0].key}`,
+					type: "tool_group" as const,
+					segments: toolBuffer,
+					timestamp: toolBuffer[0].timestamp,
+				};
+				toolBuffer = [];
+				// Attach to the last grouped segment (text or thinking)
+				const last = grouped[grouped.length - 1];
+				if (last) {
+					(last as RenderSegment & { _toolGroup?: typeof tg })._toolGroup = tg;
+				} else {
+					// No preceding segment -- push as standalone
+					grouped.push(tg);
 				}
 			};
 
@@ -2782,10 +2889,13 @@ const MessageGroupCard = memo(function MessageGroupCard({
 					toolBuffer.push(segment);
 					continue;
 				}
-				flushRun();
+				// Non-thinking, non-tool segment: flush pending items
+				flushThinkingOnly();
+				attachToolGroup();
 				grouped.push(segment);
 			}
-			flushRun();
+			flushThinkingOnly();
+			attachToolGroup();
 			return grouped;
 		}
 		if (verbosity !== 2) return normalizedSegments;
@@ -2944,8 +3054,36 @@ const MessageGroupCard = memo(function MessageGroupCard({
 					const needsTopMargin =
 						prevSegment?.type === "text" && segment.type !== "text";
 
-					if (segment.type === "text") {
+					// In minimal mode, segments may have an attached _toolGroup.
+					// Wrap content + gutter icon in a flex row.
+					const attachedToolGroup = (
+						segment as RenderSegment & {
+							_toolGroup?: Extract<RenderSegment, { type: "tool_group" }>;
+						}
+					)._toolGroup;
+
+					const wrapWithGutter = (
+						key: string,
+						content: React.ReactNode,
+					) => {
+						if (!attachedToolGroup || verbosity !== 1) {
+							return content;
+						}
 						return (
+							<div key={key} className="flex items-center gap-1">
+								<div className="flex-1 min-w-0">{content}</div>
+								<div className="shrink-0 self-center">
+									<ToolGutterIcon
+										toolGroup={attachedToolGroup}
+										locale={locale}
+									/>
+								</div>
+							</div>
+						);
+					};
+
+					if (segment.type === "text") {
+						const inner = (
 							<TextWithFileReferences
 								key={segment.key}
 								content={segment.text}
@@ -2953,6 +3091,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 								locale={locale}
 							/>
 						);
+						return wrapWithGutter(segment.key, inner);
 					}
 					if (segment.type === "tool_call") {
 						return (
@@ -2985,7 +3124,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 						);
 					}
 					if (segment.type === "thinking") {
-						return (
+						const inner = (
 							<div
 								key={segment.key}
 								className={needsTopMargin ? "mt-3" : undefined}
@@ -3002,6 +3141,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 								/>
 							</div>
 						);
+						return wrapWithGutter(segment.key, inner);
 					}
 					if (segment.type === "error") {
 						const isRetrying = segment.retrying;
@@ -3090,55 +3230,15 @@ const MessageGroupCard = memo(function MessageGroupCard({
 						);
 					}
 					if (segment.type === "tool_group") {
-						// Minimal mode: inline tool icons instead of a bordered bar
+						// Minimal mode: standalone tool_group (no preceding segment to attach to).
+						// Render as a gutter icon on its own row.
 						if (verbosity === 1) {
-							const collapsed: Array<{
-								toolName: string;
-								count: number;
-								input?: Record<string, unknown>;
-							}> = [];
-							for (const toolSegment of segment.segments) {
-								const toolName =
-									toolSegment.type === "tool_call"
-										? toolSegment.part.name
-										: toolSegment.part.name || "result";
-								const input =
-									toolSegment.type === "tool_call"
-										? (toolSegment.part.input as
-												| Record<string, unknown>
-												| undefined)
-										: undefined;
-								const last = collapsed[collapsed.length - 1];
-								if (last && last.toolName === toolName) {
-									last.count += 1;
-									continue;
-								}
-								collapsed.push({ toolName, count: 1, input });
-							}
 							return (
-								<div
-									key={segment.key}
-									className="-mt-1.5 flex items-center gap-0.5 flex-wrap"
-								>
-									{collapsed.map((entry, index) => {
-										const icon = getToolIcon(entry.toolName, entry.input);
-										const summary = getToolSummary(entry.toolName, entry.input, locale);
-										const label = summary ?? entry.toolName;
-										return (
-											<span
-												key={`${entry.toolName}-${index}`}
-												title={entry.count > 1 ? `${label} (${entry.count})` : label}
-												className="inline-flex items-center gap-0.5 px-1 py-0.5 rounded-sm text-muted-foreground/80 hover:text-muted-foreground transition-colors"
-											>
-												{icon}
-												{entry.count > 1 && (
-													<span className="text-[10px] tabular-nums opacity-70">
-														{entry.count}
-													</span>
-												)}
-											</span>
-										);
-									})}
+								<div key={segment.key} className="flex justify-end">
+									<ToolGutterIcon
+										toolGroup={segment}
+										locale={locale}
+									/>
 								</div>
 							);
 						}
