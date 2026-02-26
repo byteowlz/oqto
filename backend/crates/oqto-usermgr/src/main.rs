@@ -863,6 +863,14 @@ WantedBy=default.target
         // Add pi source if missing
         if !patched.contains("adapter = \"pi\"") {
             let pi_sessions_path = format!("{home}/.pi/agent/sessions");
+            // Remove bare `sources = []` (and similar empty arrays) to prevent
+            // TOML duplicate key errors when appending `[[sources]]`.
+            // hstry's own config generator may produce `sources = []` as an empty
+            // default, which conflicts with the `[[sources]]` array-of-tables
+            // syntax appended below.
+            for bare_array in &["sources = []", "sources= []", "sources =[]"] {
+                patched = patched.replace(bare_array, "");
+            }
             patched.push_str(&format!(
                 "\n\
                  [[sources]]\n\
