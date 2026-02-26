@@ -213,6 +213,16 @@ install_system_prerequisites() {
     esac
   fi
 
+  # yt-dlp is needed for media downloads (audio/video extraction for agents)
+  if ! command_exists yt-dlp; then
+    case "$OS_DISTRO" in
+    arch | manjaro | endeavouros) pkgs+=("yt-dlp") ;;
+    debian | ubuntu | pop | linuxmint) pkgs+=("yt-dlp") ;;
+    fedora | centos | rhel | rocky | alma*) pkgs+=("yt-dlp") ;;
+    opensuse*) pkgs+=("yt-dlp") ;;
+    esac
+  fi
+
   # starship prompt for a nice terminal experience
   if ! command_exists starship; then
     log_info "Installing starship prompt..."
@@ -291,6 +301,41 @@ APPARMOR
     log_success "starship prompt installed"
   else
     log_warn "starship not installed. Platform users will have a basic prompt."
+  fi
+
+  # uv - fast Python package manager (required for Python agent workflows)
+  if ! command_exists uv; then
+    log_info "Installing uv (Python package manager)..."
+    case "$OS_DISTRO" in
+    arch | manjaro | endeavouros)
+      sudo pacman -S --noconfirm uv 2>/dev/null || {
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+      }
+      ;;
+    *)
+      curl -LsSf https://astral.sh/uv/install.sh | sh
+      ;;
+    esac
+    # Ensure uv is in PATH for this session
+    if [[ -f "$HOME/.local/bin/uv" ]]; then
+      export PATH="$HOME/.local/bin:$PATH"
+    fi
+    if command_exists uv; then
+      log_success "uv installed: $(uv --version)"
+    else
+      log_warn "Failed to install uv. Python agent workflows will not work."
+    fi
+  else
+    log_success "uv already installed: $(uv --version)"
+  fi
+
+  # Ensure uv is globally accessible for all platform users
+  if command_exists uv; then
+    local uv_path
+    uv_path=$(command -v uv)
+    if [[ "$uv_path" != "${TOOLS_INSTALL_DIR}/uv" && "$uv_path" != "/usr/bin/uv" ]]; then
+      sudo install -m 755 "$uv_path" "${TOOLS_INSTALL_DIR}/uv" 2>/dev/null || true
+    fi
   fi
 }
 

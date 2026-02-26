@@ -30,3 +30,6 @@ kokorox = "0.2.2"
 pi = "latest"  # From npm: `bun install -g @mariozechner/pi-coding-agent`
 typst = "latest"  # Required by tmpltr: https://github.com/typst/typst
 slidev = "latest"  # Required by sldr: https://sli.dev
+uv = "latest"  # Python package manager: https://github.com/astral-sh/uv
+yt-dlp = "latest"  # Media downloader: https://github.com/yt-dlp/yt-dlp
+whisper-cpp = "latest"  # Speech-to-text: https://github.com/ggerganov/whisper.cpp

@@ -474,12 +474,86 @@ WRAPPER
   log_success "slidev installed"
 }
 
+install_whisper_cpp() {
+  if command_exists whisper-cli || command_exists main && [[ -f "${TOOLS_INSTALL_DIR}/whisper-cli" ]]; then
+    log_success "whisper.cpp already installed"
+    return 0
+  fi
+
+  log_info "Installing whisper.cpp (speech-to-text)..."
+
+  # Check for cmake
+  if ! command_exists cmake; then
+    log_info "Installing cmake (required by whisper.cpp)..."
+    case "$OS_DISTRO" in
+    arch | manjaro | endeavouros) sudo pacman -S --noconfirm cmake ;;
+    debian | ubuntu | pop | linuxmint) apt_update_once; sudo apt-get install -y cmake ;;
+    fedora | centos | rhel | rocky | alma*) sudo dnf install -y cmake ;;
+    opensuse*) sudo zypper install -y cmake ;;
+    macos) brew install cmake ;;
+    *) log_warn "Please install cmake manually"; return 1 ;;
+    esac
+  fi
+
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  trap "rm -rf '$tmpdir'" RETURN
+
+  log_info "Cloning whisper.cpp..."
+  if ! git clone --depth 1 https://github.com/ggerganov/whisper.cpp.git "$tmpdir/whisper.cpp" 2>/dev/null; then
+    log_warn "Failed to clone whisper.cpp"
+    return 1
+  fi
+
+  cd "$tmpdir/whisper.cpp"
+
+  log_info "Building whisper.cpp..."
+  cmake -B build -DCMAKE_BUILD_TYPE=Release 2>&1 | tail -5
+  cmake --build build --config Release -j "$(nproc 2>/dev/null || echo 4)" 2>&1 | tail -5
+
+  # The main binary is called 'whisper-cli' in newer versions, 'main' in older
+  local binary=""
+  if [[ -x build/bin/whisper-cli ]]; then
+    binary="build/bin/whisper-cli"
+  elif [[ -x build/bin/main ]]; then
+    binary="build/bin/main"
+  fi
+
+  if [[ -z "$binary" ]]; then
+    log_warn "whisper.cpp build failed - no binary found"
+    return 1
+  fi
+
+  sudo install -m 755 "$binary" "${TOOLS_INSTALL_DIR}/whisper-cli"
+  log_success "whisper-cli installed to ${TOOLS_INSTALL_DIR}/whisper-cli"
+
+  # Download a default model (base.en - small and fast, good for English)
+  local models_dir="/usr/local/share/whisper/models"
+  sudo mkdir -p "$models_dir"
+
+  if [[ ! -f "$models_dir/ggml-base.en.bin" ]]; then
+    log_info "Downloading whisper base.en model..."
+    local model_url="https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin"
+    if sudo curl -fsSL -o "$models_dir/ggml-base.en.bin" "$model_url"; then
+      sudo chmod a+r "$models_dir/ggml-base.en.bin"
+      log_success "whisper base.en model downloaded"
+    else
+      log_warn "Failed to download whisper model. Download manually to $models_dir/"
+    fi
+  else
+    log_success "whisper base.en model already present"
+  fi
+
+  cd - >/dev/null
+}
+
 install_all_agent_tools() {
   log_step "Installing agent tools"
 
   # External dependencies for agent tools
   install_typst
   install_slidev
+  install_whisper_cpp
 
   # Core tools (Rust) - tries pre-built GitHub release first, falls back to cargo
   # Multi-binary repos need the 3rd arg (package hint) for cargo fallback
