@@ -1426,6 +1426,35 @@ export const CanvasView = memo(function CanvasView({
 		setPosition({ x: 0, y: 0 });
 	}, []);
 
+	// Container size - start at 0 so Stage is not rendered until measured.
+	// Declared before fitToView which depends on it.
+	const [containerSize, setContainerSize] = useState({
+		width: 0,
+		height: 0,
+	});
+
+	useEffect(() => {
+		const el = containerRef.current;
+		if (!el) return;
+
+		const updateSize = () => {
+			setContainerSize({
+				width: el.offsetWidth,
+				height: el.offsetHeight,
+			});
+		};
+
+		updateSize();
+
+		if (typeof ResizeObserver !== "undefined") {
+			const ro = new ResizeObserver(updateSize);
+			ro.observe(el);
+			return () => ro.disconnect();
+		}
+		window.addEventListener("resize", updateSize);
+		return () => window.removeEventListener("resize", updateSize);
+	}, []);
+
 	const fitToView = useCallback(() => {
 		if (containerSize.width <= 0 || containerSize.height <= 0) return;
 		const cw = backgroundImage ? backgroundSize.width : 800;
@@ -1872,33 +1901,7 @@ export const CanvasView = memo(function CanvasView({
 		return () => window.removeEventListener("keydown", handleKeyDown);
 	}, [selectedId, deleteAnnotation, undo, redo, textInputPosition]);
 
-	// Container size - start at 0 so Stage is not rendered until measured
-	const [containerSize, setContainerSize] = useState({
-		width: 0,
-		height: 0,
-	});
-
-	useEffect(() => {
-		const el = containerRef.current;
-		if (!el) return;
-
-		const updateSize = () => {
-			setContainerSize({
-				width: el.offsetWidth,
-				height: el.offsetHeight,
-			});
-		};
-
-		updateSize();
-
-		if (typeof ResizeObserver !== "undefined") {
-			const ro = new ResizeObserver(updateSize);
-			ro.observe(el);
-			return () => ro.disconnect();
-		}
-		window.addEventListener("resize", updateSize);
-		return () => window.removeEventListener("resize", updateSize);
-	}, []);
+	// (containerSize state moved before fitToView to avoid TDZ reference error)
 
 	// Auto-fit when a new background image is loaded that exceeds container
 	const prevBgRef = useRef<HTMLImageElement | null>(null);
