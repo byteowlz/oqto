@@ -280,6 +280,20 @@ pub enum FilesWsCommand {
         #[serde(default)]
         workspace_path: Option<String>,
     },
+    /// Copy a file or directory from one workspace to another.
+    /// Both workspaces must belong to the current user (validated against sessions).
+    CopyToWorkspace {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        /// Workspace path of the source (must match a session's workspace_path).
+        source_workspace_path: String,
+        /// Relative path within the source workspace.
+        source_path: String,
+        /// Workspace path of the target (must match a session's workspace_path).
+        target_workspace_path: String,
+        /// Relative path within the target workspace.
+        target_path: String,
+    },
 }
 
 /// Terminal channel commands (placeholder for future implementation).
@@ -493,6 +507,14 @@ pub enum FilesWsEvent {
         id: Option<String>,
         from: String,
         to: String,
+        success: bool,
+    },
+    CopyToWorkspaceResult {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        source_workspace_path: String,
+        target_workspace_path: String,
+        files_copied: usize,
         success: bool,
     },
     Error {
@@ -1010,6 +1032,7 @@ fn ws_command_summary(cmd: &WsCommand) -> (String, Option<String>, Option<String
                 FilesWsCommand::Rename { .. } => "files.rename",
                 FilesWsCommand::Copy { .. } => "files.copy",
                 FilesWsCommand::Move { .. } => "files.move",
+                FilesWsCommand::CopyToWorkspace { .. } => "files.copy_to_workspace",
             };
             let workspace_path = match files_cmd {
                 FilesWsCommand::Tree { workspace_path, .. }
@@ -1022,6 +1045,10 @@ fn ws_command_summary(cmd: &WsCommand) -> (String, Option<String>, Option<String
                 | FilesWsCommand::Rename { workspace_path, .. }
                 | FilesWsCommand::Copy { workspace_path, .. }
                 | FilesWsCommand::Move { workspace_path, .. } => workspace_path.clone(),
+                FilesWsCommand::CopyToWorkspace {
+                    source_workspace_path,
+                    ..
+                } => Some(source_workspace_path.clone()),
             };
             (label.to_string(), None, workspace_path)
         }
@@ -2204,8 +2231,30 @@ async fn handle_files_command(
         | FilesWsCommand::CreateDirectory { id, .. }
         | FilesWsCommand::Rename { id, .. }
         | FilesWsCommand::Copy { id, .. }
-        | FilesWsCommand::Move { id, .. } => id.clone(),
+        | FilesWsCommand::Move { id, .. }
+        | FilesWsCommand::CopyToWorkspace { id, .. } => id.clone(),
     };
+
+    // CopyToWorkspace has its own dual-workspace handling; dispatch it early.
+    if let FilesWsCommand::CopyToWorkspace {
+        id,
+        source_workspace_path,
+        source_path,
+        target_workspace_path,
+        target_path,
+    } = cmd
+    {
+        return handle_copy_to_workspace(
+            id,
+            &source_workspace_path,
+            &source_path,
+            &target_workspace_path,
+            &target_path,
+            user_id,
+            state,
+        )
+        .await;
+    }
 
     let workspace_path = match &cmd {
         FilesWsCommand::Tree { workspace_path, .. }
@@ -2218,6 +2267,7 @@ async fn handle_files_command(
         | FilesWsCommand::Rename { workspace_path, .. }
         | FilesWsCommand::Copy { workspace_path, .. }
         | FilesWsCommand::Move { workspace_path, .. } => workspace_path.as_deref(),
+        FilesWsCommand::CopyToWorkspace { .. } => unreachable!(),
     };
 
     let workspace_root = match resolve_workspace_root(workspace_path) {
@@ -2663,6 +2713,8 @@ async fn handle_files_command(
                 Err(err) => Some(WsEvent::Files(FilesWsEvent::Error { id, error: err })),
             }
         }
+        // CopyToWorkspace is handled by early return before this match block
+        FilesWsCommand::CopyToWorkspace { .. } => unreachable!(),
     }
 }
 
@@ -3359,6 +3411,213 @@ fn extract_legacy_session_id(cmd: &LegacyWsCommand) -> Option<String> {
         | Legacy::RefreshSession { session_id }
         | Legacy::GetMessages { session_id, .. } => Some(session_id.clone()),
         Legacy::Pong | Legacy::A2uiAction { .. } => None,
+    }
+}
+
+/// Handle cross-workspace copy.
+///
+/// Security model:
+/// 1. Both source and target workspace paths must match a session owned by the
+///    authenticated user. This prevents copying to/from arbitrary directories.
+/// 2. The user_plane (RunnerUserPlane in multi-user mode) runs as the Linux user,
+///    so OS-level file permissions are the final enforcer. Shared workspaces work
+///    naturally if the user has read/write access at the OS level.
+/// 3. resolve_workspace_child prevents path traversal out of each workspace root.
+/// 4. Agents in bwrap sandboxes cannot invoke this -- it requires an authenticated
+///    WebSocket connection (JWT/session cookie) which only the frontend has.
+async fn handle_copy_to_workspace(
+    id: Option<String>,
+    source_workspace_path: &str,
+    source_path: &str,
+    target_workspace_path: &str,
+    target_path: &str,
+    user_id: &str,
+    state: &AppState,
+) -> Option<WsEvent> {
+    // Validate that both workspace paths belong to the current user's sessions.
+    let sessions = match state.sessions.for_user(user_id).list_sessions().await {
+        Ok(s) => s,
+        Err(err) => {
+            return Some(WsEvent::Files(FilesWsEvent::Error {
+                id,
+                error: format!("Failed to list sessions: {}", err),
+            }));
+        }
+    };
+
+    let user_workspace_paths: std::collections::HashSet<&str> = sessions
+        .iter()
+        .map(|s| s.workspace_path.as_str())
+        .collect();
+
+    if !user_workspace_paths.contains(source_workspace_path) {
+        warn!(
+            user_id = user_id,
+            source_workspace_path = source_workspace_path,
+            "Cross-workspace copy denied: source workspace not owned by user"
+        );
+        return Some(WsEvent::Files(FilesWsEvent::Error {
+            id,
+            error: "Source workspace does not belong to any of your sessions".into(),
+        }));
+    }
+
+    if !user_workspace_paths.contains(target_workspace_path) {
+        warn!(
+            user_id = user_id,
+            target_workspace_path = target_workspace_path,
+            "Cross-workspace copy denied: target workspace not owned by user"
+        );
+        return Some(WsEvent::Files(FilesWsEvent::Error {
+            id,
+            error: "Target workspace does not belong to any of your sessions".into(),
+        }));
+    }
+
+    if source_workspace_path == target_workspace_path {
+        return Some(WsEvent::Files(FilesWsEvent::Error {
+            id,
+            error: "Source and target workspaces are the same; use regular copy instead".into(),
+        }));
+    }
+
+    // Resolve workspace roots and paths
+    let source_root = std::path::PathBuf::from(source_workspace_path);
+    let target_root = std::path::PathBuf::from(target_workspace_path);
+
+    let source_resolved = match resolve_workspace_child(&source_root, source_path) {
+        Ok(p) => p,
+        Err(err) => {
+            return Some(WsEvent::Files(FilesWsEvent::Error {
+                id,
+                error: format!("Invalid source path: {}", err),
+            }));
+        }
+    };
+
+    let target_resolved = match resolve_workspace_child(&target_root, target_path) {
+        Ok(p) => p,
+        Err(err) => {
+            return Some(WsEvent::Files(FilesWsEvent::Error {
+                id,
+                error: format!("Invalid target path: {}", err),
+            }));
+        }
+    };
+
+    // Create user plane (same user for both workspaces)
+    let linux_username = state
+        .linux_users
+        .as_ref()
+        .map(|lu| lu.linux_username(user_id))
+        .unwrap_or_else(|| user_id.to_string());
+    let is_multi_user = state.linux_users.is_some();
+    let user_plane: Arc<dyn crate::user_plane::UserPlane> =
+        if let Some(pattern) = state.runner_socket_pattern.as_deref() {
+            match RunnerUserPlane::for_user_with_pattern(&linux_username, pattern) {
+                Ok(plane) => Arc::new(plane),
+                Err(err) => {
+                    error!(
+                        "Failed to create RunnerUserPlane for {}: {:#}",
+                        linux_username, err
+                    );
+                    return Some(WsEvent::Files(FilesWsEvent::Error {
+                        id,
+                        error: "File access unavailable: user runner not reachable".into(),
+                    }));
+                }
+            }
+        } else if is_multi_user {
+            error!("Multi-user mode without runner_socket_pattern configured");
+            return Some(WsEvent::Files(FilesWsEvent::Error {
+                id,
+                error: "File access not configured for multi-user mode".into(),
+            }));
+        } else {
+            match RunnerUserPlane::new_default() {
+                Ok(plane) => Arc::new(plane),
+                Err(err) => {
+                    warn!(
+                        "Runner not available in single-user mode, falling back to direct: {:#}",
+                        err
+                    );
+                    Arc::new(DirectUserPlane::new(&source_root))
+                }
+            }
+        };
+
+    // Perform the copy (recursive for directories, returns file count)
+    fn copy_recursive_cross<'a>(
+        user_plane: &'a Arc<dyn crate::user_plane::UserPlane>,
+        from_path: &'a std::path::Path,
+        to_path: &'a std::path::Path,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<usize, String>> + Send + 'a>>
+    {
+        Box::pin(async move {
+            let from_stat = user_plane
+                .stat(from_path)
+                .await
+                .map_err(|e| e.to_string())?;
+            if !from_stat.exists {
+                return Err("source path does not exist".into());
+            }
+
+            if from_stat.is_dir {
+                user_plane
+                    .create_directory(to_path, true)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                let entries = user_plane
+                    .list_directory(from_path, true)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                let mut total = 0;
+                for entry in entries {
+                    let child_from = from_path.join(&entry.name);
+                    let child_to = to_path.join(&entry.name);
+                    total += copy_recursive_cross(user_plane, &child_from, &child_to).await?;
+                }
+                Ok(total)
+            } else {
+                let content = user_plane
+                    .read_file(from_path, None, None)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                user_plane
+                    .write_file(to_path, &content.content, true)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                Ok(1)
+            }
+        })
+    }
+
+    info!(
+        user_id = user_id,
+        source = %source_resolved.display(),
+        target = %target_resolved.display(),
+        "Cross-workspace copy"
+    );
+
+    match copy_recursive_cross(&user_plane, &source_resolved, &target_resolved).await {
+        Ok(files_copied) => {
+            info!(
+                user_id = user_id,
+                files_copied = files_copied,
+                "Cross-workspace copy complete"
+            );
+            Some(WsEvent::Files(FilesWsEvent::CopyToWorkspaceResult {
+                id,
+                source_workspace_path: source_workspace_path.to_string(),
+                target_workspace_path: target_workspace_path.to_string(),
+                files_copied,
+                success: true,
+            }))
+        }
+        Err(err) => Some(WsEvent::Files(FilesWsEvent::Error {
+            id,
+            error: format!("Cross-workspace copy failed: {}", err),
+        })),
     }
 }
 

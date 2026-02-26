@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/dialog";
 import {
 	copyPathMux,
+	copyToWorkspaceMux,
 	createDirectoryMux,
 	deletePathMux,
 	downloadFileMux,
@@ -26,6 +27,7 @@ import {
 	renamePathMux,
 	uploadFileMux,
 } from "@/lib/mux-files";
+import { listWorkspaceSessions } from "@/lib/api/sessions";
 import { normalizeWorkspacePath } from "@/lib/session-utils";
 import { cn } from "@/lib/utils";
 import {
@@ -36,6 +38,7 @@ import {
 	Folder,
 	FolderPlus,
 	FolderUp,
+	FolderSync,
 	Home,
 	LayoutGrid,
 	List,
@@ -336,6 +339,11 @@ export function FileTreeView({
 		title: string;
 		sourcePath: string;
 		onConfirm: (value: string) => void;
+	} | null>(null);
+	const [workspacePickerState, setWorkspacePickerState] = useState<{
+		sourcePath: string;
+		sourceName: string;
+		isDirectory: boolean;
 	} | null>(null);
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const lastLoadRef = useRef<{ key: string; ts: number } | null>(null);
@@ -719,6 +727,10 @@ export function FileTreeView({
 		});
 	};
 
+	const handleCopyToWorkspace = (path: string, name: string, isDirectory: boolean) => {
+		setWorkspacePickerState({ sourcePath: path, sourceName: name, isDirectory });
+	};
+
 	const handleNewFolder = () => {
 		setNewFolderName("");
 	};
@@ -1042,6 +1054,7 @@ export function FileTreeView({
 						onRename={handleStartRename}
 						onCopy={handleCopy}
 						onMove={handleMove}
+						onCopyToWorkspace={handleCopyToWorkspace}
 						renamingPath={renamingPath}
 						onRenameConfirm={handleConfirmRename}
 						onRenameCancel={handleCancelRename}
@@ -1059,6 +1072,7 @@ export function FileTreeView({
 						onRename={handleStartRename}
 						onCopy={handleCopy}
 						onMove={handleMove}
+						onCopyToWorkspace={handleCopyToWorkspace}
 						renamingPath={renamingPath}
 						onRenameConfirm={handleConfirmRename}
 						onRenameCancel={handleCancelRename}
@@ -1075,6 +1089,7 @@ export function FileTreeView({
 						onRename={handleStartRename}
 						onCopy={handleCopy}
 						onMove={handleMove}
+						onCopyToWorkspace={handleCopyToWorkspace}
 						renamingPath={renamingPath}
 						onRenameConfirm={handleConfirmRename}
 						onRenameCancel={handleCancelRename}
@@ -1094,6 +1109,34 @@ export function FileTreeView({
 					setPathDialog(null);
 				}}
 				onCancel={() => setPathDialog(null)}
+			/>
+
+			{/* Workspace picker dialog for cross-workspace copy */}
+			<WorkspacePickerDialog
+				open={workspacePickerState !== null}
+				sourceName={workspacePickerState?.sourceName ?? ""}
+				sourcePath={workspacePickerState?.sourcePath ?? ""}
+				isDirectory={workspacePickerState?.isDirectory ?? false}
+				currentWorkspacePath={normalizedWorkspacePath ?? ""}
+				onConfirm={async (targetWorkspace, targetPath) => {
+					if (!normalizedWorkspacePath) return;
+					try {
+						const count = await copyToWorkspaceMux(
+							normalizedWorkspacePath,
+							workspacePickerState?.sourcePath ?? "",
+							targetWorkspace,
+							targetPath,
+						);
+						setWorkspacePickerState(null);
+						setError("");
+						// Brief success indicator (clear after 3s)
+						setError(`Copied ${count} file${count !== 1 ? "s" : ""} to workspace`);
+						setTimeout(() => setError(""), 3000);
+					} catch (err) {
+						setError(err instanceof Error ? err.message : "Cross-workspace copy failed");
+					}
+				}}
+				onCancel={() => setWorkspacePickerState(null)}
 			/>
 		</div>
 	);
@@ -1412,6 +1455,7 @@ function FileContextMenu({
 	onCopy,
 	onMove,
 	onOpenInCanvas,
+	onCopyToWorkspace,
 }: {
 	children: React.ReactNode;
 	node: FileNode;
@@ -1421,6 +1465,7 @@ function FileContextMenu({
 	onCopy: (path: string) => void;
 	onMove: (path: string) => void;
 	onOpenInCanvas?: (path: string) => void;
+	onCopyToWorkspace?: (path: string, name: string, isDirectory: boolean) => void;
 }) {
 	const isImage = node.type === "file" && isImageFile(node.name);
 
@@ -1449,6 +1494,12 @@ function FileContextMenu({
 					<MoveRight className="w-4 h-4 mr-2" />
 					Move
 				</ContextMenuItem>
+				{onCopyToWorkspace && (
+					<ContextMenuItem onClick={() => onCopyToWorkspace(node.path, node.name, node.type === "directory")}>
+						<FolderSync className="w-4 h-4 mr-2" />
+						Copy to Workspace
+					</ContextMenuItem>
+				)}
 				<ContextMenuItem
 					onClick={() => onDownload(node.path, node.type === "directory")}
 				>
@@ -1481,6 +1532,7 @@ function TreeView({
 	onRename,
 	onCopy,
 	onMove,
+	onCopyToWorkspace,
 	renamingPath,
 	onRenameConfirm,
 	onRenameCancel,
@@ -1503,6 +1555,7 @@ function TreeView({
 	onRename: (path: string, currentName: string) => void;
 	onCopy: (path: string) => void;
 	onMove: (path: string) => void;
+	onCopyToWorkspace?: (path: string, name: string, isDirectory: boolean) => void;
 	renamingPath: string | null;
 	onRenameConfirm: (newName: string) => void;
 	onRenameCancel: () => void;
@@ -1533,6 +1586,7 @@ function TreeView({
 					onRename={onRename}
 					onCopy={onCopy}
 					onMove={onMove}
+					onCopyToWorkspace={onCopyToWorkspace}
 					renamingPath={renamingPath}
 					onRenameConfirm={onRenameConfirm}
 					onRenameCancel={onRenameCancel}
@@ -1558,6 +1612,7 @@ function TreeRow({
 	onRename,
 	onCopy,
 	onMove,
+	onCopyToWorkspace,
 	renamingPath,
 	onRenameConfirm,
 	onRenameCancel,
@@ -1581,6 +1636,7 @@ function TreeRow({
 	onRename: (path: string, currentName: string) => void;
 	onCopy: (path: string) => void;
 	onMove: (path: string) => void;
+	onCopyToWorkspace?: (path: string, name: string, isDirectory: boolean) => void;
 	renamingPath: string | null;
 	onRenameConfirm: (newName: string) => void;
 	onRenameCancel: () => void;
@@ -1631,6 +1687,7 @@ function TreeRow({
 				onRename={onRename}
 				onCopy={onCopy}
 				onMove={onMove}
+				onCopyToWorkspace={onCopyToWorkspace}
 				onOpenInCanvas={onOpenInCanvas}
 			>
 				<button
@@ -1697,6 +1754,7 @@ function TreeRow({
 								onRename={onRename}
 								onCopy={onCopy}
 								onMove={onMove}
+								onCopyToWorkspace={onCopyToWorkspace}
 								renamingPath={renamingPath}
 								onRenameConfirm={onRenameConfirm}
 								onRenameCancel={onRenameCancel}
@@ -1729,6 +1787,7 @@ function ListView({
 	onRename,
 	onCopy,
 	onMove,
+	onCopyToWorkspace,
 	renamingPath,
 	onRenameConfirm,
 	onRenameCancel,
@@ -1748,6 +1807,7 @@ function ListView({
 	onRename: (path: string, currentName: string) => void;
 	onCopy: (path: string) => void;
 	onMove: (path: string) => void;
+	onCopyToWorkspace?: (path: string, name: string, isDirectory: boolean) => void;
 	renamingPath: string | null;
 	onRenameConfirm: (newName: string) => void;
 	onRenameCancel: () => void;
@@ -1784,6 +1844,7 @@ function ListView({
 							onRename={onRename}
 							onCopy={onCopy}
 							onMove={onMove}
+							onCopyToWorkspace={onCopyToWorkspace}
 						>
 							<button
 								type="button"
@@ -1858,6 +1919,7 @@ function GridView({
 	onRename,
 	onCopy,
 	onMove,
+	onCopyToWorkspace,
 	renamingPath,
 	onRenameConfirm,
 	onRenameCancel,
@@ -1877,6 +1939,7 @@ function GridView({
 	onRename: (path: string, currentName: string) => void;
 	onCopy: (path: string) => void;
 	onMove: (path: string) => void;
+	onCopyToWorkspace?: (path: string, name: string, isDirectory: boolean) => void;
 	renamingPath: string | null;
 	onRenameConfirm: (newName: string) => void;
 	onRenameCancel: () => void;
@@ -1903,6 +1966,7 @@ function GridView({
 						onRename={onRename}
 						onCopy={onCopy}
 						onMove={onMove}
+						onCopyToWorkspace={onCopyToWorkspace}
 						onOpenInCanvas={onOpenInCanvas}
 					>
 						<button
@@ -1955,3 +2019,171 @@ function GridView({
 		</div>
 	);
 }
+
+// Workspace picker dialog for cross-workspace copy
+const WorkspacePickerDialog = memo(function WorkspacePickerDialog({
+	open,
+	sourceName,
+	sourcePath,
+	isDirectory,
+	currentWorkspacePath,
+	onConfirm,
+	onCancel,
+}: {
+	open: boolean;
+	sourceName: string;
+	sourcePath: string;
+	isDirectory: boolean;
+	currentWorkspacePath: string;
+	onConfirm: (targetWorkspace: string, targetPath: string) => void;
+	onCancel: () => void;
+}) {
+	const [workspaces, setWorkspaces] = useState<
+		{ workspace_path: string; label: string }[]
+	>([]);
+	const [selectedWorkspace, setSelectedWorkspace] = useState<string | null>(
+		null,
+	);
+	const [loading, setLoading] = useState(false);
+	const [error, setError] = useState("");
+	const [copying, setCopying] = useState(false);
+
+	useEffect(() => {
+		if (!open) return;
+
+		setSelectedWorkspace(null);
+		setError("");
+		setCopying(false);
+		setLoading(true);
+
+		listWorkspaceSessions()
+			.then((sessions) => {
+				// Deduplicate by workspace_path and exclude the current workspace
+				const seen = new Set<string>();
+				const unique: { workspace_path: string; label: string }[] = [];
+				for (const session of sessions) {
+					if (
+						session.workspace_path &&
+						session.workspace_path !== currentWorkspacePath &&
+						!seen.has(session.workspace_path)
+					) {
+						seen.add(session.workspace_path);
+						// Use the last path segment as label, with full path as subtitle
+						const parts = session.workspace_path.split("/");
+						const dirName = parts[parts.length - 1] || session.workspace_path;
+						unique.push({
+							workspace_path: session.workspace_path,
+							label: dirName,
+						});
+					}
+				}
+				// Sort alphabetically by label
+				unique.sort((a, b) => a.label.localeCompare(b.label));
+				setWorkspaces(unique);
+			})
+			.catch((err) => {
+				setError(
+					err instanceof Error ? err.message : "Failed to load workspaces",
+				);
+			})
+			.finally(() => setLoading(false));
+	}, [open, currentWorkspacePath]);
+
+	const handleConfirm = async () => {
+		if (!selectedWorkspace) return;
+		setCopying(true);
+		setError("");
+		try {
+			// Target path: place the file/directory at the root of the target workspace
+			await onConfirm(selectedWorkspace, sourceName);
+		} catch (err) {
+			setError(
+				err instanceof Error ? err.message : "Copy failed",
+			);
+		} finally {
+			setCopying(false);
+		}
+	};
+
+	return (
+		<Dialog open={open} onOpenChange={(o) => !o && onCancel()}>
+			<DialogContent className="sm:max-w-md">
+				<DialogHeader>
+					<DialogTitle>Copy to Workspace</DialogTitle>
+					<DialogDescription>
+						Copy{" "}
+						<span className="font-medium text-foreground">
+							{sourceName}
+						</span>
+						{isDirectory ? " (directory)" : ""} to another workspace.
+					</DialogDescription>
+				</DialogHeader>
+
+				{loading ? (
+					<div className="flex items-center justify-center py-8">
+						<Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+					</div>
+				) : workspaces.length === 0 ? (
+					<div className="py-6 text-center text-sm text-muted-foreground">
+						No other workspaces available. Create another session first.
+					</div>
+				) : (
+					<div className="max-h-64 overflow-y-auto rounded-md border border-border bg-muted/30 py-1">
+						{workspaces.map((ws) => (
+							<button
+								key={ws.workspace_path}
+								type="button"
+								onClick={() => setSelectedWorkspace(ws.workspace_path)}
+								className={cn(
+									"flex flex-col gap-0.5 w-full px-3 py-2 text-left rounded transition-colors",
+									selectedWorkspace === ws.workspace_path
+										? "bg-primary/15 text-primary"
+										: "hover:bg-muted text-foreground",
+								)}
+							>
+								<div className="flex items-center gap-2">
+									<Folder className="w-4 h-4 shrink-0 text-muted-foreground" />
+									<span className="text-sm font-medium truncate">
+										{ws.label}
+									</span>
+								</div>
+								<span className="text-xs text-muted-foreground truncate pl-6">
+									{ws.workspace_path}
+								</span>
+							</button>
+						))}
+					</div>
+				)}
+
+				{error && (
+					<div className="text-sm text-destructive">{error}</div>
+				)}
+
+				<DialogFooter>
+					<button
+						type="button"
+						onClick={onCancel}
+						className="inline-flex items-center justify-center rounded-md px-4 py-2 text-sm font-medium border border-border bg-background text-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
+					>
+						Cancel
+					</button>
+					<button
+						type="button"
+						onClick={handleConfirm}
+						disabled={!selectedWorkspace || copying}
+						className="inline-flex items-center justify-center rounded-md px-4 py-2 text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:pointer-events-none"
+					>
+						{copying ? (
+							<>
+								<Loader2 className="w-4 h-4 mr-2 animate-spin" />
+								Copying...
+							</>
+						) : (
+							"Copy"
+						)}
+					</button>
+				</DialogFooter>
+			</DialogContent>
+		</Dialog>
+	);
+});

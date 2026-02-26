@@ -306,3 +306,37 @@ export async function uploadFileMux(
 	const buffer = await file.arrayBuffer();
 	await writeFileMux(workspacePath, destPath, buffer, true);
 }
+
+/**
+ * Copy a file or directory from one workspace to another.
+ * This is a server-side operation: the backend validates that both workspaces
+ * belong to the current user (by checking against active sessions), then
+ * performs the copy through the user's runner (respecting OS-level permissions).
+ *
+ * Returns the number of files copied.
+ */
+export async function copyToWorkspaceMux(
+	sourceWorkspace: string,
+	sourcePath: string,
+	targetWorkspace: string,
+	targetPath: string,
+): Promise<number> {
+	const manager = getWsManager();
+	const response = (await manager.sendAndWait({
+		channel: "files",
+		type: "copy_to_workspace",
+		source_workspace_path: sourceWorkspace,
+		source_path: sourcePath,
+		target_workspace_path: targetWorkspace,
+		target_path: targetPath,
+	})) as FilesWsEvent;
+
+	if (response.type === "copy_to_workspace_result") {
+		clearTreeCache(targetWorkspace);
+		return (response as { files_copied?: number }).files_copied ?? 0;
+	}
+	if (response.type === "error") {
+		throw new Error((response as { error: string }).error);
+	}
+	throw new Error("Failed to copy to workspace");
+}

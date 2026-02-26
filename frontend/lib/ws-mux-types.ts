@@ -406,6 +406,14 @@ export type FilesWsEvent =
 			to: string;
 			success: boolean;
 	  } & WsEventBase)
+	| ({
+			channel: "files";
+			type: "copy_to_workspace_result";
+			source_workspace_path: string;
+			target_workspace_path: string;
+			files_copied: number;
+			success: boolean;
+	  } & WsEventBase)
 	| ({ channel: "files"; type: "error"; error: string } & WsEventBase);
 
 export type TerminalWsEvent =
