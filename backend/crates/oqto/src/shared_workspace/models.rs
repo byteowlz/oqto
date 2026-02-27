@@ -101,6 +101,42 @@ impl MemberRole {
     }
 }
 
+/// Available icons for shared workspaces (Lucide icon names).
+pub const WORKSPACE_ICONS: &[&str] = &[
+    "users",
+    "rocket",
+    "globe",
+    "code",
+    "building",
+    "shield",
+    "zap",
+    "layers",
+    "hexagon",
+    "terminal",
+    "flask-conical",
+    "palette",
+    "brain",
+    "database",
+    "network",
+    "git-branch",
+];
+
+/// Curated color palette for shared workspaces.
+pub const WORKSPACE_COLORS: &[&str] = &[
+    "#6366f1", // indigo
+    "#8b5cf6", // violet
+    "#ec4899", // pink
+    "#f43f5e", // rose
+    "#ef4444", // red
+    "#f97316", // orange
+    "#eab308", // yellow
+    "#22c55e", // green
+    "#14b8a6", // teal
+    "#06b6d4", // cyan
+    "#3b82f6", // blue
+    "#a855f7", // purple
+];
+
 /// Shared workspace database row.
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct SharedWorkspace {
@@ -111,6 +147,10 @@ pub struct SharedWorkspace {
     pub path: String,
     pub owner_id: String,
     pub description: Option<String>,
+    /// Lucide icon name.
+    pub icon: String,
+    /// Hex color for accent.
+    pub color: String,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -136,6 +176,10 @@ pub struct SharedWorkspaceInfo {
     pub path: String,
     pub owner_id: String,
     pub description: Option<String>,
+    /// Lucide icon name.
+    pub icon: String,
+    /// Hex color for accent.
+    pub color: String,
     pub created_at: String,
     pub updated_at: String,
     /// The requesting user's role in this workspace.
@@ -167,6 +211,12 @@ pub struct CreateSharedWorkspaceRequest {
     /// Optional description.
     #[serde(default)]
     pub description: Option<String>,
+    /// Lucide icon name (defaults to auto-assigned based on slug hash).
+    #[serde(default)]
+    pub icon: Option<String>,
+    /// Hex color for accent (defaults to auto-assigned from palette).
+    #[serde(default)]
+    pub color: Option<String>,
     /// Initial member user IDs (the creator is added as owner automatically).
     #[serde(default)]
     pub member_ids: Vec<String>,
@@ -180,6 +230,10 @@ pub struct UpdateSharedWorkspaceRequest {
     pub name: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
+    #[serde(default)]
+    pub icon: Option<String>,
+    #[serde(default)]
+    pub color: Option<String>,
 }
 
 /// Request to add a member to a shared workspace.

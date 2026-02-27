@@ -6,7 +6,7 @@ use tracing::{debug, instrument};
 
 use super::models::{
     MemberRole, SharedWorkspace, SharedWorkspaceMember, SharedWorkspaceMemberInfo,
-    SharedWorkspaceInfo,
+    SharedWorkspaceInfo, WORKSPACE_COLORS, WORKSPACE_ICONS,
 };
 
 /// Repository for shared workspace database operations.
@@ -55,8 +55,23 @@ impl SharedWorkspaceRepository {
         }
     }
 
+    /// Pick an icon deterministically from the slug.
+    pub fn auto_icon(slug: &str) -> &'static str {
+        let hash = slug.bytes().fold(0u32, |acc, b| acc.wrapping_add(b as u32));
+        WORKSPACE_ICONS[hash as usize % WORKSPACE_ICONS.len()]
+    }
+
+    /// Pick a color deterministically from the slug.
+    pub fn auto_color(slug: &str) -> &'static str {
+        let hash = slug
+            .bytes()
+            .fold(0u32, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u32));
+        WORKSPACE_COLORS[hash as usize % WORKSPACE_COLORS.len()]
+    }
+
     /// Create a shared workspace record.
     #[instrument(skip(self), fields(name = %name, slug = %slug))]
+    #[allow(clippy::too_many_arguments)]
     pub async fn create(
         &self,
         id: &str,
@@ -66,11 +81,13 @@ impl SharedWorkspaceRepository {
         path: &str,
         owner_id: &str,
         description: Option<&str>,
+        icon: &str,
+        color: &str,
     ) -> Result<SharedWorkspace> {
         let row = sqlx::query_as::<sqlx::Sqlite, SharedWorkspace>(
             r#"
-            INSERT INTO shared_workspaces (id, name, slug, linux_user, path, owner_id, description)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO shared_workspaces (id, name, slug, linux_user, path, owner_id, description, icon, color)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             RETURNING *
             "#,
         )
@@ -81,6 +98,8 @@ impl SharedWorkspaceRepository {
         .bind(path)
         .bind(owner_id)
         .bind(description)
+        .bind(icon)
+        .bind(color)
         .fetch_one(&self.pool)
         .await
         .context("creating shared workspace")?;
@@ -136,6 +155,8 @@ impl SharedWorkspaceRepository {
                 sw.path,
                 sw.owner_id,
                 sw.description,
+                sw.icon,
+                sw.color,
                 sw.created_at,
                 sw.updated_at,
                 swm.role AS my_role,
@@ -152,18 +173,22 @@ impl SharedWorkspaceRepository {
         Ok(rows)
     }
 
-    /// Update a shared workspace's name/description.
+    /// Update a shared workspace's name/description/icon/color.
     pub async fn update(
         &self,
         id: &str,
         name: Option<&str>,
         description: Option<&str>,
+        icon: Option<&str>,
+        color: Option<&str>,
     ) -> Result<SharedWorkspace> {
         let row = sqlx::query_as::<sqlx::Sqlite, SharedWorkspace>(
             r#"
             UPDATE shared_workspaces
             SET name = COALESCE(?2, name),
                 description = COALESCE(?3, description),
+                icon = COALESCE(?4, icon),
+                color = COALESCE(?5, color),
                 updated_at = datetime('now')
             WHERE id = ?1
             RETURNING *
@@ -172,6 +197,8 @@ impl SharedWorkspaceRepository {
         .bind(id)
         .bind(name)
         .bind(description)
+        .bind(icon)
+        .bind(color)
         .fetch_one(&self.pool)
         .await
         .context("updating shared workspace")?;

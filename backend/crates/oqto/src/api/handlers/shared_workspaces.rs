@@ -48,6 +48,8 @@ pub async fn create_shared_workspace(
         "name": workspace.name,
         "slug": workspace.slug,
         "path": workspace.path,
+        "icon": workspace.icon,
+        "color": workspace.color,
         "created_at": workspace.created_at,
     })))
 }
@@ -94,6 +96,8 @@ pub async fn get_shared_workspace(
         "path": ws.path,
         "owner_id": ws.owner_id,
         "description": ws.description,
+        "icon": ws.icon,
+        "color": ws.color,
         "created_at": ws.created_at,
         "updated_at": ws.updated_at,
         "my_role": role.to_string(),

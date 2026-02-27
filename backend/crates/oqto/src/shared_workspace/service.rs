@@ -27,6 +27,7 @@ fn sanitize_display_name(name: &str) -> String {
 use super::models::{
     AddMemberRequest, CreateSharedWorkspaceRequest, MemberRole, SharedWorkspace,
     SharedWorkspaceInfo, SharedWorkspaceMemberInfo, UpdateSharedWorkspaceRequest,
+    WORKSPACE_COLORS, WORKSPACE_ICONS,
 };
 use super::repository::SharedWorkspaceRepository;
 use super::users_md::generate_users_md;
@@ -96,6 +97,18 @@ impl SharedWorkspaceService {
         let path = format!("/home/{}", linux_user);
         let id = format!("sw_{}", nanoid::nanoid!(12));
 
+        // Resolve icon and color (use provided or auto-assign from slug)
+        let icon = request
+            .icon
+            .as_deref()
+            .filter(|i| WORKSPACE_ICONS.contains(i))
+            .unwrap_or_else(|| SharedWorkspaceRepository::auto_icon(&slug));
+        let color = request
+            .color
+            .as_deref()
+            .filter(|c| c.starts_with('#') && c.len() == 7)
+            .unwrap_or_else(|| SharedWorkspaceRepository::auto_color(&slug));
+
         // Create Linux user via usermgr in multi-user mode
         if multi_user {
             self.create_linux_user(&linux_user, &path)?;
@@ -116,6 +129,8 @@ impl SharedWorkspaceService {
                 &path,
                 creator_id,
                 request.description.as_deref(),
+                icon,
+                color,
             )
             .await?;
 
@@ -196,9 +211,22 @@ impl SharedWorkspaceService {
             bail!("insufficient permissions to update workspace");
         }
 
-        self.repo
-            .update(workspace_id, request.name.as_deref(), request.description.as_deref())
-            .await
+        let ws = self
+            .repo
+            .update(
+                workspace_id,
+                request.name.as_deref(),
+                request.description.as_deref(),
+                request.icon.as_deref(),
+                request.color.as_deref(),
+            )
+            .await?;
+
+        // Broadcast update to all members
+        self.broadcast_change(workspace_id, "workspace_updated", None)
+            .await;
+
+        Ok(ws)
     }
 
     /// Delete a shared workspace. Requires owner role.

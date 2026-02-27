@@ -1,119 +1,47 @@
 {
   "todos": [
     {
-      "id": "t1",
-      "content": "Search memories and understand existing shared workspace context",
+      "id": "t20",
+      "content": "DB migration: add icon and color fields to shared_workspaces",
       "status": "completed",
       "priority": "high"
     },
     {
-      "id": "t2",
-      "content": "Review trx issues and existing codebase for shared workspaces",
+      "id": "t21",
+      "content": "Backend: icon/color in models, API, and create/update flows",
       "status": "completed",
       "priority": "high"
     },
     {
-      "id": "t3",
-      "content": "Create design document for shared workspaces feature",
-      "status": "completed",
-      "priority": "high"
-    },
-    {
-      "id": "t4",
-      "content": "Database migration: shared_workspaces and shared_workspace_members tables",
-      "status": "completed",
-      "priority": "high"
-    },
-    {
-      "id": "t5",
-      "content": "Backend: SharedWorkspace models and repository",
-      "status": "completed",
-      "priority": "high"
-    },
-    {
-      "id": "t6",
-      "content": "Backend: Shared workspace service layer",
-      "status": "completed",
-      "priority": "high"
-    },
-    {
-      "id": "t7",
-      "content": "Backend: API handlers for shared workspace CRUD + members",
-      "status": "completed",
-      "priority": "high"
-    },
-    {
-      "id": "t8",
-      "content": "Backend: API routes registration",
-      "status": "completed",
-      "priority": "high"
-    },
-    {
-      "id": "t9",
-      "content": "Usermgr: reuses existing create-user (oqto_shared_* matches oqto_ prefix)",
-      "status": "completed",
-      "priority": "high"
-    },
-    {
-      "id": "t10",
-      "content": "Backend: User-prepended prompt + display name sanitization",
-      "status": "completed",
-      "priority": "high"
-    },
-    {
-      "id": "t11",
-      "content": "Backend: USERS.md auto-generation for shared workspaces",
-      "status": "completed",
-      "priority": "high"
-    },
-    {
-      "id": "t12",
-      "content": "Backend: Runner routing for shared workspaces (use shared linux user's runner)",
-      "status": "completed",
-      "priority": "high"
-    },
-    {
-      "id": "t13",
-      "content": "Backend: hstry/oqto-files provisioning for shared workspaces",
-      "status": "completed",
-      "priority": "high"
-    },
-    {
-      "id": "t14",
-      "content": "Display name sanitization in prompt prepending",
-      "status": "completed",
-      "priority": "high"
-    },
-    {
-      "id": "t15",
-      "content": "Compile and fix errors",
-      "status": "completed",
-      "priority": "high"
-    },
-    {
-      "id": "t16",
-      "content": "Frontend: Shared workspace types and API client",
+      "id": "t22",
+      "content": "Frontend: shared workspace types and API client",
       "status": "pending",
       "priority": "medium"
     },
     {
-      "id": "t17",
-      "content": "Frontend: SharedWorkspace UI components (create dialog, member mgmt)",
+      "id": "t23",
+      "content": "Frontend: shared workspace sidebar section with icons/colors",
       "status": "pending",
       "priority": "medium"
     },
     {
-      "id": "t18",
-      "content": "Frontend: Sidebar integration for shared workspaces",
+      "id": "t24",
+      "content": "Frontend: create/manage shared workspace dialogs with icon/color picker",
       "status": "pending",
       "priority": "medium"
     },
     {
-      "id": "t19",
-      "content": "Update AGENTS.md, trx issues, add memory",
-      "status": "in_progress",
+      "id": "t25",
+      "content": "Frontend: handle shared_workspace.updated WS events",
+      "status": "pending",
       "priority": "medium"
+    },
+    {
+      "id": "t26",
+      "content": "Compile and verify",
+      "status": "completed",
+      "priority": "high"
     }
   ],
-  "updated_at": "2026-02-27T16:54:43.664Z"
+  "updated_at": "2026-02-27T17:19:04.949Z"
 }
