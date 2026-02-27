@@ -263,12 +263,24 @@ deploy_host() {
         for svc in $services; do
             log "  Restarting $svc..."
             if [[ "$is_local" == "true" ]]; then
-                run systemctl --user restart "$svc" || warn "  Failed to restart $svc"
+                # For oqto: kill stale port holders, use system service in multi-user mode
+                if [[ "$svc" == "oqto" && "$mode" == "multi-user" ]]; then
+                    run sudo fuser -k 8080/tcp 2>/dev/null || true
+                    sleep 1
+                    run sudo systemctl restart oqto || warn "  Failed to restart oqto"
+                else
+                    run systemctl --user restart "$svc" || warn "  Failed to restart $svc"
+                fi
             else
                 if $DRY_RUN; then
-                    echo -e "${YELLOW}  [dry-run]${NC} ssh $ssh_target systemctl --user restart $svc"
+                    echo -e "${YELLOW}  [dry-run]${NC} ssh $ssh_target sudo systemctl restart $svc"
                 else
-                    ssh "$ssh_target" "systemctl --user restart $svc" || warn "  Failed to restart $svc on $name"
+                    # Kill stale port holders before restart to prevent "Address already in use"
+                    if [[ "$svc" == "oqto" ]]; then
+                        ssh "$ssh_target" "sudo fuser -k 8080/tcp 2>/dev/null; sleep 1; sudo systemctl restart oqto" || warn "  Failed to restart oqto on $name"
+                    else
+                        ssh "$ssh_target" "sudo systemctl restart $svc 2>/dev/null || systemctl --user restart $svc" || warn "  Failed to restart $svc on $name"
+                    fi
                 fi
             fi
         done
