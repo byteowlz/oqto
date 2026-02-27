@@ -122,19 +122,20 @@ pub const WORKSPACE_ICONS: &[&str] = &[
 ];
 
 /// Curated color palette for shared workspaces.
+/// Muted, desaturated tones that complement the dark green-tinted theme.
 pub const WORKSPACE_COLORS: &[&str] = &[
-    "#6366f1", // indigo
-    "#8b5cf6", // violet
-    "#ec4899", // pink
-    "#f43f5e", // rose
-    "#ef4444", // red
-    "#f97316", // orange
-    "#eab308", // yellow
-    "#22c55e", // green
-    "#14b8a6", // teal
-    "#06b6d4", // cyan
-    "#3b82f6", // blue
-    "#a855f7", // purple
+    "#3ba77c", // primary green (matches theme primary)
+    "#5b8a72", // sage
+    "#7c9a92", // eucalyptus
+    "#6b8f9c", // slate teal
+    "#5c7d8a", // steel blue
+    "#7b8fa6", // dusty blue
+    "#8b7fa3", // muted violet
+    "#9c7b8f", // mauve
+    "#a67c7c", // dusty rose
+    "#b0926b", // warm sand
+    "#8a9670", // olive
+    "#6b9080", // seafoam
 ];
 
 /// Shared workspace database row.

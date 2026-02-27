@@ -218,6 +218,33 @@ export {
 	AgentAskAmbiguousException,
 } from "./agents";
 
+// Shared Workspaces
+export type {
+	MemberRole,
+	SharedWorkspaceInfo,
+	SharedWorkspaceMemberInfo,
+	CreateSharedWorkspaceRequest,
+	UpdateSharedWorkspaceRequest,
+	AddMemberRequest,
+	UpdateMemberRoleRequest,
+	SharedWorkspaceUpdatedEvent,
+	WorkspaceIconName,
+	WorkspaceColor,
+} from "./shared-workspaces";
+export {
+	WORKSPACE_ICONS,
+	WORKSPACE_COLORS,
+	listSharedWorkspaces,
+	createSharedWorkspace,
+	getSharedWorkspace,
+	updateSharedWorkspace,
+	deleteSharedWorkspace,
+	listMembers,
+	addMember,
+	updateMemberRole,
+	removeMember,
+} from "./shared-workspaces";
+
 // Onboarding
 export type {
 	OnboardingStage,

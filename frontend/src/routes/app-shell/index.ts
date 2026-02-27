@@ -45,3 +45,9 @@ export type {
 	SessionHierarchy,
 	SidebarSessionsProps,
 } from "./SidebarSessions";
+
+export { SidebarSharedWorkspaces } from "./SidebarSharedWorkspaces";
+export type { SidebarSharedWorkspacesProps } from "./SidebarSharedWorkspaces";
+
+export { WorkspaceIcon } from "./WorkspaceIcon";
+export type { WorkspaceIconProps } from "./WorkspaceIcon";

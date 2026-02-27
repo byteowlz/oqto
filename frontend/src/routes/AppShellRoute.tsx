@@ -40,11 +40,23 @@ import {
 	RenameSessionDialog,
 	SidebarNav,
 	SidebarSessions,
+	SidebarSharedWorkspaces,
 	useProjectActions,
 	useSessionData,
 	useSessionDialogs,
 	useSidebarState,
 } from "./app-shell";
+import { useSharedWorkspaces } from "./app-shell/hooks/useSharedWorkspaces";
+import {
+	SharedWorkspaceDialog,
+	SharedWorkspaceMembersDialog,
+} from "./app-shell/dialogs";
+import {
+	createSharedWorkspace,
+	updateSharedWorkspace,
+	deleteSharedWorkspace,
+	type SharedWorkspaceInfo,
+} from "@/lib/api/shared-workspaces";
 
 const AppShell = memo(function AppShell() {
 	const {
@@ -117,6 +129,74 @@ const AppShell = memo(function AppShell() {
 		projectSortBy: projectActions.projectSortBy,
 		projectSortAsc: projectActions.projectSortAsc,
 	});
+
+	// Shared workspaces
+	const sharedWs = useSharedWorkspaces();
+	const [swDialogOpen, setSwDialogOpen] = useState(false);
+	const [swEditTarget, setSwEditTarget] = useState<SharedWorkspaceInfo | null>(
+		null,
+	);
+	const [swMembersTarget, setSwMembersTarget] =
+		useState<SharedWorkspaceInfo | null>(null);
+	const [swSubmitting, setSwSubmitting] = useState(false);
+	const [swError, setSwError] = useState<string | null>(null);
+
+	const handleCreateOrEditSharedWorkspace = useCallback(
+		async (data: {
+			name: string;
+			description: string;
+			icon: string;
+			color: string;
+		}) => {
+			try {
+				setSwSubmitting(true);
+				setSwError(null);
+				if (swEditTarget) {
+					await updateSharedWorkspace(swEditTarget.id, {
+						name: data.name,
+						description: data.description || undefined,
+						icon: data.icon,
+						color: data.color,
+					});
+				} else {
+					await createSharedWorkspace({
+						name: data.name,
+						description: data.description || undefined,
+						icon: data.icon,
+						color: data.color,
+					});
+				}
+				setSwDialogOpen(false);
+				setSwEditTarget(null);
+				await sharedWs.refresh();
+			} catch (err) {
+				setSwError(
+					err instanceof Error ? err.message : "Failed to save workspace",
+				);
+			} finally {
+				setSwSubmitting(false);
+			}
+		},
+		[swEditTarget, sharedWs.refresh],
+	);
+
+	const handleDeleteSharedWorkspace = useCallback(
+		async (workspace: SharedWorkspaceInfo) => {
+			if (
+				!window.confirm(
+					`Delete shared workspace "${workspace.name}"? This cannot be undone.`,
+				)
+			)
+				return;
+			try {
+				await deleteSharedWorkspace(workspace.id);
+				await sharedWs.refresh();
+			} catch {
+				// ignore
+			}
+		},
+		[sharedWs.refresh],
+	);
 
 	const handleBulkDeleteSessions = useCallback(
 		async (sessionIds: string[]) => {
@@ -811,6 +891,35 @@ const AppShell = memo(function AppShell() {
 									className="w-full px-1.5 mt-2 flex-1 min-h-0 flex flex-col overflow-x-hidden"
 									data-spotlight="session-list"
 								>
+									{sharedWs.sharedWorkspaces.length > 0 && (
+										<>
+											<SidebarSharedWorkspaces
+												sharedWorkspaces={sharedWs.sharedWorkspaces}
+												expandedWorkspaces={sharedWs.expandedWorkspaces}
+												toggleWorkspaceExpanded={
+													sharedWs.toggleWorkspaceExpanded
+												}
+												onNewSharedWorkspace={() => {
+													setSwEditTarget(null);
+													setSwError(null);
+													setSwDialogOpen(true);
+												}}
+												onManageWorkspace={(ws) => {
+													setSwEditTarget(ws);
+													setSwError(null);
+													setSwDialogOpen(true);
+												}}
+												onManageMembers={(ws) => setSwMembersTarget(ws)}
+												onNewChatInWorkspace={(ws) => {
+													void createNewChat(ws.path);
+												}}
+												onDeleteWorkspace={handleDeleteSharedWorkspace}
+											/>
+											<div className="w-full px-2 my-1">
+												<div className="h-px w-full bg-sidebar-border/50" />
+											</div>
+										</>
+									)}
 									<SidebarSessions
 										locale={locale}
 										chatHistory={chatHistory}
@@ -996,6 +1105,36 @@ const AppShell = memo(function AppShell() {
 					settingsLoading={projectActions.settingsLoading}
 					onSubmit={projectActions.handleCreateProjectFromTemplate}
 				/>
+
+				{/* Shared workspace dialogs */}
+				<SharedWorkspaceDialog
+					open={swDialogOpen}
+					onOpenChange={(open) => {
+						setSwDialogOpen(open);
+						if (!open) setSwEditTarget(null);
+					}}
+					editId={swEditTarget?.id}
+					initialName={swEditTarget?.name ?? ""}
+					initialDescription={swEditTarget?.description ?? ""}
+					initialIcon={swEditTarget?.icon ?? "users"}
+					initialColor={swEditTarget?.color ?? "#3ba77c"}
+					submitting={swSubmitting}
+					error={swError}
+					onSubmit={handleCreateOrEditSharedWorkspace}
+				/>
+
+				{swMembersTarget && (
+					<SharedWorkspaceMembersDialog
+						open={!!swMembersTarget}
+						onOpenChange={(open) => {
+							if (!open) setSwMembersTarget(null);
+						}}
+						workspaceId={swMembersTarget.id}
+						workspaceName={swMembersTarget.name}
+						workspaceColor={swMembersTarget.color}
+						myRole={swMembersTarget.my_role}
+					/>
+				)}
 			</div>
 		</UIControlProvider>
 	);

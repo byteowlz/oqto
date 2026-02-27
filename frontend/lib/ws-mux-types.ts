@@ -497,11 +497,26 @@ export type TrxWsEvent =
 	  } & WsEventBase)
 	| ({ channel: "trx"; type: "error"; error: string } & WsEventBase);
 
+/** Shared workspace change types */
+export type SharedWorkspaceChangeType =
+	| "member_added"
+	| "member_removed"
+	| "member_role_changed"
+	| "workspace_updated"
+	| "workspace_deleted";
+
 /** System channel events */
 export type SystemWsEvent =
 	| { channel: "system"; type: "connected" }
 	| { channel: "system"; type: "error"; error: string }
-	| { channel: "system"; type: "ping" };
+	| { channel: "system"; type: "ping" }
+	| {
+			channel: "system";
+			type: "shared_workspace.updated";
+			workspace_id: string;
+			change_type: SharedWorkspaceChangeType;
+			detail: string | null;
+	  };
 
 /** All possible WebSocket events */
 export type WsEvent =

@@ -15,25 +15,25 @@
     {
       "id": "t22",
       "content": "Frontend: shared workspace types and API client",
-      "status": "pending",
+      "status": "completed",
       "priority": "medium"
     },
     {
       "id": "t23",
       "content": "Frontend: shared workspace sidebar section with icons/colors",
-      "status": "pending",
+      "status": "completed",
       "priority": "medium"
     },
     {
       "id": "t24",
       "content": "Frontend: create/manage shared workspace dialogs with icon/color picker",
-      "status": "pending",
+      "status": "completed",
       "priority": "medium"
     },
     {
       "id": "t25",
       "content": "Frontend: handle shared_workspace.updated WS events",
-      "status": "pending",
+      "status": "completed",
       "priority": "medium"
     },
     {
@@ -43,5 +43,5 @@
       "priority": "high"
     }
   ],
-  "updated_at": "2026-02-27T17:19:04.949Z"
+  "updated_at": "2026-02-27T18:17:51.434Z"
 }
