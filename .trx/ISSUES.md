@@ -2,6 +2,15 @@
 
 ## Open
 
+### [oqto-m7br] Security: models.json written with 644 permissions - eavs API keys readable by all users (P0, bug)
+In scripts/admin/eavs-provision.sh line 265, models.json is written with mode 644 (world-readable). This file contains the embedded eavs virtual API key. In multi-user deployments, any user on the system can read another user's API key by accessing their ~/.pi/agent/models.json.
+
+Fix: Change mode from '644' to '600' in the write_file_as_user call. Also audit all other write_file_as_user calls that write sensitive content.
+
+File: scripts/admin/eavs-provision.sh:265
+...
+
+
 ### [oqto-29e1] Stability: hstry gRPC high-availability with local spool fallback (P0, epic)
 hstry is currently a single point of failure. If the hstry gRPC service becomes unavailable, all message persistence fails with no graceful degradation. This is especially critical for long-running agent sessions where losing message history is unacceptable.
 

@@ -48,10 +48,12 @@ import {
 } from "./app-shell";
 import { useSharedWorkspaces } from "./app-shell/hooks/useSharedWorkspaces";
 import {
+	ConvertToSharedDialog,
 	SharedWorkspaceDialog,
 	SharedWorkspaceMembersDialog,
 } from "./app-shell/dialogs";
 import {
+	convertToSharedWorkspace,
 	createSharedWorkspace,
 	updateSharedWorkspace,
 	deleteSharedWorkspace,
@@ -178,6 +180,54 @@ const AppShell = memo(function AppShell() {
 			}
 		},
 		[swEditTarget, sharedWs.refresh],
+	);
+
+	// Convert project to shared workspace
+	const [convertDialogOpen, setConvertDialogOpen] = useState(false);
+	const [convertSourcePath, setConvertSourcePath] = useState("");
+	const [convertProjectName, setConvertProjectName] = useState("");
+	const [convertSubmitting, setConvertSubmitting] = useState(false);
+	const [convertError, setConvertError] = useState<string | null>(null);
+
+	const handleShareProject = useCallback(
+		(directory: string, projectName: string) => {
+			setConvertSourcePath(directory);
+			setConvertProjectName(projectName);
+			setConvertError(null);
+			setConvertDialogOpen(true);
+		},
+		[],
+	);
+
+	const handleConvertToShared = useCallback(
+		async (data: {
+			sourcePath: string;
+			name: string;
+			description: string;
+			icon: string;
+			color: string;
+		}) => {
+			try {
+				setConvertSubmitting(true);
+				setConvertError(null);
+				await convertToSharedWorkspace({
+					source_path: data.sourcePath,
+					name: data.name,
+					description: data.description || undefined,
+					icon: data.icon,
+					color: data.color,
+				});
+				setConvertDialogOpen(false);
+				await sharedWs.refresh();
+			} catch (err) {
+				setConvertError(
+					err instanceof Error ? err.message : "Failed to convert",
+				);
+			} finally {
+				setConvertSubmitting(false);
+			}
+		},
+		[sharedWs.refresh],
 	);
 
 	const handleDeleteSharedWorkspace = useCallback(
@@ -959,6 +1009,7 @@ const AppShell = memo(function AppShell() {
 										onPinProject={sidebarState.togglePinProject}
 										onRenameProject={sessionDialogs.handleRenameProject}
 										onDeleteProject={sessionDialogs.handleDeleteProject}
+										onShareProject={handleShareProject}
 										onSearchResultClick={handleSearchResultClick}
 										messageSearchExtraHits={messageSearchExtraHits}
 										sessionSearch={sessionSearch}
@@ -1135,6 +1186,16 @@ const AppShell = memo(function AppShell() {
 						myRole={swMembersTarget.my_role}
 					/>
 				)}
+
+				<ConvertToSharedDialog
+					open={convertDialogOpen}
+					onOpenChange={setConvertDialogOpen}
+					sourcePath={convertSourcePath}
+					sourceProjectName={convertProjectName}
+					submitting={convertSubmitting}
+					error={convertError}
+					onSubmit={handleConvertToShared}
+				/>
 			</div>
 		</UIControlProvider>
 	);

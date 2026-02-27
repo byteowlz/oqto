@@ -8,8 +8,9 @@ use tracing::info;
 
 use crate::auth::CurrentUser;
 use crate::shared_workspace::{
-    AddMemberRequest, CreateSharedWorkspaceRequest, SharedWorkspaceInfo,
-    SharedWorkspaceMemberInfo, UpdateMemberRequest, UpdateSharedWorkspaceRequest,
+    AddMemberRequest, AdminSharedWorkspaceInfo, ConvertToSharedRequest,
+    CreateSharedWorkspaceRequest, SharedWorkspaceInfo, SharedWorkspaceMemberInfo,
+    TransferOwnershipRequest, UpdateMemberRequest, UpdateSharedWorkspaceRequest,
 };
 
 use crate::api::error::{ApiError, ApiResult};
@@ -223,6 +224,180 @@ pub async fn remove_shared_workspace_member(
 
     service
         .remove_member(&workspace_id, user.id(), &target_user_id)
+        .await
+        .map_err(|e| ApiError::bad_request(format!("{}", e)))?;
+
+    Ok(Json(serde_json::json!({ "removed": true })))
+}
+
+// ============================================================================
+// Convert and transfer
+// ============================================================================
+
+/// Convert a personal project to a shared workspace.
+pub async fn convert_to_shared_workspace(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Json(request): Json<ConvertToSharedRequest>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let service = state
+        .shared_workspaces
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("shared workspaces not configured"))?;
+
+    let multi_user = state.linux_users.is_some();
+    let workspace = service
+        .convert_to_shared(&request, user.id(), multi_user)
+        .await
+        .map_err(|e| ApiError::bad_request(format!("failed to convert: {}", e)))?;
+
+    info!(
+        workspace_id = %workspace.id,
+        source = %request.source_path,
+        user = %user.id(),
+        "converted personal project to shared workspace"
+    );
+
+    Ok(Json(serde_json::json!({
+        "id": workspace.id,
+        "name": workspace.name,
+        "slug": workspace.slug,
+        "path": workspace.path,
+        "icon": workspace.icon,
+        "color": workspace.color,
+        "created_at": workspace.created_at,
+    })))
+}
+
+/// Transfer ownership of a shared workspace to another member.
+pub async fn transfer_shared_workspace_ownership(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(workspace_id): Path<String>,
+    Json(request): Json<TransferOwnershipRequest>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let service = state
+        .shared_workspaces
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("shared workspaces not configured"))?;
+
+    service
+        .transfer_ownership(&workspace_id, user.id(), &request)
+        .await
+        .map_err(|e| ApiError::bad_request(format!("{}", e)))?;
+
+    Ok(Json(serde_json::json!({ "transferred": true })))
+}
+
+// ============================================================================
+// Admin handlers (require admin role -- enforced by route layer)
+// ============================================================================
+
+/// Admin: list all shared workspaces.
+pub async fn admin_list_shared_workspaces(
+    State(state): State<AppState>,
+) -> ApiResult<Json<Vec<AdminSharedWorkspaceInfo>>> {
+    let service = state
+        .shared_workspaces
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("shared workspaces not configured"))?;
+
+    let workspaces = service
+        .admin_list_all()
+        .await
+        .map_err(|e| ApiError::internal(format!("failed to list workspaces: {}", e)))?;
+
+    Ok(Json(workspaces))
+}
+
+/// Admin: get shared workspace details including all members.
+pub async fn admin_get_shared_workspace(
+    State(state): State<AppState>,
+    Path(workspace_id): Path<String>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let service = state
+        .shared_workspaces
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("shared workspaces not configured"))?;
+
+    let ws = service
+        .repo()
+        .get_by_id(&workspace_id)
+        .await
+        .map_err(|e| ApiError::internal(format!("{}", e)))?
+        .ok_or_else(|| ApiError::not_found("workspace not found"))?;
+
+    let members = service
+        .repo()
+        .list_members(&workspace_id)
+        .await
+        .map_err(|e| ApiError::internal(format!("{}", e)))?;
+
+    Ok(Json(serde_json::json!({
+        "id": ws.id,
+        "name": ws.name,
+        "slug": ws.slug,
+        "linux_user": ws.linux_user,
+        "path": ws.path,
+        "owner_id": ws.owner_id,
+        "description": ws.description,
+        "icon": ws.icon,
+        "color": ws.color,
+        "created_at": ws.created_at,
+        "updated_at": ws.updated_at,
+        "members": members,
+    })))
+}
+
+/// Admin: force-delete a shared workspace.
+pub async fn admin_delete_shared_workspace(
+    State(state): State<AppState>,
+    Path(workspace_id): Path<String>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let service = state
+        .shared_workspaces
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("shared workspaces not configured"))?;
+
+    service
+        .admin_force_delete(&workspace_id)
+        .await
+        .map_err(|e| ApiError::bad_request(format!("{}", e)))?;
+
+    Ok(Json(serde_json::json!({ "deleted": true })))
+}
+
+/// Admin: force-transfer ownership.
+pub async fn admin_transfer_shared_workspace_ownership(
+    State(state): State<AppState>,
+    Path(workspace_id): Path<String>,
+    Json(request): Json<TransferOwnershipRequest>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let service = state
+        .shared_workspaces
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("shared workspaces not configured"))?;
+
+    service
+        .admin_force_transfer_ownership(&workspace_id, &request.new_owner_id)
+        .await
+        .map_err(|e| ApiError::bad_request(format!("{}", e)))?;
+
+    Ok(Json(serde_json::json!({ "transferred": true })))
+}
+
+/// Admin: force-remove a member.
+pub async fn admin_remove_shared_workspace_member(
+    State(state): State<AppState>,
+    Path((workspace_id, target_user_id)): Path<(String, String)>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let service = state
+        .shared_workspaces
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("shared workspaces not configured"))?;
+
+    service
+        .admin_force_remove_member(&workspace_id, &target_user_id)
         .await
         .map_err(|e| ApiError::bad_request(format!("{}", e)))?;
 

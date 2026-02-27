@@ -221,26 +221,140 @@ A "New Shared Workspace" dialog accessible from the sidebar:
 - Description (optional)
 - Initial members (search/add users)
 
-## Implementation Phases
+## Workspace Creation Flows
 
-### Phase 1: Backend Foundation (this PR)
-- Database migration for shared_workspaces and shared_workspace_members
-- Models, repository, service layer
-- API endpoints for CRUD and member management
-- Usermgr command for creating shared workspace Linux users
-- User-prepended prompts
-- USERS.md generation
+### 1. Create New Shared Workspace (from scratch)
 
-### Phase 2: Runner Integration
-- Shared workspace runner spawning and lifecycle
-- Session routing to shared workspace runners
-- hstry scoping per shared workspace
+Available to any user. Creates a fresh shared workspace with no projects.
 
-### Phase 3: Frontend
-- Sidebar section for shared workspaces
-- Create/manage shared workspace dialogs
-- Member management UI
-- Shared session indicators
+```
+User -> "New Shared Workspace" button in sidebar
+     -> SharedWorkspaceDialog: name, description, icon, color
+     -> Backend: POST /api/shared-workspaces
+        1. Generate slug from name
+        2. Create Linux user oqto_shared_<slug> via usermgr
+        3. Create DB record (shared_workspaces + owner member)
+        4. Generate USERS.md at workspace root
+     -> Sidebar refreshes, shows new workspace
+```
+
+### 2. Convert Personal Project to Shared Workspace
+
+Available to the project owner. Moves the project directory into a new shared
+workspace. The user's existing sessions and history for that path are preserved
+(hstry stores by path, so sessions remain accessible once the runner is
+re-pointed).
+
+```
+User -> Project context menu -> "Share this project..."
+     -> ConvertToSharedDialog: workspace name, members to invite
+     -> Backend: POST /api/shared-workspaces/convert
+        1. Validate user owns the source path
+        2. Create Linux user oqto_shared_<slug> via usermgr
+        3. Copy or move project files to /home/oqto_shared_<slug>/<project_name>/
+           (using usermgr run-as-user for correct ownership)
+        4. Create DB record with user as owner
+        5. Add invited members
+        6. Generate USERS.md
+        7. Optionally leave a symlink or redirect marker at the old path
+     -> Sidebar: project disappears from personal, appears under shared
+```
+
+The conversion copies files rather than moves them. The user keeps their
+personal copy unless they explicitly delete it. This avoids breaking any
+local state or git remotes.
+
+### 3. Create Project Inside Shared Workspace
+
+Available to members with `member` role or above. Uses the existing
+`POST /api/projects/create-from-template` endpoint but targets the shared
+workspace path.
+
+```
+User -> Shared workspace context menu -> "New project"
+     -> NewProjectDialog (same as personal, but workspace_root = shared path)
+     -> Backend: validates user is member, routes to shared workspace runner
+```
+
+## Administration Model
+
+### Self-Service (Workspace-Level)
+
+Each shared workspace is self-administered by its owner and admins.
+
+| Action | Owner | Admin | Member | Viewer |
+|--------|-------|-------|--------|--------|
+| Rename/edit workspace | Yes | Yes | No | No |
+| Change icon/color | Yes | Yes | No | No |
+| Add members | Yes | Yes | No | No |
+| Remove members | Yes | Yes (not owner) | No | No |
+| Change member roles | Yes | Yes (not owner) | No | No |
+| Delete workspace | Yes | No | No | No |
+| Transfer ownership | Yes | No | No | No |
+| Create projects inside | Yes | Yes | Yes | No |
+| Send prompts | Yes | Yes | Yes | No |
+| View sessions/files | Yes | Yes | Yes | Yes |
+
+Ownership transfer: owner can promote an admin to owner and demote themselves
+to admin (two-step in a single API call to avoid orphaned workspaces).
+
+### Platform Admin (System-Level)
+
+Platform admins (users with `role = "admin"` in the users table) have
+oversight of all shared workspaces regardless of membership:
+
+| Action | Platform Admin |
+|--------|---------------|
+| List all shared workspaces | Yes |
+| View any workspace details + members | Yes |
+| Force-delete a workspace | Yes |
+| Force-remove a member | Yes |
+| Force-transfer ownership | Yes |
+| View usage/quota stats | Yes |
+
+Admin API endpoints:
+
+```
+GET    /api/admin/shared-workspaces              # List ALL shared workspaces
+GET    /api/admin/shared-workspaces/:id          # Full details + members
+DELETE /api/admin/shared-workspaces/:id          # Force delete
+PATCH  /api/admin/shared-workspaces/:id/owner    # Force transfer ownership
+DELETE /api/admin/shared-workspaces/:id/members/:uid  # Force remove member
+```
+
+Admin UI: a "Shared Workspaces" tab in the admin panel showing all workspaces
+with owner, member count, creation date, disk usage (future).
+
+## Appearance
+
+### Icons
+
+16 curated Lucide icon names, validated server-side:
+
+`users`, `rocket`, `globe`, `code`, `building`, `shield`, `zap`, `layers`,
+`hexagon`, `terminal`, `flask-conical`, `palette`, `brain`, `database`,
+`network`, `git-branch`
+
+### Colors
+
+12 muted, desaturated tones that complement the dark green-tinted theme:
+
+| Name | Hex | Usage |
+|------|-----|-------|
+| Primary green | `#3ba77c` | Theme primary, default |
+| Sage | `#5b8a72` | |
+| Eucalyptus | `#7c9a92` | |
+| Slate teal | `#6b8f9c` | |
+| Steel blue | `#5c7d8a` | |
+| Dusty blue | `#7b8fa6` | |
+| Muted violet | `#8b7fa3` | |
+| Mauve | `#9c7b8f` | |
+| Dusty rose | `#a67c7c` | |
+| Warm sand | `#b0926b` | |
+| Olive | `#8a9670` | |
+| Seafoam | `#6b9080` | |
+
+Auto-assigned deterministically from slug hash. Overridable via create/update API.
 
 ## Security Considerations
 
@@ -250,3 +364,5 @@ A "New Shared Workspace" dialog accessible from the sidebar:
 - Viewers cannot send prompts or modify files
 - Only owners can delete workspaces
 - Only owners and admins can manage members
+- Display names sanitized before prompt prepending (strip brackets, control chars)
+- Platform admins can force-manage any workspace for governance

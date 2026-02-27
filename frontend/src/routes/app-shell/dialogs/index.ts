@@ -15,3 +15,6 @@ export type { SharedWorkspaceDialogProps } from "./SharedWorkspaceDialog";
 
 export { SharedWorkspaceMembersDialog } from "./SharedWorkspaceMembersDialog";
 export type { SharedWorkspaceMembersDialogProps } from "./SharedWorkspaceMembersDialog";
+
+export { ConvertToSharedDialog } from "./ConvertToSharedDialog";
+export type { ConvertToSharedDialogProps } from "./ConvertToSharedDialog";

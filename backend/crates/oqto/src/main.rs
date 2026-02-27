@@ -2185,6 +2185,13 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     state = state.with_onboarding(onboarding_service);
     info!("Onboarding service initialized");
 
+    // Initialize shared workspaces service
+    let sw_repo = shared_workspace::SharedWorkspaceRepository::new(database.pool().clone());
+    let sw_service = shared_workspace::SharedWorkspaceService::new(sw_repo)
+        .with_ws_hub(state.ws_hub.clone());
+    state = state.with_shared_workspaces(sw_service);
+    info!("Shared workspace service initialized");
+
     // Add Linux users config for multi-user isolation
     if ctx.config.local.linux_users.enabled {
         let linux_users_config = local::LinuxUsersConfig {

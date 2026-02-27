@@ -89,9 +89,13 @@ pub use misc::{
 
 // Shared workspace handlers
 pub use shared_workspaces::{
-    add_shared_workspace_member, create_shared_workspace, delete_shared_workspace,
-    get_shared_workspace, list_shared_workspace_members, list_shared_workspaces,
-    remove_shared_workspace_member, update_shared_workspace, update_shared_workspace_member,
+    add_shared_workspace_member, admin_delete_shared_workspace, admin_get_shared_workspace,
+    admin_list_shared_workspaces, admin_remove_shared_workspace_member,
+    admin_transfer_shared_workspace_ownership, convert_to_shared_workspace,
+    create_shared_workspace, delete_shared_workspace, get_shared_workspace,
+    list_shared_workspace_members, list_shared_workspaces, remove_shared_workspace_member,
+    transfer_shared_workspace_ownership, update_shared_workspace,
+    update_shared_workspace_member,
 };
 
 // Internal helpers used by other modules

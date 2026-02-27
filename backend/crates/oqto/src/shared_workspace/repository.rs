@@ -5,8 +5,8 @@ use sqlx::SqlitePool;
 use tracing::{debug, instrument};
 
 use super::models::{
-    MemberRole, SharedWorkspace, SharedWorkspaceMember, SharedWorkspaceMemberInfo,
-    SharedWorkspaceInfo, WORKSPACE_COLORS, WORKSPACE_ICONS,
+    AdminSharedWorkspaceInfo, MemberRole, SharedWorkspace, SharedWorkspaceMember,
+    SharedWorkspaceMemberInfo, SharedWorkspaceInfo, WORKSPACE_COLORS, WORKSPACE_ICONS,
 };
 
 /// Repository for shared workspace database operations.
@@ -377,6 +377,83 @@ impl SharedWorkspaceRepository {
             }
         }
         Ok(None)
+    }
+
+    /// Transfer ownership: set new owner, demote old owner to admin.
+    /// Must be done in a transaction to prevent orphaned workspaces.
+    pub async fn transfer_ownership(
+        &self,
+        workspace_id: &str,
+        old_owner_id: &str,
+        new_owner_id: &str,
+    ) -> Result<()> {
+        let mut tx = self.pool.begin().await.context("starting transaction")?;
+
+        // Verify new owner is a member
+        let member = sqlx::query_as::<sqlx::Sqlite, SharedWorkspaceMember>(
+            "SELECT * FROM shared_workspace_members WHERE shared_workspace_id = ? AND user_id = ?",
+        )
+        .bind(workspace_id)
+        .bind(new_owner_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .context("checking new owner membership")?;
+
+        if member.is_none() {
+            bail!("new owner must be an existing member of the workspace");
+        }
+
+        // Update workspace owner_id
+        sqlx::query("UPDATE shared_workspaces SET owner_id = ?, updated_at = datetime('now') WHERE id = ?")
+            .bind(new_owner_id)
+            .bind(workspace_id)
+            .execute(&mut *tx)
+            .await
+            .context("updating workspace owner")?;
+
+        // Promote new owner
+        sqlx::query(
+            "UPDATE shared_workspace_members SET role = 'owner' WHERE shared_workspace_id = ? AND user_id = ?",
+        )
+        .bind(workspace_id)
+        .bind(new_owner_id)
+        .execute(&mut *tx)
+        .await
+        .context("promoting new owner")?;
+
+        // Demote old owner to admin
+        sqlx::query(
+            "UPDATE shared_workspace_members SET role = 'admin' WHERE shared_workspace_id = ? AND user_id = ?",
+        )
+        .bind(workspace_id)
+        .bind(old_owner_id)
+        .execute(&mut *tx)
+        .await
+        .context("demoting old owner")?;
+
+        tx.commit().await.context("committing ownership transfer")?;
+        Ok(())
+    }
+
+    // ========================================================================
+    // Admin queries (no membership check -- caller must verify admin role)
+    // ========================================================================
+
+    /// List ALL shared workspaces with member counts (admin only).
+    pub async fn admin_list_all(&self) -> Result<Vec<AdminSharedWorkspaceInfo>> {
+        let rows = sqlx::query_as::<sqlx::Sqlite, AdminSharedWorkspaceInfo>(
+            r#"
+            SELECT
+                sw.*,
+                (SELECT COUNT(*) FROM shared_workspace_members WHERE shared_workspace_id = sw.id) AS member_count
+            FROM shared_workspaces sw
+            ORDER BY sw.created_at DESC
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await
+        .context("admin listing all shared workspaces")?;
+        Ok(rows)
     }
 }
 

@@ -56,6 +56,19 @@ export type UpdateMemberRoleRequest = {
 	role: MemberRole;
 };
 
+export type ConvertToSharedRequest = {
+	source_path: string;
+	name: string;
+	description?: string;
+	icon?: string;
+	color?: string;
+	member_ids?: string[];
+};
+
+export type TransferOwnershipRequest = {
+	new_owner_id: string;
+};
+
 export type SharedWorkspaceUpdatedEvent = {
 	workspace_id: string;
 	change_type:
@@ -231,6 +244,34 @@ export async function removeMember(
 ): Promise<void> {
 	const res = await authFetch(apiUrl(`/${workspaceId}/members/${userId}`), {
 		method: "DELETE",
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+}
+
+/** Convert a personal project into a shared workspace. */
+export async function convertToSharedWorkspace(
+	request: ConvertToSharedRequest,
+): Promise<SharedWorkspaceInfo> {
+	const res = await authFetch(apiUrl("/convert"), {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(request),
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
+/** Transfer ownership of a shared workspace. */
+export async function transferOwnership(
+	workspaceId: string,
+	request: TransferOwnershipRequest,
+): Promise<void> {
+	const res = await authFetch(apiUrl(`/${workspaceId}/transfer-ownership`), {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(request),
 		credentials: "include",
 	});
 	if (!res.ok) throw new Error(await readApiError(res));

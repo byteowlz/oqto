@@ -1,47 +1,47 @@
 {
   "todos": [
     {
-      "id": "t20",
-      "content": "DB migration: add icon and color fields to shared_workspaces",
+      "id": "t30",
+      "content": "Design: workspace creation flows, conversion, and admin model",
       "status": "completed",
       "priority": "high"
     },
     {
-      "id": "t21",
-      "content": "Backend: icon/color in models, API, and create/update flows",
-      "status": "completed",
+      "id": "t31",
+      "content": "Backend: convert personal workspace to shared workspace API",
+      "status": "in_progress",
       "priority": "high"
     },
     {
-      "id": "t22",
-      "content": "Frontend: shared workspace types and API client",
-      "status": "completed",
+      "id": "t32",
+      "content": "Backend: SharedWorkspaceService initialization in server startup",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "id": "t33",
+      "content": "Backend: admin endpoints for shared workspace management",
+      "status": "pending",
       "priority": "medium"
     },
     {
-      "id": "t23",
-      "content": "Frontend: shared workspace sidebar section with icons/colors",
-      "status": "completed",
+      "id": "t34",
+      "content": "Frontend: convert-to-shared flow in project context menu",
+      "status": "pending",
       "priority": "medium"
     },
     {
-      "id": "t24",
-      "content": "Frontend: create/manage shared workspace dialogs with icon/color picker",
-      "status": "completed",
+      "id": "t35",
+      "content": "Frontend: admin panel for shared workspace oversight",
+      "status": "pending",
       "priority": "medium"
     },
     {
-      "id": "t25",
-      "content": "Frontend: handle shared_workspace.updated WS events",
-      "status": "completed",
-      "priority": "medium"
-    },
-    {
-      "id": "t26",
-      "content": "Compile and verify",
-      "status": "completed",
+      "id": "t36",
+      "content": "Update design doc and compile/verify",
+      "status": "pending",
       "priority": "high"
     }
   ],
-  "updated_at": "2026-02-27T18:17:51.434Z"
+  "updated_at": "2026-02-27T19:54:15.876Z"
 }

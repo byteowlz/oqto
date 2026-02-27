@@ -227,6 +227,8 @@ export type {
 	UpdateSharedWorkspaceRequest,
 	AddMemberRequest,
 	UpdateMemberRoleRequest,
+	ConvertToSharedRequest,
+	TransferOwnershipRequest,
 	SharedWorkspaceUpdatedEvent,
 	WorkspaceIconName,
 	WorkspaceColor,
@@ -243,6 +245,8 @@ export {
 	addMember,
 	updateMemberRole,
 	removeMember,
+	convertToSharedWorkspace,
+	transferOwnership,
 } from "./shared-workspaces";
 
 // Onboarding

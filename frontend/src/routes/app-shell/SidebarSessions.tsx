@@ -49,6 +49,7 @@ import {
 	Plus,
 	Search,
 	Settings,
+	Share2,
 	Trash2,
 	X,
 } from "lucide-react";
@@ -111,6 +112,7 @@ export interface SidebarSessionsProps {
 	onPinProject: (projectKey: string) => void;
 	onRenameProject: (projectKey: string, currentName: string) => void;
 	onDeleteProject: (projectKey: string, projectName: string) => void;
+	onShareProject?: (directory: string, projectName: string) => void;
 	onSearchResultClick: (hit: HstrySearchHit) => void;
 	messageSearchExtraHits: HstrySearchHit[];
 	isMobile?: boolean;
@@ -156,6 +158,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 	onPinProject,
 	onRenameProject,
 	onDeleteProject,
+	onShareProject,
 	onSearchResultClick,
 	messageSearchExtraHits,
 	isMobile = false,
@@ -789,6 +792,19 @@ export const SidebarSessions = memo(function SidebarSessions({
 												<Pencil className="w-4 h-4 mr-2" />
 												{t('common.rename')}
 											</ContextMenuItem>
+											{onShareProject && project.directory && (
+												<ContextMenuItem
+													onClick={() =>
+														onShareProject(
+															project.directory as string,
+															project.name,
+														)
+													}
+												>
+													<Share2 className="w-4 h-4 mr-2" />
+													{t('sharedWorkspaces.shareProject', 'Share...')}
+												</ContextMenuItem>
+											)}
 											<ContextMenuSeparator />
 											<ContextMenuItem
 												variant="destructive"

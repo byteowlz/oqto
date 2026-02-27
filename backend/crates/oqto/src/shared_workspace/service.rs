@@ -25,8 +25,9 @@ fn sanitize_display_name(name: &str) -> String {
 }
 
 use super::models::{
-    AddMemberRequest, CreateSharedWorkspaceRequest, MemberRole, SharedWorkspace,
-    SharedWorkspaceInfo, SharedWorkspaceMemberInfo, UpdateSharedWorkspaceRequest,
+    AddMemberRequest, AdminSharedWorkspaceInfo, ConvertToSharedRequest,
+    CreateSharedWorkspaceRequest, MemberRole, SharedWorkspace, SharedWorkspaceInfo,
+    SharedWorkspaceMemberInfo, TransferOwnershipRequest, UpdateSharedWorkspaceRequest,
     WORKSPACE_COLORS, WORKSPACE_ICONS,
 };
 use super::repository::SharedWorkspaceRepository;
@@ -559,6 +560,207 @@ impl SharedWorkspaceService {
         }
     }
 
+    /// Convert a personal project into a shared workspace.
+    ///
+    /// 1. Create shared workspace (linux user, DB record)
+    /// 2. Copy project files to the shared workspace using usermgr
+    /// 3. Generate USERS.md
+    pub async fn convert_to_shared(
+        &self,
+        request: &ConvertToSharedRequest,
+        user_id: &str,
+        multi_user: bool,
+    ) -> Result<SharedWorkspace> {
+        // First, create the shared workspace
+        let create_req = CreateSharedWorkspaceRequest {
+            name: request.name.clone(),
+            description: request.description.clone(),
+            icon: request.icon.clone(),
+            color: request.color.clone(),
+            member_ids: request.member_ids.clone(),
+        };
+        let workspace = self.create(&create_req, user_id, multi_user).await?;
+
+        // Copy the source project into the shared workspace
+        let source = &request.source_path;
+        let project_name = std::path::Path::new(source)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("project");
+        let dest = format!("{}/{}", workspace.path, project_name);
+
+        if multi_user {
+            // Use usermgr to copy files with correct ownership
+            crate::local::linux_users::usermgr_request(
+                "run-as-user",
+                serde_json::json!({
+                    "username": workspace.linux_user,
+                    "binary": "cp",
+                    "args": ["-a", source, &dest],
+                    "cwd": &workspace.path,
+                }),
+            )
+            .with_context(|| format!("copying {} to shared workspace {}", source, dest))?;
+
+            // Fix ownership
+            crate::local::linux_users::usermgr_request(
+                "run-as-user",
+                serde_json::json!({
+                    "username": workspace.linux_user,
+                    "binary": "chown",
+                    "args": ["-R", &format!("{}:oqto", workspace.linux_user), &dest],
+                    "cwd": &workspace.path,
+                }),
+            )
+            .with_context(|| format!("fixing ownership of {}", dest))?;
+        } else {
+            // Single-user mode: direct copy
+            let src_path = std::path::Path::new(source);
+            let dest_path = std::path::Path::new(&dest);
+            if src_path.exists() {
+                copy_dir_recursive(src_path, dest_path)
+                    .with_context(|| format!("copying {} to {}", source, dest))?;
+            }
+        }
+
+        info!(
+            workspace_id = %workspace.id,
+            source = %source,
+            dest = %dest,
+            "converted personal project to shared workspace"
+        );
+
+        Ok(workspace)
+    }
+
+    /// Transfer ownership of a shared workspace.
+    /// Only the current owner can transfer ownership.
+    pub async fn transfer_ownership(
+        &self,
+        workspace_id: &str,
+        user_id: &str,
+        request: &TransferOwnershipRequest,
+    ) -> Result<()> {
+        // Verify the caller is the owner
+        let member = self
+            .repo
+            .get_member(workspace_id, user_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("not a member of this workspace"))?;
+        if member.role != MemberRole::Owner {
+            bail!("only the workspace owner can transfer ownership");
+        }
+
+        self.repo
+            .transfer_ownership(workspace_id, user_id, &request.new_owner_id)
+            .await?;
+
+        // Update USERS.md
+        let ws = self.repo.get_by_id(workspace_id).await?;
+        if let Some(ref ws) = ws {
+            self.regenerate_users_md(ws).await?;
+        }
+
+        // Broadcast to all members
+        self.broadcast_change(
+            workspace_id,
+            "workspace_updated",
+            Some(serde_json::json!({"new_owner": request.new_owner_id})),
+        )
+        .await;
+
+        info!(
+            workspace_id = %workspace_id,
+            old_owner = %user_id,
+            new_owner = %request.new_owner_id,
+            "transferred workspace ownership"
+        );
+
+        Ok(())
+    }
+
+    // ========================================================================
+    // Admin methods (caller must verify admin role)
+    // ========================================================================
+
+    /// List all shared workspaces (admin only).
+    pub async fn admin_list_all(&self) -> Result<Vec<AdminSharedWorkspaceInfo>> {
+        self.repo.admin_list_all().await
+    }
+
+    /// Admin force-delete a shared workspace.
+    pub async fn admin_force_delete(&self, workspace_id: &str) -> Result<()> {
+        let ws = self.repo.get_by_id(workspace_id).await?;
+        let ws = ws.ok_or_else(|| anyhow::anyhow!("workspace not found"))?;
+
+        // Notify members before deletion
+        self.broadcast_change(workspace_id, "workspace_deleted", None)
+            .await;
+
+        self.repo.delete(workspace_id).await?;
+        info!(workspace_id = %workspace_id, name = %ws.name, "admin force-deleted shared workspace");
+        Ok(())
+    }
+
+    /// Admin force-remove a member.
+    pub async fn admin_force_remove_member(
+        &self,
+        workspace_id: &str,
+        target_user_id: &str,
+    ) -> Result<()> {
+        // Notify the removed user
+        self.broadcast_change(
+            workspace_id,
+            "member_removed",
+            Some(serde_json::json!(target_user_id)),
+        )
+        .await;
+
+        self.repo.remove_member(workspace_id, target_user_id).await?;
+
+        // Regenerate USERS.md
+        let ws = self.repo.get_by_id(workspace_id).await?;
+        if let Some(ref ws) = ws {
+            self.regenerate_users_md(ws).await?;
+        }
+
+        info!(
+            workspace_id = %workspace_id,
+            user_id = %target_user_id,
+            "admin force-removed member from shared workspace"
+        );
+        Ok(())
+    }
+
+    /// Admin force-transfer ownership.
+    pub async fn admin_force_transfer_ownership(
+        &self,
+        workspace_id: &str,
+        new_owner_id: &str,
+    ) -> Result<()> {
+        let ws = self.repo.get_by_id(workspace_id).await?;
+        let ws = ws.ok_or_else(|| anyhow::anyhow!("workspace not found"))?;
+
+        self.repo
+            .transfer_ownership(workspace_id, &ws.owner_id, new_owner_id)
+            .await?;
+
+        // Reload workspace after transfer
+        let ws = self.repo.get_by_id(workspace_id).await?;
+        if let Some(ref ws) = ws {
+            self.regenerate_users_md(ws).await?;
+        }
+        self.broadcast_change(workspace_id, "workspace_updated", None)
+            .await;
+
+        info!(
+            workspace_id = %workspace_id,
+            new_owner = %new_owner_id,
+            "admin force-transferred workspace ownership"
+        );
+        Ok(())
+    }
+
     /// Create a Linux user for the shared workspace via usermgr.
     fn create_linux_user(&self, username: &str, home: &str) -> Result<()> {
         // First ensure the oqto group exists
@@ -582,6 +784,27 @@ impl SharedWorkspaceService {
         );
         Ok(())
     }
+}
+
+/// Recursively copy a directory (single-user mode fallback).
+fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> Result<()> {
+    std::fs::create_dir_all(dst)
+        .with_context(|| format!("creating directory {}", dst.display()))?;
+    for entry in std::fs::read_dir(src)
+        .with_context(|| format!("reading directory {}", src.display()))?
+    {
+        let entry = entry?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        if src_path.is_dir() {
+            copy_dir_recursive(&src_path, &dst_path)?;
+        } else {
+            std::fs::copy(&src_path, &dst_path).with_context(|| {
+                format!("copying {} to {}", src_path.display(), dst_path.display())
+            })?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

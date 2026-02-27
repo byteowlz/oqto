@@ -126,6 +126,14 @@ fn create_router_with_config_and_auth(
             patch(handlers::update_shared_workspace_member)
                 .delete(handlers::remove_shared_workspace_member),
         )
+        .route(
+            "/shared-workspaces/convert",
+            post(handlers::convert_to_shared_workspace),
+        )
+        .route(
+            "/shared-workspaces/{workspace_id}/transfer-ownership",
+            post(handlers::transfer_shared_workspace_ownership),
+        )
         // Session management
         .route("/sessions", get(handlers::list_sessions))
         .route("/sessions", post(handlers::create_session))
@@ -309,6 +317,24 @@ fn create_router_with_config_and_auth(
         .route(
             "/admin/invite-codes/{code_id}/revoke",
             post(handlers::revoke_invite_code),
+        )
+        // Admin routes - shared workspace management
+        .route(
+            "/admin/shared-workspaces",
+            get(handlers::admin_list_shared_workspaces),
+        )
+        .route(
+            "/admin/shared-workspaces/{workspace_id}",
+            get(handlers::admin_get_shared_workspace)
+                .delete(handlers::admin_delete_shared_workspace),
+        )
+        .route(
+            "/admin/shared-workspaces/{workspace_id}/owner",
+            patch(handlers::admin_transfer_shared_workspace_ownership),
+        )
+        .route(
+            "/admin/shared-workspaces/{workspace_id}/members/{user_id}",
+            delete(handlers::admin_remove_shared_workspace_member),
         )
         // Chat history routes (reads from disk, reads from hstry)
         .route("/chat-history", get(handlers::list_chat_history))

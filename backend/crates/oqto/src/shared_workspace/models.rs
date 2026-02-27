@@ -256,3 +256,50 @@ fn default_member_role() -> MemberRole {
 pub struct UpdateMemberRequest {
     pub role: MemberRole,
 }
+
+/// Request to convert a personal project into a shared workspace.
+#[derive(Debug, Clone, Deserialize, TS)]
+#[ts(export, export_to = "../../../../frontend/src/generated/")]
+pub struct ConvertToSharedRequest {
+    /// Path to the personal project directory (must be owned by the user).
+    pub source_path: String,
+    /// Name for the new shared workspace.
+    pub name: String,
+    /// Optional description.
+    #[serde(default)]
+    pub description: Option<String>,
+    /// Lucide icon name.
+    #[serde(default)]
+    pub icon: Option<String>,
+    /// Hex color for accent.
+    #[serde(default)]
+    pub color: Option<String>,
+    /// User IDs to invite as initial members.
+    #[serde(default)]
+    pub member_ids: Vec<String>,
+}
+
+/// Request to transfer ownership of a shared workspace.
+#[derive(Debug, Clone, Deserialize, TS)]
+#[ts(export, export_to = "../../../../frontend/src/generated/")]
+pub struct TransferOwnershipRequest {
+    /// The user ID of the new owner (must already be a member).
+    pub new_owner_id: String,
+}
+
+/// Admin view of a shared workspace (includes all details).
+#[derive(Debug, Clone, Serialize, FromRow)]
+pub struct AdminSharedWorkspaceInfo {
+    pub id: String,
+    pub name: String,
+    pub slug: String,
+    pub linux_user: String,
+    pub path: String,
+    pub owner_id: String,
+    pub description: Option<String>,
+    pub icon: String,
+    pub color: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub member_count: i64,
+}
