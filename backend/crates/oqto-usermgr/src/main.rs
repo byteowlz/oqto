@@ -1129,48 +1129,58 @@ WantedBy=default.target
                 i * 500
             );
 
-            // Verify critical services are actually running for this user
+            // Verify critical services are actually running for this user.
+            // Services like mmry may fail on first start (port conflicts,
+            // TIME_WAIT from previous instances) and need systemd's Restart=
+            // to recover. We retry with backoff to accommodate RestartSec=3.
             for svc in ["hstry", "mmry"] {
                 let svc_unit = format!("{svc}.service");
-                match run_user_systemctl(&["is-active", &svc_unit]) {
-                    Ok(_) => {
-                        eprintln!("oqto-usermgr: {svc} confirmed active for {username}");
-                    }
-                    Err(e) => {
-                        eprintln!("oqto-usermgr: WARNING: {svc} not active for {username}: {e}");
-                        // Try to start it explicitly
-                        if let Err(e2) = run_user_systemctl(&["start", &svc_unit]) {
-                            return Response::error(format!(
-                                "runner socket ready but {svc} failed to start: {e2}"
-                            ));
+                let max_attempts = 5;
+                let mut healthy = false;
+                for attempt in 1..=max_attempts {
+                    match run_user_systemctl(&["is-active", &svc_unit]) {
+                        Ok(_) => {
+                            eprintln!("oqto-usermgr: {svc} confirmed active for {username} (attempt {attempt})");
+                            healthy = true;
+                            break;
                         }
-                        // Give it a moment
-                        std::thread::sleep(std::time::Duration::from_secs(1));
-                        if let Err(e3) = run_user_systemctl(&["is-active", &svc_unit]) {
-                            // Capture journal logs for diagnostics
-                            let logs =
-                                run_user_systemctl(&["status", &svc_unit, "--no-pager", "-l"])
-                                    .unwrap_or_default();
-                            let journal = Command::new("/sbin/runuser")
-                                .args(["-u", username, "--"])
-                                .arg("env")
-                                .arg(format!("XDG_RUNTIME_DIR={runtime_dir}"))
-                                .arg(format!("DBUS_SESSION_BUS_ADDRESS={bus}"))
-                                .arg("journalctl")
-                                .args(["--user", "-u", &svc_unit, "-n", "20", "--no-pager"])
-                                .output()
-                                .ok()
-                                .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
-                                .unwrap_or_default();
+                        Err(e) => {
                             eprintln!(
-                                "oqto-usermgr: {svc} status for {username}:\n{logs}\n--- journal ---\n{journal}"
+                                "oqto-usermgr: {svc} not active for {username} (attempt {attempt}/{max_attempts}): {e}"
                             );
-                            return Response::error(format!(
-                                "{svc} failed to start for {username}: {e3}\n--- status ---\n{logs}\n--- journal ---\n{journal}"
-                            ));
+                            if attempt == 1 {
+                                // First failure: try explicit start
+                                let _ = run_user_systemctl(&["start", &svc_unit]);
+                            }
+                            if attempt < max_attempts {
+                                // Wait for systemd restart cycle (RestartSec=3)
+                                std::thread::sleep(std::time::Duration::from_secs(4));
+                            }
                         }
-                        eprintln!("oqto-usermgr: {svc} recovered for {username}");
                     }
+                }
+                if !healthy {
+                    // All attempts exhausted -- collect diagnostics
+                    let logs =
+                        run_user_systemctl(&["status", &svc_unit, "--no-pager", "-l"])
+                            .unwrap_or_default();
+                    let journal = Command::new("/sbin/runuser")
+                        .args(["-u", username, "--"])
+                        .arg("env")
+                        .arg(format!("XDG_RUNTIME_DIR={runtime_dir}"))
+                        .arg(format!("DBUS_SESSION_BUS_ADDRESS={bus}"))
+                        .arg("journalctl")
+                        .args(["--user", "-u", &svc_unit, "-n", "20", "--no-pager"])
+                        .output()
+                        .ok()
+                        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+                        .unwrap_or_default();
+                    eprintln!(
+                        "oqto-usermgr: {svc} failed after {max_attempts} attempts for {username}:\n{logs}\n--- journal ---\n{journal}"
+                    );
+                    return Response::error(format!(
+                        "{svc} failed to start for {username} after {max_attempts} attempts\n--- status ---\n{logs}\n--- journal ---\n{journal}"
+                    ));
                 }
             }
 
