@@ -100,22 +100,8 @@ check_prerequisites() {
   fi
 
   # Node.js -- needed by some global npm packages (slidev shebang, etc.)
-  if ! command_exists node; then
-    log_info "Installing Node.js..."
-    case "$OS_DISTRO" in
-    arch | manjaro | endeavouros) sudo pacman -S --noconfirm nodejs ;;
-    debian | ubuntu | pop | linuxmint) apt_update_once; sudo apt-get install -y nodejs ;;
-    fedora | centos | rhel | rocky | alma*) sudo dnf install -y nodejs ;;
-    opensuse*) sudo zypper install -y nodejs ;;
-    *)
-      if command_exists bun; then
-        log_info "No package manager match, skipping node (bun available)"
-      else
-        log_warn "Please install Node.js manually"
-      fi
-      ;;
-    esac
-  fi
+  # Always install/upgrade to the latest LTS version.
+  install_latest_nodejs
 
   # Check container runtime if container mode selected
   local backend_mode="${SELECTED_BACKEND_MODE:-$OQTO_BACKEND_MODE}"

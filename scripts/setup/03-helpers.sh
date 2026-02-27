@@ -164,3 +164,86 @@ detect_os() {
   fi
 }
 
+# Install or upgrade Node.js to the latest LTS version.
+# Uses the official Node.js binary tarball for consistent results across distros.
+install_latest_nodejs() {
+  local NODE_INSTALL_DIR="/usr/local"
+  local DESIRED_MAJOR="22"  # Current LTS line (update when LTS changes)
+
+  # Check if node exists and is already the desired major version
+  if command_exists node; then
+    local current_version
+    current_version="$(node --version 2>/dev/null | sed 's/^v//')"
+    local current_major="${current_version%%.*}"
+    if [[ "$current_major" == "$DESIRED_MAJOR" ]]; then
+      log_success "Node.js: v${current_version} (LTS ${DESIRED_MAJOR}.x)"
+      return 0
+    fi
+    log_info "Node.js v${current_version} installed, upgrading to LTS ${DESIRED_MAJOR}.x..."
+  else
+    log_info "Installing Node.js LTS ${DESIRED_MAJOR}.x..."
+  fi
+
+  # Determine architecture for the download URL
+  local node_arch
+  case "$(uname -m)" in
+    x86_64)  node_arch="x64" ;;
+    aarch64) node_arch="arm64" ;;
+    armv7l)  node_arch="armv7l" ;;
+    *)
+      log_warn "Unsupported architecture $(uname -m) for Node.js binary install"
+      log_warn "Falling back to distro package..."
+      case "$OS_DISTRO" in
+        arch | manjaro | endeavouros) sudo pacman -S --noconfirm nodejs ;;
+        debian | ubuntu | pop | linuxmint) apt_update_once; sudo apt-get install -y nodejs ;;
+        fedora | centos | rhel | rocky | alma*) sudo dnf install -y nodejs ;;
+        opensuse*) sudo zypper install -y nodejs ;;
+        *) log_warn "Please install Node.js manually" ;;
+      esac
+      return 0
+      ;;
+  esac
+
+  # Fetch the latest LTS version number from nodejs.org
+  local latest_version
+  latest_version="$(curl -fsSL "https://nodejs.org/dist/latest-v${DESIRED_MAJOR}.x/" \
+    | grep -oP 'node-v\K[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+
+  if [[ -z "$latest_version" ]]; then
+    log_warn "Could not determine latest Node.js version, falling back to distro package"
+    case "$OS_DISTRO" in
+      arch | manjaro | endeavouros) sudo pacman -S --noconfirm nodejs ;;
+      debian | ubuntu | pop | linuxmint) apt_update_once; sudo apt-get install -y nodejs ;;
+      fedora | centos | rhel | rocky | alma*) sudo dnf install -y nodejs ;;
+      opensuse*) sudo zypper install -y nodejs ;;
+      *) log_warn "Please install Node.js manually" ;;
+    esac
+    return 0
+  fi
+
+  local tarball="node-v${latest_version}-linux-${node_arch}.tar.xz"
+  local url="https://nodejs.org/dist/v${latest_version}/${tarball}"
+  local tmp_dir
+  tmp_dir="$(mktemp -d)"
+
+  log_info "Downloading Node.js v${latest_version} for ${node_arch}..."
+  if ! curl -fsSL "$url" -o "${tmp_dir}/${tarball}"; then
+    log_warn "Download failed, falling back to distro package"
+    rm -rf "$tmp_dir"
+    case "$OS_DISTRO" in
+      arch | manjaro | endeavouros) sudo pacman -S --noconfirm nodejs ;;
+      debian | ubuntu | pop | linuxmint) apt_update_once; sudo apt-get install -y nodejs ;;
+      fedora | centos | rhel | rocky | alma*) sudo dnf install -y nodejs ;;
+      opensuse*) sudo zypper install -y nodejs ;;
+      *) log_warn "Please install Node.js manually" ;;
+    esac
+    return 0
+  fi
+
+  # Extract directly into /usr/local (bin/, lib/, include/, share/)
+  sudo tar -xJf "${tmp_dir}/${tarball}" -C "$NODE_INSTALL_DIR" --strip-components=1
+  rm -rf "$tmp_dir"
+
+  log_success "Node.js: v${latest_version} installed to ${NODE_INSTALL_DIR}"
+}
+
