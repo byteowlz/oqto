@@ -26,7 +26,10 @@ import {
 	movePathMux,
 	renamePathMux,
 	uploadFileMux,
+	watchFilesMux,
+	unwatchFilesMux,
 } from "@/lib/mux-files";
+import { getWsManager } from "@/lib/ws-manager";
 import { listWorkspaceSessions } from "@/lib/api/sessions";
 import { normalizeWorkspacePath } from "@/lib/session-utils";
 import { cn } from "@/lib/utils";
@@ -506,19 +509,45 @@ export function FileTreeView({
 		loadTreeRef.current(currentPath, true);
 	}, [currentPath, normalizedWorkspacePath]);
 
-	// Auto-refresh the file tree periodically so new files created by agents
-	// appear without manual interaction. Uses a 5s interval, skips if the
-	// tab is hidden or a load is already in progress.
+	// Watch workspace for file changes via inotify (backend-side).
+	// When files are created/modified/deleted, the backend pushes events
+	// through the WebSocket. We debounce and refresh the tree.
 	useEffect(() => {
 		if (!normalizedWorkspacePath) return;
-		const interval = setInterval(() => {
-			if (document.hidden) return;
-			// preserveState=true: keep expanded dirs
-			// skipCache=true: force fresh data from backend
-			// silent=true: no loading spinner or error flash
-			loadTreeRef.current(currentPath, true, true, true);
-		}, 5000);
-		return () => clearInterval(interval);
+
+		// Start watching this workspace on the server
+		watchFilesMux(normalizedWorkspacePath).catch(() => {});
+
+		let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+		let unsub: (() => void) | undefined;
+
+		try {
+			const ws = getWsManager();
+			// biome-ignore lint: event type is opaque from subscribe
+			unsub = ws.subscribe("files", (event: any) => {
+				if (
+					event.type !== "file_changed" ||
+					event.workspace_path !== normalizedWorkspacePath
+				) {
+					return;
+				}
+				// Debounce: wait 500ms after last event before refreshing
+				if (debounceTimer) clearTimeout(debounceTimer);
+				debounceTimer = setTimeout(() => {
+					if (!document.hidden) {
+						loadTreeRef.current(currentPath, true, true, true);
+					}
+				}, 500);
+			});
+		} catch {
+			// WS manager not yet initialized
+		}
+
+		return () => {
+			unsub?.();
+			if (debounceTimer) clearTimeout(debounceTimer);
+			unwatchFilesMux(normalizedWorkspacePath).catch(() => {});
+		};
 	}, [normalizedWorkspacePath, currentPath]);
 
 	/** Find a node in the tree by path. */

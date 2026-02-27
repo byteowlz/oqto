@@ -294,6 +294,20 @@ pub enum FilesWsCommand {
         /// Relative path within the target workspace.
         target_path: String,
     },
+    /// Start watching a workspace directory for file changes.
+    /// Sends FileChanged events when files are created, modified, or deleted.
+    /// Only one watcher per workspace per connection; subsequent calls replace the previous watcher.
+    WatchFiles {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        workspace_path: String,
+    },
+    /// Stop watching a workspace directory for file changes.
+    UnwatchFiles {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        workspace_path: String,
+    },
 }
 
 /// Terminal channel commands (placeholder for future implementation).
@@ -517,6 +531,30 @@ pub enum FilesWsEvent {
         files_copied: usize,
         success: bool,
     },
+    /// Emitted when a file or directory changes in a watched workspace.
+    FileChanged {
+        /// Type of change: "file_created", "file_modified", "file_deleted",
+        /// "dir_created", "dir_deleted"
+        event_type: String,
+        /// Relative path within the workspace
+        path: String,
+        /// "file" or "directory"
+        entry_type: String,
+        /// Workspace path being watched
+        workspace_path: String,
+    },
+    WatchFilesResult {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        workspace_path: String,
+        success: bool,
+    },
+    UnwatchFilesResult {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        workspace_path: String,
+        success: bool,
+    },
     Error {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
@@ -696,6 +734,9 @@ struct WsConnectionState {
     pi_session_meta: HashMap<String, PiSessionMeta>,
     /// Active terminal sessions keyed by terminal_id.
     terminal_sessions: HashMap<String, TerminalSession>,
+    /// Active file watchers keyed by workspace_path.
+    /// The JoinHandle is aborted when the watcher is replaced or the connection closes.
+    file_watchers: HashMap<String, tokio::task::JoinHandle<()>>,
 }
 
 #[derive(Clone, Debug)]
@@ -739,6 +780,7 @@ async fn handle_multiplexed_ws(socket: WebSocket, state: AppState, user_id: Stri
         pi_subscriptions: HashSet::new(),
         pi_session_meta: HashMap::new(),
         terminal_sessions: HashMap::new(),
+        file_watchers: HashMap::new(),
     }));
 
     // Register this connection with the legacy WS hub for session events.
@@ -856,12 +898,15 @@ async fn handle_multiplexed_ws(socket: WebSocket, state: AppState, user_id: Stri
     // Cleanup
     event_writer.abort();
 
-    // Close terminal sessions for this connection.
+    // Close terminal sessions and file watchers for this connection.
     {
         let mut state_guard = conn_state.lock().await;
         for (_, session) in state_guard.terminal_sessions.drain() {
             let _ = session.command_tx.send(TerminalSessionCommand::Close);
             session.task.abort();
+        }
+        for (_, handle) in state_guard.file_watchers.drain() {
+            handle.abort();
         }
     }
 
@@ -954,7 +999,9 @@ async fn handle_ws_command(
         WsCommand::Agent(agent_cmd) => {
             handle_agent_command(agent_cmd, user_id, state, runner_client, conn_state).await
         }
-        WsCommand::Files(files_cmd) => handle_files_command(files_cmd, user_id, state).await,
+        WsCommand::Files(files_cmd) => {
+            handle_files_command(files_cmd, user_id, state, conn_state).await
+        }
         WsCommand::Terminal(term_cmd) => {
             handle_terminal_command(term_cmd, user_id, state, conn_state).await
         }
@@ -1033,6 +1080,8 @@ fn ws_command_summary(cmd: &WsCommand) -> (String, Option<String>, Option<String
                 FilesWsCommand::Copy { .. } => "files.copy",
                 FilesWsCommand::Move { .. } => "files.move",
                 FilesWsCommand::CopyToWorkspace { .. } => "files.copy_to_workspace",
+                FilesWsCommand::WatchFiles { .. } => "files.watch",
+                FilesWsCommand::UnwatchFiles { .. } => "files.unwatch",
             };
             let workspace_path = match files_cmd {
                 FilesWsCommand::Tree { workspace_path, .. }
@@ -1049,6 +1098,10 @@ fn ws_command_summary(cmd: &WsCommand) -> (String, Option<String>, Option<String
                     source_workspace_path,
                     ..
                 } => Some(source_workspace_path.clone()),
+                FilesWsCommand::WatchFiles { workspace_path, .. }
+                | FilesWsCommand::UnwatchFiles { workspace_path, .. } => {
+                    Some(workspace_path.clone())
+                }
             };
             (label.to_string(), None, workspace_path)
         }
@@ -2220,6 +2273,7 @@ async fn handle_files_command(
     cmd: FilesWsCommand,
     user_id: &str,
     state: &AppState,
+    conn_state: Arc<tokio::sync::Mutex<WsConnectionState>>,
 ) -> Option<WsEvent> {
     let id = match &cmd {
         FilesWsCommand::Tree { id, .. }
@@ -2232,8 +2286,18 @@ async fn handle_files_command(
         | FilesWsCommand::Rename { id, .. }
         | FilesWsCommand::Copy { id, .. }
         | FilesWsCommand::Move { id, .. }
-        | FilesWsCommand::CopyToWorkspace { id, .. } => id.clone(),
+        | FilesWsCommand::CopyToWorkspace { id, .. }
+        | FilesWsCommand::WatchFiles { id, .. }
+        | FilesWsCommand::UnwatchFiles { id, .. } => id.clone(),
     };
+
+    // Handle WatchFiles/UnwatchFiles early -- they need conn_state access.
+    if let FilesWsCommand::WatchFiles { id, workspace_path } = cmd {
+        return handle_watch_files(id, &workspace_path, user_id, state, conn_state).await;
+    }
+    if let FilesWsCommand::UnwatchFiles { id, workspace_path } = cmd {
+        return handle_unwatch_files(id, &workspace_path, conn_state).await;
+    }
 
     // CopyToWorkspace has its own dual-workspace handling; dispatch it early.
     if let FilesWsCommand::CopyToWorkspace {
@@ -2267,7 +2331,9 @@ async fn handle_files_command(
         | FilesWsCommand::Rename { workspace_path, .. }
         | FilesWsCommand::Copy { workspace_path, .. }
         | FilesWsCommand::Move { workspace_path, .. } => workspace_path.as_deref(),
-        FilesWsCommand::CopyToWorkspace { .. } => unreachable!(),
+        FilesWsCommand::CopyToWorkspace { .. }
+        | FilesWsCommand::WatchFiles { .. }
+        | FilesWsCommand::UnwatchFiles { .. } => unreachable!(),
     };
 
     let workspace_root = match resolve_workspace_root(workspace_path) {
@@ -2713,8 +2779,10 @@ async fn handle_files_command(
                 Err(err) => Some(WsEvent::Files(FilesWsEvent::Error { id, error: err })),
             }
         }
-        // CopyToWorkspace is handled by early return before this match block
-        FilesWsCommand::CopyToWorkspace { .. } => unreachable!(),
+        // These are handled by early returns before this match block
+        FilesWsCommand::CopyToWorkspace { .. }
+        | FilesWsCommand::WatchFiles { .. }
+        | FilesWsCommand::UnwatchFiles { .. } => unreachable!(),
     }
 }
 
@@ -3673,6 +3741,187 @@ fn map_tree_node(
         },
         children,
     }
+}
+
+// ============================================================================
+// File watcher
+// ============================================================================
+
+/// Start watching a workspace directory for file changes.
+async fn handle_watch_files(
+    id: Option<String>,
+    workspace_path: &str,
+    user_id: &str,
+    _state: &AppState,
+    conn_state: Arc<tokio::sync::Mutex<WsConnectionState>>,
+) -> Option<WsEvent> {
+    use notify::{RecursiveMode, Watcher, event::{EventKind, CreateKind, RemoveKind}};
+
+    let resolved_path = std::path::PathBuf::from(workspace_path);
+    if !resolved_path.is_dir() {
+        return Some(WsEvent::Files(FilesWsEvent::Error {
+            id,
+            error: format!("Not a directory: {workspace_path}"),
+        }));
+    }
+
+    let workspace_key = workspace_path.to_string();
+    let watch_dir = resolved_path.clone();
+
+    // Get the event sender from connection state
+    let event_tx = {
+        let state_guard = conn_state.lock().await;
+        state_guard.event_tx.clone()
+    };
+
+    // Stop existing watcher for this workspace if any
+    {
+        let mut state_guard = conn_state.lock().await;
+        if let Some(handle) = state_guard.file_watchers.remove(&workspace_key) {
+            handle.abort();
+        }
+    }
+
+    let ws_workspace_path = workspace_key.clone();
+
+    // Spawn watcher task
+    let (notify_tx, mut notify_rx) = mpsc::channel::<notify::Result<notify::Event>>(256);
+
+    let handle = tokio::spawn(async move {
+        // Create the inotify watcher (must be created on the async runtime thread)
+        let tx_for_watcher = notify_tx.clone();
+        let mut watcher = match notify::recommended_watcher(move |res| {
+            let _ = tx_for_watcher.blocking_send(res);
+        }) {
+            Ok(w) => w,
+            Err(e) => {
+                warn!("Failed to create file watcher for {}: {:?}", ws_workspace_path, e);
+                return;
+            }
+        };
+
+        if let Err(e) = watcher.watch(&watch_dir, RecursiveMode::Recursive) {
+            warn!("Failed to watch {}: {:?}", watch_dir.display(), e);
+            return;
+        }
+
+        debug!("File watcher started for {}", ws_workspace_path);
+
+        // Debounce: collect events and flush after 300ms of quiet
+        let debounce = Duration::from_millis(300);
+        let mut pending: HashMap<std::path::PathBuf, EventKind> = HashMap::new();
+        let mut deadline: Option<tokio::time::Instant> = None;
+
+        loop {
+            tokio::select! {
+                event = notify_rx.recv() => {
+                    match event {
+                        Some(Ok(ev)) => {
+                            for path in ev.paths {
+                                pending.insert(path, ev.kind);
+                            }
+                            deadline = Some(tokio::time::Instant::now() + debounce);
+                        }
+                        Some(Err(e)) => {
+                            warn!("File watcher error: {:?}", e);
+                        }
+                        None => break,
+                    }
+                }
+                _ = tokio::time::sleep_until(deadline.unwrap_or_else(|| tokio::time::Instant::now() + Duration::from_secs(3600))), if deadline.is_some() => {
+                    let batch: HashMap<_, _> = std::mem::take(&mut pending);
+                    deadline = None;
+
+                    for (path, kind) in batch {
+                        if !path.starts_with(&watch_dir) {
+                            continue;
+                        }
+
+                        let is_dir = match tokio::fs::metadata(&path).await {
+                            Ok(m) => m.is_dir(),
+                            Err(_) => matches!(
+                                kind,
+                                EventKind::Create(CreateKind::Folder) | EventKind::Remove(RemoveKind::Folder)
+                            ),
+                        };
+
+                        let event_type = match kind {
+                            EventKind::Create(_) => {
+                                if is_dir { "dir_created" } else { "file_created" }
+                            }
+                            EventKind::Modify(_) => {
+                                if is_dir { continue; } else { "file_modified" }
+                            }
+                            EventKind::Remove(_) => {
+                                if is_dir { "dir_deleted" } else { "file_deleted" }
+                            }
+                            _ => continue,
+                        };
+
+                        // Compute relative path
+                        let rel = path.strip_prefix(&watch_dir)
+                            .map(|p| p.to_string_lossy().to_string())
+                            .unwrap_or_default();
+                        if rel.is_empty() {
+                            continue;
+                        }
+
+                        // Skip hidden files / .git internals to reduce noise
+                        if rel.starts_with('.') || rel.contains("/.") {
+                            continue;
+                        }
+
+                        let ws_event = WsEvent::Files(FilesWsEvent::FileChanged {
+                            event_type: event_type.to_string(),
+                            path: rel,
+                            entry_type: if is_dir { "directory".to_string() } else { "file".to_string() },
+                            workspace_path: ws_workspace_path.clone(),
+                        });
+
+                        if event_tx.send(ws_event).is_err() {
+                            // Connection closed
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        debug!("File watcher stopped for {}", ws_workspace_path);
+        // `watcher` is dropped here, which stops inotify
+    });
+
+    // Store the watcher handle
+    {
+        let mut state_guard = conn_state.lock().await;
+        state_guard.file_watchers.insert(workspace_key.clone(), handle);
+    }
+
+    info!("File watcher started for workspace {} (user {})", workspace_path, user_id);
+
+    Some(WsEvent::Files(FilesWsEvent::WatchFilesResult {
+        id,
+        workspace_path: workspace_key,
+        success: true,
+    }))
+}
+
+/// Stop watching a workspace directory.
+async fn handle_unwatch_files(
+    id: Option<String>,
+    workspace_path: &str,
+    conn_state: Arc<tokio::sync::Mutex<WsConnectionState>>,
+) -> Option<WsEvent> {
+    let mut state_guard = conn_state.lock().await;
+    if let Some(handle) = state_guard.file_watchers.remove(workspace_path) {
+        handle.abort();
+        info!("File watcher stopped for workspace {}", workspace_path);
+    }
+    Some(WsEvent::Files(FilesWsEvent::UnwatchFilesResult {
+        id,
+        workspace_path: workspace_path.to_string(),
+        success: true,
+    }))
 }
 
 #[cfg(test)]

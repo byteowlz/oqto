@@ -115,6 +115,7 @@ fork.workspace = true
 glob = "0.3.3"
 fuser = "0.16.0"
 notify-rust = { version = "4", optional = true }
+notify.workspace = true
 
 # TypeScript type generation
 ts-rs = { version = "10", features = ["serde-compat", "chrono-impl", "serde-json-impl"] }

@@ -340,3 +340,36 @@ export async function copyToWorkspaceMux(
 	}
 	throw new Error("Failed to copy to workspace");
 }
+
+/**
+ * Start watching a workspace for file changes.
+ * The backend will send `file_changed` events through the WebSocket.
+ */
+export async function watchFilesMux(workspacePath: string): Promise<void> {
+	const ws = getWsManager();
+	if (!ws) return;
+	const response = (await ws.sendCommand("files", {
+		type: "watch_files",
+		workspace_path: workspacePath,
+	})) as FilesWsEvent;
+
+	if (response.type === "error") {
+		console.warn("[mux-files] watch_files failed:", (response as { error: string }).error);
+	}
+}
+
+/**
+ * Stop watching a workspace for file changes.
+ */
+export async function unwatchFilesMux(workspacePath: string): Promise<void> {
+	const ws = getWsManager();
+	if (!ws) return;
+	const response = (await ws.sendCommand("files", {
+		type: "unwatch_files",
+		workspace_path: workspacePath,
+	})) as FilesWsEvent;
+
+	if (response.type === "error") {
+		console.warn("[mux-files] unwatch_files failed:", (response as { error: string }).error);
+	}
+}
