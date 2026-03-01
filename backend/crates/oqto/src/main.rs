@@ -2214,16 +2214,10 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     state = state.with_onboarding(onboarding_service);
     info!("Onboarding service initialized");
 
-    // Initialize shared workspaces service
-    let sw_repo = shared_workspace::SharedWorkspaceRepository::new(database.pool().clone());
-    let sw_service = shared_workspace::SharedWorkspaceService::new(sw_repo)
-        .with_ws_hub(state.ws_hub.clone());
-    state = state.with_shared_workspaces(sw_service);
-    info!("Shared workspace service initialized");
-
     // Add Linux users config for multi-user isolation
+    let mut linux_users_config: Option<local::LinuxUsersConfig> = None;
     if ctx.config.local.linux_users.enabled {
-        let linux_users_config = local::LinuxUsersConfig {
+        let config = local::LinuxUsersConfig {
             enabled: ctx.config.local.linux_users.enabled,
             prefix: ctx.config.local.linux_users.prefix.clone(),
             uid_start: ctx.config.local.linux_users.uid_start,
@@ -2232,10 +2226,21 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             use_sudo: ctx.config.local.linux_users.use_sudo,
             create_home: ctx.config.local.linux_users.create_home,
         };
-        state = state.with_linux_users(linux_users_config);
+        state = state.with_linux_users(config.clone());
         // Also set runner socket pattern for multi-user chat history access
         state = state.with_runner_socket_pattern(ctx.config.local.runner_socket_pattern.clone());
+        linux_users_config = Some(config);
     }
+
+    // Initialize shared workspaces service
+    let sw_repo = shared_workspace::SharedWorkspaceRepository::new(database.pool().clone());
+    let mut sw_service = shared_workspace::SharedWorkspaceService::new(sw_repo)
+        .with_ws_hub(state.ws_hub.clone());
+    if let Some(config) = linux_users_config {
+        sw_service = sw_service.with_linux_users(config);
+    }
+    state = state.with_shared_workspaces(sw_service);
+    info!("Shared workspace service initialized");
 
     // Initialize onboarding templates service
     let onboarding_templates_service = templates::OnboardingTemplatesService::new(

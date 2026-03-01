@@ -8,6 +8,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result, bail};
 use tracing::{info, warn};
 
+use crate::local::LinuxUsersConfig;
 use crate::ws::{WsEvent, WsHub};
 
 /// Sanitize a display name for safe use in bracketed prompt prefixes.
@@ -39,6 +40,8 @@ pub struct SharedWorkspaceService {
     repo: SharedWorkspaceRepository,
     /// WebSocket hub for broadcasting real-time updates to connected users.
     ws_hub: Option<Arc<WsHub>>,
+    /// Linux users configuration for shared workspace user creation.
+    linux_users: Option<LinuxUsersConfig>,
 }
 
 impl std::fmt::Debug for SharedWorkspaceService {
@@ -46,6 +49,7 @@ impl std::fmt::Debug for SharedWorkspaceService {
         f.debug_struct("SharedWorkspaceService")
             .field("repo", &self.repo)
             .field("ws_hub", &self.ws_hub.is_some())
+            .field("linux_users", &self.linux_users.is_some())
             .finish()
     }
 }
@@ -56,12 +60,19 @@ impl SharedWorkspaceService {
         Self {
             repo,
             ws_hub: None,
+            linux_users: None,
         }
     }
 
     /// Create a new service with a WebSocket hub for real-time updates.
     pub fn with_ws_hub(mut self, hub: Arc<WsHub>) -> Self {
         self.ws_hub = Some(hub);
+        self
+    }
+
+    /// Attach Linux user configuration for shared workspace provisioning.
+    pub fn with_linux_users(mut self, config: LinuxUsersConfig) -> Self {
+        self.linux_users = Some(config);
         self
     }
 
@@ -763,23 +774,50 @@ impl SharedWorkspaceService {
 
     /// Create a Linux user for the shared workspace via usermgr.
     fn create_linux_user(&self, username: &str, home: &str) -> Result<()> {
+        let linux_users = self
+            .linux_users
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Linux user configuration not available"))?;
+
         // First ensure the oqto group exists
         let create_group_args = serde_json::json!({ "group": "oqto" });
         // Ignore error if group already exists
         let _ = crate::local::linux_users::usermgr_request("create-group", create_group_args);
 
+        let uid = linux_users
+            .next_available_uid()
+            .with_context(|| "allocating UID for shared workspace user")?;
+        let gecos = format!("Oqto platform user shared workspace {}", username);
+
         let create_user_args = serde_json::json!({
             "username": username,
-            "group": "oqto",
-            "shell": "/bin/bash",
-            "home": home,
+            "uid": uid,
+            "group": linux_users.group,
+            "shell": linux_users.shell,
+            "gecos": gecos,
+            "create_home": linux_users.create_home,
         });
         crate::local::linux_users::usermgr_request("create-user", create_user_args)
             .with_context(|| format!("creating Linux user {} for shared workspace", username))?;
 
+        // Ensure the shared workspace directory exists with proper ownership
+        let _ = crate::local::linux_users::usermgr_request(
+            "mkdir",
+            serde_json::json!({ "path": home }),
+        );
+        let _ = crate::local::linux_users::usermgr_request(
+            "chown",
+            serde_json::json!({ "path": home, "owner": format!("{}:{}", username, linux_users.group) }),
+        );
+        let _ = crate::local::linux_users::usermgr_request(
+            "chmod",
+            serde_json::json!({ "path": home, "mode": "2770" }),
+        );
+
         info!(
             linux_user = %username,
             home = %home,
+            uid = uid,
             "created Linux user for shared workspace"
         );
         Ok(())

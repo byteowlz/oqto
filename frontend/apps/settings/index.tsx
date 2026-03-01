@@ -424,22 +424,22 @@ export function SettingsApp() {
 
 					<div className="flex-1 min-h-0 overflow-y-auto scrollbar-hide mt-4">
 						{mainTab === "oqto" && (
-							<div className="max-w-3xl">
+							<div className="w-full">
 								<SettingsEditor app="oqto" isAdmin={isAdmin} />
 							</div>
 						)}
 						{mainTab === "mmry" && (
-							<div className="max-w-3xl">
+							<div className="w-full">
 								<SettingsEditor app="mmry" isAdmin={isAdmin} />
 							</div>
 						)}
 						{mainTab === "account" && (
-							<div className="max-w-3xl">
+							<div className="w-full">
 								<AccountPanel locale={locale} />
 							</div>
 						)}
 						{mainTab === "api-keys" && (
-							<div className="max-w-3xl">
+							<div className="w-full">
 								<ApiKeysPanel />
 							</div>
 						)}

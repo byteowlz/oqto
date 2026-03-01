@@ -733,6 +733,11 @@ impl LinuxUsersConfig {
         Ok(())
     }
 
+    /// Get the next available UID for a new managed user.
+    pub(crate) fn next_available_uid(&self) -> Result<u32> {
+        self.find_next_uid()
+    }
+
     /// Find the next available UID starting from uid_start.
     fn find_next_uid(&self) -> Result<u32> {
         // UID 65534 is typically nobody, 65535 is often reserved

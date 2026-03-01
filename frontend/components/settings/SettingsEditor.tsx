@@ -243,7 +243,13 @@ export function SettingsEditor({
 			)}
 
 			{/* Settings sections */}
-			<div className="space-y-2 sm:space-y-6">
+			<div
+				className={cn(
+					isMobile
+						? "space-y-2 sm:space-y-6"
+						: "grid grid-cols-1 xl:grid-cols-2 2xl:grid-cols-3 gap-4",
+				)}
+			>
 				{Object.entries(groupedProperties).map(([category, properties]) => (
 					<SettingsSection
 						key={category}
@@ -307,9 +313,13 @@ function SettingsSection({
 	}, [isMobile]);
 
 	return (
-		<div>
+		<div
+			className={cn(
+				!isMobile && "bg-background/40 border border-border/60 rounded-lg",
+			)}
+		>
 			{/* Section header */}
-			<div className="px-4 sm:px-0 pt-4 pb-2">
+			<div className={cn("px-4 sm:px-3 pt-4 pb-2", !isMobile && "pt-5")}>
 				<button
 					type="button"
 					onClick={() => setOpen((prev) => !prev)}
@@ -329,7 +339,7 @@ function SettingsSection({
 			</div>
 			{/* Section content */}
 			{open ? (
-				<div className="sm:bg-background/50 sm:border sm:border-border sm:rounded-lg overflow-hidden">
+				<div className={cn(!isMobile && "pb-2")}>
 					<div className="divide-y divide-border/50">
 						{Object.entries(properties).map(([key, prop]) => (
 							<SettingsField
