@@ -3,7 +3,7 @@
  * Reads Pi chat history from disk (from hstry)
  */
 
-import type { AgentMessage, MessagePart, MessageWithParts } from "../agent-client";
+import type { AgentMessage, AgentAgentMessageWithParts, MessagePart } from "../agent-client";
 import type { Message, Part, Role } from "@/lib/canonical-types";
 import { authFetch, controlPlaneApiUrl, readApiError } from "./client";
 
@@ -44,6 +44,14 @@ export type ChatSession = {
 	model?: string | null;
 	/** Last used provider ID (from hstry conversation) */
 	provider?: string | null;
+	/** Session stats (tokens, cost) */
+	stats?: {
+		tokens_in: number;
+		tokens_out: number;
+		cache_read: number;
+		cache_write: number;
+		cost_usd: number;
+	} | null;
 };
 
 /** Chat sessions grouped by workspace/project */
@@ -278,11 +286,11 @@ const canonicalPartToAgentPart = (
 	}
 };
 
-/** Convert a ChatMessage (canonical) to MessageWithParts (for rendering). */
+/** Convert a ChatMessage (canonical) to AgentMessageWithParts (for rendering). */
 export function convertChatMessageToAgent(
 	msg: ChatMessage,
 	sessionId: string,
-): MessageWithParts {
+): AgentMessageWithParts {
 	const parts: MessagePart[] = msg.parts.map((part) =>
 		canonicalPartToAgentPart(part, msg.id, sessionId),
 	);
@@ -326,11 +334,11 @@ export function convertChatMessageToAgent(
 	return { info, parts };
 }
 
-/** Convert an array of ChatMessages to MessageWithParts */
+/** Convert an array of ChatMessages to AgentMessageWithParts */
 export function convertChatMessagesToAgent(
 	messages: ChatMessage[],
 	sessionId: string,
-): MessageWithParts[] {
+): AgentMessageWithParts[] {
 	return messages.map((message) =>
 		convertChatMessageToAgent(message, sessionId),
 	);

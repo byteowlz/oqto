@@ -104,6 +104,9 @@ export type AgentMessageWithParts = {
 	parts: MessagePart[];
 };
 
+/** @deprecated Use AgentMessageWithParts */
+export type MessageWithParts = AgentMessageWithParts;
+
 const trimTrailingSlash = (value: string) => value.replace(/\/$/, "");
 
 const base = (agentBaseUrl: string) => {

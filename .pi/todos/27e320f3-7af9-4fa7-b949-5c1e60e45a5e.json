@@ -1,0 +1,23 @@
+{
+  "todos": [
+    {
+      "id": "dd322553",
+      "content": "Fix chat history reload regression - canonical messages not properly converted to RawMessage",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "id": "058fc405",
+      "content": "Investigate shared workspace creation error",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "id": "f5512597",
+      "content": "Fix yazi-build fallback",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ],
+  "updated_at": "2026-03-02T20:20:49.757Z"
+}

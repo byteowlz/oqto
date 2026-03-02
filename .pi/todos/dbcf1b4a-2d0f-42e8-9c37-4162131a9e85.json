@@ -1,23 +1,17 @@
 {
   "todos": [
     {
-      "id": "ef9b0f1f",
-      "content": "Polish settings layout (settings index + SettingsEditor)",
-      "status": "completed",
-      "priority": "high"
-    },
-    {
-      "id": "02e53c58",
+      "id": "19901974",
       "content": "Push release/tag and verify yazi install after changes",
       "status": "pending",
       "priority": "medium"
     },
     {
-      "id": "846cac13",
-      "content": "Fix yazi cargo fallback to use yazi-build in setup script",
-      "status": "completed",
+      "id": "413888db",
+      "content": "Fix yazi-build fallback to install yazi/ya when cargo build does not produce binaries",
+      "status": "pending",
       "priority": "high"
     }
   ],
-  "updated_at": "2026-03-02T15:18:17.465Z"
+  "updated_at": "2026-03-02T18:11:51.458Z"
 }
