@@ -1,5 +1,12 @@
 # Changes
 
+- 2026-03-02: Fix Proxmox E2E setup URL generation and make shared workspace smoke test names short to avoid Linux username limits.
+- 2026-03-02: Install yazi from GitHub releases before falling back to cargo builds (fix release extraction).
+- 2026-03-02: Add low-memory build overrides for Proxmox E2E source builds.
+- 2026-03-02: Ensure setup installs hstry even when optional agent tools are disabled (multi-user local mode).
+- 2026-03-02: Fix setup.sh container build to use deploy/container Dockerfiles.
+- 2026-03-01: Add Proxmox-based E2E automation scripts for spinning up oqto-ubuntu VMs, running setup.sh with TOML/base64 configs, and executing smoke tests.
+- 2026-03-01: Allow sharing a project into an existing shared workspace via a dedicated workdir-copy endpoint and keep shared workdirs under /home/oqto_shared_*/oqto.
 - 2026-03-01: Add setup schema plus website sync/check scripts to keep oqto-website config wizard in sync via JSON schema.
 - 2026-03-01: Add pre-commit hook and scripts to refresh dependencies.toml, including GitHub release checks for binary availability.
 - 2026-03-01: Add optional EAVS OAuth provider logins with admin-configured providers and per-user connect/disconnect support.

@@ -366,8 +366,7 @@ pub async fn sync_user_configs(
 
                     if has_eavs_key {
                         // Key exists, just sync models.json (no key rotation)
-                        match sync_eavs_models_json(eavs_client, linux_users, &linux_username)
-                            .await
+                        match sync_eavs_models_json(eavs_client, linux_users, &linux_username).await
                         {
                             Ok(()) => {
                                 result.eavs_configured = true;

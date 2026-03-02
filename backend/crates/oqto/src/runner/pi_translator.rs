@@ -650,8 +650,8 @@ impl PiTranslator {
             // All retries exhausted -- emit a non-recoverable error so the
             // frontend surfaces it to the user. Without this, the error is
             // silently swallowed and the agent just goes idle.
-            let error_text = final_error
-                .unwrap_or_else(|| "LLM request failed after all retries".to_string());
+            let error_text =
+                final_error.unwrap_or_else(|| "LLM request failed after all retries".to_string());
             events.push(EventPayload::AgentError {
                 error: error_text,
                 recoverable: false,

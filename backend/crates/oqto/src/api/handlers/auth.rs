@@ -486,8 +486,7 @@ pub async fn register(
                     "defaultProvider": provider,
                     "defaultModel": model,
                 });
-                let settings_str =
-                    serde_json::to_string_pretty(&settings).unwrap_or_default();
+                let settings_str = serde_json::to_string_pretty(&settings).unwrap_or_default();
                 if let Err(e) = crate::local::linux_users::usermgr_request(
                     "write-file",
                     serde_json::json!({

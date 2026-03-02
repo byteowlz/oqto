@@ -1,0 +1,27 @@
+"$schema" = "https://raw.githubusercontent.com/byteowlz/schemas/refs/heads/main/oqto/oqto.setup.schema.json"
+
+[deployment]
+user_mode = "multi"
+backend_mode = "local"
+
+[network]
+log_level = "info"
+caddy = false
+
+[admin]
+username = "e2e-admin"
+email = "e2e-admin@example.com"
+
+[providers]
+enabled = []
+
+[tools]
+install_all = false
+
+[hardening]
+enabled = false
+firewall = false
+fail2ban = false
+ssh_hardening = false
+auto_updates = false
+kernel_security = false

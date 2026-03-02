@@ -316,6 +316,75 @@ gpgkey=https://repo.charm.sh/yum/gpg.key' | sudo tee /etc/yum.repos.d/charm.repo
   fi
 }
 
+install_yazi_from_github() {
+  local tmpdir="$1"
+  local os
+  os=$(uname -s | tr '[:upper:]' '[:lower:]')
+  local arch
+  arch=$(uname -m)
+
+  local target=""
+  case "${os}_${arch}" in
+    linux_x86_64) target="x86_64-unknown-linux-gnu" ;;
+    linux_aarch64 | linux_arm64) target="aarch64-unknown-linux-gnu" ;;
+    darwin_x86_64) target="x86_64-apple-darwin" ;;
+    darwin_arm64) target="aarch64-apple-darwin" ;;
+  esac
+
+  if [[ -z "$target" ]]; then
+    log_warn "Unsupported platform for yazi release: ${os}_${arch}"
+    return 1
+  fi
+
+  local version
+  version=$(curl -fsSL "https://api.github.com/repos/sxyazi/yazi/releases/latest" 2>/dev/null \
+    | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')
+  if [[ -z "$version" ]]; then
+    log_warn "Could not determine yazi release version"
+    return 1
+  fi
+
+  local archive="yazi-${target}.zip"
+  local url="https://github.com/sxyazi/yazi/releases/download/${version}/${archive}"
+  log_info "Downloading yazi ${version} from ${url}"
+
+  if ! curl -fsSL "$url" -o "$tmpdir/$archive"; then
+    log_warn "Failed to download yazi release archive"
+    return 1
+  fi
+
+  python3 - <<'PY'
+import os
+import sys
+import zipfile
+
+zip_path = sys.argv[1]
+out_dir = sys.argv[2]
+
+with zipfile.ZipFile(zip_path) as zf:
+    zf.extractall(out_dir)
+PY
+"$tmpdir/$archive" "$tmpdir"
+
+  local yazi_path
+  yazi_path=$(find "$tmpdir" -maxdepth 3 -type f -name yazi | head -n 1)
+  if [[ -z "$yazi_path" ]]; then
+    log_warn "yazi binary not found in release archive"
+    return 1
+  fi
+
+  sudo install -m 755 "$yazi_path" "${TOOLS_INSTALL_DIR}/yazi"
+
+  local ya_path
+  ya_path=$(find "$tmpdir" -maxdepth 3 -type f -name ya | head -n 1)
+  if [[ -n "$ya_path" ]]; then
+    sudo install -m 755 "$ya_path" "${TOOLS_INSTALL_DIR}/ya"
+  fi
+
+  log_success "yazi installed from GitHub release"
+  return 0
+}
+
 install_shell_tools_cargo() {
   local tools=("$@")
 
@@ -331,10 +400,13 @@ install_shell_tools_cargo() {
   for tool in "${tools[@]}"; do
     case "$tool" in
     yazi | yazi-fm)
-      log_info "Installing yazi via cargo..."
-      cargo install --locked yazi-fm yazi-cli --root "$tmpdir"
-      sudo install -m 755 "$tmpdir/bin/yazi" "${TOOLS_INSTALL_DIR}/yazi"
-      sudo install -m 755 "$tmpdir/bin/ya" "${TOOLS_INSTALL_DIR}/ya" 2>/dev/null || true
+      log_info "Installing yazi from GitHub releases..."
+      if ! install_yazi_from_github "$tmpdir"; then
+        log_info "Falling back to yazi via cargo..."
+        cargo install --locked yazi-fm yazi-cli --root "$tmpdir"
+        sudo install -m 755 "$tmpdir/bin/yazi" "${TOOLS_INSTALL_DIR}/yazi"
+        sudo install -m 755 "$tmpdir/bin/ya" "${TOOLS_INSTALL_DIR}/ya" 2>/dev/null || true
+      fi
       ;;
     zoxide)
       log_info "Installing zoxide via cargo..."

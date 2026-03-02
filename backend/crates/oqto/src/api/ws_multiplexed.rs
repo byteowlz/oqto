@@ -995,7 +995,10 @@ async fn validate_workspace_path_for_user(
     // Allow if path is inside a shared workspace where user is a member
     if let Some(sw_service) = state.shared_workspaces.as_ref() {
         let canonical_str = canonical.to_string_lossy();
-        if let Ok(Some(_)) = sw_service.check_access_for_path(&canonical_str, user_id).await {
+        if let Ok(Some(_)) = sw_service
+            .check_access_for_path(&canonical_str, user_id)
+            .await
+        {
             return None; // User has access to this shared workspace
         }
     }
@@ -3594,10 +3597,8 @@ async fn handle_copy_to_workspace(
         }
     };
 
-    let user_workspace_paths: std::collections::HashSet<&str> = sessions
-        .iter()
-        .map(|s| s.workspace_path.as_str())
-        .collect();
+    let user_workspace_paths: std::collections::HashSet<&str> =
+        sessions.iter().map(|s| s.workspace_path.as_str()).collect();
 
     if !user_workspace_paths.contains(source_workspace_path) {
         warn!(
@@ -3836,7 +3837,10 @@ async fn handle_watch_files(
     _state: &AppState,
     conn_state: Arc<tokio::sync::Mutex<WsConnectionState>>,
 ) -> Option<WsEvent> {
-    use notify::{RecursiveMode, Watcher, event::{EventKind, CreateKind, RemoveKind}};
+    use notify::{
+        RecursiveMode, Watcher,
+        event::{CreateKind, EventKind, RemoveKind},
+    };
 
     let resolved_path = std::path::PathBuf::from(workspace_path);
     if !resolved_path.is_dir() {
@@ -3876,7 +3880,10 @@ async fn handle_watch_files(
         }) {
             Ok(w) => w,
             Err(e) => {
-                warn!("Failed to create file watcher for {}: {:?}", ws_workspace_path, e);
+                warn!(
+                    "Failed to create file watcher for {}: {:?}",
+                    ws_workspace_path, e
+                );
                 return;
             }
         };
@@ -3975,10 +3982,15 @@ async fn handle_watch_files(
     // Store the watcher handle
     {
         let mut state_guard = conn_state.lock().await;
-        state_guard.file_watchers.insert(workspace_key.clone(), handle);
+        state_guard
+            .file_watchers
+            .insert(workspace_key.clone(), handle);
     }
 
-    info!("File watcher started for workspace {} (user {})", workspace_path, user_id);
+    info!(
+        "File watcher started for workspace {} (user {})",
+        workspace_path, user_id
+    );
 
     Some(WsEvent::Files(FilesWsEvent::WatchFilesResult {
         id,

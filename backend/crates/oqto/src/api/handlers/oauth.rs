@@ -1,4 +1,4 @@
-use axum::{extract::Path, extract::State, Json};
+use axum::{Json, extract::Path, extract::State};
 use serde::{Deserialize, Serialize};
 
 use crate::api::error::{ApiError, ApiResult};
@@ -88,24 +88,15 @@ fn require_redirect_uri(state: &AppState, provider: &str) -> ApiResult<()> {
     Ok(())
 }
 
-async fn sync_models_with_key(
-    state: &AppState,
-    key: &str,
-    user_id: &str,
-) -> ApiResult<()> {
+async fn sync_models_with_key(state: &AppState, key: &str, user_id: &str) -> ApiResult<()> {
     let linux_users = state
         .linux_users
         .as_ref()
         .ok_or_else(|| ApiError::service_unavailable("Linux user isolation is not configured."))?;
     let linux_username = linux_users.linux_username(user_id);
-    sync_eavs_models_json_with_key(
-        eavs_client(state)?,
-        linux_users,
-        &linux_username,
-        key,
-    )
-    .await
-    .map_err(ApiError::from_anyhow)
+    sync_eavs_models_json_with_key(eavs_client(state)?, linux_users, &linux_username, key)
+        .await
+        .map_err(ApiError::from_anyhow)
 }
 
 async fn create_oauth_key(state: &AppState, user_id: &str) -> ApiResult<()> {

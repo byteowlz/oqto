@@ -1,0 +1,439 @@
+[0;32m[OK][0m Decoded setup config from URL to /tmp/oqto-setup-QsT8Nu.toml
+[0;34m[INFO][0m Loading config from: /tmp/oqto-setup-QsT8Nu.toml
+[0;32m[OK][0m Config loaded: mode=multi, providers=none
+
+[1m[0;36m
+ ________  ________  _________  ________
+|\   __  \|\   __  \|\___   ___\\   __  \
+\ \  \|\  \ \  \|\  \|___ \  \_\ \  \|\  \
+ \ \  \\\  \ \  \\\  \   \ \  \ \ \  \\\  \
+  \ \  \\\  \ \  \\\  \   \ \  \ \ \  \\\  \
+   \ \_______\ \_____  \   \ \__\ \ \_______\
+    \|_______|\|___| \__\   \|__|  \|_______|
+                    \|__|
+[0m
+[1m            got tentacles?[0m
+
+[0;34m[INFO][0m Detected: linux (x86_64)
+[0;34m[INFO][0m Distribution: ubuntu 24.04
+
+[1m[0;36m==>[0m [1mChecking prerequisites[0m
+[0;32m[OK][0m Rust: cargo 1.93.1 (083ac5135 2025-12-15)
+[0;32m[OK][0m Bun: 1.3.10
+[0;34m[INFO][0m Installed bun to /usr/local/bin for multi-user access
+bun install v1.3.10 (30e609e0)
+
++ @types/diff@7.0.2 (v8.0.0 available)
++ @types/hosted-git-info@3.0.5
++ @types/ms@2.1.0
++ @types/node@24.11.0 (v25.3.3 available)
++ @types/proper-lockfile@4.1.4
++ shx@0.4.0
++ typescript@5.9.3
++ vitest@3.2.4 (v4.0.18 available)
++ @mariozechner/clipboard@0.3.2
++ @mariozechner/jiti@2.6.5
++ @mariozechner/pi-agent-core@0.55.3
++ @mariozechner/pi-ai@0.55.3
++ @mariozechner/pi-tui@0.55.3
++ @silvia-odwyer/photon-node@0.3.4
++ chalk@5.6.2
++ cli-highlight@2.1.11
++ diff@8.0.3
++ extract-zip@2.0.1
++ file-type@21.3.0
++ glob@13.0.6
++ hosted-git-info@9.0.2
++ ignore@7.0.5
++ marked@15.0.12 (v17.0.3 available)
++ minimatch@10.2.4
++ proper-lockfile@4.1.2
++ yaml@2.8.2
+
+345 packages installed [1236.00ms]
+
+Blocked 2 postinstalls. Run `bun pm untrusted` for details.
+[0;32m[OK][0m pi installed system-wide: 0.55.3
+[0;32m[OK][0m Node.js: v22.22.0 (LTS 22.x)
+[0;32m[OK][0m All prerequisites satisfied
+[0;34m[INFO][0m Checking system prerequisites...
+[0;32m[OK][0m All system prerequisites already installed
+
+[1m[0;36m==>[0m [1mInstalling shell tools[0m
+[0;32m[OK][0m tmux already installed: tmux 3.4
+[0;32m[OK][0m fd already installed: fdfind 9.0.0
+[0;32m[OK][0m ripgrep already installed: ripgrep 14.1.0
+[0;32m[OK][0m zsh already installed: zsh 5.9 (x86_64-ubuntu-linux-gnu)
+[0;32m[OK][0m zoxide already installed: zoxide 0.9.9
+[0;32m[OK][0m gum already installed: gum version v0.17.0 (6045525)
+[0;32m[OK][0m fzf already installed: 0.44.1 (debian)
+[0;34m[INFO][0m Tools to install: yazi
+[0;34m[INFO][0m Installing yazi from GitHub releases...
+[0;34m[INFO][0m Downloading yazi v26.1.22 from https://github.com/sxyazi/yazi/releases/download/v26.1.22/yazi-x86_64-unknown-linux-gnu.zip
+[1;33m[WARN][0m yazi binary not found in release archive
+[0;34m[INFO][0m Falling back to yazi via cargo...
+
+[1m[0;36m==>[0m [1mInstalling ttyd (web terminal)[0m
+[0;32m[OK][0m ttyd already installed: ttyd version 1.7.4
+
+[1m[0;36m==>[0m [1mInstalling Pi extensions for all users[0m
+[0;34m[INFO][0m Installing Pi extensions to /home/oqto/.pi/agent/extensions
+[0;32m[OK][0m Installed auto-rename extension
+[0;32m[OK][0m Installed introspection extension
+[0;32m[OK][0m Installed oqto-bridge extension
+[0;32m[OK][0m Installed oqto-todos extension
+[0;32m[OK][0m Installed custom-context-files extension
+[0;34m[INFO][0m 5 extensions installed to /home/oqto/.pi/agent/extensions
+[0;34m[INFO][0m Installing Pi extensions to /etc/skel for new users...
+[0;34m[INFO][0m Installing Pi extensions to /etc/skel/.pi/agent/extensions
+[0;32m[OK][0m Installed auto-rename extension
+[0;32m[OK][0m Installed introspection extension
+[0;32m[OK][0m Installed oqto-bridge extension
+[0;32m[OK][0m Installed oqto-todos extension
+[0;32m[OK][0m Installed custom-context-files extension
+[0;34m[INFO][0m 5 extensions installed to /etc/skel/.pi/agent/extensions
+[0;32m[OK][0m Pi extensions installed for all applicable users
+
+[1m[0;36m==>[0m [1mInstalling agntz (Agent Toolkit)[0m
+[0;34m[INFO][0m Downloading agntz v0.3.0 for x86_64-unknown-linux-gnu...
+[0;32m[OK][0m agntz installed to /usr/local/bin/agntz
+[0;32m[OK][0m agntz v0.3.0 installed from release
+
+[1m[0;36m==>[0m [1mInstalling agent tools[0m
+[0;34m[INFO][0m Downloading hstry v0.5.1 for x86_64-unknown-linux-gnu...
+[0;32m[OK][0m hstry installed to /usr/local/bin/hstry
+[0;32m[OK][0m hstry v0.5.1 installed from release
+[0;34m[INFO][0m Running agntz doctor to check tool health...
+Checking tool health...
+
+  [x] mmry: MISSING
+  [x] trx: MISSING
+  [+] hstry: OK
+
+Some tools are missing. Install with: agntz tools install all
+
+[1m[0;36m==>[0m [1mUpgrading external tools[0m
+[0;34m[INFO][0m eavs 0.5.12 (up to date)
+[0;34m[INFO][0m agntz 0.3.0 (up to date)
+[0;34m[INFO][0m hstry 0.5.1 (up to date)
+[0;34m[INFO][0m Installing EAVS adapters...
+[1;33m[WARN][0m Could not fetch EAVS adapters. 'eavs models export' will not work.
+[0;34m[INFO][0m All tools up to date
+
+[1m[0;36m==>[0m [1mInstalling EAVS (LLM proxy)[0m
+[0;34m[INFO][0m Installing secret service for EAVS keychain support
+[0;32m[OK][0m gnome-keyring started for current session
+[0;32m[OK][0m gnome-keyring-daemon.socket enabled for future sessions
+[0;34m[INFO][0m Enabling gnome-keyring for oqto user...
+[0;32m[OK][0m gnome-keyring-daemon.socket enabled for oqto user
+[0;34m[INFO][0m Downloading eavs v0.5.12 for x86_64-unknown-linux-gnu...
+[0;32m[OK][0m eavs installed to /usr/local/bin/eavs
+[0;32m[OK][0m eavs v0.5.12 installed from release
+[0;34m[INFO][0m Installing EAVS adapters...
+[1;33m[WARN][0m Could not fetch EAVS adapters. 'eavs models export' will not work.
+[0;32m[OK][0m EAVS installed: eavs 0.5.12
+
+[1m[0;36m==>[0m [1mConfiguring EAVS[0m
+[0;32m[OK][0m EAVS base config written to /home/oqto/.config/eavs/config.toml
+[0;34m[INFO][0m Updating model catalog from models.dev...
+
+EAVS provider setup -- all provider configuration is handled by eavs.
+Batch mode will detect API keys from the environment, then offer to
+add custom providers (Azure AI Foundry, Bedrock, Ollama, etc.).
+
+[1;33m[WARN][0m eavs setup add failed (you can add providers later)
+
+[0;34m[INFO][0m You can add more providers anytime with: eavs setup add --config /home/oqto/.config/eavs/config.toml
+[1;33m[WARN][0m No providers configured. EAVS will start but agents cannot use any LLM.
+
+[1m[0;36m==>[0m [1mSetting up EAVS service[0m
+[0;32m[OK][0m EAVS started (system service, user=oqto, port 3033)
+
+[1m[0;36m==>[0m [1mGenerating models.json from EAVS[0m
+[1;33m[WARN][0m No providers with Pi-compatible APIs found. Skipping models.json.
+[0;34m[INFO][0m Running: Build Oqto
+
+[1m[0;36m==>[0m [1mBuilding Oqto components[0m
+[0;34m[INFO][0m Skipping release download (OQTO_FORCE_SOURCE_BUILD=true)
+[0;34m[INFO][0m No pre-built release available, building from source...
+[0;34m[INFO][0m Building backend...
+[0;32m[OK][0m Backend built
+[0;34m[INFO][0m Building fileserver...
+[0;32m[OK][0m Fileserver built
+[0;34m[INFO][0m Installing frontend dependencies...
+bun install v1.3.10 (30e609e0)
+
+Checked 509 installs across 609 packages (no changes) [94.00ms]
+[0;34m[INFO][0m Building frontend...
+vite v5.4.21 building for production...
+transforming...
+✓ 3408 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                                     3.32 kB │ gzip:   1.17 kB
+dist/assets/index-BPmJ7WW6.css                    166.79 kB │ gzip:  26.67 kB
+dist/assets/index-gSEHB0Cu.js                       2.24 kB │ gzip:   1.02 kB
+dist/assets/WorkspaceOverviewPanel-DDEo0sFG.js      3.17 kB │ gzip:   1.38 kB
+dist/assets/BrowserView-1zYM4ZEp.js                10.27 kB │ gzip:   3.59 kB
+dist/assets/MemoriesView-AV2EwCiW.js               10.99 kB │ gzip:   3.60 kB
+dist/assets/TerminalView-B-wqtYbc.js               14.52 kB │ gzip:   4.97 kB
+dist/assets/PreviewView-DvlU-KuH.js                14.68 kB │ gzip:   4.23 kB
+dist/assets/TrxView-MGeNKaC7.js                    23.24 kB │ gzip:   6.51 kB
+dist/assets/CanvasView-CIEQv414.js                346.95 kB │ gzip: 104.71 kB
+dist/assets/ghostty-web-DO4Zl6X-.js               638.73 kB │ gzip: 185.23 kB
+dist/assets/index-Bxr_-zGr.js                   2,170.96 kB │ gzip: 657.80 kB
+✓ built in 5.54s
+[0;32m[OK][0m Frontend built
+[0;34m[INFO][0m Building agent browser daemon...
+bun install v1.3.10 (30e609e0)
+
+Checked 8 installs across 10 packages (no changes) [5.00ms]
+bun install v1.3.10 (30e609e0)
+
+Checked 3 installs across 10 packages (no changes) [388.00ms]
+[0;34m[INFO][0m Installing Playwright chromium to /usr/local/share/playwright-browsers...
+Installing dependencies...
+Hit:1 http://archive.ubuntu.com/ubuntu noble InRelease
+Hit:2 http://archive.ubuntu.com/ubuntu noble-updates InRelease
+Hit:3 http://archive.ubuntu.com/ubuntu noble-security InRelease
+Get:4 https://repo.charm.sh/apt * InRelease
+Fetched 6718 B in 1s (11.4 kB/s)
+Reading package lists...
+Reading package lists...
+Building dependency tree...
+Reading state information...
+libasound2t64 is already the newest version (1.2.11-1ubuntu0.2).
+libatk-bridge2.0-0t64 is already the newest version (2.52.0-1build1).
+libatk1.0-0t64 is already the newest version (2.52.0-1build1).
+libatspi2.0-0t64 is already the newest version (2.52.0-1build1).
+libcairo2 is already the newest version (1.18.0-3build1).
+libcups2t64 is already the newest version (2.4.7-1.2ubuntu7.9).
+libdbus-1-3 is already the newest version (1.14.10-4ubuntu4.1).
+libdrm2 is already the newest version (2.4.125-1ubuntu0.1~24.04.1).
+libgbm1 is already the newest version (25.2.8-0ubuntu0.24.04.1).
+libglib2.0-0t64 is already the newest version (2.80.0-6ubuntu3.8).
+libnspr4 is already the newest version (2:4.35-1.1build1).
+libnss3 is already the newest version (2:3.98-1build1).
+libpango-1.0-0 is already the newest version (1.52.1+ds-1build1).
+libx11-6 is already the newest version (2:1.8.7-1build1).
+libxcb1 is already the newest version (1.15-1ubuntu2).
+libxcomposite1 is already the newest version (1:0.4.5-1build3).
+libxdamage1 is already the newest version (1:1.1.6-1build1).
+libxext6 is already the newest version (2:1.3.4-1build2).
+libxfixes3 is already the newest version (1:6.0.0-2build1).
+libxkbcommon0 is already the newest version (1.6.0-1build1).
+libxrandr2 is already the newest version (2:1.5.2-2build1).
+xvfb is already the newest version (2:21.1.12-1ubuntu1.5).
+fonts-noto-color-emoji is already the newest version (2.047-0ubuntu0.24.04.1).
+fonts-unifont is already the newest version (1:15.1.01-1build1).
+libfontconfig1 is already the newest version (2.15.0-1.1ubuntu2).
+libfreetype6 is already the newest version (2.13.2+dfsg-1build3).
+xfonts-cyrillic is already the newest version (1:1.0.5+nmu1).
+xfonts-scalable is already the newest version (1:1.0.3-1.3).
+fonts-liberation is already the newest version (1:2.1.5-3).
+fonts-ipafont-gothic is already the newest version (00303-21ubuntu1).
+fonts-wqy-zenhei is already the newest version (0.9.45-8).
+fonts-tlwg-loma-otf is already the newest version (1:0.7.3-1).
+fonts-freefont-ttf is already the newest version (20211204+svn4273-2).
+0 upgraded, 0 newly installed, 0 to remove and 139 not upgraded.
+[0;32m[OK][0m Agent browser daemon installed to /usr/local/lib/oqto-browserd
+[0;34m[INFO][0m Installing binaries to /usr/local/bin...
+[0;32m[OK][0m oqto installed
+[0;32m[OK][0m oqtoctl installed
+[0;32m[OK][0m oqto-runner installed
+[0;32m[OK][0m oqto-browser installed
+[0;32m[OK][0m pi-bridge installed
+[0;32m[OK][0m oqto-sandbox installed
+[0;32m[OK][0m oqto-setup installed
+[0;32m[OK][0m oqto-usermgr installed
+[0;32m[OK][0m oqto-files installed
+[0;32m[OK][0m Binaries installed
+[0;34m[INFO][0m Deploying frontend to /var/www/oqto...
+[0;32m[OK][0m Frontend deployed to /var/www/oqto
+[0;32m[OK][0m oqto-usermgr restarted
+[0;32m[OK][0m oqto restarted with new binary
+[0;32m[OK][0m eavs restarted
+
+[1m[0;36m==>[0m [1mGenerating configuration[0m
+[0;34m[INFO][0m Backed up existing config
+[0;34m[INFO][0m Configuring Oqto...
+
+Linux user isolation provides security by running each user's
+agent processes as a separate Linux user account.
+
+This requires:
+  - sudo privileges (for creating users and sudoers rules)
+  - The 'oqto' group will be created
+  - Sudoers rules will allow managing octo_* users
+
+[0;34m[INFO][0m Writing config to /home/oqto/.config/oqto/config.toml
+[0;32m[OK][0m Configuration written to /home/oqto/.config/oqto/config.toml
+[0;34m[INFO][0m Writing skdlr agent config to /etc/oqto/skdlr-agent.toml
+[0;34m[INFO][0m Admin credentials saved for database setup
+
+[1m[0;36m==>[0m [1mSetting up onboarding templates repo[0m
+[0;34m[INFO][0m Updating onboarding templates...
+HEAD is now at 299fb1f fix: memory workspace sandbox minimal, not strict
+[0;34m[INFO][0m Installing templates to /usr/share/oqto/oqto-templates/...
+[0;32m[OK][0m Onboarding templates installed
+
+[1m[0;36m==>[0m [1mUpdating external repos in /usr/local/share/oqto/external-repos[0m
+
+[1m[0;36m==>[0m [1mSetting up feedback directories[0m
+
+[1m[0;36m==>[0m [1mSetting up Linux user isolation[0m
+[0;34m[INFO][0m Sudoers rules will be configured for user: root
+[0;32m[OK][0m Group 'oqto' already exists
+[0;34m[INFO][0m Adding user 'root' to group 'oqto'...
+[0;32m[OK][0m User 'root' added to group 'oqto'
+[0;34m[INFO][0m Configuring sudoers for multi-user process management...
+[0;32m[OK][0m Sudoers file created: /etc/sudoers.d/oqto-multiuser
+[0;34m[INFO][0m Creating workspace directory structure...
+[0;32m[OK][0m Workspace directory created: /var/lib/oqto/workspaces
+[0;34m[INFO][0m Installing system sandbox configuration...
+[0;32m[OK][0m System sandbox config installed: /etc/oqto/sandbox.toml
+[0;34m[INFO][0m Installing skdlr agent configuration...
+[0;32m[OK][0m Skdlr agent config installed: /etc/oqto/skdlr-agent.toml
+
+[0;32m[OK][0m Linux user isolation configured successfully
+
+The following has been set up:
+  - Group 'oqto' created
+  - User 'root' added to group 'oqto'
+  - Sudoers rules for user management: /etc/sudoers.d/oqto-multiuser
+  - Workspace directory: /var/lib/oqto/workspaces
+  - System sandbox config: /etc/oqto/sandbox.toml
+
+When users are created, the server will:
+  1. Create a Linux user (e.g., oqto_1, oqto_2, ...)
+  2. Create their home directory with isolated workspace
+  3. Run their agent processes as that user (sandboxed)
+
+Security features:
+  - Processes run in bubblewrap sandbox with namespace isolation
+  - Sensitive paths (~/.ssh, ~/.aws, etc.) are blocked
+  - Sandbox config is root-owned and cannot be modified by agents
+
+[1;33m[WARN][0m You may need to log out and back in for group membership to take effect
+[0;34m[INFO][0m Server hardening skipped
+[0;34m[INFO][0m Running: System service
+
+[1m[0;36m==>[0m [1mInstalling systemd service[0m
+[0;34m[INFO][0m Multi-user mode requires system-level service installation
+[0;32m[OK][0m Service file created: /etc/systemd/system/oqto.service
+[0;34m[INFO][0m Installing oqto-usermgr service...
+[0;32m[OK][0m oqto-usermgr service installed and started
+[0;34m[INFO][0m Installing central mmry-service (embeddings server)...
+[0;32m[OK][0m mmry-central service installed and started (port 8091)
+[0;34m[INFO][0m Setting up runner socket directories...
+[0;32m[OK][0m Runner socket directories configured
+[0;32m[OK][0m Service enabled and started
+[0;34m[INFO][0m Check status with: sudo systemctl status oqto
+[0;34m[INFO][0m View logs with: sudo journalctl -u oqto -f
+[0;34m[INFO][0m Running: Admin user in database
+
+[1m[0;36m==>[0m [1mCreating admin user (production mode)[0m
+[0;34m[INFO][0m Admin user 'e2e-admin' already exists, skipping
+
+[1m[0;36m==>[0m [1mStarting services[0m
+[0;32m[OK][0m oqto-usermgr: restarted
+[0;32m[OK][0m eavs: restarted
+[0;32m[OK][0m oqto: restarted
+[0;34m[INFO][0m Updating per-user services for existing platform users...
+[0;32m[OK][0m All services started
+
+[1m[0;36m==>[0m [1mSetup Complete![0m
+
+============================================================
+                    SERVICE STATUS
+============================================================
+
+  EAVS (LLM):     [0;32mrunning[0m
+  Oqto runner:    [0;31mnot configured[0m
+  Oqto backend:   [0;32mrunning[0m
+  SearXNG:        [0;31mnot configured[0m
+  hstry:          [0;36mper-user (managed by runner)[0m
+
+============================================================
+                    CONFIGURATION
+============================================================
+
+  User mode:       multi
+  Backend mode:    local
+  Deployment mode: Production
+  Config file:     /home/oqto/.config/oqto/config.toml
+
+  Security:
+    JWT secret:    configured (64 characters)
+    Admin user:    e2e-admin
+    Admin email:   e2e-admin@example.com
+    [1;33mAdmin password was shown during setup[0m
+
+  LLM Access (EAVS):
+    Proxy URL:     http://127.0.0.1:3033
+    Config:        /etc/eavs/config.toml
+    Providers:     [1;33mconfig not found[0m
+
+============================================================
+                    INSTALLED SOFTWARE
+============================================================
+
+  Core binaries:
+    oqto:          [0;32m/usr/local/bin/oqto[0m
+    eavs:          [0;32m/usr/local/bin/eavs[0m
+    oqto-files:    [0;32m/usr/local/bin/oqto-files[0m
+    pi:            [0;32m/usr/local/bin/pi[0m
+    ttyd:          [0;32m/usr/bin/ttyd[0m
+    oqto-runner:   [0;32m/usr/local/bin/oqto-runner[0m
+
+  Agent tools:
+    agntz:         [0;32m/usr/local/bin/agntz[0m
+    mmry:          [0;31mmissing[0m
+    scrpr:         [0;31mmissing[0m
+    sx:            [0;31mmissing[0m
+    tmpltr:        [0;31mmissing[0m
+    sldr:          [0;31mmissing[0m
+    ignr:          [0;31mmissing[0m
+    typst:         [0;31mmissing[0m
+    slidev:        [0;31mmissing[0m
+
+  Shell tools:
+    tmux:          [0;32m/usr/bin/tmux[0m
+    fd:            [0;32m/usr/local/bin/fd[0m
+    rg:            [0;32m/usr/bin/rg[0m
+    yazi:          [0;31mmissing[0m
+    zsh:           [0;32m/usr/bin/zsh[0m
+    zoxide:        [0;32m/usr/local/bin/zoxide[0m
+
+  Pi extensions:
+    auto-rename:           [0;32minstalled[0m
+    introspection:         [0;32minstalled[0m
+    oqto-bridge:           [0;32minstalled[0m
+    oqto-todos:            [0;32minstalled[0m
+    custom-context-files:  [0;32minstalled[0m
+
+============================================================
+                    NEXT STEPS
+============================================================
+
+  1. Start services that are not yet running:
+     sudo systemctl start oqto-runner
+
+  2. Access the web interface:
+     http://localhost:3000
+
+  3. Login with admin credentials:
+     Username: e2e-admin
+     Password: (the password you entered during setup)
+
+  4. Create invite codes for new users:
+     oqtoctl invites create --uses 1
+     # Or use the admin interface
+
+For more information, see:
+  - README.md
+  - SETUP.md (detailed setup guide)
+  - deploy/systemd/README.md (Linux systemd setup)
+  - deploy/ansible/README.md (Ansible deployment)
+  - backend/examples/config.toml (full config reference)
+[0;32m[OK][0m Setup state saved to /home/oqto/.config/oqto/setup-state.env

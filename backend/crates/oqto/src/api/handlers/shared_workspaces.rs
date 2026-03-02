@@ -9,8 +9,9 @@ use tracing::info;
 use crate::auth::CurrentUser;
 use crate::shared_workspace::{
     AddMemberRequest, AdminSharedWorkspaceInfo, ConvertToSharedRequest,
-    CreateSharedWorkspaceRequest, SharedWorkspaceInfo, SharedWorkspaceMemberInfo,
-    TransferOwnershipRequest, UpdateMemberRequest, UpdateSharedWorkspaceRequest,
+    CreateSharedWorkspaceRequest, CreateSharedWorkspaceWorkdirRequest, SharedWorkspaceInfo,
+    SharedWorkspaceMemberInfo, TransferOwnershipRequest, UpdateMemberRequest,
+    UpdateSharedWorkspaceRequest,
 };
 
 use crate::api::error::{ApiError, ApiResult};
@@ -231,6 +232,42 @@ pub async fn remove_shared_workspace_member(
 }
 
 // ============================================================================
+// Workdir management
+// ============================================================================
+
+/// Add a workdir to a shared workspace by copying a source path.
+pub async fn add_shared_workspace_workdir(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(workspace_id): Path<String>,
+    Json(mut request): Json<CreateSharedWorkspaceWorkdirRequest>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let service = state
+        .shared_workspaces
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("shared workspaces not configured"))?;
+
+    let validated = state
+        .sessions
+        .for_user(user.id())
+        .validate_workspace_path(&request.source_path)
+        .await
+        .map_err(|e| ApiError::bad_request(format!("invalid source path: {}", e)))?;
+    request.source_path = validated.to_string_lossy().to_string();
+
+    let multi_user = state.linux_users.is_some();
+    let workdir_path = service
+        .add_workdir_from_source(&workspace_id, user.id(), &request, multi_user)
+        .await
+        .map_err(|e| ApiError::bad_request(format!("{}", e)))?;
+
+    Ok(Json(serde_json::json!({
+        "workspace_id": workspace_id,
+        "workdir_path": workdir_path,
+    })))
+}
+
+// ============================================================================
 // Convert and transfer
 // ============================================================================
 
@@ -238,12 +275,20 @@ pub async fn remove_shared_workspace_member(
 pub async fn convert_to_shared_workspace(
     State(state): State<AppState>,
     user: CurrentUser,
-    Json(request): Json<ConvertToSharedRequest>,
+    Json(mut request): Json<ConvertToSharedRequest>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let service = state
         .shared_workspaces
         .as_ref()
         .ok_or_else(|| ApiError::internal("shared workspaces not configured"))?;
+
+    let validated = state
+        .sessions
+        .for_user(user.id())
+        .validate_workspace_path(&request.source_path)
+        .await
+        .map_err(|e| ApiError::bad_request(format!("invalid source path: {}", e)))?;
+    request.source_path = validated.to_string_lossy().to_string();
 
     let multi_user = state.linux_users.is_some();
     let workspace = service

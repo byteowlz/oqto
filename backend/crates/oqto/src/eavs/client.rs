@@ -198,7 +198,10 @@ impl EavsClient {
         let response = self
             .client
             .post(&url)
-            .json(&OAuthPollRequest { user_id, device_code })
+            .json(&OAuthPollRequest {
+                user_id,
+                device_code,
+            })
             .send()
             .await?;
         self.handle_response(response).await

@@ -435,7 +435,11 @@ BANNER
 
       if [[ "$INSTALL_MMRY" == "true" || "$INSTALL_ALL_TOOLS" == "true" ]]; then
         verify_or_rerun "agent_tools" "Agent tools" \
-          "command -v mmry && command -v scrpr && command -v sx && command -v tmpltr && command -v sldr && command -v ignr" \
+          "command -v hstry && command -v mmry && command -v scrpr && command -v sx && command -v tmpltr && command -v sldr && command -v ignr" \
+          install_agent_tools_selected
+      else
+        verify_or_rerun "agent_tools" "Agent tools" \
+          "command -v hstry" \
           install_agent_tools_selected
       fi
 

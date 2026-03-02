@@ -65,6 +65,11 @@ export type ConvertToSharedRequest = {
 	member_ids?: string[];
 };
 
+export type CreateSharedWorkspaceWorkdirRequest = {
+	source_path: string;
+	name?: string;
+};
+
 export type TransferOwnershipRequest = {
 	new_owner_id: string;
 };
@@ -254,6 +259,21 @@ export async function convertToSharedWorkspace(
 	request: ConvertToSharedRequest,
 ): Promise<SharedWorkspaceInfo> {
 	const res = await authFetch(apiUrl("/convert"), {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(request),
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
+/** Add a workdir to an existing shared workspace by copying a source path. */
+export async function createSharedWorkspaceWorkdir(
+	workspaceId: string,
+	request: CreateSharedWorkspaceWorkdirRequest,
+): Promise<{ workspace_id: string; workdir_path: string }> {
+	const res = await authFetch(apiUrl(`/${workspaceId}/workdirs`), {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify(request),

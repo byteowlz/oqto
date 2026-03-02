@@ -239,6 +239,25 @@ update-runner:
     cd backend && remote-build build --release -p oqto --bin oqto --bin oqto-runner
     ./scripts/update-runner.sh
 
+# === E2E (Proxmox) ===
+e2e-proxmox-lxc-create:
+    ./scripts/e2e/proxmox-lxc-create.sh
+
+e2e-proxmox-prepare:
+    ./scripts/e2e/proxmox-prepare.sh
+
+e2e-proxmox-reset target:
+    ./scripts/e2e/proxmox-reset.sh --target {{target}}
+
+e2e-proxmox-snapshot target:
+    ./scripts/e2e/proxmox-reset.sh --target {{target}} --create-snapshot
+
+e2e-proxmox-setup target mode="toml":
+    ./scripts/e2e/proxmox-setup.sh --target {{target}} --mode {{mode}}
+
+e2e-proxmox-test target:
+    ./scripts/e2e/proxmox-run-tests.sh --target {{target}}
+
 # Bump version across all components
 # Usage: just bump patch|minor|major|x.y.z
 bump version:

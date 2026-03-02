@@ -16,11 +16,11 @@ A shared workspace is a directory owned by a dedicated Linux user (e.g., `oqto_s
 
 ```
 /home/oqto_shared_myteam/
-  USERS.md                    # Auto-generated, lists members and roles
-  .oqto/
-    workspace.toml            # Workspace metadata (display_name, shared=true)
-    shared.toml               # Shared workspace config (member list, permissions)
-  projects/
+  oqto/
+    USERS.md                    # Auto-generated, lists members and roles
+    .oqto/
+      workspace.toml            # Workspace metadata (display_name, shared=true)
+      shared.toml               # Shared workspace config (member list, permissions)
     frontend/                 # Individual workdir
       .oqto/workspace.toml
       src/...
@@ -84,7 +84,7 @@ CREATE TABLE IF NOT EXISTS shared_workspaces (
     name TEXT NOT NULL,                      -- Human-readable name (unique)
     slug TEXT UNIQUE NOT NULL,               -- URL-safe slug (lowercase, hyphens)
     linux_user TEXT NOT NULL,                -- Linux user (oqto_shared_<slug>)
-    path TEXT NOT NULL,                      -- Filesystem path (/home/oqto_shared_<slug>)
+    path TEXT NOT NULL,                      -- Filesystem path (/home/oqto_shared_<slug>/oqto)
     owner_id TEXT NOT NULL REFERENCES users(id),
     description TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -117,7 +117,7 @@ CREATE TABLE IF NOT EXISTS shared_workspace_members (
 
 Each shared workspace gets a dedicated Linux user:
 - Username: `oqto_shared_<slug>` (e.g., `oqto_shared_myteam`)
-- Home: `/home/oqto_shared_<slug>/`
+- Home: `/home/oqto_shared_<slug>/` (workspace root at `/home/oqto_shared_<slug>/oqto`)
 - Group: `oqto` (shared with all platform users for backend access)
 - The dedicated user owns all files in the workspace
 - Platform users access files through the backend/runner (not direct filesystem access)
@@ -251,7 +251,7 @@ User -> Project context menu -> "Share this project..."
      -> Backend: POST /api/shared-workspaces/convert
         1. Validate user owns the source path
         2. Create Linux user oqto_shared_<slug> via usermgr
-        3. Copy or move project files to /home/oqto_shared_<slug>/<project_name>/
+        3. Copy or move project files to /home/oqto_shared_<slug>/oqto/<project_name>/
            (using usermgr run-as-user for correct ownership)
         4. Create DB record with user as owner
         5. Add invited members

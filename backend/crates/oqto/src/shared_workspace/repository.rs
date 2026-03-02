@@ -5,8 +5,8 @@ use sqlx::SqlitePool;
 use tracing::{debug, instrument};
 
 use super::models::{
-    AdminSharedWorkspaceInfo, MemberRole, SharedWorkspace, SharedWorkspaceMember,
-    SharedWorkspaceMemberInfo, SharedWorkspaceInfo, WORKSPACE_COLORS, WORKSPACE_ICONS,
+    AdminSharedWorkspaceInfo, MemberRole, SharedWorkspace, SharedWorkspaceInfo,
+    SharedWorkspaceMember, SharedWorkspaceMemberInfo, WORKSPACE_COLORS, WORKSPACE_ICONS,
 };
 
 /// Repository for shared workspace database operations.
@@ -328,11 +328,7 @@ impl SharedWorkspaceRepository {
         .context("updating member role")?;
 
         if result.rows_affected() == 0 {
-            bail!(
-                "member {} not found in workspace {}",
-                user_id,
-                workspace_id
-            );
+            bail!("member {} not found in workspace {}", user_id, workspace_id);
         }
         Ok(())
     }
@@ -352,11 +348,7 @@ impl SharedWorkspaceRepository {
         .context("removing member from workspace")?;
 
         if result.rows_affected() == 0 {
-            bail!(
-                "member {} not found in workspace {}",
-                user_id,
-                workspace_id
-            );
+            bail!("member {} not found in workspace {}", user_id, workspace_id);
         }
         Ok(())
     }
@@ -404,12 +396,14 @@ impl SharedWorkspaceRepository {
         }
 
         // Update workspace owner_id
-        sqlx::query("UPDATE shared_workspaces SET owner_id = ?, updated_at = datetime('now') WHERE id = ?")
-            .bind(new_owner_id)
-            .bind(workspace_id)
-            .execute(&mut *tx)
-            .await
-            .context("updating workspace owner")?;
+        sqlx::query(
+            "UPDATE shared_workspaces SET owner_id = ?, updated_at = datetime('now') WHERE id = ?",
+        )
+        .bind(new_owner_id)
+        .bind(workspace_id)
+        .execute(&mut *tx)
+        .await
+        .context("updating workspace owner")?;
 
         // Promote new owner
         sqlx::query(
@@ -468,17 +462,11 @@ mod tests {
             SharedWorkspaceRepository::slugify("Hello  World!!"),
             "hello-world"
         );
-        assert_eq!(
-            SharedWorkspaceRepository::slugify("  spaces  "),
-            "spaces"
-        );
+        assert_eq!(SharedWorkspaceRepository::slugify("  spaces  "), "spaces");
         assert_eq!(
             SharedWorkspaceRepository::slugify("alpha_beta.gamma"),
             "alpha-beta-gamma"
         );
-        assert_eq!(
-            SharedWorkspaceRepository::slugify(""),
-            "workspace"
-        );
+        assert_eq!(SharedWorkspaceRepository::slugify(""), "workspace");
     }
 }

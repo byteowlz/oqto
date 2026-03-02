@@ -1,16 +1,19 @@
 //! API key management handlers.
 
-use axum::{Json, extract::{Path, State}};
+use axum::{
+    Json,
+    extract::{Path, State},
+};
 use serde::Serialize;
 use tracing::instrument;
 
 use crate::api::error::{ApiError, ApiResult};
 use crate::api::state::AppState;
-use crate::auth::CurrentUser;
 use crate::api_keys::{
     ApiKeyCreateRequest, ApiKeyCreateResponse, ApiKeyListItem, generate_api_key, hash_api_key,
     normalize_expires_at,
 };
+use crate::auth::CurrentUser;
 
 const OMNI_KEY_NAME: &str = "omni-vanilla";
 
@@ -46,9 +49,10 @@ pub async fn create_api_key(
     }
 
     let expires_at = match request.expires_at.as_deref() {
-        Some(value) => Some(normalize_expires_at(value).map_err(|e| {
-            ApiError::bad_request(format!("Invalid expires_at: {e}"))
-        })?),
+        Some(value) => Some(
+            normalize_expires_at(value)
+                .map_err(|e| ApiError::bad_request(format!("Invalid expires_at: {e}")))?,
+        ),
         None => None,
     };
 

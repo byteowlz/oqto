@@ -145,9 +145,7 @@ fn set_socket_permissions() {
     // Only the oqto service user can connect -- NOT oqto_* platform users
     // (who share the oqto group but are different UIDs).
     use std::os::unix::fs::PermissionsExt;
-    if let Err(e) =
-        std::fs::set_permissions(SOCKET_PATH, std::fs::Permissions::from_mode(0o600))
-    {
+    if let Err(e) = std::fs::set_permissions(SOCKET_PATH, std::fs::Permissions::from_mode(0o600)) {
         eprintln!("oqto-usermgr: warning: failed to set socket permissions: {e}");
     }
     if let Some(uid) = get_user_uid("oqto") {
@@ -155,9 +153,7 @@ fn set_socket_permissions() {
             eprintln!("oqto-usermgr: warning: failed to chown socket to oqto: {e}");
         }
     } else {
-        eprintln!(
-            "oqto-usermgr: warning: 'oqto' user not found, socket will be owned by root"
-        );
+        eprintln!("oqto-usermgr: warning: 'oqto' user not found, socket will be owned by root");
     }
 }
 
@@ -1169,7 +1165,9 @@ WantedBy=default.target
                 for attempt in 1..=max_attempts {
                     match run_user_systemctl(&["is-active", &svc_unit]) {
                         Ok(_) => {
-                            eprintln!("oqto-usermgr: {svc} confirmed active for {username} (attempt {attempt})");
+                            eprintln!(
+                                "oqto-usermgr: {svc} confirmed active for {username} (attempt {attempt})"
+                            );
                             healthy = true;
                             break;
                         }
@@ -1190,9 +1188,8 @@ WantedBy=default.target
                 }
                 if !healthy {
                     // All attempts exhausted -- collect diagnostics
-                    let logs =
-                        run_user_systemctl(&["status", &svc_unit, "--no-pager", "-l"])
-                            .unwrap_or_default();
+                    let logs = run_user_systemctl(&["status", &svc_unit, "--no-pager", "-l"])
+                        .unwrap_or_default();
                     let journal = Command::new("/sbin/runuser")
                         .args(["-u", username, "--"])
                         .arg("env")

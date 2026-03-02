@@ -2443,7 +2443,9 @@ impl PiSessionManager {
                 .collect()
         };
 
-        for (id, state, last_activity_arc, subscriber_count, session_event_tx, cmd_tx, child_pid) in snapshots {
+        for (id, state, last_activity_arc, subscriber_count, session_event_tx, cmd_tx, child_pid) in
+            snapshots
+        {
             let current_state = *state.read().await;
             let last_activity = *last_activity_arc.read().await;
             let is_idle = current_state == PiSessionState::Idle;
@@ -2490,7 +2492,9 @@ impl PiSessionManager {
                 // via the stdout reader. This proves Pi is alive and responsive.
                 if elapsed > health_check_after {
                     let hard_timeout = match current_state {
-                        PiSessionState::Streaming | PiSessionState::Starting => hard_timeout_streaming,
+                        PiSessionState::Streaming | PiSessionState::Starting => {
+                            hard_timeout_streaming
+                        }
                         _ => hard_timeout_transient,
                     };
 

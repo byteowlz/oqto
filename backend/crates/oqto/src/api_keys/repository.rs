@@ -102,11 +102,15 @@ impl ApiKeyRepository {
             Ok(Some(row)) => Ok(map_row_to_list_item(row)),
             Ok(None) => {
                 tracing::warn!("created api key row not found after insert");
-                Ok(fallback_created_key(id, name, key_prefix, scopes, expires_at))
+                Ok(fallback_created_key(
+                    id, name, key_prefix, scopes, expires_at,
+                ))
             }
             Err(error) => {
                 tracing::error!(?error, "failed to fetch created api key row");
-                Ok(fallback_created_key(id, name, key_prefix, scopes, expires_at))
+                Ok(fallback_created_key(
+                    id, name, key_prefix, scopes, expires_at,
+                ))
             }
         }
     }
@@ -140,14 +144,12 @@ impl ApiKeyRepository {
     }
 
     pub async fn delete_key(&self, user_id: &str, key_id: &str) -> ApiKeyStoreResult<bool> {
-        let result = sqlx::query(
-            "DELETE FROM api_keys WHERE id = ? AND user_id = ?",
-        )
-        .bind(key_id)
-        .bind(user_id)
-        .execute(&self.pool)
-        .await
-        .context("delete api key")?;
+        let result = sqlx::query("DELETE FROM api_keys WHERE id = ? AND user_id = ?")
+            .bind(key_id)
+            .bind(user_id)
+            .execute(&self.pool)
+            .await
+            .context("delete api key")?;
 
         Ok(result.rows_affected() > 0)
     }
@@ -192,13 +194,11 @@ impl ApiKeyRepository {
     }
 
     pub async fn touch_last_used(&self, key_id: &str) -> ApiKeyStoreResult<()> {
-        sqlx::query(
-            "UPDATE api_keys SET last_used_at = datetime('now') WHERE id = ?",
-        )
-        .bind(key_id)
-        .execute(&self.pool)
-        .await
-        .context("touch api key last_used_at")?;
+        sqlx::query("UPDATE api_keys SET last_used_at = datetime('now') WHERE id = ?")
+            .bind(key_id)
+            .execute(&self.pool)
+            .await
+            .context("touch api key last_used_at")?;
         Ok(())
     }
 }
@@ -250,4 +250,3 @@ fn fallback_created_key(
         revoked_at: None,
     }
 }
-

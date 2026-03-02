@@ -17,10 +17,10 @@ build_container_image() {
 
   cd "$SCRIPT_DIR"
 
-  local dockerfile="container/Dockerfile"
+  local dockerfile="deploy/container/Dockerfile"
   if [[ "$ARCH" == "arm64" || "$ARCH" == "aarch64" ]]; then
-    if [[ -f "container/Dockerfile.arm64" ]]; then
-      dockerfile="container/Dockerfile.arm64"
+    if [[ -f "deploy/container/Dockerfile.arm64" ]]; then
+      dockerfile="deploy/container/Dockerfile.arm64"
     fi
   fi
 

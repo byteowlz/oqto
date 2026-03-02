@@ -248,6 +248,7 @@ export type {
 	AddMemberRequest,
 	UpdateMemberRoleRequest,
 	ConvertToSharedRequest,
+	CreateSharedWorkspaceWorkdirRequest,
 	TransferOwnershipRequest,
 	SharedWorkspaceUpdatedEvent,
 	WorkspaceIconName,
@@ -266,6 +267,7 @@ export {
 	updateMemberRole,
 	removeMember,
 	convertToSharedWorkspace,
+	createSharedWorkspaceWorkdir,
 	transferOwnership,
 } from "./shared-workspaces";
 

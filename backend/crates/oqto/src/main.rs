@@ -2234,8 +2234,8 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
 
     // Initialize shared workspaces service
     let sw_repo = shared_workspace::SharedWorkspaceRepository::new(database.pool().clone());
-    let mut sw_service = shared_workspace::SharedWorkspaceService::new(sw_repo)
-        .with_ws_hub(state.ws_hub.clone());
+    let mut sw_service =
+        shared_workspace::SharedWorkspaceService::new(sw_repo).with_ws_hub(state.ws_hub.clone());
     if let Some(config) = linux_users_config {
         sw_service = sw_service.with_linux_users(config);
     }
@@ -2403,7 +2403,10 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
                 );
                 Some(template_path)
             } else {
-                debug!("No models.json template found at {}", template_path.display());
+                debug!(
+                    "No models.json template found at {}",
+                    template_path.display()
+                );
                 None
             }
         } else {

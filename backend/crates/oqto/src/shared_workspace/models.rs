@@ -279,6 +279,17 @@ pub struct ConvertToSharedRequest {
     pub member_ids: Vec<String>,
 }
 
+/// Request to add a workdir to an existing shared workspace.
+#[derive(Debug, Clone, Deserialize, TS)]
+#[ts(export, export_to = "../../../../frontend/src/generated/")]
+pub struct CreateSharedWorkspaceWorkdirRequest {
+    /// Path to the personal project directory to copy into the shared workspace.
+    pub source_path: String,
+    /// Optional name for the new workdir (defaults to source directory name).
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
 /// Request to transfer ownership of a shared workspace.
 #[derive(Debug, Clone, Deserialize, TS)]
 #[ts(export, export_to = "../../../../frontend/src/generated/")]

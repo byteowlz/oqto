@@ -27,9 +27,9 @@ fn sanitize_display_name(name: &str) -> String {
 
 use super::models::{
     AddMemberRequest, AdminSharedWorkspaceInfo, ConvertToSharedRequest,
-    CreateSharedWorkspaceRequest, MemberRole, SharedWorkspace, SharedWorkspaceInfo,
-    SharedWorkspaceMemberInfo, TransferOwnershipRequest, UpdateSharedWorkspaceRequest,
-    WORKSPACE_COLORS, WORKSPACE_ICONS,
+    CreateSharedWorkspaceRequest, CreateSharedWorkspaceWorkdirRequest, MemberRole, SharedWorkspace,
+    SharedWorkspaceInfo, SharedWorkspaceMemberInfo, TransferOwnershipRequest,
+    UpdateSharedWorkspaceRequest, WORKSPACE_COLORS, WORKSPACE_ICONS,
 };
 use super::repository::SharedWorkspaceRepository;
 use super::users_md::generate_users_md;
@@ -106,7 +106,8 @@ impl SharedWorkspaceService {
         }
 
         let linux_user = format!("oqto_shared_{}", slug);
-        let path = format!("/home/{}", linux_user);
+        let home = format!("/home/{}", linux_user);
+        let path = format!("{}/oqto", home);
         let id = format!("sw_{}", nanoid::nanoid!(12));
 
         // Resolve icon and color (use provided or auto-assign from slug)
@@ -123,12 +124,15 @@ impl SharedWorkspaceService {
 
         // Create Linux user via usermgr in multi-user mode
         if multi_user {
-            self.create_linux_user(&linux_user, &path)?;
+            self.create_linux_user(&linux_user, &home)?;
         } else {
             // Single-user mode: just create the directory
-            std::fs::create_dir_all(&path)
-                .with_context(|| format!("creating shared workspace dir: {}", path))?;
+            std::fs::create_dir_all(&home)
+                .with_context(|| format!("creating shared workspace dir: {}", home))?;
         }
+
+        // Ensure the shared workspace root directory exists
+        self.ensure_workspace_root(&path, &linux_user, multi_user)?;
 
         // Create database record
         let workspace = self
@@ -308,7 +312,12 @@ impl SharedWorkspaceService {
         }
 
         self.repo
-            .add_member(workspace_id, &request.user_id, request.role, Some(caller_id))
+            .add_member(
+                workspace_id,
+                &request.user_id,
+                request.role,
+                Some(caller_id),
+            )
             .await?;
 
         // Regenerate USERS.md
@@ -441,7 +450,9 @@ impl SharedWorkspaceService {
         )
         .await;
 
-        self.repo.remove_member(workspace_id, target_user_id).await?;
+        self.repo
+            .remove_member(workspace_id, target_user_id)
+            .await?;
 
         // Regenerate USERS.md
         if let Err(e) = self.regenerate_users_md(&ws).await {
@@ -511,9 +522,156 @@ impl SharedWorkspaceService {
         }
     }
 
+    /// Add a workdir to an existing shared workspace by copying a source directory.
+    pub async fn add_workdir_from_source(
+        &self,
+        workspace_id: &str,
+        user_id: &str,
+        request: &CreateSharedWorkspaceWorkdirRequest,
+        multi_user: bool,
+    ) -> Result<String> {
+        let ws = self
+            .repo
+            .get_by_id(workspace_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("shared workspace not found"))?;
+
+        let member = self
+            .repo
+            .get_member(workspace_id, user_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("not a member of this workspace"))?;
+
+        if !member.role.can_write() {
+            bail!("insufficient permissions to add workdirs");
+        }
+
+        let source = request.source_path.trim();
+        if source.is_empty() {
+            bail!("source path cannot be empty");
+        }
+
+        let source_path = std::path::Path::new(source);
+        if !source_path.exists() || !source_path.is_dir() {
+            bail!("source path must be an existing directory");
+        }
+
+        let workdir_name = if let Some(name) = request
+            .name
+            .as_deref()
+            .map(str::trim)
+            .filter(|n| !n.is_empty())
+        {
+            name.to_string()
+        } else {
+            source_path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .ok_or_else(|| anyhow::anyhow!("source path has no directory name"))?
+                .to_string()
+        };
+
+        self.validate_workdir_name(&workdir_name)?;
+
+        self.ensure_workspace_root(&ws.path, &ws.linux_user, multi_user)?;
+        let dest = format!("{}/{}", ws.path, workdir_name);
+
+        if std::path::Path::new(&dest).exists() {
+            bail!(
+                "workdir already exists in shared workspace: {}",
+                workdir_name
+            );
+        }
+
+        if multi_user {
+            crate::local::linux_users::usermgr_request(
+                "run-as-user",
+                serde_json::json!({
+                    "username": ws.linux_user,
+                    "binary": "cp",
+                    "args": ["-a", source, &dest],
+                    "cwd": &ws.path,
+                }),
+            )
+            .with_context(|| format!("copying {} to shared workspace {}", source, dest))?;
+
+            crate::local::linux_users::usermgr_request(
+                "run-as-user",
+                serde_json::json!({
+                    "username": ws.linux_user,
+                    "binary": "chown",
+                    "args": ["-R", &format!("{}:oqto", ws.linux_user), &dest],
+                    "cwd": &ws.path,
+                }),
+            )
+            .with_context(|| format!("fixing ownership of {}", dest))?;
+        } else {
+            let dest_path = std::path::Path::new(&dest);
+            copy_dir_recursive(source_path, dest_path)
+                .with_context(|| format!("copying {} to {}", source, dest))?;
+        }
+
+        info!(
+            workspace_id = %ws.id,
+            source = %source,
+            dest = %dest,
+            "added workdir to shared workspace"
+        );
+
+        Ok(dest)
+    }
+
     // ========================================================================
     // Internal helpers
     // ========================================================================
+
+    fn ensure_workspace_root(
+        &self,
+        workspace_root: &str,
+        linux_user: &str,
+        multi_user: bool,
+    ) -> Result<()> {
+        if multi_user {
+            let linux_users = self
+                .linux_users
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("Linux user configuration not available"))?;
+            let _ = crate::local::linux_users::usermgr_request(
+                "mkdir",
+                serde_json::json!({ "path": workspace_root }),
+            );
+            let _ = crate::local::linux_users::usermgr_request(
+                "chown",
+                serde_json::json!({
+                    "path": workspace_root,
+                    "owner": format!("{}:{}", linux_user, linux_users.group),
+                }),
+            );
+            let _ = crate::local::linux_users::usermgr_request(
+                "chmod",
+                serde_json::json!({ "path": workspace_root, "mode": "2770" }),
+            );
+        } else if !std::path::Path::new(workspace_root).exists() {
+            std::fs::create_dir_all(workspace_root)
+                .with_context(|| format!("creating shared workspace dir: {}", workspace_root))?;
+        }
+
+        Ok(())
+    }
+
+    fn validate_workdir_name(&self, name: &str) -> Result<()> {
+        let trimmed = name.trim();
+        if trimmed.is_empty() {
+            bail!("workdir name cannot be empty");
+        }
+        if trimmed == "." || trimmed == ".." {
+            bail!("workdir name is invalid");
+        }
+        if trimmed.contains('/') || trimmed.contains('\\') {
+            bail!("workdir name cannot include path separators");
+        }
+        Ok(())
+    }
 
     /// Regenerate USERS.md at the workspace root.
     async fn regenerate_users_md(&self, workspace: &SharedWorkspace) -> Result<()> {
@@ -598,6 +756,8 @@ impl SharedWorkspaceService {
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("project");
+        self.validate_workdir_name(project_name)?;
+        self.ensure_workspace_root(&workspace.path, &workspace.linux_user, multi_user)?;
         let dest = format!("{}/{}", workspace.path, project_name);
 
         if multi_user {
@@ -727,7 +887,9 @@ impl SharedWorkspaceService {
         )
         .await;
 
-        self.repo.remove_member(workspace_id, target_user_id).await?;
+        self.repo
+            .remove_member(workspace_id, target_user_id)
+            .await?;
 
         // Regenerate USERS.md
         let ws = self.repo.get_by_id(workspace_id).await?;
@@ -828,8 +990,8 @@ impl SharedWorkspaceService {
 fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> Result<()> {
     std::fs::create_dir_all(dst)
         .with_context(|| format!("creating directory {}", dst.display()))?;
-    for entry in std::fs::read_dir(src)
-        .with_context(|| format!("reading directory {}", src.display()))?
+    for entry in
+        std::fs::read_dir(src).with_context(|| format!("reading directory {}", src.display()))?
     {
         let entry = entry?;
         let src_path = entry.path();

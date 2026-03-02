@@ -208,6 +208,11 @@ update_models_json() {
 # Download pre-built oqto binaries and frontend from GitHub releases.
 # Returns 0 on success, 1 if download fails (caller should fall back to source build).
 download_oqto_release() {
+  if [[ "${OQTO_FORCE_SOURCE_BUILD:-}" == "true" ]]; then
+    log_info "Skipping release download (OQTO_FORCE_SOURCE_BUILD=true)"
+    return 1
+  fi
+
   local target
   target=$(get_release_target)
   if [[ -z "$target" ]]; then

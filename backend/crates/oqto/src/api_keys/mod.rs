@@ -43,8 +43,9 @@ pub fn normalize_expires_at(value: &str) -> Result<String> {
     let parsed = chrono::DateTime::parse_from_rfc3339(value)
         .map(|dt| dt.with_timezone(&chrono::Utc))
         .or_else(|_| {
-            chrono::NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M:%S")
-                .map(|dt| chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(dt, chrono::Utc))
+            chrono::NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M:%S").map(|dt| {
+                chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(dt, chrono::Utc)
+            })
         })
         .with_context(|| format!("invalid expires_at timestamp: {value}"))?;
     Ok(parsed.to_rfc3339())
@@ -55,8 +56,9 @@ pub fn parse_timestamp(value: &str) -> Option<chrono::DateTime<chrono::Utc>> {
     chrono::DateTime::parse_from_rfc3339(value)
         .map(|dt| dt.with_timezone(&chrono::Utc))
         .or_else(|_| {
-            chrono::NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M:%S")
-                .map(|dt| chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(dt, chrono::Utc))
+            chrono::NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M:%S").map(|dt| {
+                chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(dt, chrono::Utc)
+            })
         })
         .ok()
 }

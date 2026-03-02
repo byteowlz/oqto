@@ -15,9 +15,7 @@ pub fn generate_users_md(workspace_name: &str, members: &[SharedWorkspaceMemberI
         "This is a shared workspace (**{}**). Multiple users may send messages in sessions.\n",
         workspace_name
     ));
-    md.push_str(
-        "Messages are prefixed with the sender's name in square brackets.\n\n",
-    );
+    md.push_str("Messages are prefixed with the sender's name in square brackets.\n\n");
 
     md.push_str("## Members\n\n");
     md.push_str("| Name | Username | Role |\n");
@@ -31,16 +29,10 @@ pub fn generate_users_md(workspace_name: &str, members: &[SharedWorkspaceMemberI
     }
 
     md.push_str("\n## Conventions\n\n");
-    md.push_str(
-        "- Messages from users appear as: [Name] message content\n",
-    );
-    md.push_str(
-        "- When addressing a specific user's request, mention their name.\n",
-    );
+    md.push_str("- Messages from users appear as: [Name] message content\n");
+    md.push_str("- When addressing a specific user's request, mention their name.\n");
     md.push_str("- All members can see the full conversation history.\n");
-    md.push_str(
-        "- If multiple users give conflicting instructions, ask for clarification.\n",
-    );
+    md.push_str("- If multiple users give conflicting instructions, ask for clarification.\n");
 
     md
 }

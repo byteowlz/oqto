@@ -55,6 +55,7 @@ import {
 import {
 	convertToSharedWorkspace,
 	createSharedWorkspace,
+	createSharedWorkspaceWorkdir,
 	updateSharedWorkspace,
 	deleteSharedWorkspace,
 	type SharedWorkspaceInfo,
@@ -202,26 +203,39 @@ const AppShell = memo(function AppShell() {
 	const handleConvertToShared = useCallback(
 		async (data: {
 			sourcePath: string;
-			name: string;
-			description: string;
-			icon: string;
-			color: string;
+			mode: "new" | "existing";
+			workspaceName?: string;
+			description?: string;
+			icon?: string;
+			color?: string;
+			workspaceId?: string;
+			workdirName?: string;
 		}) => {
 			try {
 				setConvertSubmitting(true);
 				setConvertError(null);
-				await convertToSharedWorkspace({
-					source_path: data.sourcePath,
-					name: data.name,
-					description: data.description || undefined,
-					icon: data.icon,
-					color: data.color,
-				});
+				if (data.mode === "existing") {
+					if (!data.workspaceId) {
+						throw new Error("Select a shared workspace.");
+					}
+					await createSharedWorkspaceWorkdir(data.workspaceId, {
+						source_path: data.sourcePath,
+						name: data.workdirName || undefined,
+					});
+				} else {
+					await convertToSharedWorkspace({
+						source_path: data.sourcePath,
+						name: data.workspaceName || data.sourcePath,
+						description: data.description || undefined,
+						icon: data.icon,
+						color: data.color,
+					});
+				}
 				setConvertDialogOpen(false);
 				await sharedWs.refresh();
 			} catch (err) {
 				setConvertError(
-					err instanceof Error ? err.message : "Failed to convert",
+					err instanceof Error ? err.message : "Failed to share",
 				);
 			} finally {
 				setConvertSubmitting(false);
@@ -1192,6 +1206,7 @@ const AppShell = memo(function AppShell() {
 					onOpenChange={setConvertDialogOpen}
 					sourcePath={convertSourcePath}
 					sourceProjectName={convertProjectName}
+					sharedWorkspaces={sharedWs.sharedWorkspaces}
 					submitting={convertSubmitting}
 					error={convertError}
 					onSubmit={handleConvertToShared}
