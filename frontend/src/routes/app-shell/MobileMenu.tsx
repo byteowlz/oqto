@@ -110,8 +110,7 @@ export interface MobileMenuProps {
 		last_activity: number;
 		shared_workspace_id?: string;
 	}>;
-	busySessions?: Set<string>;
-	onSessionClick?: (sessionId: string) => void;
+	onSharedSessionClick?: (session: import("@/lib/api/chat").ChatSession) => void;
 }
 
 export const MobileMenu = memo(function MobileMenu({
@@ -180,6 +179,7 @@ export const MobileMenu = memo(function MobileMenu({
 	onDeleteWorkspace,
 	onSelectWorkdir,
 	runnerSessions,
+	onSharedSessionClick,
 }: MobileMenuProps) {
 	const { t } = useTranslation();
 
@@ -275,7 +275,7 @@ export const MobileMenu = memo(function MobileMenu({
 										onSelectWorkdir={onSelectWorkdir}
 										runnerSessions={runnerSessions}
 										busySessions={busySessions}
-										onSessionClick={onSessionClick}
+										onSessionClick={onSharedSessionClick}
 										isMobile
 									/>
 									<div className="w-full px-2 my-1">

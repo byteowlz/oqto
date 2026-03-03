@@ -504,6 +504,12 @@ impl SharedWorkspaceService {
         Ok(ws.map(|w| w.linux_user))
     }
 
+    /// Get the Linux username for a shared workspace by ID.
+    pub async fn linux_user_for_id(&self, workspace_id: &str) -> Result<Option<String>> {
+        let ws = self.repo.get_by_id(workspace_id).await?;
+        Ok(ws.map(|w| w.linux_user))
+    }
+
     /// Check if a workspace path belongs to a shared workspace and return the user's role.
     pub async fn check_access_for_path(
         &self,

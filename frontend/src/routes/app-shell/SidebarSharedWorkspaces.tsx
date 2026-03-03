@@ -15,6 +15,8 @@ import type {
 	SharedWorkspaceWorkdir,
 } from "@/lib/api/shared-workspaces";
 import { listWorkdirs } from "@/lib/api/shared-workspaces";
+import { listChatHistory } from "@/lib/api/chat";
+import type { ChatSession } from "@/lib/api/chat";
 import { cn } from "@/lib/utils";
 import {
 	ChevronDown,
@@ -56,7 +58,7 @@ export interface SidebarSharedWorkspacesProps {
 	/** Set of busy (working) session IDs */
 	busySessions?: Set<string>;
 	/** Called when user clicks a session in a shared workspace */
-	onSessionClick?: (sessionId: string) => void;
+	onSessionClick?: (session: ChatSession) => void;
 	isMobile?: boolean;
 }
 
@@ -80,36 +82,46 @@ function WorkdirList({
 	workspace,
 	isMobile,
 	onSelectWorkdir,
-	sessions,
+	activeSessions,
 	busySessions,
 	onSessionClick,
 }: {
 	workspace: SharedWorkspaceInfo;
 	isMobile: boolean;
 	onSelectWorkdir?: (workspace: SharedWorkspaceInfo, workdir: SharedWorkspaceWorkdir) => void;
-	sessions?: Array<{
+	activeSessions?: Array<{
 		session_id: string;
 		state: string;
 		cwd: string;
 		last_activity: number;
 	}>;
 	busySessions?: Set<string>;
-	onSessionClick?: (sessionId: string) => void;
+	onSessionClick?: (session: ChatSession) => void;
 }) {
 	const [workdirs, setWorkdirs] = useState<SharedWorkspaceWorkdir[]>([]);
+	const [hstrySessions, setHstrySessions] = useState<ChatSession[]>([]);
 	const [loading, setLoading] = useState(true);
 
 	useEffect(() => {
 		let cancelled = false;
 		setLoading(true);
-		listWorkdirs(workspace.id)
-			.then((data) => {
-				if (!cancelled) setWorkdirs(data);
+
+		// Fetch workdirs and session history in parallel
+		Promise.all([
+			listWorkdirs(workspace.id),
+			listChatHistory({ shared_workspace_id: workspace.id }).catch(() => [] as ChatSession[]),
+		])
+			.then(([wdData, sessionData]) => {
+				if (!cancelled) {
+					setWorkdirs(wdData);
+					setHstrySessions(sessionData);
+				}
 			})
 			.catch(() => {})
 			.finally(() => {
 				if (!cancelled) setLoading(false);
 			});
+
 		return () => {
 			cancelled = true;
 		};
@@ -134,13 +146,16 @@ function WorkdirList({
 		);
 	}
 
-	// Group sessions by workdir path
-	const sessionsByWorkdir = new Map<string, typeof sessions>();
-	for (const s of sessions ?? []) {
-		const normalizedCwd = s.cwd?.replace(/\/$/, "");
+	// Merge hstry sessions with active runner sessions (prefer runner data for active ones)
+	const activeSessionIds = new Set((activeSessions ?? []).map((s) => s.session_id));
+
+	// Group hstry sessions by workdir path
+	const sessionsByWorkdir = new Map<string, ChatSession[]>();
+	for (const s of hstrySessions) {
+		const wp = s.workspace_path?.replace(/\/$/, "");
 		for (const wd of workdirs) {
 			const normalizedWdPath = wd.path.replace(/\/$/, "");
-			if (normalizedCwd === normalizedWdPath || normalizedCwd?.startsWith(`${normalizedWdPath}/`)) {
+			if (wp === normalizedWdPath || wp?.startsWith(`${normalizedWdPath}/`)) {
 				const existing = sessionsByWorkdir.get(wd.path) ?? [];
 				existing.push(s);
 				sessionsByWorkdir.set(wd.path, existing);
@@ -179,12 +194,13 @@ function WorkdirList({
 						</button>
 						{/* Sessions under this workdir */}
 						{wdSessions.map((s) => {
-							const isBusy = busySessions?.has(s.session_id);
+							const isBusy = activeSessionIds.has(s.id) && busySessions?.has(s.id);
+							const isActive = activeSessionIds.has(s.id);
 							return (
 								<button
-									key={s.session_id}
+									key={s.id}
 									type="button"
-									onClick={() => onSessionClick?.(s.session_id)}
+									onClick={() => onSessionClick?.(s)}
 									className={cn(
 										"w-full flex items-center gap-1.5 px-8 py-0.5 text-left hover:bg-sidebar-accent/50 rounded transition-colors",
 										smallText,
@@ -193,12 +209,12 @@ function WorkdirList({
 									<MessageSquarePlus
 										className={cn(
 											"flex-shrink-0",
-											isBusy ? "text-green-500" : "text-muted-foreground/50",
+											isBusy ? "text-green-500" : isActive ? "text-foreground/70" : "text-muted-foreground/50",
 											isMobile ? "w-3 h-3" : "w-2.5 h-2.5",
 										)}
 									/>
 									<span className="text-muted-foreground truncate">
-										{s.session_id.slice(0, 12)}...
+										{s.title || s.id.slice(0, 12)}
 									</span>
 									{isBusy && (
 										<span className="ml-auto w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
@@ -427,7 +443,7 @@ export const SidebarSharedWorkspaces = memo(function SidebarSharedWorkspaces({
 										workspace={workspace}
 										isMobile={isMobile}
 										onSelectWorkdir={onSelectWorkdir}
-										sessions={runnerSessions?.filter(
+										activeSessions={runnerSessions?.filter(
 											(s) => s.shared_workspace_id === workspace.id,
 										)}
 										busySessions={busySessions}

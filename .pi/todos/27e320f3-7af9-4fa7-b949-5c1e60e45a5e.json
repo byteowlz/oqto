@@ -25,8 +25,8 @@
       "priority": "high"
     },
     {
-      "id": "sw-e2e",
-      "content": "E2E test: session creation in shared workspace workdir",
+      "id": "sw-session-filter",
+      "content": "Fix shared workspace sessions leaking into personal session list",
       "status": "completed",
       "priority": "high"
     },
@@ -37,5 +37,5 @@
       "priority": "medium"
     }
   ],
-  "updated_at": "2026-03-03T14:36:56.567Z"
+  "updated_at": "2026-03-03T14:51:34.891Z"
 }

@@ -69,6 +69,8 @@ export type ChatHistoryQuery = {
 	include_children?: boolean;
 	/** Maximum number of sessions to return */
 	limit?: number;
+	/** If set, list sessions from this shared workspace instead of personal */
+	shared_workspace_id?: string;
 };
 
 /** Request to update a chat session */
@@ -98,6 +100,7 @@ export async function listChatHistory(
 	if (query.workspace) url.searchParams.set("workspace", query.workspace);
 	if (query.include_children) url.searchParams.set("include_children", "true");
 	if (query.limit) url.searchParams.set("limit", query.limit.toString());
+	if (query.shared_workspace_id) url.searchParams.set("shared_workspace_id", query.shared_workspace_id);
 
 	const res = await authFetch(url.toString(), {
 		cache: "no-store",

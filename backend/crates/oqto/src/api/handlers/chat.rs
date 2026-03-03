@@ -28,6 +28,8 @@ pub struct ChatHistoryQuery {
     pub include_children: bool,
     /// Maximum number of sessions to return.
     pub limit: Option<usize>,
+    /// If set, list sessions from this shared workspace's runner instead of personal.
+    pub shared_workspace_id: Option<String>,
 }
 
 /// Check if multi-user mode is enabled (linux_users configured).
@@ -67,6 +69,25 @@ pub(crate) fn get_runner_for_user(
                 user_id = %user_id,
                 error = %e,
                 "Failed to create runner client"
+            );
+            None
+        }
+    }
+}
+
+/// Create a runner client for a specific Linux username (e.g. shared workspace user).
+fn get_runner_for_linux_user(
+    state: &AppState,
+    linux_username: &str,
+) -> Option<crate::runner::client::RunnerClient> {
+    let pattern = state.runner_socket_pattern.as_ref()?;
+    match crate::runner::client::RunnerClient::for_user_with_pattern(linux_username, pattern) {
+        Ok(client) => Some(client),
+        Err(e) => {
+            tracing::warn!(
+                linux_user = %linux_username,
+                error = %e,
+                "Failed to create runner client for linux user"
             );
             None
         }
@@ -179,7 +200,28 @@ pub async fn list_chat_history(
     let mut source = "hstry";
     let multi_user = is_multi_user_mode(&state);
 
-    if let Some(runner) = get_runner_for_user(&state, user.id()) {
+    // If shared_workspace_id is provided, resolve the shared workspace's runner
+    let runner_opt = if let Some(ref sw_id) = query.shared_workspace_id {
+        let sw_service = state
+            .shared_workspaces
+            .as_ref()
+            .ok_or_else(|| ApiError::internal("shared workspaces not configured"))?;
+        let (_ws, _role) = sw_service
+            .get(sw_id, user.id())
+            .await
+            .map_err(|e| ApiError::internal(format!("shared workspace lookup: {}", e)))?
+            .ok_or_else(|| ApiError::not_found("shared workspace not found or access denied"))?;
+        let linux_user = sw_service
+            .linux_user_for_id(sw_id)
+            .await
+            .map_err(|e| ApiError::internal(format!("shared workspace linux user: {}", e)))?
+            .ok_or_else(|| ApiError::internal("shared workspace linux user not found"))?;
+        get_runner_for_linux_user(&state, &linux_user)
+    } else {
+        get_runner_for_user(&state, user.id())
+    };
+
+    if let Some(runner) = runner_opt {
         match runner
             .list_workspace_chat_sessions(
                 query.workspace.clone(),

@@ -2150,7 +2150,10 @@ async fn handle_agent_command(
                 }
             };
 
-            // Also query shared workspace runners the user has access to
+            // Also query shared workspace runners the user has access to.
+            // Pre-store runner overrides so subsequent commands (get_messages,
+            // get_state, prompt, etc.) route to the correct runner without
+            // requiring the user to have sent session.create.
             if let Some(sw_service) = state.shared_workspaces.as_ref() {
                 if let Ok(workspaces) = sw_service.list_for_user(user_id).await {
                     for ws in &workspaces {
@@ -2159,6 +2162,16 @@ async fn handle_agent_command(
                         {
                             match sw_runner.pi_list_sessions().await {
                                 Ok(sessions) => {
+                                    // Store runner overrides for all discovered shared sessions
+                                    if !sessions.is_empty() {
+                                        let mut state_guard = conn_state.lock().await;
+                                        for s in &sessions {
+                                            state_guard
+                                                .session_runner_overrides
+                                                .insert(s.session_id.clone(), sw_runner.clone());
+                                        }
+                                        drop(state_guard);
+                                    }
                                     for s in &sessions {
                                         let mut obj = serde_json::json!({
                                             "session_id": s.session_id,

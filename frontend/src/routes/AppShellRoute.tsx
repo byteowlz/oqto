@@ -896,8 +896,9 @@ const AppShell = memo(function AppShell() {
 						}}
 						runnerSessions={runnerSessions}
 						busySessions={busySessions}
-						onSessionClick={(sessionId) => {
-							setSelectedChatSessionId(sessionId);
+						onSharedSessionClick={(session) => {
+							createOptimisticChatSession(session.id, session.workspace_path ?? undefined);
+							setSelectedChatSessionId(session.id);
 							sidebarState.setMobileMenuOpen(false);
 						}}
 					/>
@@ -1068,8 +1069,11 @@ const AppShell = memo(function AppShell() {
 														}}
 														runnerSessions={runnerSessions}
 														busySessions={busySessions}
-														onSessionClick={(sessionId) => {
-															setSelectedChatSessionId(sessionId);
+														onSessionClick={(session) => {
+															// Inject shared workspace session into chat history
+															// so the chat view can find it
+															createOptimisticChatSession(session.id, session.workspace_path ?? undefined);
+															setSelectedChatSessionId(session.id);
 														}}
 													/>
 													<div className="w-full px-2 my-1">
