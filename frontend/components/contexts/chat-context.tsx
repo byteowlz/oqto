@@ -56,6 +56,7 @@ export interface ChatContextValue {
 		model?: string;
 		last_activity: number;
 		subscriber_count: number;
+		shared_workspace_id?: string;
 	}>;
 	/** Count of active Pi sessions on the runner */
 	runnerSessionCount: number;
@@ -346,6 +347,9 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 			const byId = new Map(history.map((s) => [s.id, s]));
 
 			for (const session of runnerSessions) {
+				// Skip sessions that belong to shared workspaces -- they render
+				// under the shared workspace section, not personal sessions.
+				if ((session as Record<string, unknown>).shared_workspace_id) continue;
 				// Skip sessions that were explicitly deleted
 				if (deletedSessionsRef.current.has(session.session_id)) continue;
 				// hstry now returns platform_id (Oqto ID) as the session id,

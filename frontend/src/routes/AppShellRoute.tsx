@@ -82,6 +82,7 @@ const AppShell = memo(function AppShell() {
 		deleteChatSession,
 		renameChatSession,
 		busySessions,
+		runnerSessions,
 		runnerSessionCount,
 		projectDefaultAgents,
 		setProjectDefaultAgents,
@@ -893,6 +894,12 @@ const AppShell = memo(function AppShell() {
 							void createNewChat(wd.path);
 							sidebarState.setMobileMenuOpen(false);
 						}}
+						runnerSessions={runnerSessions}
+						busySessions={busySessions}
+						onSessionClick={(sessionId) => {
+							setSelectedChatSessionId(sessionId);
+							sidebarState.setMobileMenuOpen(false);
+						}}
 					/>
 				)}
 
@@ -1058,6 +1065,11 @@ const AppShell = memo(function AppShell() {
 														onDeleteWorkspace={handleDeleteSharedWorkspace}
 														onSelectWorkdir={(_ws, wd) => {
 															void createNewChat(wd.path);
+														}}
+														runnerSessions={runnerSessions}
+														busySessions={busySessions}
+														onSessionClick={(sessionId) => {
+															setSelectedChatSessionId(sessionId);
 														}}
 													/>
 													<div className="w-full px-2 my-1">

@@ -45,6 +45,18 @@ export interface SidebarSharedWorkspacesProps {
 	onDeleteWorkspace: (workspace: SharedWorkspaceInfo) => void;
 	/** Called when user clicks a workdir to start a new chat in it */
 	onSelectWorkdir?: (workspace: SharedWorkspaceInfo, workdir: SharedWorkspaceWorkdir) => void;
+	/** Runner sessions for all shared workspaces (filtered by shared_workspace_id) */
+	runnerSessions?: Array<{
+		session_id: string;
+		state: string;
+		cwd: string;
+		last_activity: number;
+		shared_workspace_id?: string;
+	}>;
+	/** Set of busy (working) session IDs */
+	busySessions?: Set<string>;
+	/** Called when user clicks a session in a shared workspace */
+	onSessionClick?: (sessionId: string) => void;
 	isMobile?: boolean;
 }
 
@@ -63,15 +75,26 @@ function RoleBadge({ role, color }: { role: string; color: string }) {
 	);
 }
 
-/** Fetches and displays workdirs for an expanded workspace */
+/** Fetches and displays workdirs for an expanded workspace, with sessions grouped under each */
 function WorkdirList({
 	workspace,
 	isMobile,
 	onSelectWorkdir,
+	sessions,
+	busySessions,
+	onSessionClick,
 }: {
 	workspace: SharedWorkspaceInfo;
 	isMobile: boolean;
 	onSelectWorkdir?: (workspace: SharedWorkspaceInfo, workdir: SharedWorkspaceWorkdir) => void;
+	sessions?: Array<{
+		session_id: string;
+		state: string;
+		cwd: string;
+		last_activity: number;
+	}>;
+	busySessions?: Set<string>;
+	onSessionClick?: (sessionId: string) => void;
 }) {
 	const [workdirs, setWorkdirs] = useState<SharedWorkspaceWorkdir[]>([]);
 	const [loading, setLoading] = useState(true);
@@ -93,6 +116,7 @@ function WorkdirList({
 	}, [workspace.id]);
 
 	const textSize = isMobile ? "text-xs" : "text-[11px]";
+	const smallText = isMobile ? "text-[10px]" : "text-[9px]";
 
 	if (loading) {
 		return (
@@ -110,27 +134,81 @@ function WorkdirList({
 		);
 	}
 
+	// Group sessions by workdir path
+	const sessionsByWorkdir = new Map<string, typeof sessions>();
+	for (const s of sessions ?? []) {
+		const normalizedCwd = s.cwd?.replace(/\/$/, "");
+		for (const wd of workdirs) {
+			const normalizedWdPath = wd.path.replace(/\/$/, "");
+			if (normalizedCwd === normalizedWdPath || normalizedCwd?.startsWith(`${normalizedWdPath}/`)) {
+				const existing = sessionsByWorkdir.get(wd.path) ?? [];
+				existing.push(s);
+				sessionsByWorkdir.set(wd.path, existing);
+				break;
+			}
+		}
+	}
+
 	return (
 		<div className="space-y-0.5">
-			{workdirs.map((wd) => (
-				<button
-					key={wd.path}
-					type="button"
-					onClick={() => onSelectWorkdir?.(workspace, wd)}
-					className={cn(
-						"w-full flex items-center gap-1.5 px-5 py-1 text-left hover:bg-sidebar-accent/50 rounded transition-colors",
-						textSize,
-					)}
-				>
-					<Folder
-						className={cn(
-							"flex-shrink-0 text-muted-foreground",
-							isMobile ? "w-3.5 h-3.5" : "w-3 h-3",
-						)}
-					/>
-					<span className="text-foreground truncate">{wd.name}</span>
-				</button>
-			))}
+			{workdirs.map((wd) => {
+				const wdSessions = sessionsByWorkdir.get(wd.path) ?? [];
+				const sessionCount = wdSessions.length;
+				return (
+					<div key={wd.path}>
+						<button
+							type="button"
+							onClick={() => onSelectWorkdir?.(workspace, wd)}
+							className={cn(
+								"w-full flex items-center gap-1.5 px-5 py-1 text-left hover:bg-sidebar-accent/50 rounded transition-colors",
+								textSize,
+							)}
+						>
+							<Folder
+								className={cn(
+									"flex-shrink-0 text-muted-foreground",
+									isMobile ? "w-3.5 h-3.5" : "w-3 h-3",
+								)}
+							/>
+							<span className="text-foreground truncate">{wd.name}</span>
+							{sessionCount > 0 && (
+								<span className={cn("text-muted-foreground/50 ml-auto", smallText)}>
+									{sessionCount}
+								</span>
+							)}
+						</button>
+						{/* Sessions under this workdir */}
+						{wdSessions.map((s) => {
+							const isBusy = busySessions?.has(s.session_id);
+							return (
+								<button
+									key={s.session_id}
+									type="button"
+									onClick={() => onSessionClick?.(s.session_id)}
+									className={cn(
+										"w-full flex items-center gap-1.5 px-8 py-0.5 text-left hover:bg-sidebar-accent/50 rounded transition-colors",
+										smallText,
+									)}
+								>
+									<MessageSquarePlus
+										className={cn(
+											"flex-shrink-0",
+											isBusy ? "text-green-500" : "text-muted-foreground/50",
+											isMobile ? "w-3 h-3" : "w-2.5 h-2.5",
+										)}
+									/>
+									<span className="text-muted-foreground truncate">
+										{s.session_id.slice(0, 12)}...
+									</span>
+									{isBusy && (
+										<span className="ml-auto w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+									)}
+								</button>
+							);
+						})}
+					</div>
+				);
+			})}
 		</div>
 	);
 }
@@ -146,6 +224,9 @@ export const SidebarSharedWorkspaces = memo(function SidebarSharedWorkspaces({
 	onNewProjectInWorkspace,
 	onDeleteWorkspace,
 	onSelectWorkdir,
+	runnerSessions,
+	busySessions,
+	onSessionClick,
 	isMobile = false,
 }: SidebarSharedWorkspacesProps) {
 	const { t } = useTranslation();
@@ -339,13 +420,18 @@ export const SidebarSharedWorkspaces = memo(function SidebarSharedWorkspaces({
 								</ContextMenuContent>
 							</ContextMenu>
 
-							{/* Expanded: show workdirs */}
+							{/* Expanded: show workdirs with sessions */}
 							{isExpanded && (
 								<div className="pb-1.5">
 									<WorkdirList
 										workspace={workspace}
 										isMobile={isMobile}
 										onSelectWorkdir={onSelectWorkdir}
+										sessions={runnerSessions?.filter(
+											(s) => s.shared_workspace_id === workspace.id,
+										)}
+										busySessions={busySessions}
+										onSessionClick={onSessionClick}
 									/>
 								</div>
 							)}

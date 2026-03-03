@@ -47,8 +47,10 @@ export {
 	useCreateInviteCodesBatch,
 	useRevokeInviteCode,
 	useDeleteInviteCode,
-	// Metrics hook
+	// Metrics hooks
 	useAdminMetrics,
+	type AdminStats,
+	useAdminStats,
 	// EAVS / Model provider hooks
 	type EavsProviderSummary,
 	type EavsModelSummary,

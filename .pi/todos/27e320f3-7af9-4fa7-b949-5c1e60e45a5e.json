@@ -1,47 +1,41 @@
 {
   "todos": [
     {
-      "id": "fix-copy-sw",
-      "content": "Fix cross-user copy for shared workspace workdirs",
-      "status": "completed",
-      "priority": "high"
-    },
-    {
-      "id": "member-mgmt",
-      "content": "Improved shared workspace member management dialog",
-      "status": "completed",
-      "priority": "high"
-    },
-    {
       "id": "sw-runner",
-      "content": "Shared workspace runner provisioning + workdir browsing",
+      "content": "Shared workspace runner provisioning (hstry, mmry, oqto-runner)",
       "status": "completed",
       "priority": "high"
     },
     {
-      "id": "mmry-ports",
-      "content": "Fix mmry port collisions on octo-azure",
+      "id": "sw-workdirs",
+      "content": "Shared workspace workdir browsing in sidebar",
       "status": "completed",
-      "priority": "medium"
+      "priority": "high"
     },
     {
-      "id": "test-user",
-      "content": "Created agenttest user for testing",
+      "id": "sw-eavs",
+      "content": "EAVS provisioning for shared workspaces (models.json + API key)",
       "status": "completed",
-      "priority": "medium"
+      "priority": "high"
     },
     {
       "id": "sw-routing",
-      "content": "Route agent commands to shared workspace runner (session.create, list_sessions)",
+      "content": "Route agent commands to shared workspace runner",
       "status": "completed",
       "priority": "high"
     },
     {
-      "id": "0c2ee339",
+      "id": "sw-e2e",
+      "content": "E2E test: session creation in shared workspace workdir",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "yazi-fix",
       "content": "Fix yazi-build fallback",
       "status": "pending",
       "priority": "medium"
     }
   ],
-  "updated_at": "2026-03-03T13:56:55.210Z"
+  "updated_at": "2026-03-03T14:36:56.567Z"
 }

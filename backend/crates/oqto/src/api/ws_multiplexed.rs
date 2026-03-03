@@ -748,11 +748,20 @@ async fn runner_client_for_path(
     workspace_path: Option<&str>,
 ) -> Option<RunnerClient> {
     if let (Some(sw_service), Some(path)) = (state.shared_workspaces.as_ref(), workspace_path) {
-        if let Ok(Some(linux_user)) = sw_service.linux_user_for_path(path).await {
-            return runner_client_for_linux_user(state, user_id, Some(&linux_user));
+        match sw_service.linux_user_for_path(path).await {
+            Ok(Some(linux_user)) => {
+                tracing::info!(path = %path, linux_user = %linux_user, "resolved path to shared workspace linux user");
+                return runner_client_for_linux_user(state, user_id, Some(&linux_user));
+            }
+            Ok(None) => {
+                tracing::debug!(path = %path, "path does not match any shared workspace");
+            }
+            Err(e) => {
+                tracing::warn!(path = %path, error = %e, "error looking up shared workspace for path");
+            }
         }
     }
-    runner_client_for_user(state, user_id)
+    None
 }
 
 /// State for a WebSocket connection, shared between command handler and event forwarder.
@@ -1267,9 +1276,11 @@ async fn handle_agent_command(
         };
 
         if let Some(ovr) = override_runner {
+            tracing::debug!(session_id = %session_id, socket = ?ovr.socket_path(), "using stored runner override");
             ovr
         } else if let CommandPayload::SessionCreate { ref config } = cmd.payload {
             // For session.create, check if cwd is inside a shared workspace
+            tracing::info!(session_id = %session_id, cwd = ?config.cwd, "session.create: checking cwd for shared workspace routing");
             let sw_runner = if let Some(ref cwd) = config.cwd {
                 runner_client_for_path(state, user_id, Some(cwd.as_str())).await
             } else {
@@ -1277,6 +1288,7 @@ async fn handle_agent_command(
             };
 
             if let Some(sw) = sw_runner {
+                tracing::info!(session_id = %session_id, socket = ?sw.socket_path(), "routing session to shared workspace runner");
                 // Store override for subsequent commands on this session
                 let is_different = runner_client
                     .map_or(true, |r| r.socket_path() != sw.socket_path());

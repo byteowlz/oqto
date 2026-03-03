@@ -103,6 +103,15 @@ export interface MobileMenuProps {
 	onNewProjectInWorkspace?: (workspace: SharedWorkspaceInfo) => void;
 	onDeleteWorkspace?: (workspace: SharedWorkspaceInfo) => void;
 	onSelectWorkdir?: (workspace: SharedWorkspaceInfo, workdir: import("@/lib/api/shared-workspaces").SharedWorkspaceWorkdir) => void;
+	runnerSessions?: Array<{
+		session_id: string;
+		state: string;
+		cwd: string;
+		last_activity: number;
+		shared_workspace_id?: string;
+	}>;
+	busySessions?: Set<string>;
+	onSessionClick?: (sessionId: string) => void;
 }
 
 export const MobileMenu = memo(function MobileMenu({
@@ -170,6 +179,7 @@ export const MobileMenu = memo(function MobileMenu({
 	onNewProjectInWorkspace,
 	onDeleteWorkspace,
 	onSelectWorkdir,
+	runnerSessions,
 }: MobileMenuProps) {
 	const { t } = useTranslation();
 
@@ -263,6 +273,9 @@ export const MobileMenu = memo(function MobileMenu({
 										onNewProjectInWorkspace={onNewProjectInWorkspace}
 										onDeleteWorkspace={onDeleteWorkspace}
 										onSelectWorkdir={onSelectWorkdir}
+										runnerSessions={runnerSessions}
+										busySessions={busySessions}
+										onSessionClick={onSessionClick}
 										isMobile
 									/>
 									<div className="w-full px-2 my-1">
