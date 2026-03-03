@@ -1,7 +1,7 @@
 //! Shared workspace service layer.
 //!
 //! Coordinates database operations, usermgr calls for Linux user creation,
-//! USERS.md generation, and access control checks.
+//! AGENTS.md generation, and access control checks.
 
 use std::sync::Arc;
 
@@ -83,7 +83,7 @@ impl SharedWorkspaceService {
     /// 3. Insert database record
     /// 4. Add creator as owner
     /// 5. Add initial members
-    /// 6. Generate USERS.md
+    /// 6. Generate AGENTS.md
     pub async fn create(
         &self,
         request: &CreateSharedWorkspaceRequest,
@@ -172,9 +172,9 @@ impl SharedWorkspaceService {
             }
         }
 
-        // Generate and write USERS.md
+        // Generate and write AGENTS.md
         if let Err(e) = self.regenerate_users_md(&workspace).await {
-            warn!("failed to generate USERS.md for workspace {}: {}", id, e);
+            warn!("failed to generate AGENTS.md for workspace {}: {}", id, e);
         }
 
         info!(
@@ -320,9 +320,9 @@ impl SharedWorkspaceService {
             )
             .await?;
 
-        // Regenerate USERS.md
+        // Regenerate AGENTS.md
         if let Err(e) = self.regenerate_users_md(&ws).await {
-            warn!("failed to regenerate USERS.md: {}", e);
+            warn!("failed to regenerate AGENTS.md: {}", e);
         }
 
         info!(
@@ -388,9 +388,9 @@ impl SharedWorkspaceService {
             .update_member_role(workspace_id, target_user_id, new_role)
             .await?;
 
-        // Regenerate USERS.md
+        // Regenerate AGENTS.md
         if let Err(e) = self.regenerate_users_md(&ws).await {
-            warn!("failed to regenerate USERS.md: {}", e);
+            warn!("failed to regenerate AGENTS.md: {}", e);
         }
 
         // Broadcast role change to all members
@@ -454,9 +454,9 @@ impl SharedWorkspaceService {
             .remove_member(workspace_id, target_user_id)
             .await?;
 
-        // Regenerate USERS.md
+        // Regenerate AGENTS.md
         if let Err(e) = self.regenerate_users_md(&ws).await {
-            warn!("failed to regenerate USERS.md: {}", e);
+            warn!("failed to regenerate AGENTS.md: {}", e);
         }
 
         info!(
@@ -670,23 +670,26 @@ impl SharedWorkspaceService {
         Ok(())
     }
 
-    /// Regenerate USERS.md at the workspace root.
-    async fn regenerate_users_md(&self, workspace: &SharedWorkspace) -> Result<()> {
+    /// Regenerate AGENTS.md at the workspace root with team member info.
+    ///
+    /// Pi auto-loads AGENTS.md from parent directories, so placing this at the
+    /// workspace root ensures every workdir session knows the team context.
+    pub async fn regenerate_users_md(&self, workspace: &SharedWorkspace) -> Result<()> {
         let members = self.repo.list_members(&workspace.id).await?;
         let content = generate_users_md(&workspace.name, &members);
 
-        let users_md_path = format!("{}/USERS.md", workspace.path);
+        let agents_md_path = format!("{}/AGENTS.md", workspace.path);
 
         // Write to filesystem -- in multi-user mode this needs to run as the shared user.
         // For now, write directly (works in single-user mode and when oqto has group access).
-        std::fs::write(&users_md_path, &content)
-            .with_context(|| format!("writing USERS.md to {}", users_md_path))?;
+        std::fs::write(&agents_md_path, &content)
+            .with_context(|| format!("writing AGENTS.md to {}", agents_md_path))?;
 
         info!(
             workspace_id = %workspace.id,
-            path = %users_md_path,
+            path = %agents_md_path,
             members = members.len(),
-            "regenerated USERS.md"
+            "regenerated workspace AGENTS.md with team info"
         );
         Ok(())
     }
@@ -730,7 +733,7 @@ impl SharedWorkspaceService {
     ///
     /// 1. Create shared workspace (linux user, DB record)
     /// 2. Copy project files to the shared workspace using usermgr
-    /// 3. Generate USERS.md
+    /// 3. Generate AGENTS.md
     pub async fn convert_to_shared(
         &self,
         request: &ConvertToSharedRequest,
@@ -810,7 +813,7 @@ impl SharedWorkspaceService {
             .transfer_ownership(workspace_id, user_id, &request.new_owner_id)
             .await?;
 
-        // Update USERS.md
+        // Update AGENTS.md
         let ws = self.repo.get_by_id(workspace_id).await?;
         if let Some(ref ws) = ws {
             self.regenerate_users_md(ws).await?;
@@ -875,7 +878,7 @@ impl SharedWorkspaceService {
             .remove_member(workspace_id, target_user_id)
             .await?;
 
-        // Regenerate USERS.md
+        // Regenerate AGENTS.md
         let ws = self.repo.get_by_id(workspace_id).await?;
         if let Some(ref ws) = ws {
             self.regenerate_users_md(ws).await?;

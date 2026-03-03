@@ -8,6 +8,13 @@ import {
 import { createPiSessionId, normalizeWorkspacePath } from "@/lib/session-utils";
 import { getWsManager } from "@/lib/ws-manager";
 import type { WsMuxConnectionState } from "@/lib/ws-mux-types";
+
+/**
+ * Module-level map of sessionId -> sharedWorkspaceId.
+ * Populated by createOptimisticChatSession when a shared workspace session is clicked.
+ * Consumed by useChat's fetchHistoryMessages to route REST calls to the correct runner.
+ */
+export const sharedWorkspaceSessionMap = new Map<string, string>();
 import {
 	type ReactNode,
 	createContext,
@@ -65,6 +72,7 @@ export interface ChatContextValue {
 	createOptimisticChatSession: (
 		sessionId: string,
 		workspacePath?: string,
+		sharedWorkspaceId?: string,
 	) => string;
 	/** Remove a placeholder chat session. */
 	clearOptimisticChatSession: (sessionId: string) => void;
@@ -143,7 +151,7 @@ const defaultChatContext: ChatContextValue = {
 	runnerSessions: [],
 	runnerSessionCount: 0,
 	refreshChatHistory: asyncNoopVoid,
-	createOptimisticChatSession: (_sessionId?: string) => "",
+	createOptimisticChatSession: (_sessionId?: string, _workspacePath?: string, _sharedWorkspaceId?: string) => "",
 	clearOptimisticChatSession: noop,
 	replaceOptimisticChatSession: noop,
 	updateChatSessionTitleLocal: noop,
@@ -579,7 +587,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 	}, []);
 
 	const createOptimisticChatSession = useCallback(
-		(sessionId: string, workspacePath?: string) => {
+		(sessionId: string, workspacePath?: string, sharedWorkspaceId?: string) => {
 			const optimisticId = sessionId;
 			if (optimisticChatSessionsRef.current.has(optimisticId)) {
 				return optimisticId;
@@ -598,6 +606,11 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 				? (resolvedPath.replace(/\\/g, "/").split("/").filter(Boolean).pop() ??
 					null)
 				: null;
+			// Track shared workspace association for REST API routing
+			if (sharedWorkspaceId) {
+				sharedWorkspaceSessionMap.set(optimisticId, sharedWorkspaceId);
+			}
+
 			const session: ChatSession = {
 				id: optimisticId,
 				readable_id: null,
@@ -610,6 +623,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 				version: 1,
 				is_child: false,
 				source_path: null,
+				shared_workspace_id: sharedWorkspaceId ?? null,
 			};
 			optimisticChatSessionsRef.current.set(optimisticId, session);
 			optimisticSelectionRef.current.set(optimisticId, selectedChatSessionId);

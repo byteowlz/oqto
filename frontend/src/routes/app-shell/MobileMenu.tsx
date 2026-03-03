@@ -110,7 +110,7 @@ export interface MobileMenuProps {
 		last_activity: number;
 		shared_workspace_id?: string;
 	}>;
-	onSharedSessionClick?: (session: import("@/lib/api/chat").ChatSession) => void;
+	onSharedSessionClick?: (session: import("@/lib/api/chat").ChatSession, sharedWorkspaceId: string) => void;
 }
 
 export const MobileMenu = memo(function MobileMenu({

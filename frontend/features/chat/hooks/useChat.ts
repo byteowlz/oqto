@@ -15,6 +15,7 @@
 
 import { useBusySessions } from "@/components/contexts";
 import { getChatMessages } from "@/lib/api";
+import { sharedWorkspaceSessionMap } from "@/components/contexts/chat-context";
 import type { CommandResponse, SessionConfig } from "@/lib/canonical-types";
 import {
 	createPiSessionId,
@@ -364,7 +365,8 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 	const fetchHistoryMessages = useCallback(
 		async (sessionId: string) => {
 			try {
-				const history = await getChatMessages(sessionId);
+				const swId = sharedWorkspaceSessionMap.get(sessionId);
+				const history = await getChatMessages(sessionId, swId);
 				if (history.length === 0) return;
 				const displayMessages = normalizeMessages(
 					history as RawMessage[],

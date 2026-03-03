@@ -63,7 +63,7 @@ export interface SidebarSharedWorkspacesProps {
 	}>;
 	busySessions?: Set<string>;
 	selectedChatSessionId: string | null;
-	onSessionClick?: (session: ChatSession) => void;
+	onSessionClick?: (session: ChatSession, sharedWorkspaceId: string) => void;
 	isMobile?: boolean;
 }
 
@@ -88,7 +88,7 @@ function WorkspaceContent({
 	) => void;
 	busySessions?: Set<string>;
 	selectedChatSessionId: string | null;
-	onSessionClick?: (session: ChatSession) => void;
+	onSessionClick?: (session: ChatSession, sharedWorkspaceId: string) => void;
 	expandedFolders: Set<string>;
 	toggleFolderExpanded: (key: string) => void;
 }) {
@@ -265,10 +265,10 @@ function WorkspaceContent({
 														? "bg-primary/15 border border-primary text-foreground"
 														: "text-muted-foreground hover:bg-sidebar-accent border border-transparent",
 												)}
-												onClick={() => onSessionClick?.(session)}
+												onClick={() => onSessionClick?.(session, workspace.id)}
 												onKeyDown={(e) => {
 													if (e.key === "Enter" || e.key === " ") {
-														onSessionClick?.(session);
+														onSessionClick?.(session, workspace.id);
 													}
 												}}
 												role="button"

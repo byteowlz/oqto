@@ -52,6 +52,8 @@ export type ChatSession = {
 		cache_write: number;
 		cost_usd: number;
 	} | null;
+	/** If set, this session belongs to a shared workspace (client-side only) */
+	shared_workspace_id?: string | null;
 };
 
 /** Chat sessions grouped by workspace/project */
@@ -172,16 +174,19 @@ export async function updateChatSession(
 	return res.json();
 }
 
-/** Get all messages for a chat session */
+/** Get all messages for a chat session.
+ * Pass shared_workspace_id to route to the shared workspace's runner. */
 export async function getChatMessages(
 	sessionId: string,
+	shared_workspace_id?: string,
 ): Promise<ChatMessage[]> {
-	const res = await authFetch(
-		controlPlaneApiUrl(`/api/chat-history/${sessionId}/messages`),
-		{
-			credentials: "include",
-		},
-	);
+	const params = new URLSearchParams();
+	if (shared_workspace_id) params.set("shared_workspace_id", shared_workspace_id);
+	const qs = params.toString();
+	const url = controlPlaneApiUrl(`/api/chat-history/${sessionId}/messages${qs ? `?${qs}` : ""}`);
+	const res = await authFetch(url, {
+		credentials: "include",
+	});
 	if (!res.ok) throw new Error(await readApiError(res));
 	return res.json();
 }

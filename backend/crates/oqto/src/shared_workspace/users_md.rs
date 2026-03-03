@@ -1,38 +1,38 @@
-//! USERS.md generation for shared workspaces.
+//! AGENTS.md generation for shared workspace roots.
 //!
-//! Generates a markdown document listing all members of a shared workspace.
-//! This file is placed at the workspace root and automatically loaded by Pi
-//! as context so the agent understands it is working with multiple users.
+//! Generates an AGENTS.md document for the workspace root that Pi auto-loads
+//! (Pi walks parent directories for AGENTS.md). This gives the agent context
+//! about team members and shared workspace conventions.
 
 use super::models::SharedWorkspaceMemberInfo;
 
-/// Generate USERS.md content from a list of members.
+/// Generate AGENTS.md content for a shared workspace root.
+///
+/// Pi automatically loads AGENTS.md from parent directories when working in a
+/// workdir. Since each workdir is a subdirectory of the workspace root, placing
+/// AGENTS.md there ensures the agent always knows the team context.
 pub fn generate_users_md(workspace_name: &str, members: &[SharedWorkspaceMemberInfo]) -> String {
     let mut md = String::new();
 
-    md.push_str("# Team Members\n\n");
-    md.push_str(&format!(
-        "This is a shared workspace (**{}**). Multiple users may send messages in sessions.\n",
-        workspace_name
-    ));
-    md.push_str("Messages are prefixed with the sender's name in square brackets.\n\n");
+    md.push_str(&format!("# {} - Shared Workspace\n\n", workspace_name));
+    md.push_str("This is a shared workspace. Multiple users collaborate on projects here.\n");
+    md.push_str("Messages are prefixed with the sender's name in square brackets, e.g. `[Alice] hello`.\n\n");
 
-    md.push_str("## Members\n\n");
-    md.push_str("| Name | Username | Role |\n");
-    md.push_str("|------|----------|------|\n");
+    md.push_str("## Team\n\n");
+    md.push_str("| Name | Role |\n");
+    md.push_str("|------|------|\n");
 
     for member in members {
         md.push_str(&format!(
-            "| {} | {} | {} |\n",
-            member.display_name, member.username, member.role
+            "| {} | {} |\n",
+            member.display_name, member.role
         ));
     }
 
     md.push_str("\n## Conventions\n\n");
-    md.push_str("- Messages from users appear as: [Name] message content\n");
-    md.push_str("- When addressing a specific user's request, mention their name.\n");
+    md.push_str("- Address users by name when responding to their specific requests.\n");
     md.push_str("- All members can see the full conversation history.\n");
-    md.push_str("- If multiple users give conflicting instructions, ask for clarification.\n");
+    md.push_str("- If users give conflicting instructions, ask for clarification.\n");
 
     md
 }
@@ -65,10 +65,9 @@ mod tests {
 
         let md = generate_users_md("Team Alpha", &members);
 
-        assert!(md.contains("# Team Members"));
-        assert!(md.contains("**Team Alpha**"));
-        assert!(md.contains("| Alice Smith | alice | owner |"));
-        assert!(md.contains("| Bob Jones | bob | member |"));
-        assert!(md.contains("[Name] message content"));
+        assert!(md.contains("# Team Alpha - Shared Workspace"));
+        assert!(md.contains("| Alice Smith | owner |"));
+        assert!(md.contains("| Bob Jones | member |"));
+        assert!(md.contains("conflicting instructions"));
     }
 }

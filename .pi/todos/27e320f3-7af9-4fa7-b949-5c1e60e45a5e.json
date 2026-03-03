@@ -1,14 +1,8 @@
 {
   "todos": [
     {
-      "id": "fix-skeleton",
-      "content": "Fix cross-user session message loading (skeleton issue)",
-      "status": "completed",
-      "priority": "high"
-    },
-    {
-      "id": "sidebar-redesign",
-      "content": "Redesign shared workspace sidebar to match personal sessions layout",
+      "id": "fix-runner-routing",
+      "content": "Fix get_chat_messages to route directly to correct shared workspace runner",
       "status": "in_progress",
       "priority": "high"
     },
@@ -19,5 +13,5 @@
       "priority": "medium"
     }
   ],
-  "updated_at": "2026-03-03T15:22:17.580Z"
+  "updated_at": "2026-03-03T19:03:48.949Z"
 }

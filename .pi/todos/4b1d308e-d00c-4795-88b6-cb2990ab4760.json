@@ -1,0 +1,23 @@
+{
+  "todos": [
+    {
+      "id": "fix-routing",
+      "content": "Fix session routing: shared workspace sessions must route to SW runner directly, not fallback loop",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "users-md",
+      "content": "Add USERS.md to shared workdirs and configure pi extension to auto-load it",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "id": "yazi-fix",
+      "content": "Fix yazi-build fallback",
+      "status": "pending",
+      "priority": "medium"
+    }
+  ],
+  "updated_at": "2026-03-03T19:19:47.712Z"
+}
