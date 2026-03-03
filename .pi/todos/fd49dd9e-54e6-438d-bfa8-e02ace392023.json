@@ -3,33 +3,33 @@
     {
       "id": "1",
       "content": "Update deploy/systemd/mmry-embeddings.config.toml: enable -> enabled, console_enable -> console_enabled",
-      "status": "pending",
+      "status": "completed",
       "priority": "high"
     },
     {
       "id": "2",
       "content": "Update backend/crates/oqto/src/local/linux_users.rs:690: enable -> enabled",
-      "status": "pending",
+      "status": "completed",
       "priority": "high"
     },
     {
       "id": "3",
       "content": "Update scripts/setup/18-services.sh:323: enable -> enabled",
-      "status": "pending",
+      "status": "completed",
       "priority": "high"
     },
     {
       "id": "4",
       "content": "Verify no other references to old field names",
-      "status": "pending",
+      "status": "completed",
       "priority": "medium"
     },
     {
       "id": "5",
       "content": "Build check and close issue",
-      "status": "pending",
+      "status": "completed",
       "priority": "medium"
     }
   ],
-  "updated_at": "2026-03-03T10:03:24.361Z"
+  "updated_at": "2026-03-03T10:10:20.223Z"
 }

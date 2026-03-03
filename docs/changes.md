@@ -1,5 +1,8 @@
 # Changes
 
+- 2026-03-03: Rename mmry external_api config fields (enable -> enabled, console_enable -> console_enabled) for mmry breaking change.
+- 2026-03-03: Add shared workspaces to mobile menu.
+- 2026-03-03: Update canonical history flow and settings layout, fix type errors from migration.
 - 2026-03-02: Align setup defaults to multi-user + container with dev mode disabled.
 - 2026-03-02: Add Proxmox LXC login script for manual setup demos.
 - 2026-03-02: Fix Proxmox E2E setup URL generation and make shared workspace smoke test names short to avoid Linux username limits.

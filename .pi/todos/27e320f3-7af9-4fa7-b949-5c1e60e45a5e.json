@@ -8,7 +8,7 @@
     },
     {
       "id": "f689fd18",
-      "content": "Fix shared workspace not showing in sidebar on octo-azure",
+      "content": "Add shared workspaces to mobile menu",
       "status": "completed",
       "priority": "high"
     },
@@ -19,5 +19,5 @@
       "priority": "medium"
     }
   ],
-  "updated_at": "2026-03-02T21:12:03.350Z"
+  "updated_at": "2026-03-03T10:07:57.694Z"
 }

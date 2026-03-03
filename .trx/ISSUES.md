@@ -38,15 +38,6 @@ setup.sh must correctly provision everything for a new platform user on a fresh 
 ...
 
 
-### [oqto-00ay] Update mmry config: rename external_api.enable -> enabled, console_enable -> console_enabled (P1, task)
-mmry breaking change (mmry-ypv4): ExternalApiConfig fields renamed for consistency.
-
-Files to update:
-- deploy/systemd/mmry-embeddings.config.toml: enable -> enabled, console_enable -> console_enabled
-- backend/crates/oqto/src/local/linux_users.rs:690: change "enable" key to "enabled"
-...
-
-
 ### [oqto-zkyq] Canonical history migration (server-side) (P1, feature)
 
 ### [oqto-q5yb] Credential proxy on oqto-runner: secret-aware API proxying via kyz (P1, feature)
@@ -1088,6 +1079,7 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [oqto-00ay] Update mmry config: rename external_api.enable -> enabled, console_enable -> console_enabled (closed 2026-03-03)
 - [oqto-xrc6.7] oqto Pulse plugin: link screen and connection management (closed 2026-02-27)
 - [oqto-xrc6.6] oqto Pulse plugin: oqto theme sync (closed 2026-02-27)
 - [oqto-xrc6.5] oqto Pulse plugin: prompt input bar (closed 2026-02-27)
@@ -1714,7 +1706,7 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
-- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
 - [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
