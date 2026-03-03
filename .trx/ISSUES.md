@@ -357,6 +357,8 @@ Implementation:
 ...
 
 
+### [oqto-d2vk] mmry port collision: stale configs cause port conflicts for new users (P2, bug)
+
 ### [octo-p3n2.8] Auth middleware: support api_key query param on WebSocket paths (P2, task)
 Extend is_websocket_auth_path to also accept ?api_key=oqak_xxx on /ws/mux, /voice/stt, /voice/tts. Resolve API key to user_id and create CurrentUser same as JWT path. Update auth priority: Bearer > X-Api-Key > cookie > ?token > ?api_key > X-Dev-User.
 
@@ -1079,6 +1081,7 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [oqto-fbrj] eavs: compat settings now wired into proxy transformer (closed 2026-03-03)
 - [oqto-00ay] Update mmry config: rename external_api.enable -> enabled, console_enable -> console_enabled (closed 2026-03-03)
 - [oqto-xrc6.7] oqto Pulse plugin: link screen and connection management (closed 2026-02-27)
 - [oqto-xrc6.6] oqto Pulse plugin: oqto theme sync (closed 2026-02-27)
@@ -1706,7 +1709,7 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
 - [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
