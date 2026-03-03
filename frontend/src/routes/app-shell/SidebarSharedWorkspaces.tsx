@@ -1,7 +1,8 @@
 /**
  * Sidebar section displaying shared workspaces the user belongs to.
- * Each workspace shows its icon in configured color, name, member count,
- * and role badge. Expanding a workspace shows its workdirs (project directories).
+ * Each workspace is a collapsible top-level entry (like a project group).
+ * Under each workspace, workdirs appear as project folders, and sessions
+ * render identically to personal sessions (same metadata, styling, etc.).
  */
 import {
 	ContextMenu,
@@ -17,21 +18,25 @@ import type {
 import { listWorkdirs } from "@/lib/api/shared-workspaces";
 import { listChatHistory } from "@/lib/api/chat";
 import type { ChatSession } from "@/lib/api/chat";
+import {
+	formatSessionDate,
+	getDisplayPiTitle,
+} from "@/lib/session-utils";
 import { cn } from "@/lib/utils";
 import {
 	ChevronDown,
 	ChevronRight,
-	Folder,
+	FolderKanban,
 	FolderPlus,
-	MessageSquarePlus,
+	Loader2,
+	MessageSquare,
 	Pencil,
 	Plus,
 	Settings,
 	Trash2,
 	UserPlus,
-	Users2,
 } from "lucide-react";
-import { memo, useCallback, useEffect, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { WorkspaceIcon } from "./WorkspaceIcon";
 
@@ -45,9 +50,10 @@ export interface SidebarSharedWorkspacesProps {
 	onNewChatInWorkspace: (workspace: SharedWorkspaceInfo) => void;
 	onNewProjectInWorkspace?: (workspace: SharedWorkspaceInfo) => void;
 	onDeleteWorkspace: (workspace: SharedWorkspaceInfo) => void;
-	/** Called when user clicks a workdir to start a new chat in it */
-	onSelectWorkdir?: (workspace: SharedWorkspaceInfo, workdir: SharedWorkspaceWorkdir) => void;
-	/** Runner sessions for all shared workspaces (filtered by shared_workspace_id) */
+	onSelectWorkdir?: (
+		workspace: SharedWorkspaceInfo,
+		workdir: SharedWorkspaceWorkdir,
+	) => void;
 	runnerSessions?: Array<{
 		session_id: string;
 		state: string;
@@ -55,48 +61,36 @@ export interface SidebarSharedWorkspacesProps {
 		last_activity: number;
 		shared_workspace_id?: string;
 	}>;
-	/** Set of busy (working) session IDs */
 	busySessions?: Set<string>;
-	/** Called when user clicks a session in a shared workspace */
+	selectedChatSessionId: string | null;
 	onSessionClick?: (session: ChatSession) => void;
 	isMobile?: boolean;
 }
 
-function RoleBadge({ role, color }: { role: string; color: string }) {
-	return (
-		<span
-			className="text-[9px] uppercase tracking-wider px-1 py-0.5 font-medium"
-			style={{
-				color,
-				backgroundColor: `${color}20`,
-				border: `1px solid ${color}30`,
-			}}
-		>
-			{role}
-		</span>
-	);
-}
-
-/** Fetches and displays workdirs for an expanded workspace, with sessions grouped under each */
-function WorkdirList({
+/** Workdir content: folders and sessions, matching personal sidebar style exactly. */
+function WorkspaceContent({
 	workspace,
 	isMobile,
+	sizeClasses,
 	onSelectWorkdir,
-	activeSessions,
 	busySessions,
+	selectedChatSessionId,
 	onSessionClick,
+	expandedFolders,
+	toggleFolderExpanded,
 }: {
 	workspace: SharedWorkspaceInfo;
 	isMobile: boolean;
-	onSelectWorkdir?: (workspace: SharedWorkspaceInfo, workdir: SharedWorkspaceWorkdir) => void;
-	activeSessions?: Array<{
-		session_id: string;
-		state: string;
-		cwd: string;
-		last_activity: number;
-	}>;
+	sizeClasses: SizeClasses;
+	onSelectWorkdir?: (
+		workspace: SharedWorkspaceInfo,
+		workdir: SharedWorkspaceWorkdir,
+	) => void;
 	busySessions?: Set<string>;
+	selectedChatSessionId: string | null;
 	onSessionClick?: (session: ChatSession) => void;
+	expandedFolders: Set<string>;
+	toggleFolderExpanded: (key: string) => void;
 }) {
 	const [workdirs, setWorkdirs] = useState<SharedWorkspaceWorkdir[]>([]);
 	const [hstrySessions, setHstrySessions] = useState<ChatSession[]>([]);
@@ -106,10 +100,11 @@ function WorkdirList({
 		let cancelled = false;
 		setLoading(true);
 
-		// Fetch workdirs and session history in parallel
 		Promise.all([
 			listWorkdirs(workspace.id),
-			listChatHistory({ shared_workspace_id: workspace.id }).catch(() => [] as ChatSession[]),
+			listChatHistory({ shared_workspace_id: workspace.id }).catch(
+				() => [] as ChatSession[],
+			),
 		])
 			.then(([wdData, sessionData]) => {
 				if (!cancelled) {
@@ -127,12 +122,35 @@ function WorkdirList({
 		};
 	}, [workspace.id]);
 
-	const textSize = isMobile ? "text-xs" : "text-[11px]";
-	const smallText = isMobile ? "text-[10px]" : "text-[9px]";
+	// Group sessions by workdir path
+	const sessionsByWorkdir = useMemo(() => {
+		const map = new Map<string, ChatSession[]>();
+		for (const s of hstrySessions) {
+			const wp = s.workspace_path?.replace(/\/$/, "");
+			for (const wd of workdirs) {
+				const normalizedWdPath = wd.path.replace(/\/$/, "");
+				if (
+					wp === normalizedWdPath ||
+					wp?.startsWith(`${normalizedWdPath}/`)
+				) {
+					const existing = map.get(wd.path) ?? [];
+					existing.push(s);
+					map.set(wd.path, existing);
+					break;
+				}
+			}
+		}
+		return map;
+	}, [hstrySessions, workdirs]);
 
 	if (loading) {
 		return (
-			<div className={cn("px-5 py-1 text-muted-foreground/60", isMobile ? "text-xs" : "text-[10px]")}>
+			<div
+				className={cn(
+					"px-5 py-1 text-muted-foreground/60",
+					isMobile ? "text-xs" : "text-[10px]",
+				)}
+			>
 				...
 			</div>
 		);
@@ -140,93 +158,177 @@ function WorkdirList({
 
 	if (workdirs.length === 0) {
 		return (
-			<div className={cn("px-5 py-1 text-muted-foreground/60 italic", isMobile ? "text-xs" : "text-[10px]")}>
+			<div
+				className={cn(
+					"px-5 py-1 text-muted-foreground/60 italic",
+					isMobile ? "text-xs" : "text-[10px]",
+				)}
+			>
 				No projects yet
 			</div>
 		);
 	}
 
-	// Merge hstry sessions with active runner sessions (prefer runner data for active ones)
-	const activeSessionIds = new Set((activeSessions ?? []).map((s) => s.session_id));
-
-	// Group hstry sessions by workdir path
-	const sessionsByWorkdir = new Map<string, ChatSession[]>();
-	for (const s of hstrySessions) {
-		const wp = s.workspace_path?.replace(/\/$/, "");
-		for (const wd of workdirs) {
-			const normalizedWdPath = wd.path.replace(/\/$/, "");
-			if (wp === normalizedWdPath || wp?.startsWith(`${normalizedWdPath}/`)) {
-				const existing = sessionsByWorkdir.get(wd.path) ?? [];
-				existing.push(s);
-				sessionsByWorkdir.set(wd.path, existing);
-				break;
-			}
-		}
-	}
-
 	return (
-		<div className="space-y-0.5">
+		<div className="space-y-0.5 pb-1">
 			{workdirs.map((wd) => {
 				const wdSessions = sessionsByWorkdir.get(wd.path) ?? [];
-				const sessionCount = wdSessions.length;
+				const folderKey = `${workspace.id}:${wd.path}`;
+				const isFolderExpanded = expandedFolders.has(folderKey);
+
 				return (
-					<div key={wd.path}>
-						<button
-							type="button"
-							onClick={() => onSelectWorkdir?.(workspace, wd)}
-							className={cn(
-								"w-full flex items-center gap-1.5 px-5 py-1 text-left hover:bg-sidebar-accent/50 rounded transition-colors",
-								textSize,
-							)}
-						>
-							<Folder
-								className={cn(
-									"flex-shrink-0 text-muted-foreground",
-									isMobile ? "w-3.5 h-3.5" : "w-3 h-3",
-								)}
-							/>
-							<span className="text-foreground truncate">{wd.name}</span>
-							{sessionCount > 0 && (
-								<span className={cn("text-muted-foreground/50 ml-auto", smallText)}>
-									{sessionCount}
-								</span>
-							)}
-						</button>
-						{/* Sessions under this workdir */}
-						{wdSessions.map((s) => {
-							const isBusy = activeSessionIds.has(s.id) && busySessions?.has(s.id);
-							const isActive = activeSessionIds.has(s.id);
-							return (
-								<button
-									key={s.id}
-									type="button"
-									onClick={() => onSessionClick?.(s)}
-									className={cn(
-										"w-full flex items-center gap-1.5 px-8 py-0.5 text-left hover:bg-sidebar-accent/50 rounded transition-colors",
-										smallText,
-									)}
-								>
-									<MessageSquarePlus
+					<div
+						key={wd.path}
+						className="border-b border-sidebar-border/50 last:border-b-0"
+					>
+						{/* Folder header - identical to personal project header */}
+						<div className="flex items-center gap-1 px-1 py-1.5 group">
+							<button
+								type="button"
+								onClick={() => toggleFolderExpanded(folderKey)}
+								className="flex items-center gap-1.5 text-left hover:bg-sidebar-accent/50 px-1 py-0.5 -mx-1"
+							>
+								{isFolderExpanded ? (
+									<ChevronDown
 										className={cn(
-											"flex-shrink-0",
-											isBusy ? "text-green-500" : isActive ? "text-foreground/70" : "text-muted-foreground/50",
-											isMobile ? "w-3 h-3" : "w-2.5 h-2.5",
+											"text-muted-foreground flex-shrink-0",
+											sizeClasses.iconSize,
 										)}
 									/>
-									<span className="text-muted-foreground truncate">
-										{s.title || s.id.slice(0, 12)}
-									</span>
-									{isBusy && (
-										<span className="ml-auto w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+								) : (
+									<ChevronRight
+										className={cn(
+											"text-muted-foreground flex-shrink-0",
+											sizeClasses.iconSize,
+										)}
+									/>
+								)}
+							</button>
+							<button
+								type="button"
+								onClick={() => toggleFolderExpanded(folderKey)}
+								className="flex-1 flex items-center gap-1.5 text-left hover:bg-sidebar-accent/50 px-1 py-0.5 -mx-1"
+							>
+								<FolderKanban
+									className={cn(
+										"text-primary/70 flex-shrink-0",
+										sizeClasses.projectIcon,
 									)}
-								</button>
-							);
-						})}
+								/>
+								<span
+									className={cn(
+										"font-medium text-foreground truncate",
+										sizeClasses.projectText,
+									)}
+								>
+									{wd.name}
+								</span>
+								<span className="text-[10px] text-muted-foreground">
+									({wdSessions.length})
+								</span>
+							</button>
+							{/* New chat in this workdir */}
+							<button
+								type="button"
+								onClick={() => onSelectWorkdir?.(workspace, wd)}
+								className={cn(
+									"text-muted-foreground hover:text-primary hover:bg-sidebar-accent opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity",
+									sizeClasses.buttonSize,
+								)}
+								title="New chat"
+							>
+								<Plus className={sizeClasses.iconSize} />
+							</button>
+						</div>
+
+						{/* Sessions - identical to personal session items */}
+						{isFolderExpanded && (
+							<div className="space-y-0.5 pb-1">
+								{wdSessions.map((session) => {
+									const isSelected =
+										selectedChatSessionId === session.id;
+									const isBusy = busySessions?.has(session.id);
+									const formattedDate = session.updated_at
+										? formatSessionDate(session.updated_at)
+										: null;
+
+									return (
+										<div
+											key={session.id}
+											className={isMobile ? "ml-4" : "ml-3"}
+										>
+											<div
+												className={cn(
+													"w-full px-2 text-left transition-colors flex items-start gap-1.5 cursor-pointer",
+													isMobile ? "py-2" : "py-1",
+													isSelected
+														? "bg-primary/15 border border-primary text-foreground"
+														: "text-muted-foreground hover:bg-sidebar-accent border border-transparent",
+												)}
+												onClick={() => onSessionClick?.(session)}
+												onKeyDown={(e) => {
+													if (e.key === "Enter" || e.key === " ") {
+														onSessionClick?.(session);
+													}
+												}}
+												role="button"
+												tabIndex={0}
+											>
+												<MessageSquare
+													className={cn(
+														"mt-0.5 flex-shrink-0 text-primary/70",
+														isMobile ? "w-4 h-4" : "w-3 h-3",
+													)}
+												/>
+												<div className="flex-1 min-w-0 text-left">
+													<div className="flex items-center gap-1">
+														<span
+															className={cn(
+																"truncate font-medium",
+																sizeClasses.sessionText,
+															)}
+														>
+															{getDisplayPiTitle(session)}
+														</span>
+														{isBusy && (
+															<Loader2 className="w-3 h-3 flex-shrink-0 text-primary animate-spin" />
+														)}
+													</div>
+													{formattedDate && (
+														<div
+															className={cn(
+																"text-muted-foreground mt-0.5",
+																sizeClasses.dateText,
+															)}
+														>
+															{formattedDate}
+														</div>
+													)}
+												</div>
+											</div>
+										</div>
+									);
+								})}
+							</div>
+						)}
 					</div>
 				);
 			})}
 		</div>
 	);
+}
+
+interface SizeClasses {
+	headerText: string;
+	iconSize: string;
+	workspaceIcon: string;
+	projectIcon: string;
+	projectText: string;
+	sessionText: string;
+	text: string;
+	buttonSize: string;
+	countText: string;
+	dateText: string;
 }
 
 export const SidebarSharedWorkspaces = memo(function SidebarSharedWorkspaces({
@@ -242,219 +344,240 @@ export const SidebarSharedWorkspaces = memo(function SidebarSharedWorkspaces({
 	onSelectWorkdir,
 	runnerSessions,
 	busySessions,
+	selectedChatSessionId,
 	onSessionClick,
 	isMobile = false,
 }: SidebarSharedWorkspacesProps) {
 	const { t } = useTranslation();
+	const [expandedFolders, setExpandedFolders] = useState<Set<string>>(
+		() => new Set(),
+	);
+
+	const toggleFolderExpanded = useCallback((key: string) => {
+		setExpandedFolders((prev) => {
+			const next = new Set(prev);
+			if (next.has(key)) {
+				next.delete(key);
+			} else {
+				next.add(key);
+			}
+			return next;
+		});
+	}, []);
 
 	if (sharedWorkspaces.length === 0) {
 		return null;
 	}
 
-	const sizeClasses = isMobile
+	const sizeClasses: SizeClasses = isMobile
 		? {
 				headerText: "text-xs",
 				iconSize: "w-4 h-4",
 				workspaceIcon: "w-4 h-4",
+				projectIcon: "w-4 h-4",
+				projectText: "text-sm",
+				sessionText: "text-sm",
 				text: "text-sm",
 				buttonSize: "p-1.5",
 				countText: "text-xs",
+				dateText: "text-[11px]",
 			}
 		: {
 				headerText: "text-xs",
 				iconSize: "w-3 h-3",
 				workspaceIcon: "w-3.5 h-3.5",
+				projectIcon: "w-3.5 h-3.5",
+				projectText: "text-xs",
+				sessionText: "text-xs",
 				text: "text-xs",
 				buttonSize: "p-1",
 				countText: "text-[10px]",
+				dateText: "text-[9px]",
 			};
 
 	return (
-		<div className="px-1">
-			{/* Section header */}
-			<div className="flex items-center justify-between gap-2 py-1.5 px-1">
-				<div className="flex items-center gap-2">
-					<Users2
-						className={cn("text-muted-foreground", sizeClasses.iconSize)}
-					/>
-					<span
-						className={cn(
-							"uppercase tracking-wide text-muted-foreground",
-							sizeClasses.headerText,
-						)}
+		<div className="px-1 space-y-0.5">
+			{sharedWorkspaces.map((workspace) => {
+				const isExpanded = expandedWorkspaces.has(workspace.id);
+				const canManage =
+					workspace.my_role === "owner" || workspace.my_role === "admin";
+
+				return (
+					<div
+						key={workspace.id}
+						className="border-b border-sidebar-border/50 last:border-b-0"
 					>
-						{t("sharedWorkspaces.title", "Shared")}
-					</span>
-					<span className={cn("text-muted-foreground/50", sizeClasses.countText)}>
-						({sharedWorkspaces.length})
-					</span>
-				</div>
-				<button
-					type="button"
-					onClick={onNewSharedWorkspace}
-					className={cn(
-						"text-muted-foreground hover:text-foreground hover:bg-sidebar-accent rounded",
-						sizeClasses.buttonSize,
-					)}
-					title={t("sharedWorkspaces.create", "New shared workspace")}
-				>
-					<Plus className={sizeClasses.iconSize} />
-				</button>
-			</div>
-
-			{/* Workspace list */}
-			<div className="space-y-0.5">
-				{sharedWorkspaces.map((workspace) => {
-					const isExpanded = expandedWorkspaces.has(workspace.id);
-					const canManage =
-						workspace.my_role === "owner" || workspace.my_role === "admin";
-
-					return (
-						<div
-							key={workspace.id}
-							className="border-b border-sidebar-border/50 last:border-b-0"
-						>
-							<ContextMenu>
-								<ContextMenuTrigger className="contents">
-									<div className="flex items-center gap-1 px-1 py-1.5 group">
-										<button
-											type="button"
-											onClick={() => toggleWorkspaceExpanded(workspace.id)}
-											className="flex items-center gap-1.5 text-left hover:bg-sidebar-accent/50 px-1 py-0.5 -mx-1"
-										>
-											{isExpanded ? (
-												<ChevronDown
-													className={cn(
-														"text-muted-foreground flex-shrink-0",
-														sizeClasses.iconSize,
-													)}
-												/>
-											) : (
-												<ChevronRight
-													className={cn(
-														"text-muted-foreground flex-shrink-0",
-														sizeClasses.iconSize,
-													)}
-												/>
-											)}
-										</button>
-										<button
-											type="button"
-											onClick={() => toggleWorkspaceExpanded(workspace.id)}
-											className="flex-1 flex items-center gap-1.5 text-left hover:bg-sidebar-accent/50 px-1 py-0.5 -mx-1 min-w-0"
-										>
-											<WorkspaceIcon
-												icon={workspace.icon}
-												color={workspace.color}
-												className={cn("flex-shrink-0", sizeClasses.workspaceIcon)}
-											/>
-											<span
+						{/* Workspace header - top level, like a project group but with workspace icon/color */}
+						<ContextMenu>
+							<ContextMenuTrigger className="contents">
+								<div className="flex items-center gap-1 px-1 py-1.5 group">
+									<button
+										type="button"
+										onClick={() => toggleWorkspaceExpanded(workspace.id)}
+										className="flex items-center gap-1.5 text-left hover:bg-sidebar-accent/50 px-1 py-0.5 -mx-1"
+									>
+										{isExpanded ? (
+											<ChevronDown
 												className={cn(
-													"font-medium text-foreground truncate",
-													sizeClasses.text,
+													"text-muted-foreground flex-shrink-0",
+													sizeClasses.iconSize,
+												)}
+											/>
+										) : (
+											<ChevronRight
+												className={cn(
+													"text-muted-foreground flex-shrink-0",
+													sizeClasses.iconSize,
+												)}
+											/>
+										)}
+									</button>
+									<button
+										type="button"
+										onClick={() => toggleWorkspaceExpanded(workspace.id)}
+										className="flex-1 flex items-center gap-1.5 text-left hover:bg-sidebar-accent/50 px-1 py-0.5 -mx-1 min-w-0"
+									>
+										<WorkspaceIcon
+											icon={workspace.icon}
+											color={workspace.color}
+											className={cn(
+												"flex-shrink-0",
+												sizeClasses.workspaceIcon,
+											)}
+										/>
+										<span
+											className={cn(
+												"font-medium text-foreground truncate",
+												sizeClasses.text,
+											)}
+										>
+											{workspace.name}
+										</span>
+									</button>
+									{/* Action buttons - visible on hover */}
+									{canManage && (
+										<>
+											<button
+												type="button"
+												onClick={() => onManageWorkspace(workspace)}
+												className={cn(
+													"text-muted-foreground hover:text-foreground hover:bg-sidebar-accent opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity",
+													sizeClasses.buttonSize,
+												)}
+												title={t(
+													"sharedWorkspaces.settings",
+													"Settings",
 												)}
 											>
-												{workspace.name}
-											</span>
-											<RoleBadge
-												role={workspace.my_role}
-												color={workspace.color}
-											/>
-											<span className={cn("text-muted-foreground", sizeClasses.countText)}>
-												{workspace.member_count}
-											</span>
-										</button>
-										{/* Action buttons - visible on hover */}
-										{canManage && (
-											<>
+												<Settings className={sizeClasses.iconSize} />
+											</button>
+											{onNewProjectInWorkspace && (
 												<button
 													type="button"
-													onClick={() => onManageWorkspace(workspace)}
+													onClick={() =>
+														onNewProjectInWorkspace(workspace)
+													}
 													className={cn(
 														"text-muted-foreground hover:text-foreground hover:bg-sidebar-accent opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity",
 														sizeClasses.buttonSize,
 													)}
-													title={t("sharedWorkspaces.settings", "Settings")}
+													title={t(
+														"sharedWorkspaces.newProject",
+														"New project",
+													)}
 												>
-													<Settings className={sizeClasses.iconSize} />
+													<FolderPlus
+														className={sizeClasses.iconSize}
+													/>
 												</button>
-												{onNewProjectInWorkspace && (
-													<button
-														type="button"
-														onClick={() => onNewProjectInWorkspace(workspace)}
-														className={cn(
-															"text-muted-foreground hover:text-foreground hover:bg-sidebar-accent opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity",
-															sizeClasses.buttonSize,
-														)}
-														title={t("sharedWorkspaces.newProject", "New project")}
-													>
-														<FolderPlus className={sizeClasses.iconSize} />
-													</button>
-												)}
-											</>
-										)}
-									</div>
-								</ContextMenuTrigger>
-								<ContextMenuContent>
-									{onNewProjectInWorkspace && (
-										<ContextMenuItem
-											onClick={() => onNewProjectInWorkspace(workspace)}
-										>
-											<FolderPlus className="w-4 h-4 mr-2" />
-											{t("sharedWorkspaces.newProject", "New project")}
-										</ContextMenuItem>
-									)}
-									<ContextMenuSeparator />
-									<ContextMenuItem
-										onClick={() => onManageMembers(workspace)}
-									>
-										<UserPlus className="w-4 h-4 mr-2" />
-										{t("sharedWorkspaces.manageMembers", "Members")}
-									</ContextMenuItem>
-									{canManage && (
-										<>
-											<ContextMenuItem
-												onClick={() => onManageWorkspace(workspace)}
-											>
-												<Pencil className="w-4 h-4 mr-2" />
-												{t("common.edit", "Edit")}
-											</ContextMenuItem>
-											{workspace.my_role === "owner" && (
-												<>
-													<ContextMenuSeparator />
-													<ContextMenuItem
-														variant="destructive"
-														onClick={() => onDeleteWorkspace(workspace)}
-													>
-														<Trash2 className="w-4 h-4 mr-2" />
-														{t("common.delete", "Delete")}
-													</ContextMenuItem>
-												</>
 											)}
 										</>
 									)}
-								</ContextMenuContent>
-							</ContextMenu>
-
-							{/* Expanded: show workdirs with sessions */}
-							{isExpanded && (
-								<div className="pb-1.5">
-									<WorkdirList
-										workspace={workspace}
-										isMobile={isMobile}
-										onSelectWorkdir={onSelectWorkdir}
-										activeSessions={runnerSessions?.filter(
-											(s) => s.shared_workspace_id === workspace.id,
-										)}
-										busySessions={busySessions}
-										onSessionClick={onSessionClick}
-									/>
 								</div>
-							)}
-						</div>
-					);
-				})}
-			</div>
+							</ContextMenuTrigger>
+							<ContextMenuContent>
+								{onNewProjectInWorkspace && (
+									<ContextMenuItem
+										onClick={() =>
+											onNewProjectInWorkspace(workspace)
+										}
+									>
+										<FolderPlus className="w-4 h-4 mr-2" />
+										{t(
+											"sharedWorkspaces.newProject",
+											"New project",
+										)}
+									</ContextMenuItem>
+								)}
+								<ContextMenuSeparator />
+								<ContextMenuItem
+									onClick={() => onManageMembers(workspace)}
+								>
+									<UserPlus className="w-4 h-4 mr-2" />
+									{t(
+										"sharedWorkspaces.manageMembers",
+										"Members",
+									)}
+								</ContextMenuItem>
+								{canManage && (
+									<>
+										<ContextMenuItem
+											onClick={() =>
+												onManageWorkspace(workspace)
+											}
+										>
+											<Pencil className="w-4 h-4 mr-2" />
+											{t("common.edit", "Edit")}
+										</ContextMenuItem>
+										{workspace.my_role === "owner" && (
+											<>
+												<ContextMenuSeparator />
+												<ContextMenuItem
+													variant="destructive"
+													onClick={() =>
+														onDeleteWorkspace(workspace)
+													}
+												>
+													<Trash2 className="w-4 h-4 mr-2" />
+													{t("common.delete", "Delete")}
+												</ContextMenuItem>
+											</>
+										)}
+									</>
+								)}
+							</ContextMenuContent>
+						</ContextMenu>
+
+						{/* Expanded: workdirs as folders, sessions as items */}
+						{isExpanded && (
+							<WorkspaceContent
+								workspace={workspace}
+								isMobile={isMobile}
+								sizeClasses={sizeClasses}
+								onSelectWorkdir={onSelectWorkdir}
+								busySessions={busySessions}
+								selectedChatSessionId={selectedChatSessionId}
+								onSessionClick={onSessionClick}
+								expandedFolders={expandedFolders}
+								toggleFolderExpanded={toggleFolderExpanded}
+							/>
+						)}
+					</div>
+				);
+			})}
+
+			{/* Create new shared workspace button */}
+			<button
+				type="button"
+				onClick={onNewSharedWorkspace}
+				className={cn(
+					"w-full flex items-center gap-1.5 px-2 py-1.5 text-muted-foreground hover:text-foreground hover:bg-sidebar-accent rounded transition-colors",
+					sizeClasses.text,
+				)}
+			>
+				<Plus className={sizeClasses.iconSize} />
+				<span>{t("sharedWorkspaces.create", "New shared workspace")}</span>
+			</button>
 		</div>
 	);
 });

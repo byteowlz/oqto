@@ -1069,6 +1069,7 @@ const AppShell = memo(function AppShell() {
 														}}
 														runnerSessions={runnerSessions}
 														busySessions={busySessions}
+														selectedChatSessionId={selectedChatSessionId}
 														onSessionClick={(session) => {
 															// Inject shared workspace session into chat history
 															// so the chat view can find it

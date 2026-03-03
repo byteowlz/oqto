@@ -775,81 +775,111 @@ pub async fn get_chat_messages(
     let multi_user = is_multi_user_mode(&state);
     let prefer_hstry = !multi_user && state.hstry.is_some();
 
+    // Helper to convert runner messages to canonical format
+    let convert_runner_messages =
+        |response: crate::runner::protocol::WorkspaceChatSessionMessagesResponse| -> Vec<oqto_protocol::messages::Message> {
+            let messages: Vec<ChatMessage> = response
+                .messages
+                .into_iter()
+                .map(|m| ChatMessage {
+                    id: m.id,
+                    session_id: m.session_id,
+                    role: m.role,
+                    created_at: m.created_at,
+                    completed_at: m.completed_at,
+                    parent_id: m.parent_id,
+                    model_id: m.model_id,
+                    provider_id: m.provider_id,
+                    agent: m.agent,
+                    summary_title: m.summary_title,
+                    tokens_input: m.tokens_input,
+                    tokens_output: m.tokens_output,
+                    tokens_reasoning: m.tokens_reasoning,
+                    cost: m.cost,
+                    client_id: None,
+                    parts: m
+                        .parts
+                        .into_iter()
+                        .map(|p| crate::history::ChatMessagePart {
+                            id: p.id,
+                            part_type: p.part_type,
+                            text: p.text,
+                            text_html: p.text_html,
+                            tool_name: p.tool_name,
+                            tool_call_id: p.tool_call_id,
+                            tool_input: p.tool_input,
+                            tool_output: p.tool_output,
+                            tool_status: p.tool_status,
+                            tool_title: p.tool_title,
+                        })
+                        .collect(),
+                })
+                .collect();
+            crate::history::legacy_messages_to_canon(messages)
+        };
+
     // In multi-user mode, use runner -> hstry
     if !prefer_hstry {
+        // Try personal runner first
         if let Some(runner) = get_runner_for_user(&state, user.id()) {
             match runner
                 .get_workspace_chat_session_messages(&session_id, query.render, None)
                 .await
             {
-                Ok(response) => {
-                    let messages: Vec<ChatMessage> = response
-                        .messages
-                        .into_iter()
-                        .map(|m| ChatMessage {
-                            id: m.id,
-                            session_id: m.session_id,
-                            role: m.role,
-                            created_at: m.created_at,
-                            completed_at: m.completed_at,
-                            parent_id: m.parent_id,
-                            model_id: m.model_id,
-                            provider_id: m.provider_id,
-                            agent: m.agent,
-                            summary_title: m.summary_title,
-                            tokens_input: m.tokens_input,
-                            tokens_output: m.tokens_output,
-                            tokens_reasoning: m.tokens_reasoning,
-                            cost: m.cost,
-                            client_id: None,
-                            parts: m
-                                .parts
-                                .into_iter()
-                                .map(|p| crate::history::ChatMessagePart {
-                                    id: p.id,
-                                    part_type: p.part_type,
-                                    text: p.text,
-                                    text_html: p.text_html,
-                                    tool_name: p.tool_name,
-                                    tool_call_id: p.tool_call_id,
-                                    tool_input: p.tool_input,
-                                    tool_output: p.tool_output,
-                                    tool_status: p.tool_status,
-                                    tool_title: p.tool_title,
-                                })
-                                .collect(),
-                        })
-                        .collect();
-
-                    let canonical = crate::history::legacy_messages_to_canon(messages);
-
+                Ok(response) if !response.messages.is_empty() => {
+                    let canonical = convert_runner_messages(response);
                     info!(user_id = %user.id(), session_id = %session_id, count = canonical.len(), render = query.render, "Listed chat messages via runner");
                     return Ok(Json(canonical));
                 }
+                Ok(_) => {
+                    // Empty response from personal runner, try shared workspace runners
+                }
                 Err(e) => {
-                    if multi_user {
-                        tracing::error!(
-                            user_id = %user.id(),
-                            session_id = %session_id,
-                            error = %e,
-                            "Runner failed in multi-user mode"
-                        );
-                        return Err(ApiError::internal("Chat history service unavailable."));
+                    tracing::debug!(
+                        user_id = %user.id(),
+                        session_id = %session_id,
+                        error = %e,
+                        "Personal runner failed, trying shared workspace runners"
+                    );
+                }
+            }
+        }
+
+        // Fallback: try shared workspace runners the user has access to
+        if let Some(sw_service) = state.shared_workspaces.as_ref() {
+            if let Ok(workspaces) = sw_service.list_for_user(user.id()).await {
+                for ws in &workspaces {
+                    if let Some(sw_runner) = get_runner_for_linux_user(&state, &ws.linux_user) {
+                        match sw_runner
+                            .get_workspace_chat_session_messages(&session_id, query.render, None)
+                            .await
+                        {
+                            Ok(response) if !response.messages.is_empty() => {
+                                let canonical = convert_runner_messages(response);
+                                info!(
+                                    user_id = %user.id(),
+                                    session_id = %session_id,
+                                    shared_workspace = %ws.id,
+                                    count = canonical.len(),
+                                    "Listed chat messages via shared workspace runner"
+                                );
+                                return Ok(Json(canonical));
+                            }
+                            _ => continue,
+                        }
                     }
                 }
             }
-        } else if multi_user {
-            return Err(ApiError::internal(
-                "Chat history service not configured for this user.",
-            ));
+        }
+
+        if multi_user {
+            // Return empty rather than error - session may exist but have no messages yet
+            return Ok(Json(Vec::new()));
         }
     }
 
     if multi_user {
-        return Err(ApiError::not_found(format!(
-            "Chat session {} not found",
-            session_id
-        )));
+        return Ok(Json(Vec::new()));
     }
 
     // Single-user mode: use hstry gRPC directly

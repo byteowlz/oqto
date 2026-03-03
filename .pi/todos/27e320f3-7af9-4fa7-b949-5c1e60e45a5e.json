@@ -1,33 +1,15 @@
 {
   "todos": [
     {
-      "id": "sw-runner",
-      "content": "Shared workspace runner provisioning (hstry, mmry, oqto-runner)",
+      "id": "fix-skeleton",
+      "content": "Fix cross-user session message loading (skeleton issue)",
       "status": "completed",
       "priority": "high"
     },
     {
-      "id": "sw-workdirs",
-      "content": "Shared workspace workdir browsing in sidebar",
-      "status": "completed",
-      "priority": "high"
-    },
-    {
-      "id": "sw-eavs",
-      "content": "EAVS provisioning for shared workspaces (models.json + API key)",
-      "status": "completed",
-      "priority": "high"
-    },
-    {
-      "id": "sw-routing",
-      "content": "Route agent commands to shared workspace runner",
-      "status": "completed",
-      "priority": "high"
-    },
-    {
-      "id": "sw-session-filter",
-      "content": "Fix shared workspace sessions leaking into personal session list",
-      "status": "completed",
+      "id": "sidebar-redesign",
+      "content": "Redesign shared workspace sidebar to match personal sessions layout",
+      "status": "in_progress",
       "priority": "high"
     },
     {
@@ -37,5 +19,5 @@
       "priority": "medium"
     }
   ],
-  "updated_at": "2026-03-03T14:51:34.891Z"
+  "updated_at": "2026-03-03T15:22:17.580Z"
 }

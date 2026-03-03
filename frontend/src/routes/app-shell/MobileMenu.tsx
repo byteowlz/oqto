@@ -275,6 +275,7 @@ export const MobileMenu = memo(function MobileMenu({
 										onSelectWorkdir={onSelectWorkdir}
 										runnerSessions={runnerSessions}
 										busySessions={busySessions}
+										selectedChatSessionId={selectedChatSessionId}
 										onSessionClick={onSharedSessionClick}
 										isMobile
 									/>
