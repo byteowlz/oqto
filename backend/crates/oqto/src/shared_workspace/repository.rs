@@ -152,6 +152,7 @@ impl SharedWorkspaceRepository {
                 sw.id,
                 sw.name,
                 sw.slug,
+                sw.linux_user,
                 sw.path,
                 sw.owner_id,
                 sw.description,

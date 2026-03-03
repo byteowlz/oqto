@@ -1,7 +1,7 @@
 /**
  * Sidebar section displaying shared workspaces the user belongs to.
  * Each workspace shows its icon in configured color, name, member count,
- * and role badge. Clicking a workspace navigates to its sessions.
+ * and role badge. Expanding a workspace shows its workdirs (project directories).
  */
 import {
 	ContextMenu,
@@ -10,12 +10,18 @@ import {
 	ContextMenuSeparator,
 	ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import type { SharedWorkspaceInfo } from "@/lib/api/shared-workspaces";
+import type {
+	SharedWorkspaceInfo,
+	SharedWorkspaceWorkdir,
+} from "@/lib/api/shared-workspaces";
+import { listWorkdirs } from "@/lib/api/shared-workspaces";
 import { cn } from "@/lib/utils";
 import {
 	ChevronDown,
 	ChevronRight,
+	Folder,
 	FolderPlus,
+	MessageSquarePlus,
 	Pencil,
 	Plus,
 	Settings,
@@ -23,7 +29,7 @@ import {
 	UserPlus,
 	Users2,
 } from "lucide-react";
-import { memo } from "react";
+import { memo, useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { WorkspaceIcon } from "./WorkspaceIcon";
 
@@ -37,6 +43,8 @@ export interface SidebarSharedWorkspacesProps {
 	onNewChatInWorkspace: (workspace: SharedWorkspaceInfo) => void;
 	onNewProjectInWorkspace?: (workspace: SharedWorkspaceInfo) => void;
 	onDeleteWorkspace: (workspace: SharedWorkspaceInfo) => void;
+	/** Called when user clicks a workdir to start a new chat in it */
+	onSelectWorkdir?: (workspace: SharedWorkspaceInfo, workdir: SharedWorkspaceWorkdir) => void;
 	isMobile?: boolean;
 }
 
@@ -55,6 +63,78 @@ function RoleBadge({ role, color }: { role: string; color: string }) {
 	);
 }
 
+/** Fetches and displays workdirs for an expanded workspace */
+function WorkdirList({
+	workspace,
+	isMobile,
+	onSelectWorkdir,
+}: {
+	workspace: SharedWorkspaceInfo;
+	isMobile: boolean;
+	onSelectWorkdir?: (workspace: SharedWorkspaceInfo, workdir: SharedWorkspaceWorkdir) => void;
+}) {
+	const [workdirs, setWorkdirs] = useState<SharedWorkspaceWorkdir[]>([]);
+	const [loading, setLoading] = useState(true);
+
+	useEffect(() => {
+		let cancelled = false;
+		setLoading(true);
+		listWorkdirs(workspace.id)
+			.then((data) => {
+				if (!cancelled) setWorkdirs(data);
+			})
+			.catch(() => {})
+			.finally(() => {
+				if (!cancelled) setLoading(false);
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [workspace.id]);
+
+	const textSize = isMobile ? "text-xs" : "text-[11px]";
+
+	if (loading) {
+		return (
+			<div className={cn("px-5 py-1 text-muted-foreground/60", isMobile ? "text-xs" : "text-[10px]")}>
+				...
+			</div>
+		);
+	}
+
+	if (workdirs.length === 0) {
+		return (
+			<div className={cn("px-5 py-1 text-muted-foreground/60 italic", isMobile ? "text-xs" : "text-[10px]")}>
+				No projects yet
+			</div>
+		);
+	}
+
+	return (
+		<div className="space-y-0.5">
+			{workdirs.map((wd) => (
+				<button
+					key={wd.path}
+					type="button"
+					onClick={() => onSelectWorkdir?.(workspace, wd)}
+					className={cn(
+						"w-full flex items-center gap-1.5 px-5 py-1 text-left hover:bg-sidebar-accent/50 rounded transition-colors",
+						textSize,
+					)}
+				>
+					<Folder
+						className={cn(
+							"flex-shrink-0 text-muted-foreground",
+							isMobile ? "w-3.5 h-3.5" : "w-3 h-3",
+						)}
+					/>
+					<span className="text-foreground truncate">{wd.name}</span>
+				</button>
+			))}
+		</div>
+	);
+}
+
 export const SidebarSharedWorkspaces = memo(function SidebarSharedWorkspaces({
 	sharedWorkspaces,
 	expandedWorkspaces,
@@ -65,6 +145,7 @@ export const SidebarSharedWorkspaces = memo(function SidebarSharedWorkspaces({
 	onNewChatInWorkspace,
 	onNewProjectInWorkspace,
 	onDeleteWorkspace,
+	onSelectWorkdir,
 	isMobile = false,
 }: SidebarSharedWorkspacesProps) {
 	const { t } = useTranslation();
@@ -258,27 +339,14 @@ export const SidebarSharedWorkspaces = memo(function SidebarSharedWorkspaces({
 								</ContextMenuContent>
 							</ContextMenu>
 
-							{/* Expanded: show workspace details */}
+							{/* Expanded: show workdirs */}
 							{isExpanded && (
-								<div className="px-3 pb-2 space-y-1">
-									{workspace.description && (
-										<p
-											className={cn(
-												"text-muted-foreground truncate",
-												isMobile ? "text-xs" : "text-[10px]",
-											)}
-										>
-											{workspace.description}
-										</p>
-									)}
-									<div
-										className={cn(
-											"text-muted-foreground/60 flex items-center gap-1",
-											isMobile ? "text-xs" : "text-[9px]",
-										)}
-									>
-										<span className="font-mono">{workspace.path}</span>
-									</div>
+								<div className="pb-1.5">
+									<WorkdirList
+										workspace={workspace}
+										isMobile={isMobile}
+										onSelectWorkdir={onSelectWorkdir}
+									/>
 								</div>
 							)}
 						</div>

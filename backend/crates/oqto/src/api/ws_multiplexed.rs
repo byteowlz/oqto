@@ -770,6 +770,11 @@ struct WsConnectionState {
     /// Active file watchers keyed by workspace_path.
     /// The JoinHandle is aborted when the watcher is replaced or the connection closes.
     file_watchers: HashMap<String, tokio::task::JoinHandle<()>>,
+    /// Runner overrides for sessions in shared workspaces.
+    /// When a session is created with a cwd inside a shared workspace, the runner
+    /// for that workspace's Linux user is stored here so subsequent commands
+    /// (prompt, get_state, etc.) route to the correct runner.
+    session_runner_overrides: HashMap<String, RunnerClient>,
 }
 
 #[derive(Clone, Debug)]
@@ -814,6 +819,7 @@ async fn handle_multiplexed_ws(socket: WebSocket, state: AppState, user_id: Stri
         pi_session_meta: HashMap::new(),
         terminal_sessions: HashMap::new(),
         file_watchers: HashMap::new(),
+        session_runner_overrides: HashMap::new(),
     }));
 
     // Register this connection with the legacy WS hub for session events.
@@ -1245,18 +1251,67 @@ async fn handle_agent_command(
             agent_response_with_runner(&runner_id, session_id, id, cmd, result)
         };
 
-    // Check if runner is available
-    let runner = match runner_client {
-        Some(r) => r,
-        None => {
-            return Some(agent_response(
-                &session_id,
-                id,
-                "error",
-                Err("Runner not available".into()),
-            ));
+    // Resolve the effective runner for this command.
+    // Priority:
+    // 1. Per-session override (for sessions in shared workspaces, stored on session.create)
+    // 2. For session.create: resolve from cwd path (may route to shared workspace runner)
+    // 3. Personal runner (default)
+    let resolved_runner: RunnerClient = {
+        // Check stored override first
+        let override_runner = {
+            let state_guard = conn_state.lock().await;
+            state_guard
+                .session_runner_overrides
+                .get(&session_id)
+                .cloned()
+        };
+
+        if let Some(ovr) = override_runner {
+            ovr
+        } else if let CommandPayload::SessionCreate { ref config } = cmd.payload {
+            // For session.create, check if cwd is inside a shared workspace
+            let sw_runner = if let Some(ref cwd) = config.cwd {
+                runner_client_for_path(state, user_id, Some(cwd.as_str())).await
+            } else {
+                None
+            };
+
+            if let Some(sw) = sw_runner {
+                // Store override for subsequent commands on this session
+                let is_different = runner_client
+                    .map_or(true, |r| r.socket_path() != sw.socket_path());
+                if is_different {
+                    let mut state_guard = conn_state.lock().await;
+                    state_guard
+                        .session_runner_overrides
+                        .insert(session_id.clone(), sw.clone());
+                }
+                sw
+            } else {
+                match runner_client {
+                    Some(r) => r.clone(),
+                    None => {
+                        return Some(agent_response(
+                            &session_id, id, "error",
+                            Err("Runner not available".into()),
+                        ));
+                    }
+                }
+            }
+        } else {
+            match runner_client {
+                Some(r) => r.clone(),
+                None => {
+                    return Some(agent_response(
+                        &session_id, id, "error",
+                        Err("Runner not available".into()),
+                    ));
+                }
+            }
         }
     };
+
+    let runner = &resolved_runner;
 
     match cmd.payload {
         CommandPayload::SessionCreate { config } => {
@@ -2056,40 +2111,78 @@ async fn handle_agent_command(
 
         CommandPayload::ListSessions => {
             debug!("agent list_sessions: user={}", user_id);
-            match runner.pi_list_sessions().await {
-                Ok(sessions) => {
-                    let sessions_json: Vec<Value> = sessions
-                        .iter()
-                        .map(|s| {
-                            let mut obj = serde_json::json!({
-                                "session_id": s.session_id,
-                                "state": s.state,
-                                "cwd": s.cwd,
-                                "provider": s.provider,
-                                "model": s.model,
-                                "last_activity": s.last_activity,
-                                "subscriber_count": s.subscriber_count,
-                            });
-                            if let Some(ref hid) = s.hstry_id {
-                                obj["hstry_id"] = serde_json::Value::String(hid.clone());
-                            }
-                            obj
-                        })
-                        .collect();
-                    Some(agent_response(
-                        &session_id,
-                        id,
-                        "list_sessions",
-                        Ok(Some(serde_json::json!({ "sessions": sessions_json }))),
-                    ))
+
+            // Collect sessions from the user's personal runner
+            let mut all_sessions: Vec<Value> = match runner.pi_list_sessions().await {
+                Ok(sessions) => sessions
+                    .iter()
+                    .map(|s| {
+                        let mut obj = serde_json::json!({
+                            "session_id": s.session_id,
+                            "state": s.state,
+                            "cwd": s.cwd,
+                            "provider": s.provider,
+                            "model": s.model,
+                            "last_activity": s.last_activity,
+                            "subscriber_count": s.subscriber_count,
+                        });
+                        if let Some(ref hid) = s.hstry_id {
+                            obj["hstry_id"] = serde_json::Value::String(hid.clone());
+                        }
+                        obj
+                    })
+                    .collect(),
+                Err(e) => {
+                    warn!("list_sessions failed for personal runner: {}", e);
+                    Vec::new()
                 }
-                Err(e) => Some(agent_response(
-                    &session_id,
-                    id,
-                    "list_sessions",
-                    Err(e.to_string()),
-                )),
+            };
+
+            // Also query shared workspace runners the user has access to
+            if let Some(sw_service) = state.shared_workspaces.as_ref() {
+                if let Ok(workspaces) = sw_service.list_for_user(user_id).await {
+                    for ws in &workspaces {
+                        if let Some(sw_runner) =
+                            runner_client_for_linux_user(state, user_id, Some(&ws.linux_user))
+                        {
+                            match sw_runner.pi_list_sessions().await {
+                                Ok(sessions) => {
+                                    for s in &sessions {
+                                        let mut obj = serde_json::json!({
+                                            "session_id": s.session_id,
+                                            "state": s.state,
+                                            "cwd": s.cwd,
+                                            "provider": s.provider,
+                                            "model": s.model,
+                                            "last_activity": s.last_activity,
+                                            "subscriber_count": s.subscriber_count,
+                                            "shared_workspace_id": ws.id,
+                                        });
+                                        if let Some(ref hid) = s.hstry_id {
+                                            obj["hstry_id"] =
+                                                serde_json::Value::String(hid.clone());
+                                        }
+                                        all_sessions.push(obj);
+                                    }
+                                }
+                                Err(e) => {
+                                    debug!(
+                                        "list_sessions failed for shared workspace {}: {}",
+                                        ws.id, e
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
             }
+
+            Some(agent_response(
+                &session_id,
+                id,
+                "list_sessions",
+                Ok(Some(serde_json::json!({ "sessions": all_sessions }))),
+            ))
         }
 
         CommandPayload::Delegate(_) | CommandPayload::DelegateCancel(_) => {

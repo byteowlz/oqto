@@ -283,6 +283,24 @@ export async function createSharedWorkspaceWorkdir(
 	return res.json();
 }
 
+/** Workdir (project directory) in a shared workspace. */
+export type SharedWorkspaceWorkdir = {
+	name: string;
+	path: string;
+};
+
+/** List workdirs in a shared workspace. */
+export async function listWorkdirs(
+	workspaceId: string,
+): Promise<SharedWorkspaceWorkdir[]> {
+	const res = await authFetch(apiUrl(`/${workspaceId}/workdirs`), {
+		cache: "no-store",
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
 /** Transfer ownership of a shared workspace. */
 export async function transferOwnership(
 	workspaceId: string,

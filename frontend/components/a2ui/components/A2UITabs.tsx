@@ -48,7 +48,9 @@ export function A2UITabs({
 					const tabKey = item.child || `tab-${index}`;
 					return (
 						<TabsTrigger key={tabKey} value={`tab-${index}`}>
-							{title}
+							<span className="max-w-[60px] truncate md:max-w-none">
+								{title}
+							</span>
 						</TabsTrigger>
 					);
 				})}

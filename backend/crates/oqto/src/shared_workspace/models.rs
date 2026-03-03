@@ -174,6 +174,8 @@ pub struct SharedWorkspaceInfo {
     pub id: String,
     pub name: String,
     pub slug: String,
+    #[serde(skip_serializing)]
+    pub linux_user: String,
     pub path: String,
     pub owner_id: String,
     pub description: Option<String>,

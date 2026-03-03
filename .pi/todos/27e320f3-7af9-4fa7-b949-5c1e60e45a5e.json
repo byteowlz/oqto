@@ -1,39 +1,21 @@
 {
   "todos": [
     {
-      "id": "dc331d0c",
-      "content": "Fix chat history reload regression",
-      "status": "completed",
-      "priority": "high"
-    },
-    {
-      "id": "f689fd18",
-      "content": "Add shared workspaces to mobile menu",
-      "status": "completed",
-      "priority": "high"
-    },
-    {
-      "id": "move-sw",
-      "content": "Move shared workspaces below search bar (desktop + mobile)",
-      "status": "completed",
-      "priority": "high"
-    },
-    {
-      "id": "fix-sw-newchat",
-      "content": "Fix shared workspace + button: now opens New Project dialog with workspace path",
-      "status": "completed",
-      "priority": "high"
-    },
-    {
-      "id": "fix-copy-sw",
-      "content": "Fix cross-user copy for shared workspace workdirs",
-      "status": "completed",
-      "priority": "high"
-    },
-    {
-      "id": "member-mgmt",
-      "content": "Implement shared workspace member management UI (add/remove users, role management)",
+      "id": "fix-login",
+      "content": "Fix login 401 on octo-azure (password reset)",
       "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "id": "cleanup-outatime",
+      "content": "Clean up OUTATIME test workdir from shared workspace",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "id": "debug-sw-visibility",
+      "content": "Debug shared workspaces not showing workdirs",
+      "status": "pending",
       "priority": "high"
     },
     {
@@ -43,5 +25,5 @@
       "priority": "medium"
     }
   ],
-  "updated_at": "2026-03-03T11:36:24.976Z"
+  "updated_at": "2026-03-03T13:26:52.924Z"
 }

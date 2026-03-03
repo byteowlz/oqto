@@ -235,6 +235,56 @@ pub async fn remove_shared_workspace_member(
 // Workdir management
 // ============================================================================
 
+/// List workdirs (project directories) in a shared workspace.
+pub async fn list_shared_workspace_workdirs(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(workspace_id): Path<String>,
+) -> ApiResult<Json<Vec<serde_json::Value>>> {
+    let service = state
+        .shared_workspaces
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("shared workspaces not configured"))?;
+
+    // Verify user has access
+    let (ws, _role) = service
+        .get(&workspace_id, user.id())
+        .await
+        .map_err(|e| ApiError::internal(format!("failed to get shared workspace: {}", e)))?
+        .ok_or_else(|| ApiError::not_found("shared workspace not found or access denied"))?;
+
+    // Scan the workspace directory for non-hidden subdirectories
+    let ws_path = std::path::Path::new(&ws.path);
+    let mut workdirs = Vec::new();
+
+    if ws_path.is_dir() {
+        if let Ok(mut entries) = tokio::fs::read_dir(ws_path).await {
+            while let Ok(Some(entry)) = entries.next_entry().await {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.starts_with('.') {
+                    continue;
+                }
+                if let Ok(ft) = entry.file_type().await {
+                    if !ft.is_dir() {
+                        continue;
+                    }
+                }
+                let path = entry.path().to_string_lossy().to_string();
+                workdirs.push(serde_json::json!({
+                    "name": name,
+                    "path": path,
+                }));
+            }
+        }
+    }
+
+    workdirs.sort_by(|a, b| {
+        a["name"].as_str().unwrap_or("").cmp(b["name"].as_str().unwrap_or(""))
+    });
+
+    Ok(Json(workdirs))
+}
+
 /// Add a workdir to a shared workspace by copying a source path.
 pub async fn add_shared_workspace_workdir(
     State(state): State<AppState>,

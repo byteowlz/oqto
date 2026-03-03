@@ -889,6 +889,10 @@ const AppShell = memo(function AppShell() {
 							sidebarState.setMobileMenuOpen(false);
 						}}
 						onDeleteWorkspace={handleDeleteSharedWorkspace}
+						onSelectWorkdir={(_ws, wd) => {
+							void createNewChat(wd.path);
+							sidebarState.setMobileMenuOpen(false);
+						}}
 					/>
 				)}
 
@@ -969,7 +973,8 @@ const AppShell = memo(function AppShell() {
 
 					{!sidebarState.sidebarCollapsed &&
 						(chatHistory.length > 0 ||
-							projectActions.workspaceDirectories.length > 0) && (
+							projectActions.workspaceDirectories.length > 0 ||
+							sharedWs.sharedWorkspaces.length > 0) && (
 							<>
 								<div className="w-full px-4">
 									<div className="h-px w-full bg-primary/50" />
@@ -1051,6 +1056,9 @@ const AppShell = memo(function AppShell() {
 															projectActions.openNewProjectForWorkspace(ws.path);
 														}}
 														onDeleteWorkspace={handleDeleteSharedWorkspace}
+														onSelectWorkdir={(_ws, wd) => {
+															void createNewChat(wd.path);
+														}}
 													/>
 													<div className="w-full px-2 my-1">
 														<div className="h-px w-full bg-sidebar-border/50" />

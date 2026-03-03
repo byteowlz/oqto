@@ -131,7 +131,8 @@ fn create_router_with_config_and_auth(
         )
         .route(
             "/shared-workspaces/{workspace_id}/workdirs",
-            post(handlers::add_shared_workspace_workdir),
+            get(handlers::list_shared_workspace_workdirs)
+                .post(handlers::add_shared_workspace_workdir),
         )
         .route(
             "/shared-workspaces/convert",
