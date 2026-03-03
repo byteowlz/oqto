@@ -59,6 +59,7 @@ export interface ProjectActionsState {
 
 	// Actions
 	handleCreateProjectFromTemplate: () => Promise<void>;
+	openNewProjectForWorkspace: (workspacePath: string) => void;
 
 	// Workspace directories
 	workspaceDirectories: WorkspaceDirectory[];
@@ -133,6 +134,20 @@ export function useProjectActions(
 		setNewProjectSettings(defaultOverviewValues);
 		lastTemplatePathRef.current = null;
 	}, []);
+
+	/** Open the new-project dialog pre-configured for a shared workspace. */
+	const openNewProjectForWorkspace = useCallback(
+		(workspacePath: string) => {
+			resetNewProjectForm();
+			const prefix = workspacePath.endsWith("/")
+				? workspacePath
+				: `${workspacePath}/`;
+			setNewProjectPath(prefix);
+			setNewProjectShared(true);
+			setNewProjectDialogOpen(true);
+		},
+		[resetNewProjectForm],
+	);
 
 	const handleNewProjectDialogChange = useCallback(
 		(open: boolean) => {
@@ -448,6 +463,7 @@ export function useProjectActions(
 		sandboxProfiles,
 		settingsLoading,
 		handleCreateProjectFromTemplate,
+		openNewProjectForWorkspace,
 		workspaceDirectories,
 		refreshWorkspaceDirectories,
 		projectSortBy,

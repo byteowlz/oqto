@@ -121,6 +121,8 @@ export interface SidebarSessionsProps {
 	onSessionSearchChange?: (query: string) => void;
 	searchMode?: SearchMode;
 	onSearchModeChange?: (mode: SearchMode) => void;
+	/** Optional slot rendered between the search bar and the SESSIONS header */
+	belowSearchSlot?: React.ReactNode;
 }
 
 export const SidebarSessions = memo(function SidebarSessions({
@@ -166,6 +168,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 	onSessionSearchChange: controlledOnSessionSearchChange,
 	searchMode: controlledSearchMode,
 	onSearchModeChange: controlledOnSearchModeChange,
+	belowSearchSlot,
 }: SidebarSessionsProps) {
 	const { t } = useTranslation();
 
@@ -525,6 +528,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 						</Button>
 					</div>
 				)}
+				{belowSearchSlot}
 				{/* Sessions header - between search and chat list */}
 				<div className="flex items-center justify-between gap-2 py-1.5 px-1">
 					<div className="flex items-center gap-2">

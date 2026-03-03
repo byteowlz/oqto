@@ -100,6 +100,7 @@ export interface MobileMenuProps {
 	onManageWorkspace?: (workspace: SharedWorkspaceInfo) => void;
 	onManageMembers?: (workspace: SharedWorkspaceInfo) => void;
 	onNewChatInWorkspace?: (workspace: SharedWorkspaceInfo) => void;
+	onNewProjectInWorkspace?: (workspace: SharedWorkspaceInfo) => void;
 	onDeleteWorkspace?: (workspace: SharedWorkspaceInfo) => void;
 }
 
@@ -165,6 +166,7 @@ export const MobileMenu = memo(function MobileMenu({
 	onManageWorkspace,
 	onManageMembers,
 	onNewChatInWorkspace,
+	onNewProjectInWorkspace,
 	onDeleteWorkspace,
 }: MobileMenuProps) {
 	const { t } = useTranslation();
@@ -202,24 +204,6 @@ export const MobileMenu = memo(function MobileMenu({
 			</div>
 
 			<nav className="flex-1 w-full px-3 pt-3 flex flex-col min-h-0 overflow-x-hidden">
-				{sharedWorkspaces && sharedWorkspaces.length > 0 && expandedWorkspaces && toggleWorkspaceExpanded && onNewSharedWorkspace && onManageWorkspace && onManageMembers && onNewChatInWorkspace && onDeleteWorkspace && (
-					<>
-						<SidebarSharedWorkspaces
-							sharedWorkspaces={sharedWorkspaces}
-							expandedWorkspaces={expandedWorkspaces}
-							toggleWorkspaceExpanded={toggleWorkspaceExpanded}
-							onNewSharedWorkspace={onNewSharedWorkspace}
-							onManageWorkspace={onManageWorkspace}
-							onManageMembers={onManageMembers}
-							onNewChatInWorkspace={onNewChatInWorkspace}
-							onDeleteWorkspace={onDeleteWorkspace}
-							isMobile
-						/>
-						<div className="w-full px-2 my-1">
-							<div className="h-px w-full bg-sidebar-border/50" />
-						</div>
-					</>
-				)}
 				{chatHistory.length > 0 && (
 					<SidebarSessions
 						locale={locale}
@@ -263,6 +247,27 @@ export const MobileMenu = memo(function MobileMenu({
 						searchMode={searchMode}
 						onSearchModeChange={onSearchModeChange}
 						isMobile
+						belowSearchSlot={
+							sharedWorkspaces && sharedWorkspaces.length > 0 && expandedWorkspaces && toggleWorkspaceExpanded && onNewSharedWorkspace && onManageWorkspace && onManageMembers && onNewChatInWorkspace && onDeleteWorkspace ? (
+								<>
+									<SidebarSharedWorkspaces
+										sharedWorkspaces={sharedWorkspaces}
+										expandedWorkspaces={expandedWorkspaces}
+										toggleWorkspaceExpanded={toggleWorkspaceExpanded}
+										onNewSharedWorkspace={onNewSharedWorkspace}
+										onManageWorkspace={onManageWorkspace}
+										onManageMembers={onManageMembers}
+										onNewChatInWorkspace={onNewChatInWorkspace}
+										onNewProjectInWorkspace={onNewProjectInWorkspace}
+										onDeleteWorkspace={onDeleteWorkspace}
+										isMobile
+									/>
+									<div className="w-full px-2 my-1">
+										<div className="h-px w-full bg-sidebar-border/50" />
+									</div>
+								</>
+							) : undefined
+						}
 					/>
 				)}
 

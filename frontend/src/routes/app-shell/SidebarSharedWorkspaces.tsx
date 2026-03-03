@@ -15,6 +15,7 @@ import { cn } from "@/lib/utils";
 import {
 	ChevronDown,
 	ChevronRight,
+	FolderPlus,
 	Pencil,
 	Plus,
 	Settings,
@@ -34,6 +35,7 @@ export interface SidebarSharedWorkspacesProps {
 	onManageWorkspace: (workspace: SharedWorkspaceInfo) => void;
 	onManageMembers: (workspace: SharedWorkspaceInfo) => void;
 	onNewChatInWorkspace: (workspace: SharedWorkspaceInfo) => void;
+	onNewProjectInWorkspace?: (workspace: SharedWorkspaceInfo) => void;
 	onDeleteWorkspace: (workspace: SharedWorkspaceInfo) => void;
 	isMobile?: boolean;
 }
@@ -61,6 +63,7 @@ export const SidebarSharedWorkspaces = memo(function SidebarSharedWorkspaces({
 	onManageWorkspace,
 	onManageMembers,
 	onNewChatInWorkspace,
+	onNewProjectInWorkspace,
 	onDeleteWorkspace,
 	isMobile = false,
 }: SidebarSharedWorkspacesProps) {
@@ -197,28 +200,32 @@ export const SidebarSharedWorkspaces = memo(function SidebarSharedWorkspaces({
 												>
 													<Settings className={sizeClasses.iconSize} />
 												</button>
-												<button
-													type="button"
-													onClick={() => onNewChatInWorkspace(workspace)}
-													className={cn(
-														"text-muted-foreground hover:text-foreground hover:bg-sidebar-accent opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity",
-														sizeClasses.buttonSize,
-													)}
-													title={t("sharedWorkspaces.newChat", "New chat")}
-												>
-													<Plus className={sizeClasses.iconSize} />
-												</button>
+												{onNewProjectInWorkspace && (
+													<button
+														type="button"
+														onClick={() => onNewProjectInWorkspace(workspace)}
+														className={cn(
+															"text-muted-foreground hover:text-foreground hover:bg-sidebar-accent opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity",
+															sizeClasses.buttonSize,
+														)}
+														title={t("sharedWorkspaces.newProject", "New project")}
+													>
+														<FolderPlus className={sizeClasses.iconSize} />
+													</button>
+												)}
 											</>
 										)}
 									</div>
 								</ContextMenuTrigger>
 								<ContextMenuContent>
-									<ContextMenuItem
-										onClick={() => onNewChatInWorkspace(workspace)}
-									>
-										<Plus className="w-4 h-4 mr-2" />
-										{t("sharedWorkspaces.newChat", "New chat")}
-									</ContextMenuItem>
+									{onNewProjectInWorkspace && (
+										<ContextMenuItem
+											onClick={() => onNewProjectInWorkspace(workspace)}
+										>
+											<FolderPlus className="w-4 h-4 mr-2" />
+											{t("sharedWorkspaces.newProject", "New project")}
+										</ContextMenuItem>
+									)}
 									<ContextMenuSeparator />
 									<ContextMenuItem
 										onClick={() => onManageMembers(workspace)}

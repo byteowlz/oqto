@@ -2,7 +2,7 @@
   "todos": [
     {
       "id": "dc331d0c",
-      "content": "Fix chat history reload regression - canonical messages not properly converted to RawMessage",
+      "content": "Fix chat history reload regression",
       "status": "completed",
       "priority": "high"
     },
@@ -13,11 +13,23 @@
       "priority": "high"
     },
     {
+      "id": "move-sw",
+      "content": "Move shared workspaces below search bar (desktop + mobile)",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "id": "fix-sw-newchat",
+      "content": "Fix shared workspace + button creating session in wrong workdir",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
       "id": "0c2ee339",
       "content": "Fix yazi-build fallback",
       "status": "pending",
       "priority": "medium"
     }
   ],
-  "updated_at": "2026-03-03T10:07:57.694Z"
+  "updated_at": "2026-03-03T11:03:36.307Z"
 }

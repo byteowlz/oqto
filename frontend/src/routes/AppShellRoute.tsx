@@ -884,6 +884,10 @@ const AppShell = memo(function AppShell() {
 							void createNewChat(ws.path);
 							sidebarState.setMobileMenuOpen(false);
 						}}
+						onNewProjectInWorkspace={(ws) => {
+							projectActions.openNewProjectForWorkspace(ws.path);
+							sidebarState.setMobileMenuOpen(false);
+						}}
 						onDeleteWorkspace={handleDeleteSharedWorkspace}
 					/>
 				)}
@@ -974,35 +978,6 @@ const AppShell = memo(function AppShell() {
 									className="w-full px-1.5 mt-2 flex-1 min-h-0 flex flex-col overflow-x-hidden"
 									data-spotlight="session-list"
 								>
-									{sharedWs.sharedWorkspaces.length > 0 && (
-										<>
-											<SidebarSharedWorkspaces
-												sharedWorkspaces={sharedWs.sharedWorkspaces}
-												expandedWorkspaces={sharedWs.expandedWorkspaces}
-												toggleWorkspaceExpanded={
-													sharedWs.toggleWorkspaceExpanded
-												}
-												onNewSharedWorkspace={() => {
-													setSwEditTarget(null);
-													setSwError(null);
-													setSwDialogOpen(true);
-												}}
-												onManageWorkspace={(ws) => {
-													setSwEditTarget(ws);
-													setSwError(null);
-													setSwDialogOpen(true);
-												}}
-												onManageMembers={(ws) => setSwMembersTarget(ws)}
-												onNewChatInWorkspace={(ws) => {
-													void createNewChat(ws.path);
-												}}
-												onDeleteWorkspace={handleDeleteSharedWorkspace}
-											/>
-											<div className="w-full px-2 my-1">
-												<div className="h-px w-full bg-sidebar-border/50" />
-											</div>
-										</>
-									)}
 									<SidebarSessions
 										locale={locale}
 										chatHistory={chatHistory}
@@ -1049,6 +1024,40 @@ const AppShell = memo(function AppShell() {
 										onSessionSearchChange={setSessionSearch}
 										searchMode={searchMode}
 										onSearchModeChange={setSearchMode}
+										belowSearchSlot={
+											sharedWs.sharedWorkspaces.length > 0 ? (
+												<>
+													<SidebarSharedWorkspaces
+														sharedWorkspaces={sharedWs.sharedWorkspaces}
+														expandedWorkspaces={sharedWs.expandedWorkspaces}
+														toggleWorkspaceExpanded={
+															sharedWs.toggleWorkspaceExpanded
+														}
+														onNewSharedWorkspace={() => {
+															setSwEditTarget(null);
+															setSwError(null);
+															setSwDialogOpen(true);
+														}}
+														onManageWorkspace={(ws) => {
+															setSwEditTarget(ws);
+															setSwError(null);
+															setSwDialogOpen(true);
+														}}
+														onManageMembers={(ws) => setSwMembersTarget(ws)}
+														onNewChatInWorkspace={(ws) => {
+															void createNewChat(ws.path);
+														}}
+														onNewProjectInWorkspace={(ws) => {
+															projectActions.openNewProjectForWorkspace(ws.path);
+														}}
+														onDeleteWorkspace={handleDeleteSharedWorkspace}
+													/>
+													<div className="w-full px-2 my-1">
+														<div className="h-px w-full bg-sidebar-border/50" />
+													</div>
+												</>
+											) : undefined
+										}
 									/>
 								</div>
 							</>
