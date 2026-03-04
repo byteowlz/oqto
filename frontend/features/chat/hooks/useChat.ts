@@ -716,10 +716,20 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 							throttleFlushTimerRef.current = null;
 						}
 					}
-					// If no streaming message exists, this message_end is for a
-					// non-assistant message (user echo or tool result) that was
-					// already skipped in message_start. Nothing to finalize.
-					if (!streamingMessageRef.current) break;
+					// If no streaming message exists, check if this is another
+					// user's message in a shared workspace (broadcast via hub).
+					if (!streamingMessageRef.current) {
+						const hubMsg = convertCanonicalMessageToDisplay(
+							event.message,
+							nextMessageId(),
+						);
+						if (hubMsg && hubMsg.role === "user") {
+							// This is a user message from another team member,
+							// broadcast via the hub. Add it to the message list.
+							setMessages((prev) => [...prev, hubMsg]);
+						}
+						break;
+					}
 
 					const fallbackId = streamingMessageRef.current.id;
 					const canonical = convertCanonicalMessageToDisplay(
