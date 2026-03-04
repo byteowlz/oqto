@@ -302,6 +302,45 @@ impl HstryClient {
             .context("Failed to list conversations from hstry")?;
         Ok(response.into_inner().conversations)
     }
+
+    /// Set `client_id` on the last user message in a conversation.
+    ///
+    /// Used when context compaction prevents normal message persist but
+    /// client_id still needs to be written for optimistic message matching.
+    /// Fetches all messages, finds the last user message by role, then
+    /// upserts it with the client_id set.
+    pub async fn set_last_user_message_client_id(
+        &self,
+        session_id: &str,
+        client_id: &str,
+    ) -> Result<()> {
+        let messages = self.get_messages(session_id, None, None).await?;
+
+        // Find the last user message
+        let last_user_msg = messages
+            .iter()
+            .rev()
+            .find(|m| m.role == "user" || m.role == "human");
+
+        let msg = last_user_msg
+            .ok_or_else(|| anyhow::anyhow!("No user message found for '{}'", session_id))?;
+
+        // Create an updated copy with client_id set
+        let updated_msg = Message {
+            client_id: Some(client_id.to_string()),
+            ..msg.clone()
+        };
+
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+
+        self.append_messages(session_id, vec![updated_msg], Some(now_ms))
+            .await?;
+
+        Ok(())
+    }
 }
 
 impl Default for HstryClient {

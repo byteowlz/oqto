@@ -1,11 +1,35 @@
 {
   "todos": [
     {
-      "id": "auto-rename",
-      "content": "Fix auto-rename not adding readable_id for shared workspace sessions",
+      "id": "v1",
+      "content": "Review all committed changes for correctness",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "v2",
+      "content": "Find root cause: stale oqto binary + compaction index mismatch",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "v3",
+      "content": "Rebuild and deploy oqto + runner binaries with targeted client_id update",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "v4",
+      "content": "Test the full dedup flow end-to-end",
       "status": "in_progress",
       "priority": "high"
+    },
+    {
+      "id": "v5",
+      "content": "Remove diagnostic warn! logging (revert to debug!)",
+      "status": "completed",
+      "priority": "medium"
     }
   ],
-  "updated_at": "2026-03-04T12:04:35.430Z"
+  "updated_at": "2026-03-04T18:50:36.795Z"
 }

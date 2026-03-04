@@ -3008,9 +3008,13 @@ impl PiSessionManager {
                 // For AgentEnd, transfer the pending client_id to the translator before translating.
                 // This ensures the client_id is included in the user message for optimistic matching.
                 if matches!(pi_event, PiEvent::AgentEnd { .. }) {
-                    let client_id = pending_client_id.write().await.take();
-                    warn!(
-                        "Pi[{}] AgentEnd: pending_client_id.take() = {:?}",
+                    // Read without taking — the incremental persist (spawned async)
+                    // also needs to read this value to set client_id on the correct
+                    // message. The value is naturally overwritten by the next command
+                    // in the command_processor_task.
+                    let client_id = pending_client_id.read().await.clone();
+                    debug!(
+                        "Pi[{}] AgentEnd: pending_client_id = {:?}",
                         session_id, client_id
                     );
                     translator.set_pending_client_id(client_id.clone());
@@ -3035,7 +3039,7 @@ impl PiSessionManager {
                             &runner_id,
                             &pending_messages,
                             &work_dir,
-                            client_id,
+                            client_id.clone(),
                         )
                         .await
                         {
@@ -3047,6 +3051,34 @@ impl PiSessionManager {
                                 pending_messages.len(),
                                 eid,
                             );
+                        }
+                        // If client_id is set, schedule a deferred update to ensure
+                        // the correct user message gets it. This runs AFTER any pending
+                        // incremental persist (which may add the actual user message to
+                        // hstry if compaction skipped the message writes above).
+                        if let Some(cid) = client_id {
+                            let client = client.clone();
+                            let eid = eid.clone();
+                            let lock = hstry_persist_lock.clone();
+                            let sid = session_id.clone();
+                            tokio::spawn(async move {
+                                // Acquire lock to wait for incremental persist to complete
+                                let _guard = lock.lock().await;
+                                if let Err(e) = client
+                                    .set_last_user_message_client_id(&eid, &cid)
+                                    .await
+                                {
+                                    warn!(
+                                        "Pi[{}] failed to set client_id on last user message: {:?}",
+                                        sid, e
+                                    );
+                                } else {
+                                    debug!(
+                                        "Pi[{}] set client_id='{}' on last user message (eid='{}')",
+                                        sid, cid, eid,
+                                    );
+                                }
+                            });
                         }
                     }
                     pending_messages.clear();
@@ -3230,6 +3262,10 @@ impl PiSessionManager {
                 }
                 PiSessionCommand::Steer { message: msg, client_id } => {
                     // Store client_id for hstry persistence (same as Prompt).
+                    debug!(
+                        "Pi[{}] cmd_processor: Steer received, client_id = {:?}",
+                        session_id, client_id
+                    );
                     *pending_client_id.write().await = client_id;
                     // The runner decides how to deliver based on session state:
                     // - Streaming: send as steer (interrupt mid-run)
@@ -3767,26 +3803,13 @@ impl PiSessionManager {
         let skip_messages = if let Some(max_idx) = existing_max_idx {
             let existing_count = (max_idx + 1) as usize;
             if messages.len() < existing_count {
-                // Don't skip when we have a client_id to set — the user message
-                // needs its client_id updated for optimistic merge to work.
-                if client_id.is_some() {
-                    warn!(
-                        "Context compaction detected (Pi has {} messages, hstry has {}), \
-                         but client_id={:?} is set — proceeding with persist to update client_id.",
-                        messages.len(),
-                        existing_count,
-                        client_id,
-                    );
-                    false
-                } else {
-                    info!(
-                        "Skipping hstry message persist: Pi has {} messages but hstry already has {} \
-                         (context compaction detected). Updating metadata only.",
-                        messages.len(),
-                        existing_count,
-                    );
-                    true
-                }
+                info!(
+                    "Skipping hstry message persist: Pi has {} messages but hstry already has {} \
+                     (context compaction detected). Updating metadata only.",
+                    messages.len(),
+                    existing_count,
+                );
+                true
             } else {
                 false
             }
