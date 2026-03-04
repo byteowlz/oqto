@@ -2,6 +2,8 @@
 
 ## Open
 
+### [oqto-5ey4] Migrate from oqto-browser to agent-browser (P0, epic)
+
 ### [oqto-m7br] Security: models.json written with 644 permissions - eavs API keys readable by all users (P0, bug)
 In scripts/admin/eavs-provision.sh line 265, models.json is written with mode 644 (world-readable). This file contains the embedded eavs virtual API key. In multi-user deployments, any user on the system can read another user's API key by accessing their ~/.pi/agent/models.json.
 
@@ -37,6 +39,17 @@ setup.sh must correctly provision everything for a new platform user on a fresh 
 3. Per-user provisioning on login/creation:
 ...
 
+
+### [oqto-mgbq] Test agent-browser with streaming to oqto frontend (P1, task)
+Test agent-browser with streaming to oqto frontend
+
+Streaming Quality Analysis:
+============================
+
+...
+
+
+### [oqto-4016] Research agent-browser integration points and verify protocol compatibility (P1, task)
 
 ### [oqto-zkyq] Canonical history migration (server-side) (P1, feature)
 
@@ -356,6 +369,16 @@ Location: frontend/apps/index.ts:1-56
 Implementation:
 ...
 
+
+### [oqto-fp4w] Update dependencies.toml to track agent-browser version (P2, task)
+
+### [oqto-pnz5] Test all existing oqto-browser commands work with agent-browser (P2, task)
+
+### [oqto-acy9] Add agent-browser to oqto installation script and justfile (P2, task)
+
+### [oqto-z582] Update AgentBrowserManager to use agent-browser binary (P2, task)
+
+### [oqto-qvtw] Update oqto AgentBrowserConfig to support both oqto-browser and agent-browser (P2, task)
 
 ### [oqto-d2vk] mmry port collision: stale configs cause port conflicts for new users (P2, bug)
 
@@ -921,6 +944,14 @@ Enable multiple platform users to access the same project/workspace with proper 
 ### Core Concept
 ...
 
+
+### [oqto-amqb] Document streaming quality decision and defaults in AGENTS.md (P3, task)
+
+### [oqto-rg67] Update .pi/skills/oqto-browser SKILL.md to reference agent-browser (P3, task)
+
+### [oqto-c2r7] Update AGENTS.md and docs to reference agent-browser instead of oqto-browser (P3, task)
+
+### [oqto-gwpa] Remove oqto-browser and oqto-browserd crates from codebase (P3, task)
 
 ### [oqto-ejm7] Frontend model picker should preselect the default model from .pi/settings.json (P3, feature)
 When a workspace has a default provider/model set in .pi/agent/settings.json (defaultProvider + defaultModel), the model picker dropdown in the frontend should preselect that model instead of whatever was last used.
@@ -1709,7 +1740,7 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
 - [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
+- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )

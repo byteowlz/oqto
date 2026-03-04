@@ -1,17 +1,11 @@
 {
   "todos": [
     {
-      "id": "readable-id-header",
-      "content": "Show readable-id in shared session chat header",
+      "id": "fix-t-crash",
+      "content": "Fix 't is not defined' crash in WorkspaceContent (SidebarSharedWorkspaces)",
       "status": "in_progress",
-      "priority": "high"
-    },
-    {
-      "id": "sw-context-menu",
-      "content": "Add context menu to shared workspace sessions in sidebar",
-      "status": "pending",
       "priority": "high"
     }
   ],
-  "updated_at": "2026-03-04T10:33:42.924Z"
+  "updated_at": "2026-03-04T11:37:05.906Z"
 }

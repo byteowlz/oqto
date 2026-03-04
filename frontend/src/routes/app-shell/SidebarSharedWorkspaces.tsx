@@ -112,6 +112,7 @@ function WorkspaceContent({
 	expandedFolders: Set<string>;
 	toggleFolderExpanded: (key: string) => void;
 }) {
+	const { t } = useTranslation();
 	const [workdirs, setWorkdirs] = useState<SharedWorkspaceWorkdir[]>([]);
 	const [fetchedSessions, setFetchedSessions] = useState<ChatSession[]>([]);
 	const [loading, setLoading] = useState(true);
