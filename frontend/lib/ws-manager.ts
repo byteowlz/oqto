@@ -504,6 +504,15 @@ class WsConnectionManager {
 		}
 		handlers.add(handler);
 
+		// Warn about potential duplicate handler registrations
+		if (handlers.size > 1) {
+			console.warn(
+				`[ws-mux] WARNING: ${handlers.size} handlers registered for session ${sessionId} after subscribeAgentSession. ` +
+				`This may cause duplicate event processing. Stack:`,
+				new Error().stack,
+			);
+		}
+
 		if (!shouldCreate) {
 			// Track the subscription for reconnection, but do not send session.create.
 			this.subscribedSessions.set(sessionId, { config, create: false });
@@ -1164,6 +1173,16 @@ class WsConnectionManager {
 			if (sessionId) {
 				const sessionHandlers = this.agentSessionHandlers.get(sessionId);
 				if (sessionHandlers) {
+					// Warn if multiple handlers exist for a single session
+					// (indicates a double-subscription bug causing duplicate events)
+					if (
+						sessionHandlers.size > 1 &&
+						isWsMuxDebugEnabled()
+					) {
+						console.warn(
+							`[ws-mux] DUPLICATE HANDLERS: ${sessionHandlers.size} handlers for session ${sessionId}, event: ${agentEvent.event}`,
+						);
+					}
 					for (const handler of sessionHandlers) {
 						try {
 							handler(agentEvent);

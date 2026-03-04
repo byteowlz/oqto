@@ -484,6 +484,13 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 				case "stream.text_delta": {
 					const delta = event.delta as string | undefined;
 					if (!delta) break;
+					if (isPiDebugEnabled()) {
+						console.debug(
+							"[useChat] text_delta:",
+							JSON.stringify(delta).slice(0, 60),
+							"session:", event.session_id,
+						);
+					}
 					const currentMsg = ensureAssistantMessage(true);
 					const lastPart = currentMsg.parts[currentMsg.parts.length - 1];
 					if (lastPart?.type === "text") {
