@@ -57,9 +57,12 @@ export interface ProjectActionsState {
 	sandboxProfiles: string[];
 	settingsLoading: boolean;
 
+	// Shared workspace context (when creating a project inside a shared workspace)
+	newProjectSharedWorkspaceId: string | null;
+
 	// Actions
 	handleCreateProjectFromTemplate: () => Promise<void>;
-	openNewProjectForWorkspace: (workspacePath: string) => void;
+	openNewProjectForWorkspace: (workspacePath: string, sharedWorkspaceId?: string) => void;
 
 	// Workspace directories
 	workspaceDirectories: WorkspaceDirectory[];
@@ -98,6 +101,7 @@ export function useProjectActions(
 	>(null);
 	const [newProjectPath, setNewProjectPath] = useState("");
 	const [newProjectShared, setNewProjectShared] = useState(false);
+	const [newProjectSharedWorkspaceId, setNewProjectSharedWorkspaceId] = useState<string | null>(null);
 	const [newProjectSubmitting, setNewProjectSubmitting] = useState(false);
 	const [newProjectError, setNewProjectError] = useState<string | null>(null);
 	const [newProjectSettings, setNewProjectSettings] =
@@ -129,6 +133,7 @@ export function useProjectActions(
 		setSelectedTemplatePath(null);
 		setNewProjectPath("");
 		setNewProjectShared(false);
+		setNewProjectSharedWorkspaceId(null);
 		setNewProjectSubmitting(false);
 		setNewProjectError(null);
 		setNewProjectSettings(defaultOverviewValues);
@@ -137,12 +142,19 @@ export function useProjectActions(
 
 	/** Open the new-project dialog pre-configured for a shared workspace. */
 	const openNewProjectForWorkspace = useCallback(
-		(workspacePath: string) => {
+		(workspacePath: string, sharedWorkspaceId?: string) => {
 			resetNewProjectForm();
-			const prefix = workspacePath.endsWith("/")
-				? workspacePath
-				: `${workspacePath}/`;
-			setNewProjectPath(prefix);
+			// For shared workspaces, path is relative (just project name).
+			// For personal workspaces, pre-fill with workspace path prefix.
+			if (sharedWorkspaceId) {
+				setNewProjectPath("");
+				setNewProjectSharedWorkspaceId(sharedWorkspaceId);
+			} else {
+				const prefix = workspacePath.endsWith("/")
+					? workspacePath
+					: `${workspacePath}/`;
+				setNewProjectPath(prefix);
+			}
 			setNewProjectShared(true);
 			setNewProjectDialogOpen(true);
 		},
@@ -340,44 +352,51 @@ export function useProjectActions(
 		if (newProjectShared) {
 			payload.shared = true;
 		}
+		if (newProjectSharedWorkspaceId) {
+			payload.shared_workspace_id = newProjectSharedWorkspaceId;
+		}
 		setNewProjectSubmitting(true);
 		try {
 			await createProjectFromTemplate(payload);
 
-			const displayName = newProjectSettings.displayName.trim();
-			await updateWorkspaceMeta(trimmedPath, {
-				display_name: displayName.length > 0 ? displayName : null,
-			});
+			// Post-creation settings only apply to personal workspaces.
+			// Shared workspace projects use the shared runner's defaults.
+			if (!newProjectSharedWorkspaceId) {
+				const displayName = newProjectSettings.displayName.trim();
+				await updateWorkspaceMeta(trimmedPath, {
+					display_name: displayName.length > 0 ? displayName : null,
+				});
 
-			if (newProjectSettings.sandboxProfile) {
-				await updateWorkspaceSandbox(trimmedPath, {
-					profile: newProjectSettings.sandboxProfile,
+				if (newProjectSettings.sandboxProfile) {
+					await updateWorkspaceSandbox(trimmedPath, {
+						profile: newProjectSettings.sandboxProfile,
+					});
+				}
+
+				if (newProjectSettings.defaultModelRef) {
+					const [provider, model] = newProjectSettings.defaultModelRef.split("/");
+					if (provider && model) {
+						await updateSettingsValues(
+							"pi-agent",
+							{
+								values: {
+									defaultProvider: provider,
+									defaultModel: model,
+								},
+							},
+							trimmedPath,
+						);
+					}
+				}
+
+				await applyWorkspacePiResources({
+					workspace_path: trimmedPath,
+					skills_mode: newProjectSettings.skillsMode,
+					extensions_mode: newProjectSettings.extensionsMode,
+					skills: newProjectSettings.selectedSkills,
+					extensions: newProjectSettings.selectedExtensions,
 				});
 			}
-
-			if (newProjectSettings.defaultModelRef) {
-				const [provider, model] = newProjectSettings.defaultModelRef.split("/");
-				if (provider && model) {
-					await updateSettingsValues(
-						"pi-agent",
-						{
-							values: {
-								defaultProvider: provider,
-								defaultModel: model,
-							},
-						},
-						trimmedPath,
-					);
-				}
-			}
-
-			await applyWorkspacePiResources({
-				workspace_path: trimmedPath,
-				skills_mode: newProjectSettings.skillsMode,
-				extensions_mode: newProjectSettings.extensionsMode,
-				skills: newProjectSettings.selectedSkills,
-				extensions: newProjectSettings.selectedExtensions,
-			});
 
 			await refreshWorkspaceDirectories();
 			handleNewProjectDialogChange(false);
@@ -392,6 +411,7 @@ export function useProjectActions(
 		selectedTemplatePath,
 		newProjectPath,
 		newProjectShared,
+		newProjectSharedWorkspaceId,
 		newProjectSettings,
 		refreshWorkspaceDirectories,
 		handleNewProjectDialogChange,
@@ -453,6 +473,7 @@ export function useProjectActions(
 		handleNewProjectPathChange,
 		newProjectShared,
 		setNewProjectShared,
+		newProjectSharedWorkspaceId,
 		newProjectSubmitting,
 		newProjectError,
 		newProjectSettings,

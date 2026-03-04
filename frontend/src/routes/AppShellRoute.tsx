@@ -907,7 +907,7 @@ const AppShell = memo(function AppShell() {
 							sidebarState.setMobileMenuOpen(false);
 						}}
 						onNewProjectInWorkspace={(ws) => {
-							projectActions.openNewProjectForWorkspace(ws.path);
+							projectActions.openNewProjectForWorkspace(ws.path, ws.id);
 							sidebarState.setMobileMenuOpen(false);
 						}}
 						onDeleteWorkspace={handleDeleteSharedWorkspace}
@@ -1082,7 +1082,7 @@ const AppShell = memo(function AppShell() {
 															void createNewChat(ws.path);
 														}}
 														onNewProjectInWorkspace={(ws) => {
-															projectActions.openNewProjectForWorkspace(ws.path);
+															projectActions.openNewProjectForWorkspace(ws.path, ws.id);
 														}}
 														onDeleteWorkspace={handleDeleteSharedWorkspace}
 														onSelectWorkdir={(_ws, wd) => {
@@ -1238,6 +1238,7 @@ const AppShell = memo(function AppShell() {
 					onProjectPathChange={projectActions.handleNewProjectPathChange}
 					newProjectShared={projectActions.newProjectShared}
 					onSharedChange={projectActions.setNewProjectShared}
+					isSharedWorkspaceContext={!!projectActions.newProjectSharedWorkspaceId}
 					newProjectError={projectActions.newProjectError}
 					newProjectSubmitting={projectActions.newProjectSubmitting}
 					newProjectSettings={projectActions.newProjectSettings}

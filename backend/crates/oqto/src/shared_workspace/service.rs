@@ -672,6 +672,16 @@ impl SharedWorkspaceService {
 
     /// Regenerate USERS.md and .pi/context.json in every workdir of this workspace.
     ///
+    /// Regenerate USERS.md for a shared workspace by ID.
+    pub async fn regenerate_users_md_by_id(&self, workspace_id: &str) -> Result<()> {
+        let ws: SharedWorkspace = self
+            .repo
+            .get_by_id(workspace_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("shared workspace not found: {workspace_id}"))?;
+        self.regenerate_users_md(&ws).await
+    }
+
     /// USERS.md contains team member info. .pi/context.json tells the
     /// custom-context-files Pi extension to auto-load USERS.md into context.
     pub async fn regenerate_users_md(&self, workspace: &SharedWorkspace) -> Result<()> {

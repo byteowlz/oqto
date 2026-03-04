@@ -151,6 +151,7 @@ export type CreateProjectFromTemplateRequest = {
 	template_path: string;
 	project_path: string;
 	shared?: boolean;
+	shared_workspace_id?: string;
 };
 
 export type CreateWorkspaceSessionRequest = {

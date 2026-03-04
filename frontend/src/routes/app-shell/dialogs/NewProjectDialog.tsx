@@ -35,6 +35,8 @@ export interface NewProjectDialogProps {
 	onProjectPathChange: (path: string) => void;
 	newProjectShared: boolean;
 	onSharedChange: (shared: boolean) => void;
+	/** True when creating within a shared workspace (hides the shared toggle). */
+	isSharedWorkspaceContext?: boolean;
 	newProjectError: string | null;
 	newProjectSubmitting: boolean;
 	newProjectSettings: WorkspaceOverviewValues;
@@ -61,6 +63,7 @@ export const NewProjectDialog = memo(function NewProjectDialog({
 	onProjectPathChange,
 	newProjectShared,
 	onSharedChange,
+	isSharedWorkspaceContext,
 	newProjectError,
 	newProjectSubmitting,
 	newProjectSettings,
@@ -150,44 +153,48 @@ export const NewProjectDialog = memo(function NewProjectDialog({
 						</div>
 					</div>
 
-					<div className="flex items-center justify-between border border-border rounded px-3 py-2">
-						<div className="text-sm">
-							{t("projects.sharedProject")}
+					{!isSharedWorkspaceContext && (
+						<div className="flex items-center justify-between border border-border rounded px-3 py-2">
+							<div className="text-sm">
+								{t("projects.sharedProject")}
+							</div>
+							<Switch
+								checked={newProjectShared}
+								onCheckedChange={onSharedChange}
+							/>
 						</div>
-						<Switch
-							checked={newProjectShared}
-							onCheckedChange={onSharedChange}
-						/>
-					</div>
+					)}
 
-					<div className="space-y-2">
-						<div className="text-xs uppercase text-muted-foreground">
-							{t("projects.workspaceSettings")}
+					{!isSharedWorkspaceContext && (
+						<div className="space-y-2">
+							<div className="text-xs uppercase text-muted-foreground">
+								{t("projects.workspaceSettings")}
+							</div>
+							{settingsLoading ? (
+								<div className="text-sm text-muted-foreground">
+									{t("projects.loadingSettings")}
+								</div>
+							) : (
+								<div className="border border-border rounded p-3">
+									<WorkspaceOverviewForm
+										locale={locale}
+										workspacePathLabel={
+											newProjectPath.trim().length > 0
+												? newProjectPath.trim()
+												: t("projects.newProject")
+										}
+										values={newProjectSettings}
+										availableModels={availableModels}
+										sandboxProfiles={sandboxProfiles}
+										availableSkills={availableSkills}
+										availableExtensions={availableExtensions}
+										onChange={onProjectSettingsChange}
+										showSave={false}
+									/>
+								</div>
+							)}
 						</div>
-						{settingsLoading ? (
-							<div className="text-sm text-muted-foreground">
-								{t("projects.loadingSettings")}
-							</div>
-						) : (
-							<div className="border border-border rounded p-3">
-								<WorkspaceOverviewForm
-									locale={locale}
-									workspacePathLabel={
-										newProjectPath.trim().length > 0
-											? newProjectPath.trim()
-											: t("projects.newProject")
-									}
-									values={newProjectSettings}
-									availableModels={availableModels}
-									sandboxProfiles={sandboxProfiles}
-									availableSkills={availableSkills}
-									availableExtensions={availableExtensions}
-									onChange={onProjectSettingsChange}
-									showSave={false}
-								/>
-							</div>
-						)}
-					</div>
+					)}
 
 					{newProjectError && (
 						<div className="text-sm text-destructive">{newProjectError}</div>

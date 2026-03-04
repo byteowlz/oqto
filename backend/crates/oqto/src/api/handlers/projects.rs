@@ -81,6 +81,8 @@ pub struct CreateProjectFromTemplateRequest {
     pub project_path: String,
     #[serde(default)]
     pub shared: bool,
+    /// When set, the project is created inside this shared workspace.
+    pub shared_workspace_id: Option<String>,
 }
 
 /// Query for listing workspace locations.
@@ -509,17 +511,40 @@ pub async fn create_project_from_template(
         return Err(ApiError::bad_request("project path is required"));
     }
 
-    let workspace_root = state.sessions.for_user(user.id()).workspace_root();
+    // Resolve workspace root and linux username based on shared workspace context.
+    let (workspace_root, linux_username_override) =
+        if let Some(ref sw_id) = request.shared_workspace_id {
+            // Verify user is a member of this shared workspace.
+            let sw_service = state
+                .shared_workspaces
+                .as_ref()
+                .ok_or_else(|| ApiError::bad_request("shared workspaces not available"))?;
+            let workspaces = sw_service
+                .list_for_user(user.id())
+                .await
+                .map_err(|e| ApiError::internal(format!("Failed to list shared workspaces: {e}")))?;
+            let ws = workspaces
+                .iter()
+                .find(|w| w.id == *sw_id)
+                .ok_or_else(|| ApiError::bad_request("shared workspace not found or not a member"))?;
+            (PathBuf::from(&ws.path), Some(ws.linux_user.clone()))
+        } else {
+            let root = state.sessions.for_user(user.id()).workspace_root();
+            (root, None)
+        };
+
     let target_dir = workspace_root.join(&project_rel);
 
     // In multi-user mode, delegate to usermgr (runs as root, can write to user homes).
     let is_multi_user = state.linux_users.as_ref().is_some_and(|lu| lu.enabled);
     if is_multi_user {
-        let linux_username = state
-            .linux_users
-            .as_ref()
-            .unwrap()
-            .linux_username(user.id());
+        let linux_username = linux_username_override.clone().unwrap_or_else(|| {
+            state
+                .linux_users
+                .as_ref()
+                .unwrap()
+                .linux_username(user.id())
+        });
         let target_str = target_dir
             .to_str()
             .ok_or_else(|| ApiError::internal("invalid target path"))?;
@@ -555,11 +580,13 @@ pub async fn create_project_from_template(
     // In multi-user mode, run git as the target user via usermgr.
     // In single-user mode, run directly.
     if is_multi_user {
-        let linux_username = state
-            .linux_users
-            .as_ref()
-            .unwrap()
-            .linux_username(user.id());
+        let linux_username = linux_username_override.unwrap_or_else(|| {
+            state
+                .linux_users
+                .as_ref()
+                .unwrap()
+                .linux_username(user.id())
+        });
         let target_str = target_dir.to_string_lossy().to_string();
         // Best-effort git init via run-as-user
         if let Err(e) = crate::local::linux_users::usermgr_request(
@@ -628,7 +655,7 @@ pub async fn create_project_from_template(
         }
     }
 
-    if request.shared {
+    if request.shared || request.shared_workspace_id.is_some() {
         let metadata = ProjectMetadata {
             project_id: format!("proj_{}", Uuid::new_v4().simple()),
             shared: true,
@@ -637,6 +664,15 @@ pub async fn create_project_from_template(
         projects::write_metadata(&target_dir, &metadata)
             .context("writing project metadata")
             .map_err(|e| ApiError::internal(format!("Failed to write project metadata: {}", e)))?;
+    }
+
+    // Regenerate USERS.md for the new workdir in shared workspaces.
+    if let Some(ref sw_id) = request.shared_workspace_id {
+        if let Some(sw_service) = state.shared_workspaces.as_ref() {
+            if let Err(e) = sw_service.regenerate_users_md_by_id(sw_id).await {
+                tracing::warn!(sw_id, "Failed to regenerate USERS.md after project creation: {e}");
+            }
+        }
     }
 
     let name = project_rel
