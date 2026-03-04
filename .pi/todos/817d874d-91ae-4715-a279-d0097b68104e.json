@@ -1,0 +1,29 @@
+{
+  "todos": [
+    {
+      "id": "1",
+      "content": "Find the sidebar/session list component rendering shared workspace workdirs",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "2",
+      "content": "Fix workdir folder icon color to match workspace icon color",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "3",
+      "content": "Fix left margin alignment to match regular sessions",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "4",
+      "content": "Commit changes",
+      "status": "completed",
+      "priority": "medium"
+    }
+  ],
+  "updated_at": "2026-03-04T20:08:29.375Z"
+}

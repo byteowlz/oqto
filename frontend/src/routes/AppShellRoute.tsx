@@ -916,7 +916,6 @@ const AppShell = memo(function AppShell() {
 							sidebarState.setMobileMenuOpen(false);
 						}}
 						runnerSessions={runnerSessions}
-						busySessions={busySessions}
 						onSharedSessionClick={(session, sharedWorkspaceId) => {
 							createOptimisticChatSession(session.id, session.workspace_path ?? undefined, sharedWorkspaceId, session);
 							setSelectedChatSessionId(session.id);
