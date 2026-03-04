@@ -1252,6 +1252,55 @@ fn agent_response_with_runner(
 }
 
 /// Handle canonical agent commands.
+/// Tag a user message with `[DisplayName]` if the session belongs to a shared workspace.
+/// Returns the original message unchanged if not in a shared workspace or if the cwd
+/// cannot be resolved.
+async fn tag_shared_workspace_message(
+    state: &AppState,
+    conn_state: &Arc<tokio::sync::Mutex<WsConnectionState>>,
+    session_id: &str,
+    user_id: &str,
+    message: &str,
+) -> String {
+    let Some(ref sw_service) = state.shared_workspaces else {
+        return message.to_string();
+    };
+    let cwd = {
+        let state_guard = conn_state.lock().await;
+        state_guard
+            .pi_session_meta
+            .get(session_id)
+            .and_then(|m| m.cwd.as_ref())
+            .map(|p| p.to_string_lossy().to_string())
+    };
+    let Some(cwd) = cwd else {
+        tracing::warn!(
+            session_id = %session_id,
+            "no cwd in session meta, cannot tag shared workspace message"
+        );
+        return message.to_string();
+    };
+    let display_name = state
+        .users
+        .get_user(user_id)
+        .await
+        .ok()
+        .flatten()
+        .map(|u| u.display_name.clone())
+        .unwrap_or_else(|| user_id.to_string());
+    let result = sw_service
+        .prepend_user_name(&cwd, &display_name, message)
+        .await;
+    tracing::debug!(
+        session_id = %session_id,
+        cwd = %cwd,
+        display_name = %display_name,
+        tagged = result.as_ref().map(|r| r.as_str() != message).unwrap_or(false),
+        "shared workspace user tag"
+    );
+    result.unwrap_or_else(|_| message.to_string())
+}
+
 ///
 /// Every command gets a `CommandResponse` event back (or `None` for fire-and-forget
 /// commands like prompt/steer/abort where streaming events are the real response).
@@ -1586,49 +1635,10 @@ async fn handle_agent_command(
         } => {
             // For shared workspaces, prepend the user's display name to the message
             // so the agent knows which user is speaking.
-            let effective_message = if let Some(ref sw_service) = state.shared_workspaces {
-                let cwd = {
-                    let state_guard = conn_state.lock().await;
-                    let meta = state_guard.pi_session_meta.get(&session_id);
-                    let cwd = meta
-                        .and_then(|m| m.cwd.as_ref())
-                        .map(|p| p.to_string_lossy().to_string());
-                    if cwd.is_none() {
-                        tracing::warn!(
-                            session_id = %session_id,
-                            has_meta = meta.is_some(),
-                            "no cwd in session meta, cannot check shared workspace for user tag"
-                        );
-                    }
-                    cwd
-                };
-                if let Some(cwd) = cwd {
-                    // Look up user display name for the prefix
-                    let display_name = state
-                        .users
-                        .get_user(user_id)
-                        .await
-                        .ok()
-                        .flatten()
-                        .map(|u| u.display_name.clone())
-                        .unwrap_or_else(|| user_id.to_string());
-                    let result = sw_service
-                        .prepend_user_name(&cwd, &display_name, &message)
-                        .await;
-                    tracing::debug!(
-                        session_id = %session_id,
-                        cwd = %cwd,
-                        display_name = %display_name,
-                        tagged = result.as_ref().map(|r| r != &message).unwrap_or(false),
-                        "shared workspace user tag check"
-                    );
-                    result.unwrap_or_else(|_| message.clone())
-                } else {
-                    message.clone()
-                }
-            } else {
-                message.clone()
-            };
+            let effective_message = tag_shared_workspace_message(
+                state, &conn_state, &session_id, user_id, &message,
+            )
+            .await;
 
             info!(
                 "agent prompt: user={}, session_id={}, len={}, client_id={:?}",
@@ -1719,13 +1729,17 @@ async fn handle_agent_command(
         }
 
         CommandPayload::Steer { message } => {
+            let effective_message = tag_shared_workspace_message(
+                state, &conn_state, &session_id, user_id, &message,
+            )
+            .await;
             info!(
                 "agent steer: user={}, session_id={}, len={}",
                 user_id,
                 session_id,
-                message.len()
+                effective_message.len()
             );
-            match runner.pi_steer(&session_id, &message).await {
+            match runner.pi_steer(&session_id, &effective_message).await {
                 Ok(()) => None,
                 Err(e) => Some(agent_response(
                     &session_id,
@@ -1737,13 +1751,17 @@ async fn handle_agent_command(
         }
 
         CommandPayload::FollowUp { message } => {
+            let effective_message = tag_shared_workspace_message(
+                state, &conn_state, &session_id, user_id, &message,
+            )
+            .await;
             info!(
                 "agent follow_up: user={}, session_id={}, len={}",
                 user_id,
                 session_id,
-                message.len()
+                effective_message.len()
             );
-            match runner.pi_follow_up(&session_id, &message).await {
+            match runner.pi_follow_up(&session_id, &effective_message).await {
                 Ok(()) => None,
                 Err(e) => Some(agent_response(
                     &session_id,
@@ -2262,6 +2280,19 @@ async fn handle_agent_command(
                                             state_guard
                                                 .session_runner_overrides
                                                 .insert(s.session_id.clone(), sw_runner.clone());
+                                            // Pre-populate session meta with cwd so
+                                            // prompt/steer handlers can resolve the
+                                            // shared workspace for username tagging
+                                            // without requiring session.create.
+                                            if !state_guard.pi_session_meta.contains_key(&s.session_id) {
+                                                state_guard.pi_session_meta.insert(
+                                                    s.session_id.clone(),
+                                                    PiSessionMeta {
+                                                        scope: Some("pi".to_string()),
+                                                        cwd: Some(std::path::PathBuf::from(&s.cwd)),
+                                                    },
+                                                );
+                                            }
                                         }
                                         drop(state_guard);
                                     }

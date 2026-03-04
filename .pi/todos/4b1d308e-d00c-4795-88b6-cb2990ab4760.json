@@ -1,11 +1,29 @@
 {
   "todos": [
     {
-      "id": "fix-t-crash",
-      "content": "Fix 't is not defined' crash in WorkspaceContent (SidebarSharedWorkspaces)",
+      "id": "username-inject",
+      "content": "Fix username injection for steer/follow_up commands (only prompt was tagged)",
       "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "meta-prepopulate",
+      "content": "Pre-populate pi_session_meta during list_sessions for shared workspace sessions",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "kimi-fail",
+      "content": "Investigate Kimi-K2.5 failing to answer for Hausmeister",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "deploy-test",
+      "content": "Build, deploy, and test fixes on octo-azure",
+      "status": "in_progress",
       "priority": "high"
     }
   ],
-  "updated_at": "2026-03-04T11:38:03.653Z"
+  "updated_at": "2026-03-04T11:57:53.725Z"
 }
