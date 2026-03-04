@@ -40,6 +40,60 @@ setup.sh must correctly provision everything for a new platform user on a fresh 
 ...
 
 
+### [oqto-14b1.3] Frontend: ServeView iframe panel with hot reload (P1, task)
+New view in the session screen alongside chat, files, terminal, browser.
+
+- New ViewKey: "serve" added to the type union
+- WsEvent::ServeStart -> store instance metadata, auto-switch to serve view
+- WsEvent::ServeReload -> increment iframe key (triggers full page reload)
+...
+
+
+### [oqto-14b1.2] Backend: serve API routes and port allocation (P1, task)
+Add serve management routes to the oqto backend:
+
+Routes:
+- POST /serve/start -- allocate port, register instance, broadcast WsEvent::ServeStart
+- POST /serve/reload -- broadcast WsEvent::ServeReload
+...
+
+
+### [oqto-14b1.1] oqto-serve CLI: static file server with swc TypeScript transpilation (P1, task)
+Implement the oqto-serve Rust binary with start/stop/list subcommands.
+
+start flow:
+1. Contact oqto backend to allocate port (POST /serve/start)
+2. Bind HTTP server on 127.0.0.1:{port}
+...
+
+
+### [oqto-14b1] oqto-serve: agent web application server (P1, epic)
+Implement oqto-serve, a CLI + HTTP server that lets agents serve self-contained HTML/CSS/JS apps to the user within the oqto frontend.
+
+Architecture:
+- oqto-serve CLI (Rust binary): start/stop/list/scaffold commands
+- Static file serving with swc TypeScript transpilation (no Node/Bun)
+...
+
+
+### [oqto-dbbw.1] Spec: finalize --app-* CSS token list and window.apphost bridge API (P1, task)
+Write the formal spec document at docs/design/byteowlz-app-runtime.md.
+
+Contents:
+- Final list of --app-* CSS variables with semantic descriptions
+- window.apphost JS bridge interface (theme, onThemeChange, future: fetch/saveState/loadState)
+...
+
+
+### [oqto-dbbw] Byteowlz App Runtime: shared contract for portable agent-generated web apps (P1, epic)
+Define and implement the shared contract that lets agent-generated HTML/CSS/JS apps run identically in oqto (iframe via oqto-serve) and omni (inline Tauri webview) without changes.
+
+The shared contract consists of:
+1. CSS Token Contract: 14 --app-* CSS variables (bg, fg, card, card-fg, primary, primary-fg, muted, muted-fg, border, destructive, success, warning, info, font). Apps use ONLY var(--app-*). Each host maps its own palette into these.
+2. JS Host Bridge: window.apphost object with theme property (dark/light) and onThemeChange(cb) subscription.
+...
+
+
 ### [oqto-mgbq] Test agent-browser with streaming to oqto frontend (P1, task)
 Test agent-browser with streaming to oqto frontend
 
@@ -370,6 +424,60 @@ Implementation:
 ...
 
 
+### [oqto-h8v2.2] Theme selection UI in settings (P2, task)
+Add theme picker to the settings panel.
+
+- Dropdown or toggle for built-in themes (oqto-light, oqto-dark)
+- Preview swatch showing key colors
+- Later: section for custom themes with add/edit/delete
+...
+
+
+### [oqto-h8v2.1] Extract current palettes into named theme objects (P2, task)
+Refactor globals.css to load theme variables from a theme definition rather than hardcoding them.
+
+- Create a Theme type/interface that holds all CSS variable values (background, foreground, card, primary, muted, border, destructive, etc.)
+- Define oqto-light and oqto-dark as the two built-in themes using the current values from globals.css
+- Apply theme by setting CSS variables on :root from the theme object
+...
+
+
+### [oqto-h8v2] Custom theming support for oqto (P2, epic)
+Enable custom color themes in oqto. The current light and dark palettes become the default theme. Users can create custom themes that override the CSS variables.
+
+Architecture:
+- Themes defined as named sets of CSS variable values (same variables as current globals.css :root and .dark)
+- Default themes: "oqto-light" (current :root) and "oqto-dark" (current .dark)
+...
+
+
+### [oqto-14b1.4] oqto-serve scaffold command with embedded templates (P2, task)
+Implement the scaffold subcommand with embedded templates (include_dir! or equivalent).
+
+Templates (all using --app-* tokens from byteowlz app runtime contract):
+- blank: minimal index.html + style.css + empty main.ts
+- dashboard: grid of stat cards, data table, status indicators
+...
+
+
+### [oqto-dbbw.3] Create apphost-shim.js bridge script (P2, task)
+Tiny JS shim (~30 lines) that provides window.apphost in any context:
+
+- If window.apphost already exists (set by host), does nothing
+- Otherwise sets up a postMessage listener for iframe contexts (oqto-serve)
+- Exposes: theme (dark/light), onThemeChange(cb)
+...
+
+
+### [oqto-dbbw.2] Create app-tokens.css with fallback defaults for all --app-* vars (P2, task)
+Create the base stylesheet that provides fallback values for all 14 --app-* CSS variables. Two variants: :root (dark defaults using oqto dark palette) and .light class (oqto light palette).
+
+Also includes:
+- border-radius: 0 everywhere (shared aesthetic)
+- Monospace font stack default
+...
+
+
 ### [oqto-fp4w] Update dependencies.toml to track agent-browser version (P2, task)
 
 ### [oqto-pnz5] Test all existing oqto-browser commands work with agent-browser (P2, task)
@@ -654,24 +762,6 @@ Props:
 ...
 
 
-### [octo-58xa.1] WebView: Backend proxy for localhost servers (P2, task)
-Create proxy endpoint for agent-spawned web servers.
-
-## Endpoint
-GET/POST /api/session/{id}/webview/proxy
-Query params:
-...
-
-
-### [octo-58xa] Agent WebView: Iframe embed for agent-spawned web apps (P2, feature)
-Allow agents to spawn custom web apps and display them in Octo's UI with sidebars visible.
-
-## Use Cases
-- Agent creates a data visualization dashboard
-- Agent builds a custom form/wizard for user input
-...
-
-
 ### [octo-k8z1.13] Browser: User interaction handoff mode (OAuth, captcha, 2FA) (P2, task)
 When agent encounters OAuth, captcha, or 2FA, it needs to hand control to user.
 
@@ -945,6 +1035,33 @@ Enable multiple platform users to access the same project/workspace with proper 
 ...
 
 
+### [oqto-h8v2.4] Dynamic --app-* injection for oqto-serve iframes (P3, task)
+When custom theming is active, oqto-serve iframes need to receive the live theme.
+
+- ServeView sends postMessage with full --app-* variable mapping on:
+  - Initial iframe load
+  - Theme change events
+...
+
+
+### [oqto-h8v2.3] Custom theme definition format and loading (P3, task)
+Allow users to define custom themes.
+
+- Theme format: TOML or JSON file with all CSS variable overrides
+- Theme directory: ~/.config/oqto/themes/ or managed via API
+- Validation against the known variable set
+...
+
+
+### [oqto-dbbw.4] Create app-utils.css shared utility classes (P3, task)
+Optional shared utility CSS that apps can use for common patterns. Uses only --app-* variables.
+
+Classes:
+- Layout: .panel, .box, .box-header, .box-title, .box-subtitle
+- Flex: .flex, .flex-col, .flex-row, .items-center, .justify-between, .gap-1/2/3
+...
+
+
 ### [oqto-amqb] Document streaming quality decision and defaults in AGENTS.md (P3, task)
 
 ### [oqto-rg67] Update .pi/skills/oqto-browser SKILL.md to reference agent-browser (P3, task)
@@ -1112,6 +1229,8 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [octo-58xa.1] WebView: Backend proxy for localhost servers (closed 2026-03-04)
+- [octo-58xa] Agent WebView: Iframe embed for agent-spawned web apps (closed 2026-03-04)
 - [oqto-fbrj] eavs: compat settings now wired into proxy transformer (closed 2026-03-03)
 - [oqto-00ay] Update mmry config: rename external_api.enable -> enabled, console_enable -> console_enabled (closed 2026-03-03)
 - [oqto-xrc6.7] oqto Pulse plugin: link screen and connection management (closed 2026-02-27)
@@ -1741,6 +1860,6 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
 - [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
 - [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
