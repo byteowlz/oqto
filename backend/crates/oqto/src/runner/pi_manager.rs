@@ -3009,6 +3009,10 @@ impl PiSessionManager {
                 // This ensures the client_id is included in the user message for optimistic matching.
                 if matches!(pi_event, PiEvent::AgentEnd { .. }) {
                     let client_id = pending_client_id.write().await.take();
+                    warn!(
+                        "Pi[{}] AgentEnd: pending_client_id.take() = {:?}",
+                        session_id, client_id
+                    );
                     translator.set_pending_client_id(client_id.clone());
                     pending_hstry_client_id = client_id;
                 }
@@ -3763,13 +3767,26 @@ impl PiSessionManager {
         let skip_messages = if let Some(max_idx) = existing_max_idx {
             let existing_count = (max_idx + 1) as usize;
             if messages.len() < existing_count {
-                info!(
-                    "Skipping hstry message persist: Pi has {} messages but hstry already has {} \
-                     (context compaction detected). Updating metadata only.",
-                    messages.len(),
-                    existing_count,
-                );
-                true
+                // Don't skip when we have a client_id to set — the user message
+                // needs its client_id updated for optimistic merge to work.
+                if client_id.is_some() {
+                    warn!(
+                        "Context compaction detected (Pi has {} messages, hstry has {}), \
+                         but client_id={:?} is set — proceeding with persist to update client_id.",
+                        messages.len(),
+                        existing_count,
+                        client_id,
+                    );
+                    false
+                } else {
+                    info!(
+                        "Skipping hstry message persist: Pi has {} messages but hstry already has {} \
+                         (context compaction detected). Updating metadata only.",
+                        messages.len(),
+                        existing_count,
+                    );
+                    true
+                }
             } else {
                 false
             }
@@ -3794,6 +3811,7 @@ impl PiSessionManager {
                     Some(oqto_session_id.to_string()),
                 )
                 .await;
+
             return Ok(());
         }
 
