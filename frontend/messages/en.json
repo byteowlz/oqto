@@ -64,7 +64,8 @@
 		"working_label": "Working",
 		"idle_label": "Idle",
 		"copyAll": "Copy all",
-		"copy": "Copy"
+		"copy": "Copy",
+		"you": "You"
 	},
 	"sessions": {
 		"title": "Sessions",

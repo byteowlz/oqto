@@ -8,10 +8,38 @@
  */
 
 import type { PiAgentMessage, PiSessionMessage } from "@/lib/api/default-chat";
-import type { Part, ToolStatus } from "@/lib/canonical-types";
+import type { Part, Sender, ToolStatus } from "@/lib/canonical-types";
 import type { DisplayMessage, DisplayPart, RawMessage } from "./types";
 
 const MESSAGE_ID_PATTERN = /^pi-msg-(\d+)$/;
+
+/**
+ * Pattern matching `[Name] ...` prefix prepended by the backend for shared
+ * workspace messages.  Captures the display name inside the brackets.
+ */
+const SENDER_TAG_RE = /^\[([^\]]+)\]\s*/;
+
+/**
+ * Extract a `[Name]` sender tag from user-message text parts.
+ *
+ * Returns the parsed Sender and mutates the parts array in-place to strip the
+ * tag prefix from the first text part so it doesn't render in the bubble.
+ * Returns `undefined` when no tag is found.
+ */
+function extractSenderFromParts(parts: DisplayPart[]): Sender | undefined {
+	for (const part of parts) {
+		if (part.type !== "text") continue;
+		const textPart = part as { type: "text"; text: string };
+		const match = textPart.text.match(SENDER_TAG_RE);
+		if (match) {
+			const name = match[1];
+			textPart.text = textPart.text.slice(match[0].length);
+			return { type: "user", id: name, name };
+		}
+		break; // only check the first text part
+	}
+	return undefined;
+}
 
 
 // ============================================================================
@@ -331,12 +359,19 @@ export function convertCanonicalMessageToDisplay(
 		};
 	}
 
+	// Use canonical sender if present, otherwise extract [Name] tag from user messages
+	let sender = msg.sender as Sender | undefined;
+	if (!sender && role === "user") {
+		sender = extractSenderFromParts(parts);
+	}
+
 	return {
 		id: typeof msg.id === "string" && msg.id ? msg.id : fallbackId,
 		role,
 		parts,
 		timestamp,
 		usage,
+		sender,
 	};
 }
 
@@ -482,6 +517,11 @@ export function normalizeMessages(
 		const clientId = message.client_id ?? message.clientId;
 		const msgModel = message.model_id ?? message.model ?? null;
 		const msgProvider = message.provider_id ?? message.provider ?? null;
+		// Extract [Name] sender tag from user messages in shared workspaces
+		let sender: Sender | undefined;
+		if (normalizedRole === "user") {
+			sender = extractSenderFromParts(parts);
+		}
 		const displayMessage: DisplayMessage = {
 			id: `${idPrefix}-${idx}`,
 			role: normalizedRole,
@@ -491,6 +531,7 @@ export function normalizeMessages(
 			clientId,
 			model: msgModel,
 			provider: msgProvider,
+			sender,
 		};
 
 		display.push(displayMessage);

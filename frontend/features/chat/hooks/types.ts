@@ -8,7 +8,7 @@
  * parts with UI-specific metadata (streaming state, client correlation).
  */
 
-import type { Part, ToolStatus, Usage } from "@/lib/canonical-types";
+import type { Part, Sender, ToolStatus, Usage } from "@/lib/canonical-types";
 import type { AgentState } from "@/lib/control-plane-client";
 
 // ============================================================================
@@ -60,6 +60,9 @@ export type DisplayMessage = {
 	model?: string | null;
 	/** Provider ID used for this message (from hstry or streaming). */
 	provider?: string | null;
+	/** Sender attribution for multi-user workspaces.
+	 * When set, the chat UI shows sender.name instead of "You". */
+	sender?: Sender;
 };
 
 /** Send mode for messages */

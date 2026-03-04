@@ -3047,7 +3047,9 @@ const MessageGroupCard = memo(function MessageGroupCard({
 					<Bot className="w-3 h-3 sm:w-4 sm:h-4 text-primary flex-shrink-0" />
 				)}
 				{isUser ? (
-					<span className="text-sm font-medium text-foreground truncate min-w-0">You</span>
+					<span className="text-sm font-medium text-foreground truncate min-w-0">
+						{group.messages[0]?.sender?.name ?? t("chat.you")}
+					</span>
 				) : (
 					<span className="text-sm font-medium text-foreground truncate min-w-0">
 						{assistantDisplayName}

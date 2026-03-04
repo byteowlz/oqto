@@ -64,7 +64,8 @@
 		"working_label": "Arbeitet",
 		"idle_label": "Bereit",
 		"copyAll": "Alles kopieren",
-		"copy": "Kopieren"
+		"copy": "Kopieren",
+		"you": "Du"
 	},
 	"sessions": {
 		"title": "Sitzungen",
