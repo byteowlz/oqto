@@ -11,6 +11,7 @@ import { useApp } from "@/hooks/use-app";
 import { useCurrentUser } from "@/hooks/use-auth";
 import { getUserDisplayName } from "@/lib/api/types";
 import { sharedWorkspaceSessionMap } from "@/components/contexts/chat-context";
+import { useSharedWorkspaces } from "@/src/routes/app-shell/hooks/useSharedWorkspaces";
 import { useIsMobile } from "@/hooks/use-mobile";
 import {
 	formatTempId,
@@ -610,9 +611,25 @@ export const SessionScreen = memo(function SessionScreen() {
 	const isOverviewActive = Boolean(normalizedOverviewPath);
 
 	// Show the user's display name on messages in shared workspace sessions.
-	const isSharedSession = selectedChatSessionId
-		? sharedWorkspaceSessionMap.has(selectedChatSessionId)
-		: false;
+	// Check both the session map (populated from runner sessions / optimistic create)
+	// and the session's workspace_path against known shared workspace paths.
+	const { sharedWorkspaces } = useSharedWorkspaces();
+	const isSharedSession = useMemo(() => {
+		if (!selectedChatSessionId) return false;
+		// Fast path: check the module-level map
+		if (sharedWorkspaceSessionMap.has(selectedChatSessionId)) return true;
+		// Fallback: check if the selected session's workspace_path is inside
+		// any shared workspace path.
+		const session = chatHistory?.find(
+			(s) => s.id === selectedChatSessionId,
+		);
+		const wp = session?.workspace_path?.replace(/\/$/, "");
+		if (!wp || sharedWorkspaces.length === 0) return false;
+		return sharedWorkspaces.some((sw) => {
+			const swp = sw.path.replace(/\/$/, "");
+			return wp === swp || wp.startsWith(`${swp}/`);
+		});
+	}, [selectedChatSessionId, sharedWorkspaces, chatHistory]);
 	const senderName = isSharedSession
 		? getUserDisplayName(currentUser)
 		: undefined;

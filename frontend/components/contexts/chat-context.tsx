@@ -264,6 +264,15 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 		() => new Map(runnerSessions.map((s) => [s.session_id, s])),
 		[runnerSessions],
 	);
+	// Populate sharedWorkspaceSessionMap from runner sessions so that
+	// shared workspace sessions are recognized even after page reload.
+	useEffect(() => {
+		for (const rs of runnerSessions) {
+			if (rs.shared_workspace_id) {
+				sharedWorkspaceSessionMap.set(rs.session_id, rs.shared_workspace_id);
+			}
+		}
+	}, [runnerSessions]);
 	useEffect(() => {
 		if (autoSelectedRef.current) return;
 		if (chatHistory.length === 0) return;
@@ -723,13 +732,13 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 	}, []);
 
 	const createNewChat = useCallback(
-		async (workspacePath?: string) => {
+		async (workspacePath?: string, sharedWorkspaceId?: string) => {
 			let resolvedPath = normalizeWorkspacePath(workspacePath) ?? null;
 			if (!resolvedPath && selectedChatSessionId) {
 				resolvedPath = getSessionWorkspacePath(selectedChatSessionId);
 			}
 			const sessionId = createPiSessionId();
-			createOptimisticChatSession(sessionId, resolvedPath ?? undefined);
+			createOptimisticChatSession(sessionId, resolvedPath ?? undefined, sharedWorkspaceId);
 			setSelectedChatSessionId(sessionId);
 			void refreshChatHistory();
 			return sessionId;

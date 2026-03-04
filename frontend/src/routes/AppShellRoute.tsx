@@ -903,7 +903,7 @@ const AppShell = memo(function AppShell() {
 						}}
 						onManageMembers={(ws) => setSwMembersTarget(ws)}
 						onNewChatInWorkspace={(ws) => {
-							void createNewChat(ws.path);
+							void createNewChat(ws.path, ws.id);
 							sidebarState.setMobileMenuOpen(false);
 						}}
 						onNewProjectInWorkspace={(ws) => {
@@ -911,8 +911,8 @@ const AppShell = memo(function AppShell() {
 							sidebarState.setMobileMenuOpen(false);
 						}}
 						onDeleteWorkspace={handleDeleteSharedWorkspace}
-						onSelectWorkdir={(_ws, wd) => {
-							void createNewChat(wd.path);
+						onSelectWorkdir={(ws, wd) => {
+							void createNewChat(wd.path, ws.id);
 							sidebarState.setMobileMenuOpen(false);
 						}}
 						runnerSessions={runnerSessions}
@@ -1079,14 +1079,14 @@ const AppShell = memo(function AppShell() {
 														}}
 														onManageMembers={(ws) => setSwMembersTarget(ws)}
 														onNewChatInWorkspace={(ws) => {
-															void createNewChat(ws.path);
+															void createNewChat(ws.path, ws.id);
 														}}
 														onNewProjectInWorkspace={(ws) => {
 															projectActions.openNewProjectForWorkspace(ws.path, ws.id);
 														}}
 														onDeleteWorkspace={handleDeleteSharedWorkspace}
-														onSelectWorkdir={(_ws, wd) => {
-															void createNewChat(wd.path);
+														onSelectWorkdir={(ws, wd) => {
+															void createNewChat(wd.path, ws.id);
 														}}
 														chatHistory={chatHistory}
 														runnerSessions={runnerSessions}
