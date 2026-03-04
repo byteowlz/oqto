@@ -80,6 +80,7 @@ export interface SidebarSharedWorkspacesProps {
 /** Workdir content: folders and sessions, matching personal sidebar style exactly. */
 function WorkspaceContent({
 	workspace,
+	workspaceColor,
 	isMobile,
 	sizeClasses,
 	onSelectWorkdir,
@@ -95,6 +96,7 @@ function WorkspaceContent({
 	toggleFolderExpanded,
 }: {
 	workspace: SharedWorkspaceInfo;
+	workspaceColor: string;
 	isMobile: boolean;
 	sizeClasses: SizeClasses;
 	onSelectWorkdir?: (
@@ -260,9 +262,10 @@ function WorkspaceContent({
 							>
 								<FolderKanban
 									className={cn(
-										"text-primary/70 flex-shrink-0",
+										"flex-shrink-0",
 										sizeClasses.projectIcon,
 									)}
+									style={{ color: workspaceColor }}
 								/>
 								<span
 									className={cn(
@@ -508,7 +511,7 @@ export const SidebarSharedWorkspaces = memo(function SidebarSharedWorkspaces({
 			};
 
 	return (
-		<div className="px-1 space-y-0.5">
+		<div className="space-y-0.5">
 			{sharedWorkspaces.map((workspace) => {
 				const isExpanded = expandedWorkspaces.has(workspace.id);
 				const canManage =
@@ -664,6 +667,7 @@ export const SidebarSharedWorkspaces = memo(function SidebarSharedWorkspaces({
 						{isExpanded && (
 							<WorkspaceContent
 								workspace={workspace}
+								workspaceColor={workspace.color}
 								isMobile={isMobile}
 								sizeClasses={sizeClasses}
 								onSelectWorkdir={onSelectWorkdir}
