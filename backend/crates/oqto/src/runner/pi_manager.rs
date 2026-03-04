@@ -2760,6 +2760,29 @@ impl PiSessionManager {
                                 if !clean_title.is_empty() && last_synced_title != clean_title {
                                     last_synced_title = clean_title.clone();
 
+                                    // Resolve readable_id: prefer the one embedded in
+                                    // the title (e.g. "Title [adj-noun-noun]"), otherwise
+                                    // look up the hstry-generated one so the frontend
+                                    // always gets a readable_id with title changes.
+                                    let readable_id = if let Some(rid) = parsed.readable_id.as_ref() {
+                                        Some(rid.to_string())
+                                    } else {
+                                        let eid = hstry_external_id.read().await.clone();
+                                        if let Some(ref client) = hstry_client {
+                                            client
+                                                .get_conversation(&eid, None)
+                                                .await
+                                                .ok()
+                                                .flatten()
+                                                .and_then(|c| {
+                                                    let rid = c.readable_id.as_deref().unwrap_or("").trim().to_string();
+                                                    if rid.is_empty() { None } else { Some(rid) }
+                                                })
+                                        } else {
+                                            None
+                                        }
+                                    };
+
                                     // Broadcast title change to frontend immediately
                                     let title_event = CanonicalEvent {
                                     session_id: session_id.clone(),
@@ -2768,7 +2791,7 @@ impl PiSessionManager {
                                     payload:
                                         oqto_protocol::events::EventPayload::SessionTitleChanged {
                                             title: clean_title.clone(),
-                                            readable_id: parsed.readable_id.map(|s| s.to_string()),
+                                            readable_id,
                                         },
                                 };
                                     let _ = event_tx.send(title_event);
@@ -2973,11 +2996,39 @@ impl PiSessionManager {
                 let canonical_payloads = translator.translate(&pi_event);
                 let ts = chrono::Utc::now().timestamp_millis();
                 for payload in &canonical_payloads {
+                    // Enrich SessionTitleChanged with hstry readable_id when
+                    // the title doesn't embed one (e.g. no readableIdSuffix).
+                    let enriched_payload = if let oqto_protocol::events::EventPayload::SessionTitleChanged {
+                        title,
+                        readable_id: None,
+                    } = payload {
+                        let hstry_rid = if let Some(ref client) = hstry_client {
+                            let eid = hstry_external_id.read().await.clone();
+                            client
+                                .get_conversation(&eid, None)
+                                .await
+                                .ok()
+                                .flatten()
+                                .and_then(|c| {
+                                    let rid = c.readable_id.as_deref().unwrap_or("").trim().to_string();
+                                    if rid.is_empty() { None } else { Some(rid) }
+                                })
+                        } else {
+                            None
+                        };
+                        oqto_protocol::events::EventPayload::SessionTitleChanged {
+                            title: title.clone(),
+                            readable_id: hstry_rid,
+                        }
+                    } else {
+                        payload.clone()
+                    };
+
                     let canonical_event = CanonicalEvent {
                         session_id: session_id.clone(),
                         runner_id: runner_id.clone(),
                         ts,
-                        payload: payload.clone(),
+                        payload: enriched_payload,
                     };
                     let _ = event_tx.send(canonical_event);
 

@@ -794,6 +794,7 @@ async fn sync_eavs_models_json_inner(
                 "id": first_model.1,
             },
             "prefixCommand": "basename $(git rev-parse --show-toplevel 2>/dev/null || pwd)",
+            "readableIdSuffix": true,
             "maxNameLength": 60
         });
         let auto_rename_content = serde_json::to_string_pretty(&auto_rename).unwrap_or_default();
