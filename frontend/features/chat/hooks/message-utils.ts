@@ -562,31 +562,7 @@ export function normalizeMessages(
 		}
 	}
 
-	// Deduplicate consecutive same-role messages with identical text content.
-	// This handles cases where hstry stores the same response twice (e.g.
-	// due to double-writes from concurrent event processing).
-	const deduped: DisplayMessage[] = [];
-	for (const msg of display) {
-		if (deduped.length > 0) {
-			const prev = deduped[deduped.length - 1];
-			if (prev.role === msg.role && prev.role === "assistant") {
-				const prevText = prev.parts
-					.filter((p): p is { type: "text"; text: string } => p.type === "text")
-					.map((p) => p.text)
-					.join("");
-				const curText = msg.parts
-					.filter((p): p is { type: "text"; text: string } => p.type === "text")
-					.map((p) => p.text)
-					.join("");
-				if (prevText === curText && prevText.length > 0) {
-					continue; // skip duplicate
-				}
-			}
-		}
-		deduped.push(msg);
-	}
-
-	return deduped;
+	return display;
 }
 
 // ============================================================================

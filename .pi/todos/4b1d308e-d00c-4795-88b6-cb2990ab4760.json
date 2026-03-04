@@ -1,47 +1,11 @@
 {
   "todos": [
     {
-      "id": "user-tags",
-      "content": "Fix unreliable user name tags [Name] on messages",
-      "status": "completed",
+      "id": "hstry-dedup-root",
+      "content": "Find and fix root cause of duplicate assistant message writes to hstry",
+      "status": "in_progress",
       "priority": "high"
-    },
-    {
-      "id": "live-messages",
-      "content": "Stream other users' messages live in shared workspace sessions",
-      "status": "completed",
-      "priority": "high"
-    },
-    {
-      "id": "display-names",
-      "content": "Show user display names in shared workspace chat messages",
-      "status": "completed",
-      "priority": "high"
-    },
-    {
-      "id": "users-md-tags",
-      "content": "USERS.md: forbid [Name] tags in agent responses",
-      "status": "completed",
-      "priority": "high"
-    },
-    {
-      "id": "sw-sidebar-sessions",
-      "content": "Shared workspace new sessions appear in sidebar",
-      "status": "completed",
-      "priority": "high"
-    },
-    {
-      "id": "sw-auto-rename",
-      "content": "Shared workspace auto-rename working (config deployed)",
-      "status": "completed",
-      "priority": "high"
-    },
-    {
-      "id": "yazi-fix",
-      "content": "Fix yazi-build fallback",
-      "status": "pending",
-      "priority": "medium"
     }
   ],
-  "updated_at": "2026-03-04T10:02:51.402Z"
+  "updated_at": "2026-03-04T10:21:52.917Z"
 }

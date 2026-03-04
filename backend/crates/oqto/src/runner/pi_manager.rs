@@ -2620,6 +2620,10 @@ impl PiSessionManager {
         // Track whether an incremental persist is already in flight to avoid
         // queuing multiple get_messages requests.
         let mut incremental_persist_in_flight = false;
+        // Serialize hstry persists so an in-flight incremental persist finishes
+        // before the authoritative AgentEnd persist runs (prevents duplicate
+        // messages from concurrent index resolution).
+        let hstry_persist_lock = Arc::new(tokio::sync::Mutex::new(()));
 
         while let Ok(Some(line)) = reader.next_line().await {
             if line.trim().is_empty() {
@@ -2819,7 +2823,9 @@ impl PiSessionManager {
                                                 let sid = session_id.clone();
                                                 let rid = runner_id.clone();
                                                 let wd = work_dir.clone();
+                                                let lock = hstry_persist_lock.clone();
                                                 tokio::spawn(async move {
+                                                    let _guard = lock.lock().await;
                                                     if let Err(e) = Self::persist_to_hstry_grpc(
                                                         &client, &eid, &sid, &rid, &messages, &wd,
                                                         None, // no client_id for incremental
@@ -2929,8 +2935,12 @@ impl PiSessionManager {
                 // Persist to hstry on AgentEnd BEFORE broadcasting canonical events.
                 // This ensures hstry has the complete history before the frontend
                 // receives agent.idle and potentially fetches/switches sessions.
+                // Acquire the persist lock to wait for any in-flight incremental
+                // persist to finish first (prevents duplicate messages from
+                // concurrent index resolution).
                 if matches!(pi_event, PiEvent::AgentEnd { .. }) && !pending_messages.is_empty() {
                     if let Some(ref client) = hstry_client {
+                        let _guard = hstry_persist_lock.lock().await;
                         let eid = hstry_external_id.read().await.clone();
                         let client_id = pending_hstry_client_id.take();
                         if let Err(e) = Self::persist_to_hstry_grpc(
