@@ -841,14 +841,26 @@ async fn handle_multiplexed_ws(socket: WebSocket, state: AppState, user_id: Stri
     tokio::spawn(async move {
         let mut ping_interval = tokio::time::interval(std::time::Duration::from_secs(30));
 
+        // Convert legacy hub events to multiplexed WsEvent.
+        // AgentEvent is a special case: it carries a canonical event that should
+        // be sent as WsEvent::Agent, not WsEvent::Session.
+        let convert_hub_event = |event: LegacyWsEvent| -> WsEvent {
+            if let LegacyWsEvent::AgentEvent { event: ref json, .. } = event {
+                if let Ok(canonical) = serde_json::from_value::<oqto_protocol::events::Event>(json.clone()) {
+                    return WsEvent::Agent(canonical);
+                }
+            }
+            WsEvent::Session(event)
+        };
+
         loop {
             tokio::select! {
                 Some(event) = hub_rx.recv() => {
-                    let _ = event_tx_for_hub.send(WsEvent::Session(event));
+                    let _ = event_tx_for_hub.send(convert_hub_event(event));
                 }
                 Ok((session_id, event)) = hub_events.recv() => {
                     if hub_for_events.is_subscribed(&hub_user_id, &session_id) {
-                        let _ = event_tx_for_hub.send(WsEvent::Session(event));
+                        let _ = event_tx_for_hub.send(convert_hub_event(event));
                     }
                 }
                 _ = ping_interval.tick() => {
@@ -1577,11 +1589,18 @@ async fn handle_agent_command(
             let effective_message = if let Some(ref sw_service) = state.shared_workspaces {
                 let cwd = {
                     let state_guard = conn_state.lock().await;
-                    state_guard
-                        .pi_session_meta
-                        .get(&session_id)
+                    let meta = state_guard.pi_session_meta.get(&session_id);
+                    let cwd = meta
                         .and_then(|m| m.cwd.as_ref())
-                        .map(|p| p.to_string_lossy().to_string())
+                        .map(|p| p.to_string_lossy().to_string());
+                    if cwd.is_none() {
+                        tracing::warn!(
+                            session_id = %session_id,
+                            has_meta = meta.is_some(),
+                            "no cwd in session meta, cannot check shared workspace for user tag"
+                        );
+                    }
+                    cwd
                 };
                 if let Some(cwd) = cwd {
                     // Look up user display name for the prefix
@@ -1593,10 +1612,17 @@ async fn handle_agent_command(
                         .flatten()
                         .map(|u| u.display_name.clone())
                         .unwrap_or_else(|| user_id.to_string());
-                    sw_service
+                    let result = sw_service
                         .prepend_user_name(&cwd, &display_name, &message)
-                        .await
-                        .unwrap_or_else(|_| message.clone())
+                        .await;
+                    tracing::debug!(
+                        session_id = %session_id,
+                        cwd = %cwd,
+                        display_name = %display_name,
+                        tagged = result.as_ref().map(|r| r != &message).unwrap_or(false),
+                        "shared workspace user tag check"
+                    );
+                    result.unwrap_or_else(|_| message.clone())
                 } else {
                     message.clone()
                 }
@@ -1611,11 +1637,78 @@ async fn handle_agent_command(
                 effective_message.len(),
                 client_id
             );
+            let client_id_for_broadcast = client_id.clone();
             match runner
                 .pi_prompt(&session_id, &effective_message, client_id)
                 .await
             {
-                Ok(()) => None, // Streaming events are the response
+                Ok(()) => {
+                    // Broadcast the user message to other users watching this session
+                    // so they see it appear live (the sender already shows it optimistically).
+                    let now = chrono::Utc::now().timestamp_millis();
+                    let msg_id = format!("user-{}", now);
+                    let user_message = oqto_protocol::messages::Message {
+                        id: msg_id.clone(),
+                        idx: 0,
+                        role: oqto_protocol::messages::Role::User,
+                        client_id: client_id_for_broadcast,
+                        sender: None,
+                        parts: vec![hstry_core::parts::Part::Text {
+                            id: format!("part-{}", now),
+                            text: effective_message.clone(),
+                            format: None,
+                        }],
+                        created_at: now,
+                        model: None,
+                        provider: None,
+                        stop_reason: None,
+                        usage: None,
+                        tool_call_id: None,
+                        tool_name: None,
+                        is_error: None,
+                        metadata: None,
+                    };
+                    let events = vec![
+                        oqto_protocol::events::Event {
+                            session_id: session_id.clone(),
+                            runner_id: String::new(),
+                            ts: now,
+                            payload: oqto_protocol::events::EventPayload::StreamMessageStart {
+                                message_id: msg_id.clone(),
+                                role: "user".to_string(),
+                            },
+                        },
+                        oqto_protocol::events::Event {
+                            session_id: session_id.clone(),
+                            runner_id: String::new(),
+                            ts: now,
+                            payload: oqto_protocol::events::EventPayload::StreamTextDelta {
+                                message_id: msg_id.clone(),
+                                delta: effective_message.clone(),
+                                content_index: 0,
+                            },
+                        },
+                        oqto_protocol::events::Event {
+                            session_id: session_id.clone(),
+                            runner_id: String::new(),
+                            ts: now,
+                            payload: oqto_protocol::events::EventPayload::StreamMessageEnd {
+                                message: user_message,
+                            },
+                        },
+                    ];
+                    // Send user message to other session subscribers via the hub.
+                    // Each event is wrapped as AgentEvent for the per-connection
+                    // hub_events listener to convert to the multiplexed WsEvent::Agent.
+                    for event in &events {
+                        let legacy = crate::ws::types::WsEvent::AgentEvent {
+                            session_id: session_id.clone(),
+                            event: serde_json::to_value(event).unwrap_or_default(),
+                        };
+                        state.ws_hub.send_to_session_except(&session_id, legacy, user_id).await;
+                    }
+                    None
+                }
                 Err(e) => Some(agent_response(
                     &session_id,
                     id,

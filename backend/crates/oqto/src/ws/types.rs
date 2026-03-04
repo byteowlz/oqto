@@ -61,6 +61,14 @@ pub enum WsEvent {
         details: Option<Value>,
     },
 
+    // ========== Canonical Agent Events (for cross-user broadcast) ==========
+    /// A canonical agent event being broadcast to session subscribers.
+    /// The multiplexed WS handler converts these to WsEvent::Agent(...).
+    AgentEvent {
+        session_id: String,
+        event: Value,
+    },
+
     // ========== Agent Connection Events ==========
     /// Agent connected and ready.
     AgentConnected { session_id: String },
