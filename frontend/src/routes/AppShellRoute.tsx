@@ -6,6 +6,7 @@ import { StatusBar } from "@/components/status-bar";
 import { Button } from "@/components/ui/button";
 import { useApp } from "@/hooks/use-app";
 import { useCurrentUser, useLogout } from "@/hooks/use-auth";
+import { getUserDisplayName } from "@/lib/api/types";
 import { useCommandPalette } from "@/hooks/use-command-palette";
 import { setChatPrefetchLimit } from "@/lib/app-settings";
 import type { HstrySearchHit } from "@/lib/control-plane-client";
@@ -457,16 +458,17 @@ const AppShell = memo(function AppShell() {
 	// Auto-bootstrap: when a new user has no workspaces, automatically create
 	// one using the username as display name. No dialog prompt needed -- the
 	// agent can rename it during bootstrap if configured to do so.
+	const currentDisplayName = getUserDisplayName(currentUser);
 	useEffect(() => {
 		if (!bootstrapReady || bootstrapSubmitting) return;
 		if (projects.length > 0 || chatHistory.length > 0) return;
-		if (!currentUser?.name) return;
+		if (!currentDisplayName) return;
 
 		setBootstrapSubmitting(true);
 		setBootstrapError(null);
 
 		const displayName =
-			currentUser.name.charAt(0).toUpperCase() + currentUser.name.slice(1);
+			currentDisplayName.charAt(0).toUpperCase() + currentDisplayName.slice(1);
 
 		bootstrapOnboarding({
 			display_name: displayName,
@@ -495,7 +497,7 @@ const AppShell = memo(function AppShell() {
 		bootstrapSubmitting,
 		projects.length,
 		chatHistory.length,
-		currentUser?.name,
+		currentDisplayName,
 		locale,
 		refreshChatHistory,
 		refreshWorkspaceSessions,
@@ -1132,7 +1134,7 @@ const AppShell = memo(function AppShell() {
 						sidebarCollapsed={sidebarState.sidebarCollapsed}
 						isDark={isDark}
 						isAdmin={isAdmin}
-						username={currentUser?.name}
+						username={currentDisplayName}
 						onToggleApp={toggleApp}
 						onToggleLocale={toggleLocale}
 						onToggleTheme={toggleTheme}

@@ -86,6 +86,8 @@ export type UseChatOptions = {
 	storageKeyPrefix?: string;
 	/** Selected session ID (disk-backed Default Chat session) */
 	selectedSessionId?: string | null;
+	/** Display name of the current user (for shared workspace sender labels) */
+	senderName?: string | null;
 	/** Notify when a new session becomes active (e.g. /new) */
 	onSelectedSessionIdChange?: (id: string | null) => void;
 	/** Callback when message stream completes */

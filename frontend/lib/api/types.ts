@@ -8,10 +8,20 @@
 
 export type UserInfo = {
 	id: string;
-	name: string;
+	/** Display name from /api/me (full user info). */
+	display_name?: string;
+	/** Short name from login response. */
+	name?: string;
+	username?: string;
 	email: string;
 	role: string;
 };
+
+/** Get the best available display name for a user. */
+export function getUserDisplayName(user: UserInfo | null | undefined): string | undefined {
+	if (!user) return undefined;
+	return user.display_name || user.name || user.username;
+}
 
 export type LoginRequest = {
 	username: string;

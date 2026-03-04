@@ -8,6 +8,9 @@ import {
 	initialFileTreeState,
 } from "@/features/sessions/components/FileTreeView";
 import { useApp } from "@/hooks/use-app";
+import { useCurrentUser } from "@/hooks/use-auth";
+import { getUserDisplayName } from "@/lib/api/types";
+import { sharedWorkspaceSessionMap } from "@/components/contexts/chat-context";
 import { useIsMobile } from "@/hooks/use-mobile";
 import {
 	formatTempId,
@@ -399,6 +402,7 @@ export const SessionScreen = memo(function SessionScreen() {
 		setScrollToMessageId,
 		getSessionWorkspacePath,
 	} = useApp();
+	const { data: currentUser } = useCurrentUser();
 	const isMobileLayout = useIsMobile();
 	const [features, setFeatures] = useState<Features>({ mmry_enabled: false });
 	const [featuresLoaded, setFeaturesLoaded] = useState(false);
@@ -605,6 +609,14 @@ export const SessionScreen = memo(function SessionScreen() {
 		normalizedOverviewPath?.split("/").filter(Boolean).pop() ?? null;
 	const isOverviewActive = Boolean(normalizedOverviewPath);
 
+	// Show the user's display name on messages in shared workspace sessions.
+	const isSharedSession = selectedChatSessionId
+		? sharedWorkspaceSessionMap.has(selectedChatSessionId)
+		: false;
+	const senderName = isSharedSession
+		? getUserDisplayName(currentUser)
+		: undefined;
+
 	const chatPanel = normalizedWorkspacePath ? (
 		<ChatView
 			locale={locale}
@@ -612,6 +624,7 @@ export const SessionScreen = memo(function SessionScreen() {
 			features={features}
 			workspacePath={normalizedWorkspacePath}
 			selectedSessionId={selectedChatSessionId}
+			senderName={senderName}
 			onSelectedSessionIdChange={setSelectedChatSessionId}
 			scrollToMessageId={scrollToMessageId}
 			onScrollToMessageComplete={() => setScrollToMessageId(null)}

@@ -175,6 +175,8 @@ export interface ChatViewProps {
 	assistantName?: string | null;
 	/** Hide the internal header (used when embedded in sessions app with external header) */
 	hideHeader?: boolean;
+	/** Display name of the current user (for shared workspace sender labels). */
+	senderName?: string | null;
 	/** Callback to report token usage (for external gauge display) */
 	onTokenUsageChange?: (usage: {
 		inputTokens: number;
@@ -216,6 +218,7 @@ export function ChatView({
 	workspacePath,
 	assistantName,
 	hideHeader = false,
+	senderName,
 	onTokenUsageChange,
 	selectedSessionId,
 	onSelectedSessionIdChange,
@@ -273,6 +276,7 @@ export function ChatView({
 		workspacePath: normalizedWorkspacePath,
 		storageKeyPrefix: resolvedStorageKeyPrefix,
 		selectedSessionId,
+		senderName,
 		onSelectedSessionIdChange,
 		onMessageComplete: handleMessageComplete,
 		onTitleChanged: updateChatSessionTitleLocal,

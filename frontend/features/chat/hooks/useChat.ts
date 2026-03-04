@@ -87,6 +87,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 		workspacePath = null,
 		storageKeyPrefix,
 		selectedSessionId,
+		senderName,
 		onSelectedSessionIdChange,
 		onMessageComplete,
 		onError,
@@ -1668,6 +1669,11 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 				parts: [{ type: "text", id: nextPartId(), text: message }],
 				timestamp: Date.now(),
 				clientId,
+				// In shared workspaces, tag the message with the current user's name
+				// so it renders with the correct sender label instead of "You".
+				...(senderName
+					? { sender: { type: "user" as const, id: senderName, name: senderName } }
+					: {}),
 			};
 			lastAssistantMessageIdRef.current = null;
 			setMessages((prev) => [...prev, userMessage]);
