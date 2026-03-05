@@ -57,6 +57,35 @@ fn resolve_personal_runner(state: &AppState, user_id: &str) -> Option<RunnerClie
     RunnerClient::for_user_with_pattern(&effective_user, pattern).ok()
 }
 
+pub async fn resolve_target_for_workspace_path(
+    state: &AppState,
+    user_id: &str,
+    workspace_path: &str,
+) -> Result<ExecutionTarget> {
+    if let Some(sw_service) = state.shared_workspaces.as_ref() {
+        if let Some((ws, _role)) = sw_service
+            .check_access_for_path(workspace_path, user_id)
+            .await
+            .with_context(|| format!("shared workspace access check for path {}", workspace_path))?
+        {
+            return Ok(ExecutionTarget::SharedWorkspace {
+                workspace_id: ws.id,
+            });
+        }
+    }
+
+    Ok(ExecutionTarget::Personal)
+}
+
+pub async fn resolve_runner_for_workspace_path(
+    state: &AppState,
+    user_id: &str,
+    workspace_path: &str,
+) -> Result<Option<RunnerClient>> {
+    let target = resolve_target_for_workspace_path(state, user_id, workspace_path).await?;
+    resolve_runner_for_target(state, user_id, &target).await
+}
+
 async fn resolve_shared_workspace_runner(
     state: &AppState,
     user_id: &str,

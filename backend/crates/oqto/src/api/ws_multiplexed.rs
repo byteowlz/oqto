@@ -34,6 +34,7 @@ use crate::local::ProcessManager;
 
 use crate::runner::client::{PiSubscriptionEvent, RunnerClient};
 use crate::runner::protocol::{PiCreateSessionRequest, PiSessionConfig as RunnerPiSessionConfig};
+use crate::runner::router::resolve_runner_for_workspace_path;
 use crate::session::Session;
 use crate::user_plane::{DirectUserPlane, RunnerUserPlane};
 use crate::ws::hub::WsHub;
@@ -747,21 +748,15 @@ async fn runner_client_for_path(
     user_id: &str,
     workspace_path: Option<&str>,
 ) -> Option<RunnerClient> {
-    if let (Some(sw_service), Some(path)) = (state.shared_workspaces.as_ref(), workspace_path) {
-        match sw_service.linux_user_for_path(path).await {
-            Ok(Some(linux_user)) => {
-                tracing::info!(path = %path, linux_user = %linux_user, "resolved path to shared workspace linux user");
-                return runner_client_for_linux_user(state, user_id, Some(&linux_user));
-            }
-            Ok(None) => {
-                tracing::debug!(path = %path, "path does not match any shared workspace");
-            }
-            Err(e) => {
-                tracing::warn!(path = %path, error = %e, "error looking up shared workspace for path");
-            }
+    let path = workspace_path?;
+    match resolve_runner_for_workspace_path(state, user_id, path).await {
+        Ok(Some(client)) => Some(client),
+        Ok(None) => None,
+        Err(e) => {
+            tracing::warn!(path = %path, error = %e, "runner resolution failed for workspace path");
+            None
         }
     }
-    None
 }
 
 /// State for a WebSocket connection, shared between command handler and event forwarder.
