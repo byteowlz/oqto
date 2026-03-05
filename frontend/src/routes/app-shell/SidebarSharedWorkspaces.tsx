@@ -68,7 +68,7 @@ import { WorkspaceIcon } from "./WorkspaceIcon";
 
 export interface SidebarSharedWorkspacesProps {
 	sharedWorkspaces: SharedWorkspaceInfo[];
-	expandedWorkspaces: Set<string>;
+	expandedWorkspaces: Set<string> | string[];
 	toggleWorkspaceExpanded: (workspaceId: string) => void;
 	onNewSharedWorkspace: () => void;
 	onManageWorkspace: (workspace: SharedWorkspaceInfo) => void;
@@ -89,13 +89,13 @@ export interface SidebarSharedWorkspacesProps {
 		last_activity: number;
 		shared_workspace_id?: string;
 	}>;
-	busySessions?: Set<string>;
+	busySessions?: Set<string> | string[];
 	selectedChatSessionId: string | null;
 	onSessionClick?: (session: ChatSession, sharedWorkspaceId: string) => void;
 	onRenameSession?: (sessionId: string) => void;
 	onDeleteSession?: (sessionId: string) => void;
 	onPinSession?: (sessionId: string) => void;
-	pinnedSessions?: Set<string>;
+	pinnedSessions?: Set<string> | string[];
 	onPinProject?: (projectKey: string) => void;
 	onRenameProject?: (projectKey: string, currentName: string) => void;
 	onDeleteProject?: (projectKey: string, projectName: string) => void;
@@ -139,13 +139,13 @@ function WorkspaceContent({
 		workdir: SharedWorkspaceWorkdir,
 	) => void;
 	chatHistory: ChatSession[];
-	busySessions?: Set<string>;
+	busySessions?: Set<string> | string[];
 	selectedChatSessionId: string | null;
 	onSessionClick?: (session: ChatSession, sharedWorkspaceId: string) => void;
 	onRenameSession?: (sessionId: string) => void;
 	onDeleteSession?: (sessionId: string) => void;
 	onPinSession?: (sessionId: string) => void;
-	pinnedSessions?: Set<string>;
+	pinnedSessions?: Set<string> | string[];
 	onPinProject?: (projectKey: string) => void;
 	onRenameProject?: (projectKey: string, currentName: string) => void;
 	onDeleteProject?: (projectKey: string, projectName: string) => void;
@@ -468,12 +468,16 @@ function WorkspaceContent({
 								{wdSessions.map((session) => {
 									const isSelected =
 										selectedChatSessionId === session.id;
-									const isBusy = busySessions?.has(session.id);
+									const isBusy = Array.isArray(busySessions)
+										? busySessions.includes(session.id)
+										: busySessions?.has(session.id);
 									const formattedDate = session.updated_at
 										? formatSessionDate(session.updated_at)
 										: null;
 									const tempId = formatTempId(getTempIdFromSession(session));
-									const isPinned = pinnedSessions?.has(session.id);
+									const isPinned = Array.isArray(pinnedSessions)
+										? pinnedSessions.includes(session.id)
+										: pinnedSessions?.has(session.id);
 
 									return (
 										<div
@@ -730,7 +734,9 @@ export const SidebarSharedWorkspaces = memo(function SidebarSharedWorkspaces({
 	return (
 		<div className="space-y-0.5">
 			{sharedWorkspaces.map((workspace) => {
-				const isExpanded = expandedWorkspaces.has(workspace.id);
+				const isExpanded = Array.isArray(expandedWorkspaces)
+					? expandedWorkspaces.includes(workspace.id)
+					: expandedWorkspaces.has(workspace.id);
 				const canManage =
 					workspace.my_role === "owner" || workspace.my_role === "admin";
 
