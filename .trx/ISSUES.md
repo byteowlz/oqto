@@ -2,6 +2,8 @@
 
 ## Open
 
+### [oqto-snfs] Backend deadlock when deleting shared workspace sessions - session.delete/session.create to SW runner hangs, blocks entire WS connection, eventually all HTTP requests time out. 30s runner client timeout not firing. Needs 45s hard deadline on WS command handler + investigation of why tokio timeout doesn't trigger. (P0, bug)
+
 ### [oqto-5ey4] Migrate from oqto-browser to agent-browser (P0, epic)
 
 ### [oqto-m7br] Security: models.json written with 644 permissions - eavs API keys readable by all users (P0, bug)
@@ -423,6 +425,8 @@ Location: frontend/apps/index.ts:1-56
 Implementation:
 ...
 
+
+### [oqto-b0zx] No context menu on shared workspace workdir folders - cannot rename or delete projects in shared workspaces. Workdir folder headers in SidebarSharedWorkspaces need ContextMenu wrapper with rename/delete/new chat actions. (P2, bug)
 
 ### [oqto-14b1.6] Runner: app_message command and ServeMessage event routing (P2, task)
 Add support in the runner for bidirectional app messaging.
@@ -1871,7 +1875,7 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
 - [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
 - [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
