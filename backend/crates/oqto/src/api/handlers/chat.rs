@@ -917,6 +917,47 @@ pub async fn get_chat_messages(
                             },
                         );
                     }
+
+                    // If no shared_workspace_id was provided and personal runner
+                    // returned no messages, probe shared workspaces the user can
+                    // access. This self-heals missing routing context after reload.
+                    if canonical.is_empty() && query.shared_workspace_id.is_none() {
+                        if let Some(sw_service) = state.shared_workspaces.as_ref() {
+                            if let Ok(workspaces) = sw_service.list_for_user(user.id()).await {
+                                for ws in workspaces {
+                                    let target = ExecutionTarget::SharedWorkspace {
+                                        workspace_id: ws.id.clone(),
+                                    };
+                                    let probe_runner = resolve_runner_for_target(&state, user.id(), &target)
+                                        .await
+                                        .ok()
+                                        .flatten();
+                                    let Some(probe_runner) = probe_runner else {
+                                        continue;
+                                    };
+                                    if let Ok(probe_response) = probe_runner
+                                        .get_workspace_chat_session_messages(&session_id, query.render, None)
+                                        .await
+                                    {
+                                        let probe_canonical = convert_runner_response(probe_response);
+                                        if !probe_canonical.is_empty() {
+                                            let mut affinity = state.session_target_affinity.write().await;
+                                            affinity.insert(session_id.clone(), target);
+                                            info!(
+                                                user_id = %user.id(),
+                                                session_id = %session_id,
+                                                shared_workspace_id = %ws.id,
+                                                count = probe_canonical.len(),
+                                                "Listed chat messages via shared workspace probe"
+                                            );
+                                            return Ok(Json(probe_canonical));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     info!(
                         user_id = %user.id(),
                         session_id = %session_id,
