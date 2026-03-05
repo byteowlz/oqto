@@ -55,6 +55,7 @@ import {
 	useRef,
 	useState,
 } from "react";
+import { PreviewView } from "@/features/sessions/components/PreviewView";
 import { useTranslation } from "react-i18next";
 
 const BrowserView = lazy(() =>
@@ -93,11 +94,6 @@ const WorkspaceOverviewPanel = lazy(() =>
 			default: mod.WorkspaceOverviewPanel,
 		}),
 	),
-);
-const PreviewView = lazy(() =>
-	import("@/features/sessions/components/PreviewView").then((mod) => ({
-		default: mod.PreviewView,
-	})),
 );
 
 type ViewKey =
