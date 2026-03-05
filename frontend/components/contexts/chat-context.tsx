@@ -106,6 +106,7 @@ const CHAT_HISTORY_CACHE_KEY = "oqto:chatHistoryCache:v2";
 const CHAT_HISTORY_CACHE_MAX_CHARS = 2_000_000;
 const CHAT_HISTORY_PREFETCH_DEBOUNCE_MS = 2000;
 const RUNNER_SESSIONS_POLL_MS = 5000;
+const RUNNER_SESSIONS_POLL_HIDDEN_MS = 20000;
 
 function readCachedChatHistory(): ChatSession[] {
 	if (typeof window === "undefined") return [];
@@ -536,8 +537,9 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 	// Keeps busy indicators accurate across reloads and backend restarts.
 	useEffect(() => {
 		const manager = getWsManager();
-		let pollTimer: ReturnType<typeof setInterval> | null = null;
+		let pollTimer: ReturnType<typeof setTimeout> | null = null;
 		let cancelled = false;
+		let pollInFlight = false;
 
 		const busyStates = new Set([
 			"streaming",
@@ -546,7 +548,23 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 			"aborting",
 		]);
 
+		const scheduleNextPoll = () => {
+			if (cancelled) return;
+			if (pollTimer) {
+				clearTimeout(pollTimer);
+			}
+			const hidden = typeof document !== "undefined" && document.hidden;
+			const delay = hidden
+				? RUNNER_SESSIONS_POLL_HIDDEN_MS
+				: RUNNER_SESSIONS_POLL_MS;
+			pollTimer = setTimeout(() => {
+				void pollSessions();
+			}, delay);
+		};
+
 		const pollSessions = async () => {
+			if (pollInFlight) return;
+			pollInFlight = true;
 			try {
 				const sessions = await manager.agentListSessions();
 				if (cancelled) return;
@@ -570,18 +588,25 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 				if (isPiDebugEnabled()) {
 					console.debug("[chat-context] Could not list active sessions:", err);
 				}
+			} finally {
+				pollInFlight = false;
+				scheduleNextPoll();
 			}
 		};
+
+		const onVisibilityChange = () => {
+			scheduleNextPoll();
+		};
+		if (typeof document !== "undefined") {
+			document.addEventListener("visibilitychange", onVisibilityChange);
+		}
 
 		const unsubscribe = manager.onConnectionState(
 			(state: WsMuxConnectionState) => {
 				if (state === "connected") {
-					pollSessions();
-					if (!pollTimer) {
-						pollTimer = setInterval(pollSessions, RUNNER_SESSIONS_POLL_MS);
-					}
+					void pollSessions();
 				} else if (pollTimer) {
-					clearInterval(pollTimer);
+					clearTimeout(pollTimer);
 					pollTimer = null;
 				}
 			},
@@ -591,7 +616,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 			cancelled = true;
 			unsubscribe();
 			if (pollTimer) {
-				clearInterval(pollTimer);
+				clearTimeout(pollTimer);
+			}
+			if (typeof document !== "undefined") {
+				document.removeEventListener("visibilitychange", onVisibilityChange);
 			}
 		};
 	}, []);
