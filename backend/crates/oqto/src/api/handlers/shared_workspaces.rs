@@ -2,8 +2,9 @@
 
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{Path, Query, State},
 };
+use serde::Deserialize;
 use tracing::info;
 
 use crate::auth::CurrentUser;
@@ -348,6 +349,31 @@ pub async fn add_shared_workspace_workdir(
         "workspace_id": workspace_id,
         "workdir_path": workdir_path,
     })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DeleteSharedWorkspaceWorkdirQuery {
+    pub path: String,
+}
+
+/// Delete a workdir from a shared workspace.
+pub async fn delete_shared_workspace_workdir(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(workspace_id): Path<String>,
+    Query(query): Query<DeleteSharedWorkspaceWorkdirQuery>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let service = state
+        .shared_workspaces
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("shared workspaces not configured"))?;
+
+    service
+        .remove_workdir(&workspace_id, user.id(), &query.path)
+        .await
+        .map_err(|e| ApiError::bad_request(format!("{}", e)))?;
+
+    Ok(Json(serde_json::json!({ "deleted": true })))
 }
 
 // ============================================================================

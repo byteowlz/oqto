@@ -627,6 +627,81 @@ impl SharedWorkspaceService {
         Ok(dest)
     }
 
+    /// Remove a workdir from a shared workspace.
+    pub async fn remove_workdir(
+        &self,
+        workspace_id: &str,
+        user_id: &str,
+        workdir_path: &str,
+    ) -> Result<()> {
+        let ws = self
+            .repo
+            .get_by_id(workspace_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("shared workspace not found"))?;
+
+        let member = self
+            .repo
+            .get_member(workspace_id, user_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("not a member of this workspace"))?;
+
+        if !member.role.can_write() {
+            bail!("insufficient permissions to delete workdirs");
+        }
+
+        let target = std::path::Path::new(workdir_path);
+        let workspace_root = std::path::Path::new(&ws.path);
+
+        // Must be inside workspace root and not equal to root.
+        let target_abs = target
+            .canonicalize()
+            .with_context(|| format!("resolving workdir path: {}", workdir_path))?;
+        let root_abs = workspace_root
+            .canonicalize()
+            .with_context(|| format!("resolving workspace root: {}", ws.path))?;
+
+        if target_abs == root_abs {
+            bail!("cannot delete shared workspace root");
+        }
+        if !target_abs.starts_with(&root_abs) {
+            bail!("workdir path is outside shared workspace root");
+        }
+
+        if !target_abs.is_dir() {
+            bail!("workdir path is not a directory");
+        }
+
+        // Only allow deleting direct child workdirs (no nested arbitrary dirs).
+        let parent = target_abs
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("invalid workdir path"))?;
+        if parent != root_abs {
+            bail!("can only delete top-level workdirs");
+        }
+
+        let pattern = self
+            .runner_socket_pattern
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("runner socket pattern not configured"))?;
+        let runner = crate::runner::client::RunnerClient::for_user_with_pattern(&ws.linux_user, pattern)
+            .with_context(|| format!("creating runner client for {}", ws.linux_user))?;
+
+        runner
+            .delete_path(&target_abs, true)
+            .await
+            .with_context(|| format!("deleting workdir {} via runner", target_abs.display()))?;
+
+        info!(
+            workspace_id = %ws.id,
+            user_id = %user_id,
+            workdir = %target_abs.display(),
+            "removed workdir from shared workspace"
+        );
+
+        Ok(())
+    }
+
     // ========================================================================
     // Internal helpers
     // ========================================================================

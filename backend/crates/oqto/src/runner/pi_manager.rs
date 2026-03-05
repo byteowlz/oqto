@@ -845,7 +845,16 @@ impl PiSessionManager {
         }
 
         // Spawn the session (the creating guard is held in the set).
-        let result = self.create_session(session_id.to_string(), config).await;
+        // Hard timeout so session.create cannot hang forever and wedge callers.
+        let result = match tokio::time::timeout(
+            std::time::Duration::from_secs(20),
+            self.create_session(session_id.to_string(), config),
+        )
+        .await
+        {
+            Ok(res) => res,
+            Err(_) => anyhow::bail!("timed out creating session '{}' after 20s", session_id),
+        };
 
         // Remove from creation set regardless of success/failure.
         {

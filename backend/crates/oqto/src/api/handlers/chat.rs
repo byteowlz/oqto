@@ -14,6 +14,7 @@ use tracing::{debug, info, instrument};
 
 use crate::auth::CurrentUser;
 use crate::history::{ChatMessage, ChatSession};
+use crate::runner::router::{ExecutionTarget, resolve_runner_for_target};
 
 use crate::api::error::{ApiError, ApiResult};
 use crate::api::state::AppState;
@@ -57,13 +58,7 @@ pub(crate) fn get_runner_for_user(
     };
 
     match crate::runner::client::RunnerClient::for_user_with_pattern(&effective_user, pattern) {
-        Ok(client) => {
-            // In multi-user mode, always return the client. Don't pre-check
-            // the socket — it may be temporarily unavailable during service
-            // restarts. The actual request will fail at connect time with a
-            // clear error, and the frontend will retry.
-            Some(client)
-        }
+        Ok(client) => Some(client),
         Err(e) => {
             tracing::warn!(
                 user_id = %user_id,
@@ -200,26 +195,19 @@ pub async fn list_chat_history(
     let mut source = "hstry";
     let multi_user = is_multi_user_mode(&state);
 
-    // If shared_workspace_id is provided, resolve the shared workspace's runner
-    let runner_opt = if let Some(ref sw_id) = query.shared_workspace_id {
-        let sw_service = state
-            .shared_workspaces
-            .as_ref()
-            .ok_or_else(|| ApiError::internal("shared workspaces not configured"))?;
-        let (_ws, _role) = sw_service
-            .get(sw_id, user.id())
-            .await
-            .map_err(|e| ApiError::internal(format!("shared workspace lookup: {}", e)))?
-            .ok_or_else(|| ApiError::not_found("shared workspace not found or access denied"))?;
-        let linux_user = sw_service
-            .linux_user_for_id(sw_id)
-            .await
-            .map_err(|e| ApiError::internal(format!("shared workspace linux user: {}", e)))?
-            .ok_or_else(|| ApiError::internal("shared workspace linux user not found"))?;
-        get_runner_for_linux_user(&state, &linux_user)
+    // If shared_workspace_id is provided, resolve the shared workspace target;
+    // otherwise use the personal target.
+    let target = if let Some(ref sw_id) = query.shared_workspace_id {
+        ExecutionTarget::SharedWorkspace {
+            workspace_id: sw_id.clone(),
+        }
     } else {
-        get_runner_for_user(&state, user.id())
+        ExecutionTarget::Personal
     };
+
+    let runner_opt = resolve_runner_for_target(&state, user.id(), &target)
+        .await
+        .map_err(|e| ApiError::internal(format!("runner target resolution: {}", e)))?;
 
     if let Some(runner) = runner_opt {
         match runner
@@ -551,25 +539,17 @@ pub async fn delete_chat_session(
 ) -> ApiResult<StatusCode> {
     let multi_user = is_multi_user_mode(&state);
 
-    let runner_opt = if let Some(ref sw_id) = query.shared_workspace_id {
-        let sw_service = state
-            .shared_workspaces
-            .as_ref()
-            .ok_or_else(|| ApiError::internal("shared workspaces not configured"))?;
-        let (_ws, _role) = sw_service
-            .get(sw_id, user.id())
-            .await
-            .map_err(|e| ApiError::internal(format!("shared workspace lookup: {}", e)))?
-            .ok_or_else(|| ApiError::not_found("shared workspace not found or access denied"))?;
-        let linux_user = sw_service
-            .linux_user_for_id(sw_id)
-            .await
-            .map_err(|e| ApiError::internal(format!("shared workspace linux user: {}", e)))?
-            .ok_or_else(|| ApiError::internal("shared workspace linux user not found"))?;
-        get_runner_for_linux_user(&state, &linux_user)
+    let target = if let Some(ref sw_id) = query.shared_workspace_id {
+        ExecutionTarget::SharedWorkspace {
+            workspace_id: sw_id.clone(),
+        }
     } else {
-        get_runner_for_user(&state, user.id())
+        ExecutionTarget::Personal
     };
+
+    let runner_opt = resolve_runner_for_target(&state, user.id(), &target)
+        .await
+        .map_err(|e| ApiError::internal(format!("runner target resolution: {}", e)))?;
 
     // In multi-user mode, use runner
     if let Some(runner) = runner_opt {
