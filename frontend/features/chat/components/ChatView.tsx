@@ -1062,14 +1062,16 @@ export function ChatView({
 		if (!container) return;
 		const mark = () => {
 			userInitiatedScrollRef.current = true;
+			// Stop auto-follow immediately on user scroll intent so streaming
+			// deltas don't keep snapping back to bottom before handleScroll runs.
+			setIsUserScrolled(true);
+			isUserScrolledRef.current = true;
 		};
 		container.addEventListener("wheel", mark, { passive: true });
-		container.addEventListener("touchstart", mark, { passive: true });
-		container.addEventListener("pointerdown", mark, { passive: true });
+		container.addEventListener("touchmove", mark, { passive: true });
 		return () => {
 			container.removeEventListener("wheel", mark);
-			container.removeEventListener("touchstart", mark);
-			container.removeEventListener("pointerdown", mark);
+			container.removeEventListener("touchmove", mark);
 		};
 	}, []);
 
