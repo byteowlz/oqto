@@ -5,6 +5,16 @@
  * render identically to personal sessions (same metadata, styling, etc.).
  */
 import {
+	AlertDialog,
+	AlertDialogAction,
+	AlertDialogCancel,
+	AlertDialogContent,
+	AlertDialogDescription,
+	AlertDialogFooter,
+	AlertDialogHeader,
+	AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
 	ContextMenu,
 	ContextMenuContent,
 	ContextMenuItem,
@@ -53,6 +63,7 @@ import {
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { sharedWorkspaceSessionMap } from "@/components/contexts/chat-context";
 import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
 import { WorkspaceIcon } from "./WorkspaceIcon";
 
 export interface SidebarSharedWorkspacesProps {
@@ -146,6 +157,9 @@ function WorkspaceContent({
 	const [workdirs, setWorkdirs] = useState<SharedWorkspaceWorkdir[]>([]);
 	const [fetchedSessions, setFetchedSessions] = useState<ChatSession[]>([]);
 	const [loading, setLoading] = useState(true);
+	const [pendingDeleteWorkdir, setPendingDeleteWorkdir] =
+		useState<SharedWorkspaceWorkdir | null>(null);
+	const [isDeletingWorkdir, setIsDeletingWorkdir] = useState(false);
 
 	useEffect(() => {
 		let cancelled = false;
@@ -255,7 +269,35 @@ function WorkspaceContent({
 		);
 	}
 
+	const confirmDeleteWorkdir = async () => {
+		if (!pendingDeleteWorkdir) return;
+		setIsDeletingWorkdir(true);
+		try {
+			await deleteSharedWorkspaceWorkdir(workspace.id, pendingDeleteWorkdir.path);
+			setWorkdirs((prev) => prev.filter((d) => d.path !== pendingDeleteWorkdir.path));
+			setFetchedSessions((prev) =>
+				prev.filter((s) => {
+					const wp = s.workspace_path ?? "";
+					return !(
+						wp === pendingDeleteWorkdir.path ||
+						wp.startsWith(`${pendingDeleteWorkdir.path}/`)
+					);
+				}),
+			);
+			onDeleteProject?.(pendingDeleteWorkdir.path, pendingDeleteWorkdir.name);
+			toast.success(`Deleted project "${pendingDeleteWorkdir.name}"`);
+		} catch (e) {
+			toast.error(
+				e instanceof Error ? e.message : "Failed to delete shared project",
+			);
+		} finally {
+			setIsDeletingWorkdir(false);
+			setPendingDeleteWorkdir(null);
+		}
+	};
+
 	return (
+		<>
 		<div className="space-y-0.5 pb-1">
 			{workdirs.map((wd) => {
 				const wdSessions = sessionsByWorkdir.get(wd.path) ?? [];
@@ -391,28 +433,7 @@ function WorkspaceContent({
 								{onDeleteProject && (
 									<ContextMenuItem
 										variant="destructive"
-										onClick={async () => {
-											if (
-												!window.confirm(
-													`Delete project "${wd.name}" from shared workspace? This cannot be undone.`,
-												)
-											)
-												return;
-											try {
-												await deleteSharedWorkspaceWorkdir(workspace.id, wd.path);
-												setWorkdirs((prev) => prev.filter((d) => d.path !== wd.path));
-												setFetchedSessions((prev) =>
-													prev.filter((s) => {
-														const wp = s.workspace_path ?? "";
-														return !(wp === wd.path || wp.startsWith(`${wd.path}/`));
-													}),
-												);
-												// Also delete hstry sessions for this workdir path.
-												onDeleteProject(wd.path, wd.name);
-											} catch {
-												// ignore
-											}
-										}}
+										onClick={() => setPendingDeleteWorkdir(wd)}
 									>
 										<Trash2 className="w-4 h-4 mr-2" />
 										{t("common.delete")}
@@ -538,6 +559,7 @@ function WorkspaceContent({
 															variant="destructive"
 															onClick={() => {
 																sharedWorkspaceSessionMap.set(session.id, workspace.id);
+																setFetchedSessions((prev) => prev.filter((s) => s.id !== session.id));
 																onDeleteSession(session.id);
 															}}
 														>
@@ -556,6 +578,40 @@ function WorkspaceContent({
 				);
 			})}
 		</div>
+		<AlertDialog
+			open={pendingDeleteWorkdir !== null}
+			onOpenChange={(open) => {
+				if (!open && !isDeletingWorkdir) {
+					setPendingDeleteWorkdir(null);
+				}
+			}}
+		>
+			<AlertDialogContent>
+				<AlertDialogHeader>
+					<AlertDialogTitle>
+						{t("common.delete", "Delete")} {pendingDeleteWorkdir?.name}
+					</AlertDialogTitle>
+					<AlertDialogDescription>
+						This will permanently delete the shared project folder and all chats inside it.
+					</AlertDialogDescription>
+				</AlertDialogHeader>
+				<AlertDialogFooter>
+					<AlertDialogCancel disabled={isDeletingWorkdir}>
+						{t("common.cancel", "Cancel")}
+					</AlertDialogCancel>
+					<AlertDialogAction
+						onClick={(e) => {
+							e.preventDefault();
+							void confirmDeleteWorkdir();
+						}}
+						disabled={isDeletingWorkdir}
+					>
+						{isDeletingWorkdir ? "Deleting..." : t("common.delete", "Delete")}
+					</AlertDialogAction>
+				</AlertDialogFooter>
+			</AlertDialogContent>
+		</AlertDialog>
+		</>
 	);
 }
 
