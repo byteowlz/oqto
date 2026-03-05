@@ -301,6 +301,20 @@ export async function listWorkdirs(
 	return res.json();
 }
 
+/** Delete a workdir from a shared workspace. */
+export async function deleteSharedWorkspaceWorkdir(
+	workspaceId: string,
+	workdirPath: string,
+): Promise<void> {
+	const url = new URL(apiUrl(`/${workspaceId}/workdirs`));
+	url.searchParams.set("path", workdirPath);
+	const res = await authFetch(url.toString(), {
+		method: "DELETE",
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+}
+
 /** Transfer ownership of a shared workspace. */
 export async function transferOwnership(
 	workspaceId: string,

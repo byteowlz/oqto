@@ -21,7 +21,10 @@ import type {
 	SharedWorkspaceInfo,
 	SharedWorkspaceWorkdir,
 } from "@/lib/api/shared-workspaces";
-import { listWorkdirs } from "@/lib/api/shared-workspaces";
+import {
+	deleteSharedWorkspaceWorkdir,
+	listWorkdirs,
+} from "@/lib/api/shared-workspaces";
 import { listChatHistory } from "@/lib/api/chat";
 import type { ChatSession } from "@/lib/api/chat";
 import {
@@ -388,7 +391,28 @@ function WorkspaceContent({
 								{onDeleteProject && (
 									<ContextMenuItem
 										variant="destructive"
-										onClick={() => onDeleteProject(wd.path, wd.name)}
+										onClick={async () => {
+											if (
+												!window.confirm(
+													`Delete project "${wd.name}" from shared workspace? This cannot be undone.`,
+												)
+											)
+												return;
+											try {
+												await deleteSharedWorkspaceWorkdir(workspace.id, wd.path);
+												setWorkdirs((prev) => prev.filter((d) => d.path !== wd.path));
+												setFetchedSessions((prev) =>
+													prev.filter((s) => {
+														const wp = s.workspace_path ?? "";
+														return !(wp === wd.path || wp.startsWith(`${wd.path}/`));
+													}),
+												);
+												// Also delete hstry sessions for this workdir path.
+												onDeleteProject(wd.path, wd.name);
+											} catch {
+												// ignore
+											}
+										}}
 									>
 										<Trash2 className="w-4 h-4 mr-2" />
 										{t("common.delete")}
