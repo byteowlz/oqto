@@ -242,16 +242,19 @@ deploy_host() {
         else
             log "Deploying frontend to $web_root"
             if [[ "$is_local" == "true" ]]; then
-                run sudo rm -rf "${web_root}/assets"
+                # Do NOT delete existing assets eagerly.
+                # Keep previous hashed chunks around so active clients don't hit
+                # dynamic import 404s during rolling frontend updates.
                 run sudo cp -a "${dist_dir}/." "${web_root}/"
             else
                 if $DRY_RUN; then
-                    echo -e "${YELLOW}  [dry-run]${NC} rsync frontend/dist/ -> $ssh_target:$web_root/"
+                    echo -e "${YELLOW}  [dry-run]${NC} rsync frontend/dist/ -> $ssh_target:$web_root/ (no eager asset deletion)"
                 else
                     local tmp_dir="/tmp/oqto-deploy-frontend"
                     ssh "$ssh_target" "rm -rf $tmp_dir && mkdir -p $tmp_dir"
+                    # Upload the new build exactly to tmp, then overlay into web root.
                     rsync -az --delete "${dist_dir}/" "${ssh_target}:${tmp_dir}/"
-                    ssh "$ssh_target" "sudo rm -rf '${web_root}/assets' && sudo cp -a '${tmp_dir}/.' '${web_root}/' && sudo chown -R ${user}:${user} '${web_root}' && rm -rf '$tmp_dir'"
+                    ssh "$ssh_target" "sudo cp -a '${tmp_dir}/.' '${web_root}/' && sudo chown -R ${user}:${user} '${web_root}' && rm -rf '$tmp_dir'"
                 fi
             fi
             ok "Frontend deployed"

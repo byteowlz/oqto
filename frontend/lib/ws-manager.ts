@@ -116,6 +116,8 @@ class WsConnectionManager {
 	private reconnectAttempt = 0;
 	private reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
 	private pingInterval: ReturnType<typeof setInterval> | null = null;
+	// Prevent get_state request storms during reconnect/reattach flows.
+	private lastGetStateAt = new Map<string, number>();
 
 	// Event handlers by channel
 	private channelHandlers: Map<Channel, Set<WsEventHandler>> = new Map();
@@ -703,6 +705,15 @@ class WsConnectionManager {
 	 * Get agent session state.
 	 */
 	agentGetState(sessionId: string, id?: string): void {
+		const now = Date.now();
+		const last = this.lastGetStateAt.get(sessionId) ?? 0;
+		if (now - last < 400) {
+			if (isWsMuxDebugEnabled()) {
+				console.debug("[ws-mux] Skipping duplicate get_state:", sessionId);
+			}
+			return;
+		}
+		this.lastGetStateAt.set(sessionId, now);
 		this.send({
 			channel: "agent",
 			session_id: sessionId,
