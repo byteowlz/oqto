@@ -491,12 +491,18 @@ impl PiSessionManager {
             // Try direct match first (works for Pi-native IDs)
             let mut found =
                 crate::pi::session_files::find_session_file(&session_id, Some(&config.cwd));
-            // No match -- resolve Pi native ID via hstry and retry
+            // No match -- resolve Pi native ID via hstry and retry.
+            // Use a timeout to prevent hanging if hstry is slow/unresponsive.
             if found.is_none()
                 && let Some(ref client) = self.hstry_client
             {
-                match client.get_conversation(&session_id, None).await {
-                    Ok(Some(conv)) => {
+                match tokio::time::timeout(
+                    std::time::Duration::from_secs(5),
+                    client.get_conversation(&session_id, None),
+                )
+                .await
+                {
+                    Ok(Ok(Some(conv))) => {
                         let pi_id = conv.external_id;
                         if !pi_id.is_empty() && pi_id != session_id {
                             debug!(
@@ -509,11 +515,17 @@ impl PiSessionManager {
                             );
                         }
                     }
-                    Ok(None) => {
+                    Ok(Ok(None)) => {
                         debug!("No hstry conversation found for session '{}'", session_id);
                     }
-                    Err(e) => {
+                    Ok(Err(e)) => {
                         warn!("Failed to resolve Pi native ID for '{}': {}", session_id, e);
+                    }
+                    Err(_) => {
+                        warn!(
+                            "Timed out resolving Pi native ID for '{}' via hstry (5s)",
+                            session_id
+                        );
                     }
                 }
             }

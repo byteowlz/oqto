@@ -1,29 +1,35 @@
 {
   "todos": [
     {
-      "id": "d1",
-      "content": "Analyze session.create deadlock pattern from logs",
+      "id": "f1",
+      "content": "Fix empty text content parts causing Kimi-K2.5 422 errors in EAVS",
       "status": "completed",
       "priority": "high"
     },
     {
-      "id": "d2",
-      "content": "Root cause: runner client read_line has no timeout, blocks tokio tasks forever",
-      "status": "completed",
-      "priority": "high"
-    },
-    {
-      "id": "d3",
-      "content": "Add timeout to runner client request_once + pi_subscribe",
-      "status": "completed",
-      "priority": "high"
-    },
-    {
-      "id": "d4",
-      "content": "Build, deploy, verify on both servers",
+      "id": "f5",
+      "content": "Investigate runner deadlock pattern (pi_create_session hangs indefinitely)",
       "status": "in_progress",
       "priority": "high"
+    },
+    {
+      "id": "f2",
+      "content": "Add context menu to workdir folders in shared workspace sidebar",
+      "status": "pending",
+      "priority": "medium"
+    },
+    {
+      "id": "f3",
+      "content": "Fix shared session delete routing to correct runner",
+      "status": "pending",
+      "priority": "medium"
+    },
+    {
+      "id": "f4",
+      "content": "Deploy and test frontend changes",
+      "status": "pending",
+      "priority": "medium"
     }
   ],
-  "updated_at": "2026-03-05T15:00:47.993Z"
+  "updated_at": "2026-03-05T15:24:35.069Z"
 }

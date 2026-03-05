@@ -40,8 +40,6 @@ setup.sh must correctly provision everything for a new platform user on a fresh 
 ...
 
 
-### [oqto-23xh] oqto backend deadlocks after session.create (P1, bug)
-
 ### [oqto-14b1.3] Frontend: ServeView iframe panel with hot reload (P1, task)
 New view in the session screen alongside chat, files, terminal, browser.
 
@@ -1240,6 +1238,7 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [oqto-23xh] oqto backend deadlocks after session.create (closed 2026-03-05)
 - [octo-58xa.3] WebView: MCP tool for opening webviews (closed 2026-03-04)
 - [octo-58xa.2] WebView: Frontend iframe component (closed 2026-03-04)
 - [octo-58xa.1] WebView: Backend proxy for localhost servers (closed 2026-03-04)
@@ -1873,6 +1872,6 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
 - [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )

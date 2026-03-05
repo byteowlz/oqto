@@ -84,6 +84,7 @@ function WorkspaceContent({
 	isMobile,
 	sizeClasses,
 	onSelectWorkdir,
+	onNewChatInWorkdir,
 	chatHistory,
 	busySessions,
 	selectedChatSessionId,
@@ -100,6 +101,10 @@ function WorkspaceContent({
 	isMobile: boolean;
 	sizeClasses: SizeClasses;
 	onSelectWorkdir?: (
+		workspace: SharedWorkspaceInfo,
+		workdir: SharedWorkspaceWorkdir,
+	) => void;
+	onNewChatInWorkdir?: (
 		workspace: SharedWorkspaceInfo,
 		workdir: SharedWorkspaceWorkdir,
 	) => void;
@@ -232,66 +237,86 @@ function WorkspaceContent({
 						key={wd.path}
 						className="border-b border-sidebar-border/50 last:border-b-0"
 					>
-						{/* Folder header - identical to personal project header */}
-						<div className="flex items-center gap-1 px-1 py-1.5 group">
-							<button
-								type="button"
-								onClick={() => toggleFolderExpanded(folderKey)}
-								className="flex items-center gap-1.5 text-left hover:bg-sidebar-accent/50 px-1 py-0.5 -mx-1"
-							>
-								{isFolderExpanded ? (
-									<ChevronDown
-										className={cn(
-											"text-muted-foreground flex-shrink-0",
-											sizeClasses.iconSize,
+						{/* Folder header - identical to personal project header, with context menu */}
+						<ContextMenu>
+							<ContextMenuTrigger asChild>
+								<div className="flex items-center gap-1 px-1 py-1.5 group">
+									<button
+										type="button"
+										onClick={() => toggleFolderExpanded(folderKey)}
+										className="flex items-center gap-1.5 text-left hover:bg-sidebar-accent/50 px-1 py-0.5 -mx-1"
+									>
+										{isFolderExpanded ? (
+											<ChevronDown
+												className={cn(
+													"text-muted-foreground flex-shrink-0",
+													sizeClasses.iconSize,
+												)}
+											/>
+										) : (
+											<ChevronRight
+												className={cn(
+													"text-muted-foreground flex-shrink-0",
+													sizeClasses.iconSize,
+												)}
+											/>
 										)}
-									/>
-								) : (
-									<ChevronRight
+									</button>
+									<button
+										type="button"
+										onClick={() => toggleFolderExpanded(folderKey)}
+										className="flex-1 flex items-center gap-1.5 text-left hover:bg-sidebar-accent/50 px-1 py-0.5 -mx-1"
+									>
+										<FolderKanban
+											className={cn(
+												"flex-shrink-0",
+												sizeClasses.projectIcon,
+											)}
+											style={{ color: workspaceColor }}
+										/>
+										<span
+											className={cn(
+												"font-medium text-foreground truncate",
+												sizeClasses.projectText,
+											)}
+										>
+											{wd.name}
+										</span>
+										<span className="text-[10px] text-muted-foreground">
+											({wdSessions.length})
+										</span>
+									</button>
+									{/* New chat in this workdir */}
+									<button
+										type="button"
+										onClick={() => onSelectWorkdir?.(workspace, wd)}
 										className={cn(
-											"text-muted-foreground flex-shrink-0",
-											sizeClasses.iconSize,
+											"text-muted-foreground hover:text-primary hover:bg-sidebar-accent opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity",
+											sizeClasses.buttonSize,
 										)}
-									/>
-								)}
-							</button>
-							<button
-								type="button"
-								onClick={() => toggleFolderExpanded(folderKey)}
-								className="flex-1 flex items-center gap-1.5 text-left hover:bg-sidebar-accent/50 px-1 py-0.5 -mx-1"
-							>
-								<FolderKanban
-									className={cn(
-										"flex-shrink-0",
-										sizeClasses.projectIcon,
-									)}
-									style={{ color: workspaceColor }}
-								/>
-								<span
-									className={cn(
-										"font-medium text-foreground truncate",
-										sizeClasses.projectText,
-									)}
+										title="New chat"
+									>
+										<Plus className={sizeClasses.iconSize} />
+									</button>
+								</div>
+							</ContextMenuTrigger>
+							<ContextMenuContent>
+								<ContextMenuItem
+									onClick={() => onNewChatInWorkdir?.(workspace, wd)}
 								>
-									{wd.name}
-								</span>
-								<span className="text-[10px] text-muted-foreground">
-									({wdSessions.length})
-								</span>
-							</button>
-							{/* New chat in this workdir */}
-							<button
-								type="button"
-								onClick={() => onSelectWorkdir?.(workspace, wd)}
-								className={cn(
-									"text-muted-foreground hover:text-primary hover:bg-sidebar-accent opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity",
-									sizeClasses.buttonSize,
-								)}
-								title="New chat"
-							>
-								<Plus className={sizeClasses.iconSize} />
-							</button>
-						</div>
+									<Plus className="w-4 h-4 mr-2" />
+									{t("chat.newChat", "New chat")}
+								</ContextMenuItem>
+								<ContextMenuItem
+									onClick={() => {
+										navigator.clipboard.writeText(wd.path);
+									}}
+								>
+									<Copy className="w-4 h-4 mr-2" />
+									{t("common.copyPath", "Copy path")}
+								</ContextMenuItem>
+							</ContextMenuContent>
+						</ContextMenu>
 
 						{/* Sessions - identical to personal session items */}
 						{isFolderExpanded && (
@@ -671,6 +696,7 @@ export const SidebarSharedWorkspaces = memo(function SidebarSharedWorkspaces({
 								isMobile={isMobile}
 								sizeClasses={sizeClasses}
 								onSelectWorkdir={onSelectWorkdir}
+								onNewChatInWorkdir={onSelectWorkdir}
 								chatHistory={chatHistory}
 								busySessions={busySessions}
 								selectedChatSessionId={selectedChatSessionId}
