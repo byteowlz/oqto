@@ -66,6 +66,16 @@ import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { WorkspaceIcon } from "./WorkspaceIcon";
 
+function hasString(
+	collection: Set<string> | string[] | null | undefined,
+	value: string,
+): boolean {
+	if (!collection) return false;
+	return Array.isArray(collection)
+		? collection.includes(value)
+		: collection.has(value);
+}
+
 export interface SidebarSharedWorkspacesProps {
 	sharedWorkspaces: SharedWorkspaceInfo[];
 	expandedWorkspaces: Set<string> | string[];
@@ -323,9 +333,7 @@ function WorkspaceContent({
 				const wdSessions = sessionsByWorkdir.get(wd.path) ?? [];
 				const folderKey = `${workspace.id}:${wd.path}`;
 				const isFolderExpanded = expandedFolders.has(folderKey);
-				const isPinnedProject = Array.isArray(pinnedProjects)
-					? pinnedProjects.includes(wd.path)
-					: pinnedProjects?.has(wd.path);
+				const isPinnedProject = hasString(pinnedProjects, wd.path);
 
 				return (
 					<div
@@ -468,16 +476,12 @@ function WorkspaceContent({
 								{wdSessions.map((session) => {
 									const isSelected =
 										selectedChatSessionId === session.id;
-									const isBusy = Array.isArray(busySessions)
-										? busySessions.includes(session.id)
-										: busySessions?.has(session.id);
+									const isBusy = hasString(busySessions, session.id);
 									const formattedDate = session.updated_at
 										? formatSessionDate(session.updated_at)
 										: null;
 									const tempId = formatTempId(getTempIdFromSession(session));
-									const isPinned = Array.isArray(pinnedSessions)
-										? pinnedSessions.includes(session.id)
-										: pinnedSessions?.has(session.id);
+									const isPinned = hasString(pinnedSessions, session.id);
 
 									return (
 										<div
@@ -734,9 +738,7 @@ export const SidebarSharedWorkspaces = memo(function SidebarSharedWorkspaces({
 	return (
 		<div className="space-y-0.5">
 			{sharedWorkspaces.map((workspace) => {
-				const isExpanded = Array.isArray(expandedWorkspaces)
-					? expandedWorkspaces.includes(workspace.id)
-					: expandedWorkspaces.has(workspace.id);
+				const isExpanded = hasString(expandedWorkspaces, workspace.id);
 				const canManage =
 					workspace.my_role === "owner" || workspace.my_role === "admin";
 
