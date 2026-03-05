@@ -239,6 +239,17 @@ pub async fn list_chat_history(
                         provider: s.provider,
                     })
                     .collect();
+                if let Some(ref sw_id) = query.shared_workspace_id {
+                    let mut affinity = state.session_target_affinity.write().await;
+                    for s in &sessions {
+                        affinity.insert(
+                            s.id.clone(),
+                            ExecutionTarget::SharedWorkspace {
+                                workspace_id: sw_id.clone(),
+                            },
+                        );
+                    }
+                }
                 source = "runner";
             }
             Err(e) => {
@@ -311,8 +322,19 @@ pub async fn get_chat_session(
 ) -> ApiResult<Json<ChatSession>> {
     let multi_user = is_multi_user_mode(&state);
 
-    // In multi-user mode, use runner
-    if let Some(runner) = get_runner_for_user(&state, user.id()) {
+    // In multi-user mode, use runner (with affinity-based target fallback).
+    let target = {
+        let affinity = state.session_target_affinity.read().await;
+        affinity
+            .get(&session_id)
+            .cloned()
+            .unwrap_or(ExecutionTarget::Personal)
+    };
+    let runner_opt = resolve_runner_for_target(&state, user.id(), &target)
+        .await
+        .map_err(|e| ApiError::internal(format!("runner target resolution: {}", e)))?;
+
+    if let Some(runner) = runner_opt {
         match runner.get_workspace_chat_session(&session_id).await {
             Ok(response) => {
                 if let Some(s) = response.session {
@@ -409,7 +431,11 @@ pub async fn update_chat_session(
             workspace_id: sw_id.clone(),
         }
     } else {
-        ExecutionTarget::Personal
+        let affinity = state.session_target_affinity.read().await;
+        affinity
+            .get(&session_id)
+            .cloned()
+            .unwrap_or(ExecutionTarget::Personal)
     };
 
     let runner_opt = resolve_runner_for_target(&state, user.id(), &target)
@@ -557,7 +583,11 @@ pub async fn delete_chat_session(
             workspace_id: sw_id.clone(),
         }
     } else {
-        ExecutionTarget::Personal
+        let affinity = state.session_target_affinity.read().await;
+        affinity
+            .get(&session_id)
+            .cloned()
+            .unwrap_or(ExecutionTarget::Personal)
     };
 
     let runner_opt = resolve_runner_for_target(&state, user.id(), &target)
@@ -568,6 +598,10 @@ pub async fn delete_chat_session(
     if let Some(runner) = runner_opt {
         match runner.pi_delete_session(&session_id).await {
             Ok(()) => {
+                {
+                    let mut affinity = state.session_target_affinity.write().await;
+                    affinity.remove(&session_id);
+                }
                 info!(session_id = %session_id, shared_workspace_id = ?query.shared_workspace_id, "Deleted chat session via runner");
                 return Ok(StatusCode::NO_CONTENT);
             }
@@ -594,6 +628,10 @@ pub async fn delete_chat_session(
     if let Some(hstry) = state.hstry.as_ref() {
         match hstry.delete_conversation(&session_id).await {
             Ok(_) => {
+                {
+                    let mut affinity = state.session_target_affinity.write().await;
+                    affinity.remove(&session_id);
+                }
                 info!(session_id = %session_id, "Deleted chat session");
                 return Ok(StatusCode::NO_CONTENT);
             }
@@ -845,28 +883,23 @@ pub async fn get_chat_messages(
     let multi_user = is_multi_user_mode(&state);
     let prefer_hstry = !multi_user && state.hstry.is_some();
 
-    // Resolve the correct runner: shared workspace runner if shared_workspace_id is set,
-    // otherwise the user's personal runner.
+    // Resolve runner via target-based routing (shared workspace query or session affinity).
     if !prefer_hstry {
-        let runner = if let Some(ref sw_id) = query.shared_workspace_id {
-            // Shared workspace session: resolve runner from workspace's linux_user
-            if let Some(sw_service) = state.shared_workspaces.as_ref() {
-                // Verify user has access to this workspace
-                let workspaces = sw_service.list_for_user(user.id()).await
-                    .map_err(|e| ApiError::internal(format!("Failed to list workspaces: {}", e)))?;
-                let ws = workspaces.iter().find(|w| &w.id == sw_id);
-                match ws {
-                    Some(ws) => get_runner_for_linux_user(&state, &ws.linux_user),
-                    None => {
-                        return Err(ApiError::forbidden("Not a member of this shared workspace"));
-                    }
-                }
-            } else {
-                None
+        let target = if let Some(ref sw_id) = query.shared_workspace_id {
+            ExecutionTarget::SharedWorkspace {
+                workspace_id: sw_id.clone(),
             }
         } else {
-            get_runner_for_user(&state, user.id())
+            let affinity = state.session_target_affinity.read().await;
+            affinity
+                .get(&session_id)
+                .cloned()
+                .unwrap_or(ExecutionTarget::Personal)
         };
+
+        let runner = resolve_runner_for_target(&state, user.id(), &target)
+            .await
+            .map_err(|e| ApiError::internal(format!("runner target resolution: {}", e)))?;
 
         if let Some(runner) = runner {
             match runner
@@ -875,6 +908,15 @@ pub async fn get_chat_messages(
             {
                 Ok(response) => {
                     let canonical = convert_runner_response(response);
+                    if let Some(ref sw_id) = query.shared_workspace_id {
+                        let mut affinity = state.session_target_affinity.write().await;
+                        affinity.insert(
+                            session_id.clone(),
+                            ExecutionTarget::SharedWorkspace {
+                                workspace_id: sw_id.clone(),
+                            },
+                        );
+                    }
                     info!(
                         user_id = %user.id(),
                         session_id = %session_id,

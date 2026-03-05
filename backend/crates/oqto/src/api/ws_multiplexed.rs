@@ -34,7 +34,9 @@ use crate::local::ProcessManager;
 
 use crate::runner::client::{PiSubscriptionEvent, RunnerClient};
 use crate::runner::protocol::{PiCreateSessionRequest, PiSessionConfig as RunnerPiSessionConfig};
-use crate::runner::router::resolve_runner_for_workspace_path;
+use crate::runner::router::{
+    ExecutionTarget, resolve_runner_for_target, resolve_target_for_workspace_path,
+};
 use crate::session::Session;
 use crate::user_plane::{DirectUserPlane, RunnerUserPlane};
 use crate::ws::hub::WsHub;
@@ -747,13 +749,19 @@ async fn runner_client_for_path(
     state: &AppState,
     user_id: &str,
     workspace_path: Option<&str>,
-) -> Option<RunnerClient> {
+) -> Option<(RunnerClient, ExecutionTarget)> {
     let path = workspace_path?;
-    match resolve_runner_for_workspace_path(state, user_id, path).await {
-        Ok(Some(client)) => Some(client),
-        Ok(None) => None,
+    match resolve_target_for_workspace_path(state, user_id, path).await {
+        Ok(target) => match resolve_runner_for_target(state, user_id, &target).await {
+            Ok(Some(client)) => Some((client, target)),
+            Ok(None) => None,
+            Err(e) => {
+                tracing::warn!(path = %path, error = %e, "runner client resolution failed for workspace path target");
+                None
+            }
+        },
         Err(e) => {
-            tracing::warn!(path = %path, error = %e, "runner resolution failed for workspace path");
+            tracing::warn!(path = %path, error = %e, "runner target resolution failed for workspace path");
             None
         }
     }
@@ -1443,7 +1451,7 @@ async fn handle_agent_command(
                 None
             };
 
-            if let Some(sw) = sw_runner {
+            if let Some((sw, target)) = sw_runner {
                 tracing::info!(session_id = %session_id, socket = ?sw.socket_path(), "routing session to shared workspace runner");
                 // Store override for subsequent commands on this session
                 let is_different = runner_client
@@ -1453,6 +1461,10 @@ async fn handle_agent_command(
                     state_guard
                         .session_runner_overrides
                         .insert(session_id.clone(), sw.clone());
+                }
+                if let ExecutionTarget::SharedWorkspace { .. } = target {
+                    let mut affinity = state.session_target_affinity.write().await;
+                    affinity.insert(session_id.clone(), target);
                 }
                 sw
             } else {
@@ -1479,12 +1491,16 @@ async fn handle_agent_command(
                     .and_then(|m| m.cwd.as_ref().map(|p| p.to_string_lossy().to_string()))
             };
             if let Some(cwd) = meta_cwd {
-                if let Some(sw) = runner_client_for_path(state, user_id, Some(cwd.as_str())).await {
+                if let Some((sw, target)) = runner_client_for_path(state, user_id, Some(cwd.as_str())).await {
                     tracing::debug!(session_id = %session_id, cwd = %cwd, socket = ?sw.socket_path(), "routing command to shared workspace runner from cached session metadata");
                     let mut state_guard = conn_state.lock().await;
                     state_guard
                         .session_runner_overrides
                         .insert(session_id.clone(), sw.clone());
+                    if let ExecutionTarget::SharedWorkspace { .. } = target {
+                        let mut affinity = state.session_target_affinity.write().await;
+                        affinity.insert(session_id.clone(), target);
+                    }
                     sw
                 } else {
                     match runner_client {
@@ -1707,7 +1723,11 @@ async fn handle_agent_command(
             state.ws_hub.unsubscribe_session(user_id, &session_id);
 
             match runner.pi_delete_session(&session_id).await {
-                Ok(()) => Some(agent_response(&session_id, id, "session.delete", Ok(None))),
+                Ok(()) => {
+                    let mut affinity = state.session_target_affinity.write().await;
+                    affinity.remove(&session_id);
+                    Some(agent_response(&session_id, id, "session.delete", Ok(None)))
+                }
                 Err(e) => Some(agent_response(
                     &session_id,
                     id,
