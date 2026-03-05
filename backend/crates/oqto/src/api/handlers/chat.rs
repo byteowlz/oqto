@@ -398,12 +398,25 @@ pub async fn update_chat_session(
     State(state): State<AppState>,
     user: CurrentUser,
     Path(session_id): Path<String>,
+    Query(query): Query<ChatHistoryQuery>,
     Json(request): Json<UpdateChatSessionRequest>,
 ) -> ApiResult<Json<ChatSession>> {
     let multi_user = is_multi_user_mode(&state);
 
-    // In multi-user mode, use runner
-    if let Some(runner) = get_runner_for_user(&state, user.id()) {
+    // In multi-user mode, use runner with target-based resolution.
+    let target = if let Some(ref sw_id) = query.shared_workspace_id {
+        ExecutionTarget::SharedWorkspace {
+            workspace_id: sw_id.clone(),
+        }
+    } else {
+        ExecutionTarget::Personal
+    };
+
+    let runner_opt = resolve_runner_for_target(&state, user.id(), &target)
+        .await
+        .map_err(|e| ApiError::internal(format!("runner target resolution: {}", e)))?;
+
+    if let Some(runner) = runner_opt {
         match runner
             .update_workspace_chat_session(&session_id, request.title.clone())
             .await

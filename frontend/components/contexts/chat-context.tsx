@@ -801,7 +801,12 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 	const renameChatSession = useCallback(
 		async (sessionId: string, title: string): Promise<boolean> => {
 			try {
-				const updated = await updateChatSession(sessionId, { title });
+				const sharedWorkspaceId = sharedWorkspaceSessionMap.get(sessionId);
+				const updated = await updateChatSession(
+					sessionId,
+					{ title },
+					sharedWorkspaceId,
+				);
 				// Mark this session as manually renamed so auto-generated
 				// title events from Pi don't overwrite the user's choice.
 				if (updated.title) manuallyRenamedRef.current.set(sessionId, updated.title);

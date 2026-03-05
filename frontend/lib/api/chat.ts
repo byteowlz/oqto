@@ -160,9 +160,13 @@ export async function getChatSession(sessionId: string): Promise<ChatSession> {
 export async function updateChatSession(
 	sessionId: string,
 	updates: UpdateChatSessionRequest,
+	shared_workspace_id?: string,
 ): Promise<ChatSession> {
-	const res = await authFetch(
-		controlPlaneApiUrl(`/api/chat-history/${sessionId}`),
+	const params = new URLSearchParams();
+	if (shared_workspace_id) params.set("shared_workspace_id", shared_workspace_id);
+	const qs = params.toString();
+	const url = controlPlaneApiUrl(`/api/chat-history/${sessionId}${qs ? `?${qs}` : ""}`);
+	const res = await authFetch(url,
 		{
 			method: "PATCH",
 			headers: { "Content-Type": "application/json" },
