@@ -369,6 +369,24 @@ class WsConnectionManager {
 		}
 
 		try {
+			if (
+				command.channel === "agent" &&
+				"cmd" in command &&
+				command.cmd === "get_state" &&
+				"session_id" in command
+			) {
+				const sessionId = command.session_id;
+				const now = Date.now();
+				const last = this.lastGetStateAt.get(sessionId) ?? 0;
+				if (now - last < 400) {
+					if (isWsMuxDebugEnabled()) {
+						console.debug("[ws-mux] Dropping duplicate get_state send:", sessionId);
+					}
+					return;
+				}
+				this.lastGetStateAt.set(sessionId, now);
+			}
+
 			if (!("id" in command) || command.id === undefined) {
 				command.id = this.nextRequestId();
 			}
@@ -1102,11 +1120,7 @@ class WsConnectionManager {
 					}
 
 					// Request initial state (model info, streaming flag, etc.)
-					this.send({
-						channel: "agent",
-						session_id: sessionId,
-						cmd: "get_state",
-					});
+					this.agentGetState(sessionId);
 
 					const pending = this.pendingMessages.get(sessionId);
 					console.log(

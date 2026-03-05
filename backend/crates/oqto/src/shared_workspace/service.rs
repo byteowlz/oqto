@@ -653,30 +653,25 @@ impl SharedWorkspaceService {
         let target = std::path::Path::new(workdir_path);
         let workspace_root = std::path::Path::new(&ws.path);
 
-        // Must be inside workspace root and not equal to root.
-        let target_abs = target
-            .canonicalize()
-            .with_context(|| format!("resolving workdir path: {}", workdir_path))?;
-        let root_abs = workspace_root
-            .canonicalize()
-            .with_context(|| format!("resolving workspace root: {}", ws.path))?;
+        // IMPORTANT: do lexical path checks only. Do not canonicalize here,
+        // because backend process permissions may not allow traversing shared
+        // workspace directories owned by the shared Linux user.
+        if !target.is_absolute() {
+            bail!("workdir path must be absolute");
+        }
 
-        if target_abs == root_abs {
+        if target == workspace_root {
             bail!("cannot delete shared workspace root");
         }
-        if !target_abs.starts_with(&root_abs) {
+        if !target.starts_with(workspace_root) {
             bail!("workdir path is outside shared workspace root");
         }
 
-        if !target_abs.is_dir() {
-            bail!("workdir path is not a directory");
-        }
-
         // Only allow deleting direct child workdirs (no nested arbitrary dirs).
-        let parent = target_abs
+        let parent = target
             .parent()
             .ok_or_else(|| anyhow::anyhow!("invalid workdir path"))?;
-        if parent != root_abs {
+        if parent != workspace_root {
             bail!("can only delete top-level workdirs");
         }
 
@@ -687,15 +682,23 @@ impl SharedWorkspaceService {
         let runner = crate::runner::client::RunnerClient::for_user_with_pattern(&ws.linux_user, pattern)
             .with_context(|| format!("creating runner client for {}", ws.linux_user))?;
 
-        runner
-            .delete_path(&target_abs, true)
+        let stat = runner
+            .stat(target)
             .await
-            .with_context(|| format!("deleting workdir {} via runner", target_abs.display()))?;
+            .with_context(|| format!("stat workdir {} via runner", target.display()))?;
+        if !stat.exists || !stat.is_dir {
+            bail!("workdir path is not a directory");
+        }
+
+        runner
+            .delete_path(target, true)
+            .await
+            .with_context(|| format!("deleting workdir {} via runner", target.display()))?;
 
         info!(
             workspace_id = %ws.id,
             user_id = %user_id,
-            workdir = %target_abs.display(),
+            workdir = %target.display(),
             "removed workdir from shared workspace"
         );
 
