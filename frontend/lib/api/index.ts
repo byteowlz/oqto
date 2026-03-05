@@ -81,6 +81,7 @@ export {
 	listChatHistoryGrouped,
 	getChatSession,
 	updateChatSession,
+	deleteChatSessionApi,
 	getChatMessages,
 	convertChatMessageToAgent,
 	convertChatMessagesToAgent,

@@ -176,6 +176,21 @@ export async function updateChatSession(
 
 /** Get all messages for a chat session.
  * Pass shared_workspace_id to route to the shared workspace's runner. */
+export async function deleteChatSessionApi(
+	sessionId: string,
+	shared_workspace_id?: string,
+): Promise<void> {
+	const params = new URLSearchParams();
+	if (shared_workspace_id) params.set("shared_workspace_id", shared_workspace_id);
+	const qs = params.toString();
+	const url = controlPlaneApiUrl(`/api/chat-history/${sessionId}${qs ? `?${qs}` : ""}`);
+	const res = await authFetch(url, {
+		method: "DELETE",
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+}
+
 export async function getChatMessages(
 	sessionId: string,
 	shared_workspace_id?: string,

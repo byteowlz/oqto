@@ -531,6 +531,13 @@ pub async fn update_chat_session(
     Err(ApiError::internal("hstry not configured"))
 }
 
+/// Query parameters for deleting chat sessions.
+#[derive(Debug, Deserialize)]
+pub struct DeleteChatSessionQuery {
+    /// If set, route delete to this shared workspace's runner.
+    pub shared_workspace_id: Option<String>,
+}
+
 /// Delete a chat session from hstry.
 ///
 /// Removes the conversation and all its messages from the history database.
@@ -540,14 +547,35 @@ pub async fn delete_chat_session(
     State(state): State<AppState>,
     user: CurrentUser,
     Path(session_id): Path<String>,
+    Query(query): Query<DeleteChatSessionQuery>,
 ) -> ApiResult<StatusCode> {
     let multi_user = is_multi_user_mode(&state);
 
+    let runner_opt = if let Some(ref sw_id) = query.shared_workspace_id {
+        let sw_service = state
+            .shared_workspaces
+            .as_ref()
+            .ok_or_else(|| ApiError::internal("shared workspaces not configured"))?;
+        let (_ws, _role) = sw_service
+            .get(sw_id, user.id())
+            .await
+            .map_err(|e| ApiError::internal(format!("shared workspace lookup: {}", e)))?
+            .ok_or_else(|| ApiError::not_found("shared workspace not found or access denied"))?;
+        let linux_user = sw_service
+            .linux_user_for_id(sw_id)
+            .await
+            .map_err(|e| ApiError::internal(format!("shared workspace linux user: {}", e)))?
+            .ok_or_else(|| ApiError::internal("shared workspace linux user not found"))?;
+        get_runner_for_linux_user(&state, &linux_user)
+    } else {
+        get_runner_for_user(&state, user.id())
+    };
+
     // In multi-user mode, use runner
-    if let Some(runner) = get_runner_for_user(&state, user.id()) {
+    if let Some(runner) = runner_opt {
         match runner.pi_delete_session(&session_id).await {
             Ok(()) => {
-                info!(session_id = %session_id, "Deleted chat session via runner");
+                info!(session_id = %session_id, shared_workspace_id = ?query.shared_workspace_id, "Deleted chat session via runner");
                 return Ok(StatusCode::NO_CONTENT);
             }
             Err(e) => {
@@ -555,6 +583,7 @@ pub async fn delete_chat_session(
                     tracing::error!(
                         user_id = %user.id(),
                         session_id = %session_id,
+                        shared_workspace_id = ?query.shared_workspace_id,
                         error = %e,
                         "Runner failed to delete chat session in multi-user mode"
                     );

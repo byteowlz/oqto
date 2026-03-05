@@ -2,6 +2,7 @@
 
 import {
 	type ChatSession,
+	deleteChatSessionApi,
 	listChatHistory,
 	updateChatSession,
 } from "@/lib/api";
@@ -764,7 +765,12 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 					setSelectedChatSessionId(null);
 				}
 
-				// Delete via WS (closes agent + removes from hstry + deletes JSONL)
+				const sharedWorkspaceId = sharedWorkspaceSessionMap.get(sessionId);
+
+				// Primary path: REST delete with shared workspace routing support.
+				await deleteChatSessionApi(sessionId, sharedWorkspaceId);
+
+				// Best-effort: also notify active WS session state machine.
 				try {
 					const manager = getWsManager();
 					manager.send({
@@ -773,7 +779,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 						cmd: "session.delete",
 					});
 				} catch {
-					// Session may not be active, that's fine
+					// ignore (session may not be connected)
 				}
 
 				return true;
@@ -781,7 +787,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 				return false;
 			}
 		},
-		[selectedChatSessionId, setSelectedChatSessionId],
+		[deleteChatSessionApi, selectedChatSessionId, setSelectedChatSessionId],
 	);
 
 	const renameChatSession = useCallback(

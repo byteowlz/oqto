@@ -1472,13 +1472,45 @@ async fn handle_agent_command(
                 }
             }
         } else {
-            match runner_client {
-                Some(r) => r.clone(),
-                None => {
-                    return Some(agent_response(
-                        &session_id, id, "error",
-                        Err("Runner not available".into()),
-                    ));
+            // For non-create commands (especially session.delete), try to route
+            // via cached session cwd metadata first. This handles commands for
+            // shared sessions that were loaded from history/list APIs without a
+            // prior session.create on this connection.
+            let meta_cwd = {
+                let state_guard = conn_state.lock().await;
+                state_guard
+                    .pi_session_meta
+                    .get(&session_id)
+                    .and_then(|m| m.cwd.as_ref().map(|p| p.to_string_lossy().to_string()))
+            };
+            if let Some(cwd) = meta_cwd {
+                if let Some(sw) = runner_client_for_path(state, user_id, Some(cwd.as_str())).await {
+                    tracing::debug!(session_id = %session_id, cwd = %cwd, socket = ?sw.socket_path(), "routing command to shared workspace runner from cached session metadata");
+                    let mut state_guard = conn_state.lock().await;
+                    state_guard
+                        .session_runner_overrides
+                        .insert(session_id.clone(), sw.clone());
+                    sw
+                } else {
+                    match runner_client {
+                        Some(r) => r.clone(),
+                        None => {
+                            return Some(agent_response(
+                                &session_id, id, "error",
+                                Err("Runner not available".into()),
+                            ));
+                        }
+                    }
+                }
+            } else {
+                match runner_client {
+                    Some(r) => r.clone(),
+                    None => {
+                        return Some(agent_response(
+                            &session_id, id, "error",
+                            Err("Runner not available".into()),
+                        ));
+                    }
                 }
             }
         }

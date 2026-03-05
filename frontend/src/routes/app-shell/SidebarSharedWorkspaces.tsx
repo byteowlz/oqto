@@ -11,6 +11,12 @@ import {
 	ContextMenuSeparator,
 	ContextMenuTrigger,
 } from "@/components/ui/context-menu";
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import type {
 	SharedWorkspaceInfo,
 	SharedWorkspaceWorkdir,
@@ -33,6 +39,7 @@ import {
 	FolderPlus,
 	Loader2,
 	MessageSquare,
+	MoreHorizontal,
 	Pencil,
 	Pin,
 	Plus,
@@ -41,6 +48,7 @@ import {
 	UserPlus,
 } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
+import { sharedWorkspaceSessionMap } from "@/components/contexts/chat-context";
 import { useTranslation } from "react-i18next";
 import { WorkspaceIcon } from "./WorkspaceIcon";
 
@@ -298,6 +306,30 @@ function WorkspaceContent({
 									>
 										<Plus className={sizeClasses.iconSize} />
 									</button>
+									<DropdownMenu>
+										<DropdownMenuTrigger asChild>
+											<button
+												type="button"
+												className={cn(
+													"text-muted-foreground hover:text-primary hover:bg-sidebar-accent opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity",
+													sizeClasses.buttonSize,
+												)}
+												title={t("common.actions", "Actions")}
+											>
+												<MoreHorizontal className={sizeClasses.iconSize} />
+											</button>
+										</DropdownMenuTrigger>
+										<DropdownMenuContent align="end">
+											<DropdownMenuItem onClick={() => onNewChatInWorkdir?.(workspace, wd)}>
+												<Plus className="w-4 h-4 mr-2" />
+												{t("chat.newChat", "New chat")}
+											</DropdownMenuItem>
+											<DropdownMenuItem onClick={() => navigator.clipboard.writeText(wd.path)}>
+												<Copy className="w-4 h-4 mr-2" />
+												{t("common.copyPath", "Copy path")}
+											</DropdownMenuItem>
+										</DropdownMenuContent>
+									</DropdownMenu>
 								</div>
 							</ContextMenuTrigger>
 							<ContextMenuContent>
@@ -433,7 +465,10 @@ function WorkspaceContent({
 													{onDeleteSession && (
 														<ContextMenuItem
 															variant="destructive"
-															onClick={() => onDeleteSession(session.id)}
+															onClick={() => {
+																sharedWorkspaceSessionMap.set(session.id, workspace.id);
+																onDeleteSession(session.id);
+															}}
 														>
 															<Trash2 className="w-4 h-4 mr-2" />
 															{t("common.delete")}
