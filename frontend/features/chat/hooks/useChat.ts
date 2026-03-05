@@ -1880,6 +1880,13 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 			setError(null);
 		}
 
+		// Fetch authoritative history immediately on session switch.
+		// This avoids showing "No messages yet" while waiting for
+		// WebSocket session readiness / reattach logic.
+		if (sessionActuallyChanged) {
+			void fetchHistoryMessages(activeSessionId);
+		}
+
 		// Use a stable wrapper that delegates to the latest handleAgentEvent
 		// via ref. This avoids putting handleAgentEvent in the deps array.
 		const stableHandler = (event: AgentWsEvent) => {
