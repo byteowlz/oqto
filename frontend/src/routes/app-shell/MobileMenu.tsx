@@ -54,7 +54,7 @@ export interface MobileMenuProps {
 	toggleProjectExpanded: (projectKey: string) => void;
 	pinnedSessions: Set<string>;
 	togglePinSession: (sessionId: string) => void;
-	pinnedProjects: string[];
+	pinnedProjects: Set<string>;
 	togglePinProject: (projectKey: string) => void;
 	projectSortBy: "date" | "name" | "sessions";
 	setProjectSortBy: (sort: "date" | "name" | "sessions") => void;
@@ -281,8 +281,12 @@ export const MobileMenu = memo(function MobileMenu({
 										onRenameSession={onRenameSession}
 										onDeleteSession={onDeleteSession}
 										onPinSession={onPinSession}
-										pinnedSessions={pinnedSessions}
-										isMobile
+												pinnedSessions={pinnedSessions}
+												onPinProject={onPinProject}
+												onRenameProject={onRenameProject}
+												onDeleteProject={onDeleteProject}
+												pinnedProjects={pinnedProjects}
+												isMobile
 									/>
 									<div className="w-full px-2 my-1">
 										<div className="h-px w-full bg-sidebar-border/50" />

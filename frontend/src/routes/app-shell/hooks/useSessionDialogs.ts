@@ -142,7 +142,9 @@ export function useSessionDialogs(): SessionDialogsState {
 					if (!normalizedPath) return false;
 					const key =
 						normalizedPath.split("/").filter(Boolean).pop() || normalizedPath;
-					return key === targetProjectKey;
+					// Support both legacy project keys (basename) and full
+					// workspace paths (used by shared workdirs).
+					return key === targetProjectKey || normalizedPath === targetProjectKey;
 				});
 
 				for (const session of sessionsToDelete) {

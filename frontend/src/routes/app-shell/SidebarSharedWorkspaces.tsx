@@ -82,6 +82,10 @@ export interface SidebarSharedWorkspacesProps {
 	onDeleteSession?: (sessionId: string) => void;
 	onPinSession?: (sessionId: string) => void;
 	pinnedSessions?: Set<string>;
+	onPinProject?: (projectKey: string) => void;
+	onRenameProject?: (projectKey: string, currentName: string) => void;
+	onDeleteProject?: (projectKey: string, projectName: string) => void;
+	pinnedProjects?: Set<string>;
 	isMobile?: boolean;
 }
 
@@ -101,6 +105,10 @@ function WorkspaceContent({
 	onDeleteSession,
 	onPinSession,
 	pinnedSessions,
+	onPinProject,
+	onRenameProject,
+	onDeleteProject,
+	pinnedProjects,
 	expandedFolders,
 	toggleFolderExpanded,
 }: {
@@ -124,6 +132,10 @@ function WorkspaceContent({
 	onDeleteSession?: (sessionId: string) => void;
 	onPinSession?: (sessionId: string) => void;
 	pinnedSessions?: Set<string>;
+	onPinProject?: (projectKey: string) => void;
+	onRenameProject?: (projectKey: string, currentName: string) => void;
+	onDeleteProject?: (projectKey: string, projectName: string) => void;
+	pinnedProjects?: Set<string>;
 	expandedFolders: Set<string>;
 	toggleFolderExpanded: (key: string) => void;
 }) {
@@ -239,6 +251,7 @@ function WorkspaceContent({
 				const wdSessions = sessionsByWorkdir.get(wd.path) ?? [];
 				const folderKey = `${workspace.id}:${wd.path}`;
 				const isFolderExpanded = expandedFolders.has(folderKey);
+				const isPinnedProject = pinnedProjects?.has(wd.path);
 
 				return (
 					<div
@@ -282,6 +295,9 @@ function WorkspaceContent({
 											)}
 											style={{ color: workspaceColor }}
 										/>
+										{isPinnedProject && (
+											<Pin className="w-3 h-3 flex-shrink-0 text-primary/70" />
+										)}
 										<span
 											className={cn(
 												"font-medium text-foreground truncate",
@@ -347,6 +363,28 @@ function WorkspaceContent({
 									<Copy className="w-4 h-4 mr-2" />
 									{t("common.copyPath", "Copy path")}
 								</ContextMenuItem>
+								{onPinProject && (
+									<ContextMenuItem onClick={() => onPinProject(wd.path)}>
+										<Pin className="w-4 h-4 mr-2" />
+										{isPinnedProject ? t("projects.unpin") : t("projects.pin")}
+									</ContextMenuItem>
+								)}
+								{onRenameProject && (
+									<ContextMenuItem onClick={() => onRenameProject(wd.path, wd.name)}>
+										<Pencil className="w-4 h-4 mr-2" />
+										{t("common.rename")}
+									</ContextMenuItem>
+								)}
+								{(onPinProject || onRenameProject) && onDeleteProject && <ContextMenuSeparator />}
+								{onDeleteProject && (
+									<ContextMenuItem
+										variant="destructive"
+										onClick={() => onDeleteProject(wd.path, wd.name)}
+									>
+										<Trash2 className="w-4 h-4 mr-2" />
+										{t("common.delete")}
+									</ContextMenuItem>
+								)}
 							</ContextMenuContent>
 						</ContextMenu>
 
@@ -521,6 +559,10 @@ export const SidebarSharedWorkspaces = memo(function SidebarSharedWorkspaces({
 	onDeleteSession,
 	onPinSession,
 	pinnedSessions,
+	onPinProject,
+	onRenameProject,
+	onDeleteProject,
+	pinnedProjects,
 	isMobile = false,
 }: SidebarSharedWorkspacesProps) {
 	const { t } = useTranslation();
@@ -740,6 +782,10 @@ export const SidebarSharedWorkspaces = memo(function SidebarSharedWorkspaces({
 								onDeleteSession={onDeleteSession}
 								onPinSession={onPinSession}
 								pinnedSessions={pinnedSessions}
+								onPinProject={onPinProject}
+								onRenameProject={onRenameProject}
+								onDeleteProject={onDeleteProject}
+								pinnedProjects={pinnedProjects}
 								expandedFolders={expandedFolders}
 								toggleFolderExpanded={toggleFolderExpanded}
 							/>

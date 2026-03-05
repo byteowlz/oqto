@@ -1101,6 +1101,10 @@ const AppShell = memo(function AppShell() {
 														onDeleteSession={handleDeleteSession}
 														onPinSession={sidebarState.togglePinSession}
 														pinnedSessions={sidebarState.pinnedSessions}
+														onPinProject={sidebarState.togglePinProject}
+														onRenameProject={sessionDialogs.handleRenameProject}
+														onDeleteProject={sessionDialogs.handleDeleteProject}
+														pinnedProjects={sidebarState.pinnedProjects}
 													/>
 													<div className="w-full px-2 my-1">
 														<div className="h-px w-full bg-sidebar-border/50" />
