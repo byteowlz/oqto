@@ -156,6 +156,7 @@ function WorkspaceContent({
 	const { t } = useTranslation();
 	const [workdirs, setWorkdirs] = useState<SharedWorkspaceWorkdir[]>([]);
 	const [fetchedSessions, setFetchedSessions] = useState<ChatSession[]>([]);
+	const [deletedSessionIds, setDeletedSessionIds] = useState<Set<string>>(new Set());
 	const [loading, setLoading] = useState(true);
 	const [pendingDeleteWorkdir, setPendingDeleteWorkdir] =
 		useState<SharedWorkspaceWorkdir | null>(null);
@@ -164,6 +165,12 @@ function WorkspaceContent({
 	useEffect(() => {
 		let cancelled = false;
 		setLoading(true);
+		const loadingGuard = window.setTimeout(() => {
+			if (!cancelled) {
+				setLoading(false);
+				toast.error("Loading shared workspace projects timed out");
+			}
+		}, 15000);
 
 		Promise.all([
 			listWorkdirs(workspace.id),
@@ -173,8 +180,9 @@ function WorkspaceContent({
 		])
 			.then(([wdData, sessionData]) => {
 				if (!cancelled) {
-					setWorkdirs(wdData);
-					const taggedSessions = sessionData.map((s) => ({
+					setWorkdirs(Array.isArray(wdData) ? wdData : []);
+					const safeSessions = Array.isArray(sessionData) ? sessionData : [];
+					const taggedSessions = safeSessions.map((s) => ({
 						...s,
 						shared_workspace_id: workspace.id,
 					}));
@@ -184,13 +192,20 @@ function WorkspaceContent({
 					setFetchedSessions(taggedSessions);
 				}
 			})
-			.catch(() => {})
+			.catch(() => {
+				if (!cancelled) {
+					setWorkdirs([]);
+					setFetchedSessions([]);
+				}
+			})
 			.finally(() => {
+				window.clearTimeout(loadingGuard);
 				if (!cancelled) setLoading(false);
 			});
 
 		return () => {
 			cancelled = true;
+			window.clearTimeout(loadingGuard);
 		};
 	}, [workspace.id]);
 
@@ -200,9 +215,14 @@ function WorkspaceContent({
 	// this workspace's path.
 	const workspacePath = workspace.path.replace(/\/$/, "");
 	const hstrySessions = useMemo(() => {
-		const byId = new Map(fetchedSessions.map((s) => [s.id, s]));
+		const byId = new Map(
+			fetchedSessions
+				.filter((s) => !deletedSessionIds.has(s.id))
+				.map((s) => [s.id, s]),
+		);
 		// Add optimistic sessions from chatHistory that match this workspace
 		for (const s of chatHistory) {
+			if (deletedSessionIds.has(s.id)) continue;
 			if (byId.has(s.id)) continue;
 			if (s.shared_workspace_id === workspace.id) {
 				byId.set(s.id, s);
@@ -214,7 +234,7 @@ function WorkspaceContent({
 			}
 		}
 		return Array.from(byId.values());
-	}, [fetchedSessions, chatHistory, workspace.id, workspacePath]);
+	}, [fetchedSessions, chatHistory, deletedSessionIds, workspace.id, workspacePath]);
 
 	// Group sessions by workdir path
 	const sessionsByWorkdir = useMemo(() => {
@@ -559,6 +579,11 @@ function WorkspaceContent({
 															variant="destructive"
 															onClick={() => {
 																sharedWorkspaceSessionMap.set(session.id, workspace.id);
+																setDeletedSessionIds((prev) => {
+																	const next = new Set(prev);
+																	next.add(session.id);
+																	return next;
+																});
 																setFetchedSessions((prev) => prev.filter((s) => s.id !== session.id));
 																onDeleteSession(session.id);
 															}}
