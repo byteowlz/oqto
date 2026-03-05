@@ -85,7 +85,7 @@ export interface SidebarSharedWorkspacesProps {
 	onPinProject?: (projectKey: string) => void;
 	onRenameProject?: (projectKey: string, currentName: string) => void;
 	onDeleteProject?: (projectKey: string, projectName: string) => void;
-	pinnedProjects?: Set<string>;
+	pinnedProjects?: Set<string> | string[];
 	isMobile?: boolean;
 }
 
@@ -135,7 +135,7 @@ function WorkspaceContent({
 	onPinProject?: (projectKey: string) => void;
 	onRenameProject?: (projectKey: string, currentName: string) => void;
 	onDeleteProject?: (projectKey: string, projectName: string) => void;
-	pinnedProjects?: Set<string>;
+	pinnedProjects?: Set<string> | string[];
 	expandedFolders: Set<string>;
 	toggleFolderExpanded: (key: string) => void;
 }) {
@@ -157,7 +157,14 @@ function WorkspaceContent({
 			.then(([wdData, sessionData]) => {
 				if (!cancelled) {
 					setWorkdirs(wdData);
-					setFetchedSessions(sessionData);
+					const taggedSessions = sessionData.map((s) => ({
+						...s,
+						shared_workspace_id: workspace.id,
+					}));
+					for (const s of taggedSessions) {
+						sharedWorkspaceSessionMap.set(s.id, workspace.id);
+					}
+					setFetchedSessions(taggedSessions);
 				}
 			})
 			.catch(() => {})
@@ -251,7 +258,9 @@ function WorkspaceContent({
 				const wdSessions = sessionsByWorkdir.get(wd.path) ?? [];
 				const folderKey = `${workspace.id}:${wd.path}`;
 				const isFolderExpanded = expandedFolders.has(folderKey);
-				const isPinnedProject = pinnedProjects?.has(wd.path);
+				const isPinnedProject = Array.isArray(pinnedProjects)
+					? pinnedProjects.includes(wd.path)
+					: pinnedProjects?.has(wd.path);
 
 				return (
 					<div
