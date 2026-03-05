@@ -1,41 +1,35 @@
 {
   "todos": [
     {
-      "id": "v1",
-      "content": "Review all committed changes for correctness",
+      "id": "e1",
+      "content": "Create empty-response-guard Pi extension",
       "status": "completed",
       "priority": "high"
     },
     {
-      "id": "v2",
-      "content": "Find root cause: stale oqto binary + compaction index mismatch",
+      "id": "e2",
+      "content": "Add to admin extension provisioning",
       "status": "completed",
       "priority": "high"
     },
     {
-      "id": "v3",
-      "content": "Rebuild and deploy oqto + runner binaries",
+      "id": "e3",
+      "content": "Deploy to archvm (local)",
       "status": "completed",
       "priority": "high"
     },
     {
-      "id": "v4",
-      "content": "Test dedup flow: client_id reaches hstry for both prompt and steer",
+      "id": "e4",
+      "content": "Deploy to octo-azure (all users)",
       "status": "completed",
       "priority": "high"
     },
     {
-      "id": "v5",
-      "content": "Remove diagnostic logging, commit clean fix",
-      "status": "completed",
-      "priority": "medium"
-    },
-    {
-      "id": "v6",
-      "content": "Store memory about the fix",
-      "status": "completed",
+      "id": "e5",
+      "content": "Commit and push",
+      "status": "in_progress",
       "priority": "medium"
     }
   ],
-  "updated_at": "2026-03-04T19:03:30.219Z"
+  "updated_at": "2026-03-05T09:04:57.400Z"
 }
