@@ -3872,6 +3872,15 @@ impl PiSessionManager {
                 )
                 .await;
 
+            if let Ok(repaired) = reconcile_hstry_with_jsonl_tail(client, hstry_external_id, work_dir).await
+                && repaired > 0
+            {
+                warn!(
+                    "Reconciled {} missing JSONL message(s) into hstry for '{}' after compaction skip",
+                    repaired, hstry_external_id
+                );
+            }
+
             return Ok(());
         }
 
@@ -3958,6 +3967,15 @@ impl PiSessionManager {
                     )
                     .await?;
             }
+        }
+
+        if let Ok(repaired) = reconcile_hstry_with_jsonl_tail(client, hstry_external_id, work_dir).await
+            && repaired > 0
+        {
+            warn!(
+                "Reconciled {} missing JSONL message(s) into hstry for '{}'",
+                repaired, hstry_external_id
+            );
         }
 
         info!(
@@ -4090,6 +4108,42 @@ fn read_jsonl_message_entries(path: PathBuf) -> Result<Vec<JsonlMessageEntry>> {
     Ok(entries)
 }
 
+fn read_jsonl_agent_messages(path: PathBuf) -> Result<Vec<(i32, AgentMessage)>> {
+    use std::io::BufRead;
+
+    let file = std::fs::File::open(&path)
+        .with_context(|| format!("Failed to open Pi session file {}", path.display()))?;
+    let reader = std::io::BufReader::new(file);
+    let mut entries = Vec::new();
+    let mut idx: i32 = 0;
+
+    for line in reader.lines() {
+        let line = line?;
+        if line.trim().is_empty() {
+            continue;
+        }
+
+        let entry: JsonlEntry = match serde_json::from_str(&line) {
+            Ok(parsed) => parsed,
+            Err(err) => {
+                warn!("Failed to parse Pi JSONL entry for reconciliation: {}", err);
+                continue;
+            }
+        };
+
+        if entry.entry_type != "message" {
+            continue;
+        }
+
+        if let Some(message) = entry.message {
+            entries.push((idx, message));
+            idx += 1;
+        }
+    }
+
+    Ok(entries)
+}
+
 fn read_jsonl_session_name(path: PathBuf) -> Result<Option<String>> {
     use std::io::BufRead;
 
@@ -4175,6 +4229,58 @@ async fn fetch_last_hstry_idx(client: &HstryClient, session_id: &str) -> Option<
         Ok(mut messages) => messages.pop().map(|msg| msg.idx),
         Err(_) => None,
     }
+}
+
+async fn reconcile_hstry_with_jsonl_tail(
+    client: &HstryClient,
+    session_id: &str,
+    work_dir: &Path,
+) -> Result<usize> {
+    use crate::hstry::agent_message_to_proto_with_client_id;
+
+    let session_file = match crate::pi::session_files::find_session_file_async(
+        session_id.to_string(),
+        Some(work_dir.to_path_buf()),
+    )
+    .await
+    {
+        Some(path) => path,
+        None => return Ok(0),
+    };
+
+    let jsonl_messages = tokio::task::spawn_blocking(move || read_jsonl_agent_messages(session_file))
+        .await
+        .ok()
+        .and_then(|r| r.ok())
+        .unwrap_or_default();
+
+    if jsonl_messages.is_empty() {
+        return Ok(0);
+    }
+
+    let max_idx = fetch_last_hstry_idx(client, session_id).await.unwrap_or(-1);
+    let missing: Vec<_> = jsonl_messages
+        .into_iter()
+        .filter(|(idx, _)| *idx > max_idx)
+        .collect();
+
+    if missing.is_empty() {
+        return Ok(0);
+    }
+
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+
+    let proto: Vec<_> = missing
+        .iter()
+        .map(|(idx, msg)| agent_message_to_proto_with_client_id(msg, *idx, None))
+        .collect();
+
+    client.append_messages(session_id, proto, Some(now_ms)).await?;
+
+    Ok(missing.len())
 }
 
 async fn resolve_jsonl_session_title(session_id: &str, work_dir: &Path) -> Option<String> {
