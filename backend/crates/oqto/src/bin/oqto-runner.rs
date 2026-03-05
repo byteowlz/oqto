@@ -460,6 +460,27 @@ impl Runner {
         }
     }
 
+    fn request_kind(req: &RunnerRequest) -> String {
+        serde_json::to_value(req)
+            .ok()
+            .and_then(|v| v.get("type").and_then(|t| t.as_str()).map(ToOwned::to_owned))
+            .unwrap_or_else(|| "unknown".to_string())
+    }
+
+    fn request_timeout(req: &RunnerRequest) -> std::time::Duration {
+        match req {
+            // Long-lived stream: handled separately in connection loop.
+            RunnerRequest::PiSubscribe(_) | RunnerRequest::SubscribeStdout(_) => {
+                std::time::Duration::from_secs(300)
+            }
+            // These can legitimately take longer due process startup/teardown.
+            RunnerRequest::PiCreateSession(_)
+            | RunnerRequest::PiDeleteSession(_)
+            | RunnerRequest::PiCloseSession(_) => std::time::Duration::from_secs(20),
+            _ => std::time::Duration::from_secs(10),
+        }
+    }
+
     /// Handle a single request.
     async fn handle_request(&self, req: RunnerRequest) -> RunnerResponse {
         match req {
@@ -3464,7 +3485,26 @@ impl Runner {
                         }
                     }
 
-                    let resp = self.handle_request(req).await;
+                    let timeout = Self::request_timeout(&req);
+                    let kind = Self::request_kind(&req);
+                    let resp = match tokio::time::timeout(timeout, self.handle_request(req)).await {
+                        Ok(resp) => resp,
+                        Err(_) => {
+                            error!(
+                                "runner request timed out: request={} timeout_secs={}",
+                                kind,
+                                timeout.as_secs()
+                            );
+                            error_response(
+                                ErrorCode::Internal,
+                                format!(
+                                    "runner request '{}' timed out after {}s",
+                                    kind,
+                                    timeout.as_secs()
+                                ),
+                            )
+                        }
+                    };
                     let json = serde_json::to_string(&resp).unwrap();
                     if let Err(e) = writer.write_all(format!("{}\n", json).as_bytes()).await {
                         error!("Failed to write response: {}", e);

@@ -1,5 +1,8 @@
 # Changes
 
+- 2026-03-05: Add hard 45s timeout around backend WS command handling to prevent per-connection deadlock when runner requests stall.
+- 2026-03-05: Route shared workspace USERS.md and .pi/context.json regeneration through the workspace runner only (no direct backend filesystem writes).
+- 2026-03-05: Add runner-side per-request timeouts with explicit timeout error responses to prevent hung requests from blocking socket handlers indefinitely.
 - 2026-03-04: Fix shared workspace message duplication by implementing deferred client_id persistence that correctly handles Pi context compaction.
 - 2026-03-04: Add client_id to Steer and FollowUp protocol commands for optimistic message matching in shared workspaces.
 - 2026-03-04: Fix hstry upsert to use COALESCE for client_id, preventing NULL overwrites from concurrent persist tasks.
