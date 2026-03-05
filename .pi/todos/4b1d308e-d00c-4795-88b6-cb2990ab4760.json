@@ -8,14 +8,14 @@
     },
     {
       "id": "f5",
-      "content": "Investigate runner deadlock pattern (pi_create_session hangs indefinitely)",
-      "status": "in_progress",
+      "content": "Investigate runner deadlock - root cause: stale hstry with CPU spin bug + no timeout on gRPC",
+      "status": "completed",
       "priority": "high"
     },
     {
       "id": "f2",
       "content": "Add context menu to workdir folders in shared workspace sidebar",
-      "status": "pending",
+      "status": "in_progress",
       "priority": "medium"
     },
     {
@@ -31,5 +31,5 @@
       "priority": "medium"
     }
   ],
-  "updated_at": "2026-03-05T15:24:35.069Z"
+  "updated_at": "2026-03-05T15:32:05.549Z"
 }

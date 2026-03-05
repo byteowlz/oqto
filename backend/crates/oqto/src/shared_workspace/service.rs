@@ -42,6 +42,8 @@ pub struct SharedWorkspaceService {
     ws_hub: Option<Arc<WsHub>>,
     /// Linux users configuration for shared workspace user creation.
     linux_users: Option<LinuxUsersConfig>,
+    /// Runner socket pattern for routing file writes to shared workspace runners.
+    runner_socket_pattern: Option<String>,
 }
 
 impl std::fmt::Debug for SharedWorkspaceService {
@@ -61,6 +63,7 @@ impl SharedWorkspaceService {
             repo,
             ws_hub: None,
             linux_users: None,
+            runner_socket_pattern: None,
         }
     }
 
@@ -73,6 +76,12 @@ impl SharedWorkspaceService {
     /// Attach Linux user configuration for shared workspace provisioning.
     pub fn with_linux_users(mut self, config: LinuxUsersConfig) -> Self {
         self.linux_users = Some(config);
+        self
+    }
+
+    /// Attach the runner socket pattern for routing file writes.
+    pub fn with_runner_socket_pattern(mut self, pattern: String) -> Self {
+        self.runner_socket_pattern = Some(pattern);
         self
     }
 
@@ -684,48 +693,69 @@ impl SharedWorkspaceService {
 
     /// USERS.md contains team member info. .pi/context.json tells the
     /// custom-context-files Pi extension to auto-load USERS.md into context.
+    ///
+    /// All file writes go through the shared workspace's runner so they
+    /// execute as the correct Linux user with proper ownership.
     pub async fn regenerate_users_md(&self, workspace: &SharedWorkspace) -> Result<()> {
+        let pattern = self
+            .runner_socket_pattern
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("runner socket pattern not configured"))?;
+
+        let runner =
+            crate::runner::client::RunnerClient::for_user_with_pattern(&workspace.linux_user, pattern)
+                .with_context(|| {
+                    format!(
+                        "creating runner client for shared workspace user {}",
+                        workspace.linux_user
+                    )
+                })?;
+
         let members = self.repo.list_members(&workspace.id).await?;
         let users_md = generate_users_md(&workspace.name, &members);
         let context_json = generate_context_json();
 
+        // List workdirs via the runner (reads the filesystem as the correct user)
         let ws_path = std::path::Path::new(&workspace.path);
-        if !ws_path.exists() {
-            tracing::debug!(
-                workspace_id = %workspace.id,
-                path = %workspace.path,
-                "workspace root does not exist yet, skipping USERS.md generation"
-            );
-            return Ok(());
-        }
+        let entries = match runner.list_directory(ws_path, false).await {
+            Ok(resp) => resp.entries,
+            Err(e) => {
+                tracing::debug!(
+                    workspace_id = %workspace.id,
+                    path = %workspace.path,
+                    error = %e,
+                    "cannot list workspace dir via runner, skipping USERS.md generation"
+                );
+                return Ok(());
+            }
+        };
 
         let mut count = 0;
-        for entry in std::fs::read_dir(ws_path)
-            .with_context(|| format!("reading workspace dir {}", workspace.path))?
-        {
-            let entry = entry?;
-            let path = entry.path();
-            if !path.is_dir() {
+        for entry in &entries {
+            if !entry.is_dir {
                 continue;
             }
-            let name = entry.file_name();
-            let name_str = name.to_string_lossy();
+            let name_str = entry.name.as_str();
             // Skip hidden dirs (.pi, .oqto, etc.)
             if name_str.starts_with('.') {
                 continue;
             }
-            // This is a workdir -- write USERS.md
-            let users_md_path = path.join("USERS.md");
-            std::fs::write(&users_md_path, &users_md)
-                .with_context(|| format!("writing {}", users_md_path.display()))?;
 
-            // Write .pi/context.json
-            let pi_dir = path.join(".pi");
-            std::fs::create_dir_all(&pi_dir)
-                .with_context(|| format!("creating {}", pi_dir.display()))?;
-            let context_json_path = pi_dir.join("context.json");
-            std::fs::write(&context_json_path, &context_json)
-                .with_context(|| format!("writing {}", context_json_path.display()))?;
+            let workdir = ws_path.join(name_str);
+
+            // Write USERS.md
+            let users_md_path = workdir.join("USERS.md");
+            runner
+                .write_file(&users_md_path, users_md.as_bytes(), false)
+                .await
+                .with_context(|| format!("writing {} via runner", users_md_path.display()))?;
+
+            // Write .pi/context.json (create_parents ensures .pi/ dir exists)
+            let context_json_path = workdir.join(".pi").join("context.json");
+            runner
+                .write_file(&context_json_path, context_json.as_bytes(), true)
+                .await
+                .with_context(|| format!("writing {} via runner", context_json_path.display()))?;
 
             count += 1;
         }
@@ -734,7 +764,7 @@ impl SharedWorkspaceService {
             workspace_id = %workspace.id,
             workdirs = count,
             members = members.len(),
-            "regenerated USERS.md + .pi/context.json in workdirs"
+            "regenerated USERS.md + .pi/context.json in workdirs via runner"
         );
         Ok(())
     }

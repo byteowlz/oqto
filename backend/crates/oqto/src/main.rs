@@ -2239,6 +2239,9 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     if let Some(config) = linux_users_config {
         sw_service = sw_service.with_linux_users(config);
     }
+    if let Some(ref pattern) = state.runner_socket_pattern {
+        sw_service = sw_service.with_runner_socket_pattern(pattern.clone());
+    }
     state = state.with_shared_workspaces(sw_service);
     info!("Shared workspace service initialized");
 
