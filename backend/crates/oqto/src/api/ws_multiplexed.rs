@@ -916,15 +916,40 @@ async fn handle_multiplexed_ws(socket: WebSocket, state: AppState, user_id: Stri
                                     }
                                 }
 
-                                let rc_guard = runner_client.lock().await;
-                                let response = handle_ws_command(
-                                    cmd,
-                                    &user_id,
-                                    &state,
-                                    rc_guard.as_ref(),
-                                    conn_state.clone(),
+                                // Clone the runner client ref so we don't
+                                // hold the Mutex across the entire handler.
+                                let rc_snapshot = {
+                                    let guard = runner_client.lock().await;
+                                    guard.clone()
+                                };
+
+                                // Hard deadline on the whole command handler.
+                                // Prevents a single stuck command from blocking
+                                // all subsequent WS messages for this connection.
+                                const WS_COMMAND_TIMEOUT: Duration = Duration::from_secs(45);
+                                let response = match tokio::time::timeout(
+                                    WS_COMMAND_TIMEOUT,
+                                    handle_ws_command(
+                                        cmd,
+                                        &user_id,
+                                        &state,
+                                        rc_snapshot.as_ref(),
+                                        conn_state.clone(),
+                                    ),
                                 )
-                                .await;
+                                .await
+                                {
+                                    Ok(resp) => resp,
+                                    Err(_) => {
+                                        error!(
+                                            "WS command timed out after {:?} for user {}",
+                                            WS_COMMAND_TIMEOUT, user_id
+                                        );
+                                        Some(WsEvent::System(SystemWsEvent::Error {
+                                            error: "Command timed out".to_string(),
+                                        }))
+                                    }
+                                };
 
                                 if let Some(event) = response {
                                     debug!("Sending WS event to client: {:?}", event);
