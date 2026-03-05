@@ -367,7 +367,11 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 		async (sessionId: string) => {
 			try {
 				const swId = sharedWorkspaceSessionMap.get(sessionId);
-				const history = await getChatMessages(sessionId, swId);
+				const history = await getChatMessages(
+					sessionId,
+					swId,
+					normalizedWorkspacePath,
+				);
 
 				// Guard: after the async fetch, verify the session is still
 				// active. If the user switched sessions while the request was
@@ -412,7 +416,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 				}
 			}
 		},
-		[mergeServerMessages, normalizeMessages],
+		[mergeServerMessages, normalizeMessages, normalizedWorkspacePath],
 	);
 
 	// ========================================================================
