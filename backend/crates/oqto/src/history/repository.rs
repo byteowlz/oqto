@@ -178,9 +178,22 @@ pub async fn get_session_from_hstry(
     let pool = open_hstry_pool(db_path).await?;
     let row = sqlx::query(
         r#"
-        SELECT id, external_id, platform_id, readable_id, title, created_at, updated_at, workspace, model, provider
-        FROM conversations
-        WHERE external_id = ? OR platform_id = ? OR readable_id = ? OR id = ?
+        SELECT
+            c.id,
+            c.external_id,
+            c.platform_id,
+            c.readable_id,
+            c.title,
+            c.created_at,
+            c.updated_at,
+            c.workspace,
+            c.model,
+            c.provider
+        FROM conversations c
+        LEFT JOIN messages m ON m.conversation_id = c.id
+        WHERE c.external_id = ? OR c.platform_id = ? OR c.readable_id = ? OR c.id = ?
+        GROUP BY c.id
+        ORDER BY COUNT(m.id) DESC, COALESCE(c.updated_at, c.created_at) DESC
         LIMIT 1
         "#,
     )
@@ -239,9 +252,12 @@ pub async fn get_session_messages_from_hstry(
     let pool = open_hstry_pool(db_path).await?;
     let conversation_row = sqlx::query(
         r#"
-        SELECT id
-        FROM conversations
-        WHERE external_id = ? OR platform_id = ? OR readable_id = ? OR id = ?
+        SELECT c.id
+        FROM conversations c
+        LEFT JOIN messages m ON m.conversation_id = c.id
+        WHERE c.external_id = ? OR c.platform_id = ? OR c.readable_id = ? OR c.id = ?
+        GROUP BY c.id
+        ORDER BY COUNT(m.id) DESC, COALESCE(c.updated_at, c.created_at) DESC
         LIMIT 1
         "#,
     )
