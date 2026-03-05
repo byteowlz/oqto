@@ -3815,13 +3815,38 @@ impl PiSessionManager {
         let skip_messages = if let Some(max_idx) = existing_max_idx {
             let existing_count = (max_idx + 1) as usize;
             if messages.len() < existing_count {
-                info!(
-                    "Skipping hstry message persist: Pi has {} messages but hstry already has {} \
-                     (context compaction detected). Updating metadata only.",
-                    messages.len(),
-                    existing_count,
-                );
-                true
+                // Compaction can reduce Pi's in-memory message window, but the
+                // current window may still contain *new* messages that have not
+                // been persisted yet (e.g. final assistant reply after tool use).
+                // If JSONL index mapping shows any message idx beyond current
+                // hstry max_idx, we must persist instead of skipping.
+                let has_newer_jsonl_idx = jsonl_indices
+                    .as_ref()
+                    .map(|indices| {
+                        indices
+                            .iter()
+                            .flatten()
+                            .any(|idx| *idx > max_idx)
+                    })
+                    .unwrap_or(false);
+
+                if has_newer_jsonl_idx {
+                    info!(
+                        "Compacted Pi window detected ({} < {}) but found JSONL idx newer than hstry max_idx={} — persisting messages.",
+                        messages.len(),
+                        existing_count,
+                        max_idx,
+                    );
+                    false
+                } else {
+                    info!(
+                        "Skipping hstry message persist: Pi has {} messages but hstry already has {} \
+                         (context compaction detected, no newer JSONL idx). Updating metadata only.",
+                        messages.len(),
+                        existing_count,
+                    );
+                    true
+                }
             } else {
                 false
             }
