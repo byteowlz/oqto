@@ -600,6 +600,21 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 		(sessionId: string, workspacePath?: string, sharedWorkspaceId?: string, existingSession?: ChatSession) => {
 			const optimisticId = sessionId;
 			if (optimisticChatSessionsRef.current.has(optimisticId)) {
+				if (existingSession) {
+					const mergedExisting: ChatSession = {
+						...existingSession,
+						shared_workspace_id:
+							sharedWorkspaceId ?? existingSession.shared_workspace_id ?? null,
+					};
+					optimisticChatSessionsRef.current.set(optimisticId, mergedExisting);
+					startTransition(() => {
+						setChatHistory((prev) =>
+							prev.map((s) =>
+								s.id === optimisticId ? { ...s, ...mergedExisting } : s,
+							),
+						);
+					});
+				}
 				return optimisticId;
 			}
 			const resolvedPath = normalizeWorkspacePath(workspacePath);
@@ -647,11 +662,20 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 			optimisticSelectionRef.current.set(optimisticId, selectedChatSessionId);
 			startTransition(() => {
 				setChatHistory((prev) => {
-					// If the session already exists, update it in-place
+					// If the session already exists, update it in-place without
+					// clobbering existing title/readable_id metadata.
 					const idx = prev.findIndex((s) => s.id === optimisticId);
 					if (idx >= 0) {
+						const current = prev[idx];
+						const safeSession = existingSession
+							? session
+							: {
+									...session,
+									title: current.title ?? session.title,
+									readable_id: current.readable_id ?? session.readable_id,
+								};
 						const updated = [...prev];
-						updated[idx] = session;
+						updated[idx] = { ...current, ...safeSession };
 						return updated;
 					}
 					return [session, ...prev];
