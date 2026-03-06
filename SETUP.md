@@ -443,19 +443,23 @@ scripts/migrate-linux-user.sh --target-user octo_wismut
 ```bash
 # Install
 ~/.config/systemd/user/oqto.service
+~/.config/systemd/user/oqto-healthcheck.service
+~/.config/systemd/user/oqto-healthcheck.timer
 
 # Enable and start
-systemctl --user enable --now oqto
+systemctl --user enable --now oqto oqto-healthcheck.timer
 
 # Check status
-systemctl --user status oqto
-journalctl --user -u oqto -f
+systemctl --user status oqto oqto-healthcheck.timer
+journalctl --user -u oqto -u oqto-healthcheck.service -f
 ```
 
 **Multi-user (system-level service)**:
 ```bash
 # Install system service
 cp oqto.service /etc/systemd/system/
+cp oqto-healthcheck.service /etc/systemd/system/
+cp oqto-healthcheck.timer /etc/systemd/system/
 
 # Install per-user runner template
 cp oqto-runner.service /etc/systemd/user/
@@ -468,7 +472,7 @@ mkdir -p /var/lib/oqto /etc/oqto /run/oqto
 chown oqto:oqto /var/lib/oqto /run/oqto
 
 # Enable and start
-systemctl enable --now oqto
+systemctl enable --now oqto oqto-healthcheck.timer
 
 # Oqto will attempt to enable lingering and start `oqto-runner` automatically
 # when creating Linux users (when `local.linux_users.enabled=true`).

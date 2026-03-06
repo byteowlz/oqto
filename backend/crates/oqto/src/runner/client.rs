@@ -734,6 +734,15 @@ impl RunnerClient {
         self.pi_switch_session(session_id, session_path).await
     }
 
+    /// Start a new session (optionally from a parent session).
+    pub async fn agent_new_session(
+        &self,
+        session_id: &str,
+        parent_session: Option<&str>,
+    ) -> Result<()> {
+        self.pi_new_session(session_id, parent_session).await
+    }
+
     /// Send a prompt message.
     pub async fn agent_prompt(
         &self,
@@ -812,8 +821,17 @@ impl RunnerClient {
     }
 
     /// Get available slash commands/capabilities.
-    pub async fn agent_get_commands(&self, session_id: &str) -> Result<PiCommandsResponse> {
-        self.pi_get_commands(session_id).await
+    pub async fn agent_get_commands(&self, session_id: &str) -> Result<AgentCommandsResponse> {
+        self.fetch_agent_commands(session_id).await
+    }
+
+    /// Get available models for the current workdir context.
+    pub async fn agent_get_available_models(
+        &self,
+        session_id: &str,
+        workdir: Option<&str>,
+    ) -> Result<PiAvailableModelsResponse> {
+        self.pi_get_available_models(session_id, workdir).await
     }
 
     /// Get available fork points/messages.
@@ -846,6 +864,11 @@ impl RunnerClient {
         self.pi_cycle_thinking_level(session_id).await
     }
 
+    /// Run compaction.
+    pub async fn agent_compact(&self, session_id: &str, instructions: Option<&str>) -> Result<()> {
+        self.pi_compact(session_id, instructions).await
+    }
+
     /// Toggle auto-compaction.
     pub async fn agent_set_auto_compaction(&self, session_id: &str, enabled: bool) -> Result<()> {
         self.pi_set_auto_compaction(session_id, enabled).await
@@ -859,6 +882,19 @@ impl RunnerClient {
     /// Abort retry.
     pub async fn agent_abort_retry(&self, session_id: &str) -> Result<()> {
         self.pi_abort_retry(session_id).await
+    }
+
+    /// Send response to an extension UI prompt.
+    pub async fn agent_extension_ui_response(
+        &self,
+        session_id: &str,
+        request_id: &str,
+        value: Option<&str>,
+        confirmed: Option<bool>,
+        cancelled: Option<bool>,
+    ) -> Result<()> {
+        self.pi_extension_ui_response(session_id, request_id, value, confirmed, cancelled)
+            .await
     }
 
     /// Fork from an entry id.
@@ -1409,15 +1445,24 @@ impl RunnerClient {
     }
 
     /// Get available commands (extensions, templates, skills).
-    pub async fn pi_get_commands(&self, session_id: &str) -> Result<PiCommandsResponse> {
-        let req = RunnerRequest::PiGetCommands(PiGetCommandsRequest {
+    pub async fn fetch_agent_commands(&self, session_id: &str) -> Result<AgentCommandsResponse> {
+        let req = RunnerRequest::AgentGetCommands(AgentGetCommandsRequest {
             session_id: session_id.to_string(),
         });
 
         let resp = self.request(&req).await?;
         match resp {
-            RunnerResponse::PiCommands(r) => Ok(r),
-            _ => anyhow::bail!("unexpected response to pi_get_commands"),
+            RunnerResponse::AgentCommands(r) => Ok(r),
+            _ => anyhow::bail!("unexpected response to fetch_agent_commands"),
+        }
+    }
+
+    /// Query runner-advertised capabilities.
+    pub async fn get_capabilities(&self) -> Result<RunnerCapabilitiesResponse> {
+        let resp = self.request(&RunnerRequest::GetCapabilities).await?;
+        match resp {
+            RunnerResponse::RunnerCapabilities(r) => Ok(r),
+            _ => anyhow::bail!("unexpected response to get_capabilities"),
         }
     }
 

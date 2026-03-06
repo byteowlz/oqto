@@ -1,0 +1,17 @@
+# Oqto health watchdog timer
+#
+# Runs oqto-healthcheck.service every 30s to auto-recover from hung but
+# still-running backend processes.
+
+[Unit]
+Description=Run Oqto health watchdog every 30s
+
+[Timer]
+OnBootSec=45
+OnUnitActiveSec=30
+AccuracySec=5
+RandomizedDelaySec=3
+Unit=oqto-healthcheck.service
+
+[Install]
+WantedBy=timers.target

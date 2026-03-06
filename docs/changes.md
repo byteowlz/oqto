@@ -1,5 +1,11 @@
 # Changes
 
+- 2026-03-06: Add oqto health watchdog services/timers in setup for single-user and multi-user installs (`oqto-healthcheck.timer`) so fresh installs auto-recover hung-but-running backends.
+- 2026-03-06: Rename runner command-discovery protocol from Pi-specific to harness-agnostic (`AgentGetCommands`, `AgentCommandInfo`, `AgentCommandsResponse`) and keep backend dispatch on `agent_*` APIs.
+- 2026-03-06: Add runner capability advertisement RPC (`GetCapabilities` -> `RunnerCapabilitiesResponse`) with harness list + feature flags for future backend negotiation.
+- 2026-03-06: Fix mux hang under ws churn by reworking `WsHub` connection tracking to stable connection IDs and non-blocking `try_send` fanout; avoid awaiting on per-connection channels in hot paths and cleanly prune closed connections.
+- 2026-03-06: Complete WS mux backend dispatch migration to `agent_*` runner client methods (including new_session, compact, available_models, extension_ui_response); no direct `pi_*` calls remain in `ws_multiplexed`.
+- 2026-03-06: Remove legacy hub session subscribe/unsubscribe coupling from agent WS lifecycle; canonical agent stream remains runner-driven.
 - 2026-03-06: Add backend-facing `agent_*` runner client API and route WS mux agent commands through it, reducing direct Pi-specific coupling in backend dispatch code.
 - 2026-03-06: Remove legacy session-channel event conversion in multiplexed WS; only canonical agent events and system events are forwarded, with shared_workspace updates mapped directly to system events.
 - 2026-03-06: Fix runner session close lock ordering in Pi session manager by avoiding awaits while holding the sessions RwLock, preventing session.create hangs after rapid create/prompt/delete cycles.

@@ -42,6 +42,12 @@ setup.sh must correctly provision everything for a new platform user on a fresh 
 ...
 
 
+### [oqto-hnbb] session.create deadlock under mock-provider stress after first create/delete cycle (P1, bug)
+
+### [oqto-ae9d] Backend runner router: target-based runner resolution with session affinity groundwork (P1, epic)
+
+### [oqto-9mtk] Shared workspace history appears partially lost in UI while data exists in hstry/API (P1, bug)
+
 ### [oqto-14b1.3] Frontend: ServeView iframe panel with hot reload (P1, task)
 New view in the session screen alongside chat, files, terminal, browser.
 
@@ -1876,6 +1882,6 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
 - [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
 - [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
 - [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )

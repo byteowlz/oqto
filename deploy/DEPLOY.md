@@ -118,3 +118,24 @@ just deploy-host octo-azure --skip-frontend
 - `remote-build` available for compilation (build server)
 - `bun` installed for frontend builds
 - `rsync` available for frontend deployment to remote hosts
+
+## Post-Deploy Watchdog Verification
+
+After deploy/restart, verify the health watchdog is active so hung-but-running
+`oqto` processes are auto-recovered.
+
+### Multi-user (system service)
+
+```bash
+ssh <host> 'systemctl is-active oqto oqto-healthcheck.timer'
+ssh <host> 'systemctl status oqto-healthcheck.timer --no-pager -l | sed -n "1,40p"'
+```
+
+### Single-user (user service)
+
+```bash
+systemctl --user is-active oqto oqto-healthcheck.timer
+systemctl --user status oqto-healthcheck.timer --no-pager -l | sed -n '1,40p'
+```
+
+Expected: both `oqto` and `oqto-healthcheck.timer` report `active`.

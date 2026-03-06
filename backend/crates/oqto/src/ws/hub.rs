@@ -2,7 +2,8 @@
 
 use dashmap::DashMap;
 use log::{info, warn};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::sync::{broadcast, mpsc};
 
 use super::types::WsEvent;
@@ -23,8 +24,11 @@ pub type WsSender = mpsc::Sender<WsEvent>;
 /// - Managing session subscriptions (which sessions a user is watching)
 /// - Broadcasting events to subscribed users
 pub struct WsHub {
-    /// User ID -> list of their WebSocket senders
-    connections: DashMap<String, Vec<WsSender>>,
+    /// User ID -> connection_id -> WebSocket sender
+    connections: DashMap<String, HashMap<usize, WsSender>>,
+
+    /// Monotonic connection ID allocator.
+    next_connection_id: AtomicUsize,
 
     /// Session ID -> set of subscribed user IDs
     session_subscribers: DashMap<String, HashSet<String>>,
@@ -39,6 +43,7 @@ impl WsHub {
         let (event_tx, _) = broadcast::channel(EVENT_BUFFER_SIZE);
         Self {
             connections: DashMap::new(),
+            next_connection_id: AtomicUsize::new(0),
             session_subscribers: DashMap::new(),
             event_tx,
         }
@@ -49,9 +54,9 @@ impl WsHub {
     /// Returns a receiver for events targeted at this connection and the connection ID.
     pub fn register_connection(&self, user_id: &str) -> (mpsc::Receiver<WsEvent>, usize) {
         let (tx, rx) = mpsc::channel(CONNECTION_BUFFER_SIZE);
+        let conn_id = self.next_connection_id.fetch_add(1, Ordering::Relaxed);
         let mut conns = self.connections.entry(user_id.to_string()).or_default();
-        let conn_id = conns.len();
-        conns.push(tx);
+        conns.insert(conn_id, tx);
         info!(
             "Registered WebSocket connection {} for user {}",
             conn_id, user_id
@@ -61,18 +66,20 @@ impl WsHub {
 
     /// Unregister a WebSocket connection.
     pub fn unregister_connection(&self, user_id: &str, conn_id: usize) {
+        let mut remove_user_entry = false;
         if let Some(mut conns) = self.connections.get_mut(user_id)
-            && conn_id < conns.len()
+            && conns.remove(&conn_id).is_some()
         {
-            conns.remove(conn_id);
             info!(
                 "Unregistered WebSocket connection {} for user {}",
                 conn_id, user_id
             );
+            remove_user_entry = conns.is_empty();
         }
 
-        // Clean up empty entries
-        self.connections.retain(|_, v| !v.is_empty());
+        if remove_user_entry {
+            self.connections.remove(user_id);
+        }
     }
 
     /// Subscribe a user to a session's events.
@@ -102,12 +109,34 @@ impl WsHub {
 
     /// Send an event to all connections of a specific user.
     pub async fn send_to_user(&self, user_id: &str, event: WsEvent) {
-        if let Some(conns) = self.connections.get(user_id) {
-            for (i, tx) in conns.iter().enumerate() {
-                if tx.send(event.clone()).await.is_err() {
-                    warn!("Failed to send event to user {} connection {}", user_id, i);
+        let mut remove_user_entry = false;
+        if let Some(mut conns) = self.connections.get_mut(user_id) {
+            let mut closed_ids = Vec::new();
+            for (conn_id, tx) in conns.iter() {
+                match tx.try_send(event.clone()) {
+                    Ok(()) => {}
+                    Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                        closed_ids.push(*conn_id);
+                    }
+                    Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                        // Never block hot paths on slow/disconnected websocket clients.
+                        // Dropping this event is preferable to stalling command handling.
+                        warn!(
+                            "Dropping event for user {} connection {}: send buffer full",
+                            user_id, conn_id
+                        );
+                    }
                 }
             }
+
+            for conn_id in closed_ids {
+                conns.remove(&conn_id);
+            }
+            remove_user_entry = conns.is_empty();
+        }
+
+        if remove_user_entry {
+            self.connections.remove(user_id);
         }
     }
 

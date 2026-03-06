@@ -1042,10 +1042,7 @@ async fn handle_multiplexed_ws(socket: WebSocket, state: AppState, user_id: Stri
         }
     }
 
-    // Unsubscribe user from all legacy session subscriptions.
-    for session_id in hub.user_subscriptions(&user_id) {
-        hub.unsubscribe_session(&user_id, &session_id);
-    }
+    // Unregister this connection from the legacy hub.
     hub.unregister_connection(&user_id, hub_conn_id);
 
     info!("Multiplexed WebSocket closed for user {}", user_id);
@@ -1668,9 +1665,6 @@ async fn handle_agent_command(
                     if !state_guard.pi_subscriptions.contains(&session_id) {
                         state_guard.subscribed_sessions.insert(session_id.clone());
                         state_guard.pi_subscriptions.insert(session_id.clone());
-                        // Subscribe to hub session events so other users'
-                        // messages are forwarded to this connection.
-                        state.ws_hub.subscribe_session(user_id, &session_id);
                         let event_tx = state_guard.event_tx.clone();
                         let runner = runner.clone();
                         let sid = session_id.clone();
@@ -1745,7 +1739,6 @@ async fn handle_agent_command(
                 handle.abort();
             }
             drop(state_guard);
-            state.ws_hub.unsubscribe_session(user_id, &session_id);
 
             match runner.agent_close_session(&session_id).await {
                 Ok(()) => Some(agent_response(&session_id, id, "session.close", Ok(None))),
@@ -1771,7 +1764,6 @@ async fn handle_agent_command(
                 handle.abort();
             }
             drop(state_guard);
-            state.ws_hub.unsubscribe_session(user_id, &session_id);
 
             match runner.agent_delete_session(&session_id).await {
                 Ok(()) => {
@@ -1794,7 +1786,7 @@ async fn handle_agent_command(
                 user_id, session_id
             );
             match runner
-                .pi_new_session(&session_id, parent_session.as_deref())
+                .agent_new_session(&session_id, parent_session.as_deref())
                 .await
             {
                 Ok(()) => Some(agent_response(
@@ -1967,7 +1959,7 @@ async fn handle_agent_command(
                 user_id, session_id, request_id
             );
             match runner
-                .pi_extension_ui_response(
+                .agent_extension_ui_response(
                     &session_id,
                     &request_id,
                     value.as_deref(),
@@ -2054,7 +2046,7 @@ async fn handle_agent_command(
                 user_id, session_id, workdir
             );
             match runner
-                .pi_get_available_models(&session_id, workdir.as_deref())
+                .agent_get_available_models(&session_id, workdir.as_deref())
                 .await
             {
                 Ok(resp) => Some(agent_response(
@@ -2334,7 +2326,7 @@ async fn handle_agent_command(
         CommandPayload::Compact { instructions } => {
             info!("agent compact: user={}, session_id={}", user_id, session_id);
             match runner
-                .pi_compact(&session_id, instructions.as_deref())
+                .agent_compact(&session_id, instructions.as_deref())
                 .await
             {
                 Ok(()) => None, // Compaction events stream via subscription

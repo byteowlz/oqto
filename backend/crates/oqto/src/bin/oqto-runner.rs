@@ -485,6 +485,7 @@ impl Runner {
     async fn handle_request(&self, req: RunnerRequest) -> RunnerResponse {
         match req {
             RunnerRequest::Ping => RunnerResponse::Pong,
+            RunnerRequest::GetCapabilities => self.get_capabilities().await,
 
             RunnerRequest::Shutdown => {
                 info!("Shutdown requested");
@@ -625,7 +626,7 @@ impl Runner {
             RunnerRequest::PiExportHtml(r) => self.pi_export_html(r).await,
 
             // Commands/Skills
-            RunnerRequest::PiGetCommands(r) => self.pi_get_commands(r).await,
+            RunnerRequest::AgentGetCommands(r) => self.agent_get_commands(r).await,
 
             // Bash
             RunnerRequest::PiBash(r) => self.pi_bash(r).await,
@@ -3142,14 +3143,27 @@ impl Runner {
         }
     }
 
+    /// Return runner-advertised capabilities for backend negotiation.
+    async fn get_capabilities(&self) -> RunnerResponse {
+        RunnerResponse::RunnerCapabilities(RunnerCapabilitiesResponse {
+            harnesses: vec!["pi".to_string()],
+            features: RunnerFeatureFlags {
+                command_discovery: true,
+                model_discovery: true,
+                fork: true,
+                extension_ui: true,
+            },
+        })
+    }
+
     /// Get available commands.
-    async fn pi_get_commands(&self, req: PiGetCommandsRequest) -> RunnerResponse {
-        debug!("pi_get_commands: session_id={}", req.session_id);
+    async fn agent_get_commands(&self, req: AgentGetCommandsRequest) -> RunnerResponse {
+        debug!("agent_get_commands: session_id={}", req.session_id);
 
         match self.pi_manager.get_commands(&req.session_id).await {
             Ok(commands) => {
-                // Parse JSON response to typed PiCommandInfo vec
-                let commands_vec: Vec<PiCommandInfo> = commands
+                // Parse JSON response to typed AgentCommandInfo vec
+                let commands_vec: Vec<AgentCommandInfo> = commands
                     .as_array()
                     .map(|arr| {
                         arr.iter()
@@ -3157,7 +3171,7 @@ impl Runner {
                             .collect()
                     })
                     .unwrap_or_default();
-                RunnerResponse::PiCommands(PiCommandsResponse {
+                RunnerResponse::AgentCommands(AgentCommandsResponse {
                     session_id: req.session_id,
                     commands: commands_vec,
                 })

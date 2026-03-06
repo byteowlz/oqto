@@ -149,6 +149,39 @@ EOF
 
     log_success "Service file created: $service_file"
 
+    # oqto health watchdog (user-level): periodically checks /api/health and
+    # restarts oqto if it becomes unresponsive while still running.
+    local health_service="$service_dir/oqto-healthcheck.service"
+    cat >"$health_service" <<EOF
+[Unit]
+Description=Oqto health watchdog
+After=oqto.service
+Wants=oqto.service
+
+[Service]
+Type=oneshot
+Environment=PATH=%h/.bun/bin:%h/.cargo/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/env bash -lc 'if ! curl -fsS --max-time 5 http://127.0.0.1:8080/api/health >/dev/null; then echo "[oqto-healthcheck] health failed, restarting oqto"; systemctl --user restart oqto; fi'
+EOF
+
+    local health_timer="$service_dir/oqto-healthcheck.timer"
+    cat >"$health_timer" <<EOF
+[Unit]
+Description=Run Oqto health watchdog every 30s
+
+[Timer]
+OnBootSec=45
+OnUnitActiveSec=30
+AccuracySec=5
+RandomizedDelaySec=3
+Unit=oqto-healthcheck.service
+
+[Install]
+WantedBy=timers.target
+EOF
+
+    log_success "Health watchdog created: $health_service + $health_timer"
+
     # Export PLAYWRIGHT_BROWSERS_PATH in shell profile so all tools
     # (slidev, playwright CLI, agent browser, etc.) find the same browsers.
     local pw_path="${PW_BROWSERS_DIR:-$HOME/.local/share/playwright-browsers}"
@@ -169,19 +202,20 @@ EOF
 
     if confirm "Enable and start services now?"; then
       systemctl --user daemon-reload
-      systemctl --user enable hstry mmry oqto-runner oqto
+      systemctl --user enable hstry mmry oqto-runner oqto oqto-healthcheck.timer
       systemctl --user start hstry mmry
       sleep 2
       systemctl --user start oqto-runner
       sleep 2
       systemctl --user start oqto
+      systemctl --user start oqto-healthcheck.timer
       log_success "Services enabled and started"
-      log_info "Check status with: systemctl --user status hstry mmry oqto-runner oqto"
-      log_info "View logs with: journalctl --user -u oqto -f"
+      log_info "Check status with: systemctl --user status hstry mmry oqto-runner oqto oqto-healthcheck.timer"
+      log_info "View logs with: journalctl --user -u oqto -u oqto-healthcheck.service -f"
     else
       log_info "To enable manually:"
       log_info "  systemctl --user daemon-reload"
-      log_info "  systemctl --user enable --now oqto-runner oqto"
+      log_info "  systemctl --user enable --now oqto-runner oqto oqto-healthcheck.timer"
     fi
   else
     # System-level service (requires sudo)
@@ -266,6 +300,38 @@ EOF
 
     log_success "Service file created: $service_file"
 
+    # oqto health watchdog (system-level): periodically checks /api/health and
+    # restarts oqto if it becomes unresponsive while still running.
+    local health_service_file="/etc/systemd/system/oqto-healthcheck.service"
+    sudo tee "$health_service_file" >/dev/null <<EOF
+[Unit]
+Description=Oqto health watchdog
+After=oqto.service
+Wants=oqto.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/env bash -lc 'if ! curl -fsS --max-time 5 http://127.0.0.1:8080/api/health >/dev/null; then echo "[oqto-healthcheck] health failed, restarting oqto"; systemctl restart oqto; fi'
+EOF
+
+    local health_timer_file="/etc/systemd/system/oqto-healthcheck.timer"
+    sudo tee "$health_timer_file" >/dev/null <<EOF
+[Unit]
+Description=Run Oqto health watchdog every 30s
+
+[Timer]
+OnBootSec=45
+OnUnitActiveSec=30
+AccuracySec=5
+RandomizedDelaySec=3
+Unit=oqto-healthcheck.service
+
+[Install]
+WantedBy=timers.target
+EOF
+
+    log_success "Health watchdog created: $health_service_file + $health_timer_file"
+
     # Install oqto-usermgr service (privileged user management daemon)
     install_usermgr_service
 
@@ -277,11 +343,12 @@ EOF
 
     if confirm "Enable and start the service now?"; then
       sudo systemctl daemon-reload
-      sudo systemctl enable oqto
+      sudo systemctl enable oqto oqto-healthcheck.timer
       sudo systemctl start oqto
+      sudo systemctl start oqto-healthcheck.timer
       log_success "Service enabled and started"
-      log_info "Check status with: sudo systemctl status oqto"
-      log_info "View logs with: sudo journalctl -u oqto -f"
+      log_info "Check status with: sudo systemctl status oqto oqto-healthcheck.timer"
+      log_info "View logs with: sudo journalctl -u oqto -u oqto-healthcheck.service -f"
     fi
   fi
 }

@@ -63,6 +63,9 @@ pub enum RunnerRequest {
     /// Health check.
     Ping,
 
+    /// Get runner capabilities (harnesses + supported feature surface).
+    GetCapabilities,
+
     /// Shutdown the runner gracefully.
     Shutdown,
 
@@ -258,10 +261,10 @@ pub enum RunnerRequest {
     PiExportHtml(PiExportHtmlRequest),
 
     // ========================================================================
-    // Pi Commands/Skills
+    // Agent Commands/Skills (harness-adapted)
     // ========================================================================
     /// Get available commands (extensions, templates, skills).
-    PiGetCommands(PiGetCommandsRequest),
+    AgentGetCommands(AgentGetCommandsRequest),
 
     // ========================================================================
     // Pi Bash
@@ -315,6 +318,9 @@ pub enum RunnerResponse {
 
     /// Pong response to ping.
     Pong,
+
+    /// Runner capabilities.
+    RunnerCapabilities(RunnerCapabilitiesResponse),
 
     /// Shutdown acknowledged.
     ShuttingDown,
@@ -456,8 +462,8 @@ pub enum RunnerResponse {
     /// Pi fork result response.
     PiForkResult(PiForkResultResponse),
 
-    /// Pi commands response.
-    PiCommands(PiCommandsResponse),
+    /// Agent commands response.
+    AgentCommands(AgentCommandsResponse),
 
     /// Pi bash result response.
     PiBashResult(PiBashResultResponse),
@@ -1080,7 +1086,7 @@ pub struct PiExportHtmlRequest {
 
 /// Request to get available commands.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PiGetCommandsRequest {
+pub struct AgentGetCommandsRequest {
     /// Session ID.
     pub session_id: String,
 }
@@ -1221,6 +1227,28 @@ pub struct StdoutEndResponse {
     pub id: String,
     /// Exit code if process exited.
     pub exit_code: Option<i32>,
+}
+
+/// Capability surface advertised by the runner.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunnerCapabilitiesResponse {
+    /// Harnesses supported by this runner (e.g. ["pi"]).
+    pub harnesses: Vec<String>,
+    /// Generic features supported by this runner transport.
+    pub features: RunnerFeatureFlags,
+}
+
+/// Feature flags for runner capability negotiation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunnerFeatureFlags {
+    /// Whether command discovery is supported via AgentGetCommands.
+    pub command_discovery: bool,
+    /// Whether model discovery is supported.
+    pub model_discovery: bool,
+    /// Whether forking is supported.
+    pub fork: bool,
+    /// Whether extension UI roundtrips are supported.
+    pub extension_ui: bool,
 }
 
 // ============================================================================
@@ -1786,7 +1814,7 @@ pub struct PiForkResultResponse {
 
 /// Command info (extension, template, or skill).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PiCommandInfo {
+pub struct AgentCommandInfo {
     /// Command name (invoke with /name).
     pub name: String,
     /// Human-readable description.
@@ -1804,11 +1832,11 @@ pub struct PiCommandInfo {
 
 /// Response with available commands.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PiCommandsResponse {
+pub struct AgentCommandsResponse {
     /// Session ID.
     pub session_id: String,
     /// Available commands.
-    pub commands: Vec<PiCommandInfo>,
+    pub commands: Vec<AgentCommandInfo>,
 }
 
 /// Response with bash execution result.

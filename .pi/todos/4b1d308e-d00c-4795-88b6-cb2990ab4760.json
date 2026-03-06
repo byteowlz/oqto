@@ -1,41 +1,29 @@
 {
   "todos": [
     {
-      "id": "f1",
-      "content": "Fix empty text content parts causing Kimi-K2.5 422 errors in EAVS",
+      "id": "fe8de303",
+      "content": "Run pre-release validation tests",
       "status": "completed",
       "priority": "high"
     },
     {
-      "id": "f5",
-      "content": "Investigate runner deadlock - root cause: stale hstry with CPU spin bug + no timeout on gRPC",
-      "status": "completed",
-      "priority": "high"
-    },
-    {
-      "id": "f6",
-      "content": "Fix USERS.md writes via runner (not direct filesystem)",
-      "status": "completed",
-      "priority": "high"
-    },
-    {
-      "id": "f2",
-      "content": "Add context menu to workdir folders in shared workspace sidebar",
+      "id": "944cd4ef",
+      "content": "Commit pending changes",
       "status": "in_progress",
-      "priority": "medium"
+      "priority": "high"
     },
     {
-      "id": "f3",
-      "content": "Fix shared session delete routing to correct runner",
+      "id": "e77845a2",
+      "content": "Bump version, create release commit and tag",
       "status": "pending",
-      "priority": "medium"
+      "priority": "high"
     },
     {
-      "id": "f4",
-      "content": "Deploy and test frontend changes",
+      "id": "68ec907e",
+      "content": "Report release result",
       "status": "pending",
       "priority": "medium"
     }
   ],
-  "updated_at": "2026-03-05T15:48:11.622Z"
+  "updated_at": "2026-03-06T09:54:18.004Z"
 }

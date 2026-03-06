@@ -598,7 +598,7 @@ pub async fn delete_chat_session(
 
     // In multi-user mode, use runner
     if let Some(runner) = runner_opt {
-        match runner.pi_delete_session(&session_id).await {
+        match runner.agent_delete_session(&session_id).await {
             Ok(()) => {
                 {
                     let mut affinity = state.session_target_affinity.write().await;

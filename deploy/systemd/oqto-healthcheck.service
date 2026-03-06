@@ -1,0 +1,13 @@
+# Oqto health watchdog service
+#
+# Periodically invoked by oqto-healthcheck.timer to verify backend liveness.
+# If /api/health is not reachable, this unit restarts oqto.
+
+[Unit]
+Description=Oqto health watchdog
+After=oqto.service
+Wants=oqto.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/env bash -lc 'if ! curl -fsS --max-time 5 http://127.0.0.1:8080/api/health >/dev/null; then echo "[oqto-healthcheck] health failed, restarting oqto"; systemctl restart oqto; fi'
