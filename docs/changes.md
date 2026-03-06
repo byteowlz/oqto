@@ -1,5 +1,6 @@
 # Changes
 
+- 2026-03-06: Add backend-facing `agent_*` runner client API and route WS mux agent commands through it, reducing direct Pi-specific coupling in backend dispatch code.
 - 2026-03-06: Remove legacy session-channel event conversion in multiplexed WS; only canonical agent events and system events are forwarded, with shared_workspace updates mapped directly to system events.
 - 2026-03-06: Fix runner session close lock ordering in Pi session manager by avoiding awaits while holding the sessions RwLock, preventing session.create hangs after rapid create/prompt/delete cycles.
 - 2026-03-05: Add hard 45s timeout around backend WS command handling to prevent per-connection deadlock when runner requests stall.

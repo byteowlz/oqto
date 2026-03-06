@@ -705,6 +705,172 @@ impl RunnerClient {
     }
 
     // ========================================================================
+    // Canonical Agent Operations (backend-facing)
+    // ========================================================================
+
+    /// Create or resume an agent session.
+    ///
+    /// NOTE: Currently implemented by the Pi harness adapter in the runner.
+    /// The backend should call this method (not `pi_*`) to stay harness-agnostic.
+    pub async fn agent_create_session(
+        &self,
+        req: PiCreateSessionRequest,
+    ) -> Result<PiSessionCreatedResponse> {
+        self.pi_create_session(req).await
+    }
+
+    /// Close an agent session.
+    pub async fn agent_close_session(&self, session_id: &str) -> Result<()> {
+        self.pi_close_session(session_id).await
+    }
+
+    /// Delete an agent session.
+    pub async fn agent_delete_session(&self, session_id: &str) -> Result<()> {
+        self.pi_delete_session(session_id).await
+    }
+
+    /// Switch to another session file.
+    pub async fn agent_switch_session(&self, session_id: &str, session_path: &str) -> Result<()> {
+        self.pi_switch_session(session_id, session_path).await
+    }
+
+    /// Send a prompt message.
+    pub async fn agent_prompt(
+        &self,
+        session_id: &str,
+        message: &str,
+        client_id: Option<String>,
+    ) -> Result<()> {
+        self.pi_prompt(session_id, message, client_id).await
+    }
+
+    /// Send a steering/interrupt message.
+    pub async fn agent_steer(
+        &self,
+        session_id: &str,
+        message: &str,
+        client_id: Option<String>,
+    ) -> Result<()> {
+        self.pi_steer_with_client_id(session_id, message, client_id)
+            .await
+    }
+
+    /// Send a queued follow-up message.
+    pub async fn agent_follow_up(
+        &self,
+        session_id: &str,
+        message: &str,
+        client_id: Option<String>,
+    ) -> Result<()> {
+        self.pi_follow_up_with_client_id(session_id, message, client_id)
+            .await
+    }
+
+    /// Abort the current operation.
+    pub async fn agent_abort(&self, session_id: &str) -> Result<()> {
+        self.pi_abort(session_id).await
+    }
+
+    /// Subscribe to canonical agent events.
+    pub async fn agent_subscribe(&self, session_id: &str) -> Result<PiSubscription> {
+        self.pi_subscribe(session_id).await
+    }
+
+    /// Get agent state.
+    pub async fn agent_get_state(&self, session_id: &str) -> Result<PiStateResponse> {
+        self.pi_get_state(session_id).await
+    }
+
+    /// Get agent messages.
+    pub async fn agent_get_messages(&self, session_id: &str) -> Result<PiMessagesResponse> {
+        self.pi_get_messages(session_id).await
+    }
+
+    /// List active agent sessions.
+    pub async fn agent_list_sessions(&self) -> Result<Vec<PiSessionInfo>> {
+        self.pi_list_sessions().await
+    }
+
+    /// Set model/provider.
+    pub async fn agent_set_model(
+        &self,
+        session_id: &str,
+        provider: &str,
+        model_id: &str,
+    ) -> Result<PiModelChangedResponse> {
+        self.pi_set_model(session_id, provider, model_id).await
+    }
+
+    /// Set display title.
+    pub async fn agent_set_session_name(&self, session_id: &str, name: &str) -> Result<()> {
+        self.pi_set_session_name(session_id, name).await
+    }
+
+    /// Get session statistics.
+    pub async fn agent_get_session_stats(&self, session_id: &str) -> Result<PiSessionStatsResponse> {
+        self.pi_get_session_stats(session_id).await
+    }
+
+    /// Get available slash commands/capabilities.
+    pub async fn agent_get_commands(&self, session_id: &str) -> Result<PiCommandsResponse> {
+        self.pi_get_commands(session_id).await
+    }
+
+    /// Get available fork points/messages.
+    pub async fn agent_get_fork_messages(
+        &self,
+        session_id: &str,
+    ) -> Result<PiForkMessagesResponse> {
+        self.pi_get_fork_messages(session_id).await
+    }
+
+    /// Cycle to next model.
+    pub async fn agent_cycle_model(&self, session_id: &str) -> Result<PiModelChangedResponse> {
+        self.pi_cycle_model(session_id).await
+    }
+
+    /// Set reasoning/thinking level.
+    pub async fn agent_set_thinking_level(
+        &self,
+        session_id: &str,
+        level: &str,
+    ) -> Result<PiThinkingLevelChangedResponse> {
+        self.pi_set_thinking_level(session_id, level).await
+    }
+
+    /// Cycle reasoning/thinking level.
+    pub async fn agent_cycle_thinking_level(
+        &self,
+        session_id: &str,
+    ) -> Result<PiThinkingLevelChangedResponse> {
+        self.pi_cycle_thinking_level(session_id).await
+    }
+
+    /// Toggle auto-compaction.
+    pub async fn agent_set_auto_compaction(&self, session_id: &str, enabled: bool) -> Result<()> {
+        self.pi_set_auto_compaction(session_id, enabled).await
+    }
+
+    /// Toggle auto-retry.
+    pub async fn agent_set_auto_retry(&self, session_id: &str, enabled: bool) -> Result<()> {
+        self.pi_set_auto_retry(session_id, enabled).await
+    }
+
+    /// Abort retry.
+    pub async fn agent_abort_retry(&self, session_id: &str) -> Result<()> {
+        self.pi_abort_retry(session_id).await
+    }
+
+    /// Fork from an entry id.
+    pub async fn agent_fork(
+        &self,
+        session_id: &str,
+        entry_id: &str,
+    ) -> Result<PiForkResultResponse> {
+        self.pi_fork(session_id, entry_id).await
+    }
+
+    // ========================================================================
     // Pi Session Operations
     // ========================================================================
 

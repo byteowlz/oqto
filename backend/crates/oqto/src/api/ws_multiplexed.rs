@@ -1652,7 +1652,7 @@ async fn handle_agent_command(
                 config: pi_config,
             };
 
-            match runner.pi_create_session(req).await {
+            match runner.agent_create_session(req).await {
                 Ok(_resp) => {
                     // Session stored under the provisional ID. Pi may
                     // assign a different real ID -- the runner re-keys
@@ -1747,7 +1747,7 @@ async fn handle_agent_command(
             drop(state_guard);
             state.ws_hub.unsubscribe_session(user_id, &session_id);
 
-            match runner.pi_close_session(&session_id).await {
+            match runner.agent_close_session(&session_id).await {
                 Ok(()) => Some(agent_response(&session_id, id, "session.close", Ok(None))),
                 Err(e) => Some(agent_response(
                     &session_id,
@@ -1773,7 +1773,7 @@ async fn handle_agent_command(
             drop(state_guard);
             state.ws_hub.unsubscribe_session(user_id, &session_id);
 
-            match runner.pi_delete_session(&session_id).await {
+            match runner.agent_delete_session(&session_id).await {
                 Ok(()) => {
                     let mut affinity = state.session_target_affinity.write().await;
                     affinity.remove(&session_id);
@@ -1817,7 +1817,7 @@ async fn handle_agent_command(
                 "agent session.switch: user={}, session_id={}, path={}",
                 user_id, session_id, session_path
             );
-            match runner.pi_switch_session(&session_id, &session_path).await {
+            match runner.agent_switch_session(&session_id, &session_path).await {
                 Ok(()) => Some(agent_response(
                     &session_id,
                     id,
@@ -1852,7 +1852,7 @@ async fn handle_agent_command(
             );
             let client_id_for_broadcast = client_id.clone();
             match runner
-                .pi_prompt(&session_id, &effective_message, client_id)
+                .agent_prompt(&session_id, &effective_message, client_id)
                 .await
             {
                 Ok(()) => {
@@ -1888,7 +1888,7 @@ async fn handle_agent_command(
                 client_id
             );
             let client_id_for_broadcast = client_id.clone();
-            match runner.pi_steer_with_client_id(&session_id, &effective_message, client_id).await {
+            match runner.agent_steer(&session_id, &effective_message, client_id).await {
                 Ok(()) => {
                     broadcast_user_message(
                         state,
@@ -1922,7 +1922,7 @@ async fn handle_agent_command(
                 client_id
             );
             let client_id_for_broadcast = client_id.clone();
-            match runner.pi_follow_up_with_client_id(&session_id, &effective_message, client_id).await {
+            match runner.agent_follow_up(&session_id, &effective_message, client_id).await {
                 Ok(()) => {
                     broadcast_user_message(
                         state,
@@ -1945,7 +1945,7 @@ async fn handle_agent_command(
 
         CommandPayload::Abort => {
             info!("agent abort: user={}, session_id={}", user_id, session_id);
-            match runner.pi_abort(&session_id).await {
+            match runner.agent_abort(&session_id).await {
                 Ok(()) => None,
                 Err(e) => Some(agent_response(
                     &session_id,
@@ -1991,7 +1991,7 @@ async fn handle_agent_command(
                 "agent get_state: user={}, session_id={}",
                 user_id, session_id
             );
-            match runner.pi_get_state(&session_id).await {
+            match runner.agent_get_state(&session_id).await {
                 Ok(resp) => {
                     let state_value = serde_json::to_value(&resp.state).unwrap_or(Value::Null);
                     Some(agent_response(
@@ -2032,7 +2032,7 @@ async fn handle_agent_command(
                 "agent get_stats: user={}, session_id={}",
                 user_id, session_id
             );
-            match runner.pi_get_session_stats(&session_id).await {
+            match runner.agent_get_session_stats(&session_id).await {
                 Ok(resp) => Some(agent_response(
                     &session_id,
                     id,
@@ -2077,7 +2077,7 @@ async fn handle_agent_command(
                 "agent get_commands: user={}, session_id={}",
                 user_id, session_id
             );
-            match runner.pi_get_commands(&session_id).await {
+            match runner.agent_get_commands(&session_id).await {
                 Ok(resp) => {
                     let commands: Vec<Value> = resp
                         .commands
@@ -2117,7 +2117,7 @@ async fn handle_agent_command(
                 "agent get_fork_points: user={}, session_id={}",
                 user_id, session_id
             );
-            match runner.pi_get_fork_messages(&session_id).await {
+            match runner.agent_get_fork_messages(&session_id).await {
                 Ok(resp) => {
                     let messages: Vec<Value> = resp
                         .messages
@@ -2151,7 +2151,7 @@ async fn handle_agent_command(
                 "agent set_model: user={}, session_id={}, {}:{}",
                 user_id, session_id, provider, model_id
             );
-            match runner.pi_set_model(&session_id, &provider, &model_id).await {
+            match runner.agent_set_model(&session_id, &provider, &model_id).await {
                 Ok(resp) => {
                     // Emit ConfigModelChanged event so the frontend UI updates.
                     let config_event = WsEvent::Agent(oqto_protocol::events::Event {
@@ -2217,7 +2217,7 @@ async fn handle_agent_command(
                 "agent cycle_model: user={}, session_id={}",
                 user_id, session_id
             );
-            match runner.pi_cycle_model(&session_id).await {
+            match runner.agent_cycle_model(&session_id).await {
                 Ok(resp) => {
                     // Emit ConfigModelChanged event so the frontend UI updates.
                     let config_event = WsEvent::Agent(oqto_protocol::events::Event {
@@ -2257,7 +2257,7 @@ async fn handle_agent_command(
                 "agent set_thinking_level: user={}, session_id={}, level={}",
                 user_id, session_id, level
             );
-            match runner.pi_set_thinking_level(&session_id, &level).await {
+            match runner.agent_set_thinking_level(&session_id, &level).await {
                 Ok(resp) => Some(agent_response(
                     &session_id,
                     id,
@@ -2278,7 +2278,7 @@ async fn handle_agent_command(
                 "agent cycle_thinking_level: user={}, session_id={}",
                 user_id, session_id
             );
-            match runner.pi_cycle_thinking_level(&session_id).await {
+            match runner.agent_cycle_thinking_level(&session_id).await {
                 Ok(resp) => Some(agent_response(
                     &session_id,
                     id,
@@ -2299,7 +2299,7 @@ async fn handle_agent_command(
                 "agent set_auto_compaction: user={}, session_id={}, enabled={}",
                 user_id, session_id, enabled
             );
-            match runner.pi_set_auto_compaction(&session_id, enabled).await {
+            match runner.agent_set_auto_compaction(&session_id, enabled).await {
                 Ok(()) => Some(agent_response(
                     &session_id,
                     id,
@@ -2320,7 +2320,7 @@ async fn handle_agent_command(
                 "agent set_auto_retry: user={}, session_id={}, enabled={}",
                 user_id, session_id, enabled
             );
-            match runner.pi_set_auto_retry(&session_id, enabled).await {
+            match runner.agent_set_auto_retry(&session_id, enabled).await {
                 Ok(()) => Some(agent_response(&session_id, id, "set_auto_retry", Ok(None))),
                 Err(e) => Some(agent_response(
                     &session_id,
@@ -2352,7 +2352,7 @@ async fn handle_agent_command(
                 "agent abort_retry: user={}, session_id={}",
                 user_id, session_id
             );
-            match runner.pi_abort_retry(&session_id).await {
+            match runner.agent_abort_retry(&session_id).await {
                 Ok(()) => Some(agent_response(&session_id, id, "abort_retry", Ok(None))),
                 Err(e) => Some(agent_response(
                     &session_id,
@@ -2368,7 +2368,7 @@ async fn handle_agent_command(
                 "agent set_session_name: user={}, session_id={}, name={}",
                 user_id, session_id, name
             );
-            match runner.pi_set_session_name(&session_id, &name).await {
+            match runner.agent_set_session_name(&session_id, &name).await {
                 Ok(()) => Some(agent_response(
                     &session_id,
                     id,
@@ -2389,7 +2389,7 @@ async fn handle_agent_command(
                 "agent fork: user={}, session_id={}, entry_id={}",
                 user_id, session_id, entry_id
             );
-            match runner.pi_fork(&session_id, &entry_id).await {
+            match runner.agent_fork(&session_id, &entry_id).await {
                 Ok(resp) => Some(agent_response(
                     &session_id,
                     id,
@@ -2407,7 +2407,7 @@ async fn handle_agent_command(
             debug!("agent list_sessions: user={}", user_id);
 
             // Collect sessions from the user's personal runner
-            let mut all_sessions: Vec<Value> = match runner.pi_list_sessions().await {
+            let mut all_sessions: Vec<Value> = match runner.agent_list_sessions().await {
                 Ok(sessions) => sessions
                     .iter()
                     .map(|s| {
@@ -2442,7 +2442,7 @@ async fn handle_agent_command(
                         if let Some(sw_runner) =
                             runner_client_for_linux_user(state, user_id, Some(&ws.linux_user))
                         {
-                            match sw_runner.pi_list_sessions().await {
+                            match sw_runner.agent_list_sessions().await {
                                 Ok(sessions) => {
                                     // Store runner overrides for all discovered shared sessions
                                     if !sessions.is_empty() {
@@ -2667,7 +2667,7 @@ async fn handle_get_messages(
     }
 
     // Last resort: try runner's live Pi process
-    match runner.pi_get_messages(session_id).await {
+    match runner.agent_get_messages(session_id).await {
         Ok(resp) => {
             let messages_value = serde_json::to_value(&resp.messages).unwrap_or_default();
             cache_pi_messages(user_id, session_id, &messages_value).await;
@@ -2706,7 +2706,7 @@ async fn forward_pi_events(
         "forward_pi_events: connecting subscription for session {}",
         session_id
     );
-    let mut subscription = runner.pi_subscribe(session_id).await?;
+    let mut subscription = runner.agent_subscribe(session_id).await?;
     info!(
         "forward_pi_events: subscription established for session {}",
         session_id
