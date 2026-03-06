@@ -1175,7 +1175,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1637,8 +1637,8 @@ dependencies = [
 
 [[package]]
 name = "hstry-core"
-version = "0.5.1"
-source = "git+https://github.com/byteowlz/hstry?branch=main#e182b12b97d4cfe4cfceffde7724b082edba22b6"
+version = "0.5.5"
+source = "git+https://github.com/byteowlz/hstry?rev=c5c7145f07ad994e527e1c4565596f07c1580a19#c5c7145f07ad994e527e1c4565596f07c1580a19"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2614,7 +2614,7 @@ checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
 
 [[package]]
 name = "oqto"
-version = "0.3.14"
+version = "0.3.19"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2635,6 +2635,7 @@ dependencies = [
  "fuser",
  "futures",
  "glob",
+ "hex",
  "hstry-core",
  "http-body-util",
  "hyper",
@@ -2658,6 +2659,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "sha2",
  "shellexpand",
  "sqlx",
  "syntect",
@@ -2680,7 +2682,7 @@ dependencies = [
 
 [[package]]
 name = "oqto-browser"
-version = "0.3.14"
+version = "0.3.19"
 dependencies = [
  "anyhow",
  "clap",
@@ -2693,7 +2695,7 @@ dependencies = [
 
 [[package]]
 name = "oqto-files"
-version = "0.3.14"
+version = "0.3.19"
 dependencies = [
  "axum",
  "bytes",
@@ -2719,7 +2721,7 @@ dependencies = [
 
 [[package]]
 name = "oqto-protocol"
-version = "0.3.14"
+version = "0.3.19"
 dependencies = [
  "hstry-core",
  "serde",
@@ -2728,7 +2730,7 @@ dependencies = [
 
 [[package]]
 name = "oqto-scaffold"
-version = "0.3.14"
+version = "0.3.19"
 dependencies = [
  "anyhow",
  "clap",
@@ -2746,7 +2748,7 @@ dependencies = [
 
 [[package]]
 name = "oqto-setup"
-version = "0.3.14"
+version = "0.3.19"
 dependencies = [
  "anyhow",
  "clap",
@@ -3235,7 +3237,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -3576,7 +3578,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3810,7 +3812,7 @@ version = "3.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8b1fdf65dd6331831494dd616b30351c38e96e45921a27745cf98490458b90bb"
 dependencies = [
- "dirs 5.0.1",
+ "dirs 6.0.0",
 ]
 
 [[package]]
@@ -4348,7 +4350,7 @@ dependencies = [
  "getrandom 0.4.1",
  "once_cell",
  "rustix",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5306,7 +5308,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

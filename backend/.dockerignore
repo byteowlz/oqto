@@ -1,0 +1,12 @@
+target/
+**/target/
+
+.git/
+.github/
+.vscode/
+
+crates/oqto-browserd/node_modules/
+crates/oqto-browserd/dist/
+
+*.log
+*.tmp
