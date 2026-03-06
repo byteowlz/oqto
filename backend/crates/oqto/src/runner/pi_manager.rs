@@ -2315,12 +2315,17 @@ impl PiSessionManager {
         let resolved_id = resolved_id.as_deref().unwrap_or(session_id);
         info!("Closing session '{}'", resolved_id);
 
-        // Send close command
-        {
+        // IMPORTANT: never hold the sessions RwLock guard across .await.
+        // Doing so can deadlock concurrent session.create (writer waits behind
+        // this read lock while we're blocked on cmd_tx backpressure).
+        let cmd_tx = {
             let sessions = self.sessions.read().await;
-            if let Some(session) = sessions.get(resolved_id) {
-                let _ = session.cmd_tx.send(PiSessionCommand::Close).await;
-            }
+            sessions.get(resolved_id).map(|session| session.cmd_tx.clone())
+        };
+
+        // Best-effort close signal (can be dropped if receiver is gone).
+        if let Some(cmd_tx) = cmd_tx {
+            let _ = cmd_tx.send(PiSessionCommand::Close).await;
         }
 
         // Remove from sessions map

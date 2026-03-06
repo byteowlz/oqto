@@ -1,5 +1,6 @@
 # Changes
 
+- 2026-03-06: Fix runner session close lock ordering in Pi session manager by avoiding awaits while holding the sessions RwLock, preventing session.create hangs after rapid create/prompt/delete cycles.
 - 2026-03-05: Add hard 45s timeout around backend WS command handling to prevent per-connection deadlock when runner requests stall.
 - 2026-03-05: Route shared workspace USERS.md and .pi/context.json regeneration through the workspace runner only (no direct backend filesystem writes).
 - 2026-03-05: Add runner-side per-request timeouts with explicit timeout error responses to prevent hung requests from blocking socket handlers indefinitely.
