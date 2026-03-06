@@ -40,7 +40,7 @@ use crate::runner::router::{
 use crate::session::Session;
 use crate::user_plane::{DirectUserPlane, RunnerUserPlane};
 use crate::ws::hub::WsHub;
-use crate::ws::types::{WsCommand as LegacyWsCommand, WsEvent as LegacyWsEvent};
+use crate::ws::types::{WsCommand as LegacyWsCommand, WsEvent as LegacyHubEvent};
 
 use super::error::ApiError;
 
@@ -451,7 +451,6 @@ pub enum WsEvent {
     Terminal(TerminalWsEvent),
     Hstry(HstryWsEvent),
     Trx(TrxWsEvent),
-    Session(LegacyWsEvent),
     System(SystemWsEvent),
 }
 
@@ -657,6 +656,14 @@ pub enum SystemWsEvent {
     Error { error: String },
     /// Ping for keep-alive
     Ping,
+    /// Shared workspace membership/metadata changed.
+    #[serde(rename = "shared_workspace.updated")]
+    SharedWorkspaceUpdated {
+        workspace_id: String,
+        change_type: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        detail: Option<Value>,
+    },
 }
 
 // ============================================================================
@@ -775,6 +782,10 @@ struct WsConnectionState {
     event_tx: mpsc::UnboundedSender<WsEvent>,
     /// Active Pi subscriptions (keyed by session_id).
     pi_subscriptions: HashSet<String>,
+    /// Forwarder tasks for Pi subscriptions (keyed by session_id).
+    /// Aborted on session close/delete and WebSocket disconnect to prevent
+    /// leaked subscription tasks across reconnect storms.
+    pi_forwarders: HashMap<String, tokio::task::JoinHandle<()>>,
     /// Metadata for Pi sessions created via this connection.
     pi_session_meta: HashMap<String, PiSessionMeta>,
     /// Active terminal sessions keyed by terminal_id.
@@ -828,53 +839,82 @@ async fn handle_multiplexed_ws(socket: WebSocket, state: AppState, user_id: Stri
         subscribed_sessions: HashSet::new(),
         event_tx: event_tx.clone(),
         pi_subscriptions: HashSet::new(),
+        pi_forwarders: HashMap::new(),
         pi_session_meta: HashMap::new(),
         terminal_sessions: HashMap::new(),
         file_watchers: HashMap::new(),
         session_runner_overrides: HashMap::new(),
     }));
 
-    // Register this connection with the legacy WS hub for session events.
+    // Register this connection with the legacy WS hub only for non-agent
+    // system-level broadcasts that have not been fully migrated yet.
+    // We intentionally do NOT forward legacy agent/session events.
     let hub: Arc<WsHub> = state.ws_hub.clone();
     let (mut hub_rx, hub_conn_id) = hub.register_connection(&user_id);
     let mut hub_events = hub.subscribe_events();
     let hub_user_id = user_id.clone();
     let hub_for_events = hub.clone();
     let event_tx_for_hub = event_tx.clone();
-    tokio::spawn(async move {
+    let hub_forwarder = tokio::spawn(async move {
         let mut ping_interval = tokio::time::interval(std::time::Duration::from_secs(30));
 
-        // Convert legacy hub events to multiplexed WsEvent.
-        // AgentEvent is a special case: it carries a canonical event that should
-        // be sent as WsEvent::Agent, not WsEvent::Session.
-        let convert_hub_event = |event: LegacyWsEvent| -> WsEvent {
-            if let LegacyWsEvent::AgentEvent { event: ref json, .. } = event {
-                if let Ok(canonical) = serde_json::from_value::<oqto_protocol::events::Event>(json.clone()) {
-                    return WsEvent::Agent(canonical);
-                }
+        let convert_hub_event = |event: LegacyHubEvent| -> Option<WsEvent> {
+            match event {
+                LegacyHubEvent::SharedWorkspaceUpdated {
+                    workspace_id,
+                    change,
+                    detail,
+                } => Some(WsEvent::System(SystemWsEvent::SharedWorkspaceUpdated {
+                    workspace_id,
+                    change_type: change,
+                    detail,
+                })),
+                _ => None,
             }
-            WsEvent::Session(event)
         };
 
         loop {
             tokio::select! {
-                Some(event) = hub_rx.recv() => {
-                    let _ = event_tx_for_hub.send(convert_hub_event(event));
+                maybe_event = hub_rx.recv() => {
+                    let Some(event) = maybe_event else {
+                        break;
+                    };
+                    if let Some(mapped) = convert_hub_event(event)
+                        && event_tx_for_hub.send(mapped).is_err()
+                    {
+                        break;
+                    }
                 }
-                Ok((session_id, event)) = hub_events.recv() => {
-                    if hub_for_events.is_subscribed(&hub_user_id, &session_id) {
-                        let _ = event_tx_for_hub.send(convert_hub_event(event));
+                hub_event = hub_events.recv() => {
+                    match hub_event {
+                        Ok((session_id, event)) => {
+                            if hub_for_events.is_subscribed(&hub_user_id, &session_id)
+                                && let Some(mapped) = convert_hub_event(event)
+                                && event_tx_for_hub.send(mapped).is_err()
+                            {
+                                break;
+                            }
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                            tracing::warn!(missed = n, user_id = %hub_user_id, "hub event forwarder lagged");
+                            continue;
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                            break;
+                        }
                     }
                 }
                 _ = ping_interval.tick() => {
-                    let _ = event_tx_for_hub.send(WsEvent::Session(LegacyWsEvent::Ping));
+                    if event_tx_for_hub
+                        .send(WsEvent::System(SystemWsEvent::Ping))
+                        .is_err()
+                    {
+                        break;
+                    }
                 }
             }
         }
     });
-
-    // Emit legacy connected event for session channel.
-    let _ = event_tx.send(WsEvent::Session(LegacyWsEvent::Connected));
 
     // Runner client is resolved lazily on first command, not at connect time.
     // The runner may still be starting when the WebSocket connects.
@@ -985,6 +1025,7 @@ async fn handle_multiplexed_ws(socket: WebSocket, state: AppState, user_id: Stri
 
     // Cleanup
     event_writer.abort();
+    hub_forwarder.abort();
 
     // Close terminal sessions and file watchers for this connection.
     {
@@ -994,6 +1035,9 @@ async fn handle_multiplexed_ws(socket: WebSocket, state: AppState, user_id: Stri
             session.task.abort();
         }
         for (_, handle) in state_guard.file_watchers.drain() {
+            handle.abort();
+        }
+        for (_, handle) in state_guard.pi_forwarders.drain() {
             handle.abort();
         }
     }
@@ -1634,7 +1678,7 @@ async fn handle_agent_command(
                         // Use a oneshot channel to wait for subscription confirmation
                         let (sub_ready_tx, sub_ready_rx) = oneshot::channel::<()>();
                         let runner_id = runner_id.clone();
-                        tokio::spawn(async move {
+                        let forwarder = tokio::spawn(async move {
                             if let Err(e) = forward_pi_events(
                                 &runner,
                                 &sid,
@@ -1647,6 +1691,7 @@ async fn handle_agent_command(
                                 error!("Event forwarding error for session {}: {:?}", sid, e);
                             }
                         });
+                        state_guard.pi_forwarders.insert(session_id.clone(), forwarder);
 
                         // Wait for the subscription to be confirmed (with timeout)
                         drop(state_guard);
@@ -1696,6 +1741,9 @@ async fn handle_agent_command(
             let mut state_guard = conn_state.lock().await;
             state_guard.subscribed_sessions.remove(&session_id);
             state_guard.pi_subscriptions.remove(&session_id);
+            if let Some(handle) = state_guard.pi_forwarders.remove(&session_id) {
+                handle.abort();
+            }
             drop(state_guard);
             state.ws_hub.unsubscribe_session(user_id, &session_id);
 
@@ -1719,6 +1767,9 @@ async fn handle_agent_command(
             let mut state_guard = conn_state.lock().await;
             state_guard.subscribed_sessions.remove(&session_id);
             state_guard.pi_subscriptions.remove(&session_id);
+            if let Some(handle) = state_guard.pi_forwarders.remove(&session_id) {
+                handle.abort();
+            }
             drop(state_guard);
             state.ws_hub.unsubscribe_session(user_id, &session_id);
 
@@ -3905,9 +3956,14 @@ async fn handle_session_command(
     let session_id = extract_legacy_session_id(&cmd.cmd);
     // Legacy Session channel commands targeted the OpenCode HTTP API which has been removed.
     // All agent interaction now flows through the Agent channel.
-    Some(WsEvent::Session(LegacyWsEvent::Error {
-        message: "Legacy session channel is deprecated. Use the agent channel instead.".to_string(),
-        session_id,
+    Some(WsEvent::System(SystemWsEvent::Error {
+        error: match session_id {
+            Some(id) => format!(
+                "Legacy session channel is deprecated for session {}. Use the agent channel instead.",
+                id
+            ),
+            None => "Legacy session channel is deprecated. Use the agent channel instead.".to_string(),
+        },
     }))
 }
 
