@@ -447,6 +447,39 @@ Implementation:
 ...
 
 
+### [oqto-jq8p.4] Frontend SSO login flow (P2, feature)
+Add SSO Login button to login page that redirects to IdP authorize endpoint. Handle callback redirect with code+state params. Store returned JWT same as dev login.
+
+### [oqto-jq8p.3] User auto-provisioning and role mapping from OIDC claims (P2, feature)
+On first SSO login, auto-create Oqto user from OIDC claims (sub, email, preferred_username). Map IdP groups to Oqto roles via config. Ensure Linux user + eavs provisioning runs for new SSO users.
+
+### [oqto-jq8p.2] Auth middleware refactor for multi-mode support (P2, feature)
+Add AuthMode enum (Dev/Local/OIDC). Middleware validates tokens with HS256 or RS256 based on config mode. Support mixed mode for migration periods.
+
+### [oqto-jq8p.1] OIDC backend: discovery, JWKS, code exchange, JWT validation (P2, feature)
+Implement OIDC protocol flow using openidconnect crate. Fetch .well-known/openid-configuration, cache JWKS keys, add /api/auth/sso/login and /api/auth/sso/callback endpoints for authorization code exchange. Validate RS256 JWTs from external IdP.
+
+### [oqto-jq8p] OAuth/SSO Support for Oqto (P2, epic)
+Implement OIDC/OAuth2 SSO login flow for Oqto. The auth config already has oidc_issuer/oidc_audience fields stubbed. This epic covers: (1) OIDC backend - discovery, JWKS fetching, code exchange, RS256 JWT validation via openidconnect crate, (2) Auth middleware refactor - support Dev/Local/OIDC modes with multi-algorithm JWT validation, (3) User auto-provisioning on first SSO login with OIDC claim mapping and IdP group-to-role mapping, (4) Frontend SSO login button + callback redirect handling, (5) Config additions - oidc_client_id, oidc_client_secret, oidc_scopes, auto_provision_users, role_mapping, (6) Linux user mapping for SSO-provisioned users, (7) Session/token management - local JWT issuance after code exchange, refresh handling. Estimated ~6-7 days total effort.
+
+### [oqto-yd5q] Docker image: all-in-one oqto container (P2, feature)
+Ship oqto as a single Docker image with all required binaries baked in.
+
+**Included binaries:**
+- oqto, oqto-runner, oqto-files, oqto-sandbox, pi-bridge (this repo)
+- hstry, eavs, mmry, agntz, trx, mailz, tmpltr, scrpr, sldr, ignr, sx (byteowlz Rust tools)
+...
+
+
+### [oqto-wz18] Make workspace scaffolding more ergonomic for agents (P2, feature)
+Currently scaffolding a new oqto workspace requires manually creating multiple files and directories (.oqto/workspace.toml, .oqto/sandbox.toml, AGENTS.md, .pi/skills/, directory structure, git init, etc.) and then hitting the API to create a session. oqto-scaffold exists as a crate but is not built/installed, and it lacks key features for agent use:
+
+- No way to scaffold from within an agent session (e.g. via API endpoint or simple CLI)
+- No session auto-creation after scaffolding (agent had to curl the API manually)
+- No skill copying/linking from the templates repo
+...
+
+
 ### [oqto-xf80] Documentation for secret injection and approvals (P2, task)
 
 ### [oqto-g3wq] Observability and ops for secret injection system (P2, task)
@@ -1073,6 +1106,12 @@ Enable multiple platform users to access the same project/workspace with proper 
 ### Core Concept
 ...
 
+
+### [oqto-jq8p.6] Session token management for SSO users (P3, feature)
+Issue local Oqto JWT after successful OIDC code exchange to decouple from IdP token expiry. Handle refresh/re-auth redirect on expiry.
+
+### [oqto-jq8p.5] Auth config extensions for OIDC (P3, feature)
+Add config fields: auth.mode, oidc_client_id, oidc_client_secret (with env: syntax), oidc_scopes, auto_provision_users, default_role, auth.role_mapping table. Update config schema and example config.
 
 ### [oqto-14b1.7] Serve proxy: apphost.fetch, readFile, writeFile capabilities (P3, task)
 Implement optional capabilities on the apphost bridge in oqto.
@@ -1912,7 +1951,7 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
 - [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
 - [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
