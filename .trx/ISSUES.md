@@ -66,8 +66,6 @@ Write design doc: data flow, trust boundaries, attack vectors. Define secret cla
 
 ### [oqto-05c1] Runner-managed secret injection with approval-based process allowlist (P1, epic)
 
-### [oqto-hnbb] session.create deadlock under mock-provider stress after first create/delete cycle (P1, bug)
-
 ### [oqto-ae9d] Backend runner router: target-based runner resolution with session affinity groundwork (P1, epic)
 
 ### [oqto-9mtk] Shared workspace history appears partially lost in UI while data exists in hstry/API (P1, bug)
@@ -125,17 +123,6 @@ Define and implement the shared contract that lets agent-generated HTML/CSS/JS a
 ### 1. CSS Token Contract (--app-* variables)
 ...
 
-
-### [oqto-mgbq] Test agent-browser with streaming to oqto frontend (P1, task)
-Test agent-browser with streaming to oqto frontend
-
-Streaming Quality Analysis:
-============================
-
-...
-
-
-### [oqto-4016] Research agent-browser integration points and verify protocol compatibility (P1, task)
 
 ### [oqto-zkyq] Canonical history migration (server-side) (P1, feature)
 
@@ -438,15 +425,6 @@ Build and distribute pre-compiled binaries for Linux (x86_64, arm64) and macOS (
 ### [octo-af5j] Release & Update System (P1, epic)
 Comprehensive system for distributing Octo releases, managing updates in the field, and expanding runtime options including Proxmox LXC support.
 
-### [workspace-jux6.1] Lazy load main app components (P1, task)
-Convert synchronous imports in apps/index.ts to React.lazy() imports. Currently SessionsApp, AgentsApp, ProjectsApp, SettingsApp, AdminApp are all bundled together. This blocks initial render with unused code.
-
-Location: frontend/apps/index.ts:1-56
-
-Implementation:
-...
-
-
 ### [oqto-jq8p.4] Frontend SSO login flow (P2, feature)
 Add SSO Login button to login page that redirects to IdP authorize endpoint. Handle callback redirect with code+state params. Store returned JWT same as dev login.
 
@@ -597,9 +575,6 @@ Additional concern: if usermgr provisioning writes the mmry config before the DB
 ...
 
 
-### [oqto-1fck] Session duplication in frontend sidebar - platform_id not set in hstry (P2, bug)
-Sessions created from the oqto frontend appear duplicated in the sidebar. Root cause: when a Pi session is created via the runner, the hstry conversation entry gets external_id (Pi native ID) but platform_id (oqto session ID) is NULL. The merge_duplicate_sessions() dedup logic in chat.rs can't match the hstry entry with the runner's live session because they have different IDs. Example: oqto session oqto-2a079205 spawned Pi session 584ac6ee which hstry stores with readable_id=used-fort-save, but no platform_id linking back to the oqto ID.
-
 ### [oqto-5ym1] Pi does not recover from hung LLM streams (no stream timeout) (P2, bug)
 When an upstream LLM provider (e.g. Kimi-K2.5) drops a streaming connection mid-response without sending [DONE] or an error, Pi hangs indefinitely in its event loop. The TCP connection closes but Pi never detects the stream ended. Observed on octo-azure where Kimi dropped reasoning_content mid-token. Pi should implement a stream inactivity timeout (e.g. 120s with no chunks) and surface it as an error so the user can retry.
 
@@ -654,9 +629,6 @@ Expand octo-setup from config hydrator into interactive CLI wizard. Two modes:
 
 
 ### [octo-3d6q] Slash command popup driven by get_commands (P2, task)
-
-### [octo-vrzt] Remove MainChatPiService legacy code (P2, task)
-MainChatPiService in src/main_chat/pi_service.rs is legacy. Everything now goes through the runner path. Has deep tendrils: used by ws_multiplexed.rs (get_messages), api/handlers/chat.rs, api/main_chat_pi.rs (REST handlers), api/routes.rs, api/state.rs, api/handlers/agent_ask.rs, api/handlers/agent_rpc.rs, pi_workspace.rs. Need to migrate all callers to use runner client.
 
 ### [octo-mkvc] Remove legacy canon/ module (from_pi, from_hstry, from_opencode) (P2, task)
 The old canon/ module (src/canon/{mod,types,from_pi,from_hstry,from_opencode}.rs) is only used by hstry/convert.rs which imports pi_message_to_canon, CanonMessage, ModelInfo. Either inline those conversions into hstry/convert.rs or keep a minimal version. The canonical protocol now lives in octo-protocol crate.
@@ -1014,63 +986,6 @@ Phase 1: Observation Masking (cheap, zero tokens)
 ...
 
 
-### [workspace-jux6.5] Add service worker for static asset caching (P2, task)
-No service worker exists. Static assets (JS/CSS bundles) are re-fetched on every visit.
-
-Implementation:
-- Add vite-plugin-pwa dependency
-- Configure workbox to cache static assets
-...
-
-
-### [workspace-jux6.4] Prefetch critical data during idle time (P2, task)
-Critical data like workspace sessions and chat history is fetched on-demand, causing delays when navigating.
-
-Location: frontend/components/app-context.tsx
-
-Implementation:
-...
-
-
-### [workspace-jux6.3] Add manual chunks to Vite build config (P2, task)
-No explicit chunking strategy exists. Vite bundles everything with default splitting which is suboptimal.
-
-Location: frontend/vite.config.ts
-
-Implementation:
-...
-
-
-### [workspace-5pmk.9] Configure iOS and Android targets (P2, task)
-Run tauri ios init and tauri android init. Configure permissions (microphone, network), app icons, splash screens, and build settings for both platforms.
-
-### [workspace-5pmk.8] Add mobile-responsive UI adjustments (P2, task)
-Ensure touch targets (44px min), safe areas (notch/home indicator), and gestures work on mobile. Test terminal and voice mode UX on touch devices.
-
-### [workspace-5pmk.7] Implement Tauri main with backend startup (P2, task)
-Start Axum backend on app launch, configure webview to load from backend URL. Handle graceful shutdown.
-
-### [workspace-5pmk.5] Update voice URL resolution for proxy mode (P2, task)
-Detect Tauri/proxied mode, use relative WebSocket paths (/api/voice/stt, /api/voice/tts) instead of direct URLs from config.
-
-### [workspace-5pmk.4] Remove server-side auth from frontend (P2, task)
-Delete middleware.ts, implement client-side auth guard in app layout. Check auth_token cookie on mount, redirect to /login if invalid.
-
-### [workspace-5pmk.3] Configure frontend for static export (P2, task)
-Set output: export in next.config.ts, disable image optimization, remove rewrites (backend handles routing).
-
-### [workspace-5pmk.1] Add static file serving to backend (P2, task)
-Use tower_http::services::ServeDir to serve frontend static export from /, with SPA fallback to index.html. Enables: (1) single-binary deployment without separate web server, (2) webapp mode without Next.js server, (3) simpler CORS since everything is same-origin.
-
-### [workspace-gg16.7] Local mode: Per-user mmry service management (P2, task)
-For local mode, spawn mmry service per Linux user (similar to opencode). Use user's home directory for database. Generate user-specific config with remote embedding delegation. Add to session lifecycle (start/stop).
-
-### [workspace-gg16.5] Frontend: Memories tab UI components (P2, task)
-Build Memories tab with Radix UI components. MemoryList (paginated, sortable), MemorySearch (query input, mode selector, rerank toggle), MemoryCard (content, category, tags, importance, date), MemoryEditor (add/edit form with validation), StoreSelector (per-repo stores).
-
-### [workspace-gg16.4] Frontend: React Query hooks for memories API (P2, task)
-Create TanStack Query hooks: useMemories, useMemorySearch, useCreateMemory, useUpdateMemory, useDeleteMemory. Handle pagination, optimistic updates, error states. Type definitions for Memory objects.
-
 ### [workspace-x7gm.5] Frontend: Project management UI (P2, task)
 Add UI for:
 - Creating and managing projects
@@ -1157,9 +1072,6 @@ Classes:
 
 ### [oqto-gwpa] Remove oqto-browser and oqto-browserd crates from codebase (P3, task)
 
-### [oqto-ejm7] Frontend model picker should preselect the default model from .pi/settings.json (P3, feature)
-When a workspace has a default provider/model set in .pi/agent/settings.json (defaultProvider + defaultModel), the model picker dropdown in the frontend should preselect that model instead of whatever was last used.
-
 ### [oqto-mgp5] Per-user eaRS instances for voice mode (parakeet engine) (P3, feature)
 
 ### [oqto-mvdv.5] WebSocket performance budget tracking and diagnostics (P3, task)
@@ -1184,15 +1096,6 @@ openai = "sk-..."
 
 
 ### [octo-wfs3] Expand fuzz testing to WebSocket commands, runner protocol, and Pi event parsing (P3, task)
-
-### [octo-mxd8.4] macOS fallback: socket broker for guarded paths (P3, feature)
-Implement a non-FUSE fallback for macOS that provides similar functionality to octo-guard using a socket-based broker.
-
-## Overview
-Since FUSE on macOS is problematic (kext deprecation, SIP issues), implement a simpler socket+copy approach.
-
-...
-
 
 ### [octo-xncy.7] Android: UI exploration mode (DroidBot-style UTG crawler) (P3, task)
 Build UI exploration/crawling mode for unknown apps.
@@ -1280,21 +1183,6 @@ Integrate skdlr for periodic heartbeats in Main Chat:
 ...
 
 
-### [workspace-ufvs] Integrate qmd for document search (P3, task)
-Add qmd (tobi/qmd) as optional document search backend. qmd excels at hybrid search (BM25 + Vector + Query Expansion + Re-ranking) for existing knowledge bases, meeting notes, docs. Complementary to mmry which handles agent memories. Consider: MCP server integration, collection management, hybrid with mmry for different use cases.
-
-### [workspace-jux6.6] Make i18n loading async (P3, task)
-initI18n() is called synchronously in main.tsx:8, blocking React render until translations load.
-
-Location: frontend/src/main.tsx:8
-
-Implementation:
-...
-
-
-### [workspace-5pmk.10] Add platform-specific native features (P3, task)
-Desktop: window management, system tray, keyboard shortcuts. Mobile: haptic feedback, safe area insets, native share. Use Tauri plugins and conditional compilation.
-
 ### [octo-xncy.9] Android: Vision fallback with OmniParser/grounding model (P4, task)
 
 ### [octo-gpj7] Avoid unwrap on WS event serialization (P4, chore)
@@ -1314,6 +1202,30 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [oqto-1fck] Session duplication in frontend sidebar - platform_id not set in hstry (closed 2026-03-08)
+- [oqto-ejm7] Frontend model picker should preselect the default model from .pi/settings.json (closed 2026-03-08)
+- [octo-mxd8.4] macOS fallback: socket broker for guarded paths (closed 2026-03-08)
+- [workspace-ufvs] Integrate qmd for document search (closed 2026-03-08)
+- [oqto-mgbq] Test agent-browser with streaming to oqto frontend (closed 2026-03-08)
+- [oqto-4016] Research agent-browser integration points and verify protocol compatibility (closed 2026-03-08)
+- [oqto-hnbb] session.create deadlock under mock-provider stress after first create/delete cycle (closed 2026-03-08)
+- [workspace-gg16.7] Local mode: Per-user mmry service management (closed 2026-03-08)
+- [workspace-gg16.5] Frontend: Memories tab UI components (closed 2026-03-08)
+- [workspace-gg16.4] Frontend: React Query hooks for memories API (closed 2026-03-08)
+- [workspace-jux6.6] Make i18n loading async (closed 2026-03-08)
+- [workspace-jux6.5] Add service worker for static asset caching (closed 2026-03-08)
+- [workspace-jux6.4] Prefetch critical data during idle time (closed 2026-03-08)
+- [workspace-jux6.3] Add manual chunks to Vite build config (closed 2026-03-08)
+- [workspace-jux6.1] Lazy load main app components (closed 2026-03-08)
+- [workspace-5pmk.10] Add platform-specific native features (closed 2026-03-08)
+- [workspace-5pmk.9] Configure iOS and Android targets (closed 2026-03-08)
+- [workspace-5pmk.8] Add mobile-responsive UI adjustments (closed 2026-03-08)
+- [workspace-5pmk.7] Implement Tauri main with backend startup (closed 2026-03-08)
+- [workspace-5pmk.5] Update voice URL resolution for proxy mode (closed 2026-03-08)
+- [workspace-5pmk.4] Remove server-side auth from frontend (closed 2026-03-08)
+- [workspace-5pmk.3] Configure frontend for static export (closed 2026-03-08)
+- [workspace-5pmk.1] Add static file serving to backend (closed 2026-03-08)
+- [octo-vrzt] Remove MainChatPiService legacy code (closed 2026-03-08)
 - [oqto-v9g0] Files panel shows stale file tree when switching between sessions in same workspace (closed 2026-03-07)
 - [oqto-q4ae] setup.sh must guarantee hstry is running and accessible for every provisioned user (closed 2026-03-07)
 - [octo-eez0] octo-browser session is killed when sending instructions to chat (closed 2026-03-07)
@@ -1951,7 +1863,7 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
 - [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
 - [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
