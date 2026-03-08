@@ -42,6 +42,30 @@ setup.sh must correctly provision everything for a new platform user on a fresh 
 ...
 
 
+### [oqto-p994] Thinking renders as plaintext markdown block in minimal mode (P1, bug)
+In minimal mode, the thinking content is being displayed as a markdown block with 'plaintext' instead of being properly rendered as collapsed thinking content. This affects the UI display of agent thinking messages when the minimal display mode is active.
+
+### [oqto-x2tk] Guarantee JSONL->hstry durability: recover missed sessions after runner/hstry restarts (P1, bug)
+
+### [oqto-dv37] Testing matrix for secret injection system (P1, task)
+
+### [oqto-f8wx] Redaction and telemetry hardening for secrets (P1, feature)
+
+### [oqto-s8pe] Approval workflow for unknown process registry (P1, feature)
+
+### [oqto-8kx4] Spawn-time auto-injection engine in runner (P1, feature)
+
+### [oqto-z94c] eavs compatibility and separation of concerns (P1, task)
+
+### [oqto-srkd] kyz resolver integration in oqto-runner (P1, feature)
+
+### [oqto-ctpz] Policy model and storage for secret injection (P1, feature)
+
+### [oqto-cv3f] Architecture + threat model for secret injection system (P1, task)
+Write design doc: data flow, trust boundaries, attack vectors. Define secret classes: llm_runtime (eavs) vs tool_credential (kyz). Define deny-by-default policy semantics. Define bypass resistance strategy (wrapper + sandbox policy).
+
+### [oqto-05c1] Runner-managed secret injection with approval-based process allowlist (P1, epic)
+
 ### [oqto-hnbb] session.create deadlock under mock-provider stress after first create/delete cycle (P1, bug)
 
 ### [oqto-ae9d] Backend runner router: target-based runner resolution with session affinity groundwork (P1, epic)
@@ -184,15 +208,6 @@ Add admin interface for managing LLM providers:
 1. Admin settings page shows configured eavs providers with status (API key set/missing, test result)
 2. Admins can add/remove/edit providers (type, API key, base_url)
 3. Provider API keys are written to eavs env file, provider config to eavs config.toml
-...
-
-
-### [oqto-q4ae] setup.sh must guarantee hstry is running and accessible for every provisioned user (P1, bug)
-Production shows 500 on /api/chat-history with 'Chat history service not configured for this user.' for wismut-vCmT. Root cause: get_runner_for_user() returns None in multi-user mode, which is a hard error. The setup process needs to:
-
-1. Verify hstry binary is installed and accessible
-2. Verify per-user hstry config exists (~/.config/hstry/config.toml)
-3. Verify per-user systemd service is created, enabled, and started
 ...
 
 
@@ -432,7 +447,23 @@ Implementation:
 ...
 
 
-### [oqto-b0zx] No context menu on shared workspace workdir folders - cannot rename or delete projects in shared workspaces. Workdir folder headers in SidebarSharedWorkspaces need ContextMenu wrapper with rename/delete/new chat actions. (P2, bug)
+### [oqto-xf80] Documentation for secret injection and approvals (P2, task)
+
+### [oqto-g3wq] Observability and ops for secret injection system (P2, task)
+
+### [oqto-2npy] Config and schema updates for secrets system (P2, task)
+
+### [oqto-3c42] Sandbox policy integration for secret isolation (P2, feature)
+
+### [oqto-ayyv] Wrapper and PATH interception strategy for secrets (P2, task)
+
+### [oqto-stwe] Frontend UX for secret approval prompts (P2, feature)
+
+### [oqto-bhcq] When opening a website in the oqto-browser sidebar the oqto frontend crashes when trying to load the website (P2, bug)
+
+### [oqto-cynq] When checking off or adding trx issues, the component reloads and flashes (P2, bug)
+
+### [oqto-p7mv] When text is streaming in fast into an assistant message, the latest words can appear at the outside of the message box before the horizontal size can adapt. (P2, bug)
 
 ### [oqto-14b1.6] Runner: app_message command and ServeMessage event routing (P2, task)
 Add support in the runner for bidirectional app messaging.
@@ -570,8 +601,6 @@ Options:
 2. Add ts(skip) or ts-specific attributes alongside serde ones where needed
 ...
 
-
-### [octo-eez0] octo-browser session is killed when sending instructions to chat (P2, bug)
 
 ### [octo-af5j.6.4] octo-setup web wizard (P2, feature)
 Web-based setup wizard served by octo itself for first-run configuration. Triggered when octo starts with no config or incomplete config.
@@ -1094,8 +1123,6 @@ When a workspace has a default provider/model set in .pi/agent/settings.json (de
 
 ### [oqto-mgp5] Per-user eaRS instances for voice mode (parakeet engine) (P3, feature)
 
-### [oqto-v9g0] Files panel shows stale file tree when switching between sessions in same workspace (P3, bug)
-
 ### [oqto-mvdv.5] WebSocket performance budget tracking and diagnostics (P3, task)
 Add performance budget tracking for key streaming metrics:
 - TTFT (prompt send to first text_delta): target 1200ms
@@ -1248,6 +1275,10 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [oqto-v9g0] Files panel shows stale file tree when switching between sessions in same workspace (closed 2026-03-07)
+- [oqto-q4ae] setup.sh must guarantee hstry is running and accessible for every provisioned user (closed 2026-03-07)
+- [octo-eez0] octo-browser session is killed when sending instructions to chat (closed 2026-03-07)
+- [oqto-b0zx] No context menu on shared workspace workdir folders - cannot rename or delete projects in shared workspaces. Workdir folder headers in SidebarSharedWorkspaces need ContextMenu wrapper with rename/delete/new chat actions. (closed 2026-03-07)
 - [oqto-23xh] oqto backend deadlocks after session.create (closed 2026-03-05)
 - [octo-58xa.3] WebView: MCP tool for opening webviews (closed 2026-03-04)
 - [octo-58xa.2] WebView: Frontend iframe component (closed 2026-03-04)
@@ -1881,7 +1912,7 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
 - [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
 - [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
+- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
