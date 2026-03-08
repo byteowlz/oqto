@@ -192,7 +192,21 @@
 		"chatVerbosityDescription": "Controls how detailed tool call rendering is.",
 		"minimal": "Minimal",
 		"compact": "Compact",
-		"verbose": "Verbose"
+		"verbose": "Verbose",
+		"reasoningLevel": "Reasoning level",
+		"selectReasoningLevel": "Select reasoning level",
+		"reasoningLevelDescription": "Controls model thinking depth for the active chat session.",
+		"reasoningLevelRequiresSession": "Create/open a chat session to change reasoning level.",
+		"thinkingOff": "Off",
+		"thinkingMinimal": "Minimal",
+		"thinkingLow": "Low",
+		"thinkingMedium": "Medium",
+		"thinkingHigh": "High",
+		"thinkingXHigh": "XHigh",
+		"agentControl": "Agent control",
+		"restartAgent": "Restart agent",
+		"restartingAgent": "Restarting agent...",
+		"restartAgentDescription": "Kills and restarts the Pi process for this session, then resumes from the session history file."
 	},
 	"files": {
 		"title": "Files",

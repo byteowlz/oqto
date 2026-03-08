@@ -24,6 +24,7 @@ pub mod projects;
 pub mod prompts;
 pub mod runner;
 pub mod session;
+pub mod session_target;
 pub mod session_ui;
 pub mod settings;
 pub mod shared_workspace;

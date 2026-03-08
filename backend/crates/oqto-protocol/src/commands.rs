@@ -63,6 +63,10 @@ pub enum CommandPayload {
     #[serde(rename = "session.switch")]
     SessionSwitch { session_path: String },
 
+    /// Restart the agent process for this session and resume from history.
+    #[serde(rename = "session.restart")]
+    SessionRestart,
+
     // -- Agent commands --
     /// Send a user prompt.
     Prompt {

@@ -40,6 +40,26 @@ export interface ModelSelectionActions {
 	cycleModel: () => Promise<void>;
 }
 
+const DEFAULT_REASONING_THINKING_LEVEL = "minimal";
+
+function isReasoningModel(modelRef: string, models: PiModelInfo[]): boolean {
+	const [provider, ...modelParts] = modelRef.split("/");
+	const modelId = modelParts.join("/");
+	if (!provider || !modelId) return false;
+
+	const direct = models.find(
+		(m) => m.provider === provider && m.id === modelId,
+	);
+	if (direct?.reasoning === true) return true;
+
+	const normalizedProvider = provider.toLowerCase();
+	const normalizedModelId = modelId.toLowerCase();
+	return (
+		normalizedProvider.includes("codex") ||
+		normalizedModelId.includes("codex")
+	);
+}
+
 export function useModelSelection(
 	sessionId: string | null,
 	workspacePath: string | null,
@@ -80,6 +100,7 @@ export function useModelSelection(
 	// Refs to avoid stale closures in event handlers
 	const pendingModelRefRef = useRef(pendingModelRef);
 	pendingModelRefRef.current = pendingModelRef;
+	const lastReasoningDefaultKeyRef = useRef<string | null>(null);
 
 	const effectiveSessionId = sessionId;
 
@@ -303,6 +324,37 @@ export function useModelSelection(
 		[modelStorageKey, workspaceModelStorageKey],
 	);
 
+	const ensureReasoningThinkingDefault = useCallback(
+		async (sid: string, modelRef: string) => {
+			if (!isReasoningModel(modelRef, availableModels)) return;
+
+			const marker = `${sid}:${modelRef}`;
+			if (lastReasoningDefaultKeyRef.current === marker) return;
+
+			try {
+				const state = (await getWsManager().agentGetStateWait(sid)) as {
+					thinkingLevel?: string;
+				} | null;
+				const currentLevel = (state?.thinkingLevel ?? "").toLowerCase();
+				if (!currentLevel || currentLevel === "off") {
+					await getWsManager().agentSetThinkingLevel(
+						sid,
+						DEFAULT_REASONING_THINKING_LEVEL,
+					);
+				}
+				lastReasoningDefaultKeyRef.current = marker;
+			} catch (err) {
+				console.warn("Failed to enforce reasoning thinking default:", err);
+			}
+		},
+		[availableModels],
+	);
+
+	useEffect(() => {
+		if (!effectiveSessionId || !selectedModelRef) return;
+		void ensureReasoningThinkingDefault(effectiveSessionId, selectedModelRef);
+	}, [effectiveSessionId, selectedModelRef, ensureReasoningThinkingDefault]);
+
 	// Helper to apply a pending model switch
 	const applyPendingModel = async (
 		modelRef: string,
@@ -319,6 +371,7 @@ export function useModelSelection(
 			await getWsManager().agentSetModel(sid, provider, modelId);
 			// Switch confirmed -- update state and persist
 			setSelectedModelRef(modelRef);
+			await ensureReasoningThinkingDefault(sid, modelRef);
 			const settingsWorkspacePath = wp ?? undefined;
 			await updateSettingsValues(
 				"pi-agent",
@@ -396,6 +449,7 @@ export function useModelSelection(
 				setIsSwitching(true);
 				try {
 					await manager.agentSetModel(effectiveSessionId, provider, modelId);
+					await ensureReasoningThinkingDefault(effectiveSessionId, modelRef);
 					// Only persist after confirmed success
 					await persistSelection(provider, modelId, modelRef);
 				} catch (err) {
@@ -424,7 +478,13 @@ export function useModelSelection(
 				await persistSelection(provider, modelId, modelRef);
 			}
 		},
-		[isIdle, effectiveSessionId, persistSelection, selectedModelRef],
+		[
+			isIdle,
+			effectiveSessionId,
+			persistSelection,
+			selectedModelRef,
+			ensureReasoningThinkingDefault,
+		],
 	);
 
 	const cycleModel = useCallback(async () => {

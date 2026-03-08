@@ -643,6 +643,39 @@ vm-test-scenario name:
 vm-test-cleanup:
     cd scripts && ./test-vm-deployment.sh --cleanup-all
 
+# Reliability API suite (headless, CI-safe)
+# Example:
+# just reliability --base-url https://oqto.engineeringautomation.eu --username admin --password secret --shared-workspace-id sw_x --workspace-path /home/... --media-path file.mp4
+reliability *ARGS:
+    ./scripts/e2e/reliability-suite.sh {{ARGS}}
+
+# Reliability soak run (default 30 minutes)
+reliability-soak *ARGS:
+    ./scripts/e2e/reliability-suite.sh --duration-sec 1800 {{ARGS}}
+
+# Reliability run using local gitignored secrets profile
+reliability-local *ARGS:
+    ./scripts/e2e/reliability-run-local.sh {{ARGS}}
+
+# Browser journey reliability run (tabs/routes + media checks)
+reliability-browser-local *ARGS:
+    ./scripts/e2e/reliability-browser-journey.sh {{ARGS}}
+
+# Shared workspace lifecycle reliability checks (create/update/delete loops)
+reliability-shared-local *ARGS:
+    ./scripts/e2e/reliability-shared-workspaces.sh {{ARGS}}
+
+# Files channel reliability checks (WS mux file mutation loops)
+reliability-files-local *ARGS:
+    ./scripts/e2e/reliability-files-local.sh {{ARGS}}
+
+# Run the current local reliability baseline suite end-to-end
+reliability-all-local:
+    ./scripts/e2e/reliability-run-local.sh --duration-sec 300 --interval-sec 5
+    ./scripts/e2e/reliability-shared-workspaces.sh --loops 3
+    ./scripts/e2e/reliability-files-local.sh --loops 5
+    ./scripts/e2e/reliability-browser-journey.sh --wait-ms 1500
+
 # Convert oqto.setup.toml to vm.tests.toml format
 vm-convert-config setup_file:
     cd scripts && ./convert-setup-toml.sh {{setup_file}}

@@ -1,5 +1,6 @@
 "use client";
 
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -14,13 +15,14 @@ import { useModelSelection } from "@/hooks/use-model-selection";
 import { type ChatVerbosity, useChatVerbosity } from "@/lib/chat-verbosity";
 import { fuzzyMatch } from "@/lib/slash-commands";
 import { cn } from "@/lib/utils";
+import { getWsManager } from "@/lib/ws-manager";
 import {
 	type TTSSettings,
 	loadTTSSettings,
 	saveTTSSettings,
 } from "@/features/voice/hooks/useTTS";
 import { Loader2 } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 export interface PiSettingsViewProps {
@@ -40,6 +42,10 @@ export function PiSettingsView({
 	const { verbosity, setVerbosity } = useChatVerbosity();
 	const [modelQuery, setModelQuery] = useState("");
 	const [ttsSettings, setTtsSettings] = useState<TTSSettings>(loadTTSSettings);
+	const [thinkingLevel, setThinkingLevel] = useState<string>("off");
+	const [thinkingLoading, setThinkingLoading] = useState<boolean>(false);
+	const [sessionReady, setSessionReady] = useState<boolean>(false);
+	const [restartingAgent, setRestartingAgent] = useState<boolean>(false);
 
 	const handleTtsVoiceChange = useCallback(
 		(e: React.ChangeEvent<HTMLInputElement>) => {
@@ -61,13 +67,124 @@ export function PiSettingsView({
 		[ttsSettings],
 	);
 
+	useEffect(() => {
+		if (!sessionId) {
+			setThinkingLevel("off");
+			setThinkingLoading(false);
+			setSessionReady(false);
+			return;
+		}
+
+		let active = true;
+		const manager = getWsManager();
+		setSessionReady(manager.isSessionReady(sessionId));
+		setThinkingLoading(true);
+
+		void manager
+			.waitForSessionReady(sessionId, 3000)
+			.then(() => {
+				if (!active) return;
+				setSessionReady(true);
+			})
+			.catch(() => {
+				// Keep false; session can still become ready later via events
+			});
+
+		manager
+			.agentGetStateWait(sessionId)
+			.then((state) => {
+				if (!active) return;
+				const s = state as
+					| { thinkingLevel?: string; thinking_level?: string }
+					| null;
+				const level = s?.thinkingLevel ?? s?.thinking_level;
+				if (typeof level === "string" && level.trim().length > 0) {
+					setThinkingLevel(level);
+				}
+			})
+			.catch(() => {
+				// Ignore and keep local fallback
+			})
+			.finally(() => {
+				if (active) setThinkingLoading(false);
+			});
+
+		const unsubscribe = manager.subscribe("agent", (event) => {
+			if (!active) return;
+			if (!("channel" in event) || event.channel !== "agent") return;
+			if (event.session_id !== sessionId) return;
+			if (event.event === "session.created") {
+				setSessionReady(true);
+			}
+			if (
+				event.event === "config.thinking_level_changed" &&
+				typeof event.level === "string"
+			) {
+				setThinkingLevel(event.level);
+			}
+		});
+
+		return () => {
+			active = false;
+			unsubscribe();
+		};
+	}, [sessionId]);
+
+	const handleThinkingLevelChange = useCallback(
+		async (value: string) => {
+			if (!sessionId || !value || !sessionReady) return;
+			const previous = thinkingLevel;
+			setThinkingLevel(value);
+			setThinkingLoading(true);
+			try {
+				const manager = getWsManager();
+				await manager.waitForSessionReady(sessionId, 3000);
+				await manager.agentSetThinkingLevel(sessionId, value);
+				const state = (await manager.agentGetStateWait(sessionId)) as {
+					thinkingLevel?: string;
+					thinking_level?: string;
+				} | null;
+				const confirmed = state?.thinkingLevel ?? state?.thinking_level;
+				if (typeof confirmed === "string" && confirmed.trim().length > 0) {
+					setThinkingLevel(confirmed);
+				}
+			} catch {
+				setThinkingLevel(previous);
+			} finally {
+				setThinkingLoading(false);
+			}
+		},
+		[sessionId, sessionReady, thinkingLevel],
+	);
+
+	const handleRestartAgent = useCallback(async () => {
+		if (!sessionId) return;
+		setRestartingAgent(true);
+		setSessionReady(false);
+		try {
+			const manager = getWsManager();
+			await manager.agentRestartSession(sessionId);
+			await manager.waitForSessionReady(sessionId, 10000);
+			setSessionReady(true);
+			const state = (await manager.agentGetStateWait(sessionId)) as {
+				thinkingLevel?: string;
+				thinking_level?: string;
+			} | null;
+			const level = state?.thinkingLevel ?? state?.thinking_level;
+			if (typeof level === "string" && level.trim().length > 0) {
+				setThinkingLevel(level);
+			}
+		} finally {
+			setRestartingAgent(false);
+		}
+	}, [sessionId]);
+
 	const {
 		availableModels,
 		selectedModelRef,
 		pendingModelRef,
 		isSwitching,
 		loading,
-		isIdle,
 		selectModel,
 	} = useModelSelection(sessionId, workspacePath, locale);
 
@@ -214,6 +331,66 @@ export function PiSettingsView({
 					</Select>
 					<p className="text-[10px] text-muted-foreground">
 						{verbosityDescription}
+					</p>
+				</div>
+
+				<div className="space-y-2">
+					<Label className="text-xs font-medium text-muted-foreground">
+						{t('pi.reasoningLevel')}
+					</Label>
+					<Select
+						value={thinkingLevel}
+						onValueChange={handleThinkingLevelChange}
+						disabled={!sessionId || !sessionReady || restartingAgent}
+					>
+						<SelectTrigger className="w-full">
+							<SelectValue
+								placeholder={
+									thinkingLoading
+										? t('models.loadingModels')
+										: t('pi.selectReasoningLevel')
+								}
+							/>
+						</SelectTrigger>
+						<SelectContent>
+							<SelectItem value="off">{t('pi.thinkingOff')}</SelectItem>
+							<SelectItem value="minimal">{t('pi.thinkingMinimal')}</SelectItem>
+							<SelectItem value="low">{t('pi.thinkingLow')}</SelectItem>
+							<SelectItem value="medium">{t('pi.thinkingMedium')}</SelectItem>
+							<SelectItem value="high">{t('pi.thinkingHigh')}</SelectItem>
+							<SelectItem value="xhigh">{t('pi.thinkingXHigh')}</SelectItem>
+						</SelectContent>
+					</Select>
+					<p className="text-[10px] text-muted-foreground">
+						{sessionId && sessionReady
+							? t('pi.reasoningLevelDescription')
+							: t('pi.reasoningLevelRequiresSession')}
+					</p>
+				</div>
+
+				<div className="space-y-2">
+					<Label className="text-xs font-medium text-muted-foreground">
+						{t('pi.agentControl')}
+					</Label>
+					<Button
+						type="button"
+						variant="outline"
+						size="sm"
+						className="w-full"
+						onClick={handleRestartAgent}
+						disabled={!sessionId || restartingAgent}
+					>
+						{restartingAgent ? (
+							<span className="inline-flex items-center gap-2">
+								<Loader2 className="h-3 w-3 animate-spin" />
+								{t('pi.restartingAgent')}
+							</span>
+						) : (
+							t('pi.restartAgent')
+						)}
+					</Button>
+					<p className="text-[10px] text-muted-foreground">
+						{t('pi.restartAgentDescription')}
 					</p>
 				</div>
 

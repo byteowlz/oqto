@@ -1,6 +1,8 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
+import { authFetch } from "@/lib/api/client";
+import { workspaceFileUrl } from "@/lib/api/files";
 import { downloadFileMux, readFileMux, writeFileMux } from "@/lib/mux-files";
 import { cn } from "@/lib/utils";
 import {
@@ -231,32 +233,6 @@ function isAudio(filename: string): boolean {
 	return AUDIO_EXTENSIONS.has(ext);
 }
 
-function guessMimeType(filename: string): string {
-	const ext = filename.substring(filename.lastIndexOf(".")).toLowerCase();
-	if (ext === ".pdf") return "application/pdf";
-	if (ext === ".png") return "image/png";
-	if (ext === ".jpg" || ext === ".jpeg") return "image/jpeg";
-	if (ext === ".gif") return "image/gif";
-	if (ext === ".webp") return "image/webp";
-	if (ext === ".svg") return "image/svg+xml";
-	if (ext === ".bmp") return "image/bmp";
-	if (ext === ".ico") return "image/x-icon";
-	if (ext === ".mp4") return "video/mp4";
-	if (ext === ".webm") return "video/webm";
-	if (ext === ".ogg" || ext === ".ogv") return "video/ogg";
-	if (ext === ".mov") return "video/quicktime";
-	if (ext === ".avi") return "video/x-msvideo";
-	if (ext === ".mkv") return "video/x-matroska";
-	if (ext === ".m4v") return "video/mp4";
-	if (ext === ".mp3") return "audio/mpeg";
-	if (ext === ".wav") return "audio/wav";
-	if (ext === ".flac") return "audio/flac";
-	if (ext === ".aac") return "audio/aac";
-	if (ext === ".m4a") return "audio/mp4";
-	if (ext === ".opus") return "audio/opus";
-	return "application/octet-stream";
-}
-
 async function fetchFileContent(
 	workspacePath: string,
 	path: string,
@@ -301,7 +277,7 @@ export function PreviewView({
 	const [binaryUrl, setBinaryUrl] = useState<string | null>(null);
 	const [binaryLoading, setBinaryLoading] = useState(false);
 	const loadingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-	const binaryUrlRef = useRef<string | null>(null);
+	const binaryObjectUrlRef = useRef<string | null>(null);
 
 	// Check mobile at render time (safe because we only use it client-side in effects)
 	const isMobileRef = useRef(false);
@@ -411,9 +387,9 @@ export function PreviewView({
 	}, [filePath, workspacePath, cacheKeyPrefix]);
 
 	useEffect(() => {
-		if (binaryUrlRef.current) {
-			URL.revokeObjectURL(binaryUrlRef.current);
-			binaryUrlRef.current = null;
+		if (binaryObjectUrlRef.current) {
+			URL.revokeObjectURL(binaryObjectUrlRef.current);
+			binaryObjectUrlRef.current = null;
 		}
 		setBinaryUrl(null);
 
@@ -423,46 +399,62 @@ export function PreviewView({
 		}
 
 		const filename = filePath.split("/").pop() || filePath;
-		const isBinary =
-			isPdf(filename) ||
-			isImage(filename) ||
-			isVideo(filename) ||
-			isAudio(filename);
+		const isPdfFile = isPdf(filename);
+		const isImageFile = isImage(filename);
+		const isVideoFile = isVideo(filename);
+		const isAudioFile = isAudio(filename);
+		const isBinary = isPdfFile || isImageFile || isVideoFile || isAudioFile;
 		if (!isBinary) {
 			setBinaryLoading(false);
 			return;
 		}
 
+		const url = workspaceFileUrl(workspacePath, filePath);
+
+		// For video/audio prefer direct URL so the browser can use Range requests
+		// for streaming/seek behavior instead of downloading full blob first.
+		if (isVideoFile || isAudioFile) {
+			setBinaryUrl(url);
+			setBinaryLoading(false);
+			return;
+		}
+
+		const controller = new AbortController();
 		let cancelled = false;
 		setBinaryLoading(true);
 		setError("");
 
-		const loadBinary = async () => {
-			try {
-				const result = await readFileMux(workspacePath, filePath);
+		authFetch(url, {
+			method: "GET",
+			credentials: "include",
+			signal: controller.signal,
+		})
+			.then(async (res) => {
+				if (!res.ok) {
+					throw new Error(`Failed to load media (${res.status})`);
+				}
+				return res.blob();
+			})
+			.then((blob) => {
 				if (cancelled) return;
-				const blob = new Blob([result.data], { type: guessMimeType(filename) });
-				const url = URL.createObjectURL(blob);
-				binaryUrlRef.current = url;
-				setBinaryUrl(url);
-			} catch (err) {
-				if (!cancelled) {
-					setError(err instanceof Error ? err.message : "Failed to load file");
-				}
-			} finally {
-				if (!cancelled) {
-					setBinaryLoading(false);
-				}
-			}
-		};
-
-		void loadBinary();
+				const objectUrl = URL.createObjectURL(blob);
+				binaryObjectUrlRef.current = objectUrl;
+				setBinaryUrl(objectUrl);
+			})
+			.catch((err) => {
+				if (cancelled || err?.name === "AbortError") return;
+				setError(err instanceof Error ? err.message : "Failed to load media");
+			})
+			.finally(() => {
+				if (!cancelled) setBinaryLoading(false);
+			});
 
 		return () => {
 			cancelled = true;
-			if (binaryUrlRef.current) {
-				URL.revokeObjectURL(binaryUrlRef.current);
-				binaryUrlRef.current = null;
+			controller.abort();
+			if (binaryObjectUrlRef.current) {
+				URL.revokeObjectURL(binaryObjectUrlRef.current);
+				binaryObjectUrlRef.current = null;
 			}
 		};
 	}, [filePath, workspacePath]);

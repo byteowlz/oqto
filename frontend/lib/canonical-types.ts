@@ -405,6 +405,7 @@ export type CommandPayload =
 	| { cmd: "session.close" }
 	| { cmd: "session.new"; parent_session?: string }
 	| { cmd: "session.switch"; session_path: string }
+	| { cmd: "session.restart" }
 	// Agent commands
 	| { cmd: "prompt"; message: string; images?: ImageAttachment[] }
 	| { cmd: "steer"; message: string }

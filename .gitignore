@@ -38,3 +38,7 @@ uploads/
 IMG_*.jpeg
 IMG_*.png
 pasted-image-*.png
+
+# Local reliability test secrets (never commit)
+scripts/e2e/.secrets/
+*.local.secrets.toml

@@ -98,6 +98,7 @@ export type PiModelInfo = {
 	name: string;
 	contextWindow: number;
 	maxTokens: number;
+	reasoning?: boolean;
 };
 
 export type PiPromptCommandInfo = {

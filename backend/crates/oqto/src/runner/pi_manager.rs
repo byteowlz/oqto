@@ -2678,6 +2678,7 @@ impl PiSessionManager {
 
         // Read stdout
         let mut reader = BufReader::new(stdout).lines();
+        let mut pending_json_fragment = String::new();
         let mut pending_messages: Vec<AgentMessage> = Vec::new();
         let mut pending_hstry_client_id: Option<String> = None;
         let mut translator = PiTranslator::new();
@@ -2703,13 +2704,24 @@ impl PiSessionManager {
         // messages from concurrent index resolution).
         let hstry_persist_lock = Arc::new(tokio::sync::Mutex::new(()));
 
-        while let Ok(Some(line)) = reader.next_line().await {
-            if line.trim().is_empty() {
+        while let Ok(Some(raw_line)) = reader.next_line().await {
+            if raw_line.trim().is_empty() {
                 continue;
             }
 
             // Update last activity
             *last_activity.write().await = Instant::now();
+
+            // Pi can emit oversized JSON payloads that get split across multiple
+            // newline chunks (not valid standalone JSON). Reassemble a pending
+            // fragment before parsing.
+            let line = if pending_json_fragment.is_empty() {
+                raw_line
+            } else {
+                let mut combined = std::mem::take(&mut pending_json_fragment);
+                combined.push_str(raw_line.trim());
+                combined
+            };
 
             // Parse the line. Pi may concatenate multiple JSON objects on a
             // single line when its output buffer fills mid-write (e.g. at
@@ -2717,6 +2729,21 @@ impl PiSessionManager {
             let parsed_messages = PiMessage::parse_all(&line);
             if parsed_messages.is_empty() {
                 continue;
+            }
+
+            // If we got a single EOF/unterminated parse error, keep buffering.
+            // This prevents dropped AgentEnd/TurnEnd events on large tool results
+            // (e.g., image/base64 payloads split across lines).
+            if parsed_messages.len() == 1
+                && let Err(err) = &parsed_messages[0]
+            {
+                let is_fragment = err.contains("EOF while parsing")
+                    || err.contains("unterminated string")
+                    || err.contains("expected value at line 1 column 1");
+                if is_fragment && line.len() < 16 * 1024 * 1024 {
+                    pending_json_fragment = line;
+                    continue;
+                }
             }
 
             for parse_result in parsed_messages {

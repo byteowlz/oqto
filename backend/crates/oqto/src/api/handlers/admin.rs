@@ -795,6 +795,9 @@ async fn sync_eavs_models_json_inner(
             },
             "prefixCommand": "basename $(git rev-parse --show-toplevel 2>/dev/null || pwd)",
             "readableIdSuffix": true,
+            // If model generation fails, prefer a human-readable fallback
+            // over raw adjective-noun-noun IDs as the visible title.
+            "fallbackDeterministic": "words",
             "maxNameLength": 60
         });
         let auto_rename_content = serde_json::to_string_pretty(&auto_rename).unwrap_or_default();

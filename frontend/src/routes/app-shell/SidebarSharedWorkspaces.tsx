@@ -174,47 +174,51 @@ function WorkspaceContent({
 	useEffect(() => {
 		let cancelled = false;
 		setLoading(true);
-		const loadingGuard = window.setTimeout(() => {
-			if (!cancelled) {
-				setLoading(false);
-				toast.error("Loading shared workspace projects timed out");
-			}
-		}, 15000);
+		setWorkdirs([]);
+		setFetchedSessions([]);
 
-		Promise.all([
-			listWorkdirs(workspace.id),
-			listChatHistory({ shared_workspace_id: workspace.id }).catch(
-				() => [] as ChatSession[],
-			),
-		])
-			.then(([wdData, sessionData]) => {
-				if (!cancelled) {
-					setWorkdirs(Array.isArray(wdData) ? wdData : []);
-					const safeSessions = Array.isArray(sessionData) ? sessionData : [];
-					const taggedSessions = safeSessions.map((s) => ({
-						...s,
-						shared_workspace_id: workspace.id,
-					}));
-					for (const s of taggedSessions) {
-						sharedWorkspaceSessionMap.set(s.id, workspace.id);
-					}
-					setFetchedSessions(taggedSessions);
-				}
-			})
-			.catch(() => {
+		const loadWorkdirs = async () => {
+			try {
+				const wdData = await listWorkdirs(workspace.id);
+				if (cancelled) return;
+				setWorkdirs(Array.isArray(wdData) ? wdData : []);
+			} catch {
 				if (!cancelled) {
 					setWorkdirs([]);
+					toast.error("Failed to load shared workspace projects");
+				}
+			} finally {
+				if (!cancelled) setLoading(false);
+			}
+		};
+
+		const loadSessions = async () => {
+			try {
+				const sessionData = await listChatHistory({
+					shared_workspace_id: workspace.id,
+				});
+				if (cancelled) return;
+				const safeSessions = Array.isArray(sessionData) ? sessionData : [];
+				const taggedSessions = safeSessions.map((s) => ({
+					...s,
+					shared_workspace_id: workspace.id,
+				}));
+				for (const s of taggedSessions) {
+					sharedWorkspaceSessionMap.set(s.id, workspace.id);
+				}
+				setFetchedSessions(taggedSessions);
+			} catch {
+				if (!cancelled) {
 					setFetchedSessions([]);
 				}
-			})
-			.finally(() => {
-				window.clearTimeout(loadingGuard);
-				if (!cancelled) setLoading(false);
-			});
+			}
+		};
+
+		void loadWorkdirs();
+		void loadSessions();
 
 		return () => {
 			cancelled = true;
-			window.clearTimeout(loadingGuard);
 		};
 	}, [workspace.id]);
 

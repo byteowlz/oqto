@@ -50,12 +50,8 @@ import {
 import type { Part, ToolStatus } from "@/lib/canonical-types";
 import { useChatVerbosity } from "@/lib/chat-verbosity";
 import { extractFileReferenceDetails, getFileTypeInfo } from "@/lib/file-types";
-import {
-	downloadFileMux,
-	readFileMux,
-	statPathMux,
-	uploadFileMux,
-} from "@/lib/mux-files";
+import { workspaceFileUrl } from "@/lib/api/files";
+import { downloadFileMux, statPathMux, uploadFileMux } from "@/lib/mux-files";
 import {
 	formatSessionDate,
 	formatTempId,
@@ -3698,6 +3694,30 @@ function TextWithFileReferences({
 	// interprets as indented code blocks, causing plain text to render as <pre><code>.
 	const cleanContent = dedentMarkdown(content.replace(ANSI_RE, ""));
 
+	// Rewrite markdown image URLs that reference local workspace files
+	// (e.g. ![avatar](ginee_pixel_art_avatar.png)) so they resolve through
+	// the authenticated workspace file endpoint.
+	const markdownContent = useMemo(() => {
+		if (!workspacePath) return cleanContent;
+		return cleanContent.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (_m, alt, rawTarget) => {
+			let target = String(rawTarget).trim();
+			if (!target) return _m;
+			if (target.startsWith("<") && target.endsWith(">")) {
+				target = target.slice(1, -1).trim();
+			}
+			// Ignore absolute/data/blob/anchor URLs
+			if (
+				/^(https?:|data:|blob:|#)/i.test(target) ||
+				target.startsWith("/api/") ||
+				target.startsWith("//")
+			) {
+				return _m;
+			}
+			const url = workspaceFileUrl(workspacePath, target);
+			return `![${alt}](${url})`;
+		});
+	}, [cleanContent, workspacePath]);
+
 	// Parse @file references, excluding code blocks
 	const fileRefs = useMemo(
 		() => extractFileReferenceDetails(cleanContent),
@@ -3709,7 +3729,7 @@ function TextWithFileReferences({
 			<ContextMenuTrigger className="contents">
 				<div className="space-y-2 select-none sm:select-auto">
 					<MarkdownRenderer
-						content={cleanContent}
+						content={markdownContent}
 						className="text-sm text-foreground leading-relaxed overflow-hidden"
 					/>
 					{/* Render file reference cards */}
@@ -3760,7 +3780,6 @@ export const FileReferenceCard = memo(function FileReferenceCard({
 	const [imageLoaded, setImageLoaded] = useState(false);
 	const [fileExists, setFileExists] = useState<boolean | null>(null);
 	const [fileUrl, setFileUrl] = useState<string | null>(null);
-	const objectUrlRef = useRef<string | null>(null);
 
 	const fileInfo = useMemo(() => getFileTypeInfo(filePath), [filePath]);
 	const isImage = fileInfo.category === "image";
@@ -3775,10 +3794,6 @@ export const FileReferenceCard = memo(function FileReferenceCard({
 		setImageLoaded(false);
 		setFileUrl(directUrl ?? null);
 
-		if (objectUrlRef.current) {
-			URL.revokeObjectURL(objectUrlRef.current);
-			objectUrlRef.current = null;
-		}
 
 		if (!workspacePath && !directUrl) {
 			setFileExists(false);
@@ -3796,12 +3811,8 @@ export const FileReferenceCard = memo(function FileReferenceCard({
 				setFileExists(true);
 
 				if ((isImage || isVideo) && !directUrl && workspacePath) {
-					const result = await readFileMux(workspacePath, filePath);
 					if (cancelled) return;
-					const blob = new Blob([result.data]);
-					const url = URL.createObjectURL(blob);
-					objectUrlRef.current = url;
-					setFileUrl(url);
+					setFileUrl(workspaceFileUrl(workspacePath, filePath));
 				}
 			} catch {
 				if (cancelled) return;
@@ -3818,10 +3829,6 @@ export const FileReferenceCard = memo(function FileReferenceCard({
 		void run();
 		return () => {
 			cancelled = true;
-			if (objectUrlRef.current) {
-				URL.revokeObjectURL(objectUrlRef.current);
-				objectUrlRef.current = null;
-			}
 		};
 	}, [directUrl, filePath, isImage, isVideo, workspacePath]);
 

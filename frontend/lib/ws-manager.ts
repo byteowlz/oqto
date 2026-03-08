@@ -774,6 +774,40 @@ class WsConnectionManager {
 	}
 
 	/**
+	 * Set thinking/reasoning level for an agent session.
+	 */
+	async agentSetThinkingLevel(sessionId: string, level: string): Promise<void> {
+		const event = await this.sendAndWait({
+			channel: "agent",
+			session_id: sessionId,
+			cmd: "set_thinking_level",
+			level,
+		});
+		const resp = this.extractCommandResponse(event);
+		if (resp && !resp.success) {
+			throw new Error(resp.error ?? "Failed to set thinking level");
+		}
+	}
+
+	/**
+	 * Restart an agent session process and resume from persisted history.
+	 */
+	async agentRestartSession(sessionId: string): Promise<void> {
+		const event = await this.sendAndWait(
+			{
+				channel: "agent",
+				session_id: sessionId,
+				cmd: "session.restart",
+			},
+			15000,
+		);
+		const resp = this.extractCommandResponse(event);
+		if (resp && !resp.success) {
+			throw new Error(resp.error ?? "Failed to restart session");
+		}
+	}
+
+	/**
 	 * Set the session name/title on the runner side.
 	 * This updates Pi's internal session name so auto-generated titles
 	 * are replaced with the user's choice.

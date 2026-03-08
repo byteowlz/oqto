@@ -4,7 +4,7 @@
  */
 
 import { toAbsoluteWsUrl } from "@/lib/url";
-import { authFetch, controlPlaneApiUrl, getAuthToken } from "./client";
+import { authFetch, controlPlaneApiUrl } from "./client";
 
 // ============================================================================
 // Proxy URLs
@@ -31,10 +31,10 @@ export function defaultChatFilesBaseUrl() {
 }
 
 export function workspaceFileUrl(workspacePath: string, path: string): string {
-	const baseUrl = fileserverWorkspaceBaseUrl();
+	// Browser-native media/image loading relies on same-origin cookie auth.
 	const origin =
 		typeof window !== "undefined" ? window.location.origin : "http://localhost";
-	const url = new URL(`${baseUrl}/file`, origin);
+	const url = new URL("/api/workspace/files/file", origin);
 	url.searchParams.set("path", path);
 	url.searchParams.set("workspace_path", workspacePath);
 	return url.toString();

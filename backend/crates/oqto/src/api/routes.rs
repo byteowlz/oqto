@@ -200,6 +200,23 @@ fn create_router_with_config_and_auth(
             "/workspace/pi-resources",
             get(handlers::get_workspace_pi_resources).post(handlers::apply_workspace_pi_resources),
         )
+        // Workspace file server proxy (binary previews/downloads)
+        .route(
+            "/workspace/files",
+            get(proxy::proxy_fileserver_for_workspace_root)
+                .post(proxy::proxy_fileserver_for_workspace_root)
+                .put(proxy::proxy_fileserver_for_workspace_root)
+                .delete(proxy::proxy_fileserver_for_workspace_root)
+                .patch(proxy::proxy_fileserver_for_workspace_root),
+        )
+        .route(
+            "/workspace/files/{*path}",
+            get(proxy::proxy_fileserver_for_workspace)
+                .post(proxy::proxy_fileserver_for_workspace)
+                .put(proxy::proxy_fileserver_for_workspace)
+                .delete(proxy::proxy_fileserver_for_workspace)
+                .patch(proxy::proxy_fileserver_for_workspace),
+        )
         // Workspace-based mmry routes (single-user mode)
         .route(
             "/workspace/memories",

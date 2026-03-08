@@ -16,6 +16,7 @@ use log::{debug, error, warn};
 use std::time::Duration;
 
 use crate::auth::CurrentUser;
+use crate::runner::router::{ExecutionTarget, resolve_target_for_workspace_path};
 use crate::session::{Session, SessionStatus};
 
 use super::super::state::AppState;
@@ -70,15 +71,55 @@ pub async fn get_io_session_for_workspace(
     user: &CurrentUser,
     workspace_path: &str,
 ) -> Result<Session, StatusCode> {
+    let session_owner = match resolve_target_for_workspace_path(state, user.id(), workspace_path)
+        .await
+        .map_err(|e| {
+            error!(
+                "Failed to resolve execution target for workspace {} and user {}: {:?}",
+                workspace_path,
+                user.id(),
+                e
+            );
+            StatusCode::SERVICE_UNAVAILABLE
+        })? {
+        ExecutionTarget::Personal => user.id().to_string(),
+        ExecutionTarget::SharedWorkspace { workspace_id } => {
+            let sw = state.shared_workspaces.as_ref().ok_or_else(|| {
+                error!(
+                    "Shared workspace service not configured while resolving IO session for {}",
+                    workspace_path
+                );
+                StatusCode::SERVICE_UNAVAILABLE
+            })?;
+
+            sw.linux_user_for_id(&workspace_id)
+                .await
+                .map_err(|e| {
+                    error!(
+                        "Failed to resolve linux user for shared workspace {} (path {}): {:?}",
+                        workspace_id, workspace_path, e
+                    );
+                    StatusCode::SERVICE_UNAVAILABLE
+                })?
+                .ok_or_else(|| {
+                    error!(
+                        "Missing linux user mapping for shared workspace {} (path {})",
+                        workspace_id, workspace_path
+                    );
+                    StatusCode::SERVICE_UNAVAILABLE
+                })?
+        }
+    };
+
     state
         .sessions
-        .for_user(user.id())
+        .for_user(&session_owner)
         .get_or_create_io_session_for_workspace(workspace_path)
         .await
         .map_err(|e| {
             error!(
-                "Failed to get IO session for workspace {}: {:?}",
-                workspace_path, e
+                "Failed to get IO session for workspace {} (owner {}): {:?}",
+                workspace_path, session_owner, e
             );
             StatusCode::SERVICE_UNAVAILABLE
         })

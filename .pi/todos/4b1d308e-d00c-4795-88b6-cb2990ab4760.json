@@ -1,29 +1,29 @@
 {
   "todos": [
     {
-      "id": "fe8de303",
-      "content": "Run pre-release validation tests",
-      "status": "completed",
-      "priority": "high"
-    },
-    {
-      "id": "944cd4ef",
-      "content": "Commit pending changes",
+      "id": "ef0538a8",
+      "content": "Run project test/build checks for current workspace state",
       "status": "in_progress",
       "priority": "high"
     },
     {
-      "id": "e77845a2",
-      "content": "Bump version, create release commit and tag",
+      "id": "deb92695",
+      "content": "Review git status and prepare a single commit with all recent changes",
       "status": "pending",
       "priority": "high"
     },
     {
-      "id": "68ec907e",
-      "content": "Report release result",
+      "id": "2518e79f",
+      "content": "Bump version(s) and create git tag(s) per project workflow",
       "status": "pending",
-      "priority": "medium"
+      "priority": "high"
+    },
+    {
+      "id": "be3b23c9",
+      "content": "Report test results, commit hash, and created tags",
+      "status": "pending",
+      "priority": "high"
     }
   ],
-  "updated_at": "2026-03-06T09:54:18.004Z"
+  "updated_at": "2026-03-08T19:40:50.362Z"
 }

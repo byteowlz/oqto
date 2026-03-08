@@ -277,7 +277,7 @@ impl PiTranslator {
     fn on_message_update(
         &mut self,
         ame: &AssistantMessageEvent,
-        _message: &AgentMessage,
+        message: &AgentMessage,
     ) -> Vec<EventPayload> {
         let msg_id = self.ensure_message_id();
 
@@ -345,14 +345,24 @@ impl PiTranslator {
             AssistantMessageEvent::Error { reason, error } => {
                 let error_text = error
                     .as_ref()
-                    .and_then(|m| extract_text_content(&m.content))
+                    .and_then(extract_error_message)
+                    .or_else(|| extract_error_message(message))
                     .unwrap_or_else(|| reason.clone());
 
-                vec![EventPayload::AgentError {
-                    error: error_text,
-                    recoverable: reason == "aborted",
+                let recoverable = reason == "aborted";
+                let mut events = vec![EventPayload::AgentError {
+                    error: error_text.clone(),
+                    recoverable,
                     phase: Some(AgentPhase::Generating),
-                }]
+                }];
+
+                // Payload-too-large failures can leave Pi in a stuck working state
+                // without a timely agent_end. Force idle to keep session recoverable.
+                if is_payload_too_large_error(&error_text) && self.state.is_working() {
+                    events.push(self.state.on_agent_end());
+                }
+
+                events
             }
 
             // Start/End markers for individual content blocks - no canonical equivalent needed.
@@ -379,13 +389,30 @@ impl PiTranslator {
         // Clear current message tracking.
         self.current_message_id = None;
 
-        vec![EventPayload::StreamMessageEnd { message: canonical }]
+        let mut events = vec![EventPayload::StreamMessageEnd {
+            message: canonical.clone(),
+        }];
 
-        // Note: when stopReason == "error", Pi follows up with auto_retry_start
-        // which transitions to AgentWorking(Retrying). If all retries fail,
-        // auto_retry_end emits AgentError(recoverable=false). The error
-        // information is also available in the canonical message's stop_reason
-        // and metadata.errorMessage fields for display purposes.
+        // Fallback for providers that report request-size failures only on
+        // message metadata (without assistant_message_event:error).
+        if matches!(canonical.stop_reason, Some(StopReason::Error))
+            && let Some(error_text) = extract_error_message(message)
+            && is_payload_too_large_error(&error_text)
+        {
+            events.push(EventPayload::AgentError {
+                error: error_text,
+                recoverable: false,
+                phase: Some(AgentPhase::Generating),
+            });
+            if self.state.is_working() {
+                events.push(self.state.on_agent_end());
+            }
+        }
+
+        events
+
+        // Note: when stopReason == "error", Pi can also follow up with
+        // auto_retry_start which transitions to AgentWorking(Retrying).
     }
 
     // -- Tool execution events --
@@ -856,6 +883,48 @@ fn pi_image_to_part(source: &ImageSource) -> Part {
 // ============================================================================
 // Helpers
 // ============================================================================
+
+fn extract_error_message(message: &AgentMessage) -> Option<String> {
+    if let Some(text) = extract_text_content(&message.content)
+        && !text.trim().is_empty()
+    {
+        return Some(text);
+    }
+
+    if let Some(val) = message.extra.get("errorMessage").and_then(Value::as_str)
+        && !val.trim().is_empty()
+    {
+        return Some(val.to_string());
+    }
+    if let Some(val) = message.extra.get("message").and_then(Value::as_str)
+        && !val.trim().is_empty()
+    {
+        return Some(val.to_string());
+    }
+    if let Some(val) = message.extra.get("error").and_then(Value::as_str)
+        && !val.trim().is_empty()
+    {
+        return Some(val.to_string());
+    }
+
+    if let Some(obj) = message.extra.get("error").and_then(Value::as_object)
+        && let Some(val) = obj.get("message").and_then(Value::as_str)
+        && !val.trim().is_empty()
+    {
+        return Some(val.to_string());
+    }
+
+    None
+}
+
+fn is_payload_too_large_error(error: &str) -> bool {
+    let lower = error.to_lowercase();
+    (lower.contains("413") && lower.contains("too large"))
+        || lower.contains("request body too large")
+        || lower.contains("request exceeds the maximum size")
+        || lower.contains("request_too_large")
+        || lower.contains("payload too large")
+}
 
 /// Convert a Pi stop reason string to canonical StopReason.
 fn pi_stop_reason(reason: &str) -> StopReason {
@@ -1465,6 +1534,50 @@ mod tests {
         });
         assert_eq!(events.len(), 1);
         assert!(matches!(events[0], EventPayload::StreamMessageEnd { .. }));
+    }
+
+    #[test]
+    fn test_413_error_forces_idle() {
+        let mut t = PiTranslator::new();
+        t.translate(&PiEvent::AgentStart);
+
+        let msg = AgentMessage {
+            role: "assistant".to_string(),
+            content: Value::String(String::new()),
+            timestamp: None,
+            tool_call_id: None,
+            tool_name: None,
+            is_error: None,
+            api: None,
+            provider: None,
+            model: None,
+            usage: None,
+            stop_reason: None,
+            extra: Default::default(),
+        };
+
+        let error = AgentMessage {
+            role: "assistant".to_string(),
+            content: Value::String(
+                "Error: 413 Request body too large. Maximum size: 10485760 bytes".to_string(),
+            ),
+            ..make_empty_message()
+        };
+
+        let events = t.translate(&PiEvent::MessageUpdate {
+            message: msg,
+            assistant_message_event: AssistantMessageEvent::Error {
+                reason: "error".to_string(),
+                error: Some(error),
+            },
+        });
+
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, EventPayload::AgentError { .. }))
+        );
+        assert!(events.iter().any(|e| matches!(e, EventPayload::AgentIdle)));
     }
 
     #[test]

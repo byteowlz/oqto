@@ -11,9 +11,9 @@ mod websocket;
 
 // Re-export public handler functions for routes
 pub use handlers::{
-    proxy_browser_stream_ws, proxy_fileserver, proxy_fileserver_for_workspace, proxy_sldr,
-    proxy_sldr_root, proxy_terminal_ws, proxy_terminal_ws_for_workspace, proxy_voice_stt_ws,
-    proxy_voice_tts_ws,
+    proxy_browser_stream_ws, proxy_fileserver, proxy_fileserver_for_workspace,
+    proxy_fileserver_for_workspace_root, proxy_sldr, proxy_sldr_root, proxy_terminal_ws,
+    proxy_terminal_ws_for_workspace, proxy_voice_stt_ws, proxy_voice_tts_ws,
 };
 pub use mmry::{
     proxy_mmry_add, proxy_mmry_add_for_workspace, proxy_mmry_list, proxy_mmry_list_for_workspace,

@@ -79,24 +79,18 @@ async fn get_mmry_target_for_workspace(
 
 /// Derive mmry store name from session workspace path.
 ///
-/// In single-user mode, each workspace maps to a separate mmry store.
-/// The store name is derived from the last component of the workspace path.
-/// For example: `/home/user/byteowlz/oqto` -> `oqto`
-fn get_mmry_store_name(state: &AppState, session: &Session) -> Option<String> {
-    if !state.mmry.single_user {
-        // In multi-user mode, each session has its own mmry instance
-        return None;
-    }
-
-    // Extract the last path component as the store name
-    std::path::Path::new(&session.workspace_path)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .map(|s| s.to_string())
+/// We always derive a workspace-scoped store name from the session path,
+/// regardless of runtime mode. This keeps memory access consistent between:
+/// - frontend session mmry proxy routes, and
+/// - in-session `agntz memory` calls (which auto-select repo/workspace stores).
+///
+/// Example: `/home/user/byteowlz/oqto` -> `oqto`
+fn get_mmry_store_name(session: &Session) -> Option<String> {
+    get_mmry_store_name_from_path(&session.workspace_path)
 }
 
 /// Derive mmry store name directly from a workspace path.
-fn get_mmry_store_name_from_path(_state: &AppState, workspace_path: &str) -> Option<String> {
+fn get_mmry_store_name_from_path(workspace_path: &str) -> Option<String> {
     let trimmed = workspace_path.trim_end_matches('/');
     if trimmed.is_empty() {
         return None;
@@ -107,10 +101,7 @@ fn get_mmry_store_name_from_path(_state: &AppState, workspace_path: &str) -> Opt
         .map(|s| s.to_string())
 }
 
-fn resolve_mmry_store_for_workspace(
-    state: &AppState,
-    query: &WorkspaceProxyQuery,
-) -> Option<String> {
+fn resolve_mmry_store_for_workspace(query: &WorkspaceProxyQuery) -> Option<String> {
     if let Some(store) = query.store.as_ref().and_then(|s| {
         let trimmed = s.trim();
         if trimmed.is_empty() {
@@ -121,7 +112,7 @@ fn resolve_mmry_store_for_workspace(
     }) {
         return Some(store);
     }
-    get_mmry_store_name_from_path(state, &query.workspace_path)
+    get_mmry_store_name_from_path(&query.workspace_path)
 }
 
 async fn resolve_mmry_session_target(
@@ -138,7 +129,7 @@ async fn resolve_mmry_session_target(
     }
 
     let target_url = get_mmry_target(state, &session)?;
-    let store = get_mmry_store_name(state, &session);
+    let store = get_mmry_store_name(&session);
     Ok((target_url, store))
 }
 
@@ -401,7 +392,7 @@ pub async fn proxy_mmry_list_for_workspace(
     req: Request<Body>,
 ) -> Result<Response<Body>, StatusCode> {
     let target_url = get_mmry_target_for_workspace(&state, user.id()).await?;
-    let store = resolve_mmry_store_for_workspace(&state, &query);
+    let store = resolve_mmry_store_for_workspace(&query);
     proxy_mmry_request_to_url(
         state.http_client.clone(),
         req,
@@ -422,7 +413,7 @@ pub async fn proxy_mmry_add_for_workspace(
     req: Request<Body>,
 ) -> Result<Response<Body>, StatusCode> {
     let target_url = get_mmry_target_for_workspace(&state, user.id()).await?;
-    let store = resolve_mmry_store_for_workspace(&state, &query);
+    let store = resolve_mmry_store_for_workspace(&query);
     proxy_mmry_request_to_url(
         state.http_client.clone(),
         req,
@@ -443,7 +434,7 @@ pub async fn proxy_mmry_search_for_workspace(
     req: Request<Body>,
 ) -> Result<Response<Body>, StatusCode> {
     let target_url = get_mmry_target_for_workspace(&state, user.id()).await?;
-    let store = resolve_mmry_store_for_workspace(&state, &query);
+    let store = resolve_mmry_store_for_workspace(&query);
     proxy_mmry_request_to_url(
         state.http_client.clone(),
         req,
@@ -465,7 +456,7 @@ pub async fn proxy_mmry_memory_for_workspace(
     req: Request<Body>,
 ) -> Result<Response<Body>, StatusCode> {
     let target_url = get_mmry_target_for_workspace(&state, user.id()).await?;
-    let store = resolve_mmry_store_for_workspace(&state, &query);
+    let store = resolve_mmry_store_for_workspace(&query);
     let path = format!("v1/memories/{}", memory_id);
     proxy_mmry_request_to_url(
         state.http_client.clone(),

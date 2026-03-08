@@ -95,6 +95,34 @@ let ghosttyInitialized = false;
 let ghosttyInitFailed = false;
 let ghosttyInitPromise: Promise<void> | null = null;
 
+let terminalFontReadyPromise: Promise<void> | null = null;
+
+function parseFontFamilies(fontFamily: string): string[] {
+	return fontFamily
+		.split(",")
+		.map((f) => f.trim().replace(/^['\"]|['\"]$/g, ""))
+		.filter(Boolean);
+}
+
+async function ensureTerminalFontReady(fontFamily: string): Promise<void> {
+	if (typeof document === "undefined" || !("fonts" in document)) return;
+	if (terminalFontReadyPromise) return terminalFontReadyPromise;
+
+	terminalFontReadyPromise = (async () => {
+		const fonts = parseFontFamilies(fontFamily);
+		const preferred = fonts.find((f) => f === "JetBrainsMono Nerd Font") ?? fonts[0];
+		if (!preferred) return;
+
+		const loadPromise = document.fonts.load(`14px "${preferred}"`, "M");
+		await Promise.race([
+			loadPromise,
+			new Promise<void>((resolve) => setTimeout(resolve, 1200)),
+		]);
+	})();
+
+	return terminalFontReadyPromise;
+}
+
 async function ensureGhosttyInit(): Promise<void> {
 	if (ghosttyInitialized) return;
 	if (ghosttyInitFailed)
@@ -122,6 +150,23 @@ export type GhosttyTerminalHandle = {
 	sendKey: (key: string) => void;
 };
 
+const DEFAULT_TERMINAL_FONT_FAMILY = [
+	'"JetBrainsMono Nerd Font"',
+	'"JetBrains Mono"',
+	'"FiraCode Nerd Font"',
+	'"Fira Code"',
+	'"CaskaydiaMono Nerd Font"',
+	'"Cascadia Mono"',
+	'"SF Mono"',
+	"Menlo",
+	"Monaco",
+	"Consolas",
+	'"Liberation Mono"',
+	'"DejaVu Sans Mono"',
+	"ui-monospace",
+	"monospace",
+].join(", ");
+
 interface GhosttyTerminalProps {
 	wsUrl: string;
 	fontFamily?: string;
@@ -137,7 +182,7 @@ export const GhosttyTerminal = forwardRef<
 	(
 		{
 			wsUrl,
-			fontFamily = "JetBrainsMono Nerd Font",
+			fontFamily = DEFAULT_TERMINAL_FONT_FAMILY,
 			fontSize = 14,
 			className,
 			theme: themeProp,
@@ -305,6 +350,8 @@ export const GhosttyTerminal = forwardRef<
 						session.isConnecting = false;
 						return;
 					}
+
+					await ensureTerminalFontReady(fontFamilyRef.current);
 
 					// ghostty-web terminals cannot be re-opened after unmount; recreate if we're mounting into a new container.
 					if (
@@ -633,7 +680,7 @@ export const MuxGhosttyTerminal = forwardRef<
 	(
 		{
 			workspacePath,
-			fontFamily = "JetBrainsMono Nerd Font",
+			fontFamily = DEFAULT_TERMINAL_FONT_FAMILY,
 			fontSize = 14,
 			className,
 			theme,
@@ -688,6 +735,7 @@ export const MuxGhosttyTerminal = forwardRef<
 					return;
 				}
 				if (!mounted || !containerRef.current) return;
+				await ensureTerminalFontReady(fontFamily);
 
 				if (terminalRef.current) {
 					try {

@@ -192,7 +192,21 @@
 		"chatVerbosityDescription": "Steuert, wie detailliert Tool-Aufrufe angezeigt werden.",
 		"minimal": "Minimal",
 		"compact": "Kompakt",
-		"verbose": "Ausfuehrlich"
+		"verbose": "Ausfuehrlich",
+		"reasoningLevel": "Reasoning-Level",
+		"selectReasoningLevel": "Reasoning-Level auswaehlen",
+		"reasoningLevelDescription": "Steuert die Denktiefe des Modells fuer die aktive Chat-Sitzung.",
+		"reasoningLevelRequiresSession": "Oeffne oder erstelle zuerst eine Chat-Sitzung, um den Reasoning-Level zu aendern.",
+		"thinkingOff": "Aus",
+		"thinkingMinimal": "Minimal",
+		"thinkingLow": "Niedrig",
+		"thinkingMedium": "Mittel",
+		"thinkingHigh": "Hoch",
+		"thinkingXHigh": "Sehr hoch",
+		"agentControl": "Agent-Steuerung",
+		"restartAgent": "Agent neu starten",
+		"restartingAgent": "Agent wird neu gestartet...",
+		"restartAgentDescription": "Beendet den Pi-Prozess dieser Sitzung, startet ihn neu und setzt ihn mit der Sitzungsverlaufsdatei fort."
 	},
 	"files": {
 		"title": "Dateien",

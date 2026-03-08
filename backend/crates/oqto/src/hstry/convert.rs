@@ -153,6 +153,30 @@ fn extract_text_content(content: &Value) -> String {
     }
 }
 
+fn sanitize_large_inline_data(value: &Value) -> Value {
+    match value {
+        Value::Array(items) => Value::Array(items.iter().map(sanitize_large_inline_data).collect()),
+        Value::Object(map) => {
+            let mut out = serde_json::Map::with_capacity(map.len());
+            for (k, v) in map {
+                if k == "data"
+                    && let Value::String(s) = v
+                    && s.len() > 8192
+                {
+                    out.insert(
+                        k.clone(),
+                        Value::String(format!("<omitted inline data: {} bytes>", s.len())),
+                    );
+                } else {
+                    out.insert(k.clone(), sanitize_large_inline_data(v));
+                }
+            }
+            Value::Object(out)
+        }
+        _ => value.clone(),
+    }
+}
+
 /// Build parts JSON from Pi message content.
 fn build_parts_json(content: &Value, msg: &AgentMessage) -> String {
     let mut parts: Vec<Value> = Vec::new();
@@ -163,11 +187,12 @@ fn build_parts_json(content: &Value, msg: &AgentMessage) -> String {
     // chat as visible text if included alongside the tool_result.
     if is_tool_result {
         let tool_call_id = msg.tool_call_id.clone().unwrap_or_default();
+        let sanitized_output = sanitize_large_inline_data(content);
         parts.push(serde_json::json!({
             "type": "tool_result",
             "toolCallId": tool_call_id,
             "name": msg.tool_name,
-            "output": content,
+            "output": sanitized_output,
             "is_error": msg.is_error.unwrap_or(false)
         }));
     } else {

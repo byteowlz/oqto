@@ -198,11 +198,9 @@ export async function deleteChatSessionApi(
 export async function getChatMessages(
 	sessionId: string,
 	shared_workspace_id?: string,
-	workspace_path?: string | null,
 ): Promise<ChatMessage[]> {
 	const params = new URLSearchParams();
 	if (shared_workspace_id) params.set("shared_workspace_id", shared_workspace_id);
-	if (workspace_path) params.set("workspace_path", workspace_path);
 	const qs = params.toString();
 	const url = controlPlaneApiUrl(`/api/chat-history/${sessionId}/messages${qs ? `?${qs}` : ""}`);
 	const res = await authFetch(url, {

@@ -1,6 +1,5 @@
 //! Application state shared across handlers.
 
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -10,7 +9,7 @@ use hyper_util::client::legacy::Client;
 use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::rt::TokioExecutor;
 use serde::{Deserialize, Serialize};
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::Mutex;
 use tracing::{debug, warn};
 
 use crate::hstry::HstryClient;
@@ -24,8 +23,8 @@ use crate::invite::InviteCodeRepository;
 use crate::local::LinuxUsersConfig;
 use crate::onboarding::OnboardingService;
 
-use crate::runner::router::ExecutionTarget;
 use crate::session::SessionService;
+use crate::session_target::SessionTargetRepository;
 use crate::session_ui::SessionAutoAttachMode;
 use crate::settings::SettingsService;
 use crate::shared_workspace::SharedWorkspaceService;
@@ -321,9 +320,8 @@ pub struct AppState {
     pub linux_users: Option<LinuxUsersConfig>,
     /// Runner socket pattern for multi-user mode (e.g., "/run/oqto/runner-sockets/{user}/oqto-runner.sock").
     pub runner_socket_pattern: Option<String>,
-    /// In-memory session affinity map for backend-owned routing.
-    /// Maps session_id -> execution target (personal/shared workspace).
-    pub session_target_affinity: Arc<RwLock<HashMap<String, ExecutionTarget>>>,
+    /// Persistent mapping from chat session ID to canonical execution target.
+    pub session_targets: Arc<SessionTargetRepository>,
     /// hstry client for unified chat history persistence.
     pub hstry: Option<HstryClient>,
     /// Audit logger for user-facing events.
@@ -374,6 +372,7 @@ impl AppState {
         voice: VoiceState,
         session_ui: SessionUiState,
         templates: TemplatesState,
+        session_targets: SessionTargetRepository,
         max_proxy_body_bytes: usize,
     ) -> Self {
         let http_client: Client<HttpConnector, Body> =
@@ -402,7 +401,7 @@ impl AppState {
             max_proxy_body_bytes,
             linux_users: None,
             runner_socket_pattern: None,
-            session_target_affinity: Arc::new(RwLock::new(HashMap::new())),
+            session_targets: Arc::new(session_targets),
             hstry: None,
             audit_logger: None,
             feedback: crate::feedback::FeedbackConfig::default(),

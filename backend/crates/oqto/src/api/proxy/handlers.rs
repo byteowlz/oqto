@@ -108,6 +108,26 @@ pub async fn proxy_fileserver_for_workspace(
     Query(query): Query<WorkspaceProxyQuery>,
     req: Request<Body>,
 ) -> Result<Response, StatusCode> {
+    proxy_fileserver_for_workspace_inner(state, user, path, query, req).await
+}
+
+/// Proxy HTTP requests to workspace fileserver root (`/api/workspace/files`).
+pub async fn proxy_fileserver_for_workspace_root(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Query(query): Query<WorkspaceProxyQuery>,
+    req: Request<Body>,
+) -> Result<Response, StatusCode> {
+    proxy_fileserver_for_workspace_inner(state, user, String::new(), query, req).await
+}
+
+async fn proxy_fileserver_for_workspace_inner(
+    state: AppState,
+    user: CurrentUser,
+    path: String,
+    query: WorkspaceProxyQuery,
+    req: Request<Body>,
+) -> Result<Response, StatusCode> {
     let session = get_io_session_for_workspace(&state, &user, &query.workspace_path).await?;
     let directory_query = build_fileserver_query(&query.workspace_path, req.uri().query());
 
