@@ -43,7 +43,7 @@ setup.sh must correctly provision everything for a new platform user on a fresh 
 
 
 ### [oqto-p994] Thinking renders as plaintext markdown block in minimal mode (P1, bug)
-In minimal mode, the thinking content is being displayed as a markdown block with 'plaintext' instead of being properly rendered as collapsed thinking content. This affects the UI display of agent thinking messages when the minimal display mode is active.
+When the thinking dropdown is expanded in minimal mode, the thinking content is wrapped in a markdown block labeled 'plaintext'. The thinking should display directly within the collapsed dropdown without the markdown wrapper.
 
 ### [oqto-x2tk] Guarantee JSONL->hstry durability: recover missed sessions after runner/hstry restarts (P1, bug)
 
@@ -1912,7 +1912,7 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
 - [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
