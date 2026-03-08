@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "oqto",
-  "version": "0.3.17",
+  "version": "0.3.20",
   "identifier": "com.tauri.dev",
   "build": {
     "frontendDist": "../dist",
