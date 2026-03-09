@@ -262,7 +262,7 @@ sync_models_for_user_with_key() {
         return 0
     fi
 
-    write_file_as_user "$linux_username" "$home/.pi/agent" "models.json" "$models_json" "644"
+    write_file_as_user "$linux_username" "$home/.pi/agent" "models.json" "$models_json" "600"
     log_step "Updated models.json"
 }
 
