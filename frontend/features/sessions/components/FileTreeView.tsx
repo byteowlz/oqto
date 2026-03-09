@@ -1931,6 +1931,7 @@ function ListView({
 										filename={file.name}
 										isDirectory={file.type === "directory"}
 										size={20}
+										className="flex-shrink-0"
 									/>
 									{isRenaming ? (
 										<RenameInput
