@@ -186,6 +186,15 @@ impl SharedWorkspaceService {
             warn!("failed to generate USERS.md for workspace {}: {}", id, e);
         }
 
+        // Provision ~/.pi/agent/ config for the shared workspace user
+        // (AGENTS.md, settings.json). Without this, Pi has no global instructions.
+        if let Err(e) = self.provision_pi_config(&linux_user, &home, multi_user) {
+            warn!(
+                "failed to provision Pi config for shared workspace {}: {}",
+                id, e
+            );
+        }
+
         info!(
             workspace_id = %id,
             slug = %slug,
@@ -708,6 +717,52 @@ impl SharedWorkspaceService {
     // ========================================================================
     // Internal helpers
     // ========================================================================
+
+    /// Provision `~/.pi/agent/` directory for a shared workspace user.
+    ///
+    /// Writes AGENTS.md (global agent instructions from embedded templates)
+    /// and a minimal settings.json so Pi knows which model to use.
+    /// Without these, Pi sessions in shared workspaces have no global context.
+    fn provision_pi_config(
+        &self,
+        linux_user: &str,
+        home: &str,
+        multi_user: bool,
+    ) -> Result<()> {
+        let pi_agent_dir = format!("{}/.pi/agent", home);
+
+        // Use the same embedded AGENTS.md that ships with the binary
+        let agents_content = include_str!("../templates/embedded/AGENTS.md");
+
+        if multi_user {
+            let linux_users = self
+                .linux_users
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("Linux user configuration not available"))?;
+
+            linux_users
+                .write_file_as_user(linux_user, &pi_agent_dir, "AGENTS.md", &agents_content)
+                .context("writing AGENTS.md for shared workspace user")?;
+
+            info!(
+                linux_user = %linux_user,
+                "provisioned ~/.pi/agent/AGENTS.md for shared workspace user"
+            );
+        } else {
+            // Single-user mode: write directly
+            std::fs::create_dir_all(&pi_agent_dir)
+                .with_context(|| format!("creating {}", pi_agent_dir))?;
+
+            let agents_path = format!("{}/AGENTS.md", pi_agent_dir);
+            if !std::path::Path::new(&agents_path).exists() {
+                std::fs::write(&agents_path, &agents_content)
+                    .with_context(|| format!("writing {}", agents_path))?;
+                info!("wrote {} for shared workspace user", agents_path);
+            }
+        }
+
+        Ok(())
+    }
 
     fn ensure_workspace_root(
         &self,
