@@ -44,6 +44,8 @@ pub struct SharedWorkspaceService {
     linux_users: Option<LinuxUsersConfig>,
     /// Runner socket pattern for routing file writes to shared workspace runners.
     runner_socket_pattern: Option<String>,
+    /// Path to oqto-templates repo root (for AGENTS.md, etc.).
+    templates_repo_path: Option<std::path::PathBuf>,
 }
 
 impl std::fmt::Debug for SharedWorkspaceService {
@@ -64,6 +66,7 @@ impl SharedWorkspaceService {
             ws_hub: None,
             linux_users: None,
             runner_socket_pattern: None,
+            templates_repo_path: None,
         }
     }
 
@@ -82,6 +85,12 @@ impl SharedWorkspaceService {
     /// Attach the runner socket pattern for routing file writes.
     pub fn with_runner_socket_pattern(mut self, pattern: String) -> Self {
         self.runner_socket_pattern = Some(pattern);
+        self
+    }
+
+    /// Set the path to the oqto-templates repo for sourcing AGENTS.md etc.
+    pub fn with_templates_repo_path(mut self, path: std::path::PathBuf) -> Self {
+        self.templates_repo_path = Some(path);
         self
     }
 
@@ -731,8 +740,28 @@ impl SharedWorkspaceService {
     ) -> Result<()> {
         let pi_agent_dir = format!("{}/.pi/agent", home);
 
-        // Use the same embedded AGENTS.md that ships with the binary
-        let agents_content = include_str!("../templates/embedded/AGENTS.md");
+        // Source AGENTS.md from oqto-templates repo, fall back to embedded
+        let agents_content = self
+            .templates_repo_path
+            .as_ref()
+            .and_then(|repo| {
+                let path = repo.join("dotfiles/.pi/agent/AGENTS.md");
+                match std::fs::read_to_string(&path) {
+                    Ok(content) => {
+                        info!("loaded AGENTS.md from templates repo: {}", path.display());
+                        Some(content)
+                    }
+                    Err(e) => {
+                        warn!(
+                            "failed to read AGENTS.md from {}: {}, using embedded fallback",
+                            path.display(),
+                            e
+                        );
+                        None
+                    }
+                }
+            })
+            .unwrap_or_else(|| include_str!("../templates/embedded/AGENTS.md").to_string());
 
         if multi_user {
             let linux_users = self

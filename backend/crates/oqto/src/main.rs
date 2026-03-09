@@ -2249,6 +2249,19 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     if let Some(ref pattern) = state.runner_socket_pattern {
         sw_service = sw_service.with_runner_socket_pattern(pattern.clone());
     }
+    // Wire up templates repo path for AGENTS.md provisioning.
+    // Resolve from local_path > cache_path > data_dir default (same logic as templates service).
+    {
+        let templates_repo = ctx
+            .config
+            .onboarding_templates
+            .local_path
+            .clone()
+            .or_else(|| ctx.config.onboarding_templates.cache_path.clone());
+        if let Some(repo_path) = templates_repo {
+            sw_service = sw_service.with_templates_repo_path(repo_path);
+        }
+    }
     state = state.with_shared_workspaces(sw_service);
     info!("Shared workspace service initialized");
 
