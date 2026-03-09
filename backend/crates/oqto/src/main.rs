@@ -2474,9 +2474,29 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
 
     info!("Listening on http://{}", addr);
 
-    let listener = TcpListener::bind(addr)
-        .await
-        .context("binding to address")?;
+    let listener = match TcpListener::bind(addr).await {
+        Ok(l) => l,
+        Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
+            warn!(
+                "Port {} is already in use, attempting to recover by killing the stale process...",
+                cmd.port
+            );
+            if try_kill_port_holder(cmd.port).await {
+                // Wait for the port to become available
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                TcpListener::bind(addr)
+                    .await
+                    .context("binding to address after killing stale process")?
+            } else {
+                return Err(anyhow::anyhow!(
+                    "Port {} is in use and could not kill the process holding it. \
+                     Is another oqto instance running?",
+                    cmd.port
+                ));
+            }
+        }
+        Err(e) => return Err(e).context("binding to address"),
+    };
 
     let stop_sessions_on_shutdown = !local_mode || ctx.config.local.stop_sessions_on_shutdown;
 
@@ -2758,6 +2778,91 @@ fn unix_peer_uid(stream: &UnixStream) -> Result<u32> {
 }
 
 /// Stop all running sessions during shutdown.
+/// Attempt to kill the process holding a TCP port.
+///
+/// Uses `ss` to find the PID, then sends SIGTERM followed by SIGKILL if needed.
+/// Only kills processes owned by the current user and named "oqto" to avoid
+/// accidentally killing unrelated services.
+async fn try_kill_port_holder(port: u16) -> bool {
+    let output = match tokio::process::Command::new("ss")
+        .args(["-tlnp", &format!("sport = :{port}")])
+        .output()
+        .await
+    {
+        Ok(o) => o,
+        Err(e) => {
+            warn!("Failed to run ss to find port holder: {}", e);
+            return false;
+        }
+    };
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Parse PID from ss output like: users:(("oqto",pid=12345,fd=16))
+    let pid = stdout
+        .lines()
+        .filter_map(|line| {
+            // Only kill oqto processes, not random services
+            if !line.contains("\"oqto\"") {
+                return None;
+            }
+            line.find("pid=").and_then(|start| {
+                let rest = &line[start + 4..];
+                rest.split(|c: char| !c.is_ascii_digit())
+                    .next()
+                    .and_then(|s| s.parse::<u32>().ok())
+            })
+        })
+        .next();
+
+    let Some(pid) = pid else {
+        warn!(
+            "Port {} is in use but could not identify the holder (non-oqto process?)",
+            port
+        );
+        return false;
+    };
+
+    let my_pid = std::process::id();
+    if pid == my_pid {
+        warn!("Port holder is ourselves (PID {}), cannot self-kill", pid);
+        return false;
+    }
+
+    info!("Sending SIGTERM to stale oqto process PID {}", pid);
+    unsafe {
+        libc::kill(pid as i32, libc::SIGTERM);
+    }
+
+    // Wait up to 3 seconds for graceful shutdown
+    for _ in 0..6 {
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        let alive = unsafe { libc::kill(pid as i32, 0) };
+        if alive != 0 {
+            info!("Stale oqto process PID {} terminated gracefully", pid);
+            return true;
+        }
+    }
+
+    // Force kill
+    warn!(
+        "Stale oqto process PID {} did not exit after SIGTERM, sending SIGKILL",
+        pid
+    );
+    unsafe {
+        libc::kill(pid as i32, libc::SIGKILL);
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    let alive = unsafe { libc::kill(pid as i32, 0) };
+    if alive != 0 {
+        info!("Stale oqto process PID {} killed", pid);
+        true
+    } else {
+        error!("Failed to kill stale oqto process PID {}", pid);
+        false
+    }
+}
+
 async fn shutdown_all_sessions(session_service: &session::SessionService) -> Result<()> {
     let sessions = session_service.list_sessions().await?;
     let running_count = sessions.iter().filter(|s| s.is_active()).count();
