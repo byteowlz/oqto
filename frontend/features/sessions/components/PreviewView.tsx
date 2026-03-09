@@ -1,7 +1,6 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
-import { authFetch } from "@/lib/api/client";
 import { workspaceFileUrl } from "@/lib/api/files";
 import { downloadFileMux, readFileMux, writeFileMux } from "@/lib/mux-files";
 import { cn } from "@/lib/utils";
@@ -409,40 +408,46 @@ export function PreviewView({
 			return;
 		}
 
-		const url = workspaceFileUrl(workspacePath, filePath);
-
 		// For video/audio prefer direct URL so the browser can use Range requests
 		// for streaming/seek behavior instead of downloading full blob first.
 		if (isVideoFile || isAudioFile) {
+			const url = workspaceFileUrl(workspacePath, filePath);
 			setBinaryUrl(url);
 			setBinaryLoading(false);
 			return;
 		}
 
-		const controller = new AbortController();
 		let cancelled = false;
 		setBinaryLoading(true);
 		setError("");
 
-		authFetch(url, {
-			method: "GET",
-			credentials: "include",
-			signal: controller.signal,
-		})
-			.then(async (res) => {
-				if (!res.ok) {
-					throw new Error(`Failed to load media (${res.status})`);
-				}
-				return res.blob();
-			})
-			.then((blob) => {
+		// Use WebSocket mux for binary file reads (PDFs, images) to avoid
+		// dependency on the REST file proxy endpoint which requires a running
+		// fileserver session.
+		readFileMux(workspacePath, filePath)
+			.then(({ data }) => {
 				if (cancelled) return;
+				// Determine MIME type from extension
+				const ext = filename.substring(filename.lastIndexOf(".")).toLowerCase();
+				const mimeMap: Record<string, string> = {
+					".pdf": "application/pdf",
+					".png": "image/png",
+					".jpg": "image/jpeg",
+					".jpeg": "image/jpeg",
+					".gif": "image/gif",
+					".webp": "image/webp",
+					".svg": "image/svg+xml",
+					".bmp": "image/bmp",
+					".ico": "image/x-icon",
+				};
+				const mimeType = mimeMap[ext] || "application/octet-stream";
+				const blob = new Blob([data], { type: mimeType });
 				const objectUrl = URL.createObjectURL(blob);
 				binaryObjectUrlRef.current = objectUrl;
 				setBinaryUrl(objectUrl);
 			})
 			.catch((err) => {
-				if (cancelled || err?.name === "AbortError") return;
+				if (cancelled) return;
 				setError(err instanceof Error ? err.message : "Failed to load media");
 			})
 			.finally(() => {
@@ -451,7 +456,6 @@ export function PreviewView({
 
 		return () => {
 			cancelled = true;
-			controller.abort();
 			if (binaryObjectUrlRef.current) {
 				URL.revokeObjectURL(binaryObjectUrlRef.current);
 				binaryObjectUrlRef.current = null;
