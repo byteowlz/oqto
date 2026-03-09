@@ -540,6 +540,39 @@ export const SessionScreen = memo(function SessionScreen() {
 		setAppTabs((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)));
 	}, []);
 
+	const handleCanvasSaveAndAddToChat = useCallback((filePath: string) => {
+		const filename = filePath.split("/").pop() ?? filePath;
+		setPendingFileAttachment({
+			id: `canvas-${Date.now()}`,
+			path: filePath,
+			filename,
+			type: "file",
+		});
+	}, []);
+
+	const handlePendingFileAttachmentConsumed = useCallback(() => {
+		setPendingFileAttachment(null);
+	}, []);
+
+	const normalizedWorkspacePath = useMemo(() => {
+		const fallback = getSessionWorkspacePath(selectedChatSessionId);
+		return normalizeWorkspacePath(
+			selectedChatFromHistory?.workspace_path ?? fallback,
+		);
+	}, [
+		getSessionWorkspacePath,
+		selectedChatFromHistory?.workspace_path,
+		selectedChatSessionId,
+	]);
+
+	const normalizedOverviewPath = useMemo(
+		() =>
+			selectedWorkspaceOverviewPath
+				? normalizeWorkspacePath(selectedWorkspaceOverviewPath)
+				: null,
+		[selectedWorkspaceOverviewPath],
+	);
+
 	// Watch for app signal files written by agents (OpenApp/CloseApp tools)
 	const lastSignalTs = useRef(0);
 	useEffect(() => {
@@ -602,39 +635,6 @@ export const SessionScreen = memo(function SessionScreen() {
 			unsub?.();
 		};
 	}, [normalizedWorkspacePath, handleOpenAsApp, handleCloseAppTab]);
-
-	const handleCanvasSaveAndAddToChat = useCallback((filePath: string) => {
-		const filename = filePath.split("/").pop() ?? filePath;
-		setPendingFileAttachment({
-			id: `canvas-${Date.now()}`,
-			path: filePath,
-			filename,
-			type: "file",
-		});
-	}, []);
-
-	const handlePendingFileAttachmentConsumed = useCallback(() => {
-		setPendingFileAttachment(null);
-	}, []);
-
-	const normalizedWorkspacePath = useMemo(() => {
-		const fallback = getSessionWorkspacePath(selectedChatSessionId);
-		return normalizeWorkspacePath(
-			selectedChatFromHistory?.workspace_path ?? fallback,
-		);
-	}, [
-		getSessionWorkspacePath,
-		selectedChatFromHistory?.workspace_path,
-		selectedChatSessionId,
-	]);
-
-	const normalizedOverviewPath = useMemo(
-		() =>
-			selectedWorkspaceOverviewPath
-				? normalizeWorkspacePath(selectedWorkspaceOverviewPath)
-				: null,
-		[selectedWorkspaceOverviewPath],
-	);
 
 	const handleNewChat = useCallback(async () => {
 		const targetWorkspace = normalizedOverviewPath ?? normalizedWorkspacePath;
