@@ -6,15 +6,6 @@
 
 ### [oqto-5ey4] Migrate from oqto-browser to agent-browser (P0, epic)
 
-### [oqto-m7br] Security: models.json written with 644 permissions - eavs API keys readable by all users (P0, bug)
-In scripts/admin/eavs-provision.sh line 265, models.json is written with mode 644 (world-readable). This file contains the embedded eavs virtual API key. In multi-user deployments, any user on the system can read another user's API key by accessing their ~/.pi/agent/models.json.
-
-Fix: Change mode from '644' to '600' in the write_file_as_user call. Also audit all other write_file_as_user calls that write sensitive content.
-
-File: scripts/admin/eavs-provision.sh:265
-...
-
-
 ### [oqto-29e1] Stability: hstry gRPC high-availability with local spool fallback (P0, epic)
 hstry is currently a single point of failure. If the hstry gRPC service becomes unavailable, all message persistence fails with no graceful degradation. This is especially critical for long-running agent sessions where losing message history is unacceptable.
 
@@ -41,6 +32,21 @@ setup.sh must correctly provision everything for a new platform user on a fresh 
 3. Per-user provisioning on login/creation:
 ...
 
+
+### [oqto-yxhc.4] Host-side postMessage bridge for file read/write (P1, task)
+Parent frame message handler in AppView that routes apphost requests. read_file -> readFileMux, write_file -> writeFileMux, save_state -> write to .oqto/app-state/{key}.json, load_state -> read from same. Path validation: no .. traversal, scoped to workspace.
+
+### [oqto-yxhc.3] File context menu: Open as App for .html files (P1, task)
+Add 'Open as App' context menu item in FileContextMenu (FileTreeView.tsx) for .html files. Routes through onOpenAsApp callback up to SessionScreen which opens the file as an app tab.
+
+### [oqto-yxhc.2] ViewKey 'app' and SessionScreen tab integration (P1, task)
+Add 'app' to ViewKey union in SessionScreen.tsx. Add AppWindow icon tab. Wire up openApp callback that adds an app tab and switches to the app view. Pass open app tabs state down to AppView.
+
+### [oqto-yxhc.1] AppView component with srcdoc rendering and apphost shim (P1, task)
+New component: features/sessions/components/AppView.tsx. Renders HTML content in <iframe srcdoc> with injected apphost bridge script and --app-* CSS variables. Supports multiple open apps via internal tab bar. Each tab has refresh/close buttons. Apphost shim provides: theme, onThemeChange, readFile, writeFile, saveState, loadState, send, onMessage stubs.
+
+### [oqto-yxhc] Inline HTML Apps: workspace apps rendered via srcdoc iframes (P1, epic)
+Render single-file HTML apps from workspace as live iframe tabs in the session screen. No backend changes. Apps get file read/write via apphost bridge (postMessage -> mux-files). Agents and users share data via workspace files. Phase 0 of the app story -- oqto-serve (oqto-14b1) handles multi-file apps later. Design: docs/design/inline-html-apps.md
 
 ### [oqto-p994] Thinking renders as plaintext markdown block in minimal mode (P1, bug)
 When the thinking dropdown is expanded in minimal mode, the thinking content is wrapped in a markdown block labeled 'plaintext'. The thinking should display directly within the collapsed dropdown without the markdown wrapper.
@@ -100,9 +106,9 @@ start flow:
 ### [oqto-14b1] oqto-serve: agent web application server (P1, epic)
 Implement oqto-serve, a CLI + HTTP server that lets agents serve self-contained HTML/CSS/JS apps to the user within the oqto frontend.
 
+NOTE: Single-file HTML apps are handled by oqto-yxhc (inline HTML apps via srcdoc iframes, no server needed). oqto-serve is for multi-file apps with relative imports, TypeScript transpilation, and CDN passthrough.
+
 Architecture:
-- oqto-serve CLI (Rust binary): start/stop/list/scaffold commands
-- Static file serving with swc TypeScript transpilation (no Node/Bun)
 ...
 
 
@@ -424,6 +430,15 @@ Build and distribute pre-compiled binaries for Linux (x86_64, arm64) and macOS (
 
 ### [octo-af5j] Release & Update System (P1, epic)
 Comprehensive system for distributing Octo releases, managing updates in the field, and expanding runtime options including Proxmox LXC support.
+
+### [oqto-yxhc.7] App templates in oqto style (P2, task)
+Create starter templates in templates/apps/: blank.html, dashboard.html, form.html, data-table.html, kanban.html, markdown-viewer.html. All single-file, self-contained, using --app-* CSS variables. Include apphost API documentation in each template as HTML comments.
+
+### [oqto-yxhc.6] Workspace pinned apps config (.oqto/apps.json) (P2, task)
+Read .oqto/apps.json from workspace on session load. Format: {apps: [{path, title, autoOpen}]}. autoOpen apps open as tabs automatically. Others available in a quick-launch dropdown. Config writable by agents.
+
+### [oqto-yxhc.5] Auto-reload apps on file change via mux file watcher (P2, task)
+When file_changed event from mux-files channel matches an open app's path, re-read the file, re-inject apphost shim, update srcdoc. Apps should use saveState/loadState for state preservation across reloads.
 
 ### [oqto-jq8p.4] Frontend SSO login flow (P2, feature)
 Add SSO Login button to login page that redirects to IdP authorize endpoint. Handle callback redirect with code+state params. Store returned JWT same as dev login.
@@ -1202,6 +1217,7 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [oqto-m7br] Security: models.json written with 644 permissions - eavs API keys readable by all users (closed 2026-03-09)
 - [oqto-1fck] Session duplication in frontend sidebar - platform_id not set in hstry (closed 2026-03-08)
 - [oqto-ejm7] Frontend model picker should preselect the default model from .pi/settings.json (closed 2026-03-08)
 - [octo-mxd8.4] macOS fallback: socket broker for guarded paths (closed 2026-03-08)
@@ -1863,7 +1879,7 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
 - [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
-- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
