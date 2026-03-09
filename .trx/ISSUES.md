@@ -33,18 +33,6 @@ setup.sh must correctly provision everything for a new platform user on a fresh 
 ...
 
 
-### [oqto-yxhc.4] Host-side postMessage bridge for file read/write (P1, task)
-Parent frame message handler in AppView that routes apphost requests. read_file -> readFileMux, write_file -> writeFileMux, save_state -> write to .oqto/app-state/{key}.json, load_state -> read from same. Path validation: no .. traversal, scoped to workspace.
-
-### [oqto-yxhc.3] File context menu: Open as App for .html files (P1, task)
-Add 'Open as App' context menu item in FileContextMenu (FileTreeView.tsx) for .html files. Routes through onOpenAsApp callback up to SessionScreen which opens the file as an app tab.
-
-### [oqto-yxhc.2] ViewKey 'app' and SessionScreen tab integration (P1, task)
-Add 'app' to ViewKey union in SessionScreen.tsx. Add AppWindow icon tab. Wire up openApp callback that adds an app tab and switches to the app view. Pass open app tabs state down to AppView.
-
-### [oqto-yxhc.1] AppView component with srcdoc rendering and apphost shim (P1, task)
-New component: features/sessions/components/AppView.tsx. Renders HTML content in <iframe srcdoc> with injected apphost bridge script and --app-* CSS variables. Supports multiple open apps via internal tab bar. Each tab has refresh/close buttons. Apphost shim provides: theme, onThemeChange, readFile, writeFile, saveState, loadState, send, onMessage stubs.
-
 ### [oqto-yxhc] Inline HTML Apps: workspace apps rendered via srcdoc iframes (P1, epic)
 Render single-file HTML apps from workspace as live iframe tabs in the session screen. No backend changes. Apps get file read/write via apphost bridge (postMessage -> mux-files). Agents and users share data via workspace files. Phase 0 of the app story -- oqto-serve (oqto-14b1) handles multi-file apps later. Design: docs/design/inline-html-apps.md
 
@@ -1217,6 +1205,10 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [oqto-yxhc.4] Host-side postMessage bridge for file read/write (closed 2026-03-09)
+- [oqto-yxhc.3] File context menu: Open as App for .html files (closed 2026-03-09)
+- [oqto-yxhc.2] ViewKey 'app' and SessionScreen tab integration (closed 2026-03-09)
+- [oqto-yxhc.1] AppView component with srcdoc rendering and apphost shim (closed 2026-03-09)
 - [oqto-m7br] Security: models.json written with 644 permissions - eavs API keys readable by all users (closed 2026-03-09)
 - [oqto-1fck] Session duplication in frontend sidebar - platform_id not set in hstry (closed 2026-03-08)
 - [oqto-ejm7] Frontend model picker should preselect the default model from .pi/settings.json (closed 2026-03-08)
@@ -1879,7 +1871,7 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
 - [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
 - [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
