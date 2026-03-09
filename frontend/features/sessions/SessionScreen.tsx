@@ -10,6 +10,8 @@ import {
 import { useApp } from "@/hooks/use-app";
 import { useCurrentUser } from "@/hooks/use-auth";
 import { getUserDisplayName } from "@/lib/api/types";
+import { readFileMux, writeFileMux } from "@/lib/mux-files";
+import { getWsManager } from "@/lib/ws-manager";
 import { sharedWorkspaceSessionMap } from "@/components/contexts/chat-context";
 import { useSharedWorkspaces } from "@/src/routes/app-shell/hooks/useSharedWorkspaces";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -538,6 +540,60 @@ export const SessionScreen = memo(function SessionScreen() {
 	const handleUpdateAppTab = useCallback((id: string, patch: Partial<typeof appTabs[number]>) => {
 		setAppTabs((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)));
 	}, []);
+
+	// Watch for app signal files written by agents (OpenApp/CloseApp tools)
+	const lastSignalTs = useRef(0);
+	useEffect(() => {
+		if (!normalizedWorkspacePath) return;
+		let unsub: (() => void) | undefined;
+		try {
+			const ws = getWsManager();
+			// biome-ignore lint: event type is opaque from subscribe
+			unsub = ws.subscribe("files", (event: any) => {
+				if (
+					event.type !== "file_changed" ||
+					event.workspace_path !== normalizedWorkspacePath
+				) return;
+				if (!event.path?.endsWith(".oqto/app-signals.json")) return;
+
+				// Read and process the signal file
+				void (async () => {
+					try {
+						const result = await readFileMux(normalizedWorkspacePath, ".oqto/app-signals.json");
+						const text = new TextDecoder().decode(result.data);
+						const file = JSON.parse(text) as { signals: Array<{ action: string; path: string; title?: string; timestamp: number }> };
+						if (!file.signals?.length) return;
+
+						// Process only new signals
+						const newSignals = file.signals.filter((s) => s.timestamp > lastSignalTs.current);
+						if (newSignals.length === 0) return;
+						lastSignalTs.current = Math.max(...newSignals.map((s) => s.timestamp));
+
+						for (const signal of newSignals) {
+							if (signal.action === "open") {
+								handleOpenAsApp(signal.path);
+							} else if (signal.action === "close") {
+								setAppTabs((prev) => {
+									const tab = prev.find((t) => t.filePath === signal.path);
+									if (tab) handleCloseAppTab(tab.id);
+									return prev;
+								});
+							}
+						}
+
+						// Clear processed signals
+						const empty = new TextEncoder().encode(JSON.stringify({ signals: [] }));
+						await writeFileMux(normalizedWorkspacePath, ".oqto/app-signals.json", empty.buffer as ArrayBuffer, true);
+					} catch {
+						// Signal file read failed - ignore
+					}
+				})();
+			});
+		} catch {
+			// WS manager not ready
+		}
+		return () => unsub?.();
+	}, [normalizedWorkspacePath, handleOpenAsApp, handleCloseAppTab]);
 
 	const handleCanvasSaveAndAddToChat = useCallback((filePath: string) => {
 		const filename = filePath.split("/").pop() ?? filePath;
