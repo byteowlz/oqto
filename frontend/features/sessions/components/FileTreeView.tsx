@@ -34,6 +34,7 @@ import { listWorkspaceSessions } from "@/lib/api/sessions";
 import { normalizeWorkspacePath } from "@/lib/session-utils";
 import { cn } from "@/lib/utils";
 import {
+	AppWindow,
 	ChevronDown,
 	ChevronRight,
 	Copy,
@@ -313,6 +314,7 @@ export const initialFileTreeState: FileTreeState = {
 interface FileTreeViewProps {
 	onPreviewFile?: (filePath: string) => void;
 	onOpenInCanvas?: (filePath: string) => void;
+	onOpenAsApp?: (filePath: string) => void;
 	workspacePath?: string | null;
 	/** External state for persistence across view switches */
 	state?: FileTreeState;
@@ -323,6 +325,7 @@ interface FileTreeViewProps {
 export function FileTreeView({
 	onPreviewFile,
 	onOpenInCanvas,
+	onOpenAsApp,
 	workspacePath,
 	state,
 	onStateChange,
@@ -409,6 +412,7 @@ export function FileTreeView({
 			const requestKey = getTreeCacheKey(cacheKey, path, INITIAL_DEPTH);
 			const now = Date.now();
 			if (
+				!skipCache &&
 				lastLoadRef.current &&
 				lastLoadRef.current.key === requestKey &&
 				now - lastLoadRef.current.ts < 600
@@ -534,9 +538,7 @@ export function FileTreeView({
 				// Debounce: wait 500ms after last event before refreshing
 				if (debounceTimer) clearTimeout(debounceTimer);
 				debounceTimer = setTimeout(() => {
-					if (!document.hidden) {
-						loadTreeRef.current(currentPath, true, true, true);
-					}
+					loadTreeRef.current(currentPath, true, true, true);
 				}, 500);
 			});
 		} catch {
@@ -1088,6 +1090,7 @@ export function FileTreeView({
 						onRenameConfirm={handleConfirmRename}
 						onRenameCancel={handleCancelRename}
 						onOpenInCanvas={onOpenInCanvas}
+						onOpenAsApp={onOpenAsApp}
 						loadingDirs={loadingDirs}
 					/>
 				) : viewMode === "list" ? (
@@ -1106,6 +1109,7 @@ export function FileTreeView({
 						onRenameConfirm={handleConfirmRename}
 						onRenameCancel={handleCancelRename}
 						onOpenInCanvas={onOpenInCanvas}
+						onOpenAsApp={onOpenAsApp}
 					/>
 				) : (
 					<GridView
@@ -1123,6 +1127,7 @@ export function FileTreeView({
 						onRenameConfirm={handleConfirmRename}
 						onRenameCancel={handleCancelRename}
 						onOpenInCanvas={onOpenInCanvas}
+						onOpenAsApp={onOpenAsApp}
 					/>
 				)}
 			</div>
@@ -1484,6 +1489,7 @@ function FileContextMenu({
 	onCopy,
 	onMove,
 	onOpenInCanvas,
+	onOpenAsApp,
 	onCopyToWorkspace,
 }: {
 	children: React.ReactNode;
@@ -1494,14 +1500,25 @@ function FileContextMenu({
 	onCopy: (path: string) => void;
 	onMove: (path: string) => void;
 	onOpenInCanvas?: (path: string) => void;
+	onOpenAsApp?: (path: string) => void;
 	onCopyToWorkspace?: (path: string, name: string, isDirectory: boolean) => void;
 }) {
 	const isImage = node.type === "file" && isImageFile(node.name);
+	const isHtml = node.type === "file" && /\.html?$/i.test(node.name);
 
 	return (
 		<ContextMenu>
 			<ContextMenuTrigger className="contents">{children}</ContextMenuTrigger>
 			<ContextMenuContent>
+				{isHtml && onOpenAsApp && (
+					<>
+						<ContextMenuItem onClick={() => onOpenAsApp(node.path)}>
+							<AppWindow className="w-4 h-4 mr-2" />
+							Open as App
+						</ContextMenuItem>
+						<ContextMenuSeparator />
+					</>
+				)}
 				{isImage && onOpenInCanvas && (
 					<>
 						<ContextMenuItem onClick={() => onOpenInCanvas(node.path)}>
@@ -1566,6 +1583,7 @@ function TreeView({
 	onRenameConfirm,
 	onRenameCancel,
 	onOpenInCanvas,
+	onOpenAsApp,
 	loadingDirs,
 }: {
 	nodes: FileNode[];
@@ -1589,6 +1607,7 @@ function TreeView({
 	onRenameConfirm: (newName: string) => void;
 	onRenameCancel: () => void;
 	onOpenInCanvas?: (path: string) => void;
+	onOpenAsApp?: (path: string) => void;
 	loadingDirs?: Set<string>;
 }) {
 	// Sort: directories first, then files, both alphabetically
@@ -1620,6 +1639,7 @@ function TreeView({
 					onRenameConfirm={onRenameConfirm}
 					onRenameCancel={onRenameCancel}
 					onOpenInCanvas={onOpenInCanvas}
+					onOpenAsApp={onOpenAsApp}
 					loadingDirs={loadingDirs}
 				/>
 			))}
@@ -1646,6 +1666,7 @@ function TreeRow({
 	onRenameConfirm,
 	onRenameCancel,
 	onOpenInCanvas,
+	onOpenAsApp,
 	loadingDirs,
 }: {
 	node: FileNode;
@@ -1670,6 +1691,7 @@ function TreeRow({
 	onRenameConfirm: (newName: string) => void;
 	onRenameCancel: () => void;
 	onOpenInCanvas?: (path: string) => void;
+	onOpenAsApp?: (path: string) => void;
 	loadingDirs?: Set<string>;
 }) {
 	const isDir = node.type === "directory";
@@ -1718,6 +1740,7 @@ function TreeRow({
 				onMove={onMove}
 				onCopyToWorkspace={onCopyToWorkspace}
 				onOpenInCanvas={onOpenInCanvas}
+				onOpenAsApp={onOpenAsApp}
 			>
 				<button
 					type="button"
@@ -1788,6 +1811,7 @@ function TreeRow({
 								onRenameConfirm={onRenameConfirm}
 								onRenameCancel={onRenameCancel}
 								onOpenInCanvas={onOpenInCanvas}
+								onOpenAsApp={onOpenAsApp}
 								loadingDirs={loadingDirs}
 							/>
 						))}
@@ -1821,6 +1845,7 @@ function ListView({
 	onRenameConfirm,
 	onRenameCancel,
 	onOpenInCanvas,
+	onOpenAsApp,
 }: {
 	files: FileNode[];
 	selectedFiles: Set<string>;
@@ -1841,6 +1866,7 @@ function ListView({
 	onRenameConfirm: (newName: string) => void;
 	onRenameCancel: () => void;
 	onOpenInCanvas?: (path: string) => void;
+	onOpenAsApp?: (path: string) => void;
 }) {
 	// Sort: directories first, then files
 	const sortedFiles = [...files].sort((a, b) => {
@@ -1869,6 +1895,7 @@ function ListView({
 							node={file}
 							onDownload={onDownload}
 							onOpenInCanvas={onOpenInCanvas}
+							onOpenAsApp={onOpenAsApp}
 							onDelete={onDelete}
 							onRename={onRename}
 							onCopy={onCopy}
@@ -1953,6 +1980,7 @@ function GridView({
 	onRenameConfirm,
 	onRenameCancel,
 	onOpenInCanvas,
+	onOpenAsApp,
 }: {
 	files: FileNode[];
 	selectedFiles: Set<string>;
@@ -1973,6 +2001,7 @@ function GridView({
 	onRenameConfirm: (newName: string) => void;
 	onRenameCancel: () => void;
 	onOpenInCanvas?: (path: string) => void;
+	onOpenAsApp?: (path: string) => void;
 }) {
 	// Sort: directories first, then files
 	const sortedFiles = [...files].sort((a, b) => {
@@ -1997,6 +2026,7 @@ function GridView({
 						onMove={onMove}
 						onCopyToWorkspace={onCopyToWorkspace}
 						onOpenInCanvas={onOpenInCanvas}
+						onOpenAsApp={onOpenAsApp}
 					>
 						<button
 							type="button"

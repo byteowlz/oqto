@@ -27,6 +27,7 @@ import {
 	ChevronUp,
 	CircleDot,
 	FileText,
+	AppWindow,
 	FolderKanban,
 	Globe,
 	ListTodo,
@@ -100,6 +101,11 @@ const PreviewView = lazy(() =>
 		default: mod.PreviewView,
 	})),
 );
+const AppView = lazy(() =>
+	import("@/features/sessions/components/AppView").then((mod) => ({
+		default: mod.AppView,
+	})),
+);
 
 type ViewKey =
 	| "chat"
@@ -110,7 +116,8 @@ type ViewKey =
 	| "memories"
 	| "terminal"
 	| "browser"
-	| "settings";
+	| "settings"
+	| "app";
 
 const viewLoadingFallback = (
 	<div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">
@@ -492,6 +499,43 @@ export const SessionScreen = memo(function SessionScreen() {
 		setActiveView("canvas");
 	}, []);
 
+	// --- App tabs state ---
+	const [appTabs, setAppTabs] = useState<
+		Array<{ id: string; filePath: string; title: string; content: string; pinned: boolean }>
+	>([]);
+	const [activeAppTabId, setActiveAppTabId] = useState<string | null>(null);
+
+	// biome-ignore lint/correctness/useExhaustiveDependencies: setActiveView is stable setState
+	const handleOpenAsApp = useCallback((filePath: string) => {
+		setAppTabs((prev) => {
+			const existing = prev.find((t) => t.filePath === filePath);
+			if (existing) {
+				setActiveAppTabId(existing.id);
+				return prev;
+			}
+			const id = `app-${Date.now()}`;
+			const name = filePath.split("/").pop() ?? filePath;
+			const title = name.replace(/\.html?$/i, "");
+			setActiveAppTabId(id);
+			return [...prev, { id, filePath, title, content: "", pinned: false }];
+		});
+		setActiveView("app");
+	}, []);
+
+	const handleCloseAppTab = useCallback((id: string) => {
+		setAppTabs((prev) => {
+			const next = prev.filter((t) => t.id !== id);
+			if (activeAppTabId === id) {
+				setActiveAppTabId(next.length > 0 ? next[next.length - 1].id : null);
+			}
+			return next;
+		});
+	}, [activeAppTabId]);
+
+	const handleUpdateAppTab = useCallback((id: string, patch: Partial<typeof appTabs[number]>) => {
+		setAppTabs((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)));
+	}, []);
+
 	const handleCanvasSaveAndAddToChat = useCallback((filePath: string) => {
 		const filename = filePath.split("/").pop() ?? filePath;
 		setPendingFileAttachment({
@@ -869,6 +913,16 @@ export const SessionScreen = memo(function SessionScreen() {
 								icon={Globe}
 								label="Browser"
 							/>
+							{appTabs.length > 0 && (
+								<TabButton
+									activeView={activeView}
+									onSelect={setActiveView}
+									view="app"
+									icon={AppWindow}
+									label="Apps"
+									badge={appTabs.length}
+								/>
+							)}
 							<TabButton
 								activeView={activeView}
 								onSelect={setActiveView}
@@ -922,6 +976,7 @@ export const SessionScreen = memo(function SessionScreen() {
 										workspacePath={normalizedWorkspacePath}
 										onPreviewFile={handlePreviewFile}
 										onOpenInCanvas={handleOpenInCanvas}
+										onOpenAsApp={handleOpenAsApp}
 										state={fileTreeState}
 										onStateChange={setFileTreeState}
 									/>
@@ -976,6 +1031,19 @@ export const SessionScreen = memo(function SessionScreen() {
 								/>
 							</Suspense>
 						</div>
+						{activeView === "app" && (
+							<Suspense fallback={viewLoadingFallback}>
+								<AppView
+									workspacePath={normalizedWorkspacePath}
+									tabs={appTabs}
+									activeTabId={activeAppTabId}
+									onSetActiveTab={setActiveAppTabId}
+									onCloseTab={handleCloseAppTab}
+									onUpdateTab={handleUpdateAppTab}
+									onExpand={() => setExpandedView("app")}
+								/>
+							</Suspense>
+						)}
 						{activeView === "settings" && (
 							<Suspense fallback={viewLoadingFallback}>
 								<PiSettingsView
@@ -1026,6 +1094,21 @@ export const SessionScreen = memo(function SessionScreen() {
 										workspacePath={normalizedWorkspacePath}
 										className="h-full"
 										onSendToChat={handleSendToChat}
+										onCollapse={() => setExpandedView(null)}
+									/>
+								</Suspense>
+							</div>
+						) : expandedView === "app" ? (
+							<div className="flex-1 min-h-0 flex flex-col -m-4 xl:-m-6">
+								<Suspense fallback={viewLoadingFallback}>
+									<AppView
+										workspacePath={normalizedWorkspacePath}
+										tabs={appTabs}
+										activeTabId={activeAppTabId}
+										onSetActiveTab={setActiveAppTabId}
+										onCloseTab={handleCloseAppTab}
+										onUpdateTab={handleUpdateAppTab}
+										isExpanded
 										onCollapse={() => setExpandedView(null)}
 									/>
 								</Suspense>
@@ -1176,6 +1259,18 @@ export const SessionScreen = memo(function SessionScreen() {
 									icon={Globe}
 									label="Browser"
 								/>
+								{appTabs.length > 0 && (
+									<CollapsedTabButton
+										activeView={activeView}
+										onSelect={(view) => {
+											setActiveView(view);
+											setRightSidebarCollapsed(false);
+										}}
+										view="app"
+										icon={AppWindow}
+										label="Apps"
+									/>
+								)}
 								<CollapsedTabButton
 									activeView={activeView}
 									onSelect={(view) => {
@@ -1254,6 +1349,17 @@ export const SessionScreen = memo(function SessionScreen() {
 										label="Browser"
 										hideLabel
 									/>
+									{appTabs.length > 0 && (
+										<TabButton
+											activeView={activeView}
+											onSelect={setActiveView}
+											view="app"
+											icon={AppWindow}
+											label="Apps"
+											hideLabel
+											badge={appTabs.length}
+										/>
+									)}
 									<TabButton
 										activeView={activeView}
 										onSelect={setActiveView}
@@ -1282,6 +1388,7 @@ export const SessionScreen = memo(function SessionScreen() {
 														workspacePath={normalizedWorkspacePath}
 														onPreviewFile={handlePreviewFile}
 														onOpenInCanvas={handleOpenInCanvas}
+														onOpenAsApp={handleOpenAsApp}
 														state={fileTreeState}
 														onStateChange={setFileTreeState}
 													/>
@@ -1369,6 +1476,19 @@ export const SessionScreen = memo(function SessionScreen() {
 											/>
 										</Suspense>
 									</div>
+									{activeView === "app" && (
+										<Suspense fallback={viewLoadingFallback}>
+											<AppView
+												workspacePath={normalizedWorkspacePath}
+												tabs={appTabs}
+												activeTabId={activeAppTabId}
+												onSetActiveTab={setActiveAppTabId}
+												onCloseTab={handleCloseAppTab}
+												onUpdateTab={handleUpdateAppTab}
+												onExpand={() => setExpandedView("app")}
+											/>
+										</Suspense>
+									)}
 									{activeView === "settings" && (
 										<Suspense fallback={viewLoadingFallback}>
 											<PiSettingsView
