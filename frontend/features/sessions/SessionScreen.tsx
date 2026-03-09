@@ -519,7 +519,7 @@ export const SessionScreen = memo(function SessionScreen() {
 			setActiveAppTabId(id);
 			return [...prev, { id, filePath, title, content: "", pinned: false }];
 		});
-		setActiveView("app");
+		setExpandedView("app");
 	}, []);
 
 	const handleCloseAppTab = useCallback((id: string) => {
@@ -527,6 +527,9 @@ export const SessionScreen = memo(function SessionScreen() {
 			const next = prev.filter((t) => t.id !== id);
 			if (activeAppTabId === id) {
 				setActiveAppTabId(next.length > 0 ? next[next.length - 1].id : null);
+			}
+			if (next.length === 0) {
+				setExpandedView(null);
 			}
 			return next;
 		});

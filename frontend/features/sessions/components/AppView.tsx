@@ -381,18 +381,15 @@ export const AppView = memo(function AppView({
 		}
 	}, [activeTab, onUpdateTab, loadTab]);
 
+	// Auto-collapse when no tabs remain
+	useEffect(() => {
+		if (tabs.length === 0 && onCollapse) {
+			onCollapse();
+		}
+	}, [tabs.length, onCollapse]);
+
 	if (tabs.length === 0) {
-		return (
-			<div className={cn("flex items-center justify-center h-full", className)}>
-				<div className="text-center space-y-2 text-muted-foreground">
-					<AppWindow className="w-8 h-8 mx-auto opacity-50" />
-					<p className="text-sm">No apps open</p>
-					<p className="text-xs">
-						Right-click an HTML file and select "Open as App"
-					</p>
-				</div>
-			</div>
-		);
+		return null;
 	}
 
 	const srcdoc = activeTab?.content
