@@ -2195,56 +2195,161 @@ impl Runner {
             }
         };
 
-        let start = req
-            .limit
-            .and_then(|limit| messages.len().checked_sub(limit))
-            .unwrap_or(0);
+        // Fast path: hstry-backed history exists.
+        if !messages.is_empty() {
+            let start = req
+                .limit
+                .and_then(|limit| messages.len().checked_sub(limit))
+                .unwrap_or(0);
 
-        let mapped: Vec<ChatMessageProto> = messages
-            .into_iter()
-            .skip(start)
-            .map(|message| {
-                let parts = message
-                    .parts
+            let mapped: Vec<ChatMessageProto> = messages
+                .into_iter()
+                .skip(start)
+                .map(|message| {
+                    let parts = message
+                        .parts
+                        .into_iter()
+                        .map(|part| ChatMessagePartProto {
+                            id: part.id,
+                            part_type: part.part_type,
+                            text: part.text,
+                            text_html: if req.render { part.text_html } else { None },
+                            tool_name: part.tool_name,
+                            tool_call_id: part.tool_call_id,
+                            tool_input: part.tool_input,
+                            tool_output: part.tool_output,
+                            tool_status: part.tool_status,
+                            tool_title: part.tool_title,
+                        })
+                        .collect();
+
+                    ChatMessageProto {
+                        id: message.id,
+                        session_id: message.session_id,
+                        role: message.role,
+                        created_at: message.created_at,
+                        completed_at: message.completed_at,
+                        parent_id: message.parent_id,
+                        model_id: message.model_id,
+                        provider_id: message.provider_id,
+                        agent: message.agent,
+                        summary_title: message.summary_title,
+                        tokens_input: message.tokens_input,
+                        tokens_output: message.tokens_output,
+                        tokens_reasoning: message.tokens_reasoning,
+                        cost: message.cost,
+                        parts,
+                    }
+                })
+                .collect();
+
+            return RunnerResponse::WorkspaceChatSessionMessages(
+                WorkspaceChatSessionMessagesResponse {
+                    session_id: req.session_id,
+                    messages: mapped,
+                },
+            );
+        }
+
+        // Fallback path: hstry may lag/be missing for this session.
+        // Try live Pi session messages so reopened sessions still render history.
+        match self.pi_manager.get_messages(&req.session_id).await {
+            Ok(raw) => {
+                let msgs: Vec<oqto::pi::AgentMessage> = raw
+                    .as_array()
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| serde_json::from_value(v.clone()).ok())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                let start = req
+                    .limit
+                    .and_then(|limit| msgs.len().checked_sub(limit))
+                    .unwrap_or(0);
+
+                let mapped: Vec<ChatMessageProto> = msgs
                     .into_iter()
-                    .map(|part| ChatMessagePartProto {
-                        id: part.id,
-                        part_type: part.part_type,
-                        text: part.text,
-                        text_html: if req.render { part.text_html } else { None },
-                        tool_name: part.tool_name,
-                        tool_call_id: part.tool_call_id,
-                        tool_input: part.tool_input,
-                        tool_output: part.tool_output,
-                        tool_status: part.tool_status,
-                        tool_title: part.tool_title,
+                    .enumerate()
+                    .skip(start)
+                    .map(|(idx, msg)| {
+                        let created_at = msg.timestamp.map(|t| t as i64).unwrap_or(0);
+                        let part_id = format!("part_{}", idx);
+                        let message_id = format!("pi_msg_{}", idx);
+
+                        let (part_type, text, tool_name, tool_call_id, tool_input, tool_output, tool_status) =
+                            if msg.role == "tool" || msg.role == "toolResult" {
+                                (
+                                    "tool_result".to_string(),
+                                    None,
+                                    msg.tool_name.clone(),
+                                    msg.tool_call_id.clone(),
+                                    None,
+                                    Some(msg.content.to_string()),
+                                    Some(if msg.is_error.unwrap_or(false) { "error" } else { "success" }.to_string()),
+                                )
+                            } else {
+                                (
+                                    "text".to_string(),
+                                    Some(
+                                        if let Some(s) = msg.content.as_str() {
+                                            s.to_string()
+                                        } else {
+                                            msg.content.to_string()
+                                        },
+                                    ),
+                                    None,
+                                    None,
+                                    None,
+                                    None,
+                                    None,
+                                )
+                            };
+
+                        ChatMessageProto {
+                            id: message_id,
+                            session_id: req.session_id.clone(),
+                            role: msg.role,
+                            created_at,
+                            completed_at: None,
+                            parent_id: None,
+                            model_id: msg.model,
+                            provider_id: msg.provider,
+                            agent: None,
+                            summary_title: None,
+                            tokens_input: msg.usage.as_ref().map(|u| u.input as i64),
+                            tokens_output: msg.usage.as_ref().map(|u| u.output as i64),
+                            tokens_reasoning: None,
+                            cost: msg.usage.and_then(|u| u.cost.map(|c| c.total)),
+                            parts: vec![ChatMessagePartProto {
+                                id: part_id,
+                                part_type,
+                                text,
+                                text_html: None,
+                                tool_name,
+                                tool_call_id,
+                                tool_input,
+                                tool_output,
+                                tool_status,
+                                tool_title: None,
+                            }],
+                        }
                     })
                     .collect();
 
-                ChatMessageProto {
-                    id: message.id,
-                    session_id: message.session_id,
-                    role: message.role,
-                    created_at: message.created_at,
-                    completed_at: message.completed_at,
-                    parent_id: message.parent_id,
-                    model_id: message.model_id,
-                    provider_id: message.provider_id,
-                    agent: message.agent,
-                    summary_title: message.summary_title,
-                    tokens_input: message.tokens_input,
-                    tokens_output: message.tokens_output,
-                    tokens_reasoning: message.tokens_reasoning,
-                    cost: message.cost,
-                    parts,
-                }
-            })
-            .collect();
-
-        RunnerResponse::WorkspaceChatSessionMessages(WorkspaceChatSessionMessagesResponse {
-            session_id: req.session_id,
-            messages: mapped,
-        })
+                RunnerResponse::WorkspaceChatSessionMessages(WorkspaceChatSessionMessagesResponse {
+                    session_id: req.session_id,
+                    messages: mapped,
+                })
+            }
+            Err(_) => RunnerResponse::WorkspaceChatSessionMessages(
+                WorkspaceChatSessionMessagesResponse {
+                    session_id: req.session_id,
+                    messages: Vec::new(),
+                },
+            ),
+        }
     }
 
     // ========================================================================
