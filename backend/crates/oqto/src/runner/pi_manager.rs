@@ -4266,8 +4266,15 @@ async fn resolve_jsonl_message_indices(
 }
 
 async fn fetch_last_hstry_idx(client: &HstryClient, session_id: &str) -> Option<i32> {
-    match client.get_messages(session_id, None, Some(1)).await {
-        Ok(mut messages) => messages.pop().map(|msg| msg.idx),
+    match client.get_messages(session_id, None, None).await {
+        Ok(messages) => messages
+            .into_iter()
+            // Ignore synthetic/system entries when computing message idx bounds.
+            // System entries can have idx values beyond Pi message idx space,
+            // which causes false "compaction" detection and dropped appends.
+            .filter(|msg| !msg.role.eq_ignore_ascii_case("system"))
+            .map(|msg| msg.idx)
+            .max(),
         Err(_) => None,
     }
 }
