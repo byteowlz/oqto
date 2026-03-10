@@ -4,7 +4,7 @@
  */
 
 import { toAbsoluteWsUrl } from "@/lib/url";
-import { authFetch, controlPlaneApiUrl } from "./client";
+import { authFetch, controlPlaneApiUrl, getAuthToken } from "./client";
 
 // ============================================================================
 // Proxy URLs
