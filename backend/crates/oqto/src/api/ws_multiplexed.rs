@@ -1560,6 +1560,14 @@ async fn handle_agent_command(
                             .insert(session_id.clone(), client.clone());
                         let _ = target;
                         client
+                    } else if let Some(r) = runner_client {
+                        // CWD-based runner resolution failed, but we have a personal
+                        // runner -- use it as fallback instead of returning empty data.
+                        tracing::debug!(
+                            session_id = %session_id,
+                            "CWD-based runner resolution failed, falling back to personal runner"
+                        );
+                        r.clone()
                     } else {
                         match &cmd.payload {
                             CommandPayload::GetState => {
@@ -1660,6 +1668,12 @@ async fn handle_agent_command(
 
                     if let Some(client) = hydrated {
                         client
+                    } else if let Some(r) = runner_client {
+                        tracing::debug!(
+                            session_id = %session_id,
+                            "Session target resolution failed, falling back to personal runner"
+                        );
+                        r.clone()
                     } else {
                         match &cmd.payload {
                             CommandPayload::GetState => {
