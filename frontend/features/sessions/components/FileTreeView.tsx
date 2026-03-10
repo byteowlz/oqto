@@ -139,13 +139,18 @@ async function fetchFileTree(
 	const existing = treeInFlight.get(key);
 	if (existing) return existing;
 
-	const request = fetchFileTreeMux(workspacePath, path, depth, false)
-		.then((result) => {
-			return result;
-		})
-		.finally(() => {
-			treeInFlight.delete(key);
+	const request = (async () => {
+		const timeoutMs = 12000;
+		const timeoutPromise = new Promise<never>((_, reject) => {
+			setTimeout(() => reject(new Error("File tree request timed out")), timeoutMs);
 		});
+		return Promise.race([
+			fetchFileTreeMux(workspacePath, path, depth, false),
+			timeoutPromise,
+		]);
+	})().finally(() => {
+		treeInFlight.delete(key);
+	});
 
 	treeInFlight.set(key, request);
 	return request;
@@ -509,7 +514,10 @@ export function FileTreeView({
 	const loadTreeRef = useRef(loadTree);
 	loadTreeRef.current = loadTree;
 	useEffect(() => {
-		if (!normalizedWorkspacePath) return;
+		if (!normalizedWorkspacePath) {
+			setLoading(false);
+			return;
+		}
 		loadTreeRef.current(currentPath, true);
 	}, [currentPath, normalizedWorkspacePath]);
 
