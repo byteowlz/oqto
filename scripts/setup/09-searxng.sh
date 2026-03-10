@@ -36,6 +36,11 @@ install_searxng() {
   local searxng_venv="${searxng_base}/venv"
   local searxng_settings="${searxng_base}/settings.yml"
 
+  # Migrate known legacy path if canonical path is missing.
+  if [[ "$service_type" == "system" ]]; then
+    migrate_legacy_searxng_path "$searxng_base" "$searxng_user"
+  fi
+
   # 1. Install system dependencies
   install_searxng_deps
 
@@ -101,6 +106,34 @@ run_as_searxng_user() {
   else
     bash -c "$cmd"
   fi
+}
+
+migrate_legacy_searxng_path() {
+  local canonical_base="$1"
+  local user="$2"
+
+  if [[ -x "${canonical_base}/venv/bin/python" ]]; then
+    return
+  fi
+
+  local candidates=(
+    "/home/octo/.local/share/searxng"
+    "/home/tommy/.local/share/searxng"
+  )
+
+  for legacy in "${candidates[@]}"; do
+    if [[ "$legacy" == "$canonical_base" ]]; then
+      continue
+    fi
+    if [[ -x "${legacy}/venv/bin/python" ]]; then
+      log_warn "Found legacy SearXNG runtime at ${legacy}; migrating to ${canonical_base}"
+      sudo mkdir -p "$(dirname "$canonical_base")"
+      sudo rm -rf "$canonical_base"
+      sudo cp -a "$legacy" "$canonical_base"
+      sudo chown -R "$user:$user" "$canonical_base"
+      return
+    fi
+  done
 }
 
 install_searxng_deps() {
@@ -294,6 +327,33 @@ EOSETTINGS
   log_success "SearXNG settings written to $settings_file"
 }
 
+stop_conflicting_searxng_on_port() {
+  local target_user="$1"
+
+  # Stop any existing searx.webapp listener on the configured local port
+  # that is owned by a different user (common after account/user renames).
+  local pids
+  pids=$(sudo ss -tlnp "sport = :${SEARXNG_PORT}" 2>/dev/null | awk -F 'pid=' '/pid=/ {split($2,a,",|\)"); print a[1]}' | sort -u)
+
+  if [[ -z "$pids" ]]; then
+    return
+  fi
+
+  while IFS= read -r pid; do
+    [[ -n "$pid" ]] || continue
+    local owner cmd
+    owner=$(ps -o user= -p "$pid" 2>/dev/null | awk '{print $1}')
+    cmd=$(ps -o args= -p "$pid" 2>/dev/null || true)
+    if [[ "$cmd" != *"searx.webapp"* ]]; then
+      continue
+    fi
+    if [[ -n "$owner" && "$owner" != "$target_user" ]]; then
+      log_warn "Stopping conflicting searx.webapp process on port ${SEARXNG_PORT} (pid=${pid}, user=${owner})"
+      sudo kill "$pid" 2>/dev/null || true
+    fi
+  done <<< "$pids"
+}
+
 install_searxng_service() {
   local searxng_base="$1"
   local searxng_venv="$2"
@@ -306,61 +366,110 @@ install_searxng_service() {
   if [[ "$service_type" == "user" ]]; then
     # User-level systemd service
     local service_dir="$HOME/.config/systemd/user"
-    mkdir -p "$service_dir"
+    local launcher_path="$HOME/.local/bin/searxng-launch"
+    mkdir -p "$service_dir" "$HOME/.local/bin"
+
+    cat >"$launcher_path" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+BASE="${searxng_base}"
+PY="\${BASE}/venv/bin/python"
+SRC="\${BASE}/searxng-src"
+if [[ ! -x "\${PY}" ]]; then
+  echo "[searxng-launch] Missing runtime: \${PY}" >&2
+  exit 1
+fi
+cd "\${SRC}"
+exec "\${PY}" -m searx.webapp
+EOF
+    chmod +x "$launcher_path"
 
     cat >"${service_dir}/searxng.service" <<EOF
 [Unit]
 Description=SearXNG local search engine
 After=default.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple
 Environment=SEARXNG_SETTINGS_PATH=${searxng_settings}
-WorkingDirectory=${searxng_src}
-ExecStart=${searxng_venv}/bin/python -m searx.webapp
+Environment=SEARXNG_BASE=${searxng_base}
+ExecStart=${launcher_path}
 Restart=on-failure
-RestartSec=5
+RestartSec=10
 
 [Install]
 WantedBy=default.target
 EOF
 
     systemctl --user daemon-reload
+    systemctl --user reset-failed searxng 2>/dev/null || true
     systemctl --user enable searxng
 
     if confirm "Start SearXNG now?"; then
-      systemctl --user start searxng
-      log_success "SearXNG started (user service)"
+      systemctl --user restart searxng
+      if curl -fsS "http://${SEARXNG_BIND}:${SEARXNG_PORT}" >/dev/null 2>&1; then
+        log_success "SearXNG started (user service)"
+      else
+        log_warn "SearXNG started but health check failed. Check: systemctl --user status searxng"
+      fi
       log_info "Check status: systemctl --user status searxng"
     fi
 
   else
     # System-level systemd service
+    local launcher_path="/usr/local/bin/searxng-launch"
+
+    stop_conflicting_searxng_on_port "$user"
+
+    sudo tee "$launcher_path" >/dev/null <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+BASE="${searxng_base}"
+PY="\${BASE}/venv/bin/python"
+SRC="\${BASE}/searxng-src"
+if [[ ! -x "\${PY}" ]]; then
+  echo "[searxng-launch] Missing runtime: \${PY}" >&2
+  exit 1
+fi
+cd "\${SRC}"
+exec "\${PY}" -m searx.webapp
+EOF
+    sudo chmod +x "$launcher_path"
+
     sudo tee /etc/systemd/system/searxng.service >/dev/null <<EOF
 [Unit]
 Description=SearXNG local search engine
 After=network.target valkey.service redis.service
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple
 User=${user}
 Group=${user}
 Environment=SEARXNG_SETTINGS_PATH=${searxng_settings}
-WorkingDirectory=${searxng_src}
-ExecStart=${searxng_venv}/bin/python -m searx.webapp
+Environment=SEARXNG_BASE=${searxng_base}
+ExecStart=${launcher_path}
 Restart=on-failure
-RestartSec=5
+RestartSec=10
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
     sudo systemctl daemon-reload
+    sudo systemctl reset-failed searxng 2>/dev/null || true
     sudo systemctl enable searxng
 
     if confirm "Start SearXNG now?"; then
-      sudo systemctl start searxng
-      log_success "SearXNG started (system service)"
+      sudo systemctl restart searxng
+      if curl -fsS "http://${SEARXNG_BIND}:${SEARXNG_PORT}" >/dev/null 2>&1; then
+        log_success "SearXNG started (system service)"
+      else
+        log_warn "SearXNG started but health check failed. Check: sudo systemctl status searxng"
+      fi
       log_info "Check status: sudo systemctl status searxng"
     fi
   fi
