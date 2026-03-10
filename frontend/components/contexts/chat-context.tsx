@@ -384,21 +384,29 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 							.pop() ?? null)
 					: null;
 				const timestamp = session.last_activity || Date.now();
+				const existing = chatHistoryRef.current.find(
+					(s) => s.id === session.session_id,
+				);
+				const preservedTitle = existing?.title?.trim();
+				const title =
+					preservedTitle && preservedTitle !== t("sessions.activeSession")
+						? preservedTitle
+						: t("sessions.activeSession");
 
 				byId.set(session.session_id, {
 					id: session.session_id,
-					readable_id: null,
-					title: t("sessions.activeSession"),
-					parent_id: null,
-					workspace_path: resolvedPath ?? null,
-					project_name: derivedProjectName,
-					created_at: timestamp,
+					readable_id: existing?.readable_id ?? null,
+					title,
+					parent_id: existing?.parent_id ?? null,
+					workspace_path: resolvedPath ?? existing?.workspace_path ?? null,
+					project_name: derivedProjectName ?? existing?.project_name ?? null,
+					created_at: existing?.created_at ?? timestamp,
 					updated_at: timestamp,
-					version: null,
-					is_child: false,
-					source_path: null,
-					model: session.model ?? null,
-					provider: session.provider ?? null,
+					version: existing?.version ?? null,
+					is_child: existing?.is_child ?? false,
+					source_path: existing?.source_path ?? null,
+					model: session.model ?? existing?.model ?? null,
+					provider: session.provider ?? existing?.provider ?? null,
 				});
 			}
 
