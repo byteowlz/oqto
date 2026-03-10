@@ -483,6 +483,7 @@ export const SessionScreen = memo(function SessionScreen() {
 
 	const handleClosePreview = useCallback(() => {
 		setPreviewFilePath(null);
+		setExpandedView((prev) => (prev === "files" ? null : prev));
 	}, []);
 
 	const handleSendToChat = useCallback((text: string) => {
@@ -701,6 +702,7 @@ export const SessionScreen = memo(function SessionScreen() {
 	// biome-ignore lint/correctness/useExhaustiveDependencies: intentionally reset on session change
 	useEffect(() => {
 		setPreviewFilePath(null);
+		setExpandedView((prev) => (prev === "files" ? null : prev));
 		setFileTreeState(initialFileTreeState);
 	}, [selectedChatSessionId]);
 
@@ -1165,6 +1167,20 @@ export const SessionScreen = memo(function SessionScreen() {
 									/>
 								</Suspense>
 							</div>
+						) : expandedView === "files" && previewFilePath ? (
+							<div className="flex-1 min-h-0 flex flex-col -m-4 xl:-m-6">
+								<Suspense fallback={viewLoadingFallback}>
+									<PreviewView
+										filePath={previewFilePath}
+										workspacePath={normalizedWorkspacePath}
+										onClose={handleClosePreview}
+										onToggleExpand={() => setExpandedView(null)}
+										isExpanded
+										showExpand
+										showHeader
+									/>
+								</Suspense>
+							</div>
 						) : expandedView === "app" ? (
 							<div className="flex-1 min-h-0 flex flex-col -m-4 xl:-m-6">
 								<Suspense fallback={viewLoadingFallback}>
@@ -1446,6 +1462,13 @@ export const SessionScreen = memo(function SessionScreen() {
 														filePath={previewFilePath}
 														workspacePath={normalizedWorkspacePath}
 														onClose={handleClosePreview}
+														onToggleExpand={() =>
+															setExpandedView((prev) =>
+																prev === "files" ? null : "files",
+															)
+														}
+														isExpanded={expandedView === "files"}
+														showExpand
 														showHeader
 													/>
 												</Suspense>
