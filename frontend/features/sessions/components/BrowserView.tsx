@@ -156,21 +156,32 @@ export function BrowserView({
 
 	const handleSendToChat = useCallback(() => {
 		if (!browserSessionId || !onSendToChat) return;
+		const currentUrlHint = urlInput.trim();
 		const cmd = [
 			"The user has started a browser session you can control.",
-			`Use \`oqto-browser --session ${browserSessionId}\` to interact with it.`,
+			`IMPORTANT: Always use this exact session: \`oqto-browser --session ${browserSessionId}\`.`,
+			"Do NOT run oqto-browser without --session, or you will open a separate blank browser instance.",
+			"",
+			"Connection check:",
+			`  oqto-browser --session ${browserSessionId} snapshot -i`,
+			...(currentUrlHint
+				? [
+					"",
+					"If the page appears blank, re-open the current URL in the same session:",
+					`  oqto-browser --session ${browserSessionId} open ${currentUrlHint}`,
+				]
+				: []),
 			"",
 			"Quick reference:",
-			`  oqto-browser --session ${browserSessionId} snapshot -i    # list interactive elements`,
-			`  oqto-browser --session ${browserSessionId} click @e1      # click element by ref`,
-			`  oqto-browser --session ${browserSessionId} fill @e2 "text" # fill input`,
-			`  oqto-browser --session ${browserSessionId} press Enter    # press key`,
+			`  oqto-browser --session ${browserSessionId} click @e1`,
+			`  oqto-browser --session ${browserSessionId} fill @e2 \"text\"`,
+			`  oqto-browser --session ${browserSessionId} press Enter`,
 			`  oqto-browser --session ${browserSessionId} screenshot /tmp/shot.png`,
-			`  oqto-browser --session ${browserSessionId} open <url>     # navigate`,
-			`  oqto-browser --session ${browserSessionId} eval "JS"      # run JS in page`,
+			`  oqto-browser --session ${browserSessionId} open <url>`,
+			`  oqto-browser --session ${browserSessionId} eval \"JS\"`,
 		].join("\n");
 		onSendToChat(cmd);
-	}, [browserSessionId, onSendToChat]);
+	}, [browserSessionId, onSendToChat, urlInput]);
 
 	// Reset state when workspace changes
 	// biome-ignore lint/correctness/useExhaustiveDependencies: intentional reset on workspace change
