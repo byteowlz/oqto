@@ -170,6 +170,11 @@ function WorkspaceContent({
 	const [pendingDeleteWorkdir, setPendingDeleteWorkdir] =
 		useState<SharedWorkspaceWorkdir | null>(null);
 	const [isDeletingWorkdir, setIsDeletingWorkdir] = useState(false);
+	const [pendingDeleteSession, setPendingDeleteSession] = useState<{
+		id: string;
+		title: string;
+	} | null>(null);
+	const [isDeletingSession, setIsDeletingSession] = useState(false);
 
 	useEffect(() => {
 		let cancelled = false;
@@ -321,6 +326,21 @@ function WorkspaceContent({
 		} finally {
 			setIsDeletingWorkdir(false);
 			setPendingDeleteWorkdir(null);
+		}
+	};
+
+	const confirmDeleteSession = async () => {
+		if (!pendingDeleteSession || !onDeleteSession) return;
+		setIsDeletingSession(true);
+		try {
+			sharedWorkspaceSessionMap.set(pendingDeleteSession.id, workspace.id);
+			await Promise.resolve(onDeleteSession(pendingDeleteSession.id));
+			setFetchedSessions((prev) =>
+				prev.filter((s) => s.id !== pendingDeleteSession.id),
+			);
+		} finally {
+			setIsDeletingSession(false);
+			setPendingDeleteSession(null);
 		}
 	};
 
@@ -585,8 +605,10 @@ function WorkspaceContent({
 														<ContextMenuItem
 															variant="destructive"
 															onClick={() => {
-																sharedWorkspaceSessionMap.set(session.id, workspace.id);
-																onDeleteSession(session.id);
+																setPendingDeleteSession({
+																	id: session.id,
+																	title: getDisplayPiTitle(session),
+																});
 															}}
 														>
 															<Trash2 className="w-4 h-4 mr-2" />
@@ -633,6 +655,41 @@ function WorkspaceContent({
 						disabled={isDeletingWorkdir}
 					>
 						{isDeletingWorkdir ? "Deleting..." : t("common.delete", "Delete")}
+					</AlertDialogAction>
+				</AlertDialogFooter>
+			</AlertDialogContent>
+		</AlertDialog>
+		<AlertDialog
+			open={pendingDeleteSession !== null}
+			onOpenChange={(open) => {
+				if (!open && !isDeletingSession) {
+					setPendingDeleteSession(null);
+				}
+			}}
+		>
+			<AlertDialogContent>
+				<AlertDialogHeader>
+					<AlertDialogTitle>
+						{pendingDeleteSession?.title
+							? t("sessions.deleteTitle", { title: pendingDeleteSession.title })
+							: t("sessions.deleteChatTitle")}
+					</AlertDialogTitle>
+					<AlertDialogDescription>
+						{t("sessions.deleteDescription")}
+					</AlertDialogDescription>
+				</AlertDialogHeader>
+				<AlertDialogFooter>
+					<AlertDialogCancel disabled={isDeletingSession}>
+						{t("common.cancel", "Cancel")}
+					</AlertDialogCancel>
+					<AlertDialogAction
+						onClick={(e) => {
+							e.preventDefault();
+							void confirmDeleteSession();
+						}}
+						disabled={isDeletingSession}
+					>
+						{isDeletingSession ? "Deleting..." : t("common.delete", "Delete")}
 					</AlertDialogAction>
 				</AlertDialogFooter>
 			</AlertDialogContent>

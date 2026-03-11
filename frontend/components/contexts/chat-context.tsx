@@ -822,7 +822,14 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 			}
 
 			try {
-				const sharedWorkspaceId = sharedWorkspaceSessionMap.get(sessionId);
+				const sessionMeta = chatHistory.find((s) => s.id === sessionId);
+				const sharedWorkspaceId =
+					sharedWorkspaceSessionMap.get(sessionId) ??
+					sessionMeta?.shared_workspace_id ??
+					undefined;
+				if (sharedWorkspaceId) {
+					sharedWorkspaceSessionMap.set(sessionId, sharedWorkspaceId);
+				}
 
 				// Primary path: REST delete with shared workspace routing support.
 				await deleteChatSessionApi(sessionId, sharedWorkspaceId);
@@ -851,6 +858,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 			}
 		},
 		[
+			chatHistory,
 			deleteChatSessionApi,
 			refreshChatHistory,
 			selectedChatSessionId,
