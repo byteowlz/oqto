@@ -48,7 +48,7 @@ import {
 	X,
 	Zap,
 } from "lucide-react";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 const PROVIDER_TYPES = [
 	{ value: "openai", label: "OpenAI" },
@@ -86,13 +86,25 @@ type ModelEntry = {
 	cost_cache_read?: number;
 };
 
+type ModelDraft = {
+	id: string;
+	name: string;
+	reasoning: boolean;
+	contextWindow: string;
+	maxTokens: string;
+	costInput: string;
+	costOutput: string;
+};
+
 // -- Model list editor (inline in the provider form) --
 function ModelListEditor({
 	models,
 	onChange,
+	onDraftChange,
 }: {
 	models: ModelEntry[];
 	onChange: (models: ModelEntry[]) => void;
+	onDraftChange?: (draft: ModelDraft | null) => void;
 }) {
 	const [newId, setNewId] = useState("");
 	const [newName, setNewName] = useState("");
@@ -176,6 +188,33 @@ function ModelListEditor({
 		},
 		[models, onChange],
 	);
+
+	useEffect(() => {
+		if (!onDraftChange) return;
+		const id = newId.trim();
+		if (!id) {
+			onDraftChange(null);
+			return;
+		}
+		onDraftChange({
+			id,
+			name: newName.trim() || id,
+			reasoning: newReasoning,
+			contextWindow: newContextWindow,
+			maxTokens: newMaxTokens,
+			costInput: newCostInput,
+			costOutput: newCostOutput,
+		});
+	}, [
+		onDraftChange,
+		newId,
+		newName,
+		newReasoning,
+		newContextWindow,
+		newMaxTokens,
+		newCostInput,
+		newCostOutput,
+	]);
 
 	const fmtCtx = (n?: number) => {
 		if (!n) return "-";
@@ -402,6 +441,7 @@ function ProviderDialog({
 	const [apiVersion, setApiVersion] = useState("");
 	const [deployment, setDeployment] = useState("");
 	const [models, setModels] = useState<ModelEntry[]>(initial?.models ?? []);
+	const [pendingDraftModel, setPendingDraftModel] = useState<ModelDraft | null>(null);
 
 	const resetForm = useCallback(() => {
 		if (!initial) {
@@ -412,11 +452,33 @@ function ProviderDialog({
 			setApiVersion("");
 			setDeployment("");
 			setModels([]);
+			setPendingDraftModel(null);
 		}
 	}, [initial]);
 
 	const handleSubmit = (e: React.FormEvent) => {
 		e.preventDefault();
+
+		let submittedModels = models;
+		if (
+			pendingDraftModel?.id &&
+			!models.some((m) => m.id === pendingDraftModel.id)
+		) {
+			submittedModels = [
+				...models,
+				{
+					id: pendingDraftModel.id,
+					name: pendingDraftModel.name,
+					reasoning: pendingDraftModel.reasoning,
+					input: ["text"],
+					context_window: Number.parseInt(pendingDraftModel.contextWindow) || 0,
+					max_tokens: Number.parseInt(pendingDraftModel.maxTokens) || 0,
+					cost_input: Number.parseFloat(pendingDraftModel.costInput) || 0,
+					cost_output: Number.parseFloat(pendingDraftModel.costOutput) || 0,
+				},
+			];
+		}
+
 		onSubmit({
 			name: isEdit ? name : name.toLowerCase().replace(/\s+/g, "-"),
 			type: type_,
@@ -424,7 +486,7 @@ function ProviderDialog({
 			base_url: baseUrl || undefined,
 			api_version: apiVersion || undefined,
 			deployment: deployment || undefined,
-			models,
+			models: submittedModels,
 		});
 		resetForm();
 	};
@@ -552,7 +614,11 @@ function ProviderDialog({
 					)}
 
 					{/* Models shortlist */}
-					<ModelListEditor models={models} onChange={setModels} />
+					<ModelListEditor
+						models={models}
+						onChange={setModels}
+						onDraftChange={setPendingDraftModel}
+					/>
 
 					{error && (
 						<div className="text-sm text-destructive flex items-center gap-2">
