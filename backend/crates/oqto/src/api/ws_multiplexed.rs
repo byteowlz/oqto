@@ -1076,6 +1076,22 @@ fn normalize_path_lexical(base: &std::path::Path, raw: &std::path::Path) -> std:
     normalized
 }
 
+fn resolve_workspace_path_for_validation(
+    path: &str,
+    user_home: &std::path::Path,
+) -> std::path::PathBuf {
+    let raw_path = std::path::PathBuf::from(path);
+    let resolved = if raw_path.is_absolute() {
+        raw_path.clone()
+    } else {
+        user_home.join(&raw_path)
+    };
+
+    resolved
+        .canonicalize()
+        .unwrap_or_else(|_| normalize_path_lexical(user_home, &raw_path))
+}
+
 /// Check that a workspace path belongs to the requesting user.
 ///
 /// In multi-user mode, the workspace_path must be either:
@@ -1101,19 +1117,11 @@ async fn validate_workspace_path_for_user(
 
     let linux_username = lu.linux_username(user_id);
     let user_home = std::path::PathBuf::from(format!("/home/{linux_username}"));
-    let raw_path = std::path::PathBuf::from(path);
 
     // Canonicalize if possible; otherwise fall back to lexical normalization.
     // Relative paths are resolved against user home so common values like "."
     // are treated as the user's workspace root.
-    let resolved = if raw_path.is_absolute() {
-        raw_path.clone()
-    } else {
-        user_home.join(&raw_path)
-    };
-    let canonical = resolved
-        .canonicalize()
-        .unwrap_or_else(|_| normalize_path_lexical(&user_home, &raw_path));
+    let canonical = resolve_workspace_path_for_validation(path, &user_home);
 
     // Allow if path is under user's personal home
     if canonical.starts_with(&user_home) {
@@ -5051,5 +5059,28 @@ mod tests {
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains(r#""channel":"agent""#));
         assert!(json.contains(r#""event":"agent.idle""#));
+    }
+
+    #[test]
+    fn test_resolve_workspace_path_for_validation_accepts_relative_dot() {
+        let user_home = std::path::PathBuf::from("/home/oqto_usr_wismut");
+        let resolved = resolve_workspace_path_for_validation(".", &user_home);
+        assert!(resolved.starts_with(&user_home));
+    }
+
+    #[test]
+    fn test_resolve_workspace_path_for_validation_accepts_relative_child() {
+        let user_home = std::path::PathBuf::from("/home/oqto_usr_wismut");
+        let resolved = resolve_workspace_path_for_validation("./oqto/main", &user_home);
+        assert!(resolved.starts_with(&user_home));
+        assert!(resolved.to_string_lossy().contains("/oqto/main"));
+    }
+
+    #[test]
+    fn test_resolve_workspace_path_for_validation_blocks_parent_escape() {
+        let user_home = std::path::PathBuf::from("/home/oqto_usr_wismut");
+        let resolved =
+            resolve_workspace_path_for_validation("../oqto_other_user/secret", &user_home);
+        assert!(!resolved.starts_with(&user_home));
     }
 }
