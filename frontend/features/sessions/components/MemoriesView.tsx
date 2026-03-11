@@ -176,7 +176,8 @@ async function searchMemories(
 		},
 	);
 	if (!res.ok) {
-		throw new Error(`Failed to search memories: ${res.statusText}`);
+		const text = await res.text();
+		throw new Error(`Failed to search memories: ${text || res.statusText || `HTTP ${res.status}`}`);
 	}
 	const data = (await res.json()) as SearchResponse;
 	return (data.memories ?? []).map((memory) => normalizeMemory(memory));

@@ -12,6 +12,7 @@ use hyper_util::client::legacy::connect::HttpConnector;
 use log::{debug, error, warn};
 
 use crate::auth::CurrentUser;
+use crate::runner::router::{ExecutionTarget, resolve_target_for_workspace_path};
 use crate::session::Session;
 
 use super::super::state::AppState;
@@ -47,34 +48,88 @@ fn get_mmry_target(state: &AppState, session: &Session) -> Result<String, Status
 
 /// Get the mmry target URL for workspace-based access.
 ///
-/// - Single-user mode: proxy to the configured local mmry service.
-/// - Multi-user mode (local): proxy to the user's pinned mmry instance.
+/// Uses deterministic workspace routing so shared workspace paths resolve to the
+/// shared workspace linux user's mmry instance (not the requesting user's personal
+/// mmry instance). This keeps frontend memory views aligned with in-workspace
+/// `agntz memory` usage.
+async fn resolve_workspace_owner_user_id(
+    state: &AppState,
+    user: &CurrentUser,
+    workspace_path: &str,
+) -> Result<String, StatusCode> {
+    match resolve_target_for_workspace_path(state, user.id(), workspace_path)
+        .await
+        .map_err(|e| {
+            error!(
+                "Failed to resolve execution target for workspace {} and user {}: {:?}",
+                workspace_path,
+                user.id(),
+                e
+            );
+            StatusCode::SERVICE_UNAVAILABLE
+        })? {
+        ExecutionTarget::Personal => Ok(user.id().to_string()),
+        ExecutionTarget::SharedWorkspace { workspace_id } => {
+            let sw = state.shared_workspaces.as_ref().ok_or_else(|| {
+                error!(
+                    "Shared workspace service not configured while resolving mmry target for {}",
+                    workspace_path
+                );
+                StatusCode::SERVICE_UNAVAILABLE
+            })?;
+
+            sw.linux_user_for_id(&workspace_id)
+                .await
+                .map_err(|e| {
+                    error!(
+                        "Failed to resolve linux user for shared workspace {} (path {}): {:?}",
+                        workspace_id, workspace_path, e
+                    );
+                    StatusCode::SERVICE_UNAVAILABLE
+                })?
+                .ok_or_else(|| {
+                    error!(
+                        "Missing linux user mapping for shared workspace {} (path {})",
+                        workspace_id, workspace_path
+                    );
+                    StatusCode::SERVICE_UNAVAILABLE
+                })
+        }
+    }
+}
+
 async fn get_mmry_target_for_workspace(
     state: &AppState,
-    user_id: &str,
+    user: &CurrentUser,
+    workspace_path: &str,
 ) -> Result<String, StatusCode> {
     if !state.mmry.enabled {
         warn!("mmry integration is not enabled");
         return Err(StatusCode::NOT_FOUND);
     }
 
-    if !state.mmry.single_user {
-        let port = state
-            .sessions
-            .for_user(user_id)
-            .ensure_user_mmry_pinned()
-            .await
-            .map_err(|e| {
-                error!(
-                    "Failed to ensure per-user mmry for workspace access: {:?}",
-                    e
-                );
-                StatusCode::SERVICE_UNAVAILABLE
-            })?;
-        return Ok(format!("http://localhost:{}", port));
+    // Authorize workspace access and deterministically resolve owner without
+    // forcing an IO session resume/start (which can add latency/fail if ports are busy).
+    let owner_user_id = resolve_workspace_owner_user_id(state, user, workspace_path).await?;
+
+    if state.mmry.single_user {
+        return Ok(state.mmry.local_service_url.clone());
     }
 
-    Ok(state.mmry.local_service_url.clone())
+    let mmry_port = state
+        .sessions
+        .for_user(&owner_user_id)
+        .ensure_user_mmry_pinned()
+        .await
+        .map_err(|e| {
+            error!(
+                "Failed to ensure per-user mmry for workspace {} (owner {}): {:?}",
+                workspace_path, owner_user_id, e
+            );
+            StatusCode::SERVICE_UNAVAILABLE
+        })?;
+
+    Ok(format!("http://localhost:{}", mmry_port))
 }
 
 /// Derive mmry store name from session workspace path.
@@ -391,7 +446,7 @@ pub async fn proxy_mmry_list_for_workspace(
     Query(query): Query<WorkspaceProxyQuery>,
     req: Request<Body>,
 ) -> Result<Response<Body>, StatusCode> {
-    let target_url = get_mmry_target_for_workspace(&state, user.id()).await?;
+    let target_url = get_mmry_target_for_workspace(&state, &user, &query.workspace_path).await?;
     let store = resolve_mmry_store_for_workspace(&query);
     proxy_mmry_request_to_url(
         state.http_client.clone(),
@@ -412,7 +467,7 @@ pub async fn proxy_mmry_add_for_workspace(
     Query(query): Query<WorkspaceProxyQuery>,
     req: Request<Body>,
 ) -> Result<Response<Body>, StatusCode> {
-    let target_url = get_mmry_target_for_workspace(&state, user.id()).await?;
+    let target_url = get_mmry_target_for_workspace(&state, &user, &query.workspace_path).await?;
     let store = resolve_mmry_store_for_workspace(&query);
     proxy_mmry_request_to_url(
         state.http_client.clone(),
@@ -433,7 +488,7 @@ pub async fn proxy_mmry_search_for_workspace(
     Query(query): Query<WorkspaceProxyQuery>,
     req: Request<Body>,
 ) -> Result<Response<Body>, StatusCode> {
-    let target_url = get_mmry_target_for_workspace(&state, user.id()).await?;
+    let target_url = get_mmry_target_for_workspace(&state, &user, &query.workspace_path).await?;
     let store = resolve_mmry_store_for_workspace(&query);
     proxy_mmry_request_to_url(
         state.http_client.clone(),
@@ -455,7 +510,7 @@ pub async fn proxy_mmry_memory_for_workspace(
     Query(query): Query<WorkspaceProxyQuery>,
     req: Request<Body>,
 ) -> Result<Response<Body>, StatusCode> {
-    let target_url = get_mmry_target_for_workspace(&state, user.id()).await?;
+    let target_url = get_mmry_target_for_workspace(&state, &user, &query.workspace_path).await?;
     let store = resolve_mmry_store_for_workspace(&query);
     let path = format!("v1/memories/{}", memory_id);
     proxy_mmry_request_to_url(
