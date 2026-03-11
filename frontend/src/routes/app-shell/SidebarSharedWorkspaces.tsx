@@ -103,7 +103,7 @@ export interface SidebarSharedWorkspacesProps {
 	selectedChatSessionId: string | null;
 	onSessionClick?: (session: ChatSession, sharedWorkspaceId: string) => void;
 	onRenameSession?: (sessionId: string) => void;
-	onDeleteSession?: (sessionId: string) => void;
+	onDeleteSession?: (sessionId: string) => Promise<boolean | void> | boolean | void;
 	onPinSession?: (sessionId: string) => void;
 	pinnedSessions?: Set<string> | string[];
 	onPinProject?: (projectKey: string) => void;
@@ -153,7 +153,7 @@ function WorkspaceContent({
 	selectedChatSessionId: string | null;
 	onSessionClick?: (session: ChatSession, sharedWorkspaceId: string) => void;
 	onRenameSession?: (sessionId: string) => void;
-	onDeleteSession?: (sessionId: string) => void;
+	onDeleteSession?: (sessionId: string) => Promise<boolean | void> | boolean | void;
 	onPinSession?: (sessionId: string) => void;
 	pinnedSessions?: Set<string> | string[];
 	onPinProject?: (projectKey: string) => void;
@@ -175,6 +175,9 @@ function WorkspaceContent({
 		title: string;
 	} | null>(null);
 	const [isDeletingSession, setIsDeletingSession] = useState(false);
+	const [hiddenSessionIds, setHiddenSessionIds] = useState<Set<string>>(
+		() => new Set(),
+	);
 
 	useEffect(() => {
 		let cancelled = false;
@@ -233,9 +236,14 @@ function WorkspaceContent({
 	// this workspace's path.
 	const workspacePath = workspace.path.replace(/\/$/, "");
 	const hstrySessions = useMemo(() => {
-		const byId = new Map(fetchedSessions.map((s) => [s.id, s]));
+		const byId = new Map(
+			fetchedSessions
+				.filter((s) => !hiddenSessionIds.has(s.id))
+				.map((s) => [s.id, s]),
+		);
 		// Add optimistic sessions from chatHistory that match this workspace
 		for (const s of chatHistory) {
+			if (hiddenSessionIds.has(s.id)) continue;
 			if (byId.has(s.id)) continue;
 			if (s.shared_workspace_id === workspace.id) {
 				byId.set(s.id, s);
@@ -247,7 +255,7 @@ function WorkspaceContent({
 			}
 		}
 		return Array.from(byId.values());
-	}, [fetchedSessions, chatHistory, workspace.id, workspacePath]);
+	}, [fetchedSessions, chatHistory, hiddenSessionIds, workspace.id, workspacePath]);
 
 	// Group sessions by workdir path
 	const sessionsByWorkdir = useMemo(() => {
@@ -331,13 +339,27 @@ function WorkspaceContent({
 
 	const confirmDeleteSession = async () => {
 		if (!pendingDeleteSession || !onDeleteSession) return;
+		const deletingId = pendingDeleteSession.id;
 		setIsDeletingSession(true);
+		setHiddenSessionIds((prev) => new Set(prev).add(deletingId));
 		try {
-			sharedWorkspaceSessionMap.set(pendingDeleteSession.id, workspace.id);
-			await Promise.resolve(onDeleteSession(pendingDeleteSession.id));
-			setFetchedSessions((prev) =>
-				prev.filter((s) => s.id !== pendingDeleteSession.id),
-			);
+			sharedWorkspaceSessionMap.set(deletingId, workspace.id);
+			const result = await Promise.resolve(onDeleteSession(deletingId));
+			if (result === false) {
+				setHiddenSessionIds((prev) => {
+					const next = new Set(prev);
+					next.delete(deletingId);
+					return next;
+				});
+				return;
+			}
+			setFetchedSessions((prev) => prev.filter((s) => s.id !== deletingId));
+		} catch {
+			setHiddenSessionIds((prev) => {
+				const next = new Set(prev);
+				next.delete(deletingId);
+				return next;
+			});
 		} finally {
 			setIsDeletingSession(false);
 			setPendingDeleteSession(null);

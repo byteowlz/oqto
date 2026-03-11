@@ -53,6 +53,7 @@ import {
 	SharedWorkspaceDialog,
 	SharedWorkspaceMembersDialog,
 } from "./app-shell/dialogs";
+import { BranchGraphDialog } from "./app-shell/dialogs/BranchGraphDialog";
 import {
 	convertToSharedWorkspace,
 	createSharedWorkspace,
@@ -112,6 +113,7 @@ const AppShell = memo(function AppShell() {
 	const [bootstrapError, setBootstrapError] = useState<string | null>(null);
 	const [bootstrapSubmitting, setBootstrapSubmitting] = useState(false);
 	const [bootstrapReady, setBootstrapReady] = useState(false);
+	const [branchGraphOpen, setBranchGraphOpen] = useState(false);
 
 	const { mutate: handleLogout } = useLogout();
 	const { data: currentUser } = useCurrentUser();
@@ -300,9 +302,7 @@ const AppShell = memo(function AppShell() {
 	);
 
 	const handleDeleteSession = useCallback(
-		async (sessionId: string) => {
-			await deleteChatSession(sessionId);
-		},
+		async (sessionId: string) => deleteChatSession(sessionId),
 		[deleteChatSession],
 	);
 
@@ -412,6 +412,13 @@ const AppShell = memo(function AppShell() {
 	useEffect(() => {
 		setMounted(true);
 	}, []);
+
+	useEffect(() => {
+		const handler = () => setBranchGraphOpen(true);
+		window.addEventListener("oqto:open-branch-graph", handler);
+		return () => window.removeEventListener("oqto:open-branch-graph", handler);
+	}, []);
+
 
 	useEffect(() => {
 		if (!mounted) return;
@@ -1185,6 +1192,15 @@ const AppShell = memo(function AppShell() {
 				<CommandPalette
 					open={commandPaletteOpen}
 					onOpenChange={setCommandPaletteOpen}
+				/>
+
+				<BranchGraphDialog
+					open={branchGraphOpen}
+					onOpenChange={setBranchGraphOpen}
+					parentSessions={sessionData.sessionHierarchy.parentSessions}
+					childSessionsByParent={sessionData.sessionHierarchy.childSessionsByParent}
+					selectedSessionId={selectedChatSessionId}
+					onSelectSession={setSelectedChatSessionId}
 				/>
 
 				<RenameSessionDialog
