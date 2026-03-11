@@ -156,7 +156,12 @@ export function BrowserView({
 
 	const handleSendToChat = useCallback(() => {
 		if (!browserSessionId || !onSendToChat) return;
-		const currentUrlHint = urlInput.trim();
+		const rawUrl = urlInput.trim();
+		const currentUrlHint = rawUrl
+			? (rawUrl.startsWith("http://") || rawUrl.startsWith("https://")
+				? rawUrl
+				: `https://${rawUrl}`)
+			: "";
 		const cmd = [
 			"The user has started a browser session you can control.",
 			`IMPORTANT: Always use this exact session: \`oqto-browser --session ${browserSessionId}\`.`,
@@ -234,9 +239,20 @@ export function BrowserView({
 	}, [canvasSize]);
 
 	useEffect(() => {
+		const clearFrame = () => {
+			lastFrameRef.current = null;
+			const canvas = canvasRef.current;
+			if (!canvas) return;
+			const ctx = canvas.getContext("2d");
+			if (ctx) {
+				ctx.clearRect(0, 0, canvas.width, canvas.height);
+			}
+		};
+
 		if (!wsUrl) {
 			setConnectionState("idle");
 			setStatusMessage("");
+			clearFrame();
 			if (socketRef.current) {
 				socketRef.current.close();
 				socketRef.current = null;
@@ -246,6 +262,7 @@ export function BrowserView({
 
 		setConnectionState("connecting");
 		setStatusMessage("");
+		clearFrame();
 		const socket = new WebSocket(wsUrl);
 		socketRef.current = socket;
 
@@ -255,10 +272,12 @@ export function BrowserView({
 		};
 		socket.onclose = () => {
 			setConnectionState("idle");
+			clearFrame();
 		};
 		socket.onerror = () => {
 			setConnectionState("error");
 			setStatusMessage("Stream error");
+			clearFrame();
 		};
 		socket.onmessage = (event) => {
 			try {
