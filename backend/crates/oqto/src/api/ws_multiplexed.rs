@@ -1828,11 +1828,25 @@ async fn handle_agent_command(
                 }
             }
 
-            let cwd = config
+            let mut cwd = config
                 .cwd
                 .as_ref()
                 .map(std::path::PathBuf::from)
                 .unwrap_or_else(|| std::path::PathBuf::from("/"));
+
+            // Avoid sandboxing sessions at filesystem root; this causes agents to
+            // attempt writing state under `/.oqto` and fail with permission errors.
+            // Prefer persisted session target workspace path, then user home fallback.
+            if cwd == std::path::PathBuf::from("/") {
+                if let Ok(Some(target)) = state.session_targets.get(&session_id).await
+                    && let Some(workspace_path) = target.workspace_path
+                    && !workspace_path.trim().is_empty()
+                {
+                    cwd = std::path::PathBuf::from(workspace_path);
+                } else if let Some(lu) = state.linux_users.as_ref() {
+                    cwd = std::path::PathBuf::from(format!("/home/{}", lu.linux_username(user_id)));
+                }
+            }
 
             {
                 let mut state_guard = conn_state.lock().await;
