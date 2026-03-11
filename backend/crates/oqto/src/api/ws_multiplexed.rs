@@ -1049,6 +1049,33 @@ async fn handle_multiplexed_ws(socket: WebSocket, state: AppState, user_id: Stri
     info!("Multiplexed WebSocket closed for user {}", user_id);
 }
 
+fn normalize_path_lexical(base: &std::path::Path, raw: &std::path::Path) -> std::path::PathBuf {
+    let joined = if raw.is_absolute() {
+        raw.to_path_buf()
+    } else {
+        base.join(raw)
+    };
+
+    let mut normalized = std::path::PathBuf::new();
+    for component in joined.components() {
+        match component {
+            std::path::Component::Prefix(prefix) => {
+                normalized.push(prefix.as_os_str());
+            }
+            std::path::Component::RootDir => {
+                normalized.push(component.as_os_str());
+            }
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                let _ = normalized.pop();
+            }
+            std::path::Component::Normal(seg) => normalized.push(seg),
+        }
+    }
+
+    normalized
+}
+
 /// Check that a workspace path belongs to the requesting user.
 ///
 /// In multi-user mode, the workspace_path must be either:
@@ -1073,16 +1100,20 @@ async fn validate_workspace_path_for_user(
     };
 
     let linux_username = lu.linux_username(user_id);
-    let user_home = format!("/home/{linux_username}");
+    let user_home = std::path::PathBuf::from(format!("/home/{linux_username}"));
+    let raw_path = std::path::PathBuf::from(path);
 
-    // Canonicalize to prevent path traversal (e.g., /home/user_a/../user_b/)
-    let canonical = match std::path::Path::new(path).canonicalize() {
-        Ok(c) => c,
-        Err(_) => {
-            // Path doesn't exist on disk -- still check the string prefix
-            std::path::PathBuf::from(path)
-        }
+    // Canonicalize if possible; otherwise fall back to lexical normalization.
+    // Relative paths are resolved against user home so common values like "."
+    // are treated as the user's workspace root.
+    let resolved = if raw_path.is_absolute() {
+        raw_path.clone()
+    } else {
+        user_home.join(&raw_path)
     };
+    let canonical = resolved
+        .canonicalize()
+        .unwrap_or_else(|_| normalize_path_lexical(&user_home, &raw_path));
 
     // Allow if path is under user's personal home
     if canonical.starts_with(&user_home) {
@@ -1103,7 +1134,8 @@ async fn validate_workspace_path_for_user(
     error!(
         user_id = %user_id,
         workspace_path = %path,
-        expected_prefix = %user_home,
+        resolved_path = %canonical.display(),
+        expected_prefix = %user_home.display(),
         "SECURITY: workspace path does not belong to user and is not a shared workspace"
     );
     Some(WsEvent::System(SystemWsEvent::Error {
@@ -1172,9 +1204,7 @@ fn ws_command_summary(cmd: &WsCommand) -> (String, Option<String>, Option<String
                 oqto_protocol::commands::CommandPayload::SessionSwitch { .. } => {
                     "agent.session_switch"
                 }
-                oqto_protocol::commands::CommandPayload::SessionRestart => {
-                    "agent.session_restart"
-                }
+                oqto_protocol::commands::CommandPayload::SessionRestart => "agent.session_restart",
                 oqto_protocol::commands::CommandPayload::Prompt { .. } => "agent.prompt",
                 oqto_protocol::commands::CommandPayload::Steer { .. } => "agent.steer",
                 oqto_protocol::commands::CommandPayload::FollowUp { .. } => "agent.follow_up",
@@ -1501,8 +1531,8 @@ async fn handle_agent_command(
                 tracing::info!(session_id = %session_id, socket = ?sw.socket_path(), "routing session to shared workspace runner");
                 resolved_target_for_command = Some(target.clone());
                 // Store override for subsequent commands on this session
-                let is_different = runner_client
-                    .map_or(true, |r| r.socket_path() != sw.socket_path());
+                let is_different =
+                    runner_client.map_or(true, |r| r.socket_path() != sw.socket_path());
                 if is_different {
                     let mut state_guard = conn_state.lock().await;
                     state_guard
@@ -1516,7 +1546,9 @@ async fn handle_agent_command(
                     Some(r) => r.clone(),
                     None => {
                         return Some(agent_response(
-                            &session_id, id, "error",
+                            &session_id,
+                            id,
+                            "error",
                             Err("Runner not available".into()),
                         ));
                     }
@@ -1571,7 +1603,12 @@ async fn handle_agent_command(
                     } else {
                         match &cmd.payload {
                             CommandPayload::GetState => {
-                                return Some(agent_response(&session_id, id, "get_state", Ok(None)));
+                                return Some(agent_response(
+                                    &session_id,
+                                    id,
+                                    "get_state",
+                                    Ok(None),
+                                ));
                             }
                             CommandPayload::GetMessages => {
                                 return Some(agent_response(
@@ -1582,7 +1619,12 @@ async fn handle_agent_command(
                                 ));
                             }
                             CommandPayload::GetStats => {
-                                return Some(agent_response(&session_id, id, "get_stats", Ok(None)));
+                                return Some(agent_response(
+                                    &session_id,
+                                    id,
+                                    "get_stats",
+                                    Ok(None),
+                                ));
                             }
                             CommandPayload::GetForkPoints => {
                                 return Some(agent_response(
@@ -1630,11 +1672,11 @@ async fn handle_agent_command(
                     let target_from_store = match state.session_targets.get(&session_id).await {
                         Ok(Some(record)) => match record.scope {
                             SessionTargetScope::Personal => Some(ExecutionTarget::Personal),
-                            SessionTargetScope::SharedWorkspace => record
-                                .workspace_id
-                                .map(|workspace_id| ExecutionTarget::SharedWorkspace {
-                                    workspace_id,
-                                }),
+                            SessionTargetScope::SharedWorkspace => {
+                                record.workspace_id.map(|workspace_id| {
+                                    ExecutionTarget::SharedWorkspace { workspace_id }
+                                })
+                            }
                         },
                         Ok(None) => None,
                         Err(_) => None,
@@ -1647,7 +1689,8 @@ async fn handle_agent_command(
                                 state_guard
                                     .session_runner_overrides
                                     .insert(session_id.clone(), client.clone());
-                                if let Ok(Some(record)) = state.session_targets.get(&session_id).await
+                                if let Ok(Some(record)) =
+                                    state.session_targets.get(&session_id).await
                                     && let Some(workspace_path) = record.workspace_path
                                 {
                                     state_guard.pi_session_meta.insert(
@@ -1677,7 +1720,12 @@ async fn handle_agent_command(
                     } else {
                         match &cmd.payload {
                             CommandPayload::GetState => {
-                                return Some(agent_response(&session_id, id, "get_state", Ok(None)));
+                                return Some(agent_response(
+                                    &session_id,
+                                    id,
+                                    "get_state",
+                                    Ok(None),
+                                ));
                             }
                             CommandPayload::GetMessages => {
                                 return Some(agent_response(
@@ -1688,7 +1736,12 @@ async fn handle_agent_command(
                                 ));
                             }
                             CommandPayload::GetStats => {
-                                return Some(agent_response(&session_id, id, "get_stats", Ok(None)));
+                                return Some(agent_response(
+                                    &session_id,
+                                    id,
+                                    "get_stats",
+                                    Ok(None),
+                                ));
                             }
                             CommandPayload::GetForkPoints => {
                                 return Some(agent_response(
@@ -1727,7 +1780,8 @@ async fn handle_agent_command(
                                     &session_id,
                                     id,
                                     "error",
-                                    Err("Session target unknown; session metadata is missing".into()),
+                                    Err("Session target unknown; session metadata is missing"
+                                        .into()),
                                 ));
                             }
                         }
@@ -1856,7 +1910,9 @@ async fn handle_agent_command(
                                 error!("Event forwarding error for session {}: {:?}", sid, e);
                             }
                         });
-                        state_guard.pi_forwarders.insert(session_id.clone(), forwarder);
+                        state_guard
+                            .pi_forwarders
+                            .insert(session_id.clone(), forwarder);
 
                         // Wait for the subscription to be confirmed (with timeout)
                         drop(state_guard);
@@ -1975,7 +2031,7 @@ async fn handle_agent_command(
                         ));
                     }
                     Some(agent_response(&session_id, id, "session.delete", Ok(None)))
-                },
+                }
                 Err(e) => Some(agent_response(
                     &session_id,
                     id,
@@ -2014,7 +2070,10 @@ async fn handle_agent_command(
                 "agent session.switch: user={}, session_id={}, path={}",
                 user_id, session_id, session_path
             );
-            match runner.agent_switch_session(&session_id, &session_path).await {
+            match runner
+                .agent_switch_session(&session_id, &session_path)
+                .await
+            {
                 Ok(()) => Some(agent_response(
                     &session_id,
                     id,
@@ -2130,12 +2189,17 @@ async fn handle_agent_command(
                             error!("Event forwarding error for session {}: {:?}", sid, e);
                         }
                     });
-                    state_guard.pi_forwarders.insert(session_id.clone(), forwarder);
+                    state_guard
+                        .pi_forwarders
+                        .insert(session_id.clone(), forwarder);
                     drop(state_guard);
 
                     match tokio::time::timeout(Duration::from_secs(5), sub_ready_rx).await {
                         Ok(Ok(())) => {
-                            debug!("Event subscription re-established for session {}", session_id);
+                            debug!(
+                                "Event subscription re-established for session {}",
+                                session_id
+                            );
                         }
                         Ok(Err(_)) => {
                             warn!(
@@ -2185,7 +2249,11 @@ async fn handle_agent_command(
                 // For shared workspaces, prepend the user's display name to the message
                 // so the agent knows which user is speaking.
                 let effective_message = tag_shared_workspace_message(
-                    state, &conn_state, &session_id, user_id, &message,
+                    state,
+                    &conn_state,
+                    &session_id,
+                    user_id,
+                    &message,
                 )
                 .await;
 
@@ -2236,7 +2304,11 @@ async fn handle_agent_command(
                 ))
             } else {
                 let effective_message = tag_shared_workspace_message(
-                    state, &conn_state, &session_id, user_id, &message,
+                    state,
+                    &conn_state,
+                    &session_id,
+                    user_id,
+                    &message,
                 )
                 .await;
                 info!(
@@ -2247,7 +2319,10 @@ async fn handle_agent_command(
                     client_id
                 );
                 let client_id_for_broadcast = client_id.clone();
-                match runner.agent_steer(&session_id, &effective_message, client_id).await {
+                match runner
+                    .agent_steer(&session_id, &effective_message, client_id)
+                    .await
+                {
                     Ok(()) => {
                         broadcast_user_message(
                             state,
@@ -2283,7 +2358,11 @@ async fn handle_agent_command(
                 ))
             } else {
                 let effective_message = tag_shared_workspace_message(
-                    state, &conn_state, &session_id, user_id, &message,
+                    state,
+                    &conn_state,
+                    &session_id,
+                    user_id,
+                    &message,
                 )
                 .await;
                 info!(
@@ -2294,7 +2373,10 @@ async fn handle_agent_command(
                     client_id
                 );
                 let client_id_for_broadcast = client_id.clone();
-                match runner.agent_follow_up(&session_id, &effective_message, client_id).await {
+                match runner
+                    .agent_follow_up(&session_id, &effective_message, client_id)
+                    .await
+                {
                     Ok(()) => {
                         broadcast_user_message(
                             state,
@@ -2474,8 +2556,7 @@ async fn handle_agent_command(
                     let msg = e.to_string();
                     if msg.contains("PiSessionNotFound")
                         || msg.contains("SessionNotFound")
-                        || (msg.contains("unknown variant")
-                            && msg.contains("agent_get_commands"))
+                        || (msg.contains("unknown variant") && msg.contains("agent_get_commands"))
                     {
                         // Compatibility fallback: older runners may not implement
                         // AgentGetCommands yet. Treat as "no commands" instead of
@@ -2531,7 +2612,10 @@ async fn handle_agent_command(
                 "agent set_model: user={}, session_id={}, {}:{}",
                 user_id, session_id, provider, model_id
             );
-            match runner.agent_set_model(&session_id, &provider, &model_id).await {
+            match runner
+                .agent_set_model(&session_id, &provider, &model_id)
+                .await
+            {
                 Ok(resp) => {
                     // Emit ConfigModelChanged event so the frontend UI updates.
                     let config_event = WsEvent::Agent(oqto_protocol::events::Event {
@@ -2835,7 +2919,10 @@ async fn handle_agent_command(
                                             // prompt/steer handlers can resolve the
                                             // shared workspace for username tagging
                                             // without requiring session.create.
-                                            if !state_guard.pi_session_meta.contains_key(&s.session_id) {
+                                            if !state_guard
+                                                .pi_session_meta
+                                                .contains_key(&s.session_id)
+                                            {
                                                 state_guard.pi_session_meta.insert(
                                                     s.session_id.clone(),
                                                     PiSessionMeta {
@@ -4387,7 +4474,9 @@ async fn handle_session_command(
                 "Legacy session channel is deprecated for session {}. Use the agent channel instead.",
                 id
             ),
-            None => "Legacy session channel is deprecated. Use the agent channel instead.".to_string(),
+            None => {
+                "Legacy session channel is deprecated. Use the agent channel instead.".to_string()
+            }
         },
     }))
 }
