@@ -20,7 +20,7 @@ import {
 	Trash2,
 	X,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 // Memory type from mmry API
 interface Memory {
@@ -96,6 +96,12 @@ interface MemoriesViewProps {
 	/** Optional store override (e.g., default chat assistant name) */
 	storeName?: string | null;
 }
+
+const MEMORY_CACHE_TTL_MS = 30_000;
+const memoryListCache = new Map<
+	string,
+	{ ts: number; data: MemoryListResponse }
+>();
 
 // Build workspace memories URL with workspace_path query param
 function workspaceMemoriesUrl(
@@ -442,23 +448,38 @@ export function MemoriesView({
 	const [isAdding, setIsAdding] = useState(false);
 	const [deletingId, setDeletingId] = useState<string | null>(null);
 	const addTextareaRef = useRef<HTMLTextAreaElement>(null);
+	const cacheKey = useMemo(
+		() => `${workspacePath ?? ""}::${storeName ?? ""}`,
+		[workspacePath, storeName],
+	);
 
 	const loadMemories = useCallback(async () => {
 		if (!workspacePath) return;
 
-		setLoading(true);
+		const cached = memoryListCache.get(cacheKey);
+		const hasFreshCache =
+			cached && Date.now() - cached.ts < MEMORY_CACHE_TTL_MS;
+		if (hasFreshCache && cached) {
+			setMemories(cached.data.memories);
+			setTotal(cached.data.total);
+			setLoading(false);
+		} else {
+			setLoading(true);
+		}
+
 		setError("");
 		setIsSearchMode(false);
 		try {
 			const data = await fetchMemories(workspacePath, 0, 50, storeName);
 			setMemories(data.memories);
 			setTotal(data.total);
+			memoryListCache.set(cacheKey, { ts: Date.now(), data });
 		} catch (err) {
 			setError(err instanceof Error ? err.message : "Failed to load memories");
 		} finally {
 			setLoading(false);
 		}
-	}, [workspacePath, storeName]);
+	}, [workspacePath, storeName, cacheKey]);
 
 	useEffect(() => {
 		loadMemories();
