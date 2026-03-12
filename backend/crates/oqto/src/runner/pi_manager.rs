@@ -2320,7 +2320,9 @@ impl PiSessionManager {
         // this read lock while we're blocked on cmd_tx backpressure).
         let cmd_tx = {
             let sessions = self.sessions.read().await;
-            sessions.get(resolved_id).map(|session| session.cmd_tx.clone())
+            sessions
+                .get(resolved_id)
+                .map(|session| session.cmd_tx.clone())
         };
 
         // Best-effort close signal (can be dropped if receiver is gone).
@@ -2569,6 +2571,27 @@ impl PiSessionManager {
                 // Pi will respond with state data, which updates last_activity
                 // via the stdout reader. This proves Pi is alive and responsive.
                 if elapsed > health_check_after {
+                    if current_state == PiSessionState::Stopping {
+                        // Stopping sessions may legitimately have no further stdout
+                        // (e.g. final event parse was dropped). Do not surface a
+                        // misleading timeout error to users in this state.
+                        if elapsed > hard_timeout_transient {
+                            warn!(
+                                "Session '{}' remained in Stopping for {:?} -- forcing to Idle without timeout error",
+                                id, elapsed,
+                            );
+                            *state.write().await = PiSessionState::Idle;
+                            let idle_event = CanonicalEvent {
+                                session_id: id.clone(),
+                                runner_id: self.config.runner_id.clone(),
+                                ts: chrono::Utc::now().timestamp_millis(),
+                                payload: EventPayload::AgentIdle,
+                            };
+                            let _ = session_event_tx.send(idle_event);
+                        }
+                        continue;
+                    }
+
                     let hard_timeout = match current_state {
                         PiSessionState::Streaming | PiSessionState::Starting => {
                             hard_timeout_streaming
@@ -2676,8 +2699,11 @@ impl PiSessionManager {
             });
         }
 
-        // Read stdout
-        let mut reader = BufReader::new(stdout).lines();
+        // Read stdout. Use read_until instead of lines() to avoid the
+        // default line-length cap causing false "process exited" on large
+        // tool payload events.
+        let mut reader = BufReader::new(stdout);
+        let mut raw_buf = Vec::new();
         let mut pending_json_fragment = String::new();
         let mut pending_messages: Vec<AgentMessage> = Vec::new();
         let mut pending_hstry_client_id: Option<String> = None;
@@ -2692,10 +2718,11 @@ impl PiSessionManager {
         // Mark as Idle after first successful read (Pi is ready)
         let mut first_event_seen = false;
 
-        // Debounce incremental hstry persistence: persist at most every 5 seconds
-        // during streaming (triggered on TurnEnd events).
-        let mut last_incremental_persist = Instant::now();
-        let incremental_persist_interval = Duration::from_secs(5);
+        // Debounce incremental hstry persistence: persist at most once per second
+        // during streaming (triggered on AgentStart/MessageUpdate/TurnEnd events).
+        // Initialize as elapsed so the first trigger (AgentStart) flushes immediately.
+        let incremental_persist_interval = Duration::from_secs(1);
+        let mut last_incremental_persist = Instant::now() - incremental_persist_interval;
         // Track whether an incremental persist is already in flight to avoid
         // queuing multiple get_messages requests.
         let mut incremental_persist_in_flight = false;
@@ -2704,7 +2731,22 @@ impl PiSessionManager {
         // messages from concurrent index resolution).
         let hstry_persist_lock = Arc::new(tokio::sync::Mutex::new(()));
 
-        while let Ok(Some(raw_line)) = reader.next_line().await {
+        loop {
+            raw_buf.clear();
+            let bytes_read = match reader.read_until(b'\n', &mut raw_buf).await {
+                Ok(n) => n,
+                Err(e) => {
+                    warn!("Pi[{}] stdout read error (continuing): {}", session_id, e);
+                    continue;
+                }
+            };
+            if bytes_read == 0 {
+                break;
+            }
+
+            let raw_line = String::from_utf8_lossy(&raw_buf)
+                .trim_end_matches(['\n', '\r'])
+                .to_string();
             if raw_line.trim().is_empty() {
                 continue;
             }
@@ -2731,16 +2773,45 @@ impl PiSessionManager {
                 continue;
             }
 
-            // If we got a single EOF/unterminated parse error, keep buffering.
-            // This prevents dropped AgentEnd/TurnEnd events on large tool results
-            // (e.g., image/base64 payloads split across lines).
+            // If we got a single parse error and the line looks like a
+            // truncated JSON object, keep buffering until the rest arrives.
+            // This prevents dropped events when Pi's stdout buffer splits a
+            // large JSON line across multiple writes (common with thinking
+            // models that produce very long `partial` fields in toolcall_delta
+            // events, exceeding 4096/8192/16384 byte boundaries).
+            //
+            // Fragment indicators:
+            //   - "EOF while parsing"       -> input ended mid-value
+            //   - "unterminated string"      -> string literal split at boundary
+            //   - "expected value at line 1 column 1" -> empty/whitespace line
+            //   - "expected `,` or `}`"      -> object split mid-field
+            //   - "expected `:`"             -> object split at key-value separator
+            //   - "expected `]`"             -> array split at boundary
+            //   - "control character..."     -> string with unescaped control char
+            //     at boundary
             if parsed_messages.len() == 1
                 && let Err(err) = &parsed_messages[0]
             {
-                let is_fragment = err.contains("EOF while parsing")
+                // Heuristic: if the line starts with `{` (looks like a JSON
+                // object) and the parse failed, treat it as a fragment. This
+                // is more robust than pattern-matching specific serde error
+                // messages which vary across versions and edge cases.
+                let looks_like_json_start = line.trim_start().starts_with('{')
+                    || line.trim_start().starts_with('[');
+                let is_known_fragment = err.contains("EOF while parsing")
                     || err.contains("unterminated string")
                     || err.contains("expected value at line 1 column 1");
-                if is_fragment && line.len() < 16 * 1024 * 1024 {
+                if (is_known_fragment || looks_like_json_start)
+                    && line.len() < 16 * 1024 * 1024
+                {
+                    if !is_known_fragment {
+                        debug!(
+                            "Pi[{}] buffering likely truncated JSON ({} bytes): {}",
+                            session_id,
+                            line.len(),
+                            err
+                        );
+                    }
                     pending_json_fragment = line;
                     continue;
                 }
@@ -2869,7 +2940,8 @@ impl PiSessionManager {
                                     // the title (e.g. "Title [adj-noun-noun]"), otherwise
                                     // look up the hstry-generated one so the frontend
                                     // always gets a readable_id with title changes.
-                                    let readable_id = if let Some(rid) = parsed.readable_id.as_ref() {
+                                    let readable_id = if let Some(rid) = parsed.readable_id.as_ref()
+                                    {
                                         Some(rid.to_string())
                                     } else {
                                         let eid = hstry_external_id.read().await.clone();
@@ -2880,7 +2952,12 @@ impl PiSessionManager {
                                                 .ok()
                                                 .flatten()
                                                 .and_then(|c| {
-                                                    let rid = c.readable_id.as_deref().unwrap_or("").trim().to_string();
+                                                    let rid = c
+                                                        .readable_id
+                                                        .as_deref()
+                                                        .unwrap_or("")
+                                                        .trim()
+                                                        .to_string();
                                                     if rid.is_empty() { None } else { Some(rid) }
                                                 })
                                         } else {
@@ -3117,9 +3194,8 @@ impl PiSessionManager {
                             tokio::spawn(async move {
                                 // Acquire lock to wait for incremental persist to complete
                                 let _guard = lock.lock().await;
-                                if let Err(e) = client
-                                    .set_last_user_message_client_id(&eid, &cid)
-                                    .await
+                                if let Err(e) =
+                                    client.set_last_user_message_client_id(&eid, &cid).await
                                 {
                                     warn!(
                                         "Pi[{}] failed to set client_id on last user message: {:?}",
@@ -3145,31 +3221,38 @@ impl PiSessionManager {
                 for payload in &canonical_payloads {
                     // Enrich SessionTitleChanged with hstry readable_id when
                     // the title doesn't embed one (e.g. no readableIdSuffix).
-                    let enriched_payload = if let oqto_protocol::events::EventPayload::SessionTitleChanged {
-                        title,
-                        readable_id: None,
-                    } = payload {
-                        let hstry_rid = if let Some(ref client) = hstry_client {
-                            let eid = hstry_external_id.read().await.clone();
-                            client
-                                .get_conversation(&eid, None)
-                                .await
-                                .ok()
-                                .flatten()
-                                .and_then(|c| {
-                                    let rid = c.readable_id.as_deref().unwrap_or("").trim().to_string();
-                                    if rid.is_empty() { None } else { Some(rid) }
-                                })
+                    let enriched_payload =
+                        if let oqto_protocol::events::EventPayload::SessionTitleChanged {
+                            title,
+                            readable_id: None,
+                        } = payload
+                        {
+                            let hstry_rid = if let Some(ref client) = hstry_client {
+                                let eid = hstry_external_id.read().await.clone();
+                                client
+                                    .get_conversation(&eid, None)
+                                    .await
+                                    .ok()
+                                    .flatten()
+                                    .and_then(|c| {
+                                        let rid = c
+                                            .readable_id
+                                            .as_deref()
+                                            .unwrap_or("")
+                                            .trim()
+                                            .to_string();
+                                        if rid.is_empty() { None } else { Some(rid) }
+                                    })
+                            } else {
+                                None
+                            };
+                            oqto_protocol::events::EventPayload::SessionTitleChanged {
+                                title: title.clone(),
+                                readable_id: hstry_rid,
+                            }
                         } else {
-                            None
+                            payload.clone()
                         };
-                        oqto_protocol::events::EventPayload::SessionTitleChanged {
-                            title: title.clone(),
-                            readable_id: hstry_rid,
-                        }
-                    } else {
-                        payload.clone()
-                    };
 
                     let canonical_event = CanonicalEvent {
                         session_id: session_id.clone(),
@@ -3213,11 +3296,25 @@ impl PiSessionManager {
                     }
                 }
 
-                // Incremental hstry persistence on TurnEnd events.
-                // This ensures hstry stays reasonably current during multi-turn streaming,
-                // so that a page reload mid-stream can recover messages from hstry.
-                // Debounced to avoid hammering hstry on rapid turn sequences.
-                if matches!(pi_event, PiEvent::TurnEnd { .. }) {
+                // Incremental hstry persistence during streaming.
+                // This keeps hstry current enough that a page reload can restore
+                // the most recent user prompt and partial assistant output.
+                // Debounced to avoid hammering hstry on high-frequency deltas.
+                let incremental_trigger =
+                    matches!(pi_event, PiEvent::AgentStart | PiEvent::TurnEnd { .. })
+                        || matches!(
+                            pi_event,
+                            PiEvent::MessageUpdate {
+                                assistant_message_event:
+                                    crate::pi::AssistantMessageEvent::TextDelta { .. }
+                                        | crate::pi::AssistantMessageEvent::TextEnd { .. }
+                                        | crate::pi::AssistantMessageEvent::ThinkingDelta { .. }
+                                        | crate::pi::AssistantMessageEvent::ToolcallDelta { .. }
+                                        | crate::pi::AssistantMessageEvent::Done { .. },
+                                ..
+                            }
+                        );
+                if incremental_trigger {
                     let elapsed = last_incremental_persist.elapsed();
                     if elapsed >= incremental_persist_interval
                         && hstry_client.is_some()
@@ -3233,7 +3330,7 @@ impl PiSessionManager {
                             incremental_persist_in_flight = false;
                         } else {
                             debug!(
-                                "Pi[{}] triggered incremental hstry persist on TurnEnd",
+                                "Pi[{}] triggered incremental hstry persist during streaming",
                                 session_id
                             );
                         }
@@ -3313,7 +3410,10 @@ impl PiSessionManager {
                     };
                     Self::write_command(&mut stdin, &pi_cmd).await
                 }
-                PiSessionCommand::Steer { message: msg, client_id } => {
+                PiSessionCommand::Steer {
+                    message: msg,
+                    client_id,
+                } => {
                     // Store client_id for hstry persistence (same as Prompt).
                     debug!(
                         "Pi[{}] cmd_processor: Steer received, client_id = {:?}",
@@ -3351,7 +3451,10 @@ impl PiSessionManager {
                     };
                     Self::write_command(&mut stdin, &pi_cmd).await
                 }
-                PiSessionCommand::FollowUp { message: msg, client_id } => {
+                PiSessionCommand::FollowUp {
+                    message: msg,
+                    client_id,
+                } => {
                     // Store client_id for hstry persistence (same as Prompt).
                     *pending_client_id.write().await = client_id;
                     // The runner decides how to deliver based on session state:
@@ -3863,12 +3966,7 @@ impl PiSessionManager {
                 // hstry max_idx, we must persist instead of skipping.
                 let has_newer_jsonl_idx = jsonl_indices
                     .as_ref()
-                    .map(|indices| {
-                        indices
-                            .iter()
-                            .flatten()
-                            .any(|idx| *idx > max_idx)
-                    })
+                    .map(|indices| indices.iter().flatten().any(|idx| *idx > max_idx))
                     .unwrap_or(false);
 
                 if has_newer_jsonl_idx {
@@ -3913,7 +4011,8 @@ impl PiSessionManager {
                 )
                 .await;
 
-            if let Ok(repaired) = reconcile_hstry_with_jsonl_tail(client, hstry_external_id, work_dir).await
+            if let Ok(repaired) =
+                reconcile_hstry_with_jsonl_tail(client, hstry_external_id, work_dir).await
                 && repaired > 0
             {
                 warn!(
@@ -4010,7 +4109,8 @@ impl PiSessionManager {
             }
         }
 
-        if let Ok(repaired) = reconcile_hstry_with_jsonl_tail(client, hstry_external_id, work_dir).await
+        if let Ok(repaired) =
+            reconcile_hstry_with_jsonl_tail(client, hstry_external_id, work_dir).await
             && repaired > 0
         {
             warn!(
@@ -4296,11 +4396,12 @@ async fn reconcile_hstry_with_jsonl_tail(
         None => return Ok(0),
     };
 
-    let jsonl_messages = tokio::task::spawn_blocking(move || read_jsonl_agent_messages(session_file))
-        .await
-        .ok()
-        .and_then(|r| r.ok())
-        .unwrap_or_default();
+    let jsonl_messages =
+        tokio::task::spawn_blocking(move || read_jsonl_agent_messages(session_file))
+            .await
+            .ok()
+            .and_then(|r| r.ok())
+            .unwrap_or_default();
 
     if jsonl_messages.is_empty() {
         return Ok(0);
@@ -4326,7 +4427,9 @@ async fn reconcile_hstry_with_jsonl_tail(
         .map(|(idx, msg)| agent_message_to_proto_with_client_id(msg, *idx, None))
         .collect();
 
-    client.append_messages(session_id, proto, Some(now_ms)).await?;
+    client
+        .append_messages(session_id, proto, Some(now_ms))
+        .await?;
 
     Ok(missing.len())
 }
