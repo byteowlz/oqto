@@ -208,6 +208,28 @@ impl PiTranslator {
         let had_streaming = self.streaming_occurred;
         self.streaming_occurred = false;
 
+        // Safety net: check if any assistant message has stop_reason "error"
+        // and emit AgentError if the error wasn't already surfaced during
+        // streaming (via AssistantMessageEvent::Error or message_end).
+        // This catches cases where Pi returns an error (e.g. "400 Unexpected
+        // message role") that wasn't caught by streaming event handlers.
+        if had_streaming {
+            for msg in messages {
+                if (msg.role == "assistant" || msg.role == "agent")
+                    && msg.stop_reason.as_deref() == Some("error")
+                {
+                    if let Some(error_text) = extract_error_message(msg) {
+                        events.push(EventPayload::AgentError {
+                            error: error_text,
+                            recoverable: true,
+                            phase: Some(AgentPhase::Generating),
+                        });
+                        break;
+                    }
+                }
+            }
+        }
+
         if !had_streaming && !messages.is_empty() {
             // Find the last user message index to attach client_id
             let last_user_idx = messages
@@ -393,19 +415,27 @@ impl PiTranslator {
             message: canonical.clone(),
         }];
 
-        // Fallback for providers that report request-size failures only on
-        // message metadata (without assistant_message_event:error).
-        if matches!(canonical.stop_reason, Some(StopReason::Error))
-            && let Some(error_text) = extract_error_message(message)
-            && is_payload_too_large_error(&error_text)
-        {
-            events.push(EventPayload::AgentError {
-                error: error_text,
-                recoverable: false,
-                phase: Some(AgentPhase::Generating),
-            });
-            if self.state.is_working() {
-                events.push(self.state.on_agent_end());
+        // When the message has stop_reason "error", emit an AgentError event
+        // so the frontend can display the error to the user. Without this,
+        // errors like "400 Unexpected message role" result in empty assistant
+        // bubbles with no visible error.
+        if matches!(canonical.stop_reason, Some(StopReason::Error)) {
+            if let Some(error_text) = extract_error_message(message) {
+                let is_fatal = is_payload_too_large_error(&error_text);
+                events.push(EventPayload::AgentError {
+                    error: error_text,
+                    // Payload-too-large errors are not recoverable (session is stuck).
+                    // Other errors (API 400s, model errors) are recoverable: the user
+                    // can retry with a different model or message.
+                    recoverable: !is_fatal,
+                    phase: Some(AgentPhase::Generating),
+                });
+
+                // Payload-too-large failures can leave Pi in a stuck working state
+                // without a timely agent_end. Force idle to keep session recoverable.
+                if is_fatal && self.state.is_working() {
+                    events.push(self.state.on_agent_end());
+                }
             }
         }
 
@@ -1680,6 +1710,95 @@ mod tests {
 
         // streaming_occurred should be true (assistant messages streamed)
         assert!(t.streaming_occurred);
+    }
+
+    #[test]
+    fn test_api_error_propagates_from_message_end() {
+        // Simulate a "400 Unexpected message role" error from the API.
+        // Pi emits message_start -> message_end with stop_reason "error"
+        // and the error text in content.
+        let mut t = PiTranslator::new();
+        t.translate(&PiEvent::AgentStart);
+
+        let msg = make_assistant_message();
+        t.translate(&PiEvent::MessageStart {
+            message: msg.clone(),
+        });
+
+        // Message ends with error
+        let error_msg = AgentMessage {
+            role: "assistant".to_string(),
+            content: Value::String("400 Unexpected message role".to_string()),
+            stop_reason: Some("error".to_string()),
+            ..make_empty_message()
+        };
+
+        let events = t.translate(&PiEvent::MessageEnd {
+            message: error_msg,
+        });
+
+        // Should emit StreamMessageEnd AND AgentError
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, EventPayload::StreamMessageEnd { .. })),
+            "Should emit StreamMessageEnd"
+        );
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                EventPayload::AgentError {
+                    recoverable: true,
+                    ..
+                }
+            )),
+            "Should emit recoverable AgentError for API errors"
+        );
+
+        // Verify the error text is preserved
+        if let Some(EventPayload::AgentError { error, .. }) =
+            events.iter().find(|e| matches!(e, EventPayload::AgentError { .. }))
+        {
+            assert!(error.contains("400 Unexpected message role"));
+        }
+    }
+
+    #[test]
+    fn test_error_propagates_via_agent_end_safety_net() {
+        // Test the safety net: even when streaming occurred, if an assistant
+        // message in agent_end has stop_reason "error", emit AgentError.
+        let mut t = PiTranslator::new();
+        t.translate(&PiEvent::AgentStart);
+
+        // Simulate streaming (sets streaming_occurred = true)
+        let msg = make_assistant_message();
+        t.translate(&PiEvent::MessageStart {
+            message: msg.clone(),
+        });
+
+        // message_end without error stop_reason (no AgentError emitted here)
+        t.translate(&PiEvent::MessageEnd { message: msg });
+
+        // agent_end with an error message in the messages list
+        let error_msg = AgentMessage {
+            role: "assistant".to_string(),
+            content: Value::String("500 Internal server error".to_string()),
+            stop_reason: Some("error".to_string()),
+            ..make_empty_message()
+        };
+
+        let events = t.translate(&PiEvent::AgentEnd {
+            messages: vec![error_msg],
+        });
+
+        // Should emit AgentError from safety net + AgentIdle
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, EventPayload::AgentError { .. })),
+            "Safety net should emit AgentError when streaming occurred but messages have errors"
+        );
+        assert!(events.iter().any(|e| matches!(e, EventPayload::AgentIdle)));
     }
 
     // Helper to create a minimal empty message for struct update syntax.
