@@ -2073,3 +2073,31 @@ export function getDisplayPiTitle(session: {
 	}
 	return title.trim() || "New Session";
 }
+
+export function isGenericSessionTitle(
+	title: string | null | undefined,
+	localizedNewSession: string,
+	localizedActiveSession: string,
+): boolean {
+	const trimmed = title?.trim();
+	if (!trimmed) return true;
+	if (trimmed === "New Session") return true;
+	if (trimmed === localizedNewSession.trim()) return true;
+	if (trimmed === localizedActiveSession.trim()) return true;
+	return false;
+}
+
+export function preferStableSessionTitle(
+	previousTitle: string | null | undefined,
+	incomingTitle: string | null | undefined,
+	localizedNewSession: string,
+	localizedActiveSession: string,
+): string | null | undefined {
+	if (
+		!isGenericSessionTitle(previousTitle, localizedNewSession, localizedActiveSession) &&
+		isGenericSessionTitle(incomingTitle, localizedNewSession, localizedActiveSession)
+	) {
+		return previousTitle;
+	}
+	return incomingTitle;
+}

@@ -77,6 +77,8 @@ export interface SessionHierarchy {
 	childSessionsByParent: Map<string, ChatSession[]>;
 }
 
+type SessionViewMode = "list" | "tree";
+
 export interface SidebarSessionsProps {
 	locale: string;
 	chatHistory: ChatSession[];
@@ -177,6 +179,16 @@ export const SidebarSessions = memo(function SidebarSessions({
 	const [localSearchMode, setLocalSearchMode] =
 		useState<SearchMode>("sessions");
 
+	const [sessionViewMode, setSessionViewMode] = useState<SessionViewMode>(() => {
+		if (typeof window === "undefined") return "list";
+		try {
+			const stored = localStorage.getItem("oqto:sessionViewMode");
+			return stored === "tree" ? "tree" : "list";
+		} catch {
+			return "list";
+		}
+	});
+
 	// Use controlled or local state
 	const sessionSearch = controlledSessionSearch ?? localSessionSearch;
 	const setSessionSearch =
@@ -224,6 +236,31 @@ export const SidebarSessions = memo(function SidebarSessions({
 		};
 		document.addEventListener("keydown", handleKeyDown);
 		return () => document.removeEventListener("keydown", handleKeyDown);
+	}, []);
+
+	useEffect(() => {
+		if (typeof window === "undefined") return;
+		try {
+			localStorage.setItem("oqto:sessionViewMode", sessionViewMode);
+		} catch {
+			// Ignore storage failures.
+		}
+	}, [sessionViewMode]);
+
+	useEffect(() => {
+		const handler = (event: Event) => {
+			const custom = event as CustomEvent<{ mode?: SessionViewMode; toggle?: boolean }>;
+			if (custom.detail?.mode === "list" || custom.detail?.mode === "tree") {
+				setSessionViewMode(custom.detail.mode);
+				return;
+			}
+			if (custom.detail?.toggle) {
+				setSessionViewMode((prev) => (prev === "list" ? "tree" : "list"));
+			}
+		};
+		window.addEventListener("oqto:set-session-view-mode", handler as EventListener);
+		return () =>
+			window.removeEventListener("oqto:set-session-view-mode", handler as EventListener);
 	}, []);
 
 	const sizeClasses = isMobile
@@ -673,6 +710,10 @@ export const SidebarSessions = memo(function SidebarSessions({
 							const isProjectExpanded =
 								deferredSearch || expandedProjects.has(project.key);
 							const isProjectPinned = pinnedProjects.includes(project.key);
+							const projectSessionsForMode =
+								sessionViewMode === "tree"
+									? project.sessions.filter((session) => !session.parent_id)
+									: project.sessions;
 							return (
 								<div
 									key={project.key}

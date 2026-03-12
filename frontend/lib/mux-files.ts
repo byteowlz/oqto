@@ -73,6 +73,7 @@ export async function fetchFileTreeMux(
 	path = ".",
 	depth = 6,
 	includeHidden = false,
+	timeoutMs = 30000,
 ): Promise<FileTreeNode[]> {
 	const key = treeCacheKey(workspacePath, path, depth, includeHidden);
 	const cached = getCachedTree(key);
@@ -83,14 +84,17 @@ export async function fetchFileTreeMux(
 
 	const manager = getWsManager();
 	const request = (async () => {
-		const response = (await manager.sendAndWait({
-			channel: "files",
-			type: "tree",
-			path,
-			depth,
-			include_hidden: includeHidden,
-			workspace_path: workspacePath,
-		})) as FilesWsEvent;
+		const response = (await manager.sendAndWait(
+			{
+				channel: "files",
+				type: "tree",
+				path,
+				depth,
+				include_hidden: includeHidden,
+				workspace_path: workspacePath,
+			},
+			timeoutMs,
+		)) as FilesWsEvent;
 
 		if (response.type !== "tree_result") {
 			if (response.type === "error") {
@@ -152,6 +156,9 @@ export async function writeFileMux(
 	if (response.type === "write_result") {
 		clearTreeCache(workspacePath);
 		return;
+	}
+	if (response.type === "error") {
+		throw new Error((response as { error: string }).error);
 	}
 	throw new Error("Failed to write file");
 }

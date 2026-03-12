@@ -140,14 +140,20 @@ async function fetchFileTree(
 	if (existing) return existing;
 
 	const request = (async () => {
-		const timeoutMs = 12000;
-		const timeoutPromise = new Promise<never>((_, reject) => {
-			setTimeout(() => reject(new Error("File tree request timed out")), timeoutMs);
-		});
-		return Promise.race([
-			fetchFileTreeMux(workspacePath, path, depth, false),
-			timeoutPromise,
-		]);
+		try {
+			// Fast path for normal cases.
+			return await fetchFileTreeMux(workspacePath, path, depth, false, 12000);
+		} catch (error) {
+			// Retry once with a longer timeout for large/shared workspaces or
+			// transient channel stalls.
+			console.warn("[file-tree] initial fetch timed out, retrying", {
+				workspacePath,
+				path,
+				depth,
+				error: error instanceof Error ? error.message : String(error),
+			});
+			return fetchFileTreeMux(workspacePath, path, depth, false, 30000);
+		}
 	})().finally(() => {
 		treeInFlight.delete(key);
 	});

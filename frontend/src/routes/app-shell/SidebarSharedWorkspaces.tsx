@@ -61,7 +61,7 @@ import {
 	UserPlus,
 } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
-import { sharedWorkspaceSessionMap } from "@/components/contexts/chat-context";
+import { setSharedWorkspaceSessionId } from "@/components/contexts/chat-context";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { WorkspaceIcon } from "./WorkspaceIcon";
@@ -212,7 +212,7 @@ function WorkspaceContent({
 					shared_workspace_id: workspace.id,
 				}));
 				for (const s of taggedSessions) {
-					sharedWorkspaceSessionMap.set(s.id, workspace.id);
+					setSharedWorkspaceSessionId(s.id, workspace.id);
 				}
 				setFetchedSessions(taggedSessions);
 			} catch {
@@ -343,7 +343,7 @@ function WorkspaceContent({
 		setIsDeletingSession(true);
 		setHiddenSessionIds((prev) => new Set(prev).add(deletingId));
 		try {
-			sharedWorkspaceSessionMap.set(deletingId, workspace.id);
+			setSharedWorkspaceSessionId(deletingId, workspace.id);
 			const result = await Promise.resolve(onDeleteSession(deletingId));
 			if (result === false) {
 				setHiddenSessionIds((prev) => {

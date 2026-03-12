@@ -6,7 +6,11 @@ import {
 	listChatHistory,
 	updateChatSession,
 } from "@/lib/api";
-import { createPiSessionId, normalizeWorkspacePath } from "@/lib/session-utils";
+import {
+	createPiSessionId,
+	normalizeWorkspacePath,
+	preferStableSessionTitle,
+} from "@/lib/session-utils";
 import { getWsManager } from "@/lib/ws-manager";
 import type { WsMuxConnectionState } from "@/lib/ws-mux-types";
 
@@ -15,7 +19,56 @@ import type { WsMuxConnectionState } from "@/lib/ws-mux-types";
  * Populated by createOptimisticChatSession when a shared workspace session is clicked.
  * Consumed by useChat's fetchHistoryMessages to route REST calls to the correct runner.
  */
+const SHARED_SESSION_MAP_STORAGE_KEY = "oqto:shared-session-map:v1";
+
 export const sharedWorkspaceSessionMap = new Map<string, string>();
+
+function persistSharedWorkspaceSessionMap() {
+	if (typeof window === "undefined") return;
+	try {
+		localStorage.setItem(
+			SHARED_SESSION_MAP_STORAGE_KEY,
+			JSON.stringify(Object.fromEntries(sharedWorkspaceSessionMap.entries())),
+		);
+	} catch {
+		// ignore storage failures
+	}
+}
+
+function hydrateSharedWorkspaceSessionMap() {
+	if (typeof window === "undefined") return;
+	if (sharedWorkspaceSessionMap.size > 0) return;
+	try {
+		const raw = localStorage.getItem(SHARED_SESSION_MAP_STORAGE_KEY);
+		if (!raw) return;
+		const parsed = JSON.parse(raw) as Record<string, string>;
+		for (const [sessionId, workspaceId] of Object.entries(parsed)) {
+			if (sessionId && workspaceId) {
+				sharedWorkspaceSessionMap.set(sessionId, workspaceId);
+			}
+		}
+	} catch {
+		// ignore parse/storage failures
+	}
+}
+
+export function setSharedWorkspaceSessionId(
+	sessionId: string,
+	sharedWorkspaceId: string,
+) {
+	sharedWorkspaceSessionMap.set(sessionId, sharedWorkspaceId);
+	persistSharedWorkspaceSessionMap();
+}
+
+export function clearSharedWorkspaceSessionId(sessionId: string) {
+	sharedWorkspaceSessionMap.delete(sessionId);
+	persistSharedWorkspaceSessionMap();
+}
+
+if (typeof window !== "undefined") {
+	hydrateSharedWorkspaceSessionMap();
+}
+
 import {
 	type ReactNode,
 	createContext,
@@ -271,7 +324,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 	useEffect(() => {
 		for (const rs of runnerSessions) {
 			if (rs.shared_workspace_id) {
-				sharedWorkspaceSessionMap.set(rs.session_id, rs.shared_workspace_id);
+				setSharedWorkspaceSessionId(rs.session_id, rs.shared_workspace_id);
 			}
 		}
 	}, [runnerSessions]);
@@ -387,11 +440,13 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 				const existing = chatHistoryRef.current.find(
 					(s) => s.id === session.session_id,
 				);
-				const preservedTitle = existing?.title?.trim();
 				const title =
-					preservedTitle && preservedTitle !== t("sessions.activeSession")
-						? preservedTitle
-						: t("sessions.activeSession");
+					preferStableSessionTitle(
+						existing?.title,
+						t("sessions.activeSession"),
+						t("sessions.newSession"),
+						t("sessions.activeSession"),
+					) ?? t("sessions.activeSession");
 
 				byId.set(session.session_id, {
 					id: session.session_id,
@@ -496,13 +551,23 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 			// The runner may have overwritten hstry with an auto-generated title
 			// between the user's rename and this refresh.
 			const manualTitles = manuallyRenamedRef.current;
-			const final_ =
-				manualTitles.size > 0
-					? withActive.map((s) => {
-							const manualTitle = manualTitles.get(s.id);
-							return manualTitle ? { ...s, title: manualTitle } : s;
-						})
-					: withActive;
+			const final_ = withActive.map((s) => {
+				const manualTitle = manualTitles.get(s.id);
+				if (manualTitle) {
+					return { ...s, title: manualTitle };
+				}
+				const previous = chatHistoryRef.current.find((prev) => prev.id === s.id);
+				if (!previous) return s;
+				return {
+					...s,
+					title: preferStableSessionTitle(
+						previous.title,
+						s.title,
+						t("sessions.newSession"),
+						t("sessions.activeSession"),
+					),
+				};
+			});
 			setChatHistory(final_);
 			setChatHistoryError(null);
 			writeCachedChatHistory(final_);
@@ -519,6 +584,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 		mergeOptimisticSessions,
 		mergeRunnerSessions,
 		normalizeHistory,
+		t,
 	]);
 
 	useEffect(() => {
@@ -669,7 +735,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 				: null;
 			// Track shared workspace association for REST API routing
 			if (sharedWorkspaceId) {
-				sharedWorkspaceSessionMap.set(optimisticId, sharedWorkspaceId);
+				setSharedWorkspaceSessionId(optimisticId, sharedWorkspaceId);
 			}
 
 			// If an existing session was provided (e.g. clicking an existing
@@ -764,18 +830,23 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 				return;
 			}
 			setChatHistory((prev) =>
-				prev.map((s) =>
-					s.id === sessionId
-						? {
-								...s,
-								title,
-								...(readableId != null ? { readable_id: readableId } : {}),
-							}
-						: s,
-				),
+				prev.map((s) => {
+					if (s.id !== sessionId) return s;
+					const stableTitle = preferStableSessionTitle(
+						s.title,
+						title,
+						t("sessions.newSession"),
+						t("sessions.activeSession"),
+					);
+					return {
+						...s,
+						title: stableTitle,
+						...(readableId != null ? { readable_id: readableId } : {}),
+					};
+				}),
 			);
 		},
-		[],
+		[t],
 	);
 
 	const getSessionWorkspacePath = useCallback((sessionId: string | null) => {
@@ -828,7 +899,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 					sessionMeta?.shared_workspace_id ??
 					undefined;
 				if (sharedWorkspaceId) {
-					sharedWorkspaceSessionMap.set(sessionId, sharedWorkspaceId);
+					setSharedWorkspaceSessionId(sessionId, sharedWorkspaceId);
 				}
 
 				// Primary path: REST delete with shared workspace routing support.

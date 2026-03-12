@@ -15,7 +15,11 @@
 
 import { useBusySessions } from "@/components/contexts";
 import { getChatMessages } from "@/lib/api";
-import { sharedWorkspaceSessionMap } from "@/components/contexts/chat-context";
+import {
+	clearSharedWorkspaceSessionId,
+	setSharedWorkspaceSessionId,
+	sharedWorkspaceSessionMap,
+} from "@/components/contexts/chat-context";
 import type { CommandResponse, SessionConfig } from "@/lib/canonical-types";
 import {
 	createPiSessionId,
@@ -1291,6 +1295,20 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 					switch (resp.cmd) {
 						case "session.create": {
 							if (resp.success) {
+								const targetData = (resp.data ?? null) as
+									| {
+											target_scope?: string;
+											target_workspace_id?: string | null;
+									  }
+									| null;
+								const targetWorkspaceId = targetData?.target_workspace_id ?? null;
+								const targetScope = targetData?.target_scope;
+								if (targetScope === "shared_workspace" && targetWorkspaceId) {
+									setSharedWorkspaceSessionId(event.session_id, targetWorkspaceId);
+								} else if (targetScope === "personal") {
+									clearSharedWorkspaceSessionId(event.session_id);
+								}
+
 								// Always fetch authoritative messages from hstry
 								// unless we're actively streaming. The localStorage
 								// cache is only a flash-of-content optimization;
@@ -1685,14 +1703,24 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 			try {
 				await manager.ensureConnected(4000);
 				await manager.waitForSessionReady(sessionId, 4000);
-			} catch (err) {
-				const error =
-					err instanceof Error ? err : new Error("WebSocket not ready");
-				isStreamingRef.current = false;
-				sendInFlightRef.current = false;
-				setIsAwaitingResponse(false);
-				setError(error);
-				throw error;
+			} catch {
+				// One-shot self-heal for transient reconnect races.
+				// We re-run ensureSession() to force a clean subscription/session check,
+				// then retry readiness with a slightly longer timeout before failing.
+				try {
+					await new Promise((resolve) => setTimeout(resolve, 200));
+					sessionId = await ensureSession();
+					await manager.ensureConnected(6000);
+					await manager.waitForSessionReady(sessionId, 6000);
+				} catch (err2) {
+					const error =
+						err2 instanceof Error ? err2 : new Error("WebSocket not ready");
+					isStreamingRef.current = false;
+					sendInFlightRef.current = false;
+					setIsAwaitingResponse(false);
+					setError(error);
+					throw error;
+				}
 			}
 
 			switch (mode) {

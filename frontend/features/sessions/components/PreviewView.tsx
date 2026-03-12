@@ -232,6 +232,27 @@ function isAudio(filename: string): boolean {
 	return AUDIO_EXTENSIONS.has(ext);
 }
 
+function getMediaMimeType(filename: string): string {
+	const ext = filename.substring(filename.lastIndexOf(".")).toLowerCase();
+	const mimeMap: Record<string, string> = {
+		".mp4": "video/mp4",
+		".webm": "video/webm",
+		".ogg": "video/ogg",
+		".ogv": "video/ogg",
+		".mov": "video/quicktime",
+		".avi": "video/x-msvideo",
+		".mkv": "video/x-matroska",
+		".m4v": "video/x-m4v",
+		".mp3": "audio/mpeg",
+		".wav": "audio/wav",
+		".flac": "audio/flac",
+		".aac": "audio/aac",
+		".m4a": "audio/mp4",
+		".opus": "audio/opus",
+	};
+	return mimeMap[ext] || "application/octet-stream";
+}
+
 async function fetchFileContent(
 	workspacePath: string,
 	path: string,
@@ -275,14 +296,9 @@ export function PreviewView({
 	const [isDarkMode, setIsDarkMode] = useState(false);
 	const [binaryUrl, setBinaryUrl] = useState<string | null>(null);
 	const [binaryLoading, setBinaryLoading] = useState(false);
+	const [mediaError, setMediaError] = useState<string>("");
 	const loadingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const binaryObjectUrlRef = useRef<string | null>(null);
-
-	// Check mobile at render time (safe because we only use it client-side in effects)
-	const isMobileRef = useRef(false);
-	if (typeof window !== "undefined") {
-		isMobileRef.current = window.innerWidth < 640;
-	}
 
 	// Ref for scroll container to preserve scroll position when entering edit mode
 	const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -394,6 +410,7 @@ export function PreviewView({
 
 		if (!filePath || !workspacePath) {
 			setBinaryLoading(false);
+			setMediaError("");
 			return;
 		}
 
@@ -405,6 +422,7 @@ export function PreviewView({
 		const isBinary = isPdfFile || isImageFile || isVideoFile || isAudioFile;
 		if (!isBinary) {
 			setBinaryLoading(false);
+			setMediaError("");
 			return;
 		}
 
@@ -413,6 +431,7 @@ export function PreviewView({
 		if (isVideoFile || isAudioFile) {
 			const url = workspaceFileUrl(workspacePath, filePath);
 			setBinaryUrl(url);
+			setMediaError("");
 			setBinaryLoading(false);
 			return;
 		}
@@ -420,6 +439,7 @@ export function PreviewView({
 		let cancelled = false;
 		setBinaryLoading(true);
 		setError("");
+		setMediaError("");
 
 		// Use WebSocket mux for binary file reads (PDFs, images) to avoid
 		// dependency on the REST file proxy endpoint which requires a running
@@ -448,7 +468,13 @@ export function PreviewView({
 			})
 			.catch((err) => {
 				if (cancelled) return;
-				setError(err instanceof Error ? err.message : "Failed to load media");
+				const fallbackUrl = workspaceFileUrl(workspacePath, filePath);
+				setBinaryUrl(fallbackUrl);
+				setMediaError(
+					err instanceof Error
+						? `Media mux read failed, using direct URL: ${err.message}`
+						: "Media mux read failed, using direct URL",
+				);
 			})
 			.finally(() => {
 				if (!cancelled) setBinaryLoading(false);
@@ -689,11 +715,25 @@ export function PreviewView({
 						<img
 							src={imageUrl}
 							alt={filename}
+							onError={() => {
+								const fallbackUrl = workspacePath
+									? workspaceFileUrl(workspacePath, filePath)
+									: null;
+								if (fallbackUrl && imageUrl !== fallbackUrl) {
+									setBinaryUrl(fallbackUrl);
+								}
+								setMediaError("Image preview failed to load. Trying fallback URL.");
+							}}
 							className="max-w-full max-h-full object-contain"
 							style={{ imageRendering: "auto" }}
 						/>
 					)}
 				</div>
+				{mediaError && (
+					<div className="px-3 py-2 text-[11px] text-amber-500 border-t border-border bg-muted/20">
+						{mediaError}
+					</div>
+				)}
 			</div>
 		);
 	}
@@ -771,17 +811,28 @@ export function PreviewView({
 				)}
 
 				{/* Video content */}
-				<div className="flex-1 overflow-hidden bg-black flex items-center justify-center">
+				<div className="flex-1 overflow-hidden bg-black flex items-center justify-center p-0 sm:p-3">
 					<video
 						src={fileUrl}
 						controls
 						playsInline
-						className="max-w-full max-h-full"
+						preload="metadata"
+						onError={() =>
+							setMediaError(
+								"Video playback failed in preview. Try Open in new tab.",
+							)
+						}
+						className="w-full h-full object-contain"
 					>
 						<track kind="captions" />
 						Your browser does not support the video tag.
 					</video>
 				</div>
+				{mediaError && (
+					<div className="px-3 py-2 text-[11px] text-amber-500 border-t border-border bg-muted/20">
+						{mediaError}
+					</div>
+				)}
 			</div>
 		);
 	}
@@ -861,10 +912,25 @@ export function PreviewView({
 				{/* Audio content */}
 				<div className="flex-1 overflow-hidden bg-muted/30 flex items-center justify-center p-4">
 					{/* biome-ignore lint/a11y/useMediaCaption: audio files may not have captions */}
-					<audio src={fileUrl} controls className="w-full">
+					<audio
+						src={fileUrl}
+						controls
+						preload="metadata"
+						onError={() =>
+							setMediaError(
+								"Audio playback failed in preview. Try Open in new tab.",
+							)
+						}
+						className="w-full"
+					>
 						Your browser does not support the audio element.
 					</audio>
 				</div>
+				{mediaError && (
+					<div className="px-3 py-2 text-[11px] text-amber-500 border-t border-border bg-muted/20">
+						{mediaError}
+					</div>
+				)}
 			</div>
 		);
 	}
