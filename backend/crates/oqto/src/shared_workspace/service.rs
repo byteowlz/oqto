@@ -697,8 +697,9 @@ impl SharedWorkspaceService {
             .runner_socket_pattern
             .as_deref()
             .ok_or_else(|| anyhow::anyhow!("runner socket pattern not configured"))?;
-        let runner = crate::runner::client::RunnerClient::for_user_with_pattern(&ws.linux_user, pattern)
-            .with_context(|| format!("creating runner client for {}", ws.linux_user))?;
+        let runner =
+            crate::runner::client::RunnerClient::for_user_with_pattern(&ws.linux_user, pattern)
+                .with_context(|| format!("creating runner client for {}", ws.linux_user))?;
 
         let stat = runner
             .stat(target)
@@ -732,12 +733,7 @@ impl SharedWorkspaceService {
     /// Writes AGENTS.md (global agent instructions from embedded templates)
     /// and a minimal settings.json so Pi knows which model to use.
     /// Without these, Pi sessions in shared workspaces have no global context.
-    fn provision_pi_config(
-        &self,
-        linux_user: &str,
-        home: &str,
-        multi_user: bool,
-    ) -> Result<()> {
+    fn provision_pi_config(&self, linux_user: &str, home: &str, multi_user: bool) -> Result<()> {
         let pi_agent_dir = format!("{}/.pi/agent", home);
 
         // Source AGENTS.md from oqto-templates repo, fall back to embedded
@@ -864,14 +860,16 @@ impl SharedWorkspaceService {
             .as_deref()
             .ok_or_else(|| anyhow::anyhow!("runner socket pattern not configured"))?;
 
-        let runner =
-            crate::runner::client::RunnerClient::for_user_with_pattern(&workspace.linux_user, pattern)
-                .with_context(|| {
-                    format!(
-                        "creating runner client for shared workspace user {}",
-                        workspace.linux_user
-                    )
-                })?;
+        let runner = crate::runner::client::RunnerClient::for_user_with_pattern(
+            &workspace.linux_user,
+            pattern,
+        )
+        .with_context(|| {
+            format!(
+                "creating runner client for shared workspace user {}",
+                workspace.linux_user
+            )
+        })?;
 
         let members = self.repo.list_members(&workspace.id).await?;
         let users_md = generate_users_md(&workspace.name, &members);

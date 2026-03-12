@@ -1600,14 +1600,6 @@ async fn handle_agent_command(
                             .insert(session_id.clone(), client.clone());
                         let _ = target;
                         client
-                    } else if let Some(r) = runner_client {
-                        // CWD-based runner resolution failed, but we have a personal
-                        // runner -- use it as fallback instead of returning empty data.
-                        tracing::debug!(
-                            session_id = %session_id,
-                            "CWD-based runner resolution failed, falling back to personal runner"
-                        );
-                        r.clone()
                     } else {
                         match &cmd.payload {
                             CommandPayload::GetState => {
@@ -1678,14 +1670,44 @@ async fn handle_agent_command(
                     }
                 } else {
                     let target_from_store = match state.session_targets.get(&session_id).await {
-                        Ok(Some(record)) => match record.scope {
-                            SessionTargetScope::Personal => Some(ExecutionTarget::Personal),
-                            SessionTargetScope::SharedWorkspace => {
-                                record.workspace_id.map(|workspace_id| {
-                                    ExecutionTarget::SharedWorkspace { workspace_id }
-                                })
+                        Ok(Some(record)) => {
+                            let mut target = match record.scope {
+                                SessionTargetScope::Personal => Some(ExecutionTarget::Personal),
+                                SessionTargetScope::SharedWorkspace => {
+                                    record.workspace_id.clone().map(|workspace_id| {
+                                        ExecutionTarget::SharedWorkspace { workspace_id }
+                                    })
+                                }
+                            };
+
+                            // Self-heal stale target rows: some older sessions were
+                            // persisted as personal despite a shared workspace path.
+                            if matches!(target, Some(ExecutionTarget::Personal))
+                                && let Some(workspace_path) = record.workspace_path.clone()
+                                && let Ok(resolved) = resolve_target_for_workspace_path(
+                                    state,
+                                    user_id,
+                                    &workspace_path,
+                                )
+                                .await
+                                && matches!(resolved, ExecutionTarget::SharedWorkspace { .. })
+                            {
+                                if let ExecutionTarget::SharedWorkspace { workspace_id } = &resolved
+                                {
+                                    let corrected = SessionTargetRecord {
+                                        session_id: session_id.clone(),
+                                        owner_user_id: None,
+                                        scope: SessionTargetScope::SharedWorkspace,
+                                        workspace_id: Some(workspace_id.clone()),
+                                        workspace_path: Some(workspace_path),
+                                    };
+                                    let _ = state.session_targets.upsert(&corrected).await;
+                                }
+                                target = Some(resolved);
                             }
-                        },
+
+                            target
+                        }
                         Ok(None) => None,
                         Err(_) => None,
                     };
@@ -1719,13 +1741,9 @@ async fn handle_agent_command(
 
                     if let Some(client) = hydrated {
                         client
-                    } else if let Some(r) = runner_client {
-                        tracing::debug!(
-                            session_id = %session_id,
-                            "Session target resolution failed, falling back to personal runner"
-                        );
-                        r.clone()
                     } else {
+                        // Fail closed for mutating commands (prompt/steer/etc), but allow
+                        // read-only probes used by frontend reattach/recovery flows.
                         match &cmd.payload {
                             CommandPayload::GetState => {
                                 return Some(agent_response(
@@ -1775,21 +1793,13 @@ async fn handle_agent_command(
                                     Ok(Some(serde_json::json!([]))),
                                 ));
                             }
-                            CommandPayload::SetModel { .. }
-                            | CommandPayload::SetThinkingLevel { .. }
-                            | CommandPayload::CycleModel
-                            | CommandPayload::CycleThinkingLevel
-                            | CommandPayload::SetAutoCompaction { .. }
-                            | CommandPayload::SetAutoRetry { .. } => {
-                                return Some(agent_response(&session_id, id, "ok", Ok(None)));
-                            }
                             _ => {
+                                let msg = "Session target could not be resolved. Reload the session list and retry.";
                                 return Some(agent_response(
                                     &session_id,
                                     id,
                                     "error",
-                                    Err("Session target unknown; session metadata is missing"
-                                        .into()),
+                                    Err(msg.into()),
                                 ));
                             }
                         }
@@ -1962,22 +1972,31 @@ async fn handle_agent_command(
                     let target_for_persist = resolved_target_for_command
                         .clone()
                         .unwrap_or(ExecutionTarget::Personal);
-                    let target_record = match target_for_persist {
-                        ExecutionTarget::Personal => SessionTargetRecord {
-                            session_id: session_id.clone(),
-                            owner_user_id: Some(user_id.to_string()),
-                            scope: SessionTargetScope::Personal,
-                            workspace_id: None,
-                            workspace_path: Some(cwd_string.clone()),
-                        },
-                        ExecutionTarget::SharedWorkspace { workspace_id } => SessionTargetRecord {
-                            session_id: session_id.clone(),
-                            owner_user_id: None,
-                            scope: SessionTargetScope::SharedWorkspace,
-                            workspace_id: Some(workspace_id),
-                            workspace_path: Some(cwd_string.clone()),
-                        },
-                    };
+                    let (target_scope, target_workspace_id, target_record) =
+                        match target_for_persist {
+                            ExecutionTarget::Personal => (
+                                "personal",
+                                None,
+                                SessionTargetRecord {
+                                    session_id: session_id.clone(),
+                                    owner_user_id: Some(user_id.to_string()),
+                                    scope: SessionTargetScope::Personal,
+                                    workspace_id: None,
+                                    workspace_path: Some(cwd_string.clone()),
+                                },
+                            ),
+                            ExecutionTarget::SharedWorkspace { workspace_id } => (
+                                "shared_workspace",
+                                Some(workspace_id.clone()),
+                                SessionTargetRecord {
+                                    session_id: session_id.clone(),
+                                    owner_user_id: None,
+                                    scope: SessionTargetScope::SharedWorkspace,
+                                    workspace_id: Some(workspace_id),
+                                    workspace_path: Some(cwd_string.clone()),
+                                },
+                            ),
+                        };
                     if let Err(e) = state.session_targets.upsert(&target_record).await {
                         return Some(agent_response(
                             &session_id,
@@ -1991,7 +2010,12 @@ async fn handle_agent_command(
                         &session_id,
                         id,
                         "session.create",
-                        Ok(Some(serde_json::json!({ "session_id": session_id }))),
+                        Ok(Some(serde_json::json!({
+                            "session_id": session_id,
+                            "target_scope": target_scope,
+                            "target_workspace_id": target_workspace_id,
+                            "workspace_path": cwd_string,
+                        }))),
                     ))
                 }
                 Err(e) => Some(agent_response(
@@ -3329,11 +3353,60 @@ async fn handle_files_command(
         }
     };
 
-    let linux_username = state
+    let mut linux_username = state
         .linux_users
         .as_ref()
         .map(|lu| lu.linux_username(user_id))
         .unwrap_or_else(|| user_id.to_string());
+
+    // Shared workspace file operations must use the workspace Linux user.
+    if state.linux_users.is_some()
+        && let Some(ws_path) = workspace_path
+        && let Ok(ExecutionTarget::SharedWorkspace { workspace_id }) =
+            resolve_target_for_workspace_path(state, user_id, ws_path).await
+    {
+        let Some(sw) = state.shared_workspaces.as_ref() else {
+            return Some(WsEvent::Files(FilesWsEvent::Error {
+                id,
+                error: "Shared workspace service not configured".to_string(),
+            }));
+        };
+
+        match sw.get(&workspace_id, user_id).await {
+            Ok(Some(_)) => {}
+            Ok(None) => {
+                return Some(WsEvent::Files(FilesWsEvent::Error {
+                    id,
+                    error: "Access denied: shared workspace membership required".to_string(),
+                }));
+            }
+            Err(err) => {
+                return Some(WsEvent::Files(FilesWsEvent::Error {
+                    id,
+                    error: format!("Failed to resolve shared workspace access: {}", err),
+                }));
+            }
+        }
+
+        match sw.linux_user_for_id(&workspace_id).await {
+            Ok(Some(owner_linux_user)) => {
+                linux_username = owner_linux_user;
+            }
+            Ok(None) => {
+                return Some(WsEvent::Files(FilesWsEvent::Error {
+                    id,
+                    error: "Shared workspace linux user not found".to_string(),
+                }));
+            }
+            Err(err) => {
+                return Some(WsEvent::Files(FilesWsEvent::Error {
+                    id,
+                    error: format!("Failed to resolve shared workspace linux user: {}", err),
+                }));
+            }
+        }
+    }
+
     let is_multi_user = state.linux_users.is_some();
     let user_plane: Arc<dyn crate::user_plane::UserPlane> =
         if let Some(pattern) = state.runner_socket_pattern.as_deref() {
@@ -3813,27 +3886,53 @@ async fn resolve_terminal_session(
     );
     if let Some(session_id) = session_id {
         let owner = match state.session_targets.get(session_id).await {
-            Ok(Some(record)) => match record.scope {
-                SessionTargetScope::Personal => {
-                    if let Some(ref owner_user_id) = record.owner_user_id
-                        && owner_user_id != user_id
-                    {
-                        return Err("Access denied: session does not belong to this user".into());
-                    }
-                    user_id.to_string()
-                }
-                SessionTargetScope::SharedWorkspace => {
-                    let workspace_id = record.workspace_id.ok_or_else(|| {
-                        "Invalid session target metadata: missing workspace_id".to_string()
-                    })?;
+            Ok(Some(record)) => {
+                // Self-heal stale personal scope for shared workspace sessions.
+                if matches!(record.scope, SessionTargetScope::Personal)
+                    && let Some(workspace_path) = record.workspace_path.clone()
+                    && let Ok(ExecutionTarget::SharedWorkspace { workspace_id }) =
+                        resolve_target_for_workspace_path(state, user_id, &workspace_path).await
+                {
+                    let corrected = SessionTargetRecord {
+                        session_id: session_id.to_string(),
+                        owner_user_id: None,
+                        scope: SessionTargetScope::SharedWorkspace,
+                        workspace_id: Some(workspace_id.clone()),
+                        workspace_path: Some(workspace_path),
+                    };
+                    let _ = state.session_targets.upsert(&corrected).await;
                     resolve_terminal_session_owner_for_target(
                         state,
                         user_id,
                         &ExecutionTarget::SharedWorkspace { workspace_id },
                     )
                     .await?
+                } else {
+                    match record.scope {
+                        SessionTargetScope::Personal => {
+                            if let Some(ref owner_user_id) = record.owner_user_id
+                                && owner_user_id != user_id
+                            {
+                                return Err(
+                                    "Access denied: session does not belong to this user".into()
+                                );
+                            }
+                            user_id.to_string()
+                        }
+                        SessionTargetScope::SharedWorkspace => {
+                            let workspace_id = record.workspace_id.ok_or_else(|| {
+                                "Invalid session target metadata: missing workspace_id".to_string()
+                            })?;
+                            resolve_terminal_session_owner_for_target(
+                                state,
+                                user_id,
+                                &ExecutionTarget::SharedWorkspace { workspace_id },
+                            )
+                            .await?
+                        }
+                    }
                 }
-            },
+            }
             Ok(None) => user_id.to_string(),
             Err(e) => return Err(format!("Failed to resolve session target: {}", e)),
         };

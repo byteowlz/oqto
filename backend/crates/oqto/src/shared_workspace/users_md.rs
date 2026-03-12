@@ -31,18 +31,19 @@ pub fn generate_users_md(workspace_name: &str, members: &[SharedWorkspaceMemberI
     md.push_str("| Name | Role |\n");
     md.push_str("|------|------|\n");
     for member in members {
-        md.push_str(&format!(
-            "| {} | {} |\n",
-            member.display_name, member.role
-        ));
+        md.push_str(&format!("| {} | {} |\n", member.display_name, member.role));
     }
 
     md.push_str("\n## Rules\n\n");
-    md.push_str("1. When you see `@sender: Name`, that tells you WHO sent the message that follows.\n");
+    md.push_str(
+        "1. When you see `@sender: Name`, that tells you WHO sent the message that follows.\n",
+    );
     md.push_str("2. Address users by their name. Say \"Hi Wismut\" not \"Hi there\".\n");
     md.push_str("3. NEVER write `@sender:` in your own responses. Only the system adds that.\n");
     md.push_str("4. Different people may ask different things. Keep track of who asked what.\n");
-    md.push_str("5. If two users give conflicting instructions, name both and ask for clarification.\n");
+    md.push_str(
+        "5. If two users give conflicting instructions, name both and ask for clarification.\n",
+    );
     md.push_str("6. All team members see the full conversation.\n");
 
     md

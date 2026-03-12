@@ -45,7 +45,62 @@ impl SessionTargetRepository {
         Self { pool }
     }
 
+    fn is_shared_workspace_path(path: &str) -> bool {
+        path.starts_with("/home/oqto_shared_") || path.starts_with("/home/octo_shared_")
+    }
+
+    fn is_shared_linux_user_owner(owner_user_id: Option<&str>) -> bool {
+        owner_user_id
+            .map(|id| id.starts_with("oqto_shared_") || id.starts_with("octo_shared_"))
+            .unwrap_or(false)
+    }
+
+    fn validate_record(record: &SessionTargetRecord) -> Result<()> {
+        if record.session_id.trim().is_empty() {
+            anyhow::bail!("session target session_id must not be empty");
+        }
+
+        match record.scope {
+            SessionTargetScope::Personal => {
+                if record.workspace_id.is_some() {
+                    anyhow::bail!(
+                        "invalid personal session target: workspace_id must be None (session_id={})",
+                        record.session_id
+                    );
+                }
+
+                if let Some(path) = record.workspace_path.as_deref()
+                    && Self::is_shared_workspace_path(path)
+                    && !Self::is_shared_linux_user_owner(record.owner_user_id.as_deref())
+                {
+                    anyhow::bail!(
+                        "invalid personal session target: shared workspace path stored as personal (session_id={}, path={})",
+                        record.session_id,
+                        path
+                    );
+                }
+            }
+            SessionTargetScope::SharedWorkspace => {
+                if record
+                    .workspace_id
+                    .as_deref()
+                    .map(str::trim)
+                    .is_none_or(str::is_empty)
+                {
+                    anyhow::bail!(
+                        "invalid shared session target: workspace_id is required (session_id={})",
+                        record.session_id
+                    );
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     pub async fn upsert(&self, record: &SessionTargetRecord) -> Result<()> {
+        Self::validate_record(record).context("validating chat session target")?;
+
         sqlx::query(
             r#"
             INSERT INTO chat_session_targets (
@@ -77,7 +132,16 @@ impl SessionTargetRepository {
     }
 
     pub async fn get(&self, session_id: &str) -> Result<Option<SessionTargetRecord>> {
-        let row = sqlx::query_as::<_, (String, Option<String>, String, Option<String>, Option<String>)>(
+        let row = sqlx::query_as::<
+            _,
+            (
+                String,
+                Option<String>,
+                String,
+                Option<String>,
+                Option<String>,
+            ),
+        >(
             r#"
             SELECT session_id, owner_user_id, scope, workspace_id, workspace_path
             FROM chat_session_targets
@@ -113,5 +177,61 @@ impl SessionTargetRepository {
             .context("deleting chat session target")?;
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SessionTargetRecord, SessionTargetRepository, SessionTargetScope};
+
+    fn personal_record(path: Option<&str>) -> SessionTargetRecord {
+        SessionTargetRecord {
+            session_id: "oqto-test-session".to_string(),
+            owner_user_id: Some("user_1".to_string()),
+            scope: SessionTargetScope::Personal,
+            workspace_id: None,
+            workspace_path: path.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn reject_personal_record_with_shared_workspace_path() {
+        let record = personal_record(Some("/home/oqto_shared_team/oqto/project"));
+        let err = SessionTargetRepository::validate_record(&record).expect_err("must reject");
+        assert!(
+            err.to_string()
+                .contains("shared workspace path stored as personal"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn reject_shared_record_without_workspace_id() {
+        let record = SessionTargetRecord {
+            session_id: "oqto-test-session".to_string(),
+            owner_user_id: None,
+            scope: SessionTargetScope::SharedWorkspace,
+            workspace_id: None,
+            workspace_path: Some("/home/oqto_shared_team/oqto/project".to_string()),
+        };
+        let err = SessionTargetRepository::validate_record(&record).expect_err("must reject");
+        assert!(
+            err.to_string().contains("workspace_id is required"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn accept_personal_record_for_shared_linux_owner() {
+        let mut record = personal_record(Some("/home/oqto_shared_team/oqto/project"));
+        record.owner_user_id = Some("oqto_shared_team".to_string());
+        SessionTargetRepository::validate_record(&record)
+            .expect("must accept personal record for shared linux owner");
+    }
+
+    #[test]
+    fn accept_valid_personal_record() {
+        let record = personal_record(Some("/home/oqto_usr_wismut/oqto/project"));
+        SessionTargetRepository::validate_record(&record).expect("must accept valid record");
     }
 }

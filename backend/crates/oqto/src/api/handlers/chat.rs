@@ -15,6 +15,7 @@ use tracing::{debug, info, instrument};
 use crate::auth::CurrentUser;
 use crate::history::{ChatMessage, ChatSession};
 use crate::runner::router::{ExecutionTarget, resolve_runner_for_target};
+use crate::session_target::{SessionTargetRecord, SessionTargetScope};
 
 use crate::api::error::{ApiError, ApiResult};
 use crate::api::state::AppState;
@@ -61,7 +62,9 @@ async fn resolve_session_target(
     {
         let target = match record.scope {
             crate::session_target::SessionTargetScope::Personal => {
-                if let Some(owner) = record.owner_user_id.as_deref() && owner != user_id {
+                if let Some(owner) = record.owner_user_id.as_deref()
+                    && owner != user_id
+                {
                     return Err(ApiError::forbidden("session does not belong to this user"));
                 }
                 ExecutionTarget::Personal
@@ -77,6 +80,60 @@ async fn resolve_session_target(
     }
 
     if multi_user {
+        // Self-heal path: discover shared workspace target if canonical metadata
+        // is missing for this session (e.g. legacy rows or transient gaps).
+        if let Some(sw) = state.shared_workspaces.as_ref() {
+            let workspaces = sw
+                .list_for_user(user_id)
+                .await
+                .map_err(|e| ApiError::internal(format!("list shared workspaces: {}", e)))?;
+
+            for workspace in workspaces {
+                let target = ExecutionTarget::SharedWorkspace {
+                    workspace_id: workspace.id.clone(),
+                };
+                let runner_opt = resolve_runner_for_target(state, user_id, &target)
+                    .await
+                    .map_err(|e| ApiError::internal(format!("runner target resolution: {}", e)))?;
+                let Some(runner) = runner_opt else {
+                    continue;
+                };
+
+                match runner.get_workspace_chat_session(session_id).await {
+                    Ok(response) if response.session.is_some() => {
+                        let workspace_path = response.session.map(|s| s.workspace_path);
+                        let record = SessionTargetRecord {
+                            session_id: session_id.to_string(),
+                            owner_user_id: None,
+                            scope: SessionTargetScope::SharedWorkspace,
+                            workspace_id: Some(workspace.id.clone()),
+                            workspace_path,
+                        };
+                        if let Err(err) = state.session_targets.upsert(&record).await {
+                            tracing::warn!(
+                                session_id = %session_id,
+                                workspace_id = %workspace.id,
+                                error = %err,
+                                "failed to persist discovered shared session target"
+                            );
+                        }
+                        return Ok(ExecutionTarget::SharedWorkspace {
+                            workspace_id: workspace.id,
+                        });
+                    }
+                    Ok(_) => {}
+                    Err(err) => {
+                        tracing::debug!(
+                            session_id = %session_id,
+                            workspace_id = %workspace.id,
+                            error = %err,
+                            "shared session probe failed"
+                        );
+                    }
+                }
+            }
+        }
+
         return Err(ApiError::bad_request(format!(
             "Session target unresolved for {}: missing canonical metadata",
             session_id
@@ -624,7 +681,12 @@ pub async fn delete_chat_session(
                     .session_targets
                     .delete(&session_id)
                     .await
-                    .map_err(|e| ApiError::internal(format!("failed to delete session target metadata: {}", e)))?;
+                    .map_err(|e| {
+                        ApiError::internal(format!(
+                            "failed to delete session target metadata: {}",
+                            e
+                        ))
+                    })?;
                 info!(session_id = %session_id, shared_workspace_id = ?query.shared_workspace_id, "Deleted chat session via runner");
                 return Ok(StatusCode::NO_CONTENT);
             }
@@ -655,7 +717,12 @@ pub async fn delete_chat_session(
                     .session_targets
                     .delete(&session_id)
                     .await
-                    .map_err(|e| ApiError::internal(format!("failed to delete session target metadata: {}", e)))?;
+                    .map_err(|e| {
+                        ApiError::internal(format!(
+                            "failed to delete session target metadata: {}",
+                            e
+                        ))
+                    })?;
                 info!(session_id = %session_id, "Deleted chat session");
                 return Ok(StatusCode::NO_CONTENT);
             }

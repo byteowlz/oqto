@@ -194,7 +194,12 @@ impl WsHub {
     }
 
     /// Send an event to all session subscribers except the specified user.
-    pub async fn send_to_session_except(&self, session_id: &str, event: WsEvent, exclude_user: &str) {
+    pub async fn send_to_session_except(
+        &self,
+        session_id: &str,
+        event: WsEvent,
+        exclude_user: &str,
+    ) {
         let subscribers = self.session_subscribers(session_id);
         for user_id in subscribers {
             if user_id != exclude_user {

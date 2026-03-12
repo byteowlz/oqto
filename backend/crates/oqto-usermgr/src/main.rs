@@ -37,6 +37,8 @@ const PI_DEFAULT_EXTENSIONS: &[&str] = &[
     "oqto-bridge",
     "oqto-todos",
     "custom-context-files",
+    "read-image-guard",
+    "read-file-guard",
 ];
 
 /// Allowed path prefixes for mkdir/chown/chmod operations.

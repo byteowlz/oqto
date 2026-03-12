@@ -14,6 +14,7 @@ use crate::auth::CurrentUser;
 
 use crate::api::error::{ApiError, ApiResult};
 use crate::api::state::AppState;
+use crate::runner::router::{ExecutionTarget, resolve_target_for_workspace_path};
 
 /// Dependency as returned by trx CLI.
 #[derive(Debug, Deserialize)]
@@ -161,9 +162,32 @@ pub async fn validate_workspace_path(
     user_id: &str,
     workspace_path: &str,
 ) -> Result<PathBuf, ApiError> {
+    let session_owner = match resolve_target_for_workspace_path(state, user_id, workspace_path)
+        .await
+        .map_err(|e| ApiError::internal(format!("Failed to resolve workspace target: {e}")))?
+    {
+        ExecutionTarget::Personal => user_id.to_string(),
+        ExecutionTarget::SharedWorkspace { workspace_id } => {
+            let sw = state
+                .shared_workspaces
+                .as_ref()
+                .ok_or_else(|| ApiError::internal("Shared workspace service not configured"))?;
+            sw.linux_user_for_id(&workspace_id)
+                .await
+                .map_err(|e| {
+                    ApiError::internal(format!(
+                        "Failed to resolve shared workspace linux user: {e}"
+                    ))
+                })?
+                .ok_or_else(|| {
+                    ApiError::internal("Missing linux user mapping for shared workspace")
+                })?
+        }
+    };
+
     let canonical = state
         .sessions
-        .for_user(user_id)
+        .for_user(&session_owner)
         .validate_workspace_path(workspace_path)
         .await
         .map_err(|e| ApiError::bad_request(format!("Invalid workspace path: {}", e)))?;

@@ -1733,9 +1733,7 @@ mod tests {
             ..make_empty_message()
         };
 
-        let events = t.translate(&PiEvent::MessageEnd {
-            message: error_msg,
-        });
+        let events = t.translate(&PiEvent::MessageEnd { message: error_msg });
 
         // Should emit StreamMessageEnd AND AgentError
         assert!(
@@ -1756,8 +1754,9 @@ mod tests {
         );
 
         // Verify the error text is preserved
-        if let Some(EventPayload::AgentError { error, .. }) =
-            events.iter().find(|e| matches!(e, EventPayload::AgentError { .. }))
+        if let Some(EventPayload::AgentError { error, .. }) = events
+            .iter()
+            .find(|e| matches!(e, EventPayload::AgentError { .. }))
         {
             assert!(error.contains("400 Unexpected message role"));
         }

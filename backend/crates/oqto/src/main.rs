@@ -2585,7 +2585,12 @@ async fn backfill_sessions_for_target(
     let response = runner
         .list_workspace_chat_sessions(None, true, None)
         .await
-        .with_context(|| format!("list_workspace_chat_sessions failed for target {:?}", target))?;
+        .with_context(|| {
+            format!(
+                "list_workspace_chat_sessions failed for target {:?}",
+                target
+            )
+        })?;
 
     let mut upserted = 0usize;
     for session in response.sessions {

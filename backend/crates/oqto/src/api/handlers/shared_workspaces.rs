@@ -313,7 +313,10 @@ pub async fn list_shared_workspace_workdirs(
     }
 
     workdirs.sort_by(|a, b| {
-        a["name"].as_str().unwrap_or("").cmp(b["name"].as_str().unwrap_or(""))
+        a["name"]
+            .as_str()
+            .unwrap_or("")
+            .cmp(b["name"].as_str().unwrap_or(""))
     });
 
     Ok(Json(workdirs))

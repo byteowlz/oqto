@@ -519,14 +519,12 @@ pub async fn create_project_from_template(
                 .shared_workspaces
                 .as_ref()
                 .ok_or_else(|| ApiError::bad_request("shared workspaces not available"))?;
-            let workspaces = sw_service
-                .list_for_user(user.id())
-                .await
-                .map_err(|e| ApiError::internal(format!("Failed to list shared workspaces: {e}")))?;
-            let ws = workspaces
-                .iter()
-                .find(|w| w.id == *sw_id)
-                .ok_or_else(|| ApiError::bad_request("shared workspace not found or not a member"))?;
+            let workspaces = sw_service.list_for_user(user.id()).await.map_err(|e| {
+                ApiError::internal(format!("Failed to list shared workspaces: {e}"))
+            })?;
+            let ws = workspaces.iter().find(|w| w.id == *sw_id).ok_or_else(|| {
+                ApiError::bad_request("shared workspace not found or not a member")
+            })?;
             (PathBuf::from(&ws.path), Some(ws.linux_user.clone()))
         } else {
             let root = state.sessions.for_user(user.id()).workspace_root();
@@ -670,7 +668,10 @@ pub async fn create_project_from_template(
     if let Some(ref sw_id) = request.shared_workspace_id {
         if let Some(sw_service) = state.shared_workspaces.as_ref() {
             if let Err(e) = sw_service.regenerate_users_md_by_id(sw_id).await {
-                tracing::warn!(sw_id, "Failed to regenerate USERS.md after project creation: {e}");
+                tracing::warn!(
+                    sw_id,
+                    "Failed to regenerate USERS.md after project creation: {e}"
+                );
             }
         }
     }

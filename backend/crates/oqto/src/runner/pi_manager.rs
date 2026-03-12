@@ -2796,14 +2796,12 @@ impl PiSessionManager {
                 // object) and the parse failed, treat it as a fragment. This
                 // is more robust than pattern-matching specific serde error
                 // messages which vary across versions and edge cases.
-                let looks_like_json_start = line.trim_start().starts_with('{')
-                    || line.trim_start().starts_with('[');
+                let looks_like_json_start =
+                    line.trim_start().starts_with('{') || line.trim_start().starts_with('[');
                 let is_known_fragment = err.contains("EOF while parsing")
                     || err.contains("unterminated string")
                     || err.contains("expected value at line 1 column 1");
-                if (is_known_fragment || looks_like_json_start)
-                    && line.len() < 16 * 1024 * 1024
-                {
+                if (is_known_fragment || looks_like_json_start) && line.len() < 16 * 1024 * 1024 {
                     if !is_known_fragment {
                         debug!(
                             "Pi[{}] buffering likely truncated JSON ({} bytes): {}",

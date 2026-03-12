@@ -38,15 +38,83 @@ pub async fn resolve_runner_for_target(
     target: &ExecutionTarget,
 ) -> Result<Option<RunnerClient>> {
     match target {
-        ExecutionTarget::Personal => Ok(resolve_personal_runner(state, user_id)),
+        ExecutionTarget::Personal => resolve_personal_runner(state, user_id).await,
         ExecutionTarget::SharedWorkspace { workspace_id } => {
             resolve_shared_workspace_runner(state, user_id, workspace_id).await
         }
     }
 }
 
-fn resolve_personal_runner(state: &AppState, user_id: &str) -> Option<RunnerClient> {
-    let pattern = state.runner_socket_pattern.as_ref()?;
+async fn ensure_runner_healthy(
+    state: &AppState,
+    linux_user: &str,
+    client: RunnerClient,
+) -> Result<RunnerClient> {
+    if client
+        .list_workspace_chat_sessions(None, false, Some(1))
+        .await
+        .is_ok()
+    {
+        return Ok(client);
+    }
+
+    let uid = resolve_linux_uid(linux_user)
+        .with_context(|| format!("resolving uid for linux user {}", linux_user))?;
+
+    crate::local::linux_users::usermgr_request(
+        "setup-user-runner",
+        serde_json::json!({
+            "username": linux_user,
+            "uid": uid,
+        }),
+    )
+    .with_context(|| format!("healing runner for linux user {}", linux_user))?;
+
+    let pattern = state
+        .runner_socket_pattern
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("runner socket pattern not configured"))?;
+
+    let healed = RunnerClient::for_user_with_pattern(linux_user, pattern).with_context(|| {
+        format!(
+            "creating healed runner client for linux user {}",
+            linux_user
+        )
+    })?;
+
+    Ok(healed)
+}
+
+fn resolve_linux_uid(linux_user: &str) -> Result<u32> {
+    use std::process::Command;
+
+    let output = Command::new("id")
+        .arg("-u")
+        .arg(linux_user)
+        .output()
+        .with_context(|| format!("running id -u {}", linux_user))?;
+
+    if !output.status.success() {
+        anyhow::bail!(
+            "id -u {} failed: {}",
+            linux_user,
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let uid = String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse::<u32>()
+        .with_context(|| format!("parsing uid for linux user {}", linux_user))?;
+
+    Ok(uid)
+}
+
+async fn resolve_personal_runner(state: &AppState, user_id: &str) -> Result<Option<RunnerClient>> {
+    let pattern = match state.runner_socket_pattern.as_ref() {
+        Some(p) => p,
+        None => return Ok(None),
+    };
 
     let effective_user = if let Some(ref lu) = state.linux_users {
         lu.linux_username(user_id)
@@ -54,7 +122,12 @@ fn resolve_personal_runner(state: &AppState, user_id: &str) -> Option<RunnerClie
         user_id.to_string()
     };
 
-    RunnerClient::for_user_with_pattern(&effective_user, pattern).ok()
+    let client = RunnerClient::for_user_with_pattern(&effective_user, pattern)
+        .with_context(|| format!("creating runner client for linux user {}", effective_user))?;
+
+    Ok(Some(
+        ensure_runner_healthy(state, &effective_user, client).await?,
+    ))
 }
 
 pub async fn resolve_target_for_workspace_path(
@@ -116,5 +189,7 @@ async fn resolve_shared_workspace_runner(
     let client = RunnerClient::for_user_with_pattern(&linux_user, pattern)
         .with_context(|| format!("creating runner client for linux user {}", linux_user))?;
 
-    Ok(Some(client))
+    Ok(Some(
+        ensure_runner_healthy(state, &linux_user, client).await?,
+    ))
 }

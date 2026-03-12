@@ -463,7 +463,11 @@ impl Runner {
     fn request_kind(req: &RunnerRequest) -> String {
         serde_json::to_value(req)
             .ok()
-            .and_then(|v| v.get("type").and_then(|t| t.as_str()).map(ToOwned::to_owned))
+            .and_then(|v| {
+                v.get("type")
+                    .and_then(|t| t.as_str())
+                    .map(ToOwned::to_owned)
+            })
             .unwrap_or_else(|| "unknown".to_string())
     }
 
@@ -2278,34 +2282,46 @@ impl Runner {
                         let part_id = format!("part_{}", idx);
                         let message_id = format!("pi_msg_{}", idx);
 
-                        let (part_type, text, tool_name, tool_call_id, tool_input, tool_output, tool_status) =
-                            if msg.role == "tool" || msg.role == "toolResult" {
-                                (
-                                    "tool_result".to_string(),
-                                    None,
-                                    msg.tool_name.clone(),
-                                    msg.tool_call_id.clone(),
-                                    None,
-                                    Some(msg.content.to_string()),
-                                    Some(if msg.is_error.unwrap_or(false) { "error" } else { "success" }.to_string()),
-                                )
-                            } else {
-                                (
-                                    "text".to_string(),
-                                    Some(
-                                        if let Some(s) = msg.content.as_str() {
-                                            s.to_string()
-                                        } else {
-                                            msg.content.to_string()
-                                        },
-                                    ),
-                                    None,
-                                    None,
-                                    None,
-                                    None,
-                                    None,
-                                )
-                            };
+                        let (
+                            part_type,
+                            text,
+                            tool_name,
+                            tool_call_id,
+                            tool_input,
+                            tool_output,
+                            tool_status,
+                        ) = if msg.role == "tool" || msg.role == "toolResult" {
+                            (
+                                "tool_result".to_string(),
+                                None,
+                                msg.tool_name.clone(),
+                                msg.tool_call_id.clone(),
+                                None,
+                                Some(msg.content.to_string()),
+                                Some(
+                                    if msg.is_error.unwrap_or(false) {
+                                        "error"
+                                    } else {
+                                        "success"
+                                    }
+                                    .to_string(),
+                                ),
+                            )
+                        } else {
+                            (
+                                "text".to_string(),
+                                Some(if let Some(s) = msg.content.as_str() {
+                                    s.to_string()
+                                } else {
+                                    msg.content.to_string()
+                                }),
+                                None,
+                                None,
+                                None,
+                                None,
+                                None,
+                            )
+                        };
 
                         ChatMessageProto {
                             id: message_id,
@@ -2343,12 +2359,12 @@ impl Runner {
                     messages: mapped,
                 })
             }
-            Err(_) => RunnerResponse::WorkspaceChatSessionMessages(
-                WorkspaceChatSessionMessagesResponse {
+            Err(_) => {
+                RunnerResponse::WorkspaceChatSessionMessages(WorkspaceChatSessionMessagesResponse {
                     session_id: req.session_id,
                     messages: Vec::new(),
-                },
-            ),
+                })
+            }
         }
     }
 

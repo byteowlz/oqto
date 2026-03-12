@@ -816,7 +816,10 @@ impl RunnerClient {
     }
 
     /// Get session statistics.
-    pub async fn agent_get_session_stats(&self, session_id: &str) -> Result<PiSessionStatsResponse> {
+    pub async fn agent_get_session_stats(
+        &self,
+        session_id: &str,
+    ) -> Result<PiSessionStatsResponse> {
         self.pi_get_session_stats(session_id).await
     }
 
@@ -944,7 +947,8 @@ impl RunnerClient {
 
     /// Send a steering message to interrupt a Pi session mid-run.
     pub async fn pi_steer(&self, session_id: &str, message: &str) -> Result<()> {
-        self.pi_steer_with_client_id(session_id, message, None).await
+        self.pi_steer_with_client_id(session_id, message, None)
+            .await
     }
 
     /// Send a steering message with a client_id for optimistic message matching.
@@ -969,7 +973,8 @@ impl RunnerClient {
 
     /// Queue a follow-up message for after the Pi session finishes.
     pub async fn pi_follow_up(&self, session_id: &str, message: &str) -> Result<()> {
-        self.pi_follow_up_with_client_id(session_id, message, None).await
+        self.pi_follow_up_with_client_id(session_id, message, None)
+            .await
     }
 
     /// Queue a follow-up message with a client_id for optimistic message matching.
@@ -1056,7 +1061,10 @@ impl RunnerClient {
         &self,
         session_id: &str,
     ) -> Result<(
-        (tokio::io::Lines<BufReader<tokio::net::unix::OwnedReadHalf>>, tokio::net::unix::OwnedWriteHalf),
+        (
+            tokio::io::Lines<BufReader<tokio::net::unix::OwnedReadHalf>>,
+            tokio::net::unix::OwnedWriteHalf,
+        ),
         String,
         RunnerResponse,
     )> {

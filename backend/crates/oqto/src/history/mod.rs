@@ -3,8 +3,8 @@
 //! This module provides access to chat sessions and messages stored in hstry,
 //! either via gRPC (preferred) or direct SQLite access (runner-side).
 
-pub mod models;
 pub mod canon;
+pub mod models;
 pub mod repository;
 pub mod service;
 
