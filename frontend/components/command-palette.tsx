@@ -21,6 +21,7 @@ import {
 	Bot,
 	Cog,
 	FolderKanban,
+	GitBranch,
 	Globe2,
 	Keyboard,
 	MessageSquare,
@@ -51,6 +52,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
 	const { startConversation, startDictation } = useVoiceCommandEmitter();
 
 	const [theme, setThemeState] = useState<"light" | "dark">("dark");
+	const [sessionViewMode, setSessionViewMode] = useState<"list" | "tree">("list");
 
 	useEffect(() => {
 		try {
@@ -58,10 +60,12 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
 			if (stored === "light" || stored === "dark") {
 				setThemeState(stored);
 			}
+			const viewMode = localStorage.getItem("oqto:sessionViewMode");
+			setSessionViewMode(viewMode === "tree" ? "tree" : "list");
 		} catch {
 			// Ignore storage failures.
 		}
-	}, []);
+	}, [open]);
 
 	const toggleTheme = useCallback(() => {
 		const next = theme === "dark" ? "light" : "dark";
@@ -86,6 +90,27 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
 		setLocale(next);
 		onOpenChange(false);
 	}, [locale, setLocale, onOpenChange]);
+
+	const toggleSessionTreeMode = useCallback(() => {
+		const next = sessionViewMode === "tree" ? "list" : "tree";
+		try {
+			localStorage.setItem("oqto:sessionViewMode", next);
+		} catch {
+			// Ignore storage failures.
+		}
+		window.dispatchEvent(
+			new CustomEvent("oqto:set-session-view-mode", {
+				detail: { mode: next },
+			}),
+		);
+		setSessionViewMode(next);
+		onOpenChange(false);
+	}, [sessionViewMode, onOpenChange]);
+
+	const openBranchGraph = useCallback(() => {
+		window.dispatchEvent(new Event("oqto:open-branch-graph"));
+		onOpenChange(false);
+	}, [onOpenChange]);
 
 	const handleNavigation = useCallback(
 		(appId: string) => {
@@ -148,6 +173,19 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
 						<Plus className="mr-2 h-4 w-4" />
 						<span>{t("sessions.newSession")}</span>
 						<CommandShortcut>N</CommandShortcut>
+					</CommandItem>
+					<CommandItem onSelect={toggleSessionTreeMode}>
+						<GitBranch className="mr-2 h-4 w-4" />
+						<span>
+							{sessionViewMode === "tree"
+								? t("command.switchToListView")
+								: t("command.switchToTreeView")}
+						</span>
+					</CommandItem>
+					<CommandItem onSelect={openBranchGraph}>
+						<GitBranch className="mr-2 h-4 w-4" />
+						<span>{t("command.openBranchGraph", "Open branch graph")}</span>
+						<CommandShortcut>B</CommandShortcut>
 					</CommandItem>
 					<CommandItem onSelect={toggleTheme}>
 						{theme === "dark" ? (

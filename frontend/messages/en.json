@@ -106,7 +106,13 @@
 		"defaultAgent": "Default agent",
 		"setDefaultAgent": "Set default agent",
 		"noAgentsFound": "No agents found",
-		"agents": "Agents"
+		"agents": "Agents",
+		"list": "List",
+		"tree": "Tree",
+		"viewList": "Switch to list view",
+		"viewTree": "Switch to tree view",
+		"branchGraph": "Session Branch Graph",
+		"branchGraphDescription": "Visual overview of conversation branches. Select a node to switch to that session."
 	},
 	"projects": {
 		"title": "Projects",
@@ -247,7 +253,10 @@
 		"switchToLight": "Switch to light mode",
 		"switchToDark": "Switch to dark mode",
 		"changeLanguageDE": "Change language (DE)",
-		"changeLanguageEN": "Change language (EN)"
+		"changeLanguageEN": "Change language (EN)",
+		"switchToTreeView": "Switch sessions to tree view",
+		"switchToListView": "Switch sessions to list view",
+		"openBranchGraph": "Open branch graph"
 	},
 	"admin": {
 		"title": "ADMIN DASHBOARD",

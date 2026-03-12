@@ -106,7 +106,13 @@
 		"defaultAgent": "Standard-Agent",
 		"setDefaultAgent": "Standard-Agent setzen",
 		"noAgentsFound": "Keine Agenten gefunden",
-		"agents": "Agenten"
+		"agents": "Agenten",
+		"list": "Liste",
+		"tree": "Baum",
+		"viewList": "Zur Listenansicht wechseln",
+		"viewTree": "Zur Baumansicht wechseln",
+		"branchGraph": "Sitzungs-Branch-Graph",
+		"branchGraphDescription": "Visuelle Übersicht der Konversations-Branches. Wählen Sie einen Knoten, um zu dieser Sitzung zu wechseln."
 	},
 	"projects": {
 		"title": "Projekte",
@@ -247,7 +253,10 @@
 		"switchToLight": "Zu hellem Modus wechseln",
 		"switchToDark": "Zu dunklem Modus wechseln",
 		"changeLanguageDE": "Sprache wechseln (EN)",
-		"changeLanguageEN": "Sprache wechseln (DE)"
+		"changeLanguageEN": "Sprache wechseln (DE)",
+		"switchToTreeView": "Sitzungen auf Baumansicht umschalten",
+		"switchToListView": "Sitzungen auf Listenansicht umschalten",
+		"openBranchGraph": "Branch-Graph öffnen"
 	},
 	"admin": {
 		"title": "ADMIN DASHBOARD",

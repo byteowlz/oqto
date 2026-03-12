@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Branching UX Design Suggestions</title>
+  <style>
+    :root {
+      --bg: #0b1020;
+      --panel: #121935;
+      --panel-2: #172044;
+      --text: #e9ecff;
+      --muted: #a4acd6;
+      --accent: #7aa2ff;
+      --ok: #67d59f;
+      --warn: #ffcc66;
+      --border: #2a3568;
+      --shadow: 0 10px 30px rgba(0,0,0,0.35);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      background: radial-gradient(1200px 800px at 10% -20%, #243372 0%, var(--bg) 60%);
+      color: var(--text);
+      line-height: 1.4;
+    }
+    .wrap {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 28px;
+    }
+    h1 { margin: 0 0 8px 0; font-size: 34px; }
+    .sub { color: var(--muted); margin-bottom: 22px; }
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 20px;
+    }
+    .pill {
+      background: #1c2653;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      padding: 6px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+      gap: 14px;
+    }
+    .card {
+      background: linear-gradient(180deg, var(--panel), var(--panel-2));
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      box-shadow: var(--shadow);
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      min-height: 265px;
+    }
+    .top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+    .num {
+      font-weight: 700;
+      color: var(--accent);
+      font-size: 13px;
+      letter-spacing: 0.03em;
+    }
+    .fit {
+      font-size: 11px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 4px 8px;
+      color: #d4dbff;
+      background: #202d61;
+    }
+    h2 { margin: 0; font-size: 18px; }
+    .desc { color: var(--muted); font-size: 14px; }
+    .box {
+      border: 1px dashed #3b4b89;
+      border-radius: 10px;
+      padding: 10px;
+      background: #121b3f;
+      font-size: 12px;
+      color: #d7deff;
+      white-space: pre-line;
+    }
+    ul { margin: 0; padding-left: 18px; color: #d9dfff; }
+    li { margin: 3px 0; font-size: 13px; }
+    .tags { margin-top: auto; display: flex; gap: 6px; flex-wrap: wrap; }
+    .tag {
+      font-size: 11px;
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      padding: 3px 6px;
+      color: var(--muted);
+    }
+    .rec {
+      margin-top: 18px;
+      padding: 14px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: #12224a;
+    }
+    .rec strong { color: var(--ok); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Branching UX: 10 Design Suggestions</h1>
+    <p class="sub">Goal: Make branching/forking first-class in the UI (sidebar + optional overlay) without introducing Pi-specific backend coupling.</p>
+
+    <div class="legend">
+      <span class="pill">Canonical graph model (harness-agnostic)</span>
+      <span class="pill">Sidebar visibility</span>
+      <span class="pill">Fast switch + safe recovery</span>
+      <span class="pill">Scales from simple to power users</span>
+    </div>
+
+    <div class="grid">
+      <article class="card">
+        <div class="top"><span class="num">01</span><span class="fit">Best for MVP</span></div>
+        <h2>Tree Sidebar Mode</h2>
+        <p class="desc">Add a List/Tree toggle to sessions sidebar. Branches render as nested nodes under origin.</p>
+        <div class="box">OUTATIME
+├─ main
+│  └─ branch-a (active)
+└─ branch-b</div>
+        <ul><li>Low implementation risk</li><li>Clear lineage at a glance</li><li>No modal required</li></ul>
+        <div class="tags"><span class="tag">Sidebar</span><span class="tag">Low complexity</span></div>
+      </article>
+
+      <article class="card">
+        <div class="top"><span class="num">02</span><span class="fit">Power users</span></div>
+        <h2>Graph Overlay (DAG)</h2>
+        <p class="desc">A dedicated overlay showing nodes and edges. Click node to preview and switch.</p>
+        <div class="box">[main]──►[variant-1]
+   └────►[variant-2]──►[variant-2b]</div>
+        <ul><li>Excellent for many forks</li><li>Supports filters and diff hints</li><li>Best debugging/recovery UX</li></ul>
+        <div class="tags"><span class="tag">Overlay</span><span class="tag">High clarity</span></div>
+      </article>
+
+      <article class="card">
+        <div class="top"><span class="num">03</span><span class="fit">Conversation-first</span></div>
+        <h2>Inline Fork Markers</h2>
+        <p class="desc">Show "Forked from this message" badges directly inside transcript at fork points.</p>
+        <div class="box">Message #84
+[Fork point] 2 children
+[Open branch A] [Open branch B]</div>
+        <ul><li>Contextual and discoverable</li><li>Minimal navigation jumps</li><li>Good for small trees</li></ul>
+        <div class="tags"><span class="tag">Chat timeline</span><span class="tag">Contextual</span></div>
+      </article>
+
+      <article class="card">
+        <div class="top"><span class="num">04</span><span class="fit">Quick iteration</span></div>
+        <h2>Branch Tabs per Session</h2>
+        <p class="desc">Represent branch heads as tabs above chat. Tabs map to branch nodes.</p>
+        <div class="box">[main] [image-fix] [prompt-v3*]</div>
+        <ul><li>Fast switching</li><li>Familiar browser-like UX</li><li>Works with small branch counts</li></ul>
+        <div class="tags"><span class="tag">Tabs</span><span class="tag">Fast switch</span></div>
+      </article>
+
+      <article class="card">
+        <div class="top"><span class="num">05</span><span class="fit">Structured workflows</span></div>
+        <h2>Branch Board (Kanban)</h2>
+        <p class="desc">Visual board grouping branches by status: Exploring, Validating, Kept, Archived.</p>
+        <div class="box">Exploring | Validating | Kept
+branch-a   branch-b    main</div>
+        <ul><li>Great for teams</li><li>Makes branch intent explicit</li><li>Improves cleanup discipline</li></ul>
+        <div class="tags"><span class="tag">Workflow</span><span class="tag">Team-friendly</span></div>
+      </article>
+
+      <article class="card">
+        <div class="top"><span class="num">06</span><span class="fit">Diff-driven</span></div>
+        <h2>Compare Mode</h2>
+        <p class="desc">Pick two branch nodes and show response/tool diff summary before switching.</p>
+        <div class="box">Compare: main ↔ prompt-v3
++ 2 tool calls
+- 1 retry
++ Better final answer length</div>
+        <ul><li>Reduces guesswork</li><li>Supports decision making</li><li>Pairs well with graph overlay</li></ul>
+        <div class="tags"><span class="tag">Diff</span><span class="tag">Analysis</span></div>
+      </article>
+
+      <article class="card">
+        <div class="top"><span class="num">07</span><span class="fit">Scalable nav</span></div>
+        <h2>Minimap + Focus Lens</h2>
+        <p class="desc">Tiny branch minimap in sidebar with viewport highlight; main area focuses selected subtree.</p>
+        <div class="box">[mini graph]
+focus: branch-2 subtree</div>
+        <ul><li>Handles deep trees</li><li>Maintains orientation</li><li>Compact UI footprint</li></ul>
+        <div class="tags"><span class="tag">Navigation</span><span class="tag">Large trees</span></div>
+      </article>
+
+      <article class="card">
+        <div class="top"><span class="num">08</span><span class="fit">Safety-first</span></div>
+        <h2>Pinned Branch Heads</h2>
+        <p class="desc">Allow pinning branch heads. Sidebar shows pinned section independent of chronology.</p>
+        <div class="box">Pinned
+• release-candidate
+• best-image-style</div>
+        <ul><li>Prevents losing valuable branches</li><li>Good for long sessions</li><li>Simple to implement</li></ul>
+        <div class="tags"><span class="tag">Pinning</span><span class="tag">Retention</span></div>
+      </article>
+
+      <article class="card">
+        <div class="top"><span class="num">09</span><span class="fit">Guided UX</span></div>
+        <h2>Fork Wizard</h2>
+        <p class="desc">Small guided flow: choose source message, name branch, optional goal label, create.</p>
+        <div class="box">Step 1: pick message
+Step 2: branch name
+Step 3: optional intent tag</div>
+        <ul><li>Reduces accidental forks</li><li>Improves branch naming quality</li><li>Good for new users</li></ul>
+        <div class="tags"><span class="tag">Onboarding</span><span class="tag">Guided</span></div>
+      </article>
+
+      <article class="card">
+        <div class="top"><span class="num">10</span><span class="fit">Recommended mix</span></div>
+        <h2>Hybrid: Tree + Overlay</h2>
+        <p class="desc">Default tree sidebar for daily use, plus optional graph overlay for complex branch management.</p>
+        <div class="box">Default: Tree
+Advanced: Open Graph Overlay
+Actions: fork, switch, compare, archive</div>
+        <ul><li>Balanced complexity</li><li>Fast path + power path</li><li>Best long-term architecture fit</li></ul>
+        <div class="tags"><span class="tag">Balanced</span><span class="tag">Phased rollout</span></div>
+      </article>
+    </div>
+
+    <div class="rec">
+      <strong>Suggested rollout:</strong> Phase 1: Tree Sidebar (01) + Inline Markers (03). Phase 2: Compare Mode (06). Phase 3: Graph Overlay (02) with pin/archive controls (08).
+    </div>
+  </div>
+</body>
+</html>
