@@ -1,0 +1,23 @@
+{
+  "todos": [
+    {
+      "id": "a5addc10",
+      "content": "Use oqto-templates AGENTS.md as the source for Pi config provisioning",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "5912df46",
+      "content": "Update embedded fallback AGENTS.md to match oqto-templates",
+      "status": "completed",
+      "priority": "medium"
+    },
+    {
+      "id": "815c4756",
+      "content": "Backfill existing users on octo-azure with correct AGENTS.md",
+      "status": "completed",
+      "priority": "high"
+    }
+  ],
+  "updated_at": "2026-03-09T22:51:51.576Z"
+}

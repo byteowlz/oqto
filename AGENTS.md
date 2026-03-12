@@ -310,7 +310,7 @@ just gen-types        # Generate TypeScript types from Rust structs
 
 **TypeScript**: Use `@/` import alias for internal modules. Functional components with named exports. Vitest for tests.
 
-**General**: No emojis in code/docs/commits. Use `bun` for JS/TS, `uv` for Python.
+**General**: No emojis in code/docs/commits. Use `bun` for JS/TS, `uv` for Python. Never use `pip` directly; use `uv add`, `uv tool install`, or `uv pip` only when explicitly required for compatibility.
 
 ---
 

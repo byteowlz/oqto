@@ -16,6 +16,8 @@
 
 : "${SEARXNG_PORT:=8888}"
 : "${SEARXNG_BIND:=127.0.0.1}"
+: "${SEARXNG_WATCHDOG_INTERVAL:=45s}"
+: "${SEARXNG_WATCHDOG_QUERY:=healthcheck}"
 
 install_searxng() {
   log_step "Installing SearXNG (local search engine)"
@@ -87,7 +89,10 @@ install_searxng() {
   # 6. Install systemd service
   install_searxng_service "$searxng_base" "$searxng_venv" "$searxng_settings" "$service_type" "$searxng_user"
 
-  # 7. Configure sx to use local instance
+  # 7. Install watchdog timer to auto-recover degraded runtime states
+  install_searxng_watchdog "$service_type"
+
+  # 8. Configure sx to use local instance
   configure_sx_for_searxng
 
   log_success "SearXNG installed and configured"
@@ -379,6 +384,14 @@ if [[ ! -x "\${PY}" ]]; then
   echo "[searxng-launch] Missing runtime: \${PY}" >&2
   exit 1
 fi
+
+# Use dedicated writable tmp dir for sqlite caches to avoid /tmp edge cases
+export TMPDIR="\${TMPDIR:-\${BASE}/tmp}"
+mkdir -p "\${TMPDIR}"
+rm -f "\${TMPDIR}/sxng_cache_DATA_CACHE.db" \
+      "\${TMPDIR}/sxng_cache_DATA_CACHE.db-shm" \
+      "\${TMPDIR}/sxng_cache_DATA_CACHE.db-wal" 2>/dev/null || true
+
 cd "\${SRC}"
 exec "\${PY}" -m searx.webapp
 EOF
@@ -433,6 +446,14 @@ if [[ ! -x "\${PY}" ]]; then
   echo "[searxng-launch] Missing runtime: \${PY}" >&2
   exit 1
 fi
+
+# Use dedicated writable tmp dir for sqlite caches to avoid /tmp edge cases
+export TMPDIR="\${TMPDIR:-\${BASE}/tmp}"
+mkdir -p "\${TMPDIR}"
+rm -f "\${TMPDIR}/sxng_cache_DATA_CACHE.db" \
+      "\${TMPDIR}/sxng_cache_DATA_CACHE.db-shm" \
+      "\${TMPDIR}/sxng_cache_DATA_CACHE.db-wal" 2>/dev/null || true
+
 cd "\${SRC}"
 exec "\${PY}" -m searx.webapp
 EOF
@@ -472,6 +493,146 @@ EOF
       fi
       log_info "Check status: sudo systemctl status searxng"
     fi
+  fi
+}
+
+install_searxng_watchdog() {
+  local service_type="$1"
+
+  local probe_script_content
+  probe_script_content='#!/usr/bin/env bash
+set -euo pipefail
+
+SEARX_URL="http://'"${SEARXNG_BIND}:${SEARXNG_PORT}"'"
+QUERY="'"${SEARXNG_WATCHDOG_QUERY}"'"
+
+if ! response=$(curl -fsS --max-time 12 "${SEARX_URL}/search?q=${QUERY}&format=json"); then
+  echo "[searxng-watchdog] search API unreachable"
+  exit 1
+fi
+
+if ! jq -e ".number_of_results != null" >/dev/null 2>&1 <<<"${response}"; then
+  echo "[searxng-watchdog] invalid JSON response"
+  exit 1
+fi
+
+if jq -e ".unresponsive_engines[]? | .[1] | strings | test(\"unexpected crash|readonly database|OperationalError\"; \"i\")" >/dev/null 2>&1 <<<"${response}"; then
+  echo "[searxng-watchdog] detected crashed engines in response"
+  exit 1
+fi
+
+# Catch silent cache corruption: readonly sqlite errors in fresh logs
+journal_scope=()
+if systemctl --user status searxng >/dev/null 2>&1; then
+  journal_scope+=(--user)
+fi
+if journalctl "${journal_scope[@]}" -u searxng --since "2 minutes ago" --no-pager 2>/dev/null | rg -qi "readonly database|sqlite3\.OperationalError"; then
+  echo "[searxng-watchdog] detected sqlite cache write errors"
+  exit 1
+fi
+'
+
+  if [[ "$service_type" == "user" ]]; then
+    local service_dir="$HOME/.config/systemd/user"
+    local local_bin_dir="$HOME/.local/bin"
+    local probe_script="$local_bin_dir/searxng-watchdog-check"
+    local probe_runner="$local_bin_dir/searxng-healthcheck-run"
+    mkdir -p "$service_dir" "$local_bin_dir"
+
+    cat >"$probe_script" <<EOF
+${probe_script_content}
+EOF
+    chmod +x "$probe_script"
+
+    cat >"$probe_runner" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+if ! "${probe_script}"; then
+  echo "[searxng-healthcheck] probe failed, restarting searxng"
+  systemctl --user restart searxng
+fi
+EOF
+    chmod +x "$probe_runner"
+
+    cat >"${service_dir}/searxng-healthcheck.service" <<EOF
+[Unit]
+Description=SearXNG health watchdog
+After=searxng.service
+
+[Service]
+Type=oneshot
+ExecStart=${probe_runner}
+EOF
+
+    cat >"${service_dir}/searxng-healthcheck.timer" <<EOF
+[Unit]
+Description=Run SearXNG health watchdog every ${SEARXNG_WATCHDOG_INTERVAL}
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=${SEARXNG_WATCHDOG_INTERVAL}
+Unit=searxng-healthcheck.service
+
+[Install]
+WantedBy=timers.target
+EOF
+
+    systemctl --user daemon-reload
+    systemctl --user enable searxng-healthcheck.timer
+    if systemctl --user is-active searxng >/dev/null 2>&1; then
+      systemctl --user start searxng-healthcheck.timer
+    fi
+
+    log_success "SearXNG watchdog installed (user): searxng-healthcheck.timer"
+  else
+    local probe_script="/usr/local/bin/searxng-watchdog-check"
+    local probe_runner="/usr/local/bin/searxng-healthcheck-run"
+
+    sudo tee "$probe_script" >/dev/null <<EOF
+${probe_script_content}
+EOF
+    sudo chmod +x "$probe_script"
+
+    sudo tee "$probe_runner" >/dev/null <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+if ! "${probe_script}"; then
+  echo "[searxng-healthcheck] probe failed, restarting searxng"
+  systemctl restart searxng
+fi
+EOF
+    sudo chmod +x "$probe_runner"
+
+    sudo tee /etc/systemd/system/searxng-healthcheck.service >/dev/null <<EOF
+[Unit]
+Description=SearXNG health watchdog
+After=searxng.service
+
+[Service]
+Type=oneshot
+ExecStart=${probe_runner}
+EOF
+
+    sudo tee /etc/systemd/system/searxng-healthcheck.timer >/dev/null <<EOF
+[Unit]
+Description=Run SearXNG health watchdog every ${SEARXNG_WATCHDOG_INTERVAL}
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=${SEARXNG_WATCHDOG_INTERVAL}
+Unit=searxng-healthcheck.service
+
+[Install]
+WantedBy=timers.target
+EOF
+
+    sudo systemctl daemon-reload
+    sudo systemctl enable searxng-healthcheck.timer
+    if sudo systemctl is-active searxng >/dev/null 2>&1; then
+      sudo systemctl start searxng-healthcheck.timer
+    fi
+
+    log_success "SearXNG watchdog installed (system): searxng-healthcheck.timer"
   fi
 }
 

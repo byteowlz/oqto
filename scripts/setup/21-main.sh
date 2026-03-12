@@ -112,6 +112,8 @@ Pi Extensions (from github.com/byteowlz/pi-agent-extensions):
   oqto-bridge          - Emit agent phase status for the Oqto runner
   oqto-todos           - Todo management for Oqto UI
   custom-context-files - Auto-load USER.md, PERSONALITY.md into prompts
+  read-image-guard     - Prevent oversized image payloads from read tool output
+  read-file-guard      - Prevent oversized text payloads from read tool output
 
 For detailed documentation on all prerequisites and components, see SETUP.md
 

@@ -16,6 +16,7 @@ PI_DEFAULT_EXTENSIONS=(
   "oqto-todos"
   "custom-context-files"
   "read-image-guard"
+  "read-file-guard"
 )
 
 # Clone or update the pi-agent-extensions repo into a cache directory.
@@ -134,6 +135,7 @@ repository: https://github.com/byteowlz/pi-agent-extensions
 - **oqto-todos**: Todo management tools for Oqto frontend integration
 - **custom-context-files**: Auto-load USER.md, PERSONALITY.md, and other context files into prompts
 - **read-image-guard**: Prevent oversized read-tool image payloads from causing provider request-body overflows
+- **read-file-guard**: Prevent oversized read-tool text payloads (for example from PDFs) from causing provider request-body overflows
 
 ## Managing Extensions
 

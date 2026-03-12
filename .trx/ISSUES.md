@@ -419,6 +419,9 @@ Build and distribute pre-compiled binaries for Linux (x86_64, arm64) and macOS (
 ### [octo-af5j] Release & Update System (P1, epic)
 Comprehensive system for distributing Octo releases, managing updates in the field, and expanding runtime options including Proxmox LXC support.
 
+### [oqto-tr4r] Composable documentation rudiments for AGENTS/bootstrap files (P2, epic)
+Introduce a lean rudiments system for composable instruction documents (starting with AGENTS.md) to enable deterministic scaffolding and surgical policy updates across templates/users/hosts.\n\nScope:\n- Define rudiment format (Markdown + frontmatter metadata)\n- Add composition manifest(s) for AGENTS.md variants\n- Implement assembler script to build final docs deterministically\n- Integrate with admin sync workflow (sync-agent-instructions)\n- Add validation/tests for missing/conflicting rudiments\n\nGoals:\n- Centralize reusable instruction blocks\n- Reduce drift across oqto, oqto-templates, and deployed user homes\n- Support controlled add/remove of policy snippets (e.g. uv-only Python) without manual bulk edits
+
 ### [oqto-yxhc.7] App templates in oqto style (P2, task)
 Create starter templates in templates/apps/: blank.html, dashboard.html, form.html, data-table.html, kanban.html, markdown-viewer.html. All single-file, self-contained, using --app-* CSS variables. Include apphost API documentation in each template as HTML comments.
 
@@ -1871,7 +1874,7 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
 - [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
 - [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )

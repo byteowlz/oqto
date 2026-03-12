@@ -221,28 +221,27 @@ install_system_prerequisites() {
 
   if [[ ${#pkgs[@]} -eq 0 ]]; then
     log_success "All system prerequisites already installed"
-    return 0
+  else
+    log_info "Installing system prerequisites: ${pkgs[*]}"
+    case "$OS_DISTRO" in
+    arch | manjaro | endeavouros)
+      sudo pacman -S --noconfirm "${pkgs[@]}"
+      ;;
+    debian | ubuntu | pop | linuxmint)
+      apt_update_once
+      sudo apt-get install -y "${pkgs[@]}"
+      ;;
+    fedora | centos | rhel | rocky | alma*)
+      sudo dnf install -y "${pkgs[@]}"
+      ;;
+    opensuse*)
+      sudo zypper install -y "${pkgs[@]}"
+      ;;
+    *)
+      log_warn "Unknown distribution $OS_DISTRO. Please install manually: ${pkgs[*]}"
+      ;;
+    esac
   fi
-
-  log_info "Installing system prerequisites: ${pkgs[*]}"
-  case "$OS_DISTRO" in
-  arch | manjaro | endeavouros)
-    sudo pacman -S --noconfirm "${pkgs[@]}"
-    ;;
-  debian | ubuntu | pop | linuxmint)
-    apt_update_once
-    sudo apt-get install -y "${pkgs[@]}"
-    ;;
-  fedora | centos | rhel | rocky | alma*)
-    sudo dnf install -y "${pkgs[@]}"
-    ;;
-  opensuse*)
-    sudo zypper install -y "${pkgs[@]}"
-    ;;
-  *)
-    log_warn "Unknown distribution $OS_DISTRO. Please install manually: ${pkgs[*]}"
-    ;;
-  esac
 
   if command_exists bwrap; then
     log_success "bubblewrap (bwrap) installed"
@@ -321,6 +320,21 @@ APPARMOR
     uv_path=$(command -v uv)
     if [[ "$uv_path" != "${TOOLS_INSTALL_DIR}/uv" && "$uv_path" != "/usr/bin/uv" ]]; then
       sudo install -m 755 "$uv_path" "${TOOLS_INSTALL_DIR}/uv" 2>/dev/null || true
+    fi
+
+    # Global Python PDF tooling for agent workflows.
+    # Use uv tool environments instead of mutating system site-packages.
+    local python_pdf_tool="pdfplumber"
+    local python_pdf_with="pymupdf"
+    log_info "Ensuring global Python PDF tooling via uv tool install: ${python_pdf_tool} (+ ${python_pdf_with})"
+    if uv tool install --force --upgrade --with "$python_pdf_with" "$python_pdf_tool" >/dev/null 2>&1; then
+      log_success "Global Python PDF tooling installed via uv: ${python_pdf_tool}, ${python_pdf_with}"
+      if command_exists "$python_pdf_tool"; then
+        sudo install -m 755 "$(command -v "$python_pdf_tool")" "${TOOLS_INSTALL_DIR}/${python_pdf_tool}" 2>/dev/null || true
+      fi
+    else
+      log_warn "Failed to install Python PDF tooling with uv tool install"
+      log_warn "Run manually: uv tool install --force --upgrade --with ${python_pdf_with} ${python_pdf_tool}"
     fi
   fi
 }

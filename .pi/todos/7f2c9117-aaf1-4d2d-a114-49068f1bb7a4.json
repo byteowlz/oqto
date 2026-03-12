@@ -1,0 +1,29 @@
+{
+  "todos": [
+    {
+      "id": "46d50d96",
+      "content": "Confirm whether user's latest message reached backend",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "6bcc2f85",
+      "content": "Heal personal/shared runner services for wismut and shared workspaces",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "138c68b2",
+      "content": "Guide user through immediate reconnection steps and retry",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "1391248d",
+      "content": "Patch transient send failure with session-ready self-heal retry and deploy frontend safely",
+      "status": "completed",
+      "priority": "high"
+    }
+  ],
+  "updated_at": "2026-03-12T13:47:48.077Z"
+}

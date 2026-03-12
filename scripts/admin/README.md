@@ -142,6 +142,26 @@ just admin-templates --check
 - `beginner` - New users who need more guidance
 - `enterprise` - Work-focused setup, skip personal customization
 
+### sync-agent-instructions
+
+Sync a chosen AGENTS.md source file into `~/.pi/agent/AGENTS.md` for platform users.
+
+```bash
+# Sync to all detected platform users by scanning /home/oqto_* and /home/octo_*
+./scripts/admin/oqto-admin sync-agent-instructions --all --update-skel
+
+# Sync a specific linux user
+./scripts/admin/oqto-admin sync-agent-instructions --user oqto_usr_wismut
+
+# Use an explicit source file
+./scripts/admin/oqto-admin sync-agent-instructions --all --source ../oqto-templates/dotfiles/.pi/agent/AGENTS.md
+```
+
+**Behavior:**
+- Filesystem-driven (does not require users to exist in DB)
+- Defaults source to `../oqto-templates/dotfiles/.pi/agent/AGENTS.md` when available
+- Can also update `/etc/skel/.pi/agent/AGENTS.md` via `--update-skel`
+
 ### sync-all
 
 Run a full provisioning sync combining all the above operations.

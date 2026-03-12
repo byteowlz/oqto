@@ -1,0 +1,29 @@
+{
+  "todos": [
+    {
+      "id": "1",
+      "content": "Build latest cmfy from source",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "2",
+      "content": "Deploy cmfy to this machine (archlinux)",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "3",
+      "content": "Deploy cmfy to octo-azure",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "4",
+      "content": "Update all cmfy configs to output_dir = ./outputs",
+      "status": "completed",
+      "priority": "high"
+    }
+  ],
+  "updated_at": "2026-03-12T08:51:15.099Z"
+}

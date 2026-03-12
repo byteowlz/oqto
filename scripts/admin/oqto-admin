@@ -40,6 +40,7 @@ ${BOLD}COMMANDS${RESET}
     ${BOLD}sync-pi-config${RESET}      Sync Pi configuration (models.json, settings) to users
     ${BOLD}manage-skills${RESET}       Install, update, or list Pi skills for users
     ${BOLD}manage-templates${RESET}    Manage onboarding/bootstrap document templates
+    ${BOLD}sync-agent-instructions${RESET} Sync ~/.pi/agent/AGENTS.md to platform users
     ${BOLD}sync-all${RESET}            Run full sync: eavs + pi config + skills for all users
     ${BOLD}user-status${RESET}         Show detailed provisioning status for users
     ${BOLD}help${RESET}                Show this help message
@@ -51,6 +52,7 @@ ${BOLD}EXAMPLES${RESET}
     oqto-admin manage-skills --install canvas-design --all
     oqto-admin manage-skills --list
     oqto-admin manage-templates --sync
+    oqto-admin sync-agent-instructions --all --update-skel
     oqto-admin sync-all
     oqto-admin user-status
 
@@ -108,6 +110,9 @@ main() {
             ;;
         manage-templates)
             exec "$SCRIPT_DIR/manage-templates.sh" "$@"
+            ;;
+        sync-agent-instructions)
+            exec "$SCRIPT_DIR/sync-agent-instructions.sh" "$@"
             ;;
         sync-all)
             exec "$SCRIPT_DIR/sync-all.sh" "$@"

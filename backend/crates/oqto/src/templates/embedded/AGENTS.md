@@ -25,6 +25,13 @@ Optionally you can add the following
 
 Use the sx cli or the exa mcp for web search. Use scrpr cli for fetching the main content from a website
 
+## Python package management
+
+- Always use `uv` for Python workflows.
+- Do not use `pip` directly.
+- Preferred commands: `uv add`, `uv tool install`, `uv run`, `uv sync`.
+- Only use `uv pip ...` as a compatibility fallback when a workflow requires pip-style semantics.
+
 ## Background tasks
 
 Use tmux whenever you kick off longer running tasks in e.g. bash so they can run in the background and you can check in whenever.

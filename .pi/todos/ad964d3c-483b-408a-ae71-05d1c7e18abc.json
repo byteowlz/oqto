@@ -1,0 +1,23 @@
+{
+  "todos": [
+    {
+      "id": "1",
+      "content": "Fix JSON fragment detection to handle 'expected , or }' and 'expected :' errors",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "2",
+      "content": "Build and test",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "3",
+      "content": "Deploy to octo-azure",
+      "status": "completed",
+      "priority": "medium"
+    }
+  ],
+  "updated_at": "2026-03-12T11:29:08.419Z"
+}

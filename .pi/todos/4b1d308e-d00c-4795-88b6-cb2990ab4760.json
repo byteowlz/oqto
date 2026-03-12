@@ -1,29 +1,23 @@
 {
   "todos": [
     {
-      "id": "85e5f3ee",
-      "content": "Run project test/build checks for current workspace state",
+      "id": "5021eddd",
+      "content": "Fix shared workspace path validation for workspace APIs (outside allowed roots error)",
       "status": "completed",
       "priority": "high"
     },
     {
-      "id": "94528cf2",
-      "content": "Review git status and prepare a single commit with all recent changes",
+      "id": "cd812f7c",
+      "content": "Run remote-build check for backend",
       "status": "completed",
       "priority": "high"
     },
     {
-      "id": "b367de9d",
-      "content": "Bump version(s) and create git tag(s) per project workflow",
+      "id": "15d29f64",
+      "content": "Deploy backend fix to octo-azure",
       "status": "completed",
-      "priority": "high"
-    },
-    {
-      "id": "67ecce55",
-      "content": "Report test results, commit hash, and created tags",
-      "status": "in_progress",
       "priority": "high"
     }
   ],
-  "updated_at": "2026-03-08T19:42:56.261Z"
+  "updated_at": "2026-03-09T21:43:22.119Z"
 }
