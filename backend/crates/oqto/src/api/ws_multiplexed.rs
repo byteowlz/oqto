@@ -2227,6 +2227,7 @@ async fn handle_agent_command(
                         let event_tx = state_guard.event_tx.clone();
                         let runner = runner.clone();
                         let sid = session_id.clone();
+                        let uid = user_id.to_string();
 
                         // Use a oneshot channel to wait for subscription confirmation
                         let (sub_ready_tx, sub_ready_rx) = oneshot::channel::<()>();
@@ -2235,6 +2236,7 @@ async fn handle_agent_command(
                             if let Err(e) = forward_pi_events(
                                 &runner,
                                 &sid,
+                                &uid,
                                 event_tx,
                                 Some(sub_ready_tx),
                                 runner_id,
@@ -2542,12 +2544,14 @@ async fn handle_agent_command(
                     let event_tx = state_guard.event_tx.clone();
                     let runner = runner.clone();
                     let sid = session_id.clone();
+                    let uid = user_id.to_string();
                     let (sub_ready_tx, sub_ready_rx) = oneshot::channel::<()>();
                     let runner_id = runner_id.clone();
                     let forwarder = tokio::spawn(async move {
                         if let Err(e) = forward_pi_events(
                             &runner,
                             &sid,
+                            &uid,
                             event_tx,
                             Some(sub_ready_tx),
                             runner_id,
@@ -3536,6 +3540,7 @@ async fn handle_get_messages(
 async fn forward_pi_events(
     runner: &RunnerClient,
     session_id: &str,
+    user_id: &str,
     event_tx: mpsc::UnboundedSender<WsEvent>,
     sub_ready_tx: Option<oneshot::Sender<()>>,
     runner_id: String,
@@ -3558,6 +3563,21 @@ async fn forward_pi_events(
     loop {
         match subscription.next().await {
             Some(PiSubscriptionEvent::Event(canonical_event)) => {
+                // Invalidate the messages cache on agent.idle so subsequent
+                // get_messages requests fetch fresh data from hstry instead
+                // of serving stale cached messages.
+                if matches!(
+                    canonical_event.payload,
+                    oqto_protocol::events::EventPayload::AgentIdle
+                ) {
+                    let mut cache = PI_MESSAGES_CACHE.write().await;
+                    if let Some(user_cache) = cache.get_mut(user_id) {
+                        if let Some(entry) = user_cache.entries.remove(session_id) {
+                            user_cache.total_bytes =
+                                user_cache.total_bytes.saturating_sub(entry.size_bytes);
+                        }
+                    }
+                }
                 if event_tx.send(WsEvent::Agent(canonical_event)).is_err() {
                     // WebSocket closed
                     break;

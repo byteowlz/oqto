@@ -313,12 +313,60 @@ pub enum PiSessionCommand {
 // Event Wrapper
 // ============================================================================
 
-/// Canonical event wrapper for the broadcast channel.
+/// Canonical event wrapper for the event distribution channel.
 ///
 /// The pi_manager translates native Pi events into canonical events using
-/// `PiTranslator` and broadcasts them. One native Pi event may produce
-/// multiple canonical events, so each is broadcast individually.
+/// `PiTranslator` and distributes them. One native Pi event may produce
+/// multiple canonical events, so each is distributed individually.
 pub type PiEventWrapper = CanonicalEvent;
+
+// ============================================================================
+// Per-Subscriber Event Distribution
+// ============================================================================
+
+/// Thread-safe collection of per-subscriber unbounded channels.
+///
+/// Unlike `tokio::broadcast`, this guarantees **zero event loss**: each
+/// subscriber gets its own unbounded `mpsc` channel. A slow subscriber
+/// does not cause other subscribers to lose events. Dead subscribers
+/// (closed channels) are pruned lazily on each `publish()` call.
+#[derive(Clone)]
+pub struct EventSubscribers {
+    inner: Arc<RwLock<Vec<mpsc::UnboundedSender<PiEventWrapper>>>>,
+}
+
+impl EventSubscribers {
+    /// Create a new empty subscriber set.
+    pub fn new() -> Self {
+        Self {
+            inner: Arc::new(RwLock::new(Vec::new())),
+        }
+    }
+
+    /// Add a new subscriber. Returns the receiving end of the channel.
+    pub async fn subscribe(&self) -> mpsc::UnboundedReceiver<PiEventWrapper> {
+        let (tx, rx) = mpsc::unbounded_channel();
+        self.inner.write().await.push(tx);
+        rx
+    }
+
+    /// Publish an event to all subscribers. Dead subscribers are removed.
+    pub async fn publish(&self, event: &PiEventWrapper) {
+        let mut subs = self.inner.write().await;
+        subs.retain(|tx| tx.send(event.clone()).is_ok());
+    }
+
+    /// Number of active subscribers.
+    pub async fn subscriber_count(&self) -> usize {
+        let subs = self.inner.read().await;
+        subs.len()
+    }
+
+    /// Remove all subscribers (e.g., on session shutdown).
+    pub async fn clear(&self) {
+        self.inner.write().await.clear();
+    }
+}
 
 // ============================================================================
 // Internal Session Structure
@@ -355,8 +403,8 @@ struct PiSession {
     hstry_external_id: HstryExternalId,
     /// Last activity timestamp (shared with reader/command tasks).
     last_activity: Arc<RwLock<Instant>>,
-    /// Broadcast channel for events.
-    event_tx: broadcast::Sender<PiEventWrapper>,
+    /// Per-subscriber event distribution (replaces broadcast to prevent event loss).
+    subscribers: EventSubscribers,
     /// Command sender to the session task.
     cmd_tx: mpsc::Sender<PiSessionCommand>,
     /// Pending response waiters (shared with reader task).
@@ -371,8 +419,8 @@ struct PiSession {
 }
 
 impl PiSession {
-    fn subscriber_count(&self) -> usize {
-        self.event_tx.receiver_count()
+    async fn subscriber_count(&self) -> usize {
+        self.subscribers.subscriber_count().await
     }
 
     /// Return the OS PID of the child process, if available.
@@ -699,13 +747,11 @@ impl PiSessionManager {
         let stderr = child.stderr.take();
 
         // Create channels
-        // Per-session event broadcast. Each subscriber (browser tab) gets its
-        // own receiver. If a subscriber falls behind (e.g., browser tab in
-        // background, backend stalled on heavy query), its receiver gets
-        // Lagged(n) and the runner emits stream.resync_required.
-        // 1024 gives ~3-5 seconds of burst capacity during fast text_delta
-        // streaming before lag occurs.
-        let (event_tx, _) = broadcast::channel::<PiEventWrapper>(1024);
+        // Per-subscriber event distribution. Each subscriber (browser tab)
+        // gets its own unbounded mpsc channel, guaranteeing zero event loss.
+        // Unlike broadcast, a slow subscriber never causes events to be
+        // dropped for other subscribers (or itself).
+        let subscribers = EventSubscribers::new();
         let (cmd_tx, cmd_rx) = mpsc::channel::<PiSessionCommand>(32);
 
         // Shared state for the session
@@ -720,7 +766,7 @@ impl PiSessionManager {
         // Spawn stdout reader task
         let reader_handle = {
             let session_id = session_id.clone();
-            let event_tx = event_tx.clone();
+            let subscribers_for_reader = subscribers.clone();
             let state = Arc::clone(&state);
             let last_activity = Arc::clone(&last_activity);
             let hstry_client = self.hstry_client.clone();
@@ -737,7 +783,7 @@ impl PiSessionManager {
                     session_id,
                     stdout,
                     stderr,
-                    event_tx,
+                    subscribers_for_reader,
                     state,
                     last_activity,
                     hstry_client,
@@ -781,7 +827,7 @@ impl PiSessionManager {
             state: Arc::clone(&state),
             hstry_external_id,
             last_activity: Arc::clone(&last_activity),
-            event_tx,
+            subscribers,
             cmd_tx,
             pending_responses,
             pending_client_id,
@@ -955,7 +1001,7 @@ impl PiSessionManager {
     }
 
     /// Subscribe to events from a session.
-    pub async fn subscribe(&self, session_id: &str) -> Result<broadcast::Receiver<PiEventWrapper>> {
+    pub async fn subscribe(&self, session_id: &str) -> Result<mpsc::UnboundedReceiver<PiEventWrapper>> {
         let resolved_id = self
             .resolve_session_key(session_id)
             .await
@@ -965,7 +1011,7 @@ impl PiSessionManager {
             .get(&resolved_id)
             .ok_or_else(|| anyhow::anyhow!("Session '{}' not found", session_id))?;
 
-        Ok(session.event_tx.subscribe())
+        Ok(session.subscribers.subscribe().await)
     }
 
     /// List all sessions.
@@ -986,21 +1032,20 @@ impl PiSessionManager {
             Option<String>,
         )> = {
             let sessions = self.sessions.read().await;
-            sessions
-                .values()
-                .map(|s| {
-                    (
-                        s.id.clone(),
-                        Arc::clone(&s.hstry_external_id),
-                        Arc::clone(&s.state),
-                        Arc::clone(&s.last_activity),
-                        s.subscriber_count(),
-                        s.config.cwd.clone(),
-                        s.config.provider.clone(),
-                        s.config.model.clone(),
-                    )
-                })
-                .collect()
+            let mut snaps = Vec::with_capacity(sessions.len());
+            for s in sessions.values() {
+                snaps.push((
+                    s.id.clone(),
+                    Arc::clone(&s.hstry_external_id),
+                    Arc::clone(&s.state),
+                    Arc::clone(&s.last_activity),
+                    s.subscriber_count().await,
+                    s.config.cwd.clone(),
+                    s.config.provider.clone(),
+                    s.config.model.clone(),
+                ));
+            }
+            snaps
         };
 
         let mut infos = Vec::with_capacity(snapshots.len());
@@ -2505,25 +2550,24 @@ impl PiSessionManager {
             Arc<RwLock<PiSessionState>>,
             Arc<RwLock<Instant>>,
             usize,
-            broadcast::Sender<PiEventWrapper>,
+            EventSubscribers,
             mpsc::Sender<PiSessionCommand>,
             Option<u32>,
         )> = {
             let sessions = self.sessions.read().await;
-            sessions
-                .iter()
-                .map(|(id, session)| {
-                    (
-                        id.clone(),
-                        Arc::clone(&session.state),
-                        Arc::clone(&session.last_activity),
-                        session.subscriber_count(),
-                        session.event_tx.clone(),
-                        session.cmd_tx.clone(),
-                        session.child_pid(),
-                    )
-                })
-                .collect()
+            let mut snaps = Vec::with_capacity(sessions.len());
+            for (id, session) in sessions.iter() {
+                snaps.push((
+                    id.clone(),
+                    Arc::clone(&session.state),
+                    Arc::clone(&session.last_activity),
+                    session.subscribers.subscriber_count().await,
+                    session.subscribers.clone(),
+                    session.cmd_tx.clone(),
+                    session.child_pid(),
+                ));
+            }
+            snaps
         };
 
         for (id, state, last_activity_arc, subscriber_count, session_event_tx, cmd_tx, child_pid) in
@@ -2558,14 +2602,14 @@ impl PiSessionManager {
                                 phase: Some(AgentPhase::Generating),
                             },
                         };
-                        let _ = session_event_tx.send(error_event);
+                        session_event_tx.publish(&error_event).await;
                         let idle_event = CanonicalEvent {
                             session_id: id.clone(),
                             runner_id: self.config.runner_id.clone(),
                             ts: chrono::Utc::now().timestamp_millis(),
                             payload: EventPayload::AgentIdle,
                         };
-                        let _ = session_event_tx.send(idle_event);
+                        session_event_tx.publish(&idle_event).await;
                         continue;
                     }
                 }
@@ -2590,7 +2634,7 @@ impl PiSessionManager {
                                 ts: chrono::Utc::now().timestamp_millis(),
                                 payload: EventPayload::AgentIdle,
                             };
-                            let _ = session_event_tx.send(idle_event);
+                            session_event_tx.publish(&idle_event).await;
                         }
                         continue;
                     }
@@ -2622,14 +2666,14 @@ impl PiSessionManager {
                                 phase: Some(AgentPhase::Generating),
                             },
                         };
-                        let _ = session_event_tx.send(error_event);
+                        session_event_tx.publish(&error_event).await;
                         let idle_event = CanonicalEvent {
                             session_id: id.clone(),
                             runner_id: self.config.runner_id.clone(),
                             ts: chrono::Utc::now().timestamp_millis(),
                             payload: EventPayload::AgentIdle,
                         };
-                        let _ = session_event_tx.send(idle_event);
+                        session_event_tx.publish(&idle_event).await;
                     } else {
                         // Not yet at hard timeout -- send health check ping.
                         debug!(
@@ -2667,7 +2711,7 @@ impl PiSessionManager {
         session_id: String,
         stdout: tokio::process::ChildStdout,
         stderr: Option<tokio::process::ChildStderr>,
-        event_tx: broadcast::Sender<PiEventWrapper>,
+        event_tx: EventSubscribers,
         state: Arc<RwLock<PiSessionState>>,
         last_activity: Arc<RwLock<Instant>>,
         hstry_client: Option<HstryClient>,
@@ -2977,7 +3021,7 @@ impl PiSessionManager {
                                             readable_id,
                                         },
                                 };
-                                    let _ = event_tx.send(title_event);
+                                    event_tx.publish(&title_event).await;
 
                                     let client = client.clone();
                                     let eid = hstry_external_id.read().await.clone();
@@ -3261,7 +3305,7 @@ impl PiSessionManager {
                         ts,
                         payload: enriched_payload,
                     };
-                    let _ = event_tx.send(canonical_event);
+                    event_tx.publish(&canonical_event).await;
 
                     // Sync title changes to hstry immediately
                     if let oqto_protocol::events::EventPayload::SessionTitleChanged {
@@ -3383,7 +3427,7 @@ impl PiSessionManager {
             ts: chrono::Utc::now().timestamp_millis(),
             payload: exit_event,
         };
-        let _ = event_tx.send(canonical_event);
+        event_tx.publish(&canonical_event).await;
         *state.write().await = PiSessionState::Stopping;
     }
 

@@ -824,27 +824,28 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 						streamingMessageRef.current.isStreaming = false;
 						streamingMessageRef.current = null;
 					}
-					// Discard any stale deferred messages -- they may be
-					// incomplete (fetched mid-stream before all messages
-					// were persisted).
+					// Discard deferred messages -- we will fetch
+					// authoritative state from hstry below.
 					deferredServerMessagesRef.current = null;
-					// Refresh session state (stats, model info, etc.) but
-					// do NOT re-fetch messages unless we explicitly need
-					// to recover after a reattach. The streaming deltas
-					// already built the local message state; fetching from
-					// hstry here would cause a scroll-to-bottom when
-					// mergeServerMessages replaces the array reference.
+					// Always fetch authoritative messages from hstry on
+					// agent.idle. The backend persists to hstry BEFORE
+					// broadcasting agent.idle, so the fetch is guaranteed
+					// to return the complete conversation. This makes the
+					// frontend self-healing: even if streaming events were
+					// dropped (broadcast overflow, WebSocket disconnect),
+					// the authoritative fetch repairs the local state.
+					//
+					// The small delay (150ms) avoids a visual flash when
+					// the streaming-built state is replaced by the fetch.
 					{
 						const sessionId = activeSessionIdRef.current;
 						if (sessionId) {
 							setTimeout(() => {
 								const manager = getWsManager();
 								manager.agentGetState(sessionId);
-								if (forceMessageSyncRef.current.has(sessionId)) {
-									forceMessageSyncRef.current.delete(sessionId);
-									void fetchHistoryMessages(sessionId);
-								}
-							}, 100);
+								forceMessageSyncRef.current.delete(sessionId);
+								void fetchHistoryMessages(sessionId);
+							}, 150);
 						}
 					}
 					break;

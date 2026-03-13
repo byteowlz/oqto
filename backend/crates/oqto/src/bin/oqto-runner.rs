@@ -3395,7 +3395,11 @@ impl Runner {
     }
 
     /// Handle Pi subscription streaming.
-    /// Subscribes to the PiSessionManager's broadcast channel and streams events.
+    /// Subscribes to the PiSessionManager's per-subscriber channel and streams events.
+    ///
+    /// Each subscriber gets its own unbounded mpsc channel, guaranteeing zero
+    /// event loss. Unlike the old broadcast approach, a slow subscriber never
+    /// causes events to be dropped.
     async fn handle_pi_subscribe(
         &self,
         session_id: &str,
@@ -3425,55 +3429,20 @@ impl Runner {
         let json = serde_json::to_string(&resp).unwrap();
         writer.write_all(format!("{}\n", json).as_bytes()).await?;
 
-        // Stream events until the session closes or client disconnects
-        loop {
-            match rx.recv().await {
-                Ok(event_wrapper) => {
-                    // Forward canonical event directly (pi_manager already translated)
-                    let resp = RunnerResponse::PiEvent(event_wrapper);
-                    let json = serde_json::to_string(&resp).unwrap();
-                    if writer
-                        .write_all(format!("{}\n", json).as_bytes())
-                        .await
-                        .is_err()
-                    {
-                        // Client disconnected
-                        debug!("Pi subscription client disconnected: {}", session_id);
-                        break;
-                    }
-                }
-                Err(broadcast::error::RecvError::Lagged(n)) => {
-                    warn!(
-                        "Pi subscription lagged, missed {} events for session {}",
-                        n, session_id
-                    );
-                    // Emit a resync_required event so the client knows to
-                    // refetch state+messages instead of trusting the delta stream.
-                    let resync_event = oqto_protocol::events::Event {
-                        session_id: session_id.to_string(),
-                        runner_id: String::new(),
-                        ts: chrono::Utc::now().timestamp_millis(),
-                        payload: oqto_protocol::events::EventPayload::StreamResyncRequired {
-                            dropped_count: n,
-                            reason: format!("broadcast subscriber lagged, missed {} events", n),
-                        },
-                    };
-                    let resp = RunnerResponse::PiEvent(resync_event);
-                    let json = serde_json::to_string(&resp).unwrap();
-                    if writer
-                        .write_all(format!("{}\n", json).as_bytes())
-                        .await
-                        .is_err()
-                    {
-                        break;
-                    }
-                    // Continue receiving -- the client will resync
-                }
-                Err(broadcast::error::RecvError::Closed) => {
-                    // Session ended
-                    info!("Pi session closed, ending subscription: {}", session_id);
-                    break;
-                }
+        // Stream events until the session closes or client disconnects.
+        // The channel is unbounded per-subscriber so events are never dropped.
+        // When the session ends, the sender side is dropped and recv() returns None.
+        while let Some(event_wrapper) = rx.recv().await {
+            let resp = RunnerResponse::PiEvent(event_wrapper);
+            let json = serde_json::to_string(&resp).unwrap();
+            if writer
+                .write_all(format!("{}\n", json).as_bytes())
+                .await
+                .is_err()
+            {
+                // Client disconnected
+                debug!("Pi subscription client disconnected: {}", session_id);
+                break;
             }
         }
 

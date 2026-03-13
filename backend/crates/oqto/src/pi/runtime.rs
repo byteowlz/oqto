@@ -272,32 +272,39 @@ impl LocalPiProcess {
             let display_line: String = line.chars().take(200).collect();
             debug!("Received from pi: {}", display_line);
 
-            match PiMessage::parse(&line) {
-                Ok(PiMessage::Response(response)) => {
-                    debug!(
-                        "Parsed as response, id={:?}, success={}",
-                        response.id, response.success
-                    );
-                    if let Some(ref id) = response.id {
-                        let mut pending = pending_responses.write().await;
-                        if let Some(tx) = pending.remove(id) {
-                            let _ = tx.send(response);
+            // Use parse_all to handle concatenated JSON objects.
+            // Pi can flush multiple JSON objects on a single stdout line when
+            // the output buffer fills at 4096 bytes (e.g. `{...}{...}\n`).
+            // Using parse() instead of parse_all() silently drops all events
+            // on such lines.
+            for parse_result in PiMessage::parse_all(&line) {
+                match parse_result {
+                    Ok(PiMessage::Response(response)) => {
+                        debug!(
+                            "Parsed as response, id={:?}, success={}",
+                            response.id, response.success
+                        );
+                        if let Some(ref id) = response.id {
+                            let mut pending = pending_responses.write().await;
+                            if let Some(tx) = pending.remove(id) {
+                                let _ = tx.send(response);
+                            } else {
+                                warn!("Received response for unknown request ID: {}", id);
+                            }
                         } else {
-                            warn!("Received response for unknown request ID: {}", id);
+                            warn!("Response has no ID: {:?}", response);
                         }
-                    } else {
-                        warn!("Response has no ID: {:?}", response);
                     }
-                }
-                Ok(PiMessage::Event(event)) => {
-                    let _ = event_tx.send(event);
-                }
-                Err(e) => {
-                    let display_line: String = line.chars().take(200).collect();
-                    warn!(
-                        "Failed to parse pi message: {:?}, line: {}",
-                        e, display_line
-                    );
+                    Ok(PiMessage::Event(event)) => {
+                        let _ = event_tx.send(event);
+                    }
+                    Err(e) => {
+                        let display_line: String = line.chars().take(200).collect();
+                        warn!(
+                            "Failed to parse pi message: {}, line: {}",
+                            e, display_line
+                        );
+                    }
                 }
             }
         }
@@ -548,25 +555,30 @@ impl RunnerPiProcess {
         let display_line: String = line.chars().take(200).collect();
         debug!("Received from pi via runner: {}", display_line);
 
-        match PiMessage::parse(line) {
-            Ok(PiMessage::Response(response)) => {
-                if let Some(ref id) = response.id {
-                    let mut pending = pending_responses.write().await;
-                    if let Some(tx) = pending.remove(id) {
-                        let _ = tx.send(response);
-                    } else {
-                        warn!("Received response for unknown request ID: {}", id);
+        // Use parse_all to handle concatenated JSON objects.
+        // Pi can flush multiple JSON objects on a single stdout line when
+        // the output buffer fills at 4096 bytes (e.g. `{...}{...}\n`).
+        for parse_result in PiMessage::parse_all(line) {
+            match parse_result {
+                Ok(PiMessage::Response(response)) => {
+                    if let Some(ref id) = response.id {
+                        let mut pending = pending_responses.write().await;
+                        if let Some(tx) = pending.remove(id) {
+                            let _ = tx.send(response);
+                        } else {
+                            warn!("Received response for unknown request ID: {}", id);
+                        }
                     }
                 }
-            }
-            Ok(PiMessage::Event(event)) => {
-                let _ = event_tx.send(event);
-            }
-            Err(e) => {
-                warn!(
-                    "Failed to parse pi message: {:?}, line: {}",
-                    e, display_line
-                );
+                Ok(PiMessage::Event(event)) => {
+                    let _ = event_tx.send(event);
+                }
+                Err(e) => {
+                    warn!(
+                        "Failed to parse pi message: {}, line: {}",
+                        e, display_line
+                    );
+                }
             }
         }
     }
