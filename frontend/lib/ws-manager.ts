@@ -174,6 +174,114 @@ class WsConnectionManager {
 	> = new Map();
 	private resyncTimeout: ReturnType<typeof setTimeout> | null = null;
 
+	// --- iOS/mobile visibility handling ---
+	// iOS Safari kills WebSocket connections when the page is backgrounded
+	// without firing a close event. We detect this via visibilitychange and
+	// force a health check + reconnect when the page becomes visible again.
+	private boundVisibilityHandler: (() => void) | null = null;
+	private boundOnlineHandler: (() => void) | null = null;
+	private lastVisibilityHiddenAt = 0;
+
+	constructor() {
+		if (typeof document !== "undefined") {
+			this.boundVisibilityHandler = this.handleVisibilityChange.bind(this);
+			document.addEventListener("visibilitychange", this.boundVisibilityHandler);
+		}
+		if (typeof window !== "undefined") {
+			this.boundOnlineHandler = this.handleOnline.bind(this);
+			window.addEventListener("online", this.boundOnlineHandler);
+		}
+	}
+
+	/**
+	 * Handle network recovery (WiFi -> cellular, tunnel reconnect, etc.).
+	 * The WebSocket is guaranteed dead after an offline->online transition.
+	 */
+	private handleOnline(): void {
+		console.log("[ws-mux] Network online event, checking connection...");
+		if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+			this.reconnectAttempt = 0;
+			this.connectionEpoch++;
+			this.setConnectionState("reconnecting");
+			this.createWebSocket();
+		}
+	}
+
+	/**
+	 * Handle page visibility changes (critical for iOS Safari).
+	 *
+	 * When the page goes hidden, record the timestamp. When it becomes
+	 * visible again, check if the WebSocket is still alive. If the page
+	 * was hidden for more than 5 seconds, assume the connection may be
+	 * dead and force a health check.
+	 */
+	private handleVisibilityChange(): void {
+		if (document.hidden) {
+			this.lastVisibilityHiddenAt = Date.now();
+			return;
+		}
+
+		// Page became visible
+		const hiddenDuration = this.lastVisibilityHiddenAt > 0
+			? Date.now() - this.lastVisibilityHiddenAt
+			: 0;
+
+		// Skip check if hidden for less than 5 seconds
+		if (hiddenDuration < 5_000) return;
+
+		console.log(
+			`[ws-mux] Page visible after ${Math.round(hiddenDuration / 1000)}s hidden, checking connection...`,
+		);
+
+		if (!this.ws || this.ws.readyState === WebSocket.CLOSED) {
+			// WebSocket is definitely dead -- reconnect immediately
+			console.log("[ws-mux] WebSocket dead after background, reconnecting...");
+			this.reconnectAttempt = 0; // Reset backoff for user-initiated recovery
+			this.connectionEpoch++;
+			this.setConnectionState("reconnecting");
+			this.createWebSocket();
+			return;
+		}
+
+		if (this.ws.readyState === WebSocket.OPEN) {
+			// WebSocket appears open but may be a zombie (iOS doesn't fire
+			// onclose after suspension). Send a lightweight probe: if we
+			// don't get a response within 5 seconds, force close + reconnect.
+			const probeId = `probe-${Date.now()}`;
+			const probeTimeout = setTimeout(() => {
+				this.pendingRequests.delete(probeId);
+				console.warn(
+					"[ws-mux] Health probe timed out after background, forcing reconnect...",
+				);
+				// Force close the zombie connection so onclose fires
+				try {
+					this.ws?.close(4000, "Health probe timeout");
+				} catch {
+					// ignore
+				}
+				// onclose handler will trigger scheduleReconnect
+			}, 5_000);
+
+			this.pendingRequests.set(probeId, () => {
+				clearTimeout(probeTimeout);
+				this.pendingRequests.delete(probeId);
+				console.log("[ws-mux] Health probe succeeded, connection alive");
+				// Connection is alive -- trigger resync for stale data
+				if (this.resyncHandlers.size > 0) {
+					this.scheduleResync(this.connectionEpoch);
+				}
+			});
+
+			// Use list_sessions as a lightweight probe
+			this.send({
+				channel: "agent",
+				session_id: "_system",
+				cmd: "list_sessions",
+				id: probeId,
+			});
+		}
+	}
+
 	// ========================================================================
 	// Public API
 	// ========================================================================
@@ -354,6 +462,16 @@ class WsConnectionManager {
 			this.ws.onclose = null; // Prevent reconnection
 			this.ws.close(1000, "Client disconnect");
 			this.ws = null;
+		}
+
+		// Remove visibility and online handlers
+		if (this.boundVisibilityHandler && typeof document !== "undefined") {
+			document.removeEventListener("visibilitychange", this.boundVisibilityHandler);
+			this.boundVisibilityHandler = null;
+		}
+		if (this.boundOnlineHandler && typeof window !== "undefined") {
+			window.removeEventListener("online", this.boundOnlineHandler);
+			this.boundOnlineHandler = null;
 		}
 	}
 
