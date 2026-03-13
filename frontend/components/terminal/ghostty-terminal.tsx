@@ -90,6 +90,20 @@ function extractSessionId(wsUrl: string): string {
 	}
 }
 
+// Stable terminal IDs per workspace path to avoid mismatches when tabs remount.
+const workspaceTerminalIds = new Map<string, string>();
+
+function getOrCreateTerminalId(workspacePath: string): string {
+	const existing = workspaceTerminalIds.get(workspacePath);
+	if (existing) return existing;
+	const id =
+		typeof crypto !== "undefined" && crypto.randomUUID
+			? crypto.randomUUID()
+			: `terminal-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+	workspaceTerminalIds.set(workspacePath, id);
+	return id;
+}
+
 // Track initialization state globally
 let ghosttyInitialized = false;
 let ghosttyInitFailed = false;
@@ -690,12 +704,17 @@ export const MuxGhosttyTerminal = forwardRef<
 		const containerRef = useRef<HTMLDivElement | null>(null);
 		const terminalRef = useRef<Terminal | null>(null);
 		const fitAddonRef = useRef<FitAddon | null>(null);
-		const terminalIdRef = useRef<string>(
-			typeof crypto !== "undefined" && crypto.randomUUID
-				? crypto.randomUUID()
-				: `terminal-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+		const stableTerminalId = useMemo(
+			() => getOrCreateTerminalId(workspacePath),
+			[workspacePath],
 		);
+		const terminalIdRef = useRef<string>(stableTerminalId);
 		const isReadyRef = useRef(false);
+		const openRetryTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+		const openWatchdogTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+		const lastOpenSentAtRef = useRef(0);
+		const openAttemptsRef = useRef(0);
+		const lastTerminalErrorRef = useRef<string | null>(null);
 		const [status, setStatus] = useState<
 			"waiting" | "connecting" | "connected" | "error"
 		>("connecting");
@@ -713,6 +732,12 @@ export const MuxGhosttyTerminal = forwardRef<
 				});
 			},
 		}));
+
+		useEffect(() => {
+			terminalIdRef.current = stableTerminalId;
+			openAttemptsRef.current = 0;
+			lastTerminalErrorRef.current = null;
+		}, [stableTerminalId]);
 
 		// Capture props as local constants so biome sees them as valid effect deps
 		const currentTheme = theme;
@@ -822,6 +847,27 @@ export const MuxGhosttyTerminal = forwardRef<
 				workspacePath,
 			);
 
+			const clearOpenRetry = () => {
+				if (openRetryTimeoutRef.current) {
+					clearTimeout(openRetryTimeoutRef.current);
+					openRetryTimeoutRef.current = null;
+				}
+			};
+			const clearOpenWatchdog = () => {
+				if (openWatchdogTimeoutRef.current) {
+					clearTimeout(openWatchdogTimeoutRef.current);
+					openWatchdogTimeoutRef.current = null;
+				}
+			};
+
+			const scheduleOpenRetry = () => {
+				if (openRetryTimeoutRef.current) return;
+				openRetryTimeoutRef.current = setTimeout(() => {
+					openRetryTimeoutRef.current = null;
+					sendOpen();
+				}, 120);
+			};
+
 			const sendOpen = () => {
 				const terminal = terminalRef.current;
 				console.log(
@@ -831,13 +877,15 @@ export const MuxGhosttyTerminal = forwardRef<
 					workspacePath,
 				);
 				if (!terminal) {
-					console.log(
-						"[MuxTerminal] No terminal ref, scheduling retry in 100ms",
-					);
-					// Terminal not ready yet, retry after a short delay
-					setTimeout(sendOpen, 100);
+					console.log("[MuxTerminal] No terminal ref, scheduling retry in 120ms");
+					scheduleOpenRetry();
 					return;
 				}
+				const now = Date.now();
+				if (now - lastOpenSentAtRef.current < 400) {
+					return;
+				}
+				lastOpenSentAtRef.current = now;
 				const { cols, rows } = terminal;
 				console.log("[MuxTerminal] Sending terminal open:", {
 					terminal_id: terminalIdRef.current,
@@ -853,17 +901,27 @@ export const MuxGhosttyTerminal = forwardRef<
 					cols,
 					rows,
 				});
+				clearOpenWatchdog();
+				openWatchdogTimeoutRef.current = setTimeout(() => {
+					if (isReadyRef.current) return;
+					openAttemptsRef.current += 1;
+					if (openAttemptsRef.current > 4) {
+						console.error("[MuxTerminal] open watchdog exceeded max retries");
+						lastTerminalErrorRef.current =
+							lastTerminalErrorRef.current ?? "Terminal did not open in time";
+						setStatus("error");
+						return;
+					}
+					console.warn("[MuxTerminal] open watchdog fired, retrying terminal open");
+					setStatus("connecting");
+					sendOpen();
+				}, 8000);
 			};
 
-			if (manager.isConnected) {
-				console.log(
-					"[MuxTerminal] Manager already connected, calling sendOpen",
-				);
-				sendOpen();
-			}
 			const unsubscribeState = manager.onConnectionState((state) => {
 				console.log("[MuxTerminal] Connection state changed:", state);
 				if (state === "connected") {
+					setStatus("connecting");
 					sendOpen();
 				}
 			});
@@ -885,6 +943,10 @@ export const MuxGhosttyTerminal = forwardRef<
 					case "opened":
 						console.log("[MuxTerminal] Terminal opened!");
 						isReadyRef.current = true;
+						openAttemptsRef.current = 0;
+						lastTerminalErrorRef.current = null;
+						clearOpenRetry();
+						clearOpenWatchdog();
 						setStatus("connected");
 						if (fitAddonRef.current) {
 							fitAddonRef.current.fit();
@@ -899,11 +961,18 @@ export const MuxGhosttyTerminal = forwardRef<
 					case "exit":
 						console.log("[MuxTerminal] Terminal exited");
 						isReadyRef.current = false;
+						clearOpenWatchdog();
 						setStatus("error");
 						break;
 					case "error":
 						console.log("[MuxTerminal] Terminal error:", terminalEvent);
 						isReadyRef.current = false;
+						clearOpenWatchdog();
+						lastTerminalErrorRef.current = terminalEvent.error;
+						if (terminalEvent.error?.includes("Ports") && terminalEvent.error.includes("still in use")) {
+							openAttemptsRef.current = 99;
+							clearOpenRetry();
+						}
 						setStatus("error");
 						break;
 				}
@@ -912,6 +981,8 @@ export const MuxGhosttyTerminal = forwardRef<
 			return () => {
 				unsubscribe();
 				unsubscribeState();
+				clearOpenRetry();
+				clearOpenWatchdog();
 				if (isReadyRef.current) {
 					manager.send({
 						channel: "terminal",
@@ -937,9 +1008,9 @@ export const MuxGhosttyTerminal = forwardRef<
 					}}
 				/>
 				{status !== "connected" && (
-					<div className="absolute inset-0 flex items-center justify-center text-xs font-mono text-muted-foreground pointer-events-none">
+					<div className="absolute inset-0 flex items-center justify-center text-xs font-mono text-muted-foreground pointer-events-none px-4 text-center">
 						{status === "error"
-							? "Terminal disconnected"
+							? lastTerminalErrorRef.current ?? "Terminal unavailable"
 							: "Connecting terminal..."}
 					</div>
 				)}

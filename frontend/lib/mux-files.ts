@@ -84,26 +84,56 @@ export async function fetchFileTreeMux(
 
 	const manager = getWsManager();
 	const request = (async () => {
-		const response = (await manager.sendAndWait(
-			{
-				channel: "files",
-				type: "tree",
-				path,
-				depth,
-				include_hidden: includeHidden,
-				workspace_path: workspacePath,
-			},
-			timeoutMs,
-		)) as FilesWsEvent;
+		const pageLimit = 1000;
+		let offset = 0;
+		const mergedEntries: FileTreeNode[] = [];
+		let truncated = false;
+		let pageCount = 0;
+		const maxPages = 50;
 
-		if (response.type !== "tree_result") {
-			if (response.type === "error") {
-				throw new Error(response.error);
+		while (pageCount < maxPages) {
+			pageCount += 1;
+			const response = (await manager.sendAndWait(
+				{
+					channel: "files",
+					type: "tree",
+					path,
+					depth,
+					include_hidden: includeHidden,
+					offset,
+					limit: pageLimit,
+					workspace_path: workspacePath,
+				},
+				timeoutMs,
+			)) as FilesWsEvent;
+
+			if (response.type !== "tree_result") {
+				if (response.type === "error") {
+					throw new Error(response.error);
+				}
+				throw new Error(`Unexpected file tree response: ${response.type}`);
 			}
-			throw new Error(`Unexpected file tree response: ${response.type}`);
+
+			mergedEntries.push(...response.entries);
+			truncated = truncated || Boolean(response.truncated);
+
+			const nextOffset = response.next_offset;
+			if (typeof nextOffset === "number" && nextOffset > offset) {
+				offset = nextOffset;
+				continue;
+			}
+			break;
 		}
-		treeCache.set(key, { timestamp: Date.now(), entries: response.entries });
-		return response.entries;
+
+		if (pageCount >= maxPages) {
+			truncated = true;
+		}
+
+		// Do not cache truncated trees; they are partial snapshots.
+		if (!truncated) {
+			treeCache.set(key, { timestamp: Date.now(), entries: mergedEntries });
+		}
+		return mergedEntries;
 	})();
 
 	treeInFlight.set(key, request);

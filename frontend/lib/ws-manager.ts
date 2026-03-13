@@ -2,10 +2,9 @@
  * Multiplexed WebSocket Connection Manager.
  *
  * Provides a single WebSocket connection per user that handles multiple channels:
- * - pi: Pi session commands and events
- * - files: File operations (future)
- * - terminal: Terminal I/O (future)
- * - hstry: History queries (future)
+ * - agent: Agent session commands and events
+ * - files: File operations
+ * - terminal: Terminal I/O
  * - system: System events (connection status, errors)
  *
  * Features:
@@ -830,6 +829,46 @@ class WsConnectionManager {
 		} catch {
 			// Best-effort -- session may not be active on runner
 		}
+	}
+
+	async agentGetForkPoints(
+		sessionId: string,
+	): Promise<Array<{ entry_id: string; role?: string; preview: string }>> {
+		const event = await this.sendAndWait({
+			channel: "agent",
+			session_id: sessionId,
+			cmd: "get_fork_points",
+		});
+		const resp = this.extractCommandResponse(event);
+		if (resp?.success) {
+			if (!Array.isArray(resp.data)) return [];
+			return (resp.data as Array<{ entry_id?: string; role?: string; preview?: string }>)
+				.filter((item) => typeof item.entry_id === "string")
+				.map((item) => ({
+					entry_id: item.entry_id as string,
+					role: item.role,
+					preview: item.preview ?? "",
+				}));
+		}
+		throw new Error(resp?.error ?? "Failed to fetch fork points");
+	}
+
+	async agentFork(
+		sessionId: string,
+		entryId: string,
+	): Promise<{ text?: string; cancelled?: boolean }> {
+		const event = await this.sendAndWait({
+			channel: "agent",
+			session_id: sessionId,
+			cmd: "fork",
+			entry_id: entryId,
+		});
+		const resp = this.extractCommandResponse(event);
+		if (!resp?.success) {
+			throw new Error(resp?.error ?? "Failed to fork session");
+		}
+		const data = (resp.data ?? {}) as { text?: string; cancelled?: boolean };
+		return { text: data.text, cancelled: data.cancelled };
 	}
 
 	/**

@@ -1604,19 +1604,42 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 			{ create: true },
 		);
 
-		await manager.ensureConnected(4000);
 		try {
-			await manager.waitForSessionReady(sessionId, 1500);
-		} catch (err) {
-			// If session wasn't created by the client (e.g. from history),
-			// avoid spawning a duplicate. Verify existence with get_state.
+			await manager.ensureConnected(4000);
 			try {
-				await manager.agentGetStateWait(sessionId);
-				manager.subscribeAgentSession(sessionId, stableHandler, sessionConfig, {
-					create: false,
-				});
+				await manager.waitForSessionReady(sessionId, 1500);
 			} catch {
-				throw err;
+				// If session wasn't created by the client (e.g. from history),
+				// avoid spawning a duplicate. Verify existence with get_state.
+				try {
+					await manager.agentGetStateWait(sessionId);
+					unsubscribeRef.current?.();
+					unsubscribeRef.current = manager.subscribeAgentSession(
+						sessionId,
+						stableHandler,
+						sessionConfig,
+						{ create: false },
+					);
+				} catch {
+					// Do not fail hard here. We keep the subscription and return
+					// the session ID so outbound messages can queue until the
+					// runner/session becomes ready.
+					if (isPiDebugEnabled()) {
+						console.warn(
+							"[useChat] ensureSession: session not ready yet, continuing with queued sends",
+							sessionId,
+						);
+					}
+				}
+			}
+		} catch {
+			// Keep going in degraded mode: ws-manager will queue outbound
+			// messages and flush after reconnect.
+			if (isPiDebugEnabled()) {
+				console.warn(
+					"[useChat] ensureSession: ws connect failed, continuing with queued sends",
+					sessionId,
+				);
 			}
 		}
 		return sessionId;
@@ -1705,21 +1728,20 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 				await manager.waitForSessionReady(sessionId, 4000);
 			} catch {
 				// One-shot self-heal for transient reconnect races.
-				// We re-run ensureSession() to force a clean subscription/session check,
-				// then retry readiness with a slightly longer timeout before failing.
+				// If readiness still fails, continue anyway: ws-manager queues
+				// outbound prompt/steer/follow_up until session.create response arrives.
 				try {
 					await new Promise((resolve) => setTimeout(resolve, 200));
 					sessionId = await ensureSession();
 					await manager.ensureConnected(6000);
 					await manager.waitForSessionReady(sessionId, 6000);
-				} catch (err2) {
-					const error =
-						err2 instanceof Error ? err2 : new Error("WebSocket not ready");
-					isStreamingRef.current = false;
-					sendInFlightRef.current = false;
-					setIsAwaitingResponse(false);
-					setError(error);
-					throw error;
+				} catch {
+					if (isPiDebugEnabled()) {
+						console.warn(
+							"[useChat] send: session not ready, sending via queue fallback",
+							sessionId,
+						);
+					}
 				}
 			}
 

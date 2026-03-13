@@ -144,13 +144,19 @@ async function fetchFileTree(
 			// Fast path for normal cases.
 			return await fetchFileTreeMux(workspacePath, path, depth, false, 12000);
 		} catch (error) {
-			// Retry once with a longer timeout for large/shared workspaces or
-			// transient channel stalls.
+			const message = error instanceof Error ? error.message : String(error);
+			const isTimeout = message.includes("Request timeout: tree");
+			if (!isTimeout) {
+				// Connection-loss and protocol errors should surface immediately.
+				// Retrying with a long timeout here causes the UI to look stuck.
+				throw error;
+			}
+			// Retry once with a longer timeout for large/shared workspaces.
 			console.warn("[file-tree] initial fetch timed out, retrying", {
 				workspacePath,
 				path,
 				depth,
-				error: error instanceof Error ? error.message : String(error),
+				error: message,
 			});
 			return fetchFileTreeMux(workspacePath, path, depth, false, 30000);
 		}
@@ -349,6 +355,8 @@ export function FileTreeView({
 	const [error, setError] = useState<string>("");
 	const [loading, setLoading] = useState(false);
 	const [uploading, setUploading] = useState(false);
+	const [retryAttempt, setRetryAttempt] = useState(0);
+	const [isRecovering, setIsRecovering] = useState(false);
 	const [newFolderName, setNewFolderName] = useState<string | null>(null);
 	const [renamingPath, setRenamingPath] = useState<string | null>(null);
 	const [loadingDirs, setLoadingDirs] = useState<Set<string>>(new Set());
@@ -411,6 +419,13 @@ export function FileTreeView({
 	);
 
 	const cacheKey = normalizedWorkspacePath ?? null;
+	const isTransientTreeError = useCallback((message: string) => {
+		return (
+			message.includes("Connection lost") ||
+			message.includes("Request timeout: tree") ||
+			message.includes("WebSocket")
+		);
+	}, []);
 
 	const loadTree = useCallback(
 		async (
@@ -458,21 +473,27 @@ export function FileTreeView({
 				// Cache the result
 				setCachedTree(cacheKey, path, data, INITIAL_DEPTH);
 				setTree(data);
+				setRetryAttempt(0);
+				setIsRecovering(false);
 				if (!preserveState) {
 					updateState({ currentPath: path });
 				}
 				if (!silent) setError("");
 			} catch (err) {
+				const message =
+					err instanceof Error ? err.message : "Unable to load file tree";
 				if (!silent) {
-					setError(
-						err instanceof Error ? err.message : "Unable to load file tree",
-					);
+					setError(message);
+				}
+				if (isTransientTreeError(message)) {
+					setIsRecovering(true);
+					setRetryAttempt((prev) => prev + 1);
 				}
 			} finally {
 				if (!silent) setLoading(false);
 			}
 		},
-		[normalizedWorkspacePath, updateState, cacheKey],
+		[normalizedWorkspacePath, updateState, cacheKey, isTransientTreeError],
 	);
 
 	/** Lazy-load deeper children for a directory when it is expanded. */
@@ -522,10 +543,35 @@ export function FileTreeView({
 	useEffect(() => {
 		if (!normalizedWorkspacePath) {
 			setLoading(false);
+			setIsRecovering(false);
+			setRetryAttempt(0);
 			return;
 		}
 		loadTreeRef.current(currentPath, true);
 	}, [currentPath, normalizedWorkspacePath]);
+
+	// Never-stuck recovery: when we are in transient error state, keep retrying
+	// with bounded backoff and trigger immediate retry on mux reconnect.
+	useEffect(() => {
+		if (!normalizedWorkspacePath || !isRecovering) return;
+
+		const manager = getWsManager();
+		const delay = Math.min(8000, 500 * 2 ** Math.min(retryAttempt, 4));
+		const timer = setTimeout(() => {
+			void loadTreeRef.current(currentPath, true, true);
+		}, delay);
+
+		const unsubscribeState = manager.onConnectionState((state) => {
+			if (state === "connected") {
+				void loadTreeRef.current(currentPath, true, true);
+			}
+		});
+
+		return () => {
+			clearTimeout(timer);
+			unsubscribeState();
+		};
+	}, [normalizedWorkspacePath, isRecovering, retryAttempt, currentPath]);
 
 	// Watch workspace for file changes via inotify (backend-side).
 	// When files are created/modified/deleted, the backend pushes events
@@ -880,7 +926,16 @@ export function FileTreeView({
 	}
 
 	if (error && tree.length === 0) {
-		return <div className="p-4 text-sm text-destructive">{error}</div>;
+		return (
+			<div className="p-4 text-sm text-destructive">
+				{error}
+				{isRecovering && (
+					<span className="ml-2 text-muted-foreground">
+						Retrying automatically (attempt {retryAttempt})...
+					</span>
+				)}
+			</div>
+		);
 	}
 
 	const breadcrumbs = getBreadcrumbs();
@@ -1061,6 +1116,11 @@ export function FileTreeView({
 			{error && (
 				<div className="flex-shrink-0 px-3 py-2 bg-destructive/10 text-destructive text-xs">
 					{error}
+					{isRecovering && (
+						<span className="ml-2 text-muted-foreground">
+							Retrying automatically (attempt {retryAttempt})...
+						</span>
+					)}
 				</div>
 			)}
 

@@ -1,29 +1,23 @@
 {
   "todos": [
     {
-      "id": "46d50d96",
-      "content": "Confirm whether user's latest message reached backend",
+      "id": "cf84efb0",
+      "content": "Locate OpenClaw and Hermes-agent related repos under ../external-repos",
       "status": "completed",
       "priority": "high"
     },
     {
-      "id": "6bcc2f85",
-      "content": "Heal personal/shared runner services for wismut and shared workspaces",
+      "id": "65aa5413",
+      "content": "Inspect document/PDF ingestion flow (upload-time vs read-time)",
       "status": "completed",
       "priority": "high"
     },
     {
-      "id": "138c68b2",
-      "content": "Guide user through immediate reconnection steps and retry",
-      "status": "completed",
-      "priority": "high"
-    },
-    {
-      "id": "1391248d",
-      "content": "Patch transient send failure with session-ready self-heal retry and deploy frontend safely",
+      "id": "14d5b4ee",
+      "content": "Check whether embeddings are optional and summarize implications for oqto/ingestr",
       "status": "completed",
       "priority": "high"
     }
   ],
-  "updated_at": "2026-03-12T13:47:48.077Z"
+  "updated_at": "2026-03-13T14:31:10.238Z"
 }

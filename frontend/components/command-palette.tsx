@@ -112,6 +112,11 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
 		onOpenChange(false);
 	}, [onOpenChange]);
 
+	const openForkList = useCallback(() => {
+		window.dispatchEvent(new Event("oqto:open-fork-list"));
+		onOpenChange(false);
+	}, [onOpenChange]);
+
 	const handleNavigation = useCallback(
 		(appId: string) => {
 			setActiveAppId(appId);
@@ -186,6 +191,11 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
 						<GitBranch className="mr-2 h-4 w-4" />
 						<span>{t("command.openBranchGraph", "Open branch graph")}</span>
 						<CommandShortcut>B</CommandShortcut>
+					</CommandItem>
+					<CommandItem onSelect={openForkList}>
+						<GitBranch className="mr-2 h-4 w-4" />
+						<span>{t("command.openForkList", "Open fork list")}</span>
+						<CommandShortcut>F</CommandShortcut>
 					</CommandItem>
 					<CommandItem onSelect={toggleTheme}>
 						{theme === "dark" ? (

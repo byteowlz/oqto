@@ -26,6 +26,14 @@ import {
 	ContextMenuItem,
 	ContextMenuTrigger,
 } from "@/components/ui/context-menu";
+import {
+	Dialog,
+	DialogContent,
+	DialogDescription,
+	DialogFooter,
+	DialogHeader,
+	DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import {
 	Popover,
@@ -78,6 +86,7 @@ import {
 	FileImage,
 	FileText,
 	FileVideo,
+	GitBranch,
 	Loader2,
 	Paperclip,
 	Send,
@@ -154,6 +163,12 @@ export interface TodoItem {
 type QueuedMessage = {
 	id: string;
 	text: string;
+};
+
+type ForkPoint = {
+	entry_id: string;
+	role?: string;
+	preview: string;
 };
 
 export interface ChatViewProps {
@@ -326,6 +341,83 @@ export function ChatView({
 		null,
 	);
 	const initialScrollDoneRef = useRef(false);
+	const [forkListOpen, setForkListOpen] = useState(false);
+	const [forkPoints, setForkPoints] = useState<ForkPoint[]>([]);
+	const [forkPointsLoading, setForkPointsLoading] = useState(false);
+	const [forkingEntryId, setForkingEntryId] = useState<string | null>(null);
+
+	const loadForkPoints = useCallback(async () => {
+		if (!selectedSessionId) {
+			toast.error("No active chat session.");
+			return [] as ForkPoint[];
+		}
+		setForkPointsLoading(true);
+		try {
+			const points = await getWsManager().agentGetForkPoints(selectedSessionId);
+			setForkPoints(points);
+			return points;
+		} catch (err) {
+			toast.error(
+				err instanceof Error ? err.message : "Failed to load fork points.",
+			);
+			return [] as ForkPoint[];
+		} finally {
+			setForkPointsLoading(false);
+		}
+	}, [selectedSessionId]);
+
+	const handleForkAtEntry = useCallback(
+		async (entryId: string) => {
+			if (!selectedSessionId) {
+				toast.error("No active chat session.");
+				return;
+			}
+			setForkingEntryId(entryId);
+			try {
+				await getWsManager().agentFork(selectedSessionId, entryId);
+				await refresh();
+				toast.success("Fork created.");
+				setForkListOpen(false);
+			} catch (err) {
+				toast.error(
+					err instanceof Error ? err.message : "Failed to fork session.",
+				);
+			} finally {
+				setForkingEntryId(null);
+			}
+		},
+		[selectedSessionId, refresh],
+	);
+
+	const handleForkFromMessage = useCallback(
+		async (messagePreview: string) => {
+			const points =
+				forkPoints.length > 0 ? forkPoints : await loadForkPoints();
+			if (points.length === 0) return;
+			const normalizedTarget = messagePreview
+				.replace(/\s+/g, " ")
+				.trim()
+				.toLowerCase();
+			const directMatch = points.find((point) => {
+				const normalizedPreview = point.preview
+					.replace(/\s+/g, " ")
+					.trim()
+					.toLowerCase();
+				return (
+					normalizedPreview === normalizedTarget ||
+					normalizedTarget.startsWith(normalizedPreview) ||
+					normalizedPreview.startsWith(normalizedTarget)
+				);
+			});
+			if (!directMatch) {
+				setForkListOpen(true);
+				toast.info("Select a message from the fork list.");
+				return;
+			}
+			await handleForkAtEntry(directMatch.entry_id);
+		},
+		[forkPoints, handleForkAtEntry, loadForkPoints],
+	);
 
 	// Consume pending chat input from external source (e.g. browser "Send to chat")
 	// biome-ignore lint/correctness/useExhaustiveDependencies: setInput is stable setState
@@ -359,6 +451,15 @@ export function ChatView({
 			setSendPendingSessionId(null);
 		}
 	}, [selectedSessionId]);
+
+	useEffect(() => {
+		const handler = () => {
+			setForkListOpen(true);
+			void loadForkPoints();
+		};
+		window.addEventListener("oqto:open-fork-list", handler);
+		return () => window.removeEventListener("oqto:open-fork-list", handler);
+	}, [loadForkPoints]);
 	useEffect(() => {
 		if (!selectedSessionId || !piState?.sessionName) return;
 		// Only apply the title if piState actually belongs to this session.
@@ -1852,8 +1953,9 @@ export function ChatView({
 	);
 
 	return (
-		<div className={cn("flex flex-col h-full min-h-0", className)}>
-			{!hideHeader && SessionHeader}
+		<>
+			<div className={cn("flex flex-col h-full min-h-0", className)}>
+				{!hideHeader && SessionHeader}
 
 			{/* Error banner - only show if no cached messages available */}
 			{displayError && messages.length === 0 && (
@@ -1971,6 +2073,13 @@ export function ChatView({
 												a2uiSurfaces={groupSurfaces}
 												onA2UIAction={handleA2UIAction}
 												messageId={groupMessageId}
+												onForkHere={
+													group.role === "user"
+														? (preview) => {
+															void handleForkFromMessage(preview);
+														}
+														: undefined
+												}
 												showWorkingIndicator={isWorking && isLastAssistantGroup}
 											/>
 										</div>
@@ -2403,7 +2512,63 @@ export function ChatView({
 					</Button>
 				</div>
 			</div>
-		</div>
+
+			<Dialog open={forkListOpen} onOpenChange={setForkListOpen}>
+				<DialogContent className="sm:max-w-2xl">
+					<DialogHeader>
+						<DialogTitle>{t("chat.forkListTitle", "Fork from message")}</DialogTitle>
+						<DialogDescription>
+							{t(
+								"chat.forkListDescription",
+								"Choose a user message to fork from. A new branch will continue from that point.",
+							)}
+						</DialogDescription>
+					</DialogHeader>
+					<div className="max-h-[50vh] overflow-y-auto space-y-2 pr-1">
+						{forkPointsLoading ? (
+							<div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
+								<Loader2 className="w-4 h-4 animate-spin" />
+								{t("chat.loadingForkPoints", "Loading fork points...")}
+							</div>
+						) : forkPoints.length === 0 ? (
+							<div className="text-sm text-muted-foreground py-2">
+								{t("chat.noForkPoints", "No forkable user messages found in this session.")}
+							</div>
+						) : (
+							forkPoints.map((point) => (
+								<button
+									key={point.entry_id}
+									type="button"
+									onClick={() => {
+										void handleForkAtEntry(point.entry_id);
+									}}
+									disabled={forkingEntryId === point.entry_id}
+									className="w-full text-left border border-border rounded px-3 py-2 hover:bg-muted/60 disabled:opacity-60"
+								>
+									<div className="flex items-center justify-between gap-3">
+										<span className="text-xs text-muted-foreground font-mono">
+											{point.entry_id.slice(0, 8)}
+										</span>
+										{forkingEntryId === point.entry_id && (
+											<Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground" />
+										)}
+									</div>
+									<div className="text-sm text-foreground mt-1 line-clamp-3">
+										{point.preview || t("chat.emptyForkPreview", "(no preview)")}
+									</div>
+								</button>
+							))
+						)}
+					</div>
+					<DialogFooter>
+						<Button variant="outline" onClick={() => setForkListOpen(false)}>
+							{t("common.close", "Close")}
+						</Button>
+					</DialogFooter>
+				</DialogContent>
+			</Dialog>
+			</div>
+		</>
 	);
 }
 
@@ -2657,6 +2822,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 	onA2UIAction,
 	messageId,
 	showWorkingIndicator = false,
+	onForkHere,
 }: {
 	group: MessageGroup;
 	assistantName?: string | null;
@@ -2667,6 +2833,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 	onA2UIAction?: (action: import("@/lib/a2ui/types").A2UIUserAction) => void;
 	messageId?: string;
 	showWorkingIndicator?: boolean;
+	onForkHere?: (messagePreview: string) => void;
 }) {
 	const isUser = group.role === "user";
 	const { t } = useTranslation();
@@ -3073,6 +3240,19 @@ const MessageGroupCard = memo(function MessageGroupCard({
 				{!isUser && allTextContent && (
 					<ReadAloudButton text={allTextContent} className="ml-1 flex-shrink-0" />
 				)}
+				{isUser && allTextContent && onForkHere && (
+					<button
+						type="button"
+						onClick={(e) => {
+							e.stopPropagation();
+							onForkHere(allTextContent);
+						}}
+						className="text-muted-foreground hover:text-foreground transition-colors"
+						title={t("chat.forkHere", "Fork here")}
+					>
+						<GitBranch className="w-3.5 h-3.5" />
+					</button>
+				)}
 				{createdAt && !Number.isNaN(createdAt.getTime()) && (
 					<span className="text-[9px] sm:text-[10px] text-foreground/50 dark:text-muted-foreground leading-none sm:leading-normal ml-2 flex-shrink-0">
 						{createdAt.toLocaleTimeString([], {
@@ -3373,6 +3553,15 @@ const MessageGroupCard = memo(function MessageGroupCard({
 				{messageCard}
 			</ContextMenuTrigger>
 			<ContextMenuContent>
+				{isUser && allTextContent && onForkHere && (
+					<ContextMenuItem
+						onClick={() => onForkHere(allTextContent)}
+						className="gap-2"
+					>
+						<GitBranch className="w-4 h-4" />
+						{t("chat.forkHere", "Fork here")}
+					</ContextMenuItem>
+				)}
 				{allTextContent && (
 					<ContextMenuItem
 						onClick={() => navigator.clipboard?.writeText(allTextContent)}

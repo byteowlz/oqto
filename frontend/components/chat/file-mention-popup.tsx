@@ -112,7 +112,9 @@ export const FileMentionPopup = memo(function FileMentionPopup({
 		setLoading(true);
 		setError(null);
 
-		fetchFileTreeMux(normalizedWorkspacePath, ".", 10, false)
+		// Keep mention indexing responsive in large repos.
+		// Depth 10 causes long blocking scans and random UI stalls.
+		fetchFileTreeMux(normalizedWorkspacePath, ".", 6, false)
 			.then((data) => {
 				// Flatten and collect all files
 				const allFiles = collectAllFiles(data);

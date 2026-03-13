@@ -1027,6 +1027,61 @@ impl SessionService {
     /// Maximum number of sub-agents per session.
     const DEFAULT_MAX_AGENTS: i64 = 10;
 
+    fn required_ports_for_range(
+        base_port: i64,
+        max_agents: i64,
+        include_mmry_port: bool,
+    ) -> Vec<u16> {
+        let mut ports =
+            Vec::with_capacity((3 + max_agents + if include_mmry_port { 1 } else { 0 }) as usize);
+        ports.push(base_port as u16);
+        ports.push((base_port + 1) as u16);
+        ports.push((base_port + 2) as u16);
+
+        let agent_base = base_port + if include_mmry_port { 4 } else { 3 };
+        if include_mmry_port {
+            ports.push((base_port + 3) as u16);
+        }
+        for i in 0..max_agents {
+            ports.push((agent_base + i) as u16);
+        }
+        ports
+    }
+
+    async fn find_usable_port_range_with_agents(
+        &self,
+        start_port: i64,
+        max_agents: i64,
+        include_mmry_port: bool,
+    ) -> Result<i64> {
+        let ports_per_session = if include_mmry_port {
+            4 + max_agents
+        } else {
+            3 + max_agents
+        };
+
+        let mut search_start = start_port;
+        for _ in 0..32 {
+            let candidate = self
+                .repo
+                .find_free_port_range_with_agents(search_start, max_agents)
+                .await?;
+            let required = Self::required_ports_for_range(candidate, max_agents, include_mmry_port);
+            if crate::local::are_ports_available(&required) {
+                return Ok(candidate);
+            }
+
+            warn!(
+                "Port range {}-{} unavailable at runtime (despite DB allocation), probing next range",
+                candidate,
+                candidate + ports_per_session - 1
+            );
+            search_start = candidate + ports_per_session;
+        }
+
+        anyhow::bail!("no usable port range available after runtime checks");
+    }
+
     /// Internal method to attempt session creation with a specific port range.
     async fn try_create_session(
         &self,
@@ -1059,8 +1114,7 @@ impl SessionService {
         };
         let search_start = self.config.base_port + (attempt as i64 * ports_per_session);
         let base_port = self
-            .repo
-            .find_free_port_range_with_agents(search_start, max_agents)
+            .find_usable_port_range_with_agents(search_start, max_agents, include_mmry_port)
             .await?;
         let agent_port = base_port;
         let fileserver_port = base_port + 1;
@@ -1663,10 +1717,6 @@ impl SessionService {
 
     async fn reassign_ports_for_resume(&self, session: &mut Session) -> Result<()> {
         let max_agents = session.max_agents.unwrap_or(Self::DEFAULT_MAX_AGENTS);
-        let base_port = self
-            .repo
-            .find_free_port_range_with_agents(self.config.base_port, max_agents)
-            .await?;
 
         // Container mode uses a per-session mmry port (base+3) when enabled.
         // Local mode uses a per-user mmry port that must NOT be reassigned here.
@@ -1674,6 +1724,14 @@ impl SessionService {
             && self.config.mmry_enabled
             && !self.config.single_user
             && session.mmry_port.is_some();
+
+        let base_port = self
+            .find_usable_port_range_with_agents(
+                self.config.base_port,
+                max_agents,
+                include_mmry_port,
+            )
+            .await?;
 
         let new_mmry_port = if include_mmry_port {
             Some(base_port + 3)
@@ -1776,89 +1834,53 @@ impl SessionService {
 
                 if !local_runtime.check_ports_available(agent_port, fileserver_port, ttyd_port) {
                     warn!(
-                        "Ports {}/{}/{} are in use for session {}, attempting cleanup...",
+                        "Ports {}/{}/{} are in use for session {}, selecting a new free range",
                         agent_port, fileserver_port, ttyd_port, session_id
                     );
-                    let cleared =
-                        local_runtime.clear_ports(&[agent_port, fileserver_port, ttyd_port]);
-                    if local_runtime.check_ports_available(agent_port, fileserver_port, ttyd_port) {
-                        info!(
-                            "Cleared {} orphan process(es), ports now available for session {}",
-                            cleared, session_id
-                        );
-                    } else {
-                        let max_agents = session.max_agents.unwrap_or(Self::DEFAULT_MAX_AGENTS);
-                        let base_port = self
-                            .repo
-                            .find_free_port_range_with_agents(self.config.base_port, max_agents)
-                            .await?;
-                        let new_agent_port = base_port as u16;
-                        let new_fileserver_port = (base_port + 1) as u16;
-                        let new_ttyd_port = (base_port + 2) as u16;
-                        let new_mmry_port = session.mmry_port.map(|_| base_port + 3);
-                        let new_agent_base_port = session.agent_base_port.map(|_| base_port + 4);
+                    let max_agents = session.max_agents.unwrap_or(Self::DEFAULT_MAX_AGENTS);
+                    let base_port = self
+                        .find_usable_port_range_with_agents(
+                            self.config.base_port,
+                            max_agents,
+                            false,
+                        )
+                        .await?;
+                    let new_agent_port = base_port as u16;
+                    let new_fileserver_port = (base_port + 1) as u16;
+                    let new_ttyd_port = (base_port + 2) as u16;
+                    let new_mmry_port = session.mmry_port;
+                    let new_agent_base_port = session.agent_base_port.map(|_| base_port + 3);
 
-                        if !local_runtime.check_ports_available(
-                            new_agent_port,
-                            new_fileserver_port,
-                            new_ttyd_port,
-                        ) {
-                            let cleared_new = local_runtime.clear_ports(&[
-                                new_agent_port,
-                                new_fileserver_port,
-                                new_ttyd_port,
-                            ]);
-                            if !local_runtime.check_ports_available(
-                                new_agent_port,
-                                new_fileserver_port,
-                                new_ttyd_port,
-                            ) {
-                                anyhow::bail!(
-                                    "Ports {}/{}/{} are still in use after cleanup (cleared {} processes) for session {}",
-                                    new_agent_port,
-                                    new_fileserver_port,
-                                    new_ttyd_port,
-                                    cleared_new,
-                                    session_id
-                                );
-                            }
-                            info!(
-                                "Cleared {} orphan process(es), new ports now available for session {}",
-                                cleared_new, session_id
-                            );
-                        }
-
-                        self.repo
-                            .update_ports(
-                                session_id,
-                                base_port,
-                                base_port + 1,
-                                base_port + 2,
-                                new_mmry_port,
-                                new_agent_base_port,
-                            )
-                            .await?;
-
-                        info!(
-                            "Reassigned ports for session {}: {}/{}/{} -> {}/{}/{}",
+                    self.repo
+                        .update_ports(
                             session_id,
-                            agent_port,
-                            fileserver_port,
-                            ttyd_port,
-                            new_agent_port,
-                            new_fileserver_port,
-                            new_ttyd_port
-                        );
+                            base_port,
+                            base_port + 1,
+                            base_port + 2,
+                            new_mmry_port,
+                            new_agent_base_port,
+                        )
+                        .await?;
 
-                        session.agent_port = base_port;
-                        session.fileserver_port = base_port + 1;
-                        session.ttyd_port = base_port + 2;
-                        session.mmry_port = new_mmry_port;
-                        session.agent_base_port = new_agent_base_port;
-                        agent_port = new_agent_port;
-                        fileserver_port = new_fileserver_port;
-                        ttyd_port = new_ttyd_port;
-                    }
+                    info!(
+                        "Reassigned ports for session {}: {}/{}/{} -> {}/{}/{}",
+                        session_id,
+                        agent_port,
+                        fileserver_port,
+                        ttyd_port,
+                        new_agent_port,
+                        new_fileserver_port,
+                        new_ttyd_port
+                    );
+
+                    session.agent_port = base_port;
+                    session.fileserver_port = base_port + 1;
+                    session.ttyd_port = base_port + 2;
+                    session.mmry_port = new_mmry_port;
+                    session.agent_base_port = new_agent_base_port;
+                    agent_port = new_agent_port;
+                    fileserver_port = new_fileserver_port;
+                    ttyd_port = new_ttyd_port;
                 }
 
                 let mut eavs_virtual_key = None;

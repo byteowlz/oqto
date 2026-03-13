@@ -192,6 +192,57 @@ fn get_runner_for_linux_user(
     }
 }
 
+fn has_non_empty_title(title: &Option<String>) -> bool {
+    title.as_ref().is_some_and(|value| !value.trim().is_empty())
+}
+
+fn merge_session_metadata(existing: &mut ChatSession, incoming: &ChatSession) {
+    if !has_non_empty_title(&existing.title) && has_non_empty_title(&incoming.title) {
+        existing.title = incoming.title.clone();
+    }
+
+    if existing.readable_id.trim().is_empty() && !incoming.readable_id.trim().is_empty() {
+        existing.readable_id = incoming.readable_id.clone();
+    }
+}
+
+fn replace_session_preserving_metadata(existing: &mut ChatSession, mut incoming: ChatSession) {
+    if has_non_empty_title(&existing.title) && !has_non_empty_title(&incoming.title) {
+        incoming.title = existing.title.clone();
+    }
+
+    if !existing.readable_id.trim().is_empty() && incoming.readable_id.trim().is_empty() {
+        incoming.readable_id = existing.readable_id.clone();
+    }
+
+    *existing = incoming;
+}
+
+fn is_oqto_session_id(session_id: &str) -> bool {
+    session_id.starts_with("oqto-")
+}
+
+fn normalize_title_for_dedupe(title: &Option<String>) -> Option<String> {
+    let raw = title.as_ref()?.trim();
+    if raw.is_empty() {
+        return None;
+    }
+
+    let mut normalized = raw.to_lowercase();
+    if let Some((prefix, rest)) = normalized.split_once(':')
+        && !rest.trim().is_empty()
+        && prefix.len() <= 12
+    {
+        normalized = rest.trim().to_string();
+    }
+
+    if normalized.is_empty() {
+        None
+    } else {
+        Some(normalized)
+    }
+}
+
 fn merge_duplicate_sessions(mut sessions: Vec<ChatSession>) -> Vec<ChatSession> {
     // Keep newest sessions first so we can prefer the freshest metadata.
     sessions.sort_by_key(|s| Reverse(s.updated_at));
@@ -200,20 +251,16 @@ fn merge_duplicate_sessions(mut sessions: Vec<ChatSession>) -> Vec<ChatSession> 
     let mut by_source: HashMap<String, String> = HashMap::new();
     let mut by_key: HashMap<(String, String), String> = HashMap::new();
     let mut by_readable: HashMap<String, String> = HashMap::new();
+    let mut by_title_key: HashMap<(String, String), String> = HashMap::new();
 
     for session in sessions {
         if let Some(source) = session.source_path.clone() {
             if let Some(existing_id) = by_source.get(&source).cloned() {
                 if let Some(existing) = by_id.get_mut(&existing_id) {
                     if session.updated_at > existing.updated_at {
-                        *existing = session;
+                        replace_session_preserving_metadata(existing, session);
                     } else {
-                        if existing.title.is_none() && session.title.is_some() {
-                            existing.title = session.title;
-                        }
-                        if existing.readable_id.is_empty() && !session.readable_id.is_empty() {
-                            existing.readable_id = session.readable_id;
-                        }
+                        merge_session_metadata(existing, &session);
                     }
                 }
                 continue;
@@ -232,13 +279,35 @@ fn merge_duplicate_sessions(mut sessions: Vec<ChatSession>) -> Vec<ChatSession> 
             session.workspace_path.clone()
         };
 
+        if let Some(normalized_title) = normalize_title_for_dedupe(&session.title) {
+            let title_key = (normalized_workspace.clone(), normalized_title);
+            if let Some(existing_id) = by_title_key.get(&title_key).cloned()
+                && existing_id != session.id
+                && let Some(existing) = by_id.get_mut(&existing_id)
+            {
+                let existing_is_oqto = is_oqto_session_id(&existing.id);
+                let incoming_is_oqto = is_oqto_session_id(&session.id);
+                if existing_is_oqto != incoming_is_oqto {
+                    if incoming_is_oqto {
+                        merge_session_metadata(existing, &session);
+                        if session.updated_at > existing.updated_at {
+                            existing.updated_at = session.updated_at;
+                        }
+                    } else {
+                        replace_session_preserving_metadata(existing, session);
+                    }
+                    continue;
+                }
+            } else {
+                by_title_key.insert(title_key, session.id.clone());
+            }
+        }
+
         if !readable.is_empty() {
             let key = (normalized_workspace.clone(), readable.clone());
             if let Some(existing_id) = by_key.get(&key).cloned() {
                 if let Some(existing) = by_id.get_mut(&existing_id) {
-                    if existing.title.is_none() && session.title.is_some() {
-                        existing.title = session.title;
-                    }
+                    merge_session_metadata(existing, &session);
                     if session.updated_at > existing.updated_at {
                         existing.updated_at = session.updated_at;
                     }
@@ -256,11 +325,9 @@ fn merge_duplicate_sessions(mut sessions: Vec<ChatSession>) -> Vec<ChatSession> 
                     let prefer_candidate =
                         existing_workspace == "global" && normalized_workspace != "global";
                     if prefer_candidate {
-                        *existing = session;
+                        replace_session_preserving_metadata(existing, session);
                     } else {
-                        if existing.title.is_none() && session.title.is_some() {
-                            existing.title = session.title;
-                        }
+                        merge_session_metadata(existing, &session);
                         if session.updated_at > existing.updated_at {
                             existing.updated_at = session.updated_at;
                         }
@@ -835,10 +902,13 @@ pub async fn list_chat_history_grouped(
                 .and_modify(|existing| {
                     // Prefer JSONL metadata (title, readable_id) over hstry when
                     // hstry has gaps, but take the newer updated_at timestamp.
-                    if existing.title.is_none() && session.title.is_some() {
+                    if !has_non_empty_title(&existing.title) && has_non_empty_title(&session.title)
+                    {
                         existing.title = session.title.clone();
                     }
-                    if existing.readable_id.is_empty() && !session.readable_id.is_empty() {
+                    if existing.readable_id.trim().is_empty()
+                        && !session.readable_id.trim().is_empty()
+                    {
                         existing.readable_id = session.readable_id.clone();
                     }
                     if session.updated_at > existing.updated_at {
@@ -1044,4 +1114,86 @@ pub async fn get_chat_messages(
 
     info!(session_id = %session_id, count = canonical.len(), render = query.render, "Listed chat messages");
     Ok(Json(canonical))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::merge_duplicate_sessions;
+    use crate::history::ChatSession;
+
+    fn build_session(id: &str, title: Option<&str>, updated_at: i64) -> ChatSession {
+        ChatSession {
+            id: id.to_string(),
+            readable_id: "same-readable".to_string(),
+            title: title.map(str::to_string),
+            parent_id: None,
+            workspace_path: "/tmp/workspace".to_string(),
+            project_name: "workspace".to_string(),
+            created_at: 1,
+            updated_at,
+            version: None,
+            is_child: false,
+            source_path: None,
+            stats: None,
+            model: None,
+            provider: None,
+        }
+    }
+
+    fn build_session_with_readable(
+        id: &str,
+        readable_id: &str,
+        title: Option<&str>,
+        updated_at: i64,
+    ) -> ChatSession {
+        ChatSession {
+            readable_id: readable_id.to_string(),
+            ..build_session(id, title, updated_at)
+        }
+    }
+
+    #[test]
+    fn merge_duplicate_sessions_preserves_non_empty_title_when_newer_record_is_blank() {
+        let older_with_title = build_session("ses_1", Some("Stable title"), 100);
+        let newer_blank_title = build_session("ses_2", Some("   "), 200);
+
+        let merged = merge_duplicate_sessions(vec![older_with_title, newer_blank_title]);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].title.as_deref(), Some("Stable title"));
+        assert_eq!(merged[0].updated_at, 200);
+    }
+
+    #[test]
+    fn merge_duplicate_sessions_upgrades_missing_title_from_older_duplicate() {
+        let older_with_title = build_session("ses_1", Some("Recovered title"), 100);
+        let newer_without_title = build_session("ses_2", None, 200);
+
+        let merged = merge_duplicate_sessions(vec![older_with_title, newer_without_title]);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].title.as_deref(), Some("Recovered title"));
+    }
+
+    #[test]
+    fn merge_duplicate_sessions_prefers_non_oqto_id_for_same_title_workspace() {
+        let ghost_oqto = build_session_with_readable(
+            "oqto-c8f1b697-b5d4-48e4-b20c-8d407a3d2970",
+            "",
+            Some("Forschung und Entwicklung grundlegender KI-Methoden"),
+            100,
+        );
+        let real_pi = build_session_with_readable(
+            "c2d30f2d-a509-4da4-9f0b-539b4539e7b8",
+            "eager-tests-junction",
+            Some("BMFTR: Forschung und Entwicklung grundlegender KI-Methoden"),
+            200,
+        );
+
+        let merged = merge_duplicate_sessions(vec![ghost_oqto, real_pi]);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(
+            merged[0].id,
+            "c2d30f2d-a509-4da4-9f0b-539b4539e7b8".to_string()
+        );
+        assert_eq!(merged[0].readable_id, "eager-tests-junction".to_string());
+    }
 }

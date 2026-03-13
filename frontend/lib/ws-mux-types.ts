@@ -72,6 +72,8 @@ export type FilesWsCommand =
 			path: string;
 			depth?: number;
 			include_hidden?: boolean;
+			offset?: number;
+			limit?: number;
 			workspace_path?: string;
 	  } & WsCommandBase)
 	| ({
@@ -346,6 +348,12 @@ export type FilesWsEvent =
 			type: "tree_result";
 			path: string;
 			entries: FileTreeNode[];
+			truncated?: boolean;
+			stop_reason?: string;
+			visited_nodes?: number;
+			elapsed_ms?: number;
+			next_offset?: number;
+			total_entries?: number;
 	  } & WsEventBase)
 	| ({
 			channel: "files";
@@ -507,16 +515,16 @@ export type SharedWorkspaceChangeType =
 
 /** System channel events */
 export type SystemWsEvent =
-	| { channel: "system"; type: "connected" }
-	| { channel: "system"; type: "error"; error: string }
-	| { channel: "system"; type: "ping" }
-	| {
+	| ({ channel: "system"; type: "connected" } & WsEventBase)
+	| ({ channel: "system"; type: "error"; error: string } & WsEventBase)
+	| ({ channel: "system"; type: "ping" } & WsEventBase)
+	| ({
 			channel: "system";
 			type: "shared_workspace.updated";
 			workspace_id: string;
 			change_type: SharedWorkspaceChangeType;
 			detail: string | null;
-	  };
+	  } & WsEventBase);
 
 /** All possible WebSocket events */
 export type WsEvent =

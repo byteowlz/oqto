@@ -1353,8 +1353,11 @@ impl PiSessionManager {
         let disk_models = self.load_models_from_disk().await;
 
         // Source 3: ephemeral Pi (picks up newly released provider models)
+        // Keep model-loading latency low for UI responsiveness. Disk models are
+        // already available immediately, so ephemeral Pi probing should be
+        // best-effort and aggressively bounded.
         let pi_models = match tokio::time::timeout(
-            Duration::from_secs(15),
+            Duration::from_secs(3),
             self.fetch_models_ephemeral(&target_workdir),
         )
         .await

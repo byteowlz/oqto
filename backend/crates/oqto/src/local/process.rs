@@ -264,31 +264,29 @@ impl ProcessManager {
 
         // For ttyd, we need to spawn a shell as the target user.
         // ttyd takes: <command> [<arguments...>] as separate positional args.
-        // Use zsh as the default shell for a better experience.
+        // IMPORTANT: do NOT start a login shell here (-l), because login shells
+        // reset cwd to $HOME and break workspace-scoped terminals.
+        // Use interactive shells so prompts/rc still work while preserving ttyd --cwd.
         let shell_args: Vec<String> = if let Some(ref username) = run_as.username {
             if run_as.use_sudo {
-                // Prefer sudo to avoid su variants that reject -c or -l options.
                 vec![
                     "sudo".to_string(),
                     "-u".to_string(),
                     username.clone(),
-                    "-H".to_string(),
                     "--".to_string(),
                     "zsh".to_string(),
-                    "-l".to_string(),
+                    "-i".to_string(),
                 ]
             } else {
-                // Use su -l <user> runs a login shell; we then exec zsh.
                 vec![
                     "su".to_string(),
-                    "-l".to_string(),
                     username.clone(),
                     "-c".to_string(),
-                    "exec zsh -l".to_string(),
+                    "exec zsh -i".to_string(),
                 ]
             }
         } else {
-            vec!["zsh".to_string(), "-l".to_string()]
+            vec!["zsh".to_string(), "-i".to_string()]
         };
 
         // Build ttyd args: options first, then shell command + args

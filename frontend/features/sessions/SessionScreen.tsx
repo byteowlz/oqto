@@ -573,6 +573,7 @@ export const SessionScreen = memo(function SessionScreen() {
 				: null,
 		[selectedWorkspaceOverviewPath],
 	);
+	const terminalWorkspacePath = normalizedOverviewPath ?? normalizedWorkspacePath;
 
 	// Watch for app signal files written by agents (OpenApp/CloseApp tools)
 	const lastSignalTs = useRef(0);
@@ -1078,9 +1079,9 @@ export const SessionScreen = memo(function SessionScreen() {
 						)}
 						{activeView === "terminal" && (
 							<div className="h-full">
-								{normalizedWorkspacePath ? (
+								{terminalWorkspacePath ? (
 									<Suspense fallback={viewLoadingFallback}>
-										<TerminalView workspacePath={normalizedWorkspacePath} />
+										<TerminalView workspacePath={terminalWorkspacePath} />
 									</Suspense>
 								) : (
 									<EmptyWorkspacePanel
@@ -1538,10 +1539,10 @@ export const SessionScreen = memo(function SessionScreen() {
 									)}
 									{activeView === "terminal" && (
 										<div className="h-full">
-											{normalizedWorkspacePath ? (
+											{terminalWorkspacePath ? (
 												<Suspense fallback={viewLoadingFallback}>
 													<TerminalView
-														workspacePath={normalizedWorkspacePath}
+														workspacePath={terminalWorkspacePath}
 													/>
 												</Suspense>
 											) : (

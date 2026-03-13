@@ -22,7 +22,7 @@ use futures::{SinkExt, StreamExt};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{Mutex, Semaphore, mpsc, oneshot};
 use tracing::{debug, error, info, warn};
 
 use chrono::Utc;
@@ -48,6 +48,14 @@ use super::error::ApiError;
 const PI_MESSAGES_CACHE_TTL: Duration = Duration::from_secs(15 * 60);
 const PI_MESSAGES_CACHE_MAX_BYTES_PER_USER: usize = 100 * 1024 * 1024;
 const PI_MESSAGES_CACHE_MAX_MESSAGES_PER_SESSION: usize = 200;
+
+// File tree traversal budgets (reliability + latency guardrails)
+const TREE_MAX_DEPTH: usize = 8;
+const TREE_MAX_NODES: usize = 20_000;
+const TREE_MAX_TIME_MS: u64 = 3_000;
+const TREE_MAX_CONCURRENCY: usize = 16;
+const TREE_PAGE_DEFAULT_LIMIT: usize = 1_000;
+const TREE_PAGE_MAX_LIMIT: usize = 5_000;
 
 struct CachedPiMessages {
     cached_at: Instant,
@@ -202,6 +210,10 @@ pub enum FilesWsCommand {
         depth: Option<usize>,
         #[serde(default)]
         include_hidden: bool,
+        #[serde(default)]
+        offset: Option<usize>,
+        #[serde(default)]
+        limit: Option<usize>,
         #[serde(default)]
         workspace_path: Option<String>,
     },
@@ -464,6 +476,18 @@ pub enum FilesWsEvent {
         id: Option<String>,
         path: String,
         entries: Vec<FileTreeNode>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        truncated: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        stop_reason: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        visited_nodes: Option<usize>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        elapsed_ms: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        next_offset: Option<usize>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        total_entries: Option<usize>,
     },
     ReadResult {
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -605,6 +629,78 @@ pub struct FileTreeNode {
     pub children: Option<Vec<FileTreeNode>>,
 }
 
+#[derive(Debug, Clone)]
+struct TreeBuildResult {
+    nodes: Vec<FileTreeNode>,
+    next_offset: Option<usize>,
+    total_entries: usize,
+}
+
+#[derive(Debug, Clone)]
+struct TreeTraversalContext {
+    deadline: Instant,
+    max_nodes: usize,
+    visited_nodes: Arc<std::sync::atomic::AtomicUsize>,
+    stop_reason: Arc<Mutex<Option<String>>>,
+    semaphore: Arc<Semaphore>,
+}
+
+impl TreeTraversalContext {
+    fn new(max_nodes: usize, max_time: Duration, max_concurrency: usize) -> Self {
+        Self {
+            deadline: Instant::now() + max_time,
+            max_nodes,
+            visited_nodes: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            stop_reason: Arc::new(Mutex::new(None)),
+            semaphore: Arc::new(Semaphore::new(max_concurrency.max(1))),
+        }
+    }
+
+    async fn mark_stop_reason_if_empty(&self, reason: &str) {
+        let mut guard = self.stop_reason.lock().await;
+        if guard.is_none() {
+            *guard = Some(reason.to_string());
+        }
+    }
+
+    async fn should_stop(&self) -> bool {
+        if Instant::now() >= self.deadline {
+            self.mark_stop_reason_if_empty("timeout").await;
+            return true;
+        }
+        if self
+            .visited_nodes
+            .load(std::sync::atomic::Ordering::Relaxed)
+            >= self.max_nodes
+        {
+            self.mark_stop_reason_if_empty("max_nodes").await;
+            return true;
+        }
+        false
+    }
+
+    async fn try_visit_node(&self) -> bool {
+        let next = self
+            .visited_nodes
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            + 1;
+        if next > self.max_nodes {
+            self.mark_stop_reason_if_empty("max_nodes").await;
+            return false;
+        }
+        true
+    }
+
+    async fn stop_reason(&self) -> Option<String> {
+        self.stop_reason.lock().await.clone()
+    }
+
+    fn visited_nodes(&self) -> usize {
+        self.visited_nodes
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
 /// Hstry channel events.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -653,8 +749,12 @@ pub enum TrxWsEvent {
 pub enum SystemWsEvent {
     /// Connection established
     Connected,
-    /// General error not tied to specific channel
-    Error { error: String },
+    /// General error. If this was caused by a specific command, includes correlation ID.
+    Error {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        error: String,
+    },
     /// Ping for keep-alive
     Ping,
     /// Shared workspace membership/metadata changed.
@@ -935,6 +1035,40 @@ async fn handle_multiplexed_ws(socket: WebSocket, state: AppState, user_id: Stri
         }
     });
 
+    // Per-channel workers avoid head-of-line blocking.
+    // A slow files.tree must never block agent prompt/abort/session commands.
+    let (agent_cmd_tx, agent_cmd_rx) = mpsc::channel::<WsCommand>(256);
+    let (files_cmd_tx, files_cmd_rx) = mpsc::channel::<WsCommand>(128);
+    let (misc_cmd_tx, misc_cmd_rx) = mpsc::channel::<WsCommand>(128);
+
+    let agent_worker = spawn_ws_command_worker(
+        "agent",
+        agent_cmd_rx,
+        user_id.clone(),
+        state.clone(),
+        runner_client.clone(),
+        conn_state.clone(),
+        event_tx.clone(),
+    );
+    let files_worker = spawn_ws_command_worker(
+        "files",
+        files_cmd_rx,
+        user_id.clone(),
+        state.clone(),
+        runner_client.clone(),
+        conn_state.clone(),
+        event_tx.clone(),
+    );
+    let misc_worker = spawn_ws_command_worker(
+        "misc",
+        misc_cmd_rx,
+        user_id.clone(),
+        state.clone(),
+        runner_client.clone(),
+        conn_state.clone(),
+        event_tx.clone(),
+    );
+
     // Handle incoming messages
     loop {
         tokio::select! {
@@ -945,64 +1079,32 @@ async fn handle_multiplexed_ws(socket: WebSocket, state: AppState, user_id: Stri
                             Ok(cmd) => {
                                 debug!("Received WS command: {:?}", cmd);
 
-                                // Lazily resolve runner client if not yet available.
-                                // The runner may start after the WebSocket connects.
-                                {
-                                    let mut rc = runner_client.lock().await;
-                                    if rc.is_none() {
-                                        *rc = runner_client_for_user(&state, &user_id);
-                                        if rc.is_some() {
-                                            debug!(
-                                                "Runner client resolved lazily for user {}",
-                                                user_id
-                                            );
+                                let target_tx = match &cmd {
+                                    WsCommand::Agent(_) => &agent_cmd_tx,
+                                    WsCommand::Files(_) => &files_cmd_tx,
+                                    _ => &misc_cmd_tx,
+                                };
+
+                                if let Err(err) = target_tx.try_send(cmd) {
+                                    let (cmd, reason) = match err {
+                                        tokio::sync::mpsc::error::TrySendError::Full(cmd) => {
+                                            (cmd, "Server busy: command queue is full")
                                         }
-                                    }
-                                }
-
-                                // Clone the runner client ref so we don't
-                                // hold the Mutex across the entire handler.
-                                let rc_snapshot = {
-                                    let guard = runner_client.lock().await;
-                                    guard.clone()
-                                };
-
-                                // Hard deadline on the whole command handler.
-                                // Prevents a single stuck command from blocking
-                                // all subsequent WS messages for this connection.
-                                const WS_COMMAND_TIMEOUT: Duration = Duration::from_secs(45);
-                                let response = match tokio::time::timeout(
-                                    WS_COMMAND_TIMEOUT,
-                                    handle_ws_command(
-                                        cmd,
-                                        &user_id,
-                                        &state,
-                                        rc_snapshot.as_ref(),
-                                        conn_state.clone(),
-                                    ),
-                                )
-                                .await
-                                {
-                                    Ok(resp) => resp,
-                                    Err(_) => {
-                                        error!(
-                                            "WS command timed out after {:?} for user {}",
-                                            WS_COMMAND_TIMEOUT, user_id
-                                        );
-                                        Some(WsEvent::System(SystemWsEvent::Error {
-                                            error: "Command timed out".to_string(),
-                                        }))
-                                    }
-                                };
-
-                                if let Some(event) = response {
-                                    debug!("Sending WS event to client: {:?}", event);
-                                    let _ = event_tx.send(event);
+                                        tokio::sync::mpsc::error::TrySendError::Closed(cmd) => {
+                                            (cmd, "Server unavailable: command worker stopped")
+                                        }
+                                    };
+                                    let cmd_id = ws_command_id(&cmd);
+                                    let _ = event_tx.send(WsEvent::System(SystemWsEvent::Error {
+                                        id: cmd_id,
+                                        error: reason.to_string(),
+                                    }));
                                 }
                             }
                             Err(e) => {
                                 warn!("Failed to parse WS command: {}", e);
                                 let _ = event_tx.send(WsEvent::System(SystemWsEvent::Error {
+                                    id: None,
                                     error: format!("Invalid command: {}", e),
                                 }));
                             }
@@ -1027,6 +1129,9 @@ async fn handle_multiplexed_ws(socket: WebSocket, state: AppState, user_id: Stri
     // Cleanup
     event_writer.abort();
     hub_forwarder.abort();
+    agent_worker.abort();
+    files_worker.abort();
+    misc_worker.abort();
 
     // Close terminal sessions and file watchers for this connection.
     {
@@ -1047,6 +1152,97 @@ async fn handle_multiplexed_ws(socket: WebSocket, state: AppState, user_id: Stri
     hub.unregister_connection(&user_id, hub_conn_id);
 
     info!("Multiplexed WebSocket closed for user {}", user_id);
+}
+
+fn spawn_ws_command_worker(
+    worker_name: &'static str,
+    mut rx: mpsc::Receiver<WsCommand>,
+    user_id: String,
+    state: AppState,
+    runner_client: Arc<tokio::sync::Mutex<Option<RunnerClient>>>,
+    conn_state: Arc<tokio::sync::Mutex<WsConnectionState>>,
+    event_tx: mpsc::UnboundedSender<WsEvent>,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        while let Some(cmd) = rx.recv().await {
+            process_ws_command(
+                worker_name,
+                cmd,
+                &user_id,
+                &state,
+                &runner_client,
+                &conn_state,
+                &event_tx,
+            )
+            .await;
+        }
+    })
+}
+
+async fn process_ws_command(
+    worker_name: &str,
+    cmd: WsCommand,
+    user_id: &str,
+    state: &AppState,
+    runner_client: &Arc<tokio::sync::Mutex<Option<RunnerClient>>>,
+    conn_state: &Arc<tokio::sync::Mutex<WsConnectionState>>,
+    event_tx: &mpsc::UnboundedSender<WsEvent>,
+) {
+    // Lazily resolve runner client if not yet available.
+    // The runner may start after the WebSocket connects.
+    {
+        let mut rc = runner_client.lock().await;
+        if rc.is_none() {
+            *rc = runner_client_for_user(state, user_id);
+            if rc.is_some() {
+                debug!(
+                    "Runner client resolved lazily for user {} (worker={})",
+                    user_id, worker_name
+                );
+            }
+        }
+    }
+
+    // Clone the runner client ref so we don't hold the Mutex across handler execution.
+    let rc_snapshot = {
+        let guard = runner_client.lock().await;
+        guard.clone()
+    };
+
+    let cmd_id = ws_command_id(&cmd);
+
+    // Hard deadline on the whole command handler.
+    // Prevents a single stuck command from occupying a worker forever.
+    const WS_COMMAND_TIMEOUT: Duration = Duration::from_secs(45);
+    let response = match tokio::time::timeout(
+        WS_COMMAND_TIMEOUT,
+        handle_ws_command(
+            cmd,
+            user_id,
+            state,
+            rc_snapshot.as_ref(),
+            conn_state.clone(),
+        ),
+    )
+    .await
+    {
+        Ok(resp) => resp,
+        Err(_) => {
+            error!(
+                "WS command timed out after {:?} for user {} (worker={})",
+                WS_COMMAND_TIMEOUT, user_id, worker_name
+            );
+            Some(WsEvent::System(SystemWsEvent::Error {
+                id: cmd_id,
+                error: "Command timed out".to_string(),
+            }))
+        }
+    };
+
+    if let Some(event) = response {
+        debug!("Sending WS event to client: {:?}", event);
+        let _ = event_tx.send(event);
+    }
 }
 
 fn normalize_path_lexical(base: &std::path::Path, raw: &std::path::Path) -> std::path::PathBuf {
@@ -1147,6 +1343,7 @@ async fn validate_workspace_path_for_user(
         "SECURITY: workspace path does not belong to user and is not a shared workspace"
     );
     Some(WsEvent::System(SystemWsEvent::Error {
+        id: None,
         error: "Access denied: workspace path does not belong to this user".to_string(),
     }))
 }
@@ -1196,6 +1393,70 @@ async fn handle_ws_command(
         WsCommand::Session(session_cmd) => {
             handle_session_command(session_cmd, user_id, state).await
         }
+    }
+}
+
+fn sort_dir_entries(
+    mut entries: Vec<crate::user_plane::DirEntry>,
+) -> Vec<crate::user_plane::DirEntry> {
+    entries.sort_by(|a, b| {
+        b.is_dir
+            .cmp(&a.is_dir)
+            .then_with(|| {
+                a.name
+                    .to_ascii_lowercase()
+                    .cmp(&b.name.to_ascii_lowercase())
+            })
+            .then_with(|| a.name.cmp(&b.name))
+    });
+    entries
+}
+
+fn resolve_tree_depth(depth: Option<usize>) -> usize {
+    depth.unwrap_or(2).clamp(1, TREE_MAX_DEPTH)
+}
+
+fn resolve_tree_page_limit(limit: Option<usize>) -> usize {
+    limit
+        .unwrap_or(TREE_PAGE_DEFAULT_LIMIT)
+        .clamp(1, TREE_PAGE_MAX_LIMIT)
+}
+
+fn ws_command_id(cmd: &WsCommand) -> Option<String> {
+    match cmd {
+        WsCommand::Agent(agent_cmd) => agent_cmd.id.clone(),
+        WsCommand::Files(files_cmd) => match files_cmd {
+            FilesWsCommand::Tree { id, .. }
+            | FilesWsCommand::Read { id, .. }
+            | FilesWsCommand::Write { id, .. }
+            | FilesWsCommand::List { id, .. }
+            | FilesWsCommand::Stat { id, .. }
+            | FilesWsCommand::Delete { id, .. }
+            | FilesWsCommand::CreateDirectory { id, .. }
+            | FilesWsCommand::Rename { id, .. }
+            | FilesWsCommand::Copy { id, .. }
+            | FilesWsCommand::Move { id, .. }
+            | FilesWsCommand::CopyToWorkspace { id, .. }
+            | FilesWsCommand::WatchFiles { id, .. }
+            | FilesWsCommand::UnwatchFiles { id, .. } => id.clone(),
+        },
+        WsCommand::Terminal(term_cmd) => match term_cmd {
+            TerminalWsCommand::Open { id, .. }
+            | TerminalWsCommand::Input { id, .. }
+            | TerminalWsCommand::Resize { id, .. }
+            | TerminalWsCommand::Close { id, .. } => id.clone(),
+        },
+        WsCommand::Hstry(hstry_cmd) => match hstry_cmd {
+            HstryWsCommand::Query { id, .. } => id.clone(),
+        },
+        WsCommand::Trx(trx_cmd) => match trx_cmd {
+            TrxWsCommand::List { id, .. }
+            | TrxWsCommand::Create { id, .. }
+            | TrxWsCommand::Update { id, .. }
+            | TrxWsCommand::Close { id, .. }
+            | TrxWsCommand::Sync { id, .. } => id.clone(),
+        },
+        WsCommand::Session(_) => None,
     }
 }
 
@@ -1642,7 +1903,24 @@ async fn handle_agent_command(
                                     Ok(Some(serde_json::json!([]))),
                                 ));
                             }
-                            CommandPayload::GetModels { .. } => {
+                            CommandPayload::GetModels { workdir } => {
+                                if let Some(personal_runner) = runner_client {
+                                    let fallback_workdir = workdir.as_deref().or(Some(&cwd));
+                                    if let Ok(resp) = personal_runner
+                                        .agent_get_available_models("_system", fallback_workdir)
+                                        .await
+                                    {
+                                        return Some(agent_response(
+                                            &session_id,
+                                            id,
+                                            "get_models",
+                                            Ok(Some(
+                                                serde_json::to_value(&resp.models)
+                                                    .unwrap_or_default(),
+                                            )),
+                                        ));
+                                    }
+                                }
                                 return Some(agent_response(
                                     &session_id,
                                     id,
@@ -1785,7 +2063,21 @@ async fn handle_agent_command(
                                     Ok(Some(serde_json::json!([]))),
                                 ));
                             }
-                            CommandPayload::GetModels { .. } => {
+                            CommandPayload::GetModels { workdir } => {
+                                if let Some(personal_runner) = runner_client
+                                    && let Ok(resp) = personal_runner
+                                        .agent_get_available_models("_system", workdir.as_deref())
+                                        .await
+                                {
+                                    return Some(agent_response(
+                                        &session_id,
+                                        id,
+                                        "get_models",
+                                        Ok(Some(
+                                            serde_json::to_value(&resp.models).unwrap_or_default(),
+                                        )),
+                                    ));
+                                }
                                 return Some(agent_response(
                                     &session_id,
                                     id,
@@ -1913,6 +2205,16 @@ async fn handle_agent_command(
                     // its map in the background, and the frontend learns
                     // about it via the get_state response.
 
+                    // Pin this session to the runner that successfully created it.
+                    // Without this, a prompt sent immediately after session.create can
+                    // race target persistence and fail with "Session target unknown".
+                    {
+                        let mut state_guard = conn_state.lock().await;
+                        state_guard
+                            .session_runner_overrides
+                            .insert(session_id.clone(), runner.clone());
+                    }
+
                     // Auto-subscribe to events for the session.
                     // We MUST wait for the subscription to be established
                     // before returning the session.create response, otherwise
@@ -1969,9 +2271,29 @@ async fn handle_agent_command(
                         drop(state_guard);
                     }
 
-                    let target_for_persist = resolved_target_for_command
+                    let mut target_for_persist = resolved_target_for_command
                         .clone()
                         .unwrap_or(ExecutionTarget::Personal);
+
+                    // Safety net: if cwd is a shared workspace path but routing resolved
+                    // as personal, force metadata scope from canonical path resolution.
+                    if matches!(target_for_persist, ExecutionTarget::Personal)
+                        && (cwd_string.starts_with("/home/oqto_shared_")
+                            || cwd_string.starts_with("/home/octo_shared_"))
+                    {
+                        if let Ok(resolved) =
+                            crate::runner::router::resolve_target_for_workspace_path(
+                                state,
+                                user_id,
+                                &cwd_string,
+                            )
+                            .await
+                            && matches!(resolved, ExecutionTarget::SharedWorkspace { .. })
+                        {
+                            target_for_persist = resolved;
+                        }
+                    }
+
                     let (target_scope, target_workspace_id, target_record) =
                         match target_for_persist {
                             ExecutionTarget::Personal => (
@@ -1998,12 +2320,12 @@ async fn handle_agent_command(
                             ),
                         };
                     if let Err(e) = state.session_targets.upsert(&target_record).await {
-                        return Some(agent_response(
-                            &session_id,
-                            id,
-                            "session.create",
-                            Err(format!("Failed to persist session target metadata: {}", e)),
-                        ));
+                        tracing::error!(
+                            session_id = %session_id,
+                            user_id = %user_id,
+                            error = %e,
+                            "failed to persist session target metadata during session.create; continuing"
+                        );
                     }
 
                     Some(agent_response(
@@ -2492,8 +2814,10 @@ async fn handle_agent_command(
                 "agent get_state: user={}, session_id={}",
                 user_id, session_id
             );
-            match runner.agent_get_state(&session_id).await {
-                Ok(resp) => {
+            match tokio::time::timeout(Duration::from_secs(6), runner.agent_get_state(&session_id))
+                .await
+            {
+                Ok(Ok(resp)) => {
                     let state_value = serde_json::to_value(&resp.state).unwrap_or(Value::Null);
                     Some(agent_response(
                         &session_id,
@@ -2502,12 +2826,13 @@ async fn handle_agent_command(
                         Ok(Some(state_value)),
                     ))
                 }
-                Err(e) => Some(agent_response(
+                Ok(Err(e)) => Some(agent_response(
                     &session_id,
                     id,
                     "get_state",
                     Err(e.to_string()),
                 )),
+                Err(_) => Some(agent_response(&session_id, id, "get_state", Ok(None))),
             }
         }
 
@@ -3454,23 +3779,65 @@ async fn handle_files_command(
         relative_path: &'a str,
         depth: usize,
         include_hidden: bool,
+        traversal: TreeTraversalContext,
+        paging: Option<(usize, usize)>,
     ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<Vec<FileTreeNode>, String>> + Send + 'a>,
+        Box<dyn std::future::Future<Output = Result<TreeBuildResult, String>> + Send + 'a>,
     > {
         Box::pin(async move {
+            if traversal.should_stop().await {
+                return Ok(TreeBuildResult {
+                    nodes: Vec::new(),
+                    next_offset: None,
+                    total_entries: 0,
+                });
+            }
+
             let resolved = resolve_workspace_child(workspace_root, relative_path)?;
+
+            let permit = traversal
+                .semaphore
+                .acquire()
+                .await
+                .map_err(|_| "tree traversal worker semaphore closed".to_string())?;
             let entries = user_plane
                 .list_directory(&resolved, include_hidden)
                 .await
                 .map_err(|e| {
                     format!("list_directory failed for {}: {:#}", resolved.display(), e)
                 })?;
+            let entries = sort_dir_entries(entries);
+            drop(permit);
+
+            let total_entries = entries.len();
+            let (paged_entries, next_offset) = if let Some((offset, limit)) = paging {
+                let start = offset.min(total_entries);
+                let end = start.saturating_add(limit).min(total_entries);
+                let next = (end < total_entries).then_some(end);
+                (
+                    entries
+                        .into_iter()
+                        .skip(start)
+                        .take(end.saturating_sub(start))
+                        .collect::<Vec<_>>(),
+                    next,
+                )
+            } else {
+                (entries, None)
+            };
 
             // Separate directories (need recursive fetch) from files (instant)
             let mut file_nodes = Vec::new();
             let mut dir_entries = Vec::new();
 
-            for entry in entries {
+            for entry in paged_entries {
+                if traversal.should_stop().await {
+                    break;
+                }
+                if !traversal.try_visit_node().await {
+                    break;
+                }
+
                 let child_path = join_relative_path(relative_path, &entry.name);
                 if entry.is_dir && depth > 1 {
                     dir_entries.push((entry, child_path));
@@ -3479,7 +3846,7 @@ async fn handle_files_command(
                 }
             }
 
-            // Fetch all subdirectories concurrently
+            // Fetch all subdirectories concurrently with bounded semaphore.
             let dir_futures: Vec<_> = dir_entries
                 .iter()
                 .map(|(_, child_path)| {
@@ -3489,6 +3856,8 @@ async fn handle_files_command(
                         child_path,
                         depth - 1,
                         include_hidden,
+                        traversal.clone(),
+                        None,
                     )
                 })
                 .collect();
@@ -3498,12 +3867,16 @@ async fn handle_files_command(
             // Build directory nodes from results, preserving original order
             let mut nodes = Vec::with_capacity(file_nodes.len() + dir_entries.len());
             for ((entry, child_path), result) in dir_entries.into_iter().zip(dir_results) {
-                let children = Some(result?);
+                let children = Some(result?.nodes);
                 nodes.push(map_tree_node(&entry, child_path, children));
             }
             nodes.append(&mut file_nodes);
 
-            Ok(nodes)
+            Ok(TreeBuildResult {
+                nodes,
+                next_offset,
+                total_entries,
+            })
         })
     }
 
@@ -3568,23 +3941,46 @@ async fn handle_files_command(
             path,
             depth,
             include_hidden,
+            offset,
+            limit,
             ..
         } => {
-            let max_depth = depth.unwrap_or(6).max(1);
+            let max_depth = resolve_tree_depth(depth);
+            let traversal = TreeTraversalContext::new(
+                TREE_MAX_NODES,
+                Duration::from_millis(TREE_MAX_TIME_MS),
+                TREE_MAX_CONCURRENCY,
+            );
+            let started = Instant::now();
+            let page_offset = offset.unwrap_or(0);
+            let page_limit = resolve_tree_page_limit(limit);
+
             match build_tree(
                 &user_plane,
                 &workspace_root,
                 &path,
                 max_depth,
                 include_hidden,
+                traversal.clone(),
+                Some((page_offset, page_limit)),
             )
             .await
             {
-                Ok(entries) => Some(WsEvent::Files(FilesWsEvent::TreeResult {
-                    id,
-                    path,
-                    entries,
-                })),
+                Ok(result) => {
+                    let stop_reason = traversal.stop_reason().await;
+                    let truncated = Some(stop_reason.is_some() || result.next_offset.is_some());
+                    Some(WsEvent::Files(FilesWsEvent::TreeResult {
+                        id,
+                        path,
+                        entries: result.nodes,
+                        truncated,
+                        stop_reason,
+                        visited_nodes: Some(traversal.visited_nodes()),
+                        elapsed_ms: Some(started.elapsed().as_millis() as u64),
+                        next_offset: result.next_offset,
+                        total_entries: Some(result.total_entries),
+                    }))
+                }
                 Err(err) => Some(WsEvent::Files(FilesWsEvent::Error { id, error: err })),
             }
         }
@@ -4590,6 +4986,7 @@ async fn handle_session_command(
     // Legacy Session channel commands targeted the OpenCode HTTP API which has been removed.
     // All agent interaction now flows through the Agent channel.
     Some(WsEvent::System(SystemWsEvent::Error {
+        id: None,
         error: match session_id {
             Some(id) => format!(
                 "Legacy session channel is deprecated for session {}. Use the agent channel instead.",
@@ -5108,6 +5505,90 @@ mod tests {
     }
 
     #[test]
+    fn test_ws_command_id_for_files_tree() {
+        let json = r#"{"channel":"files","type":"tree","id":"req-9","path":".","workspace_path":"/tmp/ws"}"#;
+        let cmd: WsCommand = serde_json::from_str(json).unwrap();
+        assert_eq!(ws_command_id(&cmd), Some("req-9".to_string()));
+    }
+
+    #[test]
+    fn test_sort_dir_entries_dirs_first_then_name() {
+        let entries = vec![
+            crate::user_plane::DirEntry {
+                name: "zeta.txt".to_string(),
+                is_dir: false,
+                is_symlink: false,
+                size: 1,
+                modified_at: 0,
+            },
+            crate::user_plane::DirEntry {
+                name: "beta".to_string(),
+                is_dir: true,
+                is_symlink: false,
+                size: 0,
+                modified_at: 0,
+            },
+            crate::user_plane::DirEntry {
+                name: "Alpha".to_string(),
+                is_dir: true,
+                is_symlink: false,
+                size: 0,
+                modified_at: 0,
+            },
+            crate::user_plane::DirEntry {
+                name: "a.txt".to_string(),
+                is_dir: false,
+                is_symlink: false,
+                size: 1,
+                modified_at: 0,
+            },
+        ];
+
+        let sorted = sort_dir_entries(entries);
+        let names: Vec<_> = sorted.into_iter().map(|e| e.name).collect();
+        assert_eq!(names, vec!["Alpha", "beta", "a.txt", "zeta.txt"]);
+    }
+
+    #[test]
+    fn test_resolve_tree_depth_bounds() {
+        assert_eq!(resolve_tree_depth(None), 2);
+        assert_eq!(resolve_tree_depth(Some(0)), 1);
+        assert_eq!(resolve_tree_depth(Some(1)), 1);
+        assert_eq!(resolve_tree_depth(Some(4)), 4);
+        assert_eq!(resolve_tree_depth(Some(999)), TREE_MAX_DEPTH);
+    }
+
+    #[test]
+    fn test_resolve_tree_page_limit_bounds() {
+        assert_eq!(resolve_tree_page_limit(None), TREE_PAGE_DEFAULT_LIMIT);
+        assert_eq!(resolve_tree_page_limit(Some(0)), 1);
+        assert_eq!(resolve_tree_page_limit(Some(50)), 50);
+        assert_eq!(resolve_tree_page_limit(Some(999999)), TREE_PAGE_MAX_LIMIT);
+    }
+
+    #[test]
+    fn test_serialize_tree_result_truncated_metadata() {
+        let event = WsEvent::Files(FilesWsEvent::TreeResult {
+            id: Some("req-tree".to_string()),
+            path: ".".to_string(),
+            entries: Vec::new(),
+            truncated: Some(true),
+            stop_reason: Some("max_nodes".to_string()),
+            visited_nodes: Some(20_000),
+            elapsed_ms: Some(123),
+            next_offset: Some(1000),
+            total_entries: Some(5000),
+        });
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains(r#""type":"tree_result""#));
+        assert!(json.contains(r#""truncated":true"#));
+        assert!(json.contains(r#""stop_reason":"max_nodes""#));
+        assert!(json.contains(r#""visited_nodes":20000"#));
+        assert!(json.contains(r#""next_offset":1000"#));
+        assert!(json.contains(r#""total_entries":5000"#));
+    }
+
+    #[test]
     fn test_serialize_agent_command_response() {
         use oqto_protocol::events::{CommandResponse, EventPayload};
 
@@ -5136,6 +5617,18 @@ mod tests {
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains(r#""channel":"system""#));
         assert!(json.contains(r#""type":"connected""#));
+    }
+
+    #[test]
+    fn test_serialize_system_error_with_id() {
+        let event = WsEvent::System(SystemWsEvent::Error {
+            id: Some("req-42".to_string()),
+            error: "Command timed out".to_string(),
+        });
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains(r#""channel":"system""#));
+        assert!(json.contains(r#""type":"error""#));
+        assert!(json.contains(r#""id":"req-42""#));
     }
 
     #[test]

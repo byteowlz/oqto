@@ -715,8 +715,10 @@ export function mergeServerMessages(
 	if (previous.length === 0) return serverMessages;
 
 	if (mode === "partial") {
-		// Keep all previous messages. Update any that match by ID or
-		// clientId; append the rest.
+		// Keep all previous messages. Update any that match by ID or clientId.
+		// As a final guard, dedupe by content fingerprint to avoid duplicate
+		// bubbles when the same server message is observed via multiple recovery
+		// paths (e.g. reconnect + resync + history fetch).
 		const result = [...previous];
 		for (const serverMsg of serverMessages) {
 			let matched = false;
@@ -738,6 +740,20 @@ export function mergeServerMessages(
 				}
 			}
 			if (!matched) {
+				const serverFp = messageFingerprint(serverMsg);
+				for (let i = 0; i < result.length; i++) {
+					const local = result[i];
+					if (local.role !== serverMsg.role) continue;
+					if (messageFingerprint(local) !== serverFp) continue;
+					const dt = Math.abs((local.timestamp ?? 0) - (serverMsg.timestamp ?? 0));
+					if (dt <= 5 * 60 * 1000) {
+						result[i] = serverMsg;
+						matched = true;
+						break;
+					}
+				}
+			}
+			if (!matched) {
 				result.push(serverMsg);
 			}
 		}
@@ -750,6 +766,7 @@ export function mergeServerMessages(
 	const serverClientIds = new Set(
 		serverMessages.filter((m) => m.clientId).map((m) => m.clientId),
 	);
+	const serverFingerprints = new Set(serverMessages.map((m) => messageFingerprint(m)));
 
 	const trailing: DisplayMessage[] = [];
 	for (let i = previous.length - 1; i >= 0; i--) {
@@ -758,12 +775,12 @@ export function mergeServerMessages(
 			trailing.unshift(msg);
 			continue;
 		}
-		if (
-			msg.role === "user" &&
-			msg.clientId &&
-			!serverClientIds.has(msg.clientId)
-		) {
-			trailing.unshift(msg);
+		if (msg.role === "user" && msg.clientId && !serverClientIds.has(msg.clientId)) {
+			// If server already has this exact user message (without client_id),
+			// do not preserve the optimistic tail copy.
+			if (!serverFingerprints.has(messageFingerprint(msg))) {
+				trailing.unshift(msg);
+			}
 			continue;
 		}
 		break;

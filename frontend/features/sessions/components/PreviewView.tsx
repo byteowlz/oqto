@@ -299,6 +299,7 @@ export function PreviewView({
 	const [mediaError, setMediaError] = useState<string>("");
 	const loadingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const binaryObjectUrlRef = useRef<string | null>(null);
+	const mediaBlobFallbackTriedRef = useRef(false);
 
 	// Ref for scroll container to preserve scroll position when entering edit mode
 	const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -406,6 +407,7 @@ export function PreviewView({
 			URL.revokeObjectURL(binaryObjectUrlRef.current);
 			binaryObjectUrlRef.current = null;
 		}
+		mediaBlobFallbackTriedRef.current = false;
 		setBinaryUrl(null);
 
 		if (!filePath || !workspacePath) {
@@ -488,6 +490,35 @@ export function PreviewView({
 			}
 		};
 	}, [filePath, workspacePath]);
+
+	const loadMediaBlobFallback = useCallback(async () => {
+		if (!workspacePath || !filePath) return;
+		if (mediaBlobFallbackTriedRef.current) return;
+		mediaBlobFallbackTriedRef.current = true;
+
+		setBinaryLoading(true);
+		try {
+			const filename = filePath.split("/").pop() || filePath;
+			const { data } = await readFileMux(workspacePath, filePath);
+			const mimeType = getMediaMimeType(filename);
+			const blob = new Blob([data], { type: mimeType });
+			if (binaryObjectUrlRef.current) {
+				URL.revokeObjectURL(binaryObjectUrlRef.current);
+			}
+			const objectUrl = URL.createObjectURL(blob);
+			binaryObjectUrlRef.current = objectUrl;
+			setBinaryUrl(objectUrl);
+			setMediaError("");
+		} catch (err) {
+			setMediaError(
+				err instanceof Error
+					? `Video/audio fallback failed: ${err.message}`
+					: "Video/audio fallback failed",
+			);
+		} finally {
+			setBinaryLoading(false);
+		}
+	}, [workspacePath, filePath]);
 
 	const handleSave = useCallback(async () => {
 		if (!workspacePath || !filePath || !cacheKeyPrefix) return;
@@ -813,17 +844,18 @@ export function PreviewView({
 				{/* Video content */}
 				<div className="flex-1 overflow-hidden bg-black flex items-center justify-center p-0 sm:p-3">
 					<video
-						src={fileUrl}
 						controls
 						playsInline
 						preload="metadata"
-						onError={() =>
+						onError={() => {
 							setMediaError(
-								"Video playback failed in preview. Try Open in new tab.",
-							)
-						}
+								"Video playback failed in preview. Trying binary fallback...",
+							);
+							void loadMediaBlobFallback();
+						}}
 						className="w-full h-full object-contain"
 					>
+						<source src={fileUrl} type={getMediaMimeType(filename)} />
 						<track kind="captions" />
 						Your browser does not support the video tag.
 					</video>
@@ -913,16 +945,17 @@ export function PreviewView({
 				<div className="flex-1 overflow-hidden bg-muted/30 flex items-center justify-center p-4">
 					{/* biome-ignore lint/a11y/useMediaCaption: audio files may not have captions */}
 					<audio
-						src={fileUrl}
 						controls
 						preload="metadata"
-						onError={() =>
+						onError={() => {
 							setMediaError(
-								"Audio playback failed in preview. Try Open in new tab.",
-							)
-						}
+								"Audio playback failed in preview. Trying binary fallback...",
+							);
+							void loadMediaBlobFallback();
+						}}
 						className="w-full"
 					>
+						<source src={fileUrl} type={getMediaMimeType(filename)} />
 						Your browser does not support the audio element.
 					</audio>
 				</div>
