@@ -2,6 +2,35 @@
 
 ## Open
 
+### [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (P0, bug)
+In useChat.ts (~line 827), on agent.idle the frontend explicitly discards deferred server messages with the comment 'may be incomplete -- fetched mid-stream before all messages were persisted.'
+
+The problem: if streaming events were dropped due to broadcast overflow (FM-1), those deferred messages were the BACKUP. Discarding them creates a double-failure mode where both streaming AND the backup are lost.
+
+Fix: On agent.idle, if the local streaming state appears incomplete (missing expected tool results, text content shorter than expected), apply deferred messages instead of discarding them.
+...
+
+
+### [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (P0, bug)
+The runner uses tokio::broadcast::channel(256) for distributing Pi events to WebSocket subscribers. When Pi emits events faster than the WebSocket can consume them (rapid text_delta bursts during long tool outputs), broadcast::Receiver::recv() returns Lagged(n), permanently dropping n events.
+
+This causes: missing text deltas, missing tool results, missing agent_end/agent_idle events. The frontend may never learn a turn completed.
+
+Current mitigation (stream.resync_required) is reactive -- the damage is already done.
+...
+
+
+### [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (P0, bug)
+LocalPiProcess::stdout_reader_task() (pi/runtime.rs ~line 290) and RunnerPiProcess::process_line() both call PiMessage::parse(&line) which fails on concatenated JSON objects. Pi flushes multiple JSON objects on a single stdout line when the output buffer fills at 4096 bytes. parse() returns 'trailing characters' error and the line is logged as a warning but ALL events on that line are lost.
+
+PiMessage::parse_all() already exists and correctly uses StreamDeserializer to split concatenated objects. The fix is to replace parse() with parse_all() in both locations.
+
+This is the most likely root cause of intermittently missing agent responses on the frontend. Every time Pi's output buffer aligns with a 4096 boundary mid-JSON, events are silently dropped.
+...
+
+
+### [oqto-vh8v] Critical: terminal routing integrity violation across users/workspaces (P0, bug)
+
 ### [oqto-snfs] Backend deadlock when deleting shared workspace sessions - session.delete/session.create to SW runner hangs, blocks entire WS connection, eventually all HTTP requests time out. 30s runner client timeout not firing. Needs 45s hard deadline on WS command handler + investigation of why tokio timeout doesn't trigger. (P0, bug)
 
 ### [oqto-5ey4] Migrate from oqto-browser to agent-browser (P0, epic)
@@ -32,6 +61,43 @@ setup.sh must correctly provision everything for a new platform user on a fresh 
 3. Per-user provisioning on login/creation:
 ...
 
+
+### [oqto-8vkn] Add message sync test suite: unit + integration + E2E tests for Pi->hstry->Frontend pipeline (P1, task)
+Create comprehensive test coverage for the message sync pipeline to prevent regressions.
+
+Unit tests (Rust):
+- T1: PiTranslator produces output for all PiEvent variants
+- T2: AgentMessage -> proto Message -> SerializableMessage round-trip preserves content
+...
+
+
+### [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (P1, bug)
+The get_messages handler in ws_multiplexed.rs uses a 15-minute TTL cache (PI_MESSAGES_CACHE). If a user opens a session (cache populated), agent runs and finishes, user switches away and back within 15 minutes -- the cache returns stale messages missing the latest agent response.
+
+Current bypass: cache is skipped during active streaming (is_active check) and when age <= 2s. But sessions that become inactive between cache population and access serve stale data.
+
+Fix: Invalidate the cache entry for a session whenever agent.idle is received for that session. This is a one-line change in the agent.idle event handler.
+...
+
+
+### [oqto-yxss] Implement version vectors for deterministic Pi->hstry->Frontend sync (P1, feature)
+Add a monotonic version counter to hstry conversations. Every append_messages or write_conversation increments it atomically. The runner includes MessageVersion { version, message_count, last_message_hash } in every agent.idle event. Frontend compares local vs server version:
+
+- local.version == server.version: in sync, no action
+- local.version < server.version: fetch from hstry (authoritative)
+- local.version > server.version: impossible, log error
+...
+
+
+### [oqto-n8bj] Bound file-tree traversal concurrency and add hard limits for huge repos (P1, task)
+
+### [oqto-a6hw] WebSocket mux command processing is head-of-line blocked by slow file tree commands (P1, bug)
+
+### [oqto-9snf] Regression suite: cross-user terminal isolation and shared workspace routing (P1, task)
+
+### [oqto-q39k] Add terminal command binding invariants (user/owner/workspace/terminal_id) fail-closed (P1, task)
+
+### [oqto-6pkb] Remove ttyd TCP fallback and enforce unix-socket-only terminal transport (P1, bug)
 
 ### [oqto-yxhc] Inline HTML Apps: workspace apps rendered via srcdoc iframes (P1, epic)
 Render single-file HTML apps from workspace as live iframe tabs in the session screen. No backend changes. Apps get file read/write via apphost bridge (postMessage -> mux-files). Agents and users share data via workspace files. Phase 0 of the app story -- oqto-serve (oqto-14b1) handles multi-file apps later. Design: docs/design/inline-html-apps.md
@@ -1874,7 +1940,7 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
 - [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
 - [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
