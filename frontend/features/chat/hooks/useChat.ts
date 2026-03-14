@@ -133,6 +133,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 	const isStreamingRef = useRef(false);
 	const lastAgentEventAtRef = useRef<number>(Date.now());
 	const sendInFlightRef = useRef(false);
+	const responseWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	// Deferred server messages received while streaming (applied on agent.idle)
 	const deferredServerMessagesRef = useRef<unknown[] | null>(null);
 	// Force a full server sync after reattaching to an active runner session.
@@ -420,6 +421,34 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 		[mergeServerMessages, normalizeMessages],
 	);
 
+	const clearResponseWatchdog = useCallback(() => {
+		if (responseWatchdogRef.current) {
+			clearTimeout(responseWatchdogRef.current);
+			responseWatchdogRef.current = null;
+		}
+	}, []);
+
+	const armResponseWatchdog = useCallback(
+		(sessionId: string) => {
+			clearResponseWatchdog();
+			responseWatchdogRef.current = setTimeout(() => {
+				const manager = getWsManager();
+				manager.agentGetState(sessionId);
+				void fetchHistoryMessages(sessionId);
+				isStreamingRef.current = false;
+				setIsStreaming(false);
+				setIsAwaitingResponse(false);
+				sendInFlightRef.current = false;
+				setError(
+					new Error(
+						"The agent did not respond in time. We recovered latest history. Please retry.",
+					),
+				);
+			}, 30000);
+		},
+		[clearResponseWatchdog, fetchHistoryMessages],
+	);
+
 	// ========================================================================
 	// Canonical agent event handler
 	// ========================================================================
@@ -460,6 +489,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 			switch (eventType) {
 				// -- Streaming lifecycle --
 				case "stream.message_start": {
+					clearResponseWatchdog();
 					setBusyForEvent(event.session_id ?? activeSessionIdRef.current, true);
 					// Only create a display message for assistant-role messages.
 					// The backend sends message_start for every Pi message
@@ -651,6 +681,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 
 				// -- Stream complete --
 				case "stream.done": {
+					clearResponseWatchdog();
 					setBusyForEvent(
 						event.session_id ?? activeSessionIdRef.current,
 						false,
@@ -801,6 +832,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 
 				// -- Agent idle (streaming ended) --
 				case "agent.idle": {
+					clearResponseWatchdog();
 					sendInFlightRef.current = false;
 					setBusyForEvent(
 						event.session_id ?? activeSessionIdRef.current,
@@ -898,6 +930,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 				}
 
 				case "agent.error": {
+					clearResponseWatchdog();
 					const wasInFlight = sendInFlightRef.current;
 					sendInFlightRef.current = false;
 					isStreamingRef.current = false;
@@ -1749,6 +1782,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 				}
 			}
 
+			armResponseWatchdog(sessionId);
 			switch (mode) {
 				case "prompt":
 					// Pass the clientId for optimistic message matching
@@ -1853,6 +1887,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 				if (!connected) {
 					// Prevent indefinite "stuck streaming" UI when WS drops mid-turn.
 					// History resync still restores messages after reconnect.
+					clearResponseWatchdog();
 					isStreamingRef.current = false;
 					setIsStreaming(false);
 					setIsAwaitingResponse(false);
@@ -1864,7 +1899,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 		);
 
 		return unsubscribe;
-	}, []);
+	}, [clearResponseWatchdog]);
 
 	// Watchdog: if the UI is "working" but we stop receiving live events,
 	// trigger a state+history resync and clear stuck spinner state.
