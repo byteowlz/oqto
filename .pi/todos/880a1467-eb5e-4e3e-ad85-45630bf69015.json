@@ -3,21 +3,27 @@
     {
       "id": "1",
       "content": "Diagnose warm-deed-best session: history loss, stuck follow-ups, mid-stream stalls",
-      "status": "in_progress",
+      "status": "completed",
       "priority": "high"
     },
     {
       "id": "2",
       "content": "Fix root causes of frontend-runner-Pi sync failures",
-      "status": "pending",
+      "status": "completed",
       "priority": "high"
     },
     {
       "id": "3",
-      "content": "Deploy fixes to octo-azure",
-      "status": "pending",
+      "content": "Build release and deploy to octo-azure",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "4",
+      "content": "Verify fix on production",
+      "status": "in_progress",
       "priority": "high"
     }
   ],
-  "updated_at": "2026-03-14T22:01:18.647Z"
+  "updated_at": "2026-03-14T22:18:27.632Z"
 }

@@ -2206,7 +2206,15 @@ impl Runner {
         // "loses" messages until the next agent.idle triggers hstry persistence.
         let session_is_active = self.pi_manager.has_session(&req.session_id).await;
         if session_is_active {
-            if let Ok(raw) = self.pi_manager.get_messages(&req.session_id).await {
+            // Use a short timeout: Pi may be busy with an LLM request and won't
+            // respond to RPC for 10+s. We'd rather return hstry data quickly
+            // than block the entire request on a busy Pi process.
+            let pi_result = tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                self.pi_manager.get_messages(&req.session_id),
+            )
+            .await;
+            if let Ok(Ok(raw)) = pi_result {
                 let pi_msgs: Vec<oqto::pi::AgentMessage> = raw
                     .as_array()
                     .map(|arr| {
