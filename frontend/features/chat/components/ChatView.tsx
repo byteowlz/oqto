@@ -697,22 +697,6 @@ export function ChatView({
 	const historyPending =
 		messages.length === 0 && (piState?.messageCount ?? 0) > 0;
 	const showSkeleton = messages.length === 0 && !displayError && historyPending;
-	const runtimeSessionId = piState?.sessionId ?? null;
-	const sessionMismatch =
-		!!selectedSessionId &&
-		!!runtimeSessionId &&
-		selectedSessionId !== runtimeSessionId;
-	const selectedSessionShort = selectedSessionId
-		? formatTempId(selectedSessionId)
-		: "none";
-	const runtimeSessionShort = runtimeSessionId
-		? formatTempId(runtimeSessionId)
-		: "none";
-	const transportState = !isConnected
-		? "disconnected"
-		: isStreaming || isAwaitingResponse
-			? "working"
-			: "idle";
 
 	const ChatSkeleton = (
 		<div className="flex-1 flex flex-col gap-4 min-h-0 animate-pulse">
@@ -2163,26 +2147,6 @@ export function ChatView({
 
 			{/* Chat input - canonical chat input */}
 			<div className="chat-input-container flex flex-col gap-1 bg-muted/30 border border-border px-2 py-1 mt-2">
-				<div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-1 text-[11px] text-muted-foreground">
-					<span
-						className={cn(
-							"inline-flex items-center rounded border px-1.5 py-0.5 font-mono",
-							isConnected
-								? "border-emerald-500/40 text-emerald-600 dark:text-emerald-400"
-								: "border-destructive/40 text-destructive",
-						)}
-					>
-						ws:{isConnected ? "up" : "down"}
-					</span>
-					<span className="font-mono">agent:{transportState}</span>
-					<span className="font-mono">view:{selectedSessionShort}</span>
-					<span className="font-mono">runtime:{runtimeSessionShort}</span>
-					{sessionMismatch && (
-						<span className="inline-flex items-center rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 font-mono text-amber-700 dark:text-amber-300">
-							session mismatch
-						</span>
-					)}
-				</div>
 				<div className="flex items-center gap-2">
 
 					{/* File upload button */}

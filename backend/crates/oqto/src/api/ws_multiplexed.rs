@@ -887,6 +887,11 @@ struct WsConnectionState {
     /// Aborted on session close/delete and WebSocket disconnect to prevent
     /// leaked subscription tasks across reconnect storms.
     pi_forwarders: HashMap<String, tokio::task::JoinHandle<()>>,
+    /// Per-session response watchdogs for in-flight prompt/steer/follow_up.
+    /// If no agent progress event arrives within the timeout, we emit
+    /// canonical terminal events (agent.error + agent.idle) so the UI never
+    /// remains in an unrecoverable working state.
+    response_watchdogs: HashMap<String, tokio::task::JoinHandle<()>>,
     /// Metadata for Pi sessions created via this connection.
     pi_session_meta: HashMap<String, PiSessionMeta>,
     /// Active terminal sessions keyed by terminal_id.
@@ -941,6 +946,7 @@ async fn handle_multiplexed_ws(socket: WebSocket, state: AppState, user_id: Stri
         event_tx: event_tx.clone(),
         pi_subscriptions: HashSet::new(),
         pi_forwarders: HashMap::new(),
+        response_watchdogs: HashMap::new(),
         pi_session_meta: HashMap::new(),
         terminal_sessions: HashMap::new(),
         file_watchers: HashMap::new(),
@@ -1144,6 +1150,9 @@ async fn handle_multiplexed_ws(socket: WebSocket, state: AppState, user_id: Stri
             handle.abort();
         }
         for (_, handle) in state_guard.pi_forwarders.drain() {
+            handle.abort();
+        }
+        for (_, handle) in state_guard.response_watchdogs.drain() {
             handle.abort();
         }
     }
@@ -1621,6 +1630,65 @@ fn agent_response_with_runner(
             },
         ),
     })
+}
+
+const RESPONSE_WATCHDOG_TIMEOUT: Duration = Duration::from_secs(45);
+
+async fn clear_response_watchdog(
+    conn_state: &Arc<tokio::sync::Mutex<WsConnectionState>>,
+    session_id: &str,
+) {
+    let mut state_guard = conn_state.lock().await;
+    if let Some(handle) = state_guard.response_watchdogs.remove(session_id) {
+        handle.abort();
+    }
+}
+
+async fn arm_response_watchdog(
+    conn_state: &Arc<tokio::sync::Mutex<WsConnectionState>>,
+    session_id: &str,
+    runner_id: &str,
+    event_tx: mpsc::UnboundedSender<WsEvent>,
+) {
+    // Replace any existing watchdog for this session.
+    clear_response_watchdog(conn_state, session_id).await;
+
+    let conn_state_for_task = Arc::clone(conn_state);
+    let session_id_owned = session_id.to_string();
+    let runner_id_owned = runner_id.to_string();
+    let handle = tokio::spawn(async move {
+        tokio::time::sleep(RESPONSE_WATCHDOG_TIMEOUT).await;
+
+        {
+            let mut state_guard = conn_state_for_task.lock().await;
+            state_guard.response_watchdogs.remove(&session_id_owned);
+        }
+
+        let error_event = oqto_protocol::events::Event {
+            session_id: session_id_owned.clone(),
+            runner_id: runner_id_owned.clone(),
+            ts: Utc::now().timestamp_millis(),
+            payload: oqto_protocol::events::EventPayload::AgentError {
+                error: "No agent progress received in time. Session recovered to idle; you can retry your message.".to_string(),
+                recoverable: true,
+                phase: Some(oqto_protocol::events::AgentPhase::Generating),
+            },
+        };
+        let _ = event_tx.send(WsEvent::Agent(error_event));
+
+        let idle_event = oqto_protocol::events::Event {
+            session_id: session_id_owned,
+            runner_id: runner_id_owned,
+            ts: Utc::now().timestamp_millis(),
+            payload: oqto_protocol::events::EventPayload::AgentIdle,
+        };
+        let _ = event_tx.send(WsEvent::Agent(idle_event));
+    });
+
+    let mut state_guard = conn_state.lock().await;
+    state_guard
+        .response_watchdogs
+        .insert(session_id.to_string(), handle);
 }
 
 /// Handle canonical agent commands.
@@ -2232,12 +2300,14 @@ async fn handle_agent_command(
                         // Use a oneshot channel to wait for subscription confirmation
                         let (sub_ready_tx, sub_ready_rx) = oneshot::channel::<()>();
                         let runner_id = runner_id.clone();
+                        let conn_state_for_fwd = Arc::clone(&conn_state);
                         let forwarder = tokio::spawn(async move {
                             if let Err(e) = forward_pi_events(
                                 &runner,
                                 &sid,
                                 &uid,
                                 event_tx,
+                                conn_state_for_fwd,
                                 Some(sub_ready_tx),
                                 runner_id,
                             )
@@ -2363,6 +2433,9 @@ async fn handle_agent_command(
             if let Some(handle) = state_guard.pi_forwarders.remove(&session_id) {
                 handle.abort();
             }
+            if let Some(handle) = state_guard.response_watchdogs.remove(&session_id) {
+                handle.abort();
+            }
             drop(state_guard);
 
             match runner.agent_close_session(&session_id).await {
@@ -2386,6 +2459,9 @@ async fn handle_agent_command(
             state_guard.subscribed_sessions.remove(&session_id);
             state_guard.pi_subscriptions.remove(&session_id);
             if let Some(handle) = state_guard.pi_forwarders.remove(&session_id) {
+                handle.abort();
+            }
+            if let Some(handle) = state_guard.response_watchdogs.remove(&session_id) {
                 handle.abort();
             }
             drop(state_guard);
@@ -2513,6 +2589,9 @@ async fn handle_agent_command(
                 if let Some(handle) = state_guard.pi_forwarders.remove(&session_id) {
                     handle.abort();
                 }
+                if let Some(handle) = state_guard.response_watchdogs.remove(&session_id) {
+                    handle.abort();
+                }
                 state_guard.pi_session_meta.insert(
                     session_id.clone(),
                     PiSessionMeta {
@@ -2547,12 +2626,14 @@ async fn handle_agent_command(
                     let uid = user_id.to_string();
                     let (sub_ready_tx, sub_ready_rx) = oneshot::channel::<()>();
                     let runner_id = runner_id.clone();
+                    let conn_state_for_fwd = Arc::clone(&conn_state);
                     let forwarder = tokio::spawn(async move {
                         if let Err(e) = forward_pi_events(
                             &runner,
                             &sid,
                             &uid,
                             event_tx,
+                            conn_state_for_fwd,
                             Some(sub_ready_tx),
                             runner_id,
                         )
@@ -2642,6 +2723,12 @@ async fn handle_agent_command(
                     .await
                 {
                     Ok(()) => {
+                        let event_tx = {
+                            let state_guard = conn_state.lock().await;
+                            state_guard.event_tx.clone()
+                        };
+                        arm_response_watchdog(&conn_state, &session_id, &runner_id, event_tx)
+                            .await;
                         broadcast_user_message(
                             state,
                             &session_id,
@@ -2696,6 +2783,12 @@ async fn handle_agent_command(
                     .await
                 {
                     Ok(()) => {
+                        let event_tx = {
+                            let state_guard = conn_state.lock().await;
+                            state_guard.event_tx.clone()
+                        };
+                        arm_response_watchdog(&conn_state, &session_id, &runner_id, event_tx)
+                            .await;
                         broadcast_user_message(
                             state,
                             &session_id,
@@ -2750,6 +2843,12 @@ async fn handle_agent_command(
                     .await
                 {
                     Ok(()) => {
+                        let event_tx = {
+                            let state_guard = conn_state.lock().await;
+                            state_guard.event_tx.clone()
+                        };
+                        arm_response_watchdog(&conn_state, &session_id, &runner_id, event_tx)
+                            .await;
                         broadcast_user_message(
                             state,
                             &session_id,
@@ -3584,6 +3683,7 @@ async fn forward_pi_events(
     session_id: &str,
     user_id: &str,
     event_tx: mpsc::UnboundedSender<WsEvent>,
+    conn_state: Arc<tokio::sync::Mutex<WsConnectionState>>,
     sub_ready_tx: Option<oneshot::Sender<()>>,
     runner_id: String,
 ) -> anyhow::Result<()> {
@@ -3605,6 +3705,9 @@ async fn forward_pi_events(
     loop {
         match subscription.next().await {
             Some(PiSubscriptionEvent::Event(canonical_event)) => {
+                // Any real agent event means the command made progress.
+                clear_response_watchdog(&conn_state, session_id).await;
+
                 // Invalidate the messages cache on agent.idle so subsequent
                 // get_messages requests fetch fresh data from hstry instead
                 // of serving stale cached messages.
@@ -3626,6 +3729,7 @@ async fn forward_pi_events(
                 }
             }
             Some(PiSubscriptionEvent::End { reason }) => {
+                clear_response_watchdog(&conn_state, session_id).await;
                 debug!(
                     "Pi subscription ended for session {}: {}",
                     session_id, reason
@@ -3633,6 +3737,7 @@ async fn forward_pi_events(
                 break;
             }
             Some(PiSubscriptionEvent::Error { code, message }) => {
+                clear_response_watchdog(&conn_state, session_id).await;
                 error!(
                     "Pi subscription error for session {}: {:?} - {}",
                     session_id, code, message
@@ -3652,6 +3757,7 @@ async fn forward_pi_events(
                 break;
             }
             None => {
+                clear_response_watchdog(&conn_state, session_id).await;
                 debug!("Pi subscription stream ended for session {}", session_id);
                 break;
             }

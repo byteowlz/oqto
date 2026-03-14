@@ -15,7 +15,7 @@ import { useModelSelection } from "@/hooks/use-model-selection";
 import { type ChatVerbosity, useChatVerbosity } from "@/lib/chat-verbosity";
 import { fuzzyMatch } from "@/lib/slash-commands";
 import { cn } from "@/lib/utils";
-import { getWsManager } from "@/lib/ws-manager";
+import { getWsManager, type WsMuxConnectionState } from "@/lib/ws-manager";
 import {
 	type TTSSettings,
 	loadTTSSettings,
@@ -46,6 +46,10 @@ export function PiSettingsView({
 	const [thinkingLoading, setThinkingLoading] = useState<boolean>(false);
 	const [sessionReady, setSessionReady] = useState<boolean>(false);
 	const [restartingAgent, setRestartingAgent] = useState<boolean>(false);
+	const [connectionState, setConnectionState] =
+		useState<WsMuxConnectionState>("connecting");
+	const [isWorking, setIsWorking] = useState<boolean>(false);
+	const [runtimeSessionId, setRuntimeSessionId] = useState<string | null>(null);
 
 	const handleTtsVoiceChange = useCallback(
 		(e: React.ChangeEvent<HTMLInputElement>) => {
@@ -95,12 +99,20 @@ export function PiSettingsView({
 			.then((state) => {
 				if (!active) return;
 				const s = state as
-					| { thinkingLevel?: string; thinking_level?: string }
+					| {
+							thinkingLevel?: string;
+							thinking_level?: string;
+							sessionId?: string;
+							session_id?: string;
+					  }
 					| null;
 				const level = s?.thinkingLevel ?? s?.thinking_level;
 				if (typeof level === "string" && level.trim().length > 0) {
 					setThinkingLevel(level);
 				}
+				setRuntimeSessionId(
+					s?.sessionId ?? s?.session_id ?? sessionId,
+				);
 			})
 			.catch(() => {
 				// Ignore and keep local fallback
@@ -113,6 +125,7 @@ export function PiSettingsView({
 			if (!active) return;
 			if (!("channel" in event) || event.channel !== "agent") return;
 			if (event.session_id !== sessionId) return;
+			setRuntimeSessionId(event.session_id);
 			if (event.event === "session.created") {
 				setSessionReady(true);
 			}
@@ -122,6 +135,16 @@ export function PiSettingsView({
 			) {
 				setThinkingLevel(event.level);
 			}
+			if (event.event === "agent.working" || event.event === "stream.message_start") {
+				setIsWorking(true);
+			}
+			if (
+				event.event === "agent.idle" ||
+				event.event === "agent.error" ||
+				event.event === "stream.done"
+			) {
+				setIsWorking(false);
+			}
 		});
 
 		return () => {
@@ -129,6 +152,14 @@ export function PiSettingsView({
 			unsubscribe();
 		};
 	}, [sessionId]);
+
+	useEffect(() => {
+		const manager = getWsManager();
+		const unsubscribe = manager.onConnectionState((state) => {
+			setConnectionState(state);
+		});
+		return unsubscribe;
+	}, []);
 
 	const handleThinkingLevelChange = useCallback(
 		async (value: string) => {
@@ -215,6 +246,19 @@ export function PiSettingsView({
 	);
 
 	const effectiveModelRef = pendingModelRef ?? selectedModelRef;
+	const wsLabel =
+		connectionState === "connected"
+			? "up"
+			: connectionState === "disconnected"
+				? "down"
+				: "connecting";
+	const agentLabel = isWorking ? "working" : "idle";
+	const viewSessionShort = sessionId ? sessionId.slice(0, 8) : "none";
+	const runtimeSessionShort = runtimeSessionId
+		? runtimeSessionId.slice(0, 8)
+		: "none";
+	const sessionMismatch =
+		!!sessionId && !!runtimeSessionId && sessionId !== runtimeSessionId;
 
 	return (
 		<div className={cn("flex flex-col h-full", className)}>
@@ -224,6 +268,29 @@ export function PiSettingsView({
 				</span>
 			</div>
 			<div className="flex-1 overflow-auto p-3 space-y-5">
+				<div className="rounded border border-border/70 bg-muted/30 px-2 py-1.5 text-[11px] text-muted-foreground">
+					<div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+						<span
+							className={cn(
+								"inline-flex items-center rounded border px-1.5 py-0.5 font-mono",
+								wsLabel === "up"
+									? "border-emerald-500/40 text-emerald-600 dark:text-emerald-400"
+									: "border-destructive/40 text-destructive",
+							)}
+						>
+							ws:{wsLabel}
+						</span>
+						<span className="font-mono">agent:{agentLabel}</span>
+						<span className="font-mono">view:{viewSessionShort}</span>
+						<span className="font-mono">runtime:{runtimeSessionShort}</span>
+						{sessionMismatch && (
+							<span className="inline-flex items-center rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 font-mono text-amber-700 dark:text-amber-300">
+								session mismatch
+							</span>
+						)}
+					</div>
+				</div>
+
 				<div className="space-y-2">
 					<Label className="text-xs font-medium">
 						{t('models.model')}
