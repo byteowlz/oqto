@@ -1491,7 +1491,7 @@ export function ChatView({
 	);
 
 	const handleSend = useCallback(
-		async (mode: "prompt" | "steer" | "follow_up" = "steer") => {
+		async (mode: "prompt" | "steer" | "follow_up" = "prompt") => {
 			const trimmed = inputValueRef.current.trim();
 			if (!trimmed && fileAttachments.length === 0) return;
 
@@ -1719,11 +1719,11 @@ export function ChatView({
 			}
 			if (e.key === "Enter" && !e.shiftKey) {
 				e.preventDefault();
-				// Steer on Enter, queue on Ctrl/Cmd+Enter
+				// Prompt on Enter, queue on Ctrl/Cmd+Enter
 				if (e.ctrlKey || e.metaKey) {
 					handleQueueIntent();
 				} else {
-					handleSend("steer");
+					handleSend("prompt");
 				}
 			}
 			if (e.key === "Escape") {
@@ -1813,7 +1813,7 @@ export function ChatView({
 			suppressClickRef.current = false;
 			return;
 		}
-		handleSend("steer");
+		handleSend("prompt");
 	}, [handleSend]);
 
 	const handleSendPointerDown = useCallback(
