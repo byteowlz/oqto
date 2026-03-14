@@ -306,7 +306,7 @@ deploy_host() {
                 if [[ "$is_local" == "true" ]]; then
                     oqtoctl user sync-configs 2>&1 | while IFS= read -r line; do log "    $line"; done || warn "  sync-configs failed (non-fatal)"
                 else
-                    ssh "$ssh_target" "oqtoctl user sync-configs 2>&1" | while IFS= read -r line; do log "    $line"; done || warn "  sync-configs failed on $name (non-fatal)"
+                    ssh "$ssh_target" "sudo oqtoctl user sync-configs 2>&1" | while IFS= read -r line; do log "    $line"; done || warn "  sync-configs failed on $name (non-fatal)"
                 fi
                 ok "Per-user configs synced"
             fi
