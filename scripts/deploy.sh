@@ -290,8 +290,27 @@ deploy_host() {
             fi
         done
 
-        # Multi-user mode: update hstry adapters + restart all per-user runners
+        # Multi-user mode: sync user configs, update hstry adapters, restart runners
         if [[ "$mode" == "multi-user" ]]; then
+            # Sync per-user config files (models.json with embedded eavs keys,
+            # Pi settings, AGENTS.md, etc.). Must run after oqto restart since
+            # it talks to the admin API. Without this, models.json can contain
+            # stale placeholder values (e.g. "EAVS_API_KEY" literal) from older
+            # oqto versions, causing 401 errors on all LLM requests.
+            log "  Syncing per-user configs (models.json, Pi settings)..."
+            if $DRY_RUN; then
+                echo -e "${YELLOW}  [dry-run]${NC} oqtoctl user sync-configs"
+            else
+                # Wait briefly for oqto to be ready after restart
+                sleep 3
+                if [[ "$is_local" == "true" ]]; then
+                    oqtoctl user sync-configs 2>&1 | while IFS= read -r line; do log "    $line"; done || warn "  sync-configs failed (non-fatal)"
+                else
+                    ssh "$ssh_target" "oqtoctl user sync-configs 2>&1" | while IFS= read -r line; do log "    $line"; done || warn "  sync-configs failed on $name (non-fatal)"
+                fi
+                ok "Per-user configs synced"
+            fi
+
             # Update hstry adapters globally BEFORE restarting services.
             # hstry refuses to start if adapters version doesn't match binary version,
             # causing a crash-loop that silently drops all chat messages.
