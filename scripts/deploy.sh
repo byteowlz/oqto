@@ -290,8 +290,30 @@ deploy_host() {
             fi
         done
 
-        # Multi-user mode: restart all per-user runners
+        # Multi-user mode: update hstry adapters + restart all per-user runners
         if [[ "$mode" == "multi-user" ]]; then
+            # Update hstry adapters globally BEFORE restarting services.
+            # hstry refuses to start if adapters version doesn't match binary version,
+            # causing a crash-loop that silently drops all chat messages.
+            log "  Updating hstry adapters..."
+            if $DRY_RUN; then
+                echo -e "${YELLOW}  [dry-run]${NC} ssh $ssh_target: hstry adapters update (global + per-user)"
+            else
+                # Update global adapters (root)
+                ssh "$ssh_target" "sudo /usr/local/bin/hstry adapters update 2>/dev/null && sudo cp -r /root/.config/hstry/adapters/* /usr/local/share/hstry/adapters/ 2>/dev/null && sudo cp /root/.config/hstry/adapters/.hstry-adapters.json /usr/local/share/hstry/adapters/.hstry-adapters.json 2>/dev/null" || warn "  Failed to update global hstry adapters"
+                # Update per-user adapters (for users that have their own adapters dir)
+                local oqto_users_adapters
+                oqto_users_adapters="$(ssh "$ssh_target" "getent passwd | grep '^oqto_' | cut -d: -f1 | head -50" || true)"
+                if [[ -n "$oqto_users_adapters" ]]; then
+                    for oqto_user in $oqto_users_adapters; do
+                        if ssh "$ssh_target" "test -d /home/${oqto_user}/.config/hstry/adapters" 2>/dev/null; then
+                            ssh "$ssh_target" "sudo -u ${oqto_user} bash -c 'HOME=/home/${oqto_user} /usr/local/bin/hstry adapters update' 2>/dev/null" || true
+                        fi
+                    done
+                fi
+                ok "hstry adapters updated"
+            fi
+
             log "  Restarting per-user runners (multi-user mode)..."
             if $DRY_RUN; then
                 echo -e "${YELLOW}  [dry-run]${NC} ssh $ssh_target: restart all per-user oqto-runner processes"
