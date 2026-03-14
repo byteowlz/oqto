@@ -3391,8 +3391,16 @@ async fn handle_get_messages(
     // the frontend misses in-progress tool calls, streaming responses, and
     // any messages between the last hstry persist and now.
     if is_active {
-        match runner.agent_get_messages(session_id).await {
-            Ok(resp) => {
+        // Use a short timeout: Pi may be busy with an LLM request and the
+        // runner's get_messages RPC can hang for 10+s. Fall through to
+        // hstry/cache quickly rather than blocking the WS response.
+        let pi_result = tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            runner.agent_get_messages(session_id),
+        )
+        .await;
+        match pi_result {
+            Ok(Ok(resp)) => {
                 let messages_value = serde_json::to_value(&resp.messages).unwrap_or_default();
                 cache_pi_messages(user_id, session_id, &messages_value).await;
                 return Some(agent_response(
@@ -3402,12 +3410,18 @@ async fn handle_get_messages(
                     Ok(Some(serde_json::json!({ "messages": messages_value }))),
                 ));
             }
-            Err(e) => {
+            Ok(Err(e)) => {
                 // Pi process may have exited between subscription and now.
                 // Fall through to hstry/cache as fallback.
                 debug!(
                     "get_messages: active session Pi query failed for {}: {}, falling through to hstry",
                     session_id, e
+                );
+            }
+            Err(_) => {
+                debug!(
+                    "get_messages: Pi query timed out for active session {}, falling through to hstry",
+                    session_id,
                 );
             }
         }
