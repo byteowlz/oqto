@@ -131,6 +131,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 	const messagesRef = useRef(messages);
 	const lastSessionRecoveryRef = useRef(0);
 	const isStreamingRef = useRef(false);
+	const lastAgentEventAtRef = useRef<number>(Date.now());
 	const sendInFlightRef = useRef(false);
 	// Deferred server messages received while streaming (applied on agent.idle)
 	const deferredServerMessagesRef = useRef<unknown[] | null>(null);
@@ -1543,6 +1544,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 				}
 				return;
 			}
+			lastAgentEventAtRef.current = Date.now();
 			handleCanonicalEvent(event);
 		},
 		[handleCanonicalEvent],
@@ -1722,6 +1724,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 			setError(null);
 
 			setIsAwaitingResponse(true);
+			lastAgentEventAtRef.current = Date.now();
 
 			const manager = getWsManager();
 			try {
@@ -1845,12 +1848,66 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 
 		const unsubscribe = manager.onConnectionState(
 			(connectionState: WsMuxConnectionState) => {
-				setIsConnected(connectionState === "connected");
+				const connected = connectionState === "connected";
+				setIsConnected(connected);
+				if (!connected) {
+					// Prevent indefinite "stuck streaming" UI when WS drops mid-turn.
+					// History resync still restores messages after reconnect.
+					isStreamingRef.current = false;
+					setIsStreaming(false);
+					setIsAwaitingResponse(false);
+					setError(new Error("Connection lost. Reconnecting..."));
+				} else {
+					setError(null);
+				}
 			},
 		);
 
 		return unsubscribe;
 	}, []);
+
+	// Watchdog: if the UI is "working" but we stop receiving live events,
+	// trigger a state+history resync and clear stuck spinner state.
+	useEffect(() => {
+		if (!isConnected) return;
+		if (!activeSessionId) return;
+		if (!isStreaming && !isAwaitingResponse) return;
+
+		const manager = getWsManager();
+		const timer = setInterval(() => {
+			const idleMs = Date.now() - lastAgentEventAtRef.current;
+			if (idleMs < 12000) return;
+
+			if (isPiDebugEnabled()) {
+				console.warn(
+					`[useChat] stream watchdog triggered for ${activeSessionId} after ${idleMs}ms without events`,
+				);
+			}
+
+			manager.agentGetState(activeSessionId);
+			void fetchHistoryMessages(activeSessionId);
+
+			// After prolonged silence, stop showing an infinite spinner.
+			if (idleMs >= 20000) {
+				isStreamingRef.current = false;
+				setIsStreaming(false);
+				setIsAwaitingResponse(false);
+				setError(
+					new Error(
+						"Live updates stalled. Recovered latest history. You can continue chatting.",
+					),
+				);
+			}
+		}, 3000);
+
+		return () => clearInterval(timer);
+	}, [
+		activeSessionId,
+		fetchHistoryMessages,
+		isAwaitingResponse,
+		isConnected,
+		isStreaming,
+	]);
 
 	// Subscribe to Pi session when active session changes.
 	// IMPORTANT: This effect must NOT depend on handleAgentEvent or other
