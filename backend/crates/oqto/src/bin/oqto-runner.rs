@@ -2199,7 +2199,48 @@ impl Runner {
             }
         };
 
-        // Fast path: hstry-backed history exists.
+        // When the session has an active Pi process, prefer Pi's live messages.
+        // Pi has the complete current-turn context including messages not yet
+        // persisted to hstry (tool calls, streaming responses, etc.). Without
+        // this, the frontend sees stale data during active sessions and
+        // "loses" messages until the next agent.idle triggers hstry persistence.
+        let session_is_active = self.pi_manager.has_session(&req.session_id).await;
+        if session_is_active {
+            if let Ok(raw) = self.pi_manager.get_messages(&req.session_id).await {
+                let pi_msgs: Vec<oqto::pi::AgentMessage> = raw
+                    .as_array()
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| serde_json::from_value(v.clone()).ok())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                if !pi_msgs.is_empty() {
+                    let start = req
+                        .limit
+                        .and_then(|limit| pi_msgs.len().checked_sub(limit))
+                        .unwrap_or(0);
+                    let session_id_clone = req.session_id.clone();
+                    let mapped: Vec<ChatMessageProto> = pi_msgs
+                        .into_iter()
+                        .enumerate()
+                        .skip(start)
+                        .map(|(idx, msg)| {
+                            pi_agent_msg_to_chat_proto(msg, idx, &session_id_clone)
+                        })
+                        .collect();
+                    return RunnerResponse::WorkspaceChatSessionMessages(
+                        WorkspaceChatSessionMessagesResponse {
+                            session_id: req.session_id,
+                            messages: mapped,
+                        },
+                    );
+                }
+            }
+            // Pi process may have exited or returned empty -- fall through to hstry.
+        }
+
+        // hstry-backed history (for inactive sessions, or Pi fallthrough above).
         if !messages.is_empty() {
             let start = req
                 .limit
@@ -2255,8 +2296,9 @@ impl Runner {
             );
         }
 
-        // Fallback path: hstry may lag/be missing for this session.
-        // Try live Pi session messages so reopened sessions still render history.
+        // Last resort: hstry empty and no active Pi process found above.
+        // Try Pi live messages one more time in case the session resolved
+        // differently (e.g., via session key mapping).
         match self.pi_manager.get_messages(&req.session_id).await {
             Ok(raw) => {
                 let msgs: Vec<oqto::pi::AgentMessage> = raw
@@ -2273,85 +2315,12 @@ impl Runner {
                     .and_then(|limit| msgs.len().checked_sub(limit))
                     .unwrap_or(0);
 
+                let session_id_clone = req.session_id.clone();
                 let mapped: Vec<ChatMessageProto> = msgs
                     .into_iter()
                     .enumerate()
                     .skip(start)
-                    .map(|(idx, msg)| {
-                        let created_at = msg.timestamp.map(|t| t as i64).unwrap_or(0);
-                        let part_id = format!("part_{}", idx);
-                        let message_id = format!("pi_msg_{}", idx);
-
-                        let (
-                            part_type,
-                            text,
-                            tool_name,
-                            tool_call_id,
-                            tool_input,
-                            tool_output,
-                            tool_status,
-                        ) = if msg.role == "tool" || msg.role == "toolResult" {
-                            (
-                                "tool_result".to_string(),
-                                None,
-                                msg.tool_name.clone(),
-                                msg.tool_call_id.clone(),
-                                None,
-                                Some(msg.content.to_string()),
-                                Some(
-                                    if msg.is_error.unwrap_or(false) {
-                                        "error"
-                                    } else {
-                                        "success"
-                                    }
-                                    .to_string(),
-                                ),
-                            )
-                        } else {
-                            (
-                                "text".to_string(),
-                                Some(if let Some(s) = msg.content.as_str() {
-                                    s.to_string()
-                                } else {
-                                    msg.content.to_string()
-                                }),
-                                None,
-                                None,
-                                None,
-                                None,
-                                None,
-                            )
-                        };
-
-                        ChatMessageProto {
-                            id: message_id,
-                            session_id: req.session_id.clone(),
-                            role: msg.role,
-                            created_at,
-                            completed_at: None,
-                            parent_id: None,
-                            model_id: msg.model,
-                            provider_id: msg.provider,
-                            agent: None,
-                            summary_title: None,
-                            tokens_input: msg.usage.as_ref().map(|u| u.input as i64),
-                            tokens_output: msg.usage.as_ref().map(|u| u.output as i64),
-                            tokens_reasoning: None,
-                            cost: msg.usage.and_then(|u| u.cost.map(|c| c.total)),
-                            parts: vec![ChatMessagePartProto {
-                                id: part_id,
-                                part_type,
-                                text,
-                                text_html: None,
-                                tool_name,
-                                tool_call_id,
-                                tool_input,
-                                tool_output,
-                                tool_status,
-                                tool_title: None,
-                            }],
-                        }
-                    })
+                    .map(|(idx, msg)| pi_agent_msg_to_chat_proto(msg, idx, &session_id_clone))
                     .collect();
 
                 RunnerResponse::WorkspaceChatSessionMessages(WorkspaceChatSessionMessagesResponse {
@@ -3726,6 +3695,81 @@ fn get_default_socket_path() -> PathBuf {
     // Use XDG_RUNTIME_DIR if available (typically /run/user/<uid>), otherwise /tmp
     let runtime_dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string());
     PathBuf::from(DEFAULT_SOCKET_PATTERN.replace("{runtime_dir}", &runtime_dir))
+}
+
+/// Convert a Pi `AgentMessage` to the `ChatMessageProto` wire format.
+/// Used when returning Pi's live messages as workspace chat history.
+fn pi_agent_msg_to_chat_proto(
+    msg: oqto::pi::AgentMessage,
+    idx: usize,
+    session_id: &str,
+) -> ChatMessageProto {
+    let created_at = msg.timestamp.map(|t| t as i64).unwrap_or(0);
+    let part_id = format!("part_{}", idx);
+    let message_id = format!("pi_msg_{}", idx);
+
+    let (part_type, text, tool_name, tool_call_id, tool_input, tool_output, tool_status) =
+        if msg.role == "tool" || msg.role == "toolResult" {
+            (
+                "tool_result".to_string(),
+                None,
+                msg.tool_name.clone(),
+                msg.tool_call_id.clone(),
+                None,
+                Some(msg.content.to_string()),
+                Some(
+                    if msg.is_error.unwrap_or(false) {
+                        "error"
+                    } else {
+                        "success"
+                    }
+                    .to_string(),
+                ),
+            )
+        } else {
+            (
+                "text".to_string(),
+                Some(if let Some(s) = msg.content.as_str() {
+                    s.to_string()
+                } else {
+                    msg.content.to_string()
+                }),
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+        };
+
+    ChatMessageProto {
+        id: message_id,
+        session_id: session_id.to_string(),
+        role: msg.role,
+        created_at,
+        completed_at: None,
+        parent_id: None,
+        model_id: msg.model,
+        provider_id: msg.provider,
+        agent: None,
+        summary_title: None,
+        tokens_input: msg.usage.as_ref().map(|u| u.input as i64),
+        tokens_output: msg.usage.as_ref().map(|u| u.output as i64),
+        tokens_reasoning: None,
+        cost: msg.usage.and_then(|u| u.cost.map(|c| c.total)),
+        parts: vec![ChatMessagePartProto {
+            id: part_id,
+            part_type,
+            text,
+            text_html: None,
+            tool_name,
+            tool_call_id,
+            tool_input,
+            tool_output,
+            tool_status,
+            tool_title: None,
+        }],
+    }
 }
 
 fn error_response(code: ErrorCode, message: impl Into<String>) -> RunnerResponse {

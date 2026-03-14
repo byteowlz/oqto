@@ -1,0 +1,23 @@
+{
+  "todos": [
+    {
+      "id": "7a1c9f20",
+      "content": "Draft comprehensive event bus design spec covering scopes, security, runner registration, UI intents, app persistence, and Pi integration",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "f38eac73",
+      "content": "Create or update trx issue(s) to track implementation epics/tasks from the spec",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "9abe6792",
+      "content": "Summarize deliverables and file paths for user",
+      "status": "completed",
+      "priority": "medium"
+    }
+  ],
+  "updated_at": "2026-03-14T21:32:03.166Z"
+}

@@ -1182,6 +1182,16 @@ impl PiSessionManager {
     }
 
     /// Get all messages from a session.
+    /// Check if the given session (or its resolved key) has an active Pi process.
+    pub async fn has_session(&self, session_id: &str) -> bool {
+        let resolved_id = self
+            .resolve_session_key(session_id)
+            .await
+            .unwrap_or_else(|| session_id.to_string());
+        let sessions = self.sessions.read().await;
+        sessions.contains_key(&resolved_id)
+    }
+
     pub async fn get_messages(&self, session_id: &str) -> Result<serde_json::Value> {
         let resolved_id = self
             .resolve_session_key(session_id)

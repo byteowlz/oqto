@@ -2,6 +2,15 @@
 
 ## Open
 
+### [oqto-8zvw] Shared workspace sessions: frontend creates new session ID instead of reusing existing hstry session ID (P0, bug)
+When a user navigates to a shared workspace session (e.g. nimble-tests-ladder with session ID f3ce6d6b), the frontend:
+1. Fetches history using the correct ID (f3ce6d6b) -> gets 101 messages
+2. But creates a FRESH oqto-UUID for session.create (e.g. oqto-7d09d46b)
+3. Runner spawns a brand new Pi process for oqto-7d09d46b
+4. Prompt goes to the new Pi (empty context)
+...
+
+
 ### [oqto-vh8v] Critical: terminal routing integrity violation across users/workspaces (P0, bug)
 
 ### [oqto-snfs] Backend deadlock when deleting shared workspace sessions - session.delete/session.create to SW runner hangs, blocks entire WS connection, eventually all HTTP requests time out. 30s runner client timeout not firing. Needs 45s hard deadline on WS command handler + investigation of why tokio timeout doesn't trigger. (P0, bug)
@@ -34,6 +43,24 @@ setup.sh must correctly provision everything for a new platform user on a fresh 
 3. Per-user provisioning on login/creation:
 ...
 
+
+### [oqto-brg9.5] Domain event hooks for trx/hstry/mmry + UI intent namespace (P1, task)
+Add low-effort boundary hooks to emit core domain events and implement permission-gated session/ui.* intent execution registry in frontend.
+
+### [oqto-brg9.4] Ack protocol for admin/control-plane events (P1, task)
+reply_to + timeout ack flow, runner ack statuses, backend aggregation, admin summary events for operational visibility.
+
+### [oqto-brg9.3] Unify inline and fullscreen app runtime with persistent app state (P1, task)
+One runtime for inline iframe and fullscreen app tabs; shared bridge API; state persistence and reload restoration; source/runtime path policy (oqto_apps + .oqto/apps).
+
+### [oqto-brg9.2] Runner event policy engine (queueing, coalescing, idle delivery, pull APIs) (P1, task)
+Implement runner queue priorities, strict auto-inject allowlist, truncation/summarization budgets, pull-on-demand event retrieval, and app event injection styles: steer (pre-prompt directional) and follow-up (post/secondary contextual).
+
+### [oqto-brg9.1] Bus channel in WS mux with scope authz and source stamping (P1, task)
+Add bus channel to mux protocol, backend subscription registry, publish/subscribe authz checks per scope (session/workspace/global), server-side topic rewriting/stamping, and audit logs.
+
+### [oqto-brg9] Unified Event Bus + Agent-Controlled UI runtime (P1, epic)
+Implement scoped bus channel (session/workspace/global), unified inline+fullscreen app runtime, runner event policy, ack-capable admin events, and UI intent control with strict authz. See docs/design/unified-event-bus-and-agent-ui.md.
 
 ### [oqto-8vkn] Add message sync test suite: unit + integration + E2E tests for Pi->hstry->Frontend pipeline (P1, task)
 Create comprehensive test coverage for the message sync pipeline to prevent regressions.
@@ -1904,11 +1931,12 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
-- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
-- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
+- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
 - [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
+- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
+- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
 - [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
+- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )

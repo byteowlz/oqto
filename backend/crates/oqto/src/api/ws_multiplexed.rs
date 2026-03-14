@@ -3385,7 +3385,35 @@ async fn handle_get_messages(
         )
     };
 
-    // Check cache
+    // When the session is ACTIVE (has a running Pi process + subscription),
+    // prefer Pi's live messages over hstry. Pi has the complete current-turn
+    // context including messages not yet persisted to hstry. Without this,
+    // the frontend misses in-progress tool calls, streaming responses, and
+    // any messages between the last hstry persist and now.
+    if is_active {
+        match runner.agent_get_messages(session_id).await {
+            Ok(resp) => {
+                let messages_value = serde_json::to_value(&resp.messages).unwrap_or_default();
+                cache_pi_messages(user_id, session_id, &messages_value).await;
+                return Some(agent_response(
+                    session_id,
+                    id,
+                    "get_messages",
+                    Ok(Some(serde_json::json!({ "messages": messages_value }))),
+                ));
+            }
+            Err(e) => {
+                // Pi process may have exited between subscription and now.
+                // Fall through to hstry/cache as fallback.
+                debug!(
+                    "get_messages: active session Pi query failed for {}: {}, falling through to hstry",
+                    session_id, e
+                );
+            }
+        }
+    }
+
+    // Check cache (only for inactive sessions or when Pi query failed above)
     if let Some(cached) = get_cached_pi_messages(user_id, session_id).await {
         let use_cached = !is_active || cached.age <= Duration::from_secs(2);
         if use_cached {
