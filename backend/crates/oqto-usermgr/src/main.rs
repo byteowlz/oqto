@@ -801,8 +801,10 @@ After=hstry.service mmry.service
 [Service]
 Type=notify
 ExecStart={RUNNER_BINARY} --socket {socket_path}
-Restart=on-failure
-RestartSec=5
+Restart=always
+RestartSec=3
+StartLimitIntervalSec=120
+StartLimitBurst=10
 Environment=RUST_LOG=info
 Environment=PATH={user_path}
 Environment=HOME={home}

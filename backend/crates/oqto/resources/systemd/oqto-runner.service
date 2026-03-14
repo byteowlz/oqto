@@ -30,8 +30,12 @@ Type=simple
 # Socket path uses XDG_RUNTIME_DIR (%t in systemd), which is /run/user/<uid>
 ExecStart=/usr/local/bin/oqto-runner
 
-Restart=on-failure
-RestartSec=5
+Restart=always
+RestartSec=3
+# Cap restart frequency to avoid runaway loops (e.g. when hstry adapters are broken).
+# systemd resets the counter after StartLimitIntervalSec without a failure.
+StartLimitIntervalSec=120
+StartLimitBurst=10
 
 # Environment
 Environment=RUST_LOG=info
