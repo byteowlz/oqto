@@ -131,6 +131,9 @@ class WsConnectionManager {
 	// Track sessions that have completed session.create
 	private sessionReady: Set<string> = new Set();
 	private sessionReadyWaiters: Map<string, Set<() => void>> = new Map();
+	private sessionCreateInFlight: Set<string> = new Set();
+	private sessionCreateTimers: Map<string, ReturnType<typeof setTimeout>> =
+		new Map();
 	// Pending messages to send once session is ready
 	private pendingMessages: Map<
 		string,
@@ -469,6 +472,9 @@ class WsConnectionManager {
 		this.clearResyncTimeout();
 		this.setConnectionState("disconnected");
 		this.cancelPendingRequests();
+		for (const sessionId of Array.from(this.sessionCreateInFlight)) {
+			this.clearSessionCreateInFlight(sessionId);
+		}
 
 		if (this.ws) {
 			this.ws.onclose = null; // Prevent reconnection
@@ -817,8 +823,16 @@ class WsConnectionManager {
 		config?: SessionConfig,
 		id?: string,
 	): void {
+		if (this.sessionReady.has(sessionId)) return;
+		if (this.sessionCreateInFlight.has(sessionId)) {
+			if (isWsMuxDebugEnabled()) {
+				console.debug("[ws-mux] Skipping duplicate session.create:", sessionId);
+			}
+			return;
+		}
 		const resolvedConfig =
 			config ?? this.subscribedSessions.get(sessionId)?.config ?? {};
+		this.markSessionCreateInFlight(sessionId);
 		this.send({
 			channel: "agent",
 			session_id: sessionId,
@@ -837,6 +851,7 @@ class WsConnectionManager {
 		this.sessionReady.delete(sessionId);
 		this.pendingSubscriptions.delete(sessionId);
 		this.pendingMessages.delete(sessionId);
+		this.clearSessionCreateInFlight(sessionId);
 		this.agentSessionHandlers.delete(sessionId);
 		this.resyncHandlers.delete(sessionId);
 
@@ -1176,6 +1191,8 @@ class WsConnectionManager {
 			for (const [sessionId, entry] of this.pendingSubscriptions) {
 				if (!entry.create) continue;
 				this.sessionReady.delete(sessionId);
+				if (this.sessionCreateInFlight.has(sessionId)) continue;
+				this.markSessionCreateInFlight(sessionId);
 				this.send({
 					channel: "agent",
 					session_id: sessionId,
@@ -1202,6 +1219,8 @@ class WsConnectionManager {
 				}
 				if (!entry.create) continue;
 				this.sessionReady.delete(sessionId);
+				if (this.sessionCreateInFlight.has(sessionId)) continue;
+				this.markSessionCreateInFlight(sessionId);
 				this.send({
 					channel: "agent",
 					session_id: sessionId,
@@ -1216,6 +1235,7 @@ class WsConnectionManager {
 					this.subscribedSessions.delete(sessionId);
 					this.sessionReady.delete(sessionId);
 					this.pendingMessages.delete(sessionId);
+					this.clearSessionCreateInFlight(sessionId);
 				}
 			}
 
@@ -1287,6 +1307,9 @@ class WsConnectionManager {
 			this.ws = null;
 			this.clearPingInterval();
 			this.cancelPendingRequests();
+			for (const sessionId of Array.from(this.sessionCreateInFlight)) {
+				this.clearSessionCreateInFlight(sessionId);
+			}
 
 			if (closeEvent.code !== 1000) {
 				// Abnormal close, attempt reconnection.
@@ -1311,6 +1334,9 @@ class WsConnectionManager {
 				const cmd = agentEvent.cmd as string | undefined;
 				const success = agentEvent.success as boolean | undefined;
 				const respId = agentEvent.id as string | undefined;
+				if (cmd === "session.create") {
+					this.clearSessionCreateInFlight(agentEvent.session_id);
+				}
 				if (
 					respId &&
 					(cmd === "prompt" || cmd === "steer" || cmd === "follow_up")
@@ -1363,6 +1389,7 @@ class WsConnectionManager {
 			// Also mark session ready on session.created event (from runner)
 			if (agentEvent.event === "session.created") {
 				const sessionId = agentEvent.session_id;
+				this.clearSessionCreateInFlight(sessionId);
 				if (!this.sessionReady.has(sessionId)) {
 					console.log("[ws-mux] Session created (event) for:", sessionId);
 					this.sessionReady.add(sessionId);
@@ -1545,6 +1572,24 @@ class WsConnectionManager {
 		if (!entry) return;
 		if (entry.timer) clearTimeout(entry.timer);
 		this.pendingAgentAcks.delete(id);
+	}
+
+	private markSessionCreateInFlight(sessionId: string): void {
+		this.sessionCreateInFlight.add(sessionId);
+		const existing = this.sessionCreateTimers.get(sessionId);
+		if (existing) clearTimeout(existing);
+		const timer = setTimeout(() => {
+			this.sessionCreateInFlight.delete(sessionId);
+			this.sessionCreateTimers.delete(sessionId);
+		}, 8000);
+		this.sessionCreateTimers.set(sessionId, timer);
+	}
+
+	private clearSessionCreateInFlight(sessionId: string): void {
+		this.sessionCreateInFlight.delete(sessionId);
+		const timer = this.sessionCreateTimers.get(sessionId);
+		if (timer) clearTimeout(timer);
+		this.sessionCreateTimers.delete(sessionId);
 	}
 
 	private setConnectionState(state: WsMuxConnectionState): void {
