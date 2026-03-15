@@ -96,25 +96,44 @@ fn estimate_messages_size(messages: &Value) -> usize {
         .unwrap_or(0)
 }
 
-async fn is_duplicate_client_id(session_id: &str, client_id: Option<&str>) -> bool {
-    let Some(client_id) = client_id else {
+fn normalized_client_id(client_id: Option<&str>) -> Option<&str> {
+    let client_id = client_id?;
+    if client_id.is_empty() {
+        return None;
+    }
+    Some(client_id)
+}
+
+async fn has_accepted_client_id(session_id: &str, client_id: Option<&str>) -> bool {
+    let Some(client_id) = normalized_client_id(client_id) else {
         return false;
     };
-    if client_id.is_empty() {
-        return false;
-    }
+
+    let map = RECENT_CLIENT_IDS.read().await;
+    map.get(session_id)
+        .is_some_and(|ids| ids.iter().any(|id| id == client_id))
+}
+
+async fn mark_client_id_accepted(session_id: &str, client_id: Option<&str>) {
+    let Some(client_id) = normalized_client_id(client_id) else {
+        return;
+    };
 
     let mut map = RECENT_CLIENT_IDS.write().await;
     let ids = map.entry(session_id.to_string()).or_default();
     if ids.iter().any(|id| id == client_id) {
-        return true;
+        return;
     }
     ids.push(client_id.to_string());
     if ids.len() > RECENT_CLIENT_IDS_MAX_PER_SESSION {
         let overflow = ids.len() - RECENT_CLIENT_IDS_MAX_PER_SESSION;
         ids.drain(0..overflow);
     }
-    false
+}
+
+async fn clear_client_ids_for_session(session_id: &str) {
+    let mut map = RECENT_CLIENT_IDS.write().await;
+    map.remove(session_id);
 }
 
 async fn cache_pi_messages(user_id: &str, session_id: &str, messages: &Value) {
@@ -2466,7 +2485,10 @@ async fn handle_agent_command(
             drop(state_guard);
 
             match runner.agent_close_session(&session_id).await {
-                Ok(()) => Some(agent_response(&session_id, id, "session.close", Ok(None))),
+                Ok(()) => {
+                    clear_client_ids_for_session(&session_id).await;
+                    Some(agent_response(&session_id, id, "session.close", Ok(None)))
+                }
                 Err(e) => Some(agent_response(
                     &session_id,
                     id,
@@ -2495,6 +2517,7 @@ async fn handle_agent_command(
 
             match runner.agent_delete_session(&session_id).await {
                 Ok(()) => {
+                    clear_client_ids_for_session(&session_id).await;
                     if let Err(e) = state.session_targets.delete(&session_id).await {
                         return Some(agent_response(
                             &session_id,
@@ -2695,6 +2718,7 @@ async fn handle_agent_command(
                         }
                     }
 
+                    clear_client_ids_for_session(&session_id).await;
                     Some(agent_response(
                         &session_id,
                         id,
@@ -2714,7 +2738,7 @@ async fn handle_agent_command(
         CommandPayload::Prompt {
             message, client_id, ..
         } => {
-            if is_duplicate_client_id(&session_id, client_id.as_deref()).await {
+            if has_accepted_client_id(&session_id, client_id.as_deref()).await {
                 return Some(agent_response(&session_id, id, "prompt", Ok(None)));
             }
             if message.trim().is_empty() {
@@ -2748,11 +2772,14 @@ async fn handle_agent_command(
                     client_id
                 );
                 let client_id_for_broadcast = client_id.clone();
+                let client_id_for_dedupe = client_id.clone();
                 match runner
                     .agent_prompt(&session_id, &effective_message, client_id)
                     .await
                 {
                     Ok(()) => {
+                        mark_client_id_accepted(&session_id, client_id_for_dedupe.as_deref())
+                            .await;
                         let event_tx = {
                             let state_guard = conn_state.lock().await;
                             state_guard.event_tx.clone()
@@ -2780,7 +2807,7 @@ async fn handle_agent_command(
         }
 
         CommandPayload::Steer { message, client_id } => {
-            if is_duplicate_client_id(&session_id, client_id.as_deref()).await {
+            if has_accepted_client_id(&session_id, client_id.as_deref()).await {
                 return Some(agent_response(&session_id, id, "steer", Ok(None)));
             }
             if message.trim().is_empty() {
@@ -2811,11 +2838,14 @@ async fn handle_agent_command(
                     client_id
                 );
                 let client_id_for_broadcast = client_id.clone();
+                let client_id_for_dedupe = client_id.clone();
                 match runner
                     .agent_steer(&session_id, &effective_message, client_id)
                     .await
                 {
                     Ok(()) => {
+                        mark_client_id_accepted(&session_id, client_id_for_dedupe.as_deref())
+                            .await;
                         let event_tx = {
                             let state_guard = conn_state.lock().await;
                             state_guard.event_tx.clone()
@@ -2843,7 +2873,7 @@ async fn handle_agent_command(
         }
 
         CommandPayload::FollowUp { message, client_id } => {
-            if is_duplicate_client_id(&session_id, client_id.as_deref()).await {
+            if has_accepted_client_id(&session_id, client_id.as_deref()).await {
                 return Some(agent_response(&session_id, id, "follow_up", Ok(None)));
             }
             if message.trim().is_empty() {
@@ -2874,11 +2904,14 @@ async fn handle_agent_command(
                     client_id
                 );
                 let client_id_for_broadcast = client_id.clone();
+                let client_id_for_dedupe = client_id.clone();
                 match runner
                     .agent_follow_up(&session_id, &effective_message, client_id)
                     .await
                 {
                     Ok(()) => {
+                        mark_client_id_accepted(&session_id, client_id_for_dedupe.as_deref())
+                            .await;
                         let event_tx = {
                             let state_guard = conn_state.lock().await;
                             state_guard.event_tx.clone()

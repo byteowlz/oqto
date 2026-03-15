@@ -3,7 +3,7 @@
 ## Open
 
 ### [oqto-heye] P0: Chat send must always terminate (response or explicit error), never infinite spinner (P0, bug)
-New archvm incident (session swift-learns-pioneer / oqto-1773569790168-e8a3e21f851b8):\n- initial prompt accepted by backend at 11:17:10 but no chat messages persisted (count stayed 0).\n- websocket dropped at 11:17:30 (reset without closing handshake) before any streamed events reached UI.\n- recurrent reset pattern continues on archvm at ~10-30s idle windows.\n\nMitigation implemented:\n- increased ws_multiplexed server ping cadence from 30s to 10s to keep intermediaries alive and reduce idle resets during early turn latency windows.\n- restarted archvm oqto user service with updated binary.
+Root-cause fix for silent initial-turn loss on archvm: dedupe-by-client_id was recorded before runner acceptance. If first send failed (race/reset), retries with same client_id were incorrectly treated as duplicates and dropped forever.\n\nImplemented in ws_multiplexed:\n- dedupe now checks only ACCEPTED client_ids.\n- client_id is marked accepted only after runner.agent_prompt/steer/follow_up returns Ok(()).\n- failed sends are retriable with same client_id (required for at-least-once send semantics with idempotency).\n- clear accepted client_id cache on session.close/session.delete/session.restart success.\n\nAlso kept earlier keepalive increase (10s ping cadence) to reduce transport resets.
 
 ### [oqto-8zvw] Shared workspace sessions: frontend creates new session ID instead of reusing existing hstry session ID (P0, bug)
 When a user navigates to a shared workspace session (e.g. nimble-tests-ladder with session ID f3ce6d6b), the frontend:
@@ -1934,12 +1934,12 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
 - [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
-- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
 - [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
 - [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
-- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
+- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
 - [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
+- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
