@@ -391,7 +391,12 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 					return;
 				}
 
-				if (history.length === 0) return;
+				if (history.length === 0) {
+					if (!isStreamingRef.current && !sendInFlightRef.current) {
+						setIsAwaitingResponse(false);
+					}
+					return;
+				}
 				const displayMessages = normalizeMessages(
 					history as RawMessage[],
 					`history-${sessionId}`,
@@ -405,6 +410,9 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 					.reverse()
 					.find((msg) => msg.role === "assistant");
 				lastAssistantMessageIdRef.current = lastAssistant?.id ?? null;
+				if (!isStreamingRef.current && !sendInFlightRef.current) {
+					setIsAwaitingResponse(false);
+				}
 				if (isPiDebugEnabled()) {
 					console.debug(
 						"[useChat] Loaded history messages:",
@@ -1328,6 +1336,16 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 					}
 
 					switch (resp.cmd) {
+						case "prompt":
+						case "steer":
+						case "follow_up": {
+							if (!resp.success) {
+								setIsAwaitingResponse(false);
+								sendInFlightRef.current = false;
+								setBusyForEvent(event.session_id ?? activeSessionIdRef.current, false);
+							}
+							break;
+						}
 						case "session.create": {
 							if (resp.success) {
 								const targetData = (resp.data ?? null) as
@@ -1569,7 +1587,8 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 	const handleAgentEvent = useCallback(
 		(event: AgentWsEvent) => {
 			const activeId = activeSessionIdRef.current;
-			if (activeId && event.session_id !== activeId) {
+			const eventSessionId = event.session_id;
+			if (activeId && eventSessionId && eventSessionId !== activeId) {
 				if (isPiDebugEnabled()) {
 					console.debug(
 						`[useChat] Ignoring agent event for session ${event.session_id}, active is ${activeId}`,
