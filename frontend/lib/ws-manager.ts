@@ -156,6 +156,18 @@ class WsConnectionManager {
 	private requestIdCounter = 0;
 	// Pending request callbacks (id -> resolve)
 	private pendingRequests: Map<string, (event: WsEvent) => void> = new Map();
+	// Outbound agent command acknowledgements (prompt/steer/follow_up)
+	private pendingAgentAcks: Map<
+		string,
+		{
+			sessionId: string;
+			cmd: "prompt" | "steer" | "follow_up";
+			message: string;
+			client_id?: string;
+			attempts: number;
+			timer: ReturnType<typeof setTimeout> | null;
+		}
+	> = new Map();
 
 	// --- Connection epoch: monotonically increasing counter incremented on
 	// every connect/reconnect/disconnect. All async post-reconnect operations
@@ -1298,6 +1310,13 @@ class WsConnectionManager {
 			if (agentEvent.event === "response") {
 				const cmd = agentEvent.cmd as string | undefined;
 				const success = agentEvent.success as boolean | undefined;
+				const respId = agentEvent.id as string | undefined;
+				if (
+					respId &&
+					(cmd === "prompt" || cmd === "steer" || cmd === "follow_up")
+				) {
+					this.clearAgentAck(respId);
+				}
 				if (cmd === "session.create" && success) {
 					const sessionId = agentEvent.session_id;
 					console.log("[ws-mux] Session created (response) for:", sessionId);
@@ -1437,17 +1456,20 @@ class WsConnectionManager {
 		id?: string,
 		clientId?: string,
 	): void {
+		const commandId = id ?? this.nextRequestId();
 		if (!this.isConnected) {
 			const pending = this.pendingMessages.get(sessionId) ?? [];
-			pending.push({ cmd, message, id, client_id: clientId });
+			pending.push({ cmd, message, id: commandId, client_id: clientId });
 			this.pendingMessages.set(sessionId, pending);
+			this.trackAgentAck(commandId, sessionId, cmd, message, clientId);
 			return;
 		}
 
 		if (!this.sessionReady.has(sessionId)) {
 			const pending = this.pendingMessages.get(sessionId) ?? [];
-			pending.push({ cmd, message, id, client_id: clientId });
+			pending.push({ cmd, message, id: commandId, client_id: clientId });
 			this.pendingMessages.set(sessionId, pending);
+			this.trackAgentAck(commandId, sessionId, cmd, message, clientId);
 			console.log(
 				"[ws-mux] Queued agent message until session is ready:",
 				sessionId,
@@ -1458,14 +1480,71 @@ class WsConnectionManager {
 			return;
 		}
 
+		this.trackAgentAck(commandId, sessionId, cmd, message, clientId);
 		this.send({
 			channel: "agent",
 			session_id: sessionId,
 			cmd,
 			message,
-			id,
+			id: commandId,
 			client_id: clientId,
 		});
+	}
+
+	private trackAgentAck(
+		id: string,
+		sessionId: string,
+		cmd: "prompt" | "steer" | "follow_up",
+		message: string,
+		client_id?: string,
+	): void {
+		const existing = this.pendingAgentAcks.get(id);
+		if (existing) {
+			if (existing.timer) clearTimeout(existing.timer);
+		}
+		this.pendingAgentAcks.set(id, {
+			sessionId,
+			cmd,
+			message,
+			client_id,
+			attempts: existing?.attempts ?? 0,
+			timer: null,
+		});
+		this.scheduleAgentAckRetry(id);
+	}
+
+	private scheduleAgentAckRetry(id: string): void {
+		const entry = this.pendingAgentAcks.get(id);
+		if (!entry) return;
+		if (entry.timer) clearTimeout(entry.timer);
+		entry.timer = setTimeout(() => {
+			const current = this.pendingAgentAcks.get(id);
+			if (!current) return;
+			if (current.attempts >= 3) {
+				this.pendingAgentAcks.delete(id);
+				console.warn("[ws-mux] Agent command ack timeout:", id, current.cmd);
+				return;
+			}
+			current.attempts += 1;
+			if (this.isConnected && this.sessionReady.has(current.sessionId)) {
+				this.send({
+					channel: "agent",
+					session_id: current.sessionId,
+					cmd: current.cmd,
+					message: current.message,
+					id,
+					client_id: current.client_id,
+				});
+			}
+			this.scheduleAgentAckRetry(id);
+		}, 6000);
+	}
+
+	private clearAgentAck(id: string): void {
+		const entry = this.pendingAgentAcks.get(id);
+		if (!entry) return;
+		if (entry.timer) clearTimeout(entry.timer);
+		this.pendingAgentAcks.delete(id);
 	}
 
 	private setConnectionState(state: WsMuxConnectionState): void {

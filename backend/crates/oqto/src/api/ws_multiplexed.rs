@@ -48,6 +48,7 @@ use super::error::ApiError;
 const PI_MESSAGES_CACHE_TTL: Duration = Duration::from_secs(15 * 60);
 const PI_MESSAGES_CACHE_MAX_BYTES_PER_USER: usize = 100 * 1024 * 1024;
 const PI_MESSAGES_CACHE_MAX_MESSAGES_PER_SESSION: usize = 200;
+const RECENT_CLIENT_IDS_MAX_PER_SESSION: usize = 512;
 
 // File tree traversal budgets (reliability + latency guardrails)
 const TREE_MAX_DEPTH: usize = 8;
@@ -72,6 +73,9 @@ struct CachedPiUserMessages {
 static PI_MESSAGES_CACHE: Lazy<tokio::sync::RwLock<HashMap<String, CachedPiUserMessages>>> =
     Lazy::new(|| tokio::sync::RwLock::new(HashMap::new()));
 
+static RECENT_CLIENT_IDS: Lazy<tokio::sync::RwLock<HashMap<String, Vec<String>>>> =
+    Lazy::new(|| tokio::sync::RwLock::new(HashMap::new()));
+
 fn trim_messages_for_cache(messages: &Value) -> Value {
     match messages {
         Value::Array(items) => {
@@ -90,6 +94,27 @@ fn estimate_messages_size(messages: &Value) -> usize {
     serde_json::to_string(messages)
         .map(|s| s.len())
         .unwrap_or(0)
+}
+
+async fn is_duplicate_client_id(session_id: &str, client_id: Option<&str>) -> bool {
+    let Some(client_id) = client_id else {
+        return false;
+    };
+    if client_id.is_empty() {
+        return false;
+    }
+
+    let mut map = RECENT_CLIENT_IDS.write().await;
+    let ids = map.entry(session_id.to_string()).or_default();
+    if ids.iter().any(|id| id == client_id) {
+        return true;
+    }
+    ids.push(client_id.to_string());
+    if ids.len() > RECENT_CLIENT_IDS_MAX_PER_SESSION {
+        let overflow = ids.len() - RECENT_CLIENT_IDS_MAX_PER_SESSION;
+        ids.drain(0..overflow);
+    }
+    false
 }
 
 async fn cache_pi_messages(user_id: &str, session_id: &str, messages: &Value) {
@@ -2687,6 +2712,9 @@ async fn handle_agent_command(
         CommandPayload::Prompt {
             message, client_id, ..
         } => {
+            if is_duplicate_client_id(&session_id, client_id.as_deref()).await {
+                return Some(agent_response(&session_id, id, "prompt", Ok(None)));
+            }
             if message.trim().is_empty() {
                 warn!(
                     "agent prompt rejected empty message: user={}, session_id={}",
@@ -2737,7 +2765,7 @@ async fn handle_agent_command(
                             client_id_for_broadcast,
                         )
                         .await;
-                        None
+                        Some(agent_response(&session_id, id, "prompt", Ok(None)))
                     }
                     Err(e) => Some(agent_response(
                         &session_id,
@@ -2750,6 +2778,9 @@ async fn handle_agent_command(
         }
 
         CommandPayload::Steer { message, client_id } => {
+            if is_duplicate_client_id(&session_id, client_id.as_deref()).await {
+                return Some(agent_response(&session_id, id, "steer", Ok(None)));
+            }
             if message.trim().is_empty() {
                 warn!(
                     "agent steer rejected empty message: user={}, session_id={}",
@@ -2797,7 +2828,7 @@ async fn handle_agent_command(
                             client_id_for_broadcast,
                         )
                         .await;
-                        None
+                        Some(agent_response(&session_id, id, "steer", Ok(None)))
                     }
                     Err(e) => Some(agent_response(
                         &session_id,
@@ -2810,6 +2841,9 @@ async fn handle_agent_command(
         }
 
         CommandPayload::FollowUp { message, client_id } => {
+            if is_duplicate_client_id(&session_id, client_id.as_deref()).await {
+                return Some(agent_response(&session_id, id, "follow_up", Ok(None)));
+            }
             if message.trim().is_empty() {
                 warn!(
                     "agent follow_up rejected empty message: user={}, session_id={}",
@@ -2857,7 +2891,7 @@ async fn handle_agent_command(
                             client_id_for_broadcast,
                         )
                         .await;
-                        None
+                        Some(agent_response(&session_id, id, "follow_up", Ok(None)))
                     }
                     Err(e) => Some(agent_response(
                         &session_id,

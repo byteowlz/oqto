@@ -3,7 +3,7 @@
 ## Open
 
 ### [oqto-heye] P0: Chat send must always terminate (response or explicit error), never infinite spinner (P0, bug)
-Implemented first architecture-aligned fix in production:\n- Backend ws_multiplexed now owns per-session response watchdogs for prompt/steer/follow_up (45s).\n- On timeout, backend emits canonical agent.error + agent.idle terminal events so UI cannot remain unrecoverably working.\n- Watchdogs are cleared on forwarded Pi progress events and on session close/delete/restart + WS cleanup.\n- Runtime diagnostics moved from chat input to settings tab (PiSettingsView) per UX request.\n\nRemaining work:\n- enforce command-id lifecycle acks and session pinning invariants to eliminate routing drift entirely.
+Implemented command acceptance durability without bypassing architecture:\n\nBackend (ws_multiplexed):\n- prompt/steer/follow_up now return canonical CommandResponse ack on accept/fail (same event bus path).\n- Added idempotency guard keyed by (session_id, client_id) to drop duplicate replays safely.\n- Kept watchdog terminal guarantees (agent.error + agent.idle) for no-progress cases.\n\nFrontend (ws-manager):\n- Added outbound agent command ack tracking for prompt/steer/follow_up by command id.\n- If ack not received, automatic retry (up to 3) with same id/client_id.\n- Retries are safe because backend dedupes by client_id per session.\n\nResult: pre-ack WS drops no longer silently lose user follow-up messages; commands are retried until accepted or explicit timeout path.
 
 ### [oqto-8zvw] Shared workspace sessions: frontend creates new session ID instead of reusing existing hstry session ID (P0, bug)
 When a user navigates to a shared workspace session (e.g. nimble-tests-ladder with session ID f3ce6d6b), the frontend:
@@ -1934,12 +1934,12 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
-- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
-- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
-- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
 - [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
+- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
+- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
+- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
 - [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
-- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
