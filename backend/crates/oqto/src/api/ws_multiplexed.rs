@@ -988,7 +988,9 @@ async fn handle_multiplexed_ws(socket: WebSocket, state: AppState, user_id: Stri
     let hub_for_events = hub.clone();
     let event_tx_for_hub = event_tx.clone();
     let hub_forwarder = tokio::spawn(async move {
-        let mut ping_interval = tokio::time::interval(std::time::Duration::from_secs(30));
+        // Keep websocket traffic flowing frequently enough for intermediate
+        // proxies/NATs that enforce short idle timeouts.
+        let mut ping_interval = tokio::time::interval(std::time::Duration::from_secs(10));
 
         let convert_hub_event = |event: LegacyHubEvent| -> Option<WsEvent> {
             match event {
