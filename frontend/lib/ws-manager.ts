@@ -496,11 +496,12 @@ class WsConnectionManager {
 	/**
 	 * Send a command to the server.
 	 * @param command The command to send
+	 * @returns true if the command was written to the socket, false otherwise
 	 */
-	send(command: WsCommand): void {
+	send(command: WsCommand): boolean {
 		if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
 			console.warn("[ws-mux] Cannot send, not connected:", command);
-			return;
+			return false;
 		}
 
 		try {
@@ -517,7 +518,7 @@ class WsConnectionManager {
 					if (isWsMuxDebugEnabled()) {
 						console.debug("[ws-mux] Dropping duplicate get_state send:", sessionId);
 					}
-					return;
+					return false;
 				}
 				this.lastGetStateAt.set(sessionId, now);
 			}
@@ -536,8 +537,10 @@ class WsConnectionManager {
 			});
 			console.log("[ws-mux] Sending:", json);
 			this.ws.send(json);
+			return true;
 		} catch (err) {
 			console.error("[ws-mux] Failed to send command:", err);
+			return false;
 		}
 	}
 
@@ -1508,7 +1511,7 @@ class WsConnectionManager {
 		}
 
 		this.trackAgentAck(commandId, sessionId, cmd, message, clientId);
-		this.send({
+		const sent = this.send({
 			channel: "agent",
 			session_id: sessionId,
 			cmd,
@@ -1516,6 +1519,12 @@ class WsConnectionManager {
 			id: commandId,
 			client_id: clientId,
 		});
+		if (!sent) {
+			const pending = this.pendingMessages.get(sessionId) ?? [];
+			pending.push({ cmd, message, id: commandId, client_id: clientId });
+			this.pendingMessages.set(sessionId, pending);
+			this.connect();
+		}
 	}
 
 	private trackAgentAck(
