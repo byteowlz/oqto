@@ -97,6 +97,8 @@ const BASE_RECONNECT_DELAY_MS = 1000;
 const MAX_RECONNECT_DELAY_MS = 30000;
 const PING_INTERVAL_MS = 30000;
 const CONNECT_TIMEOUT_MS = 10000;
+const OUTBOX_STORAGE_KEY = "__octo_agent_outbox_v1";
+const OUTBOX_MAX_AGE_MS = 10 * 60 * 1000;
 
 // Resync: delay after reconnect before triggering resync to allow
 // session.create responses to arrive first.
@@ -171,6 +173,16 @@ class WsConnectionManager {
 			timer: ReturnType<typeof setTimeout> | null;
 		}
 	> = new Map();
+	private persistedOutbox: Map<
+		string,
+		{
+			sessionId: string;
+			cmd: "prompt" | "steer" | "follow_up";
+			message: string;
+			client_id?: string;
+			updatedAt: number;
+		}
+	> = new Map();
 
 	// --- Connection epoch: monotonically increasing counter incremented on
 	// every connect/reconnect/disconnect. All async post-reconnect operations
@@ -198,6 +210,7 @@ class WsConnectionManager {
 	private lastVisibilityHiddenAt = 0;
 
 	constructor() {
+		this.loadPersistedOutbox();
 		if (typeof document !== "undefined") {
 			this.boundVisibilityHandler = this.handleVisibilityChange.bind(this);
 			document.addEventListener("visibilitychange", this.boundVisibilityHandler);
@@ -855,6 +868,7 @@ class WsConnectionManager {
 		this.pendingSubscriptions.delete(sessionId);
 		this.pendingMessages.delete(sessionId);
 		this.clearSessionCreateInFlight(sessionId);
+		this.clearOutboxForSession(sessionId);
 		this.agentSessionHandlers.delete(sessionId);
 		this.resyncHandlers.delete(sessionId);
 
@@ -1527,6 +1541,50 @@ class WsConnectionManager {
 		}
 	}
 
+	private loadPersistedOutbox(): void {
+		if (typeof window === "undefined") return;
+		try {
+			const raw = window.localStorage.getItem(OUTBOX_STORAGE_KEY);
+			if (!raw) return;
+			const parsed = JSON.parse(raw) as Array<{
+				id: string;
+				sessionId: string;
+				cmd: "prompt" | "steer" | "follow_up";
+				message: string;
+				client_id?: string;
+				updatedAt: number;
+			}>;
+			const now = Date.now();
+			for (const item of parsed) {
+				if (!item?.id || !item.sessionId || !item.cmd || !item.message) continue;
+				if (now - (item.updatedAt ?? 0) > OUTBOX_MAX_AGE_MS) continue;
+				this.persistedOutbox.set(item.id, item);
+				const pending = this.pendingMessages.get(item.sessionId) ?? [];
+				pending.push({
+					cmd: item.cmd,
+					message: item.message,
+					id: item.id,
+					client_id: item.client_id,
+				});
+				this.pendingMessages.set(item.sessionId, pending);
+			}
+		} catch (err) {
+			console.warn("[ws-mux] Failed to load outbox:", err);
+		}
+	}
+
+	private persistOutbox(): void {
+		if (typeof window === "undefined") return;
+		try {
+			const payload = Array.from(this.persistedOutbox.entries()).map(
+				([id, entry]) => ({ id, ...entry }),
+			);
+			window.localStorage.setItem(OUTBOX_STORAGE_KEY, JSON.stringify(payload));
+		} catch (err) {
+			console.warn("[ws-mux] Failed to persist outbox:", err);
+		}
+	}
+
 	private trackAgentAck(
 		id: string,
 		sessionId: string,
@@ -1546,6 +1604,14 @@ class WsConnectionManager {
 			attempts: existing?.attempts ?? 0,
 			timer: null,
 		});
+		this.persistedOutbox.set(id, {
+			sessionId,
+			cmd,
+			message,
+			client_id,
+			updatedAt: Date.now(),
+		});
+		this.persistOutbox();
 		this.scheduleAgentAckRetry(id);
 	}
 
@@ -1562,6 +1628,11 @@ class WsConnectionManager {
 				return;
 			}
 			current.attempts += 1;
+			const persisted = this.persistedOutbox.get(id);
+			if (persisted) {
+				persisted.updatedAt = Date.now();
+				this.persistOutbox();
+			}
 			if (this.isConnected && this.sessionReady.has(current.sessionId)) {
 				this.send({
 					channel: "agent",
@@ -1578,9 +1649,11 @@ class WsConnectionManager {
 
 	private clearAgentAck(id: string): void {
 		const entry = this.pendingAgentAcks.get(id);
-		if (!entry) return;
-		if (entry.timer) clearTimeout(entry.timer);
+		if (entry?.timer) clearTimeout(entry.timer);
 		this.pendingAgentAcks.delete(id);
+		if (this.persistedOutbox.delete(id)) {
+			this.persistOutbox();
+		}
 	}
 
 	private markSessionCreateInFlight(sessionId: string): void {
@@ -1599,6 +1672,17 @@ class WsConnectionManager {
 		const timer = this.sessionCreateTimers.get(sessionId);
 		if (timer) clearTimeout(timer);
 		this.sessionCreateTimers.delete(sessionId);
+	}
+
+	private clearOutboxForSession(sessionId: string): void {
+		let changed = false;
+		for (const [id, entry] of this.persistedOutbox) {
+			if (entry.sessionId === sessionId) {
+				this.persistedOutbox.delete(id);
+				changed = true;
+			}
+		}
+		if (changed) this.persistOutbox();
 	}
 
 	private setConnectionState(state: WsMuxConnectionState): void {

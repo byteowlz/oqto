@@ -3,7 +3,7 @@
 ## Open
 
 ### [oqto-heye] P0: Chat send must always terminate (response or explicit error), never infinite spinner (P0, bug)
-Archvm incident (K.I.T.T / dull-wrap-agar, ~20:10): no backend prompt log for reported lost message, while same session kept persisting to hstry. This indicates frontend-to-ws send drop before server acceptance (message never entered command path).\n\nFix in ws-manager: if agent command send fails at write time (socket appears open but send throws/fails), re-enqueue command into pendingMessages, keep ack tracking, and force reconnect. This prevents silent drop in the short dead-socket window before close event.
+Frontend durability fix for disappearing messages + reload replay symptom:\n- Added persistent agent outbox in ws-manager (localStorage, TTL 10min).\n- prompt/steer/follow_up tracked by command id are now restored after reload and re-queued until session is ready.\n- On send write failure / dead-socket window, commands remain in outbox and are retried after reconnect instead of disappearing.\n- Ack clears outbox entry; session close clears session outbox entries.\n\nThis provides at-least-once delivery across reloads and transient ws write failures.
 
 ### [oqto-8zvw] Shared workspace sessions: frontend creates new session ID instead of reusing existing hstry session ID (P0, bug)
 When a user navigates to a shared workspace session (e.g. nimble-tests-ladder with session ID f3ce6d6b), the frontend:
@@ -1934,12 +1934,12 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
-- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
-- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
 - [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
+- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
+- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
+- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
 - [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
+- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
