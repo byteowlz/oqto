@@ -767,32 +767,34 @@ export function mergeServerMessages(
 	}
 
 	// mode === "authoritative"
-	// Server is the complete source of truth. Only preserve trailing
-	// in-flight local messages the server doesn't know about yet.
+	// Server is the complete source of truth. Preserve in-flight local
+	// messages the server doesn't know yet, even across reload/resync order
+	// changes, so user messages never disappear.
 	const serverClientIds = new Set(
 		serverMessages.filter((m) => m.clientId).map((m) => m.clientId),
 	);
 	const serverFingerprints = new Set(serverMessages.map((m) => messageFingerprint(m)));
 
-	const trailing: DisplayMessage[] = [];
-	for (let i = previous.length - 1; i >= 0; i--) {
-		const msg = previous[i];
+	const preserved: DisplayMessage[] = [];
+	for (const msg of previous) {
 		if (msg.isStreaming) {
-			trailing.unshift(msg);
+			preserved.push(msg);
 			continue;
 		}
 		if (msg.role === "user" && msg.clientId && !serverClientIds.has(msg.clientId)) {
-			// If server already has this exact user message (without client_id),
-			// do not preserve the optimistic tail copy.
 			if (!serverFingerprints.has(messageFingerprint(msg))) {
-				trailing.unshift(msg);
+				preserved.push(msg);
 			}
-			continue;
 		}
-		break;
 	}
 
-	return trailing.length > 0
-		? [...serverMessages, ...trailing]
-		: serverMessages;
+	if (preserved.length === 0) return serverMessages;
+	const merged = [...serverMessages, ...preserved];
+	merged.sort((a, b) => {
+		const ta = a.timestamp ?? 0;
+		const tb = b.timestamp ?? 0;
+		if (ta !== tb) return ta - tb;
+		return a.id.localeCompare(b.id);
+	});
+	return merged;
 }

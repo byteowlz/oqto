@@ -1998,13 +1998,7 @@ export function ChatView({
 								const visibleMessages = messages.slice(-visibleCount);
 								const grouped = groupMessages(visibleMessages);
 								const lastGroup = grouped[grouped.length - 1];
-								const activeSessionKey = selectedSessionId ?? null;
-								const isWorking =
-									isStreaming ||
-									isAwaitingResponse ||
-									(sendPending &&
-										!!sendPendingSessionId &&
-										sendPendingSessionId === activeSessionKey);
+								const isWorking = isStreaming || isAwaitingResponse;
 								const needsPendingAssistant =
 									isWorking && (!lastGroup || lastGroup.role === "user");
 								const groupsToRender = needsPendingAssistant
