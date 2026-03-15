@@ -1690,6 +1690,40 @@ async fn clear_response_watchdog(
     }
 }
 
+async fn emit_terminal_send_failure(
+    conn_state: &Arc<tokio::sync::Mutex<WsConnectionState>>,
+    session_id: &str,
+    runner_id: &str,
+    error: String,
+) {
+    clear_response_watchdog(conn_state, session_id).await;
+
+    let event_tx = {
+        let state_guard = conn_state.lock().await;
+        state_guard.event_tx.clone()
+    };
+
+    let error_event = oqto_protocol::events::Event {
+        session_id: session_id.to_string(),
+        runner_id: runner_id.to_string(),
+        ts: Utc::now().timestamp_millis(),
+        payload: oqto_protocol::events::EventPayload::AgentError {
+            error,
+            recoverable: true,
+            phase: Some(oqto_protocol::events::AgentPhase::Generating),
+        },
+    };
+    let _ = event_tx.send(WsEvent::Agent(error_event));
+
+    let idle_event = oqto_protocol::events::Event {
+        session_id: session_id.to_string(),
+        runner_id: runner_id.to_string(),
+        ts: Utc::now().timestamp_millis(),
+        payload: oqto_protocol::events::EventPayload::AgentIdle,
+    };
+    let _ = event_tx.send(WsEvent::Agent(idle_event));
+}
+
 async fn arm_response_watchdog(
     conn_state: &Arc<tokio::sync::Mutex<WsConnectionState>>,
     session_id: &str,
@@ -2796,12 +2830,21 @@ async fn handle_agent_command(
                         .await;
                         Some(agent_response(&session_id, id, "prompt", Ok(None)))
                     }
-                    Err(e) => Some(agent_response(
-                        &session_id,
-                        id,
-                        "prompt",
-                        Err(format!("Failed to send prompt: {}", e)),
-                    )),
+                    Err(e) => {
+                        let error_msg = format!("Failed to send prompt: {}", e);
+                        warn!(
+                            "agent prompt failed: user={}, session_id={}, error={}",
+                            user_id, session_id, error_msg
+                        );
+                        emit_terminal_send_failure(
+                            &conn_state,
+                            &session_id,
+                            &runner_id,
+                            error_msg.clone(),
+                        )
+                        .await;
+                        Some(agent_response(&session_id, id, "prompt", Err(error_msg)))
+                    }
                 }
             }
         }
@@ -2862,12 +2905,21 @@ async fn handle_agent_command(
                         .await;
                         Some(agent_response(&session_id, id, "steer", Ok(None)))
                     }
-                    Err(e) => Some(agent_response(
-                        &session_id,
-                        id,
-                        "steer",
-                        Err(format!("Failed to send steer: {}", e)),
-                    )),
+                    Err(e) => {
+                        let error_msg = format!("Failed to send steer: {}", e);
+                        warn!(
+                            "agent steer failed: user={}, session_id={}, error={}",
+                            user_id, session_id, error_msg
+                        );
+                        emit_terminal_send_failure(
+                            &conn_state,
+                            &session_id,
+                            &runner_id,
+                            error_msg.clone(),
+                        )
+                        .await;
+                        Some(agent_response(&session_id, id, "steer", Err(error_msg)))
+                    }
                 }
             }
         }
@@ -2928,12 +2980,21 @@ async fn handle_agent_command(
                         .await;
                         Some(agent_response(&session_id, id, "follow_up", Ok(None)))
                     }
-                    Err(e) => Some(agent_response(
-                        &session_id,
-                        id,
-                        "follow_up",
-                        Err(format!("Failed to send follow_up: {}", e)),
-                    )),
+                    Err(e) => {
+                        let error_msg = format!("Failed to send follow_up: {}", e);
+                        warn!(
+                            "agent follow_up failed: user={}, session_id={}, error={}",
+                            user_id, session_id, error_msg
+                        );
+                        emit_terminal_send_failure(
+                            &conn_state,
+                            &session_id,
+                            &runner_id,
+                            error_msg.clone(),
+                        )
+                        .await;
+                        Some(agent_response(&session_id, id, "follow_up", Err(error_msg)))
+                    }
                 }
             }
         }
