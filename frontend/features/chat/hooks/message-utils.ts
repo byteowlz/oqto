@@ -428,7 +428,7 @@ export function normalizeMessages(
 			message.created_at ??
 			message.created_at_ms ??
 			message.createdAtMs ??
-			Date.now();
+			0;
 		const partsJson =
 			typeof message.parts_json === "string"
 				? message.parts_json
@@ -757,6 +757,12 @@ export function mergeServerMessages(
 				result.push(serverMsg);
 			}
 		}
+		result.sort((a, b) => {
+			const ta = a.timestamp ?? 0;
+			const tb = b.timestamp ?? 0;
+			if (ta !== tb) return ta - tb;
+			return a.id.localeCompare(b.id);
+		});
 		return result;
 	}
 
