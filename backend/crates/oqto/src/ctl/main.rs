@@ -50,6 +50,7 @@ async fn try_main() -> Result<()> {
         Command::Image { command } => handle_image(&client, command, cli.json).await,
         Command::A2ui { command } => handle_a2ui(&client, command, cli.json).await,
         Command::Ui { command } => handle_ui(&client, command, cli.json).await,
+        Command::Bus { command } => handle_bus(&client, command, cli.json).await,
         Command::Local { command } => handle_local(&client, command, cli.json).await,
         Command::Sandbox { command } => handle_sandbox(command, cli.json).await,
         Command::User { command } => handle_user(&client, command, cli.json).await,
@@ -172,6 +173,13 @@ enum Command {
     Ui {
         #[command(subcommand)]
         command: UiCommand,
+    },
+
+    /// Event bus commands (admin)
+    #[command(name = "bus")]
+    Bus {
+        #[command(subcommand)]
+        command: BusCommand,
     },
 
     /// Hash a password using bcrypt (same algorithm as the backend)
@@ -613,6 +621,30 @@ enum A2uiCommand {
         /// Timeout in seconds (default: 300)
         #[arg(long, short, default_value = "300")]
         timeout: u64,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum BusCommand {
+    /// Show event bus stats
+    Status,
+    /// Publish an event as admin
+    Publish {
+        /// Scope: session, workspace, global
+        #[arg(long)]
+        scope: String,
+        /// Scope identifier (session_id, workspace path, or global)
+        #[arg(long)]
+        scope_id: String,
+        /// Event topic (e.g. app.message, admin.agents_updated)
+        #[arg(long)]
+        topic: String,
+        /// JSON payload. If omitted, read from stdin.
+        #[arg(long)]
+        payload: Option<String>,
+        /// Payload version (default: 1)
+        #[arg(long, default_value = "1")]
+        version: u32,
     },
 }
 
@@ -4031,6 +4063,124 @@ async fn handle_a2ui(client: &OqtoClient, command: A2uiCommand, json: bool) -> R
             };
 
             send_a2ui_surface(client, &session, parsed_messages, blocking, timeout, json).await
+        }
+    }
+}
+
+async fn handle_bus(client: &OqtoClient, command: BusCommand, json: bool) -> Result<()> {
+    match command {
+        BusCommand::Status => {
+            let response = client.get("/admin/bus/stats").await?;
+            if !response.status().is_success() {
+                let body = response.text().await.unwrap_or_else(|_| "".to_string());
+                return Err(anyhow!(
+                    "bus status failed ({}): {}",
+                    response.status(),
+                    body
+                ));
+            }
+            let stats: serde_json::Value = response.json().await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&stats)?);
+            } else {
+                println!("Bus stats:");
+                println!(
+                    "  subscribers: {}",
+                    stats
+                        .get("subscriber_count")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0)
+                );
+                println!(
+                    "  subscriptions: {}",
+                    stats
+                        .get("total_subscriptions")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0)
+                );
+                println!(
+                    "  published: {}",
+                    stats
+                        .get("events_published")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0)
+                );
+                println!(
+                    "  delivered: {}",
+                    stats
+                        .get("events_delivered")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0)
+                );
+                println!(
+                    "  dropped(authz): {}",
+                    stats
+                        .get("events_dropped_authz")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0)
+                );
+                println!(
+                    "  dropped(rate): {}",
+                    stats
+                        .get("events_dropped_rate")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0)
+                );
+            }
+            Ok(())
+        }
+        BusCommand::Publish {
+            scope,
+            scope_id,
+            topic,
+            payload,
+            version,
+        } => {
+            let payload_json = if let Some(p) = payload {
+                serde_json::from_str::<serde_json::Value>(&p)
+                    .with_context(|| "parsing --payload JSON")?
+            } else {
+                let mut input = String::new();
+                std::io::stdin()
+                    .read_to_string(&mut input)
+                    .context("reading payload JSON from stdin")?;
+                if input.trim().is_empty() {
+                    serde_json::json!({})
+                } else {
+                    serde_json::from_str::<serde_json::Value>(&input)
+                        .context("parsing payload JSON from stdin")?
+                }
+            };
+
+            let body = serde_json::json!({
+                "scope": scope,
+                "scope_id": scope_id,
+                "topic": topic,
+                "payload": payload_json,
+                "version": version,
+            });
+
+            let response = client.post_json("/admin/bus/publish", &body).await?;
+            if !response.status().is_success() {
+                let err = response.text().await.unwrap_or_else(|_| "".to_string());
+                return Err(anyhow!(
+                    "bus publish failed ({}): {}",
+                    response.status(),
+                    err
+                ));
+            }
+
+            let resp: serde_json::Value = response.json().await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&resp)?);
+            } else {
+                let event_id = resp
+                    .get("event_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown");
+                println!("Published bus event: {}", event_id);
+            }
+            Ok(())
         }
     }
 }

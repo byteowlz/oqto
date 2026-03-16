@@ -75,6 +75,52 @@ pub async fn get_bus_stats(
     Ok(Json(state.bus.stats()))
 }
 
+#[derive(Debug, Deserialize)]
+pub struct PublishBusEventRequest {
+    pub scope: crate::bus::BusScope,
+    pub scope_id: String,
+    pub topic: String,
+    pub payload: serde_json::Value,
+    #[serde(default)]
+    pub version: Option<u32>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PublishBusEventResponse {
+    pub event_id: String,
+}
+
+/// Publish a bus event as admin (admin only).
+pub async fn publish_bus_event(
+    State(state): State<AppState>,
+    RequireAdmin(user): RequireAdmin,
+    Json(req): Json<PublishBusEventRequest>,
+) -> ApiResult<Json<PublishBusEventResponse>> {
+    use crate::bus::{BusEvent, EventSource};
+
+    let mut event = BusEvent::new(
+        req.scope,
+        req.scope_id,
+        req.topic,
+        req.payload,
+        EventSource::Admin {
+            user_id: user.id().to_string(),
+        },
+    );
+    if let Some(v) = req.version {
+        event.v = v;
+    }
+
+    let event_id = event.event_id.clone();
+    state
+        .bus
+        .publish_internal(event)
+        .await
+        .map_err(ApiError::internal)?;
+
+    Ok(Json(PublishBusEventResponse { event_id }))
+}
+
 #[derive(Debug, Serialize)]
 pub struct AdminMetricsSnapshot {
     pub timestamp: String,

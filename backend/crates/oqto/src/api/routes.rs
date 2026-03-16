@@ -303,6 +303,7 @@ fn create_router_with_config_and_auth(
         // Admin routes - stats
         .route("/admin/stats", get(handlers::get_admin_stats))
         .route("/admin/bus/stats", get(handlers::get_bus_stats))
+        .route("/admin/bus/publish", post(handlers::publish_bus_event))
         // Admin routes - user management
         .route("/admin/users", get(handlers::list_users))
         .route("/admin/users", post(handlers::create_user))

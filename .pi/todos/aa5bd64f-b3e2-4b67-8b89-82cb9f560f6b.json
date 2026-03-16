@@ -1,29 +1,29 @@
 {
   "todos": [
     {
-      "id": "3bc19561",
-      "content": "Trace message delivery path (runner events -> backend WS -> frontend store) to locate drop before hstry sync",
+      "id": "52b64d70",
+      "content": "Locate deployment workflow/script for archvm and octo-azure",
       "status": "completed",
       "priority": "high"
     },
     {
-      "id": "56234106",
-      "content": "Reproduce missing-message condition and identify race/ordering bug",
+      "id": "249638fc",
+      "content": "Deploy current changes to archvm",
       "status": "completed",
       "priority": "high"
     },
     {
-      "id": "5c7c45aa",
-      "content": "Implement fix so frontend never depends on delayed hstry sync for visibility",
+      "id": "457e4782",
+      "content": "Deploy current changes to octo-azure",
       "status": "completed",
       "priority": "high"
     },
     {
-      "id": "8895775c",
-      "content": "Verify with local run/tests and summarize changed files",
+      "id": "5212ffb8",
+      "content": "Verify services healthy on both hosts",
       "status": "completed",
       "priority": "high"
     }
   ],
-  "updated_at": "2026-03-16T16:06:18.826Z"
+  "updated_at": "2026-03-16T17:13:17.429Z"
 }

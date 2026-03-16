@@ -57,7 +57,7 @@ pub use projects::{
 // Admin handlers and types
 pub use admin::{
     admin_cleanup_local_sessions, admin_force_stop_session, admin_list_sessions,
-    admin_metrics_stream, get_admin_stats, get_bus_stats,
+    admin_metrics_stream, get_admin_stats, get_bus_stats, publish_bus_event,
 };
 
 // User management (admin)

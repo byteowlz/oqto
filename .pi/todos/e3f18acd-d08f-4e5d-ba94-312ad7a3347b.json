@@ -2,13 +2,13 @@
   "todos": [
     {
       "id": "1",
-      "content": "Scout backend WS mux architecture and identify integration points",
+      "content": "Scout backend WS mux architecture",
       "status": "completed",
       "priority": "high"
     },
     {
       "id": "2",
-      "content": "Implement bus channel in backend (in-memory pub/sub, topic routing, scope authz)",
+      "content": "Implement bus channel in backend (pub/sub, topic routing, scope authz)",
       "status": "completed",
       "priority": "high"
     },
@@ -21,7 +21,7 @@
     {
       "id": "4",
       "content": "Add oqtoctl bus commands (status, tail, publish)",
-      "status": "pending",
+      "status": "in_progress",
       "priority": "medium"
     },
     {
@@ -31,5 +31,5 @@
       "priority": "high"
     }
   ],
-  "updated_at": "2026-03-16T16:26:12.365Z"
+  "updated_at": "2026-03-16T19:21:07.648Z"
 }
