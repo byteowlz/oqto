@@ -2764,6 +2764,7 @@ impl PiSessionManager {
         let mut raw_buf = Vec::new();
         let mut pending_json_fragment = String::new();
         let mut pending_messages: Vec<AgentMessage> = Vec::new();
+        let mut pending_error_text: Option<String> = None;
         let mut pending_hstry_client_id: Option<String> = None;
         let mut translator = PiTranslator::new();
 
@@ -3310,51 +3311,53 @@ impl PiSessionManager {
                             payload.clone()
                         };
 
-                    // Persist errors to hstry BEFORE broadcasting so
-                    // fetchHistoryMessages (triggered by the frontend on
-                    // agent.error) finds the error already persisted.
+                    // Buffer the last error text. Only persisted to hstry
+                    // when AgentIdle fires (one error per turn, not per retry).
                     if let oqto_protocol::events::EventPayload::AgentError {
                         ref error,
                         ..
                     } = enriched_payload
                     {
-                        if let Some(ref client) = hstry_client {
-                            let eid = hstry_external_id.read().await.clone();
-                            let error_parts = serde_json::json!([{
-                                "type": "error",
-                                "id": format!("err-{}", chrono::Utc::now().timestamp_millis()),
-                                "text": error
-                            }]);
-                            let now_ms = chrono::Utc::now().timestamp_millis();
-                            let msg = hstry_core::service::proto::Message {
-                                idx: -1, // auto-assign
-                                role: "error".to_string(),
-                                content: error.clone(),
-                                parts_json: error_parts.to_string(),
-                                created_at_ms: Some(now_ms),
-                                model: None,
-                                tokens: None,
-                                cost_usd: None,
-                                metadata_json: String::new(),
-                                sender_json: String::new(),
-                                provider: None,
-                                harness: Some("pi".to_string()),
-                                client_id: None,
-                                id: None,
-                            };
-                            if let Err(e) = client
-                                .append_messages(&eid, vec![msg], Some(now_ms))
-                                .await
-                            {
-                                warn!(
-                                    "Pi[{}] failed to persist error to hstry: {:?}",
-                                    session_id, e
-                                );
-                            } else {
-                                debug!(
-                                    "Pi[{}] persisted error to hstry (eid={})",
-                                    session_id, eid,
-                                );
+                        pending_error_text = Some(error.clone());
+                    }
+
+                    // On AgentIdle, persist the buffered error (if any) to hstry
+                    // BEFORE broadcasting, so fetchHistoryMessages finds it.
+                    if matches!(enriched_payload, oqto_protocol::events::EventPayload::AgentIdle) {
+                        if let Some(error_text) = pending_error_text.take() {
+                            if let Some(ref client) = hstry_client {
+                                let eid = hstry_external_id.read().await.clone();
+                                let error_parts = serde_json::json!([{
+                                    "type": "error",
+                                    "id": format!("err-{}", chrono::Utc::now().timestamp_millis()),
+                                    "text": error_text
+                                }]);
+                                let now_ms = chrono::Utc::now().timestamp_millis();
+                                let msg = hstry_core::service::proto::Message {
+                                    idx: -1,
+                                    role: "error".to_string(),
+                                    content: error_text.clone(),
+                                    parts_json: error_parts.to_string(),
+                                    created_at_ms: Some(now_ms),
+                                    model: None,
+                                    tokens: None,
+                                    cost_usd: None,
+                                    metadata_json: String::new(),
+                                    sender_json: String::new(),
+                                    provider: None,
+                                    harness: Some("pi".to_string()),
+                                    client_id: None,
+                                    id: None,
+                                };
+                                if let Err(e) = client
+                                    .append_messages(&eid, vec![msg], Some(now_ms))
+                                    .await
+                                {
+                                    warn!(
+                                        "Pi[{}] failed to persist error to hstry: {:?}",
+                                        session_id, e
+                                    );
+                                }
                             }
                         }
                     }

@@ -1003,78 +1003,45 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 						streamingMessageRef.current = null;
 					}
 
-					// Errors are persisted to hstry by the runner as role="error"
-					// messages. Fetch them from hstry so they appear in the chat
-					// without creating duplicate client-side copies.
-					const sid = activeSessionIdRef.current;
-					if (sid) {
-						void fetchHistoryMessages(sid);
-					}
+					// Show error immediately as a standalone message.
+					// The runner also persists it to hstry on agent.idle.
+					// The agent.idle hstry fetch will dedupe by fingerprint.
+					setMessages((prev) => [
+						...prev,
+						{
+							id: nextMessageId(),
+							role: "assistant" as const,
+							parts: [{ type: "error" as const, id: nextPartId(), text: errMsg }],
+							timestamp: Date.now(),
+							isStreaming: false,
+						},
+					]);
 					break;
 				}
 
 				// -- Retry progress --
 				case "retry.start": {
-					// During auto-retry, add an inline retry indicator to the
-					// last assistant message so the user sees progress.
+					// Show retry status via the error banner, not message parts.
+					// Message parts get wiped by authoritative hstry fetches.
 					const attempt = (event.attempt as number) ?? 1;
 					const maxAttempts = (event.max_attempts as number) ?? 3;
 					const retryError = (event.error as string) || "LLM error";
-					const retryText = `${retryError} -- retrying (${attempt}/${maxAttempts})...`;
-
-					setMessages((prev) => {
-						const lastIdx = [...prev]
-							.reverse()
-							.findIndex((m) => m.role === "assistant");
-						if (lastIdx < 0) return prev;
-						const realIdx = prev.length - 1 - lastIdx;
-						const msg = prev[realIdx];
-						// Replace any existing error/retry part, or add new one
-						const filteredParts = msg.parts.filter(
-							(p) => p.type !== "error",
-						);
-						const updated = [...prev];
-						updated[realIdx] = {
-							...msg,
-							parts: [
-								...filteredParts,
-								{
-									type: "error" as const,
-									id: nextPartId(),
-									text: retryText,
-									retrying: true,
-									retryAttempt: attempt,
-									retryMax: maxAttempts,
-								} satisfies ErrorPart,
-							],
-						};
-						return updated;
-					});
+					setError(
+						new Error(
+							`${retryError} -- retrying (${attempt}/${maxAttempts})...`,
+						),
+					);
 					break;
 				}
 
 				case "retry.end": {
 					const retrySuccess = event.success as boolean;
 					if (retrySuccess) {
-						// Retry succeeded -- remove the retry indicator.
-						setMessages((prev) => {
-							const lastIdx = [...prev]
-								.reverse()
-								.findIndex((m) => m.role === "assistant");
-							if (lastIdx < 0) return prev;
-							const realIdx = prev.length - 1 - lastIdx;
-							const msg = prev[realIdx];
-							const filteredParts = msg.parts.filter(
-								(p) => !(p.type === "error" && (p as ErrorPart).retrying),
-							);
-							if (filteredParts.length === msg.parts.length) return prev;
-							const updated = [...prev];
-							updated[realIdx] = { ...msg, parts: filteredParts };
-							return updated;
-						});
+						// Retry succeeded -- clear the retry error banner.
+						setError(null);
 					}
 					// On failure, backend emits agent.error(recoverable=false)
-					// which is handled above.
+					// which persists the error to hstry and is fetched below.
 					break;
 				}
 
