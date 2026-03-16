@@ -4220,7 +4220,21 @@ async fn handle_bus(client: &OqtoClient, command: BusCommand, json: bool) -> Res
                 .replace("https://", "wss://")
                 + "/ws/mux";
 
-            let (mut ws, _) = connect_async(ws_url)
+            use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+            let mut request = ws_url
+                .into_client_request()
+                .map_err(|e| anyhow!("failed to build websocket request: {}", e))?;
+            if let Some(token) = client.auth_token.as_ref() {
+                request
+                    .headers_mut()
+                    .insert("Authorization", format!("Bearer {}", token).parse()?);
+            } else if let Some(dev_user) = client.dev_user.as_ref() {
+                request
+                    .headers_mut()
+                    .insert("X-Dev-User", dev_user.parse()?);
+            }
+
+            let (mut ws, _) = connect_async(request)
                 .await
                 .context("connecting to websocket mux for bus tail")?;
 
