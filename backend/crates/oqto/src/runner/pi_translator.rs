@@ -371,6 +371,14 @@ impl PiTranslator {
                     .or_else(|| extract_error_message(message))
                     .unwrap_or_else(|| reason.clone());
 
+                // During retry cycles, suppress per-attempt AgentError events.
+                // The final error is emitted by on_retry_end(failure) after
+                // all retries are exhausted. Emitting here would flood the
+                // frontend with duplicate errors and persist multiple entries.
+                if self.in_retry_cycle {
+                    return vec![];
+                }
+
                 let recoverable = reason == "aborted";
                 let mut events = vec![EventPayload::AgentError {
                     error: error_text.clone(),
@@ -419,7 +427,8 @@ impl PiTranslator {
         // so the frontend can display the error to the user. Without this,
         // errors like "400 Unexpected message role" result in empty assistant
         // bubbles with no visible error.
-        if matches!(canonical.stop_reason, Some(StopReason::Error)) {
+        // Skip during retry cycles: the final error comes from on_retry_end.
+        if !self.in_retry_cycle && matches!(canonical.stop_reason, Some(StopReason::Error)) {
             if let Some(error_text) = extract_error_message(message) {
                 let is_fatal = is_payload_too_large_error(&error_text);
                 events.push(EventPayload::AgentError {
@@ -704,9 +713,10 @@ impl PiTranslator {
             let phase_event = self.state.on_native_phase(AgentPhase::Generating, None);
             events.push(phase_event);
         } else {
-            // All retries exhausted -- emit a non-recoverable error so the
-            // frontend surfaces it to the user. Without this, the error is
-            // silently swallowed and the agent just goes idle.
+            // All retries exhausted -- emit error + idle to terminate the
+            // session. Pi does not send a final agent_end after retry
+            // exhaustion, so we must emit AgentIdle here to prevent the
+            // session from being permanently stuck in streaming state.
             let error_text =
                 final_error.unwrap_or_else(|| "LLM request failed after all retries".to_string());
             events.push(EventPayload::AgentError {
@@ -714,6 +724,10 @@ impl PiTranslator {
                 recoverable: false,
                 phase: Some(AgentPhase::Generating),
             });
+            // Clear streaming state and emit idle
+            self.streaming_occurred = false;
+            self.current_message_id = None;
+            events.push(self.state.on_agent_end());
         }
 
         events

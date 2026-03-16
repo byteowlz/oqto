@@ -2099,6 +2099,12 @@ export function ChatView({
 								))}
 							</div>
 						)}
+						{/* Inline error/retry indicator - shows below messages */}
+						{displayError && messages.length > 0 && !isStreaming && (
+							<div className="mt-2 px-3 py-2 rounded-md bg-destructive/10 text-destructive text-sm border border-destructive/20">
+								{displayError.message}
+							</div>
+						)}
 					</div>
 					<div ref={messagesEndRef} />
 				</div>

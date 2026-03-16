@@ -861,6 +861,9 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 					setIsStreaming(false);
 					isStreamingRef.current = false;
 					setIsAwaitingResponse(false);
+					// Clear transient error banner (retry indicators).
+					// Permanent errors are in hstry and render as messages.
+					setError(null);
 					if (streamingMessageRef.current) {
 						streamingMessageRef.current.isStreaming = false;
 						streamingMessageRef.current = null;
