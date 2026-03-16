@@ -646,6 +646,24 @@ enum BusCommand {
         #[arg(long, default_value = "1")]
         version: u32,
     },
+    /// Tail bus events via WebSocket subscription
+    Tail {
+        /// Scope: session, workspace, global
+        #[arg(long)]
+        scope: String,
+        /// Scope identifier (session_id, workspace path, or global)
+        #[arg(long)]
+        scope_id: String,
+        /// Topic pattern(s). Repeat for multiple patterns.
+        #[arg(long = "topic", required = true)]
+        topics: Vec<String>,
+        /// Maximum number of events to print before exiting (default: unlimited)
+        #[arg(long)]
+        limit: Option<usize>,
+        /// Exit after timeout seconds if no/insufficient events
+        #[arg(long)]
+        timeout: Option<u64>,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -4180,6 +4198,122 @@ async fn handle_bus(client: &OqtoClient, command: BusCommand, json: bool) -> Res
                     .unwrap_or("unknown");
                 println!("Published bus event: {}", event_id);
             }
+            Ok(())
+        }
+        BusCommand::Tail {
+            scope,
+            scope_id,
+            topics,
+            limit,
+            timeout,
+        } => {
+            use futures::{SinkExt, StreamExt};
+            use tokio_tungstenite::connect_async;
+            use tokio_tungstenite::tungstenite::protocol::Message;
+
+            let base_url = client
+                .http_base_url()
+                .ok_or_else(|| anyhow!("bus tail requires HTTP transport (not admin socket)"))?;
+            let ws_url = base_url
+                .trim_end_matches('/')
+                .replace("http://", "ws://")
+                .replace("https://", "wss://")
+                + "/ws/mux";
+
+            let (mut ws, _) = connect_async(ws_url)
+                .await
+                .context("connecting to websocket mux for bus tail")?;
+
+            let subscribe_cmd = serde_json::json!({
+                "channel": "bus",
+                "type": "subscribe",
+                "id": "oqtoctl-bus-tail-sub",
+                "scope": scope,
+                "scope_id": scope_id,
+                "topics": topics,
+            });
+            ws.send(Message::Text(subscribe_cmd.to_string().into()))
+                .await
+                .context("sending bus subscribe command")?;
+
+            let deadline = timeout.map(|t| {
+                tokio::time::Instant::now() + std::time::Duration::from_secs(t)
+            });
+            let mut seen = 0usize;
+
+            loop {
+                let next_msg = if let Some(dl) = deadline {
+                    tokio::select! {
+                        _ = tokio::time::sleep_until(dl) => break,
+                        msg = ws.next() => msg,
+                    }
+                } else {
+                    ws.next().await
+                };
+
+                let Some(msg) = next_msg else { break };
+                let msg = msg.context("reading websocket message")?;
+
+                match msg {
+                    Message::Text(text) => {
+                        let value: serde_json::Value = match serde_json::from_str(&text) {
+                            Ok(v) => v,
+                            Err(_) => continue,
+                        };
+                        if value.get("channel").and_then(|v| v.as_str()) != Some("bus") {
+                            continue;
+                        }
+                        if value.get("type").and_then(|v| v.as_str()) != Some("event") {
+                            continue;
+                        }
+
+                        seen += 1;
+                        if json {
+                            println!("{}", serde_json::to_string_pretty(&value)?);
+                        } else {
+                            let topic =
+                                value.get("topic").and_then(|v| v.as_str()).unwrap_or("-");
+                            let scope =
+                                value.get("scope").and_then(|v| v.as_str()).unwrap_or("-");
+                            let scope_id = value
+                                .get("scope_id")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("-");
+                            let source = value
+                                .get("source")
+                                .and_then(|v| v.get("type"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("-");
+                            println!("[{scope}/{scope_id}] {topic} <- {source}");
+                        }
+
+                        if let Some(max) = limit {
+                            if seen >= max {
+                                break;
+                            }
+                        }
+                    }
+                    Message::Close(_) => break,
+                    _ => {}
+                }
+            }
+
+            // Best-effort unsubscribe
+            let _ = ws
+                .send(Message::Text(
+                    serde_json::json!({
+                        "channel": "bus",
+                        "type": "unsubscribe",
+                        "id": "oqtoctl-bus-tail-unsub",
+                        "scope": scope,
+                        "scope_id": scope_id,
+                        "topics": topics,
+                    })
+                    .to_string()
+                    .into(),
+                ))
+                .await;
+
             Ok(())
         }
     }
