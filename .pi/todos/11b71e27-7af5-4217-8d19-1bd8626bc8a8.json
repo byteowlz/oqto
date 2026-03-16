@@ -1,0 +1,17 @@
+{
+  "todos": [
+    {
+      "id": "1",
+      "content": "Build /trx pi extension with overlay, fuzzy search, multi-select",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "2",
+      "content": "Test the extension",
+      "status": "completed",
+      "priority": "medium"
+    }
+  ],
+  "updated_at": "2026-03-16T09:22:03.861Z"
+}

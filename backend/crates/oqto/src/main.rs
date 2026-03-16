@@ -31,6 +31,7 @@ use std::os::unix::io::AsRawFd;
 use tokio::net::{UnixListener, UnixStream};
 
 mod agent_browser;
+mod bus;
 
 mod api;
 mod api_keys;

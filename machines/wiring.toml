@@ -1,0 +1,72 @@
+# Cross-machine wiring for Oqto
+# Defines how state machines interact with each other.
+
+# --- Runner -> Session links ---
+
+[[links]]
+from = "runner.spawning"
+event = "PROCESS_READY"
+to = "session.active"
+note = "Agent process ready triggers session activation"
+
+[[links]]
+from = "runner.spawning"
+event = "SPAWN_ERROR"
+to = "session.error"
+note = "Spawn failure puts session in error state"
+
+# --- Session -> Runner links ---
+
+[[links]]
+from = "session.closed"
+event = "SESSION_ENDED"
+to = "runner.ready"
+note = "Closed session frees runner capacity"
+
+# --- WebSocket -> Session links ---
+
+[[links]]
+from = "websocket.connected"
+event = "COMMAND"
+to = "session.working"
+note = "Prompt command from WS triggers session work"
+
+# --- Session -> WebSocket links ---
+
+[[links]]
+from = "session.working"
+event = "STREAM_DELTA"
+to = "websocket.connected"
+note = "Agent output streamed to client via WS"
+
+[[links]]
+from = "session.error"
+event = "ERROR_EVENT"
+to = "websocket.connected"
+note = "Error events broadcast to connected clients"
+
+# --- WebSocket -> Session disconnect ---
+
+[[links]]
+from = "websocket.disconnected"
+event = "CLIENT_LOST"
+to = "session.disconnected"
+note = "WS disconnect moves session to disconnected (not closed)"
+
+# --- Global constraints ---
+
+[[constraints]]
+expr = "runner.stopped implies all session.closed"
+severity = "error"
+
+[[constraints]]
+expr = "runner.failed implies all session.expired or session.closed"
+severity = "error"
+
+[[constraints]]
+expr = "websocket.disconnected does NOT imply session.closed"
+severity = "error"
+
+[[constraints]]
+expr = "session.working implies websocket.connected or session will transition to disconnected"
+severity = "warning"

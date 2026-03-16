@@ -1,0 +1,79 @@
+# Oqto WebSocket Connection State Machine
+# Multiplexed WebSocket between frontend and backend.
+# Carries agent, files, and terminal channels.
+
+machine = "websocket"
+initial = "connecting"
+
+[states.connecting]
+desc = "TCP handshake + WS upgrade in progress"
+[states.connecting.on]
+OPEN = "authenticating"
+CONNECT_ERROR = "disconnected"
+
+[states.authenticating]
+desc = "Verifying auth token on first message"
+[states.authenticating.on]
+AUTH_OK = "connected"
+AUTH_FAIL = "rejected"
+TIMEOUT = "disconnected"
+
+[states.connected]
+desc = "Authenticated and multiplexing channels"
+[states.connected.on]
+COMMAND = "connected"
+EVENT = "connected"
+PING = "connected"
+CLOSE = "closing"
+ERROR = "disconnected"
+
+[states.closing]
+desc = "Graceful close handshake"
+[states.closing.on]
+CLOSE_ACK = "disconnected"
+TIMEOUT = "disconnected"
+
+[states.rejected]
+desc = "Auth failed, connection refused"
+terminal = true
+
+[states.disconnected]
+desc = "Connection lost or closed"
+[states.disconnected.on]
+RETRY = "connecting"
+GIVE_UP = "dead"
+
+[states.dead]
+desc = "Client gave up reconnecting"
+terminal = true
+
+invariants = [
+    "COMMAND and EVENT only flow in connected state",
+    "rejected is terminal — no reconnect",
+    "disconnected can retry unless client gives up",
+    "authenticating must resolve within timeout",
+]
+
+[[edges_to_test]]
+from = "connecting"
+event = "OPEN"
+to = "authenticating"
+desc = "WS upgrade succeeded"
+
+[[edges_to_test]]
+from = "authenticating"
+event = "AUTH_OK"
+to = "connected"
+desc = "Token verified"
+
+[[edges_to_test]]
+from = "connected"
+event = "ERROR"
+to = "disconnected"
+desc = "Connection error triggers reconnect flow"
+
+[[edges_to_test]]
+from = "disconnected"
+event = "RETRY"
+to = "connecting"
+desc = "Auto-reconnect attempt"

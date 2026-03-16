@@ -429,6 +429,42 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 		[mergeServerMessages, normalizeMessages],
 	);
 
+	const applyDeferredServerMessages = useCallback(
+		(sessionId?: string | null): boolean => {
+			const deferred = deferredServerMessagesRef.current;
+			deferredServerMessagesRef.current = null;
+			if (!Array.isArray(deferred) || deferred.length === 0) {
+				return false;
+			}
+
+			const sourceSessionId = sessionId ?? activeSessionIdRef.current ?? "unknown";
+			const displayMessages = normalizeMessages(
+				deferred as RawMessage[],
+				`deferred-${sourceSessionId}`,
+			);
+			if (displayMessages.length === 0) {
+				return false;
+			}
+
+			setMessages((prev) => mergeServerMessages(prev, displayMessages, "partial"));
+			messageIdRef.current = getMaxMessageId(displayMessages);
+			const lastAssistant = [...displayMessages]
+				.reverse()
+				.find((msg) => msg.role === "assistant");
+			lastAssistantMessageIdRef.current = lastAssistant?.id ?? null;
+
+			if (isPiDebugEnabled()) {
+				console.debug(
+					"[useChat] Applied deferred server messages:",
+					sourceSessionId,
+					displayMessages.length,
+				);
+			}
+			return true;
+		},
+		[mergeServerMessages, normalizeMessages],
+	);
+
 	const clearResponseWatchdog = useCallback(() => {
 		if (responseWatchdogRef.current) {
 			clearTimeout(responseWatchdogRef.current);
@@ -868,9 +904,12 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 						streamingMessageRef.current.isStreaming = false;
 						streamingMessageRef.current = null;
 					}
-					// Discard deferred messages -- we will fetch
-					// authoritative state from hstry below.
-					deferredServerMessagesRef.current = null;
+					// Apply deferred messages first (captured while streaming)
+					// so the UI never appears to "lose" turns while waiting
+					// for the authoritative hstry refresh below.
+					applyDeferredServerMessages(
+						event.session_id ?? activeSessionIdRef.current,
+					);
 					// Always fetch authoritative messages from hstry on
 					// agent.idle. The backend persists to hstry BEFORE
 					// broadcasting agent.idle, so the fetch is guaranteed
@@ -1005,6 +1044,12 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 						onMessageComplete?.(completedMessage);
 						streamingMessageRef.current = null;
 					}
+
+					// Apply any deferred server messages captured during streaming
+					// before appending the error block.
+					applyDeferredServerMessages(
+						event.session_id ?? activeSessionIdRef.current,
+					);
 
 					// Show error immediately as a standalone message.
 					// The runner also persists it to hstry on agent.idle.
@@ -1498,6 +1543,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 		},
 		[
 			appendPartToMessage,
+			applyDeferredServerMessages,
 			applyThrottledSnapshot,
 			ensureAssistantMessage,
 			fetchHistoryMessages,

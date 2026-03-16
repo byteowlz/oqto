@@ -346,6 +346,8 @@ pub struct AppState {
     pub pi_default_model: Option<String>,
     /// Shared workspace service for multi-user collaborative workspaces.
     pub shared_workspaces: Option<Arc<SharedWorkspaceService>>,
+    /// Event bus engine for scoped pub/sub.
+    pub bus: Arc<crate::bus::BusEngine>,
     /// Path to a reference models.json to copy to new users when eavs is not configured.
     /// Typically the admin user's ~/.pi/agent/models.json.
     pub pi_models_template_path: Option<std::path::PathBuf>,
@@ -414,6 +416,7 @@ impl AppState {
             pi_default_model: None,
             pi_models_template_path: None,
             shared_workspaces: None,
+            bus: Arc::new(crate::bus::BusEngine::new(None)),
         }
     }
 
@@ -515,7 +518,10 @@ impl AppState {
 
     /// Set the shared workspace service.
     pub fn with_shared_workspaces(mut self, service: SharedWorkspaceService) -> Self {
-        self.shared_workspaces = Some(Arc::new(service));
+        let sw = Arc::new(service);
+        self.shared_workspaces = Some(sw.clone());
+        // Rebuild bus engine with shared workspace access for membership checks
+        self.bus = Arc::new(crate::bus::BusEngine::new(Some(sw)));
         self
     }
 

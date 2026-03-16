@@ -1,0 +1,106 @@
+# Oqto Session State Machine
+# A session represents a single agent conversation.
+# Lifecycle: creation -> agent matching -> prompt/response cycles -> close
+
+machine = "session"
+initial = "pending"
+
+[states.pending]
+desc = "Session created, waiting for agent process to be assigned. Optimistic ID (oqto-xxx) created"
+[states.pending.on]
+AGENT_MATCHED = "active"
+TIMEOUT = "expired"
+CLOSE = "closed"
+
+[states.active]
+desc = "Agent assigned and ready, awaiting first prompt"
+[states.active.on]
+PROMPT = "working"
+DISCONNECT = "disconnected"
+CLOSE = "closed"
+
+[states.working]
+desc = "Agent is processing a prompt"
+[states.working.on]
+AGENT_IDLE = "idle"
+AGENT_ERROR = "error"
+ABORT = "aborting"
+DISCONNECT = "disconnected"
+
+[states.aborting]
+desc = "Abort signal sent, waiting for agent to stop"
+[states.aborting.on]
+AGENT_IDLE = "idle"
+AGENT_ERROR = "error"
+ABORT_TIMEOUT = "error"
+
+[states.idle]
+desc = "Agent finished processing, ready for next prompt"
+[states.idle.on]
+PROMPT = "working"
+CLOSE = "closed"
+DISCONNECT = "disconnected"
+COMPACT = "compacting"
+
+[states.idle.on.FORK]
+target = "pending"
+spawn = true
+action = "create_fork_session"
+
+[states.compacting]
+desc = "Context compaction in progress"
+[states.compacting.on]
+COMPACT_DONE = "idle"
+COMPACT_ERROR = "error"
+
+[states.error]
+desc = "Agent encountered an error, can retry or close"
+[states.error.on]
+PROMPT = "working"
+CLOSE = "closed"
+RESET = "active"
+
+[states.disconnected]
+desc = "WebSocket disconnected but session is still alive"
+[states.disconnected.on]
+RECONNECT = "idle"
+TIMEOUT = "closed"
+
+[states.expired]
+desc = "Session timed out waiting for agent"
+terminal = true
+
+[states.closed]
+desc = "Session terminated"
+terminal = true
+
+invariants = [
+  "working implies agent process is alive",
+  "closed and expired are terminal — no transitions out",
+  "disconnected does NOT kill the agent process",
+  "ABORT in working must eventually reach idle or error",
+]
+
+[[edges_to_test]]
+from = "pending"
+event = "AGENT_MATCHED"
+to = "active"
+desc = "Happy path: agent assigned"
+
+[[edges_to_test]]
+from = "working"
+event = "ABORT"
+to = "aborting"
+desc = "User cancels in-flight request"
+
+[[edges_to_test]]
+from = "idle"
+event = "FORK"
+to = "pending"
+desc = "Fork creates new session from current point"
+
+[[edges_to_test]]
+from = "disconnected"
+event = "RECONNECT"
+to = "idle"
+desc = "Websocket reconnects to live session"

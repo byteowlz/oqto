@@ -1,0 +1,70 @@
+# Oqto Runner State Machine
+# The runner is a per-user daemon that owns agent processes.
+# It translates native harness events into canonical format.
+
+machine = "runner"
+initial = "starting"
+
+[states.starting]
+desc = "Runner process initializing, connecting to backend"
+[states.starting.on]
+CONNECTED = "ready"
+STARTUP_ERROR = "failed"
+
+[states.ready]
+desc = "Runner connected and accepting session requests"
+[states.ready.on]
+CREATE_SESSION = "spawning"
+SHUTDOWN = "draining"
+HEARTBEAT_LOST = "reconnecting"
+
+[states.spawning]
+desc = "Spawning a new agent harness process"
+[states.spawning.on]
+PROCESS_READY = "ready"
+SPAWN_ERROR = "ready"
+
+[states.reconnecting]
+desc = "Lost connection to backend, attempting reconnect"
+[states.reconnecting.on]
+CONNECTED = "ready"
+RECONNECT_TIMEOUT = "failed"
+
+[states.draining]
+desc = "Graceful shutdown: waiting for active sessions to finish"
+[states.draining.on]
+ALL_SESSIONS_CLOSED = "stopped"
+DRAIN_TIMEOUT = "stopped"
+
+[states.failed]
+desc = "Runner failed to start or lost connection permanently"
+terminal = true
+
+[states.stopped]
+desc = "Runner shut down cleanly"
+terminal = true
+
+invariants = [
+    "spawning always transitions back to ready (success or error)",
+    "draining must eventually reach stopped",
+    "failed and stopped are terminal",
+    "ready is the only state that accepts CREATE_SESSION",
+]
+
+[[edges_to_test]]
+from = "ready"
+event = "CREATE_SESSION"
+to = "spawning"
+desc = "New session request triggers agent spawn"
+
+[[edges_to_test]]
+from = "spawning"
+event = "PROCESS_READY"
+to = "ready"
+desc = "Agent process started successfully"
+
+[[edges_to_test]]
+from = "ready"
+event = "SHUTDOWN"
+to = "draining"
+desc = "Graceful shutdown initiated"

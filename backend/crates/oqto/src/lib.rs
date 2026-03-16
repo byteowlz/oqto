@@ -4,6 +4,7 @@
 
 pub mod agent_browser;
 pub mod api;
+pub mod bus;
 pub mod api_keys;
 pub mod audit;
 pub mod auth;

@@ -1,0 +1,35 @@
+{
+  "todos": [
+    {
+      "id": "s1",
+      "content": "Add axum/tokio/tower-http deps",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "s2",
+      "content": "Setup frontend/ with bun, bundle JS/CSS",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "s3",
+      "content": "Build REST API + serve command in Rust",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "id": "s4",
+      "content": "Build frontend UI (done above)",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "s5",
+      "content": "End-to-end test with Oqto machines",
+      "status": "pending",
+      "priority": "high"
+    }
+  ],
+  "updated_at": "2026-03-16T08:24:26.686Z"
+}

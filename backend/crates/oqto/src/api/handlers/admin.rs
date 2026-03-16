@@ -67,6 +67,14 @@ pub async fn get_admin_stats(
     }))
 }
 
+/// Get event bus statistics (admin only).
+pub async fn get_bus_stats(
+    State(state): State<AppState>,
+    RequireAdmin(_user): RequireAdmin,
+) -> ApiResult<Json<crate::bus::engine::BusStats>> {
+    Ok(Json(state.bus.stats()))
+}
+
 #[derive(Debug, Serialize)]
 pub struct AdminMetricsSnapshot {
     pub timestamp: String,

@@ -47,6 +47,12 @@ setup.sh must correctly provision everything for a new platform user on a fresh 
 ...
 
 
+### [oqto-75rn] Use EAVS API for provider/model CRUD from Oqto (no direct models.json drift) (P1, feature)
+Problem: Oqto frontend provider/model additions currently update Pi models.json only and do not update EAVS global provider config. This causes drift: provisioned eavs-* catalog and user-edited catalogs diverge. Expected: adding provider/model should integrate with EAVS control-plane so global routing source-of-truth stays in EAVS.\n\nProposal:\n1) Add Oqto admin flow: create/update/delete providers/models via EAVS API/CLI (not by editing config files directly).\n2) After successful mutation, trigger EAVS reload/sync and regenerate per-user models.json from EAVS /providers/detail.\n3) Keep user/workspace .oqto/models.json as optional overlay/restriction layer, but base catalog comes from EAVS.\n4) Add clear UI distinction: Global Provider (EAVS) vs Workspace Catalog Override (.oqto/models.json).\n\nAcceptance:\n- New provider added in UI appears in /providers/detail immediately\n- sync-models propagates to all users\n- no manual edits to /home/oqto/.config/eavs/config.toml required\n- no key material stored in workspace catalogs
+
+### [oqto-brg9.7] Rate limiting, subscription filters, and graceful degradation (P1, task)
+Per-source rate limits (server-enforced), payload filters on subscribe, and graceful degradation guarantees (bus down must not affect agent stream or app rendering).
+
 ### [oqto-brg9.5] Domain event hooks for trx/hstry/mmry + UI intent namespace (P1, task)
 Add low-effort boundary hooks to emit core domain events and implement permission-gated session/ui.* intent execution registry in frontend.
 
@@ -478,6 +484,18 @@ Build and distribute pre-compiled binaries for Linux (x86_64, arm64) and macOS (
 
 ### [octo-af5j] Release & Update System (P1, epic)
 Comprehensive system for distributing Octo releases, managing updates in the field, and expanding runtime options including Proxmox LXC support.
+
+### [oqto-brg9.8] Event schema versioning and multi-tab deduplication (P2, task)
+Payload version field, forward-compat rules, multi-tab event delivery with dedup by event_id, last-write-wins for app state.
+
+### [oqto-brg9.6] Bus observability: oqtoctl commands + admin frontend dashboard (P2, task)
+CLI: bus status/tail/subscriptions/publish/rate-limits. Admin UI: live event viewer, subscription table, queue depths, rate limit breaches, ack status.
+
+### [oqto-74g3] Capability-based harness feature negotiation (shell escape, compaction, fork, etc.) (P2, feature)
+Runner should advertise harness capabilities in handshake (e.g. shell_escape, bash_command, compaction, fork, model_switch). Frontend checks capabilities and uses native harness features when available (e.g. ! prefix routes to Pi bash RPC command). Falls back to instruction-based prompting when harness lacks the capability. First use case: shell escape (! and !!) in chat input using Pi's native bash command instead of instructing the agent. Pattern applies to all harness-specific features for harness-agnostic frontend.
+
+### [oqto-fhv7] Workspace-scoped models.json with runner-injected EAVS_API_KEY (P2, feature)
+Split model catalog from auth. Three modes in .oqto/config.toml [models] section: global (default, no-op), merge (global + workspace merged), restrict (workspace only, global hidden via bwrap). Workspace .oqto/models.json is pure catalog using apiKey: EAVS_API_KEY (safe to commit). Runner injects EAVS_API_KEY env var at spawn from existing eavs_virtual_key. Runner reads .oqto/config.toml mode, then instructs sandbox layer to bind-mount accordingly. Frontend: model picker reads global catalog, user toggles models on/off per workspace, saves to .oqto/models.json and sets mode=restrict in .oqto/config.toml.
 
 ### [oqto-tr4r] Composable documentation rudiments for AGENTS/bootstrap files (P2, epic)
 Introduce a lean rudiments system for composable instruction documents (starting with AGENTS.md) to enable deterministic scaffolding and surgical policy updates across templates/users/hosts.\n\nScope:\n- Define rudiment format (Markdown + frontmatter metadata)\n- Add composition manifest(s) for AGENTS.md variants\n- Implement assembler script to build final docs deterministically\n- Integrate with admin sync workflow (sync-agent-instructions)\n- Add validation/tests for missing/conflicting rudiments\n\nGoals:\n- Centralize reusable instruction blocks\n- Reduce drift across oqto, oqto-templates, and deployed user homes\n- Support controlled add/remove of policy snippets (e.g. uv-only Python) without manual bulk edits
@@ -1934,12 +1952,12 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
-- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
-- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
 - [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
+- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
+- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )

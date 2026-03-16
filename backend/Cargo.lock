@@ -2614,7 +2614,7 @@ checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
 
 [[package]]
 name = "oqto"
-version = "0.3.14"
+version = "0.3.20"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2635,6 +2635,7 @@ dependencies = [
  "fuser",
  "futures",
  "glob",
+ "hex",
  "hstry-core",
  "http-body-util",
  "hyper",
@@ -2658,6 +2659,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "sha2",
  "shellexpand",
  "sqlx",
  "syntect",
@@ -2680,7 +2682,7 @@ dependencies = [
 
 [[package]]
 name = "oqto-browser"
-version = "0.3.14"
+version = "0.3.20"
 dependencies = [
  "anyhow",
  "clap",
@@ -2693,7 +2695,7 @@ dependencies = [
 
 [[package]]
 name = "oqto-files"
-version = "0.3.14"
+version = "0.3.20"
 dependencies = [
  "axum",
  "bytes",
@@ -2719,7 +2721,7 @@ dependencies = [
 
 [[package]]
 name = "oqto-protocol"
-version = "0.3.14"
+version = "0.3.20"
 dependencies = [
  "hstry-core",
  "serde",
@@ -2728,7 +2730,7 @@ dependencies = [
 
 [[package]]
 name = "oqto-scaffold"
-version = "0.3.14"
+version = "0.3.20"
 dependencies = [
  "anyhow",
  "clap",
@@ -2746,7 +2748,7 @@ dependencies = [
 
 [[package]]
 name = "oqto-setup"
-version = "0.3.14"
+version = "0.3.20"
 dependencies = [
  "anyhow",
  "clap",

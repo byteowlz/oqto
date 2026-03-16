@@ -224,6 +224,7 @@ pub enum Channel {
     Trx,
     Session,
     System,
+    Bus,
 }
 
 // ============================================================================
@@ -240,6 +241,7 @@ pub enum WsCommand {
     Hstry(HstryWsCommand),
     Trx(TrxWsCommand),
     Session(SessionWsCommand),
+    Bus(crate::bus::BusCommand),
 }
 
 /// Files channel commands.
@@ -509,6 +511,7 @@ pub enum WsEvent {
     Hstry(HstryWsEvent),
     Trx(TrxWsEvent),
     System(SystemWsEvent),
+    Bus(crate::bus::BusWsEvent),
 }
 
 /// Files channel events (placeholder).
@@ -948,6 +951,8 @@ struct WsConnectionState {
     /// for that workspace's Linux user is stored here so subsequent commands
     /// (prompt, get_state, etc.) route to the correct runner.
     session_runner_overrides: HashMap<String, RunnerClient>,
+    /// Bus subscriber ID for this connection.
+    bus_subscriber_id: crate::bus::SubscriberId,
 }
 
 #[derive(Clone, Debug)]
@@ -995,6 +1000,7 @@ async fn handle_multiplexed_ws(socket: WebSocket, state: AppState, user_id: Stri
         terminal_sessions: HashMap::new(),
         file_watchers: HashMap::new(),
         session_runner_overrides: HashMap::new(),
+        bus_subscriber_id: 0, // Set after bus registration
     }));
 
     // Register this connection with the legacy WS hub only for non-agent
@@ -1087,6 +1093,22 @@ async fn handle_multiplexed_ws(socket: WebSocket, state: AppState, user_id: Stri
         }
     });
 
+    // Register bus subscriber for this WS connection.
+    let (bus_sub_id, mut bus_rx) = state.bus.register(&user_id);
+    {
+        let mut cs = conn_state.lock().await;
+        cs.bus_subscriber_id = bus_sub_id;
+    }
+    let event_tx_for_bus = event_tx.clone();
+    let bus_forwarder = tokio::spawn(async move {
+        while let Some(bus_event) = bus_rx.recv().await {
+            let ws_event = WsEvent::Bus(crate::bus::BusWsEvent::Event(bus_event));
+            if event_tx_for_bus.send(ws_event).is_err() {
+                break;
+            }
+        }
+    });
+
     // Per-channel workers avoid head-of-line blocking.
     // A slow files.tree must never block agent prompt/abort/session commands.
     let (agent_cmd_tx, agent_cmd_rx) = mpsc::channel::<WsCommand>(256);
@@ -1134,6 +1156,7 @@ async fn handle_multiplexed_ws(socket: WebSocket, state: AppState, user_id: Stri
                                 let target_tx = match &cmd {
                                     WsCommand::Agent(_) => &agent_cmd_tx,
                                     WsCommand::Files(_) => &files_cmd_tx,
+                                    WsCommand::Bus(_) => &misc_cmd_tx,
                                     _ => &misc_cmd_tx,
                                 };
 
@@ -1181,6 +1204,8 @@ async fn handle_multiplexed_ws(socket: WebSocket, state: AppState, user_id: Stri
     // Cleanup
     event_writer.abort();
     hub_forwarder.abort();
+    bus_forwarder.abort();
+    state.bus.unregister(bus_sub_id);
     agent_worker.abort();
     files_worker.abort();
     misc_worker.abort();
@@ -1448,6 +1473,9 @@ async fn handle_ws_command(
         WsCommand::Session(session_cmd) => {
             handle_session_command(session_cmd, user_id, state).await
         }
+        WsCommand::Bus(bus_cmd) => {
+            handle_bus_command(bus_cmd, user_id, state, conn_state).await
+        }
     }
 }
 
@@ -1512,6 +1540,11 @@ fn ws_command_id(cmd: &WsCommand) -> Option<String> {
             | TrxWsCommand::Sync { id, .. } => id.clone(),
         },
         WsCommand::Session(_) => None,
+        WsCommand::Bus(bus_cmd) => match bus_cmd {
+            crate::bus::BusCommand::Publish { id, .. }
+            | crate::bus::BusCommand::Subscribe { id, .. }
+            | crate::bus::BusCommand::Unsubscribe { id, .. } => id.clone(),
+        },
     }
 }
 
@@ -1646,6 +1679,14 @@ fn ws_command_summary(cmd: &WsCommand) -> (String, Option<String>, Option<String
         WsCommand::Session(session_cmd) => {
             let session_id = extract_legacy_session_id(&session_cmd.cmd);
             ("session.legacy".to_string(), session_id, None)
+        }
+        WsCommand::Bus(bus_cmd) => {
+            let label = match &bus_cmd {
+                crate::bus::BusCommand::Publish { topic, .. } => format!("bus.publish.{}", topic),
+                crate::bus::BusCommand::Subscribe { .. } => "bus.subscribe".to_string(),
+                crate::bus::BusCommand::Unsubscribe { .. } => "bus.unsubscribe".to_string(),
+            };
+            (label, None, None)
         }
     }
 }
@@ -5271,6 +5312,106 @@ async fn handle_trx_command(cmd: TrxWsCommand, user_id: &str, state: &AppState) 
                     error: err.to_string(),
                 })),
             }
+        }
+    }
+}
+
+/// Handle Bus channel commands.
+async fn handle_bus_command(
+    cmd: crate::bus::BusCommand,
+    user_id: &str,
+    state: &AppState,
+    conn_state: Arc<tokio::sync::Mutex<WsConnectionState>>,
+) -> Option<WsEvent> {
+    use crate::bus::{BusCommand, BusEvent, BusWsEvent, EventSource};
+
+    let bus_sub_id = {
+        let cs = conn_state.lock().await;
+        cs.bus_subscriber_id
+    };
+
+    match cmd {
+        BusCommand::Publish {
+            id,
+            scope,
+            scope_id,
+            topic,
+            payload,
+            v,
+            priority,
+            ttl_ms,
+            idempotency_key,
+            correlation_id,
+            ack,
+        } => {
+            let mut event = BusEvent::new(
+                scope,
+                scope_id,
+                topic,
+                payload,
+                EventSource::Frontend {
+                    user_id: user_id.to_string(),
+                    session_id: None,
+                },
+            );
+            event.v = v;
+            event.priority = priority;
+            event.ttl_ms = ttl_ms;
+            event.idempotency_key = idempotency_key;
+            event.correlation_id = correlation_id;
+            event.ack = ack;
+
+            match state.bus.publish(Some(bus_sub_id), event).await {
+                Ok(()) => Some(WsEvent::Bus(BusWsEvent::Response {
+                    id,
+                    success: true,
+                    error: None,
+                })),
+                Err(e) => Some(WsEvent::Bus(BusWsEvent::Response {
+                    id,
+                    success: false,
+                    error: Some(e),
+                })),
+            }
+        }
+        BusCommand::Subscribe {
+            id,
+            topics,
+            scope,
+            scope_id,
+            filter,
+        } => {
+            match state
+                .bus
+                .subscribe(bus_sub_id, user_id, scope, scope_id, topics, filter)
+                .await
+            {
+                Ok(()) => Some(WsEvent::Bus(BusWsEvent::Response {
+                    id,
+                    success: true,
+                    error: None,
+                })),
+                Err(e) => Some(WsEvent::Bus(BusWsEvent::Response {
+                    id,
+                    success: false,
+                    error: Some(e),
+                })),
+            }
+        }
+        BusCommand::Unsubscribe {
+            id,
+            topics,
+            scope,
+            scope_id,
+        } => {
+            state
+                .bus
+                .unsubscribe(bus_sub_id, &scope, &scope_id, &topics);
+            Some(WsEvent::Bus(BusWsEvent::Response {
+                id,
+                success: true,
+                error: None,
+            }))
         }
     }
 }

@@ -3,13 +3,12 @@
 /**
  * Dimensions for image/video content.
  */
-export type MediaDimensions = {
-	/**
-	 * Width in pixels.
-	 */
-	width: number;
-	/**
-	 * Height in pixels.
-	 */
-	height: number;
-};
+export type MediaDimensions = { 
+/**
+ * Width in pixels.
+ */
+width: number, 
+/**
+ * Height in pixels.
+ */
+height: number, };

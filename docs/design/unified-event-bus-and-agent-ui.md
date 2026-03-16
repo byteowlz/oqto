@@ -412,22 +412,129 @@ Minimal strategy:
 - Migrate remaining A2UI use cases to app runtime + bus interactions.
 - Remove A2UI surfaces and docs once parity is reached.
 
-## 17. Risks and Mitigations
+## 17. Event Ordering
 
-- Event storms -> queue limits, coalescing, pull-first design
+Steer/follow-up injection does not require causal ordering guarantees on the bus itself.
+If the agent is streaming, events queue and deliver at end-of-turn or next turn.
+Within a session queue, events are ordered by `ts` (arrival time). No cross-session or cross-topic ordering is guaranteed or needed.
+
+## 18. Graceful Degradation: Bus is Optional Infrastructure
+
+**Critical design invariant: frontend and runner must never hard-depend on the bus.**
+
+- If bus is down: agent stream (`agent` channel) is unaffected.
+- If bus is down: apps still render (from persisted HTML/state); interactions queue locally and retry.
+- If bus is down: runner continues normal operation; event injection simply stops.
+- If bus is down: admin operations fall back to imperative scripts (existing `just admin-*`).
+
+Bus enhances but never gates core functionality.
+
+## 19. Multi-Tab / Multi-Device
+
+Same user, multiple browser tabs:
+
+- All tabs receive bus events for their subscribed scopes.
+- All tabs can publish.
+- App state: last-write-wins with `updated_at` timestamp.
+- Frontend should deduplicate UI side-effects (toasts, notifications) using `event_id`.
+
+## 20. Event Schema Versioning
+
+Every event payload carries `v: number` (starting at `1`).
+
+- Consumers must tolerate unknown fields (forward-compatible).
+- Breaking changes increment `v` and old consumers ignore events with unknown versions.
+- Schema definitions live alongside the taxonomy doc for reference.
+
+## 21. Dead Letter Handling
+
+- Events with no matching subscriber: silently dropped (default).
+- Events with `ack` requested but zero receivers: backend emits `ack_summary` with `expected: N, received: 0` after timeout. Admin gets visibility.
+- No dead letter queue in v1. Audit log captures undeliverable ack-required events for debugging.
+
+## 22. Rate Limiting
+
+Per-source rate limits enforced server-side:
+
+| Source type | Default limit | On breach |
+|-------------|--------------|-----------|
+| App iframe | 50 events/sec | Drop + warn |
+| Agent/runner | 100 events/sec | Drop + warn |
+| Frontend | 100 events/sec | Drop + warn |
+| Admin/backend | No limit | -- |
+
+Limits are per-connection, per-topic-prefix. Configurable via backend config.
+Breach events logged for audit. Repeated breach can trigger temporary topic ban.
+
+## 23. Subscription Filters
+
+Beyond topic glob patterns, subscribers can attach payload filters at subscribe time:
+
+```typescript
+{
+  channel: "bus",
+  type: "subscribe",
+  topics: ["session/app.message"],
+  filter: {
+    "payload.action": "submit",       // exact match
+    "payload.app_id": { "$in": ["dashboard-1", "editor-2"] }
+  }
+}
+```
+
+Filters are evaluated server-side before dispatch. Keeps noisy topics manageable without client-side filtering overhead. Supported operators: exact match, `$in`, `$exists`, `$not`. No deep nesting or regex in v1.
+
+## 24. Observability
+
+### CLI
+
+```bash
+oqtoctl bus status                        # connection count, topic stats, queue depths
+oqtoctl bus tail [topic-glob]             # live stream events (like tail -f)
+oqtoctl bus subscriptions                 # list active subscriptions by user/runner
+oqtoctl bus publish <topic> <payload>     # manual publish (admin)
+oqtoctl bus rate-limits                   # current limits and breach counts
+```
+
+### Admin frontend
+
+- Live event stream viewer with topic/scope filters
+- Subscription table (who is subscribed to what)
+- Queue depth per runner/session
+- Rate limit breach dashboard
+- Ack status for recent admin events
+
+## 25. Frontend Late-Mount Catchup
+
+For inline apps that mount late (scroll into view, tab switch back):
+
+- Frontend maintains a bounded per-app ring buffer of recent events (last N or last T seconds).
+- On iframe mount, bridge replays buffered events before switching to live.
+- Ring buffer size configurable, default 50 events or 30 seconds.
+- Not a bus feature -- purely frontend-local optimization.
+
+## 26. Existing Mux Channel Migration
+
+Current channels (`files`, `terminal`, `trx`, `session`, `hstry`) coexist with bus. TBD whether they eventually become bus topics. No migration required for v1. Bus is additive.
+
+## 27. Risks and Mitigations
+
+- Event storms -> rate limits, coalescing, pull-first design
 - Context bloat -> strict token budgets and summarization
 - Cross-user leakage -> server-side authz on every publish/subscribe
-- Operational uncertainty -> ack summaries + audit logs
+- Operational uncertainty -> ack summaries + audit logs + CLI tooling
+- Bus failure -> graceful degradation, core functions unaffected
 - Scope creep -> strict v1 event subset and phased rollout
 
-## 18. Open Decisions
+## 28. Open Decisions
 
 1. `hstry` app-state persistence schema shape and retention policy.
 2. Capability token format for optional workspace/global app permissions.
 3. Exact `ui.*` intent list included in v1.
 4. Which domain events are mandatory in v1 vs vNext.
+5. Existing mux channel migration strategy (coexist vs converge).
 
-## 19. Acceptance Criteria (v1)
+## 29. Acceptance Criteria (v1)
 
 - Session-scoped bus events are isolated by `user_id` and `session_id`.
 - Workspace events are visible only to workspace members.
