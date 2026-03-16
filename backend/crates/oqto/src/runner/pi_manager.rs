@@ -2495,20 +2495,21 @@ impl PiSessionManager {
         let is_starting = current_state == PiSessionState::Starting;
         let is_streaming = current_state == PiSessionState::Streaming;
 
+        let is_stopping = current_state == PiSessionState::Stopping;
+
         match cmd {
-            PiSessionCommand::Prompt { .. } => {
-                if !(is_idle || is_starting) {
+            // Prompt, steer, and follow_up are accepted in any "live" state.
+            // The command_processor handles state-aware routing:
+            //   - steer/follow_up when idle → sent as prompt to Pi
+            //   - prompt when streaming → sent with streamingBehavior=steer
+            // If the process is dead (stopping), write will fail and state
+            // resets to idle automatically.
+            PiSessionCommand::Prompt { .. }
+            | PiSessionCommand::Steer { .. }
+            | PiSessionCommand::FollowUp { .. } => {
+                if !(is_idle || is_starting || is_streaming || is_stopping) {
                     anyhow::bail!(
-                        "Session '{}' not idle (state={})",
-                        session_id,
-                        current_state
-                    );
-                }
-            }
-            PiSessionCommand::FollowUp { .. } | PiSessionCommand::Steer { .. } => {
-                if !(is_idle || is_starting || is_streaming) {
-                    anyhow::bail!(
-                        "Session '{}' not ready for steer/follow_up (state={})",
+                        "Session '{}' not ready (state={})",
                         session_id,
                         current_state
                     );
@@ -3453,15 +3454,29 @@ impl PiSessionManager {
         while let Some(cmd) = cmd_rx.recv().await {
             let result = match cmd {
                 PiSessionCommand::Prompt { message, client_id } => {
-                    *state.write().await = PiSessionState::Streaming;
                     // Store client_id in shared state for the reader task's translator
                     // to include in the persisted messages when agent_end arrives.
                     *pending_client_id.write().await = client_id;
+                    // If already streaming, send as prompt with
+                    // streamingBehavior="steer" so Pi queues it as a steer.
+                    // Pi natively handles this: idle → new turn,
+                    // streaming → queue via steer/followUp.
+                    let current_state = *state.read().await;
+                    let streaming_behavior = if current_state == PiSessionState::Streaming {
+                        debug!(
+                            "Session '{}' is streaming, sending prompt with streamingBehavior=steer",
+                            session_id
+                        );
+                        Some("steer".to_string())
+                    } else {
+                        *state.write().await = PiSessionState::Streaming;
+                        None
+                    };
                     let pi_cmd = PiCommand::Prompt {
                         id: None,
                         message,
                         images: None,
-                        streaming_behavior: None,
+                        streaming_behavior,
                     };
                     Self::write_command(&mut stdin, &pi_cmd).await
                 }
@@ -3757,6 +3772,18 @@ impl PiSessionManager {
 
             if let Err(e) = result {
                 error!("Pi[{}] failed to write command: {}", session_id, e);
+                // If write failed (e.g. broken pipe from dead process), the
+                // state may have been set to Streaming/Compacting before the
+                // write attempt. Reset to Idle so subsequent commands are not
+                // permanently rejected with "not idle (state=streaming)".
+                let current = *state.read().await;
+                if current != PiSessionState::Idle {
+                    warn!(
+                        "Pi[{}] resetting state from {:?} to Idle after write failure",
+                        session_id, current
+                    );
+                    *state.write().await = PiSessionState::Idle;
+                }
             }
 
             *last_activity.write().await = Instant::now();

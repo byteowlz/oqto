@@ -1491,7 +1491,7 @@ export function ChatView({
 	);
 
 	const handleSend = useCallback(
-		async (mode: "prompt" | "steer" | "follow_up" = "prompt") => {
+		async (mode: "prompt" | "steer" | "follow_up" = "steer") => {
 			const trimmed = inputValueRef.current.trim();
 			if (!trimmed && fileAttachments.length === 0) return;
 

@@ -1704,7 +1704,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 	const send = useCallback(
 		async (message: string, options?: SendOptions) => {
 			sendInFlightRef.current = true;
-			const mode: SendMode = options?.mode ?? "prompt";
+			const mode: SendMode = options?.mode ?? "steer";
 			let sessionId = options?.sessionId ?? activeSessionIdRef.current;
 			if (
 				options?.sessionId &&
