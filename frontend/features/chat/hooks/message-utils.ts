@@ -270,6 +270,26 @@ function coerceBlockToPart(b: Record<string, unknown>): DisplayPart | null {
 		return null;
 	}
 
+	// --- error ---
+	if (blockType === "error") {
+		const text =
+			typeof b.text === "string"
+				? b.text
+				: typeof b.error === "string"
+					? b.error
+					: typeof b.message === "string"
+						? b.message
+						: "";
+		if (text) {
+			return {
+				type: "error",
+				id: (typeof b.id === "string" && b.id) || nextPartId(),
+				text,
+			};
+		}
+		return null;
+	}
+
 	// --- file_ref ---
 	if (blockType === "file_ref" && typeof b.uri === "string") {
 		return {
