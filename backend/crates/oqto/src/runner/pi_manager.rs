@@ -3310,6 +3310,56 @@ impl PiSessionManager {
                             payload.clone()
                         };
 
+                    // Persist errors to hstry BEFORE broadcasting so
+                    // fetchHistoryMessages (triggered by the frontend on
+                    // agent.error) finds the error already persisted.
+                    if let oqto_protocol::events::EventPayload::AgentError {
+                        ref error,
+                        ..
+                    } = enriched_payload
+                    {
+                        if let Some(ref client) = hstry_client {
+                            let eid = hstry_external_id.read().await.clone();
+                            let error_parts = serde_json::json!([{
+                                "type": "error",
+                                "id": format!("err-{}", chrono::Utc::now().timestamp_millis()),
+                                "text": error
+                            }]);
+                            let now_ms = chrono::Utc::now().timestamp_millis();
+                            let msg = hstry_core::service::proto::Message {
+                                idx: -1, // auto-assign
+                                role: "error".to_string(),
+                                content: error.clone(),
+                                parts_json: error_parts.to_string(),
+                                created_at_ms: Some(now_ms),
+                                model: None,
+                                tokens: None,
+                                cost_usd: None,
+                                metadata_json: String::new(),
+                                sender_json: String::new(),
+                                provider: None,
+                                harness: Some("pi".to_string()),
+                                client_id: None,
+                                id: None,
+                            };
+                            if let Err(e) = client
+                                .append_messages(&eid, vec![msg], Some(now_ms))
+                                .await
+                            {
+                                warn!(
+                                    "Pi[{}] failed to persist error to hstry: {:?}",
+                                    session_id, e
+                                );
+                            } else {
+                                debug!(
+                                    "Pi[{}] persisted error to hstry (eid={})",
+                                    session_id, eid,
+                                );
+                            }
+                        }
+                    }
+
+                    // Now broadcast the event to subscribers
                     let canonical_event = CanonicalEvent {
                         session_id: session_id.clone(),
                         runner_id: runner_id.clone(),
@@ -3317,60 +3367,6 @@ impl PiSessionManager {
                         payload: enriched_payload,
                     };
                     event_tx.publish(&canonical_event).await;
-
-                    // Persist errors to hstry so they survive page reloads.
-                    // Append a synthetic assistant message with an error part.
-                    if let oqto_protocol::events::EventPayload::AgentError {
-                        error,
-                        ..
-                    } = payload
-                    {
-                        if let Some(ref client) = hstry_client {
-                            let client = client.clone();
-                            let eid = hstry_external_id.read().await.clone();
-                            let error_text = error.clone();
-                            let sid = session_id.clone();
-                            tokio::spawn(async move {
-                                // Build a synthetic assistant message with an error part
-                                let error_parts = serde_json::json!([{
-                                    "type": "error",
-                                    "id": format!("err-{}", chrono::Utc::now().timestamp_millis()),
-                                    "text": error_text
-                                }]);
-                                let now_ms = chrono::Utc::now().timestamp_millis();
-                                let msg = hstry_core::service::proto::Message {
-                                    idx: -1, // auto-assign
-                                    role: "error".to_string(),
-                                    content: error_text.clone(),
-                                    parts_json: error_parts.to_string(),
-                                    created_at_ms: Some(now_ms),
-                                    model: None,
-                                    tokens: None,
-                                    cost_usd: None,
-                                    metadata_json: String::new(),
-                                    sender_json: String::new(),
-                                    provider: None,
-                                    harness: Some("pi".to_string()),
-                                    client_id: None,
-                                    id: None,
-                                };
-                                if let Err(e) = client
-                                    .append_messages(&eid, vec![msg], Some(now_ms))
-                                    .await
-                                {
-                                    warn!(
-                                        "Pi[{}] failed to persist error to hstry: {:?}",
-                                        sid, e
-                                    );
-                                } else {
-                                    debug!(
-                                        "Pi[{}] persisted error to hstry (eid={})",
-                                        sid, eid,
-                                    );
-                                }
-                            });
-                        }
-                    }
 
                     // Sync title changes to hstry immediately
                     if let oqto_protocol::events::EventPayload::SessionTitleChanged {
