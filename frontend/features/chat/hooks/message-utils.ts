@@ -706,6 +706,27 @@ function messageTextSignature(message: DisplayMessage): string {
  */
 export type MergeMode = "authoritative" | "partial";
 
+/**
+ * When replacing a local message with its server version, preserve any
+ * client-only parts (error, compaction, retry indicators) that the server
+ * doesn't persist. Without this, error banners flash briefly then vanish
+ * when a subsequent history fetch overwrites the message.
+ */
+function mergeWithLocalParts(
+	local: DisplayMessage,
+	server: DisplayMessage,
+): DisplayMessage {
+	const clientOnlyTypes = new Set(["error", "compaction"]);
+	const localOnly = local.parts.filter(
+		(p) => clientOnlyTypes.has(p.type) || ("retrying" in p && (p as { retrying?: boolean }).retrying),
+	);
+	if (localOnly.length === 0) return server;
+	return {
+		...server,
+		parts: [...server.parts, ...localOnly],
+	};
+}
+
 export function mergeServerMessages(
 	previous: DisplayMessage[],
 	serverMessages: DisplayMessage[],
@@ -725,7 +746,7 @@ export function mergeServerMessages(
 			for (let i = 0; i < result.length; i++) {
 				const local = result[i];
 				if (local.id === serverMsg.id) {
-					result[i] = serverMsg;
+					result[i] = mergeWithLocalParts(local, serverMsg);
 					matched = true;
 					break;
 				}
@@ -734,7 +755,7 @@ export function mergeServerMessages(
 					serverMsg.clientId &&
 					local.clientId === serverMsg.clientId
 				) {
-					result[i] = serverMsg;
+					result[i] = mergeWithLocalParts(local, serverMsg);
 					matched = true;
 					break;
 				}
@@ -747,7 +768,7 @@ export function mergeServerMessages(
 					if (messageFingerprint(local) !== serverFp) continue;
 					const dt = Math.abs((local.timestamp ?? 0) - (serverMsg.timestamp ?? 0));
 					if (dt <= 5 * 60 * 1000) {
-						result[i] = serverMsg;
+						result[i] = mergeWithLocalParts(local, serverMsg);
 						matched = true;
 						break;
 					}
