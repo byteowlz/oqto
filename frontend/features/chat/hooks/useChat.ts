@@ -981,13 +981,9 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 						}, 250);
 					}
 
+					// Finalize any in-flight streaming message (stop spinner)
 					if (streamingMessageRef.current) {
 						streamingMessageRef.current.isStreaming = false;
-						streamingMessageRef.current.parts.push({
-							type: "error",
-							id: nextPartId(),
-							text: errMsg,
-						});
 						const completedMessage = {
 							...streamingMessageRef.current,
 							parts: streamingMessageRef.current.parts.map((p) => ({
@@ -1005,43 +1001,14 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 						});
 						onMessageComplete?.(completedMessage);
 						streamingMessageRef.current = null;
-					} else {
-						// No streaming message -- append error as the last
-						// assistant message's error part, or create a new one.
-						setMessages((prev) => {
-							// Try to attach error to the last assistant message
-							const lastIdx = [...prev]
-								.reverse()
-								.findIndex((m) => m.role === "assistant");
-							if (lastIdx >= 0) {
-								const realIdx = prev.length - 1 - lastIdx;
-								const msg = prev[realIdx];
-								const updated = [...prev];
-								updated[realIdx] = {
-									...msg,
-									parts: [
-										...msg.parts,
-										{
-											type: "error" as const,
-											id: nextPartId(),
-											text: errMsg,
-										},
-									],
-								};
-								return updated;
-							}
-							// Fallback: create standalone error message
-							return [
-								...prev,
-								{
-									id: nextMessageId(),
-									role: "assistant" as const,
-									parts: [{ type: "error" as const, id: nextPartId(), text: errMsg }],
-									timestamp: Date.now(),
-									isStreaming: false,
-								},
-							];
-						});
+					}
+
+					// Errors are persisted to hstry by the runner as role="error"
+					// messages. Fetch them from hstry so they appear in the chat
+					// without creating duplicate client-side copies.
+					const sid = activeSessionIdRef.current;
+					if (sid) {
+						void fetchHistoryMessages(sid);
 					}
 					break;
 				}

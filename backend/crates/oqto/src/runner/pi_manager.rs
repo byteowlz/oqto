@@ -3340,7 +3340,7 @@ impl PiSessionManager {
                                 let now_ms = chrono::Utc::now().timestamp_millis();
                                 let msg = hstry_core::service::proto::Message {
                                     idx: -1, // auto-assign
-                                    role: "assistant".to_string(),
+                                    role: "error".to_string(),
                                     content: error_text.clone(),
                                     parts_json: error_parts.to_string(),
                                     created_at_ms: Some(now_ms),
