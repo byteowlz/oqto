@@ -1118,6 +1118,77 @@ impl SandboxConfig {
             debug!("Network namespace isolation enabled");
         }
 
+        // Workspace model catalog override.
+        // If .oqto/config.toml sets models.mode = "restrict" or "merge" and
+        // .oqto/models.json exists, bind-mount it over ~/.pi/agent/models.json.
+        // This must come AFTER home directory binds so it shadows the global file.
+        {
+            use crate::workspace::{ModelMode, WorkspaceConfig};
+
+            let ws_config = WorkspaceConfig::load(workspace);
+            let effective_mode = ws_config.effective_model_mode(workspace);
+            let ws_models_path = WorkspaceConfig::models_json_path(workspace);
+
+            match effective_mode {
+                ModelMode::Restrict => {
+                    // Bind workspace models.json directly over global
+                    let ws_models_str = ws_models_path.to_string_lossy().to_string();
+                    let global_models_str = target_home
+                        .as_ref()
+                        .map(|h| h.join(".pi/agent/models.json"))
+                        .unwrap_or_else(|| PathBuf::from("/nonexistent"))
+                        .to_string_lossy()
+                        .to_string();
+                    args.push("--ro-bind".to_string());
+                    args.push(ws_models_str.clone());
+                    args.push(global_models_str.clone());
+                    info!(
+                        "Workspace models restrict: {} -> {}",
+                        ws_models_str, global_models_str
+                    );
+                }
+                ModelMode::Merge => {
+                    // Merge global + workspace into a temp file, bind that
+                    let global_models_path = target_home
+                        .as_ref()
+                        .map(|h| h.join(".pi/agent/models.json"))
+                        .unwrap_or_else(|| PathBuf::from("/nonexistent"));
+                    match WorkspaceConfig::merge_models_json(&global_models_path, &ws_models_path) {
+                        Ok(merged) => {
+                            // Write merged JSON to a temp file that lives for this session
+                            let tmp_dir = std::env::temp_dir();
+                            let merged_path = tmp_dir.join(format!(
+                                "oqto-merged-models-{}.json",
+                                std::process::id()
+                            ));
+                            if let Err(e) = std::fs::write(&merged_path, &merged) {
+                                warn!("Failed to write merged models.json: {}", e);
+                            } else {
+                                let merged_str = merged_path.to_string_lossy().to_string();
+                                let global_str = global_models_path.to_string_lossy().to_string();
+                                args.push("--ro-bind".to_string());
+                                args.push(merged_str.clone());
+                                args.push(global_str.clone());
+                                info!(
+                                    "Workspace models merge: {} -> {}",
+                                    merged_str, global_str
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            warn!(
+                                "Failed to merge workspace models.json: {}. Using global.",
+                                e
+                            );
+                        }
+                    }
+                }
+                ModelMode::Global => {
+                    // No-op, Pi uses global models.json as-is
+                }
+            }
+        }
+
         // Die with parent (important for cleanup)
         args.push("--die-with-parent".to_string());
 

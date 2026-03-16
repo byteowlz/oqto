@@ -1341,6 +1341,7 @@ impl SessionService {
         }
         if let Some(virtual_key) = eavs_virtual_key {
             config = config.env("EAVS_VIRTUAL_KEY", virtual_key);
+            config = config.env("EAVS_API_KEY", virtual_key);
         }
 
         // Pass mmry config to container if enabled
@@ -1470,12 +1471,13 @@ impl SessionService {
         }
         if let Some(virtual_key) = eavs_virtual_key {
             env.insert("EAVS_VIRTUAL_KEY".to_string(), virtual_key.to_string());
-            // Also set API keys for agent
+            // Set EAVS_API_KEY so workspace .oqto/models.json can use
+            // "apiKey": "EAVS_API_KEY" (Pi resolves env var names in apiKey field).
+            env.insert("EAVS_API_KEY".to_string(), virtual_key.to_string());
+            // Also set provider-specific API keys for agent
             env.insert("ANTHROPIC_API_KEY".to_string(), virtual_key.to_string());
             env.insert("OPENAI_API_KEY".to_string(), virtual_key.to_string());
         }
-        // Eavs virtual keys are now embedded directly in models.json's apiKey field.
-        // No eavs.env loading needed -- Pi reads the key from models.json.
 
         // Enforce skdlr wrapper in Oqto sandboxed runs
         let skdlr_config_path = std::path::Path::new("/etc/oqto/skdlr-agent.toml");
