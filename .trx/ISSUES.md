@@ -491,15 +491,6 @@ Checklist:
 ...
 
 
-### [oqto-36zw.9.1] Implementation checklist: canonical type source unification (P2, task)
-Checklist:
-- [ ] Inventory duplicate canonical type definitions
-- [ ] Move/alias canonical definitions into oqto-protocol
-- [ ] Replace local canon usages with protocol imports
-- [ ] Validate serialization compatibility
-...
-
-
 ### [oqto-36zw.8.1] Implementation checklist: consolidate history and hstry surfaces (P2, task)
 Checklist:
 - [ ] Define single authoritative history integration namespace
@@ -533,15 +524,6 @@ Checklist:
 - [ ] Split handlers into process/files/sessions/memories/pi
 - [ ] Reduce src/bin/oqto-runner.rs to thin bootstrap
 - [ ] Ensure protocol dispatch parity
-...
-
-
-### [oqto-36zw.9] Unify canonical types under oqto-protocol and remove duplicated canon definitions (P2, feature)
-Ensure canonical protocol types have one source of truth.
-
-Context:
-- Parent epic: oqto-36zw
-- Current duplication between oqto/src/canon and oqto-protocol.
 ...
 
 
@@ -1396,6 +1378,8 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [oqto-36zw.9] Unify canonical types under oqto-protocol and remove duplicated canon definitions (closed 2026-03-17)
+- [oqto-36zw.9.1] Implementation checklist: canonical type source unification (closed 2026-03-17)
 - [oqto-36zw.10] Finalize runner-first cutover: remove direct runtime path from production code and update docs (closed 2026-03-17)
 - [oqto-36zw.4] Refactor api/ws_multiplexed.rs into channel-scoped modules (closed 2026-03-17)
 - [oqto-36zw.4.1] Implementation checklist: split websocket multiplex handler by channel (closed 2026-03-17)
@@ -2074,12 +2058,12 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
-- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
-- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
 - [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
 - [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
+- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
+- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
 - [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
