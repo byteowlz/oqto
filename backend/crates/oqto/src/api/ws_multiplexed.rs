@@ -1473,9 +1473,7 @@ async fn handle_ws_command(
         WsCommand::Session(session_cmd) => {
             handle_session_command(session_cmd, user_id, state).await
         }
-        WsCommand::Bus(bus_cmd) => {
-            handle_bus_command(bus_cmd, user_id, state, conn_state).await
-        }
+        WsCommand::Bus(bus_cmd) => handle_bus_command(bus_cmd, user_id, state, conn_state).await,
     }
 }
 
@@ -2853,14 +2851,12 @@ async fn handle_agent_command(
                     .await
                 {
                     Ok(()) => {
-                        mark_client_id_accepted(&session_id, client_id_for_dedupe.as_deref())
-                            .await;
+                        mark_client_id_accepted(&session_id, client_id_for_dedupe.as_deref()).await;
                         let event_tx = {
                             let state_guard = conn_state.lock().await;
                             state_guard.event_tx.clone()
                         };
-                        arm_response_watchdog(&conn_state, &session_id, &runner_id, event_tx)
-                            .await;
+                        arm_response_watchdog(&conn_state, &session_id, &runner_id, event_tx).await;
                         broadcast_user_message(
                             state,
                             &session_id,
@@ -2928,14 +2924,12 @@ async fn handle_agent_command(
                     .await
                 {
                     Ok(()) => {
-                        mark_client_id_accepted(&session_id, client_id_for_dedupe.as_deref())
-                            .await;
+                        mark_client_id_accepted(&session_id, client_id_for_dedupe.as_deref()).await;
                         let event_tx = {
                             let state_guard = conn_state.lock().await;
                             state_guard.event_tx.clone()
                         };
-                        arm_response_watchdog(&conn_state, &session_id, &runner_id, event_tx)
-                            .await;
+                        arm_response_watchdog(&conn_state, &session_id, &runner_id, event_tx).await;
                         broadcast_user_message(
                             state,
                             &session_id,
@@ -3003,14 +2997,12 @@ async fn handle_agent_command(
                     .await
                 {
                     Ok(()) => {
-                        mark_client_id_accepted(&session_id, client_id_for_dedupe.as_deref())
-                            .await;
+                        mark_client_id_accepted(&session_id, client_id_for_dedupe.as_deref()).await;
                         let event_tx = {
                             let state_guard = conn_state.lock().await;
                             state_guard.event_tx.clone()
                         };
-                        arm_response_watchdog(&conn_state, &session_id, &runner_id, event_tx)
-                            .await;
+                        arm_response_watchdog(&conn_state, &session_id, &runner_id, event_tx).await;
                         broadcast_user_message(
                             state,
                             &session_id,
@@ -3942,6 +3934,39 @@ async fn forward_pi_events(
 // Streaming events now flow as canonical events through the PiTranslator
 // in pi_manager.rs and are forwarded directly via WsEvent::Agent.
 
+/// Emit a workspace/files.* bus event (fire-and-forget).
+fn emit_file_bus_event(
+    bus: &Arc<crate::bus::BusEngine>,
+    user_id: &str,
+    workspace_path: Option<&str>,
+    topic: &str,
+    payload: serde_json::Value,
+) {
+    use crate::bus::{BusEvent, BusScope, EventSource};
+
+    let scope_id = workspace_path.unwrap_or("local").to_string();
+    // Use Service source: file ops are already authorized by the file handler,
+    // so the bus event is a system notification, not a user-initiated publish.
+    let event = BusEvent::new(
+        BusScope::Workspace,
+        scope_id,
+        format!("files.{}", topic),
+        payload,
+        EventSource::Service {
+            service: "files".to_string(),
+            user_id: Some(user_id.to_string()),
+        },
+    );
+    let topic_log = format!("files.{}", topic);
+    let bus = bus.clone();
+    tokio::spawn(async move {
+        match bus.publish_internal(event).await {
+            Ok(()) => log::debug!("Bus: emitted file event {}", topic_log),
+            Err(e) => log::warn!("Bus: failed to emit file event {}: {}", topic_log, e),
+        }
+    });
+}
+
 /// Handle Files channel commands.
 async fn handle_files_command(
     cmd: FilesWsCommand,
@@ -3994,7 +4019,7 @@ async fn handle_files_command(
         .await;
     }
 
-    let workspace_path = match &cmd {
+    let workspace_path_owned: Option<String> = match &cmd {
         FilesWsCommand::Tree { workspace_path, .. }
         | FilesWsCommand::Read { workspace_path, .. }
         | FilesWsCommand::Write { workspace_path, .. }
@@ -4004,11 +4029,12 @@ async fn handle_files_command(
         | FilesWsCommand::CreateDirectory { workspace_path, .. }
         | FilesWsCommand::Rename { workspace_path, .. }
         | FilesWsCommand::Copy { workspace_path, .. }
-        | FilesWsCommand::Move { workspace_path, .. } => workspace_path.as_deref(),
+        | FilesWsCommand::Move { workspace_path, .. } => workspace_path.clone(),
         FilesWsCommand::CopyToWorkspace { .. }
         | FilesWsCommand::WatchFiles { .. }
         | FilesWsCommand::UnwatchFiles { .. } => unreachable!(),
     };
+    let workspace_path = workspace_path_owned.as_deref();
 
     let workspace_root = match resolve_workspace_root(workspace_path) {
         Ok(path) => path,
@@ -4373,11 +4399,20 @@ async fn handle_files_command(
                 .write_file(&resolved, &decoded, create_parents)
                 .await
             {
-                Ok(()) => Some(WsEvent::Files(FilesWsEvent::WriteResult {
-                    id,
-                    path,
-                    success: true,
-                })),
+                Ok(()) => {
+                    emit_file_bus_event(
+                        &state.bus,
+                        user_id,
+                        workspace_path,
+                        "written",
+                        serde_json::json!({ "path": &path }),
+                    );
+                    Some(WsEvent::Files(FilesWsEvent::WriteResult {
+                        id,
+                        path,
+                        success: true,
+                    }))
+                }
                 Err(err) => Some(WsEvent::Files(FilesWsEvent::Error {
                     id,
                     error: err.to_string(),
@@ -4440,11 +4475,20 @@ async fn handle_files_command(
                 }
             };
             match user_plane.delete_path(&resolved, recursive).await {
-                Ok(()) => Some(WsEvent::Files(FilesWsEvent::DeleteResult {
-                    id,
-                    path,
-                    success: true,
-                })),
+                Ok(()) => {
+                    emit_file_bus_event(
+                        &state.bus,
+                        user_id,
+                        workspace_path,
+                        "deleted",
+                        serde_json::json!({ "path": &path }),
+                    );
+                    Some(WsEvent::Files(FilesWsEvent::DeleteResult {
+                        id,
+                        path,
+                        success: true,
+                    }))
+                }
                 Err(err) => Some(WsEvent::Files(FilesWsEvent::Error {
                     id,
                     error: err.to_string(),
@@ -4464,11 +4508,20 @@ async fn handle_files_command(
                 }
             };
             match user_plane.create_directory(&resolved, create_parents).await {
-                Ok(()) => Some(WsEvent::Files(FilesWsEvent::CreateDirectoryResult {
-                    id,
-                    path,
-                    success: true,
-                })),
+                Ok(()) => {
+                    emit_file_bus_event(
+                        &state.bus,
+                        user_id,
+                        workspace_path,
+                        "created",
+                        serde_json::json!({ "path": &path, "is_dir": true }),
+                    );
+                    Some(WsEvent::Files(FilesWsEvent::CreateDirectoryResult {
+                        id,
+                        path,
+                        success: true,
+                    }))
+                }
                 Err(err) => Some(WsEvent::Files(FilesWsEvent::Error {
                     id,
                     error: err.to_string(),
@@ -4497,12 +4550,21 @@ async fn handle_files_command(
                 Err(e) => Err(e),
             };
             match result {
-                Ok(()) => Some(WsEvent::Files(FilesWsEvent::RenameResult {
-                    id,
-                    from,
-                    to,
-                    success: true,
-                })),
+                Ok(()) => {
+                    emit_file_bus_event(
+                        &state.bus,
+                        user_id,
+                        workspace_path,
+                        "renamed",
+                        serde_json::json!({ "from": &from, "to": &to }),
+                    );
+                    Some(WsEvent::Files(FilesWsEvent::RenameResult {
+                        id,
+                        from,
+                        to,
+                        success: true,
+                    }))
+                }
                 Err(err) => Some(WsEvent::Files(FilesWsEvent::Error { id, error: err })),
             }
         }
@@ -4526,12 +4588,21 @@ async fn handle_files_command(
                 }
             };
             match copy_recursive(&user_plane, &from_resolved, &to_resolved, overwrite).await {
-                Ok(()) => Some(WsEvent::Files(FilesWsEvent::CopyResult {
-                    id,
-                    from,
-                    to,
-                    success: true,
-                })),
+                Ok(()) => {
+                    emit_file_bus_event(
+                        &state.bus,
+                        user_id,
+                        workspace_path,
+                        "copied",
+                        serde_json::json!({ "from": &from, "to": &to }),
+                    );
+                    Some(WsEvent::Files(FilesWsEvent::CopyResult {
+                        id,
+                        from,
+                        to,
+                        success: true,
+                    }))
+                }
                 Err(err) => Some(WsEvent::Files(FilesWsEvent::Error { id, error: err })),
             }
         }
@@ -4564,12 +4635,21 @@ async fn handle_files_command(
                 Err(e) => Err(e),
             };
             match result {
-                Ok(()) => Some(WsEvent::Files(FilesWsEvent::MoveResult {
-                    id,
-                    from,
-                    to,
-                    success: true,
-                })),
+                Ok(()) => {
+                    emit_file_bus_event(
+                        &state.bus,
+                        user_id,
+                        workspace_path,
+                        "moved",
+                        serde_json::json!({ "from": &from, "to": &to }),
+                    );
+                    Some(WsEvent::Files(FilesWsEvent::MoveResult {
+                        id,
+                        from,
+                        to,
+                        success: true,
+                    }))
+                }
                 Err(err) => Some(WsEvent::Files(FilesWsEvent::Error { id, error: err })),
             }
         }

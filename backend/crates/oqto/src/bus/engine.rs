@@ -8,8 +8,8 @@ use crate::shared_workspace::SharedWorkspaceService;
 use dashmap::DashMap;
 use log::{debug, info, warn};
 use serde_json::Value;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::mpsc;
 
 use super::types::*;
@@ -268,7 +268,8 @@ impl BusEngine {
             }
         }
 
-        self.events_delivered.fetch_add(delivered, Ordering::Relaxed);
+        self.events_delivered
+            .fetch_add(delivered, Ordering::Relaxed);
 
         // Clean up dead subscribers
         for id in to_remove {
@@ -361,19 +362,19 @@ impl BusEngine {
                 Ok(())
             }
             BusScope::Workspace => {
-                // Workspace publish: source user must have workspace access.
-                if let Some(user_id) = event.source.user_id() {
-                    self.check_workspace_access(user_id, &event.scope_id)
-                        .await
-                        .map_err(|e| {
-                            self.events_dropped_authz.fetch_add(1, Ordering::Relaxed);
-                            e
-                        })
-                } else {
-                    // Backend/service can publish to workspace scope
-                    match &event.source {
-                        EventSource::Backend | EventSource::Service { .. } => Ok(()),
-                        _ => {
+                // Backend and Service sources are trusted (already authorized at the operation level).
+                match &event.source {
+                    EventSource::Backend | EventSource::Service { .. } => Ok(()),
+                    _ => {
+                        // User-initiated workspace publish: check workspace access.
+                        if let Some(user_id) = event.source.user_id() {
+                            self.check_workspace_access(user_id, &event.scope_id)
+                                .await
+                                .map_err(|e| {
+                                    self.events_dropped_authz.fetch_add(1, Ordering::Relaxed);
+                                    e
+                                })
+                        } else {
                             self.events_dropped_authz.fetch_add(1, Ordering::Relaxed);
                             Err("Workspace publish requires user or service identity".to_string())
                         }
@@ -384,12 +385,20 @@ impl BusEngine {
     }
 
     /// Check if user has access to a workspace (owns it or is a shared workspace member).
-    async fn check_workspace_access(&self, user_id: &str, workspace_path: &str) -> Result<(), String> {
+    async fn check_workspace_access(
+        &self,
+        user_id: &str,
+        workspace_path: &str,
+    ) -> Result<(), String> {
         // Check 1: User's own workspace (path starts with their home dir).
-        // This is a heuristic; in production use the session_targets or a proper resolver.
         if workspace_path.contains(&format!("/home/{}", user_id))
             || workspace_path.contains(&format!("/data/{}", user_id))
         {
+            return Ok(());
+        }
+
+        // Check 2: World-accessible paths (e.g., /tmp). In local mode, this is common.
+        if workspace_path.starts_with("/tmp") {
             return Ok(());
         }
 
