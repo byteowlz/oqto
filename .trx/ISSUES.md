@@ -455,12 +455,6 @@ Add runner RPC endpoints for per-user session state:
 ...
 
 
-### [octo-thhx.2] Onboarding API endpoints (P1, task)
-REST endpoints: GET/PUT /api/onboarding/state, POST /api/onboarding/unlock/{component}, POST /api/onboarding/godmode, POST /api/onboarding/complete
-
-### [octo-thhx.1] Onboarding state model and database schema (P1, task)
-Backend model for tracking onboarding progress, unlocked components, user level, and language preference. Store in user preferences table or dedicated onboarding_state table.
-
 ### [octo-thhx] Onboarding & Agent UI Control (P1, epic)
 Progressive onboarding experience with wizard-driven UI, spotlight system, and i18n support. Onboarding uses step-by-step wizard forms, NOT agent-driven A2UI conversations.
 
@@ -484,6 +478,10 @@ Build and distribute pre-compiled binaries for Linux (x86_64, arm64) and macOS (
 
 ### [octo-af5j] Release & Update System (P1, epic)
 Comprehensive system for distributing Octo releases, managing updates in the field, and expanding runtime options including Proxmox LXC support.
+
+### [oqto-dnxq] Search in in Planner in the sidebar is lagging probably due to expensive re-renders on entry (P2, bug)
+
+### [oqto-ac9x] Pinning session in share workdir does not move session to the top of the lise (P2, bug)
 
 ### [oqto-brg9.8] Event schema versioning and multi-tab deduplication (P2, task)
 Payload version field, forward-compat rules, multi-tab event delivery with dedup by event_id, last-write-wins for app state.
@@ -912,13 +910,14 @@ Web wizard step for connecting LLM providers. If EAVS pre-configured by admin, s
 Prepare AGENTS.md in multiple languages: en, de, es, fr, pl, etc. Either use symlinks (AGENTS.md -> AGENTS.{lang}.md) or dynamic injection based on user language preference.
 
 ### [octo-thhx.12] Progressive UI unlock system (P2, task)
-Extend Features API with unlocked_components map. Components check unlock state before rendering. Unlock triggers: first message, tutorial progression, technical detection.
+Progressive UI unlock system that gates UI components behind onboarding progress.
 
-### [octo-thhx.11] Godmode command to skip onboarding (P2, task)
-Implement /godmode slash command, Ctrl+Shift+G shortcut, and ?godmode=true URL param. Unlocks all UI components, marks onboarding complete, sets user level to technical.
+Status (2026-03-17): UnlockGate component exists (74 lines) and OnboardingProvider tracks unlocked components, but UnlockGate is never actually used anywhere in the app. All users get godmode immediately, so unlock gating is effectively dead code.
 
 ### [octo-thhx.10] Onboarding route and flow controller (P2, task)
 Dedicated /onboarding route that orchestrates: language selection -> provider setup -> profile conversation -> tutorial. Redirects new users here, remembers progress.
+
+Status (2026-03-17): No dedicated /onboarding route exists. AppShellRoute auto-activates godmode for all users, bypassing onboarding. Backend API and state management are ready (thhx.1, thhx.2 done), but the wizard UI flow has not been built.
 
 ### [octo-thhx.9] Language selection word cloud with CRT shader (P2, task)
 Three.js or CSS animated word cloud showing 'Click me' in multiple languages. CRT post-processing effect (scanlines, chromatic aberration, flicker). Click detection triggers language selection.
@@ -1106,6 +1105,15 @@ Enable multiple platform users to access the same project/workspace with proper 
 ...
 
 
+### [oqto-97sn] Audit and reduce useEffect usage in frontend (P3, task)
+The React team discourages useEffect for most use cases. We have 46 occurrences across 12 files, with AppShellRoute.tsx alone having 14.
+
+Refactor candidates:
+- Data fetching effects -> React Router loaders or TanStack Query
+- Derived state effects -> compute during render
+...
+
+
 ### [oqto-jq8p.6] Session token management for SSO users (P3, feature)
 Issue local Oqto JWT after successful OIDC code exchange to decouple from IdP token expiry. Handle refresh/re-auth redirect on expiry.
 
@@ -1286,6 +1294,9 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [octo-thhx.2] Onboarding API endpoints (closed 2026-03-17)
+- [octo-thhx.11] Godmode command to skip onboarding (closed 2026-03-17)
+- [octo-thhx.1] Onboarding state model and database schema (closed 2026-03-17)
 - [oqto-yxhc.4] Host-side postMessage bridge for file read/write (closed 2026-03-09)
 - [oqto-yxhc.3] File context menu: Open as App for .html files (closed 2026-03-09)
 - [oqto-yxhc.2] ViewKey 'app' and SessionScreen tab integration (closed 2026-03-09)
@@ -1952,12 +1963,12 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
-- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
-- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
-- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
 - [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
 - [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
 - [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
+- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
+- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
+- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
