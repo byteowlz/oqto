@@ -323,9 +323,9 @@ update-deps:
 
     echo "Updating dependencies.toml..."
 
-    # Update Oqto version
+    # Update Oqto version (under [oqto] section)
     OQTO_VERSION=$(grep -m1 '^version = ' "$ROOT/backend/Cargo.toml" | sed 's/version = "\(.*\)"/\1/')
-    sed -i 's/^\(oqto.version =\) "[^"]*"/\1 "'"$OQTO_VERSION"'"/' "$MANIFEST"
+    sed -i '/^\[oqto\]$/,/^\[/{s/^\(version = \)"[^"]*"/\1"'"$OQTO_VERSION"'"/}' "$MANIFEST"
     echo "  oqto: $OQTO_VERSION"
 
     # Auto-discover: parse all keys under [byteowlz] section from the manifest,
@@ -422,6 +422,194 @@ update-deps:
 
     echo ""
     echo "Done: dependencies.toml updated"
+
+# Install/update all byteowlz dependencies from sibling source repos
+install-deps *ARGS:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    ROOT="$(pwd)"
+    MANIFEST="$ROOT/dependencies.toml"
+    FILTER="{{ARGS}}"  # Optional: install only a specific tool
+
+    # Parse [byteowlz] entries from manifest
+    declare -A TOOLS
+    in_section=false
+    while IFS= read -r line; do
+      if [[ "$line" =~ ^\[byteowlz\]$ ]]; then in_section=true; continue; fi
+      if [[ "$line" =~ ^\[.+\]$ ]]; then in_section=false; continue; fi
+      $in_section || continue
+      [[ "$line" =~ ^[a-zA-Z] ]] || continue
+      key=$(echo "$line" | sed 's/ *=.*//')
+      ver=$(echo "$line" | sed 's/.*= *"\([^"]*\)".*/\1/')
+      TOOLS[$key]="$ver"
+    done < "$MANIFEST"
+
+    PIDS=()
+    NAMES=()
+    LOGS=()
+
+    for key in "${!TOOLS[@]}"; do
+      manifest_ver="${TOOLS[$key]}"
+
+      # If filter is set, only install that tool
+      if [[ -n "$FILTER" && "$key" != "$FILTER" ]]; then
+        continue
+      fi
+
+      # Find repo directory (case-insensitive)
+      repo_dir=""
+      for candidate in "$ROOT/../$key" "$ROOT/../$(echo "$key" | tr '[:upper:]' '[:lower:]')"; do
+        [[ -d "$candidate" ]] && repo_dir="$candidate" && break
+      done
+
+      if [[ -z "$repo_dir" || ! -f "$repo_dir/Cargo.toml" ]]; then
+        echo "SKIP $key: no sibling repo found"
+        continue
+      fi
+
+      # Map tool name -> binary name where they differ
+      bin="$key"
+      case "$key" in
+        eaRS) bin="ears" ;;
+        kokorox) bin="koko" ;;
+        mailz) bin="mailz-cli" ;;
+      esac
+      installed_ver=$($bin --version 2>/dev/null | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
+      [[ -z "$installed_ver" ]] && installed_ver=$($bin version 2>/dev/null | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
+
+      if [[ "$installed_ver" == "$manifest_ver" && -z "$FILTER" ]]; then
+        echo "OK   $key ($manifest_ver already installed)"
+        continue
+      fi
+
+      # Determine install path
+      install_path=""
+      if grep -q '^\[workspace\]' "$repo_dir/Cargo.toml"; then
+        # Workspace: find the CLI crate
+        lkey=$(echo "$key" | tr '[:upper:]' '[:lower:]')
+        for crate_dir in "$repo_dir/crates/${lkey}-cli" "$repo_dir/crates/$lkey" "$repo_dir/${lkey}-cli" "$repo_dir/$lkey"; do
+          if [[ -f "$crate_dir/Cargo.toml" && -f "$crate_dir/src/main.rs" ]]; then
+            install_path="$crate_dir"
+            break
+          fi
+        done
+        # Fallback: find first workspace member with a main.rs
+        if [[ -z "$install_path" ]]; then
+          for member_dir in "$repo_dir"/*/; do
+            if [[ -f "$member_dir/src/main.rs" && -f "$member_dir/Cargo.toml" ]]; then
+              install_path="$member_dir"
+              break
+            fi
+          done
+        fi
+        if [[ -z "$install_path" ]]; then
+          echo "SKIP $key: workspace but no CLI crate found"
+          continue
+        fi
+      else
+        install_path="$repo_dir"
+      fi
+
+      logfile=$(mktemp)
+      echo "BUILD $key ($installed_ver -> $manifest_ver) ..."
+      cargo install --path "$install_path" --force > "$logfile" 2>&1 &
+      PIDS+=($!)
+      NAMES+=("$key")
+      LOGS+=("$logfile")
+    done
+
+    # Wait for all builds
+    FAILED=0
+    for i in "${!PIDS[@]}"; do
+      if wait "${PIDS[$i]}"; then
+        echo "DONE ${NAMES[$i]}"
+      else
+        echo "FAIL ${NAMES[$i]} (see log below)"
+        cat "${LOGS[$i]}"
+        FAILED=$((FAILED + 1))
+      fi
+      rm -f "${LOGS[$i]}"
+    done
+
+    if [[ $FAILED -gt 0 ]]; then
+      echo ""
+      echo "$FAILED tool(s) failed to install"
+      exit 1
+    fi
+
+    echo ""
+    echo "All dependencies installed"
+
+# Check installed binary versions against dependencies.toml
+check-deps:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    MANIFEST="$(pwd)/dependencies.toml"
+    OK=0
+    WARN=0
+    MISS=0
+
+    printf "%-12s %-12s %-12s %s\n" "TOOL" "MANIFEST" "INSTALLED" "STATUS"
+    printf "%-12s %-12s %-12s %s\n" "----" "--------" "---------" "------"
+
+    # Check oqto
+    OQTO_MANIFEST=$(sed -n '/^\[oqto\]/,/^\[/{s/^version = "\(.*\)"/\1/p}' "$MANIFEST")
+    OQTO_INSTALLED=$(grep -m1 '^version = ' backend/Cargo.toml | sed 's/version = "\(.*\)"/\1/')
+    if [[ "$OQTO_MANIFEST" == "$OQTO_INSTALLED" ]]; then
+      printf "%-12s %-12s %-12s %s\n" "oqto" "$OQTO_MANIFEST" "$OQTO_INSTALLED" "ok"
+      OK=$((OK + 1))
+    else
+      printf "%-12s %-12s %-12s %s\n" "oqto" "$OQTO_MANIFEST" "$OQTO_INSTALLED" "MISMATCH"
+      WARN=$((WARN + 1))
+    fi
+
+    # Check all [byteowlz] entries
+    in_section=false
+    while IFS= read -r line; do
+      if [[ "$line" =~ ^\[byteowlz\]$ ]]; then in_section=true; continue; fi
+      if [[ "$line" =~ ^\[.+\]$ ]]; then in_section=false; continue; fi
+      $in_section || continue
+      [[ "$line" =~ ^[a-zA-Z] ]] || continue
+
+      key=$(echo "$line" | sed 's/ *=.*//')
+      manifest_ver=$(echo "$line" | sed 's/.*= *"\([^"]*\)".*/\1/')
+
+      # Get installed version (try --version, then version subcommand)
+      # Map tool name -> binary name where they differ
+      bin="$key"
+      case "$key" in
+        eaRS) bin="ears" ;;
+        kokorox) bin="koko" ;;
+        mailz) bin="mailz-cli" ;;
+      esac
+      installed_ver=$($bin --version 2>/dev/null | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
+      if [[ -z "$installed_ver" ]]; then
+        installed_ver=$($bin version 2>/dev/null | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
+      fi
+
+      if [[ -z "$installed_ver" ]]; then
+        printf "%-12s %-12s %-12s %s\n" "$key" "$manifest_ver" "-" "NOT INSTALLED"
+        MISS=$((MISS + 1))
+      elif [[ "$manifest_ver" == "$installed_ver" ]]; then
+        printf "%-12s %-12s %-12s %s\n" "$key" "$manifest_ver" "$installed_ver" "ok"
+        OK=$((OK + 1))
+      else
+        printf "%-12s %-12s %-12s %s\n" "$key" "$manifest_ver" "$installed_ver" "MISMATCH"
+        WARN=$((WARN + 1))
+      fi
+    done < "$MANIFEST"
+
+    echo ""
+    echo "Summary: $OK ok, $WARN mismatches, $MISS not installed"
+
+    if [[ $WARN -gt 0 || $MISS -gt 0 ]]; then
+      echo ""
+      echo "To update installed binaries from source repos:"
+      echo "  cd ../<tool> && cargo install --path ."
+      exit 1
+    fi
 
 # Install git hooks (uses .githooks)
 install-hooks:
