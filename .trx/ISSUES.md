@@ -491,24 +491,6 @@ Checklist:
 ...
 
 
-### [oqto-36zw.6.1] Implementation checklist: extract dedicated oqto-runner crate (P2, task)
-Checklist:
-- [ ] Create crates/oqto-runner and move code incrementally
-- [ ] Update workspace Cargo manifests and dependency graph
-- [ ] Preserve client/server runner protocol interfaces
-- [ ] Verify independent runner build and startup
-...
-
-
-### [oqto-36zw.6] Extract oqto-runner into dedicated workspace crate (P2, feature)
-Promote runner daemon to a first-class crate with explicit boundaries.
-
-Context:
-- Parent epic: oqto-36zw
-- Target tree: docs/architecture/backend-target-tree.md
-...
-
-
 ### [oqto-dnxq] Search in in Planner in the sidebar is lagging probably due to expensive re-renders on entry (P2, bug)
 
 ### [oqto-ac9x] Pinning session in share workdir does not move session to the top of the lise (P2, bug)
@@ -1324,6 +1306,8 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [oqto-36zw.6] Extract oqto-runner into dedicated workspace crate (closed 2026-03-17)
+- [oqto-36zw.6.1] Implementation checklist: extract dedicated oqto-runner crate (closed 2026-03-17)
 - [oqto-36zw.5] Refactor oqto-runner binary into thin entrypoint + daemon library modules (closed 2026-03-17)
 - [oqto-36zw.5.1] Implementation checklist: modularize runner daemon internals (closed 2026-03-17)
 - [oqto-36zw.7] Extract sandbox implementation into dedicated oqto-sandbox crate (closed 2026-03-17)
@@ -2011,11 +1995,11 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
 - [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
-- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
-- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
-- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
 - [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
 - [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
 - [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
+- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
+- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
+- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
