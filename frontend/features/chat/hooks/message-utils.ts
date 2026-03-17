@@ -379,10 +379,13 @@ export function convertCanonicalMessageToDisplay(
 	const parts = normalizeContentToParts(
 		Array.isArray(msg.parts) && msg.parts.length > 0 ? msg.parts : msg.content,
 	);
-	const timestamp =
+	// Normalize timestamp to milliseconds. Some sources (Pi, hstry) may
+	// return seconds. Heuristic: if < 1e12, treat as seconds.
+	const rawTimestamp =
 		typeof msg.created_at === "number" && msg.created_at > 0
 			? msg.created_at
 			: Date.now();
+	const timestamp = rawTimestamp > 0 && rawTimestamp < 1e12 ? rawTimestamp * 1000 : rawTimestamp;
 	// Build usage from nested usage object or flat tokens_input/tokens_output fields
 	let usage = msg.usage as DisplayMessage["usage"] | undefined;
 	if (!usage && (msg.tokens_input || msg.tokens_output)) {
@@ -444,12 +447,14 @@ export function normalizeMessages(
 
 	for (const [idx, message] of messages.entries()) {
 		const role = message.role;
-		const timestamp =
+		const rawTs =
 			message.timestamp ??
 			message.created_at ??
 			message.created_at_ms ??
 			message.createdAtMs ??
 			0;
+		// Normalize: seconds -> milliseconds (heuristic: < 1e12 = seconds)
+		const timestamp = typeof rawTs === "number" && rawTs > 0 && rawTs < 1e12 ? rawTs * 1000 : rawTs;
 		const partsJson =
 			typeof message.parts_json === "string"
 				? message.parts_json
@@ -737,54 +742,54 @@ export function mergeServerMessages(
 	if (previous.length === 0) return serverMessages;
 
 	if (mode === "partial") {
-		// Keep all previous messages. Update any that match by ID or clientId.
-		// As a final guard, dedupe by content fingerprint to avoid duplicate
-		// bubbles when the same server message is observed via multiple recovery
-		// paths (e.g. reconnect + resync + history fetch).
+		// Keep all previous messages. Update any that match by ID, clientId,
+		// or content fingerprint. New (unmatched) server messages are appended
+		// in order. We do NOT re-sort by timestamp — timestamps from different
+		// sources (Pi seconds, hstry ms, Date.now() ms) are incomparable and
+		// sorting them produces wrong message order.
 		const result = [...previous];
+		const resultFingerprints = new Map<string, number>();
+		for (let i = 0; i < result.length; i++) {
+			resultFingerprints.set(messageFingerprint(result[i]), i);
+		}
+
 		for (const serverMsg of serverMessages) {
 			let matched = false;
+			// 1. Match by ID
 			for (let i = 0; i < result.length; i++) {
-				const local = result[i];
-				if (local.id === serverMsg.id) {
-					result[i] = serverMsg;
-					matched = true;
-					break;
-				}
-				if (
-					local.clientId &&
-					serverMsg.clientId &&
-					local.clientId === serverMsg.clientId
-				) {
+				if (result[i].id === serverMsg.id) {
 					result[i] = serverMsg;
 					matched = true;
 					break;
 				}
 			}
+			// 2. Match by clientId
 			if (!matched) {
-				const serverFp = messageFingerprint(serverMsg);
 				for (let i = 0; i < result.length; i++) {
-					const local = result[i];
-					if (local.role !== serverMsg.role) continue;
-					if (messageFingerprint(local) !== serverFp) continue;
-					const dt = Math.abs((local.timestamp ?? 0) - (serverMsg.timestamp ?? 0));
-					if (dt <= 5 * 60 * 1000) {
+					if (
+						result[i].clientId &&
+						serverMsg.clientId &&
+						result[i].clientId === serverMsg.clientId
+					) {
 						result[i] = serverMsg;
 						matched = true;
 						break;
 					}
 				}
 			}
+			// 3. Match by content fingerprint (same role + content = same message)
+			if (!matched) {
+				const serverFp = messageFingerprint(serverMsg);
+				const fpIdx = resultFingerprints.get(serverFp);
+				if (fpIdx !== undefined && result[fpIdx].role === serverMsg.role) {
+					result[fpIdx] = serverMsg;
+					matched = true;
+				}
+			}
 			if (!matched) {
 				result.push(serverMsg);
 			}
 		}
-		result.sort((a, b) => {
-			const ta = a.timestamp ?? 0;
-			const tb = b.timestamp ?? 0;
-			if (ta !== tb) return ta - tb;
-			return a.id.localeCompare(b.id);
-		});
 		return result;
 	}
 
@@ -811,12 +816,9 @@ export function mergeServerMessages(
 	}
 
 	if (preserved.length === 0) return serverMessages;
-	const merged = [...serverMessages, ...preserved];
-	merged.sort((a, b) => {
-		const ta = a.timestamp ?? 0;
-		const tb = b.timestamp ?? 0;
-		if (ta !== tb) return ta - tb;
-		return a.id.localeCompare(b.id);
-	});
-	return merged;
+	// Append preserved (in-flight) messages after server messages.
+	// Server messages are already in correct order from hstry.
+	// Preserved messages (optimistic user sends, streaming) logically
+	// come after the last server message.
+	return [...serverMessages, ...preserved];
 }

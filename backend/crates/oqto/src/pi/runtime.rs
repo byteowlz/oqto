@@ -300,10 +300,7 @@ impl LocalPiProcess {
                     }
                     Err(e) => {
                         let display_line: String = line.chars().take(200).collect();
-                        warn!(
-                            "Failed to parse pi message: {}, line: {}",
-                            e, display_line
-                        );
+                        warn!("Failed to parse pi message: {}, line: {}", e, display_line);
                     }
                 }
             }
@@ -574,10 +571,7 @@ impl RunnerPiProcess {
                     let _ = event_tx.send(event);
                 }
                 Err(e) => {
-                    warn!(
-                        "Failed to parse pi message: {}, line: {}",
-                        e, display_line
-                    );
+                    warn!("Failed to parse pi message: {}, line: {}", e, display_line);
                 }
             }
         }

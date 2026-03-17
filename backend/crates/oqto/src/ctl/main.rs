@@ -4250,9 +4250,8 @@ async fn handle_bus(client: &OqtoClient, command: BusCommand, json: bool) -> Res
                 .await
                 .context("sending bus subscribe command")?;
 
-            let deadline = timeout.map(|t| {
-                tokio::time::Instant::now() + std::time::Duration::from_secs(t)
-            });
+            let deadline =
+                timeout.map(|t| tokio::time::Instant::now() + std::time::Duration::from_secs(t));
             let mut seen = 0usize;
 
             loop {
@@ -4285,10 +4284,8 @@ async fn handle_bus(client: &OqtoClient, command: BusCommand, json: bool) -> Res
                         if json {
                             println!("{}", serde_json::to_string_pretty(&value)?);
                         } else {
-                            let topic =
-                                value.get("topic").and_then(|v| v.as_str()).unwrap_or("-");
-                            let scope =
-                                value.get("scope").and_then(|v| v.as_str()).unwrap_or("-");
+                            let topic = value.get("topic").and_then(|v| v.as_str()).unwrap_or("-");
+                            let scope = value.get("scope").and_then(|v| v.as_str()).unwrap_or("-");
                             let scope_id = value
                                 .get("scope_id")
                                 .and_then(|v| v.as_str())

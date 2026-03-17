@@ -1001,7 +1001,10 @@ impl PiSessionManager {
     }
 
     /// Subscribe to events from a session.
-    pub async fn subscribe(&self, session_id: &str) -> Result<mpsc::UnboundedReceiver<PiEventWrapper>> {
+    pub async fn subscribe(
+        &self,
+        session_id: &str,
+    ) -> Result<mpsc::UnboundedReceiver<PiEventWrapper>> {
         let resolved_id = self
             .resolve_session_key(session_id)
             .await
@@ -3313,17 +3316,18 @@ impl PiSessionManager {
 
                     // Buffer the last error text. Only persisted to hstry
                     // when AgentIdle fires (one error per turn, not per retry).
-                    if let oqto_protocol::events::EventPayload::AgentError {
-                        ref error,
-                        ..
-                    } = enriched_payload
+                    if let oqto_protocol::events::EventPayload::AgentError { ref error, .. } =
+                        enriched_payload
                     {
                         pending_error_text = Some(error.clone());
                     }
 
                     // On AgentIdle, persist the buffered error (if any) to hstry
                     // BEFORE broadcasting, so fetchHistoryMessages finds it.
-                    if matches!(enriched_payload, oqto_protocol::events::EventPayload::AgentIdle) {
+                    if matches!(
+                        enriched_payload,
+                        oqto_protocol::events::EventPayload::AgentIdle
+                    ) {
                         if let Some(error_text) = pending_error_text.take() {
                             if let Some(ref client) = hstry_client {
                                 let eid = hstry_external_id.read().await.clone();
@@ -3349,9 +3353,8 @@ impl PiSessionManager {
                                     client_id: None,
                                     id: None,
                                 };
-                                if let Err(e) = client
-                                    .append_messages(&eid, vec![msg], Some(now_ms))
-                                    .await
+                                if let Err(e) =
+                                    client.append_messages(&eid, vec![msg], Some(now_ms)).await
                                 {
                                     warn!(
                                         "Pi[{}] failed to persist error to hstry: {:?}",

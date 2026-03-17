@@ -1157,10 +1157,8 @@ impl SandboxConfig {
                         Ok(merged) => {
                             // Write merged JSON to a temp file that lives for this session
                             let tmp_dir = std::env::temp_dir();
-                            let merged_path = tmp_dir.join(format!(
-                                "oqto-merged-models-{}.json",
-                                std::process::id()
-                            ));
+                            let merged_path = tmp_dir
+                                .join(format!("oqto-merged-models-{}.json", std::process::id()));
                             if let Err(e) = std::fs::write(&merged_path, &merged) {
                                 warn!("Failed to write merged models.json: {}", e);
                             } else {
@@ -1169,10 +1167,7 @@ impl SandboxConfig {
                                 args.push("--ro-bind".to_string());
                                 args.push(merged_str.clone());
                                 args.push(global_str.clone());
-                                info!(
-                                    "Workspace models merge: {} -> {}",
-                                    merged_str, global_str
-                                );
+                                info!("Workspace models merge: {} -> {}", merged_str, global_str);
                             }
                         }
                         Err(e) => {

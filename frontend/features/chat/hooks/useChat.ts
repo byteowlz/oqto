@@ -1189,10 +1189,10 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 
 				// -- Messages sync --
 				case "messages": {
-					// Always merge immediately. The partial merge strategy
-					// preserves in-flight streaming messages by ID/fingerprint,
-					// so deferring is unnecessary and causes message loss when
-					// agent.idle is delayed or never fires.
+					// Always merge immediately using authoritative mode.
+					// Server messages are the complete conversation state;
+					// streaming/optimistic messages are preserved by the
+					// authoritative merge.
 					const msgs = event.messages;
 					if (Array.isArray(msgs)) {
 						const displayMessages = normalizeMessages(
@@ -1201,7 +1201,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 						);
 
 						if (displayMessages.length > 0) {
-							setMessages((prev) => mergeServerMessages(prev, displayMessages, "partial"));
+							setMessages((prev) => mergeServerMessages(prev, displayMessages, "authoritative"));
 							messageIdRef.current = getMaxMessageId(displayMessages);
 							const lastAssistant = [...displayMessages]
 								.reverse()
@@ -1343,9 +1343,11 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 						}
 
 						case "get_messages": {
-							// Always merge immediately. The partial merge
-							// preserves streaming messages by ID/fingerprint.
-							// No deferral needed — it causes message loss.
+							// Always merge immediately using authoritative mode.
+							// get_messages returns the full conversation from
+							// the backend (Pi live or hstry), so it replaces
+							// local state. Streaming/optimistic messages are
+							// preserved by the authoritative merge strategy.
 							forceMessageSyncRef.current.delete(event.session_id ?? "");
 							if (resp.success && resp.data) {
 								const data = resp.data as { messages?: RawMessage[] };
@@ -1357,7 +1359,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 									);
 									if (displayMessages.length > 0) {
 										setMessages((prev) =>
-											mergeServerMessages(prev, displayMessages, "partial"),
+											mergeServerMessages(prev, displayMessages, "authoritative"),
 										);
 										messageIdRef.current = getMaxMessageId(displayMessages);
 										const lastAssistant = [...displayMessages]
@@ -2039,7 +2041,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 						`resync-${_sessionId}`,
 					);
 					if (displayMessages.length > 0) {
-						setMessages((prev) => mergeServerMessages(prev, displayMessages, "partial"));
+						setMessages((prev) => mergeServerMessages(prev, displayMessages, "authoritative"));
 						messageIdRef.current = getMaxMessageId(displayMessages);
 						const lastAssistant = [...displayMessages]
 							.reverse()

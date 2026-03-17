@@ -2233,9 +2233,7 @@ impl Runner {
                         .into_iter()
                         .enumerate()
                         .skip(start)
-                        .map(|(idx, msg)| {
-                            pi_agent_msg_to_chat_proto(msg, idx, &session_id_clone)
-                        })
+                        .map(|(idx, msg)| pi_agent_msg_to_chat_proto(msg, idx, &session_id_clone))
                         .collect();
                     return RunnerResponse::WorkspaceChatSessionMessages(
                         WorkspaceChatSessionMessagesResponse {
@@ -3712,7 +3710,19 @@ fn pi_agent_msg_to_chat_proto(
     idx: usize,
     session_id: &str,
 ) -> ChatMessageProto {
-    let created_at = msg.timestamp.map(|t| t as i64).unwrap_or(0);
+    // Normalize Pi timestamps to milliseconds. Pi may report seconds or ms
+    // depending on the harness/event source. Heuristic: if < 1e12, it's seconds.
+    let created_at = msg
+        .timestamp
+        .map(|t| {
+            let v = t as i64;
+            if v > 0 && v < 1_000_000_000_000 {
+                v * 1000
+            } else {
+                v
+            }
+        })
+        .unwrap_or(0);
     let part_id = format!("part_{}", idx);
     let message_id = format!("pi_msg_{}", idx);
 
