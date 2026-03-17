@@ -47,9 +47,6 @@ setup.sh must correctly provision everything for a new platform user on a fresh 
 ...
 
 
-### [oqto-36zw] Backend architecture refactor: runner-first crate split and module cleanup (P1, epic)
-Refactor backend toward a runner-first architecture with clear crate boundaries and removal of duplicate/ambiguous module ownership.\n\nTarget tree and architecture map:\n- docs/architecture/backend-target-tree.md\n\nScope:\n- Make runner-mediated user-plane the default in all normal modes\n- Split oversized files (ws_multiplexed, oqto-runner daemon) into coherent submodules\n- Extract oqto-runner and oqto-sandbox into dedicated crates\n- Consolidate history/hstry responsibilities\n- Enforce single canonical protocol type source in oqto-protocol\n\nConstraints:\n- Incremental migration with compatibility at each step\n- No protocol regressions
-
 ### [oqto-75rn] Use EAVS API for provider/model CRUD from Oqto (no direct models.json drift) (P1, feature)
 Problem: Oqto frontend provider/model additions currently update Pi models.json only and do not update EAVS global provider config. This causes drift: provisioned eavs-* catalog and user-edited catalogs diverge. Expected: adding provider/model should integrate with EAVS control-plane so global routing source-of-truth stays in EAVS.\n\nProposal:\n1) Add Oqto admin flow: create/update/delete providers/models via EAVS API/CLI (not by editing config files directly).\n2) After successful mutation, trigger EAVS reload/sync and regenerate per-user models.json from EAVS /providers/detail.\n3) Keep user/workspace .oqto/models.json as optional overlay/restriction layer, but base catalog comes from EAVS.\n4) Add clear UI distinction: Global Provider (EAVS) vs Workspace Catalog Override (.oqto/models.json).\n\nAcceptance:\n- New provider added in UI appears in /providers/detail immediately\n- sync-models propagates to all users\n- no manual edits to /home/oqto/.config/eavs/config.toml required\n- no key material stored in workspace catalogs
 
@@ -481,15 +478,6 @@ Build and distribute pre-compiled binaries for Linux (x86_64, arm64) and macOS (
 
 ### [octo-af5j] Release & Update System (P1, epic)
 Comprehensive system for distributing Octo releases, managing updates in the field, and expanding runtime options including Proxmox LXC support.
-
-### [oqto-36zw.10.1] Implementation checklist: final runner-only cleanup and docs alignment (P2, task)
-Checklist:
-- [ ] Remove direct path from production runtime wiring
-- [ ] Keep test-only utilities if still needed
-- [ ] Remove obsolete config flags/branches
-- [ ] Update AGENTS.md and architecture docs
-...
-
 
 ### [oqto-dnxq] Search in in Planner in the sidebar is lagging probably due to expensive re-renders on entry (P2, bug)
 
@@ -1306,6 +1294,8 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [oqto-36zw] Backend architecture refactor: runner-first crate split and module cleanup (closed 2026-03-17)
+- [oqto-36zw.10.1] Implementation checklist: final runner-only cleanup and docs alignment (closed 2026-03-17)
 - [oqto-36zw.6] Extract oqto-runner into dedicated workspace crate (closed 2026-03-17)
 - [oqto-36zw.6.1] Implementation checklist: extract dedicated oqto-runner crate (closed 2026-03-17)
 - [oqto-36zw.5] Refactor oqto-runner binary into thin entrypoint + daemon library modules (closed 2026-03-17)
@@ -1994,12 +1984,12 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
-- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
 - [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
 - [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
+- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
 - [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
+- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
