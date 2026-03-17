@@ -47,24 +47,6 @@ setup.sh must correctly provision everything for a new platform user on a fresh 
 ...
 
 
-### [oqto-36zw.3.1] Implementation checklist: single-user runner bootstrap and recovery (P1, task)
-Checklist:
-- [ ] Auto-start runner if socket unavailable
-- [ ] Add readiness handshake (Ping/GetCapabilities) before dependent ops
-- [ ] Implement bounded retry/backoff
-- [ ] Handle runner crash/restart reconnect path
-...
-
-
-### [oqto-36zw.3] Single-user runner bootstrap and resiliency (auto-start, healthcheck, reconnect) (P1, feature)
-Ensure runner-first works reliably in single-user development environments.
-
-Context:
-- Parent epic: oqto-36zw
-
-...
-
-
 ### [oqto-36zw] Backend architecture refactor: runner-first crate split and module cleanup (P1, epic)
 Refactor backend toward a runner-first architecture with clear crate boundaries and removal of duplicate/ambiguous module ownership.\n\nTarget tree and architecture map:\n- docs/architecture/backend-target-tree.md\n\nScope:\n- Make runner-mediated user-plane the default in all normal modes\n- Split oversized files (ws_multiplexed, oqto-runner daemon) into coherent submodules\n- Extract oqto-runner and oqto-sandbox into dedicated crates\n- Consolidate history/hstry responsibilities\n- Enforce single canonical protocol type source in oqto-protocol\n\nConstraints:\n- Incremental migration with compatibility at each step\n- No protocol regressions
 
@@ -1441,6 +1423,8 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [oqto-36zw.3] Single-user runner bootstrap and resiliency (auto-start, healthcheck, reconnect) (closed 2026-03-17)
+- [oqto-36zw.3.1] Implementation checklist: single-user runner bootstrap and recovery (closed 2026-03-17)
 - [oqto-36zw.2] Make RunnerUserPlane default in all normal local modes (guard direct behind explicit unsafe flag) (closed 2026-03-17)
 - [oqto-36zw.2.1] Implementation checklist: runner-default selection policy (closed 2026-03-17)
 - [oqto-36zw.1] Baseline hardening for runner-first migration (coverage + telemetry + smoke checks) (closed 2026-03-17)
@@ -2114,12 +2098,12 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
-- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
-- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
-- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
-- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
 - [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
+- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
+- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
+- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
+- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
