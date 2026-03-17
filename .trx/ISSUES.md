@@ -500,30 +500,12 @@ Checklist:
 ...
 
 
-### [oqto-36zw.5.1] Implementation checklist: modularize runner daemon internals (P2, task)
-Checklist:
-- [ ] Introduce runner/daemon/server + state modules
-- [ ] Split handlers into process/files/sessions/memories/pi
-- [ ] Reduce src/bin/oqto-runner.rs to thin bootstrap
-- [ ] Ensure protocol dispatch parity
-...
-
-
 ### [oqto-36zw.6] Extract oqto-runner into dedicated workspace crate (P2, feature)
 Promote runner daemon to a first-class crate with explicit boundaries.
 
 Context:
 - Parent epic: oqto-36zw
 - Target tree: docs/architecture/backend-target-tree.md
-...
-
-
-### [oqto-36zw.5] Refactor oqto-runner binary into thin entrypoint + daemon library modules (P2, feature)
-Move runner implementation details out of src/bin/oqto-runner.rs.
-
-Context:
-- Parent epic: oqto-36zw
-- Current binary contains daemon state, protocol dispatch, and all handlers inline.
 ...
 
 
@@ -1342,6 +1324,8 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [oqto-36zw.5] Refactor oqto-runner binary into thin entrypoint + daemon library modules (closed 2026-03-17)
+- [oqto-36zw.5.1] Implementation checklist: modularize runner daemon internals (closed 2026-03-17)
 - [oqto-36zw.7] Extract sandbox implementation into dedicated oqto-sandbox crate (closed 2026-03-17)
 - [oqto-36zw.7.1] Implementation checklist: extract dedicated oqto-sandbox crate (closed 2026-03-17)
 - [oqto-36zw.8] Consolidate history and hstry modules into a single history integration surface (closed 2026-03-17)
@@ -2026,12 +2010,12 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
-- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
-- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
-- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
 - [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
 - [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
+- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
 - [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
+- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
