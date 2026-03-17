@@ -65,15 +65,6 @@ Checklist:
 ...
 
 
-### [oqto-36zw.1.1] Implementation checklist: baseline hardening and telemetry (P1, task)
-Checklist:
-- [ ] Add integration tests for session lifecycle via user-plane
-- [ ] Add integration tests for chat prompt/abort/retry stream behavior
-- [ ] Add integration tests for file ops and memory ops
-- [ ] Add runner/direct path metrics and error counters
-...
-
-
 ### [oqto-36zw.3] Single-user runner bootstrap and resiliency (auto-start, healthcheck, reconnect) (P1, feature)
 Ensure runner-first works reliably in single-user development environments.
 
@@ -89,15 +80,6 @@ Switch runtime selection policy to runner-first while preserving emergency fallb
 Context:
 - Parent epic: oqto-36zw
 - Policy decision: direct path should not be default runtime path.
-...
-
-
-### [oqto-36zw.1] Baseline hardening for runner-first migration (coverage + telemetry + smoke checks) (P1, task)
-Establish safety net before runtime-path migration.
-
-Context:
-- Parent epic: oqto-36zw
-- Target architecture doc: docs/architecture/backend-target-tree.md
 ...
 
 
@@ -1477,6 +1459,8 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [oqto-36zw.1] Baseline hardening for runner-first migration (coverage + telemetry + smoke checks) (closed 2026-03-17)
+- [oqto-36zw.1.1] Implementation checklist: baseline hardening and telemetry (closed 2026-03-17)
 - [octo-thhx.2] Onboarding API endpoints (closed 2026-03-17)
 - [octo-thhx.11] Godmode command to skip onboarding (closed 2026-03-17)
 - [octo-thhx.1] Onboarding state model and database schema (closed 2026-03-17)
@@ -2146,12 +2130,12 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
-- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
-- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
-- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
-- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
 - [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
+- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
+- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
+- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
+- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
