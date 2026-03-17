@@ -89,10 +89,16 @@ install_searxng() {
   # 6. Install systemd service
   install_searxng_service "$searxng_base" "$searxng_venv" "$searxng_settings" "$service_type" "$searxng_user"
 
-  # 7. Install watchdog timer to auto-recover degraded runtime states
+  # 7. Expand user agent pool to reduce CAPTCHA rate
+  expand_searxng_useragents "$searxng_src" "$service_type" "$searxng_user"
+
+  # 8. Install watchdog timer to auto-recover degraded runtime states
   install_searxng_watchdog "$service_type"
 
-  # 8. Configure sx to use local instance
+  # 9. Install periodic restart timer to clear CAPTCHA engine suspensions
+  install_searxng_captcha_recovery "$service_type"
+
+  # 10. Configure sx to use local instance
   configure_sx_for_searxng
 
   log_success "SearXNG installed and configured"
@@ -272,8 +278,7 @@ general:
 
 search:
   safe_search: 0
-  autocomplete: "duckduckgo"
-  # Enable JSON format for sx API access
+  autocomplete: ""
   formats:
     - html
     - json
@@ -297,8 +302,12 @@ ui:
 outgoing:
   request_timeout: 10.0
   max_request_timeout: 15.0
-  # Use multiple user agents to avoid blocks
   useragent_suffix: ""
+  enable_http2: true
+  pool_connections: 100
+  pool_maxsize: 20
+  keepalive_expiry: 5.0
+  retries: 1
 
 engines:
   - name: duckduckgo
@@ -633,6 +642,112 @@ EOF
     fi
 
     log_success "SearXNG watchdog installed (system): searxng-healthcheck.timer"
+  fi
+}
+
+expand_searxng_useragents() {
+  local searxng_src="$1"
+  local service_type="$2"
+  local user="$3"
+
+  local ua_file="${searxng_src}/searx/data/useragents.json"
+  if [[ ! -f "$ua_file" ]]; then
+    log_warn "useragents.json not found at ${ua_file}, skipping UA expansion"
+    return
+  fi
+
+  log_info "Expanding SearXNG user agent pool..."
+
+  local ua_content
+  read -r -d '' ua_content <<'EOUAJSON' || true
+{
+    "os": [
+        "Windows NT 10.0; Win64; x64",
+        "X11; Linux x86_64",
+        "Macintosh; Intel Mac OS X 10_15_7",
+        "X11; Ubuntu; Linux x86_64",
+        "Windows NT 11.0; Win64; x64"
+    ],
+    "ua": "Mozilla/5.0 ({os}; rv:{version}) Gecko/20100101 Firefox/{version}",
+    "versions": [
+        "147.0",
+        "146.0",
+        "145.0",
+        "144.0",
+        "143.0"
+    ]
+}
+EOUAJSON
+
+  if [[ "$service_type" == "system" ]]; then
+    echo "$ua_content" | sudo -u "$user" tee "$ua_file" >/dev/null
+  else
+    echo "$ua_content" > "$ua_file"
+  fi
+
+  log_success "User agent pool expanded to 25 combinations (5 OS x 5 versions)"
+}
+
+install_searxng_captcha_recovery() {
+  local service_type="$1"
+
+  log_info "Installing SearXNG periodic restart for CAPTCHA recovery..."
+
+  if [[ "$service_type" == "user" ]]; then
+    local service_dir="$HOME/.config/systemd/user"
+    mkdir -p "$service_dir"
+
+    cat >"${service_dir}/searxng-captcha-recovery.service" <<EOF
+[Unit]
+Description=Restart SearXNG to clear CAPTCHA engine suspensions
+
+[Service]
+Type=oneshot
+ExecStart=/bin/systemctl --user restart searxng
+EOF
+
+    cat >"${service_dir}/searxng-captcha-recovery.timer" <<EOF
+[Unit]
+Description=Restart SearXNG every 6 hours to clear CAPTCHA suspensions
+
+[Timer]
+OnBootSec=6h
+OnUnitActiveSec=6h
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+
+    systemctl --user daemon-reload
+    systemctl --user enable --now searxng-captcha-recovery.timer
+    log_success "CAPTCHA recovery timer installed (user): every 6 hours"
+  else
+    sudo tee /etc/systemd/system/searxng-captcha-recovery.service >/dev/null <<EOF
+[Unit]
+Description=Restart SearXNG to clear CAPTCHA engine suspensions
+
+[Service]
+Type=oneshot
+ExecStart=/bin/systemctl restart searxng
+EOF
+
+    sudo tee /etc/systemd/system/searxng-captcha-recovery.timer >/dev/null <<EOF
+[Unit]
+Description=Restart SearXNG every 6 hours to clear CAPTCHA suspensions
+
+[Timer]
+OnBootSec=6h
+OnUnitActiveSec=6h
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now searxng-captcha-recovery.timer
+    log_success "CAPTCHA recovery timer installed (system): every 6 hours"
   fi
 }
 
