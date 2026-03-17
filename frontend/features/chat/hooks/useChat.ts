@@ -1519,6 +1519,36 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 		}
 		const manager = getWsManager();
 
+		// If history selected a legacy/external ID, map it to a currently active
+		// runner session ID before issuing session.create. Shared workspaces can
+		// return history IDs that differ from the runner's in-memory session_id.
+		try {
+			const activeSessions = await manager.agentListSessions();
+			const alias = activeSessions.find(
+				(s) => s.session_id === sessionId || s.hstry_id === sessionId,
+			);
+			if (alias && alias.session_id !== sessionId) {
+				const previousId = sessionId;
+				sessionId = alias.session_id;
+				activeSessionIdRef.current = sessionId;
+				onSelectedSessionIdChange?.(sessionId);
+				const sharedWorkspaceId = sharedWorkspaceSessionMap.get(previousId);
+				if (sharedWorkspaceId) {
+					setSharedWorkspaceSessionId(sessionId, sharedWorkspaceId);
+				}
+				if (isPiDebugEnabled()) {
+					console.debug(
+						"[useChat] ensureSession: remapped history session alias",
+						previousId,
+						"->",
+						sessionId,
+					);
+				}
+			}
+		} catch {
+			// Best-effort alias resolution; continue with original session ID.
+		}
+
 		// If the session is already ready and we have an active subscription,
 		// there is nothing to do.  Re-subscribing would kill the existing
 		// event handler and create a gap where streaming events are lost.

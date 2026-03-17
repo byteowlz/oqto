@@ -7,6 +7,7 @@ const managerMock = {
 	ensureConnected: vi.fn(),
 	waitForSessionReady: vi.fn(),
 	agentGetStateWait: vi.fn(),
+	agentListSessions: vi.fn(),
 	agentPrompt: vi.fn(),
 	agentSteer: vi.fn(),
 	agentFollowUp: vi.fn(),
@@ -47,6 +48,7 @@ describe("useChat send reliability", () => {
 			new Error("session not ready"),
 		);
 		managerMock.agentGetStateWait.mockRejectedValue(new Error("not found"));
+		managerMock.agentListSessions.mockResolvedValue([]);
 	});
 
 	it("does not reject send when connection/readiness checks fail transiently", async () => {
@@ -72,4 +74,5 @@ describe("useChat send reliability", () => {
 		// dropped message.
 		expect(managerMock.ensureConnected).toHaveBeenCalled();
 	});
+
 });

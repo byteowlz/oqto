@@ -373,6 +373,7 @@ class WsConnectionManager {
 			last_activity: number;
 			subscriber_count: number;
 			shared_workspace_id?: string;
+			hstry_id?: string;
 		}>
 	> {
 		const event = await this.sendAndWait({
@@ -392,6 +393,7 @@ class WsConnectionManager {
 				last_activity: number;
 				subscriber_count: number;
 				shared_workspace_id?: string;
+				hstry_id?: string;
 			}>;
 		}
 		throw new Error(resp?.error ?? "Unexpected response to list_sessions");
