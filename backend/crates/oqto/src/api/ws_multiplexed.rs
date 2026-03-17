@@ -968,6 +968,9 @@ struct PiSessionMeta {
 }
 
 struct TerminalSession {
+    owner_user_id: String,
+    session_id: String,
+    workspace_path: Option<String>,
     command_tx: mpsc::UnboundedSender<TerminalSessionCommand>,
     task: tokio::task::JoinHandle<()>,
 }
