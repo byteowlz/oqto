@@ -134,8 +134,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 	const lastAgentEventAtRef = useRef<number>(Date.now());
 	const sendInFlightRef = useRef(false);
 	const responseWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-	// Deferred server messages received while streaming (applied on agent.idle)
-	const deferredServerMessagesRef = useRef<unknown[] | null>(null);
+	// (deferredServerMessagesRef removed — messages are always merged immediately)
 	// Force a full server sync after reattaching to an active runner session.
 	const forceMessageSyncRef = useRef<Set<string>>(new Set());
 	// Stable ref for the agent event handler so the subscription effect doesn't
@@ -425,42 +424,6 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 					console.debug("[useChat] Failed to load history:", err);
 				}
 			}
-		},
-		[mergeServerMessages, normalizeMessages],
-	);
-
-	const applyDeferredServerMessages = useCallback(
-		(sessionId?: string | null): boolean => {
-			const deferred = deferredServerMessagesRef.current;
-			deferredServerMessagesRef.current = null;
-			if (!Array.isArray(deferred) || deferred.length === 0) {
-				return false;
-			}
-
-			const sourceSessionId = sessionId ?? activeSessionIdRef.current ?? "unknown";
-			const displayMessages = normalizeMessages(
-				deferred as RawMessage[],
-				`deferred-${sourceSessionId}`,
-			);
-			if (displayMessages.length === 0) {
-				return false;
-			}
-
-			setMessages((prev) => mergeServerMessages(prev, displayMessages, "partial"));
-			messageIdRef.current = getMaxMessageId(displayMessages);
-			const lastAssistant = [...displayMessages]
-				.reverse()
-				.find((msg) => msg.role === "assistant");
-			lastAssistantMessageIdRef.current = lastAssistant?.id ?? null;
-
-			if (isPiDebugEnabled()) {
-				console.debug(
-					"[useChat] Applied deferred server messages:",
-					sourceSessionId,
-					displayMessages.length,
-				);
-			}
-			return true;
 		},
 		[mergeServerMessages, normalizeMessages],
 	);
@@ -904,12 +867,6 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 						streamingMessageRef.current.isStreaming = false;
 						streamingMessageRef.current = null;
 					}
-					// Apply deferred messages first (captured while streaming)
-					// so the UI never appears to "lose" turns while waiting
-					// for the authoritative hstry refresh below.
-					applyDeferredServerMessages(
-						event.session_id ?? activeSessionIdRef.current,
-					);
 					// Always fetch authoritative messages from hstry on
 					// agent.idle. The backend persists to hstry BEFORE
 					// broadcasting agent.idle, so the fetch is guaranteed
@@ -1044,12 +1001,6 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 						onMessageComplete?.(completedMessage);
 						streamingMessageRef.current = null;
 					}
-
-					// Apply any deferred server messages captured during streaming
-					// before appending the error block.
-					applyDeferredServerMessages(
-						event.session_id ?? activeSessionIdRef.current,
-					);
 
 					// Show error immediately as a standalone message.
 					// The runner also persists it to hstry on agent.idle.
@@ -1238,26 +1189,10 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 
 				// -- Messages sync --
 				case "messages": {
-					// Defer if we're currently streaming — applying persisted
-					// messages would overwrite the live in-progress content.
-					// They will be applied when agent.idle fires.
-					if (
-						streamingMessageRef.current ||
-						isStreamingRef.current ||
-						sendInFlightRef.current
-					) {
-						const msgs = event.messages;
-						if (Array.isArray(msgs) && msgs.length > 0) {
-							deferredServerMessagesRef.current = msgs;
-						}
-						if (isPiDebugEnabled()) {
-							console.debug(
-								"[useChat] Deferring messages sync during streaming:",
-								event.session_id,
-							);
-						}
-						break;
-					}
+					// Always merge immediately. The partial merge strategy
+					// preserves in-flight streaming messages by ID/fingerprint,
+					// so deferring is unnecessary and causes message loss when
+					// agent.idle is delayed or never fires.
 					const msgs = event.messages;
 					if (Array.isArray(msgs)) {
 						const displayMessages = normalizeMessages(
@@ -1408,39 +1343,10 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 						}
 
 						case "get_messages": {
-							// Defer if we're currently streaming — applying
-							// persisted messages would overwrite live content.
-							// They will be applied when agent.idle fires.
-							// However, if forceMessageSyncRef is set (e.g., reconnect
-							// during streaming), apply immediately to restore state.
-							const forceSync = forceMessageSyncRef.current.has(
-								event.session_id ?? "",
-							);
-							if (
-								!forceSync &&
-								(streamingMessageRef.current ||
-									isStreamingRef.current ||
-									sendInFlightRef.current)
-							) {
-								if (resp.success && resp.data) {
-									const data = resp.data as { messages?: unknown[] };
-									const msgs = data.messages;
-									if (Array.isArray(msgs) && msgs.length > 0) {
-										deferredServerMessagesRef.current = msgs;
-									}
-								}
-								if (isPiDebugEnabled()) {
-									console.debug(
-										"[useChat] Deferring get_messages response during streaming:",
-										event.session_id,
-									);
-								}
-								break;
-							}
-							// Clear the force sync flag - we've applied it
-							if (forceSync) {
-								forceMessageSyncRef.current.delete(event.session_id ?? "");
-							}
+							// Always merge immediately. The partial merge
+							// preserves streaming messages by ID/fingerprint.
+							// No deferral needed — it causes message loss.
+							forceMessageSyncRef.current.delete(event.session_id ?? "");
 							if (resp.success && resp.data) {
 								const data = resp.data as { messages?: RawMessage[] };
 								const msgs = data.messages;
@@ -1543,7 +1449,6 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 		},
 		[
 			appendPartToMessage,
-			applyDeferredServerMessages,
 			applyThrottledSnapshot,
 			ensureAssistantMessage,
 			fetchHistoryMessages,
@@ -1888,14 +1793,30 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 				setIsConnected(connected);
 				if (!connected) {
 					// Prevent indefinite "stuck streaming" UI when WS drops mid-turn.
-					// History resync still restores messages after reconnect.
 					clearResponseWatchdog();
 					isStreamingRef.current = false;
 					setIsStreaming(false);
 					setIsAwaitingResponse(false);
+					sendInFlightRef.current = false;
+					if (streamingMessageRef.current) {
+						streamingMessageRef.current.isStreaming = false;
+						streamingMessageRef.current = null;
+					}
 					setError(new Error("Connection lost. Reconnecting..."));
 				} else {
 					setError(null);
+					// On reconnect, fetch latest state.
+					// If we're mid-stream, use partial merge to avoid
+					// clobbering the in-flight streaming message.
+					const sid = activeSessionIdRef.current;
+					if (sid) {
+						manager.agentGetState(sid);
+						if (isStreamingRef.current || streamingMessageRef.current) {
+							manager.agentGetMessages(sid);
+						} else {
+							void fetchHistoryMessages(sid);
+						}
+					}
 				}
 			},
 		);
@@ -1903,41 +1824,68 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 		return unsubscribe;
 	}, [clearResponseWatchdog]);
 
-	// Watchdog: if the UI is "working" but we stop receiving live events,
-	// trigger a state+history resync and clear stuck spinner state.
+	// Periodic sync + watchdog: while streaming, periodically fetch
+	// authoritative messages so the UI stays current even if WS events
+	// are dropped (broadcast overflow, flaky connection, etc.).
+	// Also acts as a watchdog: if no events arrive for too long, clear
+	// the stuck spinner state.
 	useEffect(() => {
 		if (!isConnected) return;
 		if (!activeSessionId) return;
 		if (!isStreaming && !isAwaitingResponse) return;
 
 		const manager = getWsManager();
-		const timer = setInterval(() => {
+		const sessionId = activeSessionId;
+
+		// Periodic message sync every 5s while streaming.
+		// Uses get_messages (which triggers a "partial" merge via the
+		// get_messages response handler) so in-flight streaming messages
+		// and optimistic user messages are never clobbered.
+		// Do NOT call fetchHistoryMessages here — it uses "authoritative"
+		// mode which replaces all local messages with hstry data and can
+		// drop messages that haven't been persisted yet.
+		const syncTimer = setInterval(() => {
+			if (activeSessionIdRef.current !== sessionId) return;
+			manager.agentGetMessages(sessionId);
+		}, 5000);
+
+		// Watchdog: detect stalled streaming faster.
+		const watchdogTimer = setInterval(() => {
 			const idleMs = Date.now() - lastAgentEventAtRef.current;
-			if (idleMs < 12000) return;
+			if (idleMs < 8000) return;
 
 			if (isPiDebugEnabled()) {
 				console.warn(
-					`[useChat] stream watchdog triggered for ${activeSessionId} after ${idleMs}ms without events`,
+					`[useChat] stream watchdog triggered for ${sessionId} after ${idleMs}ms without events`,
 				);
 			}
 
-			manager.agentGetState(activeSessionId);
-			void fetchHistoryMessages(activeSessionId);
+			manager.agentGetState(sessionId);
 
-			// After prolonged silence, stop showing an infinite spinner.
-			if (idleMs >= 20000) {
+			// After 12s of silence, stop showing an infinite spinner
+			// and do an authoritative recovery from hstry.
+			if (idleMs >= 12000) {
 				isStreamingRef.current = false;
 				setIsStreaming(false);
 				setIsAwaitingResponse(false);
+				sendInFlightRef.current = false;
+				void fetchHistoryMessages(sessionId);
 				setError(
 					new Error(
 						"Live updates stalled. Recovered latest history. You can continue chatting.",
 					),
 				);
+			} else {
+				// Still potentially streaming (e.g. long tool call).
+				// Use partial merge to avoid clobbering in-flight messages.
+				manager.agentGetMessages(sessionId);
 			}
-		}, 3000);
+		}, 2000);
 
-		return () => clearInterval(timer);
+		return () => {
+			clearInterval(syncTimer);
+			clearInterval(watchdogTimer);
+		};
 	}, [
 		activeSessionId,
 		fetchHistoryMessages,
@@ -2185,21 +2133,13 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 								"starting",
 							]);
 							if (busyStates.has(activeSession.state)) {
-								// CRITICAL: When reattaching to a streaming session, fetch
-								// the current messages from Pi. hstry only has completed
-								// turns; Pi's get_messages returns the live window.
-								// Use forceMessageSyncRef to ensure the response is NOT
-								// deferred (which would happen since we're streaming).
+								// Reattaching to a streaming session — fetch
+								// current messages from Pi (live window).
 								console.log(
 									"[useChat] Fetching live messages from Pi for streaming session:",
 									sid,
 								);
-								forceMessageSyncRef.current.add(sid);
 								manager.agentGetMessages(sid);
-
-								// Note: isStreamingRef set after get_messages to reduce
-								// race condition window. The forceMessageSyncRef ensures
-								// the response is applied even if we're streaming.
 								setIsStreaming(true);
 								isStreamingRef.current = true;
 								setBusyForEvent(sid, true);
@@ -2264,12 +2204,9 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 
 	// NOTE: We intentionally do NOT sync isStreaming state back to
 	// isStreamingRef. The ref is set manually in send() BEFORE the optimistic
-	// user message is added, and cleared on agent.idle/stream.done. Syncing
-	// from the React state would overwrite the ref with `false` on the next
-	// render (before stream events arrive), creating a window where incoming
-	// get_messages responses are not deferred and overwrite the optimistic
-	// user message. The ref is the source of truth for deferral logic; the
-	// React state is for rendering.
+	// user message is added, and cleared on agent.idle/stream.done. The ref
+	// is the source of truth for streaming detection; the React state is
+	// for rendering.
 
 	useEffect(() => {
 		if (!activeSessionId) return;
