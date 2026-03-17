@@ -47,6 +47,33 @@ setup.sh must correctly provision everything for a new platform user on a fresh 
 ...
 
 
+### [oqto-hn80.2] Add strict lint rules banning direct useEffect (P1, task)
+Configure Biome and/or oxlint to flag any direct useEffect usage.
+
+## Rules to add
+
+### Biome (biome.json)
+...
+
+
+### [oqto-hn80.1] Create useMountEffect and useLocalStorage hooks (P1, task)
+Create foundational hooks that replace common useEffect patterns.
+
+## useMountEffect (hooks/useMountEffect.ts)
+```ts
+export function useMountEffect(effect: () => void | (() => void)) {
+...
+
+
+### [oqto-hn80] Ban useEffect: strict linting and full migration (P1, epic)
+Ban direct useEffect usage across the frontend codebase. Introduce strict lint rules, a useMountEffect escape hatch, and migrate all 46 occurrences across 12 files.
+
+Reference: Factory's 'Why we banned useEffect' (Alvin Sng, 2026-03-17), React official 'You Might Not Need an Effect' guide.
+
+## Current state
+...
+
+
 ### [oqto-36zw.3.1] Implementation checklist: single-user runner bootstrap and recovery (P1, task)
 Checklist:
 - [ ] Auto-start runner if socket unavailable
@@ -535,6 +562,60 @@ Build and distribute pre-compiled binaries for Linux (x86_64, arm64) and macOS (
 
 ### [octo-af5j] Release & Update System (P1, epic)
 Comprehensive system for distributing Octo releases, managing updates in the field, and expanding runtime options including Proxmox LXC support.
+
+### [oqto-hn80.10] Update AGENTS.md with useEffect ban policy (P2, task)
+Add the useEffect ban to AGENTS.md so all agents (human and AI) follow it.
+
+## Add to Code Style section
+```markdown
+### React useEffect Ban
+...
+
+
+### [oqto-hn80.7] Migrate useSharedWorkspaces.ts: eliminate 2 useEffect calls (P2, task)
+useSharedWorkspaces.ts has 2 useEffect calls:
+
+## Data fetching -> TanStack Query
+- L62: Initial fetch on mount -> useQuery(['shared-workspaces'], fetchSharedWorkspaces)
+
+...
+
+
+### [oqto-hn80.6] Migrate useSidebarState.ts: eliminate 3 useEffect calls (P2, task)
+useSidebarState.ts has 3 useEffect calls, all doing the same thing: localStorage persistence.
+
+## All 3 -> useLocalStorage hook
+- L43: Persist expandedProjects to localStorage -> useLocalStorage('oqto:expandedProjects', new Set())
+- L68: Persist pinnedSessions to localStorage -> useLocalStorage('oqto:pinnedSessions', new Set())
+...
+
+
+### [oqto-hn80.5] Migrate SidebarSessions.tsx: eliminate 4 useEffect calls (P2, task)
+SidebarSessions.tsx has 4 useEffect calls:
+
+## Mount effects -> useMountEffect
+- L228: Keyboard shortcut Ctrl+Shift+F for search mode toggle -> useMountEffect
+- L250: Custom event listener 'oqto:set-session-view-mode' -> useMountEffect
+...
+
+
+### [oqto-hn80.4] Migrate useProjectActions.ts: eliminate 5 useEffect calls (P2, task)
+useProjectActions.ts has 5 useEffect calls:
+
+## Derived state (remove entirely)
+- L286: Sync newProjectSettings from selectedTemplate defaults -> derive in render or useMemo
+- L301: Set default model and skills when dialog opens -> derive in render or useMemo
+...
+
+
+### [oqto-hn80.3] Migrate AppShellRoute.tsx: eliminate 14 useEffect calls (P2, task)
+AppShellRoute.tsx has 14 useEffect calls -- the biggest offender. Migrate each:
+
+## Derived state / event handlers (remove entirely)
+- L377: Route sync (matchedAppId != activeAppId) -> handle in navigation callbacks or useMemo
+- L399: Active app route sync -> merge with above into a single route handler
+...
+
 
 ### [oqto-36zw.10.1] Implementation checklist: final runner-only cleanup and docs alignment (P2, task)
 Checklist:
@@ -1288,12 +1369,21 @@ Enable multiple platform users to access the same project/workspace with proper 
 ...
 
 
-### [oqto-97sn] Audit and reduce useEffect usage in frontend (P3, task)
-The React team discourages useEffect for most use cases. We have 46 occurrences across 12 files, with AppShellRoute.tsx alone having 14.
+### [oqto-hn80.9] Migrate remaining files: RegisterPage.tsx and SidebarSharedWorkspaces.tsx (P3, task)
+Two remaining files with useEffect:
 
-Refactor candidates:
-- Data fetching effects -> React Router loaders or TanStack Query
-- Derived state effects -> compute during render
+## RegisterPage.tsx (2 effects)
+- L67: Provisioning step timer animation -> useMountEffect. Starts timers for showing progress steps during account provisioning.
+
+...
+
+
+### [oqto-hn80.8] Migrate dialog components: eliminate useEffect in 5 dialogs (P3, task)
+Five dialog components each have useEffect calls that reset form state when the dialog opens. All follow the same pattern: `useEffect(() => { if (open) resetFields(); }, [open, ...])`.
+
+## Pattern: key-based reset
+Instead of watching 'open' in an effect, use React's key prop on the dialog content to force remount:
+```tsx
 ...
 
 
@@ -1477,6 +1567,7 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [oqto-97sn] Audit and reduce useEffect usage in frontend (closed 2026-03-17)
 - [octo-thhx.2] Onboarding API endpoints (closed 2026-03-17)
 - [octo-thhx.11] Godmode command to skip onboarding (closed 2026-03-17)
 - [octo-thhx.1] Onboarding state model and database schema (closed 2026-03-17)
@@ -2146,12 +2237,12 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
-- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
-- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
-- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
 - [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
+- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
+- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
