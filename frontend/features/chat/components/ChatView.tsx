@@ -3122,7 +3122,13 @@ const MessageGroupCard = memo(function MessageGroupCard({
 			}
 			flushThinkingOnly();
 			attachToolGroup();
-			// Discard any remaining pendingToolGroup (no content to attach to)
+			// If only tool calls remain (no text/thinking segments to attach to),
+			// emit the pending tool group as a standalone segment so the message
+			// bubble isn't empty.
+			if (pendingToolGroup && grouped.length === 0) {
+				grouped.push(pendingToolGroup);
+				pendingToolGroup = null;
+			}
 			return grouped;
 		}
 		if (verbosity !== 2) return normalizedSegments;
