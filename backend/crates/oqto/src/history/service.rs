@@ -184,7 +184,7 @@ pub async fn get_session_messages_rendered(session_id: &str) -> Result<Vec<ChatM
 
 /// Get all messages for a session via gRPC (async version with caching).
 pub async fn get_session_messages_via_grpc_cached(
-    client: &crate::hstry::HstryClient,
+    client: &crate::history::hstry::HstryClient,
     session_id: &str,
 ) -> Result<Vec<ChatMessage>> {
     // Check cache first
@@ -245,7 +245,7 @@ pub async fn get_session_messages_via_grpc_cached(
 
 /// Get all messages for a session via gRPC with pre-rendered markdown HTML.
 pub async fn get_session_messages_rendered_via_grpc(
-    client: &crate::hstry::HstryClient,
+    client: &crate::history::hstry::HstryClient,
     session_id: &str,
 ) -> Result<Vec<ChatMessage>> {
     match get_session_messages_via_grpc(client, session_id).await {

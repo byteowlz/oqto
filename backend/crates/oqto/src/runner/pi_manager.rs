@@ -26,8 +26,7 @@ use tokio::process::{Child, ChildStdin, Command};
 use tokio::sync::{RwLock, broadcast, mpsc, oneshot};
 
 use crate::agent_browser::{agent_browser_session_dir, browser_session_name};
-use crate::hstry::HstryClient;
-use crate::local::SandboxConfig;
+use crate::history::HstryClient;
 use crate::pi::{
     AgentMessage, PiCommand, PiEvent, PiMessage, PiResponse, PiState, SessionStats,
     session_parser::ParsedTitle,
@@ -35,6 +34,7 @@ use crate::pi::{
 use crate::runner::pi_translator::PiTranslator;
 use crate::runner::protocol::{PiSessionInfo, PiSessionState};
 use oqto_protocol::events::{AgentPhase, Event as CanonicalEvent, EventPayload};
+use oqto_sandbox::SandboxConfig;
 
 // ============================================================================
 // Configuration
@@ -4042,7 +4042,7 @@ impl PiSessionManager {
         work_dir: &Path,
         client_id: Option<String>,
     ) -> Result<()> {
-        use crate::hstry::agent_message_to_proto_with_client_id;
+        use crate::history::agent_message_to_proto_with_client_id;
 
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -4522,7 +4522,7 @@ async fn reconcile_hstry_with_jsonl_tail(
     session_id: &str,
     work_dir: &Path,
 ) -> Result<usize> {
-    use crate::hstry::agent_message_to_proto_with_client_id;
+    use crate::history::agent_message_to_proto_with_client_id;
 
     let session_file = match crate::pi::session_files::find_session_file_async(
         session_id.to_string(),

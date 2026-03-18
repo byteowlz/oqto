@@ -1706,7 +1706,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         };
 
         // Load sandbox config from separate file (~/.config/oqto/sandbox.toml)
-        let sandbox_config = match local::SandboxConfig::load_global() {
+        let sandbox_config = match oqto_sandbox::SandboxConfig::load_global() {
             Ok(config) => {
                 if config.enabled {
                     info!("Sandbox enabled globally");
@@ -1829,6 +1829,21 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
 
     // Determine single_user mode from local config
     let single_user = ctx.config.local.single_user;
+
+    if local_mode && single_user {
+        let runner = runner::client::RunnerClient::default();
+        match runner.ensure_ready_with_recovery().await {
+            Ok(()) => info!(
+                "Single-user runner readiness verified (socket={})",
+                runner.socket_path().display()
+            ),
+            Err(err) => warn!(
+                "Single-user runner not ready at startup (socket={}, error={}); runtime requests will retry with bounded recovery",
+                runner.socket_path().display(),
+                err
+            ),
+        }
+    }
 
     let eavs_url = if local_mode {
         ctx.config.eavs.as_ref().map(|e| e.base_url.clone())
@@ -2334,19 +2349,19 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         info!("Skipping shared hstry client in multi-user mode (per-user hstry via runner)");
     } else if ctx.config.hstry.enabled {
         // Always auto-start hstry daemon and connect.
-        let hstry_config = hstry::HstryServiceConfig {
+        let hstry_config = history::HstryServiceConfig {
             binary: ctx.config.hstry.binary.clone(),
             auto_start: true,
             startup_timeout: std::time::Duration::from_secs(10),
         };
-        let hstry_manager = hstry::HstryServiceManager::new(hstry_config);
+        let hstry_manager = history::HstryServiceManager::new(hstry_config);
 
         // Ensure daemon is running (auto-starts if needed)
         match hstry_manager.ensure_running().await {
             Ok(()) => {
                 info!("hstry daemon is running");
                 // Create client and connect
-                let hstry_client = hstry::HstryClient::new();
+                let hstry_client = history::HstryClient::new();
                 if let Err(e) = hstry_client.connect().await {
                     warn!(
                         "Failed to connect to hstry daemon: {}. Will retry on first use.",

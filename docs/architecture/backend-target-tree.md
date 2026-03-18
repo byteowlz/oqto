@@ -42,15 +42,7 @@ backend/
 │   │
 │   ├── oqto-runner/
 │   │   └── src/
-│   │       ├── lib.rs
-│   │       ├── protocol.rs
-│   │       ├── client.rs
-│   │       ├── daemon/
-│   │       │   ├── mod.rs
-│   │       │   ├── server.rs
-│   │       │   ├── state.rs
-│   │       │   └── handlers/{mod.rs,process.rs,files.rs,sessions.rs,memories.rs,pi.rs}
-│   │       └── bin/oqto-runner.rs
+│   │       └── main.rs  (thin runner daemon entrypoint; uses oqto::runner::daemon modules)
 │   │
 │   ├── oqto-sandbox/
 │   │   └── src/{lib.rs,config.rs,policy.rs,linux_bwrap.rs,macos_seatbelt.rs,bin/oqto-sandbox.rs}
@@ -60,6 +52,7 @@ backend/
 │   │       ├── lib.rs
 │   │       ├── bin/oqto.rs
 │   │       ├── app/{mod.rs,bootstrap.rs,context.rs,config.rs}
+│   │       ├── bus/{mod.rs,engine.rs,types.rs,scopes.rs}
 │   │       ├── api/
 │   │       │   ├── {mod.rs,routes.rs,state.rs}
 │   │       │   ├── middleware/{mod.rs,auth.rs,audit.rs,errors.rs}
@@ -87,7 +80,7 @@ backend/
 ## Runtime Policy
 
 - Normal runtime path is **runner-mediated**.
-- `DirectUserPlane` is allowed only for tests and explicit emergency/debug mode.
+- `DirectUserPlane` is test-only and not wired into production runtime paths.
 - No production logic divergence by mode.
 
 ## Dependency Rules
@@ -99,12 +92,12 @@ backend/
 
 ## Migration Strategy (Incremental)
 
-1. Make runner default path everywhere (keep temporary direct fallback flag).
+1. Make runner default path everywhere.
 2. Split giant files into submodules (`ws_multiplexed`, runner daemon handlers).
 3. Extract `oqto-runner` and `oqto-sandbox` into dedicated crates.
 4. Consolidate history integration (`history` + `hstry`) into one crate.
 5. Move canonical types into `oqto-protocol` only.
-6. Remove deprecated direct runtime path and dead code.
+6. Remove deprecated direct runtime code and dead branches.
 
 ## Notes
 

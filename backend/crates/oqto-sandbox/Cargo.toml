@@ -1,0 +1,33 @@
+[package]
+name = "oqto-sandbox"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Sandbox configuration and CLI for Oqto"
+
+[lib]
+name = "oqto_sandbox"
+path = "src/lib.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+env_logger.workspace = true
+log.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+dirs.workspace = true
+shellexpand.workspace = true
+libc.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+tempfile.workspace = true
+which = "7"
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

@@ -1,7 +1,5 @@
 //! Canonical message format types for Oqto.
 //!
-//! This module defines types used for message content representation.
+//! Canonical type definitions are sourced from `oqto-protocol`.
 
-mod types;
-
-pub use types::*;
+pub use oqto_protocol::canon::*;

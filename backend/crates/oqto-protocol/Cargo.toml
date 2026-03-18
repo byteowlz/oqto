@@ -10,6 +10,9 @@ authors.workspace = true
 serde = { workspace = true }
 serde_json = { workspace = true }
 hstry-core = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+ts-rs = { version = "10", features = ["serde-compat", "chrono-impl", "serde-json-impl"] }
 
 [lints]
 workspace = true

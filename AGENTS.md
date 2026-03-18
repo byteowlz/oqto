@@ -104,7 +104,7 @@ Each runner advertises which harnesses it supports. The frontend shows a harness
 |--------|---------|
 | `oqto` | Main backend server |
 | `oqtoctl` | CLI for server management |
-| `oqto-runner` | Multi-user process daemon, manages agent harnesses |
+| `oqto-runner` | Multi-user process daemon (dedicated crate: `backend/crates/oqto-runner`) managing agent harnesses |
 | `oqto-sandbox` | Sandbox wrapper using bwrap/sandbox-exec |
 | `pi-bridge` | HTTP/WebSocket bridge for Pi in containers |
 | `oqto-files` | File access server for workspaces |
@@ -293,6 +293,7 @@ just gen-types        # Generate TypeScript types from Rust structs
 | Component | Build | Lint | Test | Single Test |
 |-----------|-------|------|------|-------------|
 | **backend/** | `cargo build` | `cargo clippy && cargo fmt --check` | `cargo test` | `cargo test test_name` |
+| **oqto-runner crate** | `cargo build -p oqto-runner` | `cargo clippy -p oqto-runner` | `cargo test -p oqto-runner` | `cargo test -p oqto-runner test_name` |
 | **fileserver/** | `cargo build` | `cargo clippy && cargo fmt --check` | `cargo test` | `cargo test test_name` |
 | **frontend/** | `bun run build` | `bun run lint` | `bun run test` | `bun run test -t "pattern"` |
 

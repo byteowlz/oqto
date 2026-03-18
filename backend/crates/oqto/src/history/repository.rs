@@ -538,7 +538,7 @@ fn hstry_parts_to_chat_parts(
 
 /// List all sessions from hstry via gRPC.
 pub async fn list_sessions_via_grpc(
-    client: &crate::hstry::HstryClient,
+    client: &crate::history::hstry::HstryClient,
 ) -> Result<Vec<ChatSession>> {
     let summaries = client.list_conversations(None, None, None).await?;
     let sessions = summaries
@@ -550,7 +550,7 @@ pub async fn list_sessions_via_grpc(
 
 /// Get a single session from hstry via gRPC.
 pub async fn get_session_via_grpc(
-    client: &crate::hstry::HstryClient,
+    client: &crate::history::hstry::HstryClient,
     session_id: &str,
 ) -> Result<Option<ChatSession>> {
     let conv = client.get_conversation(session_id, None).await?;
@@ -559,7 +559,7 @@ pub async fn get_session_via_grpc(
 
 /// Get messages for a session from hstry via gRPC.
 pub async fn get_session_messages_via_grpc(
-    client: &crate::hstry::HstryClient,
+    client: &crate::history::hstry::HstryClient,
     session_id: &str,
 ) -> Result<Vec<ChatMessage>> {
     let proto_messages = client.get_messages(session_id, None, None).await?;

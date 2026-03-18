@@ -38,7 +38,7 @@ use fuser::{
 };
 use glob::Pattern;
 use log::{debug, error, info, warn};
-use oqto::local::{GuardConfig, GuardPolicy, SandboxConfig};
+use oqto_sandbox::{GuardConfig, GuardPolicy, SandboxConfig};
 use rustix::process::getuid;
 use std::collections::HashMap;
 use std::ffi::OsStr;

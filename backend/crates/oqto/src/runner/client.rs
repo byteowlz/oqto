@@ -81,6 +81,111 @@ impl RunnerClient {
         &self.socket_path
     }
 
+    fn is_default_socket_path(&self) -> bool {
+        self.socket_path == Self::default().socket_path
+    }
+
+    fn is_transient_connection_error(err: &anyhow::Error) -> bool {
+        err.chain().any(|cause| {
+            let msg = cause.to_string();
+            msg.contains("Connection refused")
+                || msg.contains("No such file")
+                || msg.contains("Permission denied")
+                || msg.contains("connecting to runner")
+                || msg.contains("timed out")
+                || msg.contains("Broken pipe")
+        })
+    }
+
+    async fn recover_default_runner(&self, reason: &anyhow::Error) -> Result<bool> {
+        if !self.is_default_socket_path() || !Self::is_transient_connection_error(reason) {
+            return Ok(false);
+        }
+
+        if !self.socket_path.exists() {
+            tracing::warn!(
+                socket = %self.socket_path.display(),
+                error = %reason,
+                "Runner socket unavailable; attempting oqto-runner auto-start"
+            );
+
+            std::process::Command::new("oqto-runner")
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .context("spawning oqto-runner for single-user recovery")?;
+        }
+
+        // Bounded readiness handshake: ping + capabilities.
+        for attempt in 0..5 {
+            if attempt > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(200 * attempt as u64)).await;
+            }
+
+            if let Ok(RunnerResponse::Pong) = self.request_once(&RunnerRequest::Ping).await
+                && let Ok(RunnerResponse::RunnerCapabilities(_)) =
+                    self.request_once(&RunnerRequest::GetCapabilities).await
+            {
+                tracing::info!(
+                    socket = %self.socket_path.display(),
+                    attempt,
+                    "Runner recovered and ready"
+                );
+                return Ok(true);
+            }
+        }
+
+        anyhow::bail!(
+            "runner recovery failed at {} after bounded readiness retries",
+            self.socket_path.display()
+        );
+    }
+
+    /// Ensure runner readiness with bounded retries and optional single-user auto-start.
+    pub async fn ensure_ready_with_recovery(&self) -> Result<()> {
+        for attempt in 0..=3 {
+            if attempt > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(200 * attempt as u64)).await;
+            }
+
+            match self.request_once(&RunnerRequest::Ping).await {
+                Ok(RunnerResponse::Pong) => {
+                    match self.request_once(&RunnerRequest::GetCapabilities).await {
+                        Ok(RunnerResponse::RunnerCapabilities(_)) => return Ok(()),
+                        Ok(_) => anyhow::bail!(
+                            "unexpected response to get_capabilities readiness handshake"
+                        ),
+                        Err(err) => {
+                            if self.recover_default_runner(&err).await? {
+                                continue;
+                            }
+                            if Self::is_transient_connection_error(&err) && attempt < 3 {
+                                continue;
+                            }
+                            return Err(err);
+                        }
+                    }
+                }
+                Ok(_) => anyhow::bail!("unexpected response to ping readiness handshake"),
+                Err(err) => {
+                    if self.recover_default_runner(&err).await? {
+                        continue;
+                    }
+                    if Self::is_transient_connection_error(&err) && attempt < 3 {
+                        continue;
+                    }
+                    return Err(err);
+                }
+            }
+        }
+
+        anyhow::bail!(
+            "runner readiness failed after bounded retries (socket: {})",
+            self.socket_path.display()
+        )
+    }
+
     /// Send a request and receive a response.
     ///
     /// Retries transient connection failures (socket not found, permission
@@ -98,22 +203,21 @@ impl RunnerClient {
             match self.request_once(req).await {
                 Ok(resp) => return Ok(resp),
                 Err(e) => {
-                    let is_transient = e.chain().any(|cause| {
-                        let msg = cause.to_string();
-                        msg.contains("Connection refused")
-                            || msg.contains("No such file")
-                            || msg.contains("Permission denied")
-                            || msg.contains("connecting to runner")
-                    });
-                    if is_transient && attempt < max_retries {
-                        tracing::debug!(
-                            attempt = attempt + 1,
-                            socket = %self.socket_path.display(),
-                            error = %e,
-                            "Runner connection failed, retrying"
-                        );
-                        last_err = Some(e);
-                        continue;
+                    if Self::is_transient_connection_error(&e) {
+                        if self.recover_default_runner(&e).await? {
+                            continue;
+                        }
+
+                        if attempt < max_retries {
+                            tracing::debug!(
+                                attempt = attempt + 1,
+                                socket = %self.socket_path.display(),
+                                error = %e,
+                                "Runner connection failed, retrying"
+                            );
+                            last_err = Some(e);
+                            continue;
+                        }
                     }
                     return Err(e);
                 }
@@ -1718,6 +1822,231 @@ mod tests {
                 .to_string_lossy()
                 .contains("/run/user/1002/")
         );
+    }
+
+    #[tokio::test]
+    async fn integration_prompt_abort_retry_and_stream_subscription() {
+        use std::path::PathBuf;
+
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+        use tokio::net::UnixListener;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let socket_path = temp.path().join("runner.sock");
+        let _ = std::fs::remove_file(&socket_path);
+
+        let listener = UnixListener::bind(&socket_path).expect("bind mock runner");
+        let server = tokio::spawn(async move {
+            loop {
+                let (mut stream, _) = match listener.accept().await {
+                    Ok(conn) => conn,
+                    Err(_) => break,
+                };
+
+                let mut line = String::new();
+                let mut reader = BufReader::new(&mut stream);
+                if reader
+                    .read_line(&mut line)
+                    .await
+                    .ok()
+                    .filter(|n| *n > 0)
+                    .is_none()
+                {
+                    continue;
+                }
+
+                let req: RunnerRequest = match serde_json::from_str(&line) {
+                    Ok(req) => req,
+                    Err(_) => continue,
+                };
+
+                match req {
+                    RunnerRequest::PiPrompt(_)
+                    | RunnerRequest::PiAbort(_)
+                    | RunnerRequest::PiSetAutoRetry(_)
+                    | RunnerRequest::PiAbortRetry(_) => {
+                        let ack = serde_json::to_string(&RunnerResponse::PiCommandAck {
+                            session_id: "ses-1".to_string(),
+                        })
+                        .expect("serialize ack");
+                        let _ = stream.write_all(ack.as_bytes()).await;
+                        let _ = stream.write_all(b"\n").await;
+                    }
+                    RunnerRequest::PiSubscribe(req) => {
+                        let subscribed = serde_json::to_string(&RunnerResponse::PiSubscribed(
+                            PiSubscribedResponse {
+                                session_id: req.session_id.clone(),
+                            },
+                        ))
+                        .expect("serialize subscribed");
+                        let _ = stream.write_all(subscribed.as_bytes()).await;
+                        let _ = stream.write_all(b"\n").await;
+
+                        let event = RunnerResponse::PiEvent(oqto_protocol::events::Event {
+                            session_id: req.session_id,
+                            runner_id: "local".to_string(),
+                            ts: 1,
+                            payload: oqto_protocol::events::EventPayload::StreamTextDelta {
+                                message_id: "msg-1".to_string(),
+                                delta: "hello".to_string(),
+                                content_index: 0,
+                            },
+                        });
+                        let event_json = serde_json::to_string(&event).expect("serialize event");
+                        let _ = stream.write_all(event_json.as_bytes()).await;
+                        let _ = stream.write_all(b"\n").await;
+
+                        let end = serde_json::to_string(&RunnerResponse::PiSubscriptionEnd(
+                            PiSubscriptionEndResponse {
+                                session_id: "ses-1".to_string(),
+                                reason: "done".to_string(),
+                            },
+                        ))
+                        .expect("serialize end");
+                        let _ = stream.write_all(end.as_bytes()).await;
+                        let _ = stream.write_all(b"\n").await;
+                    }
+                    _ => {
+                        let err = serde_json::to_string(&RunnerResponse::Error(ErrorResponse {
+                            code: ErrorCode::InvalidRequest,
+                            message: "unexpected request".to_string(),
+                        }))
+                        .expect("serialize error");
+                        let _ = stream.write_all(err.as_bytes()).await;
+                        let _ = stream.write_all(b"\n").await;
+                    }
+                }
+            }
+        });
+
+        let client = RunnerClient::new(PathBuf::from(&socket_path));
+
+        client.pi_prompt("ses-1", "hi", None).await.expect("prompt");
+        client.pi_abort("ses-1").await.expect("abort");
+        client
+            .pi_set_auto_retry("ses-1", true)
+            .await
+            .expect("set auto retry");
+        client.pi_abort_retry("ses-1").await.expect("abort retry");
+
+        let mut sub = client.pi_subscribe("ses-1").await.expect("subscribe");
+        match sub.next().await {
+            Some(PiSubscriptionEvent::Event(event)) => {
+                if let oqto_protocol::events::EventPayload::StreamTextDelta { delta, .. } =
+                    event.payload
+                {
+                    assert_eq!(delta, "hello");
+                } else {
+                    panic!("expected stream.text_delta event");
+                }
+            }
+            other => panic!("expected subscription event, got {:?}", other),
+        }
+
+        match sub.next().await {
+            Some(PiSubscriptionEvent::End { reason }) => assert_eq!(reason, "done"),
+            other => panic!("expected subscription end, got {:?}", other),
+        }
+
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn integration_retries_until_runner_becomes_available() {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+        use tokio::net::UnixListener;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let socket_path = temp.path().join("runner-delayed.sock");
+        let _ = std::fs::remove_file(&socket_path);
+
+        let delayed_path = socket_path.clone();
+        let server = tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(650)).await;
+            let listener = UnixListener::bind(&delayed_path).expect("bind delayed runner");
+            let (mut stream, _) = listener.accept().await.expect("accept connection");
+
+            let mut line = String::new();
+            let mut reader = BufReader::new(&mut stream);
+            reader.read_line(&mut line).await.expect("read request");
+            let req: RunnerRequest = serde_json::from_str(&line).expect("parse request");
+            match req {
+                RunnerRequest::ListSessions => {
+                    let response = RunnerResponse::SessionList(SessionListResponse {
+                        sessions: Vec::new(),
+                    });
+                    let payload = serde_json::to_string(&response).expect("serialize response");
+                    stream
+                        .write_all(format!("{}\n", payload).as_bytes())
+                        .await
+                        .expect("write response");
+                }
+                _ => panic!("unexpected request"),
+            }
+        });
+
+        let client = RunnerClient::new(&socket_path);
+        let sessions = client
+            .list_sessions()
+            .await
+            .expect("list sessions after retry");
+        assert!(sessions.sessions.is_empty());
+
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn integration_readiness_handshake_with_delayed_runner() {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+        use tokio::net::UnixListener;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let socket_path = temp.path().join("runner-ready.sock");
+        let _ = std::fs::remove_file(&socket_path);
+
+        let delayed_path = socket_path.clone();
+        let server = tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(650)).await;
+            let listener = UnixListener::bind(&delayed_path).expect("bind delayed runner");
+
+            for _ in 0..2 {
+                let (mut stream, _) = listener.accept().await.expect("accept connection");
+                let mut line = String::new();
+                let mut reader = BufReader::new(&mut stream);
+                reader.read_line(&mut line).await.expect("read request");
+                let req: RunnerRequest = serde_json::from_str(&line).expect("parse request");
+
+                let response = match req {
+                    RunnerRequest::Ping => RunnerResponse::Pong,
+                    RunnerRequest::GetCapabilities => {
+                        RunnerResponse::RunnerCapabilities(RunnerCapabilitiesResponse {
+                            harnesses: vec!["pi".to_string()],
+                            features: RunnerFeatureFlags {
+                                command_discovery: true,
+                                model_discovery: true,
+                                fork: true,
+                                extension_ui: true,
+                            },
+                        })
+                    }
+                    _ => panic!("unexpected request"),
+                };
+
+                let payload = serde_json::to_string(&response).expect("serialize response");
+                stream
+                    .write_all(format!("{}\n", payload).as_bytes())
+                    .await
+                    .expect("write response");
+            }
+        });
+
+        let client = RunnerClient::new(&socket_path);
+        client
+            .ensure_ready_with_recovery()
+            .await
+            .expect("readiness handshake should pass after delayed startup");
+
+        server.abort();
     }
 }
 

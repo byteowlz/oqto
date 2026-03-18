@@ -126,6 +126,7 @@ pub struct AdminMetricsSnapshot {
     pub timestamp: String,
     pub host: Option<HostMetrics>,
     pub containers: Vec<SessionContainerStats>,
+    pub user_plane: Vec<crate::user_plane::UserPlaneMetricRow>,
     pub error: Option<String>,
 }
 
@@ -247,6 +248,7 @@ async fn build_admin_metrics_snapshot(
         timestamp,
         host,
         containers,
+        user_plane: state.user_plane_metrics.snapshot(),
         error,
     }
 }

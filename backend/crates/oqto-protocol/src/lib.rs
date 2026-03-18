@@ -22,6 +22,7 @@
 //! 3. **Events form a state machine.** The frontend can derive UI state from any single event.
 //! 4. **Agent-agnostic.** Supports any harness. Agent-specific features use `x-*` extensions.
 
+pub mod canon;
 pub mod commands;
 pub mod delegation;
 pub mod events;

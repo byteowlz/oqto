@@ -1,55 +1,6 @@
-//! oqto-runner - Process runner daemon for multi-user isolation.
-//!
-//! This daemon runs as a specific Linux user (via systemd user service) and
-//! accepts commands over a Unix socket to spawn and manage processes.
-//!
-//! ## Configuration
-//!
-//! The runner loads configuration from `~/.config/oqto/config.toml`, reusing
-//! Oqto's standard config format. The relevant sections are:
-//!
-//! ```toml
-//! [local]
-//! fileserver_binary = "oqto-files"
-//! ttyd_binary = "ttyd"
-//! workspace_dir = "~/oqto"
-//!
-//! [runner]
-//! # Runner-specific settings
-//! runner_id = "workstation-1"
-//! pi_sessions_dir = "~/.pi/agent/sessions"
-//! memories_dir = "~/.local/share/mmry"
-//! ```
-//!
-//! ## Security Model
-//!
-//! The runner loads sandbox configuration from (in order):
-//!   1. `--sandbox-config <path>` (CLI override)
-//!   2. `/etc/oqto/sandbox.toml` (system-wide, root-owned -- multi-user production)
-//!   3. `~/.config/oqto/sandbox.toml` (user-level -- single-user / dev setups)
-//!
-//! In multi-user production, the system config is owned by root so compromised
-//! agents cannot weaken sandbox restrictions. In single-user mode, the user
-//! config avoids requiring sudo.
-//!
-//! ## Usage
-//!
-//! ```bash
-//! # Run with default config (~/.config/oqto/config.toml)
-//! oqto-runner
-//!
-//! # Run with custom socket path (overrides config)
-//! oqto-runner --socket /tmp/my-runner.sock
-//!
-//! # With custom sandbox config
-//! oqto-runner --sandbox-config /path/to/sandbox.toml
-//! ```
-
 use anyhow::{Context, Result};
 use chrono::TimeZone;
-use clap::Parser;
 use log::{debug, error, info, warn};
-use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -57,379 +8,28 @@ use std::process::Stdio;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
-use tokio::process::{Child, Command};
+use tokio::process::Command;
 use tokio::sync::{Mutex, RwLock, broadcast};
 
-use oqto::local::SandboxConfig;
-use oqto::runner::client::DEFAULT_SOCKET_PATTERN;
-use oqto::runner::pi_manager::{PiManagerConfig, PiSessionManager};
-use oqto::runner::protocol::*;
+use crate::runner::daemon::config::RunnerUserConfig;
+use crate::runner::daemon::state::{
+    ManagedProcess, RunnerState, SessionState, StdoutBuffer, StdoutEvent,
+};
+use crate::runner::pi_manager::{PiManagerConfig, PiSessionManager};
+use crate::runner::protocol::*;
+use oqto_sandbox::SandboxConfig;
 
-// ============================================================================
-// Configuration (loaded from ~/.config/oqto/config.toml)
-// ============================================================================
-
-/// Runner configuration extracted from Oqto's config.toml.
-///
-/// This is a subset of the full AppConfig, containing only what the runner needs.
-#[derive(Debug, Clone, Default)]
-struct RunnerUserConfig {
-    /// Binary paths
-    fileserver_binary: String,
-    ttyd_binary: String,
-    pi_binary: String,
-    /// Runner identifier (human-readable)
-    runner_id: String,
-    /// Data directories
-    workspace_dir: PathBuf,
-    pi_sessions_dir: PathBuf,
-    memories_dir: PathBuf,
-}
-
-/// Config file structure (subset of Oqto's config.toml)
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(default)]
-struct ConfigFile {
-    local: LocalSection,
-    runner: RunnerSection,
-    pi: PiSection,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-struct PiSection {
-    executable: String,
-}
-
-impl Default for PiSection {
-    fn default() -> Self {
-        Self {
-            executable: "pi".to_string(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-struct LocalSection {
-    fileserver_binary: String,
-    ttyd_binary: String,
-    workspace_dir: String,
-}
-
-impl Default for LocalSection {
-    fn default() -> Self {
-        Self {
-            fileserver_binary: "oqto-files".to_string(),
-            ttyd_binary: "ttyd".to_string(),
-            workspace_dir: "~/oqto".to_string(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(default)]
-struct RunnerSection {
-    /// Runner identifier (human-readable).
-    runner_id: Option<String>,
-    /// Directory containing Pi session files.
-    pi_sessions_dir: Option<String>,
-    /// Directory containing memories (mmry).
-    memories_dir: Option<String>,
-}
-
-impl RunnerUserConfig {
-    /// Load config from ~/.config/oqto/config.toml
-    fn load() -> Self {
-        Self::load_from_path(Self::default_config_path())
-    }
-
-    fn default_config_path() -> PathBuf {
-        let config_dir = std::env::var("XDG_CONFIG_HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| {
-                let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-                PathBuf::from(home).join(".config")
-            });
-        config_dir.join("oqto").join("config.toml")
-    }
-
-    fn load_from_path(path: PathBuf) -> Self {
-        let config_file: ConfigFile = if path.exists() {
-            match std::fs::read_to_string(&path) {
-                Ok(contents) => match toml::from_str(&contents) {
-                    Ok(config) => {
-                        info!("Loaded config from {:?}", path);
-                        config
-                    }
-                    Err(e) => {
-                        warn!("Failed to parse config {:?}: {}, using defaults", path, e);
-                        ConfigFile::default()
-                    }
-                },
-                Err(e) => {
-                    warn!("Failed to read config {:?}: {}, using defaults", path, e);
-                    ConfigFile::default()
-                }
-            }
-        } else {
-            debug!("Config file {:?} not found, using defaults", path);
-            ConfigFile::default()
-        };
-
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-        let data_dir = std::env::var("XDG_DATA_HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from(&home).join(".local").join("share"));
-
-        // Resolve pi binary: use the system-wide install at /usr/local/bin/pi
-        // (installed by setup.sh). If the config specifies an absolute path, use
-        // that instead. Never rely on PATH order — per-user bun installs can
-        // shadow the system copy and silently serve outdated versions.
-        let pi_binary = {
-            let configured = &config_file.pi.executable;
-            if configured.contains('/') {
-                // Absolute path in config - use as-is
-                configured.clone()
-            } else {
-                // Prefer system-wide installs over per-user bun installs.
-                // Per-user bun installs can go stale and silently serve old
-                // model lists / miss features.
-                let system_paths = [
-                    "/usr/local/bin/pi", // setup.sh install location
-                    "/usr/bin/pi",       // npm -g / pacman install location
-                ];
-                let system_pi = system_paths
-                    .iter()
-                    .find(|p| PathBuf::from(p).exists())
-                    .map(|p| p.to_string());
-
-                if let Some(path) = system_pi {
-                    path
-                } else {
-                    // No system install — fall back to PATH lookup
-                    match std::process::Command::new("which").arg(configured).output() {
-                        Ok(output) if output.status.success() => {
-                            String::from_utf8_lossy(&output.stdout).trim().to_string()
-                        }
-                        _ => {
-                            warn!(
-                                "Pi not found at system paths or in PATH. Run setup.sh to install."
-                            );
-                            configured.clone()
-                        }
-                    }
-                }
-            }
-        };
-
-        // Log Pi version at startup for diagnostics
-        let pi_version = std::process::Command::new(&pi_binary)
-            .arg("--version")
-            .output()
-            .ok()
-            .and_then(|o| {
-                o.status
-                    .success()
-                    .then(|| String::from_utf8_lossy(&o.stdout).trim().to_string())
-            })
-            .unwrap_or_else(|| "unknown".to_string());
-        info!("Pi binary: {} (v{})", pi_binary, pi_version);
-
-        let runner_id = config_file
-            .runner
-            .runner_id
-            .or_else(|| std::env::var("OQTO_RUNNER_ID").ok())
-            .or_else(|| std::env::var("HOSTNAME").ok())
-            .unwrap_or_else(|| "local".to_string());
-
-        info!("Runner ID: {}", runner_id);
-
-        Self {
-            fileserver_binary: config_file.local.fileserver_binary,
-            ttyd_binary: config_file.local.ttyd_binary,
-            pi_binary,
-            runner_id,
-            workspace_dir: Self::expand_path(&config_file.local.workspace_dir, &home),
-            pi_sessions_dir: config_file
-                .runner
-                .pi_sessions_dir
-                .map(|p| Self::expand_path(&p, &home))
-                .unwrap_or_else(|| {
-                    PathBuf::from(&home)
-                        .join(".pi")
-                        .join("agent")
-                        .join("sessions")
-                }),
-            memories_dir: config_file
-                .runner
-                .memories_dir
-                .map(|p| Self::expand_path(&p, &home))
-                .unwrap_or_else(|| data_dir.join("mmry")),
-        }
-    }
-
-    fn expand_path(path: &str, home: &str) -> PathBuf {
-        if path.starts_with("~/") {
-            PathBuf::from(path.replacen("~", home, 1))
-        } else if path.starts_with("$HOME") {
-            PathBuf::from(path.replacen("$HOME", home, 1))
-        } else {
-            PathBuf::from(path)
-        }
-    }
-}
-
-// ============================================================================
-// CLI Arguments
-// ============================================================================
-
-#[derive(Parser, Debug)]
-#[command(
-    name = "oqto-runner",
-    about = "Process runner daemon for multi-user isolation"
-)]
-struct Args {
-    /// Path to config file.
-    /// Defaults to ~/.config/oqto/config.toml
-    #[arg(short, long)]
-    config: Option<PathBuf>,
-
-    /// Socket path to listen on.
-    /// Defaults to $XDG_RUNTIME_DIR/oqto-runner.sock
-    #[arg(short, long)]
-    socket: Option<PathBuf>,
-
-    /// Path to sandbox config file.
-    /// Defaults to /etc/oqto/sandbox.toml, then ~/.config/oqto/sandbox.toml.
-    #[arg(long)]
-    sandbox_config: Option<PathBuf>,
-
-    /// Disable sandboxing entirely.
-    #[arg(long)]
-    no_sandbox: bool,
-
-    /// Enable verbose logging.
-    #[arg(short, long)]
-    verbose: bool,
-
-    // Session service binaries (override config file)
-    /// Path to the fileserver binary.
-    #[arg(long)]
-    fileserver_binary: Option<String>,
-
-    /// Path to the ttyd binary.
-    #[arg(long)]
-    ttyd_binary: Option<String>,
-}
-
-/// Session state tracked by the runner.
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
-struct SessionState {
-    /// Session ID.
-    id: String,
-    /// Workspace path.
-    workspace_path: PathBuf,
-    /// Fileserver process ID (runner-assigned).
-    fileserver_id: String,
-    /// ttyd process ID (runner-assigned).
-    ttyd_id: String,
-    /// Fileserver port.
-    fileserver_port: u16,
-    /// ttyd port.
-    ttyd_port: u16,
-    /// Agent name.
-    agent: Option<String>,
-    /// Started timestamp.
-    started_at: std::time::Instant,
-}
-
-/// Stdout buffer shared between the reader task and the main runner.
-#[derive(Debug)]
-struct StdoutBuffer {
-    /// Buffered lines from stdout.
-    lines: Vec<String>,
-    /// Whether the process has exited.
-    closed: bool,
-    /// Exit code if process has exited.
-    exit_code: Option<i32>,
-}
-
-impl StdoutBuffer {
-    fn new() -> Self {
-        Self {
-            lines: Vec::new(),
-            closed: false,
-            exit_code: None,
-        }
-    }
-}
-
-/// Message sent on the stdout broadcast channel.
-#[derive(Debug, Clone)]
-enum StdoutEvent {
-    /// A line was read from stdout.
-    Line(String),
-    /// The process has exited.
-    Closed { exit_code: Option<i32> },
-}
-
-/// Managed process with optional RPC pipes.
-struct ManagedProcess {
-    id: String,
-    pid: u32,
-    binary: String,
-    cwd: PathBuf,
-    child: Child,
-    is_rpc: bool,
-    /// Shared stdout buffer for RPC processes (populated by background reader task).
-    stdout_buffer: Option<Arc<Mutex<StdoutBuffer>>>,
-    /// Broadcast channel for stdout lines (for subscriptions).
-    stdout_tx: Option<broadcast::Sender<StdoutEvent>>,
-    /// Handle to the background stdout reader task.
-    _reader_handle: Option<tokio::task::JoinHandle<()>>,
-}
-
-impl ManagedProcess {
-    fn is_running(&mut self) -> bool {
-        matches!(self.child.try_wait(), Ok(None))
-    }
-
-    fn exit_code(&mut self) -> Option<i32> {
-        match self.child.try_wait() {
-            Ok(Some(status)) => status.code(),
-            _ => None,
-        }
-    }
-}
-
-/// Runner daemon state.
-struct RunnerState {
-    /// All managed processes.
-    processes: HashMap<String, ManagedProcess>,
-    /// Active sessions (session_id -> SessionState).
-    sessions: HashMap<String, SessionState>,
-}
-
-impl RunnerState {
-    fn new() -> Self {
-        Self {
-            processes: HashMap::new(),
-            sessions: HashMap::new(),
-        }
-    }
-}
+mod handlers;
 
 /// Configuration for session service binaries.
 #[derive(Debug, Clone)]
-struct SessionBinaries {
-    fileserver: String,
-    ttyd: String,
+pub struct SessionBinaries {
+    pub fileserver: String,
+    pub ttyd: String,
 }
 
 /// The runner daemon.
-struct Runner {
+pub struct Runner {
     state: Arc<RwLock<RunnerState>>,
     shutdown_tx: broadcast::Sender<()>,
     /// Sandbox configuration (loaded from trusted system config).
@@ -443,7 +43,7 @@ struct Runner {
 }
 
 impl Runner {
-    fn new(
+    pub fn new(
         sandbox_config: Option<SandboxConfig>,
         binaries: SessionBinaries,
         user_config: RunnerUserConfig,
@@ -487,158 +87,7 @@ impl Runner {
 
     /// Handle a single request.
     async fn handle_request(&self, req: RunnerRequest) -> RunnerResponse {
-        match req {
-            RunnerRequest::Ping => RunnerResponse::Pong,
-            RunnerRequest::GetCapabilities => self.get_capabilities().await,
-
-            RunnerRequest::Shutdown => {
-                info!("Shutdown requested");
-                let _ = self.shutdown_tx.send(());
-                RunnerResponse::ShuttingDown
-            }
-
-            RunnerRequest::SpawnProcess(r) => self.spawn_process(r, false).await,
-            RunnerRequest::SpawnRpcProcess(r) => {
-                self.spawn_process(
-                    SpawnProcessRequest {
-                        id: r.id,
-                        binary: r.binary,
-                        args: r.args,
-                        cwd: r.cwd,
-                        env: r.env,
-                        sandboxed: r.sandboxed,
-                    },
-                    true,
-                )
-                .await
-            }
-
-            RunnerRequest::KillProcess(r) => self.kill_process(r).await,
-            RunnerRequest::GetStatus(r) => self.get_status(r).await,
-            RunnerRequest::ListProcesses => self.list_processes().await,
-            RunnerRequest::WriteStdin(r) => self.write_stdin(r).await,
-            RunnerRequest::ReadStdout(r) => self.read_stdout(r).await,
-            RunnerRequest::SubscribeStdout(_) => {
-                // Handled specially in handle_connection since it streams
-                error_response(
-                    ErrorCode::Internal,
-                    "SubscribeStdout must be handled via streaming",
-                )
-            }
-
-            // ================================================================
-            // Filesystem operations (user-plane)
-            // ================================================================
-            RunnerRequest::ReadFile(r) => self.read_file(r).await,
-            RunnerRequest::WriteFile(r) => self.write_file(r).await,
-            RunnerRequest::ListDirectory(r) => self.list_directory(r).await,
-            RunnerRequest::Stat(r) => self.stat(r).await,
-            RunnerRequest::DeletePath(r) => self.delete_path(r).await,
-            RunnerRequest::CreateDirectory(r) => self.create_directory(r).await,
-
-            // ================================================================
-            // Session operations (user-plane)
-            // ================================================================
-            RunnerRequest::ListSessions => self.list_sessions().await,
-            RunnerRequest::GetSession(r) => self.get_session(r).await,
-            RunnerRequest::StartSession(r) => self.start_session(r).await,
-            RunnerRequest::StopSession(r) => self.stop_session(r).await,
-
-            // ================================================================
-            // Main chat operations (user-plane)
-            // ================================================================
-            RunnerRequest::ListMainChatSessions => self.list_main_chat_sessions().await,
-            RunnerRequest::GetMainChatMessages(r) => self.get_main_chat_messages(r).await,
-            RunnerRequest::GetWorkspaceChatMessages(r) => self.get_workspace_chat_messages(r).await,
-            RunnerRequest::ListWorkspaceChatSessions(r) => {
-                self.list_workspace_chat_sessions(r).await
-            }
-            RunnerRequest::GetWorkspaceChatSession(r) => self.get_workspace_chat_session(r).await,
-            RunnerRequest::GetWorkspaceChatSessionMessages(r) => {
-                self.get_workspace_chat_session_messages(r).await
-            }
-
-            // ================================================================
-            // Memory operations (user-plane)
-            // ================================================================
-            RunnerRequest::SearchMemories(r) => self.search_memories(r).await,
-            RunnerRequest::AddMemory(r) => self.add_memory(r).await,
-            RunnerRequest::DeleteMemory(r) => self.delete_memory(r).await,
-
-            RunnerRequest::UpdateWorkspaceChatSession(r) => {
-                self.update_workspace_chat_session(r).await
-            }
-
-            // ================================================================
-            // Pi session management operations
-            // ================================================================
-            // Session Lifecycle
-            RunnerRequest::PiCreateSession(r) => self.pi_create_session(r).await,
-            RunnerRequest::PiCloseSession(r) => self.pi_close_session(r).await,
-            RunnerRequest::PiDeleteSession(r) => self.pi_delete_session(r).await,
-            RunnerRequest::PiNewSession(r) => self.pi_new_session(r).await,
-            RunnerRequest::PiSwitchSession(r) => self.pi_switch_session(r).await,
-            RunnerRequest::PiListSessions => self.pi_list_sessions().await,
-            RunnerRequest::PiSubscribe(_) => {
-                // Handled specially in handle_connection since it streams
-                error_response(
-                    ErrorCode::Internal,
-                    "PiSubscribe must be handled via streaming",
-                )
-            }
-            RunnerRequest::PiUnsubscribe(r) => self.pi_unsubscribe(r).await,
-
-            // Prompting
-            RunnerRequest::PiPrompt(r) => self.pi_prompt(r).await,
-            RunnerRequest::PiSteer(r) => self.pi_steer(r).await,
-            RunnerRequest::PiFollowUp(r) => self.pi_follow_up(r).await,
-            RunnerRequest::PiAbort(r) => self.pi_abort(r).await,
-
-            // State & Messages
-            RunnerRequest::PiGetState(r) => self.pi_get_state(r).await,
-            RunnerRequest::PiGetMessages(r) => self.pi_get_messages(r).await,
-            RunnerRequest::PiGetSessionStats(r) => self.pi_get_session_stats(r).await,
-            RunnerRequest::PiGetLastAssistantText(r) => self.pi_get_last_assistant_text(r).await,
-
-            // Model Management
-            RunnerRequest::PiSetModel(r) => self.pi_set_model(r).await,
-            RunnerRequest::PiCycleModel(r) => self.pi_cycle_model(r).await,
-            RunnerRequest::PiGetAvailableModels(r) => self.pi_get_available_models(r).await,
-
-            // Thinking Level
-            RunnerRequest::PiSetThinkingLevel(r) => self.pi_set_thinking_level(r).await,
-            RunnerRequest::PiCycleThinkingLevel(r) => self.pi_cycle_thinking_level(r).await,
-
-            // Compaction
-            RunnerRequest::PiCompact(r) => self.pi_compact(r).await,
-            RunnerRequest::PiSetAutoCompaction(r) => self.pi_set_auto_compaction(r).await,
-
-            // Queue Modes
-            RunnerRequest::PiSetSteeringMode(r) => self.pi_set_steering_mode(r).await,
-            RunnerRequest::PiSetFollowUpMode(r) => self.pi_set_follow_up_mode(r).await,
-
-            // Retry
-            RunnerRequest::PiSetAutoRetry(r) => self.pi_set_auto_retry(r).await,
-            RunnerRequest::PiAbortRetry(r) => self.pi_abort_retry(r).await,
-
-            // Forking
-            RunnerRequest::PiFork(r) => self.pi_fork(r).await,
-            RunnerRequest::PiGetForkMessages(r) => self.pi_get_fork_messages(r).await,
-
-            // Session Metadata
-            RunnerRequest::PiSetSessionName(r) => self.pi_set_session_name(r).await,
-            RunnerRequest::PiExportHtml(r) => self.pi_export_html(r).await,
-
-            // Commands/Skills
-            RunnerRequest::AgentGetCommands(r) => self.agent_get_commands(r).await,
-
-            // Bash
-            RunnerRequest::PiBash(r) => self.pi_bash(r).await,
-            RunnerRequest::PiAbortBash(r) => self.pi_abort_bash(r).await,
-
-            // Extension UI
-            RunnerRequest::PiExtensionUiResponse(r) => self.pi_extension_ui_response(r).await,
-        }
+        handlers::dispatch::handle_request(self, req).await
     }
 
     /// Get stdout broadcast receiver for a process.
@@ -1539,13 +988,13 @@ impl Runner {
     // ========================================================================
 
     async fn list_main_chat_sessions(&self) -> RunnerResponse {
-        let Some(db_path) = oqto::history::hstry_db_path() else {
+        let Some(db_path) = crate::history::hstry_db_path() else {
             return RunnerResponse::MainChatSessionList(MainChatSessionListResponse {
                 sessions: Vec::new(),
             });
         };
 
-        let pool = match oqto::history::repository::open_hstry_pool(&db_path).await {
+        let pool = match crate::history::repository::open_hstry_pool(&db_path).await {
             Ok(pool) => pool,
             Err(e) => {
                 return error_response(ErrorCode::IoError, format!("Failed to open hstry DB: {e}"));
@@ -1615,14 +1064,14 @@ impl Runner {
     }
 
     async fn get_main_chat_messages(&self, req: GetMainChatMessagesRequest) -> RunnerResponse {
-        let Some(db_path) = oqto::history::hstry_db_path() else {
+        let Some(db_path) = crate::history::hstry_db_path() else {
             return RunnerResponse::MainChatMessages(MainChatMessagesResponse {
                 session_id: req.session_id,
                 messages: Vec::new(),
             });
         };
 
-        let pool = match oqto::history::repository::open_hstry_pool(&db_path).await {
+        let pool = match crate::history::repository::open_hstry_pool(&db_path).await {
             Ok(pool) => pool,
             Err(e) => {
                 return error_response(ErrorCode::IoError, format!("Failed to open hstry DB: {e}"));
@@ -1771,14 +1220,14 @@ impl Runner {
         &self,
         req: GetWorkspaceChatMessagesRequest,
     ) -> RunnerResponse {
-        let Some(db_path) = oqto::history::hstry_db_path() else {
+        let Some(db_path) = crate::history::hstry_db_path() else {
             return RunnerResponse::WorkspaceChatMessages(MainChatMessagesResponse {
                 session_id: req.session_id,
                 messages: Vec::new(),
             });
         };
 
-        let pool = match oqto::history::repository::open_hstry_pool(&db_path).await {
+        let pool = match crate::history::repository::open_hstry_pool(&db_path).await {
             Ok(pool) => pool,
             Err(e) => {
                 return error_response(ErrorCode::IoError, format!("Failed to open hstry DB: {e}"));
@@ -1956,13 +1405,13 @@ impl Runner {
         &self,
         req: ListWorkspaceChatSessionsRequest,
     ) -> RunnerResponse {
-        let Some(db_path) = oqto::history::hstry_db_path() else {
+        let Some(db_path) = crate::history::hstry_db_path() else {
             return RunnerResponse::WorkspaceChatSessionList(WorkspaceChatSessionListResponse {
                 sessions: Vec::new(),
             });
         };
 
-        let pool = match oqto::history::repository::open_hstry_pool(&db_path).await {
+        let pool = match crate::history::repository::open_hstry_pool(&db_path).await {
             Ok(pool) => pool,
             Err(e) => {
                 return error_response(ErrorCode::IoError, format!("Failed to open hstry DB: {e}"));
@@ -2031,7 +1480,7 @@ impl Runner {
                 .or(external_id.clone())
                 .unwrap_or_else(|| id.clone());
             let workspace_path = workspace.unwrap_or_else(|| "global".to_string());
-            let project_name = oqto::history::project_name_from_path(&workspace_path);
+            let project_name = crate::history::project_name_from_path(&workspace_path);
             let readable_id = readable_id.unwrap_or_default();
             let updated_at_ms = updated_at.unwrap_or(created_at) * 1000;
 
@@ -2075,13 +1524,13 @@ impl Runner {
         &self,
         req: GetWorkspaceChatSessionRequest,
     ) -> RunnerResponse {
-        let Some(db_path) = oqto::history::hstry_db_path() else {
+        let Some(db_path) = crate::history::hstry_db_path() else {
             return RunnerResponse::WorkspaceChatSession(WorkspaceChatSessionResponse {
                 session: None,
             });
         };
 
-        let pool = match oqto::history::repository::open_hstry_pool(&db_path).await {
+        let pool = match crate::history::repository::open_hstry_pool(&db_path).await {
             Ok(pool) => pool,
             Err(e) => {
                 return error_response(ErrorCode::IoError, format!("Failed to open hstry DB: {e}"));
@@ -2147,7 +1596,7 @@ impl Runner {
             .or(external_id.clone())
             .unwrap_or_else(|| id.clone());
         let workspace_path = workspace.unwrap_or_else(|| "global".to_string());
-        let project_name = oqto::history::project_name_from_path(&workspace_path);
+        let project_name = crate::history::project_name_from_path(&workspace_path);
         let readable_id = readable_id.unwrap_or_default();
         let updated_at_ms = updated_at.unwrap_or(created_at) * 1000;
 
@@ -2175,7 +1624,7 @@ impl Runner {
         &self,
         req: GetWorkspaceChatSessionMessagesRequest,
     ) -> RunnerResponse {
-        let Some(db_path) = oqto::history::hstry_db_path() else {
+        let Some(db_path) = crate::history::hstry_db_path() else {
             return RunnerResponse::WorkspaceChatSessionMessages(
                 WorkspaceChatSessionMessagesResponse {
                     session_id: req.session_id,
@@ -2184,7 +1633,7 @@ impl Runner {
             );
         };
 
-        let messages = match oqto::history::repository::get_session_messages_from_hstry(
+        let messages = match crate::history::repository::get_session_messages_from_hstry(
             &req.session_id,
             &db_path,
         )
@@ -2215,7 +1664,7 @@ impl Runner {
             )
             .await;
             if let Ok(Ok(raw)) = pi_result {
-                let pi_msgs: Vec<oqto::pi::AgentMessage> = raw
+                let pi_msgs: Vec<crate::pi::AgentMessage> = raw
                     .as_array()
                     .map(|arr| {
                         arr.iter()
@@ -2307,7 +1756,7 @@ impl Runner {
         // differently (e.g., via session key mapping).
         match self.pi_manager.get_messages(&req.session_id).await {
             Ok(raw) => {
-                let msgs: Vec<oqto::pi::AgentMessage> = raw
+                let msgs: Vec<crate::pi::AgentMessage> = raw
                     .as_array()
                     .map(|arr| {
                         arr.iter()
@@ -2410,7 +1859,7 @@ impl Runner {
                     .workspace
                     .clone()
                     .unwrap_or_else(|| "global".to_string());
-                let project_name = oqto::history::project_name_from_path(&workspace_path);
+                let project_name = crate::history::project_name_from_path(&workspace_path);
 
                 RunnerResponse::WorkspaceChatSessionUpdated(WorkspaceChatSessionUpdatedResponse {
                     session: WorkspaceChatSessionInfo {
@@ -2451,7 +1900,7 @@ impl Runner {
         );
 
         // Convert protocol config to pi_manager config
-        let pi_config = oqto::runner::pi_manager::PiSessionConfig {
+        let pi_config = crate::runner::pi_manager::PiSessionConfig {
             cwd: req.config.cwd,
             provider: req.config.provider,
             model: req.config.model,
@@ -2655,8 +2104,8 @@ impl Runner {
 
         // Delete from hstry via direct SQLite as well, trying both the oqto ID and the
         // Pi native ID (covers cases where platform_id was not set).
-        if let Some(db_path) = oqto::history::hstry_db_path() {
-            if let Ok(pool) = oqto::history::repository::open_hstry_pool(&db_path).await {
+        if let Some(db_path) = crate::history::hstry_db_path() {
+            if let Ok(pool) = crate::history::repository::open_hstry_pool(&db_path).await {
                 // Delete by oqto session ID (platform_id) or Pi native ID (external_id)
                 let _ = sqlx::query(
                     "DELETE FROM conversations WHERE source_id = 'pi' AND (external_id = ? OR platform_id = ? OR id = ?)"
@@ -2768,7 +2217,7 @@ impl Runner {
         match self.pi_manager.get_messages(&req.session_id).await {
             Ok(messages) => {
                 // Parse JSON response to typed AgentMessage vec
-                let messages_vec: Vec<oqto::pi::AgentMessage> = messages
+                let messages_vec: Vec<crate::pi::AgentMessage> = messages
                     .as_array()
                     .map(|arr| {
                         arr.iter()
@@ -2833,10 +2282,10 @@ impl Runner {
     /// Pi's set_model/cycle_model responses contain `{ model: "<id>", provider: "<provider>", ... }`.
     /// Falls back to the provided defaults if parsing fails.
     fn parse_model_from_response(
-        response: &oqto::pi::PiResponse,
+        response: &crate::pi::PiResponse,
         fallback_provider: &str,
         fallback_model_id: &str,
-    ) -> oqto::pi::PiModel {
+    ) -> crate::pi::PiModel {
         let data = response.data.as_ref();
         let model_id = data
             .and_then(|d| d.get("model"))
@@ -2848,7 +2297,7 @@ impl Runner {
             .and_then(|v| v.as_str())
             .unwrap_or(fallback_provider)
             .to_string();
-        oqto::pi::PiModel {
+        crate::pi::PiModel {
             id: model_id.clone(),
             name: model_id,
             api: provider.clone(),
@@ -2934,12 +2383,12 @@ impl Runner {
                 } else {
                     &models
                 };
-                let models_vec: Vec<oqto::pi::PiModel> = models_arr
+                let models_vec: Vec<crate::pi::PiModel> = models_arr
                     .as_array()
                     .map(|arr| {
                         arr.iter()
                             .filter_map(|v| {
-                                match serde_json::from_value::<oqto::pi::PiModel>(v.clone()) {
+                                match serde_json::from_value::<crate::pi::PiModel>(v.clone()) {
                                     Ok(m) => Some(m),
                                     Err(e) => {
                                         let provider = v
@@ -3612,7 +3061,7 @@ impl Runner {
     }
 
     /// Run the daemon, listening on the given socket path.
-    async fn run(&self, socket_path: &PathBuf) -> Result<()> {
+    pub async fn run(&self, socket_path: &PathBuf) -> Result<()> {
         // Ensure the socket directory exists.
         // Normally created by oqto-usermgr, but we create it ourselves if missing
         // (e.g. after systemd restart). The parent dir has SGID group oqto, mode 2770,
@@ -3697,16 +3146,8 @@ impl Runner {
     }
 }
 
-fn get_default_socket_path() -> PathBuf {
-    // Use XDG_RUNTIME_DIR if available (typically /run/user/<uid>), otherwise /tmp
-    let runtime_dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string());
-    PathBuf::from(DEFAULT_SOCKET_PATTERN.replace("{runtime_dir}", &runtime_dir))
-}
-
-/// Convert a Pi `AgentMessage` to the `ChatMessageProto` wire format.
-/// Used when returning Pi's live messages as workspace chat history.
 fn pi_agent_msg_to_chat_proto(
-    msg: oqto::pi::AgentMessage,
+    msg: crate::pi::AgentMessage,
     idx: usize,
     session_id: &str,
 ) -> ChatMessageProto {
@@ -3805,309 +3246,5 @@ fn sd_notify_ready() {
     };
     if let Ok(sock) = std::os::unix::net::UnixDatagram::unbound() {
         let _ = sock.send_to(b"READY=1", &addr);
-    }
-}
-
-#[tokio::main]
-async fn main() -> Result<()> {
-    let args = Args::parse();
-
-    // Initialize logging
-    let log_level = if args.verbose { "debug" } else { "info" };
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(log_level)).init();
-
-    let socket_path = args.socket.unwrap_or_else(get_default_socket_path);
-
-    info!(
-        "Starting oqto-runner (user={}, socket={:?})",
-        std::env::var("USER").unwrap_or_else(|_| "unknown".to_string()),
-        socket_path
-    );
-
-    // Load sandbox configuration from trusted location
-    let sandbox_config = if args.no_sandbox {
-        info!("Sandboxing disabled via --no-sandbox flag");
-        None
-    } else if let Some(ref config_path) = args.sandbox_config {
-        // Load from specified path
-        match std::fs::read_to_string(config_path) {
-            Ok(contents) => match toml::from_str::<SandboxConfig>(&contents) {
-                Ok(mut config) => {
-                    config.enabled = true;
-                    info!("Loaded sandbox config from {:?}", config_path);
-                    Some(config)
-                }
-                Err(e) => {
-                    error!("Failed to parse sandbox config {:?}: {}", config_path, e);
-                    return Err(e.into());
-                }
-            },
-            Err(e) => {
-                error!("Failed to read sandbox config {:?}: {}", config_path, e);
-                return Err(e.into());
-            }
-        }
-    } else {
-        // Try loading sandbox config from multiple locations:
-        //   1. /etc/oqto/sandbox.toml  -- system-wide, root-owned (multi-user production)
-        //   2. ~/.config/oqto/sandbox.toml -- user-level (single-user / dev setups)
-        let system_path = std::path::Path::new("/etc/oqto/sandbox.toml");
-        let user_path = std::env::var("XDG_CONFIG_HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| {
-                let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-                PathBuf::from(home).join(".config")
-            })
-            .join("oqto")
-            .join("sandbox.toml");
-
-        let candidates: &[&std::path::Path] = &[system_path, &user_path];
-        let mut loaded = None;
-
-        for config_path in candidates {
-            if !config_path.exists() {
-                continue;
-            }
-            match std::fs::read_to_string(config_path) {
-                Ok(contents) => match toml::from_str::<SandboxConfig>(&contents) {
-                    Ok(config) => {
-                        if config.enabled {
-                            info!(
-                                "Loaded sandbox config from {}, profile='{}'",
-                                config_path.display(),
-                                config.profile
-                            );
-                            loaded = Some(config);
-                        } else {
-                            info!(
-                                "Sandbox config at {} exists but is disabled (enabled=false)",
-                                config_path.display()
-                            );
-                        }
-                        break;
-                    }
-                    Err(e) => {
-                        warn!(
-                            "Failed to parse sandbox config {}: {}. Trying next.",
-                            config_path.display(),
-                            e
-                        );
-                    }
-                },
-                Err(e) => {
-                    warn!(
-                        "Failed to read sandbox config {}: {}. Trying next.",
-                        config_path.display(),
-                        e
-                    );
-                }
-            }
-        }
-
-        loaded
-    };
-
-    if sandbox_config.is_some() {
-        info!("Sandbox enabled - processes will be wrapped with bwrap");
-    } else {
-        warn!("Sandbox disabled - processes will run without isolation");
-    }
-
-    // Load environment variables from ~/.config/oqto/env
-    // This file uses KEY=VALUE format (one per line, # comments, no quoting needed).
-    // These are set as process-level env vars so all child processes (Pi, etc.) inherit them.
-    // Typical use: API keys that systemd services don't inherit from shell profiles.
-    load_env_file();
-
-    // Load user config from ~/.config/oqto/config.toml (or custom path)
-    let user_config = args
-        .config
-        .map(RunnerUserConfig::load_from_path)
-        .unwrap_or_else(RunnerUserConfig::load);
-
-    info!(
-        "User config: workspace_dir={:?}, pi_sessions={:?}, memories={:?}",
-        user_config.workspace_dir, user_config.pi_sessions_dir, user_config.memories_dir
-    );
-
-    // CLI args override config file
-    let binaries = SessionBinaries {
-        fileserver: args
-            .fileserver_binary
-            .unwrap_or(user_config.fileserver_binary.clone()),
-        ttyd: args.ttyd_binary.unwrap_or(user_config.ttyd_binary.clone()),
-    };
-
-    info!(
-        "Session binaries: fileserver={}, ttyd={}",
-        binaries.fileserver, binaries.ttyd
-    );
-
-    // Create PiSessionManager for managing Pi agent processes
-    let state_dir = std::env::var("XDG_STATE_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| {
-            let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-            PathBuf::from(home).join(".local").join("state")
-        });
-    let pi_config = PiManagerConfig {
-        pi_binary: PathBuf::from(&user_config.pi_binary),
-        default_cwd: user_config.workspace_dir.clone(),
-        idle_timeout_secs: 300, // 5 minutes
-        cleanup_interval_secs: 60,
-        hstry_db_path: {
-            let db_path = oqto::history::hstry_db_path();
-            match &db_path {
-                Some(p) => info!("hstry DB found: {}", p.display()),
-                None => warn!("hstry DB not found -- chat history persistence disabled"),
-            }
-            db_path
-        },
-        sandbox_config: sandbox_config.clone(),
-        runner_id: user_config.runner_id.clone(),
-        model_cache_dir: Some(state_dir.join("oqto").join("model-cache")),
-    };
-    let pi_manager = PiSessionManager::new(pi_config);
-
-    // Start the cleanup loop for idle Pi sessions
-    let pi_manager_cleanup = Arc::clone(&pi_manager);
-    tokio::spawn(async move {
-        pi_manager_cleanup.cleanup_loop().await;
-    });
-
-    info!("Pi session manager initialized");
-
-    // hstry and mmry are managed as separate systemd user services.
-    // The runner's service file declares Requires=hstry.service mmry.service,
-    // so systemd starts them before us. No need to manage them here.
-
-    let runner = Runner::new(sandbox_config, binaries, user_config, pi_manager);
-    runner.run(&socket_path).await
-}
-
-/// Ensure a user-level service daemon (hstry, mmry) is running.
-///
-/// Load environment variables from `~/.config/oqto/env`.
-///
-/// Format: one `KEY=VALUE` per line. Lines starting with `#` are comments.
-/// Empty lines are skipped. Values are NOT shell-unquoted (quotes are literal).
-/// Variables are set into the process environment so all child processes inherit them.
-fn load_env_file() {
-    let env_path = std::env::var("XDG_CONFIG_HOME").unwrap_or_else(|_| {
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-        format!("{}/.config", home)
-    }) + "/oqto/env";
-
-    let path = std::path::Path::new(&env_path);
-    if !path.exists() {
-        debug!("No env file at {}, skipping", env_path);
-        return;
-    }
-
-    match std::fs::read_to_string(path) {
-        Ok(contents) => {
-            let mut count = 0;
-            for line in contents.lines() {
-                let trimmed = line.trim();
-                if trimmed.is_empty() || trimmed.starts_with('#') {
-                    continue;
-                }
-                if let Some((key, value)) = trimmed.split_once('=') {
-                    let key = key.trim();
-                    let value = value.trim();
-                    if !key.is_empty() {
-                        // SAFETY: This runs at startup before any threads are spawned
-                        // for child process management, so there are no data races.
-                        unsafe { std::env::set_var(key, value) };
-                        count += 1;
-                    }
-                }
-            }
-            info!("Loaded {} environment variables from {}", count, env_path);
-        }
-        Err(e) => {
-            warn!("Failed to read env file {}: {}", env_path, e);
-        }
-    }
-}
-
-// =============================================================================
-// Tests
-// =============================================================================
-
-#[cfg(test)]
-mod tests {
-    //! Security tests for oqto-runner session spawning.
-    //!
-    //! These tests verify that session services bind to localhost (127.0.0.1)
-    //! rather than all interfaces (0.0.0.0). This is critical for security:
-    //! services should only be accessible via the oqto backend proxy.
-
-    /// Helper to build fileserver args (mirrors the logic in Runner::start_session).
-    fn build_fileserver_args(port: u16, workspace_path: &str) -> Vec<String> {
-        vec![
-            "--port".to_string(),
-            port.to_string(),
-            "--bind".to_string(),
-            "127.0.0.1".to_string(),
-            "--root".to_string(),
-            workspace_path.to_string(),
-        ]
-    }
-
-    /// Helper to build ttyd args (mirrors the logic in Runner::start_session).
-    fn build_ttyd_args(port: u16, workspace_path: &str) -> Vec<String> {
-        vec![
-            "--port".to_string(),
-            port.to_string(),
-            "--interface".to_string(),
-            "127.0.0.1".to_string(),
-            "--writable".to_string(),
-            "--cwd".to_string(),
-            workspace_path.to_string(),
-            "zsh".to_string(),
-            "-l".to_string(),
-        ]
-    }
-
-    #[test]
-    fn test_fileserver_binds_to_localhost_only() {
-        let args = build_fileserver_args(8080, "/home/user/workspace");
-
-        let bind_idx = args.iter().position(|a| a == "--bind");
-        assert!(bind_idx.is_some(), "fileserver args must include --bind");
-
-        let bind_addr = &args[bind_idx.unwrap() + 1];
-        assert_eq!(
-            bind_addr, "127.0.0.1",
-            "fileserver must bind to 127.0.0.1, not {}. Binding to 0.0.0.0 exposes the service to the network!",
-            bind_addr
-        );
-        assert_ne!(
-            bind_addr, "0.0.0.0",
-            "SECURITY: fileserver must NOT bind to 0.0.0.0"
-        );
-    }
-
-    #[test]
-    fn test_ttyd_binds_to_localhost_only() {
-        let args = build_ttyd_args(7681, "/home/user/workspace");
-
-        let interface_idx = args.iter().position(|a| a == "--interface");
-        assert!(
-            interface_idx.is_some(),
-            "ttyd args must include --interface"
-        );
-
-        let bind_addr = &args[interface_idx.unwrap() + 1];
-        assert_eq!(
-            bind_addr, "127.0.0.1",
-            "ttyd must bind to 127.0.0.1, not {}. Binding to 0.0.0.0 exposes the service to the network!",
-            bind_addr
-        );
-        assert_ne!(
-            bind_addr, "0.0.0.0",
-            "SECURITY: ttyd must NOT bind to 0.0.0.0"
-        );
     }
 }

@@ -18,11 +18,11 @@ use uuid::Uuid;
 
 use crate::api::handlers::trx::validate_workspace_path;
 use crate::auth::CurrentUser;
-use crate::local::{SandboxConfigFile, SandboxProfile};
 use crate::projects::{self, ProjectMetadata};
 use crate::session::WorkspaceLocationInput;
 use crate::settings::{ConfigUpdate, SettingsScope};
 use crate::workspace::meta::{WorkspaceMeta, load_workspace_meta, write_workspace_meta};
+use oqto_sandbox::{SandboxConfigFile, SandboxProfile};
 
 use crate::api::error::{ApiError, ApiResult};
 use crate::api::state::AppState;

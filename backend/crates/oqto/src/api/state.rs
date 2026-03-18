@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use tracing::{debug, warn};
 
-use crate::hstry::HstryClient;
+use crate::history::HstryClient;
 use crate::local::UserSldrManager;
 
 use super::a2ui::PendingA2uiRequests;
@@ -348,6 +348,8 @@ pub struct AppState {
     pub shared_workspaces: Option<Arc<SharedWorkspaceService>>,
     /// Event bus engine for scoped pub/sub.
     pub bus: Arc<crate::bus::BusEngine>,
+    /// User-plane request/error counters by path and operation.
+    pub user_plane_metrics: Arc<crate::user_plane::UserPlaneMetrics>,
     /// Path to a reference models.json to copy to new users when eavs is not configured.
     /// Typically the admin user's ~/.pi/agent/models.json.
     pub pi_models_template_path: Option<std::path::PathBuf>,
@@ -417,6 +419,7 @@ impl AppState {
             pi_models_template_path: None,
             shared_workspaces: None,
             bus: Arc::new(crate::bus::BusEngine::new(None)),
+            user_plane_metrics: Arc::new(crate::user_plane::UserPlaneMetrics::default()),
         }
     }
 

@@ -1,0 +1,24 @@
+[package]
+name = "oqto-runner"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Dedicated runner daemon crate"
+
+[[bin]]
+name = "oqto-runner"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+env_logger.workspace = true
+log.workspace = true
+tokio.workspace = true
+
+oqto = { path = "../oqto" }
+oqto-sandbox = { path = "../oqto-sandbox" }
+
+[lints]
+workspace = true

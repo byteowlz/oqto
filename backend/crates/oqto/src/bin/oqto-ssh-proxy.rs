@@ -37,7 +37,7 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use glob::Pattern;
 use log::{debug, error, info, warn};
-use oqto::local::{SandboxConfig, SshProxyConfig};
+use oqto_sandbox::{SandboxConfig, SshProxyConfig};
 use rustix::process::getuid;
 use std::io::{Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};

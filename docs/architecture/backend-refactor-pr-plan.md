@@ -25,7 +25,8 @@ Related:
 **Required gates**
 - New integration suite passing in CI.
 - Existing backend tests passing.
-- Smoke script documented and executable.
+- Smoke script documented and executable (`scripts/e2e/smoke-runner-user-plane.sh`, `just smoke-runner-user-plane`).
+- CI invokes smoke script in `backend-test` job.
 
 ---
 
@@ -33,7 +34,7 @@ Related:
 
 **Scope**
 - Make `RunnerUserPlane` default in normal local/single-user modes.
-- Keep direct path only behind explicit `OQTO_UNSAFE_DIRECT=1`.
+- Remove temporary emergency direct fallback after cutover stabilization (PR10).
 - Emit warning when unsafe direct mode is enabled.
 
 **Blast radius**: Medium-High (runtime path selection)
@@ -96,6 +97,7 @@ Related:
 **Scope**
 - Create dedicated runner crate and move runner code.
 - Preserve server-runner contract.
+- Keep runner binary as a thin entrypoint delegating to daemon modules.
 
 **Blast radius**: High (workspace crate boundaries)
 
