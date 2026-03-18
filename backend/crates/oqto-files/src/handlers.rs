@@ -558,7 +558,11 @@ async fn watch_socket(
                     None => break,
                 }
             }
-            _ = sleep_until(deadline.unwrap()) , if deadline.is_some() => {
+            _ = async {
+                if let Some(deadline_at) = deadline {
+                    sleep_until(deadline_at).await;
+                }
+            }, if deadline.is_some() => {
                 let mut batched = HashMap::new();
                 std::mem::swap(&mut batched, &mut pending);
                 deadline = None;

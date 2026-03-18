@@ -4,6 +4,7 @@
 Usage:
   scripts/lint/rust-ai-guardrails-report.py [--paths backend/crates ...] [--top 20]
   scripts/lint/rust-ai-guardrails-report.py --changed
+  scripts/lint/rust-ai-guardrails-report.py --exclude-cfg-test
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ import pathlib
 import re
 import subprocess
 import sys
+from functools import lru_cache
 from typing import Iterable, List
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -48,7 +50,27 @@ def _get_changed_rs() -> List[str]:
     return [p for p in paths if not pat.search(p)]
 
 
-def _scan(paths: Iterable[str]):
+@lru_cache(maxsize=1024)
+def _first_cfg_test_line(rel_path: str) -> int | None:
+    path = ROOT / rel_path
+    try:
+        text = path.read_text(encoding="utf-8")
+    except Exception:
+        return None
+
+    for idx, line in enumerate(text.splitlines()):
+        stripped = line.strip()
+        if stripped.startswith("#[cfg(test)]"):
+            return idx
+    return None
+
+
+def _is_test_context(rel_path: str, line_zero_based: int) -> bool:
+    first_cfg = _first_cfg_test_line(rel_path)
+    return first_cfg is not None and line_zero_based >= first_cfg
+
+
+def _scan(paths: Iterable[str], exclude_cfg_test: bool):
     cmd = [
         "ast-grep",
         "scan",
@@ -78,9 +100,15 @@ def _scan(paths: Iterable[str]):
             obj = json.loads(line)
         except json.JSONDecodeError:
             continue
+
+        rel_path = obj.get("file", "<unknown>")
+        start_line = obj.get("range", {}).get("start", {}).get("line", -1)
+        if exclude_cfg_test and isinstance(start_line, int) and _is_test_context(rel_path, start_line):
+            continue
+
         total += 1
         by_rule[obj.get("ruleId", "<unknown>")] += 1
-        by_file[obj.get("file", "<unknown>")] += 1
+        by_file[rel_path] += 1
 
     stderr = ""
     if proc.stderr:
@@ -100,6 +128,11 @@ def main() -> int:
     p.add_argument("--paths", nargs="*", default=["backend/crates"], help="paths to scan")
     p.add_argument("--changed", action="store_true", help="scan only changed Rust files vs origin/main")
     p.add_argument("--top", type=int, default=20, help="top files to print")
+    p.add_argument(
+        "--exclude-cfg-test",
+        action="store_true",
+        help="exclude findings at/after first #[cfg(test)] block in each file",
+    )
     args = p.parse_args()
 
     paths = args.paths
@@ -110,7 +143,7 @@ def main() -> int:
             return 0
         paths = changed
 
-    total, by_rule, by_file = _scan(paths)
+    total, by_rule, by_file = _scan(paths, exclude_cfg_test=args.exclude_cfg_test)
 
     print(f"TOTAL\t{total}")
     print("BY_RULE")

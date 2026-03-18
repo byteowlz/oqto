@@ -39,6 +39,10 @@ lint-rust-ai-guardrails:
 lint-rust-ai-report:
     ./scripts/lint/rust-ai-guardrails-report.py --paths backend/crates
 
+# Guardrail metrics, excluding findings under #[cfg(test)]
+lint-rust-ai-report-prod:
+    ./scripts/lint/rust-ai-guardrails-report.py --paths backend/crates --exclude-cfg-test
+
 # Guardrail metrics (changed rust files only)
 lint-rust-ai-report-changed:
     ./scripts/lint/rust-ai-guardrails-report.py --changed
