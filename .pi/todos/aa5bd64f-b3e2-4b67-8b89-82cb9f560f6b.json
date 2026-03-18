@@ -1,29 +1,17 @@
 {
   "todos": [
     {
-      "id": "52b64d70",
-      "content": "Locate deployment workflow/script for archvm and octo-azure",
+      "id": "c6e3e44a",
+      "content": "Fix message ordering: user prompt appearing after assistant answer",
       "status": "completed",
       "priority": "high"
     },
     {
-      "id": "249638fc",
-      "content": "Deploy current changes to archvm",
-      "status": "completed",
-      "priority": "high"
-    },
-    {
-      "id": "457e4782",
-      "content": "Deploy current changes to octo-azure",
-      "status": "completed",
-      "priority": "high"
-    },
-    {
-      "id": "5212ffb8",
-      "content": "Verify services healthy on both hosts",
+      "id": "ea0cf24e",
+      "content": "Fix duplicate messages on frontend",
       "status": "completed",
       "priority": "high"
     }
   ],
-  "updated_at": "2026-03-16T17:13:17.429Z"
+  "updated_at": "2026-03-17T16:09:41.794Z"
 }

@@ -2,34 +2,28 @@
   "todos": [
     {
       "id": "1",
-      "content": "Scout backend WS mux architecture",
+      "content": "Scout file operation handlers",
       "status": "completed",
       "priority": "high"
     },
     {
       "id": "2",
-      "content": "Implement bus channel in backend (pub/sub, topic routing, scope authz)",
+      "content": "Emit workspace/files.* bus events from file handlers",
       "status": "completed",
       "priority": "high"
     },
     {
       "id": "3",
-      "content": "Add frontend bus client (useBus hook, subscribe/publish)",
+      "content": "End-to-end verified: file write -> bus event -> tail received",
       "status": "completed",
       "priority": "high"
     },
     {
       "id": "4",
-      "content": "Add oqtoctl bus commands (status, tail, publish)",
-      "status": "in_progress",
-      "priority": "medium"
-    },
-    {
-      "id": "5",
-      "content": "End-to-end test: frontend publish -> backend route -> frontend receive",
+      "content": "Frontend: subscribe to workspace/files.* via useBus in a consumer",
       "status": "pending",
-      "priority": "high"
+      "priority": "medium"
     }
   ],
-  "updated_at": "2026-03-16T19:21:07.648Z"
+  "updated_at": "2026-03-17T16:29:31.499Z"
 }
