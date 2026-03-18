@@ -14,9 +14,17 @@ export type {
 
 // Hooks
 export {
+	useAppShellBootstrap,
+	useAppShellProjectEvents,
+	useAppShellRouteSync,
+	useAppShellSessionAutomation,
+	useAppShellSettings,
+	useBranchGraphShortcut,
+	useGodmodeShortcut,
 	useProjectActions,
 	useSessionData,
 	useSessionDialogs,
+	useShellLoadingState,
 	useSidebarState,
 } from "./hooks";
 export type {

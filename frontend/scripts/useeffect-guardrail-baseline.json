@@ -1,0 +1,25 @@
+{
+	"generatedAt": "2026-03-18T15:55:40.790Z",
+	"allowMarker": "useeffect-guardrail: allow",
+	"files": {
+		"hooks/use-a2ui.ts": 1,
+		"hooks/use-command-palette.ts": 1,
+		"hooks/use-local-storage.ts": 2,
+		"hooks/use-locale.ts": 1,
+		"hooks/use-message-navigation.ts": 1,
+		"hooks/use-mobile.ts": 1,
+		"hooks/use-model-selection.ts": 5,
+		"hooks/use-mount-effect.ts": 1,
+		"src/routes/app-shell/dialogs/ConvertToSharedDialog.tsx": 1,
+		"src/routes/app-shell/dialogs/RenameProjectDialog.tsx": 1,
+		"src/routes/app-shell/dialogs/RenameSessionDialog.tsx": 1,
+		"src/routes/app-shell/dialogs/SharedWorkspaceDialog.tsx": 1,
+		"src/routes/app-shell/dialogs/SharedWorkspaceMembersDialog.tsx": 1,
+		"src/routes/app-shell/hooks/useProjectActions.ts": 5,
+		"src/routes/app-shell/hooks/useSharedWorkspaces.ts": 2,
+		"src/routes/app-shell/SidebarSessions.tsx": 1,
+		"src/routes/app-shell/SidebarSharedWorkspaces.tsx": 1,
+		"src/routes/AppShellRoute.tsx": 8,
+		"src/routes/RegisterPage.tsx": 1
+	}
+}

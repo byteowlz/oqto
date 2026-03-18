@@ -2,6 +2,7 @@
  * Hook for managing shared workspaces data and state.
  * Listens to system WS events for real-time membership/workspace changes.
  */
+import { useMountEffect } from "@/hooks/use-mount-effect";
 import {
 	type SharedWorkspaceInfo,
 	listSharedWorkspaces,
@@ -59,13 +60,13 @@ export function useSharedWorkspaces(): UseSharedWorkspacesResult {
 	}, []);
 
 	// Initial fetch
-	useEffect(() => {
+	useMountEffect(() => {
 		mountedRef.current = true;
-		refresh();
+		void refresh();
 		return () => {
 			mountedRef.current = false;
 		};
-	}, [refresh]);
+	});
 
 	// Listen for real-time shared_workspace.updated events via WebSocket
 	useEffect(() => {

@@ -1288,15 +1288,6 @@ Enable multiple platform users to access the same project/workspace with proper 
 ...
 
 
-### [oqto-97sn] Audit and reduce useEffect usage in frontend (P3, task)
-The React team discourages useEffect for most use cases. We have 46 occurrences across 12 files, with AppShellRoute.tsx alone having 14.
-
-Refactor candidates:
-- Data fetching effects -> React Router loaders or TanStack Query
-- Derived state effects -> compute during render
-...
-
-
 ### [oqto-jq8p.6] Session token management for SSO users (P3, feature)
 Issue local Oqto JWT after successful OIDC code exchange to decouple from IdP token expiry. Handle refresh/re-auth redirect on expiry.
 
@@ -1477,6 +1468,11 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [oqto-97sn] Audit and reduce useEffect usage in frontend (closed 2026-03-18)
+- [oqto-t25t] Comprehensive frontend refactor: decompose AppShellRoute and remove effect-driven architecture (closed 2026-03-18)
+- [oqto-t25t.3] Decompose AppShellRoute side-effect orchestration into dedicated hooks (closed 2026-03-18)
+- [oqto-t25t.2] Add lint guardrail to prevent new ad-hoc useEffect usage (closed 2026-03-18)
+- [oqto-t25t.1] Create useMountEffect and useLocalStorage hooks (closed 2026-03-18)
 - [oqto-719f] Add Rust AI guardrail linting baseline + ast-grep integration (closed 2026-03-18)
 - [octo-thhx.2] Onboarding API endpoints (closed 2026-03-17)
 - [octo-thhx.11] Godmode command to skip onboarding (closed 2026-03-17)
@@ -2147,12 +2143,12 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
-- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
 - [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
 - [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
 - [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
+- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
+- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )

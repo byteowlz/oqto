@@ -6,32 +6,27 @@ import { StatusBar } from "@/components/status-bar";
 import { Button } from "@/components/ui/button";
 import { useApp } from "@/hooks/use-app";
 import { useCurrentUser, useLogout } from "@/hooks/use-auth";
-import { getUserDisplayName } from "@/lib/api/types";
 import { useCommandPalette } from "@/hooks/use-command-palette";
-import { setChatPrefetchLimit } from "@/lib/app-settings";
+import { getUserDisplayName } from "@/lib/api/types";
 import type { HstrySearchHit } from "@/lib/control-plane-client";
-import {
-	bootstrapOnboarding,
-	getSettingsValues,
-} from "@/lib/control-plane-client";
 import { cn } from "@/lib/utils";
 import { Clock, PanelLeftClose, PanelRightClose } from "lucide-react";
 import { useTheme } from "next-themes";
-import {
-	memo,
-	useCallback,
-	useDeferredValue,
-	useEffect,
-	useMemo,
-	useRef,
-	useState,
-} from "react";
+import { memo, useCallback, useDeferredValue, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useLocation, useNavigate } from "react-router-dom";
 import "@/apps";
 import { UIControlProvider } from "@/components/contexts/ui-control-context";
 
 import type { SearchMode } from "@/components/search";
+import {
+	type SharedWorkspaceInfo,
+	convertToSharedWorkspace,
+	createSharedWorkspace,
+	createSharedWorkspaceWorkdir,
+	deleteSharedWorkspace,
+	updateSharedWorkspace,
+} from "@/lib/api/shared-workspaces";
 import {
 	DeleteConfirmDialog,
 	MobileHeader,
@@ -42,26 +37,26 @@ import {
 	SidebarNav,
 	SidebarSessions,
 	SidebarSharedWorkspaces,
+	useAppShellBootstrap,
+	useAppShellProjectEvents,
+	useAppShellRouteSync,
+	useAppShellSessionAutomation,
+	useAppShellSettings,
+	useBranchGraphShortcut,
+	useGodmodeShortcut,
 	useProjectActions,
 	useSessionData,
 	useSessionDialogs,
+	useShellLoadingState,
 	useSidebarState,
 } from "./app-shell";
-import { useSharedWorkspaces } from "./app-shell/hooks/useSharedWorkspaces";
 import {
 	ConvertToSharedDialog,
 	SharedWorkspaceDialog,
 	SharedWorkspaceMembersDialog,
 } from "./app-shell/dialogs";
 import { BranchGraphDialog } from "./app-shell/dialogs/BranchGraphDialog";
-import {
-	convertToSharedWorkspace,
-	createSharedWorkspace,
-	createSharedWorkspaceWorkdir,
-	updateSharedWorkspace,
-	deleteSharedWorkspace,
-	type SharedWorkspaceInfo,
-} from "@/lib/api/shared-workspaces";
+import { useSharedWorkspaces } from "./app-shell/hooks/useSharedWorkspaces";
 
 const AppShell = memo(function AppShell() {
 	const {
@@ -101,7 +96,8 @@ const AppShell = memo(function AppShell() {
 	const navigate = useNavigate();
 	const { setTheme, resolvedTheme } = useTheme();
 	const { activateGodmode, state: onboardingState } = useOnboarding();
-	const [mounted, setMounted] = useState(false);
+	const { mounted, shellReady, barVisible, barWidth, barFade } =
+		useShellLoadingState();
 	const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(
 		null,
 	);
@@ -110,9 +106,6 @@ const AppShell = memo(function AppShell() {
 	const [searchMode, setSearchMode] = useState<"sessions" | "messages">(
 		"sessions",
 	);
-	const [bootstrapError, setBootstrapError] = useState<string | null>(null);
-	const [bootstrapSubmitting, setBootstrapSubmitting] = useState(false);
-	const [bootstrapReady, setBootstrapReady] = useState(false);
 	const [branchGraphOpen, setBranchGraphOpen] = useState(false);
 
 	const { mutate: handleLogout } = useLogout();
@@ -141,9 +134,7 @@ const AppShell = memo(function AppShell() {
 			if (session.shared_workspace_id) return false;
 			const wp = session.workspace_path?.replace(/\/$/, "");
 			if (!wp) return true;
-			return !swPaths.some(
-				(swp) => wp === swp || wp.startsWith(`${swp}/`),
-			);
+			return !swPaths.some((swp) => wp === swp || wp.startsWith(`${swp}/`));
 		});
 	}, [chatHistory, sharedWs.sharedWorkspaces]);
 
@@ -257,9 +248,7 @@ const AppShell = memo(function AppShell() {
 				setConvertDialogOpen(false);
 				await sharedWs.refresh();
 			} catch (err) {
-				setConvertError(
-					err instanceof Error ? err.message : "Failed to share",
-				);
+				setConvertError(err instanceof Error ? err.message : "Failed to share");
 			} finally {
 				setConvertSubmitting(false);
 			}
@@ -306,48 +295,15 @@ const AppShell = memo(function AppShell() {
 		[deleteChatSession],
 	);
 
-	// Auto-expand the project containing the selected session so it is
-	// visible in the sidebar immediately after load.
-	const autoExpandedRef = useRef(false);
-	useEffect(() => {
-		if (autoExpandedRef.current) return;
-		if (!selectedChatSessionId) return;
-		const session = chatHistory.find((s) => s.id === selectedChatSessionId);
-		if (!session) return;
-		const key = sessionData.projectKeyForSession(session);
-		if (key && !sidebarState.expandedProjects.has(key)) {
-			sidebarState.toggleProjectExpanded(key);
-		}
-		autoExpandedRef.current = true;
-	}, [
+	useAppShellSessionAutomation({
 		selectedChatSessionId,
 		chatHistory,
-		sessionData.projectKeyForSession,
-		sidebarState.expandedProjects,
-		sidebarState.toggleProjectExpanded,
-	]);
-
-	// Auto-create a session in the first workspace when the user has no
-	// sessions at all (e.g. fresh account). This ensures the sidebar is never
-	// just an empty folder -- there's always a chat ready to go.
-	const autoCreatedRef = useRef(false);
-	useEffect(() => {
-		if (autoCreatedRef.current) return;
-		if (chatHistory.length > 0) return;
-		if (selectedChatSessionId) return;
-		if (projectActions.workspaceDirectories.length === 0) return;
-		autoCreatedRef.current = true;
-
-		const defaultDir = projectActions.workspaceDirectories[0];
-		if (defaultDir?.path) {
-			void createNewChat(defaultDir.path);
-		}
-	}, [
-		chatHistory.length,
-		selectedChatSessionId,
-		projectActions.workspaceDirectories,
+		projectKeyForSession: sessionData.projectKeyForSession,
+		expandedProjects: sidebarState.expandedProjects,
+		toggleProjectExpanded: sidebarState.toggleProjectExpanded,
+		workspaceDirectories: projectActions.workspaceDirectories,
 		createNewChat,
-	]);
+	});
 
 	const { open: commandPaletteOpen, setOpen: setCommandPaletteOpen } =
 		useCommandPalette();
@@ -374,163 +330,49 @@ const AppShell = memo(function AppShell() {
 	);
 
 	// Route synchronization effects
-	useEffect(() => {
-		if (matchedAppId && matchedAppId !== activeAppId) {
-			if (matchedAppId === "sessions" && virtualApps.has(activeAppId)) return;
-			setActiveAppId(matchedAppId);
-			if (virtualApps.has(matchedAppId) && sessionsRoute) {
-				navigate(sessionsRoute, { replace: true });
-			}
-			return;
-		}
-		if (!matchedAppId && location.pathname === "/" && sessionsRoute) {
-			navigate(sessionsRoute, { replace: true });
-		}
-	}, [
+	useAppShellRouteSync({
 		activeAppId,
-		location.pathname,
-		matchedAppId,
-		navigate,
-		sessionsRoute,
 		setActiveAppId,
+		matchedAppId,
+		pathname: location.pathname,
+		sessionsRoute,
 		virtualApps,
-	]);
+		apps,
+		navigate,
+	});
 
-	useEffect(() => {
-		if (activeAppId !== "sessions") return;
-		const activeRoute = apps.find((app) => app.id === activeAppId)?.routes?.[0];
-		if (!activeRoute || matchedAppId) return;
-		const isMatch =
-			location.pathname === activeRoute ||
-			location.pathname.startsWith(`${activeRoute}/`);
-		if (!isMatch) navigate(activeRoute, { replace: true });
-	}, [activeAppId, apps, location.pathname, matchedAppId, navigate]);
-
-	// Shell ready state
-	const [shellReady, setShellReady] = useState(false);
-
-	useEffect(() => {
-		setMounted(true);
-	}, []);
-
-	useEffect(() => {
-		const handler = () => setBranchGraphOpen(true);
-		window.addEventListener("oqto:open-branch-graph", handler);
-		return () => window.removeEventListener("oqto:open-branch-graph", handler);
-	}, []);
-
-
-	useEffect(() => {
-		if (!mounted) return;
-		const timer = requestAnimationFrame(() => {
-			requestAnimationFrame(() => {
-				setShellReady(true);
-				document.getElementById("preload")?.remove();
-				document.documentElement.removeAttribute("data-preload");
-			});
-		});
-		return () => cancelAnimationFrame(timer);
-	}, [mounted]);
+	useBranchGraphShortcut(() => setBranchGraphOpen(true));
 
 	const currentTheme = mounted ? resolvedTheme : "light";
 	const isDark = currentTheme === "dark";
 	const ActiveComponent = activeApp?.component ?? null;
 
-	// Loading bar
-	const [barVisible, setBarVisible] = useState(true);
-	const [barWidth, setBarWidth] = useState(0);
-	const [barFade, setBarFade] = useState(false);
-
-	// Keyboard shortcuts
-	useEffect(() => {
-		const handleKeyDown = (e: KeyboardEvent) => {
-			if (e.key === "g" && (e.metaKey || e.ctrlKey) && e.shiftKey) {
-				e.preventDefault();
-				if (!onboardingState.completed && !onboardingState.godmode) {
-					activateGodmode();
-				}
-			}
-		};
-		document.addEventListener("keydown", handleKeyDown);
-		return () => document.removeEventListener("keydown", handleKeyDown);
-	}, [activateGodmode, onboardingState.completed, onboardingState.godmode]);
+	useGodmodeShortcut({
+		activateGodmode,
+		onboardingCompleted: onboardingState.completed,
+		onboardingGodmode: onboardingState.godmode,
+	});
 
 	const _availableAgents = useMemo(() => [], []);
-
-	useEffect(() => {
-		const timer = window.setTimeout(() => setBootstrapReady(true), 300);
-		return () => window.clearTimeout(timer);
-	}, []);
 
 	// Auto-bootstrap: when a new user has no workspaces, automatically create
 	// one using the username as display name. No dialog prompt needed -- the
 	// agent can rename it during bootstrap if configured to do so.
 	const currentDisplayName = getUserDisplayName(currentUser);
-	useEffect(() => {
-		if (!bootstrapReady || bootstrapSubmitting) return;
-		if (projects.length > 0 || chatHistory.length > 0) return;
-		if (!currentDisplayName) return;
-
-		setBootstrapSubmitting(true);
-		setBootstrapError(null);
-
-		const displayName =
-			currentDisplayName.charAt(0).toUpperCase() + currentDisplayName.slice(1);
-
-		bootstrapOnboarding({
-			display_name: displayName,
-			language: locale,
-		})
-			.then(async () => {
-				setSelectedWorkspaceOverviewPath(null);
-				setSelectedChatSessionId(null);
-				await Promise.all([
-					refreshChatHistory(),
-					refreshWorkspaceSessions(),
-					projectActions.refreshWorkspaceDirectories(),
-				]);
-				setActiveAppId("sessions");
-			})
-			.catch((err) => {
-				setBootstrapError(
-					err instanceof Error ? err.message : "Failed to bootstrap workspace",
-				);
-			})
-			.finally(() => {
-				setBootstrapSubmitting(false);
-			});
-	}, [
-		bootstrapReady,
-		bootstrapSubmitting,
-		projects.length,
-		chatHistory.length,
+	useAppShellBootstrap({
+		projectsLength: projects.length,
+		chatHistoryLength: chatHistory.length,
 		currentDisplayName,
 		locale,
 		refreshChatHistory,
 		refreshWorkspaceSessions,
-		setActiveAppId,
-		setSelectedChatSessionId,
+		refreshWorkspaceDirectories: projectActions.refreshWorkspaceDirectories,
 		setSelectedWorkspaceOverviewPath,
-		projectActions.refreshWorkspaceDirectories,
-	]);
+		setSelectedChatSessionId,
+		setActiveAppId,
+	});
 
-	// Load settings
-	useEffect(() => {
-		let mounted = true;
-		getSettingsValues("oqto")
-			.then((values) => {
-				if (!mounted) return;
-				const raw = values["sessions.max_concurrent_sessions"]?.value;
-				// Session limit unused but kept for future use
-				setChatPrefetchLimit(values["sessions.chat_prefetch_limit"]?.value);
-			})
-			.catch(() => {
-				setChatPrefetchLimit(null);
-			});
-		return () => {
-			mounted = false;
-		};
-	}, []);
+	useAppShellSettings();
 
 	const messageSearchExtraHits = useMemo(
 		() => sessionData.sessionTitleHits,
@@ -678,92 +520,11 @@ const AppShell = memo(function AppShell() {
 		[setProjectDefaultAgents],
 	);
 
-	// External event listeners
-	useEffect(() => {
-		if (typeof window === "undefined") return;
-		const handleFilter = (event: Event) => {
-			const customEvent = event as CustomEvent<string>;
-			if (typeof customEvent.detail === "string") {
-				setSelectedProjectKey(customEvent.detail);
-				setActiveAppId("sessions");
-			}
-		};
-		const handleClear = () => setSelectedProjectKey(null);
-		const handleDefaultAgent = (event: Event) => {
-			const customEvent = event as CustomEvent<{
-				projectKey: string;
-				agentId: string;
-			}>;
-			if (!customEvent.detail) return;
-			handleProjectDefaultAgentChange(
-				customEvent.detail.projectKey,
-				customEvent.detail.agentId,
-			);
-		};
-
-		window.addEventListener(
-			"oqto:project-filter",
-			handleFilter as EventListener,
-		);
-		window.addEventListener("oqto:project-filter-clear", handleClear);
-		window.addEventListener(
-			"oqto:project-default-agent",
-			handleDefaultAgent as EventListener,
-		);
-		return () => {
-			window.removeEventListener(
-				"oqto:project-filter",
-				handleFilter as EventListener,
-			);
-			window.removeEventListener("oqto:project-filter-clear", handleClear);
-			window.removeEventListener(
-				"oqto:project-default-agent",
-				handleDefaultAgent as EventListener,
-			);
-		};
-	}, [handleProjectDefaultAgentChange, setActiveAppId]);
-
-	// Viewport and loading bar
-	useEffect(() => {
-		if (typeof window === "undefined") return;
-
-		const applyViewportHeight = () => {
-			const height = window.visualViewport?.height ?? window.innerHeight;
-			document.documentElement.style.setProperty(
-				"--app-viewport-height",
-				`${height}px`,
-			);
-		};
-
-		applyViewportHeight();
-		window.visualViewport?.addEventListener("resize", applyViewportHeight);
-		window.visualViewport?.addEventListener("scroll", applyViewportHeight);
-		window.addEventListener("orientationchange", applyViewportHeight);
-		window.addEventListener("pageshow", applyViewportHeight);
-		document.addEventListener("visibilitychange", applyViewportHeight);
-
-		setBarVisible(true);
-		setBarWidth(25);
-		const growTimer = window.setTimeout(() => setBarWidth(80), 150);
-		const finish = () => {
-			setBarWidth(100);
-			setBarFade(true);
-			window.setTimeout(() => setBarVisible(false), 500);
-		};
-		window.addEventListener("load", finish, { once: true });
-		const fallback = window.setTimeout(finish, 1600);
-
-		return () => {
-			window.visualViewport?.removeEventListener("resize", applyViewportHeight);
-			window.visualViewport?.removeEventListener("scroll", applyViewportHeight);
-			window.removeEventListener("orientationchange", applyViewportHeight);
-			window.removeEventListener("pageshow", applyViewportHeight);
-			document.removeEventListener("visibilitychange", applyViewportHeight);
-			window.clearTimeout(growTimer);
-			window.clearTimeout(fallback);
-			window.removeEventListener("load", finish);
-		};
-	}, []);
+	useAppShellProjectEvents({
+		setSelectedProjectKey,
+		setActiveAppId,
+		onProjectDefaultAgentChange: handleProjectDefaultAgentChange,
+	});
 
 	const toggleTheme = () => {
 		const next = isDark ? "light" : "dark";
@@ -924,7 +685,12 @@ const AppShell = memo(function AppShell() {
 						}}
 						runnerSessions={runnerSessions}
 						onSharedSessionClick={(session, sharedWorkspaceId) => {
-							createOptimisticChatSession(session.id, session.workspace_path ?? undefined, sharedWorkspaceId, session);
+							createOptimisticChatSession(
+								session.id,
+								session.workspace_path ?? undefined,
+								sharedWorkspaceId,
+								session,
+							);
 							setSelectedChatSessionId(session.id);
 							sidebarState.setMobileMenuOpen(false);
 						}}
@@ -990,7 +756,7 @@ const AppShell = memo(function AppShell() {
 						<div className="w-full px-3 mt-2">
 							<div className="bg-destructive/15 border border-destructive/30 rounded-md p-3 text-xs">
 								<div className="font-medium text-destructive mb-1">
-									{t('chat.chatHistoryUnavailable')}
+									{t("chat.chatHistoryUnavailable")}
 								</div>
 								<div className="text-muted-foreground mb-2 break-words">
 									{chatHistoryError}
@@ -1000,7 +766,7 @@ const AppShell = memo(function AppShell() {
 									onClick={() => refreshChatHistory()}
 									className="text-xs text-primary hover:underline"
 								>
-									{t('chat.retry')}
+									{t("chat.retry")}
 								</button>
 							</div>
 						</div>
@@ -1088,7 +854,10 @@ const AppShell = memo(function AppShell() {
 															void createNewChat(ws.path, ws.id);
 														}}
 														onNewProjectInWorkspace={(ws) => {
-															projectActions.openNewProjectForWorkspace(ws.path, ws.id);
+															projectActions.openNewProjectForWorkspace(
+																ws.path,
+																ws.id,
+															);
 														}}
 														onDeleteWorkspace={handleDeleteSharedWorkspace}
 														onSelectWorkdir={(ws, wd) => {
@@ -1099,11 +868,19 @@ const AppShell = memo(function AppShell() {
 														busySessions={busySessions}
 														selectedChatSessionId={selectedChatSessionId}
 														onSessionClick={(session, sharedWorkspaceId) => {
-															createOptimisticChatSession(session.id, session.workspace_path ?? undefined, sharedWorkspaceId, session);
+															createOptimisticChatSession(
+																session.id,
+																session.workspace_path ?? undefined,
+																sharedWorkspaceId,
+																session,
+															);
 															setSelectedChatSessionId(session.id);
 														}}
 														onRenameSession={(id) =>
-															sessionDialogs.handleRenameSession(id, chatHistory)
+															sessionDialogs.handleRenameSession(
+																id,
+																chatHistory,
+															)
 														}
 														onDeleteSession={handleDeleteSession}
 														onPinSession={sidebarState.togglePinSession}
@@ -1198,7 +975,9 @@ const AppShell = memo(function AppShell() {
 					open={branchGraphOpen}
 					onOpenChange={setBranchGraphOpen}
 					parentSessions={sessionData.sessionHierarchy.parentSessions}
-					childSessionsByParent={sessionData.sessionHierarchy.childSessionsByParent}
+					childSessionsByParent={
+						sessionData.sessionHierarchy.childSessionsByParent
+					}
 					selectedSessionId={selectedChatSessionId}
 					onSelectSession={setSelectedChatSessionId}
 				/>
@@ -1223,8 +1002,10 @@ const AppShell = memo(function AppShell() {
 						)
 					}
 					locale={locale}
-					title={t('projects.deleteProjectTitle', { name: sessionDialogs.targetProjectName })}
-					description={t('projects.deleteProjectDescription')}
+					title={t("projects.deleteProjectTitle", {
+						name: sessionDialogs.targetProjectName,
+					})}
+					description={t("projects.deleteProjectDescription")}
 				/>
 
 				<RenameProjectDialog
@@ -1257,7 +1038,9 @@ const AppShell = memo(function AppShell() {
 					onProjectPathChange={projectActions.handleNewProjectPathChange}
 					newProjectShared={projectActions.newProjectShared}
 					onSharedChange={projectActions.setNewProjectShared}
-					isSharedWorkspaceContext={!!projectActions.newProjectSharedWorkspaceId}
+					isSharedWorkspaceContext={
+						!!projectActions.newProjectSharedWorkspaceId
+					}
 					newProjectError={projectActions.newProjectError}
 					newProjectSubmitting={projectActions.newProjectSubmitting}
 					newProjectSettings={projectActions.newProjectSettings}
