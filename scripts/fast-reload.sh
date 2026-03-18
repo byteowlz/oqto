@@ -8,7 +8,8 @@ sudo -v
 
 # Build on remote and fetch release binaries
 cd "$ROOT_DIR/backend"
-remote-build build --release -p oqto --bin oqto --bin oqto-runner
+remote-build build --release -p oqto --bin oqto
+remote-build build --release -p oqto-runner --bin oqto-runner
 remote-build build --release -p oqto-files --bin oqto-files
 
 # Install binaries system-wide

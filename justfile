@@ -8,7 +8,8 @@ build: build-backend build-frontend
 
 # Build backend (all workspace crates)
 build-backend:
-    cd backend && remote-build build --release -p oqto --bin oqto --bin oqto-runner
+    cd backend && remote-build build --release -p oqto --bin oqto
+    cd backend && remote-build build --release -p oqto-runner --bin oqto-runner
     cd backend && remote-build build --release -p oqto-files --bin oqto-files
 
 # Build frontend
@@ -70,7 +71,7 @@ install-all:
     cd frontend && bun install
     cd backend/crates/oqto-browserd && bun install && bun run build
     cd backend && cargo install --path crates/oqto
-    cd backend && cargo install --path crates/oqto --bin oqto-runner
+    cd backend && cargo install --path crates/oqto-runner --bin oqto-runner
     cd backend && cargo install --path crates/oqto-files
     cd ../hstry && cargo install --path crates/hstry-cli || echo "hstry build failed, skipping"
 
@@ -84,7 +85,7 @@ install crate:
             cd backend && cargo install --path crates/oqto
             ;;
         oqto-runner)
-            cd backend && cargo install --path crates/oqto --bin oqto-runner
+            cd backend && cargo install --path crates/oqto-runner --bin oqto-runner
             ;;
         oqtoctl)
             cd backend && cargo install --path crates/oqto --bin oqtoctl
@@ -236,7 +237,8 @@ restart-runner:
 
 # Build, install, and restart runner + backend
 update-runner:
-    cd backend && remote-build build --release -p oqto --bin oqto --bin oqto-runner
+    cd backend && remote-build build --release -p oqto --bin oqto
+    cd backend && remote-build build --release -p oqto-runner --bin oqto-runner
     ./scripts/update-runner.sh
 
 # === E2E (Proxmox) ===
@@ -864,6 +866,10 @@ reliability-all-local:
     ./scripts/e2e/reliability-files-local.sh --loops 5
     ./scripts/e2e/reliability-browser-journey.sh --wait-ms 1500
 
+# Runner-path smoke checks for backend refactor baseline hardening
+smoke-runner-user-plane:
+    ./scripts/e2e/smoke-runner-user-plane.sh
+
 # Convert oqto.setup.toml to vm.tests.toml format
 vm-convert-config setup_file:
     cd scripts && ./convert-setup-toml.sh {{setup_file}}
@@ -912,4 +918,5 @@ update-pi:
     echo "Restarting oqto-runner..."
     systemctl --user restart oqto-runner
     echo "Done. Pi version: $(/usr/local/bin/pi --version 2>/dev/null)"
+
 

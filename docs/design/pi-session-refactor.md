@@ -643,7 +643,8 @@ frontend/features/main-chat/hooks/usePiChatV2.ts   # Stream 2: Updated hooks
 
 ```
 backend/crates/oqto/src/runner/protocol.rs         # Stream 3: Add Pi types
-backend/crates/oqto/src/bin/oqto-runner.rs         # Stream 1: Integrate manager
+backend/crates/oqto-runner/src/main.rs              # Stream 1: runner entrypoint
+backend/crates/oqto/src/runner/daemon/              # Stream 1: daemon/handler modules
 backend/crates/oqto/src/api/routes.rs              # Stream 2: Add new WS route
 ```
 
