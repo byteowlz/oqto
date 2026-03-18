@@ -35,6 +35,14 @@ install-ast-grep:
 lint-rust-ai-guardrails:
     ./scripts/lint/rust-ai-guardrails.sh
 
+# Guardrail metrics (all backend crates)
+lint-rust-ai-report:
+    ./scripts/lint/rust-ai-guardrails-report.py --paths backend/crates
+
+# Guardrail metrics (changed rust files only)
+lint-rust-ai-report-changed:
+    ./scripts/lint/rust-ai-guardrails-report.py --changed
+
 # Run all tests
 test: test-backend test-frontend
 
