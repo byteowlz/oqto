@@ -284,10 +284,13 @@ just dev              # Start frontend dev server (Vite on :3000)
 just build            # Build all components
 just build-backend    # Build backend only
 just build-frontend   # Build frontend only
-just lint             # Run all linters
+just lint             # Run all linters (includes Rust AI guardrails, production scope)
 just fmt              # Format all Rust code
 just check            # Check all Rust code compiles
 just gen-types        # Generate TypeScript types from Rust structs
+just lint-rust-ai-guardrails     # Gate on changed Rust files (production scope only)
+just lint-rust-ai-report         # Full report (includes test code)
+just lint-rust-ai-report-prod    # Production-only report (excludes #[cfg(test)] blocks)
 ```
 
 | Component | Build | Lint | Test | Single Test |
@@ -296,6 +299,13 @@ just gen-types        # Generate TypeScript types from Rust structs
 | **oqto-runner crate** | `cargo build -p oqto-runner` | `cargo clippy -p oqto-runner` | `cargo test -p oqto-runner` | `cargo test -p oqto-runner test_name` |
 | **fileserver/** | `cargo build` | `cargo clippy && cargo fmt --check` | `cargo test` | `cargo test test_name` |
 | **frontend/** | `bun run build` | `bun run lint` | `bun run test` | `bun run test -t "pattern"` |
+
+### Rust AI Guardrail Policy
+
+- CI/PR enforcement uses `just lint-rust-ai-guardrails`, which scans **changed Rust files** and fails only for **production-scope** violations.
+- "Production scope" excludes findings under `#[cfg(test)]` blocks.
+- Use `just lint-rust-ai-report-prod` to inspect enforceable backlog and `just lint-rust-ai-report` for full visibility (including tests/fixtures debt).
+- Policy intent: keep runtime code strict (`unwrap/expect` disallowed) while allowing pragmatic test ergonomics.
 
 ### Dev Workflow
 
