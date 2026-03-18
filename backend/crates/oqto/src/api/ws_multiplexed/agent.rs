@@ -2,6 +2,46 @@
 
 use super::*;
 
+fn emit_session_bus_event(
+    bus: &Arc<crate::bus::BusEngine>,
+    user_id: &str,
+    session_id: &str,
+    workspace_path: Option<&str>,
+    topic: &str,
+    mut payload: serde_json::Value,
+) {
+    use crate::bus::{BusEvent, BusScope, EventSource};
+
+    if let Some(obj) = payload.as_object_mut() {
+        obj.entry("session_id".to_string())
+            .or_insert_with(|| serde_json::Value::String(session_id.to_string()));
+        if let Some(workspace) = workspace_path {
+            obj.entry("workspace_path".to_string())
+                .or_insert_with(|| serde_json::Value::String(workspace.to_string()));
+        }
+    }
+
+    let scope_id = workspace_path.unwrap_or("local").to_string();
+    let event = BusEvent::new(
+        BusScope::Workspace,
+        scope_id,
+        format!("session.{}", topic),
+        payload,
+        EventSource::Service {
+            service: "runner".to_string(),
+            user_id: Some(user_id.to_string()),
+        },
+    );
+
+    let bus = bus.clone();
+    let topic_log = topic.to_string();
+    tokio::spawn(async move {
+        if let Err(err) = bus.publish_internal(event).await {
+            tracing::warn!("failed to publish session bus event {}: {}", topic_log, err);
+        }
+    });
+}
+
 pub(super) async fn handle_agent_command(
     cmd: oqto_protocol::commands::Command,
     user_id: &str,
@@ -583,6 +623,19 @@ pub(super) async fn handle_agent_command(
                         );
                     }
 
+                    emit_session_bus_event(
+                        &state.bus,
+                        user_id,
+                        &session_id,
+                        Some(&cwd_string),
+                        "created",
+                        serde_json::json!({
+                            "runner_id": runner_id,
+                            "target_scope": target_scope,
+                            "target_workspace_id": target_workspace_id,
+                        }),
+                    );
+
                     Some(agent_response(
                         &session_id,
                         id,
@@ -624,6 +677,21 @@ pub(super) async fn handle_agent_command(
             match runner.agent_close_session(&session_id).await {
                 Ok(()) => {
                     clear_client_ids_for_session(&session_id).await;
+                    let workspace_path = state
+                        .session_targets
+                        .get(&session_id)
+                        .await
+                        .ok()
+                        .flatten()
+                        .and_then(|r| r.workspace_path);
+                    emit_session_bus_event(
+                        &state.bus,
+                        user_id,
+                        &session_id,
+                        workspace_path.as_deref(),
+                        "stopped",
+                        serde_json::json!({ "runner_id": runner_id }),
+                    );
                     Some(agent_response(&session_id, id, "session.close", Ok(None)))
                 }
                 Err(e) => Some(agent_response(
@@ -655,6 +723,13 @@ pub(super) async fn handle_agent_command(
             match runner.agent_delete_session(&session_id).await {
                 Ok(()) => {
                     clear_client_ids_for_session(&session_id).await;
+                    let workspace_path = state
+                        .session_targets
+                        .get(&session_id)
+                        .await
+                        .ok()
+                        .flatten()
+                        .and_then(|r| r.workspace_path);
                     if let Err(e) = state.session_targets.delete(&session_id).await {
                         return Some(agent_response(
                             &session_id,
@@ -663,6 +738,14 @@ pub(super) async fn handle_agent_command(
                             Err(format!("Failed to delete session target metadata: {}", e)),
                         ));
                     }
+                    emit_session_bus_event(
+                        &state.bus,
+                        user_id,
+                        &session_id,
+                        workspace_path.as_deref(),
+                        "deleted",
+                        serde_json::json!({ "runner_id": runner_id }),
+                    );
                     Some(agent_response(&session_id, id, "session.delete", Ok(None)))
                 }
                 Err(e) => Some(agent_response(
