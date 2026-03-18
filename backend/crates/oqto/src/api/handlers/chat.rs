@@ -380,7 +380,7 @@ pub async fn list_chat_history(
         .map_err(|e| ApiError::internal(format!("runner target resolution: {}", e)))?;
 
     if let Some(runner) = runner_opt {
-        match runner
+        let mut response_opt = match runner
             .list_workspace_chat_sessions(
                 query.workspace.clone(),
                 query.include_children,
@@ -388,29 +388,7 @@ pub async fn list_chat_history(
             )
             .await
         {
-            Ok(response) => {
-                sessions = response
-                    .sessions
-                    .into_iter()
-                    .map(|s| ChatSession {
-                        id: s.id,
-                        readable_id: s.readable_id,
-                        title: s.title,
-                        parent_id: s.parent_id,
-                        workspace_path: s.workspace_path,
-                        project_name: s.project_name,
-                        created_at: s.created_at,
-                        updated_at: s.updated_at,
-                        version: s.version,
-                        is_child: s.is_child,
-                        source_path: None,
-                        stats: None,
-                        model: s.model,
-                        provider: s.provider,
-                    })
-                    .collect();
-                source = "runner";
-            }
+            Ok(response) => Some(response),
             Err(e) => {
                 if multi_user {
                     tracing::error!(
@@ -420,7 +398,61 @@ pub async fn list_chat_history(
                     );
                     return Err(ApiError::internal("Chat history service unavailable."));
                 }
+                None
             }
+        };
+
+        let should_try_repair = response_opt
+            .as_ref()
+            .is_some_and(|r| r.sessions.is_empty())
+            && query.workspace.is_none();
+
+        if should_try_repair {
+            match runner.repair_workspace_chat_history(Some(10_000)).await {
+                Ok(_) => {
+                    if let Ok(repaired_response) = runner
+                        .list_workspace_chat_sessions(
+                            query.workspace.clone(),
+                            query.include_children,
+                            query.limit,
+                        )
+                        .await
+                    {
+                        response_opt = Some(repaired_response);
+                    }
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        user_id = %user.id(),
+                        error = %err,
+                        "workspace chat history repair attempt failed"
+                    );
+                }
+            }
+        }
+
+        if let Some(response) = response_opt {
+            sessions = response
+                .sessions
+                .into_iter()
+                .map(|s| ChatSession {
+                    id: s.id,
+                    readable_id: s.readable_id,
+                    title: s.title,
+                    parent_id: s.parent_id,
+                    workspace_path: s.workspace_path,
+                    project_name: s.project_name,
+                    created_at: s.created_at,
+                    updated_at: s.updated_at,
+                    version: s.version,
+                    is_child: s.is_child,
+                    source_path: None,
+                    stats: None,
+                    model: s.model,
+                    provider: s.provider,
+                })
+                .collect();
+            source = "runner";
         }
     } else if multi_user {
         return Err(ApiError::internal(

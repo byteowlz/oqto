@@ -42,6 +42,160 @@ pub struct Runner {
     pi_manager: Arc<PiSessionManager>,
 }
 
+#[derive(Debug, Clone)]
+struct JsonlSessionMetadata {
+    external_id: String,
+    title: Option<String>,
+    readable_id: Option<String>,
+    created_at_ms: i64,
+    updated_at_ms: i64,
+}
+
+#[derive(Debug, Default)]
+struct JsonlScanOutcome {
+    scanned_files: usize,
+    skipped_files: usize,
+    failed_files: usize,
+    sessions: Vec<JsonlSessionMetadata>,
+}
+
+fn parse_pi_session_id_from_path(path: &std::path::Path) -> Option<String> {
+    let stem = path.file_stem()?.to_string_lossy();
+    let (_, session_id) = stem.rsplit_once('_')?;
+    if session_id.is_empty() {
+        None
+    } else {
+        Some(session_id.to_string())
+    }
+}
+
+fn parse_pi_created_at_ms_from_path(path: &std::path::Path) -> Option<i64> {
+    let stem = path.file_stem()?.to_string_lossy();
+    let (ts, _) = stem.rsplit_once('_')?;
+    let parsed = chrono::NaiveDateTime::parse_from_str(ts, "%Y-%m-%dT%H-%M-%S-%3fZ").ok()?;
+    Some(chrono::Utc.from_utc_datetime(&parsed).timestamp_millis())
+}
+
+fn read_last_session_info_name(path: &std::path::Path) -> Option<String> {
+    use std::io::BufRead;
+
+    let file = std::fs::File::open(path).ok()?;
+    let reader = std::io::BufReader::new(file);
+    let mut last_name: Option<String> = None;
+
+    for line in reader.lines().map_while(Result::ok) {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) else {
+            continue;
+        };
+
+        let entry_type = value.get("type").and_then(|v| v.as_str());
+        if entry_type != Some("session_info") {
+            continue;
+        }
+
+        if let Some(name) = value.get("name").and_then(|v| v.as_str()) {
+            let clean = name.trim();
+            if !clean.is_empty() {
+                last_name = Some(clean.to_string());
+            }
+        }
+    }
+
+    last_name
+}
+
+fn scan_pi_jsonl_session_metadata(limit: Option<usize>) -> JsonlScanOutcome {
+    let mut outcome = JsonlScanOutcome::default();
+
+    let Ok(home) = std::env::var("HOME") else {
+        return outcome;
+    };
+    let base = std::path::PathBuf::from(home).join(".pi/agent/sessions");
+    let Ok(workspaces) = std::fs::read_dir(base) else {
+        return outcome;
+    };
+
+    let mut files = Vec::new();
+    for workspace in workspaces.flatten() {
+        let workspace_path = workspace.path();
+        if !workspace_path.is_dir() {
+            continue;
+        }
+        let Ok(entries) = std::fs::read_dir(&workspace_path) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() && path.extension().and_then(|v| v.to_str()) == Some("jsonl") {
+                files.push(path);
+            }
+        }
+    }
+
+    files.sort();
+    files.reverse();
+
+    if let Some(limit) = limit
+        && files.len() > limit
+    {
+        files.truncate(limit);
+    }
+
+    for path in files {
+        outcome.scanned_files += 1;
+
+        let Some(external_id) = parse_pi_session_id_from_path(&path) else {
+            outcome.skipped_files += 1;
+            continue;
+        };
+
+        let metadata = std::fs::metadata(&path);
+        let modified_ms = metadata
+            .ok()
+            .and_then(|m| m.modified().ok())
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+
+        let created_at_ms = parse_pi_created_at_ms_from_path(&path).unwrap_or(modified_ms);
+        let updated_at_ms = if modified_ms > 0 {
+            modified_ms
+        } else {
+            created_at_ms
+        };
+
+        let session_name = read_last_session_info_name(&path);
+        let (title, readable_id) = if let Some(name) = session_name {
+            let parsed = crate::pi::session_parser::ParsedTitle::parse(&name);
+            let parsed_title = parsed.display_title().trim();
+            let title = if parsed_title.is_empty() {
+                None
+            } else {
+                Some(parsed_title.to_string())
+            };
+            let readable_id = parsed.get_readable_id().map(ToOwned::to_owned);
+            (title, readable_id)
+        } else {
+            (None, None)
+        };
+
+        outcome.sessions.push(JsonlSessionMetadata {
+            external_id,
+            title,
+            readable_id,
+            created_at_ms,
+            updated_at_ms,
+        });
+    }
+
+    outcome
+}
+
 impl Runner {
     pub fn new(
         sandbox_config: Option<SandboxConfig>,
@@ -1892,6 +2046,87 @@ impl Runner {
                 format!("Failed to fetch updated session: {e}"),
             ),
         }
+    }
+
+    /// Repair missing workspace chat history metadata by scanning Pi JSONL session files.
+    async fn repair_workspace_chat_history(
+        &self,
+        req: RepairWorkspaceChatHistoryRequest,
+    ) -> RunnerResponse {
+        let Some(client) = self.pi_manager.hstry_client() else {
+            return error_response(ErrorCode::Internal, "hstry client not available");
+        };
+
+        let scan = match tokio::task::spawn_blocking(move || scan_pi_jsonl_session_metadata(req.limit)).await {
+            Ok(outcome) => outcome,
+            Err(err) => {
+                return error_response(
+                    ErrorCode::Internal,
+                    format!("Failed to scan Pi session files: {err}"),
+                );
+            }
+        };
+
+        let mut repaired = 0usize;
+        let mut skipped = scan.skipped_files;
+        let mut failed = scan.failed_files;
+
+        for session in scan.sessions {
+            match client.get_conversation(&session.external_id, None).await {
+                Ok(Some(_)) => {
+                    skipped += 1;
+                    continue;
+                }
+                Ok(None) => {}
+                Err(err) => {
+                    failed += 1;
+                    warn!(
+                        "Failed to check conversation existence during repair for {}: {}",
+                        session.external_id, err
+                    );
+                    continue;
+                }
+            }
+
+            if let Err(err) = client
+                .write_conversation(
+                    &session.external_id,
+                    session.title.clone(),
+                    None,
+                    None,
+                    None,
+                    Some("{\"recovered_from\":\"pi_jsonl\"}".to_string()),
+                    Vec::new(),
+                    session.created_at_ms,
+                    Some(session.updated_at_ms),
+                    Some("pi".to_string()),
+                    session.readable_id.clone(),
+                    None,
+                )
+                .await
+            {
+                failed += 1;
+                warn!(
+                    "Failed to upsert recovered conversation {}: {}",
+                    session.external_id, err
+                );
+                continue;
+            }
+
+            repaired += 1;
+        }
+
+        info!(
+            "workspace chat history repair completed: scanned={} repaired={} skipped={} failed={}",
+            scan.scanned_files, repaired, skipped, failed
+        );
+
+        RunnerResponse::WorkspaceChatHistoryRepaired(WorkspaceChatHistoryRepairResponse {
+            scanned_files: scan.scanned_files,
+            repaired_conversations: repaired,
+            skipped_files: skipped,
+            failed_files: failed,
+        })
     }
 
     // Pi Session Management Operations

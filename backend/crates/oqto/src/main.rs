@@ -2607,6 +2607,13 @@ async fn backfill_sessions_for_target(
         return Ok(0);
     };
 
+    if let Err(err) = runner.repair_workspace_chat_history(Some(10_000)).await {
+        warn!(
+            "workspace chat history repair failed before session target backfill (user={} target={:?}): {}",
+            user_id, target, err
+        );
+    }
+
     let response = runner
         .list_workspace_chat_sessions(None, true, None)
         .await

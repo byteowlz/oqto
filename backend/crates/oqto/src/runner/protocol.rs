@@ -125,6 +125,9 @@ pub enum RunnerRequest {
     /// Update a workspace Pi chat session (e.g., rename title).
     UpdateWorkspaceChatSession(UpdateWorkspaceChatSessionRequest),
 
+    /// Repair missing workspace chat session metadata by scanning Pi JSONL session files.
+    RepairWorkspaceChatHistory(RepairWorkspaceChatHistoryRequest),
+
     // ========================================================================
     // Memory Operations (user-plane)
     // ========================================================================
@@ -383,6 +386,9 @@ pub enum RunnerResponse {
 
     /// Workspace chat session updated.
     WorkspaceChatSessionUpdated(WorkspaceChatSessionUpdatedResponse),
+
+    /// Workspace chat history repair result.
+    WorkspaceChatHistoryRepaired(WorkspaceChatHistoryRepairResponse),
 
     // ========================================================================
     // Memory Responses
@@ -743,6 +749,14 @@ pub struct UpdateWorkspaceChatSessionRequest {
     /// New title (if updating).
     #[serde(default)]
     pub title: Option<String>,
+}
+
+/// Request to repair workspace chat history metadata from Pi JSONL session files.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RepairWorkspaceChatHistoryRequest {
+    /// Optional upper bound for scanned files (newest-first within each directory).
+    #[serde(default)]
+    pub limit: Option<usize>,
 }
 
 // ============================================================================
@@ -1504,6 +1518,19 @@ pub struct WorkspaceChatSessionMessagesResponse {
 pub struct WorkspaceChatSessionUpdatedResponse {
     /// Updated session info.
     pub session: WorkspaceChatSessionInfo,
+}
+
+/// Response when workspace chat history repair completes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceChatHistoryRepairResponse {
+    /// Number of JSONL files scanned.
+    pub scanned_files: usize,
+    /// Number of conversations upserted into hstry.
+    pub repaired_conversations: usize,
+    /// Number of files skipped (already present or invalid).
+    pub skipped_files: usize,
+    /// Number of files that failed during repair.
+    pub failed_files: usize,
 }
 
 /// Chat message part (protocol type for runner communication).

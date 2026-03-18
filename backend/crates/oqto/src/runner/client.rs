@@ -730,6 +730,22 @@ impl RunnerClient {
         }
     }
 
+    /// Repair missing workspace chat history metadata from Pi JSONL session files.
+    pub async fn repair_workspace_chat_history(
+        &self,
+        limit: Option<usize>,
+    ) -> Result<WorkspaceChatHistoryRepairResponse> {
+        let req = RunnerRequest::RepairWorkspaceChatHistory(RepairWorkspaceChatHistoryRequest {
+            limit,
+        });
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::WorkspaceChatHistoryRepaired(r) => Ok(r),
+            _ => anyhow::bail!("unexpected response to repair_workspace_chat_history"),
+        }
+    }
+
     // ========================================================================
     // Memory Operations (user-plane)
     // ========================================================================

@@ -17,6 +17,9 @@ pub(crate) async fn handle_request(runner: &Runner, req: RunnerRequest) -> Runne
         RunnerRequest::UpdateWorkspaceChatSession(r) => {
             runner.update_workspace_chat_session(r).await
         }
+        RunnerRequest::RepairWorkspaceChatHistory(r) => {
+            runner.repair_workspace_chat_history(r).await
+        }
         _ => error_response(ErrorCode::InvalidRequest, "Invalid sessions request"),
     }
 }
