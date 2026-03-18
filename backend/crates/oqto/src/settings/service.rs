@@ -468,7 +468,6 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    #[allow(clippy::approx_constant)]
     fn test_toml_json_roundtrip() {
         let json = json!({
             "string": "hello",

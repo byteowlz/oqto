@@ -282,7 +282,6 @@ pub struct PiResponse {
 /// Events streamed from pi during agent operation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-#[allow(clippy::large_enum_variant)]
 pub enum PiEvent {
     /// Agent begins processing.
     AgentStart,
@@ -686,7 +685,6 @@ pub struct SessionTokens {
 
 /// Message received from pi stdout - either a response or an event.
 #[derive(Debug, Clone)]
-#[allow(clippy::large_enum_variant)]
 pub enum PiMessage {
     Response(PiResponse),
     Event(PiEvent),

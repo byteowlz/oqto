@@ -28,7 +28,6 @@ use super::ws;
 
 /// Authentication mode for API routers.
 #[derive(Clone)]
-#[allow(clippy::large_enum_variant)]
 pub enum AuthMode {
     /// Standard JWT/cookie authentication.
     Jwt,

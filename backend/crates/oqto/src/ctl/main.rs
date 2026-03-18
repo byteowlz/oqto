@@ -781,7 +781,6 @@ impl OqtoResponse {
     }
 }
 
-#[allow(clippy::large_enum_variant)]
 enum OqtoTransport {
     Http {
         base_url: String,

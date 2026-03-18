@@ -506,7 +506,6 @@ pub struct TrxIssueUpdate {
 /// `WsEvent::Agent` as canonical `oqto_protocol::events::Event` values.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "channel", rename_all = "snake_case")]
-#[allow(clippy::large_enum_variant)]
 pub enum WsEvent {
     /// Canonical agent events (streaming, state, command responses, delegation, etc.).
     /// Serializes as `{"channel": "agent", "session_id": ..., "event": ..., ...}`.
