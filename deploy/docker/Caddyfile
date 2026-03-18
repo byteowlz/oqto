@@ -1,0 +1,4 @@
+# Placeholder - overwritten by entrypoint.sh at runtime
+:8080 {
+    respond "Oqto starting..." 503
+}
