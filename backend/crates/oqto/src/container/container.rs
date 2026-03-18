@@ -444,7 +444,11 @@ fn validate_container_name(name: &str) -> ContainerResult<()> {
     }
 
     // Must start with alphanumeric or underscore
-    let first_char = name.chars().next().unwrap();
+    let Some(first_char) = name.chars().next() else {
+        return Err(ContainerError::InvalidInput(
+            "container name cannot be empty".to_string(),
+        ));
+    };
     if !first_char.is_ascii_alphanumeric() && first_char != '_' {
         return Err(ContainerError::InvalidInput(
             "container name must start with an alphanumeric character or underscore".to_string(),
@@ -494,8 +498,13 @@ fn validate_hostname(hostname: &str) -> ContainerResult<()> {
         }
 
         // Must start and end with alphanumeric
-        let first = label.chars().next().unwrap();
-        let last = label.chars().last().unwrap();
+        let mut chars = label.chars();
+        let Some(first) = chars.next() else {
+            return Err(ContainerError::InvalidInput(
+                "hostname cannot have empty labels".to_string(),
+            ));
+        };
+        let last = chars.next_back().unwrap_or(first);
         if !first.is_ascii_alphanumeric() || !last.is_ascii_alphanumeric() {
             return Err(ContainerError::InvalidInput(
                 "hostname labels must start and end with alphanumeric characters".to_string(),
@@ -533,7 +542,11 @@ fn validate_env_var_key(key: &str) -> ContainerResult<()> {
     }
 
     // Must start with letter or underscore
-    let first_char = key.chars().next().unwrap();
+    let Some(first_char) = key.chars().next() else {
+        return Err(ContainerError::InvalidInput(
+            "environment variable key cannot be empty".to_string(),
+        ));
+    };
     if !first_char.is_ascii_alphabetic() && first_char != '_' {
         return Err(ContainerError::InvalidInput(format!(
             "environment variable key '{}' must start with a letter or underscore",
