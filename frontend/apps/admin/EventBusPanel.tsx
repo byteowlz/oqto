@@ -7,6 +7,9 @@ import { busSubscribe } from "@/lib/bus-client";
 import type { BusEvent, BusScope } from "@/lib/ws-mux-types";
 import {
 	Activity,
+	Download,
+	Pause,
+	Play,
 	Radio,
 	RefreshCw,
 	Trash2,
@@ -19,7 +22,36 @@ type EventRow = BusEvent & {
 	receivedAt: number;
 };
 
+type TopicPreset = {
+	label: string;
+	scope: BusScope;
+	scopeId: string;
+	topics: string;
+};
+
 const MAX_EVENTS = 200;
+
+const TOPIC_PRESETS: TopicPreset[] = [
+	{ label: "All (global)", scope: "global", scopeId: "global", topics: "**" },
+	{
+		label: "Session lifecycle",
+		scope: "workspace",
+		scopeId: "local",
+		topics: "session.**",
+	},
+	{
+		label: "Files",
+		scope: "workspace",
+		scopeId: "local",
+		topics: "files.**",
+	},
+	{
+		label: "Services",
+		scope: "global",
+		scopeId: "global",
+		topics: "service.**",
+	},
+];
 
 function metric(label: string, value: string | number) {
 	return (
@@ -68,7 +100,17 @@ export function EventBusPanel() {
 	const [topicsInput, setTopicsInput] = useState("**");
 	const [events, setEvents] = useState<EventRow[]>([]);
 	const [connected, setConnected] = useState(false);
+	const [paused, setPaused] = useState(false);
+	const [filterText, setFilterText] = useState("");
+	const [autoExportEnabled, setAutoExportEnabled] = useState(false);
+	const [autoExportEvery, setAutoExportEvery] = useState("50");
+	const autoExportNextThresholdRef = useRef(50);
 	const unsubscribeRef = useRef<(() => void) | null>(null);
+	const pausedRef = useRef(paused);
+
+	useEffect(() => {
+		pausedRef.current = paused;
+	}, [paused]);
 
 	const topics = useMemo(
 		() =>
@@ -78,6 +120,24 @@ export function EventBusPanel() {
 				.filter((topic) => topic.length > 0),
 		[topicsInput],
 	);
+
+	const parsedAutoExportEvery = useMemo(() => {
+		const parsed = Number.parseInt(autoExportEvery, 10);
+		return Number.isFinite(parsed) && parsed > 0 ? parsed : 50;
+	}, [autoExportEvery]);
+
+	const filteredEvents = useMemo(() => {
+		const needle = filterText.trim().toLowerCase();
+		if (needle.length === 0) return events;
+		return events.filter((event) => {
+			if (event.topic.toLowerCase().includes(needle)) return true;
+			if (event.scope_id.toLowerCase().includes(needle)) return true;
+			if (renderSource(event.source).toLowerCase().includes(needle))
+				return true;
+			const payloadText = pretty(event.payload).toLowerCase();
+			return payloadText.includes(needle);
+		});
+	}, [events, filterText]);
 
 	const disconnect = useCallback(() => {
 		if (unsubscribeRef.current) {
@@ -96,6 +156,7 @@ export function EventBusPanel() {
 				topics: topics.length > 0 ? topics : ["**"],
 			},
 			(event) => {
+				if (pausedRef.current) return;
 				setEvents((prev) => {
 					const next: EventRow = { ...event, receivedAt: Date.now() };
 					const updated = [next, ...prev];
@@ -115,6 +176,43 @@ export function EventBusPanel() {
 		return () => disconnect();
 	}, [connect, disconnect]);
 
+	const exportEvents = useCallback(
+		(rows: EventRow[], suffix: "all" | "filtered") => {
+			const dump = {
+				exported_at: new Date().toISOString(),
+				scope,
+				scope_id: scopeId,
+				topics: topics.length > 0 ? topics : ["**"],
+				filter_text: filterText.trim() || undefined,
+				event_count: rows.length,
+				events: rows,
+			};
+			const blob = new Blob([JSON.stringify(dump, null, 2)], {
+				type: "application/json",
+			});
+			const url = URL.createObjectURL(blob);
+			const link = document.createElement("a");
+			link.href = url;
+			link.download = `oqto-eventbus-${suffix}-${Date.now()}.json`;
+			document.body.appendChild(link);
+			link.click();
+			document.body.removeChild(link);
+			URL.revokeObjectURL(url);
+		},
+		[filterText, scope, scopeId, topics],
+	);
+
+	useEffect(() => {
+		autoExportNextThresholdRef.current = parsedAutoExportEvery;
+	}, [parsedAutoExportEvery]);
+
+	useEffect(() => {
+		if (!autoExportEnabled) return;
+		if (events.length < autoExportNextThresholdRef.current) return;
+		exportEvents(events, "all");
+		autoExportNextThresholdRef.current += parsedAutoExportEvery;
+	}, [autoExportEnabled, events, exportEvents, parsedAutoExportEvery]);
+
 	const latestEvent = events[0];
 
 	return (
@@ -132,6 +230,11 @@ export function EventBusPanel() {
 							<WifiOff className="w-3 h-3" /> disconnected
 						</Badge>
 					)}
+					{paused && (
+						<Badge variant="outline" className="gap-1">
+							<Pause className="w-3 h-3" /> paused
+						</Badge>
+					)}
 				</div>
 				<div className="flex items-center gap-2">
 					<Button
@@ -143,6 +246,38 @@ export function EventBusPanel() {
 						}}
 					>
 						<RefreshCw className="w-3.5 h-3.5" />
+					</Button>
+					<Button
+						type="button"
+						size="sm"
+						variant="outline"
+						onClick={() => setPaused((prev) => !prev)}
+					>
+						{paused ? (
+							<Play className="w-3.5 h-3.5" />
+						) : (
+							<Pause className="w-3.5 h-3.5" />
+						)}
+					</Button>
+					<Button
+						type="button"
+						size="sm"
+						variant="outline"
+						onClick={() => exportEvents(events, "all")}
+						disabled={events.length === 0}
+					>
+						<Download className="w-3.5 h-3.5" />
+						<span className="ml-1">All</span>
+					</Button>
+					<Button
+						type="button"
+						size="sm"
+						variant="outline"
+						onClick={() => exportEvents(filteredEvents, "filtered")}
+						disabled={filteredEvents.length === 0}
+					>
+						<Download className="w-3.5 h-3.5" />
+						<span className="ml-1">Filtered</span>
 					</Button>
 					<Button
 						type="button"
@@ -167,6 +302,24 @@ export function EventBusPanel() {
 						</Button>
 					)}
 				</div>
+			</div>
+
+			<div className="flex flex-wrap gap-2">
+				{TOPIC_PRESETS.map((preset) => (
+					<Button
+						key={preset.label}
+						type="button"
+						size="sm"
+						variant="outline"
+						onClick={() => {
+							setScope(preset.scope);
+							setScopeId(preset.scopeId);
+							setTopicsInput(preset.topics);
+						}}
+					>
+						{preset.label}
+					</Button>
+				))}
 			</div>
 
 			<div className="grid grid-cols-1 md:grid-cols-3 gap-2">
@@ -208,6 +361,38 @@ export function EventBusPanel() {
 				</label>
 			</div>
 
+			<div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+				<label className="text-xs text-muted-foreground flex flex-col gap-1">
+					Filter events (topic/source/scope/payload)
+					<input
+						className="h-8 px-2 border border-border bg-background text-foreground"
+						value={filterText}
+						onChange={(e) => setFilterText(e.target.value)}
+						placeholder="session.created"
+					/>
+				</label>
+				<label className="text-xs text-muted-foreground flex flex-col gap-1">
+					Auto-export every N events
+					<input
+						className="h-8 px-2 border border-border bg-background text-foreground"
+						value={autoExportEvery}
+						onChange={(e) => setAutoExportEvery(e.target.value)}
+						placeholder="50"
+					/>
+				</label>
+				<div className="text-xs text-muted-foreground flex flex-col gap-1">
+					<span>Auto-export</span>
+					<Button
+						type="button"
+						size="sm"
+						variant={autoExportEnabled ? "default" : "outline"}
+						onClick={() => setAutoExportEnabled((prev) => !prev)}
+					>
+						{autoExportEnabled ? "Enabled" : "Disabled"}
+					</Button>
+				</div>
+			</div>
+
 			<div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2">
 				{metric(
 					"subscribers",
@@ -244,16 +429,19 @@ export function EventBusPanel() {
 						: latestEvent
 							? `Last event: ${latestEvent.topic} (${new Date(latestEvent.ts).toLocaleTimeString()})`
 							: "No events received yet"}
+				<span className="font-mono">
+					showing {filteredEvents.length}/{events.length}
+				</span>
 			</div>
 
 			<div className="border border-border bg-background/40 max-h-96 overflow-auto">
-				{events.length === 0 ? (
+				{filteredEvents.length === 0 ? (
 					<div className="px-3 py-4 text-xs text-muted-foreground">
-						No events yet. Adjust scope/scope_id and click Connect.
+						No matching events yet. Adjust filters/scope and click Connect.
 					</div>
 				) : (
 					<ul className="divide-y divide-border">
-						{events.map((event) => (
+						{filteredEvents.map((event) => (
 							<li
 								key={`${event.event_id}-${event.receivedAt}`}
 								className="px-3 py-2"
