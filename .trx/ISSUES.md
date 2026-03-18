@@ -2,6 +2,22 @@
 
 ## Open
 
+### [oqto-heye] P0: Chat send must always terminate (response or explicit error), never infinite spinner (P0, bug)
+Repro at 23:57 (jolly-moves-kernel): backend accepted prompt commands but no user-visible terminal recovery when runner send failed/stalled, resulting in bogus working state and perceived message loss.\n\nBackend hardening added:\n- on prompt/steer/follow_up send failure, ws now emits canonical terminal events immediately (agent.error + agent.idle) and logs failure details with session id.\n- clears response watchdog on failure path before terminal emission.\n\nDeployed to archvm backend.
+
+### [oqto-8zvw] Shared workspace sessions: frontend creates new session ID instead of reusing existing hstry session ID (P0, bug)
+When a user navigates to a shared workspace session (e.g. nimble-tests-ladder with session ID f3ce6d6b), the frontend:
+1. Fetches history using the correct ID (f3ce6d6b) -> gets 101 messages
+2. But creates a FRESH oqto-UUID for session.create (e.g. oqto-7d09d46b)
+3. Runner spawns a brand new Pi process for oqto-7d09d46b
+4. Prompt goes to the new Pi (empty context)
+...
+
+
+### [oqto-vh8v] Critical: terminal routing integrity violation across users/workspaces (P0, bug)
+
+### [oqto-snfs] Backend deadlock when deleting shared workspace sessions - session.delete/session.create to SW runner hangs, blocks entire WS connection, eventually all HTTP requests time out. 30s runner client timeout not firing. Needs 45s hard deadline on WS command handler + investigation of why tokio timeout doesn't trigger. (P0, bug)
+
 ### [oqto-5ey4] Migrate from oqto-browser to agent-browser (P0, epic)
 
 ### [oqto-29e1] Stability: hstry gRPC high-availability with local spool fallback (P0, epic)
@@ -31,7 +47,62 @@ setup.sh must correctly provision everything for a new platform user on a fresh 
 ...
 
 
-### [oqto-719f] Add Rust AI guardrail linting baseline + ast-grep integration (P1, task)
+### [oqto-36zw.3.1] Implementation checklist: single-user runner bootstrap and recovery (P1, task)
+Checklist:
+- [ ] Auto-start runner if socket unavailable
+- [ ] Add readiness handshake (Ping/GetCapabilities) before dependent ops
+- [ ] Implement bounded retry/backoff
+- [ ] Handle runner crash/restart reconnect path
+...
+
+
+### [oqto-36zw.2.1] Implementation checklist: runner-default selection policy (P1, task)
+Checklist:
+- [ ] Change default path selection to RunnerUserPlane
+- [ ] Add explicit unsafe fallback gate (OQTO_UNSAFE_DIRECT)
+- [ ] Add startup warning when unsafe direct mode is active
+- [ ] Add tests for selection matrix (default, explicit override)
+...
+
+
+### [oqto-36zw.1.1] Implementation checklist: baseline hardening and telemetry (P1, task)
+Checklist:
+- [ ] Add integration tests for session lifecycle via user-plane
+- [ ] Add integration tests for chat prompt/abort/retry stream behavior
+- [ ] Add integration tests for file ops and memory ops
+- [ ] Add runner/direct path metrics and error counters
+...
+
+
+### [oqto-36zw.3] Single-user runner bootstrap and resiliency (auto-start, healthcheck, reconnect) (P1, feature)
+Ensure runner-first works reliably in single-user development environments.
+
+Context:
+- Parent epic: oqto-36zw
+
+...
+
+
+### [oqto-36zw.2] Make RunnerUserPlane default in all normal local modes (guard direct behind explicit unsafe flag) (P1, feature)
+Switch runtime selection policy to runner-first while preserving emergency fallback.
+
+Context:
+- Parent epic: oqto-36zw
+- Policy decision: direct path should not be default runtime path.
+...
+
+
+### [oqto-36zw.1] Baseline hardening for runner-first migration (coverage + telemetry + smoke checks) (P1, task)
+Establish safety net before runtime-path migration.
+
+Context:
+- Parent epic: oqto-36zw
+- Target architecture doc: docs/architecture/backend-target-tree.md
+...
+
+
+### [oqto-36zw] Backend architecture refactor: runner-first crate split and module cleanup (P1, epic)
+Refactor backend toward a runner-first architecture with clear crate boundaries and removal of duplicate/ambiguous module ownership.\n\nTarget tree and architecture map:\n- docs/architecture/backend-target-tree.md\n\nScope:\n- Make runner-mediated user-plane the default in all normal modes\n- Split oversized files (ws_multiplexed, oqto-runner daemon) into coherent submodules\n- Extract oqto-runner and oqto-sandbox into dedicated crates\n- Consolidate history/hstry responsibilities\n- Enforce single canonical protocol type source in oqto-protocol\n\nConstraints:\n- Incremental migration with compatibility at each step\n- No protocol regressions
 
 ### [oqto-75rn] Use EAVS API for provider/model CRUD from Oqto (no direct models.json drift) (P1, feature)
 Problem: Oqto frontend provider/model additions currently update Pi models.json only and do not update EAVS global provider config. This causes drift: provisioned eavs-* catalog and user-edited catalogs diverge. Expected: adding provider/model should integrate with EAVS control-plane so global routing source-of-truth stays in EAVS.\n\nProposal:\n1) Add Oqto admin flow: create/update/delete providers/models via EAVS API/CLI (not by editing config files directly).\n2) After successful mutation, trigger EAVS reload/sync and regenerate per-user models.json from EAVS /providers/detail.\n3) Keep user/workspace .oqto/models.json as optional overlay/restriction layer, but base catalog comes from EAVS.\n4) Add clear UI distinction: Global Provider (EAVS) vs Workspace Catalog Override (.oqto/models.json).\n\nAcceptance:\n- New provider added in UI appears in /providers/detail immediately\n- sync-models propagates to all users\n- no manual edits to /home/oqto/.config/eavs/config.toml required\n- no key material stored in workspace catalogs
@@ -464,6 +535,132 @@ Build and distribute pre-compiled binaries for Linux (x86_64, arm64) and macOS (
 
 ### [octo-af5j] Release & Update System (P1, epic)
 Comprehensive system for distributing Octo releases, managing updates in the field, and expanding runtime options including Proxmox LXC support.
+
+### [oqto-36zw.10.1] Implementation checklist: final runner-only cleanup and docs alignment (P2, task)
+Checklist:
+- [ ] Remove direct path from production runtime wiring
+- [ ] Keep test-only utilities if still needed
+- [ ] Remove obsolete config flags/branches
+- [ ] Update AGENTS.md and architecture docs
+...
+
+
+### [oqto-36zw.9.1] Implementation checklist: canonical type source unification (P2, task)
+Checklist:
+- [ ] Inventory duplicate canonical type definitions
+- [ ] Move/alias canonical definitions into oqto-protocol
+- [ ] Replace local canon usages with protocol imports
+- [ ] Validate serialization compatibility
+...
+
+
+### [oqto-36zw.8.1] Implementation checklist: consolidate history and hstry surfaces (P2, task)
+Checklist:
+- [ ] Define single authoritative history integration namespace
+- [ ] Move read/write/convert responsibilities under that namespace
+- [ ] Remove stale re-exports and duplicate adapters
+- [ ] Update callsites/imports across backend
+...
+
+
+### [oqto-36zw.7.1] Implementation checklist: extract dedicated oqto-sandbox crate (P2, task)
+Checklist:
+- [ ] Create crates/oqto-sandbox and move config/policy/platform code
+- [ ] Keep oqto-sandbox CLI as thin wrapper
+- [ ] Update runner integration imports
+- [ ] Validate Linux bwrap behavior parity
+...
+
+
+### [oqto-36zw.6.1] Implementation checklist: extract dedicated oqto-runner crate (P2, task)
+Checklist:
+- [ ] Create crates/oqto-runner and move code incrementally
+- [ ] Update workspace Cargo manifests and dependency graph
+- [ ] Preserve client/server runner protocol interfaces
+- [ ] Verify independent runner build and startup
+...
+
+
+### [oqto-36zw.5.1] Implementation checklist: modularize runner daemon internals (P2, task)
+Checklist:
+- [ ] Introduce runner/daemon/server + state modules
+- [ ] Split handlers into process/files/sessions/memories/pi
+- [ ] Reduce src/bin/oqto-runner.rs to thin bootstrap
+- [ ] Ensure protocol dispatch parity
+...
+
+
+### [oqto-36zw.4.1] Implementation checklist: split websocket multiplex handler by channel (P2, task)
+Checklist:
+- [ ] Create ws/multiplexed module structure by channel
+- [ ] Move channel-specific logic without changing wire format
+- [ ] Keep shared context and dispatch entrypoint coherent
+- [ ] Add/refresh protocol snapshot tests
+...
+
+
+### [oqto-36zw.10] Finalize runner-first cutover: remove direct runtime path from production code and update docs (P2, task)
+Complete migration by deleting deprecated runtime branching.
+
+Context:
+- Parent epic: oqto-36zw
+- Must happen only after runner-first path is stable.
+...
+
+
+### [oqto-36zw.9] Unify canonical types under oqto-protocol and remove duplicated canon definitions (P2, feature)
+Ensure canonical protocol types have one source of truth.
+
+Context:
+- Parent epic: oqto-36zw
+- Current duplication between oqto/src/canon and oqto-protocol.
+...
+
+
+### [oqto-36zw.8] Consolidate history and hstry modules into a single history integration surface (P2, feature)
+Remove ambiguous dual-module ownership for chat history integration.
+
+Context:
+- Parent epic: oqto-36zw
+- Current overlap between history/ and hstry/ causes navigation confusion.
+...
+
+
+### [oqto-36zw.7] Extract sandbox implementation into dedicated oqto-sandbox crate (P2, feature)
+Separate sandbox policy/implementation from server crate.
+
+Context:
+- Parent epic: oqto-36zw
+
+...
+
+
+### [oqto-36zw.6] Extract oqto-runner into dedicated workspace crate (P2, feature)
+Promote runner daemon to a first-class crate with explicit boundaries.
+
+Context:
+- Parent epic: oqto-36zw
+- Target tree: docs/architecture/backend-target-tree.md
+...
+
+
+### [oqto-36zw.5] Refactor oqto-runner binary into thin entrypoint + daemon library modules (P2, feature)
+Move runner implementation details out of src/bin/oqto-runner.rs.
+
+Context:
+- Parent epic: oqto-36zw
+- Current binary contains daemon state, protocol dispatch, and all handlers inline.
+...
+
+
+### [oqto-36zw.4] Refactor api/ws_multiplexed.rs into channel-scoped modules (P2, feature)
+Decompose oversized multiplexed websocket file into maintainable channel handlers.
+
+Context:
+- Parent epic: oqto-36zw
+- Current file is oversized and mixes unrelated responsibilities.
+...
+
 
 ### [oqto-dnxq] Search in in Planner in the sidebar is lagging probably due to expensive re-renders on entry (P2, bug)
 
@@ -1280,31 +1477,6 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
-- [oqto-vh8v] Critical: terminal routing integrity violation across users/workspaces (closed 2026-03-17)
-- [oqto-heye] P0: Chat send must always terminate (response or explicit error), never infinite spinner (closed 2026-03-17)
-- [oqto-8zvw] Shared workspace sessions: frontend creates new session ID instead of reusing existing hstry session ID (closed 2026-03-17)
-- [oqto-snfs] Backend deadlock when deleting shared workspace sessions - session.delete/session.create to SW runner hangs, blocks entire WS connection, eventually all HTTP requests time out. 30s runner client timeout not firing. Needs 45s hard deadline on WS command handler + investigation of why tokio timeout doesn't trigger. (closed 2026-03-17)
-- [oqto-36zw] Backend architecture refactor: runner-first crate split and module cleanup (closed 2026-03-17)
-- [oqto-36zw.10.1] Implementation checklist: final runner-only cleanup and docs alignment (closed 2026-03-17)
-- [oqto-36zw.6] Extract oqto-runner into dedicated workspace crate (closed 2026-03-17)
-- [oqto-36zw.6.1] Implementation checklist: extract dedicated oqto-runner crate (closed 2026-03-17)
-- [oqto-36zw.5] Refactor oqto-runner binary into thin entrypoint + daemon library modules (closed 2026-03-17)
-- [oqto-36zw.5.1] Implementation checklist: modularize runner daemon internals (closed 2026-03-17)
-- [oqto-36zw.7] Extract sandbox implementation into dedicated oqto-sandbox crate (closed 2026-03-17)
-- [oqto-36zw.7.1] Implementation checklist: extract dedicated oqto-sandbox crate (closed 2026-03-17)
-- [oqto-36zw.8] Consolidate history and hstry modules into a single history integration surface (closed 2026-03-17)
-- [oqto-36zw.8.1] Implementation checklist: consolidate history and hstry surfaces (closed 2026-03-17)
-- [oqto-36zw.9] Unify canonical types under oqto-protocol and remove duplicated canon definitions (closed 2026-03-17)
-- [oqto-36zw.9.1] Implementation checklist: canonical type source unification (closed 2026-03-17)
-- [oqto-36zw.10] Finalize runner-first cutover: remove direct runtime path from production code and update docs (closed 2026-03-17)
-- [oqto-36zw.4] Refactor api/ws_multiplexed.rs into channel-scoped modules (closed 2026-03-17)
-- [oqto-36zw.4.1] Implementation checklist: split websocket multiplex handler by channel (closed 2026-03-17)
-- [oqto-36zw.3] Single-user runner bootstrap and resiliency (auto-start, healthcheck, reconnect) (closed 2026-03-17)
-- [oqto-36zw.3.1] Implementation checklist: single-user runner bootstrap and recovery (closed 2026-03-17)
-- [oqto-36zw.2] Make RunnerUserPlane default in all normal local modes (guard direct behind explicit unsafe flag) (closed 2026-03-17)
-- [oqto-36zw.2.1] Implementation checklist: runner-default selection policy (closed 2026-03-17)
-- [oqto-36zw.1] Baseline hardening for runner-first migration (coverage + telemetry + smoke checks) (closed 2026-03-17)
-- [oqto-36zw.1.1] Implementation checklist: baseline hardening and telemetry (closed 2026-03-17)
 - [octo-thhx.2] Onboarding API endpoints (closed 2026-03-17)
 - [octo-thhx.11] Godmode command to skip onboarding (closed 2026-03-17)
 - [octo-thhx.1] Onboarding state model and database schema (closed 2026-03-17)
@@ -1974,12 +2146,12 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
 - [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
-- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
-- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
-- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
 - [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
+- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
+- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
+- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
