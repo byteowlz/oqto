@@ -26,7 +26,7 @@ export function useAppShellRouteSync({
 	apps,
 	navigate,
 }: UseAppShellRouteSyncInput): void {
-	// useeffect-guardrail: allow - route->app state synchronization bridge
+	// useeffect-guardrail: allow - route->app state synchronization and canonicalization
 	useEffect(() => {
 		if (matchedAppId && matchedAppId !== activeAppId) {
 			if (matchedAppId === "sessions" && virtualApps.has(activeAppId)) return;
@@ -38,9 +38,18 @@ export function useAppShellRouteSync({
 		}
 		if (!matchedAppId && pathname === "/" && sessionsRoute) {
 			navigate(sessionsRoute, { replace: true });
+			return;
 		}
+
+		if (activeAppId !== "sessions") return;
+		const activeRoute = apps.find((app) => app.id === activeAppId)?.routes?.[0];
+		if (!activeRoute || matchedAppId) return;
+		const isMatch =
+			pathname === activeRoute || pathname.startsWith(`${activeRoute}/`);
+		if (!isMatch) navigate(activeRoute, { replace: true });
 	}, [
 		activeAppId,
+		apps,
 		matchedAppId,
 		navigate,
 		pathname,
@@ -48,14 +57,4 @@ export function useAppShellRouteSync({
 		setActiveAppId,
 		virtualApps,
 	]);
-
-	// useeffect-guardrail: allow - sessions route canonicalization for deep links
-	useEffect(() => {
-		if (activeAppId !== "sessions") return;
-		const activeRoute = apps.find((app) => app.id === activeAppId)?.routes?.[0];
-		if (!activeRoute || matchedAppId) return;
-		const isMatch =
-			pathname === activeRoute || pathname.startsWith(`${activeRoute}/`);
-		if (!isMatch) navigate(activeRoute, { replace: true });
-	}, [activeAppId, apps, matchedAppId, navigate, pathname]);
 }

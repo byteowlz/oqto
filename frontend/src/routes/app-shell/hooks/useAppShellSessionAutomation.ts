@@ -25,30 +25,23 @@ export function useAppShellSessionAutomation({
 	createNewChat,
 }: UseAppShellSessionAutomationInput): void {
 	const autoExpandedRef = useRef(false);
-	// useeffect-guardrail: allow - one-time auto expand based on initial selected session
-	useEffect(() => {
-		if (autoExpandedRef.current) return;
-		if (!selectedChatSessionId) return;
-		const session = chatHistory.find(
-			(item) => item.id === selectedChatSessionId,
-		);
-		if (!session) return;
-		const key = projectKeyForSession(session);
-		if (key && !expandedProjects.has(key)) {
-			toggleProjectExpanded(key);
-		}
-		autoExpandedRef.current = true;
-	}, [
-		chatHistory,
-		expandedProjects,
-		projectKeyForSession,
-		selectedChatSessionId,
-		toggleProjectExpanded,
-	]);
-
 	const autoCreatedRef = useRef(false);
-	// useeffect-guardrail: allow - one-time bootstrap chat creation for empty workspaces
+
+	// useeffect-guardrail: allow - one-time session automation during initial shell state
 	useEffect(() => {
+		if (!autoExpandedRef.current && selectedChatSessionId) {
+			const session = chatHistory.find(
+				(item) => item.id === selectedChatSessionId,
+			);
+			if (session) {
+				const key = projectKeyForSession(session);
+				if (key && !expandedProjects.has(key)) {
+					toggleProjectExpanded(key);
+				}
+				autoExpandedRef.current = true;
+			}
+		}
+
 		if (autoCreatedRef.current) return;
 		if (chatHistory.length > 0) return;
 		if (selectedChatSessionId) return;
@@ -60,9 +53,12 @@ export function useAppShellSessionAutomation({
 			void createNewChat(defaultDirectory.path);
 		}
 	}, [
-		chatHistory.length,
+		chatHistory,
 		createNewChat,
+		expandedProjects,
+		projectKeyForSession,
 		selectedChatSessionId,
+		toggleProjectExpanded,
 		workspaceDirectories,
 	]);
 }

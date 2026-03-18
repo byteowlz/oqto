@@ -55,8 +55,7 @@ function isReasoningModel(modelRef: string, models: PiModelInfo[]): boolean {
 	const normalizedProvider = provider.toLowerCase();
 	const normalizedModelId = modelId.toLowerCase();
 	return (
-		normalizedProvider.includes("codex") ||
-		normalizedModelId.includes("codex")
+		normalizedProvider.includes("codex") || normalizedModelId.includes("codex")
 	);
 }
 
@@ -229,10 +228,29 @@ export function useModelSelection(
 		};
 	}, [effectiveSessionId, _normalizedWorkspacePath, modelCacheKey]);
 
-	// Derive idle/streaming state from agent events (no polling)
-	// Also handles applying pending model when agent goes idle
+	// Derive idle/streaming state from agent events and fetch initial state.
+	// Also handles applying pending model when agent goes idle.
+	// useeffect-guardrail: allow - websocket subscription + initial idle state fetch
 	useEffect(() => {
-		if (!effectiveSessionId) return undefined;
+		if (!effectiveSessionId) {
+			setIsIdle(true);
+			return undefined;
+		}
+
+		void getWsManager()
+			.agentGetStateWait(effectiveSessionId)
+			.then((state) => {
+				const s = state as {
+					isStreaming: boolean;
+					isCompacting: boolean;
+				} | null;
+				if (s) {
+					setIsIdle(!s.isStreaming && !s.isCompacting);
+				}
+			})
+			.catch(() => {
+				// Ignore - default to idle
+			});
 
 		const unsubscribe = getWsManager().subscribe("agent", (event) => {
 			if (!("channel" in event) || event.channel !== "agent") return;
@@ -280,28 +298,6 @@ export function useModelSelection(
 		});
 		return unsubscribe;
 	}, [effectiveSessionId, workspacePath]);
-
-	// Fetch initial idle state once on mount (single request, not a poll)
-	useEffect(() => {
-		if (!effectiveSessionId) {
-			setIsIdle(true);
-			return;
-		}
-		getWsManager()
-			.agentGetStateWait(effectiveSessionId)
-			.then((state) => {
-				const s = state as {
-					isStreaming: boolean;
-					isCompacting: boolean;
-				} | null;
-				if (s) {
-					setIsIdle(!s.isStreaming && !s.isCompacting);
-				}
-			})
-			.catch(() => {
-				// Ignore - default to idle
-			});
-	}, [effectiveSessionId]);
 
 	const persistModelSelection = useCallback(
 		(modelRef: string | null) => {

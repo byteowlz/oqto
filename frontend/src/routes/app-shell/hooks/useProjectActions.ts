@@ -330,23 +330,19 @@ export function useProjectActions(
 		[availableExtensions, availableModels, availableSkills],
 	);
 
+	// useeffect-guardrail: allow - synchronize dialog defaults when template/options change
 	useEffect(() => {
 		if (!newProjectDialogOpen) return;
-		if (selectedTemplatePath === lastTemplatePathRef.current) return;
-		const nextValues = buildSettingsFromDefaults(
-			selectedTemplate?.defaults ?? null,
-		);
-		setNewProjectSettings(nextValues);
-		lastTemplatePathRef.current = selectedTemplatePath;
-	}, [
-		buildSettingsFromDefaults,
-		newProjectDialogOpen,
-		selectedTemplate?.defaults,
-		selectedTemplatePath,
-	]);
 
-	useEffect(() => {
-		if (!newProjectDialogOpen) return;
+		if (selectedTemplatePath !== lastTemplatePathRef.current) {
+			const nextValues = buildSettingsFromDefaults(
+				selectedTemplate?.defaults ?? null,
+			);
+			setNewProjectSettings(nextValues);
+			lastTemplatePathRef.current = selectedTemplatePath;
+			return;
+		}
+
 		setNewProjectSettings((prev) => {
 			let next = prev;
 			if (!prev.defaultModelRef && availableModels[0]) {
@@ -378,7 +374,10 @@ export function useProjectActions(
 		availableExtensions,
 		availableModels,
 		availableSkills,
+		buildSettingsFromDefaults,
 		newProjectDialogOpen,
+		selectedTemplate?.defaults,
+		selectedTemplatePath,
 	]);
 
 	const handleCreateProjectFromTemplate = useCallback(async () => {
