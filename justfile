@@ -17,7 +17,7 @@ build-frontend:
     cd frontend && bun run build
 
 # Run all linters
-lint: lint-backend lint-frontend
+lint: lint-backend lint-frontend lint-rust-ai-guardrails
 
 # Lint backend
 lint-backend:
@@ -26,6 +26,14 @@ lint-backend:
 # Lint frontend
 lint-frontend:
     cd frontend && bun run lint
+
+# Install ast-grep (advanced structural linting)
+install-ast-grep:
+    cargo install ast-grep --locked
+
+# Rust AI guardrails via ast-grep (changed files only)
+lint-rust-ai-guardrails:
+    ./scripts/lint/rust-ai-guardrails.sh
 
 # Run all tests
 test: test-backend test-frontend

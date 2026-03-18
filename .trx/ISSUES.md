@@ -31,6 +31,8 @@ setup.sh must correctly provision everything for a new platform user on a fresh 
 ...
 
 
+### [oqto-719f] Add Rust AI guardrail linting baseline + ast-grep integration (P1, task)
+
 ### [oqto-75rn] Use EAVS API for provider/model CRUD from Oqto (no direct models.json drift) (P1, feature)
 Problem: Oqto frontend provider/model additions currently update Pi models.json only and do not update EAVS global provider config. This causes drift: provisioned eavs-* catalog and user-edited catalogs diverge. Expected: adding provider/model should integrate with EAVS control-plane so global routing source-of-truth stays in EAVS.\n\nProposal:\n1) Add Oqto admin flow: create/update/delete providers/models via EAVS API/CLI (not by editing config files directly).\n2) After successful mutation, trigger EAVS reload/sync and regenerate per-user models.json from EAVS /providers/detail.\n3) Keep user/workspace .oqto/models.json as optional overlay/restriction layer, but base catalog comes from EAVS.\n4) Add clear UI distinction: Global Provider (EAVS) vs Workspace Catalog Override (.oqto/models.json).\n\nAcceptance:\n- New provider added in UI appears in /providers/detail immediately\n- sync-models propagates to all users\n- no manual edits to /home/oqto/.config/eavs/config.toml required\n- no key material stored in workspace catalogs
 
@@ -1972,12 +1974,12 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
-- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
-- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
-- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
 - [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
 - [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
-- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
+- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
 - [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
+- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
+- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )

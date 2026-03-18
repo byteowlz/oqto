@@ -11,6 +11,7 @@
 #   scrpr   - Web content extraction (readability, Tavily, Jina)
 #   tmpltr  - Document generation from templates (Typst)
 #   ignr    - Gitignore generation (auto-detect languages/tools)
+#   ast-grep - AST-based structural linting/rewrite engine
 #
 # Installation sources (in order of preference):
 #   1. cargo install / go install from registries
@@ -547,6 +548,29 @@ install_whisper_cpp() {
   cd - >/dev/null
 }
 
+install_ast_grep() {
+  log_step "Installing ast-grep (AST linting)"
+
+  if command_exists ast-grep; then
+    log_success "ast-grep already installed"
+    return 0
+  fi
+
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  if cargo install --locked --root "$tmpdir" ast-grep 2>&1 | tail -5; then
+    if [[ -x "$tmpdir/bin/ast-grep" ]]; then
+      install_binary_global "$tmpdir/bin/ast-grep" "ast-grep"
+      rm -rf "$tmpdir"
+      return 0
+    fi
+  fi
+
+  rm -rf "$tmpdir"
+  log_warn "Failed to install ast-grep automatically (cargo). Install manually: cargo install ast-grep --locked"
+  return 1
+}
+
 install_all_agent_tools() {
   log_step "Installing agent tools"
 
@@ -566,6 +590,7 @@ install_all_agent_tools() {
   download_or_build_tool tmpltr
   download_or_build_tool sldr sldr sldr-cli
   download_or_build_tool ignr
+  install_ast_grep || true
 
   # Core tools (Go) - tries pre-built GitHub release first, falls back to go install
   download_or_build_tool scrpr scrpr "" go
@@ -588,6 +613,7 @@ select_agent_tools() {
   echo "    tmpltr  - Document generation from templates (requires typst)"
   echo "    sldr    - Modular presentations (requires slidev/sli.dev)"
   echo "    ignr    - Gitignore generation"
+  echo "    ast-grep - AST-based structural linting"
   echo "    trx     - Issue/task tracking"
   echo
   echo "  Installing sx will also set up a local SearXNG search engine"
@@ -614,6 +640,7 @@ install_agent_tools_selected() {
 
   # hstry is required for per-user chat history (systemd user service)
   download_or_build_tool hstry hstry hstry-cli
+  install_ast_grep || true
 
   if [[ "$INSTALL_MMRY" == "true" ]]; then
     download_or_build_tool mmry mmry mmry-cli
