@@ -53,8 +53,11 @@ fn split_model_ref(
     match (model, provider) {
         (Some(m), Some(p)) if !p.is_empty() => (Some(p.clone()), Some(m.clone())),
         (Some(m), _) if m.contains('/') => {
-            let idx = m.find('/').unwrap();
-            (Some(m[..idx].to_string()), Some(m[idx + 1..].to_string()))
+            if let Some((p, model)) = m.split_once('/') {
+                (Some(p.to_string()), Some(model.to_string()))
+            } else {
+                (None, Some(m.clone()))
+            }
         }
         (Some(m), _) => (None, Some(m.clone())),
         (None, _) => (None, None),

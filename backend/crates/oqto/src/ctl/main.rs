@@ -823,7 +823,9 @@ impl OqtoClient {
                 && socket_path.as_ref().is_some_and(|path| path.exists());
 
             if can_use_admin_socket {
-                let socket_path = socket_path.expect("admin socket path");
+                let Some(socket_path) = socket_path else {
+                    anyhow::bail!("admin socket path unavailable");
+                };
                 let base_path = base_path_from_url(&base_url)?;
                 let client = HyperClient::builder(TokioExecutor::new()).build(UnixConnector);
 

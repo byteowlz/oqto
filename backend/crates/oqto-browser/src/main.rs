@@ -407,8 +407,11 @@ fn main() -> Result<()> {
         } => {
             // Detect if target is a number (ms) or a selector
             let (selector, wait_timeout) = match &target {
-                Some(t) if t.parse::<u64>().is_ok() => (None, Some(t.parse::<u64>().unwrap())),
-                sel => (sel.clone(), timeout_ms),
+                Some(t) => match t.parse::<u64>() {
+                    Ok(ms) => (None, Some(ms)),
+                    Err(_) => (target.clone(), timeout_ms),
+                },
+                None => (None, timeout_ms),
             };
             send_command(
                 &cli.session,

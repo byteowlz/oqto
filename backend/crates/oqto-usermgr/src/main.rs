@@ -1631,7 +1631,10 @@ fn cmd_verify_socket_dirs(_args: &serde_json::Value) -> Response {
 
         // Look up expected UID
         let expected_uid = unsafe {
-            let cname = std::ffi::CString::new(dirname.as_bytes()).unwrap();
+            let cname = match std::ffi::CString::new(dirname.as_bytes()) {
+                Ok(v) => v,
+                Err(_) => continue, // invalid username bytes, skip
+            };
             let pw = libc::getpwnam(cname.as_ptr());
             if pw.is_null() {
                 continue; // user doesn't exist, skip
@@ -1640,7 +1643,10 @@ fn cmd_verify_socket_dirs(_args: &serde_json::Value) -> Response {
         };
 
         let oqto_gid = unsafe {
-            let cname = std::ffi::CString::new("oqto").unwrap();
+            let cname = match std::ffi::CString::new("oqto") {
+                Ok(v) => v,
+                Err(_) => continue, // static literal should always be valid
+            };
             let gr = libc::getgrnam(cname.as_ptr());
             if gr.is_null() {
                 0 // fallback, shouldn't happen

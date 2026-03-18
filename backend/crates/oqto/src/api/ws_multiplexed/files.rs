@@ -935,18 +935,20 @@ async fn connect_ttyd_socket(session_id: &str, ttyd_port: u16) -> anyhow::Result
 
         let stream = UnixStream::connect(&socket_path).await?;
         let mut request = "ws://localhost/ws".into_client_request()?;
-        request
-            .headers_mut()
-            .insert("Sec-WebSocket-Protocol", "tty".parse().unwrap());
+        request.headers_mut().insert(
+            "Sec-WebSocket-Protocol",
+            axum::http::HeaderValue::from_static("tty"),
+        );
         let (socket, _response) = client_async(request, stream).await?;
         return Ok(TtydConnection::Unix(socket));
     }
 
     let url = format!("ws://localhost:{}/ws", ttyd_port);
     let mut request = url.into_client_request()?;
-    request
-        .headers_mut()
-        .insert("Sec-WebSocket-Protocol", "tty".parse().unwrap());
+    request.headers_mut().insert(
+        "Sec-WebSocket-Protocol",
+        axum::http::HeaderValue::from_static("tty"),
+    );
     let (socket, _response) = connect_async(request).await?;
     Ok(TtydConnection::Tcp(socket))
 }
