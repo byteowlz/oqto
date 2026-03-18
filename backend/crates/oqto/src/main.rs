@@ -2134,9 +2134,10 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         .saturating_mul(1024 * 1024);
 
     // Create settings services
-    let oqto_schema: serde_json::Value =
-        serde_json::from_str(include_str!("../examples/backend.config.schema.json"))
-            .expect("Failed to parse embedded oqto schema");
+    let oqto_schema: serde_json::Value = serde_json::from_str(include_str!(
+        "../examples/backend.config.schema.json",
+    ))
+    .context("Failed to parse embedded oqto schema")?;
 
     let oqto_config_dir = default_config_dir()?;
     let settings_oqto = settings::SettingsService::new(oqto_schema, oqto_config_dir, "config.toml")
@@ -2170,12 +2171,14 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
 
     // Create Pi agent settings services (settings.json + models.json)
     // Schemas are embedded at compile time so they work on any deployment.
-    let pi_settings_schema: serde_json::Value =
-        serde_json::from_str(include_str!("../schemas/pi-agent/settings.schema.json"))
-            .expect("embedded pi-agent settings schema must be valid JSON");
-    let pi_models_schema: serde_json::Value =
-        serde_json::from_str(include_str!("../schemas/pi-agent/models.schema.json"))
-            .expect("embedded pi-agent models schema must be valid JSON");
+    let pi_settings_schema: serde_json::Value = serde_json::from_str(include_str!(
+        "../schemas/pi-agent/settings.schema.json",
+    ))
+    .context("embedded pi-agent settings schema must be valid JSON")?;
+    let pi_models_schema: serde_json::Value = serde_json::from_str(include_str!(
+        "../schemas/pi-agent/models.schema.json",
+    ))
+    .context("embedded pi-agent models schema must be valid JSON")?;
 
     let pi_config_dir = dirs::home_dir()
         .map(|home| home.join(".pi").join("agent"))
@@ -2534,17 +2537,21 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     // Set up graceful shutdown
     let shutdown_signal = async move {
         let ctrl_c = async {
-            tokio::signal::ctrl_c()
-                .await
-                .expect("failed to install Ctrl+C handler");
+            if let Err(err) = tokio::signal::ctrl_c().await {
+                tracing::error!(error = %err, "failed to install Ctrl+C handler");
+            }
         };
 
         #[cfg(unix)]
         let terminate = async {
-            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-                .expect("failed to install signal handler")
-                .recv()
-                .await;
+            match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+                Ok(mut sigterm) => {
+                    sigterm.recv().await;
+                }
+                Err(err) => {
+                    tracing::error!(error = %err, "failed to install signal handler");
+                }
+            }
         };
 
         #[cfg(not(unix))]

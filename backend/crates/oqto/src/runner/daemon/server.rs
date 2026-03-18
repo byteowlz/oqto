@@ -2829,6 +2829,14 @@ impl Runner {
     /// Each subscriber gets its own unbounded mpsc channel, guaranteeing zero
     /// event loss. Unlike the old broadcast approach, a slow subscriber never
     /// causes events to be dropped.
+    fn serialize_response_line(
+        resp: &RunnerResponse,
+    ) -> std::result::Result<String, std::io::Error> {
+        serde_json::to_string(resp)
+            .map(|json| format!("{}\n", json))
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))
+    }
+
     async fn handle_pi_subscribe(
         &self,
         session_id: &str,
@@ -2845,8 +2853,8 @@ impl Runner {
                     ErrorCode::PiSessionNotFound,
                     format!("Failed to subscribe: {}", e),
                 );
-                let json = serde_json::to_string(&resp).unwrap();
-                writer.write_all(format!("{}\n", json).as_bytes()).await?;
+                let line = Self::serialize_response_line(&resp)?;
+                writer.write_all(line.as_bytes()).await?;
                 return Ok(());
             }
         };
@@ -2855,20 +2863,22 @@ impl Runner {
         let resp = RunnerResponse::PiSubscribed(PiSubscribedResponse {
             session_id: session_id.to_string(),
         });
-        let json = serde_json::to_string(&resp).unwrap();
-        writer.write_all(format!("{}\n", json).as_bytes()).await?;
+        let line = Self::serialize_response_line(&resp)?;
+        writer.write_all(line.as_bytes()).await?;
 
         // Stream events until the session closes or client disconnects.
         // The channel is unbounded per-subscriber so events are never dropped.
         // When the session ends, the sender side is dropped and recv() returns None.
         while let Some(event_wrapper) = rx.recv().await {
             let resp = RunnerResponse::PiEvent(event_wrapper);
-            let json = serde_json::to_string(&resp).unwrap();
-            if writer
-                .write_all(format!("{}\n", json).as_bytes())
-                .await
-                .is_err()
-            {
+            let line = match Self::serialize_response_line(&resp) {
+                Ok(line) => line,
+                Err(err) => {
+                    error!("Failed to serialize Pi event response: {}", err);
+                    break;
+                }
+            };
+            if writer.write_all(line.as_bytes()).await.is_err() {
                 // Client disconnected
                 debug!("Pi subscription client disconnected: {}", session_id);
                 break;
@@ -2880,8 +2890,9 @@ impl Runner {
             session_id: session_id.to_string(),
             reason: "session_closed".to_string(),
         });
-        let json = serde_json::to_string(&end_resp).unwrap();
-        let _ = writer.write_all(format!("{}\n", json).as_bytes()).await;
+        if let Ok(line) = Self::serialize_response_line(&end_resp) {
+            let _ = writer.write_all(line.as_bytes()).await;
+        }
 
         Ok(())
     }
@@ -2908,8 +2919,9 @@ impl Runner {
                                 ErrorCode::InvalidRequest,
                                 format!("Invalid JSON: {}", e),
                             );
-                            let json = serde_json::to_string(&resp).unwrap();
-                            let _ = writer.write_all(format!("{}\n", json).as_bytes()).await;
+                            if let Ok(line) = Self::serialize_response_line(&resp) {
+                                let _ = writer.write_all(line.as_bytes()).await;
+                            }
                             continue;
                         }
                     };
@@ -2937,12 +2949,14 @@ impl Runner {
                                     RunnerResponse::StdoutSubscribed(StdoutSubscribedResponse {
                                         id: process_id.clone(),
                                     });
-                                let json = serde_json::to_string(&resp).unwrap();
-                                if writer
-                                    .write_all(format!("{}\n", json).as_bytes())
-                                    .await
-                                    .is_err()
-                                {
+                                let line = match Self::serialize_response_line(&resp) {
+                                    Ok(line) => line,
+                                    Err(err) => {
+                                        error!("Failed to serialize stdout subscribe response: {}", err);
+                                        break;
+                                    }
+                                };
+                                if writer.write_all(line.as_bytes()).await.is_err() {
                                     break;
                                 }
 
@@ -2952,12 +2966,14 @@ impl Runner {
                                         id: process_id.clone(),
                                         line: buffered_line,
                                     });
-                                    let json = serde_json::to_string(&resp).unwrap();
-                                    if writer
-                                        .write_all(format!("{}\n", json).as_bytes())
-                                        .await
-                                        .is_err()
-                                    {
+                                    let line = match Self::serialize_response_line(&resp) {
+                                        Ok(line) => line,
+                                        Err(err) => {
+                                            error!("Failed to serialize buffered stdout line: {}", err);
+                                            break;
+                                        }
+                                    };
+                                    if writer.write_all(line.as_bytes()).await.is_err() {
                                         break;
                                     }
                                 }
@@ -2971,12 +2987,18 @@ impl Runner {
                                                     id: process_id.clone(),
                                                     line: stdout_line,
                                                 });
-                                            let json = serde_json::to_string(&resp).unwrap();
-                                            if writer
-                                                .write_all(format!("{}\n", json).as_bytes())
-                                                .await
-                                                .is_err()
+                                            let line = match Self::serialize_response_line(&resp)
                                             {
+                                                Ok(line) => line,
+                                                Err(err) => {
+                                                    error!(
+                                                        "Failed to serialize stdout line event: {}",
+                                                        err
+                                                    );
+                                                    break;
+                                                }
+                                            };
+                                            if writer.write_all(line.as_bytes()).await.is_err() {
                                                 break;
                                             }
                                         }
@@ -2986,10 +3008,10 @@ impl Runner {
                                                     id: process_id.clone(),
                                                     exit_code,
                                                 });
-                                            let json = serde_json::to_string(&resp).unwrap();
-                                            let _ = writer
-                                                .write_all(format!("{}\n", json).as_bytes())
-                                                .await;
+                                            if let Ok(line) = Self::serialize_response_line(&resp)
+                                            {
+                                                let _ = writer.write_all(line.as_bytes()).await;
+                                            }
                                             break;
                                         }
                                         Err(broadcast::error::RecvError::Lagged(n)) => {
@@ -3005,10 +3027,10 @@ impl Runner {
                                                     id: process_id.clone(),
                                                     exit_code: None,
                                                 });
-                                            let json = serde_json::to_string(&resp).unwrap();
-                                            let _ = writer
-                                                .write_all(format!("{}\n", json).as_bytes())
-                                                .await;
+                                            if let Ok(line) = Self::serialize_response_line(&resp)
+                                            {
+                                                let _ = writer.write_all(line.as_bytes()).await;
+                                            }
                                             break;
                                         }
                                     }
@@ -3018,12 +3040,14 @@ impl Runner {
                                 continue;
                             }
                             Err(resp) => {
-                                let json = serde_json::to_string(&resp).unwrap();
-                                if writer
-                                    .write_all(format!("{}\n", json).as_bytes())
-                                    .await
-                                    .is_err()
-                                {
+                                let line = match Self::serialize_response_line(&resp) {
+                                    Ok(line) => line,
+                                    Err(err) => {
+                                        error!("Failed to serialize stdout subscription error: {}", err);
+                                        break;
+                                    }
+                                };
+                                if writer.write_all(line.as_bytes()).await.is_err() {
                                     break;
                                 }
                                 continue;
@@ -3051,8 +3075,14 @@ impl Runner {
                             )
                         }
                     };
-                    let json = serde_json::to_string(&resp).unwrap();
-                    if let Err(e) = writer.write_all(format!("{}\n", json).as_bytes()).await {
+                    let line = match Self::serialize_response_line(&resp) {
+                        Ok(line) => line,
+                        Err(err) => {
+                            error!("Failed to serialize response: {}", err);
+                            break;
+                        }
+                    };
+                    if let Err(e) = writer.write_all(line.as_bytes()).await {
                         error!("Failed to write response: {}", e);
                         break;
                     }
