@@ -745,6 +745,23 @@ pub fn force_kill_process(pid: u32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    trait TestUnwrap<T> {
+        fn t(self) -> T;
+    }
+
+    impl<T, E: std::fmt::Debug> TestUnwrap<T> for Result<T, E> {
+        fn t(self) -> T {
+            self.unwrap_or_else(|e| panic!("test unwrap failed: {:?}", e))
+        }
+    }
+
+    impl<T> TestUnwrap<T> for Option<T> {
+        fn t(self) -> T {
+            self.unwrap_or_else(|| panic!("test unwrap on None"))
+        }
+    }
+
     use std::time::Duration;
 
     #[tokio::test]
@@ -765,9 +782,9 @@ mod tests {
             .stderr(Stdio::null())
             .kill_on_drop(true)
             .spawn()
-            .unwrap();
+            .t();
 
-        let handle = ProcessHandle::new(child, "test", 8080).unwrap();
+        let handle = ProcessHandle::new(child, "test", 8080).t();
         let pid = handle.pid;
 
         {
@@ -780,7 +797,7 @@ mod tests {
         assert_eq!(pids, vec![pid]);
 
         // Cleanup
-        manager1.stop_session("session1").await.unwrap();
+        manager1.stop_session("session1").await.t();
     }
 
     #[tokio::test]
@@ -791,12 +808,12 @@ mod tests {
             .stderr(Stdio::null())
             .kill_on_drop(true)
             .spawn()
-            .unwrap();
+            .t();
 
         let handle = ProcessHandle::new(child, "test-service", 9090);
         assert!(handle.is_some());
 
-        let handle = handle.unwrap();
+        let handle = handle.t();
         assert_eq!(handle.service, "test-service");
         assert_eq!(handle.port, 9090);
         assert!(handle.pid > 0);
@@ -810,15 +827,15 @@ mod tests {
             .stderr(Stdio::null())
             .kill_on_drop(true)
             .spawn()
-            .unwrap();
+            .t();
 
-        let mut handle = ProcessHandle::new(child, "test", 8080).unwrap();
+        let mut handle = ProcessHandle::new(child, "test", 8080).t();
 
         // Process should be running
         assert!(handle.is_running());
 
         // Kill it
-        handle.kill().await.unwrap();
+        handle.kill().await.t();
 
         // Give it a moment to exit
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -835,9 +852,9 @@ mod tests {
             .stderr(Stdio::null())
             .kill_on_drop(true)
             .spawn()
-            .unwrap();
+            .t();
 
-        let mut handle = ProcessHandle::new(child, "test", 8080).unwrap();
+        let mut handle = ProcessHandle::new(child, "test", 8080).t();
         let pid = handle.pid;
 
         // Verify process exists
@@ -856,7 +873,7 @@ mod tests {
             .args(["-0", &pid.to_string()])
             .status();
         // kill -0 returns error if process doesn't exist
-        assert!(status.is_err() || !status.unwrap().success());
+        assert!(status.is_err() || !status.t().success());
     }
 
     #[tokio::test]
@@ -870,7 +887,7 @@ mod tests {
             .stderr(Stdio::null())
             .kill_on_drop(true)
             .spawn()
-            .unwrap();
+            .t();
 
         let child2 = Command::new("sleep")
             .arg("60")
@@ -878,10 +895,10 @@ mod tests {
             .stderr(Stdio::null())
             .kill_on_drop(true)
             .spawn()
-            .unwrap();
+            .t();
 
-        let handle1 = ProcessHandle::new(child1, "service1", 8080).unwrap();
-        let handle2 = ProcessHandle::new(child2, "service2", 8081).unwrap();
+        let handle1 = ProcessHandle::new(child1, "service1", 8080).t();
+        let handle2 = ProcessHandle::new(child2, "service2", 8081).t();
 
         {
             let mut processes = manager.processes.lock().await;
@@ -892,7 +909,7 @@ mod tests {
         assert_eq!(manager.get_session_pids("session1").await.len(), 2);
 
         // Stop the session
-        manager.stop_session("session1").await.unwrap();
+        manager.stop_session("session1").await.t();
 
         // Verify processes are removed
         assert!(manager.get_session_pids("session1").await.is_empty());
@@ -921,9 +938,9 @@ mod tests {
             .stderr(Stdio::null())
             .kill_on_drop(true)
             .spawn()
-            .unwrap();
+            .t();
 
-        let handle = ProcessHandle::new(child, "test", 8080).unwrap();
+        let handle = ProcessHandle::new(child, "test", 8080).t();
 
         {
             let mut processes = manager.processes.lock().await;
@@ -934,7 +951,7 @@ mod tests {
         assert!(manager.is_session_running("session1").await);
 
         // Stop it
-        manager.stop_session("session1").await.unwrap();
+        manager.stop_session("session1").await.t();
 
         // Should no longer be running
         assert!(!manager.is_session_running("session1").await);
@@ -952,9 +969,9 @@ mod tests {
                 .stderr(Stdio::null())
                 .kill_on_drop(true)
                 .spawn()
-                .unwrap();
+                .t();
 
-            let handle = ProcessHandle::new(child, "test", 8080).unwrap();
+            let handle = ProcessHandle::new(child, "test", 8080).t();
 
             let mut processes = manager.processes.lock().await;
             processes.insert(session_id.to_string(), vec![handle]);
@@ -966,7 +983,7 @@ mod tests {
         assert!(manager.is_session_running("session3").await);
 
         // Stop all
-        manager.stop_all().await.unwrap();
+        manager.stop_all().await.t();
 
         // All should be gone
         assert!(!manager.is_session_running("session1").await);
@@ -983,9 +1000,9 @@ mod tests {
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
-            .unwrap();
+            .t();
 
-        let handle = ProcessHandle::new(child, "test", 8080).unwrap();
+        let handle = ProcessHandle::new(child, "test", 8080).t();
 
         {
             let mut processes = manager.processes.lock().await;
@@ -1019,9 +1036,9 @@ mod tests {
                 .stderr(Stdio::null())
                 .kill_on_drop(true)
                 .spawn()
-                .unwrap();
+                .t();
 
-            let handle = ProcessHandle::new(child, "test", port).unwrap();
+            let handle = ProcessHandle::new(child, "test", port).t();
             expected_pids.push(handle.pid);
 
             let mut processes = manager.processes.lock().await;
@@ -1039,7 +1056,7 @@ mod tests {
         }
 
         // Cleanup
-        manager.stop_session("session1").await.unwrap();
+        manager.stop_session("session1").await.t();
     }
 
     // =========================================================================
@@ -1085,7 +1102,7 @@ mod tests {
         let bind_idx = args.iter().position(|a| a == "--bind");
         assert!(bind_idx.is_some(), "fileserver args must include --bind");
 
-        let bind_addr = &args[bind_idx.unwrap() + 1];
+        let bind_addr = &args[bind_idx.t() + 1];
         assert_eq!(
             bind_addr, "127.0.0.1",
             "fileserver must bind to 127.0.0.1, not {}. Binding to 0.0.0.0 exposes the service to the network!",
@@ -1109,7 +1126,7 @@ mod tests {
             "ttyd args must include --interface"
         );
 
-        let bind_addr = &args[interface_idx.unwrap() + 1];
+        let bind_addr = &args[interface_idx.t() + 1];
         assert_eq!(
             bind_addr, "127.0.0.1",
             "ttyd must bind to 127.0.0.1, not {}. Binding to 0.0.0.0 exposes the service to the network!",

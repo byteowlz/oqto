@@ -1775,8 +1775,28 @@ fn lookup_uid(_username: &str) -> Result<u32> {
 }
 
 #[cfg(test)]
+trait TestUnwrap<T> {
+    fn t(self) -> T;
+}
+
+#[cfg(test)]
+impl<T, E: std::fmt::Debug> TestUnwrap<T> for Result<T, E> {
+    fn t(self) -> T {
+        self.unwrap_or_else(|e| panic!("test unwrap failed: {:?}", e))
+    }
+}
+
+#[cfg(test)]
+impl<T> TestUnwrap<T> for Option<T> {
+    fn t(self) -> T {
+        self.unwrap_or_else(|| panic!("test unwrap on None"))
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
+
 
     #[test]
     fn test_default() {
@@ -1830,11 +1850,11 @@ mod tests {
         use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
         use tokio::net::UnixListener;
 
-        let temp = tempfile::tempdir().expect("tempdir");
+        let temp = tempfile::tempdir().t();
         let socket_path = temp.path().join("runner.sock");
         let _ = std::fs::remove_file(&socket_path);
 
-        let listener = UnixListener::bind(&socket_path).expect("bind mock runner");
+        let listener = UnixListener::bind(&socket_path).t();
         let server = tokio::spawn(async move {
             loop {
                 let (mut stream, _) = match listener.accept().await {
@@ -1867,7 +1887,7 @@ mod tests {
                         let ack = serde_json::to_string(&RunnerResponse::PiCommandAck {
                             session_id: "ses-1".to_string(),
                         })
-                        .expect("serialize ack");
+                        .t();
                         let _ = stream.write_all(ack.as_bytes()).await;
                         let _ = stream.write_all(b"\n").await;
                     }
@@ -1877,7 +1897,7 @@ mod tests {
                                 session_id: req.session_id.clone(),
                             },
                         ))
-                        .expect("serialize subscribed");
+                        .t();
                         let _ = stream.write_all(subscribed.as_bytes()).await;
                         let _ = stream.write_all(b"\n").await;
 
@@ -1891,7 +1911,7 @@ mod tests {
                                 content_index: 0,
                             },
                         });
-                        let event_json = serde_json::to_string(&event).expect("serialize event");
+                        let event_json = serde_json::to_string(&event).t();
                         let _ = stream.write_all(event_json.as_bytes()).await;
                         let _ = stream.write_all(b"\n").await;
 
@@ -1901,7 +1921,7 @@ mod tests {
                                 reason: "done".to_string(),
                             },
                         ))
-                        .expect("serialize end");
+                        .t();
                         let _ = stream.write_all(end.as_bytes()).await;
                         let _ = stream.write_all(b"\n").await;
                     }
@@ -1910,7 +1930,7 @@ mod tests {
                             code: ErrorCode::InvalidRequest,
                             message: "unexpected request".to_string(),
                         }))
-                        .expect("serialize error");
+                        .t();
                         let _ = stream.write_all(err.as_bytes()).await;
                         let _ = stream.write_all(b"\n").await;
                     }
@@ -1920,15 +1940,15 @@ mod tests {
 
         let client = RunnerClient::new(PathBuf::from(&socket_path));
 
-        client.pi_prompt("ses-1", "hi", None).await.expect("prompt");
-        client.pi_abort("ses-1").await.expect("abort");
+        client.pi_prompt("ses-1", "hi", None).await.t();
+        client.pi_abort("ses-1").await.t();
         client
             .pi_set_auto_retry("ses-1", true)
             .await
-            .expect("set auto retry");
-        client.pi_abort_retry("ses-1").await.expect("abort retry");
+            .t();
+        client.pi_abort_retry("ses-1").await.t();
 
-        let mut sub = client.pi_subscribe("ses-1").await.expect("subscribe");
+        let mut sub = client.pi_subscribe("ses-1").await.t();
         match sub.next().await {
             Some(PiSubscriptionEvent::Event(event)) => {
                 if let oqto_protocol::events::EventPayload::StreamTextDelta { delta, .. } =
@@ -1955,30 +1975,30 @@ mod tests {
         use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
         use tokio::net::UnixListener;
 
-        let temp = tempfile::tempdir().expect("tempdir");
+        let temp = tempfile::tempdir().t();
         let socket_path = temp.path().join("runner-delayed.sock");
         let _ = std::fs::remove_file(&socket_path);
 
         let delayed_path = socket_path.clone();
         let server = tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_millis(650)).await;
-            let listener = UnixListener::bind(&delayed_path).expect("bind delayed runner");
-            let (mut stream, _) = listener.accept().await.expect("accept connection");
+            let listener = UnixListener::bind(&delayed_path).t();
+            let (mut stream, _) = listener.accept().await.t();
 
             let mut line = String::new();
             let mut reader = BufReader::new(&mut stream);
-            reader.read_line(&mut line).await.expect("read request");
-            let req: RunnerRequest = serde_json::from_str(&line).expect("parse request");
+            reader.read_line(&mut line).await.t();
+            let req: RunnerRequest = serde_json::from_str(&line).t();
             match req {
                 RunnerRequest::ListSessions => {
                     let response = RunnerResponse::SessionList(SessionListResponse {
                         sessions: Vec::new(),
                     });
-                    let payload = serde_json::to_string(&response).expect("serialize response");
+                    let payload = serde_json::to_string(&response).t();
                     stream
                         .write_all(format!("{}\n", payload).as_bytes())
                         .await
-                        .expect("write response");
+                        .t();
                 }
                 _ => panic!("unexpected request"),
             }
@@ -1988,7 +2008,7 @@ mod tests {
         let sessions = client
             .list_sessions()
             .await
-            .expect("list sessions after retry");
+            .t();
         assert!(sessions.sessions.is_empty());
 
         server.abort();
@@ -1999,21 +2019,21 @@ mod tests {
         use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
         use tokio::net::UnixListener;
 
-        let temp = tempfile::tempdir().expect("tempdir");
+        let temp = tempfile::tempdir().t();
         let socket_path = temp.path().join("runner-ready.sock");
         let _ = std::fs::remove_file(&socket_path);
 
         let delayed_path = socket_path.clone();
         let server = tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_millis(650)).await;
-            let listener = UnixListener::bind(&delayed_path).expect("bind delayed runner");
+            let listener = UnixListener::bind(&delayed_path).t();
 
             for _ in 0..2 {
-                let (mut stream, _) = listener.accept().await.expect("accept connection");
+                let (mut stream, _) = listener.accept().await.t();
                 let mut line = String::new();
                 let mut reader = BufReader::new(&mut stream);
-                reader.read_line(&mut line).await.expect("read request");
-                let req: RunnerRequest = serde_json::from_str(&line).expect("parse request");
+                reader.read_line(&mut line).await.t();
+                let req: RunnerRequest = serde_json::from_str(&line).t();
 
                 let response = match req {
                     RunnerRequest::Ping => RunnerResponse::Pong,
@@ -2031,11 +2051,11 @@ mod tests {
                     _ => panic!("unexpected request"),
                 };
 
-                let payload = serde_json::to_string(&response).expect("serialize response");
+                let payload = serde_json::to_string(&response).t();
                 stream
                     .write_all(format!("{}\n", payload).as_bytes())
                     .await
-                    .expect("write response");
+                    .t();
             }
         });
 
@@ -2043,7 +2063,7 @@ mod tests {
         client
             .ensure_ready_with_recovery()
             .await
-            .expect("readiness handshake should pass after delayed startup");
+            .t();
 
         server.abort();
     }
@@ -2149,16 +2169,16 @@ mod security_tests {
                 false,
             )
             .await
-            .expect("should spawn process");
+            .t();
 
         // Read the output
         let output = alice_client
             .read_stdout("test-whoami", 1000)
             .await
-            .expect("should read stdout");
+            .t();
 
         // Verify the UID matches Alice's UID
-        let uid: u32 = output.data.trim().parse().expect("should be a number");
+        let uid: u32 = output.data.trim().parse().t();
         assert_eq!(uid, 1001, "Process should run as Alice (uid 1001)");
 
         // Cleanup

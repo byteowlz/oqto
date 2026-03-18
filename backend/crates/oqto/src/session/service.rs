@@ -3083,6 +3083,23 @@ fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> Result<()
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    trait TestUnwrap<T> {
+        fn t(self) -> T;
+    }
+
+    impl<T, E: std::fmt::Debug> TestUnwrap<T> for Result<T, E> {
+        fn t(self) -> T {
+            self.unwrap_or_else(|e| panic!("test unwrap failed: {:?}", e))
+        }
+    }
+
+    impl<T> TestUnwrap<T> for Option<T> {
+        fn t(self) -> T {
+            self.unwrap_or_else(|| panic!("test unwrap on None"))
+        }
+    }
+
     use crate::container::{Container, ContainerRuntimeApi, ContainerStats};
     use crate::db::Database;
     use crate::eavs::{CreateKeyResponse, EavsApi, EavsResult};
@@ -3101,7 +3118,7 @@ mod tests {
             &self,
             config: &ContainerConfig,
         ) -> crate::container::ContainerResult<String> {
-            *self.last_env.lock().unwrap() = config.env.clone();
+            *self.last_env.lock().t() = config.env.clone();
 
             Ok("fake-container-id".to_string())
         }
@@ -3221,12 +3238,12 @@ mod tests {
 
     #[tokio::test]
     async fn create_session_never_persists_eavs_virtual_key() {
-        let db = Database::in_memory().await.unwrap();
+        let db = Database::in_memory().await.t();
         let repo = SessionRepository::new(db.pool().clone());
         let fake_runtime = Arc::new(FakeRuntime::default());
         let runtime: Arc<dyn ContainerRuntimeApi> = fake_runtime.clone();
         let eavs: Arc<dyn EavsApi> = Arc::new(FakeEavs);
-        let workspace_dir = tempfile::tempdir().unwrap();
+        let workspace_dir = tempfile::tempdir().t();
 
         let config = SessionServiceConfig {
             default_image: "test-image:latest".to_string(),
@@ -3264,7 +3281,7 @@ mod tests {
                 env: Default::default(),
             })
             .await
-            .unwrap();
+            .t();
 
         assert_eq!(session.status, SessionStatus::Running);
         assert!(session.container_id.is_some());
@@ -3272,10 +3289,10 @@ mod tests {
         assert!(session.eavs_key_hash.is_some());
         assert!(session.eavs_virtual_key.is_none());
 
-        let stored = repo.get(&session.id).await.unwrap().unwrap();
+        let stored = repo.get(&session.id).await.t().t();
         assert!(stored.eavs_virtual_key.is_none());
 
-        let last_env = fake_runtime.last_env.lock().unwrap();
+        let last_env = fake_runtime.last_env.lock().t();
         assert_eq!(
             last_env.get("EAVS_VIRTUAL_KEY"),
             Some(&"vk_test_123".to_string())
@@ -3284,7 +3301,7 @@ mod tests {
 
     #[tokio::test]
     async fn collect_container_stats_returns_sessions() {
-        let db = Database::in_memory().await.unwrap();
+        let db = Database::in_memory().await.t();
         let repo = SessionRepository::new(db.pool().clone());
         let runtime: Arc<dyn ContainerRuntimeApi> = Arc::new(FakeRuntime::default());
         let service = SessionService::new(repo.clone(), runtime, SessionServiceConfig::default());
@@ -3319,9 +3336,9 @@ mod tests {
             error_message: None,
         };
 
-        repo.create(&session).await.unwrap();
+        repo.create(&session).await.t();
 
-        let report = service.collect_container_stats().await.unwrap();
+        let report = service.collect_container_stats().await.t();
         assert!(report.errors.is_empty());
         assert_eq!(report.stats.len(), 1);
         assert_eq!(report.stats[0].session_id, "session-1");
@@ -3330,15 +3347,15 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_workspace_path_enforces_allowed_roots() {
-        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_dir = tempfile::tempdir().t();
         let workspace_root = temp_dir.path().join("workspaces");
-        std::fs::create_dir_all(&workspace_root).unwrap();
+        std::fs::create_dir_all(&workspace_root).t();
 
         let allowed = workspace_root.join("project");
-        std::fs::create_dir_all(&allowed).unwrap();
+        std::fs::create_dir_all(&allowed).t();
 
         let outside = temp_dir.path().join("outside");
-        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::create_dir_all(&outside).t();
 
         let local_config = LocalRuntimeConfig {
             workspace_dir: workspace_root.to_string_lossy().to_string(),
@@ -3353,7 +3370,7 @@ mod tests {
             ..Default::default()
         };
 
-        let db = Database::in_memory().await.unwrap();
+        let db = Database::in_memory().await.t();
         let repo = SessionRepository::new(db.pool().clone());
         let runner = RunnerClient::default();
         let service = SessionService::with_runner(repo, runner, local_runtime, config);
@@ -3362,14 +3379,14 @@ mod tests {
         let resolved = service
             .resolve_workspace_path(user_id, allowed.to_string_lossy().as_ref())
             .await
-            .unwrap();
-        assert_eq!(resolved, allowed.canonicalize().unwrap());
+            .t();
+        assert_eq!(resolved, allowed.canonicalize().t());
 
         let relative = service
             .resolve_workspace_path(user_id, "project")
             .await
-            .unwrap();
-        assert_eq!(relative, allowed.canonicalize().unwrap());
+            .t();
+        assert_eq!(relative, allowed.canonicalize().t());
 
         let err = service
             .resolve_workspace_path(user_id, outside.to_string_lossy().as_ref())
@@ -3399,14 +3416,14 @@ mod tests {
         assert_eq!(config.runtime_mode, RuntimeMode::Local);
         assert!(config.local_config.is_some());
         assert_eq!(
-            config.local_config.unwrap().fileserver_binary,
+            config.local_config.t().fileserver_binary,
             local_config.fileserver_binary
         );
     }
 
     #[tokio::test]
     async fn test_session_service_with_runner_constructor() {
-        let db = Database::in_memory().await.unwrap();
+        let db = Database::in_memory().await.t();
         let repo = SessionRepository::new(db.pool().clone());
 
         let local_config = LocalRuntimeConfig::default();
@@ -3429,7 +3446,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_session_service_with_runner_and_eavs_constructor() {
-        let db = Database::in_memory().await.unwrap();
+        let db = Database::in_memory().await.t();
         let repo = SessionRepository::new(db.pool().clone());
 
         let local_config = LocalRuntimeConfig::default();
@@ -3467,10 +3484,10 @@ mod tests {
     #[test]
     fn test_runtime_mode_from_str() {
         assert_eq!(
-            "container".parse::<RuntimeMode>().unwrap(),
+            "container".parse::<RuntimeMode>().t(),
             RuntimeMode::Container
         );
-        assert_eq!("local".parse::<RuntimeMode>().unwrap(), RuntimeMode::Local);
+        assert_eq!("local".parse::<RuntimeMode>().t(), RuntimeMode::Local);
         assert!("invalid".parse::<RuntimeMode>().is_err());
     }
 
@@ -3480,15 +3497,15 @@ mod tests {
         let container = RuntimeMode::Container;
         let local = RuntimeMode::Local;
 
-        let container_json = serde_json::to_string(&container).unwrap();
-        let local_json = serde_json::to_string(&local).unwrap();
+        let container_json = serde_json::to_string(&container).t();
+        let local_json = serde_json::to_string(&local).t();
 
         assert_eq!(container_json, "\"container\"");
         assert_eq!(local_json, "\"local\"");
 
         // Test deserialization
-        let parsed_container: RuntimeMode = serde_json::from_str(&container_json).unwrap();
-        let parsed_local: RuntimeMode = serde_json::from_str(&local_json).unwrap();
+        let parsed_container: RuntimeMode = serde_json::from_str(&container_json).t();
+        let parsed_local: RuntimeMode = serde_json::from_str(&local_json).t();
 
         assert_eq!(parsed_container, RuntimeMode::Container);
         assert_eq!(parsed_local, RuntimeMode::Local);
@@ -3529,7 +3546,7 @@ mod tests {
             &self,
             _container_id: &str,
         ) -> crate::container::ContainerResult<()> {
-            if *self.fail_start.lock().unwrap() {
+            if *self.fail_start.lock().t() {
                 Err(crate::container::ContainerError::CommandFailed {
                     command: "start".to_string(),
                     message: "simulated start failure".to_string(),
@@ -3618,7 +3635,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_resume_session_marks_failed_on_container_start_error() {
-        let db = Database::in_memory().await.unwrap();
+        let db = Database::in_memory().await.t();
         let repo = SessionRepository::new(db.pool().clone());
         let runtime: Arc<dyn ContainerRuntimeApi> = Arc::new(FailingRuntime::new(true));
 
@@ -3663,30 +3680,30 @@ mod tests {
             error_message: None,
         };
 
-        repo.create(&session).await.unwrap();
+        repo.create(&session).await.t();
 
         // Try to resume - should fail and mark as failed
         let result = service.resume_session("test-session-1").await;
         assert!(result.is_ok()); // Returns Ok with the failed session
 
-        let failed_session = result.unwrap();
+        let failed_session = result.t();
         assert_eq!(failed_session.status, SessionStatus::Failed);
         assert!(failed_session.error_message.is_some());
         assert!(
             failed_session
                 .error_message
-                .unwrap()
+                .t()
                 .contains("resume failed")
         );
 
         // Verify in database
-        let stored = repo.get("test-session-1").await.unwrap().unwrap();
+        let stored = repo.get("test-session-1").await.t().t();
         assert_eq!(stored.status, SessionStatus::Failed);
     }
 
     #[tokio::test]
     async fn test_resume_session_marks_failed_on_readiness_timeout() {
-        let db = Database::in_memory().await.unwrap();
+        let db = Database::in_memory().await.t();
         let repo = SessionRepository::new(db.pool().clone());
         let runtime: Arc<dyn ContainerRuntimeApi> = Arc::new(FakeRuntime::default());
 
@@ -3732,24 +3749,24 @@ mod tests {
             error_message: None,
         };
 
-        repo.create(&session).await.unwrap();
+        repo.create(&session).await.t();
 
         // Try to resume - should fail on readiness and mark as failed
         let result = service.resume_session("test-session-2").await;
         assert!(result.is_ok());
 
-        let failed_session = result.unwrap();
+        let failed_session = result.t();
         assert_eq!(failed_session.status, SessionStatus::Failed);
         assert!(failed_session.error_message.is_some());
 
         // Verify in database
-        let stored = repo.get("test-session-2").await.unwrap().unwrap();
+        let stored = repo.get("test-session-2").await.t().t();
         assert_eq!(stored.status, SessionStatus::Failed);
     }
 
     #[tokio::test]
     async fn test_resume_session_not_stopped_returns_error() {
-        let db = Database::in_memory().await.unwrap();
+        let db = Database::in_memory().await.t();
         let repo = SessionRepository::new(db.pool().clone());
         let runtime: Arc<dyn ContainerRuntimeApi> = Arc::new(FakeRuntime::default());
 
@@ -3787,7 +3804,7 @@ mod tests {
             error_message: None,
         };
 
-        repo.create(&session).await.unwrap();
+        repo.create(&session).await.t();
 
         // Try to resume a running session - should return error
         let result = service.resume_session("test-session-3").await;
@@ -3798,7 +3815,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_resume_session_not_found_returns_error() {
-        let db = Database::in_memory().await.unwrap();
+        let db = Database::in_memory().await.t();
         let repo = SessionRepository::new(db.pool().clone());
         let runtime: Arc<dyn ContainerRuntimeApi> = Arc::new(FakeRuntime::default());
 
@@ -3814,7 +3831,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_resume_session_success() {
-        let db = Database::in_memory().await.unwrap();
+        let db = Database::in_memory().await.t();
         let repo = SessionRepository::new(db.pool().clone());
         let runtime: Arc<dyn ContainerRuntimeApi> = Arc::new(FakeRuntime::default());
 
@@ -3859,18 +3876,18 @@ mod tests {
             error_message: None,
         };
 
-        repo.create(&session).await.unwrap();
+        repo.create(&session).await.t();
 
         // Resume should succeed
         let result = service.resume_session("test-session-4").await;
         assert!(result.is_ok());
 
-        let resumed = result.unwrap();
+        let resumed = result.t();
         assert_eq!(resumed.status, SessionStatus::Running);
         assert!(resumed.error_message.is_none());
 
         // Verify in database
-        let stored = repo.get("test-session-4").await.unwrap().unwrap();
+        let stored = repo.get("test-session-4").await.t().t();
         assert_eq!(stored.status, SessionStatus::Running);
     }
 }
