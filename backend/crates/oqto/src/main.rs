@@ -1956,7 +1956,9 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
 
     // Create session service based on runtime mode
     let mut session_service = if local_mode {
-        let local_rt = local_runtime.expect("local runtime should be set in local mode");
+        let Some(local_rt) = local_runtime else {
+            anyhow::bail!("local runtime should be set in local mode");
+        };
         let runner = runner::client::RunnerClient::default();
         if let Some(eavs) = eavs_client.clone() {
             session::SessionService::with_runner_and_eavs(
@@ -1975,9 +1977,9 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             )
         }
     } else {
-        let container_rt = container_runtime
-            .clone()
-            .expect("container runtime should be set in container mode");
+        let Some(container_rt) = container_runtime.clone() else {
+            anyhow::bail!("container runtime should be set in container mode");
+        };
         if let Some(eavs) = eavs_client.clone() {
             session::SessionService::with_eavs(
                 session_repo,

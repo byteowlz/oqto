@@ -286,8 +286,14 @@ pub async fn get_session_messages_rendered_from_dir(
             msg.parts
                 .iter()
                 .enumerate()
-                .filter(|(_, part)| part.part_type == "text" && part.text.is_some())
-                .map(move |(part_idx, part)| (msg_idx, part_idx, part.text.clone().unwrap()))
+                .filter_map(move |(part_idx, part)| {
+                    if part.part_type != "text" {
+                        return None;
+                    }
+                    part.text
+                        .as_ref()
+                        .map(|text| (msg_idx, part_idx, text.clone()))
+                })
         })
         .collect();
 

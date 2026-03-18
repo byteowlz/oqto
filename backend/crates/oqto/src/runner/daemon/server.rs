@@ -164,7 +164,12 @@ impl Runner {
 
         // Build command - either direct or via oqto-sandbox
         let (program, args, effective_binary) = if use_sandbox {
-            let sandbox_config = self.sandbox_config.as_ref().unwrap();
+            let Some(sandbox_config) = self.sandbox_config.as_ref() else {
+                return error_response(
+                    ErrorCode::SandboxError,
+                    "Sandbox requested but no sandbox config loaded".to_string(),
+                );
+            };
 
             // Build bwrap args using the trusted config
             // Note: We use the current user (runner's user) for path expansion
