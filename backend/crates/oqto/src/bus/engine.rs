@@ -162,13 +162,15 @@ impl BusEngine {
         &self,
         subscriber_id: SubscriberId,
         user_id: &str,
+        is_admin: bool,
         scope: BusScope,
         scope_id: String,
         topic_patterns: Vec<String>,
         filter: Option<Value>,
     ) -> Result<(), String> {
         // Authorize the subscription scope
-        self.authorize_scope(user_id, &scope, &scope_id).await?;
+        self.authorize_scope(user_id, is_admin, &scope, &scope_id)
+            .await?;
 
         let mut sub = self
             .subscribers
@@ -252,8 +254,9 @@ impl BusEngine {
 
             // Check if any subscription matches
             let matches = subscriber.subscriptions.iter().any(|s| {
-                s.scope == event.scope
-                    && s.scope_id == event.scope_id
+                let scope_matches =
+                    s.scope == event.scope && (s.scope_id == event.scope_id || s.scope_id == "*");
+                scope_matches
                     && topic_matches(&s.topic_pattern, &event.topic)
                     && filter_matches(&s.filter, &event.payload)
             });
@@ -318,17 +321,34 @@ impl BusEngine {
     async fn authorize_scope(
         &self,
         user_id: &str,
+        is_admin: bool,
         scope: &BusScope,
         scope_id: &str,
     ) -> Result<(), String> {
         match scope {
             BusScope::Session => {
+                // Admin wildcard for observability dashboards.
+                if scope_id == "*" {
+                    if is_admin {
+                        return Ok(());
+                    }
+                    return Err("Only admin can subscribe to all sessions".to_string());
+                }
+
                 // Session scope: any authenticated user can subscribe to session-scoped events.
                 // Delivery filtering ensures they only receive events for sessions they own.
                 // The session ownership check happens at event delivery time via source.user_id.
                 Ok(())
             }
             BusScope::Workspace => {
+                // Admin wildcard for observability dashboards.
+                if scope_id == "*" {
+                    if is_admin {
+                        return Ok(());
+                    }
+                    return Err("Only admin can subscribe to all workspaces".to_string());
+                }
+
                 // Workspace scope: user must own or be a member of the workspace.
                 self.check_workspace_access(user_id, scope_id).await
             }
@@ -623,6 +643,7 @@ mod tests {
             .subscribe(
                 sub_id,
                 "alice",
+                false,
                 BusScope::Session,
                 "ses_1".to_string(),
                 vec!["app.*".to_string()],
@@ -660,6 +681,7 @@ mod tests {
             .subscribe(
                 sub_a,
                 "alice",
+                false,
                 BusScope::Session,
                 "ses_alice".to_string(),
                 vec!["app.*".to_string()],
@@ -673,6 +695,7 @@ mod tests {
             .subscribe(
                 sub_b,
                 "bob",
+                false,
                 BusScope::Session,
                 "ses_bob".to_string(),
                 vec!["app.*".to_string()],
@@ -728,6 +751,7 @@ mod tests {
             .subscribe(
                 sub_id,
                 "alice",
+                false,
                 BusScope::Global,
                 "global".to_string(),
                 vec!["admin.*".to_string()],
@@ -759,6 +783,7 @@ mod tests {
             .subscribe(
                 sub_id,
                 "alice",
+                false,
                 BusScope::Session,
                 "ses_1".to_string(),
                 vec!["app.message".to_string()],
@@ -794,5 +819,80 @@ mod tests {
         );
         engine.publish(None, event2).await.unwrap();
         assert!(rx.try_recv().is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_workspace_wildcard_subscribe_requires_admin() {
+        let engine = BusEngine::new(None);
+        let (sub_id, _rx) = engine.register("alice");
+
+        let err = engine
+            .subscribe(
+                sub_id,
+                "alice",
+                false,
+                BusScope::Workspace,
+                "*".to_string(),
+                vec!["session.**".to_string()],
+                None,
+            )
+            .await
+            .unwrap_err();
+
+        assert!(err.contains("Only admin"));
+    }
+
+    #[tokio::test]
+    async fn test_workspace_wildcard_subscribe_delivers_all_workspaces_for_admin() {
+        let engine = BusEngine::new(None);
+        let (sub_id, mut rx) = engine.register("admin");
+
+        engine
+            .subscribe(
+                sub_id,
+                "admin",
+                true,
+                BusScope::Workspace,
+                "*".to_string(),
+                vec!["session.**".to_string()],
+                None,
+            )
+            .await
+            .unwrap();
+
+        let event = BusEvent::new(
+            BusScope::Workspace,
+            "/home/alice/project".to_string(),
+            "session.created".to_string(),
+            json!({"session_id": "s1"}),
+            EventSource::Service {
+                service: "runner".to_string(),
+                user_id: Some("alice".to_string()),
+            },
+        );
+        engine.publish(None, event).await.unwrap();
+
+        assert!(rx.try_recv().is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_session_wildcard_subscribe_requires_admin() {
+        let engine = BusEngine::new(None);
+        let (sub_id, _rx) = engine.register("alice");
+
+        let err = engine
+            .subscribe(
+                sub_id,
+                "alice",
+                false,
+                BusScope::Session,
+                "*".to_string(),
+                vec!["app.**".to_string()],
+                None,
+            )
+            .await
+            .unwrap_err();
+
+        assert!(err.contains("Only admin"));
     }
 }

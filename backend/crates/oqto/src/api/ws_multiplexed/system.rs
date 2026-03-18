@@ -5,6 +5,7 @@ use super::*;
 pub(super) async fn handle_bus_command(
     cmd: crate::bus::BusCommand,
     user_id: &str,
+    is_admin: bool,
     state: &AppState,
     conn_state: Arc<tokio::sync::Mutex<WsConnectionState>>,
 ) -> Option<WsEvent> {
@@ -68,7 +69,15 @@ pub(super) async fn handle_bus_command(
         } => {
             match state
                 .bus
-                .subscribe(bus_sub_id, user_id, scope, scope_id, topics, filter)
+                .subscribe(
+                    bus_sub_id,
+                    user_id,
+                    is_admin,
+                    scope,
+                    scope_id,
+                    topics,
+                    filter,
+                )
                 .await
             {
                 Ok(()) => Some(WsEvent::Bus(BusWsEvent::Response {

@@ -34,15 +34,21 @@ const MAX_EVENTS = 200;
 const TOPIC_PRESETS: TopicPreset[] = [
 	{ label: "All (global)", scope: "global", scopeId: "global", topics: "**" },
 	{
+		label: "All workspaces (admin)",
+		scope: "workspace",
+		scopeId: "*",
+		topics: "**",
+	},
+	{
 		label: "Session lifecycle",
 		scope: "workspace",
-		scopeId: "local",
+		scopeId: "*",
 		topics: "session.**",
 	},
 	{
 		label: "Files",
 		scope: "workspace",
-		scopeId: "local",
+		scopeId: "*",
 		topics: "files.**",
 	},
 	{
@@ -101,11 +107,12 @@ export function EventBusPanel() {
 	const [events, setEvents] = useState<EventRow[]>([]);
 	const [connected, setConnected] = useState(false);
 	const [paused, setPaused] = useState(false);
+	const [adminGlobalView, setAdminGlobalView] = useState(true);
 	const [filterText, setFilterText] = useState("");
 	const [autoExportEnabled, setAutoExportEnabled] = useState(false);
 	const [autoExportEvery, setAutoExportEvery] = useState("50");
 	const autoExportNextThresholdRef = useRef(50);
-	const unsubscribeRef = useRef<(() => void) | null>(null);
+	const unsubscribeRef = useRef<Array<() => void>>([]);
 	const pausedRef = useRef(paused);
 
 	useEffect(() => {
@@ -140,36 +147,76 @@ export function EventBusPanel() {
 	}, [events, filterText]);
 
 	const disconnect = useCallback(() => {
-		if (unsubscribeRef.current) {
-			unsubscribeRef.current();
-			unsubscribeRef.current = null;
+		for (const unsub of unsubscribeRef.current) {
+			unsub();
 		}
+		unsubscribeRef.current = [];
 		setConnected(false);
 	}, []);
 
 	const connect = useCallback(() => {
 		disconnect();
-		const subscription = busSubscribe(
-			{
-				scope,
-				scopeId,
-				topics: topics.length > 0 ? topics : ["**"],
-			},
-			(event) => {
-				if (pausedRef.current) return;
-				setEvents((prev) => {
-					const next: EventRow = { ...event, receivedAt: Date.now() };
-					const updated = [next, ...prev];
-					if (updated.length > MAX_EVENTS) {
-						return updated.slice(0, MAX_EVENTS);
-					}
-					return updated;
-				});
-			},
-		);
-		unsubscribeRef.current = subscription.unsubscribe;
+
+		const onEvent = (event: BusEvent) => {
+			if (pausedRef.current) return;
+			setEvents((prev) => {
+				const next: EventRow = { ...event, receivedAt: Date.now() };
+				const updated = [next, ...prev];
+				if (updated.length > MAX_EVENTS) {
+					return updated.slice(0, MAX_EVENTS);
+				}
+				return updated;
+			});
+		};
+
+		const subs: Array<() => void> = [];
+		if (adminGlobalView) {
+			subs.push(
+				busSubscribe(
+					{
+						scope: "global",
+						scopeId: "global",
+						topics: topics.length > 0 ? topics : ["**"],
+					},
+					onEvent,
+				).unsubscribe,
+			);
+			subs.push(
+				busSubscribe(
+					{
+						scope: "workspace",
+						scopeId: "*",
+						topics: topics.length > 0 ? topics : ["**"],
+					},
+					onEvent,
+				).unsubscribe,
+			);
+			subs.push(
+				busSubscribe(
+					{
+						scope: "session",
+						scopeId: "*",
+						topics: topics.length > 0 ? topics : ["**"],
+					},
+					onEvent,
+				).unsubscribe,
+			);
+		} else {
+			subs.push(
+				busSubscribe(
+					{
+						scope,
+						scopeId,
+						topics: topics.length > 0 ? topics : ["**"],
+					},
+					onEvent,
+				).unsubscribe,
+			);
+		}
+
+		unsubscribeRef.current = subs;
 		setConnected(true);
-	}, [disconnect, scope, scopeId, topics]);
+	}, [adminGlobalView, disconnect, scope, scopeId, topics]);
 
 	useEffect(() => {
 		connect();
@@ -237,6 +284,14 @@ export function EventBusPanel() {
 					)}
 				</div>
 				<div className="flex items-center gap-2">
+					<Button
+						type="button"
+						size="sm"
+						variant={adminGlobalView ? "default" : "outline"}
+						onClick={() => setAdminGlobalView((prev) => !prev)}
+					>
+						{adminGlobalView ? "Admin global view" : "Scoped view"}
+					</Button>
 					<Button
 						type="button"
 						size="sm"
@@ -326,8 +381,9 @@ export function EventBusPanel() {
 				<label className="text-xs text-muted-foreground flex flex-col gap-1">
 					Scope
 					<select
-						className="h-8 px-2 border border-border bg-background text-foreground"
+						className="h-8 px-2 border border-border bg-background text-foreground disabled:opacity-50"
 						value={scope}
+						disabled={adminGlobalView}
 						onChange={(e) => {
 							const nextScope = e.target.value as BusScope;
 							setScope(nextScope);
@@ -342,11 +398,16 @@ export function EventBusPanel() {
 				<label className="text-xs text-muted-foreground flex flex-col gap-1">
 					Scope ID
 					<input
-						className="h-8 px-2 border border-border bg-background text-foreground"
+						className="h-8 px-2 border border-border bg-background text-foreground disabled:opacity-50"
 						value={scopeId}
+						disabled={adminGlobalView}
 						onChange={(e) => setScopeId(e.target.value)}
 						placeholder={
-							scope === "global" ? "global" : "workspace path / session id"
+							adminGlobalView
+								? "auto: global + workspace:* + session:*"
+								: scope === "global"
+									? "global"
+									: "workspace path / session id"
 						}
 					/>
 				</label>
@@ -437,7 +498,7 @@ export function EventBusPanel() {
 			<div className="border border-border bg-background/40 max-h-96 overflow-auto">
 				{filteredEvents.length === 0 ? (
 					<div className="px-3 py-4 text-xs text-muted-foreground">
-						No matching events yet. Adjust filters/scope and click Connect.
+						No matching events yet. Adjust filters/topics and click Connect.
 					</div>
 				) : (
 					<ul className="divide-y divide-border">

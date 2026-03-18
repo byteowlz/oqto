@@ -850,8 +850,11 @@ pub async fn ws_multiplexed_handler(
     );
 
     let user_id = user.id().to_string();
+    let is_admin = user.is_admin();
 
-    Ok(ws.on_upgrade(move |socket| handle_multiplexed_ws(socket, state, user_id)))
+    Ok(ws.on_upgrade(move |socket| {
+        handle_multiplexed_ws(socket, state, user_id, is_admin)
+    }))
 }
 
 /// Create a runner client for a user if multi-user mode is enabled.
@@ -981,7 +984,12 @@ enum TerminalSessionCommand {
 }
 
 /// Handle the multiplexed WebSocket connection.
-async fn handle_multiplexed_ws(socket: WebSocket, state: AppState, user_id: String) {
+async fn handle_multiplexed_ws(
+    socket: WebSocket,
+    state: AppState,
+    user_id: String,
+    is_admin: bool,
+) {
     let (mut ws_sender, mut ws_receiver) = socket.split();
 
     // Create channel for forwarding events to WebSocket
@@ -1127,6 +1135,7 @@ async fn handle_multiplexed_ws(socket: WebSocket, state: AppState, user_id: Stri
         "agent",
         agent_cmd_rx,
         user_id.clone(),
+        is_admin,
         state.clone(),
         runner_client.clone(),
         conn_state.clone(),
@@ -1136,6 +1145,7 @@ async fn handle_multiplexed_ws(socket: WebSocket, state: AppState, user_id: Stri
         "files",
         files_cmd_rx,
         user_id.clone(),
+        is_admin,
         state.clone(),
         runner_client.clone(),
         conn_state.clone(),
@@ -1145,6 +1155,7 @@ async fn handle_multiplexed_ws(socket: WebSocket, state: AppState, user_id: Stri
         "misc",
         misc_cmd_rx,
         user_id.clone(),
+        is_admin,
         state.clone(),
         runner_client.clone(),
         conn_state.clone(),
@@ -1246,6 +1257,7 @@ fn spawn_ws_command_worker(
     worker_name: &'static str,
     mut rx: mpsc::Receiver<WsCommand>,
     user_id: String,
+    is_admin: bool,
     state: AppState,
     runner_client: Arc<tokio::sync::Mutex<Option<RunnerClient>>>,
     conn_state: Arc<tokio::sync::Mutex<WsConnectionState>>,
@@ -1257,6 +1269,7 @@ fn spawn_ws_command_worker(
                 worker_name,
                 cmd,
                 &user_id,
+                is_admin,
                 &state,
                 &runner_client,
                 &conn_state,
@@ -1271,6 +1284,7 @@ async fn process_ws_command(
     worker_name: &str,
     cmd: WsCommand,
     user_id: &str,
+    is_admin: bool,
     state: &AppState,
     runner_client: &Arc<tokio::sync::Mutex<Option<RunnerClient>>>,
     conn_state: &Arc<tokio::sync::Mutex<WsConnectionState>>,
@@ -1321,6 +1335,7 @@ async fn process_ws_command(
         handle_ws_command(
             cmd,
             user_id,
+            is_admin,
             state,
             rc_snapshot.as_ref(),
             conn_state.clone(),
@@ -1454,6 +1469,7 @@ async fn validate_workspace_path_for_user(
 async fn handle_ws_command(
     cmd: WsCommand,
     user_id: &str,
+    is_admin: bool,
     state: &AppState,
     runner_client: Option<&RunnerClient>,
     conn_state: Arc<tokio::sync::Mutex<WsConnectionState>>,
@@ -1496,7 +1512,7 @@ async fn handle_ws_command(
             history::handle_session_command(session_cmd, user_id, state).await
         }
         WsCommand::Bus(bus_cmd) => {
-            system::handle_bus_command(bus_cmd, user_id, state, conn_state).await
+            system::handle_bus_command(bus_cmd, user_id, is_admin, state, conn_state).await
         }
     }
 }
