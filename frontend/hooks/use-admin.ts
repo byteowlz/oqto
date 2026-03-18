@@ -44,7 +44,9 @@ export {
 	useAdminMetrics,
 	// Stats hook
 	type AdminStats,
+	type BusStats,
 	useAdminStats,
+	useAdminBusStats,
 	// EAVS / Model provider hooks
 	type EavsProviderSummary,
 	type EavsModelSummary,

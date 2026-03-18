@@ -162,6 +162,7 @@ export const adminKeys = {
 	inviteCodes: () => [...adminKeys.all, "inviteCodes"] as const,
 	inviteCodeStats: () => [...adminKeys.all, "inviteCodeStats"] as const,
 	eavsProviders: () => [...adminKeys.all, "eavsProviders"] as const,
+	busStats: () => [...adminKeys.all, "busStats"] as const,
 };
 
 // ============================================================================
@@ -231,9 +232,27 @@ export type AdminStats = {
 	running_sessions: number;
 };
 
+export type BusStats = {
+	subscriber_count: number;
+	total_subscriptions: number;
+	events_published: number;
+	events_delivered: number;
+	events_dropped_authz: number;
+	events_dropped_rate: number;
+};
+
 async function fetchAdminStats(): Promise<AdminStats> {
 	const res = await fetch(controlPlaneApiUrl("/api/admin/stats"), {
 		headers: getAuthHeaders(),
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
+async function fetchBusStats(): Promise<BusStats> {
+	const res = await fetch(controlPlaneApiUrl("/api/admin/bus/stats"), {
+		headers: getAuthHeaders(),
+		credentials: "include",
 	});
 	if (!res.ok) throw new Error(await readApiError(res));
 	return res.json();
@@ -244,6 +263,14 @@ export function useAdminStats() {
 		queryKey: [...adminKeys.all, "stats"] as const,
 		queryFn: fetchAdminStats,
 		refetchInterval: 10000,
+	});
+}
+
+export function useAdminBusStats() {
+	return useQuery({
+		queryKey: adminKeys.busStats(),
+		queryFn: fetchBusStats,
+		refetchInterval: 5000,
 	});
 }
 
