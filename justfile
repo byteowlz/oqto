@@ -31,7 +31,7 @@ lint-frontend:
 install-ast-grep:
     cargo install ast-grep --locked
 
-# Rust AI guardrails via ast-grep (changed files only)
+# Rust AI guardrails via ast-grep (changed files, production scope only)
 lint-rust-ai-guardrails:
     ./scripts/lint/rust-ai-guardrails.sh
 

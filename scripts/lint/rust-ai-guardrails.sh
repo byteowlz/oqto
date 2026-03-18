@@ -26,5 +26,20 @@ if [[ ${#changed_rs[@]} -eq 0 ]]; then
   exit 0
 fi
 
-echo "Running ast-grep guardrails on ${#changed_rs[@]} changed Rust files..."
-ast-grep scan --config .ast-grep/sgconfig.yml "${changed_rs[@]}"
+echo "Running ast-grep guardrails on ${#changed_rs[@]} changed Rust files (production scope)..."
+
+report_output="$(./scripts/lint/rust-ai-guardrails-report.py --paths "${changed_rs[@]}" --exclude-cfg-test)"
+echo "$report_output"
+
+total="$(echo "$report_output" | awk -F'\t' '/^TOTAL\t/{print $2}')"
+if [[ -z "$total" ]]; then
+  echo "error: failed to parse TOTAL from guardrail report" >&2
+  exit 2
+fi
+
+if [[ "$total" -gt 0 ]]; then
+  echo "error: rust AI guardrail violations found in production scope: $total" >&2
+  exit 1
+fi
+
+echo "Rust AI guardrails passed (production scope)."
