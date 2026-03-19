@@ -47,6 +47,43 @@ run()  {
     fi
 }
 
+log_multiline_prefixed() {
+    local prefix="$1"
+    local text="$2"
+    while IFS= read -r line; do
+        [[ -n "$line" ]] && log "${prefix}${line}"
+    done <<< "$text"
+}
+
+sync_configs_with_retry() {
+    local is_local="$1"
+    local ssh_target="${2:-}"
+    local host_name="${3:-local}"
+    local attempts=10
+    local delay_seconds=2
+    local attempt output
+
+    for ((attempt=1; attempt<=attempts; attempt++)); do
+        if [[ "$is_local" == "true" ]]; then
+            if output="$(oqtoctl user sync-configs 2>&1)"; then
+                log_multiline_prefixed "    " "$output"
+                return 0
+            fi
+        else
+            if output="$(ssh "$ssh_target" "sudo oqtoctl user sync-configs 2>&1" 2>&1)"; then
+                log_multiline_prefixed "    " "$output"
+                return 0
+            fi
+        fi
+
+        log_multiline_prefixed "    " "$output"
+        warn "  sync-configs attempt ${attempt}/${attempts} failed on ${host_name}; retrying in ${delay_seconds}s"
+        sleep "$delay_seconds"
+    done
+
+    return 1
+}
+
 usage() {
     sed -n '/^# Usage:/,/^[^#]/p' "$0" | grep '^#' | sed 's/^# \?//'
     exit 0
@@ -302,14 +339,14 @@ deploy_host() {
             if $DRY_RUN; then
                 echo -e "${YELLOW}  [dry-run]${NC} oqtoctl user sync-configs"
             else
-                # Wait briefly for oqto to be ready after restart
-                sleep 3
-                if [[ "$is_local" == "true" ]]; then
-                    oqtoctl user sync-configs 2>&1 | while IFS= read -r line; do log "    $line"; done || warn "  sync-configs failed (non-fatal)"
+                # Give oqto a brief startup window; sync call itself retries if
+                # unix socket/admin API isn't ready yet.
+                sleep 2
+                if sync_configs_with_retry "$is_local" "$ssh_target" "$name"; then
+                    ok "Per-user configs synced"
                 else
-                    ssh "$ssh_target" "sudo oqtoctl user sync-configs 2>&1" | while IFS= read -r line; do log "    $line"; done || warn "  sync-configs failed on $name (non-fatal)"
+                    warn "  sync-configs failed on $name (non-fatal)"
                 fi
-                ok "Per-user configs synced"
             fi
 
             # Update hstry adapters globally BEFORE restarting services.

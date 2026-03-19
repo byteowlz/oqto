@@ -82,7 +82,6 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 
-
 function isPiDebugEnabled(): boolean {
 	if (!import.meta.env.DEV) return false;
 	try {
@@ -142,9 +141,7 @@ export interface ChatContextValue {
 		title: string,
 		readableId?: string | null,
 	) => void;
-	createNewChat: (
-		workspacePath?: string,
-	) => Promise<string | null>;
+	createNewChat: (workspacePath?: string) => Promise<string | null>;
 	deleteChatSession: (sessionId: string) => Promise<boolean>;
 	renameChatSession: (sessionId: string, title: string) => Promise<boolean>;
 	getSessionWorkspacePath: (sessionId: string | null) => string | null;
@@ -206,7 +203,12 @@ const defaultChatContext: ChatContextValue = {
 	runnerSessions: [],
 	runnerSessionCount: 0,
 	refreshChatHistory: asyncNoopVoid,
-	createOptimisticChatSession: (_sessionId?: string, _workspacePath?: string, _sharedWorkspaceId?: string, _existingSession?: ChatSession) => "",
+	createOptimisticChatSession: (
+		_sessionId?: string,
+		_workspacePath?: string,
+		_sharedWorkspaceId?: string,
+		_existingSession?: ChatSession,
+	) => "",
 	clearOptimisticChatSession: noop,
 	replaceOptimisticChatSession: noop,
 	updateChatSessionTitleLocal: noop,
@@ -389,7 +391,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 			const byId = new Map(history.map((s) => [s.id, s]));
 			const byReadable = new Map(
 				history
-					.filter((s): s is ChatSession & { readable_id: string } => !!s.readable_id?.trim())
+					.filter(
+						(s): s is ChatSession & { readable_id: string } =>
+							!!s.readable_id?.trim(),
+					)
 					.map((s) => [s.readable_id.trim(), s]),
 			);
 
@@ -537,9 +542,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 		try {
 			const rawHistory = await listChatHistory();
 			// Filter out sessions that were explicitly deleted in this page session
-			const history = deletedSessionsRef.current.size > 0
-				? rawHistory.filter((s) => !deletedSessionsRef.current.has(s.id))
-				: rawHistory;
+			const history =
+				deletedSessionsRef.current.size > 0
+					? rawHistory.filter((s) => !deletedSessionsRef.current.has(s.id))
+					: rawHistory;
 			const t1 = performance.now();
 			const normalized = normalizeHistory(history);
 			const merged = mergeRunnerSessions(mergeOptimisticSessions(normalized));
@@ -572,7 +578,9 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 					// hstry hasn't caught up yet — keep the auto title
 					return { ...s, title: autoTitle };
 				}
-				const previous = chatHistoryRef.current.find((prev) => prev.id === s.id);
+				const previous = chatHistoryRef.current.find(
+					(prev) => prev.id === s.id,
+				);
 				if (!previous) return s;
 				return {
 					...s,
@@ -715,7 +723,12 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 	}, []);
 
 	const createOptimisticChatSession = useCallback(
-		(sessionId: string, workspacePath?: string, sharedWorkspaceId?: string, existingSession?: ChatSession) => {
+		(
+			sessionId: string,
+			workspacePath?: string,
+			sharedWorkspaceId?: string,
+			existingSession?: ChatSession,
+		) => {
 			const optimisticId = sessionId;
 			if (optimisticChatSessionsRef.current.has(optimisticId)) {
 				if (existingSession) {
@@ -760,7 +773,8 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 			const session: ChatSession = existingSession
 				? {
 						...existingSession,
-						shared_workspace_id: sharedWorkspaceId ?? existingSession.shared_workspace_id ?? null,
+						shared_workspace_id:
+							sharedWorkspaceId ?? existingSession.shared_workspace_id ?? null,
 					}
 				: {
 						id: optimisticId,
@@ -883,7 +897,11 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 				resolvedPath = getSessionWorkspacePath(selectedChatSessionId);
 			}
 			const sessionId = createPiSessionId();
-			createOptimisticChatSession(sessionId, resolvedPath ?? undefined, sharedWorkspaceId);
+			createOptimisticChatSession(
+				sessionId,
+				resolvedPath ?? undefined,
+				sharedWorkspaceId,
+			);
 			setSelectedChatSessionId(sessionId);
 			void refreshChatHistory();
 			return sessionId;
@@ -953,31 +971,78 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 	const renameChatSession = useCallback(
 		async (sessionId: string, title: string): Promise<boolean> => {
 			try {
-				const sharedWorkspaceId = sharedWorkspaceSessionMap.get(sessionId);
+				const sessionMeta = chatHistoryRef.current.find(
+					(s) => s.id === sessionId,
+				);
+				const sharedWorkspaceId =
+					sharedWorkspaceSessionMap.get(sessionId) ??
+					sessionMeta?.shared_workspace_id ??
+					undefined;
+				if (sharedWorkspaceId) {
+					setSharedWorkspaceSessionId(sessionId, sharedWorkspaceId);
+				}
+
 				const updated = await updateChatSession(
 					sessionId,
 					{ title },
 					sharedWorkspaceId,
 				);
+
+				const canonicalSessionId = updated.id || sessionId;
+				const canonicalTitle = (updated.title ?? title).trim();
+
+				// If backend canonicalized an optimistic ID, update local mappings.
+				if (canonicalSessionId !== sessionId) {
+					const existingManualTitle = manuallyRenamedRef.current.get(sessionId);
+					if (
+						existingManualTitle &&
+						!manuallyRenamedRef.current.has(canonicalSessionId)
+					) {
+						manuallyRenamedRef.current.set(
+							canonicalSessionId,
+							existingManualTitle,
+						);
+					}
+					manuallyRenamedRef.current.delete(sessionId);
+					autoTitlesRef.current.delete(sessionId);
+					const override = sessionWorkspaceOverridesRef.current.get(sessionId);
+					if (override !== undefined) {
+						sessionWorkspaceOverridesRef.current.set(
+							canonicalSessionId,
+							override,
+						);
+						sessionWorkspaceOverridesRef.current.delete(sessionId);
+					}
+					if (sharedWorkspaceId) {
+						setSharedWorkspaceSessionId(canonicalSessionId, sharedWorkspaceId);
+						clearSharedWorkspaceSessionId(sessionId);
+					}
+					replaceOptimisticChatSession(sessionId, canonicalSessionId);
+				}
+
 				// Mark this session as manually renamed so auto-generated
 				// title events from Pi don't overwrite the user's choice.
-				if (updated.title) manuallyRenamedRef.current.set(sessionId, updated.title);
+				if (canonicalTitle) {
+					manuallyRenamedRef.current.set(canonicalSessionId, canonicalTitle);
+				}
 				setChatHistory((prev) =>
 					prev.map((s) =>
-						s.id === sessionId ? { ...s, title: updated.title } : s,
+						s.id === canonicalSessionId || s.id === sessionId
+							? { ...s, id: canonicalSessionId, title: canonicalTitle }
+							: s,
 					),
 				);
 
 				// Also tell the runner/Pi to update its internal session name.
 				// This prevents the runner from overwriting hstry with Pi's
 				// auto-generated title on the next state event.
-				try {
-					const manager = getWsManager();
-					if (manager.isConnected) {
-						void manager.agentSetSessionName(sessionId, updated.title ?? "");
-					}
-				} catch {
-					// Best-effort -- runner notification is not critical
+				const manager = getWsManager();
+				if (manager.isSessionReady(canonicalSessionId)) {
+					void manager
+						.agentSetSessionName(canonicalSessionId, canonicalTitle)
+						.catch(() => {
+							// Best-effort -- runner notification is not critical.
+						});
 				}
 
 				return true;
@@ -985,7 +1050,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 				return false;
 			}
 		},
-		[],
+		[replaceOptimisticChatSession],
 	);
 
 	const value = useMemo<ChatContextValue>(
