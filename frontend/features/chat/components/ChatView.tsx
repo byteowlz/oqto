@@ -81,6 +81,7 @@ import {
 	Bot,
 	Check,
 	Copy,
+	Download,
 	ExternalLink,
 	FileCode,
 	FileImage,
@@ -88,6 +89,7 @@ import {
 	FileVideo,
 	GitBranch,
 	Loader2,
+	PaintBucket,
 	Paperclip,
 	Send,
 	StopCircle,
@@ -3982,6 +3984,26 @@ export const FileReferenceCard = memo(function FileReferenceCard({
 	const isVideo = fileInfo.category === "video";
 	const fileName = label || filePath.split("/").pop() || filePath;
 
+	// Download file
+	const handleDownload = useCallback(async () => {
+		try {
+			await downloadFileMux(workspacePath, filePath, fileName);
+		} catch (err) {
+			console.error("Failed to download file:", err);
+		}
+	}, [workspacePath, filePath, fileName]);
+
+	// Open in canvas (only for images)
+	const handleOpenInCanvas = useCallback(() => {
+		if (!isImage) return;
+		// Dispatch custom event that SessionScreen can listen to
+		window.dispatchEvent(
+			new CustomEvent("oqto:open-in-canvas", {
+				detail: { imagePath: filePath },
+			}),
+		);
+	}, [isImage, filePath]);
+
 	useEffect(() => {
 		let cancelled = false;
 		setIsLoading(true);
@@ -4046,9 +4068,29 @@ export const FileReferenceCard = memo(function FileReferenceCard({
 	if (isImage) {
 		return (
 			<div className="border border-border bg-muted/20 rounded overflow-hidden max-w-md">
-				<div className="flex items-center gap-2 px-3 py-2 bg-muted/50 border-b border-border">
-					<FileImage className="w-4 h-4 text-muted-foreground" />
-					<span className="text-xs font-medium truncate">{fileName}</span>
+				<div className="flex items-center justify-between px-3 py-2 bg-muted/50 border-b border-border">
+					<div className="flex items-center gap-2 min-w-0">
+						<FileImage className="w-4 h-4 text-muted-foreground shrink-0" />
+						<span className="text-xs font-medium truncate">{fileName}</span>
+					</div>
+					<div className="flex items-center gap-1 shrink-0">
+						<button
+							type="button"
+							onClick={handleOpenInCanvas}
+							className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted/80 rounded transition-colors"
+							title="Open in canvas"
+						>
+							<PaintBucket className="w-3.5 h-3.5" />
+						</button>
+						<button
+							type="button"
+							onClick={handleDownload}
+							className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted/80 rounded transition-colors"
+							title="Download"
+						>
+							<Download className="w-3.5 h-3.5" />
+						</button>
+					</div>
 				</div>
 				<div className="relative">
 					{isLoading && !imageLoaded && (
@@ -4087,9 +4129,19 @@ export const FileReferenceCard = memo(function FileReferenceCard({
 	if (isVideo) {
 		return (
 			<div className="border border-border bg-muted/20 rounded overflow-hidden max-w-md">
-				<div className="flex items-center gap-2 px-3 py-2 bg-muted/50 border-b border-border">
-					<FileVideo className="w-4 h-4 text-muted-foreground" />
-					<span className="text-xs font-medium truncate">{fileName}</span>
+				<div className="flex items-center justify-between px-3 py-2 bg-muted/50 border-b border-border">
+					<div className="flex items-center gap-2 min-w-0">
+						<FileVideo className="w-4 h-4 text-muted-foreground shrink-0" />
+						<span className="text-xs font-medium truncate">{fileName}</span>
+					</div>
+					<button
+						type="button"
+						onClick={handleDownload}
+						className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted/80 rounded transition-colors shrink-0"
+						title="Download"
+					>
+						<Download className="w-3.5 h-3.5" />
+					</button>
 				</div>
 				<video
 					src={fileUrl ?? ""}

@@ -707,6 +707,23 @@ export const SessionScreen = memo(function SessionScreen() {
 		setFileTreeState(initialFileTreeState);
 	}, [selectedChatSessionId]);
 
+	// Listen for "open in canvas" events from file reference cards
+	useEffect(() => {
+		const handleOpenInCanvas = (e: Event) => {
+			const customEvent = e as CustomEvent<{ imagePath: string }>;
+			const imagePath = customEvent.detail?.imagePath;
+			if (imagePath) {
+				setCanvasImagePath(imagePath);
+				setActiveView("canvas");
+			}
+		};
+
+		window.addEventListener("oqto:open-in-canvas", handleOpenInCanvas);
+		return () => {
+			window.removeEventListener("oqto:open-in-canvas", handleOpenInCanvas);
+		};
+	}, [setActiveView]);
+
 	const headerTitle = selectedChatFromHistory
 		? getDisplayPiTitle(selectedChatFromHistory)
 		: "Chat";

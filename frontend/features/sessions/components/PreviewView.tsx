@@ -1,10 +1,12 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
+import { MarkdownRenderer } from "@/components/data-display";
 import { workspaceFileUrl } from "@/lib/api/files";
 import { downloadFileMux, readFileMux, writeFileMux } from "@/lib/mux-files";
 import { cn } from "@/lib/utils";
 import {
+	Code,
 	Download,
 	ExternalLink,
 	Eye,
@@ -294,6 +296,7 @@ export function PreviewView({
 	const [error, setError] = useState<string>("");
 	const [isEditing, setIsEditing] = useState(false);
 	const [isDarkMode, setIsDarkMode] = useState(false);
+	const [showMarkdownView, setShowMarkdownView] = useState(true);
 	const [binaryUrl, setBinaryUrl] = useState<string | null>(null);
 	const [binaryLoading, setBinaryLoading] = useState(false);
 	const [mediaError, setMediaError] = useState<string>("");
@@ -609,6 +612,12 @@ export function PreviewView({
 	const isPdfFile = isPdf(filename);
 	const isVideoFile = isVideo(filename);
 	const isAudioFile = isAudio(filename);
+
+	// Check if file is markdown
+	const isMarkdownFile =
+		filename.toLowerCase().endsWith(".md") ||
+		filename.toLowerCase().endsWith(".mdx") ||
+		filename.toLowerCase().endsWith(".markdown");
 	const fileUrl = binaryUrl;
 	const imageUrl = isImageFile ? binaryUrl : null;
 	const ExpandIcon = isExpanded ? Minimize2 : Maximize2;
@@ -1016,18 +1025,33 @@ export function PreviewView({
 								</Button>
 							</>
 						) : (
-							canEdit && (
-								<Button
-									type="button"
-									variant="ghost"
-									size="sm"
-									onClick={handleStartEdit}
-									className="h-6 px-1.5 text-xs"
-								>
-									<Pencil className="w-3 h-3 mr-1" />
-									Edit
-								</Button>
-							)
+							<>
+								{isMarkdownFile && !isEditing && (
+									<Button
+										type="button"
+										variant="ghost"
+										size="sm"
+										onClick={() => setShowMarkdownView((v) => !v)}
+										className="h-6 px-1.5 text-xs"
+										title={showMarkdownView ? "Show source" : "Show rendered"}
+									>
+										<Code className="w-3 h-3 mr-1" />
+										{showMarkdownView ? "Code" : "Rendered"}
+									</Button>
+								)}
+								{canEdit && (
+									<Button
+										type="button"
+										variant="ghost"
+										size="sm"
+										onClick={handleStartEdit}
+										className="h-6 px-1.5 text-xs"
+									>
+										<Pencil className="w-3 h-3 mr-1" />
+										Edit
+									</Button>
+								)}
+							</>
 						)}
 						{showExpand && onToggleExpand && (
 							<Button
@@ -1087,35 +1111,44 @@ export function PreviewView({
 						}}
 					/>
 				) : content ? (
-					<div
-						className="overflow-auto py-1"
-						style={{
-							minHeight: "100%",
-						}}
-					>
-						<SyntaxHighlighter
-							style={oneDark as Record<string, React.CSSProperties>}
-							language={language}
-							showLineNumbers
-							wrapLines
-							wrapLongLines
-							customStyle={{
-								margin: 0,
-								padding: "12px",
-								background: "transparent",
-								fontSize: "12px",
+					isMarkdownFile && showMarkdownView ? (
+						<div className="p-4" style={{ minHeight: "100%" }}>
+							<MarkdownRenderer
+								content={content}
+								className="text-sm leading-relaxed"
+							/>
+						</div>
+					) : (
+						<div
+							className="overflow-auto py-1"
+							style={{
 								minHeight: "100%",
 							}}
-							lineNumberStyle={{
-								minWidth: "2.5em",
-								paddingRight: "1em",
-								color: "var(--muted-foreground)",
-								opacity: 0.5,
-							}}
 						>
-							{content}
-						</SyntaxHighlighter>
-					</div>
+							<SyntaxHighlighter
+								style={oneDark as Record<string, React.CSSProperties>}
+								language={language}
+								showLineNumbers
+								wrapLines
+								wrapLongLines
+								customStyle={{
+									margin: 0,
+									padding: "12px",
+									background: "transparent",
+									fontSize: "12px",
+									minHeight: "100%",
+								}}
+								lineNumberStyle={{
+									minWidth: "2.5em",
+									paddingRight: "1em",
+									color: "var(--muted-foreground)",
+									opacity: 0.5,
+								}}
+							>
+								{content}
+							</SyntaxHighlighter>
+						</div>
+					)
 				) : null}
 			</div>
 		</div>
