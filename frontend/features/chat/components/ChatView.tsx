@@ -1161,10 +1161,16 @@ export function ChatView({
 		if (!container) return;
 		const mark = () => {
 			userInitiatedScrollRef.current = true;
-			// Stop auto-follow immediately on user scroll intent so streaming
-			// deltas don't keep snapping back to bottom before handleScroll runs.
-			setIsUserScrolled(true);
-			isUserScrolledRef.current = true;
+			// Only mark as scrolled-away if we are NOT already at the bottom.
+			// This prevents the jump-to-bottom button from flashing when the
+			// user scrolls down and reaches the end of the chat.
+			const atBottom =
+				container.scrollHeight - container.scrollTop - container.clientHeight <
+				80;
+			if (!atBottom) {
+				setIsUserScrolled(true);
+				isUserScrolledRef.current = true;
+			}
 		};
 		container.addEventListener("wheel", mark, { passive: true });
 		container.addEventListener("touchmove", mark, { passive: true });
