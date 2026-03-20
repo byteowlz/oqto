@@ -1852,7 +1852,9 @@ function TreeRow({
 							onCancel={onRenameCancel}
 						/>
 					) : (
-						<span className="truncate text-sm">{node.name}</span>
+						<span className="truncate text-sm" title={node.name}>
+							{node.name}
+						</span>
 					)}
 					{!isRenaming && isDir && node.children && (
 						<span className="text-xs text-muted-foreground/60 ml-auto pr-2">
@@ -2014,7 +2016,9 @@ function ListView({
 											onCancel={onRenameCancel}
 										/>
 									) : (
-										<span className="truncate text-sm">{file.name}</span>
+										<span className="truncate text-sm" title={file.name}>
+											{file.name}
+										</span>
 									)}
 									{!isRenaming &&
 										file.type === "directory" &&

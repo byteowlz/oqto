@@ -1174,9 +1174,13 @@ export function ChatView({
 		};
 		container.addEventListener("wheel", mark, { passive: true });
 		container.addEventListener("touchmove", mark, { passive: true });
+		container.addEventListener("pointerdown", mark, { passive: true });
+		container.addEventListener("mousedown", mark, { passive: true });
 		return () => {
 			container.removeEventListener("wheel", mark);
 			container.removeEventListener("touchmove", mark);
+			container.removeEventListener("pointerdown", mark);
+			container.removeEventListener("mousedown", mark);
 		};
 	}, []);
 
@@ -1227,15 +1231,22 @@ export function ChatView({
 			return;
 		}
 
-		// Prefer the explicit user gesture flag, but allow scrollbar drag and
-		// keyboard scrolls that do not emit wheel/touch/pointer events.
-		if (userInitiatedScrollRef.current) {
-			userInitiatedScrollRef.current = false;
-		}
-
 		const atBottom =
 			container.scrollHeight - container.scrollTop - container.clientHeight <
 			80;
+
+		// Never mark as "user scrolled up" unless we observed an explicit user
+		// gesture. This avoids false positives from streaming/layout growth.
+		if (!userInitiatedScrollRef.current) {
+			if (atBottom) {
+				setIsUserScrolled(false);
+				isUserScrolledRef.current = false;
+				setCachedScrollPosition(null, scrollStorageKey);
+			}
+			return;
+		}
+
+		userInitiatedScrollRef.current = false;
 		setIsUserScrolled(!atBottom);
 		isUserScrolledRef.current = !atBottom;
 		if (atBottom) {
@@ -2117,18 +2128,17 @@ export function ChatView({
 					<div ref={messagesEndRef} />
 				</div>
 
+				{/* Jump to bottom — slim bar above input (overlay to avoid layout shift) */}
+				{isUserScrolled && (
+					<button
+						type="button"
+						onClick={handleScrollToBottom}
+						className="absolute bottom-0 left-0 right-0 z-10 bg-primary/50 cursor-pointer hover:bg-primary transition-colors"
+						style={{ height: "4px", minHeight: "4px", padding: 0, lineHeight: 0 }}
+						title="Jump to bottom"
+					/>
+				)}
 			</div>
-
-			{/* Jump to bottom — slim bar with arrow above input */}
-			{isUserScrolled && (
-				<button
-					type="button"
-					onClick={handleScrollToBottom}
-					className="w-full bg-primary/50 cursor-pointer hover:bg-primary transition-colors"
-					style={{ height: "4px", minHeight: "4px", padding: 0, lineHeight: 0 }}
-					title="Jump to bottom"
-				/>
-			)}
 
 			{/* Hidden file input */}
 			<input
@@ -3473,10 +3483,26 @@ const MessageGroupCard = memo(function MessageGroupCard({
 						);
 					}
 					if (segment.type === "tool_group") {
-						// At verbosity=1 tool_groups are attached to adjacent segments
-						// via _toolGroup, so standalone ones should not appear.
-						// Skip them silently to avoid empty rows.
-						if (verbosity === 1) return null;
+						// In minimal mode, tool groups are usually attached to neighboring
+						// text/thinking segments via _toolGroup. But tool-only assistant
+						// messages can produce a standalone tool_group. Render a compact
+						// fallback row so the bubble is never empty.
+						if (verbosity === 1) {
+							return (
+								<div
+									key={segment.key}
+									className={cn(
+										"relative min-h-5 text-xs text-muted-foreground",
+										needsTopMargin && "mt-2",
+									)}
+								>
+									<span>{t("chat.toolsUsed", "Used tools")}</span>
+									<div className="absolute right-[-2.625rem] sm:right-[-3.375rem] top-0 bottom-0 flex items-center">
+										<ToolGutterIcon toolGroup={segment} locale={locale} />
+									</div>
+								</div>
+							);
+						}
 						const toolItems = segment.segments.map((toolSegment) => {
 							const toolName =
 								toolSegment.type === "tool_call"
