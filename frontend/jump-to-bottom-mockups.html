@@ -1,0 +1,675 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Jump to Bottom — 10 Alternatives</title>
+<style>
+  :root {
+    --bg: #222624;
+    --surface: #2d312f;
+    --surface-dim: #0f1412;
+    --panel: #161c1a;
+    --panel-strong: #222624;
+    --border: #2d312f;
+    --text: #b8bfbb;
+    --text-bright: #f2f5f3;
+    --text-muted: #b2b9b5;
+    --text-dim: #6b7974;
+    --primary: #3ba77c;
+    --primary-fg: #222624;
+    --secondary: #3a3f41;
+    --destructive: #b94a48;
+    --accent: #3a3f41;
+    --code-bg: #1a201e;
+    --code-border: #2a3632;
+    --code-accent: #3ba77c;
+  }
+
+  @font-face {
+    font-family: "JetBrainsMono";
+    src: local("JetBrainsMono Nerd Font"), local("JetBrains Mono"), local("ui-monospace");
+    font-display: swap;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--surface-dim);
+    color: var(--text);
+    font-family: "JetBrainsMono", "JetBrainsMono Nerd Font", ui-monospace, monospace;
+    font-size: 12px;
+    line-height: 1.5;
+  }
+
+  h1 {
+    text-align: center;
+    padding: 32px 16px 8px;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-bright);
+    letter-spacing: -0.02em;
+  }
+
+  .subtitle {
+    text-align: center;
+    color: var(--text-dim);
+    font-size: 11px;
+    margin-bottom: 32px;
+  }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+    gap: 1px;
+    padding: 0 24px 48px;
+    max-width: 1400px;
+    margin: 0 auto;
+    background: var(--border);
+  }
+
+  .card {
+    background: var(--panel);
+    overflow: hidden;
+  }
+
+  .card-header {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .card-header h3 {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-bright);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .card-header .badge {
+    font-size: 10px;
+    color: var(--text-dim);
+    background: var(--surface);
+    padding: 2px 6px;
+    text-transform: lowercase;
+    letter-spacing: 0.02em;
+    border: 1px solid var(--border);
+  }
+
+  /* Chat mock area */
+  .chat-mock {
+    position: relative;
+    height: 300px;
+    overflow: hidden;
+    background: var(--bg);
+  }
+
+  .chat-messages {
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .msg {
+    max-width: 82%;
+    padding: 6px 10px;
+    font-size: 11px;
+    line-height: 1.6;
+    color: var(--text);
+  }
+
+  .msg.user {
+    align-self: flex-end;
+    background: var(--code-bg);
+    border: 1px solid var(--code-border);
+    color: var(--text-muted);
+  }
+
+  .msg.assistant {
+    align-self: flex-start;
+    background: var(--surface);
+    border: 1px solid var(--border);
+  }
+
+  .msg.faded {
+    opacity: 0.3;
+  }
+
+  .msg code {
+    color: var(--code-accent);
+    font-size: 11px;
+  }
+
+  /* Input bar mock */
+  .input-bar {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    padding: 10px 14px;
+    background: linear-gradient(transparent, var(--bg) 40%);
+    pointer-events: none;
+  }
+
+  .input-mock {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 8px 12px;
+    font-size: 11px;
+    color: var(--text-dim);
+    font-family: inherit;
+  }
+
+  .card-desc {
+    padding: 10px 14px;
+    border-top: 1px solid var(--border);
+    font-size: 10px;
+    color: var(--text-dim);
+    line-height: 1.6;
+  }
+
+  /* ====== BUTTON VARIANTS ====== */
+
+  /* 1. Centered Pill */
+  .btn-pill {
+    position: absolute;
+    bottom: 60px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    font-family: inherit;
+    font-size: 10px;
+    padding: 4px 14px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: all 0.15s;
+    z-index: 10;
+    white-space: nowrap;
+  }
+  .btn-pill:hover {
+    color: var(--primary);
+    border-color: var(--primary);
+    background: var(--panel);
+  }
+  .btn-pill svg { width: 10px; height: 10px; }
+
+  /* 2. Floating square — bottom-right */
+  .btn-square {
+    position: absolute;
+    bottom: 64px;
+    right: 16px;
+    width: 28px;
+    height: 28px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    display: grid;
+    place-items: center;
+    cursor: pointer;
+    transition: all 0.15s;
+    z-index: 10;
+  }
+  .btn-square:hover {
+    background: var(--primary);
+    border-color: var(--primary);
+    color: var(--primary-fg);
+  }
+  .btn-square svg { width: 12px; height: 12px; }
+
+  /* 3. Expanding edge bar */
+  .btn-edge-bar {
+    position: absolute;
+    bottom: 52px;
+    left: 14px;
+    right: 14px;
+    height: 2px;
+    background: var(--primary);
+    opacity: 0.4;
+    cursor: pointer;
+    transition: all 0.2s;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .btn-edge-bar:hover {
+    height: 22px;
+    opacity: 1;
+  }
+  .btn-edge-bar .bar-label {
+    font-size: 10px;
+    color: var(--primary-fg);
+    opacity: 0;
+    transition: opacity 0.15s;
+    white-space: nowrap;
+    font-family: inherit;
+    font-weight: 600;
+  }
+  .btn-edge-bar:hover .bar-label {
+    opacity: 1;
+  }
+
+  /* 4. Gutter dot — right edge */
+  .btn-gutter {
+    position: absolute;
+    bottom: 96px;
+    right: 3px;
+    width: 6px;
+    height: 6px;
+    background: var(--primary);
+    cursor: pointer;
+    transition: all 0.2s;
+    z-index: 10;
+    opacity: 0.6;
+  }
+  .btn-gutter:hover {
+    width: 24px;
+    height: 24px;
+    right: 6px;
+    bottom: 93px;
+    opacity: 1;
+    display: grid;
+    place-items: center;
+  }
+  .btn-gutter svg {
+    width: 12px; height: 12px;
+    color: var(--primary-fg);
+    opacity: 0;
+    transition: opacity 0.1s;
+  }
+  .btn-gutter:hover svg { opacity: 1; }
+
+  /* 5. Text link — minimal */
+  .btn-text-link {
+    position: absolute;
+    bottom: 62px;
+    left: 50%;
+    transform: translateX(-50%);
+    color: var(--primary);
+    font-size: 10px;
+    font-family: inherit;
+    cursor: pointer;
+    text-decoration: none;
+    opacity: 0.6;
+    transition: opacity 0.15s;
+    z-index: 10;
+    white-space: nowrap;
+  }
+  .btn-text-link:hover {
+    opacity: 1;
+    text-decoration: underline;
+  }
+
+  /* 6. Badge with count */
+  .btn-badge {
+    position: absolute;
+    bottom: 64px;
+    right: 16px;
+    background: var(--primary);
+    color: var(--primary-fg);
+    font-family: inherit;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 2px 8px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    transition: all 0.15s;
+    z-index: 10;
+  }
+  .btn-badge:hover {
+    filter: brightness(1.15);
+  }
+  .btn-badge svg { width: 9px; height: 9px; }
+
+  /* 7. Side rail tab — left edge */
+  .btn-rail {
+    position: absolute;
+    bottom: 76px;
+    left: 0;
+    width: 16px;
+    height: 36px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: none;
+    display: grid;
+    place-items: center;
+    cursor: pointer;
+    color: var(--text-dim);
+    transition: all 0.15s;
+    z-index: 10;
+  }
+  .btn-rail:hover {
+    width: 24px;
+    background: var(--panel);
+    border-color: var(--primary);
+    color: var(--primary);
+  }
+  .btn-rail svg { width: 10px; height: 10px; }
+
+  /* 8. Ghost bar — icon only, centered */
+  .btn-ghost {
+    position: absolute;
+    bottom: 60px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 36px;
+    height: 18px;
+    background: rgba(255,255,255,0.02);
+    border: 1px solid rgba(255,255,255,0.04);
+    display: grid;
+    place-items: center;
+    cursor: pointer;
+    color: var(--text-dim);
+    transition: all 0.15s;
+    z-index: 10;
+  }
+  .btn-ghost:hover {
+    background: var(--surface);
+    border-color: var(--primary);
+    color: var(--primary);
+    width: 72px;
+  }
+  .btn-ghost svg { width: 10px; height: 10px; }
+
+  /* 9. Gradient hint with chevrons */
+  .btn-gradient {
+    position: absolute;
+    bottom: 44px;
+    left: 0;
+    right: 0;
+    height: 44px;
+    background: linear-gradient(transparent, rgba(59,167,124,0.04));
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    padding-bottom: 2px;
+    cursor: pointer;
+    transition: all 0.2s;
+    z-index: 10;
+  }
+  .btn-gradient:hover {
+    background: linear-gradient(transparent, rgba(59,167,124,0.1));
+  }
+  .btn-gradient .chevrons {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    color: var(--primary);
+    opacity: 0.4;
+    transition: opacity 0.15s;
+  }
+  .btn-gradient:hover .chevrons { opacity: 1; }
+  .btn-gradient svg { width: 14px; height: 9px; }
+
+  /* 10. Corner tab — right edge, just above input */
+  .btn-corner {
+    position: absolute;
+    bottom: 52px;
+    right: 0;
+    width: 24px;
+    height: 24px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-right: none;
+    display: grid;
+    place-items: center;
+    cursor: pointer;
+    color: var(--text-dim);
+    transition: all 0.15s;
+    z-index: 10;
+    opacity: 0.6;
+  }
+  .btn-corner:hover {
+    opacity: 1;
+    width: 32px;
+    background: var(--panel);
+    color: var(--primary);
+    border-color: var(--primary);
+  }
+  .btn-corner svg { width: 10px; height: 10px; }
+</style>
+</head>
+<body>
+
+<h1>jump to bottom -- 10 alternatives</h1>
+<p class="subtitle">hover each chat mockup to see interactive state</p>
+
+<div class="grid">
+
+  <!-- 1. Centered Pill -->
+  <div class="card">
+    <div class="card-header">
+      <h3>01 centered pill</h3>
+      <span class="badge">center</span>
+    </div>
+    <div class="chat-mock">
+      <div class="chat-messages">
+        <div class="msg assistant faded">sure, i can help with that. let me look at the configuration...</div>
+        <div class="msg user faded">can you also check the deployment logs?</div>
+        <div class="msg assistant faded">looking at the logs now. i see several entries from the last hour that might be relevant...</div>
+        <div class="msg user faded">what about the error on line 42?</div>
+        <div class="msg assistant">the error on line 42 is caused by a missing environment variable. you need to add <code>API_KEY</code> to your .env file.</div>
+      </div>
+      <div class="btn-pill">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"/></svg>
+        new messages below
+      </div>
+      <div class="input-bar"><div class="input-mock">type a message...</div></div>
+    </div>
+    <div class="card-desc">small pill with text label. unobtrusive but discoverable. highlights primary on hover.</div>
+  </div>
+
+  <!-- 2. Floating Square -->
+  <div class="card">
+    <div class="card-header">
+      <h3>02 floating square</h3>
+      <span class="badge">bottom-right</span>
+    </div>
+    <div class="chat-mock">
+      <div class="chat-messages">
+        <div class="msg assistant faded">sure, i can help with that. let me look at the configuration...</div>
+        <div class="msg user faded">can you also check the deployment logs?</div>
+        <div class="msg assistant faded">looking at the logs now. i see several entries from the last hour that might be relevant...</div>
+        <div class="msg user faded">what about the error on line 42?</div>
+        <div class="msg assistant">the error on line 42 is caused by a missing environment variable. you need to add <code>API_KEY</code> to your .env file.</div>
+      </div>
+      <div class="btn-square">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"/></svg>
+      </div>
+      <div class="input-bar"><div class="input-mock">type a message...</div></div>
+    </div>
+    <div class="card-desc">classic fab, sharp corners. 28px square. fills primary green on hover.</div>
+  </div>
+
+  <!-- 3. Expanding Edge Bar -->
+  <div class="card">
+    <div class="card-header">
+      <h3>03 expanding edge bar</h3>
+      <span class="badge">full width</span>
+    </div>
+    <div class="chat-mock">
+      <div class="chat-messages">
+        <div class="msg assistant faded">sure, i can help with that. let me look at the configuration...</div>
+        <div class="msg user faded">can you also check the deployment logs?</div>
+        <div class="msg assistant faded">looking at the logs now. i see several entries from the last hour that might be relevant...</div>
+        <div class="msg user faded">what about the error on line 42?</div>
+        <div class="msg assistant">the error on line 42 is caused by a missing environment variable. you need to add <code>API_KEY</code> to your .env file.</div>
+      </div>
+      <div class="btn-edge-bar">
+        <span class="bar-label">jump to latest</span>
+      </div>
+      <div class="input-bar"><div class="input-mock">type a message...</div></div>
+    </div>
+    <div class="card-desc">thin 2px primary line above input. expands to labeled bar on hover. nearly invisible at rest.</div>
+  </div>
+
+  <!-- 4. Gutter Dot -->
+  <div class="card">
+    <div class="card-header">
+      <h3>04 gutter dot</h3>
+      <span class="badge">right edge</span>
+    </div>
+    <div class="chat-mock">
+      <div class="chat-messages">
+        <div class="msg assistant faded">sure, i can help with that. let me look at the configuration...</div>
+        <div class="msg user faded">can you also check the deployment logs?</div>
+        <div class="msg assistant faded">looking at the logs now. i see several entries from the last hour that might be relevant...</div>
+        <div class="msg user faded">what about the error on line 42?</div>
+        <div class="msg assistant">the error on line 42 is caused by a missing environment variable. you need to add <code>API_KEY</code> to your .env file.</div>
+      </div>
+      <div class="btn-gutter">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"/></svg>
+      </div>
+      <div class="input-bar"><div class="input-mock">type a message...</div></div>
+    </div>
+    <div class="card-desc">tiny 6px dot on scroll rail. expands to 24px square with arrow on hover. ultra-minimal footprint.</div>
+  </div>
+
+  <!-- 5. Text Link -->
+  <div class="card">
+    <div class="card-header">
+      <h3>05 text link</h3>
+      <span class="badge">center</span>
+    </div>
+    <div class="chat-mock">
+      <div class="chat-messages">
+        <div class="msg assistant faded">sure, i can help with that. let me look at the configuration...</div>
+        <div class="msg user faded">can you also check the deployment logs?</div>
+        <div class="msg assistant faded">looking at the logs now. i see several entries from the last hour that might be relevant...</div>
+        <div class="msg user faded">what about the error on line 42?</div>
+        <div class="msg assistant">the error on line 42 is caused by a missing environment variable. you need to add <code>API_KEY</code> to your .env file.</div>
+      </div>
+      <a class="btn-text-link">&#8595; scroll to bottom</a>
+      <div class="input-bar"><div class="input-mock">type a message...</div></div>
+    </div>
+    <div class="card-desc">plain text link, no chrome. smallest visual weight. underlines on hover. blends into flow.</div>
+  </div>
+
+  <!-- 6. Badge with Count -->
+  <div class="card">
+    <div class="card-header">
+      <h3>06 badge with count</h3>
+      <span class="badge">bottom-right</span>
+    </div>
+    <div class="chat-mock">
+      <div class="chat-messages">
+        <div class="msg assistant faded">sure, i can help with that. let me look at the configuration...</div>
+        <div class="msg user faded">can you also check the deployment logs?</div>
+        <div class="msg assistant faded">looking at the logs now. i see several entries from the last hour that might be relevant...</div>
+        <div class="msg user faded">what about the error on line 42?</div>
+        <div class="msg assistant">the error on line 42 is caused by a missing environment variable. you need to add <code>API_KEY</code> to your .env file.</div>
+      </div>
+      <div class="btn-badge">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"/></svg>
+        3 new
+      </div>
+      <div class="input-bar"><div class="input-mock">type a message...</div></div>
+    </div>
+    <div class="card-desc">compact primary badge with unread count. gives context. small but intentionally visible.</div>
+  </div>
+
+  <!-- 7. Side Rail Tab -->
+  <div class="card">
+    <div class="card-header">
+      <h3>07 side rail tab</h3>
+      <span class="badge">left edge</span>
+    </div>
+    <div class="chat-mock">
+      <div class="chat-messages">
+        <div class="msg assistant faded">sure, i can help with that. let me look at the configuration...</div>
+        <div class="msg user faded">can you also check the deployment logs?</div>
+        <div class="msg assistant faded">looking at the logs now. i see several entries from the last hour that might be relevant...</div>
+        <div class="msg user faded">what about the error on line 42?</div>
+        <div class="msg assistant">the error on line 42 is caused by a missing environment variable. you need to add <code>API_KEY</code> to your .env file.</div>
+      </div>
+      <div class="btn-rail">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"/></svg>
+      </div>
+      <div class="input-bar"><div class="input-mock">type a message...</div></div>
+    </div>
+    <div class="card-desc">tab protruding from left edge like a drawer pull. entirely out of content flow. widens on hover.</div>
+  </div>
+
+  <!-- 8. Ghost Bar -->
+  <div class="card">
+    <div class="card-header">
+      <h3>08 ghost bar</h3>
+      <span class="badge">center</span>
+    </div>
+    <div class="chat-mock">
+      <div class="chat-messages">
+        <div class="msg assistant faded">sure, i can help with that. let me look at the configuration...</div>
+        <div class="msg user faded">can you also check the deployment logs?</div>
+        <div class="msg assistant faded">looking at the logs now. i see several entries from the last hour that might be relevant...</div>
+        <div class="msg user faded">what about the error on line 42?</div>
+        <div class="msg assistant">the error on line 42 is caused by a missing environment variable. you need to add <code>API_KEY</code> to your .env file.</div>
+      </div>
+      <div class="btn-ghost">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"/></svg>
+      </div>
+      <div class="input-bar"><div class="input-mock">type a message...</div></div>
+    </div>
+    <div class="card-desc">nearly transparent icon-only bar. barely visible at rest. widens and tints on hover. maximum ghosting.</div>
+  </div>
+
+  <!-- 9. Gradient Hint -->
+  <div class="card">
+    <div class="card-header">
+      <h3>09 gradient fade hint</h3>
+      <span class="badge">full width</span>
+    </div>
+    <div class="chat-mock">
+      <div class="chat-messages">
+        <div class="msg assistant faded">sure, i can help with that. let me look at the configuration...</div>
+        <div class="msg user faded">can you also check the deployment logs?</div>
+        <div class="msg assistant faded">looking at the logs now. i see several entries from the last hour that might be relevant...</div>
+        <div class="msg user faded">what about the error on line 42?</div>
+        <div class="msg assistant">the error on line 42 is caused by a missing environment variable. you need to add <code>API_KEY</code> to your .env file.</div>
+      </div>
+      <div class="btn-gradient">
+        <div class="chevrons">
+          <svg viewBox="0 0 24 12" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 2l6 6 6-6"/></svg>
+          <svg viewBox="0 0 24 12" fill="none" stroke="currentColor" stroke-width="2.5" style="margin-top:-3px;opacity:0.4"><path d="M6 2l6 6 6-6"/></svg>
+        </div>
+      </div>
+      <div class="input-bar"><div class="input-mock">type a message...</div></div>
+    </div>
+    <div class="card-desc">subtle green gradient band above input with double chevrons. no borders. clickable area is generous.</div>
+  </div>
+
+  <!-- 10. Corner Anchor Tab -->
+  <div class="card">
+    <div class="card-header">
+      <h3>10 corner anchor tab</h3>
+      <span class="badge">right edge</span>
+    </div>
+    <div class="chat-mock">
+      <div class="chat-messages">
+        <div class="msg assistant faded">sure, i can help with that. let me look at the configuration...</div>
+        <div class="msg user faded">can you also check the deployment logs?</div>
+        <div class="msg assistant faded">looking at the logs now. i see several entries from the last hour that might be relevant...</div>
+        <div class="msg user faded">what about the error on line 42?</div>
+        <div class="msg assistant">the error on line 42 is caused by a missing environment variable. you need to add <code>API_KEY</code> to your .env file.</div>
+      </div>
+      <div class="btn-corner">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"/></svg>
+      </div>
+      <div class="input-bar"><div class="input-mock">type a message...</div></div>
+    </div>
+    <div class="card-desc">small tab flush with right edge just above input. grows wider on hover with primary accent.</div>
+  </div>
+
+</div>
+
+</body>
+</html>

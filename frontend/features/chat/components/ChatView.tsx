@@ -2117,32 +2117,18 @@ export function ChatView({
 					<div ref={messagesEndRef} />
 				</div>
 
-				{/* Jump to bottom button - appears when user has scrolled up */}
-				{isUserScrolled && (
-					<button
-						type="button"
-						onClick={handleScrollToBottom}
-						className="absolute bottom-3 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-primary text-primary-foreground text-xs shadow-md hover:bg-primary/90 transition-colors"
-						title="Jump to bottom"
-					>
-						<svg
-							xmlns="http://www.w3.org/2000/svg"
-							width="12"
-							height="12"
-							viewBox="0 0 24 24"
-							fill="none"
-							stroke="currentColor"
-							strokeWidth="2"
-							strokeLinecap="round"
-							strokeLinejoin="round"
-							aria-hidden="true"
-						>
-							<polyline points="6 9 12 15 18 9" />
-						</svg>
-						Jump to bottom
-					</button>
-				)}
 			</div>
+
+			{/* Jump to bottom — slim bar with arrow above input */}
+			{isUserScrolled && (
+				<button
+					type="button"
+					onClick={handleScrollToBottom}
+					className="w-full bg-primary/50 cursor-pointer hover:bg-primary transition-colors"
+					style={{ height: "4px", minHeight: "4px", padding: 0, lineHeight: 0 }}
+					title="Jump to bottom"
+				/>
+			)}
 
 			{/* Hidden file input */}
 			<input
