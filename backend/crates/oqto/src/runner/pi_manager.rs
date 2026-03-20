@@ -21,6 +21,7 @@ use chrono::DateTime;
 use futures::FutureExt;
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
+use sqlx::Row;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, Command};
 use tokio::sync::{RwLock, broadcast, mpsc, oneshot};
@@ -33,7 +34,9 @@ use crate::pi::{
 };
 use crate::runner::pi_translator::PiTranslator;
 use crate::runner::protocol::{PiSessionInfo, PiSessionState};
-use oqto_protocol::events::{AgentPhase, Event as CanonicalEvent, EventPayload};
+use oqto_protocol::events::{
+    AgentPhase, Event as CanonicalEvent, EventPayload, MessageVersion,
+};
 use oqto_sandbox::SandboxConfig;
 
 // ============================================================================
@@ -2621,7 +2624,9 @@ impl PiSessionManager {
                             session_id: id.clone(),
                             runner_id: self.config.runner_id.clone(),
                             ts: chrono::Utc::now().timestamp_millis(),
-                            payload: EventPayload::AgentIdle,
+                            payload: EventPayload::AgentIdle {
+                                message_version: None,
+                            },
                         };
                         session_event_tx.publish(&idle_event).await;
                         continue;
@@ -2646,7 +2651,9 @@ impl PiSessionManager {
                                 session_id: id.clone(),
                                 runner_id: self.config.runner_id.clone(),
                                 ts: chrono::Utc::now().timestamp_millis(),
-                                payload: EventPayload::AgentIdle,
+                                payload: EventPayload::AgentIdle {
+                                message_version: None,
+                            },
                             };
                             session_event_tx.publish(&idle_event).await;
                         }
@@ -2685,7 +2692,9 @@ impl PiSessionManager {
                             session_id: id.clone(),
                             runner_id: self.config.runner_id.clone(),
                             ts: chrono::Utc::now().timestamp_millis(),
-                            payload: EventPayload::AgentIdle,
+                            payload: EventPayload::AgentIdle {
+                                message_version: None,
+                            },
                         };
                         session_event_tx.publish(&idle_event).await;
                     } else {
@@ -3281,7 +3290,7 @@ impl PiSessionManager {
                 for payload in &canonical_payloads {
                     // Enrich SessionTitleChanged with hstry readable_id when
                     // the title doesn't embed one (e.g. no readableIdSuffix).
-                    let enriched_payload =
+                    let mut enriched_payload =
                         if let oqto_protocol::events::EventPayload::SessionTitleChanged {
                             title,
                             readable_id: None,
@@ -3326,7 +3335,7 @@ impl PiSessionManager {
                     // BEFORE broadcasting, so fetchHistoryMessages finds it.
                     if matches!(
                         enriched_payload,
-                        oqto_protocol::events::EventPayload::AgentIdle
+                        oqto_protocol::events::EventPayload::AgentIdle { .. }
                     ) {
                         if let Some(error_text) = pending_error_text.take() {
                             if let Some(ref client) = hstry_client {
@@ -3363,6 +3372,18 @@ impl PiSessionManager {
                                 }
                             }
                         }
+                    }
+
+                    if matches!(
+                        enriched_payload,
+                        oqto_protocol::events::EventPayload::AgentIdle { .. }
+                    ) {
+                        let eid = hstry_external_id.read().await.clone();
+                        let message_version =
+                            read_hstry_message_version_snapshot(&eid, &session_id).await;
+                        enriched_payload = oqto_protocol::events::EventPayload::AgentIdle {
+                            message_version,
+                        };
                     }
 
                     // Now broadcast the event to subscribers
@@ -4501,6 +4522,54 @@ async fn resolve_jsonl_message_indices(
     }
 
     Some(result)
+}
+
+async fn read_hstry_message_version_snapshot(
+    hstry_external_id: &str,
+    fallback_session_id: &str,
+) -> Option<MessageVersion> {
+    let db_path = crate::history::hstry_db_path()?;
+    let pool = crate::history::repository::open_hstry_pool(&db_path)
+        .await
+        .ok()?;
+
+    let has_version_col: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM pragma_table_info('conversations') WHERE name = 'version'",
+    )
+    .fetch_one(&pool)
+    .await
+    .ok()?;
+
+    if has_version_col <= 0 {
+        return None;
+    }
+
+    let row = sqlx::query(
+        r#"
+        SELECT c.version as version,
+               (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) as message_count
+        FROM conversations c
+        WHERE c.source_id = 'pi'
+          AND (c.external_id = ? OR c.platform_id = ? OR c.readable_id = ? OR c.id = ?)
+        LIMIT 1
+        "#,
+    )
+    .bind(hstry_external_id)
+    .bind(fallback_session_id)
+    .bind(hstry_external_id)
+    .bind(hstry_external_id)
+    .fetch_optional(&pool)
+    .await
+    .ok()??;
+
+    let version = row.try_get::<i64, _>("version").ok()?;
+    let message_count = row.try_get::<i64, _>("message_count").ok();
+
+    Some(MessageVersion {
+        version: version.max(0) as u64,
+        message_count: message_count.map(|v| v.max(0) as u64),
+        last_message_hash: None,
+    })
 }
 
 async fn fetch_last_hstry_idx(client: &HstryClient, session_id: &str) -> Option<i32> {

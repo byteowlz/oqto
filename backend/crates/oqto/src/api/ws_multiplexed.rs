@@ -22,6 +22,7 @@ use futures::{SinkExt, StreamExt};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sqlx::Row;
 use tokio::sync::{Mutex, Semaphore, mpsc, oneshot};
 use tracing::{debug, error, info, warn};
 
@@ -210,6 +211,71 @@ async fn get_cached_pi_messages(
     }
     None
 }
+
+async fn read_hstry_message_version_snapshot(
+    session_id: &str,
+    _workspace: Option<String>,
+    is_multi_user: bool,
+) -> Option<oqto_protocol::events::MessageVersion> {
+    if is_multi_user {
+        return None;
+    }
+
+    let db_path = crate::history::hstry_db_path()?;
+    let pool = crate::history::repository::open_hstry_pool(&db_path)
+        .await
+        .ok()?;
+
+    let has_version_col: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM pragma_table_info('conversations') WHERE name = 'version'",
+    )
+    .fetch_one(&pool)
+    .await
+    .ok()?;
+
+    if has_version_col <= 0 {
+        return None;
+    }
+
+    let query = r#"
+        SELECT c.version as version,
+               (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) as message_count
+        FROM conversations c
+        WHERE c.source_id = 'pi'
+          AND (c.external_id = ? OR c.platform_id = ? OR c.readable_id = ? OR c.id = ?)
+        LIMIT 1
+        "#;
+
+    let mut row = None;
+    for attempt in 0..3 {
+        row = sqlx::query(query)
+            .bind(session_id)
+            .bind(session_id)
+            .bind(session_id)
+            .bind(session_id)
+            .fetch_optional(&pool)
+            .await
+            .ok()
+            .flatten();
+        if row.is_some() {
+            break;
+        }
+        if attempt < 2 {
+            tokio::time::sleep(Duration::from_millis(120)).await;
+        }
+    }
+
+    let row = row?;
+    let version = row.try_get::<i64, _>("version").ok()?;
+    let message_count = row.try_get::<i64, _>("message_count").ok();
+
+    Some(oqto_protocol::events::MessageVersion {
+        version: version.max(0) as u64,
+        message_count: message_count.map(|v| v.max(0) as u64),
+        last_message_hash: None,
+    })
+}
+
 use super::handlers::trx::{
     CloseTrxIssueRequest, CreateTrxIssueRequest, TrxWorkspaceQuery, UpdateTrxIssueRequest,
 };
@@ -1798,7 +1864,9 @@ async fn emit_terminal_send_failure(
         session_id: session_id.to_string(),
         runner_id: runner_id.to_string(),
         ts: Utc::now().timestamp_millis(),
-        payload: oqto_protocol::events::EventPayload::AgentIdle,
+        payload: oqto_protocol::events::EventPayload::AgentIdle {
+                message_version: None,
+            },
     };
     let _ = event_tx.send(WsEvent::Agent(idle_event));
 }
@@ -1839,7 +1907,9 @@ async fn arm_response_watchdog(
             session_id: session_id_owned,
             runner_id: runner_id_owned,
             ts: Utc::now().timestamp_millis(),
-            payload: oqto_protocol::events::EventPayload::AgentIdle,
+            payload: oqto_protocol::events::EventPayload::AgentIdle {
+                message_version: None,
+            },
         };
         let _ = event_tx.send(WsEvent::Agent(idle_event));
     });
@@ -2000,6 +2070,27 @@ async fn handle_get_messages(
         )
     };
 
+    let is_multi_user = state.linux_users.is_some();
+    let workspace_for_hstry = session_meta.as_ref().and_then(|meta| {
+        (meta.scope.as_deref() == Some("workspace") || meta.scope.as_deref() == Some("pi"))
+            .then(|| meta.cwd.as_ref().map(|cwd| cwd.to_string_lossy().to_string()))
+            .flatten()
+    });
+    let persisted_message_version =
+        read_hstry_message_version_snapshot(session_id, workspace_for_hstry, is_multi_user).await;
+
+    let response_data =
+        |messages: Value, message_version: Option<oqto_protocol::events::MessageVersion>| {
+            let mut data = serde_json::Map::new();
+            data.insert("messages".to_string(), messages);
+            if let Some(version) = message_version {
+                if let Ok(version_json) = serde_json::to_value(version) {
+                    data.insert("message_version".to_string(), version_json);
+                }
+            }
+            Value::Object(data)
+        };
+
     // When the session is ACTIVE (has a running Pi process + subscription),
     // prefer Pi's live messages over hstry. Pi has the complete current-turn
     // context including messages not yet persisted to hstry. Without this,
@@ -2022,7 +2113,10 @@ async fn handle_get_messages(
                     session_id,
                     id,
                     "get_messages",
-                    Ok(Some(serde_json::json!({ "messages": messages_value }))),
+                    Ok(Some(response_data(
+                        messages_value,
+                        persisted_message_version.clone(),
+                    ))),
                 ));
             }
             Ok(Err(e)) => {
@@ -2050,14 +2144,15 @@ async fn handle_get_messages(
                 session_id,
                 id,
                 "get_messages",
-                Ok(Some(serde_json::json!({ "messages": cached.messages }))),
+                Ok(Some(response_data(
+                    cached.messages,
+                    persisted_message_version.clone(),
+                ))),
             ));
         }
     }
 
     // Try hstry for historical messages
-    let is_multi_user = state.linux_users.is_some();
-
     if let Some(meta) = session_meta.as_ref()
         && (meta.scope.as_deref() == Some("workspace") || meta.scope.as_deref() == Some("pi"))
         && let Some(work_dir) = meta.cwd.as_ref()
@@ -2085,7 +2180,10 @@ async fn handle_get_messages(
                         session_id,
                         id,
                         "get_messages",
-                        Ok(Some(serde_json::json!({ "messages": messages_value }))),
+                        Ok(Some(response_data(
+                            messages_value,
+                            persisted_message_version.clone(),
+                        ))),
                     ));
                 }
                 Ok(_) => {}
@@ -2107,7 +2205,10 @@ async fn handle_get_messages(
                         session_id,
                         id,
                         "get_messages",
-                        Ok(Some(serde_json::json!({ "messages": messages_value }))),
+                        Ok(Some(response_data(
+                            messages_value,
+                            persisted_message_version.clone(),
+                        ))),
                     ));
                 }
                 Ok(_) => {}
@@ -2135,7 +2236,10 @@ async fn handle_get_messages(
                     session_id,
                     id,
                     "get_messages",
-                    Ok(Some(serde_json::json!({ "messages": messages_value }))),
+                    Ok(Some(response_data(
+                        messages_value,
+                        persisted_message_version.clone(),
+                    ))),
                 ));
             }
             Ok(_) => {}
@@ -2156,7 +2260,10 @@ async fn handle_get_messages(
                     session_id,
                     id,
                     "get_messages",
-                    Ok(Some(serde_json::json!({ "messages": messages_value }))),
+                    Ok(Some(response_data(
+                        messages_value,
+                        persisted_message_version.clone(),
+                    ))),
                 ));
             }
             Ok(_) => {}
@@ -2175,7 +2282,10 @@ async fn handle_get_messages(
                 session_id,
                 id,
                 "get_messages",
-                Ok(Some(serde_json::json!({ "messages": messages_value }))),
+                Ok(Some(response_data(
+                    messages_value,
+                    persisted_message_version.clone(),
+                ))),
             ))
         }
         Err(e) => Some(agent_response(
@@ -2230,7 +2340,7 @@ async fn forward_pi_events(
                 // of serving stale cached messages.
                 if matches!(
                     canonical_event.payload,
-                    oqto_protocol::events::EventPayload::AgentIdle
+                    oqto_protocol::events::EventPayload::AgentIdle { .. }
                 ) {
                     let mut cache = PI_MESSAGES_CACHE.write().await;
                     if let Some(user_cache) = cache.get_mut(user_id) {
@@ -2971,7 +3081,9 @@ mod tests {
             session_id: "ses_abc".into(),
             runner_id: "local".into(),
             ts: 1738764000000,
-            payload: EventPayload::AgentIdle,
+            payload: EventPayload::AgentIdle {
+                message_version: None,
+            },
         });
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains(r#""channel":"agent""#));
@@ -2999,6 +3111,93 @@ mod tests {
         let resolved =
             resolve_workspace_path_for_validation("../oqto_other_user/secret", &user_home);
         assert!(!resolved.starts_with(&user_home));
+    }
+
+    #[tokio::test]
+    async fn test_read_hstry_message_version_snapshot_reads_version_from_db() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let db_path = std::env::temp_dir().join(format!("oqto-hstry-version-{unique}.db"));
+
+        let options = sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(&db_path)
+            .create_if_missing(true);
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await
+            .expect("open temp sqlite");
+
+        sqlx::query(
+            r#"CREATE TABLE conversations (
+                id TEXT PRIMARY KEY,
+                source_id TEXT NOT NULL,
+                external_id TEXT,
+                platform_id TEXT,
+                readable_id TEXT,
+                version INTEGER NOT NULL DEFAULT 0
+            )"#,
+        )
+        .execute(&pool)
+        .await
+        .expect("create conversations");
+
+        sqlx::query(
+            r#"CREATE TABLE messages (
+                id TEXT PRIMARY KEY,
+                conversation_id TEXT NOT NULL
+            )"#,
+        )
+        .execute(&pool)
+        .await
+        .expect("create messages");
+
+        sqlx::query(
+            "INSERT INTO conversations (id, source_id, external_id, version) VALUES (?, 'pi', ?, ?)",
+        )
+        .bind("conv-1")
+        .bind("sess-1")
+        .bind(7_i64)
+        .execute(&pool)
+        .await
+        .expect("insert conversation");
+
+        sqlx::query("INSERT INTO messages (id, conversation_id) VALUES (?, ?)")
+            .bind("m-1")
+            .bind("conv-1")
+            .execute(&pool)
+            .await
+            .expect("insert m1");
+        sqlx::query("INSERT INTO messages (id, conversation_id) VALUES (?, ?)")
+            .bind("m-2")
+            .bind("conv-1")
+            .execute(&pool)
+            .await
+            .expect("insert m2");
+
+        drop(pool);
+
+        let previous = std::env::var("OQTO_HSTRY_DB").ok();
+        // SAFETY: test-only process-local env mutation, restored before exit.
+        unsafe { std::env::set_var("OQTO_HSTRY_DB", &db_path) };
+
+        let snapshot = read_hstry_message_version_snapshot("sess-1", None, false).await;
+
+        if let Some(prev) = previous {
+            // SAFETY: test-only process-local env mutation, restored before exit.
+            unsafe { std::env::set_var("OQTO_HSTRY_DB", prev) };
+        } else {
+            // SAFETY: test-only process-local env mutation, restored before exit.
+            unsafe { std::env::remove_var("OQTO_HSTRY_DB") };
+        }
+
+        let _ = std::fs::remove_file(&db_path);
+
+        let snapshot = snapshot.expect("snapshot present");
+        assert_eq!(snapshot.version, 7);
+        assert_eq!(snapshot.message_count, Some(2));
     }
 
     #[tokio::test]
@@ -3047,7 +3246,7 @@ mod tests {
 
         match second {
             WsEvent::Agent(event) => {
-                assert!(matches!(event.payload, oqto_protocol::events::EventPayload::AgentIdle));
+                assert!(matches!(event.payload, oqto_protocol::events::EventPayload::AgentIdle { .. }));
             }
             other => panic!("expected agent event, got {other:?}"),
         }

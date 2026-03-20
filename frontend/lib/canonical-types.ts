@@ -246,13 +246,19 @@ export type CommandResponse = {
 };
 
 /** All canonical event payloads. Tagged union on `event` field. */
+export type MessageVersion = {
+	version: number;
+	message_count?: number;
+	last_message_hash?: number;
+};
+
 export type EventPayload =
 	// Session lifecycle
 	| { event: "session.created"; resumed: boolean; harness: string }
 	| { event: "session.closed"; reason?: string }
 	| { event: "session.heartbeat"; process: ProcessHealth }
 	// Agent state
-	| { event: "agent.idle" }
+	| { event: "agent.idle"; message_version?: MessageVersion }
 	| { event: "agent.working"; phase: AgentPhase; detail?: string }
 	| {
 			event: "agent.error";

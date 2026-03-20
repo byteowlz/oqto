@@ -48,6 +48,18 @@ import {
 	normalizeContentToParts,
 	normalizeMessages,
 } from "./message-utils";
+import {
+	beginMessageSync,
+	bindIdentity,
+	completeMessageSync,
+	createInitialChatStateMachine,
+	deriveUiFlags,
+	resetIdentity,
+	selectMessageMergeMode,
+	transitionTransport,
+	transitionTurn,
+	type MessageSyncSource,
+} from "./chat-state-machine";
 import type {
 	AgentState,
 	DisplayMessage,
@@ -134,6 +146,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 	const lastAgentEventAtRef = useRef<number>(Date.now());
 	const sendInFlightRef = useRef(false);
 	const responseWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const persistedMessageVersionRef = useRef<number | null>(null);
 	// (deferredServerMessagesRef removed — messages are always merged immediately)
 	// Force a full server sync after reattaching to an active runner session.
 	const forceMessageSyncRef = useRef<Set<string>>(new Set());
@@ -163,6 +176,39 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 	const throttleFlushTimerRef = useRef<ReturnType<typeof setInterval> | null>(
 		null,
 	);
+
+	const machineRef = useRef(createInitialChatStateMachine(activeSessionId));
+	const transportEpochRef = useRef(0);
+
+	const applyTurnState = useCallback(
+		(next: Parameters<typeof transitionTurn>[1]) => {
+			const updated = transitionTurn(machineRef.current, next);
+			machineRef.current = updated;
+			const flags = deriveUiFlags(updated.turn);
+			setIsStreaming(flags.isStreaming);
+			setIsAwaitingResponse(flags.isAwaitingResponse);
+			isStreamingRef.current = flags.isStreaming;
+			if (!flags.isAwaitingResponse) {
+				sendInFlightRef.current = false;
+			}
+		},
+		[],
+	);
+
+	const bindSessionIdentity = useCallback(
+		(payload: { runnerId: string; hstryId?: string; piId?: string }) => {
+			machineRef.current = bindIdentity(machineRef.current, payload);
+		},
+		[],
+	);
+
+	const resetSessionIdentity = useCallback((clientId: string | null) => {
+		machineRef.current = resetIdentity(
+			machineRef.current,
+			clientId ?? "unbound-session",
+		);
+		applyTurnState({ kind: "idle" });
+	}, [applyTurnState]);
 
 	// Generate unique message ID
 	const nextMessageId = useCallback(() => {
@@ -213,6 +259,41 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 		}
 		return config;
 	}, [normalizedWorkspacePath]);
+
+	const applyServerMessages = useCallback(
+		(
+			rawMessages: RawMessage[] | unknown[],
+			source: MessageSyncSource,
+			sessionId: string,
+			serverVersion?: number,
+		) => {
+			if (typeof serverVersion === "number") {
+				persistedMessageVersionRef.current = Math.max(
+					persistedMessageVersionRef.current ?? 0,
+					serverVersion,
+				);
+			}
+			if (!Array.isArray(rawMessages) || rawMessages.length === 0) return;
+			machineRef.current = beginMessageSync(machineRef.current, source);
+			const displayMessages = normalizeMessages(
+				rawMessages as RawMessage[],
+				`${source}-${sessionId}`,
+			);
+			if (displayMessages.length === 0) {
+				machineRef.current = completeMessageSync(machineRef.current, source);
+				return;
+			}
+			const mergeMode = selectMessageMergeMode(machineRef.current, source);
+			setMessages((prev) => mergeServerMessages(prev, displayMessages, mergeMode));
+			messageIdRef.current = getMaxMessageId(displayMessages);
+			const lastAssistant = [...displayMessages]
+				.reverse()
+				.find((msg) => msg.role === "assistant");
+			lastAssistantMessageIdRef.current = lastAssistant?.id ?? null;
+			machineRef.current = completeMessageSync(machineRef.current, source);
+		},
+		[mergeServerMessages, normalizeMessages],
+	);
 
 	const appendPartToMessage = useCallback(
 		(messageId: string, part: DisplayPart) => {
@@ -369,7 +450,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: mergeServerMessages/normalizeMessages are stable refs
 	const fetchHistoryMessages = useCallback(
-		async (sessionId: string) => {
+		async (sessionId: string, expectedVersion?: number) => {
 			try {
 				const swId = sharedWorkspaceSessionMap.get(sessionId);
 				const history = await getChatMessages(sessionId, swId);
@@ -392,25 +473,18 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 
 				if (history.length === 0) {
 					if (!isStreamingRef.current && !sendInFlightRef.current) {
-						setIsAwaitingResponse(false);
+						applyTurnState({ kind: "idle" });
 					}
 					return;
 				}
-				const displayMessages = normalizeMessages(
+				applyServerMessages(
 					history as RawMessage[],
-					`history-${sessionId}`,
+					"history",
+					sessionId,
+					expectedVersion,
 				);
-				if (displayMessages.length === 0) return;
-				setMessages((prev) =>
-					mergeServerMessages(prev, displayMessages, "authoritative"),
-				);
-				messageIdRef.current = getMaxMessageId(displayMessages);
-				const lastAssistant = [...displayMessages]
-					.reverse()
-					.find((msg) => msg.role === "assistant");
-				lastAssistantMessageIdRef.current = lastAssistant?.id ?? null;
 				if (!isStreamingRef.current && !sendInFlightRef.current) {
-					setIsAwaitingResponse(false);
+					applyTurnState({ kind: "idle" });
 				}
 				if (isPiDebugEnabled()) {
 					console.debug(
@@ -425,7 +499,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 				}
 			}
 		},
-		[mergeServerMessages, normalizeMessages],
+		[applyServerMessages, applyTurnState],
 	);
 
 	const clearResponseWatchdog = useCallback(() => {
@@ -442,10 +516,12 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 				const manager = getWsManager();
 				manager.agentGetState(sessionId);
 				void fetchHistoryMessages(sessionId);
-				isStreamingRef.current = false;
-				setIsStreaming(false);
-				setIsAwaitingResponse(false);
-				sendInFlightRef.current = false;
+				applyTurnState({
+					kind: "error",
+					recoverable: true,
+					message:
+						"The agent did not respond in time. We recovered latest history. Please retry.",
+				});
 				setError(
 					new Error(
 						"The agent did not respond in time. We recovered latest history. Please retry.",
@@ -453,7 +529,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 				);
 			}, 30000);
 		},
-		[clearResponseWatchdog, fetchHistoryMessages],
+		[applyTurnState, clearResponseWatchdog, fetchHistoryMessages],
 	);
 
 	// ========================================================================
@@ -518,8 +594,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 						lastAssistantMessageIdRef.current = assistantMessage.id;
 						setMessages((prev) => [...prev, assistantMessage]);
 					}
-					setIsStreaming(true);
-					setIsAwaitingResponse(false);
+					applyTurnState({ kind: "streaming" });
 					break;
 				}
 
@@ -547,7 +622,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 					}
 					// Coalesce through throttle instead of scheduling every delta
 					throttledStreamingUpdate(currentMsg);
-					setIsAwaitingResponse(false);
+					applyTurnState({ kind: "streaming" });
 					break;
 				}
 
@@ -568,7 +643,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 					}
 					// Coalesce through throttle instead of scheduling every delta
 					throttledStreamingUpdate(currentMsg);
-					setIsAwaitingResponse(false);
+					applyTurnState({ kind: "streaming" });
 					break;
 				}
 
@@ -596,8 +671,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 							appendPartToMessage(targetMessage.id, part);
 						}
 					}
-					setIsStreaming(true);
-					setIsAwaitingResponse(false);
+					applyTurnState({ kind: "streaming" });
 					break;
 				}
 
@@ -645,8 +719,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 							appendPartToMessage(targetMessage.id, part);
 						}
 					}
-					setIsStreaming(true);
-					setIsAwaitingResponse(false);
+					applyTurnState({ kind: "streaming" });
 					break;
 				}
 
@@ -681,8 +754,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 					} else {
 						appendPartToMessage(targetMessage.id, part);
 					}
-					setIsStreaming(true);
-					setIsAwaitingResponse(false);
+					applyTurnState({ kind: "streaming" });
 					break;
 				}
 
@@ -739,8 +811,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 					// now only contains assistant messages, so no deduplication
 					// issues with the optimistic user message.
 					isStreamingRef.current = false;
-					setIsStreaming(false);
-					setIsAwaitingResponse(false);
+					applyTurnState({ kind: "idle" });
 					break;
 				}
 
@@ -833,7 +904,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 					// subsequent assistant turn) creates a new message.
 					onMessageComplete?.(updated);
 					streamingMessageRef.current = null;
-					setIsAwaitingResponse(false);
+					applyTurnState({ kind: "reconciling", reason: "idle" });
 					break;
 				}
 
@@ -857,9 +928,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 							throttleFlushTimerRef.current = null;
 						}
 					}
-					setIsStreaming(false);
-					isStreamingRef.current = false;
-					setIsAwaitingResponse(false);
+					applyTurnState({ kind: "reconciling", reason: "idle" });
 					// Clear transient error banner (retry indicators).
 					// Permanent errors are in hstry and render as messages.
 					setError(null);
@@ -880,11 +949,32 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 					{
 						const sessionId = activeSessionIdRef.current;
 						if (sessionId) {
+							const messageVersion =
+								typeof event.message_version === "object" &&
+								event.message_version !== null
+									? Number(
+										(event.message_version as { version?: number }).version,
+									)
+									: Number.NaN;
+							const localVersion = persistedMessageVersionRef.current;
+							const needsSync =
+								!Number.isFinite(messageVersion) ||
+								localVersion === null ||
+								localVersion < messageVersion;
 							setTimeout(() => {
 								const manager = getWsManager();
 								manager.agentGetState(sessionId);
-								forceMessageSyncRef.current.delete(sessionId);
-								void fetchHistoryMessages(sessionId);
+								if (needsSync) {
+									forceMessageSyncRef.current.delete(sessionId);
+									void fetchHistoryMessages(
+										sessionId,
+										Number.isFinite(messageVersion)
+											? messageVersion
+											: undefined,
+									);
+								} else {
+									applyTurnState({ kind: "idle" });
+								}
 							}, 150);
 						}
 					}
@@ -929,6 +1019,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 					const resyncSessionId =
 						event.session_id ?? activeSessionIdRef.current;
 					if (resyncSessionId) {
+						applyTurnState({ kind: "reconciling", reason: "resync" });
 						const manager = getWsManager();
 						manager.agentGetState(resyncSessionId);
 						void fetchHistoryMessages(resyncSessionId);
@@ -959,8 +1050,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 					const err = new Error(errMsg);
 					setError(err);
 					onError?.(err);
-					setIsStreaming(false);
-					setIsAwaitingResponse(false);
+					applyTurnState({ kind: "error", recoverable, message: errMsg });
 
 					// Auto-recover for session-not-found errors
 					const sessionId = activeSessionIdRef.current;
@@ -1195,25 +1285,16 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 					// authoritative merge.
 					const msgs = event.messages;
 					if (Array.isArray(msgs)) {
-						const displayMessages = normalizeMessages(
+						applyServerMessages(
 							msgs,
-							`server-${event.session_id}`,
+							"ws_messages",
+							event.session_id ?? activeSessionIdRef.current ?? "unknown",
 						);
-
-						if (displayMessages.length > 0) {
-							setMessages((prev) => mergeServerMessages(prev, displayMessages, "authoritative"));
-							messageIdRef.current = getMaxMessageId(displayMessages);
-							const lastAssistant = [...displayMessages]
-								.reverse()
-								.find((msg) => msg.role === "assistant");
-							lastAssistantMessageIdRef.current = lastAssistant?.id ?? null;
-						}
-
 						if (isPiDebugEnabled()) {
 							console.debug(
 								"[useChat] Loaded messages:",
 								event.session_id,
-								displayMessages.length,
+								msgs.length,
 							);
 						}
 					}
@@ -1257,8 +1338,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 						case "steer":
 						case "follow_up": {
 							if (!resp.success) {
-								setIsAwaitingResponse(false);
-								sendInFlightRef.current = false;
+								applyTurnState({ kind: "idle" });
 								setBusyForEvent(event.session_id ?? activeSessionIdRef.current, false);
 							}
 							break;
@@ -1308,30 +1388,37 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 
 						case "get_state": {
 							if (resp.success && resp.data) {
-								const nextState = resp.data as AgentState;
+								const nextState = resp.data as AgentState & {
+									sessionId?: string;
+								};
 								setState(nextState);
+								bindSessionIdentity({
+									runnerId: event.session_id ?? activeSessionIdRef.current ?? "",
+									piId:
+										typeof nextState.sessionId === "string"
+											? nextState.sessionId
+											: undefined,
+								});
 								if (nextState?.isStreaming === true) {
 									// Runner reports the session is actively streaming.
 									// Restore streaming/busy UI state so spinners show
 									// after page reload. The actual stream events will
 									// arrive via the event subscription.
 									if (!isStreamingRef.current) {
-										setIsStreaming(true);
-										isStreamingRef.current = true;
+										applyTurnState({ kind: "streaming" });
 										setBusyForEvent(
 											event.session_id ?? activeSessionIdRef.current,
 											true,
 										);
 									}
 								} else if (nextState?.isStreaming === false) {
-									setIsStreaming(false);
-									// Only clear isAwaitingResponse if we don't
+									// Only clear awaiting state if we don't
 									// have a send in-flight. Otherwise, the
 									// get_state after session.create arrives
 									// before Pi starts streaming and kills the
 									// working indicator prematurely.
 									if (!sendInFlightRef.current) {
-										setIsAwaitingResponse(false);
+										applyTurnState({ kind: "idle" });
 									}
 									if (streamingMessageRef.current) {
 										streamingMessageRef.current.isStreaming = false;
@@ -1350,31 +1437,35 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 							// preserved by the authoritative merge strategy.
 							forceMessageSyncRef.current.delete(event.session_id ?? "");
 							if (resp.success && resp.data) {
-								const data = resp.data as { messages?: RawMessage[] };
+								const data = resp.data as {
+									messages?: RawMessage[];
+									message_version?: { version?: number };
+								};
 								const msgs = data.messages;
+								const serverVersion =
+									typeof data.message_version?.version === "number"
+										? data.message_version.version
+										: undefined;
 								if (Array.isArray(msgs)) {
-									const displayMessages = normalizeMessages(
-										msgs as RawMessage[],
-										`server-${event.session_id}`,
+									applyServerMessages(
+										msgs,
+										"ws_get_messages",
+										event.session_id ?? activeSessionIdRef.current ?? "unknown",
+										serverVersion,
 									);
-									if (displayMessages.length > 0) {
-										setMessages((prev) =>
-											mergeServerMessages(prev, displayMessages, "authoritative"),
-										);
-										messageIdRef.current = getMaxMessageId(displayMessages);
-										const lastAssistant = [...displayMessages]
-											.reverse()
-											.find((msg) => msg.role === "assistant");
-										lastAssistantMessageIdRef.current =
-											lastAssistant?.id ?? null;
-									}
 									if (isPiDebugEnabled()) {
 										console.debug(
 											"[useChat] Loaded messages:",
 											event.session_id,
-											displayMessages.length,
+											msgs.length,
+											serverVersion,
 										);
 									}
+								} else if (typeof serverVersion === "number") {
+									persistedMessageVersionRef.current = Math.max(
+										persistedMessageVersionRef.current ?? 0,
+										serverVersion,
+									);
 								}
 							}
 							break;
@@ -1451,7 +1542,10 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 		},
 		[
 			appendPartToMessage,
+			applyServerMessages,
 			applyThrottledSnapshot,
+			applyTurnState,
+			bindSessionIdentity,
 			ensureAssistantMessage,
 			fetchHistoryMessages,
 			nextMessageId,
@@ -1476,7 +1570,11 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 	 */
 	const handleAgentEvent = useCallback(
 		(event: AgentWsEvent) => {
-			const activeId = activeSessionIdRef.current;
+			const identity = machineRef.current.identity;
+			const activeId =
+				identity.kind === "bound"
+					? identity.runnerId
+					: activeSessionIdRef.current;
 			const eventSessionId = event.session_id;
 			if (activeId && eventSessionId && eventSessionId !== activeId) {
 				if (isPiDebugEnabled()) {
@@ -1527,23 +1625,29 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 			const alias = activeSessions.find(
 				(s) => s.session_id === sessionId || s.hstry_id === sessionId,
 			);
-			if (alias && alias.session_id !== sessionId) {
-				const previousId = sessionId;
-				sessionId = alias.session_id;
-				activeSessionIdRef.current = sessionId;
-				onSelectedSessionIdChange?.(sessionId);
-				const sharedWorkspaceId = sharedWorkspaceSessionMap.get(previousId);
-				if (sharedWorkspaceId) {
-					setSharedWorkspaceSessionId(sessionId, sharedWorkspaceId);
+			if (alias) {
+				if (alias.session_id !== sessionId) {
+					const previousId = sessionId;
+					sessionId = alias.session_id;
+					activeSessionIdRef.current = sessionId;
+					onSelectedSessionIdChange?.(sessionId);
+					const sharedWorkspaceId = sharedWorkspaceSessionMap.get(previousId);
+					if (sharedWorkspaceId) {
+						setSharedWorkspaceSessionId(sessionId, sharedWorkspaceId);
+					}
+					if (isPiDebugEnabled()) {
+						console.debug(
+							"[useChat] ensureSession: remapped history session alias",
+							previousId,
+							"->",
+							sessionId,
+						);
+					}
 				}
-				if (isPiDebugEnabled()) {
-					console.debug(
-						"[useChat] ensureSession: remapped history session alias",
-						previousId,
-						"->",
-						sessionId,
-					);
-				}
+				bindSessionIdentity({
+					runnerId: alias.session_id,
+					hstryId: alias.hstry_id,
+				});
 			}
 		} catch {
 			// Best-effort alias resolution; continue with original session ID.
@@ -1553,6 +1657,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 		// there is nothing to do.  Re-subscribing would kill the existing
 		// event handler and create a gap where streaming events are lost.
 		if (manager.isSessionReady(sessionId) && unsubscribeRef.current) {
+			bindSessionIdentity({ runnerId: sessionId });
 			return sessionId;
 		}
 
@@ -1569,6 +1674,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 				sessionConfig,
 				{ create: false },
 			);
+			bindSessionIdentity({ runnerId: sessionId });
 			return sessionId;
 		}
 
@@ -1617,8 +1723,9 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 				);
 			}
 		}
+		bindSessionIdentity({ runnerId: sessionId });
 		return sessionId;
-	}, [getSessionConfig, onSelectedSessionIdChange]);
+	}, [bindSessionIdentity, getSessionConfig, onSelectedSessionIdChange]);
 
 	// Send message
 	const send = useCallback(
@@ -1650,8 +1757,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 				// Clear local state for the new session.
 				setMessages([]);
 				streamingMessageRef.current = null;
-				setIsStreaming(false);
-				isStreamingRef.current = false;
+				applyTurnState({ kind: "idle" });
 				setError(null);
 				messageIdRef.current = 0;
 			}
@@ -1660,6 +1766,13 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 			} catch (err) {
 				sendInFlightRef.current = false;
 				throw err;
+			}
+
+			const identity = machineRef.current.identity;
+			if (identity.kind === "bound") {
+				sessionId = identity.runnerId;
+			} else {
+				bindSessionIdentity({ runnerId: sessionId });
 			}
 
 			// Mark as streaming IMMEDIATELY so that any server messages
@@ -1695,7 +1808,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 			setMessages((prev) => [...prev, userMessage]);
 			setError(null);
 
-			setIsAwaitingResponse(true);
+			applyTurnState({ kind: "sending" });
 			lastAgentEventAtRef.current = Date.now();
 
 			const manager = getWsManager();
@@ -1735,7 +1848,14 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 					break;
 			}
 		},
-		[ensureSession, getSessionConfig, nextMessageId, onSelectedSessionIdChange],
+		[
+			applyTurnState,
+			bindSessionIdentity,
+			ensureSession,
+			getSessionConfig,
+			nextMessageId,
+			onSelectedSessionIdChange,
+		],
 	);
 
 	// Abort current stream
@@ -1743,10 +1863,10 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 		const sessionId = activeSessionIdRef.current;
 		if (!sessionId) return;
 
-		setIsAwaitingResponse(false);
+		applyTurnState({ kind: "idle" });
 		const manager = getWsManager();
 		manager.agentAbort(sessionId);
-	}, []);
+	}, [applyTurnState]);
 
 	// Compact session
 	const compact = useCallback(async (customInstructions?: string) => {
@@ -1762,13 +1882,12 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 		// Clear local state
 		setMessages([]);
 		streamingMessageRef.current = null;
-		isStreamingRef.current = false;
-		setIsStreaming(false);
-		setIsAwaitingResponse(false);
+		applyTurnState({ kind: "idle" });
 		setError(null);
 		messageIdRef.current = 0;
+		resetSessionIdentity(activeSessionIdRef.current);
 		await ensureSession();
-	}, [ensureSession]);
+	}, [applyTurnState, ensureSession, resetSessionIdentity]);
 
 	// Reset session - closes and recreates
 	const resetSession = useCallback(async () => {
@@ -1781,11 +1900,10 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 		// Clear local state
 		setMessages([]);
 		streamingMessageRef.current = null;
-		isStreamingRef.current = false;
-		setIsStreaming(false);
-		setIsAwaitingResponse(false);
+		applyTurnState({ kind: "idle" });
 		setError(null);
 		messageIdRef.current = 0;
+		resetSessionIdentity(sessionId);
 
 		// Close and recreate session
 		const manager = getWsManager();
@@ -1799,7 +1917,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 		if (isPiDebugEnabled()) {
 			console.debug("[useChat] resetSession for:", sessionId);
 		}
-	}, [getSessionConfig]);
+	}, [applyTurnState, getSessionConfig, resetSessionIdentity]);
 
 	// Refresh - request current state from backend
 	const refresh = useCallback(async () => {
@@ -1822,13 +1940,39 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 		const unsubscribe = manager.onConnectionState(
 			(connectionState: WsMuxConnectionState) => {
 				const connected = connectionState === "connected";
+				if (connectionState === "connected") {
+					transportEpochRef.current += 1;
+					machineRef.current = transitionTransport(
+						machineRef.current,
+						"connected",
+						transportEpochRef.current,
+					);
+				} else if (connectionState === "connecting") {
+					machineRef.current = transitionTransport(
+						machineRef.current,
+						"connecting",
+						transportEpochRef.current,
+					);
+				} else if (connectionState === "reconnecting") {
+					transportEpochRef.current += 1;
+					machineRef.current = transitionTransport(
+						machineRef.current,
+						"reconnecting",
+						transportEpochRef.current,
+					);
+				} else {
+					machineRef.current = transitionTransport(
+						machineRef.current,
+						"disconnected",
+						transportEpochRef.current,
+					);
+				}
 				setIsConnected(connected);
 				if (!connected) {
 					// Prevent indefinite "stuck streaming" UI when WS drops mid-turn.
 					clearResponseWatchdog();
 					isStreamingRef.current = false;
-					setIsStreaming(false);
-					setIsAwaitingResponse(false);
+					applyTurnState({ kind: "idle" });
 					sendInFlightRef.current = false;
 					if (streamingMessageRef.current) {
 						streamingMessageRef.current.isStreaming = false;
@@ -1854,7 +1998,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 		);
 
 		return unsubscribe;
-	}, [clearResponseWatchdog]);
+	}, [applyTurnState, clearResponseWatchdog, fetchHistoryMessages]);
 
 	// Periodic sync + watchdog: while streaming, periodically fetch
 	// authoritative messages so the UI stays current even if WS events
@@ -1897,10 +2041,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 			// After 12s of silence, stop showing an infinite spinner
 			// and do an authoritative recovery from hstry.
 			if (idleMs >= 12000) {
-				isStreamingRef.current = false;
-				setIsStreaming(false);
-				setIsAwaitingResponse(false);
-				sendInFlightRef.current = false;
+				applyTurnState({ kind: "idle" });
 				void fetchHistoryMessages(sessionId);
 				setError(
 					new Error(
@@ -1995,9 +2136,8 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 			// session being applied to the new one as a title.
 			streamingMessageRef.current = null;
 			setState(null);
-			setIsStreaming(false);
-			isStreamingRef.current = false;
-			setIsAwaitingResponse(false);
+			applyTurnState({ kind: "idle" });
+			resetSessionIdentity(activeSessionId);
 			setError(null);
 		}
 
@@ -2048,12 +2188,9 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 					const nextState = stateData as AgentState;
 					setState(nextState);
 					if (nextState?.isStreaming === true) {
-						setIsStreaming(true);
-						isStreamingRef.current = true;
+						applyTurnState({ kind: "streaming" });
 					} else {
-						setIsStreaming(false);
-						isStreamingRef.current = false;
-						setIsAwaitingResponse(false);
+						applyTurnState({ kind: "idle" });
 						if (streamingMessageRef.current) {
 							streamingMessageRef.current.isStreaming = false;
 							streamingMessageRef.current = null;
@@ -2066,18 +2203,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 				// (not the full history), so replacing would discard earlier turns.
 				// Also fetch from hstry for the complete history.
 				if (serverMessages.length > 0) {
-					const displayMessages = normalizeMessages(
-						serverMessages as RawMessage[],
-						`resync-${_sessionId}`,
-					);
-					if (displayMessages.length > 0) {
-						setMessages((prev) => mergeServerMessages(prev, displayMessages, "authoritative"));
-						messageIdRef.current = getMaxMessageId(displayMessages);
-						const lastAssistant = [...displayMessages]
-							.reverse()
-							.find((msg) => msg.role === "assistant");
-						lastAssistantMessageIdRef.current = lastAssistant?.id ?? null;
-					}
+					applyServerMessages(serverMessages as RawMessage[], "resync", _sessionId);
 				}
 
 				// Reset throttle state since we just rebuilt everything
@@ -2172,8 +2298,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 									sid,
 								);
 								manager.agentGetMessages(sid);
-								setIsStreaming(true);
-								isStreamingRef.current = true;
+								applyTurnState({ kind: "streaming" });
 								setBusyForEvent(sid, true);
 							}
 						} else {
