@@ -509,7 +509,11 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 			if (activeIds.size === 0) return history;
 
 			for (const session of chatHistoryRef.current) {
-				if (activeIds.has(session.id) && !byId.has(session.id)) {
+				if (
+					activeIds.has(session.id) &&
+					!byId.has(session.id) &&
+					!deletedSessionsRef.current.has(session.id)
+				) {
 					byId.set(session.id, session);
 				}
 			}
@@ -666,7 +670,14 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 			try {
 				const sessions = await manager.agentListSessions();
 				if (cancelled) return;
-				setRunnerSessions(sessions);
+				// Filter out sessions that were explicitly deleted in this page session
+				const filtered =
+					deletedSessionsRef.current.size > 0
+						? sessions.filter(
+								(s) => !deletedSessionsRef.current.has(s.session_id),
+							)
+						: sessions;
+				setRunnerSessions(filtered);
 				const nextBusy = new Set<string>();
 				for (const s of sessions) {
 					if (busyStates.has(s.state)) {
@@ -873,7 +884,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 				}),
 			);
 		},
-		[t],
+		[],
 	);
 
 	const getSessionWorkspacePath = useCallback((sessionId: string | null) => {
@@ -917,6 +928,27 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 
 	const deleteChatSession = useCallback(
 		async (sessionId: string) => {
+			const sessionMeta = chatHistory.find((s) => s.id === sessionId);
+			const sharedWorkspaceId =
+				sharedWorkspaceSessionMap.get(sessionId) ??
+				sessionMeta?.shared_workspace_id ??
+				undefined;
+
+			// Mark deleted before any async work so runner/history refreshes cannot
+			// resurrect the session while the delete request is in flight.
+			deletedSessionsRef.current.add(sessionId);
+			optimisticChatSessionsRef.current.delete(sessionId);
+			optimisticSelectionRef.current.delete(sessionId);
+			clearSharedWorkspaceSessionId(sessionId);
+			setRunnerSessions((prev) =>
+				prev.filter((session) => session.session_id !== sessionId),
+			);
+			setBusySessions((prev) => {
+				if (!prev.has(sessionId)) return prev;
+				const next = new Set(prev);
+				next.delete(sessionId);
+				return next;
+			});
 			// Optimistically remove from UI immediately
 			setChatHistory((prev) => prev.filter((s) => s.id !== sessionId));
 			if (selectedChatSessionId === sessionId) {
@@ -924,20 +956,12 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 			}
 
 			try {
-				const sessionMeta = chatHistory.find((s) => s.id === sessionId);
-				const sharedWorkspaceId =
-					sharedWorkspaceSessionMap.get(sessionId) ??
-					sessionMeta?.shared_workspace_id ??
-					undefined;
 				if (sharedWorkspaceId) {
 					setSharedWorkspaceSessionId(sessionId, sharedWorkspaceId);
 				}
 
 				// Primary path: REST delete with shared workspace routing support.
 				await deleteChatSessionApi(sessionId, sharedWorkspaceId);
-
-				// Mark deleted only after backend confirmed deletion.
-				deletedSessionsRef.current.add(sessionId);
 
 				// Best-effort: also notify active WS session state machine.
 				try {
@@ -950,18 +974,21 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 				} catch {
 					// ignore (session may not be connected)
 				}
+				clearSharedWorkspaceSessionId(sessionId);
 
 				return true;
 			} catch {
 				// Delete failed: allow session to reappear from source of truth.
 				deletedSessionsRef.current.delete(sessionId);
+				if (sharedWorkspaceId) {
+					setSharedWorkspaceSessionId(sessionId, sharedWorkspaceId);
+				}
 				void refreshChatHistory();
 				return false;
 			}
 		},
 		[
 			chatHistory,
-			deleteChatSessionApi,
 			refreshChatHistory,
 			selectedChatSessionId,
 			setSelectedChatSessionId,
