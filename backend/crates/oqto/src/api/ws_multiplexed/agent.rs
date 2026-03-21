@@ -1680,6 +1680,30 @@ pub(super) async fn handle_agent_command(
                 }
             };
 
+            // The runner is shared across all Oqto users (especially in local
+            // mode). Filter out sessions that were created by a different user
+            // by checking session_targets ownership. Sessions without a target
+            // record are assumed to belong to the requesting user (freshly
+            // created sessions whose target hasn't been persisted yet).
+            let mut filtered = Vec::with_capacity(all_sessions.len());
+            for s in all_sessions {
+                let sid = s.get("session_id").and_then(|v| v.as_str()).unwrap_or("");
+                match state.session_targets.get(sid).await {
+                    Ok(Some(record)) => {
+                        if record.owner_user_id.as_deref() == Some(user_id)
+                            || record.owner_user_id.is_none()
+                        {
+                            filtered.push(s);
+                        }
+                    }
+                    _ => {
+                        // No target record or lookup error — include it
+                        filtered.push(s);
+                    }
+                }
+            }
+            all_sessions = filtered;
+
             // Also query shared workspace runners the user has access to.
             // Pre-store runner overrides so subsequent commands (get_messages,
             // get_state, prompt, etc.) route to the correct runner without

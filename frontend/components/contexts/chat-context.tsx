@@ -8,7 +8,6 @@ import {
 } from "@/lib/api";
 import {
 	createPiSessionId,
-	isGenericSessionTitle,
 	normalizeWorkspacePath,
 	preferStableSessionTitle,
 } from "@/lib/session-utils";
@@ -630,36 +629,11 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 				break;
 			}
 		}
-		// Also check if any runner session still has a generic title in the
-		// chat history -- this means hstry hasn't been queried since the
-		// runner first reported the session.
-		let hasGenericTitle = false;
-		if (!hasMissing) {
-			for (const session of runnerSessions) {
-				const entry = current.find((item) => item.id === session.session_id);
-				if (
-					entry &&
-					isGenericSessionTitle(
-						entry.title,
-						t("sessions.newSession"),
-						t("sessions.activeSession"),
-					)
-				) {
-					hasGenericTitle = true;
-					break;
-				}
-			}
-		}
-		if (hasMissing) {
-			const merged = mergeRunnerSessions(current);
-			setChatHistory(merged);
-			writeCachedChatHistory(merged);
-		}
-		// Fetch real titles from hstry for new or generically-titled sessions
-		if (hasMissing || hasGenericTitle) {
-			void refreshChatHistory();
-		}
-	}, [mergeRunnerSessions, refreshChatHistory, runnerSessions, t]);
+		if (!hasMissing) return;
+		const merged = mergeRunnerSessions(current);
+		setChatHistory(merged);
+		writeCachedChatHistory(merged);
+	}, [mergeRunnerSessions, runnerSessions]);
 
 	// Poll runner for active Pi sessions via the mux WebSocket.
 	// Keeps busy indicators accurate across reloads and backend restarts.
