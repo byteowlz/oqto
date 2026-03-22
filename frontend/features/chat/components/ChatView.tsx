@@ -3574,6 +3574,11 @@ const MessageGroupCard = memo(function MessageGroupCard({
 		</div>
 	);
 
+	const isCoarsePointerDevice = useCoarsePointerDevice();
+	if (isCoarsePointerDevice) {
+		return messageCard;
+	}
+
 	return (
 		<ContextMenu>
 			<ContextMenuTrigger className="contents">
@@ -3891,9 +3896,23 @@ function PiPartRenderer({
 	}
 }
 
+function useCoarsePointerDevice(): boolean {
+	const [isCoarsePointer, setIsCoarsePointer] = useState(false);
+
+	useEffect(() => {
+		const mediaQuery = window.matchMedia("(pointer: coarse)");
+		const update = () => setIsCoarsePointer(mediaQuery.matches);
+		update();
+		mediaQuery.addEventListener("change", update);
+		return () => mediaQuery.removeEventListener("change", update);
+	}, []);
+
+	return isCoarsePointer;
+}
+
 /**
  * Renders text content with @file references as inline previews.
- * Wrapped in context menu for copy functionality on mobile.
+ * Desktop gets a context-menu copy action; touch devices keep native media interactions.
  */
 function TextWithFileReferences({
 	content,
@@ -3939,30 +3958,37 @@ function TextWithFileReferences({
 		() => extractFileReferenceDetails(cleanContent),
 		[cleanContent],
 	);
+	const isCoarsePointerDevice = useCoarsePointerDevice();
+
+	const contentBlock = (
+		<div className="space-y-2 select-none sm:select-auto">
+			<MarkdownRenderer
+				content={markdownContent}
+				className="text-sm text-foreground leading-relaxed overflow-hidden"
+			/>
+			{/* Render file reference cards */}
+			{fileRefs.length > 0 && workspacePath && (
+				<div className="flex flex-wrap gap-2 mt-2">
+					{fileRefs.map((ref) => (
+						<FileReferenceCard
+							key={`${ref.filePath}-${ref.label}`}
+							filePath={ref.filePath}
+							workspacePath={workspacePath}
+							label={ref.label}
+						/>
+					))}
+				</div>
+			)}
+		</div>
+	);
+
+	if (isCoarsePointerDevice) {
+		return contentBlock;
+	}
 
 	return (
 		<ContextMenu>
-			<ContextMenuTrigger className="contents">
-				<div className="space-y-2 select-none sm:select-auto">
-					<MarkdownRenderer
-						content={markdownContent}
-						className="text-sm text-foreground leading-relaxed overflow-hidden"
-					/>
-					{/* Render file reference cards */}
-					{fileRefs.length > 0 && workspacePath && (
-						<div className="flex flex-wrap gap-2 mt-2">
-							{fileRefs.map((ref) => (
-								<FileReferenceCard
-									key={`${ref.filePath}-${ref.label}`}
-									filePath={ref.filePath}
-									workspacePath={workspacePath}
-									label={ref.label}
-								/>
-							))}
-						</div>
-					)}
-				</div>
-			</ContextMenuTrigger>
+			<ContextMenuTrigger className="contents">{contentBlock}</ContextMenuTrigger>
 			<ContextMenuContent>
 				<ContextMenuItem
 					onClick={() => navigator.clipboard?.writeText(cleanContent)}
