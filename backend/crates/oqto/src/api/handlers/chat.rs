@@ -380,11 +380,7 @@ pub async fn list_chat_history(
         .ok_or_else(|| ApiError::internal("Runner is required but not available for this user."))?;
 
     let mut response = runner
-        .list_workspace_chat_sessions(
-            query.workspace.clone(),
-            query.include_children,
-            query.limit,
-        )
+        .list_workspace_chat_sessions(query.workspace.clone(), query.include_children, query.limit)
         .await
         .map_err(|e| ApiError::internal(format!("runner list sessions failed: {}", e)))?;
 
@@ -649,9 +645,13 @@ pub async fn delete_chat_session(
         .await
         .map_err(|e| ApiError::internal(format!("runner delete session failed: {}", e)))?;
 
-    state.session_targets.delete(&session_id).await.map_err(|e| {
-        ApiError::internal(format!("failed to delete session target metadata: {}", e))
-    })?;
+    state
+        .session_targets
+        .delete(&session_id)
+        .await
+        .map_err(|e| {
+            ApiError::internal(format!("failed to delete session target metadata: {}", e))
+        })?;
 
     info!(session_id = %session_id, shared_workspace_id = ?query.shared_workspace_id, "Deleted chat session via runner");
     Ok(StatusCode::NO_CONTENT)
@@ -678,11 +678,7 @@ pub async fn list_chat_history_grouped(
         .ok_or_else(|| ApiError::internal("Runner is required but not available for this user."))?;
 
     let response = runner
-        .list_workspace_chat_sessions(
-            query.workspace.clone(),
-            query.include_children,
-            query.limit,
-        )
+        .list_workspace_chat_sessions(query.workspace.clone(), query.include_children, query.limit)
         .await
         .map_err(|e| ApiError::internal(format!("runner grouped list failed: {}", e)))?;
 

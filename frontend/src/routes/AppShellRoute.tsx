@@ -19,6 +19,7 @@ import "@/apps";
 import { UIControlProvider } from "@/components/contexts/ui-control-context";
 
 import type { SearchMode } from "@/components/search";
+import { triggerChatHistoryBackfill } from "@/lib/api/chat";
 import {
 	type SharedWorkspaceInfo,
 	convertToSharedWorkspace,
@@ -27,7 +28,6 @@ import {
 	deleteSharedWorkspace,
 	updateSharedWorkspace,
 } from "@/lib/api/shared-workspaces";
-import { triggerChatHistoryBackfill } from "@/lib/api/chat";
 import {
 	DeleteConfirmDialog,
 	MobileHeader,
@@ -299,7 +299,9 @@ const AppShell = memo(function AppShell() {
 	const handleBackfillProjectSessions = useCallback(
 		async (workspacePath: string) => {
 			try {
-				const result = await triggerChatHistoryBackfill({ workspace: workspacePath });
+				const result = await triggerChatHistoryBackfill({
+					workspace: workspacePath,
+				});
 				await refreshChatHistory({ force: true });
 				await refreshWorkspaceSessions();
 				return result;
@@ -843,7 +845,9 @@ const AppShell = memo(function AppShell() {
 										onRenameProject={sessionDialogs.handleRenameProject}
 										onDeleteProject={sessionDialogs.handleDeleteProject}
 										onBackfillProject={(directory) => {
-											void handleBackfillProjectSessions(directory).catch(() => {});
+											void handleBackfillProjectSessions(directory).catch(
+												() => {},
+											);
 										}}
 										onShareProject={handleShareProject}
 										onSearchResultClick={handleSearchResultClick}

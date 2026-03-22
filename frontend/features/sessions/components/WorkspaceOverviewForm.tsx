@@ -59,8 +59,8 @@ export function WorkspaceOverviewForm({
 	const { t } = useTranslation();
 
 	const modeLabel = (mode: "all" | "custom") => {
-		if (mode === "all") return t('workspace.all');
-		return t('workspace.custom');
+		if (mode === "all") return t("workspace.all");
+		return t("workspace.custom");
 	};
 
 	const update = (patch: Partial<WorkspaceOverviewValues>) => {
@@ -146,7 +146,7 @@ export function WorkspaceOverviewForm({
 			<div className="grid grid-cols-1 md:grid-cols-3 gap-2">
 				{items.length === 0 && (
 					<div className="text-xs text-muted-foreground">
-						{t('common.noEntriesFound')}
+						{t("common.noEntriesFound")}
 					</div>
 				)}
 				{items.map((item) => {
@@ -179,7 +179,7 @@ export function WorkspaceOverviewForm({
 			{mandatoryExtensions.length > 0 && (
 				<div className="space-y-1.5">
 					<div className="text-[11px] text-muted-foreground">
-						{t('workspace.platformAlwaysActive')}
+						{t("workspace.platformAlwaysActive")}
 					</div>
 					<div className="grid grid-cols-1 md:grid-cols-3 gap-2">
 						{mandatoryExtensions.map((ext) => (
@@ -199,7 +199,7 @@ export function WorkspaceOverviewForm({
 			{optionalExtensions.length > 0 && (
 				<div className="space-y-1.5">
 					<div className="text-[11px] text-muted-foreground">
-						{t('workspace.additional')}
+						{t("workspace.additional")}
 					</div>
 					<div className="flex items-center gap-2">
 						<Button
@@ -261,7 +261,7 @@ export function WorkspaceOverviewForm({
 		<div className="space-y-6">
 			<div>
 				<div className="text-xs uppercase text-muted-foreground">
-					{t('workspace.workspace')}
+					{t("workspace.workspace")}
 				</div>
 				<div className="text-sm font-mono text-foreground/80">
 					{workspacePathLabel}
@@ -270,37 +270,35 @@ export function WorkspaceOverviewForm({
 
 			<div className="space-y-2">
 				<div className="text-xs uppercase text-muted-foreground">
-					{t('common.name')}
+					{t("common.name")}
 				</div>
 				<Input
 					value={values.displayName}
 					onChange={(event) => update({ displayName: event.target.value })}
-					placeholder={t('projects.projectName')}
+					placeholder={t("projects.projectName")}
 				/>
 			</div>
 
 			<div className="space-y-2">
 				<div className="flex items-center justify-between">
 					<div className="text-xs uppercase text-muted-foreground">
-						{t('workspace.piDefaultModel')}
+						{t("workspace.piDefaultModel")}
 					</div>
 				</div>
 				<p className="text-[11px] text-muted-foreground">
-					{t('workspace.piDefaultModelDescription')}
+					{t("workspace.piDefaultModelDescription")}
 				</p>
 				<Select
 					value={selectedModelValue}
 					onValueChange={(value) => update({ defaultModelRef: value || null })}
 				>
 					<SelectTrigger>
-						<SelectValue
-							placeholder={t('models.selectModel')}
-						/>
+						<SelectValue placeholder={t("models.selectModel")} />
 					</SelectTrigger>
 					<SelectContent>
 						{modelOptions.length === 0 ? (
 							<div className="px-2 py-1.5 text-xs text-muted-foreground">
-								{t('models.noModelsAvailable')}
+								{t("models.noModelsAvailable")}
 							</div>
 						) : (
 							modelOptions.map((option) => (
@@ -315,7 +313,7 @@ export function WorkspaceOverviewForm({
 
 			<div className="space-y-2">
 				<div className="text-xs uppercase text-muted-foreground">
-					{t('workspace.sandboxProfile')}
+					{t("workspace.sandboxProfile")}
 				</div>
 				<Select
 					value={values.sandboxProfile}
@@ -336,7 +334,7 @@ export function WorkspaceOverviewForm({
 
 			<div className="space-y-2">
 				<div className="text-xs uppercase text-muted-foreground">
-					{t('workspace.skills')}
+					{t("workspace.skills")}
 				</div>
 				{renderSkillsList(
 					availableSkills,
@@ -347,7 +345,7 @@ export function WorkspaceOverviewForm({
 
 			<div className="space-y-2">
 				<div className="text-xs uppercase text-muted-foreground">
-					{t('workspace.extensions')}
+					{t("workspace.extensions")}
 				</div>
 				{renderExtensionsList()}
 			</div>
@@ -357,9 +355,7 @@ export function WorkspaceOverviewForm({
 			{showSave && onSave && (
 				<div className="flex items-center justify-end">
 					<Button onClick={onSave} disabled={saving}>
-						{saving
-							? t('common.saving')
-							: t('workspace.saveChanges')}
+						{saving ? t("common.saving") : t("workspace.saveChanges")}
 					</Button>
 				</div>
 			)}

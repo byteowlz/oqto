@@ -3382,10 +3382,7 @@ mod tests {
             .t();
         assert_eq!(resolved, allowed.canonicalize().t());
 
-        let relative = service
-            .resolve_workspace_path(user_id, "project")
-            .await
-            .t();
+        let relative = service.resolve_workspace_path(user_id, "project").await.t();
         assert_eq!(relative, allowed.canonicalize().t());
 
         let err = service
@@ -3689,12 +3686,7 @@ mod tests {
         let failed_session = result.t();
         assert_eq!(failed_session.status, SessionStatus::Failed);
         assert!(failed_session.error_message.is_some());
-        assert!(
-            failed_session
-                .error_message
-                .t()
-                .contains("resume failed")
-        );
+        assert!(failed_session.error_message.t().contains("resume failed"));
 
         // Verify in database
         let stored = repo.get("test-session-1").await.t().t();

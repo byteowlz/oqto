@@ -52,7 +52,9 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
 	const { startConversation, startDictation } = useVoiceCommandEmitter();
 
 	const [theme, setThemeState] = useState<"light" | "dark">("dark");
-	const [sessionViewMode, setSessionViewMode] = useState<"list" | "tree">("list");
+	const [sessionViewMode, setSessionViewMode] = useState<"list" | "tree">(
+		"list",
+	);
 
 	useEffect(() => {
 		try {
@@ -65,7 +67,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
 		} catch {
 			// Ignore storage failures.
 		}
-	}, [open]);
+	}, []);
 
 	const toggleTheme = useCallback(() => {
 		const next = theme === "dark" ? "light" : "dark";
@@ -165,13 +167,9 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
 			description={t("command.description")}
 			dataSpotlight="command-palette"
 		>
-			<CommandInput
-				placeholder={t("command.inputPlaceholder")}
-			/>
+			<CommandInput placeholder={t("command.inputPlaceholder")} />
 			<CommandList>
-				<CommandEmpty>
-					{t("command.noResults")}
-				</CommandEmpty>
+				<CommandEmpty>{t("command.noResults")}</CommandEmpty>
 
 				<CommandGroup heading={t("command.actions")}>
 					<CommandItem onSelect={handleNewChat}>

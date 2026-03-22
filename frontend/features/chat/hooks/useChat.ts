@@ -14,13 +14,13 @@
  */
 
 import { useBusySessions } from "@/components/contexts";
-import { getChatMessages } from "@/lib/api";
 import {
 	clearSharedWorkspaceSessionId,
 	getRunnerHistoryAlias,
 	setSharedWorkspaceSessionId,
 	sharedWorkspaceSessionMap,
 } from "@/components/contexts/chat-context";
+import { getChatMessages } from "@/lib/api";
 import type { CommandResponse, SessionConfig } from "@/lib/canonical-types";
 import {
 	createPiSessionId,
@@ -42,14 +42,7 @@ import {
 	writeCachedSessionMessages,
 } from "./cache";
 import {
-	convertCanonicalMessageToDisplay,
-	getMaxMessageId,
-	mergeServerMessages,
-	nextPartId,
-	normalizeContentToParts,
-	normalizeMessages,
-} from "./message-utils";
-import {
+	type MessageSyncSource,
 	beginMessageSync,
 	bindIdentity,
 	completeMessageSync,
@@ -59,8 +52,15 @@ import {
 	selectMessageMergeMode,
 	transitionTransport,
 	transitionTurn,
-	type MessageSyncSource,
 } from "./chat-state-machine";
+import {
+	convertCanonicalMessageToDisplay,
+	getMaxMessageId,
+	mergeServerMessages,
+	nextPartId,
+	normalizeContentToParts,
+	normalizeMessages,
+} from "./message-utils";
 import type {
 	AgentState,
 	DisplayMessage,
@@ -92,7 +92,6 @@ function isPiDebugEnabled(): boolean {
 	}
 	return import.meta.env.VITE_DEBUG_PI_V2 === "1";
 }
-
 
 /**
  * Hook for managing Pi chat using the multiplexed WebSocket.
@@ -146,7 +145,9 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 	const isStreamingRef = useRef(false);
 	const lastAgentEventAtRef = useRef<number>(Date.now());
 	const sendInFlightRef = useRef(false);
-	const responseWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const responseWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(
+		null,
+	);
 	const persistedMessageVersionRef = useRef<number | null>(null);
 	// (deferredServerMessagesRef removed — messages are always merged immediately)
 	// Force a full server sync after reattaching to an active runner session.
@@ -203,13 +204,16 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 		[],
 	);
 
-	const resetSessionIdentity = useCallback((clientId: string | null) => {
-		machineRef.current = resetIdentity(
-			machineRef.current,
-			clientId ?? "unbound-session",
-		);
-		applyTurnState({ kind: "idle" });
-	}, [applyTurnState]);
+	const resetSessionIdentity = useCallback(
+		(clientId: string | null) => {
+			machineRef.current = resetIdentity(
+				machineRef.current,
+				clientId ?? "unbound-session",
+			);
+			applyTurnState({ kind: "idle" });
+		},
+		[applyTurnState],
+	);
 
 	// Generate unique message ID
 	const nextMessageId = useCallback(() => {
@@ -285,7 +289,9 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 				return;
 			}
 			const mergeMode = selectMessageMergeMode(machineRef.current, source);
-			setMessages((prev) => mergeServerMessages(prev, displayMessages, mergeMode));
+			setMessages((prev) =>
+				mergeServerMessages(prev, displayMessages, mergeMode),
+			);
 			messageIdRef.current = getMaxMessageId(displayMessages);
 			const lastAssistant = [...displayMessages]
 				.reverse()
@@ -293,7 +299,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 			lastAssistantMessageIdRef.current = lastAssistant?.id ?? null;
 			machineRef.current = completeMessageSync(machineRef.current, source);
 		},
-		[mergeServerMessages, normalizeMessages],
+		[],
 	);
 
 	const appendPartToMessage = useCallback(
@@ -380,7 +386,10 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 		const elapsed = Date.now() - batch.lastFlushTime;
 		if (elapsed >= BATCH_FLUSH_INTERVAL_MS) {
 			// Use a microtask-like delay (0ms setTimeout) for immediate flush
-			batch.rafId = window.setTimeout(flushStreamingUpdate, 0) as unknown as number;
+			batch.rafId = window.setTimeout(
+				flushStreamingUpdate,
+				0,
+			) as unknown as number;
 		} else {
 			const delay = BATCH_FLUSH_INTERVAL_MS - elapsed;
 			batch.rafId = window.setTimeout(() => {
@@ -449,24 +458,25 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 		[applyThrottledSnapshot],
 	);
 
-	// biome-ignore lint/correctness/useExhaustiveDependencies: mergeServerMessages/normalizeMessages are stable refs
 	const fetchHistoryMessages = useCallback(
 		async (sessionId: string, expectedVersion?: number) => {
 			try {
 				const swId = sharedWorkspaceSessionMap.get(sessionId);
-				let history = await getChatMessages(sessionId, swId).catch(async (err) => {
-					const alias = getRunnerHistoryAlias(sessionId);
-					if (!alias || alias === sessionId) throw err;
-					if (isPiDebugEnabled()) {
-						console.debug(
-							"[useChat] fetchHistoryMessages: retrying with runner alias",
-							sessionId,
-							"->",
-							alias,
-						);
-					}
-					return getChatMessages(alias, swId);
-				});
+				let history = await getChatMessages(sessionId, swId).catch(
+					async (err) => {
+						const alias = getRunnerHistoryAlias(sessionId);
+						if (!alias || alias === sessionId) throw err;
+						if (isPiDebugEnabled()) {
+							console.debug(
+								"[useChat] fetchHistoryMessages: retrying with runner alias",
+								sessionId,
+								"->",
+								alias,
+							);
+						}
+						return getChatMessages(alias, swId);
+					},
+				);
 				if (history.length === 0) {
 					const alias = getRunnerHistoryAlias(sessionId);
 					if (alias && alias !== sessionId) {
@@ -487,7 +497,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 							"[useChat] Discarding stale history fetch for",
 							sessionId,
 							"(active is now",
-							activeSessionIdRef.current + ")",
+							`${activeSessionIdRef.current})`,
 						);
 					}
 					return;
@@ -628,7 +638,8 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 						console.debug(
 							"[useChat] text_delta:",
 							JSON.stringify(delta).slice(0, 60),
-							"session:", event.session_id,
+							"session:",
+							event.session_id,
 						);
 					}
 					const currentMsg = ensureAssistantMessage(true);
@@ -975,8 +986,8 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 								typeof event.message_version === "object" &&
 								event.message_version !== null
 									? Number(
-										(event.message_version as { version?: number }).version,
-									)
+											(event.message_version as { version?: number }).version,
+										)
 									: Number.NaN;
 							const localVersion = persistedMessageVersionRef.current;
 							const needsSync =
@@ -1122,7 +1133,9 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 						{
 							id: nextMessageId(),
 							role: "assistant" as const,
-							parts: [{ type: "error" as const, id: nextPartId(), text: errMsg }],
+							parts: [
+								{ type: "error" as const, id: nextPartId(), text: errMsg },
+							],
 							timestamp: Date.now(),
 							isStreaming: false,
 						},
@@ -1184,9 +1197,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 								const parts: string[] = ["Context compacted"];
 								if (tokensBefore) {
 									const fmt = (n: number) =>
-										n >= 1000
-											? `${(n / 1000).toFixed(1)}K`
-											: n.toString();
+										n >= 1000 ? `${(n / 1000).toFixed(1)}K` : n.toString();
 									parts[0] = `Context compacted (${fmt(tokensBefore)} tokens summarized)`;
 								}
 								return parts[0];
@@ -1209,7 +1220,8 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 					if (streamingMessageRef.current?.id === currentMsg.id) {
 						// Replace the "Compacting context..." part if it exists
 						const compactIdx = currentMsg.parts.findIndex(
-							(p) => p.type === "compaction" && p.text === "Compacting context...",
+							(p) =>
+								p.type === "compaction" && p.text === "Compacting context...",
 						);
 						if (compactIdx >= 0) {
 							currentMsg.parts[compactIdx] = part;
@@ -1224,7 +1236,8 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 							if (msgIdx < 0) return prev;
 							const msg = prev[msgIdx];
 							const compactIdx = msg.parts.findIndex(
-								(p) => p.type === "compaction" && p.text === "Compacting context...",
+								(p) =>
+									p.type === "compaction" && p.text === "Compacting context...",
 							);
 							if (compactIdx >= 0) {
 								const next = [...prev];
@@ -1361,22 +1374,27 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 						case "follow_up": {
 							if (!resp.success) {
 								applyTurnState({ kind: "idle" });
-								setBusyForEvent(event.session_id ?? activeSessionIdRef.current, false);
+								setBusyForEvent(
+									event.session_id ?? activeSessionIdRef.current,
+									false,
+								);
 							}
 							break;
 						}
 						case "session.create": {
 							if (resp.success) {
-								const targetData = (resp.data ?? null) as
-									| {
-											target_scope?: string;
-											target_workspace_id?: string | null;
-									  }
-									| null;
-								const targetWorkspaceId = targetData?.target_workspace_id ?? null;
+								const targetData = (resp.data ?? null) as {
+									target_scope?: string;
+									target_workspace_id?: string | null;
+								} | null;
+								const targetWorkspaceId =
+									targetData?.target_workspace_id ?? null;
 								const targetScope = targetData?.target_scope;
 								if (targetScope === "shared_workspace" && targetWorkspaceId) {
-									setSharedWorkspaceSessionId(event.session_id, targetWorkspaceId);
+									setSharedWorkspaceSessionId(
+										event.session_id,
+										targetWorkspaceId,
+									);
 								} else if (targetScope === "personal") {
 									clearSharedWorkspaceSessionId(event.session_id);
 								}
@@ -1415,7 +1433,8 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 								};
 								setState(nextState);
 								bindSessionIdentity({
-									runnerId: event.session_id ?? activeSessionIdRef.current ?? "",
+									runnerId:
+										event.session_id ?? activeSessionIdRef.current ?? "",
 									piId:
 										typeof nextState.sessionId === "string"
 											? nextState.sessionId
@@ -1567,6 +1586,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 			applyServerMessages,
 			applyThrottledSnapshot,
 			applyTurnState,
+			clearResponseWatchdog,
 			bindSessionIdentity,
 			ensureAssistantMessage,
 			fetchHistoryMessages,
@@ -1823,7 +1843,13 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 				// In shared workspaces, tag the message with the current user's name
 				// so it renders with the correct sender label instead of "You".
 				...(senderName
-					? { sender: { type: "user" as const, id: senderName, name: senderName } }
+					? {
+							sender: {
+								type: "user" as const,
+								id: senderName,
+								name: senderName,
+							},
+						}
 					: {}),
 			};
 			lastAssistantMessageIdRef.current = null;
@@ -1872,11 +1898,13 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 		},
 		[
 			applyTurnState,
+			armResponseWatchdog,
 			bindSessionIdentity,
 			ensureSession,
 			getSessionConfig,
 			nextMessageId,
 			onSelectedSessionIdChange,
+			senderName,
 		],
 	);
 
@@ -2083,6 +2111,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 		};
 	}, [
 		activeSessionId,
+		applyTurnState,
 		fetchHistoryMessages,
 		isAwaitingResponse,
 		isConnected,
@@ -2225,7 +2254,11 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 				// (not the full history), so replacing would discard earlier turns.
 				// Also fetch from hstry for the complete history.
 				if (serverMessages.length > 0) {
-					applyServerMessages(serverMessages as RawMessage[], "resync", _sessionId);
+					applyServerMessages(
+						serverMessages as RawMessage[],
+						"resync",
+						_sessionId,
+					);
 				}
 
 				// Reset throttle state since we just rebuilt everything

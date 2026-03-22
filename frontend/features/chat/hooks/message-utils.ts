@@ -54,7 +54,6 @@ function extractSenderFromParts(parts: DisplayPart[]): Sender | undefined {
 	return undefined;
 }
 
-
 // ============================================================================
 // Internal helpers
 // ============================================================================
@@ -374,8 +373,8 @@ export function convertCanonicalMessageToDisplay(
 	const role =
 		roleValue === "user" || roleValue === "assistant" || roleValue === "system"
 			? roleValue
-			// "error" and "tool" roles display on the assistant side
-			: "assistant";
+			: // "error" and "tool" roles display on the assistant side
+				"assistant";
 	const parts = normalizeContentToParts(
 		Array.isArray(msg.parts) && msg.parts.length > 0 ? msg.parts : msg.content,
 	);
@@ -385,7 +384,10 @@ export function convertCanonicalMessageToDisplay(
 		typeof msg.created_at === "number" && msg.created_at > 0
 			? msg.created_at
 			: Date.now();
-	const timestamp = rawTimestamp > 0 && rawTimestamp < 1e12 ? rawTimestamp * 1000 : rawTimestamp;
+	const timestamp =
+		rawTimestamp > 0 && rawTimestamp < 1e12
+			? rawTimestamp * 1000
+			: rawTimestamp;
 	// Build usage from nested usage object or flat tokens_input/tokens_output fields
 	let usage = msg.usage as DisplayMessage["usage"] | undefined;
 	if (!usage && (msg.tokens_input || msg.tokens_output)) {
@@ -454,7 +456,10 @@ export function normalizeMessages(
 			message.createdAtMs ??
 			0;
 		// Normalize: seconds -> milliseconds (heuristic: < 1e12 = seconds)
-		const timestamp = typeof rawTs === "number" && rawTs > 0 && rawTs < 1e12 ? rawTs * 1000 : rawTs;
+		const timestamp =
+			typeof rawTs === "number" && rawTs > 0 && rawTs < 1e12
+				? rawTs * 1000
+				: rawTs;
 		const partsJson =
 			typeof message.parts_json === "string"
 				? message.parts_json
@@ -551,8 +556,8 @@ export function normalizeMessages(
 		const normalizedRole =
 			role === "user" || role === "assistant" || role === "system"
 				? role
-				// "error" role displays on assistant side
-				: "assistant";
+				: // "error" role displays on assistant side
+					"assistant";
 		const parts = normalizeContentToParts(content);
 		const clientId = message.client_id ?? message.clientId;
 		const msgModel = message.model_id ?? message.model ?? null;
@@ -800,7 +805,9 @@ export function mergeServerMessages(
 	const serverClientIds = new Set(
 		serverMessages.filter((m) => m.clientId).map((m) => m.clientId),
 	);
-	const serverFingerprints = new Set(serverMessages.map((m) => messageFingerprint(m)));
+	const serverFingerprints = new Set(
+		serverMessages.map((m) => messageFingerprint(m)),
+	);
 
 	const preserved: DisplayMessage[] = [];
 	for (const msg of previous) {
@@ -808,7 +815,11 @@ export function mergeServerMessages(
 			preserved.push(msg);
 			continue;
 		}
-		if (msg.role === "user" && msg.clientId && !serverClientIds.has(msg.clientId)) {
+		if (
+			msg.role === "user" &&
+			msg.clientId &&
+			!serverClientIds.has(msg.clientId)
+		) {
 			if (!serverFingerprints.has(messageFingerprint(msg))) {
 				preserved.push(msg);
 			}

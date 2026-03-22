@@ -440,7 +440,6 @@ mod tests {
         }
     }
 
-
     async fn setup_test_db() -> SqlitePool {
         let pool = SqlitePool::connect(":memory:").await.t();
 

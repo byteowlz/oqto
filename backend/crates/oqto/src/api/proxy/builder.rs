@@ -294,10 +294,14 @@ pub async fn proxy_http_request_with_query(
             new_content_length,
             parts.headers.get(axum::http::header::CONTENT_LENGTH)
         );
-        let content_length = axum::http::HeaderValue::from_str(&new_content_length).map_err(|e| {
-            error!("Invalid content-length header value {}: {:?}", new_content_length, e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+        let content_length =
+            axum::http::HeaderValue::from_str(&new_content_length).map_err(|e| {
+                error!(
+                    "Invalid content-length header value {}: {:?}",
+                    new_content_length, e
+                );
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?;
         forwarded
             .headers_mut()
             .insert(axum::http::header::CONTENT_LENGTH, content_length);

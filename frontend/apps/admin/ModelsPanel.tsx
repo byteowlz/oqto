@@ -441,7 +441,9 @@ function ProviderDialog({
 	const [apiVersion, setApiVersion] = useState("");
 	const [deployment, setDeployment] = useState("");
 	const [models, setModels] = useState<ModelEntry[]>(initial?.models ?? []);
-	const [pendingDraftModel, setPendingDraftModel] = useState<ModelDraft | null>(null);
+	const [pendingDraftModel, setPendingDraftModel] = useState<ModelDraft | null>(
+		null,
+	);
 
 	const resetForm = useCallback(() => {
 		if (!initial) {

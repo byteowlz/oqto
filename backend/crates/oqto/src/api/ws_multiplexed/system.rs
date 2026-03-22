@@ -70,13 +70,7 @@ pub(super) async fn handle_bus_command(
             match state
                 .bus
                 .subscribe(
-                    bus_sub_id,
-                    user_id,
-                    is_admin,
-                    scope,
-                    scope_id,
-                    topics,
-                    filter,
+                    bus_sub_id, user_id, is_admin, scope, scope_id, topics, filter,
                 )
                 .await
             {

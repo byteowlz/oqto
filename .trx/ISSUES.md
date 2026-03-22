@@ -545,6 +545,8 @@ Build and distribute pre-compiled binaries for Linux (x86_64, arm64) and macOS (
 ### [octo-af5j] Release & Update System (P1, epic)
 Comprehensive system for distributing Octo releases, managing updates in the field, and expanding runtime options including Proxmox LXC support.
 
+### [oqto-e8vx] Tool calls sometimes are shown duplicated (P2, bug)
+
 ### [oqto-79er] Mobile chat: inline media taps open Copy All context menu instead of interacting with image/video (P2, bug)
 On touch devices, chat bubbles and text segments are wrapped in Radix ContextMenuTrigger for copy actions. This can hijack long-press/tap events on inline @file previews. Symptoms: inline image preview intermittently fails to open/render on mobile; inline video controls trigger the copy-all modal instead of playback.
 
@@ -1486,6 +1488,7 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [oqto-hb6g] File tree: enable directory download as ZIP and multi-select ZIP download (closed 2026-03-22)
 - [oqto-97sn] Audit and reduce useEffect usage in frontend (closed 2026-03-18)
 - [oqto-t25t] Comprehensive frontend refactor: decompose AppShellRoute and remove effect-driven architecture (closed 2026-03-18)
 - [oqto-t25t.3] Decompose AppShellRoute side-effect orchestration into dedicated hooks (closed 2026-03-18)
@@ -2161,12 +2164,12 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
-- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
-- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
-- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
 - [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
+- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
 - [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
 - [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
+- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
 - [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
+- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
+- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )

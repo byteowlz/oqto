@@ -42,9 +42,7 @@ export const DeleteConfirmDialog = memo(function DeleteConfirmDialog({
 					</AlertDialogDescription>
 				</AlertDialogHeader>
 				<AlertDialogFooter>
-					<AlertDialogCancel>
-						{t("common.cancel")}
-					</AlertDialogCancel>
+					<AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
 					<AlertDialogAction onClick={onConfirm}>
 						{t("common.delete")}
 					</AlertDialogAction>

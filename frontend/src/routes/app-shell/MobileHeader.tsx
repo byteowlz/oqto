@@ -122,7 +122,7 @@ export const MobileHeader = memo(function MobileHeader({
 					type="button"
 					variant="ghost"
 					size="icon"
-					aria-label={t('sessions.newSession')}
+					aria-label={t("sessions.newSession")}
 					onClick={onNewChat}
 					className="text-muted-foreground hover:text-primary flex-shrink-0"
 				>

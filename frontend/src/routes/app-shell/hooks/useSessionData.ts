@@ -147,9 +147,9 @@ export function useSessionData({
 				"projectID" in session ? session.projectID : null
 			)?.trim();
 			if (projectId) return projectId;
-			return t('workspace.workspace');
+			return t("workspace.workspace");
 		},
-		[locale, t],
+		[t],
 	);
 
 	// Filter and sort sessions
@@ -263,7 +263,7 @@ export function useSessionData({
 		if (!entries.has("workspace") && workspaceDirectories.length === 0) {
 			entries.set("workspace", {
 				key: "workspace",
-				name: t('workspace.workspace'),
+				name: t("workspace.workspace"),
 				sessionCount: 0,
 				lastActive: 0,
 			});
@@ -275,7 +275,6 @@ export function useSessionData({
 		projectLabelForSession,
 		sessionHierarchy.parentSessions,
 		workspaceDirectories,
-		locale,
 		t,
 	]);
 

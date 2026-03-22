@@ -34,9 +34,7 @@ use crate::pi::{
 };
 use crate::runner::pi_translator::PiTranslator;
 use crate::runner::protocol::{PiSessionInfo, PiSessionState};
-use oqto_protocol::events::{
-    AgentPhase, Event as CanonicalEvent, EventPayload, MessageVersion,
-};
+use oqto_protocol::events::{AgentPhase, Event as CanonicalEvent, EventPayload, MessageVersion};
 use oqto_sandbox::SandboxConfig;
 
 // ============================================================================
@@ -2652,8 +2650,8 @@ impl PiSessionManager {
                                 runner_id: self.config.runner_id.clone(),
                                 ts: chrono::Utc::now().timestamp_millis(),
                                 payload: EventPayload::AgentIdle {
-                                message_version: None,
-                            },
+                                    message_version: None,
+                                },
                             };
                             session_event_tx.publish(&idle_event).await;
                         }
@@ -3381,9 +3379,8 @@ impl PiSessionManager {
                         let eid = hstry_external_id.read().await.clone();
                         let message_version =
                             read_hstry_message_version_snapshot(&eid, &session_id).await;
-                        enriched_payload = oqto_protocol::events::EventPayload::AgentIdle {
-                            message_version,
-                        };
+                        enriched_payload =
+                            oqto_protocol::events::EventPayload::AgentIdle { message_version };
                     }
 
                     // Now broadcast the event to subscribers

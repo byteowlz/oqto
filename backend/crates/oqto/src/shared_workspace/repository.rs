@@ -71,7 +71,7 @@ impl SharedWorkspaceRepository {
 
     /// Create a shared workspace record.
     #[instrument(skip(self), fields(name = %name, slug = %slug))]
-        pub async fn create(
+    pub async fn create(
         &self,
         id: &str,
         name: &str,

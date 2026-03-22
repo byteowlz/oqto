@@ -1035,7 +1035,11 @@ mod tests {
 
         // End
         let events = t.translate(&PiEvent::AgentEnd { messages: vec![] });
-        assert!(events.iter().any(|e| matches!(e, EventPayload::AgentIdle { .. })));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, EventPayload::AgentIdle { .. }))
+        );
         assert!(t.state.is_idle());
     }
 
@@ -1396,7 +1400,11 @@ mod tests {
                 .iter()
                 .any(|e| matches!(e, EventPayload::Messages { .. }))
         );
-        assert!(events.iter().any(|e| matches!(e, EventPayload::AgentIdle { .. })));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, EventPayload::AgentIdle { .. }))
+        );
     }
 
     #[test]
@@ -1439,7 +1447,11 @@ mod tests {
             "Messages event should be suppressed when streaming occurred"
         );
         // AgentIdle should still be emitted.
-        assert!(events.iter().any(|e| matches!(e, EventPayload::AgentIdle { .. })));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, EventPayload::AgentIdle { .. }))
+        );
     }
 
     #[test]
@@ -1621,7 +1633,11 @@ mod tests {
                 .iter()
                 .any(|e| matches!(e, EventPayload::AgentError { .. }))
         );
-        assert!(events.iter().any(|e| matches!(e, EventPayload::AgentIdle { .. })));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, EventPayload::AgentIdle { .. }))
+        );
     }
 
     #[test]
@@ -1811,7 +1827,11 @@ mod tests {
                 .any(|e| matches!(e, EventPayload::AgentError { .. })),
             "Safety net should emit AgentError when streaming occurred but messages have errors"
         );
-        assert!(events.iter().any(|e| matches!(e, EventPayload::AgentIdle { .. })));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, EventPayload::AgentIdle { .. }))
+        );
     }
 
     // Helper to create a minimal empty message for struct update syntax.

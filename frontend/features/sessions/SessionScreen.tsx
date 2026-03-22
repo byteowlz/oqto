@@ -12,7 +12,6 @@ import { useCurrentUser } from "@/hooks/use-auth";
 import { getUserDisplayName } from "@/lib/api/types";
 
 import { sharedWorkspaceSessionMap } from "@/components/contexts/chat-context";
-import { useSharedWorkspaces } from "@/src/routes/app-shell/hooks/useSharedWorkspaces";
 import { useIsMobile } from "@/hooks/use-mobile";
 import {
 	formatTempId,
@@ -21,14 +20,15 @@ import {
 	normalizeWorkspacePath,
 } from "@/lib/session-utils";
 import { cn } from "@/lib/utils";
+import { useSharedWorkspaces } from "@/src/routes/app-shell/hooks/useSharedWorkspaces";
 import {
+	AppWindow,
 	Brain,
 	CheckSquare,
 	ChevronDown,
 	ChevronUp,
 	CircleDot,
 	FileText,
-	AppWindow,
 	FolderKanban,
 	Globe,
 	ListTodo,
@@ -503,11 +503,16 @@ export const SessionScreen = memo(function SessionScreen() {
 
 	// --- App tabs state ---
 	const [appTabs, setAppTabs] = useState<
-		Array<{ id: string; filePath: string; title: string; content: string; pinned: boolean }>
+		Array<{
+			id: string;
+			filePath: string;
+			title: string;
+			content: string;
+			pinned: boolean;
+		}>
 	>([]);
 	const [activeAppTabId, setActiveAppTabId] = useState<string | null>(null);
 
-	// biome-ignore lint/correctness/useExhaustiveDependencies: setActiveView is stable setState
 	const handleOpenAsApp = useCallback((filePath: string) => {
 		setAppTabs((prev) => {
 			const existing = prev.find((t) => t.filePath === filePath);
@@ -524,22 +529,30 @@ export const SessionScreen = memo(function SessionScreen() {
 		setExpandedView("app");
 	}, []);
 
-	const handleCloseAppTab = useCallback((id: string) => {
-		setAppTabs((prev) => {
-			const next = prev.filter((t) => t.id !== id);
-			if (activeAppTabId === id) {
-				setActiveAppTabId(next.length > 0 ? next[next.length - 1].id : null);
-			}
-			if (next.length === 0) {
-				setExpandedView(null);
-			}
-			return next;
-		});
-	}, [activeAppTabId]);
+	const handleCloseAppTab = useCallback(
+		(id: string) => {
+			setAppTabs((prev) => {
+				const next = prev.filter((t) => t.id !== id);
+				if (activeAppTabId === id) {
+					setActiveAppTabId(next.length > 0 ? next[next.length - 1].id : null);
+				}
+				if (next.length === 0) {
+					setExpandedView(null);
+				}
+				return next;
+			});
+		},
+		[activeAppTabId],
+	);
 
-	const handleUpdateAppTab = useCallback((id: string, patch: Partial<typeof appTabs[number]>) => {
-		setAppTabs((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)));
-	}, []);
+	const handleUpdateAppTab = useCallback(
+		(id: string, patch: Partial<(typeof appTabs)[number]>) => {
+			setAppTabs((prev) =>
+				prev.map((t) => (t.id === id ? { ...t, ...patch } : t)),
+			);
+		},
+		[],
+	);
 
 	const handleCanvasSaveAndAddToChat = useCallback((filePath: string) => {
 		const filename = filePath.split("/").pop() ?? filePath;
@@ -573,7 +586,8 @@ export const SessionScreen = memo(function SessionScreen() {
 				: null,
 		[selectedWorkspaceOverviewPath],
 	);
-	const terminalWorkspacePath = normalizedOverviewPath ?? normalizedWorkspacePath;
+	const terminalWorkspacePath =
+		normalizedOverviewPath ?? normalizedWorkspacePath;
 
 	// Watch for app signal files written by agents (OpenApp/CloseApp tools)
 	const lastSignalTs = useRef(0);
@@ -594,19 +608,34 @@ export const SessionScreen = memo(function SessionScreen() {
 					if (
 						event.type !== "file_changed" ||
 						event.workspace_path !== normalizedWorkspacePath
-					) return;
+					)
+						return;
 					if (!event.path?.endsWith(".oqto/app-signals.json")) return;
 
 					void (async () => {
 						try {
-							const result = await readFileMux(normalizedWorkspacePath, ".oqto/app-signals.json");
+							const result = await readFileMux(
+								normalizedWorkspacePath,
+								".oqto/app-signals.json",
+							);
 							const text = new TextDecoder().decode(result.data);
-							const file = JSON.parse(text) as { signals: Array<{ action: string; path: string; title?: string; timestamp: number }> };
+							const file = JSON.parse(text) as {
+								signals: Array<{
+									action: string;
+									path: string;
+									title?: string;
+									timestamp: number;
+								}>;
+							};
 							if (!file.signals?.length) return;
 
-							const newSignals = file.signals.filter((s) => s.timestamp > lastSignalTs.current);
+							const newSignals = file.signals.filter(
+								(s) => s.timestamp > lastSignalTs.current,
+							);
 							if (newSignals.length === 0) return;
-							lastSignalTs.current = Math.max(...newSignals.map((s) => s.timestamp));
+							lastSignalTs.current = Math.max(
+								...newSignals.map((s) => s.timestamp),
+							);
 
 							for (const signal of newSignals) {
 								if (signal.action === "open") {
@@ -620,8 +649,15 @@ export const SessionScreen = memo(function SessionScreen() {
 								}
 							}
 
-							const empty = new TextEncoder().encode(JSON.stringify({ signals: [] }));
-							await writeFileMux(normalizedWorkspacePath, ".oqto/app-signals.json", empty.buffer as ArrayBuffer, true);
+							const empty = new TextEncoder().encode(
+								JSON.stringify({ signals: [] }),
+							);
+							await writeFileMux(
+								normalizedWorkspacePath,
+								".oqto/app-signals.json",
+								empty.buffer as ArrayBuffer,
+								true,
+							);
 						} catch {
 							// Signal file read failed - ignore
 						}
@@ -752,9 +788,7 @@ export const SessionScreen = memo(function SessionScreen() {
 		if (sharedWorkspaceSessionMap.has(selectedChatSessionId)) return true;
 		// Fallback: check if the selected session's workspace_path is inside
 		// any shared workspace path.
-		const session = chatHistory?.find(
-			(s) => s.id === selectedChatSessionId,
-		);
+		const session = chatHistory?.find((s) => s.id === selectedChatSessionId);
 		const wp = session?.workspace_path?.replace(/\/$/, "");
 		if (!wp || sharedWorkspaces.length === 0) return false;
 		return sharedWorkspaces.some((sw) => {
@@ -1558,9 +1592,7 @@ export const SessionScreen = memo(function SessionScreen() {
 										<div className="h-full">
 											{terminalWorkspacePath ? (
 												<Suspense fallback={viewLoadingFallback}>
-													<TerminalView
-														workspacePath={terminalWorkspacePath}
-													/>
+													<TerminalView workspacePath={terminalWorkspacePath} />
 												</Suspense>
 											) : (
 												<EmptyWorkspacePanel

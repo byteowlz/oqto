@@ -11,16 +11,16 @@ import {
 	SelectValue,
 } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
-import { useModelSelection } from "@/hooks/use-model-selection";
-import { type ChatVerbosity, useChatVerbosity } from "@/lib/chat-verbosity";
-import { fuzzyMatch } from "@/lib/slash-commands";
-import { cn } from "@/lib/utils";
-import { getWsManager, type WsMuxConnectionState } from "@/lib/ws-manager";
 import {
 	type TTSSettings,
 	loadTTSSettings,
 	saveTTSSettings,
 } from "@/features/voice/hooks/useTTS";
+import { useModelSelection } from "@/hooks/use-model-selection";
+import { type ChatVerbosity, useChatVerbosity } from "@/lib/chat-verbosity";
+import { fuzzyMatch } from "@/lib/slash-commands";
+import { cn } from "@/lib/utils";
+import { type WsMuxConnectionState, getWsManager } from "@/lib/ws-manager";
 import { Loader2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -98,21 +98,17 @@ export function PiSettingsView({
 			.agentGetStateWait(sessionId)
 			.then((state) => {
 				if (!active) return;
-				const s = state as
-					| {
-							thinkingLevel?: string;
-							thinking_level?: string;
-							sessionId?: string;
-							session_id?: string;
-					  }
-					| null;
+				const s = state as {
+					thinkingLevel?: string;
+					thinking_level?: string;
+					sessionId?: string;
+					session_id?: string;
+				} | null;
 				const level = s?.thinkingLevel ?? s?.thinking_level;
 				if (typeof level === "string" && level.trim().length > 0) {
 					setThinkingLevel(level);
 				}
-				setRuntimeSessionId(
-					s?.sessionId ?? s?.session_id ?? sessionId,
-				);
+				setRuntimeSessionId(s?.sessionId ?? s?.session_id ?? sessionId);
 			})
 			.catch(() => {
 				// Ignore and keep local fallback
@@ -135,7 +131,10 @@ export function PiSettingsView({
 			) {
 				setThinkingLevel(event.level);
 			}
-			if (event.event === "agent.working" || event.event === "stream.message_start") {
+			if (
+				event.event === "agent.working" ||
+				event.event === "stream.message_start"
+			) {
 				setIsWorking(true);
 			}
 			if (
@@ -233,8 +232,8 @@ export function PiSettingsView({
 		});
 	}, [availableModels, modelQuery]);
 
-	const verbosityLabel = t('pi.chatVerbosity');
-	const verbosityDescription = t('pi.chatVerbosityDescription');
+	const verbosityLabel = t("pi.chatVerbosity");
+	const verbosityDescription = t("pi.chatVerbosityDescription");
 
 	const handleModelChange = useCallback(
 		async (value: string) => {
@@ -263,9 +262,7 @@ export function PiSettingsView({
 	return (
 		<div className={cn("flex flex-col h-full", className)}>
 			<div className="flex items-center justify-between p-3 border-b border-border">
-				<span className="text-sm font-medium">
-					{t('pi.settings')}
-				</span>
+				<span className="text-sm font-medium">{t("pi.settings")}</span>
 			</div>
 			<div className="flex-1 overflow-auto p-3 space-y-5">
 				<div className="rounded border border-border/70 bg-muted/30 px-2 py-1.5 text-[11px] text-muted-foreground">
@@ -292,13 +289,11 @@ export function PiSettingsView({
 				</div>
 
 				<div className="space-y-2">
-					<Label className="text-xs font-medium">
-						{t('models.model')}
-					</Label>
+					<Label className="text-xs font-medium">{t("models.model")}</Label>
 					{loading ? (
 						<div className="flex items-center gap-2 text-xs text-muted-foreground">
 							<Loader2 className="h-4 w-4 animate-spin" />
-							{t('models.loadingModels')}
+							{t("models.loadingModels")}
 						</div>
 					) : (
 						<Select
@@ -313,8 +308,8 @@ export function PiSettingsView({
 								<SelectValue
 									placeholder={
 										isSwitching
-											? t('models.switchingModel')
-											: t('models.selectModel')
+											? t("models.switchingModel")
+											: t("models.selectModel")
 									}
 								/>
 							</SelectTrigger>
@@ -325,7 +320,7 @@ export function PiSettingsView({
 									onKeyDown={(e) => e.stopPropagation()}
 								>
 									<Input
-										placeholder={t('models.searchModels')}
+										placeholder={t("models.searchModels")}
 										value={modelQuery}
 										onChange={(e) => setModelQuery(e.target.value)}
 										className="h-8"
@@ -333,11 +328,11 @@ export function PiSettingsView({
 								</div>
 								{availableModels.length === 0 ? (
 									<div className="p-3 text-sm text-muted-foreground text-center">
-										{t('models.noModelsAvailable')}
+										{t("models.noModelsAvailable")}
 									</div>
 								) : filteredModels.length === 0 ? (
 									<div className="p-3 text-sm text-muted-foreground text-center">
-										{t('models.noMatches')}
+										{t("models.noMatches")}
 									</div>
 								) : (
 									filteredModels.map((model) => {
@@ -353,7 +348,7 @@ export function PiSettingsView({
 													</span>
 													{isPending && (
 														<span className="text-[10px] text-muted-foreground">
-															{t('models.pending')}
+															{t("models.pending")}
 														</span>
 													)}
 												</div>
@@ -366,7 +361,7 @@ export function PiSettingsView({
 					)}
 					{pendingModelRef && (
 						<p className="text-[10px] text-muted-foreground">
-							{t('models.modelChangeAfterCompletion')}
+							{t("models.modelChangeAfterCompletion")}
 						</p>
 					)}
 				</div>
@@ -385,15 +380,9 @@ export function PiSettingsView({
 							<SelectValue />
 						</SelectTrigger>
 						<SelectContent>
-							<SelectItem value="1">
-								{t('pi.minimal')}
-							</SelectItem>
-							<SelectItem value="2">
-								{t('pi.compact')}
-							</SelectItem>
-							<SelectItem value="3">
-								{t('pi.verbose')}
-							</SelectItem>
+							<SelectItem value="1">{t("pi.minimal")}</SelectItem>
+							<SelectItem value="2">{t("pi.compact")}</SelectItem>
+							<SelectItem value="3">{t("pi.verbose")}</SelectItem>
 						</SelectContent>
 					</Select>
 					<p className="text-[10px] text-muted-foreground">
@@ -403,7 +392,7 @@ export function PiSettingsView({
 
 				<div className="space-y-2">
 					<Label className="text-xs font-medium text-muted-foreground">
-						{t('pi.reasoningLevel')}
+						{t("pi.reasoningLevel")}
 					</Label>
 					<Select
 						value={thinkingLevel}
@@ -414,30 +403,30 @@ export function PiSettingsView({
 							<SelectValue
 								placeholder={
 									thinkingLoading
-										? t('models.loadingModels')
-										: t('pi.selectReasoningLevel')
+										? t("models.loadingModels")
+										: t("pi.selectReasoningLevel")
 								}
 							/>
 						</SelectTrigger>
 						<SelectContent>
-							<SelectItem value="off">{t('pi.thinkingOff')}</SelectItem>
-							<SelectItem value="minimal">{t('pi.thinkingMinimal')}</SelectItem>
-							<SelectItem value="low">{t('pi.thinkingLow')}</SelectItem>
-							<SelectItem value="medium">{t('pi.thinkingMedium')}</SelectItem>
-							<SelectItem value="high">{t('pi.thinkingHigh')}</SelectItem>
-							<SelectItem value="xhigh">{t('pi.thinkingXHigh')}</SelectItem>
+							<SelectItem value="off">{t("pi.thinkingOff")}</SelectItem>
+							<SelectItem value="minimal">{t("pi.thinkingMinimal")}</SelectItem>
+							<SelectItem value="low">{t("pi.thinkingLow")}</SelectItem>
+							<SelectItem value="medium">{t("pi.thinkingMedium")}</SelectItem>
+							<SelectItem value="high">{t("pi.thinkingHigh")}</SelectItem>
+							<SelectItem value="xhigh">{t("pi.thinkingXHigh")}</SelectItem>
 						</SelectContent>
 					</Select>
 					<p className="text-[10px] text-muted-foreground">
 						{sessionId && sessionReady
-							? t('pi.reasoningLevelDescription')
-							: t('pi.reasoningLevelRequiresSession')}
+							? t("pi.reasoningLevelDescription")
+							: t("pi.reasoningLevelRequiresSession")}
 					</p>
 				</div>
 
 				<div className="space-y-2">
 					<Label className="text-xs font-medium text-muted-foreground">
-						{t('pi.agentControl')}
+						{t("pi.agentControl")}
 					</Label>
 					<Button
 						type="button"
@@ -450,26 +439,26 @@ export function PiSettingsView({
 						{restartingAgent ? (
 							<span className="inline-flex items-center gap-2">
 								<Loader2 className="h-3 w-3 animate-spin" />
-								{t('pi.restartingAgent')}
+								{t("pi.restartingAgent")}
 							</span>
 						) : (
-							t('pi.restartAgent')
+							t("pi.restartAgent")
 						)}
 					</Button>
 					<p className="text-[10px] text-muted-foreground">
-						{t('pi.restartAgentDescription')}
+						{t("pi.restartAgentDescription")}
 					</p>
 				</div>
 
 				{/* Read Aloud (TTS) settings */}
 				<div className="space-y-3">
 					<Label className="text-xs font-medium text-muted-foreground">
-						{t('pi.readAloud', 'Read Aloud')}
+						{t("pi.readAloud", "Read Aloud")}
 					</Label>
 
 					<div className="space-y-1.5">
 						<Label className="text-[11px] text-muted-foreground">
-							{t('pi.ttsVoice', 'Voice')}
+							{t("pi.ttsVoice", "Voice")}
 						</Label>
 						<Input
 							value={ttsSettings.voice}
@@ -482,7 +471,7 @@ export function PiSettingsView({
 					<div className="space-y-1.5">
 						<div className="flex items-center justify-between">
 							<Label className="text-[11px] text-muted-foreground">
-								{t('pi.ttsSpeed', 'Speed')}
+								{t("pi.ttsSpeed", "Speed")}
 							</Label>
 							<span className="text-[11px] text-muted-foreground tabular-nums">
 								{ttsSettings.speed.toFixed(1)}x
@@ -498,7 +487,10 @@ export function PiSettingsView({
 					</div>
 
 					<p className="text-[10px] text-muted-foreground">
-						{t('pi.ttsDescription', 'Voice and speed for the Read Aloud button on messages.')}
+						{t(
+							"pi.ttsDescription",
+							"Voice and speed for the Read Aloud button on messages.",
+						)}
 					</p>
 				</div>
 			</div>

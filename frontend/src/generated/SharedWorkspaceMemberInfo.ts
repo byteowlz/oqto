@@ -4,4 +4,11 @@ import type { MemberRole } from "./MemberRole";
 /**
  * Public member info (returned to clients).
  */
-export type SharedWorkspaceMemberInfo = { user_id: string, username: string, display_name: string, avatar_url: string | null, role: MemberRole, added_at: string, };
+export type SharedWorkspaceMemberInfo = {
+	user_id: string;
+	username: string;
+	display_name: string;
+	avatar_url: string | null;
+	role: MemberRole;
+	added_at: string;
+};

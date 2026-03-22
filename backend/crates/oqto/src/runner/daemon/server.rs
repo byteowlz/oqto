@@ -2082,15 +2082,18 @@ impl Runner {
             return error_response(ErrorCode::Internal, "hstry client not available");
         };
 
-        let scan = match tokio::task::spawn_blocking(move || scan_pi_jsonl_session_metadata(req.limit)).await {
-            Ok(outcome) => outcome,
-            Err(err) => {
-                return error_response(
-                    ErrorCode::Internal,
-                    format!("Failed to scan Pi session files: {err}"),
-                );
-            }
-        };
+        let scan =
+            match tokio::task::spawn_blocking(move || scan_pi_jsonl_session_metadata(req.limit))
+                .await
+            {
+                Ok(outcome) => outcome,
+                Err(err) => {
+                    return error_response(
+                        ErrorCode::Internal,
+                        format!("Failed to scan Pi session files: {err}"),
+                    );
+                }
+            };
 
         let mut repaired = 0usize;
         let mut skipped = scan.skipped_files;
@@ -2098,10 +2101,9 @@ impl Runner {
 
         for session in scan.sessions {
             if let Some(workspace_filter) = req.workspace.as_ref() {
-                let matches_workspace = session
-                    .workspace_path
-                    .as_ref()
-                    .is_some_and(|path| path == workspace_filter || path.starts_with(&format!("{workspace_filter}/")));
+                let matches_workspace = session.workspace_path.as_ref().is_some_and(|path| {
+                    path == workspace_filter || path.starts_with(&format!("{workspace_filter}/"))
+                });
                 if !matches_workspace {
                     skipped += 1;
                     continue;
@@ -3224,7 +3226,10 @@ impl Runner {
                                 let line = match Self::serialize_response_line(&resp) {
                                     Ok(line) => line,
                                     Err(err) => {
-                                        error!("Failed to serialize stdout subscribe response: {}", err);
+                                        error!(
+                                            "Failed to serialize stdout subscribe response: {}",
+                                            err
+                                        );
                                         break;
                                     }
                                 };
@@ -3241,7 +3246,10 @@ impl Runner {
                                     let line = match Self::serialize_response_line(&resp) {
                                         Ok(line) => line,
                                         Err(err) => {
-                                            error!("Failed to serialize buffered stdout line: {}", err);
+                                            error!(
+                                                "Failed to serialize buffered stdout line: {}",
+                                                err
+                                            );
                                             break;
                                         }
                                     };
@@ -3259,8 +3267,7 @@ impl Runner {
                                                     id: process_id.clone(),
                                                     line: stdout_line,
                                                 });
-                                            let line = match Self::serialize_response_line(&resp)
-                                            {
+                                            let line = match Self::serialize_response_line(&resp) {
                                                 Ok(line) => line,
                                                 Err(err) => {
                                                     error!(
@@ -3280,8 +3287,7 @@ impl Runner {
                                                     id: process_id.clone(),
                                                     exit_code,
                                                 });
-                                            if let Ok(line) = Self::serialize_response_line(&resp)
-                                            {
+                                            if let Ok(line) = Self::serialize_response_line(&resp) {
                                                 let _ = writer.write_all(line.as_bytes()).await;
                                             }
                                             break;
@@ -3299,8 +3305,7 @@ impl Runner {
                                                     id: process_id.clone(),
                                                     exit_code: None,
                                                 });
-                                            if let Ok(line) = Self::serialize_response_line(&resp)
-                                            {
+                                            if let Ok(line) = Self::serialize_response_line(&resp) {
                                                 let _ = writer.write_all(line.as_bytes()).await;
                                             }
                                             break;
@@ -3315,7 +3320,10 @@ impl Runner {
                                 let line = match Self::serialize_response_line(&resp) {
                                     Ok(line) => line,
                                     Err(err) => {
-                                        error!("Failed to serialize stdout subscription error: {}", err);
+                                        error!(
+                                            "Failed to serialize stdout subscription error: {}",
+                                            err
+                                        );
                                         break;
                                     }
                                 };

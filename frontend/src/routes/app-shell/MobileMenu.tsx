@@ -1,6 +1,7 @@
 import type { SearchMode } from "@/components/search";
 import { Button } from "@/components/ui/button";
 import type { AgentInfo } from "@/lib/agent-client";
+import type { SharedWorkspaceInfo } from "@/lib/api/shared-workspaces";
 import type { ChatSession, HstrySearchHit } from "@/lib/control-plane-client";
 import { formatSessionDate } from "@/lib/session-utils";
 import { cn } from "@/lib/utils";
@@ -23,7 +24,6 @@ import {
 	type SessionsByProject,
 	SidebarSessions,
 } from "./SidebarSessions";
-import type { SharedWorkspaceInfo } from "@/lib/api/shared-workspaces";
 import { SidebarSharedWorkspaces } from "./SidebarSharedWorkspaces";
 
 const sidebarBg = "var(--sidebar, #181b1a)";
@@ -102,7 +102,10 @@ export interface MobileMenuProps {
 	onNewChatInWorkspace?: (workspace: SharedWorkspaceInfo) => void;
 	onNewProjectInWorkspace?: (workspace: SharedWorkspaceInfo) => void;
 	onDeleteWorkspace?: (workspace: SharedWorkspaceInfo) => void;
-	onSelectWorkdir?: (workspace: SharedWorkspaceInfo, workdir: import("@/lib/api/shared-workspaces").SharedWorkspaceWorkdir) => void;
+	onSelectWorkdir?: (
+		workspace: SharedWorkspaceInfo,
+		workdir: import("@/lib/api/shared-workspaces").SharedWorkspaceWorkdir,
+	) => void;
 	runnerSessions?: Array<{
 		session_id: string;
 		state: string;
@@ -110,7 +113,10 @@ export interface MobileMenuProps {
 		last_activity: number;
 		shared_workspace_id?: string;
 	}>;
-	onSharedSessionClick?: (session: import("@/lib/api/chat").ChatSession, sharedWorkspaceId: string) => void;
+	onSharedSessionClick?: (
+		session: import("@/lib/api/chat").ChatSession,
+		sharedWorkspaceId: string,
+	) => void;
 }
 
 export const MobileMenu = memo(function MobileMenu({
@@ -260,7 +266,15 @@ export const MobileMenu = memo(function MobileMenu({
 						onSearchModeChange={onSearchModeChange}
 						isMobile
 						belowSearchSlot={
-							sharedWorkspaces && sharedWorkspaces.length > 0 && expandedWorkspaces && toggleWorkspaceExpanded && onNewSharedWorkspace && onManageWorkspace && onManageMembers && onNewChatInWorkspace && onDeleteWorkspace ? (
+							sharedWorkspaces &&
+							sharedWorkspaces.length > 0 &&
+							expandedWorkspaces &&
+							toggleWorkspaceExpanded &&
+							onNewSharedWorkspace &&
+							onManageWorkspace &&
+							onManageMembers &&
+							onNewChatInWorkspace &&
+							onDeleteWorkspace ? (
 								<>
 									<SidebarSharedWorkspaces
 										sharedWorkspaces={sharedWorkspaces}
@@ -281,12 +295,12 @@ export const MobileMenu = memo(function MobileMenu({
 										onRenameSession={onRenameSession}
 										onDeleteSession={onDeleteSession}
 										onPinSession={onPinSession}
-												pinnedSessions={pinnedSessions}
-												onPinProject={onPinProject}
-												onRenameProject={onRenameProject}
-												onDeleteProject={onDeleteProject}
-												pinnedProjects={pinnedProjects}
-												isMobile
+										pinnedSessions={pinnedSessions}
+										onPinProject={onPinProject}
+										onRenameProject={onRenameProject}
+										onDeleteProject={onDeleteProject}
+										pinnedProjects={pinnedProjects}
+										isMobile
 									/>
 									<div className="w-full px-2 my-1">
 										<div className="h-px w-full bg-sidebar-border/50" />
@@ -301,7 +315,7 @@ export const MobileMenu = memo(function MobileMenu({
 					<div className="flex-1 min-h-0 flex flex-col">
 						<div className="flex items-center justify-between gap-2 px-2 py-1.5">
 							<span className="text-xs uppercase tracking-wide text-muted-foreground">
-								{t('nav.projects')}
+								{t("nav.projects")}
 							</span>
 							<span className="text-xs text-muted-foreground/50">
 								({projectSummaries.length})
@@ -310,13 +324,13 @@ export const MobileMenu = memo(function MobileMenu({
 						<div className="flex-1 overflow-y-auto overflow-x-hidden space-y-2 px-1">
 							{projectSummaries.length === 0 ? (
 								<div className="text-sm text-muted-foreground/60 text-center py-6">
-									{t('sessions.noProjectsYet')}
+									{t("sessions.noProjectsYet")}
 								</div>
 							) : (
 								projectSummaries.map((project) => {
 									const lastActiveLabel = project.lastActive
 										? formatSessionDate(project.lastActive)
-										: t('common.never');
+										: t("common.never");
 									const defaultAgent = projectDefaultAgents[project.key];
 									return (
 										<div
@@ -340,13 +354,11 @@ export const MobileMenu = memo(function MobileMenu({
 													</span>
 												</div>
 												<div className="text-xs text-muted-foreground/60 mt-1">
-													{project.sessionCount}{" "}
-													{t('sessions.chats')} ·{" "}
+													{project.sessionCount} {t("sessions.chats")} ·{" "}
 													{lastActiveLabel}
 												</div>
 												<div className="text-xs text-muted-foreground/60 mt-0.5">
-													{t('sessions.defaultAgent')}
-													: {defaultAgent || "-"}
+													{t("sessions.defaultAgent")}: {defaultAgent || "-"}
 												</div>
 											</button>
 											<div className="px-3 pb-2">
@@ -361,7 +373,7 @@ export const MobileMenu = memo(function MobileMenu({
 													className="w-full text-xs bg-sidebar-accent/50 border border-sidebar-border rounded px-2 py-1"
 												>
 													<option value="">
-														{t('sessions.setDefaultAgent')}
+														{t("sessions.setDefaultAgent")}
 													</option>
 													{availableAgents.map((agent) => (
 														<option key={agent.id} value={agent.id}>
@@ -382,7 +394,7 @@ export const MobileMenu = memo(function MobileMenu({
 					<div className="flex-1 min-h-0 flex flex-col">
 						<div className="flex items-center justify-between gap-2 px-2 py-1.5">
 							<span className="text-xs uppercase tracking-wide text-muted-foreground">
-								{t('sessions.agents')}
+								{t("sessions.agents")}
 							</span>
 							<Button
 								type="button"
@@ -391,13 +403,13 @@ export const MobileMenu = memo(function MobileMenu({
 								onClick={onClose}
 								className="text-xs"
 							>
-								{t('common.create')}
+								{t("common.create")}
 							</Button>
 						</div>
 						<div className="flex-1 overflow-y-auto overflow-x-hidden space-y-2 px-1">
 							{availableAgents.length === 0 ? (
 								<div className="text-sm text-muted-foreground/60 text-center py-6">
-									{t('sessions.noAgentsFound')}
+									{t("sessions.noAgentsFound")}
 								</div>
 							) : (
 								availableAgents.map((agent) => (

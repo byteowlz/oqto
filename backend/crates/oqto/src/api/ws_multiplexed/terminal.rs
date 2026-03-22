@@ -64,7 +64,10 @@ pub(super) async fn handle_terminal_command(
             let state_guard = conn_state.lock().await;
             if let Some(existing) = state_guard.terminal_sessions.get(&terminal_id) {
                 if terminal_binding_matches(existing, user_id, &session.id) {
-                    info!("Terminal already exists and matches binding: {}", terminal_id);
+                    info!(
+                        "Terminal already exists and matches binding: {}",
+                        terminal_id
+                    );
                     return Some(WsEvent::Terminal(TerminalWsEvent::Opened {
                         id,
                         terminal_id,

@@ -1,4 +1,3 @@
-import { describe, expect, it } from "vitest";
 import {
 	beginMessageSync,
 	bindIdentity,
@@ -10,6 +9,7 @@ import {
 	transitionTransport,
 	transitionTurn,
 } from "@/features/chat/hooks/chat-state-machine";
+import { describe, expect, it } from "vitest";
 
 describe("chat state machine", () => {
 	it("rejects non-idle turn transitions while unbound", () => {
@@ -36,7 +36,10 @@ describe("chat state machine", () => {
 		});
 		expect(sending.turn.kind).toBe("sending");
 
-		const streaming = transitionTurn(sending, { kind: "streaming", turnId: "t1" });
+		const streaming = transitionTurn(sending, {
+			kind: "streaming",
+			turnId: "t1",
+		});
 		expect(streaming.turn.kind).toBe("streaming");
 		expect(deriveUiFlags(streaming.turn)).toEqual({
 			isStreaming: true,
@@ -77,8 +80,13 @@ describe("chat state machine", () => {
 			commandId: "cmd-1",
 			clientMessageId: "msg-1",
 		});
-		const streaming = transitionTurn(sending, { kind: "streaming", turnId: "t1" });
-		expect(selectMessageMergeMode(streaming, "ws_get_messages")).toBe("partial");
+		const streaming = transitionTurn(sending, {
+			kind: "streaming",
+			turnId: "t1",
+		});
+		expect(selectMessageMergeMode(streaming, "ws_get_messages")).toBe(
+			"partial",
+		);
 		expect(selectMessageMergeMode(streaming, "history")).toBe("authoritative");
 		const reconciling = transitionTurn(streaming, {
 			kind: "reconciling",

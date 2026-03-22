@@ -216,9 +216,9 @@ export const ConvertToSharedDialog = memo(function ConvertToSharedDialog({
 							</div>
 
 							<div className="space-y-1">
-								<label className="text-xs text-muted-foreground">
+								<div className="text-xs text-muted-foreground">
 									{t("sharedWorkspaces.icon", "Icon")}
-								</label>
+								</div>
 								<div className="grid grid-cols-8 gap-1">
 									{WORKSPACE_ICONS.map((iconName) => (
 										<button
@@ -246,9 +246,9 @@ export const ConvertToSharedDialog = memo(function ConvertToSharedDialog({
 							</div>
 
 							<div className="space-y-1">
-								<label className="text-xs text-muted-foreground">
+								<div className="text-xs text-muted-foreground">
 									{t("sharedWorkspaces.color", "Color")}
-								</label>
+								</div>
 								<div className="flex flex-wrap gap-1">
 									{WORKSPACE_COLORS.map((c) => (
 										<button
@@ -297,12 +297,12 @@ export const ConvertToSharedDialog = memo(function ConvertToSharedDialog({
 							) : (
 								<>
 									<div className="space-y-1">
-										<label className="text-xs text-muted-foreground">
+										<div className="text-xs text-muted-foreground">
 											{t(
 												"sharedWorkspaces.targetWorkspace",
 												"Shared workspace",
 											)}
-										</label>
+										</div>
 										<Select value={workspaceId} onValueChange={setWorkspaceId}>
 											<SelectTrigger className="w-full">
 												<SelectValue

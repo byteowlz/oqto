@@ -1815,7 +1815,6 @@ impl<T> TestUnwrap<T> for Option<T> {
 mod tests {
     use super::*;
 
-
     #[test]
     fn test_default() {
         let client = RunnerClient::default();
@@ -1960,10 +1959,7 @@ mod tests {
 
         client.pi_prompt("ses-1", "hi", None).await.t();
         client.pi_abort("ses-1").await.t();
-        client
-            .pi_set_auto_retry("ses-1", true)
-            .await
-            .t();
+        client.pi_set_auto_retry("ses-1", true).await.t();
         client.pi_abort_retry("ses-1").await.t();
 
         let mut sub = client.pi_subscribe("ses-1").await.t();
@@ -2023,10 +2019,7 @@ mod tests {
         });
 
         let client = RunnerClient::new(&socket_path);
-        let sessions = client
-            .list_sessions()
-            .await
-            .t();
+        let sessions = client.list_sessions().await.t();
         assert!(sessions.sessions.is_empty());
 
         server.abort();
@@ -2078,10 +2071,7 @@ mod tests {
         });
 
         let client = RunnerClient::new(&socket_path);
-        client
-            .ensure_ready_with_recovery()
-            .await
-            .t();
+        client.ensure_ready_with_recovery().await.t();
 
         server.abort();
     }
@@ -2190,10 +2180,7 @@ mod security_tests {
             .t();
 
         // Read the output
-        let output = alice_client
-            .read_stdout("test-whoami", 1000)
-            .await
-            .t();
+        let output = alice_client.read_stdout("test-whoami", 1000).await.t();
 
         // Verify the UID matches Alice's UID
         let uid: u32 = output.data.trim().parse().t();

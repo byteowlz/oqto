@@ -2437,109 +2437,111 @@ export const CanvasView = memo(function CanvasView({
 				className="flex-1 overflow-hidden relative"
 				style={{ backgroundColor: canvasBackgroundColor }}
 			>
-				{containerSize.width > 0 && containerSize.height > 0 && <Stage
-					ref={stageRef}
-					width={containerSize.width}
-					height={containerSize.height}
-					scaleX={scale}
-					scaleY={scale}
-					x={position.x}
-					y={position.y}
-					draggable={tool === "pan"}
-					onDragStart={() => {
-						if (tool === "pan") setIsPanning(true);
-					}}
-					onDragEnd={(e) => {
-						if (tool === "pan") {
-							setIsPanning(false);
-							setPosition({ x: e.target.x(), y: e.target.y() });
-						}
-					}}
-					onMouseDown={handleMouseDown}
-					onMouseMove={handleMouseMove}
-					onMouseUp={handleMouseUp}
-					onTouchStart={handleMouseDown}
-					onTouchMove={handleMouseMove}
-					onTouchEnd={handleMouseUp}
-					style={{
-						cursor:
-							tool === "pan"
-								? isPanning
-									? "grabbing"
-									: "grab"
-								: tool === "select"
-									? "default"
-									: tool === "eraser"
-										? "not-allowed"
-										: "crosshair",
-					}}
-				>
-					{/* Background layer */}
-					<Layer>
-						{/* Canvas background - adapts to dark mode */}
-						<Rect
-							x={0}
-							y={0}
-							width={canvasWidth}
-							height={canvasHeight}
-							fill={canvasBackgroundColor}
-						/>
-						{/* Background image */}
-						{backgroundImage && (
-							<KonvaImage
-								image={backgroundImage}
+				{containerSize.width > 0 && containerSize.height > 0 && (
+					<Stage
+						ref={stageRef}
+						width={containerSize.width}
+						height={containerSize.height}
+						scaleX={scale}
+						scaleY={scale}
+						x={position.x}
+						y={position.y}
+						draggable={tool === "pan"}
+						onDragStart={() => {
+							if (tool === "pan") setIsPanning(true);
+						}}
+						onDragEnd={(e) => {
+							if (tool === "pan") {
+								setIsPanning(false);
+								setPosition({ x: e.target.x(), y: e.target.y() });
+							}
+						}}
+						onMouseDown={handleMouseDown}
+						onMouseMove={handleMouseMove}
+						onMouseUp={handleMouseUp}
+						onTouchStart={handleMouseDown}
+						onTouchMove={handleMouseMove}
+						onTouchEnd={handleMouseUp}
+						style={{
+							cursor:
+								tool === "pan"
+									? isPanning
+										? "grabbing"
+										: "grab"
+									: tool === "select"
+										? "default"
+										: tool === "eraser"
+											? "not-allowed"
+											: "crosshair",
+						}}
+					>
+						{/* Background layer */}
+						<Layer>
+							{/* Canvas background - adapts to dark mode */}
+							<Rect
 								x={0}
 								y={0}
-								width={backgroundSize.width}
-								height={backgroundSize.height}
+								width={canvasWidth}
+								height={canvasHeight}
+								fill={canvasBackgroundColor}
 							/>
-						)}
-					</Layer>
+							{/* Background image */}
+							{backgroundImage && (
+								<KonvaImage
+									image={backgroundImage}
+									x={0}
+									y={0}
+									width={backgroundSize.width}
+									height={backgroundSize.height}
+								/>
+							)}
+						</Layer>
 
-					{/* Annotations layer */}
-					<Layer>
-						{annotations.map((annotation) => (
-							<AnnotationShape
-								key={annotation.id}
-								annotation={annotation}
-								isSelected={annotation.id === selectedId}
-								onSelect={() => setSelectedId(annotation.id)}
-								onChange={(newAttrs) =>
-									updateAnnotation(annotation.id, newAttrs)
-								}
-								image={
-									annotation.type === "image"
-										? imageCache.get(annotation.id)
-										: undefined
-								}
-							/>
-						))}
-
-						{/* Current drawing */}
-						{currentAnnotation && (
-							<AnnotationShape
-								annotation={currentAnnotation}
-								isSelected={false}
-								onSelect={() => {}}
-								onChange={() => {}}
-							/>
-						)}
-
-						{/* Transformer for selected shape */}
-						{selectedId && (
-							<Transformer
-								ref={transformerRef}
-								boundBoxFunc={(oldBox, newBox) => {
-									// Limit minimum size
-									if (newBox.width < 5 || newBox.height < 5) {
-										return oldBox;
+						{/* Annotations layer */}
+						<Layer>
+							{annotations.map((annotation) => (
+								<AnnotationShape
+									key={annotation.id}
+									annotation={annotation}
+									isSelected={annotation.id === selectedId}
+									onSelect={() => setSelectedId(annotation.id)}
+									onChange={(newAttrs) =>
+										updateAnnotation(annotation.id, newAttrs)
 									}
-									return newBox;
-								}}
-							/>
-						)}
-					</Layer>
-				</Stage>}
+									image={
+										annotation.type === "image"
+											? imageCache.get(annotation.id)
+											: undefined
+									}
+								/>
+							))}
+
+							{/* Current drawing */}
+							{currentAnnotation && (
+								<AnnotationShape
+									annotation={currentAnnotation}
+									isSelected={false}
+									onSelect={() => {}}
+									onChange={() => {}}
+								/>
+							)}
+
+							{/* Transformer for selected shape */}
+							{selectedId && (
+								<Transformer
+									ref={transformerRef}
+									boundBoxFunc={(oldBox, newBox) => {
+										// Limit minimum size
+										if (newBox.width < 5 || newBox.height < 5) {
+											return oldBox;
+										}
+										return newBox;
+									}}
+								/>
+							)}
+						</Layer>
+					</Stage>
+				)}
 
 				{/* Floating delete button for selected item (mobile-friendly) */}
 				{selectedId &&

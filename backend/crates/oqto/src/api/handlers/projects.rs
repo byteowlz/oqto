@@ -582,8 +582,8 @@ pub async fn create_project_from_template(
             .linux_users
             .as_ref()
             .ok_or_else(|| ApiError::internal("linux users not available"))?;
-        let linux_username = linux_username_override
-            .unwrap_or_else(|| linux_users.linux_username(user.id()));
+        let linux_username =
+            linux_username_override.unwrap_or_else(|| linux_users.linux_username(user.id()));
         let target_str = target_dir.to_string_lossy().to_string();
         // Best-effort git init via run-as-user
         if let Err(e) = crate::local::linux_users::usermgr_request(

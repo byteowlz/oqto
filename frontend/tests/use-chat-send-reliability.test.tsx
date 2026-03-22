@@ -74,5 +74,4 @@ describe("useChat send reliability", () => {
 		// dropped message.
 		expect(managerMock.ensureConnected).toHaveBeenCalled();
 	});
-
 });

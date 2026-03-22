@@ -195,20 +195,20 @@ export function WorkspaceOverviewPanel({
 			<div className="flex-shrink-0 flex items-center justify-between border-b border-border pb-3 mb-4">
 				<div>
 					<div className="text-base font-semibold">
-						{t('workspace.overview')}
+						{t("workspace.overview")}
 					</div>
 					<div className="text-xs text-muted-foreground">
-						{t('workspace.projectSettings')}
+						{t("workspace.projectSettings")}
 					</div>
 				</div>
 				<Button variant="outline" size="sm" onClick={onClose}>
-					{t('common.back')}
+					{t("common.back")}
 				</Button>
 			</div>
 
 			{loading ? (
 				<div className="text-sm text-muted-foreground">
-					{t('common.loading')}
+					{t("common.loading")}
 				</div>
 			) : (
 				<div className="flex-1 min-h-0 overflow-y-auto">

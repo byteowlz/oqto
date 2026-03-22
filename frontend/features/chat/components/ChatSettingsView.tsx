@@ -159,18 +159,14 @@ export function ChatSettingsView({
 		<div className={cn("flex flex-col h-full", className)}>
 			{/* Header */}
 			<div className="flex items-center justify-between p-3 border-b border-border">
-				<span className="text-sm font-medium">
-					{t('chat.settings')}
-				</span>
+				<span className="text-sm font-medium">{t("chat.settings")}</span>
 			</div>
 
 			{/* Settings form */}
 			<div className="flex-1 overflow-auto p-3 space-y-4">
 				{/* Model selector */}
 				<div className="space-y-2">
-					<Label className="text-xs font-medium">
-						{t('models.model')}
-					</Label>
+					<Label className="text-xs font-medium">{t("models.model")}</Label>
 					<Select
 						value={selectedModelRef ?? undefined}
 						onValueChange={handleModelChange}
@@ -188,8 +184,8 @@ export function ChatSettingsView({
 							<SelectValue
 								placeholder={
 									isSwitchingModel
-										? t('models.switchingModel')
-										: t('models.selectModel')
+										? t("models.switchingModel")
+										: t("models.selectModel")
 								}
 							/>
 						</SelectTrigger>
@@ -202,18 +198,18 @@ export function ChatSettingsView({
 								<Input
 									value={modelQuery}
 									onChange={(e) => setModelQuery(e.target.value)}
-									placeholder={t('models.searchModels')}
-									aria-label={t('models.searchModels')}
+									placeholder={t("models.searchModels")}
+									aria-label={t("models.searchModels")}
 									className="h-8 text-xs"
 								/>
 							</div>
 							{availableModels.length === 0 ? (
 								<SelectItem value="__none__" disabled>
-									{t('models.noModelsAvailable')}
+									{t("models.noModelsAvailable")}
 								</SelectItem>
 							) : filteredModels.length === 0 ? (
 								<SelectItem value="__no_results__" disabled>
-									{t('models.noMatches')}
+									{t("models.noMatches")}
 								</SelectItem>
 							) : (
 								filteredModels.map((model) => {
@@ -228,11 +224,11 @@ export function ChatSettingsView({
 						</SelectContent>
 					</Select>
 					<p className="text-[10px] text-muted-foreground">
-						{t('models.providerModelForChat')}
+						{t("models.providerModelForChat")}
 					</p>
 					{!isIdle && (
 						<p className="text-[10px] text-muted-foreground">
-							{t('models.modelSwitchIdleOnly')}
+							{t("models.modelSwitchIdleOnly")}
 						</p>
 					)}
 				</div>

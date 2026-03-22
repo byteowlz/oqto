@@ -1,7 +1,7 @@
 "use client";
 
-import { Button } from "@/components/ui/button";
 import { MarkdownRenderer } from "@/components/data-display";
+import { Button } from "@/components/ui/button";
 import { workspaceFileUrl } from "@/lib/api/files";
 import { downloadFileMux, readFileMux, writeFileMux } from "@/lib/mux-files";
 import { cn } from "@/lib/utils";
@@ -762,7 +762,9 @@ export function PreviewView({
 								if (fallbackUrl && imageUrl !== fallbackUrl) {
 									setBinaryUrl(fallbackUrl);
 								}
-								setMediaError("Image preview failed to load. Trying fallback URL.");
+								setMediaError(
+									"Image preview failed to load. Trying fallback URL.",
+								);
 							}}
 							className="max-w-full max-h-full object-contain"
 							style={{ imageRendering: "auto" }}

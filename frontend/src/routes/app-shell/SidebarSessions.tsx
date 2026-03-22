@@ -825,7 +825,9 @@ export const SidebarSessions = memo(function SidebarSessions({
 													</ContextMenuItem>
 													{onBackfillProject && (
 														<ContextMenuItem
-															onClick={() => onBackfillProject(project.directory as string)}
+															onClick={() =>
+																onBackfillProject(project.directory as string)
+															}
 														>
 															<RefreshCw className="w-4 h-4 mr-2" />
 															Backfill sessions

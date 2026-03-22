@@ -423,7 +423,7 @@ export const ChatInputArea = memo(
 
 		const translations = useMemo(
 			() => ({
-				inputPlaceholder: t('chat.placeholder'),
+				inputPlaceholder: t("chat.placeholder"),
 			}),
 			[t],
 		);
@@ -509,7 +509,7 @@ export const ChatInputArea = memo(
 							<DictationOverlay
 								value={messageInputRef.current}
 								liveTranscript={dictation.liveTranscript}
-								placeholder={t('chat.speakNow')}
+								placeholder={t("chat.speakNow")}
 								vadProgress={dictation.vadProgress}
 								autoSend={dictation.autoSendEnabled}
 								onAutoSendChange={dictation.setAutoSendEnabled}

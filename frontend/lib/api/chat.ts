@@ -3,8 +3,12 @@
  * Reads Pi chat history from disk (from hstry)
  */
 
-import type { AgentMessage, AgentAgentMessageWithParts, MessagePart } from "../agent-client";
 import type { Message, Part, Role } from "@/lib/canonical-types";
+import type {
+	AgentAgentMessageWithParts,
+	AgentMessage,
+	MessagePart,
+} from "../agent-client";
 import { authFetch, controlPlaneApiUrl, readApiError } from "./client";
 
 const normalizeWorkspacePathValue = (path?: string | null): string | null => {
@@ -102,7 +106,8 @@ export async function listChatHistory(
 	if (query.workspace) url.searchParams.set("workspace", query.workspace);
 	if (query.include_children) url.searchParams.set("include_children", "true");
 	if (query.limit) url.searchParams.set("limit", query.limit.toString());
-	if (query.shared_workspace_id) url.searchParams.set("shared_workspace_id", query.shared_workspace_id);
+	if (query.shared_workspace_id)
+		url.searchParams.set("shared_workspace_id", query.shared_workspace_id);
 
 	const res = await authFetch(url.toString(), {
 		cache: "no-store",
@@ -163,17 +168,18 @@ export async function updateChatSession(
 	shared_workspace_id?: string,
 ): Promise<ChatSession> {
 	const params = new URLSearchParams();
-	if (shared_workspace_id) params.set("shared_workspace_id", shared_workspace_id);
+	if (shared_workspace_id)
+		params.set("shared_workspace_id", shared_workspace_id);
 	const qs = params.toString();
-	const url = controlPlaneApiUrl(`/api/chat-history/${sessionId}${qs ? `?${qs}` : ""}`);
-	const res = await authFetch(url,
-		{
-			method: "PATCH",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify(updates),
-			credentials: "include",
-		},
+	const url = controlPlaneApiUrl(
+		`/api/chat-history/${sessionId}${qs ? `?${qs}` : ""}`,
 	);
+	const res = await authFetch(url, {
+		method: "PATCH",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(updates),
+		credentials: "include",
+	});
 	if (!res.ok) throw new Error(await readApiError(res));
 	return res.json();
 }
@@ -185,9 +191,12 @@ export async function deleteChatSessionApi(
 	shared_workspace_id?: string,
 ): Promise<void> {
 	const params = new URLSearchParams();
-	if (shared_workspace_id) params.set("shared_workspace_id", shared_workspace_id);
+	if (shared_workspace_id)
+		params.set("shared_workspace_id", shared_workspace_id);
 	const qs = params.toString();
-	const url = controlPlaneApiUrl(`/api/chat-history/${sessionId}${qs ? `?${qs}` : ""}`);
+	const url = controlPlaneApiUrl(
+		`/api/chat-history/${sessionId}${qs ? `?${qs}` : ""}`,
+	);
 	const res = await authFetch(url, {
 		method: "DELETE",
 		credentials: "include",
@@ -202,11 +211,13 @@ export type BackfillChatHistoryResponse = {
 	failed_files: number;
 };
 
-export async function triggerChatHistoryBackfill(opts: {
-	workspace?: string;
-	shared_workspace_id?: string;
-	limit?: number;
-} = {}): Promise<BackfillChatHistoryResponse> {
+export async function triggerChatHistoryBackfill(
+	opts: {
+		workspace?: string;
+		shared_workspace_id?: string;
+		limit?: number;
+	} = {},
+): Promise<BackfillChatHistoryResponse> {
 	const url = new URL(
 		controlPlaneApiUrl("/api/chat-history/backfill"),
 		window.location.origin,
@@ -232,9 +243,12 @@ export async function getChatMessages(
 	shared_workspace_id?: string,
 ): Promise<ChatMessage[]> {
 	const params = new URLSearchParams();
-	if (shared_workspace_id) params.set("shared_workspace_id", shared_workspace_id);
+	if (shared_workspace_id)
+		params.set("shared_workspace_id", shared_workspace_id);
 	const qs = params.toString();
-	const url = controlPlaneApiUrl(`/api/chat-history/${sessionId}/messages${qs ? `?${qs}` : ""}`);
+	const url = controlPlaneApiUrl(
+		`/api/chat-history/${sessionId}/messages${qs ? `?${qs}` : ""}`,
+	);
 	const res = await authFetch(url, {
 		credentials: "include",
 	});
@@ -269,7 +283,6 @@ const mapToolStatus = (
 			return "running";
 		case "error":
 			return "error";
-		case "success":
 		default:
 			return "completed";
 	}
@@ -307,7 +320,9 @@ const canonicalPartToAgentPart = (
 				callID: part.toolCallId,
 				state: {
 					status: mapToolStatus(part.status),
-					input: (part.input ?? undefined) as Record<string, unknown> | undefined,
+					input: (part.input ?? undefined) as
+						| Record<string, unknown>
+						| undefined,
 					title: part.name,
 				},
 			};

@@ -16,23 +16,24 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from "@/components/ui/dialog";
+import { listWorkspaceSessions } from "@/lib/api/sessions";
 import {
 	copyPathMux,
 	copyToWorkspaceMux,
 	createDirectoryMux,
 	deletePathMux,
-	downloadFileMux,
+	downloadPathMux,
+	downloadZipMux,
 	fetchFileTreeMux,
 	movePathMux,
 	renamePathMux,
+	unwatchFilesMux,
 	uploadFileMux,
 	watchFilesMux,
-	unwatchFilesMux,
 } from "@/lib/mux-files";
-import { getWsManager } from "@/lib/ws-manager";
-import { listWorkspaceSessions } from "@/lib/api/sessions";
 import { normalizeWorkspacePath } from "@/lib/session-utils";
 import { cn } from "@/lib/utils";
+import { getWsManager } from "@/lib/ws-manager";
 import {
 	AppWindow,
 	ChevronDown,
@@ -41,8 +42,8 @@ import {
 	Download,
 	Folder,
 	FolderPlus,
-	FolderUp,
 	FolderSync,
+	FolderUp,
 	Home,
 	LayoutGrid,
 	List,
@@ -723,25 +724,29 @@ export function FileTreeView({
 		}
 	};
 
-	const handleDownload = (path: string, isDirectory: boolean) => {
+	const handleDownload = (path: string, _isDirectory: boolean) => {
 		if (!normalizedWorkspacePath || !cacheKey) return;
-		if (isDirectory) {
-			setError("Directory download is not supported yet.");
-			return;
-		}
-		void downloadFileMux(normalizedWorkspacePath, path);
+		void downloadPathMux(normalizedWorkspacePath, path);
 	};
 
 	const handleDownloadSelected = () => {
 		if (!normalizedWorkspacePath || !cacheKey || selectedFiles.size === 0)
 			return;
 
-		if (selectedFiles.size === 1) {
-			const path = Array.from(selectedFiles)[0];
-			handleDownload(path, false); // We don't know if it's a directory
-		} else {
-			setError("Multi-file download is not supported yet.");
-		}
+		void (async () => {
+			try {
+				const selectedPaths = Array.from(selectedFiles);
+				if (selectedPaths.length === 1) {
+					await downloadPathMux(normalizedWorkspacePath, selectedPaths[0]);
+					return;
+				}
+
+				const zipName = `selection-${new Date().toISOString().slice(0, 10)}.zip`;
+				await downloadZipMux(normalizedWorkspacePath, selectedPaths, zipName);
+			} catch (err) {
+				setError(err instanceof Error ? err.message : "Download failed");
+			}
+		})();
 	};
 
 	const handleDelete = async (path: string) => {
@@ -818,8 +823,16 @@ export function FileTreeView({
 		});
 	};
 
-	const handleCopyToWorkspace = (path: string, name: string, isDirectory: boolean) => {
-		setWorkspacePickerState({ sourcePath: path, sourceName: name, isDirectory });
+	const handleCopyToWorkspace = (
+		path: string,
+		name: string,
+		isDirectory: boolean,
+	) => {
+		setWorkspacePickerState({
+			sourcePath: path,
+			sourceName: name,
+			isDirectory,
+		});
 	};
 
 	const handleNewFolder = () => {
@@ -1238,10 +1251,16 @@ export function FileTreeView({
 						setWorkspacePickerState(null);
 						setError("");
 						// Brief success indicator (clear after 3s)
-						setError(`Copied ${count} file${count !== 1 ? "s" : ""} to workspace`);
+						setError(
+							`Copied ${count} file${count !== 1 ? "s" : ""} to workspace`,
+						);
 						setTimeout(() => setError(""), 3000);
 					} catch (err) {
-						setError(err instanceof Error ? err.message : "Cross-workspace copy failed");
+						setError(
+							err instanceof Error
+								? err.message
+								: "Cross-workspace copy failed",
+						);
 					}
 				}}
 				onCancel={() => setWorkspacePickerState(null)}
@@ -1575,7 +1594,11 @@ function FileContextMenu({
 	onMove: (path: string) => void;
 	onOpenInCanvas?: (path: string) => void;
 	onOpenAsApp?: (path: string) => void;
-	onCopyToWorkspace?: (path: string, name: string, isDirectory: boolean) => void;
+	onCopyToWorkspace?: (
+		path: string,
+		name: string,
+		isDirectory: boolean,
+	) => void;
 }) {
 	const isImage = node.type === "file" && isImageFile(node.name);
 	const isHtml = node.type === "file" && /\.html?$/i.test(node.name);
@@ -1615,7 +1638,11 @@ function FileContextMenu({
 					Move
 				</ContextMenuItem>
 				{onCopyToWorkspace && (
-					<ContextMenuItem onClick={() => onCopyToWorkspace(node.path, node.name, node.type === "directory")}>
+					<ContextMenuItem
+						onClick={() =>
+							onCopyToWorkspace(node.path, node.name, node.type === "directory")
+						}
+					>
 						<FolderSync className="w-4 h-4 mr-2" />
 						Copy to Workspace
 					</ContextMenuItem>
@@ -1676,7 +1703,11 @@ function TreeView({
 	onRename: (path: string, currentName: string) => void;
 	onCopy: (path: string) => void;
 	onMove: (path: string) => void;
-	onCopyToWorkspace?: (path: string, name: string, isDirectory: boolean) => void;
+	onCopyToWorkspace?: (
+		path: string,
+		name: string,
+		isDirectory: boolean,
+	) => void;
 	renamingPath: string | null;
 	onRenameConfirm: (newName: string) => void;
 	onRenameCancel: () => void;
@@ -1760,7 +1791,11 @@ function TreeRow({
 	onRename: (path: string, currentName: string) => void;
 	onCopy: (path: string) => void;
 	onMove: (path: string) => void;
-	onCopyToWorkspace?: (path: string, name: string, isDirectory: boolean) => void;
+	onCopyToWorkspace?: (
+		path: string,
+		name: string,
+		isDirectory: boolean,
+	) => void;
 	renamingPath: string | null;
 	onRenameConfirm: (newName: string) => void;
 	onRenameCancel: () => void;
@@ -1937,7 +1972,11 @@ function ListView({
 	onRename: (path: string, currentName: string) => void;
 	onCopy: (path: string) => void;
 	onMove: (path: string) => void;
-	onCopyToWorkspace?: (path: string, name: string, isDirectory: boolean) => void;
+	onCopyToWorkspace?: (
+		path: string,
+		name: string,
+		isDirectory: boolean,
+	) => void;
 	renamingPath: string | null;
 	onRenameConfirm: (newName: string) => void;
 	onRenameCancel: () => void;
@@ -2075,7 +2114,11 @@ function GridView({
 	onRename: (path: string, currentName: string) => void;
 	onCopy: (path: string) => void;
 	onMove: (path: string) => void;
-	onCopyToWorkspace?: (path: string, name: string, isDirectory: boolean) => void;
+	onCopyToWorkspace?: (
+		path: string,
+		name: string,
+		isDirectory: boolean,
+	) => void;
 	renamingPath: string | null;
 	onRenameConfirm: (newName: string) => void;
 	onRenameCancel: () => void;
@@ -2235,9 +2278,7 @@ const WorkspacePickerDialog = memo(function WorkspacePickerDialog({
 			// Target path: place the file/directory at the root of the target workspace
 			await onConfirm(selectedWorkspace, sourceName);
 		} catch (err) {
-			setError(
-				err instanceof Error ? err.message : "Copy failed",
-			);
+			setError(err instanceof Error ? err.message : "Copy failed");
 		} finally {
 			setCopying(false);
 		}
@@ -2250,9 +2291,7 @@ const WorkspacePickerDialog = memo(function WorkspacePickerDialog({
 					<DialogTitle>Copy to Workspace</DialogTitle>
 					<DialogDescription>
 						Copy{" "}
-						<span className="font-medium text-foreground">
-							{sourceName}
-						</span>
+						<span className="font-medium text-foreground">{sourceName}</span>
 						{isDirectory ? " (directory)" : ""} to another workspace.
 					</DialogDescription>
 				</DialogHeader>
@@ -2293,9 +2332,7 @@ const WorkspacePickerDialog = memo(function WorkspacePickerDialog({
 					</div>
 				)}
 
-				{error && (
-					<div className="text-sm text-destructive">{error}</div>
-				)}
+				{error && <div className="text-sm text-destructive">{error}</div>}
 
 				<DialogFooter>
 					<button

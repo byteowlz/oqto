@@ -918,9 +918,7 @@ pub async fn ws_multiplexed_handler(
     let user_id = user.id().to_string();
     let is_admin = user.is_admin();
 
-    Ok(ws.on_upgrade(move |socket| {
-        handle_multiplexed_ws(socket, state, user_id, is_admin)
-    }))
+    Ok(ws.on_upgrade(move |socket| handle_multiplexed_ws(socket, state, user_id, is_admin)))
 }
 
 /// Create a runner client for a user if multi-user mode is enabled.
@@ -1865,8 +1863,8 @@ async fn emit_terminal_send_failure(
         runner_id: runner_id.to_string(),
         ts: Utc::now().timestamp_millis(),
         payload: oqto_protocol::events::EventPayload::AgentIdle {
-                message_version: None,
-            },
+            message_version: None,
+        },
     };
     let _ = event_tx.send(WsEvent::Agent(idle_event));
 }
@@ -2073,7 +2071,11 @@ async fn handle_get_messages(
     let is_multi_user = state.linux_users.is_some();
     let workspace_for_hstry = session_meta.as_ref().and_then(|meta| {
         (meta.scope.as_deref() == Some("workspace") || meta.scope.as_deref() == Some("pi"))
-            .then(|| meta.cwd.as_ref().map(|cwd| cwd.to_string_lossy().to_string()))
+            .then(|| {
+                meta.cwd
+                    .as_ref()
+                    .map(|cwd| cwd.to_string_lossy().to_string())
+            })
             .flatten()
     });
     let persisted_message_version =
@@ -3246,7 +3248,10 @@ mod tests {
 
         match second {
             WsEvent::Agent(event) => {
-                assert!(matches!(event.payload, oqto_protocol::events::EventPayload::AgentIdle { .. }));
+                assert!(matches!(
+                    event.payload,
+                    oqto_protocol::events::EventPayload::AgentIdle { .. }
+                ));
             }
             other => panic!("expected agent event, got {other:?}"),
         }

@@ -4,8 +4,10 @@ import { CopyButton } from "@/components/data-display/markdown-renderer";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { cn } from "@/lib/utils";
 import {
+	type ApiKeyListItem,
+	type OAuthLoginResponse,
+	type OAuthProviderInfo,
 	createApiKey,
 	deleteApiKey,
 	deleteOAuthProvider,
@@ -14,15 +16,13 @@ import {
 	pollOAuthDevice,
 	startOAuthLogin,
 	submitOAuthCallback,
-	type ApiKeyListItem,
-	type OAuthLoginResponse,
-	type OAuthProviderInfo,
 } from "@/lib/api";
 import { controlPlaneDirectBaseUrl } from "@/lib/api/client";
+import { cn } from "@/lib/utils";
 import { AlertCircle, Link2, Loader2, Trash2 } from "lucide-react";
+import QRCode from "qrcode";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import QRCode from "qrcode";
 import { toast } from "sonner";
 
 const OMNI_KEY_NAME = "omni-vanilla";
@@ -132,9 +132,7 @@ export function ApiKeysPanel() {
 			setOmniQr(qr);
 			await refresh();
 		} catch (err) {
-			setError(
-				err instanceof Error ? err.message : "Failed to create API key",
-			);
+			setError(err instanceof Error ? err.message : "Failed to create API key");
 		} finally {
 			setConnecting(false);
 		}
@@ -143,7 +141,10 @@ export function ApiKeysPanel() {
 	const handleManualCreate = useCallback(async () => {
 		const trimmedName = manualName.trim();
 		if (!trimmedName) {
-			const message = t("settings.apiKeysNameRequired", "Key name is required.");
+			const message = t(
+				"settings.apiKeysNameRequired",
+				"Key name is required.",
+			);
 			setError(message);
 			toast.error(message);
 			return;
@@ -186,32 +187,29 @@ export function ApiKeysPanel() {
 		[refresh],
 	);
 
-	const handleOAuthLogin = useCallback(
-		async (providerId: string) => {
-			setOauthError(null);
-			setOauthStarting((prev) => ({ ...prev, [providerId]: true }));
-			try {
-				const response = await startOAuthLogin(providerId);
-				setOauthPending((prev) => ({
-					...prev,
-					[providerId]: {
-						login: response,
-						code: "",
-						submitting: false,
-						polling: false,
-					},
-				}));
-			} catch (err) {
-				const message =
-					err instanceof Error ? err.message : "Failed to start OAuth login";
-				setOauthError(message);
-				toast.error(message);
-			} finally {
-				setOauthStarting((prev) => ({ ...prev, [providerId]: false }));
-			}
-		},
-		[],
-	);
+	const handleOAuthLogin = useCallback(async (providerId: string) => {
+		setOauthError(null);
+		setOauthStarting((prev) => ({ ...prev, [providerId]: true }));
+		try {
+			const response = await startOAuthLogin(providerId);
+			setOauthPending((prev) => ({
+				...prev,
+				[providerId]: {
+					login: response,
+					code: "",
+					submitting: false,
+					polling: false,
+				},
+			}));
+		} catch (err) {
+			const message =
+				err instanceof Error ? err.message : "Failed to start OAuth login";
+			setOauthError(message);
+			toast.error(message);
+		} finally {
+			setOauthStarting((prev) => ({ ...prev, [providerId]: false }));
+		}
+	}, []);
 
 	const handleOAuthCodeChange = useCallback(
 		(providerId: string, value: string) => {
@@ -254,9 +252,7 @@ export function ApiKeysPanel() {
 			}));
 			try {
 				await submitOAuthCallback(pending.code.trim(), pending.login.state);
-				toast.success(
-					t("settings.oauthConnected", "Provider connected."),
-				);
+				toast.success(t("settings.oauthConnected", "Provider connected."));
 				setOauthPending((prev) => {
 					const next = { ...prev };
 					delete next[providerId];
@@ -265,9 +261,7 @@ export function ApiKeysPanel() {
 				await refreshOAuth();
 			} catch (err) {
 				const message =
-					err instanceof Error
-						? err.message
-						: "Failed to complete OAuth login";
+					err instanceof Error ? err.message : "Failed to complete OAuth login";
 				setOauthError(message);
 				toast.error(message);
 			} finally {
@@ -300,9 +294,7 @@ export function ApiKeysPanel() {
 					pending.login.device_code,
 				);
 				if (response.status === "stored") {
-					toast.success(
-						t("settings.oauthConnected", "Provider connected."),
-					);
+					toast.success(t("settings.oauthConnected", "Provider connected."));
 					setOauthPending((prev) => {
 						const next = { ...prev };
 						delete next[providerId];
@@ -337,9 +329,7 @@ export function ApiKeysPanel() {
 				await refreshOAuth();
 			} catch (err) {
 				const message =
-					err instanceof Error
-						? err.message
-						: "Failed to disconnect provider";
+					err instanceof Error ? err.message : "Failed to disconnect provider";
 				setOauthError(message);
 				toast.error(message);
 			}
@@ -363,17 +353,14 @@ export function ApiKeysPanel() {
 				</CardHeader>
 				<CardContent className="space-y-4">
 					<div className="space-y-3">
-						<label className="text-xs text-muted-foreground">
+						<div className="text-xs text-muted-foreground">
 							{t("settings.apiKeysCreateTitle", "Create API key")}
-						</label>
+						</div>
 						<div className="grid gap-2 sm:grid-cols-[1.5fr_1fr_auto]">
 							<Input
 								value={manualName}
 								onChange={(e) => setManualName(e.target.value)}
-								placeholder={t(
-									"settings.apiKeysNamePlaceholder",
-									"Key name",
-								)}
+								placeholder={t("settings.apiKeysNamePlaceholder", "Key name")}
 							/>
 							<Input
 								type="date"
@@ -436,9 +423,9 @@ export function ApiKeysPanel() {
 						</p>
 						{manualKey && (
 							<div className="space-y-2">
-								<label className="text-xs text-muted-foreground">
+								<div className="text-xs text-muted-foreground">
 									{t("settings.apiKeysCreatedLabel", "New API key")}
-								</label>
+								</div>
 								<div className="flex items-center gap-2">
 									<Input value={manualKey} readOnly className="text-xs" />
 									<CopyButton text={manualKey} />
@@ -478,15 +465,11 @@ export function ApiKeysPanel() {
 					{omniLink && (
 						<div className="grid gap-4 lg:grid-cols-[1fr_200px]">
 							<div className="space-y-2">
-								<label className="text-xs text-muted-foreground">
+								<div className="text-xs text-muted-foreground">
 									{t("settings.omniLink", "Omni deep link")}
-								</label>
+								</div>
 								<div className="flex items-center gap-2">
-									<Input
-										value={omniLink}
-										readOnly
-										className="text-xs"
-									/>
+									<Input value={omniLink} readOnly className="text-xs" />
 									<CopyButton text={omniLink} />
 								</div>
 								<p className="text-xs text-muted-foreground">
@@ -530,7 +513,7 @@ export function ApiKeysPanel() {
 						<p className="text-xs text-muted-foreground">
 							{t(
 								"settings.oauthDescription",
-								"Connect provider accounts via OAuth."
+								"Connect provider accounts via OAuth.",
 							)}
 						</p>
 					</CardHeader>
@@ -544,15 +527,12 @@ export function ApiKeysPanel() {
 							<p className="text-sm text-muted-foreground">
 								{t(
 									"settings.oauthDisabled",
-									"OAuth logins are disabled by the administrator."
+									"OAuth logins are disabled by the administrator.",
 								)}
 							</p>
 						) : oauthProviders.length === 0 ? (
 							<p className="text-sm text-muted-foreground">
-								{t(
-									"settings.oauthEmpty",
-									"No OAuth providers are configured."
-								)}
+								{t("settings.oauthEmpty", "No OAuth providers are configured.")}
 							</p>
 						) : (
 							<div className="space-y-3">
@@ -566,13 +546,14 @@ export function ApiKeysPanel() {
 										>
 											<div className="flex flex-wrap items-start justify-between gap-2">
 												<div>
-													<p className="text-sm font-medium">
-														{provider.name}
-													</p>
+													<p className="text-sm font-medium">{provider.name}</p>
 													<p className="text-xs text-muted-foreground">
 														{provider.connected
 															? t("settings.oauthConnectedLabel", "Connected")
-															: t("settings.oauthDisconnectedLabel", "Not connected")}
+															: t(
+																	"settings.oauthDisconnectedLabel",
+																	"Not connected",
+																)}
 													</p>
 												</div>
 												<div className="flex items-center gap-2">
@@ -604,38 +585,48 @@ export function ApiKeysPanel() {
 														<Button
 															variant="outline"
 															onClick={() =>
-																window.open(pending.login.auth_url || "", "_blank")
+																window.open(
+																	pending.login.auth_url || "",
+																	"_blank",
+																)
 															}
 														>
 															{t("settings.oauthOpenLogin", "Open login")}
 														</Button>
 													)}
-													{pending.login.verification_uri && pending.login.user_code && (
-														<div className="space-y-1">
-															<p>
-																{t("settings.oauthDeviceUrl", "Verification URL")}: {" "}
-																{pending.login.verification_uri}
-															</p>
-															<div className="flex items-center gap-2">
-																<Input
-																	value={pending.login.user_code}
-																	readOnly
-																	className="text-xs"
-																/>
-																<CopyButton text={pending.login.user_code} />
+													{pending.login.verification_uri &&
+														pending.login.user_code && (
+															<div className="space-y-1">
+																<p>
+																	{t(
+																		"settings.oauthDeviceUrl",
+																		"Verification URL",
+																	)}
+																	: {pending.login.verification_uri}
+																</p>
+																<div className="flex items-center gap-2">
+																	<Input
+																		value={pending.login.user_code}
+																		readOnly
+																		className="text-xs"
+																	/>
+																	<CopyButton text={pending.login.user_code} />
+																</div>
 															</div>
-														</div>
-													)}
+														)}
 													{pending.login.state && (
 														<div className="space-y-2">
 															<Input
 																value={pending.code}
 																onChange={(e) =>
-																	handleOAuthCodeChange(provider.id, e.target.value)
+																	handleOAuthCodeChange(
+																		provider.id,
+																		e.target.value,
+																	)
 																}
 																placeholder={t(
 																	"settings.oauthCodePlaceholder",
-																	"Paste authorization code"
+																	"Paste authorization code",
 																)}
 															/>
 															<Button
@@ -711,32 +702,35 @@ export function ApiKeysPanel() {
 											<p className="text-sm font-medium">{key.name}</p>
 											<p className="text-xs text-muted-foreground">
 												{t("settings.apiKeyPrefix", "Prefix")}: octo_sk_
-												{key.key_prefix}
-												…
+												{key.key_prefix}…
 											</p>
 										</div>
 										<Button
-										type="button"
-										variant="ghost"
-										size="icon"
-										className="text-destructive hover:text-destructive"
-										onClick={() => handleDelete(key.id)}
-									>
-										<Trash2 className="h-4 w-4" />
-									</Button>
+											type="button"
+											variant="ghost"
+											size="icon"
+											className="text-destructive hover:text-destructive"
+											onClick={() => handleDelete(key.id)}
+										>
+											<Trash2 className="h-4 w-4" />
+										</Button>
 									</div>
 									<div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
 										<span>
-											{t("settings.apiKeyCreated", "Created")}: {formatDate(key.created_at)}
+											{t("settings.apiKeyCreated", "Created")}:{" "}
+											{formatDate(key.created_at)}
 										</span>
 										<span>
-											{t("settings.apiKeyLastUsed", "Last used")}: {formatDate(key.last_used_at)}
+											{t("settings.apiKeyLastUsed", "Last used")}:{" "}
+											{formatDate(key.last_used_at)}
 										</span>
 										<span>
-											{t("settings.apiKeyExpires", "Expires")}: {formatDate(key.expires_at)}
+											{t("settings.apiKeyExpires", "Expires")}:{" "}
+											{formatDate(key.expires_at)}
 										</span>
 										<span>
-											{t("settings.apiKeyRevoked", "Revoked")}: {formatDate(key.revoked_at)}
+											{t("settings.apiKeyRevoked", "Revoked")}:{" "}
+											{formatDate(key.revoked_at)}
 										</span>
 									</div>
 								</div>
