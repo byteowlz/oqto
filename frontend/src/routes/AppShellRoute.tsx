@@ -27,6 +27,7 @@ import {
 	deleteSharedWorkspace,
 	updateSharedWorkspace,
 } from "@/lib/api/shared-workspaces";
+import { triggerChatHistoryBackfill } from "@/lib/api/chat";
 import {
 	DeleteConfirmDialog,
 	MobileHeader,
@@ -293,6 +294,21 @@ const AppShell = memo(function AppShell() {
 	const handleDeleteSession = useCallback(
 		async (sessionId: string) => deleteChatSession(sessionId),
 		[deleteChatSession],
+	);
+
+	const handleBackfillProjectSessions = useCallback(
+		async (workspacePath: string) => {
+			try {
+				const result = await triggerChatHistoryBackfill({ workspace: workspacePath });
+				await refreshChatHistory({ force: true });
+				await refreshWorkspaceSessions();
+				return result;
+			} catch (error) {
+				console.error("Failed to backfill project sessions", error);
+				throw error;
+			}
+		},
+		[refreshChatHistory, refreshWorkspaceSessions],
 	);
 
 	useAppShellSessionAutomation({
@@ -644,6 +660,9 @@ const AppShell = memo(function AppShell() {
 						onPinProject={sidebarState.togglePinProject}
 						onRenameProject={sessionDialogs.handleRenameProject}
 						onDeleteProject={sessionDialogs.handleDeleteProject}
+						onBackfillProject={(directory) => {
+							void handleBackfillProjectSessions(directory).catch(() => {});
+						}}
 						onSearchResultClick={handleSearchResultClick}
 						messageSearchExtraHits={messageSearchExtraHits}
 						sessionSearch={sessionSearch}
@@ -823,6 +842,9 @@ const AppShell = memo(function AppShell() {
 										onPinProject={sidebarState.togglePinProject}
 										onRenameProject={sessionDialogs.handleRenameProject}
 										onDeleteProject={sessionDialogs.handleDeleteProject}
+										onBackfillProject={(directory) => {
+											void handleBackfillProjectSessions(directory).catch(() => {});
+										}}
 										onShareProject={handleShareProject}
 										onSearchResultClick={handleSearchResultClick}
 										messageSearchExtraHits={messageSearchExtraHits}

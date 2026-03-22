@@ -49,6 +49,7 @@ import {
 	Pencil,
 	Pin,
 	Plus,
+	RefreshCw,
 	Search,
 	Settings,
 	Share2,
@@ -116,6 +117,7 @@ export interface SidebarSessionsProps {
 	onPinProject: (projectKey: string) => void;
 	onRenameProject: (projectKey: string, currentName: string) => void;
 	onDeleteProject: (projectKey: string, projectName: string) => void;
+	onBackfillProject?: (directory: string) => void;
 	onShareProject?: (directory: string, projectName: string) => void;
 	onSearchResultClick: (hit: HstrySearchHit) => void;
 	messageSearchExtraHits: HstrySearchHit[];
@@ -164,6 +166,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 	onPinProject,
 	onRenameProject,
 	onDeleteProject,
+	onBackfillProject,
 	onShareProject,
 	onSearchResultClick,
 	messageSearchExtraHits,
@@ -820,6 +823,14 @@ export const SidebarSessions = memo(function SidebarSessions({
 														<Plus className="w-4 h-4 mr-2" />
 														{t("sessions.newSession")}
 													</ContextMenuItem>
+													{onBackfillProject && (
+														<ContextMenuItem
+															onClick={() => onBackfillProject(project.directory as string)}
+														>
+															<RefreshCw className="w-4 h-4 mr-2" />
+															Backfill sessions
+														</ContextMenuItem>
+													)}
 													<ContextMenuSeparator />
 												</>
 											)}

@@ -195,6 +195,38 @@ export async function deleteChatSessionApi(
 	if (!res.ok) throw new Error(await readApiError(res));
 }
 
+export type BackfillChatHistoryResponse = {
+	scanned_files: number;
+	repaired_conversations: number;
+	skipped_files: number;
+	failed_files: number;
+};
+
+export async function triggerChatHistoryBackfill(opts: {
+	workspace?: string;
+	shared_workspace_id?: string;
+	limit?: number;
+} = {}): Promise<BackfillChatHistoryResponse> {
+	const url = new URL(
+		controlPlaneApiUrl("/api/chat-history/backfill"),
+		window.location.origin,
+	);
+	if (opts.workspace) url.searchParams.set("workspace", opts.workspace);
+	if (opts.shared_workspace_id) {
+		url.searchParams.set("shared_workspace_id", opts.shared_workspace_id);
+	}
+	if (typeof opts.limit === "number") {
+		url.searchParams.set("limit", String(opts.limit));
+	}
+
+	const res = await authFetch(url.toString(), {
+		method: "POST",
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(await readApiError(res));
+	return res.json();
+}
+
 export async function getChatMessages(
 	sessionId: string,
 	shared_workspace_id?: string,

@@ -378,6 +378,7 @@ fn create_router_with_config_and_auth(
         )
         // Chat history routes (reads from disk, reads from hstry)
         .route("/chat-history", get(handlers::list_chat_history))
+        .route("/chat-history/backfill", post(handlers::backfill_chat_history))
         .route(
             "/chat-history/grouped",
             get(handlers::list_chat_history_grouped),

@@ -757,6 +757,10 @@ pub struct RepairWorkspaceChatHistoryRequest {
     /// Optional upper bound for scanned files (newest-first within each directory).
     #[serde(default)]
     pub limit: Option<usize>,
+    /// Optional workspace/workdir path filter. When set, only sessions whose
+    /// workspace path matches this prefix are repaired.
+    #[serde(default)]
+    pub workspace: Option<String>,
 }
 
 // ============================================================================

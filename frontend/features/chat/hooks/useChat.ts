@@ -17,6 +17,7 @@ import { useBusySessions } from "@/components/contexts";
 import { getChatMessages } from "@/lib/api";
 import {
 	clearSharedWorkspaceSessionId,
+	getRunnerHistoryAlias,
 	setSharedWorkspaceSessionId,
 	sharedWorkspaceSessionMap,
 } from "@/components/contexts/chat-context";
@@ -453,7 +454,28 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 		async (sessionId: string, expectedVersion?: number) => {
 			try {
 				const swId = sharedWorkspaceSessionMap.get(sessionId);
-				const history = await getChatMessages(sessionId, swId);
+				let history = await getChatMessages(sessionId, swId).catch(async (err) => {
+					const alias = getRunnerHistoryAlias(sessionId);
+					if (!alias || alias === sessionId) throw err;
+					if (isPiDebugEnabled()) {
+						console.debug(
+							"[useChat] fetchHistoryMessages: retrying with runner alias",
+							sessionId,
+							"->",
+							alias,
+						);
+					}
+					return getChatMessages(alias, swId);
+				});
+				if (history.length === 0) {
+					const alias = getRunnerHistoryAlias(sessionId);
+					if (alias && alias !== sessionId) {
+						const aliasHistory = await getChatMessages(alias, swId);
+						if (aliasHistory.length > 0) {
+							history = aliasHistory;
+						}
+					}
+				}
 
 				// Guard: after the async fetch, verify the session is still
 				// active. If the user switched sessions while the request was

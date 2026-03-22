@@ -84,6 +84,56 @@ sync_configs_with_retry() {
     return 1
 }
 
+ensure_single_user_runner() {
+    local is_local="$1"
+    local ssh_target="${2:-}"
+    local host_name="${3:-local}"
+
+    log "  Ensuring oqto-runner is active (single-user mode)..."
+
+    if [[ "$is_local" == "true" ]]; then
+        if systemctl --user is-active --quiet oqto-runner; then
+            ok "  oqto-runner already active"
+            return 0
+        fi
+
+        run systemctl --user enable --now oqto-runner || {
+            warn "  Failed to enable/start oqto-runner on ${host_name}"
+            return 1
+        }
+
+        local uid socket
+        uid="$(id -u)"
+        socket="/run/user/${uid}/oqto-runner.sock"
+        if [[ -S "$socket" ]]; then
+            ok "  Runner socket available: $socket"
+        else
+            warn "  Runner service started but socket missing: $socket"
+        fi
+        return 0
+    fi
+
+    if ssh "$ssh_target" "systemctl --user is-active --quiet oqto-runner"; then
+        ok "  oqto-runner already active on ${host_name}"
+        return 0
+    fi
+
+    if ! ssh "$ssh_target" "systemctl --user enable --now oqto-runner"; then
+        warn "  Failed to enable/start oqto-runner on ${host_name}"
+        return 1
+    fi
+
+    local remote_socket_check
+    remote_socket_check="uid=\$(id -u); test -S /run/user/\${uid}/oqto-runner.sock"
+    if ssh "$ssh_target" "$remote_socket_check"; then
+        ok "  Runner socket available on ${host_name}"
+    else
+        warn "  Runner service started on ${host_name} but socket missing"
+    fi
+
+    return 0
+}
+
 usage() {
     sed -n '/^# Usage:/,/^[^#]/p' "$0" | grep '^#' | sed 's/^# \?//'
     exit 0
@@ -398,7 +448,26 @@ deploy_host() {
             fi
         fi
 
+        # Single-user mode: runner must always be up (runner-only architecture)
+        if [[ "$mode" == "single-user" ]]; then
+            if $DRY_RUN; then
+                echo -e "${YELLOW}  [dry-run]${NC} ensure oqto-runner is enabled and running"
+            else
+                ensure_single_user_runner "$is_local" "$ssh_target" "$name" || warn "  oqto-runner availability check failed"
+            fi
+        fi
+
         ok "Services restarted"
+    fi
+
+    # Even when service restart is skipped, enforce runner availability in single-user mode.
+    if [[ "$mode" == "single-user" && "$SKIP_SERVICES" == "true" ]]; then
+        log "Service restart skipped; still verifying oqto-runner availability (single-user mode)"
+        if $DRY_RUN; then
+            echo -e "${YELLOW}  [dry-run]${NC} ensure oqto-runner is enabled and running"
+        else
+            ensure_single_user_runner "$is_local" "$ssh_target" "$name" || warn "  oqto-runner availability check failed"
+        fi
     fi
 
     ok "Deployment to ${BOLD}$name${NC} complete"

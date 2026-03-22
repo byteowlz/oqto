@@ -35,7 +35,7 @@ import {
 	deleteSharedWorkspaceWorkdir,
 	listWorkdirs,
 } from "@/lib/api/shared-workspaces";
-import { listChatHistory } from "@/lib/api/chat";
+import { listChatHistory, triggerChatHistoryBackfill } from "@/lib/api/chat";
 import type { ChatSession } from "@/lib/api/chat";
 import {
 	formatSessionDate,
@@ -56,6 +56,7 @@ import {
 	Pencil,
 	Pin,
 	Plus,
+	RefreshCw,
 	Settings,
 	Trash2,
 	UserPlus,
@@ -337,6 +338,27 @@ function WorkspaceContent({
 		}
 	};
 
+	const backfillWorkdirSessions = async (workdirPath: string) => {
+		try {
+			const result = await triggerChatHistoryBackfill({
+				workspace: workdirPath,
+				shared_workspace_id: workspace.id,
+			});
+			const sessionData = await listChatHistory({
+				shared_workspace_id: workspace.id,
+			});
+			const safeSessions = Array.isArray(sessionData) ? sessionData : [];
+			setFetchedSessions(
+				safeSessions.map((s) => ({ ...s, shared_workspace_id: workspace.id })),
+			);
+			toast.success(
+				`Backfill complete: repaired ${result.repaired_conversations}, scanned ${result.scanned_files}`,
+			);
+		} catch (e) {
+			toast.error(e instanceof Error ? e.message : "Backfill failed");
+		}
+	};
+
 	const confirmDeleteSession = async () => {
 		if (!pendingDeleteSession || !onDeleteSession) return;
 		const deletingId = pendingDeleteSession.id;
@@ -466,6 +488,10 @@ function WorkspaceContent({
 												<Copy className="w-4 h-4 mr-2" />
 												{t("common.copyPath", "Copy path")}
 											</DropdownMenuItem>
+											<DropdownMenuItem onClick={() => void backfillWorkdirSessions(wd.path)}>
+												<RefreshCw className="w-4 h-4 mr-2" />
+												Backfill sessions
+											</DropdownMenuItem>
 										</DropdownMenuContent>
 									</DropdownMenu>
 								</div>
@@ -484,6 +510,10 @@ function WorkspaceContent({
 								>
 									<Copy className="w-4 h-4 mr-2" />
 									{t("common.copyPath", "Copy path")}
+								</ContextMenuItem>
+								<ContextMenuItem onClick={() => void backfillWorkdirSessions(wd.path)}>
+									<RefreshCw className="w-4 h-4 mr-2" />
+									Backfill sessions
 								</ContextMenuItem>
 								{onPinProject && (
 									<ContextMenuItem onClick={() => onPinProject(wd.path)}>

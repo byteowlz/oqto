@@ -47,6 +47,7 @@ struct JsonlSessionMetadata {
     external_id: String,
     title: Option<String>,
     readable_id: Option<String>,
+    workspace_path: Option<String>,
     created_at_ms: i64,
     updated_at_ms: i64,
 }
@@ -74,6 +75,18 @@ fn parse_pi_created_at_ms_from_path(path: &std::path::Path) -> Option<i64> {
     let (ts, _) = stem.rsplit_once('_')?;
     let parsed = chrono::NaiveDateTime::parse_from_str(ts, "%Y-%m-%dT%H-%M-%S-%3fZ").ok()?;
     Some(chrono::Utc.from_utc_datetime(&parsed).timestamp_millis())
+}
+
+fn decode_workspace_path_from_safe_dirname(dirname: &str) -> Option<String> {
+    let trimmed = dirname.trim();
+    let core = trimmed
+        .strip_prefix("--")
+        .and_then(|v| v.strip_suffix("--"))
+        .unwrap_or(trimmed);
+    if core.is_empty() {
+        return None;
+    }
+    Some(format!("/{}", core.replace('-', "/")))
 }
 
 fn read_last_session_info_name(path: &std::path::Path) -> Option<String> {
@@ -120,24 +133,29 @@ fn scan_pi_jsonl_session_metadata(limit: Option<usize>) -> JsonlScanOutcome {
         return outcome;
     };
 
-    let mut files = Vec::new();
+    let mut files: Vec<(std::path::PathBuf, Option<String>)> = Vec::new();
     for workspace in workspaces.flatten() {
-        let workspace_path = workspace.path();
-        if !workspace_path.is_dir() {
+        let workspace_dir_path = workspace.path();
+        if !workspace_dir_path.is_dir() {
             continue;
         }
-        let Ok(entries) = std::fs::read_dir(&workspace_path) else {
+        let workspace_path = workspace_dir_path
+            .file_name()
+            .and_then(|v| v.to_str())
+            .and_then(decode_workspace_path_from_safe_dirname);
+
+        let Ok(entries) = std::fs::read_dir(&workspace_dir_path) else {
             continue;
         };
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_file() && path.extension().and_then(|v| v.to_str()) == Some("jsonl") {
-                files.push(path);
+                files.push((path, workspace_path.clone()));
             }
         }
     }
 
-    files.sort();
+    files.sort_by(|a, b| a.0.cmp(&b.0));
     files.reverse();
 
     if let Some(limit) = limit
@@ -146,7 +164,7 @@ fn scan_pi_jsonl_session_metadata(limit: Option<usize>) -> JsonlScanOutcome {
         files.truncate(limit);
     }
 
-    for path in files {
+    for (path, workspace_path) in files {
         outcome.scanned_files += 1;
 
         let Some(external_id) = parse_pi_session_id_from_path(&path) else {
@@ -172,13 +190,19 @@ fn scan_pi_jsonl_session_metadata(limit: Option<usize>) -> JsonlScanOutcome {
         let session_name = read_last_session_info_name(&path);
         let (title, readable_id) = if let Some(name) = session_name {
             let parsed = crate::pi::session_parser::ParsedTitle::parse(&name);
-            let parsed_title = parsed.display_title().trim();
-            let title = if parsed_title.is_empty() {
-                None
-            } else {
-                Some(parsed_title.to_string())
-            };
             let readable_id = parsed.get_readable_id().map(ToOwned::to_owned);
+            let parsed_title = parsed.display_title().trim();
+            let fallback_title = name
+                .split('[')
+                .next()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string);
+            let title = if !parsed_title.is_empty() {
+                Some(parsed_title.to_string())
+            } else {
+                fallback_title
+            };
             (title, readable_id)
         } else {
             (None, None)
@@ -188,6 +212,7 @@ fn scan_pi_jsonl_session_metadata(limit: Option<usize>) -> JsonlScanOutcome {
             external_id,
             title,
             readable_id,
+            workspace_path,
             created_at_ms,
             updated_at_ms,
         });
@@ -2072,6 +2097,17 @@ impl Runner {
         let mut failed = scan.failed_files;
 
         for session in scan.sessions {
+            if let Some(workspace_filter) = req.workspace.as_ref() {
+                let matches_workspace = session
+                    .workspace_path
+                    .as_ref()
+                    .is_some_and(|path| path == workspace_filter || path.starts_with(&format!("{workspace_filter}/")));
+                if !matches_workspace {
+                    skipped += 1;
+                    continue;
+                }
+            }
+
             match client.get_conversation(&session.external_id, None).await {
                 Ok(Some(_)) => {
                     skipped += 1;
@@ -2092,7 +2128,7 @@ impl Runner {
                 .write_conversation(
                     &session.external_id,
                     session.title.clone(),
-                    None,
+                    session.workspace_path.clone(),
                     None,
                     None,
                     Some("{\"recovered_from\":\"pi_jsonl\"}".to_string()),
@@ -2389,8 +2425,9 @@ impl Runner {
                         for file in files.flatten() {
                             let fname = file.file_name();
                             let fname_str = fname.to_string_lossy();
-                            if fname_str.contains(&hstry_external_id)
-                                && fname_str.ends_with(".jsonl")
+                            if fname_str.ends_with(".jsonl")
+                                && (fname_str.contains(&hstry_external_id)
+                                    || fname_str.contains(&req.session_id))
                             {
                                 info!("Deleting Pi session file: {}", file.path().display());
                                 let _ = std::fs::remove_file(file.path());

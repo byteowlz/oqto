@@ -734,9 +734,11 @@ impl RunnerClient {
     pub async fn repair_workspace_chat_history(
         &self,
         limit: Option<usize>,
+        workspace: Option<String>,
     ) -> Result<WorkspaceChatHistoryRepairResponse> {
         let req = RunnerRequest::RepairWorkspaceChatHistory(RepairWorkspaceChatHistoryRequest {
             limit,
+            workspace,
         });
 
         let resp = self.request(&req).await?;
