@@ -939,4 +939,33 @@ update-pi:
     systemctl --user restart oqto-runner
     echo "Done. Pi version: $(/usr/local/bin/pi --version 2>/dev/null)"
 
+# --- iOS (remote Mac build via Tailscale) ---
+
+ios-mac := "mac"
+ios-remote-dir := "~/byteowlz/oqto"
+ios-device := "D9CV2YHT7J"
+
+# Sync project to Mac
+ios-sync:
+    rsync -avz --delete \
+      --exclude 'target/' \
+      --exclude 'node_modules/' \
+      --exclude 'frontend/src-tauri/gen/' \
+      --exclude '.git/' \
+      --exclude 'backend/target/' \
+      --exclude 'fileserver/target/' \
+      ./ {{ios-mac}}:{{ios-remote-dir}}/
+
+# Build iOS app on Mac
+ios-build: ios-sync
+    ssh -t {{ios-mac}} "cd {{ios-remote-dir}}/frontend && bun install && bun tauri ios build --config src-tauri/tauri.ios.conf.json"
+
+# Build and install to iPhone
+ios-deploy: ios-build
+    ssh -t {{ios-mac}} "xcrun devicectl device install app --device {{ios-device}} {{ios-remote-dir}}/frontend/src-tauri/gen/apple/build/arm64/oqto.ipa"
+
+# Install last build to iPhone (skip rebuild)
+ios-install:
+    ssh -t {{ios-mac}} "xcrun devicectl device install app --device {{ios-device}} {{ios-remote-dir}}/frontend/src-tauri/gen/apple/build/arm64/oqto.ipa"
+
 

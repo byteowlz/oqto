@@ -87,13 +87,15 @@ RUN set -eux; \
     \
     # ================================================================== \
     # Byteowlz Rust tools (tarballs contain binaries at root level) \
+    # Required: hstry, eavs (core services) \
+    # Optional: agntz, mmry, sldr, ignr, trx (agent tools) \
     # ================================================================== \
     for repo in hstry eavs agntz mmry sldr ignr trx; do \
       echo "--- Downloading $repo ---"; \
       TAG=$(tag "$GH/$repo"); \
       curl -fsSL "$GH/$repo/releases/download/${TAG}/${repo}-${TAG}-${RUST_TARGET}.tar.gz" \
         | tar xz -C /out/bin/ \
-      || echo "WARN: $repo download failed"; \
+      || echo "WARN: $repo download failed (may not have ${RUST_TARGET} build)"; \
     done; \
     \
     # tmpltr (no releases yet -- skip, will be source-built) \
@@ -141,7 +143,19 @@ RUN set -eux; \
     rm -f /out/bin/LICENSE* /out/bin/README* /out/bin/CHANGELOG* /out/bin/checksums* 2>/dev/null || true; \
     chmod +x /out/bin/* 2>/dev/null || true; \
     echo "=== Downloaded binaries ==="; ls -la /out/bin/; \
-    echo "=== Frontend files ==="; ls /out/frontend/ | head -5
+    echo "=== Frontend files ==="; ls /out/frontend/ | head -5; \
+    \
+    # ================================================================== \
+    # Verify required binaries exist \
+    # ================================================================== \
+    MISSING=""; \
+    for bin in oqto oqtoctl oqto-runner oqto-files hstry eavs caddy; do \
+      if [ ! -f "/out/bin/$bin" ]; then MISSING="$MISSING $bin"; fi; \
+    done; \
+    if [ -n "$MISSING" ]; then \
+      echo "ERROR: Required binaries missing:$MISSING"; exit 1; \
+    fi; \
+    echo "=== All required binaries present ==="
 
 # ---------------------------------------------------------------------------
 # Stage 2: Build tools without pre-built releases (source fallback)
