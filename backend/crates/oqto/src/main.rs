@@ -16,6 +16,7 @@ use config::{Config, Environment, File, FileFormat};
 use log::{LevelFilter, debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
+use tower_http::services::{ServeDir, ServeFile};
 
 #[cfg(unix)]
 use hyper::server::conn::http1;
@@ -1600,6 +1601,42 @@ fn parse_duration(s: &str) -> Result<i64> {
     Ok(seconds)
 }
 
+fn resolve_frontend_dir() -> Option<PathBuf> {
+    let candidates = [
+        std::env::var("OQTO_FRONTEND_DIR").ok().map(PathBuf::from),
+        Some(PathBuf::from("/var/www/oqto")),
+        Some(PathBuf::from("/usr/local/share/oqto/frontend/dist")),
+    ];
+
+    candidates.into_iter().flatten().find(|dir| dir.join("index.html").is_file())
+}
+
+fn with_frontend_static_if_available(api_router: axum::Router) -> axum::Router {
+    match resolve_frontend_dir() {
+        Some(frontend_dir) => {
+            info!(
+                "Serving frontend static files from {}",
+                frontend_dir.display()
+            );
+            let spa_fallback = ServeFile::new(frontend_dir.join("index.html"));
+            let static_service = ServeDir::new(frontend_dir)
+                .append_index_html_on_directories(true)
+                .fallback(spa_fallback);
+
+            axum::Router::new()
+                .nest("/api", api_router)
+                .fallback_service(axum::routing::get_service(static_service))
+        }
+        None => {
+            warn!(
+                "No frontend static files found. API is available under /api, but / will return 404. \
+Set OQTO_FRONTEND_DIR or deploy frontend to /var/www/oqto"
+            );
+            axum::Router::new().nest("/api", api_router)
+        }
+    }
+}
+
 async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     info!("Starting workspace backend server...");
 
@@ -2477,7 +2514,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     // internal services, containers) must use /api/* paths.
     let admin_state = state.clone();
     let api_router = api::create_router_with_config(state, ctx.config.server.max_upload_size_mb);
-    let app = axum::Router::new().nest("/api", api_router);
+    let app = with_frontend_static_if_available(api_router);
 
     #[cfg(unix)]
     if let Some(ref socket_path) = ctx.config.server.admin_socket_path {

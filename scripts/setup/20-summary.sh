@@ -383,6 +383,9 @@ print_summary() {
     for svc in "${need_start[@]}"; do
       if [[ "$SELECTED_USER_MODE" == "single" ]]; then
         echo "     systemctl --user start $svc"
+      elif [[ "$svc" == "oqto-runner" ]]; then
+        echo "     # oqto-runner is per-user in multi-user mode (managed by oqto-usermgr)"
+        echo "     # Create/start a platform user runner via oqto UI or oqtoctl user provisioning"
       else
         echo "     sudo systemctl start $svc"
       fi
@@ -393,10 +396,12 @@ print_summary() {
 
   if [[ "$PRODUCTION_MODE" == "true" ]]; then
     echo "  $step. Access the web interface:"
-    if [[ -n "$DOMAIN" && "$DOMAIN" != "localhost" ]]; then
+    if [[ "$SETUP_CADDY" == "yes" && -n "$DOMAIN" && "$DOMAIN" != "localhost" ]]; then
       echo "     https://${DOMAIN}"
-    else
+    elif [[ "$SETUP_CADDY" == "yes" ]]; then
       echo "     http://localhost:3000"
+    else
+      echo "     http://localhost:8080"
     fi
     echo
     ((step++))

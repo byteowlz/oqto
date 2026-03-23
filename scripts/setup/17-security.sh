@@ -89,7 +89,6 @@ configure_firewall() {
   local http_port="80"
   local https_port="443"
   local octo_port="8080"
-  local frontend_port="3000"
 
   case "$OS_DISTRO" in
   debian | ubuntu | pop | linuxmint | arch | manjaro | endeavouros)
@@ -109,10 +108,9 @@ configure_firewall() {
         sudo ufw allow "$https_port/tcp" comment 'HTTPS'
       fi
 
-      # Allow Oqto ports (only if not using Caddy)
+      # Allow Oqto backend/UI port (only if not using Caddy)
       if [[ "$SETUP_CADDY" != "yes" ]]; then
-        sudo ufw allow "$octo_port/tcp" comment 'Oqto API'
-        sudo ufw allow "$frontend_port/tcp" comment 'Oqto Frontend'
+        sudo ufw allow "$octo_port/tcp" comment 'Oqto UI/API'
       fi
 
       # Enable UFW
@@ -140,10 +138,9 @@ configure_firewall() {
         sudo firewall-cmd --permanent --add-service=https
       fi
 
-      # Allow Oqto ports (only if not using Caddy)
+      # Allow Oqto backend/UI port (only if not using Caddy)
       if [[ "$SETUP_CADDY" != "yes" ]]; then
         sudo firewall-cmd --permanent --add-port="$octo_port/tcp"
-        sudo firewall-cmd --permanent --add-port="$frontend_port/tcp"
       fi
 
       sudo firewall-cmd --reload

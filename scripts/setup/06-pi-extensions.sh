@@ -99,6 +99,17 @@ install_pi_extensions_for_user() {
 
   mkdir -p "$extensions_dir"
 
+  # Cleanup legacy unprefixed extension directories from pre-rename installs.
+  # Example: auto-rename -> pi-auto-rename
+  for ext_name in "${PI_DEFAULT_EXTENSIONS[@]}"; do
+    local legacy_name="${ext_name#pi-}"
+    local legacy_dir="${extensions_dir}/${legacy_name}"
+    if [[ "$legacy_name" != "$ext_name" && -d "$legacy_dir" ]]; then
+      rm -rf "$legacy_dir"
+      log_info "Removed legacy extension directory: ${legacy_name}"
+    fi
+  done
+
   local installed=0
   for ext_name in "${PI_DEFAULT_EXTENSIONS[@]}"; do
     local src_dir="${ext_source}/${ext_name}"

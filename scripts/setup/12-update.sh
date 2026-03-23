@@ -444,6 +444,10 @@ build_octo() {
       sudo chown -R root:root "$frontend_deploy"
       log_success "Frontend deployed to ${frontend_deploy}"
     else
+      if [[ "${PRODUCTION_MODE:-false}" == "true" && "${SETUP_CADDY:-no}" != "yes" ]]; then
+        log_error "Frontend dist not found (${frontend_dist}). Production without Caddy requires backend-served static frontend files."
+        return 1
+      fi
       log_warn "Frontend dist not found, skipping deployment"
     fi
   fi
