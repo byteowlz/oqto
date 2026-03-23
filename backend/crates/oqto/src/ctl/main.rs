@@ -252,8 +252,8 @@ enum ImageCommand {
     Check,
     /// Pull latest image
     Pull {
-        /// Image name (default: oqto-dev:latest)
-        #[arg(default_value = "oqto-dev:latest")]
+        /// Image name (default: oqto:latest)
+        #[arg(default_value = "oqto:latest")]
         image: String,
     },
     /// Rebuild container image from Dockerfile
@@ -1580,7 +1580,7 @@ async fn handle_image(client: &OqtoClient, command: ImageCommand, json: bool) ->
                 "-f",
                 &format!("{}/{}", path, dockerfile),
                 "-t",
-                "oqto-dev:latest",
+                "oqto:latest",
             ]);
 
             if no_cache {
@@ -1593,9 +1593,9 @@ async fn handle_image(client: &OqtoClient, command: ImageCommand, json: bool) ->
 
             if output.status.success() {
                 if json {
-                    println!(r#"{{"status": "built", "image": "oqto-dev:latest"}}"#);
+                    println!(r#"{{"status": "built", "image": "oqto:latest"}}"#);
                 } else {
-                    println!("Successfully built oqto-dev:latest");
+                    println!("Successfully built oqto:latest");
                 }
             } else {
                 let stderr = String::from_utf8_lossy(&output.stderr);

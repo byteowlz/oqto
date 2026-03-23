@@ -182,7 +182,7 @@ impl Default for SessionConfig {
     fn default() -> Self {
         Self {
             workspace_path: "/tmp/workspace".to_string(),
-            image: "oqto-dev:latest".to_string(),
+            image: "oqto:latest".to_string(),
             base_port: 41820,
             env: Default::default(),
         }
@@ -196,7 +196,7 @@ pub struct CreateSessionRequest {
     /// Path to the workspace directory.
     #[serde(default)]
     pub workspace_path: Option<String>,
-    /// Container image to use (optional, defaults to oqto-dev).
+    /// Container image to use (optional, defaults to oqto).
     #[serde(default)]
     pub image: Option<String>,
     /// Agent name for the session.

@@ -46,11 +46,11 @@ describe("tool output leak from hstry imports", () => {
 				// This is the problematic tool result message from hstry
 				role: "tool",
 				content:
-					"./frontend/node_modules/typescript/lib/diagnosticMessages.json\n./deploy/container/skel/.config/opencode/opencode.json",
+					"./frontend/node_modules/typescript/lib/diagnosticMessages.json\n./deploy/docker/.env.example",
 				parts_json: JSON.stringify([
 					{
 						// THIS text part contains the raw tool output - should NOT leak
-						text: "./frontend/node_modules/typescript/lib/diagnosticMessages.json\n./deploy/container/skel/.config/opencode/opencode.json",
+						text: "./frontend/node_modules/typescript/lib/diagnosticMessages.json\n./deploy/docker/.env.example",
 						type: "text",
 					},
 					{
@@ -58,7 +58,7 @@ describe("tool output leak from hstry imports", () => {
 						name: "bash",
 						output: [
 							{
-								text: "./frontend/node_modules/typescript/lib/diagnosticMessages.json\n./deploy/container/skel/.config/opencode/opencode.json",
+								text: "./frontend/node_modules/typescript/lib/diagnosticMessages.json\n./deploy/docker/.env.example",
 								type: "text",
 							},
 						],
@@ -189,10 +189,10 @@ describe("tool output leak from hstry imports", () => {
 			{
 				role: "tool",
 				content:
-					"./frontend/node_modules/typescript/lib/pl/diagnosticMessages.generated.json\n./deploy/container/skel/.config/opencode/opencode.json\n./.pi/settings.json\n",
+					"./frontend/node_modules/typescript/lib/pl/diagnosticMessages.generated.json\n./deploy/docker/.env.example\n./.pi/settings.json\n",
 				parts_json: JSON.stringify([
 					{
-						text: "./frontend/node_modules/typescript/lib/pl/diagnosticMessages.generated.json\n./deploy/container/skel/.config/opencode/opencode.json\n./.pi/settings.json\n",
+						text: "./frontend/node_modules/typescript/lib/pl/diagnosticMessages.generated.json\n./deploy/docker/.env.example\n./.pi/settings.json\n",
 						type: "text",
 					},
 					{
@@ -200,7 +200,7 @@ describe("tool output leak from hstry imports", () => {
 						name: "bash",
 						output: [
 							{
-								text: "./frontend/node_modules/typescript/lib/pl/diagnosticMessages.generated.json\n./deploy/container/skel/.config/opencode/opencode.json\n./.pi/settings.json\n",
+								text: "./frontend/node_modules/typescript/lib/pl/diagnosticMessages.generated.json\n./deploy/docker/.env.example\n./.pi/settings.json\n",
 								type: "text",
 							},
 						],
@@ -334,7 +334,7 @@ describe("tool output leak from hstry imports", () => {
 					{
 						type: "text",
 						id: "p5",
-						text: "./frontend/node_modules/typescript/lib/diagnosticMessages.json\n./deploy/container/skel/.config/opencode/opencode.json",
+						text: "./frontend/node_modules/typescript/lib/diagnosticMessages.json\n./deploy/docker/.env.example",
 					},
 					{
 						type: "tool_result",
@@ -342,7 +342,7 @@ describe("tool output leak from hstry imports", () => {
 						toolCallId: "call_abc123",
 						name: "bash",
 						output:
-							"./frontend/node_modules/typescript/lib/diagnosticMessages.json\n./deploy/container/skel/.config/opencode/opencode.json",
+							"./frontend/node_modules/typescript/lib/diagnosticMessages.json\n./deploy/docker/.env.example",
 						isError: false,
 					},
 				],

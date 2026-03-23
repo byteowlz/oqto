@@ -39,7 +39,7 @@ fail_fast = true
 # Custom path to the container runtime binary (optional)
 # binary = "/usr/local/bin/docker"
 # Default container image for sessions
-default_image = "oqto-dev:latest"
+default_image = "oqto:latest"
 # Base port for allocating session ports (each session uses 3 consecutive ports)
 base_port = 41820
 # Path to skeleton directory for new user homes (dotfiles, configs, etc.)

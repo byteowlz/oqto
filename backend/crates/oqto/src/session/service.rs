@@ -53,7 +53,7 @@ use super::workspace_locations::WorkspaceLocationRepository;
 const CONTAINER_NAME_PREFIX: &str = "oqto-";
 
 /// Default container image.
-const DEFAULT_IMAGE: &str = "oqto-dev:latest";
+const DEFAULT_IMAGE: &str = "oqto:latest";
 
 /// Default base port.
 const DEFAULT_BASE_PORT: i64 = 41820;
@@ -3315,7 +3315,7 @@ mod tests {
             user_id: "user-1".to_string(),
             workspace_path: "/tmp/workspace".to_string(),
             agent: None,
-            image: "oqto-dev:latest".to_string(),
+            image: "oqto:latest".to_string(),
             image_digest: None,
             agent_port: 41821,
             fileserver_port: 41822,

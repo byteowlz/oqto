@@ -160,39 +160,12 @@ This monolithic image is designed to be split later when the runner gains TCP/IP
 
 The runner currently uses Unix sockets, so everything must live in one container for now.
 
-## CI/CD (GitHub Actions)
+## CI/CD
 
-```yaml
-# .github/workflows/docker.yml
-name: Docker
-on:
-  push:
-    tags: ['v*']
-  workflow_dispatch:
+The Docker image is built and pushed automatically by `.github/workflows/docker.yml` when a release is published. It triggers after the release workflow creates GitHub releases with pre-built binaries.
 
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: deploy/docker/Dockerfile
-          push: true
-          platforms: linux/amd64,linux/arm64
-          tags: |
-            ghcr.io/byteowlz/oqto:${{ github.ref_name }}
-            ghcr.io/byteowlz/oqto:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+```bash
+# Image is published to:
+ghcr.io/byteowlz/oqto:latest
+ghcr.io/byteowlz/oqto:<version>
 ```

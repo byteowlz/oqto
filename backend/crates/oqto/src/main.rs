@@ -214,7 +214,7 @@ struct ServeCommand {
     #[arg(short, long, default_value = "8080")]
     port: u16,
     /// Default container image
-    #[arg(long, default_value = "oqto-dev:latest")]
+    #[arg(long, default_value = "oqto:latest")]
     image: String,
     /// Base port for session allocation
     #[arg(long, default_value = "41820")]
@@ -991,7 +991,7 @@ impl Default for ContainerRuntimeConfig {
         Self {
             runtime: None,
             binary: None,
-            default_image: "oqto-dev:latest".to_string(),
+            default_image: "oqto:latest".to_string(),
             base_port: 41820,
             user_data_path: None,
             skel_path: None,
@@ -1810,7 +1810,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     };
 
     // Session config: CLI args override config file values
-    let default_image = if cmd.image != "oqto-dev:latest" {
+    let default_image = if cmd.image != "oqto:latest" {
         cmd.image.clone()
     } else {
         ctx.config.container.default_image.clone()
