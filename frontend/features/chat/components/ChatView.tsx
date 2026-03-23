@@ -295,6 +295,8 @@ export function ChatView({
 		isStreaming,
 		isAwaitingResponse,
 		error,
+		historyHydrated,
+		historyLoading,
 		send,
 		appendLocalAssistantMessage,
 		abort,
@@ -721,9 +723,7 @@ export function ChatView({
 	}, [currentModelRef, modelStorageKey, selectedModelRef]);
 
 	const displayError = commandError ?? error;
-	const historyPending =
-		messages.length === 0 && (piState?.messageCount ?? 0) > 0;
-	const showSkeleton = messages.length === 0 && !displayError && historyPending;
+	const showSkeleton = messages.length === 0 && !displayError && historyLoading;
 
 	const ChatSkeleton = (
 		<div className="flex-1 flex flex-col gap-4 min-h-0 animate-pulse">
@@ -2019,6 +2019,7 @@ export function ChatView({
 							{showSkeleton && ChatSkeleton}
 
 							{!showSkeleton &&
+								historyHydrated &&
 								messages.length === 0 &&
 								!sendPending &&
 								!isStreaming &&

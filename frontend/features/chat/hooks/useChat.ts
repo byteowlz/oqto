@@ -36,6 +36,7 @@ import { getWsManager } from "@/lib/ws-manager";
 import type { AgentWsEvent, WsMuxConnectionState } from "@/lib/ws-mux-types";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+	clearStoragePrefixCache,
 	readCachedSessionMessages,
 	sanitizeStorageKey,
 	transferCachedSessionMessages,
@@ -133,6 +134,12 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 	const [isStreaming, setIsStreaming] = useState(false);
 	const [isAwaitingResponse, setIsAwaitingResponse] = useState(false);
 	const [error, setError] = useState<Error | null>(null);
+	const [historyHydrated, setHistoryHydrated] = useState(
+		!activeSessionId || messages.length > 0,
+	);
+	const [historyLoading, setHistoryLoading] = useState(
+		Boolean(activeSessionId && messages.length === 0),
+	);
 	const { setSessionBusy } = useBusySessions();
 
 	// Refs
@@ -528,6 +535,11 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 			} catch (err) {
 				if (isPiDebugEnabled()) {
 					console.debug("[useChat] Failed to load history:", err);
+				}
+			} finally {
+				if (activeSessionIdRef.current === sessionId) {
+					setHistoryHydrated(true);
+					setHistoryLoading(false);
 				}
 			}
 		},
@@ -2132,6 +2144,8 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 		}
 
 		if (!activeSessionId) {
+			setHistoryHydrated(true);
+			setHistoryLoading(false);
 			return;
 		}
 
@@ -2164,6 +2178,9 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 		// same) prevents clobbering in-flight streaming and the optimistic user
 		// message.
 		if (sessionActuallyChanged) {
+			// Clear in-memory cache for this storage prefix to prevent contamination
+			// from previous sessions. localStorage entries remain intact.
+			clearStoragePrefixCache(resolvedStorageKeyPrefix);
 			// Load cached messages for this session.
 			const cached = readCachedSessionMessages(
 				activeSessionId,
@@ -2176,11 +2193,14 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 					.reverse()
 					.find((msg) => msg.role === "assistant");
 				lastAssistantMessageIdRef.current = lastAssistant?.id ?? null;
+				setHistoryLoading(false);
 			} else {
 				setMessages([]);
 				messageIdRef.current = 0;
 				lastAssistantMessageIdRef.current = null;
+				setHistoryLoading(true);
 			}
+			setHistoryHydrated(false);
 
 			// Reset streaming and agent state for the new session.
 			// Clearing state prevents stale sessionName from the previous
@@ -2450,6 +2470,8 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 		isStreaming,
 		isAwaitingResponse,
 		error,
+		historyHydrated,
+		historyLoading,
 		send,
 		appendLocalAssistantMessage,
 		abort,

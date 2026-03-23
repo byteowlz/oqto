@@ -811,25 +811,20 @@ export function mergeServerMessages(
 
 	const preserved: DisplayMessage[] = [];
 	for (const msg of previous) {
+		// Only preserve truly in-flight streaming messages
 		if (msg.isStreaming) {
 			preserved.push(msg);
-			continue;
 		}
-		if (
-			msg.role === "user" &&
-			msg.clientId &&
-			!serverClientIds.has(msg.clientId)
-		) {
-			if (!serverFingerprints.has(messageFingerprint(msg))) {
-				preserved.push(msg);
-			}
-		}
+		// Do NOT preserve non-streaming user messages in authoritative mode.
+		// If the server doesn't have them, they were either:
+		// - From a different session (cache contamination)
+		// - Already persisted but lost their clientId on server serialization
+		// In both cases, we should NOT preserve them to avoid duplicates.
 	}
 
 	if (preserved.length === 0) return serverMessages;
 	// Append preserved (in-flight) messages after server messages.
 	// Server messages are already in correct order from hstry.
-	// Preserved messages (optimistic user sends, streaming) logically
-	// come after the last server message.
+	// Preserved messages (streaming only) logically come after the last server message.
 	return [...serverMessages, ...preserved];
 }
