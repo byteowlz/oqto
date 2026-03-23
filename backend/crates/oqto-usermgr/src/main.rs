@@ -31,14 +31,14 @@ const PI_EXTENSIONS_DIR: &str = "/usr/share/oqto/pi-agent-extensions";
 
 /// Default extensions to install for new users.
 const PI_DEFAULT_EXTENSIONS: &[&str] = &[
-    "auto-rename",
-    "azure-empty-response-guard",
-    "introspection",
-    "oqto-bridge",
-    "oqto-todos",
-    "custom-context-files",
-    "read-image-guard",
-    "read-file-guard",
+    "pi-auto-rename",
+    "pi-azure-empty-response-guard",
+    "pi-introspection",
+    "pi-oqto-bridge",
+    "pi-oqto-todos",
+    "pi-custom-context-files",
+    "pi-read-image-guard",
+    "pi-read-file-guard",
 ];
 
 /// Allowed path prefixes for mkdir/chown/chmod operations.
