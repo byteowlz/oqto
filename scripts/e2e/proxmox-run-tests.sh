@@ -91,4 +91,25 @@ fi
 
 curl -fsS -H "$auth_header" -X DELETE "http://${IP}:${OQTO_E2E_HTTP_PORT}/api/shared-workspaces/${workspace_id}" >/dev/null
 
+# Take a screenshot of the logged-in UI if agent-browser is available
+screenshot_path="${OQTO_E2E_LOG_DIR}/screenshot-${VMID}.png"
+base_url="http://${IP}:${OQTO_E2E_HTTP_PORT}"
+if command -v agent-browser >/dev/null 2>&1 && [[ -n "${DISPLAY:-}" ]]; then
+  echo "Taking screenshot of logged-in UI..."
+  # Log in by injecting the JWT token directly into localStorage, then navigating.
+  # This avoids form-fill timing issues with agent-browser's stateless CLI model.
+  agent-browser open "${base_url}/login" --wait 2000 >/dev/null 2>&1 || true
+  agent-browser eval "localStorage.setItem('oqto:authToken', '${token}');" >/dev/null 2>&1 || true
+  agent-browser open "${base_url}/" --wait 5000 >/dev/null 2>&1 || true
+  agent-browser screenshot "$screenshot_path" >/dev/null 2>&1 || true
+  agent-browser close >/dev/null 2>&1 || true
+  if [[ -f "$screenshot_path" ]]; then
+    echo "Screenshot saved: $screenshot_path"
+  else
+    echo "Screenshot failed (non-fatal)"
+  fi
+else
+  echo "Skipping screenshot (agent-browser or DISPLAY not available)"
+fi
+
 echo "E2E smoke tests passed for VM $VMID ($IP)"
