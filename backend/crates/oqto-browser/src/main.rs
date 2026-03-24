@@ -1400,12 +1400,24 @@ fn agent_browser_session_dir(session: &str) -> PathBuf {
     if let Ok(dir) = std::env::var("AGENT_BROWSER_SOCKET_DIR") {
         return PathBuf::from(dir);
     }
-    agent_browser_base_dir().join(session)
+    agent_browser_base_dir().join(hash_session_id(session))
+}
+
+/// Hash a session ID to a fixed-length string (12 hex characters).
+/// This prevents socket paths from exceeding the 108-character Unix socket limit
+/// when users have long usernames (e.g., "oqto_shared_content-creation").
+fn hash_session_id(session: &str) -> String {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = DefaultHasher::new();
+    session.hash(&mut hasher);
+    format!("{:012x}", hasher.finish())
 }
 
 #[cfg(unix)]
 fn socket_path(session: &str) -> PathBuf {
-    agent_browser_session_dir(session).join(format!("{session}.sock"))
+    agent_browser_session_dir(session).join(format!("{}.sock", hash_session_id(session)))
 }
 
 #[cfg(not(unix))]
