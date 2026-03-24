@@ -86,8 +86,11 @@ The fix adds a `hash_session_id()` function that:
 
 **Example:**
 ```
-Before: ~/.local/state/oqto/agent-browser/oqto_shared_content-creation/oqto_shared_content-creation.sock (117 chars)
-After:  ~/.local/state/oqto/agent-browser/a3f7b8c2d1e5/a3f7b8c2d1e5.sock (66 chars)
+Before: ~/.local/state/oqto/agent-browser/oqto_shared_content-creation/oqto_shared_content-creation.sock (129 chars) ❌
+After:  ~/.local/state/oqto/agent-browser/bf4100c767eb/bf4100c767eb.sock (97 chars) ✅
+
+Unix socket path limit: 108 characters
+Path reduction: 32 characters
 ```
 
-The socket path is now guaranteed to be under 70 characters regardless of session ID length.
+The socket path is now guaranteed to be well under 100 characters regardless of session ID length.
