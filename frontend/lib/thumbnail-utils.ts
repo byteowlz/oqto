@@ -27,7 +27,7 @@ export function getThumbnailUrl({
 }
 
 /**
- * Check if a file extension supports thumbnails
+ * Check if a file extension supports thumbnails (images only)
  */
 export function supportsThumbnail(filename: string): boolean {
 	const ext = filename.substring(filename.lastIndexOf(".")).toLowerCase();
@@ -42,7 +42,14 @@ export function supportsThumbnail(filename: string): boolean {
 		".ico",
 	]);
 
-	return supportedExtensions.has(ext) || !filename.includes(".");
+	return supportedExtensions.has(ext);
+}
+
+/**
+ * Check if a file supports thumbnail generation (images + videos)
+ */
+export function supportsMediaThumbnail(filename: string): boolean {
+	return supportsThumbnail(filename) || isVideoFile(filename);
 }
 
 /**

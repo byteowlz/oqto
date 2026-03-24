@@ -3,7 +3,8 @@
 import { FileIcon } from "@/components/data-display";
 import { ThumbnailImage } from "./ThumbnailImage";
 import { MediaQuickAccessBar, type MediaType } from "./MediaQuickAccessBar";
-import { getThumbnailUrl, supportsThumbnail, isVideoFile } from "@/lib/thumbnail-utils";
+import { LightboxGallery, type LightboxItem } from "./LightboxGallery";
+import { getThumbnailUrl, supportsThumbnail, supportsMediaThumbnail, isVideoFile, formatDuration } from "@/lib/thumbnail-utils";
 import {
 	ContextMenu,
 	ContextMenuContent,
@@ -51,6 +52,7 @@ import {
 	LayoutGrid,
 	List,
 	Loader2,
+	Maximize2,
 	MoveRight,
 	PaintBucket,
 	Pencil,
@@ -379,6 +381,10 @@ export function FileTreeView({
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const lastLoadRef = useRef<{ key: string; ts: number } | null>(null);
 
+	// Media gallery state
+	const [lightboxOpen, setLightboxOpen] = useState(false);
+	const [lightboxIndex, setLightboxIndex] = useState(0);
+
 	// Use external state if provided, otherwise use internal state
 	const [internalExpanded, setInternalExpanded] = useState<
 		Record<string, boolean>
@@ -671,9 +677,14 @@ export function FileTreeView({
 			}
 			updateState({ selectedFiles: newSelection, selectedFile: path });
 		} else {
-			// Normal click: clear selection, preview file if previewable
+			// Normal click: clear selection
 			updateState({ selectedFile: path, selectedFiles: new Set() });
-			if (!isDirectory && onPreviewFile && isPreviewable(name)) {
+
+			if (isDirectory) {
+				// Click on folder: navigate into it
+				handleNavigateToFolder(path);
+			} else if (!isDirectory && onPreviewFile && isPreviewable(name)) {
+				// Other previewable file: use existing preview
 				onPreviewFile(path);
 			}
 		}
@@ -991,6 +1002,44 @@ export function FileTreeView({
 
 	const mediaCounts = useMemo(() => countMediaFiles(), [tree]);
 
+	// Build lightbox items from media files in current tree
+	const lightboxItems: LightboxItem[] = useMemo(() => {
+		const items: LightboxItem[] = [];
+		const collectMedia = (nodes: FileNode[]) => {
+			for (const node of nodes) {
+				if (node.type === "directory") {
+					if (node.children) collectMedia(node.children);
+				} else if (normalizedWorkspacePath) {
+					const isImg = supportsThumbnail(node.name);
+					const isVid = isVideoFile(node.name);
+					if (isImg || isVid) {
+						const params = new URLSearchParams({
+							directory: normalizedWorkspacePath,
+							path: node.path,
+						});
+						items.push({
+							src: `/api/files/file?${params.toString()}`,
+							type: isVid ? "video" : "image",
+							path: node.path,
+							filename: node.name,
+						});
+					}
+				}
+			}
+		};
+		collectMedia(filteredTree);
+		return items;
+	}, [filteredTree, normalizedWorkspacePath]);
+
+	// Open lightbox for a specific file
+	const handleOpenLightbox = useCallback((filePath: string) => {
+		const idx = lightboxItems.findIndex((item) => item.path === filePath);
+		if (idx >= 0) {
+			setLightboxIndex(idx);
+			setLightboxOpen(true);
+		}
+	}, [lightboxItems]);
+
 	// Get breadcrumb parts from current path
 	const getBreadcrumbs = () => {
 		if (currentPath === ".") return [{ name: "Home", path: "." }];
@@ -1275,6 +1324,7 @@ export function FileTreeView({
 						onRenameCancel={handleCancelRename}
 						onOpenInCanvas={onOpenInCanvas}
 						onOpenAsApp={onOpenAsApp}
+						onOpenInGallery={handleOpenLightbox}
 						loadingDirs={loadingDirs}
 					/>
 				) : viewMode === "list" ? (
@@ -1294,6 +1344,7 @@ export function FileTreeView({
 						onRenameCancel={handleCancelRename}
 						onOpenInCanvas={onOpenInCanvas}
 						onOpenAsApp={onOpenAsApp}
+						onOpenInGallery={handleOpenLightbox}
 					/>
 				) : (
 					<GridView
@@ -1313,6 +1364,7 @@ export function FileTreeView({
 						onRenameCancel={handleCancelRename}
 						onOpenInCanvas={onOpenInCanvas}
 						onOpenAsApp={onOpenAsApp}
+						onOpenInGallery={handleOpenLightbox}
 					/>
 				)}
 			</div>
@@ -1362,6 +1414,15 @@ export function FileTreeView({
 					}
 				}}
 				onCancel={() => setWorkspacePickerState(null)}
+			/>
+
+			{/* Lightbox Gallery */}
+			<LightboxGallery
+				open={lightboxOpen}
+				items={lightboxItems}
+				initialIndex={lightboxIndex}
+				onClose={() => setLightboxOpen(false)}
+				workspacePath={normalizedWorkspacePath}
 			/>
 		</div>
 	);
@@ -1681,6 +1742,7 @@ function FileContextMenu({
 	onMove,
 	onOpenInCanvas,
 	onOpenAsApp,
+	onOpenInGallery,
 	onCopyToWorkspace,
 }: {
 	children: React.ReactNode;
@@ -1692,6 +1754,8 @@ function FileContextMenu({
 	onMove: (path: string) => void;
 	onOpenInCanvas?: (path: string) => void;
 	onOpenAsApp?: (path: string) => void;
+	onOpenInGallery?: (path: string) => void;
+	onOpenInGallery?: (path: string) => void;
 	onCopyToWorkspace?: (
 		path: string,
 		name: string,
@@ -1699,12 +1763,23 @@ function FileContextMenu({
 	) => void;
 }) {
 	const isImage = node.type === "file" && isImageFile(node.name);
+	const isVideo = node.type === "file" && isVideoFile(node.name);
+	const isMedia = isImage || isVideo;
 	const isHtml = node.type === "file" && /\.html?$/i.test(node.name);
 
 	return (
 		<ContextMenu>
 			<ContextMenuTrigger className="contents">{children}</ContextMenuTrigger>
 			<ContextMenuContent>
+				{isMedia && onOpenInGallery && (
+					<>
+						<ContextMenuItem onClick={() => onOpenInGallery(node.path)}>
+							<Maximize2 className="w-4 h-4 mr-2" />
+							Open in Gallery
+						</ContextMenuItem>
+						<ContextMenuSeparator />
+					</>
+				)}
 				{isHtml && onOpenAsApp && (
 					<>
 						<ContextMenuItem onClick={() => onOpenAsApp(node.path)}>
@@ -1783,6 +1858,7 @@ function TreeView({
 	onRenameCancel,
 	onOpenInCanvas,
 	onOpenAsApp,
+	onOpenInGallery,
 	loadingDirs,
 }: {
 	nodes: FileNode[];
@@ -1811,6 +1887,7 @@ function TreeView({
 	onRenameCancel: () => void;
 	onOpenInCanvas?: (path: string) => void;
 	onOpenAsApp?: (path: string) => void;
+	onOpenInGallery?: (path: string) => void;
 	loadingDirs?: Set<string>;
 }) {
 	// Sort: directories first, then files, both alphabetically
@@ -1843,6 +1920,7 @@ function TreeView({
 					onRenameCancel={onRenameCancel}
 					onOpenInCanvas={onOpenInCanvas}
 					onOpenAsApp={onOpenAsApp}
+					onOpenInGallery={onOpenInGallery}
 					loadingDirs={loadingDirs}
 				/>
 			))}
@@ -1870,6 +1948,7 @@ function TreeRow({
 	onRenameCancel,
 	onOpenInCanvas,
 	onOpenAsApp,
+	onOpenInGallery,
 	loadingDirs,
 }: {
 	node: FileNode;
@@ -1899,6 +1978,7 @@ function TreeRow({
 	onRenameCancel: () => void;
 	onOpenInCanvas?: (path: string) => void;
 	onOpenAsApp?: (path: string) => void;
+	onOpenInGallery?: (path: string) => void;
 	loadingDirs?: Set<string>;
 }) {
 	const isDir = node.type === "directory";
@@ -1948,6 +2028,7 @@ function TreeRow({
 				onCopyToWorkspace={onCopyToWorkspace}
 				onOpenInCanvas={onOpenInCanvas}
 				onOpenAsApp={onOpenAsApp}
+				onOpenInGallery={onOpenInGallery}
 			>
 				<button
 					type="button"
@@ -2055,6 +2136,7 @@ function ListView({
 	onRenameCancel,
 	onOpenInCanvas,
 	onOpenAsApp,
+	onOpenInGallery,
 }: {
 	files: FileNode[];
 	selectedFiles: Set<string>;
@@ -2080,6 +2162,7 @@ function ListView({
 	onRenameCancel: () => void;
 	onOpenInCanvas?: (path: string) => void;
 	onOpenAsApp?: (path: string) => void;
+	onOpenInGallery?: (path: string) => void;
 }) {
 	// Sort: directories first, then files
 	const sortedFiles = [...files].sort((a, b) => {
@@ -2198,6 +2281,7 @@ function GridView({
 	onRenameCancel,
 	onOpenInCanvas,
 	onOpenAsApp,
+	onOpenInGallery,
 }: {
 	files: FileNode[];
 	workspacePath?: string | null;
@@ -2224,6 +2308,7 @@ function GridView({
 	onRenameCancel: () => void;
 	onOpenInCanvas?: (path: string) => void;
 	onOpenAsApp?: (path: string) => void;
+	onOpenInGallery?: (path: string) => void;
 }) {
 	// Sort: directories first, then files
 	const sortedFiles = [...files].sort((a, b) => {
@@ -2249,6 +2334,7 @@ function GridView({
 						onCopyToWorkspace={onCopyToWorkspace}
 						onOpenInCanvas={onOpenInCanvas}
 						onOpenAsApp={onOpenAsApp}
+						onOpenInGallery={onOpenInGallery}
 					>
 						<button
 							type="button"
@@ -2274,13 +2360,17 @@ function GridView({
 								isSelected && "bg-primary/10 ring-1 ring-primary/30",
 							)}
 						>
-							{file.type === "file" && supportsThumbnail(file.name) && workspacePath ? (
+							{file.type === "file" && supportsMediaThumbnail(file.name) && workspacePath ? (
 								<ThumbnailImage
 									src={getThumbnailUrl({ workspacePath, filePath: file.path })}
 									alt={file.name}
 									filename={file.name}
 									extension={file.name.substring(file.name.lastIndexOf("."))}
+									isVideo={isVideoFile(file.name)}
 									size={96}
+									onClick={() => {
+										if (onOpenInGallery) onOpenInGallery(file.path);
+									}}
 								/>
 							) : (
 								<FileIcon

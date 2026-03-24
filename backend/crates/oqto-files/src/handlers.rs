@@ -1704,10 +1704,13 @@ pub async fn get_thumbnail(
         .unwrap_or("")
         .to_lowercase();
 
+    let is_image = is_image_file(&extension);
+    let is_video = is_video_file(&extension);
+
     // Check if file is supported
-    if !is_image_file(&extension) {
+    if !is_image && !is_video {
         return Err(FileServerError::InvalidPath(format!(
-            "Unsupported file type: {}",
+            "Unsupported file type for thumbnails: {}",
             extension
         )));
     }
@@ -1738,7 +1741,12 @@ pub async fn get_thumbnail(
         file_path,
         query.size
     );
-    generate_thumbnail(&file_path, &thumbnail_path, query.size).await?;
+
+    if is_video {
+        generate_video_thumbnail(&file_path, &thumbnail_path, query.size).await?;
+    } else {
+        generate_thumbnail(&file_path, &thumbnail_path, query.size).await?;
+    }
 
     serve_thumbnail(&thumbnail_path).await
 }
@@ -1785,6 +1793,20 @@ async fn generate_thumbnail(
     .map_err(|e| FileServerError::Io(std::io::Error::other(e.to_string())))?;
 
     result
+}
+
+/// Generate a thumbnail for a video file (async wrapper)
+async fn generate_video_thumbnail(
+    source_path: &Path,
+    dest_path: &Path,
+    size: u32,
+) -> Result<(), FileServerError> {
+    let (source, dest) = (source_path.to_path_buf(), dest_path.to_path_buf());
+    tokio::task::spawn_blocking(move || {
+        generate_video_thumbnail_blocking(&source, &dest, size)
+    })
+    .await
+    .map_err(|e| FileServerError::Io(std::io::Error::other(e.to_string())))?
 }
 
 fn generate_thumbnail_blocking(
@@ -1889,6 +1911,71 @@ fn is_image_file(extension: &str) -> bool {
         extension.to_lowercase().as_str(),
         "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "ico" | "svg"
     )
+}
+
+fn is_video_file(extension: &str) -> bool {
+    matches!(
+        extension.to_lowercase().as_str(),
+        "mp4" | "webm" | "ogg" | "ogv" | "mov" | "avi" | "mkv" | "m4v"
+    )
+}
+
+/// Generate a thumbnail for a video file using ffmpeg.
+/// Extracts a frame at ~1 second into the video.
+fn generate_video_thumbnail_blocking(
+    source_path: &Path,
+    dest_path: &Path,
+    size: u32,
+) -> Result<(), FileServerError> {
+    let parent_dir = dest_path
+        .parent()
+        .ok_or_else(|| FileServerError::Io(std::io::Error::other("Invalid thumbnail path")))?;
+    std::fs::create_dir_all(parent_dir)?;
+
+    let source_str = source_path.to_str().ok_or_else(|| {
+        FileServerError::InvalidPath("Invalid source path encoding".to_string())
+    })?;
+    let dest_str = dest_path.to_str().ok_or_else(|| {
+        FileServerError::InvalidPath("Invalid dest path encoding".to_string())
+    })?;
+
+    let scale_filter = format!("scale='min({s},iw)':'min({s},ih)':force_original_aspect_ratio=decrease", s = size);
+
+    let output = std::process::Command::new("ffmpeg")
+        .args([
+            "-i", source_str,
+            "-ss", "1",          // seek to 1 second
+            "-frames:v", "1",    // extract 1 frame
+            "-vf", &scale_filter,
+            "-q:v", "5",         // JPEG quality (2=best, 31=worst)
+            "-y",                // overwrite output
+            dest_str,
+        ])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .output();
+
+    match output {
+        Ok(result) if result.status.success() => {
+            debug!("Video thumbnail generated: {:?}", dest_path);
+            Ok(())
+        }
+        Ok(result) => {
+            let stderr = String::from_utf8_lossy(&result.stderr);
+            warn!("ffmpeg failed for {:?}: {}", source_path, stderr);
+            Err(FileServerError::InvalidPath(format!(
+                "ffmpeg failed: {}",
+                stderr.chars().take(200).collect::<String>()
+            )))
+        }
+        Err(e) => {
+            // ffmpeg not available - not an error, just unsupported
+            warn!("ffmpeg not available: {}", e);
+            Err(FileServerError::InvalidPath(
+                "ffmpeg not available for video thumbnails".to_string(),
+            ))
+        }
+    }
 }
 
 #[cfg(test)]
