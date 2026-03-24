@@ -2,9 +2,6 @@
 
 ## Open
 
-### [oqto-6k4b] Media Browsing & Discovery Improvements (P0, epic)
-Comprehensive overhaul of media file browsing in Oqto: real thumbnails, quick filters, video preview, gallery view, and batch operations. Implement backend thumbnail generation, UI improvements, and full media browsing experience.
-
 ### [oqto-heye] P0: Chat send must always terminate (response or explicit error), never infinite spinner (P0, bug)
 Repro at 23:57 (jolly-moves-kernel): backend accepted prompt commands but no user-visible terminal recovery when runner send failed/stalled, resulting in bogus working state and perceived message loss.\n\nBackend hardening added:\n- on prompt/steer/follow_up send failure, ws now emits canonical terminal events immediately (agent.error + agent.idle) and logs failure details with session id.\n- clears response watchdog on failure path before terminal emission.\n\nDeployed to archvm backend.
 
@@ -550,18 +547,6 @@ Build and distribute pre-compiled binaries for Linux (x86_64, arm64) and macOS (
 
 ### [octo-af5j] Release & Update System (P1, epic)
 Comprehensive system for distributing Octo releases, managing updates in the field, and expanding runtime options including Proxmox LXC support.
-
-### [oqto-wkcf] Video Gallery Mode (P2, task)
-Dedicated video-only view with larger thumbnails, duration badges, and quick actions. Sort by duration/size/modified. Show file metadata in grid.
-
-### [oqto-7h4f] Hover Video Preview (P2, task)
-Hover over video thumbnail for 1-2s to auto-play muted preview (first 5-10s on loop). Click to unmute/open full player. Great for scanning multiple videos.
-
-### [oqto-wx4h] Recent Media Sidebar (P2, task)
-Collapsible sidebar panel showing recently modified images/videos with thumbnails, grouped by Today/Yesterday/This Week. Quick one-click to open files.
-
-### [oqto-y4t9] Smart Media Search (P2, task)
-Add dedicated media search with auto-complete for extensions, quick filters (Today/This Week/Large files), tag support, and active filter chips.
 
 ### [oqto-e8vx] Tool calls sometimes are shown duplicated (P2, bug)
 
@@ -1506,6 +1491,11 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [oqto-6k4b] Media Browsing & Discovery Improvements (closed 2026-03-24)
+- [oqto-wkcf] Video Gallery Mode (closed 2026-03-24)
+- [oqto-wx4h] Recent Media Sidebar (closed 2026-03-24)
+- [oqto-7h4f] Hover Video Preview (closed 2026-03-24)
+- [oqto-y4t9] Smart Media Search (closed 2026-03-24)
 - [oqto-nzc2] Filmstrip View (closed 2026-03-24)
 - [oqto-hm43] Batch Media Operations (closed 2026-03-24)
 - [oqto-t3vd] Lightbox Gallery View (closed 2026-03-24)
@@ -2190,12 +2180,12 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
+- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
 - [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
+- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
 - [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
 - [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
-- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
-- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
