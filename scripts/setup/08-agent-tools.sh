@@ -164,40 +164,63 @@ install_binary_global() {
 install_hstry_adapters() {
   local adapters_dest="/usr/local/share/hstry/adapters"
 
-  # If adapters already exist with the pi adapter, skip
-  if [[ -d "$adapters_dest" && -f "$adapters_dest/pi/adapter.ts" ]]; then
+  # hstry >=0.5 expects an adapter manifest file (.hstry-adapters.json).
+  # Only treat the install as valid when both the pi adapter and manifest exist.
+  if [[ -d "$adapters_dest" && -f "$adapters_dest/pi/adapter.ts" && -f "$adapters_dest/.hstry-adapters.json" ]]; then
     log_info "hstry adapters already installed"
     return 0
   fi
 
+  log_info "Installing hstry adapters..."
+
+  # Preferred path: let hstry generate adapters + manifest, then copy system-wide.
+  if command_exists hstry; then
+    local tmpcfg
+    tmpcfg=$(mktemp -d)
+    if XDG_CONFIG_HOME="$tmpcfg" XDG_DATA_HOME="$tmpcfg/.local/share" hstry adapters update >/dev/null 2>&1; then
+      if [[ -f "$tmpcfg/hstry/adapters/.hstry-adapters.json" ]]; then
+        sudo mkdir -p "$adapters_dest"
+        sudo rsync -a --delete "$tmpcfg/hstry/adapters/" "$adapters_dest/"
+        sudo chmod -R a+rX "$adapters_dest"
+        rm -rf "$tmpcfg"
+        log_success "hstry adapters installed to $adapters_dest"
+        return 0
+      fi
+    fi
+    rm -rf "$tmpcfg"
+  fi
+
+  # Fallback: fetch adapters from repo archive and synthesize a minimal manifest.
   local version
   version=$(get_dep_version hstry)
   local tag="v${version:-main}"
-
-  log_info "Installing hstry adapters..."
   local tmpdir
   tmpdir=$(mktemp -d)
 
   if curl -fsSL "https://github.com/byteowlz/hstry/archive/refs/tags/${tag}.tar.gz" |
     tar xz -C "$tmpdir" --strip-components=1 "*/adapters" 2>/dev/null; then
-    sudo mkdir -p "$adapters_dest"
-    sudo cp -r "$tmpdir/adapters/"* "$adapters_dest/"
-    sudo chmod -R a+rX "$adapters_dest"
-    log_success "hstry adapters installed to $adapters_dest"
+    :
+  elif curl -fsSL "https://github.com/byteowlz/hstry/archive/refs/heads/main.tar.gz" |
+    tar xz -C "$tmpdir" --strip-components=1 "*/adapters" 2>/dev/null; then
+    :
   else
-    # Try main branch as fallback
-    if curl -fsSL "https://github.com/byteowlz/hstry/archive/refs/heads/main.tar.gz" |
-      tar xz -C "$tmpdir" --strip-components=1 "*/adapters" 2>/dev/null; then
-      sudo mkdir -p "$adapters_dest"
-      sudo cp -r "$tmpdir/adapters/"* "$adapters_dest/"
-      sudo chmod -R a+rX "$adapters_dest"
-      log_success "hstry adapters installed from main branch"
-    else
-      log_warn "Could not fetch hstry adapters. 'hstry sync' for pi sessions will not work."
-    fi
+    rm -rf "$tmpdir"
+    log_warn "Could not fetch hstry adapters. 'hstry sync' for pi sessions will not work."
+    return 1
   fi
 
+  # Synthesize manifest if archive does not include one.
+  if [[ ! -f "$tmpdir/adapters/.hstry-adapters.json" ]]; then
+    cat >"$tmpdir/adapters/.hstry-adapters.json" <<'EOF'
+{"repos":[{"name":"official","url":"https://github.com/byteowlz/hstry-adapters"}]}
+EOF
+  fi
+
+  sudo mkdir -p "$adapters_dest"
+  sudo rsync -a --delete "$tmpdir/adapters/" "$adapters_dest/"
+  sudo chmod -R a+rX "$adapters_dest"
   rm -rf "$tmpdir"
+  log_success "hstry adapters installed to $adapters_dest"
 }
 
 # Install a Rust tool from crates.io, GitHub, or local source.
@@ -235,11 +258,12 @@ install_rust_tool() {
     fi
   fi
 
-  # Build cargo install args
+  # Build cargo install args.
+  # Cargo 1.93 removed -p/--package for `cargo install --git`; package must be
+  # passed as the optional positional CRATE argument.
   local -a cargo_args=(--git "${BYTEOWLZ_GITHUB}/${repo}.git" --root "$tmpdir")
   if [[ -n "$pkg" ]]; then
-    # Multi-binary repo: specify both the package and the binary name
-    cargo_args+=(-p "$pkg" --bin "$tool")
+    cargo_args+=("$pkg")
   fi
 
   # Install from GitHub (always latest main branch)
@@ -640,9 +664,11 @@ install_agent_tools_selected() {
 
   # hstry is required for per-user chat history (systemd user service)
   download_or_build_tool hstry hstry hstry-cli
+  install_hstry_adapters
   install_ast_grep || true
 
-  if [[ "$INSTALL_MMRY" == "true" ]]; then
+  # mmry is mandatory in multi-user mode (per-user mmry service + central embeddings)
+  if [[ "${SELECTED_USER_MODE:-single}" == "multi" || "$INSTALL_MMRY" == "true" ]]; then
     download_or_build_tool mmry mmry mmry-cli
     download_or_build_tool mmry-service mmry mmry-service
   fi
