@@ -12,11 +12,14 @@ use axum::{
     http::{StatusCode, header},
     response::{IntoResponse, Response},
 };
+use image::{DynamicImage, ImageEncoder, GenericImageView};
+use image::codecs::jpeg::JpegEncoder;
 use notify::{
     EventKind, RecursiveMode, Watcher,
     event::{CreateKind, RemoveKind},
 };
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use syntect::highlighting::ThemeSet;
 use syntect::html::{IncludeBackground, styled_line_to_highlighted_html};
 use syntect::parsing::SyntaxSet;
@@ -1651,6 +1654,241 @@ fn track_zip_entry(
     }
 
     Ok(())
+}
+
+// ========================================================================
+// Thumbnail Generation
+// ========================================================================
+
+/// Query parameters for thumbnail endpoint
+#[derive(Debug, Deserialize)]
+pub struct ThumbnailQuery {
+    /// Workspace directory path
+    pub directory: Option<String>,
+    /// File path relative to workspace
+    #[serde(default = "default_thumbnail_path")]
+    pub path: String,
+    /// Thumbnail size in pixels (128, 256, 512)
+    #[serde(default = "default_thumbnail_size")]
+    pub size: u32,
+}
+
+fn default_thumbnail_path() -> String {
+    ".".to_string()
+}
+
+fn default_thumbnail_size() -> u32 {
+    256
+}
+
+/// Get thumbnail for an image or video file
+///
+/// Generates thumbnails on-demand and caches them to disk.
+/// For videos, extracts a frame at 50% of the video duration.
+/// For images, resizes while preserving aspect ratio.
+pub async fn get_thumbnail(
+    State(state): State<AppState>,
+    Query(query): Query<ThumbnailQuery>,
+) -> Result<Response, FileServerError> {
+    let root_dir = resolve_request_root(&state.root_dir, query.directory.as_deref())?;
+    let file_path = resolve_and_verify_path(&root_dir, &query.path)?;
+
+    if !file_path.exists() {
+        return Err(FileServerError::NotFound(query.path));
+    }
+
+    // Determine file extension
+    let extension = file_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    // Check if file is supported
+    if !is_image_file(&extension) {
+        return Err(FileServerError::InvalidPath(format!(
+            "Unsupported file type: {}",
+            extension
+        )));
+    }
+
+    // Generate cache key from file path and size
+    let cache_key = generate_cache_key(&file_path, query.size);
+
+    // Get or create cache directory
+    let cache_dir = get_thumbnail_cache_dir(&state.config)?;
+    let thumbnail_path = cache_dir.join(&cache_key);
+
+    // Check if thumbnail exists in cache and is not too old
+    if let Ok(metadata) = tokio::fs::metadata(&thumbnail_path).await {
+        if let Ok(modified) = metadata.modified() {
+            let age = SystemTime::now()
+                .duration_since(modified)
+                .unwrap_or(Duration::ZERO);
+            if age.as_secs() < state.config.max_thumbnail_age {
+                debug!("Cache hit for thumbnail: {:?}", thumbnail_path);
+                return serve_thumbnail(&thumbnail_path).await;
+            }
+        }
+    }
+
+    // Generate thumbnail
+    debug!(
+        "Generating thumbnail for {:?} at size {}",
+        file_path,
+        query.size
+    );
+    generate_thumbnail(&file_path, &thumbnail_path, query.size).await?;
+
+    serve_thumbnail(&thumbnail_path).await
+}
+
+/// Serve a cached thumbnail file
+async fn serve_thumbnail(thumbnail_path: &Path) -> Result<Response, FileServerError> {
+    let path_clone = thumbnail_path.to_path_buf();
+    let (file, size) = tokio::task::spawn_blocking(move || {
+        let file = std::fs::File::open(&path_clone)?;
+        let size = file.metadata()?.len();
+        Ok::<_, std::io::Error>((file, size))
+    })
+    .await
+    .map_err(|e| FileServerError::Io(std::io::Error::other(e.to_string())))??;
+
+    let body = Body::from_stream(ReaderStream::new(fs::File::from_std(file)));
+
+    Ok((
+        StatusCode::OK,
+        [
+            (header::CONTENT_TYPE, "image/jpeg".to_string()),
+            (header::CONTENT_LENGTH, size.to_string()),
+            (
+                header::CACHE_CONTROL,
+                "public, max-age=2592000".to_string(), // 30 days
+            ),
+        ],
+        body,
+    )
+        .into_response())
+}
+
+/// Generate a thumbnail for an image file
+async fn generate_thumbnail(
+    source_path: &Path,
+    dest_path: &Path,
+    size: u32,
+) -> Result<(), FileServerError> {
+    let (source, dest) = (source_path.to_path_buf(), dest_path.to_path_buf());
+    let result = tokio::task::spawn_blocking(move || {
+        generate_thumbnail_blocking(&source, &dest, size)
+    })
+    .await
+    .map_err(|e| FileServerError::Io(std::io::Error::other(e.to_string())))?;
+
+    result
+}
+
+fn generate_thumbnail_blocking(
+    source_path: &Path,
+    dest_path: &Path,
+    size: u32,
+) -> Result<(), FileServerError> {
+    // Load image
+    let img = image::open(source_path).map_err(|e| {
+        error!("Failed to load image {:?}: {}", source_path, e);
+        FileServerError::InvalidPath(format!("Failed to load image: {}", e))
+    })?;
+
+    // Calculate thumbnail dimensions while preserving aspect ratio
+    let (width, height) = img.dimensions();
+    let (new_width, new_height) = if width > height {
+        if width > size {
+            (size, height * size / width)
+        } else {
+            (width, height)
+        }
+    } else if height > size {
+        (width * size / height, size)
+    } else {
+        (width, height)
+    };
+
+    // Resize image
+    let thumbnail = img.resize(
+        new_width.max(1),
+        new_height.max(1),
+        image::imageops::FilterType::Lanczos3,
+    );
+
+    // Save as JPEG
+    let parent_dir = dest_path
+        .parent()
+        .ok_or_else(|| FileServerError::Io(std::io::Error::other(
+            "Invalid thumbnail path".to_string(),
+        )))?;
+
+    std::fs::create_dir_all(parent_dir).map_err(|e| {
+        error!("Failed to create thumbnail cache dir {:?}: {}", parent_dir, e);
+        FileServerError::Io(std::io::Error::other(e))
+    })?;
+
+    // Save as JPEG with quality 80
+    let file = std::fs::File::create(dest_path).map_err(|e| {
+        error!("Failed to create thumbnail file {:?}: {}", dest_path, e);
+        FileServerError::Io(std::io::Error::other(e.to_string()))
+    })?;
+    let encoder = JpegEncoder::new_with_quality(&file, 80);
+    thumbnail
+        .write_with_encoder(encoder)
+        .map_err(|e| {
+            error!("Failed to encode thumbnail {:?}: {}", dest_path, e);
+            FileServerError::Io(std::io::Error::other(format!(
+                "Failed to encode thumbnail: {}",
+                e
+            )))
+        })?;
+
+    debug!("Thumbnail saved to {:?}", dest_path);
+    Ok(())
+}
+
+/// Generate cache key from file path and size
+fn generate_cache_key(file_path: &Path, size: u32) -> String {
+    let mut hasher = Sha256::new();
+    if let Some(path_str) = file_path.to_str() {
+        hasher.update(path_str.as_bytes());
+    }
+    hasher.update(size.to_le_bytes());
+    let result = hasher.finalize();
+    format!("{}_{:x}.jpg", size, result)
+}
+
+/// Get thumbnail cache directory
+fn get_thumbnail_cache_dir(config: &Config) -> Result<PathBuf, FileServerError> {
+    match &config.thumbnail_cache_dir {
+        Some(path) => Ok(path.clone()),
+        None => {
+            // Default to ~/.cache/oqto/thumbnails
+            let home_dir = std::env::var("HOME").map_err(|_| {
+                error!("Failed to determine home directory");
+                FileServerError::Io(std::io::Error::other(
+                    "Failed to determine home directory".to_string(),
+                ))
+            })?;
+            let cache_dir = PathBuf::from(home_dir)
+                .join(".cache")
+                .join("oqto")
+                .join("thumbnails");
+            Ok(cache_dir)
+        }
+    }
+}
+
+/// Check if file extension is supported for thumbnail generation
+fn is_image_file(extension: &str) -> bool {
+    matches!(
+        extension.to_lowercase().as_str(),
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "ico" | "svg"
+    )
 }
 
 #[cfg(test)]

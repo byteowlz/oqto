@@ -1,6 +1,8 @@
 "use client";
 
 import { FileIcon } from "@/components/data-display";
+import { ThumbnailImage } from "./ThumbnailImage";
+import { getThumbnailUrl, supportsThumbnail } from "@/lib/thumbnail-utils";
 import {
 	ContextMenu,
 	ContextMenuContent,
@@ -1201,6 +1203,7 @@ export function FileTreeView({
 				) : (
 					<GridView
 						files={tree}
+						workspacePath={normalizedWorkspacePath}
 						selectedFiles={selectedFiles}
 						onSelectFile={handleSelectFile}
 						onNavigateToFolder={handleNavigateToFolder}
@@ -2085,6 +2088,7 @@ function ListView({
 // Grid View Component
 function GridView({
 	files,
+	workspacePath,
 	selectedFiles,
 	onSelectFile,
 	onNavigateToFolder,
@@ -2101,6 +2105,7 @@ function GridView({
 	onOpenAsApp,
 }: {
 	files: FileNode[];
+	workspacePath?: string | null;
 	selectedFiles: Set<string>;
 	onSelectFile: (
 		path: string,
@@ -2174,11 +2179,21 @@ function GridView({
 								isSelected && "bg-primary/10 ring-1 ring-primary/30",
 							)}
 						>
-							<FileIcon
-								filename={file.name}
-								isDirectory={file.type === "directory"}
-								size={48}
-							/>
+							{file.type === "file" && supportsThumbnail(file.name) && workspacePath ? (
+								<ThumbnailImage
+									src={getThumbnailUrl({ workspacePath, filePath: file.path })}
+									alt={file.name}
+									filename={file.name}
+									extension={file.name.substring(file.name.lastIndexOf("."))}
+									size={96}
+								/>
+							) : (
+								<FileIcon
+									filename={file.name}
+									isDirectory={file.type === "directory"}
+									size={48}
+								/>
+							)}
 							{isRenaming ? (
 								<RenameInput
 									initialValue={file.name}

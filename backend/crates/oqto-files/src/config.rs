@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -32,6 +32,14 @@ pub struct Config {
     /// Office/document extensions for simple view filtering
     #[serde(default = "default_office_extensions")]
     pub office_extensions: Vec<String>,
+
+    /// Thumbnail cache directory (defaults to ~/.cache/oqto/thumbnails)
+    #[serde(default)]
+    pub thumbnail_cache_dir: Option<PathBuf>,
+
+    /// Maximum thumbnail age in seconds (defaults to 30 days)
+    #[serde(default = "default_max_thumbnail_age")]
+    pub max_thumbnail_age: u64,
 }
 
 fn default_max_upload_size() -> u64 {
@@ -106,6 +114,10 @@ fn default_office_extensions() -> Vec<String> {
     ]
 }
 
+fn default_max_thumbnail_age() -> u64 {
+    30 * 24 * 60 * 60 // 30 days
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -116,6 +128,8 @@ impl Default for Config {
             hidden_extensions: default_hidden_extensions(),
             hidden_dirs: default_hidden_dirs(),
             office_extensions: default_office_extensions(),
+            thumbnail_cache_dir: None,
+            max_thumbnail_age: default_max_thumbnail_age(),
         }
     }
 }

@@ -26,4 +26,6 @@ pub fn file_routes() -> Router<AppState> {
         // Download operations
         .route("/download", get(handlers::download))
         .route("/download-zip", get(handlers::download_zip))
+        // Thumbnail generation
+        .route("/thumbnail", get(handlers::get_thumbnail))
 }

@@ -55,5 +55,12 @@ syntect.workspace = true
 # Temp files (disk-backed zip creation)
 tempfile.workspace = true
 
+# Image processing
+image.workspace = true
+
+# Hashing for cache keys
+sha2.workspace = true
+hex.workspace = true
+
 [lints]
 workspace = true

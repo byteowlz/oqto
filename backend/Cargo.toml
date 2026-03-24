@@ -95,6 +95,9 @@ walkdir = "2.5"
 notify = "8.2"
 zip = { version = "2.4", default-features = false, features = ["deflate"] }
 
+# Image processing
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif"] }
+
 # Dev dependencies
 tempfile = "3"
 axum-test = "17"
