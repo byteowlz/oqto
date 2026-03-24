@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/control-plane-client", () => ({
 	controlPlaneApiUrl: () => "http://localhost:8080/api/ws/mux",

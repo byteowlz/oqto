@@ -36,13 +36,17 @@ function BranchNode({
 }) {
 	const children = childSessionsByParent.get(session.id) || [];
 	const isSelected = selectedSessionId === session.id;
-	const date = session.updated_at ? formatSessionDate(session.updated_at) : null;
+	const date = session.updated_at
+		? formatSessionDate(session.updated_at)
+		: null;
 
 	return (
 		<div className="space-y-1">
 			<div className="flex items-center gap-2">
 				{depth > 0 ? (
-					<div className="text-muted-foreground/60 text-xs">{"└".padStart(depth + 1, "─")}</div>
+					<div className="text-muted-foreground/60 text-xs">
+						{"└".padStart(depth + 1, "─")}
+					</div>
 				) : (
 					<GitBranch className="w-3.5 h-3.5 text-primary/70" />
 				)}
@@ -56,8 +60,14 @@ function BranchNode({
 							: "border-border text-muted-foreground",
 					)}
 				>
-					<div className="font-medium truncate">{getDisplayPiTitle(session)}</div>
-					{date && <div className="text-[10px] text-muted-foreground mt-0.5">{date}</div>}
+					<div className="font-medium truncate">
+						{getDisplayPiTitle(session)}
+					</div>
+					{date && (
+						<div className="text-[10px] text-muted-foreground mt-0.5">
+							{date}
+						</div>
+					)}
 				</button>
 			</div>
 			{children.length > 0 && (
@@ -92,7 +102,9 @@ export function BranchGraphDialog({
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent className="sm:max-w-3xl max-h-[80vh] overflow-hidden">
 				<DialogHeader>
-					<DialogTitle>{t("sessions.branchGraph", "Session Branch Graph")}</DialogTitle>
+					<DialogTitle>
+						{t("sessions.branchGraph", "Session Branch Graph")}
+					</DialogTitle>
 					<DialogDescription>
 						{t(
 							"sessions.branchGraphDescription",

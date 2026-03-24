@@ -311,7 +311,9 @@ export function AgentsApp() {
 						{loading ? (
 							<div className="text-sm text-muted-foreground">Loading...</div>
 						) : filteredAgents.length === 0 ? (
-							<div className="text-sm text-muted-foreground">{t("agents.noAgents")}</div>
+							<div className="text-sm text-muted-foreground">
+								{t("agents.noAgents")}
+							</div>
 						) : (
 							filteredAgents.map((agent) => {
 								const isSelected = selectedAgentId === agent.id;

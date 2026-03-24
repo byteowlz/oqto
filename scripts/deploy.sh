@@ -47,6 +47,93 @@ run()  {
     fi
 }
 
+log_multiline_prefixed() {
+    local prefix="$1"
+    local text="$2"
+    while IFS= read -r line; do
+        [[ -n "$line" ]] && log "${prefix}${line}"
+    done <<< "$text"
+}
+
+sync_configs_with_retry() {
+    local is_local="$1"
+    local ssh_target="${2:-}"
+    local host_name="${3:-local}"
+    local attempts=10
+    local delay_seconds=2
+    local attempt output
+
+    for ((attempt=1; attempt<=attempts; attempt++)); do
+        if [[ "$is_local" == "true" ]]; then
+            if output="$(oqtoctl user sync-configs 2>&1)"; then
+                log_multiline_prefixed "    " "$output"
+                return 0
+            fi
+        else
+            if output="$(ssh "$ssh_target" "sudo oqtoctl user sync-configs 2>&1" 2>&1)"; then
+                log_multiline_prefixed "    " "$output"
+                return 0
+            fi
+        fi
+
+        log_multiline_prefixed "    " "$output"
+        warn "  sync-configs attempt ${attempt}/${attempts} failed on ${host_name}; retrying in ${delay_seconds}s"
+        sleep "$delay_seconds"
+    done
+
+    return 1
+}
+
+ensure_single_user_runner() {
+    local is_local="$1"
+    local ssh_target="${2:-}"
+    local host_name="${3:-local}"
+
+    log "  Ensuring oqto-runner is active (single-user mode)..."
+
+    if [[ "$is_local" == "true" ]]; then
+        if systemctl --user is-active --quiet oqto-runner; then
+            ok "  oqto-runner already active"
+            return 0
+        fi
+
+        run systemctl --user enable --now oqto-runner || {
+            warn "  Failed to enable/start oqto-runner on ${host_name}"
+            return 1
+        }
+
+        local uid socket
+        uid="$(id -u)"
+        socket="/run/user/${uid}/oqto-runner.sock"
+        if [[ -S "$socket" ]]; then
+            ok "  Runner socket available: $socket"
+        else
+            warn "  Runner service started but socket missing: $socket"
+        fi
+        return 0
+    fi
+
+    if ssh "$ssh_target" "systemctl --user is-active --quiet oqto-runner"; then
+        ok "  oqto-runner already active on ${host_name}"
+        return 0
+    fi
+
+    if ! ssh "$ssh_target" "systemctl --user enable --now oqto-runner"; then
+        warn "  Failed to enable/start oqto-runner on ${host_name}"
+        return 1
+    fi
+
+    local remote_socket_check
+    remote_socket_check="uid=\$(id -u); test -S /run/user/\${uid}/oqto-runner.sock"
+    if ssh "$ssh_target" "$remote_socket_check"; then
+        ok "  Runner socket available on ${host_name}"
+    else
+        warn "  Runner service started on ${host_name} but socket missing"
+    fi
+
+    return 0
+}
+
 usage() {
     sed -n '/^# Usage:/,/^[^#]/p' "$0" | grep '^#' | sed 's/^# \?//'
     exit 0
@@ -164,7 +251,8 @@ if ! $SKIP_BUILD; then
 
     if ! $SKIP_BACKEND; then
         log "Building backend binaries (remote-build)..."
-        run bash -c "cd '$ROOT_DIR/backend' && remote-build build --release -p oqto --bin oqto --bin oqto-runner --bin oqto-sandbox"
+        run bash -c "cd '$ROOT_DIR/backend' && remote-build build --release -p oqto --bin oqto --bin oqto-sandbox"
+        run bash -c "cd '$ROOT_DIR/backend' && remote-build build --release -p oqto-runner --bin oqto-runner"
         run bash -c "cd '$ROOT_DIR/backend' && remote-build build --release -p oqto-files --bin oqto-files"
         run bash -c "cd '$ROOT_DIR/backend' && remote-build build --release -p oqto-usermgr --bin oqto-usermgr"
     fi
@@ -301,14 +389,14 @@ deploy_host() {
             if $DRY_RUN; then
                 echo -e "${YELLOW}  [dry-run]${NC} oqtoctl user sync-configs"
             else
-                # Wait briefly for oqto to be ready after restart
-                sleep 3
-                if [[ "$is_local" == "true" ]]; then
-                    oqtoctl user sync-configs 2>&1 | while IFS= read -r line; do log "    $line"; done || warn "  sync-configs failed (non-fatal)"
+                # Give oqto a brief startup window; sync call itself retries if
+                # unix socket/admin API isn't ready yet.
+                sleep 2
+                if sync_configs_with_retry "$is_local" "$ssh_target" "$name"; then
+                    ok "Per-user configs synced"
                 else
-                    ssh "$ssh_target" "sudo oqtoctl user sync-configs 2>&1" | while IFS= read -r line; do log "    $line"; done || warn "  sync-configs failed on $name (non-fatal)"
+                    warn "  sync-configs failed on $name (non-fatal)"
                 fi
-                ok "Per-user configs synced"
             fi
 
             # Update hstry adapters globally BEFORE restarting services.
@@ -360,7 +448,26 @@ deploy_host() {
             fi
         fi
 
+        # Single-user mode: runner must always be up (runner-only architecture)
+        if [[ "$mode" == "single-user" ]]; then
+            if $DRY_RUN; then
+                echo -e "${YELLOW}  [dry-run]${NC} ensure oqto-runner is enabled and running"
+            else
+                ensure_single_user_runner "$is_local" "$ssh_target" "$name" || warn "  oqto-runner availability check failed"
+            fi
+        fi
+
         ok "Services restarted"
+    fi
+
+    # Even when service restart is skipped, enforce runner availability in single-user mode.
+    if [[ "$mode" == "single-user" && "$SKIP_SERVICES" == "true" ]]; then
+        log "Service restart skipped; still verifying oqto-runner availability (single-user mode)"
+        if $DRY_RUN; then
+            echo -e "${YELLOW}  [dry-run]${NC} ensure oqto-runner is enabled and running"
+        else
+            ensure_single_user_runner "$is_local" "$ssh_target" "$name" || warn "  oqto-runner availability check failed"
+        fi
     fi
 
     ok "Deployment to ${BOLD}$name${NC} complete"

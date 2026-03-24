@@ -9,14 +9,14 @@ PI_EXTENSIONS_REPO="https://github.com/byteowlz/pi-agent-extensions.git"
 # These are the Oqto-relevant extensions; users can install others via the
 # pi-agent-extensions justfile.
 PI_DEFAULT_EXTENSIONS=(
-  "auto-rename"
-  "azure-empty-response-guard"
-  "introspection"
-  "oqto-bridge"
-  "oqto-todos"
-  "custom-context-files"
-  "read-image-guard"
-  "read-file-guard"
+  "pi-auto-rename"
+  "pi-azure-empty-response-guard"
+  "pi-introspection"
+  "pi-oqto-bridge"
+  "pi-oqto-todos"
+  "pi-custom-context-files"
+  "pi-read-image-guard"
+  "pi-read-file-guard"
 )
 
 # Clone or update the pi-agent-extensions repo into a cache directory.
@@ -56,7 +56,7 @@ clone_pi_extensions_repo() {
   fi
 
   # Verify the clone has content (an extension with index.ts should exist)
-  if [[ ! -f "$cache_dir/oqto-bridge/index.ts" ]]; then
+  if [[ ! -f "$cache_dir/pi-oqto-bridge/index.ts" ]]; then
     log_warn "pi-agent-extensions cache is stale or broken, re-cloning..." >&2
     rm -rf "$cache_dir"
     mkdir -p "$(dirname "$cache_dir")"
@@ -99,6 +99,17 @@ install_pi_extensions_for_user() {
 
   mkdir -p "$extensions_dir"
 
+  # Cleanup legacy unprefixed extension directories from pre-rename installs.
+  # Example: auto-rename -> pi-auto-rename
+  for ext_name in "${PI_DEFAULT_EXTENSIONS[@]}"; do
+    local legacy_name="${ext_name#pi-}"
+    local legacy_dir="${extensions_dir}/${legacy_name}"
+    if [[ "$legacy_name" != "$ext_name" && -d "$legacy_dir" ]]; then
+      rm -rf "$legacy_dir"
+      log_info "Removed legacy extension directory: ${legacy_name}"
+    fi
+  done
+
   local installed=0
   for ext_name in "${PI_DEFAULT_EXTENSIONS[@]}"; do
     local src_dir="${ext_source}/${ext_name}"
@@ -130,12 +141,12 @@ repository: https://github.com/byteowlz/pi-agent-extensions
 
 ## Installed Extensions
 
-- **auto-rename**: Automatically generate session names from first user query
-- **oqto-bridge**: Emit granular agent phase status for the Oqto runner
-- **oqto-todos**: Todo management tools for Oqto frontend integration
-- **custom-context-files**: Auto-load USER.md, PERSONALITY.md, and other context files into prompts
-- **read-image-guard**: Prevent oversized read-tool image payloads from causing provider request-body overflows
-- **read-file-guard**: Prevent oversized read-tool text payloads (for example from PDFs) from causing provider request-body overflows
+- **pi-auto-rename**: Automatically generate session names from first user query
+- **pi-oqto-bridge**: Emit granular agent phase status for the Oqto runner
+- **pi-oqto-todos**: Todo management tools for Oqto frontend integration
+- **pi-custom-context-files**: Auto-load USER.md, PERSONALITY.md, and other context files into prompts
+- **pi-read-image-guard**: Prevent oversized read-tool image payloads from causing provider request-body overflows
+- **pi-read-file-guard**: Prevent oversized read-tool text payloads (for example from PDFs) from causing provider request-body overflows
 
 ## Managing Extensions
 

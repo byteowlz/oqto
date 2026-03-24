@@ -8,20 +8,24 @@
  * - **Data URI**: Inline base64 with MIME type (data:image/png;base64,...)
  * - **Base64**: Raw base64 data with separate MIME type field
  */
-export type MediaSource = { 
-/**
- * URL to the media file.
- */
-url: string, 
-/**
- * MIME type (optional, can be inferred from URL or content).
- */
-mime_type: string | null, } | { 
-/**
- * Base64-encoded content.
- */
-data: string, 
-/**
- * MIME type (required for base64).
- */
-mimeType: string, };
+export type MediaSource =
+	| {
+			/**
+			 * URL to the media file.
+			 */
+			url: string;
+			/**
+			 * MIME type (optional, can be inferred from URL or content).
+			 */
+			mime_type: string | null;
+	  }
+	| {
+			/**
+			 * Base64-encoded content.
+			 */
+			data: string;
+			/**
+			 * MIME type (required for base64).
+			 */
+			mimeType: string;
+	  };

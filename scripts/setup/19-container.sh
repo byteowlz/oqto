@@ -11,22 +11,16 @@ build_container_image() {
 
   if ! confirm "Build the Oqto container image? (this may take several minutes)"; then
     log_info "Skipping container build"
-    log_info "You can build later with: just container-build"
+    log_info "You can build later with: docker build -f deploy/docker/Dockerfile -t oqto:latest ."
     return
   fi
 
   cd "$SCRIPT_DIR"
 
-  local dockerfile="deploy/container/Dockerfile"
-  if [[ "$ARCH" == "arm64" || "$ARCH" == "aarch64" ]]; then
-    if [[ -f "deploy/container/Dockerfile.arm64" ]]; then
-      dockerfile="deploy/container/Dockerfile.arm64"
-    fi
-  fi
+  local dockerfile="deploy/docker/Dockerfile"
 
   log_info "Building image with $CONTAINER_RUNTIME..."
-  $CONTAINER_RUNTIME build -t oqto-dev:latest -f "$dockerfile" .
+  $CONTAINER_RUNTIME build -t oqto:latest -f "$dockerfile" .
 
-  log_success "Container image built: oqto-dev:latest"
+  log_success "Container image built: oqto:latest"
 }
-

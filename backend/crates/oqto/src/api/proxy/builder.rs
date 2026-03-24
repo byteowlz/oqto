@@ -294,11 +294,17 @@ pub async fn proxy_http_request_with_query(
             new_content_length,
             parts.headers.get(axum::http::header::CONTENT_LENGTH)
         );
-        forwarded.headers_mut().insert(
-            axum::http::header::CONTENT_LENGTH,
-            axum::http::HeaderValue::from_str(&new_content_length)
-                .expect("content-length is valid"),
-        );
+        let content_length =
+            axum::http::HeaderValue::from_str(&new_content_length).map_err(|e| {
+                error!(
+                    "Invalid content-length header value {}: {:?}",
+                    new_content_length, e
+                );
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?;
+        forwarded
+            .headers_mut()
+            .insert(axum::http::header::CONTENT_LENGTH, content_length);
 
         // Ensure Host header matches the target authority.
         if let Some(authority) = forwarded.uri().authority() {

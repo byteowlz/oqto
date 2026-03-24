@@ -1,17 +1,20 @@
-import { describe, expect, it } from "vitest";
 import {
-	messageFingerprint,
 	mergeServerMessages,
+	messageFingerprint,
 	shouldPreserveLocalMessage,
 } from "@/features/chat/hooks/message-utils";
 import type { DisplayMessage } from "@/features/chat/hooks/types";
+import { describe, expect, it } from "vitest";
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 function makeMessage(
-	overrides: Partial<DisplayMessage> & { id: string; role: DisplayMessage["role"] },
+	overrides: Partial<DisplayMessage> & {
+		id: string;
+		role: DisplayMessage["role"];
+	},
 ): DisplayMessage {
 	return {
 		parts: [],
@@ -77,15 +80,27 @@ describe("shouldPreserveLocalMessage", () => {
 	});
 
 	it("does not preserve UUIDs", () => {
-		const msg = textMsg("550e8400-e29b-41d4-a716-446655440000", "user", "hello");
+		const msg = textMsg(
+			"550e8400-e29b-41d4-a716-446655440000",
+			"user",
+			"hello",
+		);
 		expect(shouldPreserveLocalMessage(msg)).toBe(false);
 	});
 
 	it("requires exact pi-msg-N format (digits only)", () => {
-		expect(shouldPreserveLocalMessage(textMsg("pi-msg-", "user", "x"))).toBe(false);
-		expect(shouldPreserveLocalMessage(textMsg("pi-msg-abc", "user", "x"))).toBe(false);
-		expect(shouldPreserveLocalMessage(textMsg("pi-msg-1", "user", "x"))).toBe(true);
-		expect(shouldPreserveLocalMessage(textMsg("pi-msg-999", "user", "x"))).toBe(true);
+		expect(shouldPreserveLocalMessage(textMsg("pi-msg-", "user", "x"))).toBe(
+			false,
+		);
+		expect(shouldPreserveLocalMessage(textMsg("pi-msg-abc", "user", "x"))).toBe(
+			false,
+		);
+		expect(shouldPreserveLocalMessage(textMsg("pi-msg-1", "user", "x"))).toBe(
+			true,
+		);
+		expect(shouldPreserveLocalMessage(textMsg("pi-msg-999", "user", "x"))).toBe(
+			true,
+		);
 	});
 });
 
@@ -97,7 +112,9 @@ describe("messageFingerprint", () => {
 	it("includes role in fingerprint", () => {
 		const userMsg = textMsg("1", "user", "hello");
 		const assistantMsg = textMsg("2", "assistant", "hello");
-		expect(messageFingerprint(userMsg)).not.toBe(messageFingerprint(assistantMsg));
+		expect(messageFingerprint(userMsg)).not.toBe(
+			messageFingerprint(assistantMsg),
+		);
 	});
 
 	it("same content produces same fingerprint regardless of id", () => {
@@ -214,12 +231,19 @@ describe("mergeServerMessages", () => {
 		it("keeps streaming assistant message at tail (authoritative path)", () => {
 			const prev = [
 				textMsg("pi-msg-1", "user", "hello", { timestamp: now }),
-				{ ...textMsg("pi-msg-2", "assistant", "partial response", { timestamp: now }), isStreaming: true },
+				{
+					...textMsg("pi-msg-2", "assistant", "partial response", {
+						timestamp: now,
+					}),
+					isStreaming: true,
+				},
 			];
 			// Server has >= messages -> authoritative path
 			const server = [
 				textMsg("history-s1-0", "user", "hello", { timestamp: now }),
-				textMsg("history-s1-1", "assistant", "earlier reply", { timestamp: now }),
+				textMsg("history-s1-1", "assistant", "earlier reply", {
+					timestamp: now,
+				}),
 			];
 			const result = mergeServerMessages(prev, server, "authoritative");
 			expect(result).toHaveLength(3);
@@ -232,8 +256,16 @@ describe("mergeServerMessages", () => {
 		it("keeps optimistic user message + streaming response (authoritative path)", () => {
 			const prev = [
 				textMsg("pi-msg-1", "user", "old msg", { timestamp: now }),
-				textMsg("pi-msg-2", "user", "new question", { timestamp: now, clientId: "c-new" }),
-				{ ...textMsg("pi-msg-3", "assistant", "thinking...", { timestamp: now }), isStreaming: true },
+				textMsg("pi-msg-2", "user", "new question", {
+					timestamp: now,
+					clientId: "c-new",
+				}),
+				{
+					...textMsg("pi-msg-3", "assistant", "thinking...", {
+						timestamp: now,
+					}),
+					isStreaming: true,
+				},
 			];
 			// Server has >= messages -> authoritative path
 			const server = [
@@ -253,7 +285,10 @@ describe("mergeServerMessages", () => {
 		it("keeps streaming message in incremental path too", () => {
 			const prev = [
 				textMsg("pi-msg-1", "user", "hello", { timestamp: now }),
-				{ ...textMsg("pi-msg-2", "assistant", "partial", { timestamp: now }), isStreaming: true },
+				{
+					...textMsg("pi-msg-2", "assistant", "partial", { timestamp: now }),
+					isStreaming: true,
+				},
 			];
 			// Server has fewer -> incremental path preserves everything
 			const server = [
@@ -269,7 +304,10 @@ describe("mergeServerMessages", () => {
 	describe("preserves optimistic user messages", () => {
 		it("keeps user message with clientId not in server", () => {
 			const prev = [
-				textMsg("pi-msg-1", "user", "sent just now", { timestamp: now, clientId: "c-123" }),
+				textMsg("pi-msg-1", "user", "sent just now", {
+					timestamp: now,
+					clientId: "c-123",
+				}),
 			];
 			const server = [
 				textMsg("history-s1-0", "user", "earlier", { timestamp: now }),
@@ -281,10 +319,16 @@ describe("mergeServerMessages", () => {
 
 		it("drops user message when server has matching clientId", () => {
 			const prev = [
-				textMsg("pi-msg-1", "user", "my msg", { timestamp: now, clientId: "c-123" }),
+				textMsg("pi-msg-1", "user", "my msg", {
+					timestamp: now,
+					clientId: "c-123",
+				}),
 			];
 			const server = [
-				textMsg("history-s1-0", "user", "my msg", { timestamp: now, clientId: "c-123" }),
+				textMsg("history-s1-0", "user", "my msg", {
+					timestamp: now,
+					clientId: "c-123",
+				}),
 			];
 			const result = mergeServerMessages(prev, server, "authoritative");
 			expect(result).toHaveLength(1);
@@ -298,11 +342,15 @@ describe("mergeServerMessages", () => {
 			// text but different IDs caused both to survive.
 			const prev = [
 				textMsg("pi-msg-1", "user", "hello world", { timestamp: now }),
-				textMsg("pi-msg-2", "assistant", "I can help with that", { timestamp: now }),
+				textMsg("pi-msg-2", "assistant", "I can help with that", {
+					timestamp: now,
+				}),
 			];
 			const server = [
 				textMsg("history-s1-0", "user", "hello world", { timestamp: now }),
-				textMsg("history-s1-1", "assistant", "I can help with that", { timestamp: now }),
+				textMsg("history-s1-1", "assistant", "I can help with that", {
+					timestamp: now,
+				}),
 			];
 			const result = mergeServerMessages(prev, server, "authoritative");
 			expect(result).toHaveLength(2);
@@ -319,7 +367,11 @@ describe("mergeServerMessages", () => {
 					id: "pi-msg-1",
 					role: "assistant",
 					parts: [
-						{ type: "thinking", id: "th-1", text: "Let me think about this..." },
+						{
+							type: "thinking",
+							id: "th-1",
+							text: "Let me think about this...",
+						},
 						{ type: "text", id: "t-1", text: "Here is my answer." },
 					],
 					timestamp: now,
@@ -330,7 +382,11 @@ describe("mergeServerMessages", () => {
 					id: "history-s1-0",
 					role: "assistant",
 					parts: [
-						{ type: "thinking", id: "p-55", text: "Let me think about this..." },
+						{
+							type: "thinking",
+							id: "p-55",
+							text: "Let me think about this...",
+						},
 						{ type: "text", id: "p-56", text: "Here is my answer." },
 					],
 					timestamp: now,
@@ -347,17 +403,27 @@ describe("mergeServerMessages", () => {
 			const prev = [
 				// This user msg with clientId is NOT at the tail (there's a completed
 				// assistant msg after it), so it should NOT be preserved.
-				textMsg("pi-msg-1", "user", "old question", { timestamp: now, clientId: "c-old" }),
+				textMsg("pi-msg-1", "user", "old question", {
+					timestamp: now,
+					clientId: "c-old",
+				}),
 				textMsg("pi-msg-2", "assistant", "old answer", { timestamp: now }),
 				// This IS at the tail and is in-flight
-				textMsg("pi-msg-3", "user", "new question", { timestamp: now, clientId: "c-new" }),
+				textMsg("pi-msg-3", "user", "new question", {
+					timestamp: now,
+					clientId: "c-new",
+				}),
 			];
 			// Server has MORE messages than prev -> authoritative path
 			const server = [
 				textMsg("history-s1-0", "user", "old question", { timestamp: now }),
 				textMsg("history-s1-1", "assistant", "old answer", { timestamp: now }),
-				textMsg("history-s1-2", "assistant", "different context", { timestamp: now }),
-				textMsg("history-s1-3", "assistant", "more context", { timestamp: now }),
+				textMsg("history-s1-2", "assistant", "different context", {
+					timestamp: now,
+				}),
+				textMsg("history-s1-3", "assistant", "more context", {
+					timestamp: now,
+				}),
 			];
 			const result = mergeServerMessages(prev, server, "authoritative");
 			// Server (4) + only pi-msg-3 (tail in-flight)
@@ -373,13 +439,24 @@ describe("mergeServerMessages", () => {
 			// but local state has 10 from earlier streaming
 			const prev = [];
 			for (let i = 0; i < 10; i++) {
-				prev.push(textMsg(`pi-msg-${i}`, i % 2 === 0 ? "user" : "assistant", `msg ${i}`, { timestamp: now + i * 1000 }));
+				prev.push(
+					textMsg(
+						`pi-msg-${i}`,
+						i % 2 === 0 ? "user" : "assistant",
+						`msg ${i}`,
+						{ timestamp: now + i * 1000 },
+					),
+				);
 			}
 			// Server returns only last 3 (partial context window)
 			const server = [
-				textMsg("server-7", "assistant", "msg 7 updated", { timestamp: now + 7000 }),
+				textMsg("server-7", "assistant", "msg 7 updated", {
+					timestamp: now + 7000,
+				}),
 				textMsg("server-8", "user", "msg 8 updated", { timestamp: now + 8000 }),
-				textMsg("server-9", "assistant", "msg 9 updated", { timestamp: now + 9000 }),
+				textMsg("server-9", "assistant", "msg 9 updated", {
+					timestamp: now + 9000,
+				}),
 			];
 			const result = mergeServerMessages(prev, server, "partial");
 			// All 10 original + 3 server (no ID match, so appended)
@@ -411,7 +488,10 @@ describe("mergeServerMessages", () => {
 				textMsg("local-3", "user", "followup", { timestamp: now }),
 			];
 			const server = [
-				textMsg("confirmed-1", "user", "msg updated", { timestamp: now, clientId: "c1" }),
+				textMsg("confirmed-1", "user", "msg updated", {
+					timestamp: now,
+					clientId: "c1",
+				}),
 			];
 			const result = mergeServerMessages(prev, server, "partial");
 			expect(result).toHaveLength(3);

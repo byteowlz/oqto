@@ -21,14 +21,13 @@ use super::onboarding_handlers;
 use super::proxy;
 use super::state::AppState;
 use super::ui_control as ui_control_handlers;
-use super::ws_multiplexed;
+use super::ws;
 
 // Note: handlers module now provides all public handlers via re-exports in handlers/mod.rs
 // Routes continue to use `handlers::function_name` - no changes needed
 
 /// Authentication mode for API routers.
 #[derive(Clone)]
-#[allow(clippy::large_enum_variant)]
 pub enum AuthMode {
     /// Standard JWT/cookie authentication.
     Jwt,
@@ -74,7 +73,7 @@ fn create_router_with_config_and_auth(
     // Protected routes (require authentication)
     let protected_routes = Router::new()
         // Multiplexed WebSocket endpoint for Pi, files, terminal, hstry channels
-        .route("/ws/mux", get(ws_multiplexed::ws_multiplexed_handler))
+        .route("/ws/mux", get(ws::multiplexed::ws_multiplexed_handler))
         // sldr routes
         .route(
             "/sldr",
@@ -379,6 +378,10 @@ fn create_router_with_config_and_auth(
         )
         // Chat history routes (reads from disk, reads from hstry)
         .route("/chat-history", get(handlers::list_chat_history))
+        .route(
+            "/chat-history/backfill",
+            post(handlers::backfill_chat_history),
+        )
         .route(
             "/chat-history/grouped",
             get(handlers::list_chat_history_grouped),

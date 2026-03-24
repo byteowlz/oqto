@@ -114,7 +114,7 @@ let terminalFontReadyPromise: Promise<void> | null = null;
 function parseFontFamilies(fontFamily: string): string[] {
 	return fontFamily
 		.split(",")
-		.map((f) => f.trim().replace(/^['\"]|['\"]$/g, ""))
+		.map((f) => f.trim().replace(/^['"]|['"]$/g, ""))
 		.filter(Boolean);
 }
 
@@ -124,7 +124,8 @@ async function ensureTerminalFontReady(fontFamily: string): Promise<void> {
 
 	terminalFontReadyPromise = (async () => {
 		const fonts = parseFontFamilies(fontFamily);
-		const preferred = fonts.find((f) => f === "JetBrainsMono Nerd Font") ?? fonts[0];
+		const preferred =
+			fonts.find((f) => f === "JetBrainsMono Nerd Font") ?? fonts[0];
 		if (!preferred) return;
 
 		const loadPromise = document.fonts.load(`14px "${preferred}"`, "M");
@@ -710,8 +711,12 @@ export const MuxGhosttyTerminal = forwardRef<
 		);
 		const terminalIdRef = useRef<string>(stableTerminalId);
 		const isReadyRef = useRef(false);
-		const openRetryTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-		const openWatchdogTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+		const openRetryTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+			null,
+		);
+		const openWatchdogTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+			null,
+		);
 		const lastOpenSentAtRef = useRef(0);
 		const openAttemptsRef = useRef(0);
 		const lastTerminalErrorRef = useRef<string | null>(null);
@@ -877,7 +882,9 @@ export const MuxGhosttyTerminal = forwardRef<
 					workspacePath,
 				);
 				if (!terminal) {
-					console.log("[MuxTerminal] No terminal ref, scheduling retry in 120ms");
+					console.log(
+						"[MuxTerminal] No terminal ref, scheduling retry in 120ms",
+					);
 					scheduleOpenRetry();
 					return;
 				}
@@ -912,7 +919,9 @@ export const MuxGhosttyTerminal = forwardRef<
 						setStatus("error");
 						return;
 					}
-					console.warn("[MuxTerminal] open watchdog fired, retrying terminal open");
+					console.warn(
+						"[MuxTerminal] open watchdog fired, retrying terminal open",
+					);
 					setStatus("connecting");
 					sendOpen();
 				}, 8000);
@@ -969,7 +978,10 @@ export const MuxGhosttyTerminal = forwardRef<
 						isReadyRef.current = false;
 						clearOpenWatchdog();
 						lastTerminalErrorRef.current = terminalEvent.error;
-						if (terminalEvent.error?.includes("Ports") && terminalEvent.error.includes("still in use")) {
+						if (
+							terminalEvent.error?.includes("Ports") &&
+							terminalEvent.error.includes("still in use")
+						) {
 							openAttemptsRef.current = 99;
 							clearOpenRetry();
 						}
@@ -1010,7 +1022,7 @@ export const MuxGhosttyTerminal = forwardRef<
 				{status !== "connected" && (
 					<div className="absolute inset-0 flex items-center justify-center text-xs font-mono text-muted-foreground pointer-events-none px-4 text-center">
 						{status === "error"
-							? lastTerminalErrorRef.current ?? "Terminal unavailable"
+							? (lastTerminalErrorRef.current ?? "Terminal unavailable")
 							: "Connecting terminal..."}
 					</div>
 				)}

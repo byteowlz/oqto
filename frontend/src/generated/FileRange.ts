@@ -3,20 +3,21 @@
 /**
  * A range within a file (for citations and file references).
  */
-export type FileRange = { 
-/**
- * Start line (1-indexed).
- */
-start_line: number | null, 
-/**
- * End line (1-indexed, inclusive).
- */
-end_line: number | null, 
-/**
- * Start column (0-indexed).
- */
-start_col: number | null, 
-/**
- * End column (0-indexed).
- */
-end_col: number | null, };
+export type FileRange = {
+	/**
+	 * Start line (1-indexed).
+	 */
+	start_line: number | null;
+	/**
+	 * End line (1-indexed, inclusive).
+	 */
+	end_line: number | null;
+	/**
+	 * Start column (0-indexed).
+	 */
+	start_col: number | null;
+	/**
+	 * End column (0-indexed).
+	 */
+	end_col: number | null;
+};

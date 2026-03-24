@@ -36,9 +36,7 @@ export function BootstrapWorkspaceDialog({
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent>
 				<DialogHeader>
-					<DialogTitle>
-						{t("dialogs.nameWorkspace")}
-					</DialogTitle>
+					<DialogTitle>{t("dialogs.nameWorkspace")}</DialogTitle>
 					<DialogDescription>
 						{t("dialogs.nameWorkspaceDescription")}
 					</DialogDescription>
@@ -46,9 +44,7 @@ export function BootstrapWorkspaceDialog({
 
 				<div className="grid gap-4 py-4">
 					<div className="grid gap-2">
-						<Label htmlFor="workspace-name">
-							{t("dialogs.displayName")}
-						</Label>
+						<Label htmlFor="workspace-name">{t("dialogs.displayName")}</Label>
 						<Input
 							id="workspace-name"
 							placeholder={t("dialogs.displayNamePlaceholder")}

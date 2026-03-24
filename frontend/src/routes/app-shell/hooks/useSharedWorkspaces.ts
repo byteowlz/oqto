@@ -2,13 +2,14 @@
  * Hook for managing shared workspaces data and state.
  * Listens to system WS events for real-time membership/workspace changes.
  */
+import { useMountEffect } from "@/hooks/use-mount-effect";
 import {
 	type SharedWorkspaceInfo,
 	listSharedWorkspaces,
 } from "@/lib/api/shared-workspaces";
 import { getWsManager } from "@/lib/ws-manager";
 import type { SystemWsEvent } from "@/lib/ws-mux-types";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 
 export interface UseSharedWorkspacesResult {
 	/** All shared workspaces the user belongs to. */
@@ -59,26 +60,26 @@ export function useSharedWorkspaces(): UseSharedWorkspacesResult {
 	}, []);
 
 	// Initial fetch
-	useEffect(() => {
+	useMountEffect(() => {
 		mountedRef.current = true;
-		refresh();
+		void refresh();
 		return () => {
 			mountedRef.current = false;
 		};
-	}, [refresh]);
+	});
 
 	// Listen for real-time shared_workspace.updated events via WebSocket
-	useEffect(() => {
+	useMountEffect(() => {
 		const manager = getWsManager();
 		const unsub = manager.subscribe("system", (event) => {
 			const sysEvent = event as SystemWsEvent;
 			if (sysEvent.type === "shared_workspace.updated") {
 				// Re-fetch the full list on any change
-				refresh();
+				void refresh();
 			}
 		});
 		return unsub;
-	}, [refresh]);
+	});
 
 	const toggleWorkspaceExpanded = useCallback((workspaceId: string) => {
 		setExpandedWorkspaces((prev) => {

@@ -1,0 +1,50 @@
+# =============================================================================
+# Oqto All-in-One Docker Compose
+# =============================================================================
+#
+# Quick start:
+#   cp .env.example .env    # Edit with your API keys
+#   docker compose up -d
+#
+# Access: http://localhost:8080
+#
+# =============================================================================
+
+services:
+  oqto:
+    image: ghcr.io/byteowlz/oqto:latest
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    container_name: oqto
+    restart: unless-stopped
+    ports:
+      - "${OQTO_PORT:-8080}:8080"
+    environment:
+      # --- Required: at least one LLM provider key ---
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+
+      # --- Auth ---
+      - JWT_SECRET=${JWT_SECRET:-}
+      - ADMIN_USER=${ADMIN_USER:-admin}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
+      - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@oqto.local}
+
+      # --- Optional tuning ---
+      - OQTO_LOG_LEVEL=${OQTO_LOG_LEVEL:-info}
+      - OQTO_SINGLE_USER=${OQTO_SINGLE_USER:-false}
+    volumes:
+      - oqto-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+volumes:
+  oqto-data:
+    driver: local

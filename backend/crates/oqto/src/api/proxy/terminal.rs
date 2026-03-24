@@ -3,6 +3,7 @@
 //! Handles the ttyd binary protocol and supports both Unix socket and TCP connections.
 
 use axum::extract::ws::WebSocket;
+use axum::http::HeaderValue;
 use futures::{SinkExt, StreamExt};
 use log::debug;
 use std::path::Path as StdPath;
@@ -110,7 +111,7 @@ async fn connect_ttyd_unix(socket_path: &StdPath) -> anyhow::Result<TtydConnecti
     let mut request = "ws://localhost/ws".into_client_request()?;
     request
         .headers_mut()
-        .insert("Sec-WebSocket-Protocol", "tty".parse().unwrap());
+        .insert("Sec-WebSocket-Protocol", HeaderValue::from_static("tty"));
 
     let (socket, _response) = client_async(request, stream).await?;
     Ok(TtydConnection::Unix(socket))
@@ -124,7 +125,7 @@ async fn connect_ttyd_tcp(port: u16) -> anyhow::Result<TtydConnection> {
     let mut request = url.into_client_request()?;
     request
         .headers_mut()
-        .insert("Sec-WebSocket-Protocol", "tty".parse().unwrap());
+        .insert("Sec-WebSocket-Protocol", HeaderValue::from_static("tty"));
 
     let (socket, _response) = connect_async(request).await?;
     Ok(TtydConnection::Tcp(socket))
@@ -321,7 +322,9 @@ pub async fn handle_terminal_proxy(
                     let text_str = text.to_string();
                     // ttyd sends text messages - check for command prefix
                     if !text_str.is_empty() {
-                        let first_char = text_str.chars().next().unwrap();
+                        let Some(first_char) = text_str.chars().next() else {
+                            continue;
+                        };
                         match first_char {
                             '0' => {
                                 // Output data - strip the '0' prefix and send to client

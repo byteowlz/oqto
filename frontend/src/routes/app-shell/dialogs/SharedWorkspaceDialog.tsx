@@ -12,6 +12,7 @@ import {
 	DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { useResetOnOpen } from "@/hooks/use-reset-on-open";
 import {
 	WORKSPACE_COLORS,
 	WORKSPACE_ICONS,
@@ -20,7 +21,7 @@ import {
 } from "@/lib/api/shared-workspaces";
 import { cn } from "@/lib/utils";
 import { Check, Loader2 } from "lucide-react";
-import { memo, useCallback, useEffect, useState } from "react";
+import { memo, useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { WorkspaceIcon } from "../WorkspaceIcon";
 
@@ -63,19 +64,25 @@ export const SharedWorkspaceDialog = memo(function SharedWorkspaceDialog({
 	const [icon, setIcon] = useState(initialIcon);
 	const [color, setColor] = useState(initialColor);
 
-	// Reset form when dialog opens or initial values change
-	useEffect(() => {
-		if (open) {
+	useResetOnOpen(
+		open,
+		() => {
 			setName(initialName);
 			setDescription(initialDescription);
 			setIcon(initialIcon);
 			setColor(initialColor);
-		}
-	}, [open, initialName, initialDescription, initialIcon, initialColor]);
+		},
+		[initialName, initialDescription, initialIcon, initialColor],
+	);
 
 	const handleSubmit = useCallback(() => {
 		if (!name.trim()) return;
-		onSubmit({ name: name.trim(), description: description.trim(), icon, color });
+		onSubmit({
+			name: name.trim(),
+			description: description.trim(),
+			icon,
+			color,
+		});
 	}, [name, description, icon, color, onSubmit]);
 
 	return (
@@ -103,10 +110,7 @@ export const SharedWorkspaceDialog = memo(function SharedWorkspaceDialog({
 				<div className="space-y-4 py-2">
 					{/* Name input */}
 					<div className="space-y-1">
-						<label
-							htmlFor="sw-name"
-							className="text-xs text-muted-foreground"
-						>
+						<label htmlFor="sw-name" className="text-xs text-muted-foreground">
 							{t("common.name", "Name")}
 						</label>
 						<Input
@@ -126,10 +130,7 @@ export const SharedWorkspaceDialog = memo(function SharedWorkspaceDialog({
 
 					{/* Description input */}
 					<div className="space-y-1">
-						<label
-							htmlFor="sw-desc"
-							className="text-xs text-muted-foreground"
-						>
+						<label htmlFor="sw-desc" className="text-xs text-muted-foreground">
 							{t("common.description", "Description")}
 						</label>
 						<Input
@@ -145,9 +146,9 @@ export const SharedWorkspaceDialog = memo(function SharedWorkspaceDialog({
 
 					{/* Icon picker */}
 					<div className="space-y-1">
-						<label className="text-xs text-muted-foreground">
+						<div className="text-xs text-muted-foreground">
 							{t("sharedWorkspaces.icon", "Icon")}
-						</label>
+						</div>
 						<div className="grid grid-cols-8 gap-1">
 							{WORKSPACE_ICONS.map((iconName) => (
 								<button
@@ -164,7 +165,9 @@ export const SharedWorkspaceDialog = memo(function SharedWorkspaceDialog({
 								>
 									<WorkspaceIcon
 										icon={iconName}
-										color={icon === iconName ? color : "var(--muted-foreground)"}
+										color={
+											icon === iconName ? color : "var(--muted-foreground)"
+										}
 										className="w-4 h-4"
 									/>
 								</button>
@@ -174,9 +177,9 @@ export const SharedWorkspaceDialog = memo(function SharedWorkspaceDialog({
 
 					{/* Color picker */}
 					<div className="space-y-1">
-						<label className="text-xs text-muted-foreground">
+						<div className="text-xs text-muted-foreground">
 							{t("sharedWorkspaces.color", "Color")}
-						</label>
+						</div>
 						<div className="flex flex-wrap gap-1">
 							{WORKSPACE_COLORS.map((c) => (
 								<button
@@ -214,9 +217,7 @@ export const SharedWorkspaceDialog = memo(function SharedWorkspaceDialog({
 						</span>
 					</div>
 
-					{error && (
-						<p className="text-xs text-destructive">{error}</p>
-					)}
+					{error && <p className="text-xs text-destructive">{error}</p>}
 				</div>
 
 				<DialogFooter>
@@ -227,14 +228,9 @@ export const SharedWorkspaceDialog = memo(function SharedWorkspaceDialog({
 					>
 						{t("common.cancel", "Cancel")}
 					</Button>
-					<Button
-						onClick={handleSubmit}
-						disabled={!name.trim() || submitting}
-					>
+					<Button onClick={handleSubmit} disabled={!name.trim() || submitting}>
 						{submitting && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-						{isEdit
-							? t("common.save", "Save")
-							: t("common.create", "Create")}
+						{isEdit ? t("common.save", "Save") : t("common.create", "Create")}
 					</Button>
 				</DialogFooter>
 			</DialogContent>

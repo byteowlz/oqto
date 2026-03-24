@@ -237,11 +237,11 @@ pub async fn bootstrap_onboarding(
     // attempt that failed partway through), we skip to session creation.
     if !workspace_already_initialized {
         if is_multi_user {
-            let linux_username = state
+            let linux_users = state
                 .linux_users
                 .as_ref()
-                .unwrap()
-                .linux_username(user.id());
+                .ok_or_else(|| ApiError::Internal("linux users not available".into()))?;
+            let linux_username = linux_users.linux_username(user.id());
             let ws_str = workspace_path
                 .to_str()
                 .ok_or_else(|| ApiError::Internal("invalid workspace path".into()))?;

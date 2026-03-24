@@ -47,39 +47,15 @@ setup.sh must correctly provision everything for a new platform user on a fresh 
 ...
 
 
-### [oqto-5fv7] Frontend comprehensive refactor (P1, epic)
-Comprehensive frontend refactor to improve performance, maintainability, and code quality.
+### [oqto-a0z4] Instant chat history UX: cached-first rendering with hydration gating (P1, epic)
+Hard requirement: opening any chat must render history instantly with no visible empty-state flash.\n\nStatus: Partially complete\n\nCompleted:\n- Added explicit frontend hydration state in chat hook (historyHydrated, historyLoading)\n- Render cached messages immediately, then authoritative hstry sync in background\n- Prevent 'No messages yet' from appearing before first authoritative fetch settles\n- Fixed cache contamination: clear in-memory cache on session switch\n- Fixed authoritative merge: only preserve isStreaming messages (no timestamp-based leaks)\n- Frontend lint passes\n\nRemaining:\n- Session prewarm: prefetch latest messages for visible sessions (child task oqto-a0z4.1)\n\nSuccess criteria:\n- Opening an existing chat never flashes an empty timeline before history appears.\n- If cache exists, content appears immediately (<1 frame) and later reconciles.\n- If cache missing, show loading/skeleton until first authoritative response, then either messages or true empty state.\n- Frontend lint passes.
 
-## Motivation
-- Lighthouse performance score: 52/100
-- Time to Interactive: 160.6s, Total Blocking Time: 6,250ms
-...
+### [oqto-nb6s] Reduce oqto cold-start time and add readiness-gated deploy sync-configs (P1, task)
+Observed on octo-azure: systemd reports oqto started, but admin unix socket (/run/oqto/oqtoctl.sock) and HTTP listener come up ~10s later. deploy sync-configs currently races this window, causing repeated 'Connection refused (os error 111)' on oqtoctl unix requests.
 
-
-### [oqto-hn80.2] Add strict lint rules banning direct useEffect (P1, task)
-Configure Biome and/or oxlint to flag any direct useEffect usage.
-
-## Rules to add
-
-### Biome (biome.json)
-...
-
-
-### [oqto-hn80.1] Create useMountEffect and useLocalStorage hooks (P1, task)
-Create foundational hooks that replace common useEffect patterns.
-
-## useMountEffect (hooks/useMountEffect.ts)
-```ts
-export function useMountEffect(effect: () => void | (() => void)) {
-...
-
-
-### [oqto-hn80] Ban useEffect: strict linting and full migration (P1, epic)
-Ban direct useEffect usage across the frontend codebase. Introduce strict lint rules, a useMountEffect escape hatch, and migrate all 46 occurrences across 12 files.
-
-Reference: Factory's 'Why we banned useEffect' (Alvin Sng, 2026-03-17), React official 'You Might Not Need an Effect' guide.
-
-## Current state
+Evidence from logs:
+- service started around 12:07:49
+- admin socket + HTTP listener only at ~12:08:00
 ...
 
 
@@ -572,57 +548,14 @@ Build and distribute pre-compiled binaries for Linux (x86_64, arm64) and macOS (
 ### [octo-af5j] Release & Update System (P1, epic)
 Comprehensive system for distributing Octo releases, managing updates in the field, and expanding runtime options including Proxmox LXC support.
 
-### [oqto-hn80.10] Update AGENTS.md with useEffect ban policy (P2, task)
-Add the useEffect ban to AGENTS.md so all agents (human and AI) follow it.
+### [oqto-e8vx] Tool calls sometimes are shown duplicated (P2, bug)
 
-## Add to Code Style section
-```markdown
-### React useEffect Ban
-...
+### [oqto-79er] Mobile chat: inline media taps open Copy All context menu instead of interacting with image/video (P2, bug)
+On touch devices, chat bubbles and text segments are wrapped in Radix ContextMenuTrigger for copy actions. This can hijack long-press/tap events on inline @file previews. Symptoms: inline image preview intermittently fails to open/render on mobile; inline video controls trigger the copy-all modal instead of playback.
 
-
-### [oqto-hn80.7] Migrate useSharedWorkspaces.ts: eliminate 2 useEffect calls (P2, task)
-useSharedWorkspaces.ts has 2 useEffect calls:
-
-## Data fetching -> TanStack Query
-- L62: Initial fetch on mount -> useQuery(['shared-workspaces'], fetchSharedWorkspaces)
-
-...
-
-
-### [oqto-hn80.6] Migrate useSidebarState.ts: eliminate 3 useEffect calls (P2, task)
-useSidebarState.ts has 3 useEffect calls, all doing the same thing: localStorage persistence.
-
-## All 3 -> useLocalStorage hook
-- L43: Persist expandedProjects to localStorage -> useLocalStorage('oqto:expandedProjects', new Set())
-- L68: Persist pinnedSessions to localStorage -> useLocalStorage('oqto:pinnedSessions', new Set())
-...
-
-
-### [oqto-hn80.5] Migrate SidebarSessions.tsx: eliminate 4 useEffect calls (P2, task)
-SidebarSessions.tsx has 4 useEffect calls:
-
-## Mount effects -> useMountEffect
-- L228: Keyboard shortcut Ctrl+Shift+F for search mode toggle -> useMountEffect
-- L250: Custom event listener 'oqto:set-session-view-mode' -> useMountEffect
-...
-
-
-### [oqto-hn80.4] Migrate useProjectActions.ts: eliminate 5 useEffect calls (P2, task)
-useProjectActions.ts has 5 useEffect calls:
-
-## Derived state (remove entirely)
-- L286: Sync newProjectSettings from selectedTemplate defaults -> derive in render or useMemo
-- L301: Set default model and skills when dialog opens -> derive in render or useMemo
-...
-
-
-### [oqto-hn80.3] Migrate AppShellRoute.tsx: eliminate 14 useEffect calls (P2, task)
-AppShellRoute.tsx has 14 useEffect calls -- the biggest offender. Migrate each:
-
-## Derived state / event handlers (remove entirely)
-- L377: Route sync (matchedAppId != activeAppId) -> handle in navigation callbacks or useMemo
-- L399: Active app route sync -> merge with above into a single route handler
+Fix implemented:
+- frontend/features/chat/components/ChatView.tsx
+  - Added useCoarsePointerDevice() via matchMedia('(pointer: coarse)').
 ...
 
 
@@ -1378,24 +1311,6 @@ Enable multiple platform users to access the same project/workspace with proper 
 ...
 
 
-### [oqto-hn80.9] Migrate remaining files: RegisterPage.tsx and SidebarSharedWorkspaces.tsx (P3, task)
-Two remaining files with useEffect:
-
-## RegisterPage.tsx (2 effects)
-- L67: Provisioning step timer animation -> useMountEffect. Starts timers for showing progress steps during account provisioning.
-
-...
-
-
-### [oqto-hn80.8] Migrate dialog components: eliminate useEffect in 5 dialogs (P3, task)
-Five dialog components each have useEffect calls that reset form state when the dialog opens. All follow the same pattern: `useEffect(() => { if (open) resetFields(); }, [open, ...])`.
-
-## Pattern: key-based reset
-Instead of watching 'open' in an effect, use React's key prop on the dialog content to force remount:
-```tsx
-...
-
-
 ### [oqto-jq8p.6] Session token management for SSO users (P3, feature)
 Issue local Oqto JWT after successful OIDC code exchange to decouple from IdP token expiry. Handle refresh/re-auth redirect on expiry.
 
@@ -1576,7 +1491,14 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
-- [oqto-97sn] Audit and reduce useEffect usage in frontend (closed 2026-03-17)
+- [oqto-a0z4.1] Implement session prewarm: prefetch latest messages for visible sessions (closed 2026-03-23)
+- [oqto-hb6g] File tree: enable directory download as ZIP and multi-select ZIP download (closed 2026-03-22)
+- [oqto-97sn] Audit and reduce useEffect usage in frontend (closed 2026-03-18)
+- [oqto-t25t] Comprehensive frontend refactor: decompose AppShellRoute and remove effect-driven architecture (closed 2026-03-18)
+- [oqto-t25t.3] Decompose AppShellRoute side-effect orchestration into dedicated hooks (closed 2026-03-18)
+- [oqto-t25t.2] Add lint guardrail to prevent new ad-hoc useEffect usage (closed 2026-03-18)
+- [oqto-t25t.1] Create useMountEffect and useLocalStorage hooks (closed 2026-03-18)
+- [oqto-719f] Add Rust AI guardrail linting baseline + ast-grep integration (closed 2026-03-18)
 - [octo-thhx.2] Onboarding API endpoints (closed 2026-03-17)
 - [octo-thhx.11] Godmode command to skip onboarding (closed 2026-03-17)
 - [octo-thhx.1] Onboarding state model and database schema (closed 2026-03-17)
@@ -2248,10 +2170,10 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
 - [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
 - [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
-- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
-- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
 - [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
+- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
+- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
+- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
 - [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
-- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
+- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )

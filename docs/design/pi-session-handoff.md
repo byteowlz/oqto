@@ -39,7 +39,7 @@ All 36 Pi commands are defined in the runner protocol:
 
 ### 2. Runner Handlers (Wired to PiSessionManager) - COMPLETE
 
-All handlers exist in `backend/crates/oqto/src/bin/oqto-runner.rs` and route to PiSessionManager.
+Runner entrypoint lives in `backend/crates/oqto-runner/src/main.rs`; daemon/handler logic lives in `backend/crates/oqto/src/runner/daemon/*` and routes to PiSessionManager.
 
 **All Pi handlers are now fully wired to PiSessionManager:**
 
@@ -209,7 +209,8 @@ backend/crates/oqto/src/runner/client.rs     # Client methods
 backend/crates/oqto/src/runner/pi_manager.rs # Session manager (with sandbox support)
 
 # Backend - Runner
-backend/crates/oqto/src/bin/oqto-runner.rs   # All Pi handlers wired to PiSessionManager
+backend/crates/oqto-runner/src/main.rs         # Runner crate entrypoint
+backend/crates/oqto/src/runner/daemon/         # Runner daemon + Pi handlers
 
 # Backend - WS
 backend/crates/oqto/src/api/ws_multiplexed.rs  # Multiplexed WebSocket handler
@@ -231,8 +232,8 @@ backend/crates/oqto/src/api/main_chat_pi.rs      # REST handlers for session lis
 
 1. **Unit tests:** Run `cargo test` after each change
 2. **Manual testing:**
-   - Start runner: `cargo run --bin oqto-runner`
-   - Start backend: `cargo run --bin oqto`
+   - Start runner: `cargo run -p oqto-runner --bin oqto-runner`
+   - Start backend: `cargo run -p oqto --bin oqto`
    - Open frontend, check console for WS messages
 3. **Integration test:** Send commands via WS, verify Pi responds
 
@@ -251,8 +252,8 @@ cd frontend && bun run build   # Frontend builds
 # Frontend (usePiChat) -> WsConnectionManager -> /api/ws/mux -> RunnerClient -> PiSessionManager -> Pi process
 
 # To test:
-# 1. Start runner: cargo run --bin oqto-runner
-# 2. Start backend: cargo run --bin oqto
+# 1. Start runner: cargo run -p oqto-runner --bin oqto-runner
+# 2. Start backend: cargo run -p oqto --bin oqto
 # 3. Open frontend, Main Chat should use multiplexed WS
 ```
 
@@ -290,3 +291,5 @@ Commands that return data (like `get_state`, `get_messages`, `get_available_mode
 3. **Session persistence across runner restart?**
    - Currently sessions are in-memory
    - Could persist session list to disk
+  - Could persist session list to disk
+list to disk

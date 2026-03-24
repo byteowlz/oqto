@@ -65,7 +65,12 @@ async fn resolve_session_target(
                 if let Some(owner) = record.owner_user_id.as_deref()
                     && owner != user_id
                 {
-                    return Err(ApiError::forbidden("session does not belong to this user"));
+                    // In single-user mode, tolerate stale owner metadata and
+                    // continue with self-heal discovery below. In multi-user
+                    // mode this remains a hard authz boundary.
+                    if multi_user {
+                        return Err(ApiError::forbidden("session does not belong to this user"));
+                    }
                 }
                 ExecutionTarget::Personal
             }
@@ -361,12 +366,6 @@ pub async fn list_chat_history(
     user: CurrentUser,
     Query(query): Query<ChatHistoryQuery>,
 ) -> ApiResult<Json<Vec<ChatSession>>> {
-    let mut sessions: Vec<ChatSession> = Vec::new();
-    let mut source = "hstry";
-    let multi_user = is_multi_user_mode(&state);
-
-    // If shared_workspace_id is provided, resolve the shared workspace target;
-    // otherwise use the personal target.
     let target = if let Some(ref sw_id) = query.shared_workspace_id {
         ExecutionTarget::SharedWorkspace {
             workspace_id: sw_id.clone(),
@@ -375,77 +374,52 @@ pub async fn list_chat_history(
         ExecutionTarget::Personal
     };
 
-    let runner_opt = resolve_runner_for_target(&state, user.id(), &target)
+    let runner = resolve_runner_for_target(&state, user.id(), &target)
         .await
-        .map_err(|e| ApiError::internal(format!("runner target resolution: {}", e)))?;
+        .map_err(|e| ApiError::internal(format!("runner target resolution: {}", e)))?
+        .ok_or_else(|| ApiError::internal("Runner is required but not available for this user."))?;
 
-    if let Some(runner) = runner_opt {
-        match runner
+    let mut response = runner
+        .list_workspace_chat_sessions(query.workspace.clone(), query.include_children, query.limit)
+        .await
+        .map_err(|e| ApiError::internal(format!("runner list sessions failed: {}", e)))?;
+
+    if query.workspace.is_none()
+        && runner
+            .repair_workspace_chat_history(Some(10_000), None)
+            .await
+            .is_ok()
+        && let Ok(repaired_response) = runner
             .list_workspace_chat_sessions(
                 query.workspace.clone(),
                 query.include_children,
                 query.limit,
             )
             .await
-        {
-            Ok(response) => {
-                sessions = response
-                    .sessions
-                    .into_iter()
-                    .map(|s| ChatSession {
-                        id: s.id,
-                        readable_id: s.readable_id,
-                        title: s.title,
-                        parent_id: s.parent_id,
-                        workspace_path: s.workspace_path,
-                        project_name: s.project_name,
-                        created_at: s.created_at,
-                        updated_at: s.updated_at,
-                        version: s.version,
-                        is_child: s.is_child,
-                        source_path: None,
-                        stats: None,
-                        model: s.model,
-                        provider: s.provider,
-                    })
-                    .collect();
-                source = "runner";
-            }
-            Err(e) => {
-                if multi_user {
-                    tracing::error!(
-                        user_id = %user.id(),
-                        error = %e,
-                        "Runner failed in multi-user mode"
-                    );
-                    return Err(ApiError::internal("Chat history service unavailable."));
-                }
-            }
-        }
-    } else if multi_user {
-        return Err(ApiError::internal(
-            "Chat history service not configured for this user.",
-        ));
+    {
+        response = repaired_response;
     }
 
-    if sessions.is_empty()
-        && !multi_user
-        && let Some(hstry) = state.hstry.as_ref()
-    {
-        match crate::history::repository::list_sessions_via_grpc(hstry).await {
-            Ok(found) => {
-                sessions = found;
-            }
-            Err(e) => {
-                tracing::error!("Failed to list sessions via hstry gRPC: {}", e);
-                return Err(ApiError::service_unavailable(format!(
-                    "Chat history service (hstry) is not reachable: {}. \
-                     Try restarting it with: hstry service start",
-                    e
-                )));
-            }
-        }
-    }
+    let mut sessions: Vec<ChatSession> = response
+        .sessions
+        .into_iter()
+        .map(|s| ChatSession {
+            id: s.id,
+            readable_id: s.readable_id,
+            title: s.title,
+            parent_id: s.parent_id,
+            workspace_path: s.workspace_path,
+            project_name: s.project_name,
+            created_at: s.created_at,
+            updated_at: s.updated_at,
+            version: s.version,
+            is_child: s.is_child,
+            source_path: None,
+            stats: None,
+            model: s.model,
+            provider: s.provider,
+        })
+        .collect();
 
     sessions = merge_duplicate_sessions(sessions);
 
@@ -466,8 +440,60 @@ pub async fn list_chat_history(
         sessions.truncate(limit);
     }
 
-    debug!(user_id = %user.id(), count = sessions.len(), source = source, "Listed chat history");
+    debug!(user_id = %user.id(), count = sessions.len(), source = "runner", "Listed chat history");
     Ok(Json(sessions))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct BackfillChatHistoryQuery {
+    /// Optional workspace/workdir path to backfill.
+    pub workspace: Option<String>,
+    /// If set, run backfill on this shared workspace runner.
+    pub shared_workspace_id: Option<String>,
+    /// Optional upper bound of scanned session files.
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct BackfillChatHistoryResponse {
+    pub scanned_files: usize,
+    pub repaired_conversations: usize,
+    pub skipped_files: usize,
+    pub failed_files: usize,
+}
+
+/// Trigger JSONL->hstry backfill for personal or shared-workspace sessions.
+#[instrument(skip(state))]
+pub async fn backfill_chat_history(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Query(query): Query<BackfillChatHistoryQuery>,
+) -> ApiResult<Json<BackfillChatHistoryResponse>> {
+    let target = if let Some(ref sw_id) = query.shared_workspace_id {
+        ExecutionTarget::SharedWorkspace {
+            workspace_id: sw_id.clone(),
+        }
+    } else {
+        ExecutionTarget::Personal
+    };
+
+    let runner = resolve_runner_for_target(&state, user.id(), &target)
+        .await
+        .map_err(|e| ApiError::internal(format!("runner target resolution: {}", e)))?
+        .ok_or_else(|| ApiError::internal("Runner is required but not available for this user."))?;
+
+    let limit = query.limit.or(Some(10_000));
+    let result = runner
+        .repair_workspace_chat_history(limit, query.workspace.clone())
+        .await
+        .map_err(|e| ApiError::internal(format!("backfill failed: {}", e)))?;
+
+    Ok(Json(BackfillChatHistoryResponse {
+        scanned_files: result.scanned_files,
+        repaired_conversations: result.repaired_conversations,
+        skipped_files: result.skipped_files,
+        failed_files: result.failed_files,
+    }))
 }
 
 /// Get a specific chat session by ID.
@@ -479,82 +505,47 @@ pub async fn get_chat_session(
     user: CurrentUser,
     Path(session_id): Path<String>,
 ) -> ApiResult<Json<ChatSession>> {
-    let multi_user = is_multi_user_mode(&state);
-
-    let target = resolve_session_target(&state, user.id(), &session_id, None, multi_user).await?;
-    let runner_opt = resolve_runner_for_target(&state, user.id(), &target)
+    let target = resolve_session_target(
+        &state,
+        user.id(),
+        &session_id,
+        None,
+        is_multi_user_mode(&state),
+    )
+    .await?;
+    let runner = resolve_runner_for_target(&state, user.id(), &target)
         .await
-        .map_err(|e| ApiError::internal(format!("runner target resolution: {}", e)))?;
+        .map_err(|e| ApiError::internal(format!("runner target resolution: {}", e)))?
+        .ok_or_else(|| ApiError::internal("Runner is required but not available for this user."))?;
 
-    if let Some(runner) = runner_opt {
-        match runner.get_workspace_chat_session(&session_id).await {
-            Ok(response) => {
-                if let Some(s) = response.session {
-                    return Ok(Json(ChatSession {
-                        id: s.id,
-                        readable_id: s.readable_id,
-                        title: s.title,
-                        parent_id: s.parent_id,
-                        workspace_path: s.workspace_path,
-                        project_name: s.project_name,
-                        created_at: s.created_at,
-                        updated_at: s.updated_at,
-                        version: s.version,
-                        is_child: s.is_child,
-                        source_path: None,
-                        stats: None,
-                        model: s.model,
-                        provider: s.provider,
-                    }));
-                }
-            }
-            Err(e) => {
-                // SECURITY: In multi-user mode, do NOT fall back
-                if multi_user {
-                    tracing::error!(
-                        user_id = %user.id(),
-                        session_id = %session_id,
-                        error = %e,
-                        "Runner failed in multi-user mode"
-                    );
-                    return Err(ApiError::internal("Chat history service unavailable."));
-                }
-            }
-        }
+    let response = runner
+        .get_workspace_chat_session(&session_id)
+        .await
+        .map_err(|e| ApiError::internal(format!("runner get session failed: {}", e)))?;
 
-        if multi_user {
-            return Err(ApiError::not_found(format!(
-                "Chat session {} not found",
-                session_id
-            )));
-        }
-    } else if multi_user {
-        // SECURITY: Multi-user mode requires runner
-        return Err(ApiError::internal(
-            "Chat history service not configured for this user.",
-        ));
+    if let Some(s) = response.session {
+        return Ok(Json(ChatSession {
+            id: s.id,
+            readable_id: s.readable_id,
+            title: s.title,
+            parent_id: s.parent_id,
+            workspace_path: s.workspace_path,
+            project_name: s.project_name,
+            created_at: s.created_at,
+            updated_at: s.updated_at,
+            version: s.version,
+            is_child: s.is_child,
+            source_path: None,
+            stats: None,
+            model: s.model,
+            provider: s.provider,
+        }));
     }
 
-    // Single-user mode: use hstry gRPC
-    if let Some(hstry) = state.hstry.as_ref() {
-        match crate::history::repository::get_session_via_grpc(hstry, &session_id).await {
-            Ok(Some(session)) => return Ok(Json(session)),
-            Ok(None) => {
-                return Err(ApiError::not_found(format!(
-                    "Chat session {} not found",
-                    session_id
-                )));
-            }
-            Err(err) => {
-                return Err(ApiError::internal(format!(
-                    "Failed to load chat session: {}",
-                    err
-                )));
-            }
-        }
-    }
-
-    Err(ApiError::internal("hstry not configured"))
+    Err(ApiError::not_found(format!(
+        "Chat session {} not found",
+        session_id
+    )))
 }
 
 /// Request to update a chat session.
@@ -575,136 +566,46 @@ pub async fn update_chat_session(
     Query(query): Query<ChatHistoryQuery>,
     Json(request): Json<UpdateChatSessionRequest>,
 ) -> ApiResult<Json<ChatSession>> {
-    let multi_user = is_multi_user_mode(&state);
-
-    // Resolve target deterministically from explicit workspace id/path or durable metadata.
     let target = resolve_session_target(
         &state,
         user.id(),
         &session_id,
         query.shared_workspace_id.as_deref(),
-        multi_user,
+        is_multi_user_mode(&state),
     )
     .await?;
 
-    let runner_opt = resolve_runner_for_target(&state, user.id(), &target)
+    let runner = resolve_runner_for_target(&state, user.id(), &target)
         .await
-        .map_err(|e| ApiError::internal(format!("runner target resolution: {}", e)))?;
+        .map_err(|e| ApiError::internal(format!("runner target resolution: {}", e)))?
+        .ok_or_else(|| ApiError::internal("Runner is required but not available for this user."))?;
 
-    if let Some(runner) = runner_opt {
-        match runner
-            .update_workspace_chat_session(&session_id, request.title.clone())
-            .await
-        {
-            Ok(response) => {
-                let session = ChatSession {
-                    id: response.session.id,
-                    readable_id: response.session.readable_id,
-                    title: response.session.title,
-                    parent_id: response.session.parent_id,
-                    workspace_path: response.session.workspace_path,
-                    project_name: response.session.project_name,
-                    created_at: response.session.created_at,
-                    updated_at: response.session.updated_at,
-                    version: response.session.version,
-                    is_child: response.session.is_child,
-                    source_path: None,
-                    stats: None,
-                    model: response.session.model,
-                    provider: response.session.provider,
-                };
+    let response = runner
+        .update_workspace_chat_session(&session_id, request.title.clone())
+        .await
+        .map_err(|e| ApiError::internal(format!("runner update session failed: {}", e)))?;
 
-                if let Some(ref title) = request.title {
-                    info!(session_id = %session_id, title = %title, "Updated chat session title via runner");
-                }
-                return Ok(Json(session));
-            }
-            Err(e) => {
-                // SECURITY: In multi-user mode, do NOT fall back
-                if multi_user {
-                    tracing::error!(
-                        user_id = %user.id(),
-                        session_id = %session_id,
-                        error = %e,
-                        "Runner failed in multi-user mode"
-                    );
-                    return Err(ApiError::internal("Chat history service unavailable."));
-                }
-            }
-        }
-    } else if multi_user {
-        // SECURITY: Multi-user mode requires runner
-        return Err(ApiError::internal(
-            "Chat history service not configured for this user.",
-        ));
+    let session = ChatSession {
+        id: response.session.id,
+        readable_id: response.session.readable_id,
+        title: response.session.title,
+        parent_id: response.session.parent_id,
+        workspace_path: response.session.workspace_path,
+        project_name: response.session.project_name,
+        created_at: response.session.created_at,
+        updated_at: response.session.updated_at,
+        version: response.session.version,
+        is_child: response.session.is_child,
+        source_path: None,
+        stats: None,
+        model: response.session.model,
+        provider: response.session.provider,
+    };
+
+    if let Some(ref title) = request.title {
+        info!(session_id = %session_id, title = %title, "Updated chat session title via runner");
     }
-
-    // Single-user mode: update via hstry gRPC (partial update)
-    if let Some(hstry) = state.hstry.as_ref() {
-        if let Some(ref title) = request.title {
-            match hstry
-                .update_conversation(
-                    &session_id,
-                    Some(title.clone()),
-                    None, // workspace unchanged
-                    None, // model unchanged
-                    None, // provider unchanged
-                    None, // metadata unchanged
-                    None, // readable_id unchanged
-                    None, // harness unchanged
-                    None, // platform_id unchanged
-                )
-                .await
-            {
-                Ok(_) => {
-                    match crate::history::repository::get_session_via_grpc(hstry, &session_id).await
-                    {
-                        Ok(Some(session)) => {
-                            info!(session_id = %session_id, title = %title, "Updated chat session title");
-                            return Ok(Json(session));
-                        }
-                        Ok(None) => {
-                            return Err(ApiError::not_found(format!(
-                                "Chat session {} not found after update",
-                                session_id
-                            )));
-                        }
-                        Err(err) => {
-                            return Err(ApiError::internal(format!(
-                                "Failed to fetch updated session: {}",
-                                err
-                            )));
-                        }
-                    }
-                }
-                Err(err) => {
-                    return Err(ApiError::internal(format!(
-                        "Failed to update chat session: {}",
-                        err
-                    )));
-                }
-            }
-        } else {
-            // No updates requested - just return the current session
-            match crate::history::repository::get_session_via_grpc(hstry, &session_id).await {
-                Ok(Some(session)) => return Ok(Json(session)),
-                Ok(None) => {
-                    return Err(ApiError::not_found(format!(
-                        "Chat session {} not found",
-                        session_id
-                    )));
-                }
-                Err(err) => {
-                    return Err(ApiError::internal(format!(
-                        "Failed to get chat session: {}",
-                        err
-                    )));
-                }
-            }
-        }
-    }
-
-    Err(ApiError::internal("hstry not configured"))
+    Ok(Json(session))
 }
 
 /// Query parameters for deleting chat sessions.
@@ -725,84 +626,35 @@ pub async fn delete_chat_session(
     Path(session_id): Path<String>,
     Query(query): Query<DeleteChatSessionQuery>,
 ) -> ApiResult<StatusCode> {
-    let multi_user = is_multi_user_mode(&state);
-
     let target = resolve_session_target(
         &state,
         user.id(),
         &session_id,
         query.shared_workspace_id.as_deref(),
-        multi_user,
+        is_multi_user_mode(&state),
     )
     .await?;
 
-    let runner_opt = resolve_runner_for_target(&state, user.id(), &target)
+    let runner = resolve_runner_for_target(&state, user.id(), &target)
         .await
-        .map_err(|e| ApiError::internal(format!("runner target resolution: {}", e)))?;
+        .map_err(|e| ApiError::internal(format!("runner target resolution: {}", e)))?
+        .ok_or_else(|| ApiError::internal("Runner is required but not available for this user."))?;
 
-    // In multi-user mode, use runner
-    if let Some(runner) = runner_opt {
-        match runner.agent_delete_session(&session_id).await {
-            Ok(()) => {
-                state
-                    .session_targets
-                    .delete(&session_id)
-                    .await
-                    .map_err(|e| {
-                        ApiError::internal(format!(
-                            "failed to delete session target metadata: {}",
-                            e
-                        ))
-                    })?;
-                info!(session_id = %session_id, shared_workspace_id = ?query.shared_workspace_id, "Deleted chat session via runner");
-                return Ok(StatusCode::NO_CONTENT);
-            }
-            Err(e) => {
-                if multi_user {
-                    tracing::error!(
-                        user_id = %user.id(),
-                        session_id = %session_id,
-                        shared_workspace_id = ?query.shared_workspace_id,
-                        error = %e,
-                        "Runner failed to delete chat session in multi-user mode"
-                    );
-                    return Err(ApiError::internal("Chat history service unavailable."));
-                }
-            }
-        }
-    } else if multi_user {
-        return Err(ApiError::internal(
-            "Chat history service not configured for this user.",
-        ));
-    }
+    runner
+        .agent_delete_session(&session_id)
+        .await
+        .map_err(|e| ApiError::internal(format!("runner delete session failed: {}", e)))?;
 
-    // Single-user mode: delete via hstry gRPC
-    if let Some(hstry) = state.hstry.as_ref() {
-        match hstry.delete_conversation(&session_id).await {
-            Ok(_) => {
-                state
-                    .session_targets
-                    .delete(&session_id)
-                    .await
-                    .map_err(|e| {
-                        ApiError::internal(format!(
-                            "failed to delete session target metadata: {}",
-                            e
-                        ))
-                    })?;
-                info!(session_id = %session_id, "Deleted chat session");
-                return Ok(StatusCode::NO_CONTENT);
-            }
-            Err(err) => {
-                return Err(ApiError::internal(format!(
-                    "Failed to delete chat session: {}",
-                    err
-                )));
-            }
-        }
-    }
+    state
+        .session_targets
+        .delete(&session_id)
+        .await
+        .map_err(|e| {
+            ApiError::internal(format!("failed to delete session target metadata: {}", e))
+        })?;
 
-    Err(ApiError::internal("hstry not configured"))
+    info!(session_id = %session_id, shared_workspace_id = ?query.shared_workspace_id, "Deleted chat session via runner");
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Response for grouped chat history.
@@ -822,105 +674,34 @@ pub async fn list_chat_history_grouped(
     user: CurrentUser,
     Query(query): Query<ChatHistoryQuery>,
 ) -> ApiResult<Json<Vec<GroupedChatHistory>>> {
-    let mut sessions: Vec<ChatSession> = Vec::new();
-    let mut source = "hstry";
-    let multi_user = is_multi_user_mode(&state);
+    let runner = get_runner_for_user(&state, user.id())
+        .ok_or_else(|| ApiError::internal("Runner is required but not available for this user."))?;
 
-    if let Some(runner) = get_runner_for_user(&state, user.id()) {
-        match runner
-            .list_workspace_chat_sessions(
-                query.workspace.clone(),
-                query.include_children,
-                query.limit,
-            )
-            .await
-        {
-            Ok(response) => {
-                sessions = response
-                    .sessions
-                    .into_iter()
-                    .map(|s| ChatSession {
-                        id: s.id,
-                        readable_id: s.readable_id,
-                        title: s.title,
-                        parent_id: s.parent_id,
-                        workspace_path: s.workspace_path,
-                        project_name: s.project_name,
-                        created_at: s.created_at,
-                        updated_at: s.updated_at,
-                        version: s.version,
-                        is_child: s.is_child,
-                        source_path: None,
-                        stats: None,
-                        model: s.model,
-                        provider: s.provider,
-                    })
-                    .collect();
-                source = "runner";
-            }
-            Err(e) => {
-                if multi_user {
-                    tracing::error!(
-                        user_id = %user.id(),
-                        error = %e,
-                        "Runner failed in multi-user mode"
-                    );
-                    return Err(ApiError::internal("Chat history service unavailable."));
-                }
-            }
-        }
-    } else if multi_user {
-        return Err(ApiError::internal(
-            "Chat history service not configured for this user.",
-        ));
-    }
+    let response = runner
+        .list_workspace_chat_sessions(query.workspace.clone(), query.include_children, query.limit)
+        .await
+        .map_err(|e| ApiError::internal(format!("runner grouped list failed: {}", e)))?;
 
-    let mut hstry_sessions: Vec<ChatSession> = Vec::new();
-    if !multi_user && let Some(hstry) = state.hstry.as_ref() {
-        match crate::history::repository::list_sessions_via_grpc(hstry).await {
-            Ok(found) => {
-                hstry_sessions = found;
-            }
-            Err(e) => {
-                tracing::error!("Failed to list sessions via hstry gRPC (grouped): {}", e);
-                return Err(ApiError::service_unavailable(format!(
-                    "Chat history service (hstry) is not reachable: {}. \
-                     Try restarting it with: hstry service start",
-                    e
-                )));
-            }
-        }
-    }
-
-    if !hstry_sessions.is_empty() {
-        let mut by_id: HashMap<String, ChatSession> =
-            sessions.into_iter().map(|s| (s.id.clone(), s)).collect();
-
-        for session in hstry_sessions {
-            by_id
-                .entry(session.id.clone())
-                .and_modify(|existing| {
-                    // Prefer JSONL metadata (title, readable_id) over hstry when
-                    // hstry has gaps, but take the newer updated_at timestamp.
-                    if !has_non_empty_title(&existing.title) && has_non_empty_title(&session.title)
-                    {
-                        existing.title = session.title.clone();
-                    }
-                    if existing.readable_id.trim().is_empty()
-                        && !session.readable_id.trim().is_empty()
-                    {
-                        existing.readable_id = session.readable_id.clone();
-                    }
-                    if session.updated_at > existing.updated_at {
-                        existing.updated_at = session.updated_at;
-                    }
-                })
-                .or_insert(session);
-        }
-        source = "mixed";
-
-        sessions = by_id.into_values().collect();
-    }
+    let mut sessions: Vec<ChatSession> = response
+        .sessions
+        .into_iter()
+        .map(|s| ChatSession {
+            id: s.id,
+            readable_id: s.readable_id,
+            title: s.title,
+            parent_id: s.parent_id,
+            workspace_path: s.workspace_path,
+            project_name: s.project_name,
+            created_at: s.created_at,
+            updated_at: s.updated_at,
+            version: s.version,
+            is_child: s.is_child,
+            source_path: None,
+            stats: None,
+            model: s.model,
+            provider: s.provider,
+        })
+        .collect();
 
     sessions = merge_duplicate_sessions(sessions);
 
@@ -966,7 +747,7 @@ pub async fn list_chat_history_grouped(
 
     result.sort_by_key(|g| Reverse(g.sessions.first().map(|s| s.updated_at).unwrap_or(0)));
 
-    debug!(user_id = %user.id(), count = result.len(), source = source, "Listed grouped chat history");
+    debug!(user_id = %user.id(), count = result.len(), source = "runner", "Listed grouped chat history");
     Ok(Json(result))
 }
 
@@ -1041,78 +822,52 @@ pub async fn get_chat_messages(
     Path(session_id): Path<String>,
     Query(query): Query<ChatMessagesQuery>,
 ) -> ApiResult<Json<Vec<oqto_protocol::messages::Message>>> {
-    let multi_user = is_multi_user_mode(&state);
-    let prefer_hstry = !multi_user && state.hstry.is_some();
+    let target = resolve_session_target(
+        &state,
+        user.id(),
+        &session_id,
+        query.shared_workspace_id.as_deref(),
+        is_multi_user_mode(&state),
+    )
+    .await?;
 
-    // Resolve runner via explicit workspace id/path or durable conversation metadata.
-    if !prefer_hstry {
-        let target = resolve_session_target(
-            &state,
-            user.id(),
-            &session_id,
-            query.shared_workspace_id.as_deref(),
-            multi_user,
-        )
-        .await?;
+    let runner = resolve_runner_for_target(&state, user.id(), &target)
+        .await
+        .map_err(|e| ApiError::internal(format!("runner target resolution: {}", e)))?
+        .ok_or_else(|| ApiError::internal("Runner is required but not available for this user."))?;
 
-        let runner = resolve_runner_for_target(&state, user.id(), &target)
+    let response = runner
+        .get_workspace_chat_session_messages(&session_id, query.render, None)
+        .await
+        .map_err(|e| ApiError::internal(format!("runner get messages failed: {}", e)))?;
+
+    let mut canonical = convert_runner_response(response);
+    if canonical.is_empty() {
+        if let Err(err) = runner
+            .repair_workspace_chat_history(Some(10_000), None)
             .await
-            .map_err(|e| ApiError::internal(format!("runner target resolution: {}", e)))?;
-
-        if let Some(runner) = runner {
-            match runner
-                .get_workspace_chat_session_messages(&session_id, query.render, None)
-                .await
-            {
-                Ok(response) => {
-                    let canonical = convert_runner_response(response);
-
-                    info!(
-                        user_id = %user.id(),
-                        session_id = %session_id,
-                        shared_workspace_id = ?query.shared_workspace_id,
-                        count = canonical.len(),
-                        "Listed chat messages via runner"
-                    );
-                    return Ok(Json(canonical));
-                }
-                Err(e) => {
-                    if multi_user {
-                        tracing::error!(
-                            user_id = %user.id(),
-                            session_id = %session_id,
-                            error = %e,
-                            "Runner failed in multi-user mode"
-                        );
-                        return Err(ApiError::internal("Chat history service unavailable."));
-                    }
-                }
-            }
-        } else if multi_user {
-            return Err(ApiError::internal(
-                "Chat history service not configured for this user.",
-            ));
+        {
+            tracing::debug!(
+                user_id = %user.id(),
+                session_id = %session_id,
+                error = %err,
+                "workspace chat history repair before get_chat_messages failed"
+            );
+        } else if let Ok(repaired_response) = runner
+            .get_workspace_chat_session_messages(&session_id, query.render, None)
+            .await
+        {
+            canonical = convert_runner_response(repaired_response);
         }
     }
 
-    if multi_user {
-        return Err(ApiError::not_found(format!(
-            "Chat session {} not found",
-            session_id
-        )));
-    }
-
-    // Single-user mode: use hstry gRPC directly
-    let messages = if let Some(hstry) = state.hstry.as_ref() {
-        crate::history::repository::get_session_messages_via_grpc(hstry, &session_id).await
-    } else {
-        Err(anyhow::anyhow!("hstry not configured"))
-    }
-    .map_err(|e| ApiError::internal(format!("Failed to get chat messages: {}", e)))?;
-
-    let canonical = crate::history::legacy_messages_to_canon(messages);
-
-    info!(session_id = %session_id, count = canonical.len(), render = query.render, "Listed chat messages");
+    info!(
+        user_id = %user.id(),
+        session_id = %session_id,
+        shared_workspace_id = ?query.shared_workspace_id,
+        count = canonical.len(),
+        "Listed chat messages via runner"
+    );
     Ok(Json(canonical))
 }
 

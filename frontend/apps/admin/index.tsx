@@ -8,6 +8,7 @@ import {
 	Blocks,
 	PanelLeftClose,
 	PanelRightClose,
+	Radio,
 	Shield,
 	Ticket,
 	Users,
@@ -16,6 +17,7 @@ import {
 import { Suspense, lazy, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
+import { EventBusPanel } from "./EventBusPanel";
 import { InviteCodesPanel } from "./InviteCodesPanel";
 import { MetricsPanel } from "./MetricsPanel";
 import { ModelsPanel } from "./ModelsPanel";
@@ -63,7 +65,7 @@ export function AdminApp() {
 	const { t } = useTranslation();
 	const navigate = useNavigate();
 	const [activeSection, setActiveSection] = useState<
-		"overview" | "sessions" | "users" | "invites" | "models"
+		"overview" | "eventbus" | "sessions" | "users" | "invites" | "models"
 	>("overview");
 	const [rightSidebarCollapsed, setRightSidebarCollapsed] = useState(false);
 
@@ -74,6 +76,7 @@ export function AdminApp() {
 
 	const labels = {
 		overview: t("admin.overview"),
+		eventbus: t("admin.eventBus", "Event Bus"),
 		sessions: t("admin.sessions"),
 		users: t("admin.users"),
 		invites: t("admin.inviteCodes"),
@@ -89,9 +92,12 @@ export function AdminApp() {
 				return (
 					<div className="space-y-4">
 						<MetricsPanel />
+						<EventBusPanel />
 						<SessionsPanel containerStats={undefined} />
 					</div>
 				);
+			case "eventbus":
+				return <EventBusPanel />;
 			case "sessions":
 				return <SessionsPanel containerStats={undefined} />;
 			case "users":
@@ -116,6 +122,12 @@ export function AdminApp() {
 							onClick={() => setActiveSection("overview")}
 							icon={Activity}
 							label={labels.overview}
+						/>
+						<SectionTabButton
+							active={activeSection === "eventbus"}
+							onClick={() => setActiveSection("eventbus")}
+							icon={Radio}
+							label={labels.eventbus}
 						/>
 						<SectionTabButton
 							active={activeSection === "sessions"}
@@ -173,6 +185,12 @@ export function AdminApp() {
 									onClick={() => setActiveSection("overview")}
 									icon={Activity}
 									label={labels.overview}
+								/>
+								<SectionTabButton
+									active={activeSection === "eventbus"}
+									onClick={() => setActiveSection("eventbus")}
+									icon={Radio}
+									label={labels.eventbus}
 								/>
 								<SectionTabButton
 									active={activeSection === "sessions"}

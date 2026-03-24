@@ -37,7 +37,7 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use glob::Pattern;
 use log::{debug, error, info, warn};
-use oqto::local::{SandboxConfig, SshProxyConfig};
+use oqto_sandbox::{SandboxConfig, SshProxyConfig};
 use rustix::process::getuid;
 use std::io::{Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -387,11 +387,13 @@ fn main() -> Result<()> {
         PathBuf::from(format!("/run/user/{}/oqto-ssh.sock", uid))
     });
 
-    let upstream_path = args.upstream.unwrap_or_else(|| {
+    let upstream_path = if let Some(upstream) = args.upstream {
+        upstream
+    } else {
         std::env::var("SSH_AUTH_SOCK")
             .map(PathBuf::from)
-            .expect("SSH_AUTH_SOCK not set and --upstream not provided")
-    });
+            .context("SSH_AUTH_SOCK not set and --upstream not provided")?
+    };
 
     info!("oqto-ssh-proxy starting");
     info!("  Listen: {:?}", listen_path);

@@ -161,8 +161,30 @@ pub async fn send_surface(
     }
 
     // For blocking, wait for user response
-    let rx = rx.unwrap();
-    let req_id = request_id.clone().unwrap();
+    let rx = rx.ok_or_else(|| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(A2uiSurfaceResponse {
+                success: false,
+                surface_id: surface_id.clone(),
+                request_id: None,
+                action: None,
+                error: Some("Missing response channel for blocking request".to_string()),
+            }),
+        )
+    })?;
+    let req_id = request_id.clone().ok_or_else(|| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(A2uiSurfaceResponse {
+                success: false,
+                surface_id: surface_id.clone(),
+                request_id: None,
+                action: None,
+                error: Some("Missing request id for blocking request".to_string()),
+            }),
+        )
+    })?;
 
     match tokio::time::timeout(Duration::from_secs(timeout_secs), rx).await {
         Ok(Ok(action)) => {

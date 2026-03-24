@@ -252,8 +252,8 @@ enum ImageCommand {
     Check,
     /// Pull latest image
     Pull {
-        /// Image name (default: oqto-dev:latest)
-        #[arg(default_value = "oqto-dev:latest")]
+        /// Image name (default: oqto:latest)
+        #[arg(default_value = "oqto:latest")]
         image: String,
     },
     /// Rebuild container image from Dockerfile
@@ -781,7 +781,6 @@ impl OqtoResponse {
     }
 }
 
-#[allow(clippy::large_enum_variant)]
 enum OqtoTransport {
     Http {
         base_url: String,
@@ -823,7 +822,9 @@ impl OqtoClient {
                 && socket_path.as_ref().is_some_and(|path| path.exists());
 
             if can_use_admin_socket {
-                let socket_path = socket_path.expect("admin socket path");
+                let Some(socket_path) = socket_path else {
+                    anyhow::bail!("admin socket path unavailable");
+                };
                 let base_path = base_path_from_url(&base_url)?;
                 let client = HyperClient::builder(TokioExecutor::new()).build(UnixConnector);
 
@@ -1579,7 +1580,7 @@ async fn handle_image(client: &OqtoClient, command: ImageCommand, json: bool) ->
                 "-f",
                 &format!("{}/{}", path, dockerfile),
                 "-t",
-                "oqto-dev:latest",
+                "oqto:latest",
             ]);
 
             if no_cache {
@@ -1592,9 +1593,9 @@ async fn handle_image(client: &OqtoClient, command: ImageCommand, json: bool) ->
 
             if output.status.success() {
                 if json {
-                    println!(r#"{{"status": "built", "image": "oqto-dev:latest"}}"#);
+                    println!(r#"{{"status": "built", "image": "oqto:latest"}}"#);
                 } else {
-                    println!("Successfully built oqto-dev:latest");
+                    println!("Successfully built oqto:latest");
                 }
             } else {
                 let stderr = String::from_utf8_lossy(&output.stderr);

@@ -46,6 +46,10 @@ if [[ -z "$admin_password" ]]; then
   admin_password=$(openssl rand -base64 18)
 fi
 
+# Always force-set the password so login works regardless of whether this is
+# a fresh setup or a re-run (where the generated password is no longer in the log).
+vm_ssh "$IP" "sudo -n /usr/local/bin/oqtoctl user set-password '${OQTO_E2E_ADMIN_USERNAME}' --password '${admin_password}' --config /home/oqto/.config/oqto/config.toml" >/dev/null 2>&1 || true
+
 login_payload=$(printf '{"username":"%s","password":"%s"}' "$OQTO_E2E_ADMIN_USERNAME" "$admin_password")
 login_url="http://${IP}:${OQTO_E2E_HTTP_PORT}/api/auth/login"
 
@@ -61,42 +65,9 @@ except json.JSONDecodeError:
 print(payload.get("token", ""))')
 
 if [[ -z "$token" ]]; then
-  echo "Login response was empty or missing token" >&2
+  echo "Login failed after password reset" >&2
   if [[ -n "$login_response" ]]; then
     echo "Login response: $login_response" >&2
-  fi
-  db_path="/home/oqto/.local/share/oqto/oqto.db"
-  vm_ssh "$IP" "sudo systemctl start oqto" >/dev/null
-  vm_ssh "$IP" "for i in {1..30}; do sudo test -f ${db_path} && break; sleep 1; done"
-  vm_ssh "$IP" "sudo /usr/local/bin/oqtoctl user set-password '${OQTO_E2E_ADMIN_USERNAME}' --password '${admin_password}' --config /home/oqto/.config/oqto/config.toml" >/dev/null || true
-
-  login_response=$(curl -sS -H "Content-Type: application/json" -d "$login_payload" "$login_url" || true)
-  token=$(printf '%s' "$login_response" | python3 -c 'import json,sys; data=sys.stdin.read().strip();
-if not data:
-    sys.exit(0)
-try:
-    payload=json.loads(data)
-except json.JSONDecodeError:
-    sys.exit(0)
-print(payload.get("token", ""))')
-
-  if [[ -z "$token" ]]; then
-    echo "Login after password reset failed" >&2
-    if [[ -n "$login_response" ]]; then
-      echo "Login response: $login_response" >&2
-    fi
-    password_hash=$(vm_ssh "$IP" "sudo /usr/local/bin/oqtoctl hash-password --password '${admin_password}'")
-    vm_ssh "$IP" "printf 'y\n' | sudo /usr/local/bin/oqtoctl user bootstrap --username '${OQTO_E2E_ADMIN_USERNAME}' --email 'e2e-admin@example.com' --database '${db_path}' --password-hash '${password_hash}' --no-linux-user --config /home/oqto/.config/oqto/config.toml" >/dev/null || true
-
-    login_response=$(curl -sS -H "Content-Type: application/json" -d "$login_payload" "$login_url" || true)
-    token=$(printf '%s' "$login_response" | python3 -c 'import json,sys; data=sys.stdin.read().strip();
-if not data:
-    sys.exit(0)
-try:
-    payload=json.loads(data)
-except json.JSONDecodeError:
-    sys.exit(0)
-print(payload.get("token", ""))')
   fi
 fi
 
@@ -119,5 +90,26 @@ if [[ -z "$workspace_id" ]]; then
 fi
 
 curl -fsS -H "$auth_header" -X DELETE "http://${IP}:${OQTO_E2E_HTTP_PORT}/api/shared-workspaces/${workspace_id}" >/dev/null
+
+# Take a screenshot of the logged-in UI if agent-browser is available
+screenshot_path="${OQTO_E2E_LOG_DIR}/screenshot-${VMID}.png"
+base_url="http://${IP}:${OQTO_E2E_HTTP_PORT}"
+if command -v agent-browser >/dev/null 2>&1 && [[ -n "${DISPLAY:-}" ]]; then
+  echo "Taking screenshot of logged-in UI..."
+  # Log in by injecting the JWT token directly into localStorage, then navigating.
+  # This avoids form-fill timing issues with agent-browser's stateless CLI model.
+  agent-browser open "${base_url}/login" --wait 2000 >/dev/null 2>&1 || true
+  agent-browser eval "localStorage.setItem('oqto:authToken', '${token}');" >/dev/null 2>&1 || true
+  agent-browser open "${base_url}/" --wait 5000 >/dev/null 2>&1 || true
+  agent-browser screenshot "$screenshot_path" >/dev/null 2>&1 || true
+  agent-browser close >/dev/null 2>&1 || true
+  if [[ -f "$screenshot_path" ]]; then
+    echo "Screenshot saved: $screenshot_path"
+  else
+    echo "Screenshot failed (non-fatal)"
+  fi
+else
+  echo "Skipping screenshot (agent-browser or DISPLAY not available)"
+fi
 
 echo "E2E smoke tests passed for VM $VMID ($IP)"

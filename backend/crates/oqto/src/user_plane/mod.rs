@@ -1,17 +1,17 @@
 //! User-plane abstraction for multi-user isolation.
 //!
-//! This module provides a trait that abstracts user-plane operations, enabling:
-//! - Direct access in single-user/container mode
-//! - Runner-mediated access in local multi-user mode
+//! This module provides a trait that abstracts user-plane operations.
 //!
 //! All user data operations (filesystem, sessions, memories, main chat) go through
-//! this abstraction, ensuring the backend cannot directly access other users' data.
+//! this abstraction. Production runtime is runner-mediated only.
 
+#[cfg(test)]
 mod direct;
+mod metrics;
 mod runner;
 mod types;
 
-pub use direct::DirectUserPlane;
+pub use metrics::{MeteredUserPlane, UserPlaneMetricRow, UserPlaneMetrics, UserPlanePath};
 pub use runner::RunnerUserPlane;
 pub use types::*;
 
@@ -20,10 +20,6 @@ use async_trait::async_trait;
 use std::path::Path;
 
 /// Trait for user-plane operations.
-///
-/// Implementations:
-/// - `DirectUserPlane`: Direct filesystem/database access (single-user, container mode)
-/// - `RunnerUserPlane`: Access via per-user runner daemon (local multi-user mode)
 #[async_trait]
 pub trait UserPlane: Send + Sync {
     // ========================================================================

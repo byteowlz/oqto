@@ -169,7 +169,9 @@ impl SessionState {
     /// Transition to idle on agent_end.
     pub fn on_agent_end(&mut self) -> EventPayload {
         *self = Self::Idle;
-        EventPayload::AgentIdle
+        EventPayload::AgentIdle {
+            message_version: None,
+        }
     }
 
     /// Refine the phase within the working state (from extension setStatus).
@@ -301,7 +303,12 @@ mod tests {
 
         // agent_end -> idle
         let event = state.on_agent_end();
-        assert!(matches!(event, EventPayload::AgentIdle));
+        assert!(matches!(
+            event,
+            EventPayload::AgentIdle {
+                message_version: None
+            }
+        ));
         assert!(state.is_idle());
 
         // extension while idle -> ignored

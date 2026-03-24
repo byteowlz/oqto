@@ -199,7 +199,7 @@ mode = "$SELECTED_BACKEND_MODE"
 
 [container]
 runtime = "${CONTAINER_RUNTIME:-docker}"
-default_image = "oqto-dev:latest"
+default_image = "oqto:latest"
 base_port = 41820
 EOF
 

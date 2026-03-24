@@ -8,6 +8,7 @@ import {
 } from "@/lib/api";
 import {
 	createPiSessionId,
+	isGenericSessionTitle,
 	normalizeWorkspacePath,
 	preferStableSessionTitle,
 } from "@/lib/session-utils";
@@ -22,6 +23,11 @@ import type { WsMuxConnectionState } from "@/lib/ws-mux-types";
 const SHARED_SESSION_MAP_STORAGE_KEY = "oqto:shared-session-map:v1";
 
 export const sharedWorkspaceSessionMap = new Map<string, string>();
+const runnerHistoryAliasMap = new Map<string, string>();
+
+export function getRunnerHistoryAlias(sessionId: string): string | undefined {
+	return runnerHistoryAliasMap.get(sessionId);
+}
 
 function persistSharedWorkspaceSessionMap() {
 	if (typeof window === "undefined") return;
@@ -82,7 +88,6 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 
-
 function isPiDebugEnabled(): boolean {
 	if (!import.meta.env.DEV) return false;
 	try {
@@ -118,6 +123,7 @@ export interface ChatContextValue {
 		last_activity: number;
 		subscriber_count: number;
 		shared_workspace_id?: string;
+		hstry_id?: string;
 	}>;
 	/** Count of active Pi sessions on the runner */
 	runnerSessionCount: number;
@@ -142,9 +148,7 @@ export interface ChatContextValue {
 		title: string,
 		readableId?: string | null,
 	) => void;
-	createNewChat: (
-		workspacePath?: string,
-	) => Promise<string | null>;
+	createNewChat: (workspacePath?: string) => Promise<string | null>;
 	deleteChatSession: (sessionId: string) => Promise<boolean>;
 	renameChatSession: (sessionId: string, title: string) => Promise<boolean>;
 	getSessionWorkspacePath: (sessionId: string | null) => string | null;
@@ -206,7 +210,12 @@ const defaultChatContext: ChatContextValue = {
 	runnerSessions: [],
 	runnerSessionCount: 0,
 	refreshChatHistory: asyncNoopVoid,
-	createOptimisticChatSession: (_sessionId?: string, _workspacePath?: string, _sharedWorkspaceId?: string, _existingSession?: ChatSession) => "",
+	createOptimisticChatSession: (
+		_sessionId?: string,
+		_workspacePath?: string,
+		_sharedWorkspaceId?: string,
+		_existingSession?: ChatSession,
+	) => "",
 	clearOptimisticChatSession: noop,
 	replaceOptimisticChatSession: noop,
 	updateChatSessionTitleLocal: noop,
@@ -295,6 +304,8 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 			model?: string;
 			last_activity: number;
 			subscriber_count: number;
+			shared_workspace_id?: string;
+			hstry_id?: string;
 		}>
 	>([]);
 	const runnerSessionsRef = useRef(runnerSessions);
@@ -389,7 +400,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 			const byId = new Map(history.map((s) => [s.id, s]));
 			const byReadable = new Map(
 				history
-					.filter((s): s is ChatSession & { readable_id: string } => !!s.readable_id?.trim())
+					.filter(
+						(s): s is ChatSession & { readable_id: string } =>
+							!!s.readable_id?.trim(),
+					)
 					.map((s) => [s.readable_id.trim(), s]),
 			);
 
@@ -430,8 +444,21 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 				if ((session as Record<string, unknown>).shared_workspace_id) continue;
 				// Skip sessions that were explicitly deleted
 				if (deletedSessionsRef.current.has(session.session_id)) continue;
+
+				const historyAliasId = session.hstry_id?.trim();
+				if (historyAliasId && historyAliasId !== session.session_id) {
+					runnerHistoryAliasMap.set(session.session_id, historyAliasId);
+					const aliasEntry = byId.get(historyAliasId);
+					if (aliasEntry && !byId.has(session.session_id)) {
+						byId.delete(historyAliasId);
+						byId.set(session.session_id, {
+							...aliasEntry,
+							id: session.session_id,
+						});
+					}
+				}
 				// hstry now returns platform_id (Oqto ID) as the session id,
-				// so a direct match is sufficient.
+				// but some legacy rows still resolve via hstry_id aliases.
 				if (byId.has(session.session_id)) continue;
 
 				const resolvedPath = normalizeWorkspacePath(session.cwd);
@@ -444,7 +471,9 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 					: null;
 				const timestamp = session.last_activity || Date.now();
 				const existing = chatHistoryRef.current.find(
-					(s) => s.id === session.session_id,
+					(s) =>
+						s.id === session.session_id ||
+						(historyAliasId ? s.id === historyAliasId : false),
 				);
 				const title =
 					preferStableSessionTitle(
@@ -504,7 +533,11 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 			if (activeIds.size === 0) return history;
 
 			for (const session of chatHistoryRef.current) {
-				if (activeIds.has(session.id) && !byId.has(session.id)) {
+				if (
+					activeIds.has(session.id) &&
+					!byId.has(session.id) &&
+					!deletedSessionsRef.current.has(session.id)
+				) {
 					byId.set(session.id, session);
 				}
 			}
@@ -514,94 +547,101 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 		[selectedChatSessionId],
 	);
 
-	const refreshChatHistory = useCallback(async () => {
-		const now = Date.now();
-		if (prefetchInFlightRef.current) {
-			if (isPiDebugEnabled())
-				console.debug("[chat-context] refreshChatHistory skipped: in-flight");
-			return;
-		}
-		// Bypass debounce when there's an active error (user clicking Retry)
-		const hasError = chatHistoryErrorRef.current !== null;
-		if (
-			!hasError &&
-			now - lastPrefetchRef.current < CHAT_HISTORY_PREFETCH_DEBOUNCE_MS
-		) {
-			if (isPiDebugEnabled())
-				console.debug("[chat-context] refreshChatHistory skipped: debounce");
-			return;
-		}
-		prefetchInFlightRef.current = true;
-		lastPrefetchRef.current = now;
-		const t0 = performance.now();
-		try {
-			const rawHistory = await listChatHistory();
-			// Filter out sessions that were explicitly deleted in this page session
-			const history = deletedSessionsRef.current.size > 0
-				? rawHistory.filter((s) => !deletedSessionsRef.current.has(s.id))
-				: rawHistory;
-			const t1 = performance.now();
-			const normalized = normalizeHistory(history);
-			const merged = mergeRunnerSessions(mergeOptimisticSessions(normalized));
-			const withActive = mergeActiveSessions(merged);
-			if (isPiDebugEnabled()) {
-				console.debug(
-					"[chat-context] refreshChatHistory: fetched",
-					history.length,
-					"sessions in",
-					`${Math.round(t1 - t0)}ms, total`,
-					`${Math.round(performance.now() - t0)}ms`,
-				);
+	const refreshChatHistory = useCallback(
+		async (opts?: { force?: boolean }) => {
+			const now = Date.now();
+			if (prefetchInFlightRef.current) {
+				if (isPiDebugEnabled())
+					console.debug("[chat-context] refreshChatHistory skipped: in-flight");
+				return;
 			}
-			// Preserve titles for sessions that were manually renamed by the user
-			// or auto-generated by the extension but not yet confirmed by hstry.
-			const manualTitles = manuallyRenamedRef.current;
-			const autoTitles = autoTitlesRef.current;
-			const final_ = withActive.map((s) => {
-				const manualTitle = manualTitles.get(s.id);
-				if (manualTitle) {
-					return { ...s, title: manualTitle };
+			// Bypass debounce when there's an active error (user clicking Retry)
+			const hasError = chatHistoryErrorRef.current !== null;
+			if (
+				!opts?.force &&
+				!hasError &&
+				now - lastPrefetchRef.current < CHAT_HISTORY_PREFETCH_DEBOUNCE_MS
+			) {
+				if (isPiDebugEnabled())
+					console.debug("[chat-context] refreshChatHistory skipped: debounce");
+				return;
+			}
+			prefetchInFlightRef.current = true;
+			lastPrefetchRef.current = now;
+			const t0 = performance.now();
+			try {
+				const rawHistory = await listChatHistory();
+				// Filter out sessions that were explicitly deleted in this page session
+				const history =
+					deletedSessionsRef.current.size > 0
+						? rawHistory.filter((s) => !deletedSessionsRef.current.has(s.id))
+						: rawHistory;
+				const t1 = performance.now();
+				const normalized = normalizeHistory(history);
+				const merged = mergeRunnerSessions(mergeOptimisticSessions(normalized));
+				const withActive = mergeActiveSessions(merged);
+				if (isPiDebugEnabled()) {
+					console.debug(
+						"[chat-context] refreshChatHistory: fetched",
+						history.length,
+						"sessions in",
+						`${Math.round(t1 - t0)}ms, total`,
+						`${Math.round(performance.now() - t0)}ms`,
+					);
 				}
-				const autoTitle = autoTitles.get(s.id);
-				if (autoTitle) {
-					// hstry has caught up — clear the override
-					if (s.title === autoTitle) {
-						autoTitles.delete(s.id);
-						return s;
+				// Preserve titles for sessions that were manually renamed by the user
+				// or auto-generated by the extension but not yet confirmed by hstry.
+				const manualTitles = manuallyRenamedRef.current;
+				const autoTitles = autoTitlesRef.current;
+				const final_ = withActive.map((s) => {
+					const manualTitle = manualTitles.get(s.id);
+					if (manualTitle) {
+						return { ...s, title: manualTitle };
 					}
-					// hstry hasn't caught up yet — keep the auto title
-					return { ...s, title: autoTitle };
-				}
-				const previous = chatHistoryRef.current.find((prev) => prev.id === s.id);
-				if (!previous) return s;
-				return {
-					...s,
-					title: preferStableSessionTitle(
-						previous.title,
-						s.title,
-						t("sessions.newSession"),
-						t("sessions.activeSession"),
-					),
-				};
-			});
-			setChatHistory(final_);
-			setChatHistoryError(null);
-			writeCachedChatHistory(final_);
-		} catch (err) {
-			const msg =
-				err instanceof Error ? err.message : "Failed to load chat history";
-			console.error("[chat-context] refreshChatHistory failed:", msg);
-			setChatHistoryError(msg);
-		} finally {
-			prefetchInFlightRef.current = false;
-		}
-	}, [
-		mergeActiveSessions,
-		mergeOptimisticSessions,
-		mergeRunnerSessions,
-		normalizeHistory,
-		t,
-	]);
+					const autoTitle = autoTitles.get(s.id);
+					if (autoTitle) {
+						// hstry has caught up — clear the override
+						if (s.title === autoTitle) {
+							autoTitles.delete(s.id);
+							return s;
+						}
+						// hstry hasn't caught up yet — keep the auto title
+						return { ...s, title: autoTitle };
+					}
+					const previous = chatHistoryRef.current.find(
+						(prev) => prev.id === s.id,
+					);
+					if (!previous) return s;
+					return {
+						...s,
+						title: preferStableSessionTitle(
+							previous.title,
+							s.title,
+							t("sessions.newSession"),
+							t("sessions.activeSession"),
+						),
+					};
+				});
+				setChatHistory(final_);
+				setChatHistoryError(null);
+				writeCachedChatHistory(final_);
+			} catch (err) {
+				const msg =
+					err instanceof Error ? err.message : "Failed to load chat history";
+				console.error("[chat-context] refreshChatHistory failed:", msg);
+				setChatHistoryError(msg);
+			} finally {
+				prefetchInFlightRef.current = false;
+			}
+		},
+		[
+			mergeActiveSessions,
+			mergeOptimisticSessions,
+			mergeRunnerSessions,
+			normalizeHistory,
+			t,
+		],
+	);
 
 	useEffect(() => {
 		refreshChatHistory();
@@ -612,16 +652,46 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 		const current = chatHistoryRef.current;
 		let hasMissing = false;
 		for (const session of runnerSessions) {
+			// Shared workspace sessions are rendered in a separate sidebar section
+			// and intentionally skipped by mergeRunnerSessions(). They must not
+			// trigger the personal hstry refresh loop here.
+			if (session.shared_workspace_id) continue;
 			if (!current.some((item) => item.id === session.session_id)) {
 				hasMissing = true;
 				break;
 			}
 		}
-		if (!hasMissing) return;
-		const merged = mergeRunnerSessions(current);
-		setChatHistory(merged);
-		writeCachedChatHistory(merged);
-	}, [mergeRunnerSessions, runnerSessions]);
+		// Also check if any runner session still has a generic title in the
+		// chat history -- this means hstry hasn't been queried since the
+		// runner first reported the session.
+		let hasGenericTitle = false;
+		if (!hasMissing) {
+			for (const session of runnerSessions) {
+				if (session.shared_workspace_id) continue;
+				const entry = current.find((item) => item.id === session.session_id);
+				if (
+					entry &&
+					isGenericSessionTitle(
+						entry.title,
+						t("sessions.newSession"),
+						t("sessions.activeSession"),
+					)
+				) {
+					hasGenericTitle = true;
+					break;
+				}
+			}
+		}
+		if (hasMissing) {
+			const merged = mergeRunnerSessions(current);
+			setChatHistory(merged);
+			writeCachedChatHistory(merged);
+		}
+		// Fetch real titles from hstry for new or generically-titled sessions
+		if (hasMissing || hasGenericTitle) {
+			void refreshChatHistory({ force: true });
+		}
+	}, [mergeRunnerSessions, refreshChatHistory, runnerSessions, t]);
 
 	// Poll runner for active Pi sessions via the mux WebSocket.
 	// Keeps busy indicators accurate across reloads and backend restarts.
@@ -658,7 +728,20 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 			try {
 				const sessions = await manager.agentListSessions();
 				if (cancelled) return;
-				setRunnerSessions(sessions);
+				// Filter out sessions that were explicitly deleted in this page session
+				const filtered =
+					deletedSessionsRef.current.size > 0
+						? sessions.filter(
+								(s) => !deletedSessionsRef.current.has(s.session_id),
+							)
+						: sessions;
+				setRunnerSessions(filtered);
+				for (const s of filtered) {
+					const alias = s.hstry_id?.trim();
+					if (alias && alias !== s.session_id) {
+						runnerHistoryAliasMap.set(s.session_id, alias);
+					}
+				}
 				const nextBusy = new Set<string>();
 				for (const s of sessions) {
 					if (busyStates.has(s.state)) {
@@ -715,7 +798,12 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 	}, []);
 
 	const createOptimisticChatSession = useCallback(
-		(sessionId: string, workspacePath?: string, sharedWorkspaceId?: string, existingSession?: ChatSession) => {
+		(
+			sessionId: string,
+			workspacePath?: string,
+			sharedWorkspaceId?: string,
+			existingSession?: ChatSession,
+		) => {
 			const optimisticId = sessionId;
 			if (optimisticChatSessionsRef.current.has(optimisticId)) {
 				if (existingSession) {
@@ -760,7 +848,8 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 			const session: ChatSession = existingSession
 				? {
 						...existingSession,
-						shared_workspace_id: sharedWorkspaceId ?? existingSession.shared_workspace_id ?? null,
+						shared_workspace_id:
+							sharedWorkspaceId ?? existingSession.shared_workspace_id ?? null,
 					}
 				: {
 						id: optimisticId,
@@ -859,7 +948,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 				}),
 			);
 		},
-		[t],
+		[],
 	);
 
 	const getSessionWorkspacePath = useCallback((sessionId: string | null) => {
@@ -883,7 +972,11 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 				resolvedPath = getSessionWorkspacePath(selectedChatSessionId);
 			}
 			const sessionId = createPiSessionId();
-			createOptimisticChatSession(sessionId, resolvedPath ?? undefined, sharedWorkspaceId);
+			createOptimisticChatSession(
+				sessionId,
+				resolvedPath ?? undefined,
+				sharedWorkspaceId,
+			);
 			setSelectedChatSessionId(sessionId);
 			void refreshChatHistory();
 			return sessionId;
@@ -899,6 +992,27 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 
 	const deleteChatSession = useCallback(
 		async (sessionId: string) => {
+			const sessionMeta = chatHistory.find((s) => s.id === sessionId);
+			const sharedWorkspaceId =
+				sharedWorkspaceSessionMap.get(sessionId) ??
+				sessionMeta?.shared_workspace_id ??
+				undefined;
+
+			// Mark deleted before any async work so runner/history refreshes cannot
+			// resurrect the session while the delete request is in flight.
+			deletedSessionsRef.current.add(sessionId);
+			optimisticChatSessionsRef.current.delete(sessionId);
+			optimisticSelectionRef.current.delete(sessionId);
+			clearSharedWorkspaceSessionId(sessionId);
+			setRunnerSessions((prev) =>
+				prev.filter((session) => session.session_id !== sessionId),
+			);
+			setBusySessions((prev) => {
+				if (!prev.has(sessionId)) return prev;
+				const next = new Set(prev);
+				next.delete(sessionId);
+				return next;
+			});
 			// Optimistically remove from UI immediately
 			setChatHistory((prev) => prev.filter((s) => s.id !== sessionId));
 			if (selectedChatSessionId === sessionId) {
@@ -906,20 +1020,12 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 			}
 
 			try {
-				const sessionMeta = chatHistory.find((s) => s.id === sessionId);
-				const sharedWorkspaceId =
-					sharedWorkspaceSessionMap.get(sessionId) ??
-					sessionMeta?.shared_workspace_id ??
-					undefined;
 				if (sharedWorkspaceId) {
 					setSharedWorkspaceSessionId(sessionId, sharedWorkspaceId);
 				}
 
 				// Primary path: REST delete with shared workspace routing support.
 				await deleteChatSessionApi(sessionId, sharedWorkspaceId);
-
-				// Mark deleted only after backend confirmed deletion.
-				deletedSessionsRef.current.add(sessionId);
 
 				// Best-effort: also notify active WS session state machine.
 				try {
@@ -932,18 +1038,21 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 				} catch {
 					// ignore (session may not be connected)
 				}
+				clearSharedWorkspaceSessionId(sessionId);
 
 				return true;
 			} catch {
 				// Delete failed: allow session to reappear from source of truth.
 				deletedSessionsRef.current.delete(sessionId);
+				if (sharedWorkspaceId) {
+					setSharedWorkspaceSessionId(sessionId, sharedWorkspaceId);
+				}
 				void refreshChatHistory();
 				return false;
 			}
 		},
 		[
 			chatHistory,
-			deleteChatSessionApi,
 			refreshChatHistory,
 			selectedChatSessionId,
 			setSelectedChatSessionId,
@@ -953,31 +1062,78 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 	const renameChatSession = useCallback(
 		async (sessionId: string, title: string): Promise<boolean> => {
 			try {
-				const sharedWorkspaceId = sharedWorkspaceSessionMap.get(sessionId);
+				const sessionMeta = chatHistoryRef.current.find(
+					(s) => s.id === sessionId,
+				);
+				const sharedWorkspaceId =
+					sharedWorkspaceSessionMap.get(sessionId) ??
+					sessionMeta?.shared_workspace_id ??
+					undefined;
+				if (sharedWorkspaceId) {
+					setSharedWorkspaceSessionId(sessionId, sharedWorkspaceId);
+				}
+
 				const updated = await updateChatSession(
 					sessionId,
 					{ title },
 					sharedWorkspaceId,
 				);
+
+				const canonicalSessionId = updated.id || sessionId;
+				const canonicalTitle = (updated.title ?? title).trim();
+
+				// If backend canonicalized an optimistic ID, update local mappings.
+				if (canonicalSessionId !== sessionId) {
+					const existingManualTitle = manuallyRenamedRef.current.get(sessionId);
+					if (
+						existingManualTitle &&
+						!manuallyRenamedRef.current.has(canonicalSessionId)
+					) {
+						manuallyRenamedRef.current.set(
+							canonicalSessionId,
+							existingManualTitle,
+						);
+					}
+					manuallyRenamedRef.current.delete(sessionId);
+					autoTitlesRef.current.delete(sessionId);
+					const override = sessionWorkspaceOverridesRef.current.get(sessionId);
+					if (override !== undefined) {
+						sessionWorkspaceOverridesRef.current.set(
+							canonicalSessionId,
+							override,
+						);
+						sessionWorkspaceOverridesRef.current.delete(sessionId);
+					}
+					if (sharedWorkspaceId) {
+						setSharedWorkspaceSessionId(canonicalSessionId, sharedWorkspaceId);
+						clearSharedWorkspaceSessionId(sessionId);
+					}
+					replaceOptimisticChatSession(sessionId, canonicalSessionId);
+				}
+
 				// Mark this session as manually renamed so auto-generated
 				// title events from Pi don't overwrite the user's choice.
-				if (updated.title) manuallyRenamedRef.current.set(sessionId, updated.title);
+				if (canonicalTitle) {
+					manuallyRenamedRef.current.set(canonicalSessionId, canonicalTitle);
+				}
 				setChatHistory((prev) =>
 					prev.map((s) =>
-						s.id === sessionId ? { ...s, title: updated.title } : s,
+						s.id === canonicalSessionId || s.id === sessionId
+							? { ...s, id: canonicalSessionId, title: canonicalTitle }
+							: s,
 					),
 				);
 
 				// Also tell the runner/Pi to update its internal session name.
 				// This prevents the runner from overwriting hstry with Pi's
 				// auto-generated title on the next state event.
-				try {
-					const manager = getWsManager();
-					if (manager.isConnected) {
-						void manager.agentSetSessionName(sessionId, updated.title ?? "");
-					}
-				} catch {
-					// Best-effort -- runner notification is not critical
+				const manager = getWsManager();
+				if (manager.isSessionReady(canonicalSessionId)) {
+					void manager
+						.agentSetSessionName(canonicalSessionId, canonicalTitle)
+						.catch(() => {
+							// Best-effort -- runner notification is not critical.
+						});
 				}
 
 				return true;
@@ -985,7 +1141,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 				return false;
 			}
 		},
-		[],
+		[replaceOptimisticChatSession],
 	);
 
 	const value = useMemo<ChatContextValue>(

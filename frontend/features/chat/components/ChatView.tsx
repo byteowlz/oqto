@@ -12,7 +12,6 @@ import {
 	getToolIcon,
 } from "@/components/chat";
 import { BrailleSpinner } from "@/components/common";
-import { getToolSummary } from "@/lib/tool-summaries";
 import { useChatContext } from "@/components/contexts/chat-context";
 import {
 	ContextWindowGauge,
@@ -55,10 +54,10 @@ import {
 	setCachedScrollPosition,
 	useChat,
 } from "@/hooks/useChat";
+import { workspaceFileUrl } from "@/lib/api/files";
 import type { Part, ToolStatus } from "@/lib/canonical-types";
 import { useChatVerbosity } from "@/lib/chat-verbosity";
 import { extractFileReferenceDetails, getFileTypeInfo } from "@/lib/file-types";
-import { workspaceFileUrl } from "@/lib/api/files";
 import { downloadFileMux, statPathMux, uploadFileMux } from "@/lib/mux-files";
 import {
 	formatSessionDate,
@@ -73,6 +72,7 @@ import {
 	fuzzyMatch,
 	parseSlashInput,
 } from "@/lib/slash-commands";
+import { getToolSummary } from "@/lib/tool-summaries";
 import { cn } from "@/lib/utils";
 import { getWsManager } from "@/lib/ws-manager";
 import {
@@ -81,6 +81,7 @@ import {
 	Bot,
 	Check,
 	Copy,
+	Download,
 	ExternalLink,
 	FileCode,
 	FileImage,
@@ -88,6 +89,7 @@ import {
 	FileVideo,
 	GitBranch,
 	Loader2,
+	PaintBucket,
 	Paperclip,
 	Send,
 	StopCircle,
@@ -110,10 +112,28 @@ import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 
 // Strip ANSI escape codes from text content (tool output may contain them).
-// Uses a single comprehensive regex that handles SGR, CSI, OSC, and literal sequences.
-const ANSI_RE =
-	// biome-ignore lint: control chars needed for ANSI matching
-	/[\x1b\x9b][\[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nq-uy=><~]|\\x1b\[[0-9;]*[A-Za-z]/g;
+// Handles actual ESC bytes and literal "\\x1b[..." sequences.
+const ANSI_LITERAL_RE = /\\x1b\[[0-9;]*[A-Za-z]/g;
+
+function stripAnsiSequences(value: string): string {
+	let out = "";
+	for (let i = 0; i < value.length; i += 1) {
+		const code = value.charCodeAt(i);
+		// ESC (0x1B) or CSI (0x9B)
+		if (code === 0x1b || code === 0x9b) {
+			i += 1;
+			while (i < value.length) {
+				const c = value.charCodeAt(i);
+				// Final byte in CSI sequence (@ through ~)
+				if (c >= 0x40 && c <= 0x7e) break;
+				i += 1;
+			}
+			continue;
+		}
+		out += value[i];
+	}
+	return out.replace(ANSI_LITERAL_RE, "");
+}
 
 /**
  * Remove common leading whitespace from text to prevent CommonMark from
@@ -275,6 +295,8 @@ export function ChatView({
 		isStreaming,
 		isAwaitingResponse,
 		error,
+		historyHydrated,
+		historyLoading,
 		send,
 		appendLocalAssistantMessage,
 		abort,
@@ -617,12 +639,19 @@ export function ChatView({
 					part.type === "tool_result" &&
 					part.name?.toLowerCase().includes("todo")
 				) {
-					const output = part.output as Record<string, unknown> | string | undefined;
+					const output = part.output as
+						| Record<string, unknown>
+						| string
+						| undefined;
 					// Output can be a JSON string (from the extension's text content)
 					// or already parsed as an object.
 					let parsed: Record<string, unknown> | undefined;
 					if (typeof output === "string") {
-						try { parsed = JSON.parse(output); } catch { /* not JSON */ }
+						try {
+							parsed = JSON.parse(output);
+						} catch {
+							/* not JSON */
+						}
 					} else if (output && typeof output === "object") {
 						parsed = output;
 					}
@@ -694,9 +723,7 @@ export function ChatView({
 	}, [currentModelRef, modelStorageKey, selectedModelRef]);
 
 	const displayError = commandError ?? error;
-	const historyPending =
-		messages.length === 0 && (piState?.messageCount ?? 0) > 0;
-	const showSkeleton = messages.length === 0 && !displayError && historyPending;
+	const showSkeleton = messages.length === 0 && !displayError && historyLoading;
 
 	const ChatSkeleton = (
 		<div className="flex-1 flex flex-col gap-4 min-h-0 animate-pulse">
@@ -827,9 +854,8 @@ export function ChatView({
 		let cancelled = false;
 		const fetchStats = async () => {
 			try {
-				const stats = await getWsManager().agentGetSessionStats(
-					selectedSessionId,
-				);
+				const stats =
+					await getWsManager().agentGetSessionStats(selectedSessionId);
 				if (cancelled) return;
 				if (stats && typeof stats === "object" && "tokens" in stats) {
 					const tokens = (
@@ -873,9 +899,8 @@ export function ChatView({
 		let cancelled = false;
 		const refreshStats = async () => {
 			try {
-				const stats = await getWsManager().agentGetSessionStats(
-					selectedSessionId,
-				);
+				const stats =
+					await getWsManager().agentGetSessionStats(selectedSessionId);
 				if (cancelled) return;
 				if (stats && typeof stats === "object" && "tokens" in stats) {
 					const tokens = (
@@ -913,7 +938,10 @@ export function ChatView({
 		}
 
 		// Priority 2: Pi session stats (fetched on session load)
-		if (piSessionTokens && (piSessionTokens.input > 0 || piSessionTokens.output > 0)) {
+		if (
+			piSessionTokens &&
+			(piSessionTokens.input > 0 || piSessionTokens.output > 0)
+		) {
 			return {
 				inputTokens: piSessionTokens.input,
 				outputTokens: piSessionTokens.output,
@@ -941,9 +969,7 @@ export function ChatView({
 					("tool_input" in part
 						? (part as { tool_input?: string }).tool_input
 						: null) ??
-					("output" in part
-						? (part as { output?: string }).output
-						: null) ??
+					("output" in part ? (part as { output?: string }).output : null) ??
 					"";
 				if (text) {
 					const estimatedTokens = Math.ceil(text.length / 4);
@@ -1159,16 +1185,26 @@ export function ChatView({
 		if (!container) return;
 		const mark = () => {
 			userInitiatedScrollRef.current = true;
-			// Stop auto-follow immediately on user scroll intent so streaming
-			// deltas don't keep snapping back to bottom before handleScroll runs.
-			setIsUserScrolled(true);
-			isUserScrolledRef.current = true;
+			// Only mark as scrolled-away if we are NOT already at the bottom.
+			// This prevents the jump-to-bottom button from flashing when the
+			// user scrolls down and reaches the end of the chat.
+			const atBottom =
+				container.scrollHeight - container.scrollTop - container.clientHeight <
+				80;
+			if (!atBottom) {
+				setIsUserScrolled(true);
+				isUserScrolledRef.current = true;
+			}
 		};
 		container.addEventListener("wheel", mark, { passive: true });
 		container.addEventListener("touchmove", mark, { passive: true });
+		container.addEventListener("pointerdown", mark, { passive: true });
+		container.addEventListener("mousedown", mark, { passive: true });
 		return () => {
 			container.removeEventListener("wheel", mark);
 			container.removeEventListener("touchmove", mark);
+			container.removeEventListener("pointerdown", mark);
+			container.removeEventListener("mousedown", mark);
 		};
 	}, []);
 
@@ -1219,15 +1255,22 @@ export function ChatView({
 			return;
 		}
 
-		// Prefer the explicit user gesture flag, but allow scrollbar drag and
-		// keyboard scrolls that do not emit wheel/touch/pointer events.
-		if (userInitiatedScrollRef.current) {
-			userInitiatedScrollRef.current = false;
-		}
-
 		const atBottom =
 			container.scrollHeight - container.scrollTop - container.clientHeight <
 			80;
+
+		// Never mark as "user scrolled up" unless we observed an explicit user
+		// gesture. This avoids false positives from streaming/layout growth.
+		if (!userInitiatedScrollRef.current) {
+			if (atBottom) {
+				setIsUserScrolled(false);
+				isUserScrolledRef.current = false;
+				setCachedScrollPosition(null, scrollStorageKey);
+			}
+			return;
+		}
+
+		userInitiatedScrollRef.current = false;
 		setIsUserScrolled(!atBottom);
 		isUserScrolledRef.current = !atBottom;
 		if (atBottom) {
@@ -1957,617 +2000,617 @@ export function ChatView({
 			<div className={cn("flex flex-col h-full min-h-0", className)}>
 				{!hideHeader && SessionHeader}
 
-			{/* Error banner - only show if no cached messages available */}
-			{displayError && messages.length === 0 && (
-				<div className="px-4 py-2 bg-destructive/10 text-destructive text-sm">
-					{displayError.message}
-				</div>
-			)}
+				{/* Error banner - only show if no cached messages available */}
+				{displayError && messages.length === 0 && (
+					<div className="px-4 py-2 bg-destructive/10 text-destructive text-sm">
+						{displayError.message}
+					</div>
+				)}
 
-			{/* Messages area */}
-			<div className="relative flex-1 min-h-0">
-				<div
-					ref={messagesContainerRef}
-					onScroll={handleScroll}
-					className="h-full bg-muted/30 border border-border p-2 sm:p-4 overflow-y-auto scrollbar-hide"
-					data-spotlight="chat-timeline"
-				>
-					<div>
-						{showSkeleton && ChatSkeleton}
+				{/* Messages area */}
+				<div className="relative flex-1 min-h-0">
+					<div
+						ref={messagesContainerRef}
+						onScroll={handleScroll}
+						className="h-full bg-muted/30 border border-border p-2 sm:p-4 overflow-y-auto scrollbar-hide"
+						data-spotlight="chat-timeline"
+					>
+						<div>
+							{showSkeleton && ChatSkeleton}
 
-						{!showSkeleton &&
-							messages.length === 0 &&
-							!sendPending &&
-							!isStreaming &&
-							!isAwaitingResponse && (
-								<div className="flex items-center gap-2 text-sm text-muted-foreground">
-									<span>{t("chat.noMessages")}</span>
+							{!showSkeleton &&
+								historyHydrated &&
+								messages.length === 0 &&
+								!sendPending &&
+								!isStreaming &&
+								!isAwaitingResponse && (
+									<div className="flex items-center gap-2 text-sm text-muted-foreground">
+										<span>{t("chat.noMessages")}</span>
+									</div>
+								)}
+
+							{/* Load more indicator */}
+							{messages.length > visibleCount && (
+								<div className="text-center text-xs text-muted-foreground py-2">
+									{messages.length - visibleCount} older messages...
 								</div>
 							)}
 
-						{/* Load more indicator */}
-						{messages.length > visibleCount && (
-							<div className="text-center text-xs text-muted-foreground py-2">
-								{messages.length - visibleCount} older messages...
-							</div>
-						)}
+							{/* Only render the last visibleCount messages for performance */}
+							{!showSkeleton &&
+								(() => {
+									const visibleMessages = messages.slice(-visibleCount);
+									const grouped = groupMessages(visibleMessages);
+									const lastGroup = grouped[grouped.length - 1];
+									const isWorking = isStreaming || isAwaitingResponse;
+									const needsPendingAssistant =
+										isWorking && (!lastGroup || lastGroup.role === "user");
+									const groupsToRender = needsPendingAssistant
+										? [
+												...grouped,
+												{
+													role: "assistant" as const,
+													messages: [
+														{
+															id: "pending-assistant",
+															role: "assistant" as const,
+															parts: [],
+															timestamp: Date.now(),
+															isStreaming: true,
+														},
+													],
+												},
+											]
+										: grouped;
 
-						{/* Only render the last visibleCount messages for performance */}
-						{!showSkeleton &&
-							(() => {
-								const visibleMessages = messages.slice(-visibleCount);
-								const grouped = groupMessages(visibleMessages);
-								const lastGroup = grouped[grouped.length - 1];
-								const isWorking = isStreaming || isAwaitingResponse;
-								const needsPendingAssistant =
-									isWorking && (!lastGroup || lastGroup.role === "user");
-								const groupsToRender = needsPendingAssistant
-									? [
-											...grouped,
-											{
-												role: "assistant" as const,
-												messages: [
-													{
-														id: "pending-assistant",
-														role: "assistant" as const,
-														parts: [],
-														timestamp: Date.now(),
-														isStreaming: true,
-													},
-												],
-											},
-										]
-									: grouped;
+									return groupsToRender.map((group, groupIndex) => {
+										const groupSurfaces = group.messages.flatMap(
+											(m) => surfacesByMessageId.get(m.id) ?? [],
+										);
+										const groupMessageId = group.messages[0]?.id;
+										// Check if this is the last assistant group
+										const isLastAssistantGroup =
+											group.role === "assistant" &&
+											!groupsToRender
+												.slice(groupIndex + 1)
+												.some((g) => g.role === "assistant");
 
-								return groupsToRender.map((group, groupIndex) => {
-									const groupSurfaces = group.messages.flatMap(
-										(m) => surfacesByMessageId.get(m.id) ?? [],
-									);
-									const groupMessageId = group.messages[0]?.id;
-									// Check if this is the last assistant group
-									const isLastAssistantGroup =
-										group.role === "assistant" &&
-										!groupsToRender
-											.slice(groupIndex + 1)
-											.some((g) => g.role === "assistant");
-
-									// Detect model change: compare this assistant group's model
-									// to the previous assistant group's model
-									let modelChangeDivider: React.ReactNode = null;
-									if (group.role === "assistant") {
-										const thisModel = getGroupModelRef(group);
-										if (thisModel) {
-											// Find previous assistant group
-											for (let i = groupIndex - 1; i >= 0; i--) {
-												if (groupsToRender[i].role === "assistant") {
-													const prevModel = getGroupModelRef(groupsToRender[i]);
-													if (prevModel && prevModel !== thisModel) {
-														modelChangeDivider = (
-															<ModelChangeDivider modelRef={thisModel} />
+										// Detect model change: compare this assistant group's model
+										// to the previous assistant group's model
+										let modelChangeDivider: React.ReactNode = null;
+										if (group.role === "assistant") {
+											const thisModel = getGroupModelRef(group);
+											if (thisModel) {
+												// Find previous assistant group
+												for (let i = groupIndex - 1; i >= 0; i--) {
+													if (groupsToRender[i].role === "assistant") {
+														const prevModel = getGroupModelRef(
+															groupsToRender[i],
 														);
+														if (prevModel && prevModel !== thisModel) {
+															modelChangeDivider = (
+																<ModelChangeDivider modelRef={thisModel} />
+															);
+														}
+														break;
 													}
-													break;
 												}
 											}
 										}
-									}
 
-									return (
-										<div
-											key={`${groupMessageId ?? `${group.role}-${groupIndex}`}-${groupIndex}`}
-											className={groupIndex > 0 ? "mt-4 sm:mt-6" : ""}
-										>
-											{modelChangeDivider}
-											<MessageGroupCard
-												group={group}
-												assistantName={assistantName}
-												tempIdLabel={tempIdLabel}
-												workspacePath={workspacePath}
-												locale={locale}
-												a2uiSurfaces={groupSurfaces}
-												onA2UIAction={handleA2UIAction}
-												messageId={groupMessageId}
-												onForkHere={
-													group.role === "user"
-														? (preview) => {
-															void handleForkFromMessage(preview);
-														}
-														: undefined
-												}
-												showWorkingIndicator={isWorking && isLastAssistantGroup}
-											/>
-										</div>
-									);
-								});
-							})()}
+										return (
+											<div
+												key={`${groupMessageId ?? `${group.role}-${groupIndex}`}-${groupIndex}`}
+												className={groupIndex > 0 ? "mt-4 sm:mt-6" : ""}
+											>
+												{modelChangeDivider}
+												<MessageGroupCard
+													group={group}
+													assistantName={assistantName}
+													tempIdLabel={tempIdLabel}
+													workspacePath={workspacePath}
+													locale={locale}
+													a2uiSurfaces={groupSurfaces}
+													onA2UIAction={handleA2UIAction}
+													messageId={groupMessageId}
+													onForkHere={
+														group.role === "user"
+															? (preview) => {
+																	void handleForkFromMessage(preview);
+																}
+															: undefined
+													}
+													showWorkingIndicator={
+														isWorking && isLastAssistantGroup
+													}
+												/>
+											</div>
+										);
+									});
+								})()}
 
-						{/* Orphaned A2UI surfaces (no valid anchor) */}
-						{orphanedSurfaces.length > 0 && (
-							<div className="space-y-2 mt-4">
-								{orphanedSurfaces.map((surface) => (
-									<A2UICallCard
-										key={surface.surfaceId}
-										surfaceId={surface.surfaceId}
-										messages={surface.messages}
-										blocking={surface.blocking}
-										requestId={surface.requestId}
-										answered={surface.answered}
-										answeredAction={surface.answeredAction}
-										answeredAt={surface.answeredAt}
-										onAction={handleA2UIAction}
-									/>
-								))}
-							</div>
-						)}
-						{/* Inline error/retry indicator - shows below messages */}
-						{displayError && messages.length > 0 && !isStreaming && (
-							<div className="mt-2 px-3 py-2 rounded-md bg-destructive/10 text-destructive text-sm border border-destructive/20">
-								{displayError.message}
-							</div>
-						)}
+							{/* Orphaned A2UI surfaces (no valid anchor) */}
+							{orphanedSurfaces.length > 0 && (
+								<div className="space-y-2 mt-4">
+									{orphanedSurfaces.map((surface) => (
+										<A2UICallCard
+											key={surface.surfaceId}
+											surfaceId={surface.surfaceId}
+											messages={surface.messages}
+											blocking={surface.blocking}
+											requestId={surface.requestId}
+											answered={surface.answered}
+											answeredAction={surface.answeredAction}
+											answeredAt={surface.answeredAt}
+											onAction={handleA2UIAction}
+										/>
+									))}
+								</div>
+							)}
+							{/* Inline error/retry indicator - shows below messages */}
+							{displayError && messages.length > 0 && !isStreaming && (
+								<div className="mt-2 px-3 py-2 rounded-md bg-destructive/10 text-destructive text-sm border border-destructive/20">
+									{displayError.message}
+								</div>
+							)}
+						</div>
+						<div ref={messagesEndRef} />
 					</div>
-					<div ref={messagesEndRef} />
-				</div>
 
-				{/* Jump to bottom button - appears when user has scrolled up */}
-				{isUserScrolled && (
-					<button
-						type="button"
-						onClick={handleScrollToBottom}
-						className="absolute bottom-3 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-primary text-primary-foreground text-xs shadow-md hover:bg-primary/90 transition-colors"
-						title="Jump to bottom"
-					>
-						<svg
-							xmlns="http://www.w3.org/2000/svg"
-							width="12"
-							height="12"
-							viewBox="0 0 24 24"
-							fill="none"
-							stroke="currentColor"
-							strokeWidth="2"
-							strokeLinecap="round"
-							strokeLinejoin="round"
-							aria-hidden="true"
-						>
-							<polyline points="6 9 12 15 18 9" />
-						</svg>
-						Jump to bottom
-					</button>
-				)}
-			</div>
-
-			{/* Hidden file input */}
-			<input
-				ref={fileInputRef}
-				type="file"
-				multiple
-				className="hidden"
-				onChange={(e) => handleFileUpload(e.target.files)}
-			/>
-
-			{/* Chat input - canonical chat input */}
-			<div className="chat-input-container flex flex-col gap-1 bg-muted/30 border border-border px-2 py-1 mt-2">
-				<div className="flex items-center gap-2">
-
-					{/* File upload button */}
-					<button
-						type="button"
-						onClick={() => fileInputRef.current?.click()}
-						disabled={isUploading}
-						className="flex-shrink-0 h-8 px-2 flex items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-						title={t("chat.uploadFile")}
-					>
-						{isUploading ? (
-							<Loader2 className="size-4 animate-spin" />
-						) : (
-							<Paperclip className="size-4" />
-						)}
-					</button>
-
-					{/* Voice menu button */}
-					{hasVoice && (
-						<VoiceMenuButton
-							activeMode={voiceMode}
-							voiceState={dictation.isActive ? "listening" : "idle"}
-							onConversation={handleVoiceConversation}
-							onDictation={handleVoiceDictation}
-							onStop={handleVoiceStop}
-							locale={locale}
-							className="flex-shrink-0"
+					{/* Jump to bottom — slim bar above input (overlay to avoid layout shift) */}
+					{isUserScrolled && (
+						<button
+							type="button"
+							onClick={handleScrollToBottom}
+							className="absolute bottom-0 left-0 right-0 z-10 bg-primary/50 cursor-pointer hover:bg-primary transition-colors"
+							style={{
+								height: "4px",
+								minHeight: "4px",
+								padding: 0,
+								lineHeight: 0,
+							}}
+							title="Jump to bottom"
 						/>
 					)}
+				</div>
 
-					{/* Textarea wrapper with slash command popup */}
-					<div
-						className="flex-1 relative flex flex-col min-h-[32px]"
-						data-spotlight="chat-input"
-					>
-						<SlashCommandPopup
-							commands={slashCommands}
-							query={slashQueryRef.current.command}
-							isOpen={
-								showSlashPopup &&
-								slashQueryRef.current.isSlash &&
-								!slashQueryRef.current.args
-							}
-							onSelect={(cmd) => {
-								const sq = slashQueryRef.current;
-								if (builtInCommandNames.has(cmd.name)) {
-									runSlashCommand(cmd.name, sq.args)
-										.then((result) => {
-											if (result.clearInput) {
+				{/* Hidden file input */}
+				<input
+					ref={fileInputRef}
+					type="file"
+					multiple
+					className="hidden"
+					onChange={(e) => handleFileUpload(e.target.files)}
+				/>
+
+				{/* Chat input - canonical chat input */}
+				<div className="chat-input-container flex flex-col gap-1 bg-muted/30 border border-border px-2 py-1 mt-2">
+					<div className="flex items-center gap-2">
+						{/* File upload button */}
+						<button
+							type="button"
+							onClick={() => fileInputRef.current?.click()}
+							disabled={isUploading}
+							className="flex-shrink-0 h-8 px-2 flex items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+							title={t("chat.uploadFile")}
+						>
+							{isUploading ? (
+								<Loader2 className="size-4 animate-spin" />
+							) : (
+								<Paperclip className="size-4" />
+							)}
+						</button>
+
+						{/* Voice menu button */}
+						{hasVoice && (
+							<VoiceMenuButton
+								activeMode={voiceMode}
+								voiceState={dictation.isActive ? "listening" : "idle"}
+								onConversation={handleVoiceConversation}
+								onDictation={handleVoiceDictation}
+								onStop={handleVoiceStop}
+								locale={locale}
+								className="flex-shrink-0"
+							/>
+						)}
+
+						{/* Textarea wrapper with slash command popup */}
+						<div
+							className="flex-1 relative flex flex-col min-h-[32px]"
+							data-spotlight="chat-input"
+						>
+							<SlashCommandPopup
+								commands={slashCommands}
+								query={slashQueryRef.current.command}
+								isOpen={
+									showSlashPopup &&
+									slashQueryRef.current.isSlash &&
+									!slashQueryRef.current.args
+								}
+								onSelect={(cmd) => {
+									const sq = slashQueryRef.current;
+									if (builtInCommandNames.has(cmd.name)) {
+										runSlashCommand(cmd.name, sq.args)
+											.then((result) => {
+												if (result.clearInput) {
+													setInput("");
+													setFileAttachments([]);
+													if (inputRef.current) {
+														inputRef.current.style.height = "auto";
+													}
+												}
+												setShowSlashPopup(false);
+											})
+											.catch((err) => {
+												setCommandError(
+													err instanceof Error
+														? err
+														: new Error("Command failed"),
+												);
+												setShowSlashPopup(false);
+											});
+										return;
+									}
+
+									if (sq.args.trim()) {
+										send(`/${cmd.name} ${sq.args.trim()}`)
+											.then(() => {
 												setInput("");
 												setFileAttachments([]);
 												if (inputRef.current) {
 													inputRef.current.style.height = "auto";
 												}
-											}
-											setShowSlashPopup(false);
-										})
-										.catch((err) => {
-											setCommandError(
-												err instanceof Error
-													? err
-													: new Error("Command failed"),
-											);
-											setShowSlashPopup(false);
-										});
-									return;
-								}
+												setShowSlashPopup(false);
+											})
+											.catch((err) => {
+												setCommandError(
+													err instanceof Error
+														? err
+														: new Error("Command failed"),
+												);
+												setShowSlashPopup(false);
+											});
+									} else {
+										setInput(`/${cmd.name} `);
+										inputRef.current?.focus();
+										setShowSlashPopup(false);
+									}
+								}}
+								onClose={() => setShowSlashPopup(false)}
+							/>
+							<FileMentionPopup
+								query={fileMentionQuery}
+								isOpen={showFileMentionPopup}
+								workspacePath={workspacePath ?? null}
+								onSelect={handleFileSelect}
+								onClose={() => {
+									setShowFileMentionPopup(false);
+									setFileMentionQuery("");
+								}}
+							/>
 
-								if (sq.args.trim()) {
-									send(`/${cmd.name} ${sq.args.trim()}`)
-										.then(() => {
-											setInput("");
-											setFileAttachments([]);
-											if (inputRef.current) {
-												inputRef.current.style.height = "auto";
-											}
-											setShowSlashPopup(false);
-										})
-										.catch((err) => {
-											setCommandError(
-												err instanceof Error
-													? err
-													: new Error("Command failed"),
-											);
-											setShowSlashPopup(false);
-										});
-								} else {
-									setInput(`/${cmd.name} `);
-									inputRef.current?.focus();
-									setShowSlashPopup(false);
-								}
-							}}
-							onClose={() => setShowSlashPopup(false)}
-						/>
-						<FileMentionPopup
-							query={fileMentionQuery}
-							isOpen={showFileMentionPopup}
-							workspacePath={workspacePath ?? null}
-							onSelect={handleFileSelect}
-							onClose={() => {
-								setShowFileMentionPopup(false);
-								setFileMentionQuery("");
-							}}
-						/>
-
-						{queuedMessages.length > 0 && (
-							<div className="mb-2 rounded-md border border-border/60 bg-muted/20 p-2">
-								<div className="flex items-center justify-between text-xs text-muted-foreground mb-2">
-									<span>Queued messages</span>
-									<Button
-										type="button"
-										variant="ghost"
-										size="sm"
-										className="h-6 px-2 text-xs text-muted-foreground hover:text-foreground"
-										onClick={handleQueueClear}
-									>
-										Clear
-									</Button>
-								</div>
-								<div className="space-y-1 max-h-32 overflow-y-auto pr-1">
-									{queuedMessages.map((item, index) => (
-										<div
-											key={item.id}
-											className="flex items-start gap-2 rounded-md bg-muted/30 p-1.5"
+							{queuedMessages.length > 0 && (
+								<div className="mb-2 rounded-md border border-border/60 bg-muted/20 p-2">
+									<div className="flex items-center justify-between text-xs text-muted-foreground mb-2">
+										<span>Queued messages</span>
+										<Button
+											type="button"
+											variant="ghost"
+											size="sm"
+											className="h-6 px-2 text-xs text-muted-foreground hover:text-foreground"
+											onClick={handleQueueClear}
 										>
-											<span className="mt-1 text-[10px] text-muted-foreground w-4 text-right">
-												{index + 1}
-											</span>
-											<textarea
-												value={item.text}
-												onChange={(e) =>
-													handleQueueEdit(item.id, e.target.value)
-												}
-												onInput={(e) => {
-													const el = e.currentTarget;
-													el.style.height = "auto";
-													el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
-												}}
-												rows={1}
-												className="flex-1 bg-transparent text-xs leading-4 resize-none outline-none"
-											/>
-											<div className="flex flex-col gap-1">
-												<Button
-													type="button"
-													variant="ghost"
-													size="icon"
-													className="h-6 w-6 text-muted-foreground hover:text-foreground"
-													disabled={index === 0}
-													onClick={() => handleQueueMove(item.id, -1)}
-												>
-													<ArrowUp className="h-3 w-3" />
-												</Button>
-												<Button
-													type="button"
-													variant="ghost"
-													size="icon"
-													className="h-6 w-6 text-muted-foreground hover:text-foreground"
-													disabled={index === queuedMessages.length - 1}
-													onClick={() => handleQueueMove(item.id, 1)}
-												>
-													<ArrowDown className="h-3 w-3" />
-												</Button>
-												<Button
-													type="button"
-													variant="ghost"
-													size="icon"
-													className="h-6 w-6 text-muted-foreground hover:text-foreground"
-													onClick={() => handleQueueRemove(item.id)}
-												>
-													<Trash2 className="h-3 w-3" />
-												</Button>
+											Clear
+										</Button>
+									</div>
+									<div className="space-y-1 max-h-32 overflow-y-auto pr-1">
+										{queuedMessages.map((item, index) => (
+											<div
+												key={item.id}
+												className="flex items-start gap-2 rounded-md bg-muted/30 p-1.5"
+											>
+												<span className="mt-1 text-[10px] text-muted-foreground w-4 text-right">
+													{index + 1}
+												</span>
+												<textarea
+													value={item.text}
+													onChange={(e) =>
+														handleQueueEdit(item.id, e.target.value)
+													}
+													onInput={(e) => {
+														const el = e.currentTarget;
+														el.style.height = "auto";
+														el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
+													}}
+													rows={1}
+													className="flex-1 bg-transparent text-xs leading-4 resize-none outline-none"
+												/>
+												<div className="flex flex-col gap-1">
+													<Button
+														type="button"
+														variant="ghost"
+														size="icon"
+														className="h-6 w-6 text-muted-foreground hover:text-foreground"
+														disabled={index === 0}
+														onClick={() => handleQueueMove(item.id, -1)}
+													>
+														<ArrowUp className="h-3 w-3" />
+													</Button>
+													<Button
+														type="button"
+														variant="ghost"
+														size="icon"
+														className="h-6 w-6 text-muted-foreground hover:text-foreground"
+														disabled={index === queuedMessages.length - 1}
+														onClick={() => handleQueueMove(item.id, 1)}
+													>
+														<ArrowDown className="h-3 w-3" />
+													</Button>
+													<Button
+														type="button"
+														variant="ghost"
+														size="icon"
+														className="h-6 w-6 text-muted-foreground hover:text-foreground"
+														onClick={() => handleQueueRemove(item.id)}
+													>
+														<Trash2 className="h-3 w-3" />
+													</Button>
+												</div>
 											</div>
-										</div>
+										))}
+									</div>
+								</div>
+							)}
+
+							{/* File attachment chips */}
+							{fileAttachments.length > 0 && (
+								<div className="flex flex-wrap gap-1 mb-1">
+									{fileAttachments.map((attachment) => (
+										<FileAttachmentChip
+											key={attachment.id}
+											attachment={attachment}
+											onRemove={() => {
+												setFileAttachments((prev) =>
+													prev.filter((a) => a.id !== attachment.id),
+												);
+											}}
+										/>
 									))}
 								</div>
-							</div>
-						)}
+							)}
 
-						{/* File attachment chips */}
-						{fileAttachments.length > 0 && (
-							<div className="flex flex-wrap gap-1 mb-1">
-								{fileAttachments.map((attachment) => (
-									<FileAttachmentChip
-										key={attachment.id}
-										attachment={attachment}
-										onRemove={() => {
-											setFileAttachments((prev) =>
-												prev.filter((a) => a.id !== attachment.id),
-											);
-										}}
-									/>
-								))}
-							</div>
-						)}
+							{hasVoice && dictation.isActive ? (
+								<DictationOverlay
+									open
+									value={inputValueRef.current}
+									liveTranscript={dictation.liveTranscript}
+									placeholder={t("chat.speakNow")}
+									vadProgress={dictation.vadProgress}
+									autoSend={dictation.autoSendEnabled}
+									onAutoSendChange={dictation.setAutoSendEnabled}
+									onStop={handleVoiceStop}
+									onChange={handleInputChange}
+									onKeyDown={handleKeyDown}
+									onPaste={(e) => {
+										// Handle pasted files
+										const items = e.clipboardData?.items;
+										if (!items) return;
 
-						{hasVoice && dictation.isActive ? (
-							<DictationOverlay
-								open
-								value={inputValueRef.current}
-								liveTranscript={dictation.liveTranscript}
-								placeholder={t("chat.speakNow")}
-								vadProgress={dictation.vadProgress}
-								autoSend={dictation.autoSendEnabled}
-								onAutoSendChange={dictation.setAutoSendEnabled}
-								onStop={handleVoiceStop}
-								onChange={handleInputChange}
-								onKeyDown={handleKeyDown}
-								onPaste={(e) => {
-									// Handle pasted files
-									const items = e.clipboardData?.items;
-									if (!items) return;
-
-									const files: File[] = [];
-									let imageIndex = 0;
-									for (const item of Array.from(items)) {
-										if (item.kind === "file") {
-											const file = item.getAsFile();
-											if (file) {
-												// Rename generic clipboard image names to be unique
-												const isGenericName =
-													/^image\.(png|gif|jpg|jpeg|webp)$/i.test(file.name);
-												if (isGenericName) {
-													const ext = file.name.split(".").pop() || "png";
-													const uniqueName = `pasted-image-${Date.now()}-${imageIndex++}.${ext}`;
-													const renamedFile = new File([file], uniqueName, {
-														type: file.type,
-													});
-													files.push(renamedFile);
-												} else {
-													files.push(file);
+										const files: File[] = [];
+										let imageIndex = 0;
+										for (const item of Array.from(items)) {
+											if (item.kind === "file") {
+												const file = item.getAsFile();
+												if (file) {
+													// Rename generic clipboard image names to be unique
+													const isGenericName =
+														/^image\.(png|gif|jpg|jpeg|webp)$/i.test(file.name);
+													if (isGenericName) {
+														const ext = file.name.split(".").pop() || "png";
+														const uniqueName = `pasted-image-${Date.now()}-${imageIndex++}.${ext}`;
+														const renamedFile = new File([file], uniqueName, {
+															type: file.type,
+														});
+														files.push(renamedFile);
+													} else {
+														files.push(file);
+													}
 												}
 											}
 										}
-									}
 
-									if (files.length > 0) {
-										e.preventDefault();
-										const dataTransfer = new DataTransfer();
-										for (const file of files) {
-											dataTransfer.items.add(file);
+										if (files.length > 0) {
+											e.preventDefault();
+											const dataTransfer = new DataTransfer();
+											for (const file of files) {
+												dataTransfer.items.add(file);
+											}
+											handleFileUpload(dataTransfer.files);
 										}
-										handleFileUpload(dataTransfer.files);
-									}
-								}}
-								onFocus={(e) => {
-									// Scroll input into view on mobile when keyboard opens
-									setTimeout(() => {
-										e.target.scrollIntoView({
-											behavior: "smooth",
-											block: "nearest",
-										});
-									}, 300);
-								}}
-							/>
-						) : (
-							<textarea
-								ref={inputRef}
-								autoComplete="off"
-								autoCorrect="off"
-								autoCapitalize="sentences"
-								spellCheck={false}
-								enterKeyHint="send"
-								data-form-type="other"
-								placeholder={t("chat.placeholder")}
-								defaultValue={inputInitialValue}
-								onChange={handleInputChange}
-								onKeyDown={handleKeyDown}
-								onPaste={(e) => {
-									// Handle pasted files
-									const items = e.clipboardData?.items;
-									if (!items) return;
+									}}
+									onFocus={(e) => {
+										// Scroll input into view on mobile when keyboard opens
+										setTimeout(() => {
+											e.target.scrollIntoView({
+												behavior: "smooth",
+												block: "nearest",
+											});
+										}, 300);
+									}}
+								/>
+							) : (
+								<textarea
+									ref={inputRef}
+									autoComplete="off"
+									autoCorrect="off"
+									autoCapitalize="sentences"
+									spellCheck={false}
+									enterKeyHint="send"
+									data-form-type="other"
+									placeholder={t("chat.placeholder")}
+									defaultValue={inputInitialValue}
+									onChange={handleInputChange}
+									onKeyDown={handleKeyDown}
+									onPaste={(e) => {
+										// Handle pasted files
+										const items = e.clipboardData?.items;
+										if (!items) return;
 
-									const files: File[] = [];
-									let imageIndex = 0;
-									for (const item of Array.from(items)) {
-										if (item.kind === "file") {
-											const file = item.getAsFile();
-											if (file) {
-												// Rename generic clipboard image names to be unique
-												const isGenericName =
-													/^image\.(png|gif|jpg|jpeg|webp)$/i.test(file.name);
-												if (isGenericName) {
-													const ext = file.name.split(".").pop() || "png";
-													const uniqueName = `pasted-image-${Date.now()}-${imageIndex++}.${ext}`;
-													const renamedFile = new File([file], uniqueName, {
-														type: file.type,
-													});
-													files.push(renamedFile);
-												} else {
-													files.push(file);
+										const files: File[] = [];
+										let imageIndex = 0;
+										for (const item of Array.from(items)) {
+											if (item.kind === "file") {
+												const file = item.getAsFile();
+												if (file) {
+													// Rename generic clipboard image names to be unique
+													const isGenericName =
+														/^image\.(png|gif|jpg|jpeg|webp)$/i.test(file.name);
+													if (isGenericName) {
+														const ext = file.name.split(".").pop() || "png";
+														const uniqueName = `pasted-image-${Date.now()}-${imageIndex++}.${ext}`;
+														const renamedFile = new File([file], uniqueName, {
+															type: file.type,
+														});
+														files.push(renamedFile);
+													} else {
+														files.push(file);
+													}
 												}
 											}
 										}
-									}
 
-									if (files.length > 0) {
-										e.preventDefault();
-										const dataTransfer = new DataTransfer();
-										for (const file of files) {
-											dataTransfer.items.add(file);
+										if (files.length > 0) {
+											e.preventDefault();
+											const dataTransfer = new DataTransfer();
+											for (const file of files) {
+												dataTransfer.items.add(file);
+											}
+											handleFileUpload(dataTransfer.files);
 										}
-										handleFileUpload(dataTransfer.files);
-									}
-								}}
-								onFocus={(e) => {
-									// Scroll input into view on mobile when keyboard opens
-									setTimeout(() => {
-										e.target.scrollIntoView({
-											behavior: "smooth",
-											block: "nearest",
-										});
-									}, 300);
-								}}
-								rows={1}
-								className="w-full bg-transparent border-none outline-none text-foreground placeholder:text-muted-foreground text-sm resize-none py-1.5 leading-5 max-h-[200px] overflow-y-auto"
-							/>
-						)}
-					</div>
+									}}
+									onFocus={(e) => {
+										// Scroll input into view on mobile when keyboard opens
+										setTimeout(() => {
+											e.target.scrollIntoView({
+												behavior: "smooth",
+												block: "nearest",
+											});
+										}, 300);
+									}}
+									rows={1}
+									className="w-full bg-transparent border-none outline-none text-foreground placeholder:text-muted-foreground text-sm resize-none py-1.5 leading-5 max-h-[200px] overflow-y-auto"
+								/>
+							)}
+						</div>
 
-					{/* Stop button - only shown when streaming */}
-					{isStreaming && (
+						{/* Stop button - only shown when streaming */}
+						{isStreaming && (
+							<Button
+								type="button"
+								onClick={handleStop}
+								className="stop-button-animated flex-shrink-0 h-8 px-2 flex items-center justify-center text-destructive hover:text-destructive/80 transition-colors bg-transparent hover:bg-transparent"
+								variant="ghost"
+								size="icon"
+								title={t("chat.stopAgent")}
+							>
+								<span className="stop-button-ring" aria-hidden>
+									<svg viewBox="0 0 100 100" role="presentation">
+										<circle
+											cx="50"
+											cy="50"
+											r="46"
+											fill="none"
+											stroke="currentColor"
+											strokeWidth="3"
+											strokeLinecap="round"
+											strokeDasharray="72 216"
+											opacity="0.8"
+										/>
+									</svg>
+								</span>
+								<StopCircle className="w-4 h-4" />
+							</Button>
+						)}
+
+						{/* Send button */}
 						<Button
 							type="button"
-							onClick={handleStop}
-							className="stop-button-animated flex-shrink-0 h-8 px-2 flex items-center justify-center text-destructive hover:text-destructive/80 transition-colors bg-transparent hover:bg-transparent"
+							data-dictation-send
+							onClick={handleSendClick}
+							onPointerDown={handleSendPointerDown}
+							onPointerUp={handleSendPointerUp}
+							onPointerCancel={handleSendPointerUp}
+							onPointerLeave={handleSendPointerLeave}
+							disabled={!canSendInput && fileAttachments.length === 0}
+							className="flex-shrink-0 h-8 px-2 flex items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed transition-colors bg-transparent hover:bg-transparent"
 							variant="ghost"
 							size="icon"
-							title={t("chat.stopAgent")}
 						>
-							<span className="stop-button-ring" aria-hidden>
-								<svg viewBox="0 0 100 100" role="presentation">
-									<circle
-										cx="50"
-										cy="50"
-										r="46"
-										fill="none"
-										stroke="currentColor"
-										strokeWidth="3"
-										strokeLinecap="round"
-										strokeDasharray="72 216"
-										opacity="0.8"
-									/>
-								</svg>
-							</span>
-							<StopCircle className="w-4 h-4" />
+							<Send className="w-4 h-4" />
 						</Button>
-					)}
-
-					{/* Send button */}
-					<Button
-						type="button"
-						data-dictation-send
-						onClick={handleSendClick}
-						onPointerDown={handleSendPointerDown}
-						onPointerUp={handleSendPointerUp}
-						onPointerCancel={handleSendPointerUp}
-						onPointerLeave={handleSendPointerLeave}
-						disabled={!canSendInput && fileAttachments.length === 0}
-						className="flex-shrink-0 h-8 px-2 flex items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed transition-colors bg-transparent hover:bg-transparent"
-						variant="ghost"
-						size="icon"
-					>
-						<Send className="w-4 h-4" />
-					</Button>
-				</div>
-			</div>
-
-			<Dialog open={forkListOpen} onOpenChange={setForkListOpen}>
-				<DialogContent className="sm:max-w-2xl">
-					<DialogHeader>
-						<DialogTitle>{t("chat.forkListTitle", "Fork from message")}</DialogTitle>
-						<DialogDescription>
-							{t(
-								"chat.forkListDescription",
-								"Choose a user message to fork from. A new branch will continue from that point.",
-							)}
-						</DialogDescription>
-					</DialogHeader>
-					<div className="max-h-[50vh] overflow-y-auto space-y-2 pr-1">
-						{forkPointsLoading ? (
-							<div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
-								<Loader2 className="w-4 h-4 animate-spin" />
-								{t("chat.loadingForkPoints", "Loading fork points...")}
-							</div>
-						) : forkPoints.length === 0 ? (
-							<div className="text-sm text-muted-foreground py-2">
-								{t("chat.noForkPoints", "No forkable user messages found in this session.")}
-							</div>
-						) : (
-							forkPoints.map((point) => (
-								<button
-									key={point.entry_id}
-									type="button"
-									onClick={() => {
-										void handleForkAtEntry(point.entry_id);
-									}}
-									disabled={forkingEntryId === point.entry_id}
-									className="w-full text-left border border-border rounded px-3 py-2 hover:bg-muted/60 disabled:opacity-60"
-								>
-									<div className="flex items-center justify-between gap-3">
-										<span className="text-xs text-muted-foreground font-mono">
-											{point.entry_id.slice(0, 8)}
-										</span>
-										{forkingEntryId === point.entry_id && (
-											<Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground" />
-										)}
-									</div>
-									<div className="text-sm text-foreground mt-1 line-clamp-3">
-										{point.preview || t("chat.emptyForkPreview", "(no preview)")}
-									</div>
-								</button>
-							))
-						)}
 					</div>
-					<DialogFooter>
-						<Button variant="outline" onClick={() => setForkListOpen(false)}>
-							{t("common.close", "Close")}
-						</Button>
-					</DialogFooter>
-				</DialogContent>
-			</Dialog>
+				</div>
+
+				<Dialog open={forkListOpen} onOpenChange={setForkListOpen}>
+					<DialogContent className="sm:max-w-2xl">
+						<DialogHeader>
+							<DialogTitle>
+								{t("chat.forkListTitle", "Fork from message")}
+							</DialogTitle>
+							<DialogDescription>
+								{t(
+									"chat.forkListDescription",
+									"Choose a user message to fork from. A new branch will continue from that point.",
+								)}
+							</DialogDescription>
+						</DialogHeader>
+						<div className="max-h-[50vh] overflow-y-auto space-y-2 pr-1">
+							{forkPointsLoading ? (
+								<div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
+									<Loader2 className="w-4 h-4 animate-spin" />
+									{t("chat.loadingForkPoints", "Loading fork points...")}
+								</div>
+							) : forkPoints.length === 0 ? (
+								<div className="text-sm text-muted-foreground py-2">
+									{t(
+										"chat.noForkPoints",
+										"No forkable user messages found in this session.",
+									)}
+								</div>
+							) : (
+								forkPoints.map((point) => (
+									<button
+										key={point.entry_id}
+										type="button"
+										onClick={() => {
+											void handleForkAtEntry(point.entry_id);
+										}}
+										disabled={forkingEntryId === point.entry_id}
+										className="w-full text-left border border-border rounded px-3 py-2 hover:bg-muted/60 disabled:opacity-60"
+									>
+										<div className="flex items-center justify-between gap-3">
+											<span className="text-xs text-muted-foreground font-mono">
+												{point.entry_id.slice(0, 8)}
+											</span>
+											{forkingEntryId === point.entry_id && (
+												<Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground" />
+											)}
+										</div>
+										<div className="text-sm text-foreground mt-1 line-clamp-3">
+											{point.preview ||
+												t("chat.emptyForkPreview", "(no preview)")}
+										</div>
+									</button>
+								))
+							)}
+						</div>
+						<DialogFooter>
+							<Button variant="outline" onClick={() => setForkListOpen(false)}>
+								{t("common.close", "Close")}
+							</Button>
+						</DialogFooter>
+					</DialogContent>
+				</Dialog>
 			</div>
 		</>
 	);
@@ -2713,7 +2756,15 @@ type Segment =
 	  }
 	| { key: string; type: "thinking"; text: string; timestamp: number }
 	| { key: string; type: "compaction"; text: string; timestamp: number }
-	| { key: string; type: "error"; text: string; timestamp: number; retrying?: boolean; retryAttempt?: number; retryMax?: number }
+	| {
+			key: string;
+			type: "error";
+			text: string;
+			timestamp: number;
+			retrying?: boolean;
+			retryAttempt?: number;
+			retryMax?: number;
+	  }
 	| {
 			key: string;
 			type: "a2ui";
@@ -2782,11 +2833,7 @@ function ToolGutterIcon({
 					)}
 				</button>
 			</PopoverTrigger>
-			<PopoverContent
-				side="left"
-				align="start"
-				className="w-64 p-2"
-			>
+			<PopoverContent side="left" align="start" className="w-64 p-2">
 				<div className="space-y-1">
 					{collapsed.map((entry, i) => {
 						const icon = getToolIcon(entry.toolName, entry.input);
@@ -2969,7 +3016,12 @@ const MessageGroupCard = memo(function MessageGroupCard({
 				timestamp,
 			});
 		} else if (part.type === "error") {
-			const ep = part as { text?: string; retrying?: boolean; retryAttempt?: number; retryMax?: number };
+			const ep = part as {
+				text?: string;
+				retrying?: boolean;
+				retryAttempt?: number;
+				retryMax?: number;
+			};
 			segments.push({
 				key,
 				type: "error",
@@ -3093,7 +3145,9 @@ const MessageGroupCard = memo(function MessageGroupCard({
 			const pushSegment = (seg: RenderSegment) => {
 				// Attach any pending (leading) tool group to this segment
 				if (pendingToolGroup) {
-					(seg as RenderSegment & { _toolGroup?: typeof pendingToolGroup })._toolGroup = pendingToolGroup;
+					(
+						seg as RenderSegment & { _toolGroup?: typeof pendingToolGroup }
+					)._toolGroup = pendingToolGroup;
 					pendingToolGroup = null;
 				}
 				grouped.push(seg);
@@ -3245,7 +3299,10 @@ const MessageGroupCard = memo(function MessageGroupCard({
 				)}
 				<div className="flex-1" />
 				{!isUser && allTextContent && (
-					<ReadAloudButton text={allTextContent} className="ml-1 flex-shrink-0" />
+					<ReadAloudButton
+						text={allTextContent}
+						className="ml-1 flex-shrink-0"
+					/>
 				)}
 				{isUser && allTextContent && onForkHere && (
 					<button
@@ -3279,10 +3336,12 @@ const MessageGroupCard = memo(function MessageGroupCard({
 				)}
 			</div>
 
-			<div className={cn(
-				"relative px-2 sm:px-4 py-2 sm:py-3 group space-y-2 overflow-hidden",
-				!isUser && verbosity === 1 && "pr-12 sm:pr-16",
-			)}>
+			<div
+				className={cn(
+					"relative px-2 sm:px-4 py-2 sm:py-3 group space-y-2 overflow-hidden",
+					!isUser && verbosity === 1 && "pr-12 sm:pr-16",
+				)}
+			>
 				{!isUser && verbosity === 1 && (
 					<div className="absolute top-2 bottom-2 right-[2.25rem] sm:right-[2.75rem] w-px bg-border/40" />
 				)}
@@ -3311,10 +3370,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 						}
 					)._toolGroup;
 
-					const wrapWithGutter = (
-						key: string,
-						content: React.ReactNode,
-					) => {
+					const wrapWithGutter = (key: string, content: React.ReactNode) => {
 						if (!attachedToolGroup || verbosity !== 1) {
 							return content;
 						}
@@ -3379,12 +3435,14 @@ const MessageGroupCard = memo(function MessageGroupCard({
 								className={needsTopMargin ? "mt-3" : undefined}
 							>
 								<PiPartRenderer
-									part={{
-										type: "thinking",
-										id: segment.key,
-										text: segment.text,
-										__verbosity: verbosity,
-									} as DisplayPart}
+									part={
+										{
+											type: "thinking",
+											id: segment.key,
+											text: segment.text,
+											__verbosity: verbosity,
+										} as DisplayPart
+									}
 									locale={locale}
 									workspacePath={workspacePath}
 								/>
@@ -3410,6 +3468,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 										className="animate-spin h-3.5 w-3.5 shrink-0"
 										viewBox="0 0 24 24"
 										fill="none"
+										aria-hidden="true"
 									>
 										<circle
 											className="opacity-25"
@@ -3446,6 +3505,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 											className="animate-spin h-3 w-3"
 											viewBox="0 0 24 24"
 											fill="none"
+											aria-hidden="true"
 										>
 											<circle
 												className="opacity-25"
@@ -3467,6 +3527,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 											viewBox="0 0 24 24"
 											fill="none"
 											stroke="currentColor"
+											aria-hidden="true"
 											strokeWidth="2"
 										>
 											<path d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9" />
@@ -3479,10 +3540,26 @@ const MessageGroupCard = memo(function MessageGroupCard({
 						);
 					}
 					if (segment.type === "tool_group") {
-						// At verbosity=1 tool_groups are attached to adjacent segments
-						// via _toolGroup, so standalone ones should not appear.
-						// Skip them silently to avoid empty rows.
-						if (verbosity === 1) return null;
+						// In minimal mode, tool groups are usually attached to neighboring
+						// text/thinking segments via _toolGroup. But tool-only assistant
+						// messages can produce a standalone tool_group. Render a compact
+						// fallback row so the bubble is never empty.
+						if (verbosity === 1) {
+							return (
+								<div
+									key={segment.key}
+									className={cn(
+										"relative min-h-5 text-xs text-muted-foreground",
+										needsTopMargin && "mt-2",
+									)}
+								>
+									<span>{t("chat.toolsUsed", "Used tools")}</span>
+									<div className="absolute right-[-2.625rem] sm:right-[-3.375rem] top-0 bottom-0 flex items-center">
+										<ToolGutterIcon toolGroup={segment} locale={locale} />
+									</div>
+								</div>
+							);
+						}
 						const toolItems = segment.segments.map((toolSegment) => {
 							const toolName =
 								toolSegment.type === "tool_call"
@@ -3554,6 +3631,11 @@ const MessageGroupCard = memo(function MessageGroupCard({
 		</div>
 	);
 
+	const isCoarsePointerDevice = useCoarsePointerDevice();
+	if (isCoarsePointerDevice) {
+		return messageCard;
+	}
+
 	return (
 		<ContextMenu>
 			<ContextMenuTrigger className="contents">
@@ -3602,7 +3684,7 @@ function PiPartRenderer({
 	hideHeader?: boolean;
 }) {
 	const { t } = useTranslation();
-	const stripAnsi = (value: string): string => value.replace(ANSI_RE, "");
+	const stripAnsi = (value: string): string => stripAnsiSequences(value);
 
 	const formatToolResultOutput = (content: unknown): string | undefined => {
 		const decodeBytes = (bytes: Uint8Array): string | undefined => {
@@ -3768,6 +3850,7 @@ function PiPartRenderer({
 							className="h-3.5 w-3.5 shrink-0 transition-transform group-open:rotate-90"
 							viewBox="0 0 24 24"
 							fill="none"
+							aria-hidden="true"
 							stroke="currentColor"
 							strokeWidth="2"
 							strokeLinecap="round"
@@ -3871,9 +3954,23 @@ function PiPartRenderer({
 	}
 }
 
+function useCoarsePointerDevice(): boolean {
+	const [isCoarsePointer, setIsCoarsePointer] = useState(false);
+
+	useEffect(() => {
+		const mediaQuery = window.matchMedia("(pointer: coarse)");
+		const update = () => setIsCoarsePointer(mediaQuery.matches);
+		update();
+		mediaQuery.addEventListener("change", update);
+		return () => mediaQuery.removeEventListener("change", update);
+	}, []);
+
+	return isCoarsePointer;
+}
+
 /**
  * Renders text content with @file references as inline previews.
- * Wrapped in context menu for copy functionality on mobile.
+ * Desktop gets a context-menu copy action; touch devices keep native media interactions.
  */
 function TextWithFileReferences({
 	content,
@@ -3888,30 +3985,33 @@ function TextWithFileReferences({
 	// Strip ANSI escape codes and fix indentation before rendering.
 	// Some models (e.g. Kimi-K2.5) prefix text with 4+ spaces which CommonMark
 	// interprets as indented code blocks, causing plain text to render as <pre><code>.
-	const cleanContent = dedentMarkdown(content.replace(ANSI_RE, ""));
+	const cleanContent = dedentMarkdown(stripAnsiSequences(content));
 
 	// Rewrite markdown image URLs that reference local workspace files
 	// (e.g. ![avatar](ginee_pixel_art_avatar.png)) so they resolve through
 	// the authenticated workspace file endpoint.
 	const markdownContent = useMemo(() => {
 		if (!workspacePath) return cleanContent;
-		return cleanContent.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (_m, alt, rawTarget) => {
-			let target = String(rawTarget).trim();
-			if (!target) return _m;
-			if (target.startsWith("<") && target.endsWith(">")) {
-				target = target.slice(1, -1).trim();
-			}
-			// Ignore absolute/data/blob/anchor URLs
-			if (
-				/^(https?:|data:|blob:|#)/i.test(target) ||
-				target.startsWith("/api/") ||
-				target.startsWith("//")
-			) {
-				return _m;
-			}
-			const url = workspaceFileUrl(workspacePath, target);
-			return `![${alt}](${url})`;
-		});
+		return cleanContent.replace(
+			/!\[([^\]]*)\]\(([^)]+)\)/g,
+			(_m, alt, rawTarget) => {
+				let target = String(rawTarget).trim();
+				if (!target) return _m;
+				if (target.startsWith("<") && target.endsWith(">")) {
+					target = target.slice(1, -1).trim();
+				}
+				// Ignore absolute/data/blob/anchor URLs
+				if (
+					/^(https?:|data:|blob:|#)/i.test(target) ||
+					target.startsWith("/api/") ||
+					target.startsWith("//")
+				) {
+					return _m;
+				}
+				const url = workspaceFileUrl(workspacePath, target);
+				return `![${alt}](${url})`;
+			},
+		);
 	}, [cleanContent, workspacePath]);
 
 	// Parse @file references, excluding code blocks
@@ -3919,29 +4019,38 @@ function TextWithFileReferences({
 		() => extractFileReferenceDetails(cleanContent),
 		[cleanContent],
 	);
+	const isCoarsePointerDevice = useCoarsePointerDevice();
+
+	const contentBlock = (
+		<div className="space-y-2 select-none sm:select-auto">
+			<MarkdownRenderer
+				content={markdownContent}
+				className="text-sm text-foreground leading-relaxed overflow-hidden"
+			/>
+			{/* Render file reference cards */}
+			{fileRefs.length > 0 && workspacePath && (
+				<div className="flex flex-wrap gap-2 mt-2">
+					{fileRefs.map((ref) => (
+						<FileReferenceCard
+							key={`${ref.filePath}-${ref.label}`}
+							filePath={ref.filePath}
+							workspacePath={workspacePath}
+							label={ref.label}
+						/>
+					))}
+				</div>
+			)}
+		</div>
+	);
+
+	if (isCoarsePointerDevice) {
+		return contentBlock;
+	}
 
 	return (
 		<ContextMenu>
 			<ContextMenuTrigger className="contents">
-				<div className="space-y-2 select-none sm:select-auto">
-					<MarkdownRenderer
-						content={markdownContent}
-						className="text-sm text-foreground leading-relaxed overflow-hidden"
-					/>
-					{/* Render file reference cards */}
-					{fileRefs.length > 0 && workspacePath && (
-						<div className="flex flex-wrap gap-2 mt-2">
-							{fileRefs.map((ref) => (
-								<FileReferenceCard
-									key={`${ref.filePath}-${ref.label}`}
-									filePath={ref.filePath}
-									workspacePath={workspacePath}
-									label={ref.label}
-								/>
-							))}
-						</div>
-					)}
-				</div>
+				{contentBlock}
 			</ContextMenuTrigger>
 			<ContextMenuContent>
 				<ContextMenuItem
@@ -3982,6 +4091,26 @@ export const FileReferenceCard = memo(function FileReferenceCard({
 	const isVideo = fileInfo.category === "video";
 	const fileName = label || filePath.split("/").pop() || filePath;
 
+	// Download file
+	const handleDownload = useCallback(async () => {
+		try {
+			await downloadFileMux(workspacePath, filePath, fileName);
+		} catch (err) {
+			console.error("Failed to download file:", err);
+		}
+	}, [workspacePath, filePath, fileName]);
+
+	// Open in canvas (only for images)
+	const handleOpenInCanvas = useCallback(() => {
+		if (!isImage) return;
+		// Dispatch custom event that SessionScreen can listen to
+		window.dispatchEvent(
+			new CustomEvent("oqto:open-in-canvas", {
+				detail: { imagePath: filePath },
+			}),
+		);
+	}, [isImage, filePath]);
+
 	useEffect(() => {
 		let cancelled = false;
 		setIsLoading(true);
@@ -3989,7 +4118,6 @@ export const FileReferenceCard = memo(function FileReferenceCard({
 		setFileExists(null);
 		setImageLoaded(false);
 		setFileUrl(directUrl ?? null);
-
 
 		if (!workspacePath && !directUrl) {
 			setFileExists(false);
@@ -4046,9 +4174,29 @@ export const FileReferenceCard = memo(function FileReferenceCard({
 	if (isImage) {
 		return (
 			<div className="border border-border bg-muted/20 rounded overflow-hidden max-w-md">
-				<div className="flex items-center gap-2 px-3 py-2 bg-muted/50 border-b border-border">
-					<FileImage className="w-4 h-4 text-muted-foreground" />
-					<span className="text-xs font-medium truncate">{fileName}</span>
+				<div className="flex items-center justify-between px-3 py-2 bg-muted/50 border-b border-border">
+					<div className="flex items-center gap-2 min-w-0">
+						<FileImage className="w-4 h-4 text-muted-foreground shrink-0" />
+						<span className="text-xs font-medium truncate">{fileName}</span>
+					</div>
+					<div className="flex items-center gap-1 shrink-0">
+						<button
+							type="button"
+							onClick={handleOpenInCanvas}
+							className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted/80 rounded transition-colors"
+							title="Open in canvas"
+						>
+							<PaintBucket className="w-3.5 h-3.5" />
+						</button>
+						<button
+							type="button"
+							onClick={handleDownload}
+							className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted/80 rounded transition-colors"
+							title="Download"
+						>
+							<Download className="w-3.5 h-3.5" />
+						</button>
+					</div>
 				</div>
 				<div className="relative">
 					{isLoading && !imageLoaded && (
@@ -4087,9 +4235,19 @@ export const FileReferenceCard = memo(function FileReferenceCard({
 	if (isVideo) {
 		return (
 			<div className="border border-border bg-muted/20 rounded overflow-hidden max-w-md">
-				<div className="flex items-center gap-2 px-3 py-2 bg-muted/50 border-b border-border">
-					<FileVideo className="w-4 h-4 text-muted-foreground" />
-					<span className="text-xs font-medium truncate">{fileName}</span>
+				<div className="flex items-center justify-between px-3 py-2 bg-muted/50 border-b border-border">
+					<div className="flex items-center gap-2 min-w-0">
+						<FileVideo className="w-4 h-4 text-muted-foreground shrink-0" />
+						<span className="text-xs font-medium truncate">{fileName}</span>
+					</div>
+					<button
+						type="button"
+						onClick={handleDownload}
+						className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted/80 rounded transition-colors shrink-0"
+						title="Download"
+					>
+						<Download className="w-3.5 h-3.5" />
+					</button>
 				</div>
 				<video
 					src={fileUrl ?? ""}

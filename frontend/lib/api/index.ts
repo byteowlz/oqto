@@ -201,8 +201,17 @@ export {
 } from "./settings";
 
 // API keys
-export type { ApiKeyListItem, CreateApiKeyRequest, CreateApiKeyResponse } from "./api-keys";
-export { listApiKeys, createApiKey, revokeApiKey, deleteApiKey } from "./api-keys";
+export type {
+	ApiKeyListItem,
+	CreateApiKeyRequest,
+	CreateApiKeyResponse,
+} from "./api-keys";
+export {
+	listApiKeys,
+	createApiKey,
+	revokeApiKey,
+	deleteApiKey,
+} from "./api-keys";
 
 // OAuth provider login
 export type {

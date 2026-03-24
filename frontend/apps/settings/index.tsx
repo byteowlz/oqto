@@ -1,8 +1,8 @@
 "use client";
 
+import { ApiKeysPanel } from "@/apps/settings/ApiKeysPanel";
 import { SettingsEditor } from "@/components/settings";
 import { Button } from "@/components/ui/button";
-import { ApiKeysPanel } from "@/apps/settings/ApiKeysPanel";
 import { useApp } from "@/hooks/use-app";
 import { changePassword } from "@/lib/api/auth";
 import { cn } from "@/lib/utils";
@@ -10,8 +10,8 @@ import {
 	Brain,
 	HelpCircle,
 	Info,
-	Keyboard,
 	Key,
+	Keyboard,
 	PanelLeftClose,
 	PanelRightClose,
 	Settings,
@@ -35,7 +35,9 @@ function SettingsHelpPanel({ locale }: { locale: "en" | "de" }) {
 					<Info className="w-4 h-4" />
 					{t("settings.helpTitle")}
 				</h3>
-				<p className="text-sm text-muted-foreground">{t("settings.helpDescription")}</p>
+				<p className="text-sm text-muted-foreground">
+					{t("settings.helpDescription")}
+				</p>
 			</div>
 
 			<div>
@@ -59,7 +61,9 @@ function SettingsHelpPanel({ locale }: { locale: "en" | "de" }) {
 				<h4 className="text-xs font-medium uppercase text-muted-foreground mb-2">
 					{t("settings.categories")}
 				</h4>
-				<p className="text-sm text-muted-foreground">{t("settings.categoryDescription")}</p>
+				<p className="text-sm text-muted-foreground">
+					{t("settings.categoryDescription")}
+				</p>
 			</div>
 		</div>
 	);
@@ -68,7 +72,9 @@ function SettingsHelpPanel({ locale }: { locale: "en" | "de" }) {
 function ShortcutsPanel({ locale }: { locale: "en" | "de" }) {
 	const { t } = useTranslation();
 
-	const shortcuts = t("settings.shortcutsList", { returnObjects: true }) as Array<{ key: string; desc: string }>;
+	const shortcuts = t("settings.shortcutsList", {
+		returnObjects: true,
+	}) as Array<{ key: string; desc: string }>;
 
 	return (
 		<div className="h-full overflow-y-auto p-4 space-y-4">
@@ -172,7 +178,9 @@ function AccountPanel({ locale }: { locale: "en" | "de" }) {
 	return (
 		<div className="h-full overflow-y-auto p-4 space-y-6">
 			<div>
-				<h3 className="text-sm font-semibold mb-4">{t("settings.changePassword")}</h3>
+				<h3 className="text-sm font-semibold mb-4">
+					{t("settings.changePassword")}
+				</h3>
 				<form onSubmit={handleSubmit} className="space-y-3 max-w-sm">
 					<div>
 						<label
@@ -228,7 +236,11 @@ function AccountPanel({ locale }: { locale: "en" | "de" }) {
 						/>
 					</div>
 					{error && <p className="text-xs text-destructive">{error}</p>}
-					{success && <p className="text-xs text-primary">{t("settings.passwordSuccess")}</p>}
+					{success && (
+						<p className="text-xs text-primary">
+							{t("settings.passwordSuccess")}
+						</p>
+					)}
 					<button
 						type="submit"
 						disabled={loading}

@@ -170,7 +170,9 @@ const markdownComponents: Components = {
 		);
 	},
 	p({ children }) {
-		return <p className="mb-3 last:mb-0 leading-relaxed text-justify">{children}</p>;
+		return (
+			<p className="mb-3 last:mb-0 leading-relaxed text-justify">{children}</p>
+		);
 	},
 	h1({ children }) {
 		return (

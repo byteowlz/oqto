@@ -878,27 +878,39 @@ fn ensure_toml_table<'a>(value: &'a mut TomlValue, key: &str) -> &'a mut toml::v
         *value = TomlValue::Table(toml::value::Table::new());
     }
 
-    let table = value.as_table_mut().expect("toml root table");
-    table
+    let table = match value {
+        TomlValue::Table(table) => table,
+        _ => unreachable!("value must be a table after normalization"),
+    };
+
+    let entry = table
         .entry(key.to_string())
         .or_insert_with(|| TomlValue::Table(toml::value::Table::new()));
-    table
-        .get_mut(key)
-        .and_then(TomlValue::as_table_mut)
-        .expect("toml subtable")
+    if !entry.is_table() {
+        *entry = TomlValue::Table(toml::value::Table::new());
+    }
+
+    match entry {
+        TomlValue::Table(subtable) => subtable,
+        _ => unreachable!("entry must be a table after normalization"),
+    }
 }
 
 fn ensure_toml_subtable<'a>(
     parent: &'a mut toml::value::Table,
     key: &str,
 ) -> &'a mut toml::value::Table {
-    parent
+    let entry = parent
         .entry(key.to_string())
         .or_insert_with(|| TomlValue::Table(toml::value::Table::new()));
-    parent
-        .get_mut(key)
-        .and_then(TomlValue::as_table_mut)
-        .expect("toml nested subtable")
+    if !entry.is_table() {
+        *entry = TomlValue::Table(toml::value::Table::new());
+    }
+
+    match entry {
+        TomlValue::Table(subtable) => subtable,
+        _ => unreachable!("entry must be a table after normalization"),
+    }
 }
 
 /// Sanitize a user ID to be a valid Linux username.

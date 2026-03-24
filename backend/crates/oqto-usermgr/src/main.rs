@@ -31,14 +31,14 @@ const PI_EXTENSIONS_DIR: &str = "/usr/share/oqto/pi-agent-extensions";
 
 /// Default extensions to install for new users.
 const PI_DEFAULT_EXTENSIONS: &[&str] = &[
-    "auto-rename",
-    "azure-empty-response-guard",
-    "introspection",
-    "oqto-bridge",
-    "oqto-todos",
-    "custom-context-files",
-    "read-image-guard",
-    "read-file-guard",
+    "pi-auto-rename",
+    "pi-azure-empty-response-guard",
+    "pi-introspection",
+    "pi-oqto-bridge",
+    "pi-oqto-todos",
+    "pi-custom-context-files",
+    "pi-read-image-guard",
+    "pi-read-file-guard",
 ];
 
 /// Allowed path prefixes for mkdir/chown/chmod operations.
@@ -1631,7 +1631,10 @@ fn cmd_verify_socket_dirs(_args: &serde_json::Value) -> Response {
 
         // Look up expected UID
         let expected_uid = unsafe {
-            let cname = std::ffi::CString::new(dirname.as_bytes()).unwrap();
+            let cname = match std::ffi::CString::new(dirname.as_bytes()) {
+                Ok(v) => v,
+                Err(_) => continue, // invalid username bytes, skip
+            };
             let pw = libc::getpwnam(cname.as_ptr());
             if pw.is_null() {
                 continue; // user doesn't exist, skip
@@ -1640,7 +1643,10 @@ fn cmd_verify_socket_dirs(_args: &serde_json::Value) -> Response {
         };
 
         let oqto_gid = unsafe {
-            let cname = std::ffi::CString::new("oqto").unwrap();
+            let cname = match std::ffi::CString::new("oqto") {
+                Ok(v) => v,
+                Err(_) => continue, // static literal should always be valid
+            };
             let gr = libc::getgrnam(cname.as_ptr());
             if gr.is_null() {
                 0 // fallback, shouldn't happen

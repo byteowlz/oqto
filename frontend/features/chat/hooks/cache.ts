@@ -199,6 +199,27 @@ export function clearCachedSessionMessages(
 	}
 }
 
+/** Clear ALL in-memory cache entries for a storage key prefix.
+ * Call this when switching between sessions to prevent cache contamination. */
+export function clearStoragePrefixCache(storageKeyPrefix: string) {
+	const prefix = `${storageKeyPrefix}:`;
+	const keysToDelete: string[] = [];
+	for (const [key] of sessionMessageCache.messagesBySession) {
+		if (key.startsWith(prefix)) {
+			keysToDelete.push(key);
+		}
+	}
+	for (const key of keysToDelete) {
+		sessionMessageCache.messagesBySession.delete(key);
+		const pending = sessionMessageCache.pendingWrite.get(key);
+		if (pending) {
+			clearTimeout(pending);
+			sessionMessageCache.pendingWrite.delete(key);
+		}
+		sessionMessageCache.lastWriteTime.delete(key);
+	}
+}
+
 /** Move cached session messages from one session ID to another */
 export function transferCachedSessionMessages(
 	fromSessionId: string,

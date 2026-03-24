@@ -41,8 +41,8 @@ pub use sessions::{
 
 // Chat history handlers and types
 pub use chat::{
-    delete_chat_session, get_chat_messages, get_chat_session, list_chat_history,
-    list_chat_history_grouped, update_chat_session,
+    backfill_chat_history, delete_chat_session, get_chat_messages, get_chat_session,
+    list_chat_history, list_chat_history_grouped, update_chat_session,
 };
 pub use feedback::create_feedback;
 

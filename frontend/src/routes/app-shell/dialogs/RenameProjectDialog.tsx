@@ -8,7 +8,8 @@ import {
 	DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { memo, useCallback, useEffect, useState } from "react";
+import { useResetOnOpen } from "@/hooks/use-reset-on-open";
+import { memo, useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 export interface RenameProjectDialogProps {
@@ -29,12 +30,13 @@ export const RenameProjectDialog = memo(function RenameProjectDialog({
 	const { t } = useTranslation();
 	const [value, setValue] = useState(initialValue);
 
-	// Sync with initial value when dialog opens
-	useEffect(() => {
-		if (open) {
+	useResetOnOpen(
+		open,
+		() => {
 			setValue(initialValue);
-		}
-	}, [open, initialValue]);
+		},
+		[initialValue],
+	);
 
 	const handleConfirm = useCallback(() => {
 		onConfirm(value);
@@ -44,9 +46,7 @@ export const RenameProjectDialog = memo(function RenameProjectDialog({
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent>
 				<DialogHeader>
-					<DialogTitle>
-						{t("projects.renameProject")}
-					</DialogTitle>
+					<DialogTitle>{t("projects.renameProject")}</DialogTitle>
 					<DialogDescription>
 						{t("projects.renameDescription")}
 					</DialogDescription>

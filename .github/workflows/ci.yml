@@ -85,6 +85,9 @@ jobs:
         working-directory: backend
         run: cargo test
 
+      - name: Runner user-plane smoke
+        run: ./scripts/e2e/smoke-runner-user-plane.sh
+
   # ---------------------------------------------------------------------------
   # Frontend: lint, build, test
   # ---------------------------------------------------------------------------

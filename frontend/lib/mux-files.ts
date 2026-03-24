@@ -320,19 +320,63 @@ export async function movePathMux(
 	throw new Error("Failed to move path");
 }
 
+function triggerBrowserDownload(url: string, filename?: string): void {
+	const link = document.createElement("a");
+	link.href = url;
+	if (filename) {
+		link.download = filename;
+	}
+	link.rel = "noopener";
+	link.click();
+}
+
+/**
+ * Download a single file or directory.
+ *
+ * Files are streamed directly by the fileserver.
+ * Directories are returned as ZIP archives by the fileserver.
+ */
+export async function downloadPathMux(
+	workspacePath: string,
+	path: string,
+	filename?: string,
+): Promise<void> {
+	const origin =
+		typeof window !== "undefined" ? window.location.origin : "http://localhost";
+	const url = new URL("/api/workspace/files/download", origin);
+	url.searchParams.set("workspace_path", workspacePath);
+	url.searchParams.set("path", path);
+	triggerBrowserDownload(url.toString(), filename);
+}
+
+/**
+ * Download multiple files/directories as a single ZIP archive.
+ */
+export async function downloadZipMux(
+	workspacePath: string,
+	paths: string[],
+	zipName?: string,
+): Promise<void> {
+	if (paths.length === 0) {
+		throw new Error("No paths selected for zip download");
+	}
+	const origin =
+		typeof window !== "undefined" ? window.location.origin : "http://localhost";
+	const url = new URL("/api/workspace/files/download-zip", origin);
+	url.searchParams.set("workspace_path", workspacePath);
+	url.searchParams.set("paths", paths.join(","));
+	if (zipName) {
+		url.searchParams.set("name", zipName);
+	}
+	triggerBrowserDownload(url.toString(), zipName);
+}
+
 export async function downloadFileMux(
 	workspacePath: string,
 	path: string,
 	filename?: string,
 ): Promise<void> {
-	const result = await readFileMux(workspacePath, path);
-	const blob = new Blob([result.data]);
-	const url = URL.createObjectURL(blob);
-	const link = document.createElement("a");
-	link.href = url;
-	link.download = filename ?? path.split("/").pop() ?? "download";
-	link.click();
-	URL.revokeObjectURL(url);
+	await downloadPathMux(workspacePath, path, filename);
 }
 
 export async function uploadFileMux(
@@ -391,7 +435,10 @@ export async function watchFilesMux(workspacePath: string): Promise<void> {
 	})) as FilesWsEvent;
 
 	if (response.type === "error") {
-		console.warn("[mux-files] watch_files failed:", (response as { error: string }).error);
+		console.warn(
+			"[mux-files] watch_files failed:",
+			(response as { error: string }).error,
+		);
 	}
 }
 
@@ -407,6 +454,9 @@ export async function unwatchFilesMux(workspacePath: string): Promise<void> {
 	})) as FilesWsEvent;
 
 	if (response.type === "error") {
-		console.warn("[mux-files] unwatch_files failed:", (response as { error: string }).error);
+		console.warn(
+			"[mux-files] unwatch_files failed:",
+			(response as { error: string }).error,
+		);
 	}
 }

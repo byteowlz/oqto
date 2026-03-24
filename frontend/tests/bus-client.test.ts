@@ -49,9 +49,7 @@ describe("bus-client", () => {
 	});
 
 	it("subscribes and forwards matching bus events", () => {
-		let wsHandler:
-			| ((event: Record<string, unknown>) => void)
-			| undefined;
+		let wsHandler: ((event: Record<string, unknown>) => void) | undefined;
 		const wsUnsub = vi.fn();
 		subscribeMock.mockImplementation(
 			(_channel: string, handler: (event: Record<string, unknown>) => void) => {

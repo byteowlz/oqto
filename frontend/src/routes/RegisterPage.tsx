@@ -91,6 +91,7 @@ function ProvisioningStatus({ startTime }: { startTime: number }) {
 							className="h-4 w-4 shrink-0 text-green-500"
 							viewBox="0 0 16 16"
 							fill="currentColor"
+							aria-hidden="true"
 						>
 							<path
 								fillRule="evenodd"
@@ -103,6 +104,7 @@ function ProvisioningStatus({ startTime }: { startTime: number }) {
 							viewBox="0 0 16 16"
 							fill="none"
 							stroke="currentColor"
+							aria-hidden="true"
 							strokeWidth="2"
 						>
 							<circle cx="8" cy="8" r="6" opacity="0.25" />
@@ -209,10 +211,7 @@ export function RegisterPage() {
 					</div>
 				) : (
 					<Form {...form}>
-						<form
-							onSubmit={form.handleSubmit(onSubmit)}
-							className="space-y-4"
-						>
+						<form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
 							{error && (
 								<Alert variant="destructive">
 									<AlertDescription>{error}</AlertDescription>
@@ -335,11 +334,7 @@ export function RegisterPage() {
 								)}
 							/>
 
-							<Button
-								type="submit"
-								className="w-full"
-								disabled={isLoading}
-							>
+							<Button type="submit" className="w-full" disabled={isLoading}>
 								{isLoading ? "Creating account..." : "Create account"}
 							</Button>
 						</form>

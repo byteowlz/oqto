@@ -20,14 +20,12 @@ import {
 	SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useResetOnOpen } from "@/hooks/use-reset-on-open";
 import type { SharedWorkspaceInfo } from "@/lib/api/shared-workspaces";
-import {
-	WORKSPACE_COLORS,
-	WORKSPACE_ICONS,
-} from "@/lib/api/shared-workspaces";
+import { WORKSPACE_COLORS, WORKSPACE_ICONS } from "@/lib/api/shared-workspaces";
 import { cn } from "@/lib/utils";
 import { Check, FolderInput, Loader2 } from "lucide-react";
-import { memo, useCallback, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { WorkspaceIcon } from "../WorkspaceIcon";
 
@@ -83,8 +81,9 @@ export const ConvertToSharedDialog = memo(function ConvertToSharedDialog({
 		[eligibleWorkspaces, workspaceId],
 	);
 
-	useEffect(() => {
-		if (open) {
+	useResetOnOpen(
+		open,
+		() => {
 			setShareMode("new");
 			setWorkspaceId(eligibleWorkspaces[0]?.id);
 			setWorkspaceName(sourceProjectName);
@@ -92,8 +91,9 @@ export const ConvertToSharedDialog = memo(function ConvertToSharedDialog({
 			setDescription("");
 			setIcon("code");
 			setColor(WORKSPACE_COLORS[0]);
-		}
-	}, [open, sourceProjectName, eligibleWorkspaces]);
+		},
+		[sourceProjectName, eligibleWorkspaces],
+	);
 
 	const handleSubmit = useCallback(() => {
 		if (shareMode === "new") {
@@ -157,13 +157,22 @@ export const ConvertToSharedDialog = memo(function ConvertToSharedDialog({
 						<span className="font-mono truncate">{sourcePath}</span>
 					</div>
 
-					<Tabs value={shareMode} onValueChange={(value) => setShareMode(value as ShareMode)}>
+					<Tabs
+						value={shareMode}
+						onValueChange={(value) => setShareMode(value as ShareMode)}
+					>
 						<TabsList className="w-full">
 							<TabsTrigger value="new">
 								{t("sharedWorkspaces.shareModeNew", "New shared workspace")}
 							</TabsTrigger>
-							<TabsTrigger value="existing" disabled={eligibleWorkspaces.length === 0}>
-								{t("sharedWorkspaces.shareModeExisting", "Existing shared workspace")}
+							<TabsTrigger
+								value="existing"
+								disabled={eligibleWorkspaces.length === 0}
+							>
+								{t(
+									"sharedWorkspaces.shareModeExisting",
+									"Existing shared workspace",
+								)}
 							</TabsTrigger>
 						</TabsList>
 
@@ -182,7 +191,8 @@ export const ConvertToSharedDialog = memo(function ConvertToSharedDialog({
 									placeholder={sourceProjectName}
 									autoFocus
 									onKeyDown={(e) => {
-										if (e.key === "Enter" && workspaceName.trim()) handleSubmit();
+										if (e.key === "Enter" && workspaceName.trim())
+											handleSubmit();
 									}}
 								/>
 							</div>
@@ -206,9 +216,9 @@ export const ConvertToSharedDialog = memo(function ConvertToSharedDialog({
 							</div>
 
 							<div className="space-y-1">
-								<label className="text-xs text-muted-foreground">
+								<div className="text-xs text-muted-foreground">
 									{t("sharedWorkspaces.icon", "Icon")}
-								</label>
+								</div>
 								<div className="grid grid-cols-8 gap-1">
 									{WORKSPACE_ICONS.map((iconName) => (
 										<button
@@ -236,9 +246,9 @@ export const ConvertToSharedDialog = memo(function ConvertToSharedDialog({
 							</div>
 
 							<div className="space-y-1">
-								<label className="text-xs text-muted-foreground">
+								<div className="text-xs text-muted-foreground">
 									{t("sharedWorkspaces.color", "Color")}
-								</label>
+								</div>
 								<div className="flex flex-wrap gap-1">
 									{WORKSPACE_COLORS.map((c) => (
 										<button
@@ -287,16 +297,13 @@ export const ConvertToSharedDialog = memo(function ConvertToSharedDialog({
 							) : (
 								<>
 									<div className="space-y-1">
-										<label className="text-xs text-muted-foreground">
+										<div className="text-xs text-muted-foreground">
 											{t(
 												"sharedWorkspaces.targetWorkspace",
 												"Shared workspace",
 											)}
-										</label>
-										<Select
-											value={workspaceId}
-											onValueChange={setWorkspaceId}
-										>
+										</div>
+										<Select value={workspaceId} onValueChange={setWorkspaceId}>
 											<SelectTrigger className="w-full">
 												<SelectValue
 													placeholder={t(
@@ -333,7 +340,8 @@ export const ConvertToSharedDialog = memo(function ConvertToSharedDialog({
 											onChange={(e) => setWorkdirName(e.target.value)}
 											placeholder={sourceProjectName}
 											onKeyDown={(e) => {
-												if (e.key === "Enter" && workdirName.trim()) handleSubmit();
+												if (e.key === "Enter" && workdirName.trim())
+													handleSubmit();
 											}}
 										/>
 									</div>

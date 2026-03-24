@@ -18,11 +18,11 @@ use uuid::Uuid;
 
 use crate::api::handlers::trx::validate_workspace_path;
 use crate::auth::CurrentUser;
-use crate::local::{SandboxConfigFile, SandboxProfile};
 use crate::projects::{self, ProjectMetadata};
 use crate::session::WorkspaceLocationInput;
 use crate::settings::{ConfigUpdate, SettingsScope};
 use crate::workspace::meta::{WorkspaceMeta, load_workspace_meta, write_workspace_meta};
+use oqto_sandbox::{SandboxConfigFile, SandboxProfile};
 
 use crate::api::error::{ApiError, ApiResult};
 use crate::api::state::AppState;
@@ -536,13 +536,13 @@ pub async fn create_project_from_template(
     // In multi-user mode, delegate to usermgr (runs as root, can write to user homes).
     let is_multi_user = state.linux_users.as_ref().is_some_and(|lu| lu.enabled);
     if is_multi_user {
-        let linux_username = linux_username_override.clone().unwrap_or_else(|| {
-            state
-                .linux_users
-                .as_ref()
-                .unwrap()
-                .linux_username(user.id())
-        });
+        let linux_users = state
+            .linux_users
+            .as_ref()
+            .ok_or_else(|| ApiError::internal("linux users not available"))?;
+        let linux_username = linux_username_override
+            .clone()
+            .unwrap_or_else(|| linux_users.linux_username(user.id()));
         let target_str = target_dir
             .to_str()
             .ok_or_else(|| ApiError::internal("invalid target path"))?;
@@ -578,13 +578,12 @@ pub async fn create_project_from_template(
     // In multi-user mode, run git as the target user via usermgr.
     // In single-user mode, run directly.
     if is_multi_user {
-        let linux_username = linux_username_override.unwrap_or_else(|| {
-            state
-                .linux_users
-                .as_ref()
-                .unwrap()
-                .linux_username(user.id())
-        });
+        let linux_users = state
+            .linux_users
+            .as_ref()
+            .ok_or_else(|| ApiError::internal("linux users not available"))?;
+        let linux_username =
+            linux_username_override.unwrap_or_else(|| linux_users.linux_username(user.id()));
         let target_str = target_dir.to_string_lossy().to_string();
         // Best-effort git init via run-as-user
         if let Err(e) = crate::local::linux_users::usermgr_request(

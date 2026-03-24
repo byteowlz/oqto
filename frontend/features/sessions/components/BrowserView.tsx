@@ -158,9 +158,9 @@ export function BrowserView({
 		if (!browserSessionId || !onSendToChat) return;
 		const rawUrl = urlInput.trim();
 		const currentUrlHint = rawUrl
-			? (rawUrl.startsWith("http://") || rawUrl.startsWith("https://")
+			? rawUrl.startsWith("http://") || rawUrl.startsWith("https://")
 				? rawUrl
-				: `https://${rawUrl}`)
+				: `https://${rawUrl}`
 			: "";
 		const cmd = [
 			"The user has started a browser session you can control.",
@@ -171,19 +171,19 @@ export function BrowserView({
 			`  oqto-browser --session ${browserSessionId} snapshot -i`,
 			...(currentUrlHint
 				? [
-					"",
-					"If the page appears blank, re-open the current URL in the same session:",
-					`  oqto-browser --session ${browserSessionId} open ${currentUrlHint}`,
-				]
+						"",
+						"If the page appears blank, re-open the current URL in the same session:",
+						`  oqto-browser --session ${browserSessionId} open ${currentUrlHint}`,
+					]
 				: []),
 			"",
 			"Quick reference:",
 			`  oqto-browser --session ${browserSessionId} click @e1`,
-			`  oqto-browser --session ${browserSessionId} fill @e2 \"text\"`,
+			`  oqto-browser --session ${browserSessionId} fill @e2 "text"`,
 			`  oqto-browser --session ${browserSessionId} press Enter`,
 			`  oqto-browser --session ${browserSessionId} screenshot /tmp/shot.png`,
 			`  oqto-browser --session ${browserSessionId} open <url>`,
-			`  oqto-browser --session ${browserSessionId} eval \"JS\"`,
+			`  oqto-browser --session ${browserSessionId} eval "JS"`,
 		].join("\n");
 		onSendToChat(cmd);
 	}, [browserSessionId, onSendToChat, urlInput]);

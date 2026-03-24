@@ -11,6 +11,8 @@ import {
 	DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { useResetOnOpen } from "@/hooks/use-reset-on-open";
+import { authFetch, controlPlaneApiUrl, readApiError } from "@/lib/api/client";
 import {
 	type MemberRole,
 	type SharedWorkspaceMemberInfo,
@@ -19,21 +21,20 @@ import {
 	removeMember,
 	updateMemberRole,
 } from "@/lib/api/shared-workspaces";
-import { authFetch, controlPlaneApiUrl, readApiError } from "@/lib/api/client";
 import { cn } from "@/lib/utils";
 import {
 	Check,
 	ChevronDown,
 	Crown,
+	Eye,
 	Loader2,
 	Shield,
 	Trash2,
 	User,
 	UserPlus,
-	Eye,
 	X,
 } from "lucide-react";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 export interface SharedWorkspaceMembersDialogProps {
@@ -54,11 +55,27 @@ type UserInfo = {
 
 const ROLE_CONFIG: Record<
 	MemberRole,
-	{ icon: React.ComponentType<{ className?: string }>; label: string; description: string }
+	{
+		icon: React.ComponentType<{ className?: string }>;
+		label: string;
+		description: string;
+	}
 > = {
-	owner: { icon: Crown, label: "Owner", description: "Full control, can transfer ownership" },
-	admin: { icon: Shield, label: "Admin", description: "Manage members and settings" },
-	member: { icon: User, label: "Member", description: "Create and edit projects" },
+	owner: {
+		icon: Crown,
+		label: "Owner",
+		description: "Full control, can transfer ownership",
+	},
+	admin: {
+		icon: Shield,
+		label: "Admin",
+		description: "Manage members and settings",
+	},
+	member: {
+		icon: User,
+		label: "Member",
+		description: "Create and edit projects",
+	},
 	viewer: { icon: Eye, label: "Viewer", description: "Read-only access" },
 };
 
@@ -110,15 +127,19 @@ export const SharedWorkspaceMembersDialog = memo(
 			}
 		}, [workspaceId]);
 
-		useEffect(() => {
-			if (open) {
-				fetchMemberList();
-				fetchUsers().then(setAllUsers).catch(() => {});
+		useResetOnOpen(
+			open,
+			() => {
+				void fetchMemberList();
+				void fetchUsers()
+					.then(setAllUsers)
+					.catch(() => {});
 				setSearchQuery("");
 				setAddError(null);
 				setShowUserPicker(false);
-			}
-		}, [open, fetchMemberList]);
+			},
+			[fetchMemberList],
+		);
 
 		const memberUserIds = useMemo(
 			() => new Set(members.map((m) => m.user_id)),
@@ -126,7 +147,8 @@ export const SharedWorkspaceMembersDialog = memo(
 		);
 
 		const filteredUsers = useMemo(() => {
-			if (!searchQuery.trim()) return allUsers.filter((u) => !memberUserIds.has(u.id));
+			if (!searchQuery.trim())
+				return allUsers.filter((u) => !memberUserIds.has(u.id));
 			const q = searchQuery.toLowerCase();
 			return allUsers.filter(
 				(u) =>
@@ -224,9 +246,7 @@ export const SharedWorkspaceMembersDialog = memo(
 										<RoleIcon
 											className={cn(
 												"w-4 h-4 flex-shrink-0",
-												isOwner
-													? "text-amber-500"
-													: "text-muted-foreground",
+												isOwner ? "text-amber-500" : "text-muted-foreground",
 											)}
 										/>
 										<div className="flex-1 min-w-0">
@@ -365,13 +385,22 @@ export const SharedWorkspaceMembersDialog = memo(
 									<div className="absolute left-0 right-0 top-full mt-1 z-50 max-h-48 overflow-y-auto bg-popover border border-border rounded-md shadow-lg">
 										{allUsers.length === 0 ? (
 											<div className="px-3 py-2 text-xs text-muted-foreground">
-												{t("sharedWorkspaces.noUsersAvailable", "No users available (admin access required)")}
+												{t(
+													"sharedWorkspaces.noUsersAvailable",
+													"No users available (admin access required)",
+												)}
 											</div>
 										) : filteredUsers.length === 0 ? (
 											<div className="px-3 py-2 text-xs text-muted-foreground">
 												{searchQuery
-													? t("sharedWorkspaces.noUsersMatch", "No matching users found")
-													: t("sharedWorkspaces.allUsersAdded", "All users are already members")}
+													? t(
+															"sharedWorkspaces.noUsersMatch",
+															"No matching users found",
+														)
+													: t(
+															"sharedWorkspaces.allUsersAdded",
+															"All users are already members",
+														)}
 											</div>
 										) : (
 											filteredUsers.map((user) => (

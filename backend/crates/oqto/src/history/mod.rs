@@ -4,6 +4,7 @@
 //! either via gRPC (preferred) or direct SQLite access (runner-side).
 
 pub mod canon;
+pub mod hstry;
 pub mod models;
 pub mod repository;
 pub mod service;
@@ -27,4 +28,9 @@ pub use repository::{
 pub use service::{
     get_session_messages_rendered_from_dir, get_session_messages_rendered_via_grpc,
     get_session_messages_via_grpc_cached, search_hstry,
+};
+
+pub use hstry::{
+    HstryClient, HstryServiceConfig, HstryServiceManager, SerializableMessage,
+    agent_message_to_proto, agent_message_to_proto_with_client_id, proto_messages_to_serializable,
 };

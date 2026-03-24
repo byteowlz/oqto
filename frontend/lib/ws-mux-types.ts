@@ -500,14 +500,14 @@ export type FilesWsEvent =
 			files_copied: number;
 			success: boolean;
 	  } & WsEventBase)
-	| ({
+	| {
 			channel: "files";
 			type: "file_changed";
 			event_type: string;
 			path: string;
 			entry_type: string;
 			workspace_path: string;
-	  })
+	  }
 	| ({
 			channel: "files";
 			type: "watch_files_result";

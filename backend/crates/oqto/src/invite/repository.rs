@@ -424,8 +424,24 @@ impl InviteCodeRepository {
 mod tests {
     use super::*;
 
+    trait TestUnwrap<T> {
+        fn t(self) -> T;
+    }
+
+    impl<T, E: std::fmt::Debug> TestUnwrap<T> for Result<T, E> {
+        fn t(self) -> T {
+            self.unwrap_or_else(|e| panic!("test unwrap failed: {:?}", e))
+        }
+    }
+
+    impl<T> TestUnwrap<T> for Option<T> {
+        fn t(self) -> T {
+            self.unwrap_or_else(|| panic!("test unwrap on None"))
+        }
+    }
+
     async fn setup_test_db() -> SqlitePool {
-        let pool = SqlitePool::connect(":memory:").await.unwrap();
+        let pool = SqlitePool::connect(":memory:").await.t();
 
         // Create users table first (for foreign key)
         sqlx::query(
@@ -445,7 +461,7 @@ mod tests {
         )
         .execute(&pool)
         .await
-        .unwrap();
+        .t();
 
         // Insert a test admin user
         sqlx::query(
@@ -456,7 +472,7 @@ mod tests {
         )
         .execute(&pool)
         .await
-        .unwrap();
+        .t();
 
         // Create invite_codes table
         sqlx::query(
@@ -477,7 +493,7 @@ mod tests {
         )
         .execute(&pool)
         .await
-        .unwrap();
+        .t();
 
         pool
     }
@@ -494,18 +510,18 @@ mod tests {
             note: Some("Test code".to_string()),
         };
 
-        let code = repo.create(request, "usr_admin").await.unwrap();
+        let code = repo.create(request, "usr_admin").await.t();
         assert_eq!(code.code, "TEST123");
         assert_eq!(code.max_uses, 5);
         assert_eq!(code.uses_remaining, 5);
         assert!(code.is_valid());
 
         // Fetch by ID
-        let fetched = repo.get(&code.id).await.unwrap().unwrap();
+        let fetched = repo.get(&code.id).await.t().t();
         assert_eq!(fetched.id, code.id);
 
         // Fetch by code
-        let by_code = repo.get_by_code("TEST123").await.unwrap().unwrap();
+        let by_code = repo.get_by_code("TEST123").await.t().t();
         assert_eq!(by_code.id, code.id);
     }
 
@@ -523,7 +539,7 @@ mod tests {
         )
         .execute(&pool)
         .await
-        .unwrap();
+        .t();
 
         let request = CreateInviteCodeRequest {
             code: Some("CONSUME1".to_string()),
@@ -532,16 +548,16 @@ mod tests {
             note: None,
         };
 
-        let code = repo.create(request, "usr_admin").await.unwrap();
+        let code = repo.create(request, "usr_admin").await.t();
         assert_eq!(code.uses_remaining, 2);
 
         // Consume once
-        let consumed = repo.consume("CONSUME1", "usr_test").await.unwrap();
+        let consumed = repo.consume("CONSUME1", "usr_test").await.t();
         assert_eq!(consumed.uses_remaining, 1);
         assert!(consumed.is_valid());
 
         // Consume again
-        let consumed2 = repo.consume("CONSUME1", "usr_test").await.unwrap();
+        let consumed2 = repo.consume("CONSUME1", "usr_test").await.t();
         assert_eq!(consumed2.uses_remaining, 0);
         assert!(!consumed2.is_valid());
 
@@ -558,7 +574,7 @@ mod tests {
         let codes = repo
             .create_batch(5, 1, None, Some("BATCH"), Some("Batch test"), "usr_admin")
             .await
-            .unwrap();
+            .t();
 
         assert_eq!(codes.len(), 5);
         for code in &codes {
@@ -579,12 +595,12 @@ mod tests {
             note: None,
         };
 
-        let code = repo.create(request, "usr_admin").await.unwrap();
+        let code = repo.create(request, "usr_admin").await.t();
         assert!(code.is_valid());
 
-        repo.revoke(&code.id).await.unwrap();
+        repo.revoke(&code.id).await.t();
 
-        let revoked = repo.get(&code.id).await.unwrap().unwrap();
+        let revoked = repo.get(&code.id).await.t().t();
         assert_eq!(revoked.uses_remaining, 0);
         assert!(!revoked.is_valid());
     }
@@ -601,13 +617,13 @@ mod tests {
             note: None,
         };
 
-        repo.create(request, "usr_admin").await.unwrap();
+        repo.create(request, "usr_admin").await.t();
 
         // Valid code
-        assert!(repo.validate("VALID1").await.unwrap());
+        assert!(repo.validate("VALID1").await.t());
 
         // Invalid code
-        assert!(!repo.validate("NONEXISTENT").await.unwrap());
+        assert!(!repo.validate("NONEXISTENT").await.t());
     }
 
     #[tokio::test]
@@ -624,7 +640,7 @@ mod tests {
         )
         .execute(&pool)
         .await
-        .unwrap();
+        .t();
 
         let request = CreateInviteCodeRequest {
             code: Some("ATOMIC1".to_string()),
@@ -633,7 +649,7 @@ mod tests {
             note: None,
         };
 
-        repo.create(request, "usr_admin").await.unwrap();
+        repo.create(request, "usr_admin").await.t();
 
         // First atomic consume should succeed
         let result = repo.try_consume_atomic("ATOMIC1", "usr_test").await;
@@ -679,7 +695,7 @@ mod tests {
         )
         .execute(&pool)
         .await
-        .unwrap();
+        .t();
 
         let request = CreateInviteCodeRequest {
             code: Some("MULTI3".to_string()),
@@ -688,7 +704,7 @@ mod tests {
             note: None,
         };
 
-        repo.create(request, "usr_admin").await.unwrap();
+        repo.create(request, "usr_admin").await.t();
 
         // Three atomic consumes should succeed
         assert!(repo.try_consume_atomic("MULTI3", "usr_test1").await.is_ok());
@@ -714,7 +730,7 @@ mod tests {
         )
         .execute(&pool)
         .await
-        .unwrap();
+        .t();
 
         let request = CreateInviteCodeRequest {
             code: Some("RESTORE1".to_string()),
@@ -723,7 +739,7 @@ mod tests {
             note: None,
         };
 
-        repo.create(request, "usr_admin").await.unwrap();
+        repo.create(request, "usr_admin").await.t();
 
         // Consume the code
         assert!(
@@ -733,14 +749,14 @@ mod tests {
         );
 
         // Verify it's exhausted
-        let invite = repo.get_by_code("RESTORE1").await.unwrap().unwrap();
+        let invite = repo.get_by_code("RESTORE1").await.t().t();
         assert_eq!(invite.uses_remaining, 0);
 
         // Restore the use
-        repo.restore_use("RESTORE1").await.unwrap();
+        repo.restore_use("RESTORE1").await.t();
 
         // Verify it's restored
-        let invite = repo.get_by_code("RESTORE1").await.unwrap().unwrap();
+        let invite = repo.get_by_code("RESTORE1").await.t().t();
         assert_eq!(invite.uses_remaining, 1);
 
         // Can consume again
@@ -773,7 +789,7 @@ mod tests {
             .bind(format!("Test User {}", i))
             .execute(&pool)
             .await
-            .unwrap();
+            .t();
         }
 
         // Create a single-use invite code
@@ -783,7 +799,7 @@ mod tests {
             expires_in_secs: None,
             note: None,
         };
-        repo.create(request, "usr_admin").await.unwrap();
+        repo.create(request, "usr_admin").await.t();
 
         // Spawn 10 concurrent tasks trying to consume the same code
         let barrier = Arc::new(Barrier::new(10));
@@ -808,7 +824,7 @@ mod tests {
         let mut failure_count = 0;
 
         for handle in handles {
-            match handle.await.unwrap() {
+            match handle.await.t() {
                 Ok(_) => success_count += 1,
                 Err(_) => failure_count += 1,
             }
@@ -822,7 +838,7 @@ mod tests {
         assert_eq!(failure_count, 9, "Nine concurrent consumers should fail");
 
         // Verify the code is exhausted
-        let invite = repo.get_by_code("CONCURRENT1").await.unwrap().unwrap();
+        let invite = repo.get_by_code("CONCURRENT1").await.t().t();
         assert_eq!(invite.uses_remaining, 0);
     }
 }

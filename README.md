@@ -122,21 +122,24 @@ Open `http://localhost:3000`. Check backend logs for dev credentials.
 
 ---
 
-### Use container mode
+### Docker Deployment
 
-IMPORTANT: I am focussing on local mode for now but will support container mode in the future as well.
+All-in-one Docker image with backend, frontend, Pi, and all tools:
 
 ```bash
-docker build -t oqto-dev:latest -f container/Dockerfile .
+cd deploy/docker
+cp .env.example .env  # Add your API keys
+docker compose up -d
+# Open http://localhost:8080
 ```
 
-Configure the backend to use containers in `~/.config/oqto/config.toml`:
+Or build from source:
 
-```toml
-[container]
-runtime = "docker"
-default_image = "oqto-dev:latest"
+```bash
+docker build -f deploy/docker/Dockerfile -t oqto:latest .
 ```
+
+See `deploy/docker/README.md` for full documentation.
 
 ## Project Structure
 

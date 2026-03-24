@@ -253,13 +253,21 @@ export function MetricsPanel() {
 					label="ACTIVE SESSIONS"
 					value={runningSessions}
 					Icon={Activity}
-					percent={adminStats ? (runningSessions / Math.max(adminStats.total_sessions, 1)) * 100 : 0}
+					percent={
+						adminStats
+							? (runningSessions / Math.max(adminStats.total_sessions, 1)) * 100
+							: 0
+					}
 				/>
 				<StatCard
 					label="ACTIVE USERS"
 					value={activeUsers}
 					Icon={Users}
-					percent={adminStats ? (activeUsers / Math.max(adminStats.total_users, 1)) * 100 : 0}
+					percent={
+						adminStats
+							? (activeUsers / Math.max(adminStats.total_users, 1)) * 100
+							: 0
+					}
 				/>
 			</div>
 

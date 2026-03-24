@@ -15,10 +15,6 @@ name = "oqtoctl"
 path = "src/ctl/main.rs"
 
 [[bin]]
-name = "oqto-runner"
-path = "src/bin/oqto-runner.rs"
-
-[[bin]]
 name = "oqto-sandbox"
 path = "src/bin/oqto-sandbox.rs"
 
@@ -101,6 +97,7 @@ dashmap.workspace = true
 
 # File server (for Main Chat file access)
 oqto-files = { path = "../oqto-files" }
+oqto-sandbox = { path = "../oqto-sandbox" }
 
 # Authentication
 jsonwebtoken.workspace = true

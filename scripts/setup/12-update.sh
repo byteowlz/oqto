@@ -304,9 +304,10 @@ download_oqto_release() {
 
 # Build oqto backend and frontend from source.
 build_oqto_from_source() {
-  # Build backend (includes oqto, oqto-runner, oqto-sandbox, pi-bridge binaries)
+  # Build backend binaries from their owning crates.
+  # Note: oqto-runner is a dedicated crate (`crates/oqto-runner`), not a bin in `oqto`.
   log_info "Building backend..."
-  if ! (cd backend && cargo build --release); then
+  if ! (cd backend && cargo build --release -p oqto -p oqto-runner -p oqto-sandbox); then
     log_error "Backend build failed"
     return 1
   fi
@@ -443,6 +444,10 @@ build_octo() {
       sudo chown -R root:root "$frontend_deploy"
       log_success "Frontend deployed to ${frontend_deploy}"
     else
+      if [[ "${PRODUCTION_MODE:-false}" == "true" && "${SETUP_CADDY:-no}" != "yes" ]]; then
+        log_error "Frontend dist not found (${frontend_dist}). Production without Caddy requires backend-served static frontend files."
+        return 1
+      fi
       log_warn "Frontend dist not found, skipping deployment"
     fi
   fi

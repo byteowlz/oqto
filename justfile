@@ -8,7 +8,8 @@ build: build-backend build-frontend
 
 # Build backend (all workspace crates)
 build-backend:
-    cd backend && remote-build build --release -p oqto --bin oqto --bin oqto-runner
+    cd backend && remote-build build --release -p oqto --bin oqto
+    cd backend && remote-build build --release -p oqto-runner --bin oqto-runner
     cd backend && remote-build build --release -p oqto-files --bin oqto-files
 
 # Build frontend
@@ -16,7 +17,7 @@ build-frontend:
     cd frontend && bun run build
 
 # Run all linters
-lint: lint-backend lint-frontend
+lint: lint-backend lint-frontend lint-rust-ai-guardrails
 
 # Lint backend
 lint-backend:
@@ -25,6 +26,26 @@ lint-backend:
 # Lint frontend
 lint-frontend:
     cd frontend && bun run lint
+
+# Install ast-grep (advanced structural linting)
+install-ast-grep:
+    cargo install ast-grep --locked
+
+# Rust AI guardrails via ast-grep (changed files, production scope only)
+lint-rust-ai-guardrails:
+    ./scripts/lint/rust-ai-guardrails.sh
+
+# Guardrail metrics (all backend crates)
+lint-rust-ai-report:
+    ./scripts/lint/rust-ai-guardrails-report.py --paths backend/crates
+
+# Guardrail metrics, excluding findings under #[cfg(test)]
+lint-rust-ai-report-prod:
+    ./scripts/lint/rust-ai-guardrails-report.py --paths backend/crates --exclude-cfg-test
+
+# Guardrail metrics (changed rust files only)
+lint-rust-ai-report-changed:
+    ./scripts/lint/rust-ai-guardrails-report.py --changed
 
 # Run all tests
 test: test-backend test-frontend
@@ -70,7 +91,7 @@ install-all:
     cd frontend && bun install
     cd backend/crates/oqto-browserd && bun install && bun run build
     cd backend && cargo install --path crates/oqto
-    cd backend && cargo install --path crates/oqto --bin oqto-runner
+    cd backend && cargo install --path crates/oqto-runner --bin oqto-runner
     cd backend && cargo install --path crates/oqto-files
     cd ../hstry && cargo install --path crates/hstry-cli || echo "hstry build failed, skipping"
 
@@ -84,7 +105,7 @@ install crate:
             cd backend && cargo install --path crates/oqto
             ;;
         oqto-runner)
-            cd backend && cargo install --path crates/oqto --bin oqto-runner
+            cd backend && cargo install --path crates/oqto-runner --bin oqto-runner
             ;;
         oqtoctl)
             cd backend && cargo install --path crates/oqto --bin oqtoctl
@@ -236,7 +257,8 @@ restart-runner:
 
 # Build, install, and restart runner + backend
 update-runner:
-    cd backend && remote-build build --release -p oqto --bin oqto --bin oqto-runner
+    cd backend && remote-build build --release -p oqto --bin oqto
+    cd backend && remote-build build --release -p oqto-runner --bin oqto-runner
     ./scripts/update-runner.sh
 
 # === E2E (Proxmox) ===
@@ -864,6 +886,10 @@ reliability-all-local:
     ./scripts/e2e/reliability-files-local.sh --loops 5
     ./scripts/e2e/reliability-browser-journey.sh --wait-ms 1500
 
+# Runner-path smoke checks for backend refactor baseline hardening
+smoke-runner-user-plane:
+    ./scripts/e2e/smoke-runner-user-plane.sh
+
 # Convert oqto.setup.toml to vm.tests.toml format
 vm-convert-config setup_file:
     cd scripts && ./convert-setup-toml.sh {{setup_file}}
@@ -912,4 +938,34 @@ update-pi:
     echo "Restarting oqto-runner..."
     systemctl --user restart oqto-runner
     echo "Done. Pi version: $(/usr/local/bin/pi --version 2>/dev/null)"
+
+# --- iOS (remote Mac build via Tailscale) ---
+
+ios-mac := "mac"
+ios-remote-dir := "~/byteowlz/oqto"
+ios-device := "D9CV2YHT7J"
+
+# Sync project to Mac
+ios-sync:
+    rsync -avz --delete \
+      --exclude 'target/' \
+      --exclude 'node_modules/' \
+      --exclude 'frontend/src-tauri/gen/' \
+      --exclude '.git/' \
+      --exclude 'backend/target/' \
+      --exclude 'fileserver/target/' \
+      ./ {{ios-mac}}:{{ios-remote-dir}}/
+
+# Build iOS app on Mac
+ios-build: ios-sync
+    ssh -t {{ios-mac}} "cd {{ios-remote-dir}}/frontend && bun install && bun tauri ios build --config src-tauri/tauri.ios.conf.json"
+
+# Build and install to iPhone
+ios-deploy: ios-build
+    ssh -t {{ios-mac}} "xcrun devicectl device install app --device {{ios-device}} {{ios-remote-dir}}/frontend/src-tauri/gen/apple/build/arm64/oqto.ipa"
+
+# Install last build to iPhone (skip rebuild)
+ios-install:
+    ssh -t {{ios-mac}} "xcrun devicectl device install app --device {{ios-device}} {{ios-remote-dir}}/frontend/src-tauri/gen/apple/build/arm64/oqto.ipa"
+
 

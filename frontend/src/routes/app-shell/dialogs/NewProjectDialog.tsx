@@ -81,9 +81,7 @@ export const NewProjectDialog = memo(function NewProjectDialog({
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent className="sm:max-w-xl max-h-[85vh] overflow-y-auto">
 				<DialogHeader>
-					<DialogTitle>
-						{t("projects.newProject")}
-					</DialogTitle>
+					<DialogTitle>{t("projects.newProject")}</DialogTitle>
 					<DialogDescription>
 						{t("projects.newProjectDescription")}
 					</DialogDescription>
@@ -155,9 +153,7 @@ export const NewProjectDialog = memo(function NewProjectDialog({
 
 					{!isSharedWorkspaceContext && (
 						<div className="flex items-center justify-between border border-border rounded px-3 py-2">
-							<div className="text-sm">
-								{t("projects.sharedProject")}
-							</div>
+							<div className="text-sm">{t("projects.sharedProject")}</div>
 							<Switch
 								checked={newProjectShared}
 								onCheckedChange={onSharedChange}

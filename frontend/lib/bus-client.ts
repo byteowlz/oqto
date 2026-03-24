@@ -101,9 +101,16 @@ export function busSubscribe(
 		const busEvent = event as BusWsEvent;
 		if (busEvent.channel !== "bus") return;
 		if (busEvent.type === "event") {
-			// The backend already filtered by subscription, but we double-check scope
-			const evt = busEvent as unknown as { channel: "bus"; type: "event" } & BusEvent;
-			if (evt.scope === opts.scope && evt.scope_id === opts.scopeId) {
+			// The backend already filtered by subscription, but we double-check scope.
+			// scopeId "*" means wildcard across all scope IDs in that scope.
+			const evt = busEvent as unknown as {
+				channel: "bus";
+				type: "event";
+			} & BusEvent;
+			if (
+				evt.scope === opts.scope &&
+				(opts.scopeId === "*" || evt.scope_id === opts.scopeId)
+			) {
 				handler(evt);
 			}
 		}

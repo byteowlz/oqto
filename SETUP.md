@@ -361,7 +361,7 @@ Runs each session in isolated Docker/Podman containers.
 
 **Prerequisites**:
 - Docker or Podman runtime
-- Container image: `oqto-dev:latest`
+- Container image: `oqto:latest` (build with `docker build -f deploy/docker/Dockerfile -t oqto:latest .`)
 
 **Best for**:
 - Multi-user deployments
@@ -371,18 +371,14 @@ Runs each session in isolated Docker/Podman containers.
 
 **Building the container image**:
 ```bash
-docker build -t oqto-dev:latest -f container/Dockerfile .
+docker build -f deploy/docker/Dockerfile -t oqto:latest .
 ```
 
-**Configuration**:
-```toml
-[backend]
-mode = "container"
-
-[container]
-runtime = "docker"  # or "podman"
-default_image = "oqto-dev:latest"
-base_port = 41820
+Or use Docker Compose:
+```bash
+cd deploy/docker
+cp .env.example .env  # Add your API keys
+docker compose up -d
 ```
 
 ## User Modes
@@ -846,7 +842,7 @@ Error: `Failed to find container image`
 
 Solution: Build the container image:
 ```bash
-docker build -t oqto-dev:latest -f container/Dockerfile .
+docker build -f deploy/docker/Dockerfile -t oqto:latest .
 ```
 
 ### Port already in use

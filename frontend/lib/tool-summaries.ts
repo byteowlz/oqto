@@ -160,9 +160,12 @@ const bashPatterns: BashPattern[] = [
 	{
 		match: (cmd) => /\b(sx|exa-web-search|exa-code-context)\s/.test(cmd),
 		summary: (cmd) => {
-			const m = cmd.match(/(?:sx|exa-web-search|exa-code-context)\s+['"]([^'"]+)/);
+			const m = cmd.match(
+				/(?:sx|exa-web-search|exa-code-context)\s+['"]([^'"]+)/,
+			);
 			const query = m ? m[1] : null;
-			if (query) return i18n.t("tools.searchingQuery", { query: truncStr(query, 40) });
+			if (query)
+				return i18n.t("tools.searchingQuery", { query: truncStr(query, 40) });
 			return i18n.t("tools.webSearch");
 		},
 	},
@@ -215,8 +218,7 @@ export function getToolSummary(
 	const name = toolName.toLowerCase();
 
 	if (name === "bash" || name === "execute_command") {
-		const cmd =
-			(input?.command as string) ?? (input?.cmd as string) ?? null;
+		const cmd = (input?.command as string) ?? (input?.cmd as string) ?? null;
 		if (cmd) {
 			const summary = summarizeBash(cmd);
 			if (summary) return summary;
@@ -247,12 +249,15 @@ export function getToolSummary(
 
 	if (name === "glob") {
 		const pattern = (input?.pattern as string) ?? null;
-		if (pattern) return i18n.t("tools.findingPattern", { pattern: truncStr(pattern, 40) });
+		if (pattern)
+			return i18n.t("tools.findingPattern", { pattern: truncStr(pattern, 40) });
 	}
 
 	if (name === "grep") {
-		const pattern = (input?.pattern as string) ?? (input?.query as string) ?? null;
-		if (pattern) return i18n.t("tools.searchingFor", { query: truncStr(pattern, 30) });
+		const pattern =
+			(input?.pattern as string) ?? (input?.query as string) ?? null;
+		if (pattern)
+			return i18n.t("tools.searchingFor", { query: truncStr(pattern, 30) });
 	}
 
 	if (name === "todowrite" || name === "todo_write") {

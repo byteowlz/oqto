@@ -3,21 +3,9 @@
 import { Button } from "@/components/ui/button";
 import { readFileMux, writeFileMux } from "@/lib/mux-files";
 import { cn } from "@/lib/utils";
-import {
-	AppWindow,
-	Maximize2,
-	Minimize2,
-	RefreshCw,
-	X,
-} from "lucide-react";
+import { AppWindow, Maximize2, Minimize2, RefreshCw, X } from "lucide-react";
 import { useTheme } from "next-themes";
-import {
-	memo,
-	useCallback,
-	useEffect,
-	useRef,
-	useState,
-} from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -231,7 +219,9 @@ export const AppView = memo(function AppView({
 				const text = new TextDecoder().decode(result.data);
 				// Extract <title> if present
 				const titleMatch = text.match(/<title>([^<]+)<\/title>/i);
-				const title = titleMatch ? titleMatch[1].trim() : titleFromPath(tab.filePath);
+				const title = titleMatch
+					? titleMatch[1].trim()
+					: titleFromPath(tab.filePath);
 				onUpdateTab(tab.id, { content: text, title });
 			} catch (err) {
 				const msg = err instanceof Error ? err.message : "Failed to load file";
@@ -438,7 +428,9 @@ export const AppView = memo(function AppView({
 						className="p-1 text-muted-foreground hover:text-foreground hover:bg-muted/50 rounded transition-colors"
 						title="Refresh"
 					>
-						<RefreshCw className={cn("w-3.5 h-3.5", loading && "animate-spin")} />
+						<RefreshCw
+							className={cn("w-3.5 h-3.5", loading && "animate-spin")}
+						/>
 					</button>
 					{onExpand && !isExpanded && (
 						<button

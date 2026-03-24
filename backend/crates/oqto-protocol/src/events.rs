@@ -68,7 +68,10 @@ pub enum EventPayload {
     // -- Agent state --
     /// Agent is idle, waiting for input.
     #[serde(rename = "agent.idle")]
-    AgentIdle,
+    AgentIdle {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message_version: Option<MessageVersion>,
+    },
 
     /// Agent is working (LLM generating, tool running, etc.).
     #[serde(rename = "agent.working")]
@@ -282,6 +285,19 @@ pub enum EventPayload {
 // ============================================================================
 // Supporting types
 // ============================================================================
+
+/// Monotonic message version from the persistence layer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MessageVersion {
+    /// Logical version for the conversation (monotonic per conversation).
+    pub version: u64,
+    /// Optional persisted message count snapshot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_count: Option<u64>,
+    /// Optional hash/fingerprint for divergence diagnostics.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_message_hash: Option<u64>,
+}
 
 /// What the agent is currently doing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

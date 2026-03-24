@@ -18,6 +18,8 @@ import {
 	DropdownMenuSeparator,
 	DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { useLocalStorage } from "@/hooks/use-local-storage";
+import { useMountEffect } from "@/hooks/use-mount-effect";
 import type {
 	ChatSession,
 	HstrySearchHit,
@@ -47,6 +49,7 @@ import {
 	Pencil,
 	Pin,
 	Plus,
+	RefreshCw,
 	Search,
 	Settings,
 	Share2,
@@ -114,6 +117,7 @@ export interface SidebarSessionsProps {
 	onPinProject: (projectKey: string) => void;
 	onRenameProject: (projectKey: string, currentName: string) => void;
 	onDeleteProject: (projectKey: string, projectName: string) => void;
+	onBackfillProject?: (directory: string) => void;
 	onShareProject?: (directory: string, projectName: string) => void;
 	onSearchResultClick: (hit: HstrySearchHit) => void;
 	messageSearchExtraHits: HstrySearchHit[];
@@ -162,6 +166,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 	onPinProject,
 	onRenameProject,
 	onDeleteProject,
+	onBackfillProject,
 	onShareProject,
 	onSearchResultClick,
 	messageSearchExtraHits,
@@ -179,15 +184,14 @@ export const SidebarSessions = memo(function SidebarSessions({
 	const [localSearchMode, setLocalSearchMode] =
 		useState<SearchMode>("sessions");
 
-	const [sessionViewMode, setSessionViewMode] = useState<SessionViewMode>(() => {
-		if (typeof window === "undefined") return "list";
-		try {
-			const stored = localStorage.getItem("oqto:sessionViewMode");
-			return stored === "tree" ? "tree" : "list";
-		} catch {
-			return "list";
-		}
-	});
+	const [sessionViewMode, setSessionViewMode] =
+		useLocalStorage<SessionViewMode>("oqto:sessionViewMode", "list", {
+			deserialize: (raw) => {
+				const parsed = JSON.parse(raw);
+				return parsed === "tree" ? "tree" : "list";
+			},
+			serialize: (value) => JSON.stringify(value),
+		});
 
 	// Use controlled or local state
 	const sessionSearch = controlledSessionSearch ?? localSessionSearch;
@@ -224,8 +228,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 	);
 
 	// Keyboard shortcut: Ctrl+Shift+F to toggle search mode
-	// biome-ignore lint/correctness/useExhaustiveDependencies: setSearchMode is a stable setState
-	useEffect(() => {
+	useMountEffect(() => {
 		const handleKeyDown = (e: KeyboardEvent) => {
 			if (e.key === "f" && (e.metaKey || e.ctrlKey) && e.shiftKey) {
 				e.preventDefault();
@@ -236,20 +239,14 @@ export const SidebarSessions = memo(function SidebarSessions({
 		};
 		document.addEventListener("keydown", handleKeyDown);
 		return () => document.removeEventListener("keydown", handleKeyDown);
-	}, []);
+	});
 
-	useEffect(() => {
-		if (typeof window === "undefined") return;
-		try {
-			localStorage.setItem("oqto:sessionViewMode", sessionViewMode);
-		} catch {
-			// Ignore storage failures.
-		}
-	}, [sessionViewMode]);
-
-	useEffect(() => {
+	useMountEffect(() => {
 		const handler = (event: Event) => {
-			const custom = event as CustomEvent<{ mode?: SessionViewMode; toggle?: boolean }>;
+			const custom = event as CustomEvent<{
+				mode?: SessionViewMode;
+				toggle?: boolean;
+			}>;
 			if (custom.detail?.mode === "list" || custom.detail?.mode === "tree") {
 				setSessionViewMode(custom.detail.mode);
 				return;
@@ -258,10 +255,16 @@ export const SidebarSessions = memo(function SidebarSessions({
 				setSessionViewMode((prev) => (prev === "list" ? "tree" : "list"));
 			}
 		};
-		window.addEventListener("oqto:set-session-view-mode", handler as EventListener);
+		window.addEventListener(
+			"oqto:set-session-view-mode",
+			handler as EventListener,
+		);
 		return () =>
-			window.removeEventListener("oqto:set-session-view-mode", handler as EventListener);
-	}, []);
+			window.removeEventListener(
+				"oqto:set-session-view-mode",
+				handler as EventListener,
+			);
+	});
 
 	const sizeClasses = isMobile
 		? {
@@ -437,8 +440,8 @@ export const SidebarSessions = memo(function SidebarSessions({
 				locale={locale}
 				title={
 					pendingDeleteTitle
-						? t('sessions.deleteTitle', { title: pendingDeleteTitle })
-						: t('sessions.deleteChatTitle')
+						? t("sessions.deleteTitle", { title: pendingDeleteTitle })
+						: t("sessions.deleteChatTitle")
 				}
 			/>
 			<DeleteConfirmDialog
@@ -449,8 +452,10 @@ export const SidebarSessions = memo(function SidebarSessions({
 					handleBulkDelete();
 				}}
 				locale={locale}
-				title={t('sessions.bulkDeleteTitle', { count: selectedSessionIds.size })}
-				description={t('sessions.bulkDeleteDescription')}
+				title={t("sessions.bulkDeleteTitle", {
+					count: selectedSessionIds.size,
+				})}
+				description={t("sessions.bulkDeleteDescription")}
 			/>
 			{/* Sticky header section - Search, Default Chat, Sessions header */}
 			<div className="flex-shrink-0 space-y-0.5 px-1">
@@ -482,14 +487,14 @@ export const SidebarSessions = memo(function SidebarSessions({
 								className={cn(searchMode === "sessions" && "bg-accent")}
 							>
 								<Search className="w-3.5 h-3.5 mr-2" />
-								{t('sessions.filterSessions')}
+								{t("sessions.filterSessions")}
 							</DropdownMenuItem>
 							<DropdownMenuItem
 								onClick={() => setSearchMode("messages")}
 								className={cn(searchMode === "messages" && "bg-accent")}
 							>
 								<MessageSquare className="w-3.5 h-3.5 mr-2" />
-								{t('sessions.searchMessages')}
+								{t("sessions.searchMessages")}
 							</DropdownMenuItem>
 							{searchMode === "messages" && (
 								<>
@@ -498,13 +503,13 @@ export const SidebarSessions = memo(function SidebarSessions({
 										onClick={() => setAgentFilter("all")}
 										className={cn(agentFilter === "all" && "bg-accent")}
 									>
-										{t('sessions.allAgents')}
+										{t("sessions.allAgents")}
 									</DropdownMenuItem>
 									<DropdownMenuItem
 										onClick={() => setAgentFilter("pi_agent")}
 										className={cn(agentFilter === "pi_agent" && "bg-accent")}
 									>
-										{t('sessions.chatOnly')}
+										{t("sessions.chatOnly")}
 									</DropdownMenuItem>
 								</>
 							)}
@@ -514,8 +519,8 @@ export const SidebarSessions = memo(function SidebarSessions({
 						type="text"
 						placeholder={
 							searchMode === "messages"
-								? t('sessions.searchMessagesPlaceholder')
-								: t('sessions.searchPlaceholder')
+								? t("sessions.searchMessagesPlaceholder")
+								: t("sessions.searchPlaceholder")
 						}
 						value={sessionSearch}
 						onChange={(e) => setSessionSearch(e.target.value)}
@@ -551,7 +556,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 							className="h-6 px-2 text-xs"
 						>
 							<Trash2 className="w-3 h-3 mr-1" />
-							{t('common.delete')}
+							{t("common.delete")}
 						</Button>
 						<Button
 							type="button"
@@ -559,7 +564,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 							size="sm"
 							onClick={() => setSelectedSessionIds(new Set())}
 							className="h-6 w-6 p-0"
-							title={t('sessions.clearSelection')}
+							title={t("sessions.clearSelection")}
 						>
 							<X className="w-3 h-3" />
 						</Button>
@@ -575,7 +580,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 								sizeClasses.headerText,
 							)}
 						>
-							{t('sessions.title')}
+							{t("sessions.title")}
 						</span>
 						<span
 							className={cn(
@@ -595,7 +600,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 								"text-muted-foreground hover:text-foreground hover:bg-sidebar-accent rounded",
 								sizeClasses.buttonSize,
 							)}
-							title={t('sessions.newSession')}
+							title={t("sessions.newSession")}
 						>
 							<Plus className={sizeClasses.iconSize} />
 						</button>
@@ -606,7 +611,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 								"text-muted-foreground hover:text-foreground hover:bg-sidebar-accent rounded",
 								sizeClasses.buttonSize,
 							)}
-							title={t('projects.newProject')}
+							title={t("projects.newProject")}
 						>
 							<FolderPlus className={sizeClasses.iconSize} />
 						</button>
@@ -629,7 +634,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 										"text-muted-foreground hover:text-foreground hover:bg-sidebar-accent rounded",
 										sizeClasses.buttonSize,
 									)}
-									title={t('sort.sort')}
+									title={t("sort.sort")}
 								>
 									{projectSortAsc ? (
 										<ArrowUp className={sizeClasses.iconSize} />
@@ -644,21 +649,21 @@ export const SidebarSessions = memo(function SidebarSessions({
 									className={cn(projectSortBy === "date" && "bg-accent")}
 								>
 									<Clock className="w-3.5 h-3.5 mr-2" />
-									{t('sort.date')}
+									{t("sort.date")}
 								</DropdownMenuItem>
 								<DropdownMenuItem
 									onClick={() => setProjectSortBy("name")}
 									className={cn(projectSortBy === "name" && "bg-accent")}
 								>
 									<ArrowUpDown className="w-3.5 h-3.5 mr-2" />
-									{t('sort.name')}
+									{t("sort.name")}
 								</DropdownMenuItem>
 								<DropdownMenuItem
 									onClick={() => setProjectSortBy("sessions")}
 									className={cn(projectSortBy === "sessions" && "bg-accent")}
 								>
 									<MessageSquare className="w-3.5 h-3.5 mr-2" />
-									{t('sort.count')}
+									{t("sort.count")}
 								</DropdownMenuItem>
 								<DropdownMenuSeparator />
 								<DropdownMenuItem
@@ -667,12 +672,12 @@ export const SidebarSessions = memo(function SidebarSessions({
 									{projectSortAsc ? (
 										<>
 											<ArrowDown className="w-3.5 h-3.5 mr-2" />
-											{t('sort.descending')}
+											{t("sort.descending")}
 										</>
 									) : (
 										<>
 											<ArrowUp className="w-3.5 h-3.5 mr-2" />
-											{t('sort.ascending')}
+											{t("sort.ascending")}
 										</>
 									)}
 								</DropdownMenuItem>
@@ -702,7 +707,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 									sizeClasses.sessionText,
 								)}
 							>
-								{t('common.noResults')}
+								{t("common.noResults")}
 							</div>
 						)}
 						{sessionsByProject.map((project) => {
@@ -786,7 +791,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 																"text-muted-foreground hover:text-primary hover:bg-sidebar-accent opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity",
 																sizeClasses.buttonSize,
 															)}
-															title={t('projects.workspaceOverview')}
+															title={t("projects.workspaceOverview")}
 														>
 															<Settings className={sizeClasses.iconSize} />
 														</button>
@@ -799,7 +804,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 																"text-muted-foreground hover:text-primary hover:bg-sidebar-accent opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity",
 																sizeClasses.buttonSize,
 															)}
-															title={t('projects.newChatInProject')}
+															title={t("projects.newChatInProject")}
 														>
 															<Plus className={sizeClasses.iconSize} />
 														</button>
@@ -816,8 +821,18 @@ export const SidebarSessions = memo(function SidebarSessions({
 														}
 													>
 														<Plus className="w-4 h-4 mr-2" />
-														{t('sessions.newSession')}
+														{t("sessions.newSession")}
 													</ContextMenuItem>
+													{onBackfillProject && (
+														<ContextMenuItem
+															onClick={() =>
+																onBackfillProject(project.directory as string)
+															}
+														>
+															<RefreshCw className="w-4 h-4 mr-2" />
+															Backfill sessions
+														</ContextMenuItem>
+													)}
 													<ContextMenuSeparator />
 												</>
 											)}
@@ -826,8 +841,8 @@ export const SidebarSessions = memo(function SidebarSessions({
 											>
 												<Pin className="w-4 h-4 mr-2" />
 												{isProjectPinned
-													? t('projects.unpin')
-													: t('projects.pin')}
+													? t("projects.unpin")
+													: t("projects.pin")}
 											</ContextMenuItem>
 											<ContextMenuItem
 												onClick={() =>
@@ -835,7 +850,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 												}
 											>
 												<Pencil className="w-4 h-4 mr-2" />
-												{t('common.rename')}
+												{t("common.rename")}
 											</ContextMenuItem>
 											{onShareProject && project.directory && (
 												<ContextMenuItem
@@ -847,7 +862,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 													}
 												>
 													<Share2 className="w-4 h-4 mr-2" />
-													{t('sharedWorkspaces.shareProject', 'Share...')}
+													{t("sharedWorkspaces.shareProject", "Share...")}
 												</ContextMenuItem>
 											)}
 											<ContextMenuSeparator />
@@ -858,8 +873,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 												}
 											>
 												<Trash2 className="w-4 h-4 mr-2" />
-												{t('common.delete')} (
-												{project.sessions.length}{" "}
+												{t("common.delete")} ({project.sessions.length}{" "}
 												{project.sessions.length === 1 ? "chat" : "chats"})
 											</ContextMenuItem>
 										</ContextMenuContent>
@@ -986,7 +1000,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 																			}}
 																		>
 																			<Copy className="w-4 h-4 mr-2" />
-																			{t('sessions.copyTempId')}
+																			{t("sessions.copyTempId")}
 																		</ContextMenuItem>
 																	)}
 																	<ContextMenuItem
@@ -1003,14 +1017,14 @@ export const SidebarSessions = memo(function SidebarSessions({
 																	>
 																		<Pin className="w-4 h-4 mr-2" />
 																		{pinnedSessions.has(session.id)
-																			? t('projects.unpin')
-																			: t('projects.pin')}
+																			? t("projects.unpin")
+																			: t("projects.pin")}
 																	</ContextMenuItem>
 																	<ContextMenuItem
 																		onClick={() => onRenameSession(session.id)}
 																	>
 																		<Pencil className="w-4 h-4 mr-2" />
-																		{t('common.rename')}
+																		{t("common.rename")}
 																	</ContextMenuItem>
 																	<ContextMenuSeparator />
 																	<ContextMenuItem
@@ -1020,7 +1034,7 @@ export const SidebarSessions = memo(function SidebarSessions({
 																		}
 																	>
 																		<Trash2 className="w-4 h-4 mr-2" />
-																		{t('common.delete')}
+																		{t("common.delete")}
 																	</ContextMenuItem>
 																</ContextMenuContent>
 															</ContextMenu>
@@ -1116,8 +1130,8 @@ export const SidebarSessions = memo(function SidebarSessions({
 																						>
 																							<Copy className="w-4 h-4 mr-2" />
 																							{childTempIdLabel
-																								? `${t('sessions.copyTempId')} (${childTempIdLabel})`
-																								: t('sessions.copyTempId')}
+																								? `${t("sessions.copyTempId")} (${childTempIdLabel})`
+																								: t("sessions.copyTempId")}
 																						</ContextMenuItem>
 																						<ContextMenuItem
 																							onClick={() => {

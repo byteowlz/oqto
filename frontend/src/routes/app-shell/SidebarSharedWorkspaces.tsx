@@ -1,3 +1,4 @@
+import { setSharedWorkspaceSessionId } from "@/components/contexts/chat-context";
 /**
  * Sidebar section displaying shared workspaces the user belongs to.
  * Each workspace is a collapsible top-level entry (like a project group).
@@ -27,6 +28,8 @@ import {
 	DropdownMenuItem,
 	DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { listChatHistory, triggerChatHistoryBackfill } from "@/lib/api/chat";
+import type { ChatSession } from "@/lib/api/chat";
 import type {
 	SharedWorkspaceInfo,
 	SharedWorkspaceWorkdir,
@@ -35,8 +38,6 @@ import {
 	deleteSharedWorkspaceWorkdir,
 	listWorkdirs,
 } from "@/lib/api/shared-workspaces";
-import { listChatHistory } from "@/lib/api/chat";
-import type { ChatSession } from "@/lib/api/chat";
 import {
 	formatSessionDate,
 	formatTempId,
@@ -56,12 +57,12 @@ import {
 	Pencil,
 	Pin,
 	Plus,
+	RefreshCw,
 	Settings,
 	Trash2,
 	UserPlus,
 } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
-import { setSharedWorkspaceSessionId } from "@/components/contexts/chat-context";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { WorkspaceIcon } from "./WorkspaceIcon";
@@ -103,7 +104,9 @@ export interface SidebarSharedWorkspacesProps {
 	selectedChatSessionId: string | null;
 	onSessionClick?: (session: ChatSession, sharedWorkspaceId: string) => void;
 	onRenameSession?: (sessionId: string) => void;
-	onDeleteSession?: (sessionId: string) => Promise<boolean | void> | boolean | void;
+	onDeleteSession?: (
+		sessionId: string,
+	) => Promise<boolean | undefined> | boolean | undefined;
 	onPinSession?: (sessionId: string) => void;
 	pinnedSessions?: Set<string> | string[];
 	onPinProject?: (projectKey: string) => void;
@@ -153,7 +156,9 @@ function WorkspaceContent({
 	selectedChatSessionId: string | null;
 	onSessionClick?: (session: ChatSession, sharedWorkspaceId: string) => void;
 	onRenameSession?: (sessionId: string) => void;
-	onDeleteSession?: (sessionId: string) => Promise<boolean | void> | boolean | void;
+	onDeleteSession?: (
+		sessionId: string,
+	) => Promise<boolean | undefined> | boolean | undefined;
 	onPinSession?: (sessionId: string) => void;
 	pinnedSessions?: Set<string> | string[];
 	onPinProject?: (projectKey: string) => void;
@@ -255,7 +260,13 @@ function WorkspaceContent({
 			}
 		}
 		return Array.from(byId.values());
-	}, [fetchedSessions, chatHistory, hiddenSessionIds, workspace.id, workspacePath]);
+	}, [
+		fetchedSessions,
+		chatHistory,
+		hiddenSessionIds,
+		workspace.id,
+		workspacePath,
+	]);
 
 	// Group sessions by workdir path
 	const sessionsByWorkdir = useMemo(() => {
@@ -264,10 +275,7 @@ function WorkspaceContent({
 			const wp = s.workspace_path?.replace(/\/$/, "");
 			for (const wd of workdirs) {
 				const normalizedWdPath = wd.path.replace(/\/$/, "");
-				if (
-					wp === normalizedWdPath ||
-					wp?.startsWith(`${normalizedWdPath}/`)
-				) {
+				if (wp === normalizedWdPath || wp?.startsWith(`${normalizedWdPath}/`)) {
 					const existing = map.get(wd.path) ?? [];
 					existing.push(s);
 					map.set(wd.path, existing);
@@ -278,7 +286,8 @@ function WorkspaceContent({
 		// Sort each workdir's sessions newest-first
 		for (const sessions of map.values()) {
 			sessions.sort(
-				(a, b) => (b.updated_at ?? b.created_at) - (a.updated_at ?? a.created_at),
+				(a, b) =>
+					(b.updated_at ?? b.created_at) - (a.updated_at ?? a.created_at),
 			);
 		}
 		return map;
@@ -314,8 +323,13 @@ function WorkspaceContent({
 		if (!pendingDeleteWorkdir) return;
 		setIsDeletingWorkdir(true);
 		try {
-			await deleteSharedWorkspaceWorkdir(workspace.id, pendingDeleteWorkdir.path);
-			setWorkdirs((prev) => prev.filter((d) => d.path !== pendingDeleteWorkdir.path));
+			await deleteSharedWorkspaceWorkdir(
+				workspace.id,
+				pendingDeleteWorkdir.path,
+			);
+			setWorkdirs((prev) =>
+				prev.filter((d) => d.path !== pendingDeleteWorkdir.path),
+			);
 			setFetchedSessions((prev) =>
 				prev.filter((s) => {
 					const wp = s.workspace_path ?? "";
@@ -334,6 +348,27 @@ function WorkspaceContent({
 		} finally {
 			setIsDeletingWorkdir(false);
 			setPendingDeleteWorkdir(null);
+		}
+	};
+
+	const backfillWorkdirSessions = async (workdirPath: string) => {
+		try {
+			const result = await triggerChatHistoryBackfill({
+				workspace: workdirPath,
+				shared_workspace_id: workspace.id,
+			});
+			const sessionData = await listChatHistory({
+				shared_workspace_id: workspace.id,
+			});
+			const safeSessions = Array.isArray(sessionData) ? sessionData : [];
+			setFetchedSessions(
+				safeSessions.map((s) => ({ ...s, shared_workspace_id: workspace.id })),
+			);
+			toast.success(
+				`Backfill complete: repaired ${result.repaired_conversations}, scanned ${result.scanned_files}`,
+			);
+		} catch (e) {
+			toast.error(e instanceof Error ? e.message : "Backfill failed");
 		}
 	};
 
@@ -368,354 +403,372 @@ function WorkspaceContent({
 
 	return (
 		<>
-		<div className="space-y-0.5 pb-1">
-			{workdirs.map((wd) => {
-				const wdSessions = sessionsByWorkdir.get(wd.path) ?? [];
-				const folderKey = `${workspace.id}:${wd.path}`;
-				const isFolderExpanded = expandedFolders.has(folderKey);
-				const isPinnedProject = hasString(pinnedProjects, wd.path);
+			<div className="space-y-0.5 pb-1">
+				{workdirs.map((wd) => {
+					const wdSessions = sessionsByWorkdir.get(wd.path) ?? [];
+					const folderKey = `${workspace.id}:${wd.path}`;
+					const isFolderExpanded = expandedFolders.has(folderKey);
+					const isPinnedProject = hasString(pinnedProjects, wd.path);
 
-				return (
-					<div
-						key={wd.path}
-						className="border-b border-sidebar-border/50 last:border-b-0"
-					>
-						{/* Folder header - identical to personal project header, with context menu */}
-						<ContextMenu>
-							<ContextMenuTrigger asChild>
-								<div className="flex items-center gap-1 px-1 py-1.5 group">
-									<button
-										type="button"
-										onClick={() => toggleFolderExpanded(folderKey)}
-										className="flex items-center gap-1.5 text-left hover:bg-sidebar-accent/50 px-1 py-0.5 -mx-1"
-									>
-										{isFolderExpanded ? (
-											<ChevronDown
-												className={cn(
-													"text-muted-foreground flex-shrink-0",
-													sizeClasses.iconSize,
-												)}
-											/>
-										) : (
-											<ChevronRight
-												className={cn(
-													"text-muted-foreground flex-shrink-0",
-													sizeClasses.iconSize,
-												)}
-											/>
-										)}
-									</button>
-									<button
-										type="button"
-										onClick={() => toggleFolderExpanded(folderKey)}
-										className="flex-1 flex items-center gap-1.5 text-left hover:bg-sidebar-accent/50 px-1 py-0.5 -mx-1"
-									>
-										<FolderKanban
-											className={cn(
-												"flex-shrink-0",
-												sizeClasses.projectIcon,
-											)}
-											style={{ color: workspaceColor }}
-										/>
-										{isPinnedProject && (
-											<Pin className="w-3 h-3 flex-shrink-0 text-primary/70" />
-										)}
-										<span
-											className={cn(
-												"font-medium text-foreground truncate",
-												sizeClasses.projectText,
-											)}
+					return (
+						<div
+							key={wd.path}
+							className="border-b border-sidebar-border/50 last:border-b-0"
+						>
+							{/* Folder header - identical to personal project header, with context menu */}
+							<ContextMenu>
+								<ContextMenuTrigger asChild>
+									<div className="flex items-center gap-1 px-1 py-1.5 group">
+										<button
+											type="button"
+											onClick={() => toggleFolderExpanded(folderKey)}
+											className="flex items-center gap-1.5 text-left hover:bg-sidebar-accent/50 px-1 py-0.5 -mx-1"
 										>
-											{wd.name}
-										</span>
-										<span className="text-[10px] text-muted-foreground">
-											({wdSessions.length})
-										</span>
-									</button>
-									{/* New chat in this workdir */}
-									<button
-										type="button"
-										onClick={() => onSelectWorkdir?.(workspace, wd)}
-										className={cn(
-											"text-muted-foreground hover:text-primary hover:bg-sidebar-accent opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity",
-											sizeClasses.buttonSize,
-										)}
-										title="New chat"
-									>
-										<Plus className={sizeClasses.iconSize} />
-									</button>
-									<DropdownMenu>
-										<DropdownMenuTrigger asChild>
-											<button
-												type="button"
+											{isFolderExpanded ? (
+												<ChevronDown
+													className={cn(
+														"text-muted-foreground flex-shrink-0",
+														sizeClasses.iconSize,
+													)}
+												/>
+											) : (
+												<ChevronRight
+													className={cn(
+														"text-muted-foreground flex-shrink-0",
+														sizeClasses.iconSize,
+													)}
+												/>
+											)}
+										</button>
+										<button
+											type="button"
+											onClick={() => toggleFolderExpanded(folderKey)}
+											className="flex-1 flex items-center gap-1.5 text-left hover:bg-sidebar-accent/50 px-1 py-0.5 -mx-1"
+										>
+											<FolderKanban
+												className={cn("flex-shrink-0", sizeClasses.projectIcon)}
+												style={{ color: workspaceColor }}
+											/>
+											{isPinnedProject && (
+												<Pin className="w-3 h-3 flex-shrink-0 text-primary/70" />
+											)}
+											<span
 												className={cn(
-													"text-muted-foreground hover:text-primary hover:bg-sidebar-accent opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity",
-													sizeClasses.buttonSize,
+													"font-medium text-foreground truncate",
+													sizeClasses.projectText,
 												)}
-												title={t("common.actions", "Actions")}
 											>
-												<MoreHorizontal className={sizeClasses.iconSize} />
-											</button>
-										</DropdownMenuTrigger>
-										<DropdownMenuContent align="end">
-											<DropdownMenuItem onClick={() => onNewChatInWorkdir?.(workspace, wd)}>
-												<Plus className="w-4 h-4 mr-2" />
-												{t("chat.newChat", "New chat")}
-											</DropdownMenuItem>
-											<DropdownMenuItem onClick={() => navigator.clipboard.writeText(wd.path)}>
-												<Copy className="w-4 h-4 mr-2" />
-												{t("common.copyPath", "Copy path")}
-											</DropdownMenuItem>
-										</DropdownMenuContent>
-									</DropdownMenu>
-								</div>
-							</ContextMenuTrigger>
-							<ContextMenuContent>
-								<ContextMenuItem
-									onClick={() => onNewChatInWorkdir?.(workspace, wd)}
-								>
-									<Plus className="w-4 h-4 mr-2" />
-									{t("chat.newChat", "New chat")}
-								</ContextMenuItem>
-								<ContextMenuItem
-									onClick={() => {
-										navigator.clipboard.writeText(wd.path);
-									}}
-								>
-									<Copy className="w-4 h-4 mr-2" />
-									{t("common.copyPath", "Copy path")}
-								</ContextMenuItem>
-								{onPinProject && (
-									<ContextMenuItem onClick={() => onPinProject(wd.path)}>
-										<Pin className="w-4 h-4 mr-2" />
-										{isPinnedProject ? t("projects.unpin") : t("projects.pin")}
-									</ContextMenuItem>
-								)}
-								{onRenameProject && (
-									<ContextMenuItem onClick={() => onRenameProject(wd.path, wd.name)}>
-										<Pencil className="w-4 h-4 mr-2" />
-										{t("common.rename")}
-									</ContextMenuItem>
-								)}
-								{(onPinProject || onRenameProject) && onDeleteProject && <ContextMenuSeparator />}
-								{onDeleteProject && (
-									<ContextMenuItem
-										variant="destructive"
-										onClick={() => setPendingDeleteWorkdir(wd)}
-									>
-										<Trash2 className="w-4 h-4 mr-2" />
-										{t("common.delete")}
-									</ContextMenuItem>
-								)}
-							</ContextMenuContent>
-						</ContextMenu>
-
-						{/* Sessions - identical to personal session items */}
-						{isFolderExpanded && (
-							<div className="space-y-0.5 pb-1">
-								{wdSessions.map((session) => {
-									const isSelected =
-										selectedChatSessionId === session.id;
-									const isBusy = hasString(busySessions, session.id);
-									const formattedDate = session.updated_at
-										? formatSessionDate(session.updated_at)
-										: null;
-									const tempId = formatTempId(getTempIdFromSession(session));
-									const isPinned = hasString(pinnedSessions, session.id);
-
-									return (
-										<div
-											key={session.id}
-											className={isMobile ? "ml-4" : "ml-3"}
+												{wd.name}
+											</span>
+											<span className="text-[10px] text-muted-foreground">
+												({wdSessions.length})
+											</span>
+										</button>
+										{/* New chat in this workdir */}
+										<button
+											type="button"
+											onClick={() => onSelectWorkdir?.(workspace, wd)}
+											className={cn(
+												"text-muted-foreground hover:text-primary hover:bg-sidebar-accent opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity",
+												sizeClasses.buttonSize,
+											)}
+											title="New chat"
 										>
-											<ContextMenu>
-												<ContextMenuTrigger asChild>
-													<div
-														className={cn(
-															"w-full px-2 text-left transition-colors flex items-start gap-1.5 cursor-pointer",
-															isMobile ? "py-2" : "py-1",
-															isSelected
-																? "bg-primary/15 border border-primary text-foreground"
-																: "text-muted-foreground hover:bg-sidebar-accent border border-transparent",
-														)}
-														onClick={() => onSessionClick?.(session, workspace.id)}
-														onKeyDown={(e) => {
-															if (e.key === "Enter" || e.key === " ") {
-																onSessionClick?.(session, workspace.id);
-															}
-														}}
-														role="button"
-														tabIndex={0}
-													>
-														<MessageSquare
+											<Plus className={sizeClasses.iconSize} />
+										</button>
+										<DropdownMenu>
+											<DropdownMenuTrigger asChild>
+												<button
+													type="button"
+													className={cn(
+														"text-muted-foreground hover:text-primary hover:bg-sidebar-accent opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity",
+														sizeClasses.buttonSize,
+													)}
+													title={t("common.actions", "Actions")}
+												>
+													<MoreHorizontal className={sizeClasses.iconSize} />
+												</button>
+											</DropdownMenuTrigger>
+											<DropdownMenuContent align="end">
+												<DropdownMenuItem
+													onClick={() => onNewChatInWorkdir?.(workspace, wd)}
+												>
+													<Plus className="w-4 h-4 mr-2" />
+													{t("chat.newChat", "New chat")}
+												</DropdownMenuItem>
+												<DropdownMenuItem
+													onClick={() => navigator.clipboard.writeText(wd.path)}
+												>
+													<Copy className="w-4 h-4 mr-2" />
+													{t("common.copyPath", "Copy path")}
+												</DropdownMenuItem>
+												<DropdownMenuItem
+													onClick={() => void backfillWorkdirSessions(wd.path)}
+												>
+													<RefreshCw className="w-4 h-4 mr-2" />
+													Backfill sessions
+												</DropdownMenuItem>
+											</DropdownMenuContent>
+										</DropdownMenu>
+									</div>
+								</ContextMenuTrigger>
+								<ContextMenuContent>
+									<ContextMenuItem
+										onClick={() => onNewChatInWorkdir?.(workspace, wd)}
+									>
+										<Plus className="w-4 h-4 mr-2" />
+										{t("chat.newChat", "New chat")}
+									</ContextMenuItem>
+									<ContextMenuItem
+										onClick={() => {
+											navigator.clipboard.writeText(wd.path);
+										}}
+									>
+										<Copy className="w-4 h-4 mr-2" />
+										{t("common.copyPath", "Copy path")}
+									</ContextMenuItem>
+									<ContextMenuItem
+										onClick={() => void backfillWorkdirSessions(wd.path)}
+									>
+										<RefreshCw className="w-4 h-4 mr-2" />
+										Backfill sessions
+									</ContextMenuItem>
+									{onPinProject && (
+										<ContextMenuItem onClick={() => onPinProject(wd.path)}>
+											<Pin className="w-4 h-4 mr-2" />
+											{isPinnedProject
+												? t("projects.unpin")
+												: t("projects.pin")}
+										</ContextMenuItem>
+									)}
+									{onRenameProject && (
+										<ContextMenuItem
+											onClick={() => onRenameProject(wd.path, wd.name)}
+										>
+											<Pencil className="w-4 h-4 mr-2" />
+											{t("common.rename")}
+										</ContextMenuItem>
+									)}
+									{(onPinProject || onRenameProject) && onDeleteProject && (
+										<ContextMenuSeparator />
+									)}
+									{onDeleteProject && (
+										<ContextMenuItem
+											variant="destructive"
+											onClick={() => setPendingDeleteWorkdir(wd)}
+										>
+											<Trash2 className="w-4 h-4 mr-2" />
+											{t("common.delete")}
+										</ContextMenuItem>
+									)}
+								</ContextMenuContent>
+							</ContextMenu>
+
+							{/* Sessions - identical to personal session items */}
+							{isFolderExpanded && (
+								<div className="space-y-0.5 pb-1">
+									{wdSessions.map((session) => {
+										const isSelected = selectedChatSessionId === session.id;
+										const isBusy = hasString(busySessions, session.id);
+										const formattedDate = session.updated_at
+											? formatSessionDate(session.updated_at)
+											: null;
+										const tempId = formatTempId(getTempIdFromSession(session));
+										const isPinned = hasString(pinnedSessions, session.id);
+
+										return (
+											<div
+												key={session.id}
+												className={isMobile ? "ml-4" : "ml-3"}
+											>
+												<ContextMenu>
+													<ContextMenuTrigger asChild>
+														<button
+															type="button"
 															className={cn(
-																"mt-0.5 flex-shrink-0",
-																isMobile ? "w-4 h-4" : "w-3 h-3",
+																"w-full px-2 text-left transition-colors flex items-start gap-1.5 cursor-pointer",
+																isMobile ? "py-2" : "py-1",
+																isSelected
+																	? "bg-primary/15 border border-primary text-foreground"
+																	: "text-muted-foreground hover:bg-sidebar-accent border border-transparent",
 															)}
-															style={{ color: workspaceColor }}
-														/>
-														<div className="flex-1 min-w-0 text-left">
-															<div className="flex items-center gap-1">
-																{isPinned && (
-																	<Pin className="w-3 h-3 flex-shrink-0 text-primary/70" />
+															onClick={() =>
+																onSessionClick?.(session, workspace.id)
+															}
+														>
+															<MessageSquare
+																className={cn(
+																	"mt-0.5 flex-shrink-0",
+																	isMobile ? "w-4 h-4" : "w-3 h-3",
 																)}
-																<span
-																	className={cn(
-																		"truncate font-medium",
-																		sizeClasses.sessionText,
+																style={{ color: workspaceColor }}
+															/>
+															<div className="flex-1 min-w-0 text-left">
+																<div className="flex items-center gap-1">
+																	{isPinned && (
+																		<Pin className="w-3 h-3 flex-shrink-0 text-primary/70" />
 																	)}
-																>
-																	{getDisplayPiTitle(session)}
-																</span>
-																{isBusy && (
-																	<Loader2 className="w-3 h-3 flex-shrink-0 text-primary animate-spin" />
+																	<span
+																		className={cn(
+																			"truncate font-medium",
+																			sizeClasses.sessionText,
+																		)}
+																	>
+																		{getDisplayPiTitle(session)}
+																	</span>
+																	{isBusy && (
+																		<Loader2 className="w-3 h-3 flex-shrink-0 text-primary animate-spin" />
+																	)}
+																</div>
+																{formattedDate && (
+																	<div
+																		className={cn(
+																			"text-muted-foreground mt-0.5",
+																			sizeClasses.dateText,
+																		)}
+																	>
+																		{formattedDate}
+																	</div>
 																)}
 															</div>
-															{formattedDate && (
-																<div
-																	className={cn(
-																		"text-muted-foreground mt-0.5",
-																		sizeClasses.dateText,
-																	)}
-																>
-																	{formattedDate}
-																</div>
-															)}
-														</div>
-													</div>
-												</ContextMenuTrigger>
-												<ContextMenuContent>
-													{tempId && (
+														</button>
+													</ContextMenuTrigger>
+													<ContextMenuContent>
+														{tempId && (
+															<ContextMenuItem
+																onClick={() => {
+																	navigator.clipboard.writeText(tempId);
+																}}
+															>
+																<Copy className="w-4 h-4 mr-2" />
+																{tempId}
+															</ContextMenuItem>
+														)}
 														<ContextMenuItem
 															onClick={() => {
-																navigator.clipboard.writeText(tempId);
+																navigator.clipboard.writeText(session.id);
 															}}
 														>
 															<Copy className="w-4 h-4 mr-2" />
-															{tempId}
+															{session.id.slice(0, 16)}...
 														</ContextMenuItem>
-													)}
-													<ContextMenuItem
-														onClick={() => {
-															navigator.clipboard.writeText(session.id);
-														}}
-													>
-														<Copy className="w-4 h-4 mr-2" />
-														{session.id.slice(0, 16)}...
-													</ContextMenuItem>
-													<ContextMenuSeparator />
-													{onPinSession && (
-														<ContextMenuItem
-															onClick={() => onPinSession(session.id)}
-														>
-															<Pin className="w-4 h-4 mr-2" />
-															{isPinned ? t("projects.unpin") : t("projects.pin")}
-														</ContextMenuItem>
-													)}
-													{onRenameSession && (
-														<ContextMenuItem
-															onClick={() => onRenameSession(session.id)}
-														>
-															<Pencil className="w-4 h-4 mr-2" />
-															{t("common.rename")}
-														</ContextMenuItem>
-													)}
-													{(onPinSession || onRenameSession) && onDeleteSession && (
 														<ContextMenuSeparator />
-													)}
-													{onDeleteSession && (
-														<ContextMenuItem
-															variant="destructive"
-															onClick={() => {
-																setPendingDeleteSession({
-																	id: session.id,
-																	title: getDisplayPiTitle(session),
-																});
-															}}
-														>
-															<Trash2 className="w-4 h-4 mr-2" />
-															{t("common.delete")}
-														</ContextMenuItem>
-													)}
-												</ContextMenuContent>
-											</ContextMenu>
-										</div>
-									);
-								})}
-							</div>
-						)}
-					</div>
-				);
-			})}
-		</div>
-		<AlertDialog
-			open={pendingDeleteWorkdir !== null}
-			onOpenChange={(open) => {
-				if (!open && !isDeletingWorkdir) {
-					setPendingDeleteWorkdir(null);
-				}
-			}}
-		>
-			<AlertDialogContent>
-				<AlertDialogHeader>
-					<AlertDialogTitle>
-						{t("common.delete", "Delete")} {pendingDeleteWorkdir?.name}
-					</AlertDialogTitle>
-					<AlertDialogDescription>
-						This will permanently delete the shared project folder and all chats inside it.
-					</AlertDialogDescription>
-				</AlertDialogHeader>
-				<AlertDialogFooter>
-					<AlertDialogCancel disabled={isDeletingWorkdir}>
-						{t("common.cancel", "Cancel")}
-					</AlertDialogCancel>
-					<AlertDialogAction
-						onClick={(e) => {
-							e.preventDefault();
-							void confirmDeleteWorkdir();
-						}}
-						disabled={isDeletingWorkdir}
-					>
-						{isDeletingWorkdir ? "Deleting..." : t("common.delete", "Delete")}
-					</AlertDialogAction>
-				</AlertDialogFooter>
-			</AlertDialogContent>
-		</AlertDialog>
-		<AlertDialog
-			open={pendingDeleteSession !== null}
-			onOpenChange={(open) => {
-				if (!open && !isDeletingSession) {
-					setPendingDeleteSession(null);
-				}
-			}}
-		>
-			<AlertDialogContent>
-				<AlertDialogHeader>
-					<AlertDialogTitle>
-						{pendingDeleteSession?.title
-							? t("sessions.deleteTitle", { title: pendingDeleteSession.title })
-							: t("sessions.deleteChatTitle")}
-					</AlertDialogTitle>
-					<AlertDialogDescription>
-						{t("sessions.deleteDescription")}
-					</AlertDialogDescription>
-				</AlertDialogHeader>
-				<AlertDialogFooter>
-					<AlertDialogCancel disabled={isDeletingSession}>
-						{t("common.cancel", "Cancel")}
-					</AlertDialogCancel>
-					<AlertDialogAction
-						onClick={(e) => {
-							e.preventDefault();
-							void confirmDeleteSession();
-						}}
-						disabled={isDeletingSession}
-					>
-						{isDeletingSession ? "Deleting..." : t("common.delete", "Delete")}
-					</AlertDialogAction>
-				</AlertDialogFooter>
-			</AlertDialogContent>
-		</AlertDialog>
+														{onPinSession && (
+															<ContextMenuItem
+																onClick={() => onPinSession(session.id)}
+															>
+																<Pin className="w-4 h-4 mr-2" />
+																{isPinned
+																	? t("projects.unpin")
+																	: t("projects.pin")}
+															</ContextMenuItem>
+														)}
+														{onRenameSession && (
+															<ContextMenuItem
+																onClick={() => onRenameSession(session.id)}
+															>
+																<Pencil className="w-4 h-4 mr-2" />
+																{t("common.rename")}
+															</ContextMenuItem>
+														)}
+														{(onPinSession || onRenameSession) &&
+															onDeleteSession && <ContextMenuSeparator />}
+														{onDeleteSession && (
+															<ContextMenuItem
+																variant="destructive"
+																onClick={() => {
+																	setPendingDeleteSession({
+																		id: session.id,
+																		title: getDisplayPiTitle(session),
+																	});
+																}}
+															>
+																<Trash2 className="w-4 h-4 mr-2" />
+																{t("common.delete")}
+															</ContextMenuItem>
+														)}
+													</ContextMenuContent>
+												</ContextMenu>
+											</div>
+										);
+									})}
+								</div>
+							)}
+						</div>
+					);
+				})}
+			</div>
+			<AlertDialog
+				open={pendingDeleteWorkdir !== null}
+				onOpenChange={(open) => {
+					if (!open && !isDeletingWorkdir) {
+						setPendingDeleteWorkdir(null);
+					}
+				}}
+			>
+				<AlertDialogContent>
+					<AlertDialogHeader>
+						<AlertDialogTitle>
+							{t("common.delete", "Delete")} {pendingDeleteWorkdir?.name}
+						</AlertDialogTitle>
+						<AlertDialogDescription>
+							This will permanently delete the shared project folder and all
+							chats inside it.
+						</AlertDialogDescription>
+					</AlertDialogHeader>
+					<AlertDialogFooter>
+						<AlertDialogCancel disabled={isDeletingWorkdir}>
+							{t("common.cancel", "Cancel")}
+						</AlertDialogCancel>
+						<AlertDialogAction
+							onClick={(e) => {
+								e.preventDefault();
+								void confirmDeleteWorkdir();
+							}}
+							disabled={isDeletingWorkdir}
+						>
+							{isDeletingWorkdir ? "Deleting..." : t("common.delete", "Delete")}
+						</AlertDialogAction>
+					</AlertDialogFooter>
+				</AlertDialogContent>
+			</AlertDialog>
+			<AlertDialog
+				open={pendingDeleteSession !== null}
+				onOpenChange={(open) => {
+					if (!open && !isDeletingSession) {
+						setPendingDeleteSession(null);
+					}
+				}}
+			>
+				<AlertDialogContent>
+					<AlertDialogHeader>
+						<AlertDialogTitle>
+							{pendingDeleteSession?.title
+								? t("sessions.deleteTitle", {
+										title: pendingDeleteSession.title,
+									})
+								: t("sessions.deleteChatTitle")}
+						</AlertDialogTitle>
+						<AlertDialogDescription>
+							{t("sessions.deleteDescription")}
+						</AlertDialogDescription>
+					</AlertDialogHeader>
+					<AlertDialogFooter>
+						<AlertDialogCancel disabled={isDeletingSession}>
+							{t("common.cancel", "Cancel")}
+						</AlertDialogCancel>
+						<AlertDialogAction
+							onClick={(e) => {
+								e.preventDefault();
+								void confirmDeleteSession();
+							}}
+							disabled={isDeletingSession}
+						>
+							{isDeletingSession ? "Deleting..." : t("common.delete", "Delete")}
+						</AlertDialogAction>
+					</AlertDialogFooter>
+				</AlertDialogContent>
+			</AlertDialog>
 		</>
 	);
 }
@@ -851,10 +904,7 @@ export const SidebarSharedWorkspaces = memo(function SidebarSharedWorkspaces({
 										<WorkspaceIcon
 											icon={workspace.icon}
 											color={workspace.color}
-											className={cn(
-												"flex-shrink-0",
-												sizeClasses.workspaceIcon,
-											)}
+											className={cn("flex-shrink-0", sizeClasses.workspaceIcon)}
 										/>
 										<span
 											className={cn(
@@ -875,19 +925,14 @@ export const SidebarSharedWorkspaces = memo(function SidebarSharedWorkspaces({
 													"text-muted-foreground hover:text-foreground hover:bg-sidebar-accent opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity",
 													sizeClasses.buttonSize,
 												)}
-												title={t(
-													"sharedWorkspaces.settings",
-													"Settings",
-												)}
+												title={t("sharedWorkspaces.settings", "Settings")}
 											>
 												<Settings className={sizeClasses.iconSize} />
 											</button>
 											{onNewProjectInWorkspace && (
 												<button
 													type="button"
-													onClick={() =>
-														onNewProjectInWorkspace(workspace)
-													}
+													onClick={() => onNewProjectInWorkspace(workspace)}
 													className={cn(
 														"text-muted-foreground hover:text-foreground hover:bg-sidebar-accent opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity",
 														sizeClasses.buttonSize,
@@ -897,9 +942,7 @@ export const SidebarSharedWorkspaces = memo(function SidebarSharedWorkspaces({
 														"New project",
 													)}
 												>
-													<FolderPlus
-														className={sizeClasses.iconSize}
-													/>
+													<FolderPlus className={sizeClasses.iconSize} />
 												</button>
 											)}
 										</>
@@ -909,33 +952,21 @@ export const SidebarSharedWorkspaces = memo(function SidebarSharedWorkspaces({
 							<ContextMenuContent>
 								{onNewProjectInWorkspace && (
 									<ContextMenuItem
-										onClick={() =>
-											onNewProjectInWorkspace(workspace)
-										}
+										onClick={() => onNewProjectInWorkspace(workspace)}
 									>
 										<FolderPlus className="w-4 h-4 mr-2" />
-										{t(
-											"sharedWorkspaces.newProject",
-											"New project",
-										)}
+										{t("sharedWorkspaces.newProject", "New project")}
 									</ContextMenuItem>
 								)}
 								<ContextMenuSeparator />
-								<ContextMenuItem
-									onClick={() => onManageMembers(workspace)}
-								>
+								<ContextMenuItem onClick={() => onManageMembers(workspace)}>
 									<UserPlus className="w-4 h-4 mr-2" />
-									{t(
-										"sharedWorkspaces.manageMembers",
-										"Members",
-									)}
+									{t("sharedWorkspaces.manageMembers", "Members")}
 								</ContextMenuItem>
 								{canManage && (
 									<>
 										<ContextMenuItem
-											onClick={() =>
-												onManageWorkspace(workspace)
-											}
+											onClick={() => onManageWorkspace(workspace)}
 										>
 											<Pencil className="w-4 h-4 mr-2" />
 											{t("common.edit", "Edit")}
@@ -945,9 +976,7 @@ export const SidebarSharedWorkspaces = memo(function SidebarSharedWorkspaces({
 												<ContextMenuSeparator />
 												<ContextMenuItem
 													variant="destructive"
-													onClick={() =>
-														onDeleteWorkspace(workspace)
-													}
+													onClick={() => onDeleteWorkspace(workspace)}
 												>
 													<Trash2 className="w-4 h-4 mr-2" />
 													{t("common.delete", "Delete")}

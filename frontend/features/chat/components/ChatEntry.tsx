@@ -455,9 +455,7 @@ export function ChatEntry({
 	async function handleReset() {
 		if (!resetName.trim()) return;
 		if (!resetNameIsValid) {
-			setResetError(
-				t("assistant.nameValidationError"),
-			);
+			setResetError(t("assistant.nameValidationError"));
 			return;
 		}
 
@@ -618,9 +616,7 @@ export function ChatEntry({
 			const failures = results.filter((r) => r.status === "rejected");
 			if (failures.length > 0) {
 				console.error("Failed to delete some sessions:", failures);
-				setBulkDeleteError(
-					t("assistant.someSessionsFailedDelete"),
-				);
+				setBulkDeleteError(t("assistant.someSessionsFailedDelete"));
 				setSessions(previous);
 				setLatestSessionId(previous[0]?.id ?? null);
 			}
@@ -693,9 +689,7 @@ export function ChatEntry({
 					)}
 				>
 					<Plus className="w-4 h-4" />
-					<span className="text-sm">
-						{t("assistant.setupDefaultChat")}
-					</span>
+					<span className="text-sm">{t("assistant.setupDefaultChat")}</span>
 				</button>
 
 				<CreateAssistantDialog
@@ -829,9 +823,7 @@ export function ChatEntry({
 												size="sm"
 												onClick={() => setSelectedSessionIds(new Set())}
 												className="h-6 w-6 p-0"
-												title={
-													t("sessions.clearSelection")
-												}
+												title={t("sessions.clearSelection")}
 											>
 												<X className="w-3 h-3" />
 											</Button>
@@ -842,8 +834,7 @@ export function ChatEntry({
 											session.id === (activeSessionId ?? latestSessionId);
 										const isSelectedRow = selectedSessionIds.has(session.id);
 
-										const emptyTitle =
-											t("sessions.newSession");
+										const emptyTitle = t("sessions.newSession");
 										const displayTitle = session.title || emptyTitle;
 
 										const tempId = getTempIdFromSession(session);
@@ -976,11 +967,11 @@ export function ChatEntry({
 			>
 				<DialogContent>
 					<DialogHeader>
-						<DialogTitle>
-							{t("assistant.bulkDeleteTitle")}
-						</DialogTitle>
+						<DialogTitle>{t("assistant.bulkDeleteTitle")}</DialogTitle>
 						<DialogDescription>
-							{t("assistant.bulkDeleteDescription", { count: selectedSessionIds.size })}
+							{t("assistant.bulkDeleteDescription", {
+								count: selectedSessionIds.size,
+							})}
 						</DialogDescription>
 					</DialogHeader>
 					{bulkDeleteError && (
@@ -1115,9 +1106,7 @@ function CreateAssistantDialog({
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent>
 				<DialogHeader>
-					<DialogTitle>
-						{t("assistant.nameYourAssistant")}
-					</DialogTitle>
+					<DialogTitle>{t("assistant.nameYourAssistant")}</DialogTitle>
 					<DialogDescription>
 						{isRename
 							? t("assistant.updateAssistantDescription")
@@ -1132,9 +1121,7 @@ function CreateAssistantDialog({
 						</Label>
 						<Input
 							id="assistant-name"
-							placeholder={
-								t("assistant.assistantNamePlaceholder")
-							}
+							placeholder={t("assistant.assistantNamePlaceholder")}
 							value={name}
 							onChange={(e) => onNameChange(e.target.value)}
 							onKeyDown={(e) => {
@@ -1162,9 +1149,7 @@ function CreateAssistantDialog({
 					</Button>
 					<Button onClick={onSubmit} disabled={loading || !name.trim()}>
 						{loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-						{isRename
-							? t("common.save")
-							: t("common.create")}
+						{isRename ? t("common.save") : t("common.create")}
 					</Button>
 				</DialogFooter>
 			</DialogContent>
@@ -1199,9 +1184,7 @@ function ResetAssistantDialog({
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent>
 				<DialogHeader>
-					<DialogTitle>
-						{t("assistant.resetDefaultChat")}
-					</DialogTitle>
+					<DialogTitle>{t("assistant.resetDefaultChat")}</DialogTitle>
 					<DialogDescription>
 						{t("assistant.resetDescription")}
 					</DialogDescription>
@@ -1234,9 +1217,7 @@ function ResetAssistantDialog({
 						onClick={onSubmit}
 						disabled={loading || !name.trim() || !nameIsValid}
 					>
-						{loading
-							? t("common.resetting")
-							: t("common.reset")}
+						{loading ? t("common.resetting") : t("common.reset")}
 					</Button>
 				</DialogFooter>
 			</DialogContent>
@@ -1269,9 +1250,7 @@ function RenameSessionDialog({
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent>
 				<DialogHeader>
-					<DialogTitle>
-						{t("dialogs.renameSession")}
-					</DialogTitle>
+					<DialogTitle>{t("dialogs.renameSession")}</DialogTitle>
 					<DialogDescription>
 						{t("dialogs.renameSessionDescription")}
 					</DialogDescription>
@@ -1279,9 +1258,7 @@ function RenameSessionDialog({
 
 				<div className="grid gap-4 py-4">
 					<div className="grid gap-2">
-						<Label htmlFor="session-title">
-							{t("common.title")}
-						</Label>
+						<Label htmlFor="session-title">{t("common.title")}</Label>
 						<Input
 							id="session-title"
 							placeholder={t("dialogs.sessionTitle")}
@@ -1340,9 +1317,7 @@ function DeleteSessionDialog({
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent>
 				<DialogHeader>
-					<DialogTitle>
-						{t("dialogs.deleteSession")}
-					</DialogTitle>
+					<DialogTitle>{t("dialogs.deleteSession")}</DialogTitle>
 					<DialogDescription>
 						{t("dialogs.deleteSessionDescription", { title })}
 					</DialogDescription>
@@ -1353,9 +1328,7 @@ function DeleteSessionDialog({
 						{t("common.cancel")}
 					</Button>
 					<Button variant="destructive" onClick={onSubmit} disabled={loading}>
-						{loading
-							? t("common.deleting")
-							: t("common.delete")}
+						{loading ? t("common.deleting") : t("common.delete")}
 					</Button>
 				</DialogFooter>
 			</DialogContent>

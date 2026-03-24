@@ -2094,8 +2094,16 @@ export function preferStableSessionTitle(
 	localizedActiveSession: string,
 ): string | null | undefined {
 	if (
-		!isGenericSessionTitle(previousTitle, localizedNewSession, localizedActiveSession) &&
-		isGenericSessionTitle(incomingTitle, localizedNewSession, localizedActiveSession)
+		!isGenericSessionTitle(
+			previousTitle,
+			localizedNewSession,
+			localizedActiveSession,
+		) &&
+		isGenericSessionTitle(
+			incomingTitle,
+			localizedNewSession,
+			localizedActiveSession,
+		)
 	) {
 		return previousTitle;
 	}

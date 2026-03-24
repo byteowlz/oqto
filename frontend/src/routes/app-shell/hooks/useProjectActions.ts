@@ -2,6 +2,7 @@ import type {
 	ResourceEntry,
 	WorkspaceOverviewValues,
 } from "@/features/sessions/components/WorkspaceOverviewForm";
+import { useMountEffect } from "@/hooks/use-mount-effect";
 import type { PiModelInfo } from "@/lib/api/default-chat";
 import {
 	type CreateProjectFromTemplateRequest,
@@ -62,7 +63,10 @@ export interface ProjectActionsState {
 
 	// Actions
 	handleCreateProjectFromTemplate: () => Promise<void>;
-	openNewProjectForWorkspace: (workspacePath: string, sharedWorkspaceId?: string) => void;
+	openNewProjectForWorkspace: (
+		workspacePath: string,
+		sharedWorkspaceId?: string,
+	) => void;
 
 	// Workspace directories
 	workspaceDirectories: WorkspaceDirectory[];
@@ -89,7 +93,7 @@ export function useProjectActions(
 	workspacePath?: string | null,
 ): ProjectActionsState {
 	// Dialog states
-	const [newProjectDialogOpen, setNewProjectDialogOpen] = useState(false);
+	const [newProjectDialogOpen, setNewProjectDialogOpenRaw] = useState(false);
 	const [projectTemplates, setProjectTemplates] = useState<
 		ProjectTemplateEntry[]
 	>([]);
@@ -101,7 +105,8 @@ export function useProjectActions(
 	>(null);
 	const [newProjectPath, setNewProjectPath] = useState("");
 	const [newProjectShared, setNewProjectShared] = useState(false);
-	const [newProjectSharedWorkspaceId, setNewProjectSharedWorkspaceId] = useState<string | null>(null);
+	const [newProjectSharedWorkspaceId, setNewProjectSharedWorkspaceId] =
+		useState<string | null>(null);
 	const [newProjectSubmitting, setNewProjectSubmitting] = useState(false);
 	const [newProjectError, setNewProjectError] = useState<string | null>(null);
 	const [newProjectSettings, setNewProjectSettings] =
@@ -140,36 +145,34 @@ export function useProjectActions(
 		lastTemplatePathRef.current = null;
 	}, []);
 
-	/** Open the new-project dialog pre-configured for a shared workspace. */
-	const openNewProjectForWorkspace = useCallback(
-		(workspacePath: string, sharedWorkspaceId?: string) => {
-			resetNewProjectForm();
-			// For shared workspaces, path is relative (just project name).
-			// For personal workspaces, pre-fill with workspace path prefix.
-			if (sharedWorkspaceId) {
-				setNewProjectPath("");
-				setNewProjectSharedWorkspaceId(sharedWorkspaceId);
-			} else {
-				const prefix = workspacePath.endsWith("/")
-					? workspacePath
-					: `${workspacePath}/`;
-				setNewProjectPath(prefix);
-			}
-			setNewProjectShared(true);
-			setNewProjectDialogOpen(true);
-		},
-		[resetNewProjectForm],
-	);
+	const templateRequestIdRef = useRef(0);
 
-	const handleNewProjectDialogChange = useCallback(
-		(open: boolean) => {
-			setNewProjectDialogOpen(open);
-			if (!open) {
-				resetNewProjectForm();
+	const loadTemplates = useCallback(async () => {
+		if (typeof window === "undefined") return;
+		const requestId = ++templateRequestIdRef.current;
+		setTemplatesLoading(true);
+		setTemplatesError(null);
+		try {
+			const response = await listProjectTemplates();
+			if (requestId !== templateRequestIdRef.current) return;
+			setTemplatesConfigured(response.configured);
+			setProjectTemplates(response.templates);
+			if (response.templates.length > 0) {
+				setSelectedTemplatePath((prev) => prev ?? response.templates[0].path);
 			}
-		},
-		[resetNewProjectForm],
-	);
+		} catch (err) {
+			if (requestId !== templateRequestIdRef.current) return;
+			console.error("Failed to load templates:", err);
+			setTemplatesError(
+				err instanceof Error ? err.message : "Failed to load templates",
+			);
+			setProjectTemplates([]);
+		} finally {
+			if (requestId === templateRequestIdRef.current) {
+				setTemplatesLoading(false);
+			}
+		}
+	}, []);
 
 	const refreshWorkspaceDirectories = useCallback(() => {
 		if (typeof window === "undefined") return Promise.resolve();
@@ -219,6 +222,50 @@ export function useProjectActions(
 			setSettingsLoading(false);
 		}
 	}, [workspacePath]);
+
+	const loadDialogData = useCallback(() => {
+		void Promise.all([loadSettingsOptions(), loadTemplates()]);
+	}, [loadSettingsOptions, loadTemplates]);
+
+	const handleNewProjectDialogChange = useCallback(
+		(open: boolean) => {
+			setNewProjectDialogOpenRaw(open);
+			if (!open) {
+				resetNewProjectForm();
+				return;
+			}
+			loadDialogData();
+		},
+		[loadDialogData, resetNewProjectForm],
+	);
+
+	const setNewProjectDialogOpen = useCallback(
+		(open: boolean) => {
+			handleNewProjectDialogChange(open);
+		},
+		[handleNewProjectDialogChange],
+	);
+
+	/** Open the new-project dialog pre-configured for a shared workspace. */
+	const openNewProjectForWorkspace = useCallback(
+		(workspacePath: string, sharedWorkspaceId?: string) => {
+			resetNewProjectForm();
+			// For shared workspaces, path is relative (just project name).
+			// For personal workspaces, pre-fill with workspace path prefix.
+			if (sharedWorkspaceId) {
+				setNewProjectPath("");
+				setNewProjectSharedWorkspaceId(sharedWorkspaceId);
+			} else {
+				const prefix = workspacePath.endsWith("/")
+					? workspacePath
+					: `${workspacePath}/`;
+				setNewProjectPath(prefix);
+			}
+			setNewProjectShared(true);
+			handleNewProjectDialogChange(true);
+		},
+		[handleNewProjectDialogChange, resetNewProjectForm],
+	);
 
 	const handleNewProjectPathChange = useCallback((value: string) => {
 		setNewProjectPath(value);
@@ -283,23 +330,19 @@ export function useProjectActions(
 		[availableExtensions, availableModels, availableSkills],
 	);
 
+	// useeffect-guardrail: allow - synchronize dialog defaults when template/options change
 	useEffect(() => {
 		if (!newProjectDialogOpen) return;
-		if (selectedTemplatePath === lastTemplatePathRef.current) return;
-		const nextValues = buildSettingsFromDefaults(
-			selectedTemplate?.defaults ?? null,
-		);
-		setNewProjectSettings(nextValues);
-		lastTemplatePathRef.current = selectedTemplatePath;
-	}, [
-		buildSettingsFromDefaults,
-		newProjectDialogOpen,
-		selectedTemplate?.defaults,
-		selectedTemplatePath,
-	]);
 
-	useEffect(() => {
-		if (!newProjectDialogOpen) return;
+		if (selectedTemplatePath !== lastTemplatePathRef.current) {
+			const nextValues = buildSettingsFromDefaults(
+				selectedTemplate?.defaults ?? null,
+			);
+			setNewProjectSettings(nextValues);
+			lastTemplatePathRef.current = selectedTemplatePath;
+			return;
+		}
+
 		setNewProjectSettings((prev) => {
 			let next = prev;
 			if (!prev.defaultModelRef && availableModels[0]) {
@@ -331,7 +374,10 @@ export function useProjectActions(
 		availableExtensions,
 		availableModels,
 		availableSkills,
+		buildSettingsFromDefaults,
 		newProjectDialogOpen,
+		selectedTemplate?.defaults,
+		selectedTemplatePath,
 	]);
 
 	const handleCreateProjectFromTemplate = useCallback(async () => {
@@ -374,7 +420,8 @@ export function useProjectActions(
 				}
 
 				if (newProjectSettings.defaultModelRef) {
-					const [provider, model] = newProjectSettings.defaultModelRef.split("/");
+					const [provider, model] =
+						newProjectSettings.defaultModelRef.split("/");
 					if (provider && model) {
 						await updateSettingsValues(
 							"pi-agent",
@@ -418,46 +465,9 @@ export function useProjectActions(
 	]);
 
 	// Load workspace directories on mount
-	useEffect(() => {
-		refreshWorkspaceDirectories();
-	}, [refreshWorkspaceDirectories]);
-
-	// Load settings options when dialog opens
-	useEffect(() => {
-		if (!newProjectDialogOpen) return;
-		void loadSettingsOptions();
-	}, [loadSettingsOptions, newProjectDialogOpen]);
-
-	// Load templates when dialog opens
-	useEffect(() => {
-		if (!newProjectDialogOpen || typeof window === "undefined") return;
-		let active = true;
-		setTemplatesLoading(true);
-		setTemplatesError(null);
-		listProjectTemplates()
-			.then((response) => {
-				if (!active) return;
-				setTemplatesConfigured(response.configured);
-				setProjectTemplates(response.templates);
-				if (response.templates.length > 0) {
-					setSelectedTemplatePath((prev) => prev ?? response.templates[0].path);
-				}
-			})
-			.catch((err) => {
-				if (!active) return;
-				console.error("Failed to load templates:", err);
-				setTemplatesError(
-					err instanceof Error ? err.message : "Failed to load templates",
-				);
-				setProjectTemplates([]);
-			})
-			.finally(() => {
-				if (active) setTemplatesLoading(false);
-			});
-		return () => {
-			active = false;
-		};
-	}, [newProjectDialogOpen]);
+	useMountEffect(() => {
+		void refreshWorkspaceDirectories();
+	});
 
 	return {
 		newProjectDialogOpen,

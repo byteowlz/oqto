@@ -38,13 +38,13 @@ use fuser::{
 };
 use glob::Pattern;
 use log::{debug, error, info, warn};
-use oqto::local::{GuardConfig, GuardPolicy, SandboxConfig};
+use oqto_sandbox::{GuardConfig, GuardPolicy, SandboxConfig};
 use rustix::process::getuid;
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
-use std::sync::RwLock;
+use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// TTL for FUSE attribute caching
@@ -162,8 +162,8 @@ impl GuardedFs {
 
         // Initialize root inode
         {
-            let mut inodes = fs.inodes.write().unwrap();
-            let mut path_to_inode = fs.path_to_inode.write().unwrap();
+            let mut inodes = fs.inodes_write();
+            let mut path_to_inode = fs.path_to_inode_write();
 
             inodes.insert(
                 FUSE_ROOT_ID,
@@ -181,6 +181,76 @@ impl GuardedFs {
         fs.init_guarded_paths();
 
         fs
+    }
+
+    fn inodes_read(&self) -> RwLockReadGuard<'_, HashMap<u64, InodeEntry>> {
+        match self.inodes.read() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                warn!("inodes lock poisoned (read), continuing with inner state");
+                poisoned.into_inner()
+            }
+        }
+    }
+
+    fn inodes_write(&self) -> RwLockWriteGuard<'_, HashMap<u64, InodeEntry>> {
+        match self.inodes.write() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                warn!("inodes lock poisoned (write), continuing with inner state");
+                poisoned.into_inner()
+            }
+        }
+    }
+
+    fn path_to_inode_read(&self) -> RwLockReadGuard<'_, HashMap<PathBuf, u64>> {
+        match self.path_to_inode.read() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                warn!("path_to_inode lock poisoned (read), continuing with inner state");
+                poisoned.into_inner()
+            }
+        }
+    }
+
+    fn path_to_inode_write(&self) -> RwLockWriteGuard<'_, HashMap<PathBuf, u64>> {
+        match self.path_to_inode.write() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                warn!("path_to_inode lock poisoned (write), continuing with inner state");
+                poisoned.into_inner()
+            }
+        }
+    }
+
+    fn next_inode_write(&self) -> RwLockWriteGuard<'_, u64> {
+        match self.next_inode.write() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                warn!("next_inode lock poisoned (write), continuing with inner state");
+                poisoned.into_inner()
+            }
+        }
+    }
+
+    fn approvals_read(&self) -> RwLockReadGuard<'_, HashMap<ApprovalKey, SystemTime>> {
+        match self.approvals.read() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                warn!("approvals lock poisoned (read), continuing with inner state");
+                poisoned.into_inner()
+            }
+        }
+    }
+
+    fn approvals_write(&self) -> RwLockWriteGuard<'_, HashMap<ApprovalKey, SystemTime>> {
+        match self.approvals.write() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                warn!("approvals lock poisoned (write), continuing with inner state");
+                poisoned.into_inner()
+            }
+        }
     }
 
     /// Initialize the directory structure for guarded paths
@@ -206,7 +276,7 @@ impl GuardedFs {
 
             // Check if already exists
             {
-                let path_to_inode = self.path_to_inode.read().unwrap();
+                let path_to_inode = self.path_to_inode_read();
                 if let Some(&ino) = path_to_inode.get(&current) {
                     parent_ino = ino;
                     continue;
@@ -215,7 +285,7 @@ impl GuardedFs {
 
             // Create new inode
             let ino = {
-                let mut next = self.next_inode.write().unwrap();
+                let mut next = self.next_inode_write();
                 let ino = *next;
                 *next += 1;
                 ino
@@ -225,8 +295,8 @@ impl GuardedFs {
             let name = component.as_os_str().to_string_lossy().to_string();
 
             {
-                let mut inodes = self.inodes.write().unwrap();
-                let mut path_to_inode = self.path_to_inode.write().unwrap();
+                let mut inodes = self.inodes_write();
+                let mut path_to_inode = self.path_to_inode_write();
 
                 inodes.insert(
                     ino,
@@ -250,7 +320,7 @@ impl GuardedFs {
     fn get_or_create_inode(&self, path: &Path) -> Option<u64> {
         // Check existing
         {
-            let path_to_inode = self.path_to_inode.read().unwrap();
+            let path_to_inode = self.path_to_inode_read();
             if let Some(&ino) = path_to_inode.get(path) {
                 return Some(ino);
             }
@@ -262,7 +332,7 @@ impl GuardedFs {
 
     /// Get the real path for an inode
     fn get_real_path(&self, ino: u64) -> Option<PathBuf> {
-        let inodes = self.inodes.read().unwrap();
+        let inodes = self.inodes_read();
         inodes.get(&ino).map(|e| e.real_path.clone())
     }
 
@@ -318,7 +388,7 @@ impl GuardedFs {
             operation: operation.to_string(),
         };
 
-        let approvals = self.approvals.read().unwrap();
+        let approvals = self.approvals_read();
         if let Some(expiry) = approvals.get(&key)
             && *expiry > SystemTime::now()
         {
@@ -337,7 +407,7 @@ impl GuardedFs {
         // Cache for 8 hours (session duration)
         let expiry = SystemTime::now() + Duration::from_secs(8 * 60 * 60);
 
-        let mut approvals = self.approvals.write().unwrap();
+        let mut approvals = self.approvals_write();
         approvals.insert(key, expiry);
     }
 

@@ -16,6 +16,7 @@ use config::{Config, Environment, File, FileFormat};
 use log::{LevelFilter, debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
+use tower_http::services::{ServeDir, ServeFile};
 
 #[cfg(unix)]
 use hyper::server::conn::http1;
@@ -213,7 +214,7 @@ struct ServeCommand {
     #[arg(short, long, default_value = "8080")]
     port: u16,
     /// Default container image
-    #[arg(long, default_value = "oqto-dev:latest")]
+    #[arg(long, default_value = "oqto:latest")]
     image: String,
     /// Base port for session allocation
     #[arg(long, default_value = "41820")]
@@ -990,7 +991,7 @@ impl Default for ContainerRuntimeConfig {
         Self {
             runtime: None,
             binary: None,
-            default_image: "oqto-dev:latest".to_string(),
+            default_image: "oqto:latest".to_string(),
             base_port: 41820,
             user_data_path: None,
             skel_path: None,
@@ -1600,6 +1601,42 @@ fn parse_duration(s: &str) -> Result<i64> {
     Ok(seconds)
 }
 
+fn resolve_frontend_dir() -> Option<PathBuf> {
+    let candidates = [
+        std::env::var("OQTO_FRONTEND_DIR").ok().map(PathBuf::from),
+        Some(PathBuf::from("/var/www/oqto")),
+        Some(PathBuf::from("/usr/local/share/oqto/frontend/dist")),
+    ];
+
+    candidates.into_iter().flatten().find(|dir| dir.join("index.html").is_file())
+}
+
+fn with_frontend_static_if_available(api_router: axum::Router) -> axum::Router {
+    match resolve_frontend_dir() {
+        Some(frontend_dir) => {
+            info!(
+                "Serving frontend static files from {}",
+                frontend_dir.display()
+            );
+            let spa_fallback = ServeFile::new(frontend_dir.join("index.html"));
+            let static_service = ServeDir::new(frontend_dir)
+                .append_index_html_on_directories(true)
+                .fallback(spa_fallback);
+
+            axum::Router::new()
+                .nest("/api", api_router)
+                .fallback_service(axum::routing::get_service(static_service))
+        }
+        None => {
+            warn!(
+                "No frontend static files found. API is available under /api, but / will return 404. \
+Set OQTO_FRONTEND_DIR or deploy frontend to /var/www/oqto"
+            );
+            axum::Router::new().nest("/api", api_router)
+        }
+    }
+}
+
 async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     info!("Starting workspace backend server...");
 
@@ -1706,7 +1743,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         };
 
         // Load sandbox config from separate file (~/.config/oqto/sandbox.toml)
-        let sandbox_config = match local::SandboxConfig::load_global() {
+        let sandbox_config = match oqto_sandbox::SandboxConfig::load_global() {
             Ok(config) => {
                 if config.enabled {
                     info!("Sandbox enabled globally");
@@ -1773,7 +1810,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     };
 
     // Session config: CLI args override config file values
-    let default_image = if cmd.image != "oqto-dev:latest" {
+    let default_image = if cmd.image != "oqto:latest" {
         cmd.image.clone()
     } else {
         ctx.config.container.default_image.clone()
@@ -1829,6 +1866,21 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
 
     // Determine single_user mode from local config
     let single_user = ctx.config.local.single_user;
+
+    if local_mode && single_user {
+        let runner = runner::client::RunnerClient::default();
+        match runner.ensure_ready_with_recovery().await {
+            Ok(()) => info!(
+                "Single-user runner readiness verified (socket={})",
+                runner.socket_path().display()
+            ),
+            Err(err) => warn!(
+                "Single-user runner not ready at startup (socket={}, error={}); runtime requests will retry with bounded recovery",
+                runner.socket_path().display(),
+                err
+            ),
+        }
+    }
 
     let eavs_url = if local_mode {
         ctx.config.eavs.as_ref().map(|e| e.base_url.clone())
@@ -1941,7 +1993,9 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
 
     // Create session service based on runtime mode
     let mut session_service = if local_mode {
-        let local_rt = local_runtime.expect("local runtime should be set in local mode");
+        let Some(local_rt) = local_runtime else {
+            anyhow::bail!("local runtime should be set in local mode");
+        };
         let runner = runner::client::RunnerClient::default();
         if let Some(eavs) = eavs_client.clone() {
             session::SessionService::with_runner_and_eavs(
@@ -1960,9 +2014,9 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             )
         }
     } else {
-        let container_rt = container_runtime
-            .clone()
-            .expect("container runtime should be set in container mode");
+        let Some(container_rt) = container_runtime.clone() else {
+            anyhow::bail!("container runtime should be set in container mode");
+        };
         if let Some(eavs) = eavs_client.clone() {
             session::SessionService::with_eavs(
                 session_repo,
@@ -2118,8 +2172,8 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
 
     // Create settings services
     let oqto_schema: serde_json::Value =
-        serde_json::from_str(include_str!("../examples/backend.config.schema.json"))
-            .expect("Failed to parse embedded oqto schema");
+        serde_json::from_str(include_str!("../examples/backend.config.schema.json",))
+            .context("Failed to parse embedded oqto schema")?;
 
     let oqto_config_dir = default_config_dir()?;
     let settings_oqto = settings::SettingsService::new(oqto_schema, oqto_config_dir, "config.toml")
@@ -2154,11 +2208,11 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     // Create Pi agent settings services (settings.json + models.json)
     // Schemas are embedded at compile time so they work on any deployment.
     let pi_settings_schema: serde_json::Value =
-        serde_json::from_str(include_str!("../schemas/pi-agent/settings.schema.json"))
-            .expect("embedded pi-agent settings schema must be valid JSON");
+        serde_json::from_str(include_str!("../schemas/pi-agent/settings.schema.json",))
+            .context("embedded pi-agent settings schema must be valid JSON")?;
     let pi_models_schema: serde_json::Value =
-        serde_json::from_str(include_str!("../schemas/pi-agent/models.schema.json"))
-            .expect("embedded pi-agent models schema must be valid JSON");
+        serde_json::from_str(include_str!("../schemas/pi-agent/models.schema.json",))
+            .context("embedded pi-agent models schema must be valid JSON")?;
 
     let pi_config_dir = dirs::home_dir()
         .map(|home| home.join(".pi").join("agent"))
@@ -2334,19 +2388,19 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         info!("Skipping shared hstry client in multi-user mode (per-user hstry via runner)");
     } else if ctx.config.hstry.enabled {
         // Always auto-start hstry daemon and connect.
-        let hstry_config = hstry::HstryServiceConfig {
+        let hstry_config = history::HstryServiceConfig {
             binary: ctx.config.hstry.binary.clone(),
             auto_start: true,
             startup_timeout: std::time::Duration::from_secs(10),
         };
-        let hstry_manager = hstry::HstryServiceManager::new(hstry_config);
+        let hstry_manager = history::HstryServiceManager::new(hstry_config);
 
         // Ensure daemon is running (auto-starts if needed)
         match hstry_manager.ensure_running().await {
             Ok(()) => {
                 info!("hstry daemon is running");
                 // Create client and connect
-                let hstry_client = hstry::HstryClient::new();
+                let hstry_client = history::HstryClient::new();
                 if let Err(e) = hstry_client.connect().await {
                     warn!(
                         "Failed to connect to hstry daemon: {}. Will retry on first use.",
@@ -2460,7 +2514,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     // internal services, containers) must use /api/* paths.
     let admin_state = state.clone();
     let api_router = api::create_router_with_config(state, ctx.config.server.max_upload_size_mb);
-    let app = axum::Router::new().nest("/api", api_router);
+    let app = with_frontend_static_if_available(api_router);
 
     #[cfg(unix)]
     if let Some(ref socket_path) = ctx.config.server.admin_socket_path {
@@ -2517,17 +2571,21 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     // Set up graceful shutdown
     let shutdown_signal = async move {
         let ctrl_c = async {
-            tokio::signal::ctrl_c()
-                .await
-                .expect("failed to install Ctrl+C handler");
+            if let Err(err) = tokio::signal::ctrl_c().await {
+                tracing::error!(error = %err, "failed to install Ctrl+C handler");
+            }
         };
 
         #[cfg(unix)]
         let terminate = async {
-            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-                .expect("failed to install signal handler")
-                .recv()
-                .await;
+            match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+                Ok(mut sigterm) => {
+                    sigterm.recv().await;
+                }
+                Err(err) => {
+                    tracing::error!(error = %err, "failed to install signal handler");
+                }
+            }
         };
 
         #[cfg(not(unix))]
@@ -2582,6 +2640,16 @@ async fn backfill_sessions_for_target(
     let Some(runner) = resolve_runner_for_target(state, user_id, target).await? else {
         return Ok(0);
     };
+
+    if let Err(err) = runner
+        .repair_workspace_chat_history(Some(10_000), None)
+        .await
+    {
+        warn!(
+            "workspace chat history repair failed before session target backfill (user={} target={:?}): {}",
+            user_id, target, err
+        );
+    }
 
     let response = runner
         .list_workspace_chat_sessions(None, true, None)

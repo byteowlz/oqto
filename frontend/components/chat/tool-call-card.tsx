@@ -863,7 +863,10 @@ export function ToolCallCard({
 	const toolName = tool || "Unknown Tool";
 	const status = state?.status;
 	const input = state?.input;
-	const summary = getToolSummary(toolName, input as Record<string, unknown> | undefined);
+	const summary = getToolSummary(
+		toolName,
+		input as Record<string, unknown> | undefined,
+	);
 	const title = summary || state?.title || toolName;
 	const output = state?.output;
 	const duration = formatDuration(state?.time?.start, state?.time?.end);

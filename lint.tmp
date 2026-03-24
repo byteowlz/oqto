@@ -1,0 +1,2108 @@
+>> Syncing backend to 3070...
+>> Building on 3070: cargo  clippy
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(rename = "startLine", skip_serializing_if = "Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(rename = "endLine", skip_serializing_if = "Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(rename = "startCol", skip_serializing_if = "Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(rename = "endCol", skip_serializing_if = "Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(rename = "mimeType", default, skip_serializing_if =
+"Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(default, skip_serializing_if = "is_default_format")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(default, skip_serializing_if = "Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(default, skip_serializing_if = "is_default_visibility")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(default, skip_serializing_if = "Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(default, skip_serializing_if = "Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(default, skip_serializing_if = "is_default_status")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(default, skip_serializing_if = "Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(default, skip_serializing_if = "Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(default, skip_serializing_if = "Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(default, skip_serializing_if = "Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(rename = "durationMs", default, skip_serializing_if =
+"Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(default, skip_serializing_if = "Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(default, skip_serializing_if = "Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(default, skip_serializing_if = "Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(rename = "originText", default, skip_serializing_if =
+"Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(default, skip_serializing_if = "Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(default, skip_serializing_if = "Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(rename = "targetUri", default, skip_serializing_if =
+"Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(rename = "targetRange", default, skip_serializing_if =
+"Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(rename = "originText", default, skip_serializing_if =
+"Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(default, skip_serializing_if = "Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(default, skip_serializing_if = "Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(default, skip_serializing_if = "Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(default, skip_serializing_if = "Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(rename = "durationSec", default, skip_serializing_if =
+"Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(default, skip_serializing_if = "Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(default, skip_serializing_if = "Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(rename = "durationSec", default, skip_serializing_if =
+"Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(default, skip_serializing_if = "Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(default, skip_serializing_if = "Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(default, skip_serializing_if = "Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(default, skip_serializing_if = "Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(rename = "sizeBytes", default, skip_serializing_if =
+"Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(default, skip_serializing_if = "Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(default, skip_serializing_if = "Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(default, skip_serializing_if = "Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(default, skip_serializing_if = "Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(default, skip_serializing_if = "Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(default, skip_serializing_if = "Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(rename = "cacheRead", default, skip_serializing_if =
+"Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(rename = "cacheWrite", default, skip_serializing_if =
+"Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(default, skip_serializing_if = "Vec::is_empty")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(rename = "completedAt", default, skip_serializing_if =
+"Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(default, skip_serializing_if = "Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(default, skip_serializing_if = "Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(rename = "costUsd", default, skip_serializing_if = "Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(rename = "parentId", default, skip_serializing_if =
+"Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(default, skip_serializing_if = "Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(default, skip_serializing_if = "Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(rename = "externalId", default, skip_serializing_if =
+"Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(rename = "readableId", default, skip_serializing_if =
+"Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(default, skip_serializing_if = "Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(default, skip_serializing_if = "Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(rename = "projectName", default, skip_serializing_if =
+"Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(default, skip_serializing_if = "Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(rename = "tokensIn", default, skip_serializing_if =
+"Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(rename = "tokensOut", default, skip_serializing_if =
+"Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(rename = "costUsd", default, skip_serializing_if = "Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(rename = "parentId", default, skip_serializing_if =
+"Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(default, skip_serializing_if = "Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(default, skip_serializing_if = "Vec::is_empty")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(default, skip_serializing_if = "Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(default, skip_serializing_if = "Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(default, skip_serializing_if = "Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(default, skip_serializing_if = "Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(rename = "durationMs", default, skip_serializing_if =
+"Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(default, skip_serializing_if = "Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(rename = "costUsd", default, skip_serializing_if = "Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(default, skip_serializing_if = "Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(default, skip_serializing_if = "Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(skip_serializing_if = "Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(skip_serializing_if = "Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(skip_serializing_if = "Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(skip_serializing_if = "Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(skip_serializing_if = "Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(skip_serializing_if = "Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(skip_serializing)]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(skip_serializing)]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[1m[33mwarning[0m[1m: empty line after doc comment[0m
+  [1m[94m--> [0mcrates/oqto/src/api/ws_multiplexed/history.rs:58:1
+   [1m[94m|[0m
+[1m[94m58[0m [1m[94m|[0m [1m[33m/[0m /// Handle TRX channel commands.
+[1m[94m59[0m [1m[94m|[0m [1m[33m|[0m
+   [1m[94m|[0m [1m[33m|_^[0m
+[1m[94m60[0m [1m[94m|[0m   pub(super) async fn handle_trx_command(
+   [1m[94m|[0m   [1m[94m--------------------------------------[0m [1m[94mthe comment documents this function[0m
+   [1m[94m|[0m
+   [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#empty_line_after_doc_comments
+   [1m[94m= [0m[1mnote[0m: `#[warn(clippy::empty_line_after_doc_comments)]` on by default
+   [1m[94m= [0m[1mhelp[0m: if the empty line is unintentional, remove it
+
+[1m[33mwarning[0m[1m: empty line after doc comment[0m
+   [1m[94m--> [0mcrates/oqto/src/api/ws_multiplexed/history.rs:218:1
+    [1m[94m|[0m
+[1m[94m218[0m [1m[94m|[0m [1m[33m/[0m /// Handle Bus channel commands.
+[1m[94m219[0m [1m[94m|[0m [1m[33m|[0m
+    [1m[94m|[0m [1m[33m|_^[0m
+[1m[94m220[0m [1m[94m|[0m   pub(super) async fn handle_session_command(
+    [1m[94m|[0m   [1m[94m------------------------------------------[0m [1m[94mthe comment documents this function[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#empty_line_after_doc_comments
+    [1m[94m= [0m[1mhelp[0m: if the empty line is unintentional, remove it
+
+[1m[33mwarning[0m[1m: unused variable: `linux_users`[0m
+   [1m[94m--> [0mcrates/oqto/src/api/handlers/auth.rs:475:21
+    [1m[94m|[0m
+[1m[94m475[0m [1m[94m|[0m         if let Some(ref linux_users) = state.linux_users {
+    [1m[94m|[0m                     [1m[33m^^^^^^^^^^^^^^^[0m [1m[33mhelp: if this is intentional, prefix it with an underscore: `_linux_users`[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mnote[0m: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+[1m[33mwarning[0m[1m: unused variable: `linux_users`[0m
+   [1m[94m--> [0mcrates/oqto/src/api/handlers/auth.rs:555:17
+    [1m[94m|[0m
+[1m[94m555[0m [1m[94m|[0m     if let Some(ref linux_users) = state.linux_users {
+    [1m[94m|[0m                 [1m[33m^^^^^^^^^^^^^^^[0m [1m[33mhelp: if this is intentional, prefix it with an underscore: `_linux_users`[0m
+
+[1m[33mwarning[0m[1m: unused variable: `selected_extensions`[0m
+   [1m[94m--> [0mcrates/oqto/src/api/handlers/projects.rs:970:9
+    [1m[94m|[0m
+[1m[94m970[0m [1m[94m|[0m     let selected_extensions =
+    [1m[94m|[0m         [1m[33m^^^^^^^^^^^^^^^^^^^[0m [1m[33mhelp: if this is intentional, prefix it with an underscore: `_selected_extensions`[0m
+
+[1m[33mwarning[0m[1m: this `if` statement can be collapsed[0m
+   [1m[94m--> [0mcrates/oqto/src/api/handlers/admin.rs:879:9
+    [1m[94m|[0m
+[1m[94m879[0m [1m[94m|[0m [1m[33m/[0m [1m[94m...[0m   if let Some(models) = provider_val.get("models").and_then(|m| [1m[94m...[0m
+[1m[94m880[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m       if let Some(first) = models.first() {
+[1m[94m881[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m           if let Some(id) = first.get("id").and_then(|v| v.as_st[1m[94m...[0m
+[1m[94m882[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m               return Some((provider_name.clone(), id.to_string()));
+[1m[94m...[0m   [1m[33m|[0m
+[1m[94m885[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m   }
+    [1m[94m|[0m [1m[33m|_______^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#collapsible_if
+    [1m[94m= [0m[1mnote[0m: requested on the command line with `-W clippy::collapsible-if`
+[1m[96mhelp[0m: collapse nested if block
+    [1m[94m|[0m
+[1m[94m879[0m [92m~ [0m        if let Some(models) = provider_val.get("models").and_then(|m| m.as_array())
+[1m[94m880[0m [92m~ [0m            [92m&&[0m let Some(first) = models.first() {
+[1m[94m881[0m [1m[94m|[0m                 if let Some(id) = first.get("id").and_then(|v| v.as_str()) {
+[1m[94m882[0m [1m[94m|[0m                     return Some((provider_name.clone(), id.to_string()));
+[1m[94m883[0m [1m[94m|[0m                 }
+[1m[94m884[0m [92m~ [0m            }
+    [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: this `if` statement can be collapsed[0m
+   [1m[94m--> [0mcrates/oqto/src/api/handlers/admin.rs:880:13
+    [1m[94m|[0m
+[1m[94m880[0m [1m[94m|[0m [1m[33m/[0m [1m[94m...[0m   if let Some(first) = models.first() {
+[1m[94m881[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m       if let Some(id) = first.get("id").and_then(|v| v.as_str()) {
+[1m[94m882[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m           return Some((provider_name.clone(), id.to_string()));
+[1m[94m883[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m       }
+[1m[94m884[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m   }
+    [1m[94m|[0m [1m[33m|_______^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#collapsible_if
+[1m[96mhelp[0m: collapse nested if block
+    [1m[94m|[0m
+[1m[94m880[0m [92m~ [0m            if let Some(first) = models.first()
+[1m[94m881[0m [92m~ [0m                [92m&&[0m let Some(id) = first.get("id").and_then(|v| v.as_str()) {
+[1m[94m882[0m [1m[94m|[0m                     return Some((provider_name.clone(), id.to_string()));
+[1m[94m883[0m [92m~ [0m                }
+    [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: this `if` statement can be collapsed[0m
+   [1m[94m--> [0mcrates/oqto/src/api/handlers/auth.rs:409:21
+    [1m[94m|[0m
+[1m[94m409[0m [1m[94m|[0m [1m[33m/[0m [1m[94m...[0m   if let Ok(content) = std::fs::read_to_string(&models_path) {
+[1m[94m410[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m       if let Ok(config) = serde_json::from_str::<serde_json::Val[1m[94m...[0m
+[1m[94m411[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m           if let Some(providers) =
+[1m[94m412[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m               config.get("providers").and_then(|p| p.as_object())
+[1m[94m...[0m   [1m[33m|[0m
+[1m[94m459[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m   }
+    [1m[94m|[0m [1m[33m|_______^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#collapsible_if
+[1m[96mhelp[0m: collapse nested if block
+    [1m[94m|[0m
+[1m[94m409[0m [92m~ [0m                    if let Ok(content) = std::fs::read_to_string(&models_path)
+[1m[94m410[0m [92m~ [0m                        [92m&&[0m let Ok(config) = serde_json::from_str::<serde_json::Value>(&content) {
+[1m[94m411[0m [1m[94m|[0m                             if let Some(providers) =
+[1m[94m...[0m
+[1m[94m457[0m [1m[94m|[0m                             }
+[1m[94m458[0m [92m~ [0m                        }
+    [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: this `if` statement can be collapsed[0m
+   [1m[94m--> [0mcrates/oqto/src/api/handlers/auth.rs:410:25
+    [1m[94m|[0m
+[1m[94m410[0m [1m[94m|[0m [1m[33m/[0m [1m[94m...[0m   if let Ok(config) = serde_json::from_str::<serde_json::Value>([1m[94m...[0m
+[1m[94m411[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m       if let Some(providers) =
+[1m[94m412[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m           config.get("providers").and_then(|p| p.as_object())
+[1m[94m...[0m   [1m[33m|[0m
+[1m[94m458[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m   }
+    [1m[94m|[0m [1m[33m|_______^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#collapsible_if
+[1m[96mhelp[0m: collapse nested if block
+    [1m[94m|[0m
+[1m[94m410[0m [92m~ [0m                        if let Ok(config) = serde_json::from_str::<serde_json::Value>(&content)
+[1m[94m411[0m [92m~ [0m                            [92m&&[0m let Some(providers) =
+[1m[94m412[0m [1m[94m|[0m                                 config.get("providers").and_then(|p| p.as_object())
+[1m[94m...[0m
+[1m[94m456[0m [1m[94m|[0m                                 }
+[1m[94m457[0m [92m~ [0m                            }
+    [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: this `if` statement can be collapsed[0m
+   [1m[94m--> [0mcrates/oqto/src/api/handlers/auth.rs:415:33
+    [1m[94m|[0m
+[1m[94m415[0m [1m[94m|[0m [1m[33m/[0m [1m[94m...[0m                   if let Some((provider_name, provider_config)) =
+[1m[94m416[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m                       providers.iter().next()
+[1m[94m417[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m                   {
+[1m[94m418[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m                       if let Some(first_model) = provider_config
+[1m[94m...[0m   [1m[33m|[0m
+[1m[94m456[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m                   }
+    [1m[94m|[0m [1m[33m|_______________________^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#collapsible_if
+[1m[96mhelp[0m: collapse nested if block
+    [1m[94m|[0m
+[1m[94m416[0m [92m~ [0m                                    providers.iter().next()
+[1m[94m417[0m [92m~ [0m                                    [92m&&[0m let Some(first_model) = provider_config
+[1m[94m418[0m [1m[94m|[0m                                         .get("models")
+[1m[94m...[0m
+[1m[94m453[0m [1m[94m|[0m                                         }
+[1m[94m454[0m [92m~ [0m                                    }
+    [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: this `if` statement can be collapsed[0m
+   [1m[94m--> [0mcrates/oqto/src/api/handlers/auth.rs:474:5
+    [1m[94m|[0m
+[1m[94m474[0m [1m[94m|[0m [1m[33m/[0m     if !pi_settings_written {
+[1m[94m475[0m [1m[94m|[0m [1m[33m|[0m         if let Some(ref linux_users) = state.linux_users {
+[1m[94m476[0m [1m[94m|[0m [1m[33m|[0m             let linux_username = resolved_linux_username
+[1m[94m477[0m [1m[94m|[0m [1m[33m|[0m                 .as_deref()
+[1m[94m...[0m   [1m[33m|[0m
+[1m[94m552[0m [1m[94m|[0m [1m[33m|[0m     }
+    [1m[94m|[0m [1m[33m|_____^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#collapsible_if
+[1m[96mhelp[0m: collapse nested if block
+    [1m[94m|[0m
+[1m[94m474[0m [92m~ [0m    if !pi_settings_written
+[1m[94m475[0m [92m~ [0m        [92m&&[0m let Some(ref linux_users) = state.linux_users {
+[1m[94m476[0m [1m[94m|[0m             let linux_username = resolved_linux_username
+[1m[94m...[0m
+[1m[94m550[0m [1m[94m|[0m             }
+[1m[94m551[0m [92m~ [0m        }
+    [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: this `if` statement can be collapsed[0m
+   [1m[94m--> [0mcrates/oqto/src/api/handlers/auth.rs:515:13
+    [1m[94m|[0m
+[1m[94m515[0m [1m[94m|[0m [1m[33m/[0m [1m[94m...[0m   if let Some(ref template_path) = state.pi_models_template_path {
+[1m[94m516[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m       if template_path.exists() {
+[1m[94m517[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m           match std::fs::read_to_string(template_path) {
+[1m[94m518[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m               Ok(content) => {
+[1m[94m...[0m   [1m[33m|[0m
+[1m[94m550[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m   }
+    [1m[94m|[0m [1m[33m|_______^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#collapsible_if
+[1m[96mhelp[0m: collapse nested if block
+    [1m[94m|[0m
+[1m[94m515[0m [92m~ [0m            if let Some(ref template_path) = state.pi_models_template_path
+[1m[94m516[0m [92m~ [0m                [92m&&[0m template_path.exists() {
+[1m[94m517[0m [1m[94m|[0m                     match std::fs::read_to_string(template_path) {
+[1m[94m...[0m
+[1m[94m548[0m [1m[94m|[0m                     }
+[1m[94m549[0m [92m~ [0m                }
+    [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: this `if` statement can be collapsed[0m
+   [1m[94m--> [0mcrates/oqto/src/api/handlers/auth.rs:611:9
+    [1m[94m|[0m
+[1m[94m611[0m [1m[94m|[0m [1m[33m/[0m [1m[94m...[0m   if let Some(ref src) = template_src {
+[1m[94m612[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m       if src.is_dir() {
+[1m[94m613[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m           create_args["template_src"] =
+[1m[94m614[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m               serde_json::Value::String(src.to_string_lossy().in[1m[94m...[0m
+[1m[94m615[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m       }
+[1m[94m616[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m   }
+    [1m[94m|[0m [1m[33m|_______^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#collapsible_if
+[1m[96mhelp[0m: collapse nested if block
+    [1m[94m|[0m
+[1m[94m611[0m [92m~ [0m        if let Some(ref src) = template_src
+[1m[94m612[0m [92m~ [0m            [92m&&[0m src.is_dir() {
+[1m[94m613[0m [1m[94m|[0m                 create_args["template_src"] =
+[1m[94m614[0m [1m[94m|[0m                     serde_json::Value::String(src.to_string_lossy().into_owned());
+[1m[94m615[0m [92m~ [0m            }
+    [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: this `if` statement can be collapsed[0m
+   [1m[94m--> [0mcrates/oqto/src/api/handlers/projects.rs:667:5
+    [1m[94m|[0m
+[1m[94m667[0m [1m[94m|[0m [1m[33m/[0m     if let Some(ref sw_id) = request.shared_workspace_id {
+[1m[94m668[0m [1m[94m|[0m [1m[33m|[0m         if let Some(sw_service) = state.shared_workspaces.as_ref() {
+[1m[94m669[0m [1m[94m|[0m [1m[33m|[0m             if let Err(e) = sw_service.regenerate_users_md_by_id(sw_[1m[94m...[0m
+[1m[94m670[0m [1m[94m|[0m [1m[33m|[0m                 tracing::warn!(
+[1m[94m...[0m   [1m[33m|[0m
+[1m[94m676[0m [1m[94m|[0m [1m[33m|[0m     }
+    [1m[94m|[0m [1m[33m|_____^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#collapsible_if
+[1m[96mhelp[0m: collapse nested if block
+    [1m[94m|[0m
+[1m[94m667[0m [92m~ [0m    if let Some(ref sw_id) = request.shared_workspace_id
+[1m[94m668[0m [92m~ [0m        [92m&&[0m let Some(sw_service) = state.shared_workspaces.as_ref() {
+[1m[94m669[0m [1m[94m|[0m             if let Err(e) = sw_service.regenerate_users_md_by_id(sw_id).await {
+[1m[94m...[0m
+[1m[94m674[0m [1m[94m|[0m             }
+[1m[94m675[0m [92m~ [0m        }
+    [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: this `if` statement can be collapsed[0m
+   [1m[94m--> [0mcrates/oqto/src/api/handlers/projects.rs:668:9
+    [1m[94m|[0m
+[1m[94m668[0m [1m[94m|[0m [1m[33m/[0m [1m[94m...[0m   if let Some(sw_service) = state.shared_workspaces.as_ref() {
+[1m[94m669[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m       if let Err(e) = sw_service.regenerate_users_md_by_id(sw_id[1m[94m...[0m
+[1m[94m670[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m           tracing::warn!(
+[1m[94m671[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m               sw_id,
+[1m[94m...[0m   [1m[33m|[0m
+[1m[94m675[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m   }
+    [1m[94m|[0m [1m[33m|_______^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#collapsible_if
+[1m[96mhelp[0m: collapse nested if block
+    [1m[94m|[0m
+[1m[94m668[0m [92m~ [0m        if let Some(sw_service) = state.shared_workspaces.as_ref()
+[1m[94m669[0m [92m~ [0m            [92m&&[0m let Err(e) = sw_service.regenerate_users_md_by_id(sw_id).await {
+[1m[94m670[0m [1m[94m|[0m                 tracing::warn!(
+[1m[94m...[0m
+[1m[94m673[0m [1m[94m|[0m                 );
+[1m[94m674[0m [92m~ [0m            }
+    [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: this `if` statement can be collapsed[0m
+    [1m[94m--> [0mcrates/oqto/src/api/handlers/projects.rs:1101:5
+     [1m[94m|[0m
+[1m[94m1101[0m [1m[94m|[0m [1m[33m/[0m     if let Some(ref lu) = state.linux_users {
+[1m[94m1102[0m [1m[94m|[0m [1m[33m|[0m         if lu.enabled {
+[1m[94m1103[0m [1m[94m|[0m [1m[33m|[0m             let linux_username = lu.linux_username(user_id);
+[1m[94m1104[0m [1m[94m|[0m [1m[33m|[0m             let user_home = format!("/home/{}", linux_username);
+[1m[94m...[0m    [1m[33m|[0m
+[1m[94m1115[0m [1m[94m|[0m [1m[33m|[0m     }
+     [1m[94m|[0m [1m[33m|_____^[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#collapsible_if
+[1m[96mhelp[0m: collapse nested if block
+     [1m[94m|[0m
+[1m[94m1101[0m [92m~ [0m    if let Some(ref lu) = state.linux_users
+[1m[94m1102[0m [92m~ [0m        [92m&&[0m lu.enabled {
+[1m[94m1103[0m [1m[94m|[0m             let linux_username = lu.linux_username(user_id);
+ [1m[94m...[0m
+[1m[94m1113[0m [1m[94m|[0m             return Ok(PathBuf::from(expanded));
+[1m[94m1114[0m [92m~ [0m        }
+     [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: this `if` statement can be collapsed[0m
+  [1m[94m--> [0mcrates/oqto/src/api/handlers/shared_workspaces.rs:44:5
+   [1m[94m|[0m
+[1m[94m44[0m [1m[94m|[0m [1m[33m/[0m     if multi_user {
+[1m[94m45[0m [1m[94m|[0m [1m[33m|[0m         if let Some(eavs_client) = state.eavs_client.as_ref() {
+[1m[94m46[0m [1m[94m|[0m [1m[33m|[0m             if let Some(linux_users) = state.linux_users.as_ref() {
+[1m[94m47[0m [1m[94m|[0m [1m[33m|[0m                 let sw_user_id = format!("shared-{}", workspace.id);
+[1m[94m...[0m  [1m[33m|[0m
+[1m[94m73[0m [1m[94m|[0m [1m[33m|[0m     }
+   [1m[94m|[0m [1m[33m|_____^[0m
+   [1m[94m|[0m
+   [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#collapsible_if
+[1m[96mhelp[0m: collapse nested if block
+   [1m[94m|[0m
+[1m[94m44[0m [92m~ [0m    if multi_user
+[1m[94m45[0m [92m~ [0m        [92m&&[0m let Some(eavs_client) = state.eavs_client.as_ref() {
+[1m[94m46[0m [1m[94m|[0m             if let Some(linux_users) = state.linux_users.as_ref() {
+[1m[94m...[0m
+[1m[94m71[0m [1m[94m|[0m             }
+[1m[94m72[0m [92m~ [0m        }
+   [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: this `if` statement can be collapsed[0m
+  [1m[94m--> [0mcrates/oqto/src/api/handlers/shared_workspaces.rs:45:9
+   [1m[94m|[0m
+[1m[94m45[0m [1m[94m|[0m [1m[33m/[0m         if let Some(eavs_client) = state.eavs_client.as_ref() {
+[1m[94m46[0m [1m[94m|[0m [1m[33m|[0m             if let Some(linux_users) = state.linux_users.as_ref() {
+[1m[94m47[0m [1m[94m|[0m [1m[33m|[0m                 let sw_user_id = format!("shared-{}", workspace.id);
+[1m[94m48[0m [1m[94m|[0m [1m[33m|[0m                 match super::admin::provision_eavs_for_user(
+[1m[94m...[0m  [1m[33m|[0m
+[1m[94m72[0m [1m[94m|[0m [1m[33m|[0m         }
+   [1m[94m|[0m [1m[33m|_________^[0m
+   [1m[94m|[0m
+   [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#collapsible_if
+[1m[96mhelp[0m: collapse nested if block
+   [1m[94m|[0m
+[1m[94m45[0m [92m~ [0m        if let Some(eavs_client) = state.eavs_client.as_ref()
+[1m[94m46[0m [92m~ [0m            [92m&&[0m let Some(linux_users) = state.linux_users.as_ref() {
+[1m[94m47[0m [1m[94m|[0m                 let sw_user_id = format!("shared-{}", workspace.id);
+[1m[94m...[0m
+[1m[94m70[0m [1m[94m|[0m                 }
+[1m[94m71[0m [92m~ [0m            }
+   [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: this `if` statement can be collapsed[0m
+   [1m[94m--> [0mcrates/oqto/src/api/handlers/shared_workspaces.rs:294:5
+    [1m[94m|[0m
+[1m[94m294[0m [1m[94m|[0m [1m[33m/[0m     if ws_path.is_dir() {
+[1m[94m295[0m [1m[94m|[0m [1m[33m|[0m         if let Ok(mut entries) = tokio::fs::read_dir(ws_path).await {
+[1m[94m296[0m [1m[94m|[0m [1m[33m|[0m             while let Ok(Some(entry)) = entries.next_entry().await {
+[1m[94m297[0m [1m[94m|[0m [1m[33m|[0m                 let name = entry.file_name().to_string_lossy().to_st[1m[94m...[0m
+[1m[94m...[0m   [1m[33m|[0m
+[1m[94m313[0m [1m[94m|[0m [1m[33m|[0m     }
+    [1m[94m|[0m [1m[33m|_____^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#collapsible_if
+[1m[96mhelp[0m: collapse nested if block
+    [1m[94m|[0m
+[1m[94m294[0m [92m~ [0m    if ws_path.is_dir()
+[1m[94m295[0m [92m~ [0m        [92m&&[0m let Ok(mut entries) = tokio::fs::read_dir(ws_path).await {
+[1m[94m296[0m [1m[94m|[0m             while let Ok(Some(entry)) = entries.next_entry().await {
+[1m[94m...[0m
+[1m[94m311[0m [1m[94m|[0m             }
+[1m[94m312[0m [92m~ [0m        }
+    [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: this `if` statement can be collapsed[0m
+   [1m[94m--> [0mcrates/oqto/src/api/handlers/shared_workspaces.rs:301:17
+    [1m[94m|[0m
+[1m[94m301[0m [1m[94m|[0m [1m[33m/[0m                 if let Ok(ft) = entry.file_type().await {
+[1m[94m302[0m [1m[94m|[0m [1m[33m|[0m                     if !ft.is_dir() {
+[1m[94m303[0m [1m[94m|[0m [1m[33m|[0m                         continue;
+[1m[94m304[0m [1m[94m|[0m [1m[33m|[0m                     }
+[1m[94m305[0m [1m[94m|[0m [1m[33m|[0m                 }
+    [1m[94m|[0m [1m[33m|_________________^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#collapsible_if
+[1m[96mhelp[0m: collapse nested if block
+    [1m[94m|[0m
+[1m[94m301[0m [92m~ [0m                if let Ok(ft) = entry.file_type().await
+[1m[94m302[0m [92m~ [0m                    [92m&&[0m !ft.is_dir() {
+[1m[94m303[0m [1m[94m|[0m                         continue;
+[1m[94m304[0m [92m~ [0m                    }
+    [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: the borrowed expression implements the required traits[0m
+   [1m[94m--> [0mcrates/oqto/src/api/onboarding_handlers.rs:253:23
+    [1m[94m|[0m
+[1m[94m253[0m [1m[94m|[0m                 .join(&templates_service.subdirectory());
+    [1m[94m|[0m                       [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m [1m[33mhelp: change this to: `templates_service.subdirectory()`[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#needless_borrows_for_generic_args
+    [1m[94m= [0m[1mnote[0m: `#[warn(clippy::needless_borrows_for_generic_args)]` on by default
+
+[1m[33mwarning[0m[1m: the borrowed expression implements the required traits[0m
+   [1m[94m--> [0mcrates/oqto/src/api/onboarding_handlers.rs:292:23
+    [1m[94m|[0m
+[1m[94m292[0m [1m[94m|[0m                 .join(&templates_service.subdirectory());
+    [1m[94m|[0m                       [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m [1m[33mhelp: change this to: `templates_service.subdirectory()`[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#needless_borrows_for_generic_args
+
+[1m[33mwarning[0m[1m: large size difference between variants[0m
+  [1m[94m--> [0mcrates/oqto/src/api/routes.rs:31:1
+   [1m[94m|[0m
+[1m[94m31[0m [1m[94m|[0m [1m[33m/[0m pub enum AuthMode {
+[1m[94m32[0m [1m[94m|[0m [1m[33m|[0m     /// Standard JWT/cookie authentication.
+[1m[94m33[0m [1m[94m|[0m [1m[33m|[0m     Jwt,
+   [1m[94m|[0m [1m[33m|[0m     [1m[94m---[0m [1m[94mthe second-largest variant carries no data at all[0m
+[1m[94m34[0m [1m[94m|[0m [1m[33m|[0m     /// Admin override for trusted local sockets.
+[1m[94m35[0m [1m[94m|[0m [1m[33m|[0m     Admin(CurrentUser),
+   [1m[94m|[0m [1m[33m|[0m     [1m[94m------------------[0m [1m[94mthe largest variant contains at least 256 bytes[0m
+[1m[94m36[0m [1m[94m|[0m [1m[33m|[0m }
+   [1m[94m|[0m [1m[33m|_^[0m [1m[33mthe entire enum is at least 256 bytes[0m
+   [1m[94m|[0m
+   [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#large_enum_variant
+   [1m[94m= [0m[1mnote[0m: `#[warn(clippy::large_enum_variant)]` on by default
+[1m[96mhelp[0m: consider boxing the large fields or introducing indirection in some other way to reduce the total size of the enum
+   [1m[94m|[0m
+[1m[94m35[0m [91m- [0m    Admin([91mCurrentUser[0m),
+[1m[94m35[0m [92m+ [0m    Admin([92mBox<CurrentUser>[0m),
+   [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: this `map_or` can be simplified[0m
+  [1m[94m--> [0mcrates/oqto/src/api/ws_multiplexed/agent.rs:95:21
+   [1m[94m|[0m
+[1m[94m95[0m [1m[94m|[0m [1m[94m...[0m   runner_client.map_or(true, |r| r.socket_path() != sw.socket_path());
+   [1m[94m|[0m       [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+   [1m[94m|[0m
+   [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#unnecessary_map_or
+   [1m[94m= [0m[1mnote[0m: requested on the command line with `-W clippy::unnecessary-map-or`
+[1m[96mhelp[0m: use `is_none_or` instead
+   [1m[94m|[0m
+[1m[94m95[0m [91m- [0m                    runner_client.[91mmap_or[0m([91mtrue, [0m|r| r.socket_path() != sw.socket_path());
+[1m[94m95[0m [92m+ [0m                    runner_client.[92mis_none_or[0m(|r| r.socket_path() != sw.socket_path());
+   [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: this creates an owned instance just for comparison[0m
+   [1m[94m--> [0mcrates/oqto/src/api/ws_multiplexed/agent.rs:433:23
+    [1m[94m|[0m
+[1m[94m433[0m [1m[94m|[0m             if cwd == std::path::PathBuf::from("/") {
+    [1m[94m|[0m                [1m[94m-------[0m[1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+    [1m[94m|[0m                [1m[94m|[0m
+    [1m[94m|[0m                [1m[94mhelp: try: `cwd == "/"`[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#cmp_owned
+    [1m[94m= [0m[1mnote[0m: `#[warn(clippy::cmp_owned)]` on by default
+
+[1m[33mwarning[0m[1m: this `if` statement can be collapsed[0m
+   [1m[94m--> [0mcrates/oqto/src/api/ws_multiplexed/agent.rs:575:21
+    [1m[94m|[0m
+[1m[94m575[0m [1m[94m|[0m [1m[33m/[0m [1m[94m...[0m   if matches!(target_for_persist, ExecutionTarget::Personal)
+[1m[94m576[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m       && (cwd_string.starts_with("/home/oqto_shared_")
+[1m[94m577[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m           || cwd_string.starts_with("/home/octo_shared_"))
+[1m[94m...[0m   [1m[33m|[0m
+[1m[94m590[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m   }
+    [1m[94m|[0m [1m[33m|_______^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#collapsible_if
+[1m[96mhelp[0m: collapse nested if block
+    [1m[94m|[0m
+[1m[94m577[0m [92m~ [0m                            || cwd_string.starts_with("/home/octo_shared_"))
+[1m[94m578[0m [92m~ [0m                        [92m&&[0m let Ok(resolved) =
+[1m[94m579[0m [1m[94m|[0m                             crate::runner::router::resolve_target_for_workspace_path(
+[1m[94m...[0m
+[1m[94m587[0m [1m[94m|[0m                             target_for_persist = resolved;
+[1m[94m588[0m [92m~ [0m                        }
+    [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: this `if` statement can be collapsed[0m
+    [1m[94m--> [0mcrates/oqto/src/api/ws_multiplexed/agent.rs:1711:13
+     [1m[94m|[0m
+[1m[94m1711[0m [1m[94m|[0m [1m[33m/[0m [1m[94m...[0m   if let Some(sw_service) = state.shared_workspaces.as_ref() {
+[1m[94m1712[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m       if let Ok(workspaces) = sw_service.list_for_user(user_id)[1m[94m...[0m
+[1m[94m1713[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m           for ws in &workspaces {
+[1m[94m1714[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m               if let Some(sw_runner) =
+[1m[94m...[0m    [1m[33m|[0m
+[1m[94m1773[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m   }
+     [1m[94m|[0m [1m[33m|_______^[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#collapsible_if
+[1m[96mhelp[0m: collapse nested if block
+     [1m[94m|[0m
+[1m[94m1711[0m [92m~ [0m            if let Some(sw_service) = state.shared_workspaces.as_ref()
+[1m[94m1712[0m [92m~ [0m                [92m&&[0m let Ok(workspaces) = sw_service.list_for_user(user_id).await {
+[1m[94m1713[0m [1m[94m|[0m                     for ws in &workspaces {
+ [1m[94m...[0m
+[1m[94m1771[0m [1m[94m|[0m                     }
+[1m[94m1772[0m [92m~ [0m                }
+     [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: large size difference between variants[0m
+   [1m[94m--> [0mcrates/oqto/src/api/ws_multiplexed.rs:575:1
+    [1m[94m|[0m
+[1m[94m575[0m [1m[94m|[0m [1m[33m/[0m pub enum WsEvent {
+[1m[94m576[0m [1m[94m|[0m [1m[33m|[0m     /// Canonical agent events (streaming, state, command responses,[1m[94m...[0m
+[1m[94m577[0m [1m[94m|[0m [1m[33m|[0m     /// Serializes as `{"channel": "agent", "session_id": ..., "even[1m[94m...[0m
+[1m[94m578[0m [1m[94m|[0m [1m[33m|[0m     #[serde(rename = "agent")]
+[1m[94m579[0m [1m[94m|[0m [1m[33m|[0m     Agent(oqto_protocol::events::Event),
+    [1m[94m|[0m [1m[33m|[0m     [1m[94m-----------------------------------[0m [1m[94mthe largest variant contains at least 584 bytes[0m
+[1m[94m...[0m   [1m[33m|[0m
+[1m[94m585[0m [1m[94m|[0m [1m[33m|[0m     Bus(crate::bus::BusWsEvent),
+    [1m[94m|[0m [1m[33m|[0m     [1m[94m---------------------------[0m [1m[94mthe second-largest variant contains at least 320 bytes[0m
+[1m[94m586[0m [1m[94m|[0m [1m[33m|[0m }
+    [1m[94m|[0m [1m[33m|_^[0m [1m[33mthe entire enum is at least 584 bytes[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#large_enum_variant
+[1m[96mhelp[0m: consider boxing the large fields or introducing indirection in some other way to reduce the total size of the enum
+    [1m[94m|[0m
+[1m[94m579[0m [91m- [0m    Agent([91moqto_protocol::events::Event[0m),
+[1m[94m579[0m [92m+ [0m    Agent([92mBox<oqto_protocol::events::Event>[0m),
+    [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: this `if` statement can be collapsed[0m
+    [1m[94m--> [0mcrates/oqto/src/api/ws_multiplexed.rs:2088:13
+     [1m[94m|[0m
+[1m[94m2088[0m [1m[94m|[0m [1m[33m/[0m [1m[94m...[0m   if let Some(version) = message_version {
+[1m[94m2089[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m       if let Ok(version_json) = serde_json::to_value(version) {
+[1m[94m2090[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m           data.insert("message_version".to_string(), version_js[1m[94m...[0m
+[1m[94m2091[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m       }
+[1m[94m2092[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m   }
+     [1m[94m|[0m [1m[33m|_______^[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#collapsible_if
+[1m[96mhelp[0m: collapse nested if block
+     [1m[94m|[0m
+[1m[94m2088[0m [92m~ [0m            if let Some(version) = message_version
+[1m[94m2089[0m [92m~ [0m                [92m&&[0m let Ok(version_json) = serde_json::to_value(version) {
+[1m[94m2090[0m [1m[94m|[0m                     data.insert("message_version".to_string(), version_json);
+[1m[94m2091[0m [92m~ [0m                }
+     [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: this `if` statement can be collapsed[0m
+    [1m[94m--> [0mcrates/oqto/src/api/ws_multiplexed.rs:2348:21
+     [1m[94m|[0m
+[1m[94m2348[0m [1m[94m|[0m [1m[33m/[0m [1m[94m...[0m   if let Some(user_cache) = cache.get_mut(user_id) {
+[1m[94m2349[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m       if let Some(entry) = user_cache.entries.remove(session_id) {
+[1m[94m2350[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m           user_cache.total_bytes =
+[1m[94m2351[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m               user_cache.total_bytes.saturating_sub(entry.size_[1m[94m...[0m
+[1m[94m2352[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m       }
+[1m[94m2353[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m   }
+     [1m[94m|[0m [1m[33m|_______^[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#collapsible_if
+[1m[96mhelp[0m: collapse nested if block
+     [1m[94m|[0m
+[1m[94m2348[0m [92m~ [0m                    if let Some(user_cache) = cache.get_mut(user_id)
+[1m[94m2349[0m [92m~ [0m                        [92m&&[0m let Some(entry) = user_cache.entries.remove(session_id) {
+[1m[94m2350[0m [1m[94m|[0m                             user_cache.total_bytes =
+[1m[94m2351[0m [1m[94m|[0m                                 user_cache.total_bytes.saturating_sub(entry.size_bytes);
+[1m[94m2352[0m [92m~ [0m                        }
+     [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: this `if` statement can be collapsed[0m
+   [1m[94m--> [0mcrates/oqto/src/api_keys/repository.rs:178:9
+    [1m[94m|[0m
+[1m[94m178[0m [1m[94m|[0m [1m[33m/[0m         if let Some(ref expires_at) = row.expires_at {
+[1m[94m179[0m [1m[94m|[0m [1m[33m|[0m             if let Some(expiry) = parse_timestamp(expires_at) {
+[1m[94m180[0m [1m[94m|[0m [1m[33m|[0m                 if expiry < chrono::Utc::now() {
+[1m[94m181[0m [1m[94m|[0m [1m[33m|[0m                     return Ok(None);
+[1m[94m...[0m   [1m[33m|[0m
+[1m[94m184[0m [1m[94m|[0m [1m[33m|[0m         }
+    [1m[94m|[0m [1m[33m|_________^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#collapsible_if
+[1m[96mhelp[0m: collapse nested if block
+    [1m[94m|[0m
+[1m[94m178[0m [92m~ [0m        if let Some(ref expires_at) = row.expires_at
+[1m[94m179[0m [92m~ [0m            [92m&&[0m let Some(expiry) = parse_timestamp(expires_at) {
+[1m[94m180[0m [1m[94m|[0m                 if expiry < chrono::Utc::now() {
+[1m[94m181[0m [1m[94m|[0m                     return Ok(None);
+[1m[94m182[0m [1m[94m|[0m                 }
+[1m[94m183[0m [92m~ [0m            }
+    [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: this `if` statement can be collapsed[0m
+   [1m[94m--> [0mcrates/oqto/src/api_keys/repository.rs:179:13
+    [1m[94m|[0m
+[1m[94m179[0m [1m[94m|[0m [1m[33m/[0m             if let Some(expiry) = parse_timestamp(expires_at) {
+[1m[94m180[0m [1m[94m|[0m [1m[33m|[0m                 if expiry < chrono::Utc::now() {
+[1m[94m181[0m [1m[94m|[0m [1m[33m|[0m                     return Ok(None);
+[1m[94m182[0m [1m[94m|[0m [1m[33m|[0m                 }
+[1m[94m183[0m [1m[94m|[0m [1m[33m|[0m             }
+    [1m[94m|[0m [1m[33m|_____________^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#collapsible_if
+[1m[96mhelp[0m: collapse nested if block
+    [1m[94m|[0m
+[1m[94m179[0m [92m~ [0m            if let Some(expiry) = parse_timestamp(expires_at)
+[1m[94m180[0m [92m~ [0m                [92m&&[0m expiry < chrono::Utc::now() {
+[1m[94m181[0m [1m[94m|[0m                     return Ok(None);
+[1m[94m182[0m [92m~ [0m                }
+    [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: this `if` statement can be collapsed[0m
+   [1m[94m--> [0mcrates/oqto/src/bus/engine.rs:229:9
+    [1m[94m|[0m
+[1m[94m229[0m [1m[94m|[0m [1m[33m/[0m [1m[94m...[0m   if let Some(pid) = publisher_id {
+[1m[94m230[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m       if let Some(mut rl) = self.rate_limits.get_mut(&pid) {
+[1m[94m231[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m           if !rl.check_and_increment() {
+[1m[94m232[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m               self.events_dropped_rate.fetch_add(1, Ordering::Re[1m[94m...[0m
+[1m[94m...[0m   [1m[33m|[0m
+[1m[94m240[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m   }
+    [1m[94m|[0m [1m[33m|_______^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#collapsible_if
+[1m[96mhelp[0m: collapse nested if block
+    [1m[94m|[0m
+[1m[94m229[0m [92m~ [0m        if let Some(pid) = publisher_id
+[1m[94m230[0m [92m~ [0m            [92m&&[0m let Some(mut rl) = self.rate_limits.get_mut(&pid) {
+[1m[94m231[0m [1m[94m|[0m                 if !rl.check_and_increment() {
+[1m[94m...[0m
+[1m[94m238[0m [1m[94m|[0m                 }
+[1m[94m239[0m [92m~ [0m            }
+    [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: this `if` statement can be collapsed[0m
+   [1m[94m--> [0mcrates/oqto/src/bus/engine.rs:230:13
+    [1m[94m|[0m
+[1m[94m230[0m [1m[94m|[0m [1m[33m/[0m [1m[94m...[0m   if let Some(mut rl) = self.rate_limits.get_mut(&pid) {
+[1m[94m231[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m       if !rl.check_and_increment() {
+[1m[94m232[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m           self.events_dropped_rate.fetch_add(1, Ordering::Relaxed);
+[1m[94m233[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m           warn!(
+[1m[94m...[0m   [1m[33m|[0m
+[1m[94m239[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m   }
+    [1m[94m|[0m [1m[33m|_______^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#collapsible_if
+[1m[96mhelp[0m: collapse nested if block
+    [1m[94m|[0m
+[1m[94m230[0m [92m~ [0m            if let Some(mut rl) = self.rate_limits.get_mut(&pid)
+[1m[94m231[0m [92m~ [0m                [92m&&[0m !rl.check_and_increment() {
+[1m[94m232[0m [1m[94m|[0m                     self.events_dropped_rate.fetch_add(1, Ordering::Relaxed);
+[1m[94m...[0m
+[1m[94m237[0m [1m[94m|[0m                     return Err("Rate limit exceeded".to_string());
+[1m[94m238[0m [92m~ [0m                }
+    [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: using `map_err` over `inspect_err`[0m
+   [1m[94m--> [0mcrates/oqto/src/bus/engine.rs:393:34
+    [1m[94m|[0m
+[1m[94m393[0m [1m[94m|[0m [1m[94m...[0m                   .map_err(|e| {
+    [1m[94m|[0m                        [1m[33m^^^^^^^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#manual_inspect
+    [1m[94m= [0m[1mnote[0m: `#[warn(clippy::manual_inspect)]` on by default
+[1m[96mhelp[0m: try
+    [1m[94m|[0m
+[1m[94m393[0m [92m~ [0m                                .[92minspect_err[0m(|e| {
+[1m[94m394[0m [92m~ [0m                                    self.events_dropped_authz.fetch_add(1, Ordering::Relaxed);
+    [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: this `if` statement can be collapsed[0m
+   [1m[94m--> [0mcrates/oqto/src/bus/engine.rs:426:9
+    [1m[94m|[0m
+[1m[94m426[0m [1m[94m|[0m [1m[33m/[0m [1m[94m...[0m   if let Some(sw) = &self.shared_workspaces {
+[1m[94m427[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m       if let Ok(Some(workspace)) = sw.repo().find_workspace_for_[1m[94m...[0m
+[1m[94m428[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m           if let Ok(Some(_member)) = sw.repo().get_member(&works[1m[94m...[0m
+[1m[94m429[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m               return Ok(());
+[1m[94m...[0m   [1m[33m|[0m
+[1m[94m432[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m   }
+    [1m[94m|[0m [1m[33m|_______^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#collapsible_if
+[1m[96mhelp[0m: collapse nested if block
+    [1m[94m|[0m
+[1m[94m426[0m [92m~ [0m        if let Some(sw) = &self.shared_workspaces
+[1m[94m427[0m [92m~ [0m            [92m&&[0m let Ok(Some(workspace)) = sw.repo().find_workspace_for_path(workspace_path).await {
+[1m[94m428[0m [1m[94m|[0m                 if let Ok(Some(_member)) = sw.repo().get_member(&workspace.id, user_id).await {
+[1m[94m429[0m [1m[94m|[0m                     return Ok(());
+[1m[94m430[0m [1m[94m|[0m                 }
+[1m[94m431[0m [92m~ [0m            }
+    [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: this `if` statement can be collapsed[0m
+   [1m[94m--> [0mcrates/oqto/src/bus/engine.rs:427:13
+    [1m[94m|[0m
+[1m[94m427[0m [1m[94m|[0m [1m[33m/[0m [1m[94m...[0m   if let Ok(Some(workspace)) = sw.repo().find_workspace_for_path[1m[94m...[0m
+[1m[94m428[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m       if let Ok(Some(_member)) = sw.repo().get_member(&workspace[1m[94m...[0m
+[1m[94m429[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m           return Ok(());
+[1m[94m430[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m       }
+[1m[94m431[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m   }
+    [1m[94m|[0m [1m[33m|_______^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#collapsible_if
+[1m[96mhelp[0m: collapse nested if block
+    [1m[94m|[0m
+[1m[94m427[0m [92m~ [0m            if let Ok(Some(workspace)) = sw.repo().find_workspace_for_path(workspace_path).await
+[1m[94m428[0m [92m~ [0m                [92m&&[0m let Ok(Some(_member)) = sw.repo().get_member(&workspace.id, user_id).await {
+[1m[94m429[0m [1m[94m|[0m                     return Ok(());
+[1m[94m430[0m [92m~ [0m                }
+    [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: this `if` statement can be collapsed[0m
+   [1m[94m--> [0mcrates/oqto/src/bus/engine.rs:512:25
+    [1m[94m|[0m
+[1m[94m512[0m [1m[94m|[0m [1m[33m/[0m                         if let Value::Array(arr) = val {
+[1m[94m513[0m [1m[94m|[0m [1m[33m|[0m                             if !arr.iter().any(|v| Some(v) == actual) {
+[1m[94m514[0m [1m[94m|[0m [1m[33m|[0m                                 return false;
+[1m[94m515[0m [1m[94m|[0m [1m[33m|[0m                             }
+[1m[94m516[0m [1m[94m|[0m [1m[33m|[0m                         }
+    [1m[94m|[0m [1m[33m|_________________________^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#collapsible_if
+[1m[96mhelp[0m: collapse nested if block
+    [1m[94m|[0m
+[1m[94m512[0m [92m~ [0m                        if let Value::Array(arr) = val
+[1m[94m513[0m [92m~ [0m                            [92m&&[0m !arr.iter().any(|v| Some(v) == actual) {
+[1m[94m514[0m [1m[94m|[0m                                 return false;
+[1m[94m515[0m [92m~ [0m                            }
+    [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: large size difference between variants[0m
+   [1m[94m--> [0mcrates/oqto/src/bus/types.rs:242:1
+    [1m[94m|[0m
+[1m[94m242[0m [1m[94m|[0m [1m[33m/[0m  pub enum BusWsEvent {
+[1m[94m243[0m [1m[94m|[0m [1m[33m|[0m      /// A bus event delivered to a subscriber.
+[1m[94m244[0m [1m[94m|[0m [1m[33m|[0m      Event(BusEvent),
+    [1m[94m|[0m [1m[33m|[0m      [1m[94m---------------[0m [1m[94mthe largest variant contains at least 320 bytes[0m
+[1m[94m245[0m [1m[94m|[0m [1m[33m|[0m      /// Response to a subscribe/unsubscribe/publish command.
+[1m[94m246[0m [1m[94m|[0m [1m[33m|[0m[1m[94m/[0m     Response {
+[1m[94m247[0m [1m[94m|[0m [1m[33m|[0m[1m[94m|[0m         #[serde(skip_serializing_if = "Option::is_none")]
+[1m[94m248[0m [1m[94m|[0m [1m[33m|[0m[1m[94m|[0m         id: Option<String>,
+[1m[94m249[0m [1m[94m|[0m [1m[33m|[0m[1m[94m|[0m         success: bool,
+[1m[94m250[0m [1m[94m|[0m [1m[33m|[0m[1m[94m|[0m         #[serde(skip_serializing_if = "Option::is_none")]
+[1m[94m251[0m [1m[94m|[0m [1m[33m|[0m[1m[94m|[0m         error: Option<String>,
+[1m[94m252[0m [1m[94m|[0m [1m[33m|[0m[1m[94m|[0m     },
+    [1m[94m|[0m [1m[33m|[0m[1m[94m|_____-[0m [1m[94mthe second-largest variant contains at least 49 bytes[0m
+[1m[94m253[0m [1m[94m|[0m [1m[33m|[0m  }
+    [1m[94m|[0m [1m[33m|__^[0m [1m[33mthe entire enum is at least 320 bytes[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#large_enum_variant
+[1m[96mhelp[0m: consider boxing the large fields or introducing indirection in some other way to reduce the total size of the enum
+    [1m[94m|[0m
+[1m[94m244[0m [91m- [0m    Event([91mBusEvent[0m),
+[1m[94m244[0m [92m+ [0m    Event([92mBox<BusEvent>[0m),
+    [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: writing `&String` instead of `&str` involves a new object where a slice will do[0m
+   [1m[94m--> [0mcrates/oqto/src/history/canon.rs:128:30
+    [1m[94m|[0m
+[1m[94m128[0m [1m[94m|[0m fn parse_tool_output(output: &String) -> Value {
+    [1m[94m|[0m                              [1m[33m^^^^^^^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#ptr_arg
+    [1m[94m= [0m[1mnote[0m: requested on the command line with `-W clippy::ptr-arg`
+[1m[96mhelp[0m: change this to
+    [1m[94m|[0m
+[1m[94m128[0m [92m~ [0mfn parse_tool_output(output: [92m&str[0m) -> Value {
+[1m[94m129[0m [92m~ [0m    serde_json::from_str(output).unwrap_or_else(|_| Value::String([92moutput.to_owned()[0m))
+    [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: this `if` statement can be collapsed[0m
+  [1m[94m--> [0mcrates/oqto/src/history/repository.rs:42:5
+   [1m[94m|[0m
+[1m[94m42[0m [1m[94m|[0m [1m[33m/[0m     if let Some(path) = hstry_db_path_from_config() {
+[1m[94m43[0m [1m[94m|[0m [1m[33m|[0m         if path.exists() {
+[1m[94m44[0m [1m[94m|[0m [1m[33m|[0m             return Some(path);
+[1m[94m45[0m [1m[94m|[0m [1m[33m|[0m         }
+[1m[94m46[0m [1m[94m|[0m [1m[33m|[0m     }
+   [1m[94m|[0m [1m[33m|_____^[0m
+   [1m[94m|[0m
+   [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#collapsible_if
+[1m[96mhelp[0m: collapse nested if block
+   [1m[94m|[0m
+[1m[94m42[0m [92m~ [0m    if let Some(path) = hstry_db_path_from_config()
+[1m[94m43[0m [92m~ [0m        [92m&&[0m path.exists() {
+[1m[94m44[0m [1m[94m|[0m             return Some(path);
+[1m[94m45[0m [92m~ [0m        }
+   [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: large size difference between variants[0m
+   [1m[94m--> [0mcrates/oqto/src/pi/types.rs:285:1
+    [1m[94m|[0m
+[1m[94m285[0m [1m[94m|[0m [1m[33m/[0m   pub enum PiEvent {
+[1m[94m286[0m [1m[94m|[0m [1m[33m|[0m       /// Agent begins processing.
+[1m[94m287[0m [1m[94m|[0m [1m[33m|[0m       AgentStart,
+[1m[94m288[0m [1m[94m|[0m [1m[33m|[0m       /// Agent completes.
+[1m[94m...[0m   [1m[33m|[0m
+[1m[94m293[0m [1m[94m|[0m [1m[33m|[0m [1m[94m/[0m     TurnEnd {
+[1m[94m294[0m [1m[94m|[0m [1m[33m|[0m [1m[94m|[0m         message: AgentMessage,
+[1m[94m295[0m [1m[94m|[0m [1m[33m|[0m [1m[94m|[0m         #[serde(rename = "toolResults", default)]
+[1m[94m296[0m [1m[94m|[0m [1m[33m|[0m [1m[94m|[0m         tool_results: Vec<ToolResultMessage>,
+[1m[94m297[0m [1m[94m|[0m [1m[33m|[0m [1m[94m|[0m     },
+    [1m[94m|[0m [1m[33m|[0m [1m[94m|_____-[0m [1m[94mthe second-largest variant contains at least 376 bytes[0m
+[1m[94m...[0m   [1m[33m|[0m
+[1m[94m301[0m [1m[94m|[0m [1m[33m|[0m [1m[94m/[0m     MessageUpdate {
+[1m[94m302[0m [1m[94m|[0m [1m[33m|[0m [1m[94m|[0m         message: AgentMessage,
+[1m[94m303[0m [1m[94m|[0m [1m[33m|[0m [1m[94m|[0m         #[serde(rename = "assistantMessageEvent")]
+[1m[94m304[0m [1m[94m|[0m [1m[33m|[0m [1m[94m|[0m         assistant_message_event: AssistantMessageEvent,
+[1m[94m305[0m [1m[94m|[0m [1m[33m|[0m [1m[94m|[0m     },
+    [1m[94m|[0m [1m[33m|[0m [1m[94m|_____-[0m [1m[94mthe largest variant contains at least 736 bytes[0m
+[1m[94m...[0m   [1m[33m|[0m
+[1m[94m373[0m [1m[94m|[0m [1m[33m|[0m       Unknown,
+[1m[94m374[0m [1m[94m|[0m [1m[33m|[0m   }
+    [1m[94m|[0m [1m[33m|___^[0m [1m[33mthe entire enum is at least 736 bytes[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#large_enum_variant
+[1m[96mhelp[0m: consider boxing the large fields or introducing indirection in some other way to reduce the total size of the enum
+    [1m[94m|[0m
+[1m[94m304[0m [91m- [0m        assistant_message_event: [91mAssistantMessageEvent[0m,
+[1m[94m304[0m [92m+ [0m        assistant_message_event: [92mBox<AssistantMessageEvent>[0m,
+    [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: large size difference between variants[0m
+   [1m[94m--> [0mcrates/oqto/src/pi/types.rs:688:1
+    [1m[94m|[0m
+[1m[94m688[0m [1m[94m|[0m [1m[33m/[0m pub enum PiMessage {
+[1m[94m689[0m [1m[94m|[0m [1m[33m|[0m     Response(PiResponse),
+    [1m[94m|[0m [1m[33m|[0m     [1m[94m--------------------[0m [1m[94mthe second-largest variant contains at least 88 bytes[0m
+[1m[94m690[0m [1m[94m|[0m [1m[33m|[0m     Event(PiEvent),
+    [1m[94m|[0m [1m[33m|[0m     [1m[94m--------------[0m [1m[94mthe largest variant contains at least 736 bytes[0m
+[1m[94m691[0m [1m[94m|[0m [1m[33m|[0m }
+    [1m[94m|[0m [1m[33m|_^[0m [1m[33mthe entire enum is at least 736 bytes[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#large_enum_variant
+[1m[96mhelp[0m: consider boxing the large fields or introducing indirection in some other way to reduce the total size of the enum
+    [1m[94m|[0m
+[1m[94m690[0m [91m- [0m    Event([91mPiEvent[0m),
+[1m[94m690[0m [92m+ [0m    Event([92mBox<PiEvent>[0m),
+    [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: large size difference between variants[0m
+   [1m[94m--> [0mcrates/oqto/src/prompts/models.rs:304:1
+    [1m[94m|[0m
+[1m[94m304[0m [1m[94m|[0m [1m[33m/[0m  pub enum PromptMessage {
+[1m[94m305[0m [1m[94m|[0m [1m[33m|[0m      /// New prompt created
+[1m[94m306[0m [1m[94m|[0m [1m[33m|[0m      Created { prompt: Prompt },
+    [1m[94m|[0m [1m[33m|[0m      [1m[94m--------------------------[0m [1m[94mthe largest variant contains at least 256 bytes[0m
+[1m[94m...[0m   [1m[33m|[0m
+[1m[94m309[0m [1m[94m|[0m [1m[33m|[0m[1m[94m/[0m     Responded {
+[1m[94m310[0m [1m[94m|[0m [1m[33m|[0m[1m[94m|[0m         prompt_id: String,
+[1m[94m311[0m [1m[94m|[0m [1m[33m|[0m[1m[94m|[0m         action: PromptAction,
+[1m[94m312[0m [1m[94m|[0m [1m[33m|[0m[1m[94m|[0m     },
+    [1m[94m|[0m [1m[33m|[0m[1m[94m|_____-[0m [1m[94mthe second-largest variant contains at least 25 bytes[0m
+[1m[94m...[0m   [1m[33m|[0m
+[1m[94m321[0m [1m[94m|[0m [1m[33m|[0m      Sync { prompts: Vec<Prompt> },
+[1m[94m322[0m [1m[94m|[0m [1m[33m|[0m  }
+    [1m[94m|[0m [1m[33m|__^[0m [1m[33mthe entire enum is at least 256 bytes[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#large_enum_variant
+[1m[96mhelp[0m: consider boxing the large fields or introducing indirection in some other way to reduce the total size of the enum
+    [1m[94m|[0m
+[1m[94m306[0m [91m- [0m    Created { prompt: [91mPrompt[0m },
+[1m[94m306[0m [92m+ [0m    Created { prompt: [92mBox<Prompt>[0m },
+    [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: large size difference between variants[0m
+    [1m[94m--> [0mcrates/oqto/src/runner/client.rs:1752:1
+     [1m[94m|[0m
+[1m[94m1752[0m [1m[94m|[0m [1m[33m/[0m pub enum PiSubscriptionEvent {
+[1m[94m1753[0m [1m[94m|[0m [1m[33m|[0m     /// A canonical event from the session (translated from Pi nati[1m[94m...[0m
+[1m[94m1754[0m [1m[94m|[0m [1m[33m|[0m     Event(oqto_protocol::events::Event),
+     [1m[94m|[0m [1m[33m|[0m     [1m[94m-----------------------------------[0m [1m[94mthe largest variant contains at least 584 bytes[0m
+[1m[94m1755[0m [1m[94m|[0m [1m[33m|[0m     /// The subscription ended.
+[1m[94m...[0m    [1m[33m|[0m
+[1m[94m1758[0m [1m[94m|[0m [1m[33m|[0m     Error { code: ErrorCode, message: String },
+     [1m[94m|[0m [1m[33m|[0m     [1m[94m------------------------------------------[0m [1m[94mthe second-largest variant contains at least 25 bytes[0m
+[1m[94m1759[0m [1m[94m|[0m [1m[33m|[0m }
+     [1m[94m|[0m [1m[33m|_^[0m [1m[33mthe entire enum is at least 584 bytes[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#large_enum_variant
+[1m[96mhelp[0m: consider boxing the large fields or introducing indirection in some other way to reduce the total size of the enum
+     [1m[94m|[0m
+[1m[94m1754[0m [91m- [0m    Event([91moqto_protocol::events::Event[0m),
+[1m[94m1754[0m [92m+ [0m    Event([92mBox<oqto_protocol::events::Event>[0m),
+     [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: this `if` statement can be collapsed[0m
+    [1m[94m--> [0mcrates/oqto/src/runner/daemon/server.rs:1673:13
+     [1m[94m|[0m
+[1m[94m1673[0m [1m[94m|[0m [1m[33m/[0m [1m[94m...[0m   if let Ok(home) = std::env::var("HOME") {
+[1m[94m1674[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m       if !workspace_path.starts_with(&home) && workspace_path ![1m[94m...[0m
+[1m[94m1675[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m           tracing::warn!(
+[1m[94m1676[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m               workspace = %workspace_path,
+[1m[94m...[0m    [1m[33m|[0m
+[1m[94m1682[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m   }
+     [1m[94m|[0m [1m[33m|_______^[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#collapsible_if
+[1m[96mhelp[0m: collapse nested if block
+     [1m[94m|[0m
+[1m[94m1673[0m [92m~ [0m            if let Ok(home) = std::env::var("HOME")
+[1m[94m1674[0m [92m~ [0m                [92m&&[0m !workspace_path.starts_with(&home) && workspace_path != "global" {
+[1m[94m1675[0m [1m[94m|[0m                     tracing::warn!(
+ [1m[94m...[0m
+[1m[94m1680[0m [1m[94m|[0m                     continue;
+[1m[94m1681[0m [92m~ [0m                }
+     [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: this `if` statement can be collapsed[0m
+    [1m[94m--> [0mcrates/oqto/src/runner/daemon/server.rs:2374:9
+     [1m[94m|[0m
+[1m[94m2374[0m [1m[94m|[0m [1m[33m/[0m [1m[94m...[0m   if let Some(hstry_client) = self.pi_manager.hstry_client() {
+[1m[94m2375[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m       if let Err(e) = hstry_client.delete_conversation(&hstry_e[1m[94m...[0m
+[1m[94m2376[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m           warn!(
+[1m[94m2377[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m               "Failed to delete conversation from hstry for ses[1m[94m...[0m
+[1m[94m...[0m    [1m[33m|[0m
+[1m[94m2381[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m   }
+     [1m[94m|[0m [1m[33m|_______^[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#collapsible_if
+[1m[96mhelp[0m: collapse nested if block
+     [1m[94m|[0m
+[1m[94m2374[0m [92m~ [0m        if let Some(hstry_client) = self.pi_manager.hstry_client()
+[1m[94m2375[0m [92m~ [0m            [92m&&[0m let Err(e) = hstry_client.delete_conversation(&hstry_external_id).await {
+[1m[94m2376[0m [1m[94m|[0m                 warn!(
+ [1m[94m...[0m
+[1m[94m2379[0m [1m[94m|[0m                 );
+[1m[94m2380[0m [92m~ [0m            }
+     [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: this `if` statement can be collapsed[0m
+    [1m[94m--> [0mcrates/oqto/src/runner/daemon/server.rs:2385:9
+     [1m[94m|[0m
+[1m[94m2385[0m [1m[94m|[0m [1m[33m/[0m [1m[94m...[0m   if let Some(db_path) = crate::history::hstry_db_path() {
+[1m[94m2386[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m       if let Ok(pool) = crate::history::repository::open_hstry_[1m[94m...[0m
+[1m[94m2387[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m           // Delete by oqto session ID (platform_id) or Pi nati[1m[94m...[0m
+[1m[94m2388[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m           let _ = sqlx::query(
+[1m[94m...[0m    [1m[33m|[0m
+[1m[94m2408[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m   }
+     [1m[94m|[0m [1m[33m|_______^[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#collapsible_if
+[1m[96mhelp[0m: collapse nested if block
+     [1m[94m|[0m
+[1m[94m2385[0m [92m~ [0m        if let Some(db_path) = crate::history::hstry_db_path()
+[1m[94m2386[0m [92m~ [0m            [92m&&[0m let Ok(pool) = crate::history::repository::open_hstry_pool(&db_path).await {
+[1m[94m2387[0m [1m[94m|[0m                 // Delete by oqto session ID (platform_id) or Pi native ID (external_id)
+ [1m[94m...[0m
+[1m[94m2406[0m [1m[94m|[0m                 }
+[1m[94m2407[0m [92m~ [0m            }
+     [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: you should consider adding a `Default` implementation for `StdoutBuffer`[0m
+  [1m[94m--> [0mcrates/oqto/src/runner/daemon/state.rs:31:5
+   [1m[94m|[0m
+[1m[94m31[0m [1m[94m|[0m [1m[33m/[0m     pub fn new() -> Self {
+[1m[94m32[0m [1m[94m|[0m [1m[33m|[0m         Self {
+[1m[94m33[0m [1m[94m|[0m [1m[33m|[0m             lines: Vec::new(),
+[1m[94m34[0m [1m[94m|[0m [1m[33m|[0m             closed: false,
+[1m[94m...[0m  [1m[33m|[0m
+[1m[94m37[0m [1m[94m|[0m [1m[33m|[0m     }
+   [1m[94m|[0m [1m[33m|_____^[0m
+   [1m[94m|[0m
+   [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#new_without_default
+   [1m[94m= [0m[1mnote[0m: `#[warn(clippy::new_without_default)]` on by default
+[1m[96mhelp[0m: try adding this
+   [1m[94m|[0m
+[1m[94m30[0m [92m+ impl Default for StdoutBuffer {[0m
+[1m[94m31[0m [92m+     fn default() -> Self {[0m
+[1m[94m32[0m [92m+         Self::new()[0m
+[1m[94m33[0m [92m+     }[0m
+[1m[94m34[0m [92m+ }[0m
+   [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: you should consider adding a `Default` implementation for `RunnerState`[0m
+  [1m[94m--> [0mcrates/oqto/src/runner/daemon/state.rs:80:5
+   [1m[94m|[0m
+[1m[94m80[0m [1m[94m|[0m [1m[33m/[0m     pub fn new() -> Self {
+[1m[94m81[0m [1m[94m|[0m [1m[33m|[0m         Self {
+[1m[94m82[0m [1m[94m|[0m [1m[33m|[0m             processes: HashMap::new(),
+[1m[94m83[0m [1m[94m|[0m [1m[33m|[0m             sessions: HashMap::new(),
+[1m[94m84[0m [1m[94m|[0m [1m[33m|[0m         }
+[1m[94m85[0m [1m[94m|[0m [1m[33m|[0m     }
+   [1m[94m|[0m [1m[33m|_____^[0m
+   [1m[94m|[0m
+   [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#new_without_default
+[1m[96mhelp[0m: try adding this
+   [1m[94m|[0m
+[1m[94m79[0m [92m+ impl Default for RunnerState {[0m
+[1m[94m80[0m [92m+     fn default() -> Self {[0m
+[1m[94m81[0m [92m+         Self::new()[0m
+[1m[94m82[0m [92m+     }[0m
+[1m[94m83[0m [92m+ }[0m
+   [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: you should consider adding a `Default` implementation for `EventSubscribers`[0m
+   [1m[94m--> [0mcrates/oqto/src/runner/pi_manager.rs:341:5
+    [1m[94m|[0m
+[1m[94m341[0m [1m[94m|[0m [1m[33m/[0m     pub fn new() -> Self {
+[1m[94m342[0m [1m[94m|[0m [1m[33m|[0m         Self {
+[1m[94m343[0m [1m[94m|[0m [1m[33m|[0m             inner: Arc::new(RwLock::new(Vec::new())),
+[1m[94m344[0m [1m[94m|[0m [1m[33m|[0m         }
+[1m[94m345[0m [1m[94m|[0m [1m[33m|[0m     }
+    [1m[94m|[0m [1m[33m|_____^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#new_without_default
+[1m[96mhelp[0m: try adding this
+    [1m[94m|[0m
+[1m[94m339[0m [92m+ impl Default for EventSubscribers {[0m
+[1m[94m340[0m [92m+     fn default() -> Self {[0m
+[1m[94m341[0m [92m+         Self::new()[0m
+[1m[94m342[0m [92m+     }[0m
+[1m[94m343[0m [92m+ }[0m
+    [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: this `if` statement can be collapsed[0m
+    [1m[94m--> [0mcrates/oqto/src/runner/pi_manager.rs:1625:9
+     [1m[94m|[0m
+[1m[94m1625[0m [1m[94m|[0m [1m[33m/[0m         if let Ok(meta) = std::fs::metadata(&models_path) {
+[1m[94m1626[0m [1m[94m|[0m [1m[33m|[0m             if let Ok(mtime) = meta.modified() {
+[1m[94m1627[0m [1m[94m|[0m [1m[33m|[0m                 *self.models_json_mtime.write().await = Some(mtime);
+[1m[94m1628[0m [1m[94m|[0m [1m[33m|[0m             }
+[1m[94m1629[0m [1m[94m|[0m [1m[33m|[0m         }
+     [1m[94m|[0m [1m[33m|_________^[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#collapsible_if
+[1m[96mhelp[0m: collapse nested if block
+     [1m[94m|[0m
+[1m[94m1625[0m [92m~ [0m        if let Ok(meta) = std::fs::metadata(&models_path)
+[1m[94m1626[0m [92m~ [0m            [92m&&[0m let Ok(mtime) = meta.modified() {
+[1m[94m1627[0m [1m[94m|[0m                 *self.models_json_mtime.write().await = Some(mtime);
+[1m[94m1628[0m [92m~ [0m            }
+     [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: this `if` statement can be collapsed[0m
+    [1m[94m--> [0mcrates/oqto/src/runner/pi_manager.rs:1727:13
+     [1m[94m|[0m
+[1m[94m1727[0m [1m[94m|[0m [1m[33m/[0m [1m[94m...[0m   if let Some(id) = model.get("id").and_then(|id| id.as_str()) {
+[1m[94m1728[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m       if !seen.contains(id) {
+[1m[94m1729[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m           merged.push(model);
+[1m[94m1730[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m       }
+[1m[94m1731[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m   }
+     [1m[94m|[0m [1m[33m|_______^[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#collapsible_if
+[1m[96mhelp[0m: collapse nested if block
+     [1m[94m|[0m
+[1m[94m1727[0m [92m~ [0m            if let Some(id) = model.get("id").and_then(|id| id.as_str())
+[1m[94m1728[0m [92m~ [0m                [92m&&[0m !seen.contains(id) {
+[1m[94m1729[0m [1m[94m|[0m                     merged.push(model);
+[1m[94m1730[0m [92m~ [0m                }
+     [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: this `if` statement can be collapsed[0m
+    [1m[94m--> [0mcrates/oqto/src/runner/pi_manager.rs:3334:21
+     [1m[94m|[0m
+[1m[94m3334[0m [1m[94m|[0m [1m[33m/[0m [1m[94m...[0m   if matches!(
+[1m[94m3335[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m       enriched_payload,
+[1m[94m3336[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m       oqto_protocol::events::EventPayload::AgentIdle { .. }
+[1m[94m3337[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m   ) {
+[1m[94m...[0m    [1m[33m|[0m
+[1m[94m3373[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m   }
+     [1m[94m|[0m [1m[33m|_______^[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#collapsible_if
+[1m[96mhelp[0m: collapse nested if block
+     [1m[94m|[0m
+[1m[94m3337[0m [92m~ [0m                    )
+[1m[94m3338[0m [92m~ [0m                        [92m&&[0m let Some(error_text) = pending_error_text.take() {
+[1m[94m3339[0m [1m[94m|[0m                             if let Some(ref client) = hstry_client {
+ [1m[94m...[0m
+[1m[94m3371[0m [1m[94m|[0m                             }
+[1m[94m3372[0m [92m~ [0m                        }
+     [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: this `if` statement can be collapsed[0m
+    [1m[94m--> [0mcrates/oqto/src/runner/pi_manager.rs:3338:25
+     [1m[94m|[0m
+[1m[94m3338[0m [1m[94m|[0m [1m[33m/[0m [1m[94m...[0m   if let Some(error_text) = pending_error_text.take() {
+[1m[94m3339[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m       if let Some(ref client) = hstry_client {
+[1m[94m3340[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m           let eid = hstry_external_id.read().await.clone();
+[1m[94m3341[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m           let error_parts = serde_json::json!([{
+[1m[94m...[0m    [1m[33m|[0m
+[1m[94m3372[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m   }
+     [1m[94m|[0m [1m[33m|_______^[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#collapsible_if
+[1m[96mhelp[0m: collapse nested if block
+     [1m[94m|[0m
+[1m[94m3338[0m [92m~ [0m                        if let Some(error_text) = pending_error_text.take()
+[1m[94m3339[0m [92m~ [0m                            [92m&&[0m let Some(ref client) = hstry_client {
+[1m[94m3340[0m [1m[94m|[0m                                 let eid = hstry_external_id.read().await.clone();
+ [1m[94m...[0m
+[1m[94m3370[0m [1m[94m|[0m                                 }
+[1m[94m3371[0m [92m~ [0m                            }
+     [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: this `if` statement can be collapsed[0m
+   [1m[94m--> [0mcrates/oqto/src/runner/pi_translator.rs:218:17
+    [1m[94m|[0m
+[1m[94m218[0m [1m[94m|[0m [1m[33m/[0m [1m[94m...[0m   if (msg.role == "assistant" || msg.role == "agent")
+[1m[94m219[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m       && msg.stop_reason.as_deref() == Some("error")
+[1m[94m220[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m   {
+[1m[94m221[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m       if let Some(error_text) = extract_error_message(msg) {
+[1m[94m...[0m   [1m[33m|[0m
+[1m[94m229[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m   }
+    [1m[94m|[0m [1m[33m|_______^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#collapsible_if
+[1m[96mhelp[0m: collapse nested if block
+    [1m[94m|[0m
+[1m[94m219[0m [92m~ [0m                    && msg.stop_reason.as_deref() == Some("error")
+[1m[94m220[0m [92m~ [0m                    [92m&&[0m let Some(error_text) = extract_error_message(msg) {
+[1m[94m221[0m [1m[94m|[0m                         events.push(EventPayload::AgentError {
+[1m[94m...[0m
+[1m[94m226[0m [1m[94m|[0m                         break;
+[1m[94m227[0m [92m~ [0m                    }
+    [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: this `if` statement can be collapsed[0m
+   [1m[94m--> [0mcrates/oqto/src/runner/pi_translator.rs:431:9
+    [1m[94m|[0m
+[1m[94m431[0m [1m[94m|[0m [1m[33m/[0m [1m[94m...[0m   if !self.in_retry_cycle && matches!(canonical.stop_reason, Som[1m[94m...[0m
+[1m[94m432[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m       if let Some(error_text) = extract_error_message(message) {
+[1m[94m433[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m           let is_fatal = is_payload_too_large_error(&error_text);
+[1m[94m434[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m           events.push(EventPayload::AgentError {
+[1m[94m...[0m   [1m[33m|[0m
+[1m[94m449[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m   }
+    [1m[94m|[0m [1m[33m|_______^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#collapsible_if
+[1m[96mhelp[0m: collapse nested if block
+    [1m[94m|[0m
+[1m[94m431[0m [92m~ [0m        if !self.in_retry_cycle && matches!(canonical.stop_reason, Some(StopReason::Error))
+[1m[94m432[0m [92m~ [0m            [92m&&[0m let Some(error_text) = extract_error_message(message) {
+[1m[94m433[0m [1m[94m|[0m                 let is_fatal = is_payload_too_large_error(&error_text);
+[1m[94m...[0m
+[1m[94m447[0m [1m[94m|[0m                 }
+[1m[94m448[0m [92m~ [0m            }
+    [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: this `if` statement can be collapsed[0m
+   [1m[94m--> [0mcrates/oqto/src/runner/router.rs:138:5
+    [1m[94m|[0m
+[1m[94m138[0m [1m[94m|[0m [1m[33m/[0m     if let Some(sw_service) = state.shared_workspaces.as_ref() {
+[1m[94m139[0m [1m[94m|[0m [1m[33m|[0m         if let Some((ws, _role)) = sw_service
+[1m[94m140[0m [1m[94m|[0m [1m[33m|[0m             .check_access_for_path(workspace_path, user_id)
+[1m[94m141[0m [1m[94m|[0m [1m[33m|[0m             .await
+[1m[94m...[0m   [1m[33m|[0m
+[1m[94m148[0m [1m[94m|[0m [1m[33m|[0m     }
+    [1m[94m|[0m [1m[33m|_____^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#collapsible_if
+[1m[96mhelp[0m: collapse nested if block
+    [1m[94m|[0m
+[1m[94m138[0m [92m~ [0m    if let Some(sw_service) = state.shared_workspaces.as_ref()
+[1m[94m139[0m [92m~ [0m        [92m&&[0m let Some((ws, _role)) = sw_service
+[1m[94m140[0m [1m[94m|[0m             .check_access_for_path(workspace_path, user_id)
+[1m[94m...[0m
+[1m[94m146[0m [1m[94m|[0m             });
+[1m[94m147[0m [92m~ [0m        }
+    [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: this `if` statement can be collapsed[0m
+   [1m[94m--> [0mcrates/oqto-usermgr/src/main.rs:489:5
+    [1m[94m|[0m
+[1m[94m489[0m [1m[94m|[0m [1m[33m/[0m     if std::path::Path::new(&socket_dir).exists() {
+[1m[94m490[0m [1m[94m|[0m [1m[33m|[0m         if let Err(e) = run_cmd("/bin/rm", &["-rf", &socket_dir]) {
+[1m[94m491[0m [1m[94m|[0m [1m[33m|[0m             warnings.push(format!("rm {socket_dir}: {e}"));
+[1m[94m492[0m [1m[94m|[0m [1m[33m|[0m         }
+[1m[94m493[0m [1m[94m|[0m [1m[33m|[0m     }
+    [1m[94m|[0m [1m[33m|_____^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#collapsible_if
+    [1m[94m= [0m[1mnote[0m: `#[warn(clippy::collapsible_if)]` on by default
+[1m[96mhelp[0m: collapse nested if block
+    [1m[94m|[0m
+[1m[94m489[0m [92m~ [0m    if std::path::Path::new(&socket_dir).exists()
+[1m[94m490[0m [92m~ [0m        [92m&&[0m let Err(e) = run_cmd("/bin/rm", &["-rf", &socket_dir]) {
+[1m[94m491[0m [1m[94m|[0m             warnings.push(format!("rm {socket_dir}: {e}"));
+[1m[94m492[0m [92m~ [0m        }
+    [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: this `if` statement can be collapsed[0m
+   [1m[94m--> [0mcrates/oqto-usermgr/src/main.rs:513:13
+    [1m[94m|[0m
+[1m[94m513[0m [1m[94m|[0m [1m[33m/[0m             if std::path::Path::new(&home).exists() {
+[1m[94m514[0m [1m[94m|[0m [1m[33m|[0m                 if let Err(e3) = run_cmd("/bin/rm", &["-rf", &home]) {
+[1m[94m515[0m [1m[94m|[0m [1m[33m|[0m                     warnings.push(format!("rm home {home}: {e3}"));
+[1m[94m516[0m [1m[94m|[0m [1m[33m|[0m                 }
+[1m[94m517[0m [1m[94m|[0m [1m[33m|[0m             }
+    [1m[94m|[0m [1m[33m|_____________^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#collapsible_if
+[1m[96mhelp[0m: collapse nested if block
+    [1m[94m|[0m
+[1m[94m513[0m [92m~ [0m            if std::path::Path::new(&home).exists()
+[1m[94m514[0m [92m~ [0m                [92m&&[0m let Err(e3) = run_cmd("/bin/rm", &["-rf", &home]) {
+[1m[94m515[0m [1m[94m|[0m                     warnings.push(format!("rm home {home}: {e3}"));
+[1m[94m516[0m [92m~ [0m                }
+    [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: this `if` statement can be collapsed[0m
+   [1m[94m--> [0mcrates/oqto-usermgr/src/main.rs:850:9
+    [1m[94m|[0m
+[1m[94m850[0m [1m[94m|[0m [1m[33m/[0m [1m[94m...[0m   if let Ok(content) = std::fs::read_to_string(&hstry_config_pat[1m[94m...[0m
+[1m[94m851[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m       if content.contains("enabled = false") {
+[1m[94m852[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m           let patched = content.replace("enabled = false", "enab[1m[94m...[0m
+[1m[94m853[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m           let _ = std::fs::write(&hstry_config_path, patched);
+[1m[94m854[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m       }
+[1m[94m855[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m   }
+    [1m[94m|[0m [1m[33m|_______^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#collapsible_if
+[1m[96mhelp[0m: collapse nested if block
+    [1m[94m|[0m
+[1m[94m850[0m [92m~ [0m        if let Ok(content) = std::fs::read_to_string(&hstry_config_path)
+[1m[94m851[0m [92m~ [0m            [92m&&[0m content.contains("enabled = false") {
+[1m[94m852[0m [1m[94m|[0m                 let patched = content.replace("enabled = false", "enabled = true");
+[1m[94m853[0m [1m[94m|[0m                 let _ = std::fs::write(&hstry_config_path, patched);
+[1m[94m854[0m [92m~ [0m            }
+    [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: unneeded late initialization[0m
+   [1m[94m--> [0mcrates/oqto-usermgr/src/main.rs:880:9
+    [1m[94m|[0m
+[1m[94m880[0m [1m[94m|[0m         let needs_write;
+    [1m[94m|[0m         [1m[33m^^^^^^^^^^^^^^^^[0m [1m[33mcreated here[0m
+[1m[94m...[0m
+[1m[94m915[0m [1m[94m|[0m         needs_write = patched != content;
+    [1m[94m|[0m         [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m [1m[33minitialised here[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#needless_late_init
+    [1m[94m= [0m[1mnote[0m: `#[warn(clippy::needless_late_init)]` on by default
+[1m[96mhelp[0m: move the declaration `needs_write` here
+    [1m[94m|[0m
+[1m[94m880[0m [92m~ [0m        
+[1m[94m881[0m [1m[94m|[0m
+[1m[94m...[0m
+[1m[94m914[0m [1m[94m|[0m
+[1m[94m915[0m [92m~ [0m        [92mlet [0mneeds_write = patched != content;
+    [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: this `if` statement can be collapsed[0m
+    [1m[94m--> [0mcrates/oqto-usermgr/src/main.rs:1286:17
+     [1m[94m|[0m
+[1m[94m1286[0m [1m[94m|[0m [1m[33m/[0m [1m[94m...[0m   if let Some(parent) = std::path::Path::new(&file_path).parent[1m[94m...[0m
+[1m[94m1287[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m       if let Err(e) = std::fs::create_dir_all(parent) {
+[1m[94m1288[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m           return Response::error(format!("creating dir for {fil[1m[94m...[0m
+[1m[94m1289[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m       }
+[1m[94m1290[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m   }
+     [1m[94m|[0m [1m[33m|_______^[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#collapsible_if
+[1m[96mhelp[0m: collapse nested if block
+     [1m[94m|[0m
+[1m[94m1286[0m [92m~ [0m                if let Some(parent) = std::path::Path::new(&file_path).parent()
+[1m[94m1287[0m [92m~ [0m                    [92m&&[0m let Err(e) = std::fs::create_dir_all(parent) {
+[1m[94m1288[0m [1m[94m|[0m                         return Response::error(format!("creating dir for {file_path}: {e}"));
+[1m[94m1289[0m [92m~ [0m                    }
+     [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: this expression creates a reference which is immediately dereferenced by the compiler[0m
+    [1m[94m--> [0mcrates/oqto-usermgr/src/main.rs:1407:54
+     [1m[94m|[0m
+[1m[94m1407[0m [1m[94m|[0m [1m[94m...[0mve(&src_dir, &std::path::Path::new(&dest_dir)) {
+     [1m[94m|[0m                 [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m [1m[33mhelp: change this to: `std::path::Path::new(&dest_dir)`[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#needless_borrow
+     [1m[94m= [0m[1mnote[0m: `#[warn(clippy::needless_borrow)]` on by default
+
+[1m[33mwarning[0m[1m: this `if` statement can be collapsed[0m
+    [1m[94m--> [0mcrates/oqto-usermgr/src/main.rs:1466:5
+     [1m[94m|[0m
+[1m[94m1466[0m [1m[94m|[0m [1m[33m/[0m     if let Some(parent) = std::path::Path::new(&full_path).parent() {
+[1m[94m1467[0m [1m[94m|[0m [1m[33m|[0m         if !parent.exists() {
+[1m[94m1468[0m [1m[94m|[0m [1m[33m|[0m             if let Err(e) = std::fs::create_dir_all(parent) {
+[1m[94m1469[0m [1m[94m|[0m [1m[33m|[0m                 return Response::error(format!("mkdir {}: {e}", par[1m[94m...[0m
+[1m[94m...[0m    [1m[33m|[0m
+[1m[94m1481[0m [1m[94m|[0m [1m[33m|[0m     }
+     [1m[94m|[0m [1m[33m|_____^[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#collapsible_if
+[1m[96mhelp[0m: collapse nested if block
+     [1m[94m|[0m
+[1m[94m1466[0m [92m~ [0m    if let Some(parent) = std::path::Path::new(&full_path).parent()
+[1m[94m1467[0m [92m~ [0m        [92m&&[0m !parent.exists() {
+[1m[94m1468[0m [1m[94m|[0m             if let Err(e) = std::fs::create_dir_all(parent) {
+ [1m[94m...[0m
+[1m[94m1479[0m [1m[94m|[0m             );
+[1m[94m1480[0m [92m~ [0m        }
+     [1m[94m|[0m
+
+[1m[33mwarning[0m: `oqto` (lib) generated 58 warnings (run `cargo clippy --fix --lib -p oqto` to apply 47 suggestions)
+[1m[33mwarning[0m: `oqto-usermgr` (bin "oqto-usermgr") generated 7 warnings (run `cargo clippy --fix --bin "oqto-usermgr" -p oqto-usermgr` to apply 7 suggestions)
+[1m[33mwarning[0m[1m: large size difference between variants[0m
+   [1m[94m--> [0mcrates/oqto/src/ctl/main.rs:784:1
+    [1m[94m|[0m
+[1m[94m784[0m [1m[94m|[0m [1m[33m/[0m   enum OqtoTransport {
+[1m[94m785[0m [1m[94m|[0m [1m[33m|[0m [1m[94m/[0m     Http {
+[1m[94m786[0m [1m[94m|[0m [1m[33m|[0m [1m[94m|[0m         base_url: String,
+[1m[94m787[0m [1m[94m|[0m [1m[33m|[0m [1m[94m|[0m         client: reqwest::Client,
+[1m[94m788[0m [1m[94m|[0m [1m[33m|[0m [1m[94m|[0m     },
+    [1m[94m|[0m [1m[33m|[0m [1m[94m|_____-[0m [1m[94mthe second-largest variant contains at least 32 bytes[0m
+[1m[94m789[0m [1m[94m|[0m [1m[33m|[0m       #[cfg(unix)]
+[1m[94m790[0m [1m[94m|[0m [1m[33m|[0m [1m[94m/[0m     Unix {
+[1m[94m791[0m [1m[94m|[0m [1m[33m|[0m [1m[94m|[0m         socket_path: PathBuf,
+[1m[94m792[0m [1m[94m|[0m [1m[33m|[0m [1m[94m|[0m         base_path: String,
+[1m[94m793[0m [1m[94m|[0m [1m[33m|[0m [1m[94m|[0m         client: UnixClient,
+[1m[94m794[0m [1m[94m|[0m [1m[33m|[0m [1m[94m|[0m     },
+    [1m[94m|[0m [1m[33m|[0m [1m[94m|_____-[0m [1m[94mthe largest variant contains at least 296 bytes[0m
+[1m[94m795[0m [1m[94m|[0m [1m[33m|[0m   }
+    [1m[94m|[0m [1m[33m|___^[0m [1m[33mthe entire enum is at least 296 bytes[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#large_enum_variant
+    [1m[94m= [0m[1mnote[0m: `#[warn(clippy::large_enum_variant)]` on by default
+[1m[96mhelp[0m: consider boxing the large fields or introducing indirection in some other way to reduce the total size of the enum
+    [1m[94m|[0m
+[1m[94m793[0m [91m- [0m        client: [91mUnixClient[0m,
+[1m[94m793[0m [92m+ [0m        client: [92mBox<UnixClient>[0m,
+    [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: this `if` statement can be collapsed[0m
+    [1m[94m--> [0mcrates/oqto/src/ctl/main.rs:2938:9
+     [1m[94m|[0m
+[1m[94m2938[0m [1m[94m|[0m [1m[33m/[0m [1m[94m...[0m   if let Ok(user) = serde_json::from_str::<serde_json::Value>(&[1m[94m...[0m
+[1m[94m2939[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m       if let Some(id) = user["id"].as_str() {
+[1m[94m2940[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m           return Ok(id.to_string());
+[1m[94m2941[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m       }
+[1m[94m2942[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m   }
+     [1m[94m|[0m [1m[33m|_______^[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#collapsible_if
+     [1m[94m= [0m[1mnote[0m: requested on the command line with `-W clippy::collapsible-if`
+[1m[96mhelp[0m: collapse nested if block
+     [1m[94m|[0m
+[1m[94m2938[0m [92m~ [0m        if let Ok(user) = serde_json::from_str::<serde_json::Value>(&body)
+[1m[94m2939[0m [92m~ [0m            [92m&&[0m let Some(id) = user["id"].as_str() {
+[1m[94m2940[0m [1m[94m|[0m                 return Ok(id.to_string());
+[1m[94m2941[0m [92m~ [0m            }
+     [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: this `if` statement can be collapsed[0m
+    [1m[94m--> [0mcrates/oqto/src/ctl/main.rs:2951:17
+     [1m[94m|[0m
+[1m[94m2951[0m [1m[94m|[0m [1m[33m/[0m                 if user["username"].as_str() == Some(user_or_id) {
+[1m[94m2952[0m [1m[94m|[0m [1m[33m|[0m                     if let Some(id) = user["id"].as_str() {
+[1m[94m2953[0m [1m[94m|[0m [1m[33m|[0m                         return Ok(id.to_string());
+[1m[94m2954[0m [1m[94m|[0m [1m[33m|[0m                     }
+[1m[94m2955[0m [1m[94m|[0m [1m[33m|[0m                 }
+     [1m[94m|[0m [1m[33m|_________________^[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#collapsible_if
+[1m[96mhelp[0m: collapse nested if block
+     [1m[94m|[0m
+[1m[94m2951[0m [92m~ [0m                if user["username"].as_str() == Some(user_or_id)
+[1m[94m2952[0m [92m~ [0m                    [92m&&[0m let Some(id) = user["id"].as_str() {
+[1m[94m2953[0m [1m[94m|[0m                         return Ok(id.to_string());
+[1m[94m2954[0m [92m~ [0m                    }
+     [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: this `if` statement can be collapsed[0m
+    [1m[94m--> [0mcrates/oqto/src/ctl/main.rs:4302:25
+     [1m[94m|[0m
+[1m[94m4302[0m [1m[94m|[0m [1m[33m/[0m                         if let Some(max) = limit {
+[1m[94m4303[0m [1m[94m|[0m [1m[33m|[0m                             if seen >= max {
+[1m[94m4304[0m [1m[94m|[0m [1m[33m|[0m                                 break;
+[1m[94m4305[0m [1m[94m|[0m [1m[33m|[0m                             }
+[1m[94m4306[0m [1m[94m|[0m [1m[33m|[0m                         }
+     [1m[94m|[0m [1m[33m|_________________________^[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#collapsible_if
+[1m[96mhelp[0m: collapse nested if block
+     [1m[94m|[0m
+[1m[94m4302[0m [92m~ [0m                        if let Some(max) = limit
+[1m[94m4303[0m [92m~ [0m                            [92m&&[0m seen >= max {
+[1m[94m4304[0m [1m[94m|[0m                                 break;
+[1m[94m4305[0m [92m~ [0m                            }
+     [1m[94m|[0m
+
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(skip_serializing_if = "Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(skip_serializing_if = "Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(skip_serializing_if = "Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(skip_serializing_if = "Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(skip_serializing_if = "Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(skip_serializing_if = "Option::is_none")]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(skip_serializing)]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[0m[1m[38;5;11mwarning[0m[1m[38;5;15m: failed to parse serde attribute
+[0m[1m[38;5;12m  | 
+  | [0m[38;5;15m#[serde(skip_serializing)]
+[0m[1m[38;5;12m  | 
+  = [0m[1m[38;5;15mnote: [0m[38;5;15mts-rs failed to parse this attribute. It will be ignored.
+[1m[33mwarning[0m[1m: this `if` statement can be collapsed[0m
+   [1m[94m--> [0mcrates/oqto/src/bus/engine.rs:229:9
+    [1m[94m|[0m
+[1m[94m229[0m [1m[94m|[0m [1m[33m/[0m [1m[94m...[0m   if let Some(pid) = publisher_id {
+[1m[94m230[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m       if let Some(mut rl) = self.rate_limits.get_mut(&pid) {
+[1m[94m231[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m           if !rl.check_and_increment() {
+[1m[94m232[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m               self.events_dropped_rate.fetch_add(1, Ordering::Re[1m[94m...[0m
+[1m[94m...[0m   [1m[33m|[0m
+[1m[94m240[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m   }
+    [1m[94m|[0m [1m[33m|_______^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#collapsible_if
+    [1m[94m= [0m[1mnote[0m: requested on the command line with `-W clippy::collapsible-if`
+[1m[96mhelp[0m: collapse nested if block
+    [1m[94m|[0m
+[1m[94m229[0m [92m~ [0m        if let Some(pid) = publisher_id
+[1m[94m230[0m [92m~ [0m            [92m&&[0m let Some(mut rl) = self.rate_limits.get_mut(&pid) {
+[1m[94m231[0m [1m[94m|[0m                 if !rl.check_and_increment() {
+[1m[94m...[0m
+[1m[94m238[0m [1m[94m|[0m                 }
+[1m[94m239[0m [92m~ [0m            }
+    [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: large size difference between variants[0m
+   [1m[94m--> [0mcrates/oqto/src/bus/types.rs:242:1
+    [1m[94m|[0m
+[1m[94m242[0m [1m[94m|[0m [1m[33m/[0m  pub enum BusWsEvent {
+[1m[94m243[0m [1m[94m|[0m [1m[33m|[0m      /// A bus event delivered to a subscriber.
+[1m[94m244[0m [1m[94m|[0m [1m[33m|[0m      Event(BusEvent),
+    [1m[94m|[0m [1m[33m|[0m      [1m[94m---------------[0m [1m[94mthe largest variant contains at least 320 bytes[0m
+[1m[94m245[0m [1m[94m|[0m [1m[33m|[0m      /// Response to a subscribe/unsubscribe/publish command.
+[1m[94m246[0m [1m[94m|[0m [1m[33m|[0m[1m[94m/[0m     Response {
+[1m[94m247[0m [1m[94m|[0m [1m[33m|[0m[1m[94m|[0m         #[serde(skip_serializing_if = "Option::is_none")]
+[1m[94m248[0m [1m[94m|[0m [1m[33m|[0m[1m[94m|[0m         id: Option<String>,
+[1m[94m249[0m [1m[94m|[0m [1m[33m|[0m[1m[94m|[0m         success: bool,
+[1m[94m250[0m [1m[94m|[0m [1m[33m|[0m[1m[94m|[0m         #[serde(skip_serializing_if = "Option::is_none")]
+[1m[94m251[0m [1m[94m|[0m [1m[33m|[0m[1m[94m|[0m         error: Option<String>,
+[1m[94m252[0m [1m[94m|[0m [1m[33m|[0m[1m[94m|[0m     },
+    [1m[94m|[0m [1m[33m|[0m[1m[94m|_____-[0m [1m[94mthe second-largest variant contains at least 49 bytes[0m
+[1m[94m253[0m [1m[94m|[0m [1m[33m|[0m  }
+    [1m[94m|[0m [1m[33m|__^[0m [1m[33mthe entire enum is at least 320 bytes[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#large_enum_variant
+    [1m[94m= [0m[1mnote[0m: `#[warn(clippy::large_enum_variant)]` on by default
+[1m[96mhelp[0m: consider boxing the large fields or introducing indirection in some other way to reduce the total size of the enum
+    [1m[94m|[0m
+[1m[94m244[0m [91m- [0m    Event([91mBusEvent[0m),
+[1m[94m244[0m [92m+ [0m    Event([92mBox<BusEvent>[0m),
+    [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: this `if` statement can be collapsed[0m
+   [1m[94m--> [0mcrates/oqto/src/api/handlers/admin.rs:879:9
+    [1m[94m|[0m
+[1m[94m879[0m [1m[94m|[0m [1m[33m/[0m [1m[94m...[0m   if let Some(models) = provider_val.get("models").and_then(|m| [1m[94m...[0m
+[1m[94m880[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m       if let Some(first) = models.first() {
+[1m[94m881[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m           if let Some(id) = first.get("id").and_then(|v| v.as_st[1m[94m...[0m
+[1m[94m882[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m               return Some((provider_name.clone(), id.to_string()));
+[1m[94m...[0m   [1m[33m|[0m
+[1m[94m885[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m   }
+    [1m[94m|[0m [1m[33m|_______^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#collapsible_if
+[1m[96mhelp[0m: collapse nested if block
+    [1m[94m|[0m
+[1m[94m879[0m [92m~ [0m        if let Some(models) = provider_val.get("models").and_then(|m| m.as_array())
+[1m[94m880[0m [92m~ [0m            [92m&&[0m let Some(first) = models.first() {
+[1m[94m881[0m [1m[94m|[0m                 if let Some(id) = first.get("id").and_then(|v| v.as_str()) {
+[1m[94m882[0m [1m[94m|[0m                     return Some((provider_name.clone(), id.to_string()));
+[1m[94m883[0m [1m[94m|[0m                 }
+[1m[94m884[0m [92m~ [0m            }
+    [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: large size difference between variants[0m
+  [1m[94m--> [0mcrates/oqto/src/api/routes.rs:31:1
+   [1m[94m|[0m
+[1m[94m31[0m [1m[94m|[0m [1m[33m/[0m pub enum AuthMode {
+[1m[94m32[0m [1m[94m|[0m [1m[33m|[0m     /// Standard JWT/cookie authentication.
+[1m[94m33[0m [1m[94m|[0m [1m[33m|[0m     Jwt,
+   [1m[94m|[0m [1m[33m|[0m     [1m[94m---[0m [1m[94mthe second-largest variant carries no data at all[0m
+[1m[94m34[0m [1m[94m|[0m [1m[33m|[0m     /// Admin override for trusted local sockets.
+[1m[94m35[0m [1m[94m|[0m [1m[33m|[0m     Admin(CurrentUser),
+   [1m[94m|[0m [1m[33m|[0m     [1m[94m------------------[0m [1m[94mthe largest variant contains at least 256 bytes[0m
+[1m[94m36[0m [1m[94m|[0m [1m[33m|[0m }
+   [1m[94m|[0m [1m[33m|_^[0m [1m[33mthe entire enum is at least 256 bytes[0m
+   [1m[94m|[0m
+   [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#large_enum_variant
+[1m[96mhelp[0m: consider boxing the large fields or introducing indirection in some other way to reduce the total size of the enum
+   [1m[94m|[0m
+[1m[94m35[0m [91m- [0m    Admin([91mCurrentUser[0m),
+[1m[94m35[0m [92m+ [0m    Admin([92mBox<CurrentUser>[0m),
+   [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: this `impl` can be derived[0m
+   [1m[94m--> [0mcrates/oqto/src/main.rs:665:1
+    [1m[94m|[0m
+[1m[94m665[0m [1m[94m|[0m [1m[33m/[0m impl Default for EavsOAuthConfig {
+[1m[94m666[0m [1m[94m|[0m [1m[33m|[0m     fn default() -> Self {
+[1m[94m667[0m [1m[94m|[0m [1m[33m|[0m         Self {
+[1m[94m668[0m [1m[94m|[0m [1m[33m|[0m             enabled: false,
+[1m[94m...[0m   [1m[33m|[0m
+[1m[94m673[0m [1m[94m|[0m [1m[33m|[0m }
+    [1m[94m|[0m [1m[33m|_^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#derivable_impls
+    [1m[94m= [0m[1mnote[0m: requested on the command line with `-W clippy::derivable-impls`
+[1m[96mhelp[0m: replace the manual implementation with a derive attribute
+    [1m[94m|[0m
+[1m[94m656[0m [92m+ #[derive(Default)][0m
+[1m[94m657[0m [1m[94m|[0m struct EavsOAuthConfig {
+    [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: this `if` statement can be collapsed[0m
+    [1m[94m--> [0mcrates/oqto/src/main.rs:3199:5
+     [1m[94m|[0m
+[1m[94m3199[0m [1m[94m|[0m [1m[33m/[0m     if models_path.exists() {
+[1m[94m3200[0m [1m[94m|[0m [1m[33m|[0m         if let Ok(existing) = std::fs::read_to_string(&models_path) {
+[1m[94m3201[0m [1m[94m|[0m [1m[33m|[0m             if let Ok(existing_json) = serde_json::from_str::<serde[1m[94m...[0m
+[1m[94m3202[0m [1m[94m|[0m [1m[33m|[0m                 if existing_json == models_json {
+[1m[94m...[0m    [1m[33m|[0m
+[1m[94m3209[0m [1m[94m|[0m [1m[33m|[0m     }
+     [1m[94m|[0m [1m[33m|_____^[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#collapsible_if
+[1m[96mhelp[0m: collapse nested if block
+     [1m[94m|[0m
+[1m[94m3199[0m [92m~ [0m    if models_path.exists()
+[1m[94m3200[0m [92m~ [0m        [92m&&[0m let Ok(existing) = std::fs::read_to_string(&models_path) {
+[1m[94m3201[0m [1m[94m|[0m             if let Ok(existing_json) = serde_json::from_str::<serde_json::Value>(&existing) {
+ [1m[94m...[0m
+[1m[94m3207[0m [1m[94m|[0m             }
+[1m[94m3208[0m [92m~ [0m        }
+     [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: this `if` statement can be collapsed[0m
+    [1m[94m--> [0mcrates/oqto/src/main.rs:3200:9
+     [1m[94m|[0m
+[1m[94m3200[0m [1m[94m|[0m [1m[33m/[0m [1m[94m...[0m   if let Ok(existing) = std::fs::read_to_string(&models_path) {
+[1m[94m3201[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m       if let Ok(existing_json) = serde_json::from_str::<serde_j[1m[94m...[0m
+[1m[94m3202[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m           if existing_json == models_json {
+[1m[94m3203[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m               debug!("models.json is up to date");
+[1m[94m...[0m    [1m[33m|[0m
+[1m[94m3208[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m   }
+     [1m[94m|[0m [1m[33m|_______^[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#collapsible_if
+[1m[96mhelp[0m: collapse nested if block
+     [1m[94m|[0m
+[1m[94m3200[0m [92m~ [0m        if let Ok(existing) = std::fs::read_to_string(&models_path)
+[1m[94m3201[0m [92m~ [0m            [92m&&[0m let Ok(existing_json) = serde_json::from_str::<serde_json::Value>(&existing) {
+[1m[94m3202[0m [1m[94m|[0m                 if existing_json == models_json {
+ [1m[94m...[0m
+[1m[94m3206[0m [1m[94m|[0m                 }
+[1m[94m3207[0m [92m~ [0m            }
+     [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: this `if` statement can be collapsed[0m
+    [1m[94m--> [0mcrates/oqto/src/main.rs:3201:13
+     [1m[94m|[0m
+[1m[94m3201[0m [1m[94m|[0m [1m[33m/[0m [1m[94m...[0m   if let Ok(existing_json) = serde_json::from_str::<serde_json:[1m[94m...[0m
+[1m[94m3202[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m       if existing_json == models_json {
+[1m[94m3203[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m           debug!("models.json is up to date");
+[1m[94m3204[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m           ensure_pi_settings_json(&pi_dir, &models_json);
+[1m[94m...[0m    [1m[33m|[0m
+[1m[94m3207[0m [1m[94m|[0m [1m[33m|[0m [1m[94m...[0m   }
+     [1m[94m|[0m [1m[33m|_______^[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#collapsible_if
+[1m[96mhelp[0m: collapse nested if block
+     [1m[94m|[0m
+[1m[94m3201[0m [92m~ [0m            if let Ok(existing_json) = serde_json::from_str::<serde_json::Value>(&existing)
+[1m[94m3202[0m [92m~ [0m                [92m&&[0m existing_json == models_json {
+[1m[94m3203[0m [1m[94m|[0m                     debug!("models.json is up to date");
+[1m[94m3204[0m [1m[94m|[0m                     ensure_pi_settings_json(&pi_dir, &models_json);
+[1m[94m3205[0m [1m[94m|[0m                     return;
+[1m[94m3206[0m [92m~ [0m                }
+     [1m[94m|[0m
+
+[1m[33mwarning[0m[1m: this `if` statement can be collapsed[0m
+    [1m[94m--> [0mcrates/oqto/src/main.rs:3261:5
+     [1m[94m|[0m
+[1m[94m3261[0m [1m[94m|[0m [1m[33m/[0m     if let Some(path) = oqto_env {
+[1m[94m3262[0m [1m[94m|[0m [1m[33m|[0m         if let Ok(contents) = std::fs::read_to_string(&path) {
+[1m[94m3263[0m [1m[94m|[0m [1m[33m|[0m             for line in contents.lines() {
+[1m[94m3264[0m [1m[94m|[0m [1m[33m|[0m                 if let Some(value) = line.trim().strip_prefix("EAVS[1m[94m...[0m
+[1m[94m...[0m    [1m[33m|[0m
+[1m[94m3272[0m [1m[94m|[0m [1m[33m|[0m     }
+     [1m[94m|[0m [1m[33m|_____^[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#collapsible_if
+[1m[96mhelp[0m: collapse nested if block
+     [1m[94m|[0m
+[1m[94m3261[0m [92m~ [0m    if let Some(path) = oqto_env
+[1m[94m3262[0m [92m~ [0m        [92m&&[0m let Ok(contents) = std::fs::read_to_string(&path) {
+[1m[94m3263[0m [1m[94m|[0m             for line in contents.lines() {
+ [1m[94m...[0m
+[1m[94m3270[0m [1m[94m|[0m             }
+[1m[94m3271[0m [92m~ [0m        }
+     [1m[94m|[0m
+
+[1m[33mwarning[0m: `oqto` (bin "oqtoctl") generated 4 warnings (run `cargo clippy --fix --bin "oqtoctl" -p oqto` to apply 3 suggestions)
+[1m[33mwarning[0m: `oqto` (bin "oqto") generated 59 warnings (50 duplicates) (run `cargo clippy --fix --bin "oqto" -p oqto` to apply 7 suggestions)
+[1m[92m    Finished[0m `dev` profile [unoptimized + debuginfo] target(s) in 0.40s
+>> Done (no artifacts to fetch).
+Checked 418 files in 307ms. No fixes applied.
+
+  ! eslint(no-useless-escape): Unnecessary escape character '"'
+     ,-[./features/sessions/components/BrowserView.tsx:182:59]
+ 181 |             `  oqto-browser --session ${browserSessionId} click @e1`,
+ 182 |             `  oqto-browser --session ${browserSessionId} fill @e2 \"text\"`,
+     :                                                                    ^^
+ 183 |             `  oqto-browser --session ${browserSessionId} press Enter`,
+     `----
+  help: Replace `\"` with `"`.
+
+  ! eslint(no-useless-escape): Unnecessary escape character '"'
+     ,-[./features/sessions/components/BrowserView.tsx:182:65]
+ 181 |             `  oqto-browser --session ${browserSessionId} click @e1`,
+ 182 |             `  oqto-browser --session ${browserSessionId} fill @e2 \"text\"`,
+     :                                                                          ^^
+ 183 |             `  oqto-browser --session ${browserSessionId} press Enter`,
+     `----
+  help: Replace `\"` with `"`.
+
+  ! eslint(no-useless-escape): Unnecessary escape character '"'
+     ,-[./features/sessions/components/BrowserView.tsx:186:55]
+ 185 |             `  oqto-browser --session ${browserSessionId} open <url>`,
+ 186 |             `  oqto-browser --session ${browserSessionId} eval \"JS\"`,
+     :                                                                ^^
+ 187 |         ].join("\n");
+     `----
+  help: Replace `\"` with `"`.
+
+  ! eslint(no-useless-escape): Unnecessary escape character '"'
+     ,-[./features/sessions/components/BrowserView.tsx:186:59]
+ 185 |             `  oqto-browser --session ${browserSessionId} open <url>`,
+ 186 |             `  oqto-browser --session ${browserSessionId} eval \"JS\"`,
+     :                                                                    ^^
+ 187 |         ].join("\n");
+     `----
+  help: Replace `\"` with `"`.
+
+  ! eslint(no-control-regex): Unexpected control character(s)
+     ,-[./features/chat/components/ChatView.tsx:118:2]
+ 117 |     // biome-ignore lint: control chars needed for ANSI matching
+ 118 |     /[\x1b\x9b][\[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nq-uy=><~]|\\x1b\[[0-9;]*[A-Za-z]/g;
+     :     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ 119 | 
+     `----
+  help: Unexpected control character(s) in regular expression: "\x1b"
+
+  ! eslint(no-useless-escape): Unnecessary escape character '['
+     ,-[./features/chat/components/ChatView.tsx:118:14]
+ 117 |     // biome-ignore lint: control chars needed for ANSI matching
+ 118 |     /[\x1b\x9b][\[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nq-uy=><~]|\\x1b\[[0-9;]*[A-Za-z]/g;
+     :                 ^^
+ 119 | 
+     `----
+  help: Replace `\[` with `[`.
+
+  ! eslint(no-useless-escape): Unnecessary escape character '"'
+     ,-[./components/terminal/ghostty-terminal.tsx:117:36]
+ 116 |         .split(",")
+ 117 |         .map((f) => f.trim().replace(/^['\"]|['\"]$/g, ""))
+     :                                          ^^
+ 118 |         .filter(Boolean);
+     `----
+  help: Replace `\"` with `"`.
+
+  ! eslint(no-useless-escape): Unnecessary escape character '"'
+     ,-[./components/terminal/ghostty-terminal.tsx:117:42]
+ 116 |         .split(",")
+ 117 |         .map((f) => f.trim().replace(/^['\"]|['\"]$/g, ""))
+     :                                                ^^
+ 118 |         .filter(Boolean);
+     `----
+  help: Replace `\"` with `"`.
+
+Finished in 49ms on 405 files with 95 rules using 4 threads.
+Found 8 warnings and 0 errors.
+useEffect guardrail OK (11 files, 14 tracked occurrences).
+Running ast-grep guardrails on 84 changed Rust files (production scope)...
+TOTAL	0
+BY_RULE
+FILES_WITH_HITS	0
+TOP_FILES
+Rust AI guardrails passed (production scope).

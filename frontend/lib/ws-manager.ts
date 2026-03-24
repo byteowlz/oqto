@@ -213,7 +213,10 @@ class WsConnectionManager {
 		this.loadPersistedOutbox();
 		if (typeof document !== "undefined") {
 			this.boundVisibilityHandler = this.handleVisibilityChange.bind(this);
-			document.addEventListener("visibilitychange", this.boundVisibilityHandler);
+			document.addEventListener(
+				"visibilitychange",
+				this.boundVisibilityHandler,
+			);
 		}
 		if (typeof window !== "undefined") {
 			this.boundOnlineHandler = this.handleOnline.bind(this);
@@ -250,9 +253,10 @@ class WsConnectionManager {
 		}
 
 		// Page became visible
-		const hiddenDuration = this.lastVisibilityHiddenAt > 0
-			? Date.now() - this.lastVisibilityHiddenAt
-			: 0;
+		const hiddenDuration =
+			this.lastVisibilityHiddenAt > 0
+				? Date.now() - this.lastVisibilityHiddenAt
+				: 0;
 
 		// Skip check if hidden for less than 5 seconds
 		if (hiddenDuration < 5_000) return;
@@ -373,6 +377,7 @@ class WsConnectionManager {
 			last_activity: number;
 			subscriber_count: number;
 			shared_workspace_id?: string;
+			hstry_id?: string;
 		}>
 	> {
 		const event = await this.sendAndWait({
@@ -392,6 +397,7 @@ class WsConnectionManager {
 				last_activity: number;
 				subscriber_count: number;
 				shared_workspace_id?: string;
+				hstry_id?: string;
 			}>;
 		}
 		throw new Error(resp?.error ?? "Unexpected response to list_sessions");
@@ -497,7 +503,10 @@ class WsConnectionManager {
 
 		// Remove visibility and online handlers
 		if (this.boundVisibilityHandler && typeof document !== "undefined") {
-			document.removeEventListener("visibilitychange", this.boundVisibilityHandler);
+			document.removeEventListener(
+				"visibilitychange",
+				this.boundVisibilityHandler,
+			);
 			this.boundVisibilityHandler = null;
 		}
 		if (this.boundOnlineHandler && typeof window !== "undefined") {
@@ -529,7 +538,10 @@ class WsConnectionManager {
 				const last = this.lastGetStateAt.get(sessionId) ?? 0;
 				if (now - last < 400) {
 					if (isWsMuxDebugEnabled()) {
-						console.debug("[ws-mux] Dropping duplicate get_state send:", sessionId);
+						console.debug(
+							"[ws-mux] Dropping duplicate get_state send:",
+							sessionId,
+						);
 					}
 					return false;
 				}
@@ -678,8 +690,7 @@ class WsConnectionManager {
 		// Warn about potential duplicate handler registrations
 		if (handlers.size > 1) {
 			console.warn(
-				`[ws-mux] WARNING: ${handlers.size} handlers registered for session ${sessionId} after subscribeAgentSession. ` +
-				`This may cause duplicate event processing. Stack:`,
+				`[ws-mux] WARNING: ${handlers.size} handlers registered for session ${sessionId} after subscribeAgentSession. This may cause duplicate event processing. Stack:`,
 				new Error().stack,
 			);
 		}
@@ -1004,7 +1015,13 @@ class WsConnectionManager {
 		const resp = this.extractCommandResponse(event);
 		if (resp?.success) {
 			if (!Array.isArray(resp.data)) return [];
-			return (resp.data as Array<{ entry_id?: string; role?: string; preview?: string }>)
+			return (
+				resp.data as Array<{
+					entry_id?: string;
+					role?: string;
+					preview?: string;
+				}>
+			)
 				.filter((item) => typeof item.entry_id === "string")
 				.map((item) => ({
 					entry_id: item.entry_id as string,
@@ -1470,10 +1487,7 @@ class WsConnectionManager {
 				if (sessionHandlers) {
 					// Warn if multiple handlers exist for a single session
 					// (indicates a double-subscription bug causing duplicate events)
-					if (
-						sessionHandlers.size > 1 &&
-						isWsMuxDebugEnabled()
-					) {
+					if (sessionHandlers.size > 1 && isWsMuxDebugEnabled()) {
 						console.warn(
 							`[ws-mux] DUPLICATE HANDLERS: ${sessionHandlers.size} handlers for session ${sessionId}, event: ${agentEvent.event}`,
 						);
@@ -1556,7 +1570,8 @@ class WsConnectionManager {
 			}>;
 			const now = Date.now();
 			for (const item of parsed) {
-				if (!item?.id || !item.sessionId || !item.cmd || !item.message) continue;
+				if (!item?.id || !item.sessionId || !item.cmd || !item.message)
+					continue;
 				if (now - (item.updatedAt ?? 0) > OUTBOX_MAX_AGE_MS) continue;
 				this.persistedOutbox.set(item.id, item);
 				const pending = this.pendingMessages.get(item.sessionId) ?? [];

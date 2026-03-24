@@ -17,7 +17,7 @@ static TITLE_PATTERN: Lazy<Regex> = Lazy::new(|| {
     Regex::new(
         r#"^(?:(?P<workspace>[^:]+):\s*)?(?P<title>[^\[]+)\s*\[(?P<readable_id>[^\]]+)\]\s*$"#,
     )
-    .expect("Invalid regex pattern for auto-generated title")
+    .unwrap_or_else(|err| panic!("Invalid regex pattern for auto-generated title: {err}"))
 });
 
 /// Parsed components of an auto-generated Pi session title

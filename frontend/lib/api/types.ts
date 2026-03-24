@@ -18,7 +18,9 @@ export type UserInfo = {
 };
 
 /** Get the best available display name for a user. */
-export function getUserDisplayName(user: UserInfo | null | undefined): string | undefined {
+export function getUserDisplayName(
+	user: UserInfo | null | undefined,
+): string | undefined {
 	if (!user) return undefined;
 	return user.display_name || user.name || user.username;
 }

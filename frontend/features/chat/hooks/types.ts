@@ -116,6 +116,10 @@ export type UseChatReturn = {
 	isAwaitingResponse: boolean;
 	/** Current error if any */
 	error: Error | null;
+	/** True after first authoritative history load completed for current session */
+	historyHydrated: boolean;
+	/** True while waiting for first authoritative history for current session */
+	historyLoading: boolean;
 	/** Send a message */
 	send: (message: string, options?: SendOptions) => Promise<void>;
 	/** Append a local assistant message (no agent call) */

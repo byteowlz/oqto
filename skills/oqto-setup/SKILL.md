@@ -161,7 +161,7 @@ brew install ttyd
 
 ```bash
 # Build the image
-docker build -t oqto-dev:latest -f container/Dockerfile .
+docker build -f deploy/docker/Dockerfile -t oqto:latest .
 ```
 
 ### Port Already in Use
