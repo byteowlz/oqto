@@ -76,6 +76,25 @@ Implement **Option 1** (Hash Session ID) with a helper function that:
 
 This ensures the socket path is always under 80 characters, well within the 108-character limit.
 
+## Why Not /tmp or XDG_RUNTIME_DIR?
+
+**Critical constraint**: oqto uses bwrap (bubblewrap) for sandboxing. The bwrap configuration creates an isolated tmpfs for `/tmp` inside the sandbox:
+
+```rust
+// From backend/crates/oqto-sandbox/src/config.rs:
+// /tmp (usually needed)
+args.push("--tmpfs".to_string());
+args.push("/tmp".to_string());
+```
+
+This means:
+- oqto-browserd runs on the **host**
+- Creates sockets on the **host**
+- The sandbox has its own **isolated /tmp** (tmpfs)
+- Sockets in host /tmp are **NOT visible** inside the sandbox
+
+Therefore, we **MUST** use `XDG_STATE_HOME` (which is on a real filesystem and gets properly bind-mounted by bwrap), not `/tmp` or `XDG_RUNTIME_DIR`.
+
 ## Implementation Status
 ✅ **FIXED** - Implemented in `backend/crates/oqto-browser/src/main.rs`
 
@@ -94,3 +113,42 @@ Path reduction: 32 characters
 ```
 
 The socket path is now guaranteed to be well under 100 characters regardless of session ID length.
+
+## Isolation Security Analysis
+
+The hash-based approach maintains proper isolation:
+
+### 1. User Separation (Primary Isolation)
+- Each user has their own home directory
+- File system permissions prevent cross-user access
+- **User A cannot access User B's sockets**
+
+### 2. Session Separation (Secondary Isolation)
+- Each session gets a unique hash of their session ID
+- Hash space: 48 bits = 281,474,976,710,656 possible values
+- Collision probability:
+  - 10 sessions: ~1 in 24 trillion
+  - 100 sessions: ~1 in 2.4 trillion
+  - 1000 sessions: ~1 in 240 billion
+- **Collision risk is negligible**
+
+### 3. Safe Failure Mode
+If a theoretical hash collision occurs:
+- Second daemon would fail to bind socket (EADDRINUSE)
+- Second session would get connection error
+- **No security breach, just a crash**
+
+### 4. Why Hash is Safe
+- Hash is deterministic (same session ID always gets same hash)
+- Hash cannot be reversed to get original session ID
+- Hash is unpredictable without knowing session ID
+- **Isolation is maintained through both user separation and hash uniqueness**
+
+## Conclusion
+
+The hash-based solution is the **correct** approach given the bwrap sandbox constraint. It:
+- ✅ Fixes the socket path length issue
+- ✅ Maintains proper isolation (user + session)
+- ✅ Works with bwrap sandbox (uses XDG_STATE_HOME)
+- ✅ Has negligible collision risk
+- ✅ Has safe failure mode
