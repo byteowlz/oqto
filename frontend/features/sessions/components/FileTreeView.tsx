@@ -1259,14 +1259,79 @@ export function FileTreeView({
 
 			{/* Selection info bar */}
 			{hasSelection && (
-				<div className="flex-shrink-0 flex items-center justify-between px-3 py-1.5 bg-primary/10 border-b border-border text-xs">
-					<span>{selectedFiles.size} item(s) selected</span>
+				<div className="flex-shrink-0 flex items-center gap-2 px-3 py-1.5 bg-primary/10 border-b border-border text-xs">
+					<span className="text-primary font-medium">
+						{selectedFiles.size} item(s) selected
+					</span>
+					<span className="text-muted-foreground">
+						{(() => {
+							let totalSize = 0;
+							const findSize = (nodes: FileNode[]) => {
+								for (const node of nodes) {
+									if (selectedFiles.has(node.path) && node.size) {
+										totalSize += node.size;
+									}
+									if (node.children) findSize(node.children);
+								}
+							};
+							findSize(tree);
+							return totalSize > 0 ? formatFileSize(totalSize) : "";
+						})()}
+					</span>
+					<div className="flex-1" />
+					<button
+						type="button"
+						onClick={handleDownloadSelected}
+						className="px-2 py-0.5 bg-primary text-primary-foreground rounded hover:bg-primary/90 transition-colors"
+						title="Download selected"
+					>
+						Download
+					</button>
+					<button
+						type="button"
+						onClick={() => {
+							// Open lightbox with only selected media files
+							const mediaFiles = Array.from(selectedFiles).filter((p) => {
+								const name = p.split("/").pop() ?? "";
+								return supportsThumbnail(name) || isVideoFile(name);
+							});
+							if (mediaFiles.length > 0 && normalizedWorkspacePath) {
+								const items: LightboxItem[] = mediaFiles.map((p) => {
+									const name = p.split("/").pop() ?? "";
+									const params = new URLSearchParams({
+										directory: normalizedWorkspacePath,
+										path: p,
+									});
+									return {
+										src: `/api/files/file?${params.toString()}`,
+										type: isVideoFile(name) ? "video" as const : "image" as const,
+										path: p,
+										filename: name,
+									};
+								});
+								setLightboxIndex(0);
+								setLightboxOpen(true);
+							}
+						}}
+						className="px-2 py-0.5 bg-muted text-foreground rounded hover:bg-muted/80 transition-colors"
+						title="View selected in gallery"
+					>
+						Gallery
+					</button>
+					<button
+						type="button"
+						onClick={handleDeleteSelected}
+						className="px-2 py-0.5 bg-destructive/10 text-destructive rounded hover:bg-destructive/20 transition-colors"
+						title="Delete selected"
+					>
+						Delete
+					</button>
 					<button
 						type="button"
 						onClick={clearSelection}
-						className="text-muted-foreground hover:text-foreground"
+						className="text-muted-foreground hover:text-foreground ml-1"
 					>
-						Clear selection
+						Clear
 					</button>
 				</div>
 			)}

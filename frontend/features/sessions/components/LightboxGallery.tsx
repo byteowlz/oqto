@@ -335,29 +335,58 @@ export const LightboxGallery = memo(function LightboxGallery({
 				</div>
 			</div>
 
+			{/* Filmstrip */}
+			{items.length > 1 && (
+				<div
+					className="flex-shrink-0 bg-black/90 border-t border-white/10 px-4 py-2 overflow-x-auto scrollbar-none [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+					onClick={(e) => e.stopPropagation()}
+				>
+					<div className="flex gap-1.5 justify-center min-w-min">
+						{items.map((item, index) => (
+							<button
+								key={item.path}
+								type="button"
+								onClick={() => {
+									setCurrentIndex(index);
+									setZoom(1);
+									setRotation(0);
+								}}
+								className={cn(
+									"flex-shrink-0 w-16 h-12 rounded overflow-hidden border-2 transition-all",
+									index === currentIndex
+										? "border-primary opacity-100 scale-105"
+										: "border-transparent opacity-50 hover:opacity-80",
+								)}
+								title={item.filename}
+							>
+								{item.type === "image" ? (
+									<img
+										src={item.src}
+										alt={item.filename}
+										className="w-full h-full object-cover"
+										loading="lazy"
+									/>
+								) : (
+									<div className="w-full h-full bg-muted/30 flex items-center justify-center text-white/60 text-[10px]">
+										▶
+									</div>
+								)}
+							</button>
+						))}
+					</div>
+				</div>
+			)}
+
 			{/* Keyboard shortcuts footer */}
-			<div className="flex-shrink-0 bg-black/80 backdrop-blur-sm px-6 py-2">
-				<div className="flex items-center justify-center gap-6 text-xs text-muted-foreground">
-					<div className="flex items-center gap-4">
-						<span className="text-white">←/→</span>
-						<span className="text-white">Previous/Next</span>
-						<span className="text-white">Space</span>
-						<span className="text-white">Play/Pause</span>
-					</div>
-					<div className="flex items-center gap-4">
-						<span className="text-white">+/-</span>
-						<span className="text-white">Zoom In/Out</span>
-						<span className="text-white">R</span>
-						<span className="text-white">Rotate</span>
-					</div>
-					<div className="flex items-center gap-4">
-						<span className="text-white">0</span>
-						<span className="text-white">Reset Zoom/Rotate</span>
-						<span className="text-white">F</span>
-						<span className="text-white">Fullscreen</span>
-						<span className="text-white">Esc</span>
-						<span className="text-white">Close</span>
-					</div>
+			<div className="flex-shrink-0 bg-black/80 backdrop-blur-sm px-6 py-1.5">
+				<div className="flex items-center justify-center gap-4 text-[10px] text-white/40">
+					<span>←/→ Navigate</span>
+					<span>Space Play/Pause</span>
+					<span>+/- Zoom</span>
+					<span>R Rotate</span>
+					<span>0 Reset</span>
+					<span>F Fullscreen</span>
+					<span>Esc Close</span>
 				</div>
 			</div>
 		</div>
