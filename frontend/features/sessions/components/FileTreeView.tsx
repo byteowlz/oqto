@@ -4,7 +4,13 @@ import { FileIcon } from "@/components/data-display";
 import { ThumbnailImage } from "./ThumbnailImage";
 import { MediaQuickAccessBar, type MediaType } from "./MediaQuickAccessBar";
 import { LightboxGallery, type LightboxItem } from "./LightboxGallery";
-import { supportsThumbnail, supportsMediaThumbnail, isVideoFile, formatDuration } from "@/lib/thumbnail-utils";
+import {
+	supportsThumbnail,
+	supportsMediaThumbnail,
+	isVideoFile,
+	buildWorkspaceFileUrl,
+	formatDuration,
+} from "@/lib/thumbnail-utils";
 import {
 	ContextMenu,
 	ContextMenuContent,
@@ -2440,6 +2446,11 @@ function GridView({
 									filePath={file.path}
 									filename={file.name}
 									isVideo={isVideoFile(file.name)}
+									videoSrc={
+										isVideoFile(file.name)
+											? buildWorkspaceFileUrl(workspacePath, file.path)
+											: undefined
+									}
 									size={96}
 									onClick={() => {
 										if (onOpenInGallery) onOpenInGallery(file.path);

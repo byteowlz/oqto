@@ -2,8 +2,6 @@
  * Thumbnail utilities for file browser
  */
 
-import { readFileMux } from "@/lib/mux-files";
-
 export type ThumbnailSize = 128 | 256 | 512;
 
 // In-memory cache of blob URLs for thumbnails
@@ -15,7 +13,7 @@ function thumbnailCacheKey(workspacePath: string, filePath: string, size: Thumbn
 }
 
 /**
- * Fetch a thumbnail via the mux layer and return a blob URL.
+ * Fetch a generated thumbnail through the authenticated workspace files proxy and return a blob URL.
  * Results are cached in memory. Returns null on failure.
  */
 export async function fetchThumbnailUrl({
@@ -29,43 +27,32 @@ export async function fetchThumbnailUrl({
 }): Promise<string | null> {
 	const key = thumbnailCacheKey(workspacePath, filePath, size);
 
-	// Check cache
 	const cached = thumbnailBlobCache.get(key);
 	if (cached) return cached;
 
-	// Deduplicate in-flight requests
 	const existing = thumbnailInFlight.get(key);
 	if (existing) return existing;
 
 	const request = (async (): Promise<string | null> => {
 		try {
-			const result = await readFileMux(workspacePath, filePath);
-			if (!result.data || result.data.byteLength === 0) return null;
-
-			// Guess MIME type from extension
-			const ext = filePath.substring(filePath.lastIndexOf(".")).toLowerCase();
-			const mimeTypes: Record<string, string> = {
-				".png": "image/png",
-				".jpg": "image/jpeg",
-				".jpeg": "image/jpeg",
-				".gif": "image/gif",
-				".webp": "image/webp",
-				".svg": "image/svg+xml",
-				".bmp": "image/bmp",
-				".ico": "image/x-icon",
-				".mp4": "video/mp4",
-				".webm": "video/webm",
-				".ogg": "video/ogg",
-				".mov": "video/quicktime",
-			};
-			const mime = mimeTypes[ext] ?? "application/octet-stream";
-
-			const blob = new Blob([result.data], { type: mime });
+			const params = new URLSearchParams({
+				workspace_path: workspacePath,
+				path: filePath,
+				size: String(size),
+			});
+			const response = await fetch(`/api/workspace/files/thumbnail?${params.toString()}`, {
+				method: "GET",
+				credentials: "include",
+			});
+			if (!response.ok) {
+				return null;
+			}
+			const blob = await response.blob();
+			if (blob.size === 0) return null;
 			const url = URL.createObjectURL(blob);
 			thumbnailBlobCache.set(key, url);
 			return url;
-		} catch (err) {
-			console.warn("[thumbnail] Failed to fetch:", filePath, err);
+		} catch {
 			return null;
 		} finally {
 			thumbnailInFlight.delete(key);
@@ -97,6 +84,17 @@ export function clearThumbnailCache(workspacePath?: string): void {
 }
 
 /**
+ * Build a proxied workspace file URL for direct media playback.
+ */
+export function buildWorkspaceFileUrl(workspacePath: string, filePath: string): string {
+	const params = new URLSearchParams({
+		workspace_path: workspacePath,
+		path: filePath,
+	});
+	return `/api/workspace/files/file?${params.toString()}`;
+}
+
+/**
  * Check if a file extension supports thumbnails (images only)
  */
 export function supportsThumbnail(filename: string): boolean {
@@ -123,7 +121,7 @@ export function supportsMediaThumbnail(filename: string): boolean {
 }
 
 /**
- * Check if a file is a video (for future video thumbnail support)
+ * Check if a file is a video.
  */
 export function isVideoFile(filename: string): boolean {
 	const ext = filename.substring(filename.lastIndexOf(".")).toLowerCase();
