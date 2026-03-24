@@ -1723,15 +1723,15 @@ pub async fn get_thumbnail(
     let thumbnail_path = cache_dir.join(&cache_key);
 
     // Check if thumbnail exists in cache and is not too old
-    if let Ok(metadata) = tokio::fs::metadata(&thumbnail_path).await {
-        if let Ok(modified) = metadata.modified() {
-            let age = SystemTime::now()
-                .duration_since(modified)
-                .unwrap_or(Duration::ZERO);
-            if age.as_secs() < state.config.max_thumbnail_age {
-                debug!("Cache hit for thumbnail: {:?}", thumbnail_path);
-                return serve_thumbnail(&thumbnail_path).await;
-            }
+    if let Ok(metadata) = tokio::fs::metadata(&thumbnail_path).await
+        && let Ok(modified) = metadata.modified()
+    {
+        let age = SystemTime::now()
+            .duration_since(modified)
+            .unwrap_or(Duration::ZERO);
+        if age.as_secs() < state.config.max_thumbnail_age {
+            debug!("Cache hit for thumbnail: {:?}", thumbnail_path);
+            return serve_thumbnail(&thumbnail_path).await;
         }
     }
 
@@ -1786,13 +1786,9 @@ async fn generate_thumbnail(
     size: u32,
 ) -> Result<(), FileServerError> {
     let (source, dest) = (source_path.to_path_buf(), dest_path.to_path_buf());
-    let result = tokio::task::spawn_blocking(move || {
-        generate_thumbnail_blocking(&source, &dest, size)
-    })
-    .await
-    .map_err(|e| FileServerError::Io(std::io::Error::other(e.to_string())))?;
-
-    result
+    tokio::task::spawn_blocking(move || generate_thumbnail_blocking(&source, &dest, size))
+        .await
+        .map_err(|e| FileServerError::Io(std::io::Error::other(e.to_string())))?
 }
 
 /// Generate a thumbnail for a video file (async wrapper)
