@@ -2,9 +2,6 @@
 
 ## Open
 
-### [oqto-9g4r] Backend Thumbnail Generation API (P0, task)
-Add /api/files/thumbnail endpoint to oqto-files server. Generate thumbnails for images (Sharp) and videos (FFmpeg). Cache to disk with invalidation. Support 128/256/512px sizes.
-
 ### [oqto-6k4b] Media Browsing & Discovery Improvements (P0, epic)
 Comprehensive overhaul of media file browsing in Oqto: real thumbnails, quick filters, video preview, gallery view, and batch operations. Implement backend thumbnail generation, UI improvements, and full media browsing experience.
 
@@ -64,9 +61,6 @@ Click video thumbnail to open modal with video player. Show basic controls (play
 
 ### [oqto-a0em] Media Quick Access Bar (P1, task)
 Add toolbar above file tree with filter buttons: Images, Videos, Audio. Show counts and thumbnail galleries for each type. One-click to filter workspace files.
-
-### [oqto-7kac] Frontend Thumbnail Display (P1, task)
-Implement progressive loading UI for thumbnails in FileTreeView grid view. Show placeholders with spinners, lazy-load in viewport, support size toggles (Compact/Medium/Large).
 
 ### [oqto-a0z4] Instant chat history UX: cached-first rendering with hydration gating (P1, epic)
 Hard requirement: opening any chat must render history instantly with no visible empty-state flash.\n\nStatus: Partially complete\n\nCompleted:\n- Added explicit frontend hydration state in chat hook (historyHydrated, historyLoading)\n- Render cached messages immediately, then authoritative hstry sync in background\n- Prevent 'No messages yet' from appearing before first authoritative fetch settles\n- Fixed cache contamination: clear in-memory cache on session switch\n- Fixed authoritative merge: only preserve isStreaming messages (no timestamp-based leaks)\n- Frontend lint passes\n\nRemaining:\n- Session prewarm: prefetch latest messages for visible sessions (child task oqto-a0z4.1)\n\nSuccess criteria:\n- Opening an existing chat never flashes an empty timeline before history appears.\n- If cache exists, content appears immediately (<1 frame) and later reconciles.\n- If cache missing, show loading/skeleton until first authoritative response, then either messages or true empty state.\n- Frontend lint passes.
@@ -1527,6 +1521,8 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [oqto-7kac] Frontend Thumbnail Display (closed 2026-03-24)
+- [oqto-9g4r] Backend Thumbnail Generation API (closed 2026-03-24)
 - [oqto-a0z4.1] Implement session prewarm: prefetch latest messages for visible sessions (closed 2026-03-23)
 - [oqto-hb6g] File tree: enable directory download as ZIP and multi-select ZIP download (closed 2026-03-22)
 - [oqto-97sn] Audit and reduce useEffect usage in frontend (closed 2026-03-18)
@@ -2204,12 +2200,12 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
-- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
-- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
 - [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
-- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
 - [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
+- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
+- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
 - [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
+- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )

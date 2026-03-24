@@ -2,7 +2,8 @@
 
 import { FileIcon } from "@/components/data-display";
 import { ThumbnailImage } from "./ThumbnailImage";
-import { getThumbnailUrl, supportsThumbnail } from "@/lib/thumbnail-utils";
+import { MediaQuickAccessBar, type MediaType } from "./MediaQuickAccessBar";
+import { getThumbnailUrl, supportsThumbnail, isVideoFile } from "@/lib/thumbnail-utils";
 import {
 	ContextMenu,
 	ContextMenuContent,
@@ -321,6 +322,7 @@ export interface FileTreeState {
 	selectedFile: string | null;
 	selectedFiles: Set<string>;
 	viewMode: ViewMode;
+	mediaFilter: MediaType;
 }
 
 export const initialFileTreeState: FileTreeState = {
@@ -329,6 +331,7 @@ export const initialFileTreeState: FileTreeState = {
 	selectedFile: null,
 	selectedFiles: new Set(),
 	viewMode: "tree",
+	mediaFilter: "all",
 };
 
 interface FileTreeViewProps {
@@ -387,6 +390,7 @@ export function FileTreeView({
 		Set<string>
 	>(new Set());
 	const [internalViewMode, setInternalViewMode] = useState<ViewMode>("tree");
+	const [internalMediaFilter, setInternalMediaFilter] = useState<MediaType>("all");
 	const [internalCurrentPath, setInternalCurrentPath] = useState<string>(".");
 
 	const expanded = state?.expanded ?? internalExpanded;
@@ -394,6 +398,7 @@ export function FileTreeView({
 	const selectedFiles = state?.selectedFiles ?? internalSelectedFiles;
 	const viewMode = state?.viewMode ?? internalViewMode;
 	const currentPath = state?.currentPath ?? internalCurrentPath;
+	const mediaFilter = state?.mediaFilter ?? internalMediaFilter;
 
 	// Use a ref for external state to avoid recreating updateState on every render.
 	// This breaks the dependency chain that caused loadTree to re-run on every
@@ -416,6 +421,8 @@ export function FileTreeView({
 					setInternalViewMode(updates.viewMode);
 				if (updates.currentPath !== undefined)
 					setInternalCurrentPath(updates.currentPath);
+				if (updates.mediaFilter !== undefined)
+					setInternalMediaFilter(updates.mediaFilter);
 			}
 		},
 		[onStateChange],
@@ -910,6 +917,80 @@ export function FileTreeView({
 		updateState({ selectedFiles: new Set(), selectedFile: null });
 	};
 
+	// Count media files in tree
+	const countMediaFiles = () => {
+		let imageCount = 0;
+		let videoCount = 0;
+		let audioCount = 0;
+
+		const countFiles = (nodes: FileNode[]) => {
+			for (const node of nodes) {
+				if (node.type === "directory") {
+					if (node.children) {
+						countFiles(node.children);
+					}
+				} else {
+					const ext = node.name.substring(node.name.lastIndexOf(".")).toLowerCase();
+					if (node.name === ".") continue;
+
+					if (isVideoFile(node.name)) {
+						videoCount++;
+					} else if (supportsThumbnail(node.name)) {
+						imageCount++;
+					} else if ([".mp3", ".wav", ".flac", ".aac", ".m4a", ".opus"].includes(ext)) {
+						audioCount++;
+					}
+				}
+			}
+		};
+
+		countFiles(tree);
+		return { imageCount, videoCount, audioCount };
+	};
+
+	// Filter files by media type
+	const filterFiles = (nodes: FileNode[], filter: MediaType): FileNode[] => {
+		if (filter === "all") return nodes;
+
+		return nodes.filter((node) => {
+			if (node.type === "directory") {
+				// Always show directories, but filter their children
+				if (node.children) {
+					const filteredChildren = filterFiles(node.children, filter);
+					return filteredChildren.length > 0 || node.children.length === 0;
+				}
+				return true;
+			}
+
+			// Filter files by type
+			const ext = node.name.substring(node.name.lastIndexOf(".")).toLowerCase();
+			if (filter === "images") {
+				return supportsThumbnail(node.name);
+			} else if (filter === "videos") {
+				return isVideoFile(node.name);
+			} else if (filter === "audio") {
+				return [".mp3", ".wav", ".flac", ".aac", ".m4a", ".opus"].includes(ext);
+			}
+			return true;
+		}).map((node) => {
+			// Recursively filter children for directories
+			if (node.type === "directory" && node.children) {
+				return {
+					...node,
+					children: filterFiles(node.children, filter),
+				};
+			}
+			return node;
+		});
+	};
+
+	// Get filtered tree based on media filter
+	const filteredTree = useMemo(() => {
+		return filterFiles(tree, viewMode === "tree" ? "all" : mediaFilter);
+	}, [tree, mediaFilter, viewMode]);
+
+	const mediaCounts = useMemo(() => countMediaFiles(), [tree]);
+
 	// Get breadcrumb parts from current path
 	const getBreadcrumbs = () => {
 		if (currentPath === ".") return [{ name: "Home", path: "." }];
@@ -966,6 +1047,20 @@ export function FileTreeView({
 				className="hidden"
 				onChange={handleFileChange}
 			/>
+
+			{/* Media Quick Access Bar */}
+			{viewMode !== "tree" && (
+				<MediaQuickAccessBar
+					activeFilter={mediaFilter}
+					onFilterChange={(filter) => updateState({ mediaFilter: filter })}
+					imageCount={mediaCounts.imageCount}
+					videoCount={mediaCounts.videoCount}
+					audioCount={mediaCounts.audioCount}
+					showViewModeToggle
+					viewMode={viewMode}
+					onViewModeChange={(mode) => updateState({ viewMode: mode })}
+				/>
+			)}
 
 			{/* Navigation bar */}
 			<div className="flex-shrink-0 flex items-center gap-1 p-2 border-b border-border">
@@ -1157,13 +1252,13 @@ export function FileTreeView({
 					}
 				}}
 			>
-				{tree.length === 0 ? (
+				{filteredTree.length === 0 ? (
 					<div className="text-sm text-muted-foreground p-4">
 						No files found.
 					</div>
 				) : viewMode === "tree" ? (
 					<TreeView
-						nodes={tree}
+						nodes={filteredTree}
 						expanded={expanded}
 						onToggle={toggle}
 						selectedFiles={selectedFiles}
@@ -1184,7 +1279,7 @@ export function FileTreeView({
 					/>
 				) : viewMode === "list" ? (
 					<ListView
-						files={tree}
+						files={filteredTree}
 						selectedFiles={selectedFiles}
 						onSelectFile={handleSelectFile}
 						onNavigateToFolder={handleNavigateToFolder}
@@ -1202,7 +1297,7 @@ export function FileTreeView({
 					/>
 				) : (
 					<GridView
-						files={tree}
+						files={filteredTree}
 						workspacePath={normalizedWorkspacePath}
 						selectedFiles={selectedFiles}
 						onSelectFile={handleSelectFile}
@@ -1227,7 +1322,7 @@ export function FileTreeView({
 				open={pathDialog !== null}
 				title={pathDialog?.title ?? ""}
 				sourcePath={pathDialog?.sourcePath ?? ""}
-				tree={tree}
+				tree={filteredTree}
 				onConfirm={(value) => {
 					pathDialog?.onConfirm(value);
 					setPathDialog(null);
