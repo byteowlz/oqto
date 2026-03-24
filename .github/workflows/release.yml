@@ -32,10 +32,9 @@ jobs:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             use_cross: false
-          # TODO: re-enable once Cross.toml protoc fix is verified
-          # - target: aarch64-unknown-linux-gnu
-          #   os: ubuntu-latest
-          #   use_cross: true
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
+            use_cross: false
 
     steps:
       - uses: actions/checkout@v4
@@ -62,8 +61,8 @@ jobs:
         if: matrix.use_cross
         run: cargo install cross --git https://github.com/cross-rs/cross
 
-      - name: Install native deps (x86_64 Linux)
-        if: matrix.target == 'x86_64-unknown-linux-gnu'
+      - name: Install native deps (Linux)
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y protobuf-compiler
