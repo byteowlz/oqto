@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EAVS First-Login Setup - Design Exploration</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: system-ui, -apple-system, sans-serif; background: #09090b; color: #e5e5e5; line-height: 1.6; }
+  .container { max-width: 1100px; margin: 0 auto; padding: 40px 24px; }
+  h1 { font-size: 28px; margin-bottom: 8px; }
+  .subtitle { color: #888; margin-bottom: 48px; font-size: 15px; }
+  .section { margin-bottom: 56px; }
+  .section-title { font-size: 20px; font-weight: 600; margin-bottom: 6px; }
+  .section-context { color: #888; font-size: 14px; margin-bottom: 24px; max-width: 720px; }
+  .options { display: grid; gap: 20px; }
+  .options.cols-2 { grid-template-columns: 1fr 1fr; }
+  .option { border: 1px solid #222; border-radius: 12px; background: #111; overflow: hidden; }
+  .option.recommended { border-color: #2563eb; }
+  .option-header { padding: 16px 20px 12px; }
+  .option-label { font-size: 16px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+  .badge { background: #1e3a5f; color: #60a5fa; font-size: 11px; padding: 2px 8px; border-radius: 10px; font-weight: 500; }
+  .option-desc { color: #999; font-size: 13px; margin-top: 6px; }
+  .option-body { padding: 0 20px 20px; }
+  .mermaid-placeholder { background: #0a0a0a; border: 1px solid #1a1a1a; border-radius: 8px; padding: 20px; font-family: monospace; font-size: 12px; color: #888; white-space: pre; overflow-x: auto; }
+  pre { background: #0a0a0a; border: 1px solid #1a1a1a; border-radius: 8px; padding: 16px; font-size: 12.5px; overflow-x: auto; line-height: 1.5; }
+  code { font-family: 'JetBrains Mono', 'Fira Code', monospace; }
+  .preview-frame { border: 1px solid #1a1a1a; border-radius: 8px; overflow: hidden; margin-top: 12px; }
+  .divider { border: none; border-top: 1px solid #1a1a1a; margin: 48px 0; }
+  .flow-diagram { background: #0a0a0a; border: 1px solid #1a1a1a; border-radius: 8px; padding: 24px; margin-top: 12px; }
+  .flow-row { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; flex-wrap: wrap; }
+  .flow-box { background: #111; border: 1px solid #2a2a2a; border-radius: 6px; padding: 6px 14px; font-size: 13px; white-space: nowrap; }
+  .flow-box.action { background: #1e293b; border-color: #334155; color: #93c5fd; }
+  .flow-box.decision { background: #1a1a2e; border-color: #312e81; color: #a5b4fc; border-radius: 20px; }
+  .flow-box.success { background: #0a2615; border-color: #166534; color: #4ade80; }
+  .flow-box.warn { background: #2a1a0a; border-color: #92400e; color: #fbbf24; }
+  .flow-arrow { color: #444; font-size: 18px; }
+  @media (max-width: 768px) { .options.cols-2 { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>EAVS First-Login Setup Wizard</h1>
+<p class="subtitle">Design exploration: adding frontend EAVS configuration and connection testing on first admin login</p>
+
+<!-- ============================================================ -->
+<div class="section">
+  <h2 class="section-title">1. Setup Flow Architecture</h2>
+  <p class="section-context">Currently EAVS is configured entirely via CLI (setup.sh). For first-time admin login, we add a frontend wizard that detects "no providers configured" and guides through setup.</p>
+
+  <div class="options">
+    <!-- Option A -->
+    <div class="option recommended">
+      <div class="option-header">
+        <div class="option-label">A: Blocking Setup Wizard <span class="badge">Recommended</span></div>
+        <div class="option-desc">Full-screen wizard on first admin login. Blocks access to chat until at least one provider works.</div>
+      </div>
+      <div class="option-body">
+        <div class="flow-diagram">
+          <div class="flow-row">
+            <div class="flow-box action">Admin logs in</div>
+            <span class="flow-arrow">&#8594;</span>
+            <div class="flow-box decision">EAVS health check?</div>
+          </div>
+          <div class="flow-row" style="margin-left: 40px;">
+            <span style="color:#444">&#8627; No providers:</span>
+            <div class="flow-box warn">Setup Wizard (full screen)</div>
+          </div>
+          <div class="flow-row" style="margin-left: 40px;">
+            <span style="color:#444">&#8627; Providers OK:</span>
+            <div class="flow-box success">Normal App Shell</div>
+          </div>
+          <div class="flow-row" style="margin-left: 80px; margin-top: 12px;">
+            <div class="flow-box">Step 1: Provider Keys</div>
+            <span class="flow-arrow">&#8594;</span>
+            <div class="flow-box">Step 2: Test Connection</div>
+            <span class="flow-arrow">&#8594;</span>
+            <div class="flow-box">Step 3: Select Models</div>
+            <span class="flow-arrow">&#8594;</span>
+            <div class="flow-box success">Step 4: Confirm</div>
+          </div>
+          <div class="flow-row" style="margin-left: 80px;">
+            <span style="color:#666; font-size: 12px;">&#8593; Test fails? Loop back to Step 1</span>
+          </div>
+        </div>
+
+        <pre style="margin-top: 16px;"><code>// New backend endpoints needed:
+
+// GET /api/admin/eavs/status
+// Returns: { configured: bool, providers: [{name, type, healthy}] }
+
+// POST /api/admin/eavs/providers
+// Body: { name, type, api_key, base_url? }
+// Writes to eavs config.toml + env file, restarts eavs
+
+// POST /api/admin/eavs/test
+// Body: { provider_name } or { type, api_key, base_url? }
+// Returns: { success, error?, latency_ms, models_found }
+
+// POST /api/admin/eavs/provision
+// Triggers models.json generation + user key provisioning
+// Returns: { models_count, providers_count }</code></pre>
+      </div>
+    </div>
+
+    <!-- Option B -->
+    <div class="option">
+      <div class="option-header">
+        <div class="option-label">B: Non-blocking Banner + Settings Page</div>
+        <div class="option-desc">Soft banner on first login pointing to a Settings > EAVS page. User can browse the app but can't start sessions.</div>
+      </div>
+      <div class="option-body">
+        <div class="flow-diagram">
+          <div class="flow-row">
+            <div class="flow-box action">Admin logs in</div>
+            <span class="flow-arrow">&#8594;</span>
+            <div class="flow-box decision">EAVS health check?</div>
+          </div>
+          <div class="flow-row" style="margin-left: 40px;">
+            <span style="color:#444">&#8627; No providers:</span>
+            <div class="flow-box warn">App Shell + Warning Banner</div>
+          </div>
+          <div class="flow-row" style="margin-left: 40px;">
+            <span style="color:#444">&#8627; Providers OK:</span>
+            <div class="flow-box success">Normal App Shell</div>
+          </div>
+          <div class="flow-row" style="margin-left: 80px; margin-top: 12px;">
+            <div class="flow-box">Banner: "Configure LLM providers"</div>
+            <span class="flow-arrow">&#8594;</span>
+            <div class="flow-box">Settings > EAVS Tab</div>
+            <span class="flow-arrow">&#8594;</span>
+            <div class="flow-box">Add + Test Provider</div>
+            <span class="flow-arrow">&#8594;</span>
+            <div class="flow-box success">Banner disappears</div>
+          </div>
+        </div>
+
+        <pre style="margin-top: 16px;"><code>// Same backend endpoints as Option A, but:
+// - Settings page is always accessible (not just first-run)
+// - Banner uses GET /api/admin/eavs/status to show/hide
+// - Provider management is a permanent admin feature
+// - Sessions disabled until eavs_configured = true
+
+// Frontend routes:
+// /settings/eavs - Provider management page
+// Components: ProviderCard, AddProviderDialog, TestConnectionBtn</code></pre>
+      </div>
+    </div>
+  </div>
+</div>
+
+<hr class="divider">
+
+<!-- ============================================================ -->
+<div class="section">
+  <h2 class="section-title">2. Provider Configuration UI</h2>
+  <p class="section-context">The core UI for adding and testing LLM provider connections.</p>
+
+  <div class="options cols-2">
+    <!-- Card Grid -->
+    <div class="option">
+      <div class="option-header">
+        <div class="option-label">Card-based Provider Grid</div>
+        <div class="option-desc">Provider logos in a grid. Click to configure. Green/red status badges. Test button per card. Lives in Settings permanently.</div>
+      </div>
+      <div class="option-body">
+        <div class="preview-frame">
+          <div style="background:#0a0a0a;color:#e5e5e5;padding:24px;">
+            <h3 style="margin:0 0 8px;font-size:18px">LLM Providers</h3>
+            <p style="color:#888;margin:0 0 20px;font-size:13px">Add API keys to connect your LLM providers</p>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+              <div style="border:1px solid #2a2a2a;border-radius:8px;padding:16px;background:#111">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+                  <span style="font-weight:600">Anthropic</span>
+                  <span style="background:#166534;color:#4ade80;padding:2px 8px;border-radius:10px;font-size:11px">Connected</span>
+                </div>
+                <div style="color:#888;font-size:12px;margin-bottom:12px">3 models available</div>
+                <div style="display:flex;gap:8px">
+                  <button style="background:#222;border:1px solid #333;color:#ccc;padding:4px 12px;border-radius:6px;font-size:12px;cursor:pointer">Edit</button>
+                  <button style="background:#222;border:1px solid #333;color:#ccc;padding:4px 12px;border-radius:6px;font-size:12px;cursor:pointer">Test</button>
+                </div>
+              </div>
+              <div style="border:1px solid #2a2a2a;border-radius:8px;padding:16px;background:#111">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+                  <span style="font-weight:600">OpenAI</span>
+                  <span style="background:#7f1d1d;color:#f87171;padding:2px 8px;border-radius:10px;font-size:11px">Not configured</span>
+                </div>
+                <div style="color:#888;font-size:12px;margin-bottom:12px">No API key</div>
+                <button style="background:#2563eb;border:none;color:white;padding:4px 12px;border-radius:6px;font-size:12px;cursor:pointer">Configure</button>
+              </div>
+              <div style="border:1px solid #2a2a2a;border-radius:8px;padding:16px;background:#111">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+                  <span style="font-weight:600">Google</span>
+                  <span style="background:#7f1d1d;color:#f87171;padding:2px 8px;border-radius:10px;font-size:11px">Not configured</span>
+                </div>
+                <div style="color:#888;font-size:12px;margin-bottom:12px">No API key</div>
+                <button style="background:#2563eb;border:none;color:white;padding:4px 12px;border-radius:6px;font-size:12px;cursor:pointer">Configure</button>
+              </div>
+              <div style="border:1px dashed #333;border-radius:8px;padding:16px;display:flex;align-items:center;justify-content:center;color:#666;cursor:pointer;font-size:14px">+ Custom Provider</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Stepper Wizard -->
+    <div class="option">
+      <div class="option-header">
+        <div class="option-label">Stepper Wizard (first-run)</div>
+        <div class="option-desc">Clean step-by-step flow: pick providers, enter keys, test, done. Focused, no distractions.</div>
+      </div>
+      <div class="option-body">
+        <div class="preview-frame">
+          <div style="background:#0a0a0a;color:#e5e5e5;padding:24px;max-width:480px;margin:auto">
+            <div style="display:flex;gap:8px;margin-bottom:24px">
+              <div style="flex:1;height:3px;background:#2563eb;border-radius:2px"></div>
+              <div style="flex:1;height:3px;background:#2563eb;border-radius:2px"></div>
+              <div style="flex:1;height:3px;background:#333;border-radius:2px"></div>
+              <div style="flex:1;height:3px;background:#333;border-radius:2px"></div>
+            </div>
+            <h3 style="margin:0 0 4px;font-size:20px">Connect Anthropic</h3>
+            <p style="color:#888;margin:0 0 20px;font-size:13px">Step 2 of 4 -- Enter your API key</p>
+            <label style="display:block;font-size:13px;color:#aaa;margin-bottom:6px">API Key</label>
+            <div style="display:flex;gap:8px;margin-bottom:16px">
+              <input style="flex:1;background:#111;border:1px solid #333;color:white;padding:10px 12px;border-radius:8px;font-size:14px;font-family:monospace" value="sk-ant-api03-xxxxx..." readonly>
+              <button style="background:#222;border:1px solid #333;color:#ccc;padding:8px 16px;border-radius:8px;font-size:13px;cursor:pointer;white-space:nowrap">Test</button>
+            </div>
+            <div style="background:#0a2615;border:1px solid #166534;border-radius:8px;padding:12px;margin-bottom:20px;display:flex;align-items:center;gap:8px">
+              <span style="color:#4ade80;font-size:16px">&#10003;</span>
+              <div>
+                <div style="color:#4ade80;font-size:13px;font-weight:500">Connection successful</div>
+                <div style="color:#6ee7a0;font-size:12px">Found 8 models -- 142ms latency</div>
+              </div>
+            </div>
+            <div style="display:flex;justify-content:space-between">
+              <button style="background:#222;border:1px solid #333;color:#ccc;padding:8px 20px;border-radius:8px;font-size:13px;cursor:pointer">Back</button>
+              <button style="background:#2563eb;border:none;color:white;padding:8px 20px;border-radius:8px;font-size:13px;cursor:pointer">Next: Google</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<hr class="divider">
+
+<!-- ============================================================ -->
+<div class="section">
+  <h2 class="section-title">3. Recommended Approach: Hybrid</h2>
+  <p class="section-context">First admin login triggers the stepper wizard. After setup, the same UI lives permanently at Settings > Providers. Both share components.</p>
+
+  <div class="options">
+    <div class="option recommended">
+      <div class="option-header">
+        <div class="option-label">Hybrid: Wizard on first-run, Settings page permanently <span class="badge">Recommended</span></div>
+        <div class="option-desc">First admin login triggers wizard. After setup, the same card-grid UI lives at Settings > Providers for ongoing management.</div>
+      </div>
+      <div class="option-body">
+        <pre><code>Implementation Plan
+===================
+
+1. Backend (4 new endpoints):
+
+   GET  /api/admin/eavs/status
+     -> { configured: bool, providers: [{ name, type, healthy, models_count }] }
+     -> Called on login and by settings page
+
+   POST /api/admin/eavs/providers
+     -> Body: { name, type, api_key, base_url?, test_model? }
+     -> Writes to eavs config.toml + env file
+     -> Restarts eavs service (systemctl or signal)
+     -> Returns: { provider: { name, type, healthy } }
+
+   POST /api/admin/eavs/test
+     -> Body: { provider_name } OR { type, api_key, base_url? }
+     -> Calls eavs health/test endpoint
+     -> Returns: { success, error?, latency_ms, models_found }
+
+   POST /api/admin/eavs/sync
+     -> Regenerates models.json for all users
+     -> Returns: { models_count, providers_count }
+
+   DELETE /api/admin/eavs/providers/{name}
+     -> Removes provider from config, restarts eavs
+
+2. Frontend Components (shared between wizard + settings):
+
+   ProviderForm         -- API key input, type selector, base_url for custom
+   TestConnectionButton -- Calls POST /eavs/test, shows spinner/result
+   ProviderCard         -- Status badge, model count, edit/test/remove actions
+   ProviderGrid         -- Card grid layout with "+ Custom" button
+
+   EavsSetupWizard      -- Full-screen stepper (first-run only)
+     Step 1: Select providers (checkboxes: Anthropic, OpenAI, Google, Custom)
+     Step 2: Enter API keys (one per selected provider, with inline test)
+     Step 3: Review + confirm (shows all green checks)
+     Step 4: Syncing models... (calls POST /eavs/sync, shows progress)
+
+   SettingsProvidersPage -- Permanent settings page using ProviderGrid
+     /settings/providers route
+     Add/edit/remove/test providers at any time
+
+3. App Shell Integration:
+
+   On login:
+     GET /api/admin/eavs/status
+     if (!configured && user.role === 'admin')
+       -> Show EavsSetupWizard (full-screen, blocks app)
+     if (!configured && user.role !== 'admin')
+       -> Show banner: "Waiting for admin to configure LLM providers"
+     if (configured)
+       -> Normal app shell
+
+   Session creation:
+     Disable "New Session" button if eavs not configured
+     Tooltip: "No LLM providers configured"
+
+4. Security:
+
+   All /api/admin/eavs/* endpoints require admin role
+   API keys are write-only (never returned in GET responses)
+   Test endpoint accepts ephemeral keys (not persisted until confirmed)
+   eavs restart is rate-limited (max 1 per 10s)</code></pre>
+      </div>
+    </div>
+  </div>
+</div>
+
+</div>
+</body>
+</html>
