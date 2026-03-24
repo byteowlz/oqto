@@ -46,6 +46,10 @@ if [[ -z "$admin_password" ]]; then
   admin_password=$(openssl rand -base64 18)
 fi
 
+# Always force-set the password so login works regardless of whether this is
+# a fresh setup or a re-run (where the generated password is no longer in the log).
+vm_ssh "$IP" "sudo -n /usr/local/bin/oqtoctl user set-password '${OQTO_E2E_ADMIN_USERNAME}' --password '${admin_password}' --config /home/oqto/.config/oqto/config.toml" >/dev/null 2>&1 || true
+
 login_payload=$(printf '{"username":"%s","password":"%s"}' "$OQTO_E2E_ADMIN_USERNAME" "$admin_password")
 login_url="http://${IP}:${OQTO_E2E_HTTP_PORT}/api/auth/login"
 
@@ -61,42 +65,9 @@ except json.JSONDecodeError:
 print(payload.get("token", ""))')
 
 if [[ -z "$token" ]]; then
-  echo "Login response was empty or missing token" >&2
+  echo "Login failed after password reset" >&2
   if [[ -n "$login_response" ]]; then
     echo "Login response: $login_response" >&2
-  fi
-  db_path="/home/oqto/.local/share/oqto/oqto.db"
-  vm_ssh "$IP" "sudo systemctl start oqto" >/dev/null
-  vm_ssh "$IP" "for i in {1..30}; do sudo test -f ${db_path} && break; sleep 1; done"
-  vm_ssh "$IP" "sudo /usr/local/bin/oqtoctl user set-password '${OQTO_E2E_ADMIN_USERNAME}' --password '${admin_password}' --config /home/oqto/.config/oqto/config.toml" >/dev/null || true
-
-  login_response=$(curl -sS -H "Content-Type: application/json" -d "$login_payload" "$login_url" || true)
-  token=$(printf '%s' "$login_response" | python3 -c 'import json,sys; data=sys.stdin.read().strip();
-if not data:
-    sys.exit(0)
-try:
-    payload=json.loads(data)
-except json.JSONDecodeError:
-    sys.exit(0)
-print(payload.get("token", ""))')
-
-  if [[ -z "$token" ]]; then
-    echo "Login after password reset failed" >&2
-    if [[ -n "$login_response" ]]; then
-      echo "Login response: $login_response" >&2
-    fi
-    password_hash=$(vm_ssh "$IP" "sudo /usr/local/bin/oqtoctl hash-password --password '${admin_password}'")
-    vm_ssh "$IP" "printf 'y\n' | sudo /usr/local/bin/oqtoctl user bootstrap --username '${OQTO_E2E_ADMIN_USERNAME}' --email 'e2e-admin@example.com' --database '${db_path}' --password-hash '${password_hash}' --no-linux-user --config /home/oqto/.config/oqto/config.toml" >/dev/null || true
-
-    login_response=$(curl -sS -H "Content-Type: application/json" -d "$login_payload" "$login_url" || true)
-    token=$(printf '%s' "$login_response" | python3 -c 'import json,sys; data=sys.stdin.read().strip();
-if not data:
-    sys.exit(0)
-try:
-    payload=json.loads(data)
-except json.JSONDecodeError:
-    sys.exit(0)
-print(payload.get("token", ""))')
   fi
 fi
 
