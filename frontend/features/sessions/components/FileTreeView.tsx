@@ -384,6 +384,7 @@ export function FileTreeView({
 	// Media gallery state
 	const [lightboxOpen, setLightboxOpen] = useState(false);
 	const [lightboxIndex, setLightboxIndex] = useState(0);
+	const [mediaSearchQuery, setMediaSearchQuery] = useState("");
 
 	// Use external state if provided, otherwise use internal state
 	const [internalExpanded, setInternalExpanded] = useState<
@@ -995,10 +996,35 @@ export function FileTreeView({
 		});
 	};
 
-	// Get filtered tree based on media filter
+	// Get filtered tree based on media filter and search query
 	const filteredTree = useMemo(() => {
-		return filterFiles(tree, viewMode === "tree" ? "all" : mediaFilter);
-	}, [tree, mediaFilter, viewMode]);
+		let result = filterFiles(tree, viewMode === "tree" ? "all" : mediaFilter);
+
+		// Apply search filter
+		const query = mediaSearchQuery.trim().toLowerCase();
+		if (query && viewMode !== "tree") {
+			const searchFilter = (nodes: FileNode[]): FileNode[] => {
+				return nodes.filter((node) => {
+					if (node.type === "directory") {
+						if (node.children) {
+							const filtered = searchFilter(node.children);
+							return filtered.length > 0;
+						}
+						return node.name.toLowerCase().includes(query);
+					}
+					return node.name.toLowerCase().includes(query);
+				}).map((node) => {
+					if (node.type === "directory" && node.children) {
+						return { ...node, children: searchFilter(node.children) };
+					}
+					return node;
+				});
+			};
+			result = searchFilter(result);
+		}
+
+		return result;
+	}, [tree, mediaFilter, viewMode, mediaSearchQuery]);
 
 	const mediaCounts = useMemo(() => countMediaFiles(), [tree]);
 
@@ -1105,9 +1131,8 @@ export function FileTreeView({
 					imageCount={mediaCounts.imageCount}
 					videoCount={mediaCounts.videoCount}
 					audioCount={mediaCounts.audioCount}
-					showViewModeToggle
-					viewMode={viewMode}
-					onViewModeChange={(mode) => updateState({ viewMode: mode })}
+					searchQuery={mediaSearchQuery}
+					onSearchChange={setMediaSearchQuery}
 				/>
 			)}
 
@@ -2432,6 +2457,7 @@ function GridView({
 									filename={file.name}
 									extension={file.name.substring(file.name.lastIndexOf("."))}
 									isVideo={isVideoFile(file.name)}
+									videoSrc={isVideoFile(file.name) ? `/api/files/file?${new URLSearchParams({ directory: workspacePath, path: file.path }).toString()}` : undefined}
 									size={96}
 									onClick={() => {
 										if (onOpenInGallery) onOpenInGallery(file.path);

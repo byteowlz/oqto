@@ -13,6 +13,8 @@ export interface ThumbnailImageProps {
 	extension?: string;
 	/** Whether this is a video file */
 	isVideo?: boolean;
+	/** Video source URL for hover preview */
+	videoSrc?: string;
 	/** Optional duration badge for videos */
 	duration?: string;
 	/** Thumbnail size for layout */
@@ -39,6 +41,7 @@ export const ThumbnailImage = memo(function ThumbnailImage({
 	filename,
 	extension,
 	isVideo = false,
+	videoSrc,
 	duration,
 	size = 128,
 	loading: externalLoading = false,
@@ -52,7 +55,11 @@ export const ThumbnailImage = memo(function ThumbnailImage({
 	const [internalLoading, setInternalLoading] = useState(true);
 	const [internalError, setInternalError] = useState(false);
 	const [imageLoaded, setImageLoaded] = useState(false);
+	const [isHovering, setIsHovering] = useState(false);
+	const [showVideoPreview, setShowVideoPreview] = useState(false);
 	const imgRef = useRef<HTMLImageElement>(null);
+	const videoPreviewRef = useRef<HTMLVideoElement>(null);
+	const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const observerRef = useRef<IntersectionObserver | null>(null);
 
 	const isLoading = externalLoading || internalLoading;
@@ -122,6 +129,44 @@ export const ThumbnailImage = memo(function ThumbnailImage({
 		"--thumbnail-size": `${size}px`,
 	} as React.CSSProperties;
 
+	// Hover video preview handlers
+	const handleMouseEnter = useCallback(() => {
+		if (!isVideo || !videoSrc) return;
+		setIsHovering(true);
+		hoverTimerRef.current = setTimeout(() => {
+			setShowVideoPreview(true);
+		}, 800); // 800ms delay before showing preview
+	}, [isVideo, videoSrc]);
+
+	const handleMouseLeave = useCallback(() => {
+		setIsHovering(false);
+		setShowVideoPreview(false);
+		if (hoverTimerRef.current) {
+			clearTimeout(hoverTimerRef.current);
+			hoverTimerRef.current = null;
+		}
+		if (videoPreviewRef.current) {
+			videoPreviewRef.current.pause();
+			videoPreviewRef.current.currentTime = 0;
+		}
+	}, []);
+
+	// Cleanup hover timer
+	useEffect(() => {
+		return () => {
+			if (hoverTimerRef.current) {
+				clearTimeout(hoverTimerRef.current);
+			}
+		};
+	}, []);
+
+	// Auto-play video preview when shown
+	useEffect(() => {
+		if (showVideoPreview && videoPreviewRef.current) {
+			videoPreviewRef.current.play().catch(() => {});
+		}
+	}, [showVideoPreview]);
+
 	return (
 		<div
 			className={cn(
@@ -135,6 +180,8 @@ export const ThumbnailImage = memo(function ThumbnailImage({
 			style={style}
 			onClick={onClick}
 			onDoubleClick={onDoubleClick}
+			onMouseEnter={handleMouseEnter}
+			onMouseLeave={handleMouseLeave}
 		>
 			{showThumbnail && src ? (
 				<img
@@ -164,12 +211,35 @@ export const ThumbnailImage = memo(function ThumbnailImage({
 							) : (
 								<ImageIcon className="w-6 h-6 text-muted-foreground" />
 							)}
-							{duration && !isLoading && (
-								<div className="absolute bottom-1 right-1 bg-black/70 text-white text-[8px] px-1 rounded">
-									{duration}
-								</div>
-							)}
 						</>
+					)}
+				</div>
+			)}
+
+			{/* Video hover preview */}
+			{showVideoPreview && videoSrc && (
+				<video
+					ref={videoPreviewRef}
+					src={videoSrc}
+					className="absolute inset-0 w-full h-full object-cover"
+					muted
+					loop
+					playsInline
+				/>
+			)}
+
+			{/* Video indicator / duration badge */}
+			{isVideo && (
+				<div className="absolute bottom-1 right-1 flex items-center gap-1">
+					{showVideoPreview && (
+						<span className="bg-primary/80 text-primary-foreground text-[8px] px-1 rounded">
+							▶
+						</span>
+					)}
+					{duration && (
+						<span className="bg-black/70 text-white text-[8px] px-1 rounded">
+							{duration}
+						</span>
 					)}
 				</div>
 			)}
