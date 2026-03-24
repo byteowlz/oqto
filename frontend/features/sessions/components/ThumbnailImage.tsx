@@ -3,143 +3,104 @@
 import { cn } from "@/lib/utils";
 import { Image as ImageIcon, Film, Loader2 } from "lucide-react";
 import { memo, useCallback, useState, useRef, useEffect } from "react";
+import { fetchThumbnailUrl } from "@/lib/thumbnail-utils";
 
 export interface ThumbnailImageProps {
-	src: string | null;
-	alt: string;
-	/** File name to display if thumbnail fails or loading */
+	/** Workspace path for fetching via mux */
+	workspacePath: string;
+	/** File path relative to workspace */
+	filePath: string;
+	/** File name */
 	filename: string;
-	/** File extension for icon fallback */
-	extension?: string;
 	/** Whether this is a video file */
 	isVideo?: boolean;
-	/** Video source URL for hover preview */
+	/** Video source URL for hover preview (blob URL) */
 	videoSrc?: string;
 	/** Optional duration badge for videos */
 	duration?: string;
 	/** Thumbnail size for layout */
 	size?: number;
-	/** Whether image is currently loading */
-	loading?: boolean;
-	/** Error state */
-	error?: boolean;
 	/** On click handler */
 	onClick?: () => void;
-	/** On double click handler */
-	onDoubleClick?: () => void;
 	/** Whether item is selected */
 	selected?: boolean;
 	/** Additional class names */
 	className?: string;
-	/** Image priority for loading */
-	priority?: "high" | "low" | "auto";
 }
 
 export const ThumbnailImage = memo(function ThumbnailImage({
-	src,
-	alt,
+	workspacePath,
+	filePath,
 	filename,
-	extension,
 	isVideo = false,
 	videoSrc,
 	duration,
 	size = 128,
-	loading: externalLoading = false,
-	error: externalError = false,
 	onClick,
-	onDoubleClick,
 	selected = false,
 	className,
-	priority = "auto",
 }: ThumbnailImageProps) {
-	const [internalLoading, setInternalLoading] = useState(true);
-	const [internalError, setInternalError] = useState(false);
-	const [imageLoaded, setImageLoaded] = useState(false);
-	const [isHovering, setIsHovering] = useState(false);
+	const [blobUrl, setBlobUrl] = useState<string | null>(null);
+	const [loading, setLoading] = useState(true);
+	const [error, setError] = useState(false);
 	const [showVideoPreview, setShowVideoPreview] = useState(false);
-	const imgRef = useRef<HTMLImageElement>(null);
+
+	const containerRef = useRef<HTMLDivElement>(null);
 	const videoPreviewRef = useRef<HTMLVideoElement>(null);
 	const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-	const observerRef = useRef<IntersectionObserver | null>(null);
+	const mountedRef = useRef(true);
 
-	const isLoading = externalLoading || internalLoading;
-	const hasError = externalError || internalError;
-	const showThumbnail = src && !hasError && imageLoaded;
-	const showPlaceholder = !showThumbnail;
-
-	// Handle image load
-	const handleLoad = useCallback(() => {
-		setInternalLoading(false);
-		setInternalError(false);
-		setImageLoaded(true);
-	}, []);
-
-	// Handle image error
-	const handleError = useCallback(() => {
-		setInternalLoading(false);
-		setInternalError(true);
-		setImageLoaded(false);
-	}, []);
-
-	// Intersection observer for lazy loading
+	// Fetch thumbnail via mux when visible
 	useEffect(() => {
-		const img = imgRef.current;
-		if (!img || !src || priority === "high") return;
+		mountedRef.current = true;
+		let cancelled = false;
 
 		const observer = new IntersectionObserver(
 			(entries) => {
-				for (const entry of entries) {
-					if (entry.isIntersecting) {
-						setInternalLoading(true);
-					}
+				if (entries[0]?.isIntersecting && !blobUrl && !error) {
+					fetchThumbnailUrl({ workspacePath, filePath })
+						.then((url) => {
+							if (cancelled || !mountedRef.current) return;
+							if (url) {
+								setBlobUrl(url);
+								setLoading(false);
+							} else {
+								setError(true);
+								setLoading(false);
+							}
+						})
+						.catch(() => {
+							if (!cancelled && mountedRef.current) {
+								setError(true);
+								setLoading(false);
+							}
+						});
+					observer.disconnect();
 				}
 			},
-			{ rootMargin: "50px" },
+			{ rootMargin: "100px" },
 		);
 
-		observer.observe(img);
-		observerRef.current = observer;
-
-		return () => {
-			observer.disconnect();
-			observerRef.current = null;
-		};
-	}, [src, priority]);
-
-	// Cleanup observer on unmount
-	useEffect(() => {
-		return () => {
-			if (observerRef.current) {
-				observerRef.current.disconnect();
-			}
-		};
-	}, []);
-
-	// Reset state when src changes
-	useEffect(() => {
-		if (src) {
-			setInternalLoading(true);
-			setInternalError(false);
-			setImageLoaded(false);
+		if (containerRef.current) {
+			observer.observe(containerRef.current);
 		}
-	}, [src]);
 
-	// Calculate aspect-ratio styles
-	const style = {
-		"--thumbnail-size": `${size}px`,
-	} as React.CSSProperties;
+		return () => {
+			cancelled = true;
+			mountedRef.current = false;
+			observer.disconnect();
+		};
+	}, [workspacePath, filePath, blobUrl, error]);
 
 	// Hover video preview handlers
 	const handleMouseEnter = useCallback(() => {
 		if (!isVideo || !videoSrc) return;
-		setIsHovering(true);
 		hoverTimerRef.current = setTimeout(() => {
 			setShowVideoPreview(true);
-		}, 800); // 800ms delay before showing preview
+		}, 800);
 	}, [isVideo, videoSrc]);
 
 	const handleMouseLeave = useCallback(() => {
-		setIsHovering(false);
 		setShowVideoPreview(false);
 		if (hoverTimerRef.current) {
 			clearTimeout(hoverTimerRef.current);
@@ -151,67 +112,53 @@ export const ThumbnailImage = memo(function ThumbnailImage({
 		}
 	}, []);
 
-	// Cleanup hover timer
 	useEffect(() => {
 		return () => {
-			if (hoverTimerRef.current) {
-				clearTimeout(hoverTimerRef.current);
-			}
+			if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
 		};
 	}, []);
 
-	// Auto-play video preview when shown
 	useEffect(() => {
 		if (showVideoPreview && videoPreviewRef.current) {
 			videoPreviewRef.current.play().catch(() => {});
 		}
 	}, [showVideoPreview]);
 
+	const showThumbnail = blobUrl && !error;
+
 	return (
 		<div
+			ref={containerRef}
 			className={cn(
-				"relative flex-shrink-0 rounded-md overflow-hidden",
-				"bg-muted/50",
-				"hover:bg-muted/80",
+				"relative flex-shrink-0 rounded-md overflow-hidden cursor-pointer",
+				"bg-muted/50 hover:bg-muted/80",
 				"transition-colors duration-150",
 				selected && "ring-2 ring-primary ring-offset-2 ring-offset-background",
 				className,
 			)}
-			style={style}
+			style={{ width: size, height: size }}
 			onClick={onClick}
-			onDoubleClick={onDoubleClick}
 			onMouseEnter={handleMouseEnter}
 			onMouseLeave={handleMouseLeave}
 		>
-			{showThumbnail && src ? (
+			{/* Thumbnail image */}
+			{showThumbnail && (
 				<img
-					ref={imgRef}
-					src={src}
-					alt={alt}
-					width={size}
-					height={size}
-					loading="lazy"
+					src={blobUrl}
+					alt={filename}
 					className="w-full h-full object-cover"
-					onLoad={handleLoad}
-					onError={handleError}
-					style={{
-						aspectRatio: "1/1",
-					}}
 				/>
-			) : null}
+			)}
 
-			{showPlaceholder && (
+			{/* Placeholder */}
+			{!showThumbnail && (
 				<div className="w-full h-full flex items-center justify-center">
-					{isLoading ? (
+					{loading ? (
 						<Loader2 className="w-6 h-6 text-muted-foreground animate-spin" />
+					) : isVideo ? (
+						<Film className="w-6 h-6 text-muted-foreground" />
 					) : (
-						<>
-							{isVideo ? (
-								<Film className="w-6 h-6 text-muted-foreground" />
-							) : (
-								<ImageIcon className="w-6 h-6 text-muted-foreground" />
-							)}
-						</>
+						<ImageIcon className="w-6 h-6 text-muted-foreground" />
 					)}
 				</div>
 			)}

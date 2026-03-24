@@ -4,7 +4,7 @@ import { FileIcon } from "@/components/data-display";
 import { ThumbnailImage } from "./ThumbnailImage";
 import { MediaQuickAccessBar, type MediaType } from "./MediaQuickAccessBar";
 import { LightboxGallery, type LightboxItem } from "./LightboxGallery";
-import { getThumbnailUrl, supportsThumbnail, supportsMediaThumbnail, isVideoFile, formatDuration } from "@/lib/thumbnail-utils";
+import { supportsThumbnail, supportsMediaThumbnail, isVideoFile, formatDuration } from "@/lib/thumbnail-utils";
 import {
 	ContextMenu,
 	ContextMenuContent,
@@ -1035,16 +1035,11 @@ export function FileTreeView({
 			for (const node of nodes) {
 				if (node.type === "directory") {
 					if (node.children) collectMedia(node.children);
-				} else if (normalizedWorkspacePath) {
+				} else {
 					const isImg = supportsThumbnail(node.name);
 					const isVid = isVideoFile(node.name);
 					if (isImg || isVid) {
-						const params = new URLSearchParams({
-							directory: normalizedWorkspacePath,
-							path: node.path,
-						});
 						items.push({
-							src: `/api/files/file?${params.toString()}`,
 							type: isVid ? "video" : "image",
 							path: node.path,
 							filename: node.name,
@@ -1055,7 +1050,7 @@ export function FileTreeView({
 		};
 		collectMedia(filteredTree);
 		return items;
-	}, [filteredTree, normalizedWorkspacePath]);
+	}, [filteredTree]);
 
 	// Open lightbox for a specific file
 	const handleOpenLightbox = useCallback((filePath: string) => {
@@ -1320,21 +1315,10 @@ export function FileTreeView({
 								const name = p.split("/").pop() ?? "";
 								return supportsThumbnail(name) || isVideoFile(name);
 							});
-							if (mediaFiles.length > 0 && normalizedWorkspacePath) {
-								const items: LightboxItem[] = mediaFiles.map((p) => {
-									const name = p.split("/").pop() ?? "";
-									const params = new URLSearchParams({
-										directory: normalizedWorkspacePath,
-										path: p,
-									});
-									return {
-										src: `/api/files/file?${params.toString()}`,
-										type: isVideoFile(name) ? "video" as const : "image" as const,
-										path: p,
-										filename: name,
-									};
-								});
-								setLightboxIndex(0);
+							if (mediaFiles.length > 0) {
+								// Just open lightbox - it will match against lightboxItems
+								const idx = lightboxItems.findIndex((item) => mediaFiles.includes(item.path));
+								setLightboxIndex(idx >= 0 ? idx : 0);
 								setLightboxOpen(true);
 							}
 						}}
@@ -2452,12 +2436,10 @@ function GridView({
 						>
 							{file.type === "file" && supportsMediaThumbnail(file.name) && workspacePath ? (
 								<ThumbnailImage
-									src={getThumbnailUrl({ workspacePath, filePath: file.path })}
-									alt={file.name}
+									workspacePath={workspacePath}
+									filePath={file.path}
 									filename={file.name}
-									extension={file.name.substring(file.name.lastIndexOf("."))}
 									isVideo={isVideoFile(file.name)}
-									videoSrc={isVideoFile(file.name) ? `/api/files/file?${new URLSearchParams({ directory: workspacePath, path: file.path }).toString()}` : undefined}
 									size={96}
 									onClick={() => {
 										if (onOpenInGallery) onOpenInGallery(file.path);

@@ -1,15 +1,15 @@
 "use client";
 
-import { X, ZoomIn, ZoomOut, RotateCw, Download, ChevronLeft, ChevronRight, Maximize2 } from "lucide-react";
+import { X, ZoomIn, ZoomOut, RotateCw, Download, ChevronLeft, ChevronRight, Maximize2, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { memo, useState, useCallback, useEffect, useRef } from "react";
+import { readFileMux } from "@/lib/mux-files";
 
 export interface LightboxItem {
-	src: string;
 	type: "image" | "video";
 	/** For videos: duration in seconds */
 	duration?: number;
-	/** File path */
+	/** File path relative to workspace */
 	path: string;
 	/** File name */
 	filename: string;
@@ -39,9 +39,12 @@ export const LightboxGallery = memo(function LightboxGallery({
 	const [zoom, setZoom] = useState(1);
 	const [rotation, setRotation] = useState(0);
 	const [isFullscreen, setIsFullscreen] = useState(false);
+	const [mediaBlobUrl, setMediaBlobUrl] = useState<string | null>(null);
+	const [mediaLoading, setMediaLoading] = useState(false);
 
 	const containerRef = useRef<HTMLDivElement>(null);
 	const imageRef = useRef<HTMLImageElement>(null);
+	const blobCacheRef = useRef<Map<string, string>>(new Map());
 
 	// Reset state when lightbox opens
 	useEffect(() => {
@@ -52,9 +55,59 @@ export const LightboxGallery = memo(function LightboxGallery({
 		}
 	}, [open, initialIndex]);
 
+	// Cleanup blob URLs on close
+	useEffect(() => {
+		if (!open) {
+			for (const url of blobCacheRef.current.values()) {
+				URL.revokeObjectURL(url);
+			}
+			blobCacheRef.current.clear();
+			setMediaBlobUrl(null);
+		}
+	}, [open]);
+
 	const currentItem = items[currentIndex];
 	const isVideo = currentItem?.type === "video";
 	const isImage = currentItem?.type === "image";
+
+	// Fetch current media via mux
+	useEffect(() => {
+		if (!open || !currentItem || !workspacePath) return;
+
+		const cached = blobCacheRef.current.get(currentItem.path);
+		if (cached) {
+			setMediaBlobUrl(cached);
+			return;
+		}
+
+		let cancelled = false;
+		setMediaLoading(true);
+		setMediaBlobUrl(null);
+
+		readFileMux(workspacePath, currentItem.path)
+			.then(({ data }) => {
+				if (cancelled) return;
+				const ext = currentItem.filename.substring(currentItem.filename.lastIndexOf(".")).toLowerCase();
+				const mimeMap: Record<string, string> = {
+					".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+					".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml",
+					".bmp": "image/bmp", ".mp4": "video/mp4", ".webm": "video/webm",
+					".ogg": "video/ogg", ".mov": "video/quicktime", ".mkv": "video/x-matroska",
+				};
+				const blob = new Blob([data], { type: mimeMap[ext] ?? "application/octet-stream" });
+				const url = URL.createObjectURL(blob);
+				blobCacheRef.current.set(currentItem.path, url);
+				setMediaBlobUrl(url);
+			})
+			.catch(() => {
+				if (!cancelled) setMediaBlobUrl(null);
+			})
+			.finally(() => {
+				if (!cancelled) setMediaLoading(false);
+			});
+
+		return () => { cancelled = true; };
+	}, [open, currentIndex, currentItem, workspacePath]);
 
 	// Keyboard shortcuts
 	const handleKeyDown = useCallback((e: KeyboardEvent) => {
@@ -154,10 +207,10 @@ export const LightboxGallery = memo(function LightboxGallery({
 	};
 
 	const handleDownload = () => {
-		if (!currentItem) return;
+		if (!currentItem || !mediaBlobUrl) return;
 
 		const a = document.createElement("a");
-		a.href = currentItem.src;
+		a.href = mediaBlobUrl;
 		a.download = currentItem.filename;
 		a.click();
 	};
@@ -313,19 +366,23 @@ export const LightboxGallery = memo(function LightboxGallery({
 					</button>
 
 					{/* Media */}
-					{isImage && (
+					{mediaLoading && (
+						<Loader2 className="w-8 h-8 text-white/50 animate-spin" />
+					)}
+
+					{!mediaLoading && mediaBlobUrl && isImage && (
 						<img
 							ref={imageRef}
-							src={currentItem.src}
+							src={mediaBlobUrl}
 							alt={currentItem.filename}
 							className="max-w-full max-h-full object-contain"
 							style={getTransformStyle()}
 						/>
 					)}
 
-					{isVideo && (
+					{!mediaLoading && mediaBlobUrl && isVideo && (
 						<video
-							src={currentItem.src}
+							src={mediaBlobUrl}
 							className="max-w-full max-h-full object-contain"
 							controls
 							preload="metadata"
@@ -359,16 +416,24 @@ export const LightboxGallery = memo(function LightboxGallery({
 								)}
 								title={item.filename}
 							>
-								{item.type === "image" ? (
-									<img
-										src={item.src}
-										alt={item.filename}
-										className="w-full h-full object-cover"
-										loading="lazy"
-									/>
+								{blobCacheRef.current.has(item.path) ? (
+									item.type === "image" ? (
+										<img
+											src={blobCacheRef.current.get(item.path)}
+											alt={item.filename}
+											className="w-full h-full object-cover"
+										/>
+									) : (
+										<div className="w-full h-full bg-muted/30 flex items-center justify-center text-white/60 text-[10px]">
+											▶
+										</div>
+									)
 								) : (
-									<div className="w-full h-full bg-muted/30 flex items-center justify-center text-white/60 text-[10px]">
-										▶
+									<div className={cn(
+										"w-full h-full flex items-center justify-center text-[8px]",
+										item.type === "video" ? "text-white/40" : "text-white/30",
+									)}>
+										{item.type === "video" ? "▶" : "◻"}
 									</div>
 								)}
 							</button>

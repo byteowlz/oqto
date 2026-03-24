@@ -2,12 +2,23 @@
  * Thumbnail utilities for file browser
  */
 
+import { readFileMux } from "@/lib/mux-files";
+
 export type ThumbnailSize = 128 | 256 | 512;
 
+// In-memory cache of blob URLs for thumbnails
+const thumbnailBlobCache = new Map<string, string>();
+const thumbnailInFlight = new Map<string, Promise<string | null>>();
+
+function thumbnailCacheKey(workspacePath: string, filePath: string, size: ThumbnailSize): string {
+	return `${workspacePath}:${filePath}:${size}`;
+}
+
 /**
- * Generate thumbnail URL for a file
+ * Fetch a thumbnail via the mux layer and return a blob URL.
+ * Results are cached in memory. Returns null on failure.
  */
-export function getThumbnailUrl({
+export async function fetchThumbnailUrl({
 	workspacePath,
 	filePath,
 	size = 256,
@@ -15,15 +26,74 @@ export function getThumbnailUrl({
 	workspacePath: string;
 	filePath: string;
 	size?: ThumbnailSize;
-}): string {
-	const params = new URLSearchParams({
-		directory: workspacePath,
-		path: filePath,
-		size: size.toString(),
-	});
+}): Promise<string | null> {
+	const key = thumbnailCacheKey(workspacePath, filePath, size);
 
-	// The oqto-files server endpoint
-	return `/api/files/thumbnail?${params.toString()}`;
+	// Check cache
+	const cached = thumbnailBlobCache.get(key);
+	if (cached) return cached;
+
+	// Deduplicate in-flight requests
+	const existing = thumbnailInFlight.get(key);
+	if (existing) return existing;
+
+	const request = (async (): Promise<string | null> => {
+		try {
+			const result = await readFileMux(workspacePath, filePath);
+			if (!result.data || result.data.byteLength === 0) return null;
+
+			// Guess MIME type from extension
+			const ext = filePath.substring(filePath.lastIndexOf(".")).toLowerCase();
+			const mimeTypes: Record<string, string> = {
+				".png": "image/png",
+				".jpg": "image/jpeg",
+				".jpeg": "image/jpeg",
+				".gif": "image/gif",
+				".webp": "image/webp",
+				".svg": "image/svg+xml",
+				".bmp": "image/bmp",
+				".ico": "image/x-icon",
+				".mp4": "video/mp4",
+				".webm": "video/webm",
+				".ogg": "video/ogg",
+				".mov": "video/quicktime",
+			};
+			const mime = mimeTypes[ext] ?? "application/octet-stream";
+
+			const blob = new Blob([result.data], { type: mime });
+			const url = URL.createObjectURL(blob);
+			thumbnailBlobCache.set(key, url);
+			return url;
+		} catch (err) {
+			console.warn("[thumbnail] Failed to fetch:", filePath, err);
+			return null;
+		} finally {
+			thumbnailInFlight.delete(key);
+		}
+	})();
+
+	thumbnailInFlight.set(key, request);
+	return request;
+}
+
+/**
+ * Clear cached thumbnail blob URLs (call on workspace change)
+ */
+export function clearThumbnailCache(workspacePath?: string): void {
+	if (workspacePath) {
+		const prefix = `${workspacePath}:`;
+		for (const [key, url] of thumbnailBlobCache.entries()) {
+			if (key.startsWith(prefix)) {
+				URL.revokeObjectURL(url);
+				thumbnailBlobCache.delete(key);
+			}
+		}
+	} else {
+		for (const url of thumbnailBlobCache.values()) {
+			URL.revokeObjectURL(url);
+		}
+		thumbnailBlobCache.clear();
+	}
 }
 
 /**
