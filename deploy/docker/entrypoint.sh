@@ -290,6 +290,11 @@ single_user = ${OQTO_SINGLE_USER}
 cleanup_on_startup = true
 stop_sessions_on_shutdown = true
 
+[local.linux_users]
+enabled = true
+create_home = true
+use_sudo = true
+
 [auth]
 dev_mode = ${DEV_MODE}
 jwt_secret = "${JWT_SECRET}"
