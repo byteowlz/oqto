@@ -42,7 +42,7 @@
 #   oqto:  oqto-{tag}-{target}.tar.gz         (binaries in bin/ subdir)
 #          oqto-frontend-{tag}.tar.gz          (static assets in dist/)
 #
-FROM debian:bookworm-slim AS downloader
+FROM ubuntu:24.04 AS downloader
 
 ARG TARGETARCH
 
@@ -159,7 +159,7 @@ RUN set -eux; \
 # ---------------------------------------------------------------------------
 # Stage 2: Final image
 # ---------------------------------------------------------------------------
-FROM debian:bookworm-slim
+FROM ubuntu:24.04
 
 LABEL org.opencontainers.image.title="oqto" \
       org.opencontainers.image.description="Oqto AI Agent Workspace Platform - All-in-One" \
@@ -186,8 +186,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     procps tini locales \
     && rm -rf /var/lib/apt/lists/* \
     # Generate locale
-    && sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen && locale-gen \
-    # fd-find -> fd symlink (Debian installs as fdfind)
+    && locale-gen en_US.UTF-8 \
+    # fd-find -> fd symlink (Ubuntu installs as fdfind)
     && ln -sf "$(which fdfind)" /usr/local/bin/fd
 
 # Install bun (JS runtime for Pi and other tools)
