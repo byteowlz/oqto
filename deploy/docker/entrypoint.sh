@@ -463,7 +463,7 @@ if [ ! -f "${OQTO_DATA_DIR}/oqto/.bootstrapped" ] && [ "$DEV_MODE" = "false" ]; 
   fi
 
   log "Bootstrapping admin user..."
-  su -s /bin/bash oqto -c "
+  BOOTSTRAP_OUTPUT=$(su -s /bin/bash oqto -c "
     export HOME=/home/oqto
     export XDG_RUNTIME_DIR=/run/oqto
     oqtoctl user create \
@@ -472,8 +472,17 @@ if [ ! -f "${OQTO_DATA_DIR}/oqto/.bootstrapped" ] && [ "$DEV_MODE" = "false" ]; 
       -p '${ADMIN_PASSWORD}' \
       -r admin \
       2>&1
-  " && touch "${OQTO_DATA_DIR}/oqto/.bootstrapped" \
-    || log_error "Admin bootstrap failed (may already exist)"
+  ") && touch "${OQTO_DATA_DIR}/oqto/.bootstrapped" \
+    || {
+      echo "$BOOTSTRAP_OUTPUT"
+      # If user already exists (409), that's fine — mark as bootstrapped
+      if echo "$BOOTSTRAP_OUTPUT" | grep -q "409\|already"; then
+        log "Admin user already exists, skipping"
+        touch "${OQTO_DATA_DIR}/oqto/.bootstrapped"
+      else
+        log_error "Admin bootstrap failed"
+      fi
+    }
 fi
 
 # 5. caddy (reverse proxy + frontend)
@@ -483,7 +492,7 @@ PIDS+=($!)
 
 log "============================================"
 log "  Oqto is running!"
-log "  URL: http://localhost:${OQTO_PORT}"
+log "  URL: http://localhost:${OQTO_HOST_PORT:-${OQTO_PORT}}"
 log "============================================"
 
 # Wait for any process to exit

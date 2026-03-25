@@ -42,6 +42,7 @@ services:
       # --- Optional tuning ---
       - OQTO_LOG_LEVEL=${OQTO_LOG_LEVEL:-info}
       - OQTO_SINGLE_USER=${OQTO_SINGLE_USER:-false}
+      - OQTO_HOST_PORT=${OQTO_PORT:-8080}
     volumes:
       - ${OQTO_DATA_PATH:-oqto-data}:/data
     healthcheck:
