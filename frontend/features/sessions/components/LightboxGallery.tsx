@@ -46,6 +46,10 @@ export const LightboxGallery = memo(function LightboxGallery({
 	const imageRef = useRef<HTMLImageElement>(null);
 	const blobCacheRef = useRef<Map<string, string>>(new Map());
 
+	// Touch swipe state
+	const touchStartRef = useRef<{ x: number; y: number; t: number } | null>(null);
+	const [swipeOffset, setSwipeOffset] = useState(0);
+
 	// Reset state when lightbox opens
 	useEffect(() => {
 		if (open) {
@@ -224,6 +228,54 @@ export const LightboxGallery = memo(function LightboxGallery({
 		};
 	};
 
+	// Touch swipe handlers
+	const handleTouchStart = useCallback((e: React.TouchEvent) => {
+		if (zoom > 1) return; // Don't swipe when zoomed in
+		const touch = e.touches[0];
+		touchStartRef.current = { x: touch.clientX, y: touch.clientY, t: Date.now() };
+		setSwipeOffset(0);
+	}, [zoom]);
+
+	const handleTouchMove = useCallback((e: React.TouchEvent) => {
+		if (!touchStartRef.current || zoom > 1) return;
+		const touch = e.touches[0];
+		const dx = touch.clientX - touchStartRef.current.x;
+		const dy = touch.clientY - touchStartRef.current.y;
+
+		// Only track horizontal swipes (ignore vertical scroll)
+		if (Math.abs(dx) > Math.abs(dy) * 1.5) {
+			e.preventDefault();
+			setSwipeOffset(dx);
+		}
+	}, [zoom]);
+
+	const handleTouchEnd = useCallback(() => {
+		if (!touchStartRef.current || zoom > 1) {
+			touchStartRef.current = null;
+			return;
+		}
+
+		const elapsed = Date.now() - touchStartRef.current.t;
+		const velocity = Math.abs(swipeOffset) / Math.max(elapsed, 1);
+		const threshold = 50; // px
+		const velocityThreshold = 0.3; // px/ms
+
+		if (swipeOffset < -threshold || (swipeOffset < 0 && velocity > velocityThreshold)) {
+			// Swipe left → next
+			setCurrentIndex((prev) => (prev + 1) % items.length);
+			setZoom(1);
+			setRotation(0);
+		} else if (swipeOffset > threshold || (swipeOffset > 0 && velocity > velocityThreshold)) {
+			// Swipe right → previous
+			setCurrentIndex((prev) => (prev - 1 + items.length) % items.length);
+			setZoom(1);
+			setRotation(0);
+		}
+
+		touchStartRef.current = null;
+		setSwipeOffset(0);
+	}, [swipeOffset, zoom, items.length]);
+
 	if (!open || !currentItem) return null;
 
 	return (
@@ -341,10 +393,19 @@ export const LightboxGallery = memo(function LightboxGallery({
 			</div>
 
 			{/* Main content */}
-			<div className="flex-1 flex items-center justify-center overflow-hidden">
+			<div
+				className="flex-1 flex items-center justify-center overflow-hidden touch-none"
+				onTouchStart={handleTouchStart}
+				onTouchMove={handleTouchMove}
+				onTouchEnd={handleTouchEnd}
+			>
 				<div
 					ref={containerRef}
 					className="relative w-full h-full flex items-center justify-center"
+					style={{
+						transform: swipeOffset !== 0 ? `translateX(${swipeOffset}px)` : undefined,
+						transition: swipeOffset !== 0 ? "none" : "transform 0.2s ease-out",
+					}}
 				>
 					{/* Navigation buttons */}
 					<button
