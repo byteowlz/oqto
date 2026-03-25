@@ -21,7 +21,19 @@ docker compose logs -f
 open http://localhost:8080
 ```
 
-On first boot, admin credentials are printed in the logs. Save them.
+Docker runs in single-user mode by default (`OQTO_SINGLE_USER=true`), so no login is required.
+
+If you explicitly set `OQTO_SINGLE_USER=false`, admin credentials are bootstrapped on first run and printed in logs.
+
+## Docker Runtime Mode
+
+This compose setup is optimized for **single-user Docker**.
+
+- Default: `OQTO_SINGLE_USER=true`
+- No host systemd/logind requirements
+- Works on Docker Desktop (Mac/Windows) and Linux Docker engines
+
+For full multi-user Linux isolation (`local.linux_users.enabled=true` + per-user system services), use a native Linux host/VM deployment.
 
 ## Build Locally
 
@@ -56,7 +68,7 @@ docker compose build
 | `ADMIN_USER` | `admin` | Bootstrap admin username (first run only) |
 | `ADMIN_PASSWORD` | auto-generated | Admin password. Printed in logs if auto-generated. |
 | `ADMIN_EMAIL` | `admin@oqto.local` | Admin email |
-| `OQTO_SINGLE_USER` | `false` | Set `true` to disable auth entirely (dev/personal use) |
+| `OQTO_SINGLE_USER` | `true` | Single-user mode for Docker (no auth). Set `false` only for Linux host multi-user setups. |
 
 ### Configuration
 

@@ -160,7 +160,7 @@ RUN set -eux; \
 # ---------------------------------------------------------------------------
 # Stage 2: Final image
 # ---------------------------------------------------------------------------
-FROM jrei/systemd-ubuntu:24.04
+FROM ubuntu:24.04
 
 LABEL org.opencontainers.image.title="oqto" \
       org.opencontainers.image.description="Oqto AI Agent Workspace Platform - All-in-One" \
@@ -184,7 +184,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     fonts-liberation fonts-noto fonts-noto-color-emoji fonts-dejavu \
     fonts-roboto fonts-inter \
     # Misc
-    procps locales \
+    procps tini locales \
     && rm -rf /var/lib/apt/lists/* \
     # Generate locale
     && locale-gen en_US.UTF-8 \
@@ -269,19 +269,8 @@ COPY deploy/docker/Caddyfile /etc/caddy/Caddyfile
 COPY deploy/docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
-# Script to capture Docker env vars before systemd starts oqto
-RUN printf '#!/bin/bash\nmkdir -p /etc/oqto\nenv | grep -E "^(ANTHROPIC|OPENAI|GEMINI|OPENROUTER|AZURE|DEEPSEEK|MISTRAL|JWT_SECRET|ADMIN|OQTO_|LOCAL_LLM)" > /etc/oqto/docker.env\n' \
-    > /usr/local/bin/oqto-capture-env.sh && chmod +x /usr/local/bin/oqto-capture-env.sh
-
-# Run env capture early in boot
-RUN printf '[Unit]\nDescription=Capture Docker env vars for Oqto\nBefore=oqto.service\nDefaultDependencies=no\n\n[Service]\nType=oneshot\nExecStart=/usr/local/bin/oqto-capture-env.sh\nRemainAfterExit=yes\n\n[Install]\nWantedBy=multi-user.target\n' \
-    > /etc/systemd/system/oqto-env.service \
-    && systemctl enable oqto-env.service
-
-# Oqto runs as a systemd service (enables per-user sessions via loginctl/systemctl)
-RUN printf '[Unit]\nDescription=Oqto Platform\nAfter=oqto-env.service\nRequires=oqto-env.service\n\n[Service]\nType=simple\nExecStart=/usr/local/bin/entrypoint.sh\nRestart=on-failure\nRestartSec=5\nEnvironmentFile=-/etc/oqto/docker.env\n\n[Install]\nWantedBy=multi-user.target\n' \
-    > /etc/systemd/system/oqto.service \
-    && systemctl enable oqto.service
-
 EXPOSE 8080
 VOLUME ["/data"]
+
+ENTRYPOINT ["tini", "--"]
+CMD ["/usr/local/bin/entrypoint.sh"]

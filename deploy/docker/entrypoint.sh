@@ -258,8 +258,10 @@ chown -R oqto:oqto /home/oqto/.config/hstry
 # ---------------------------------------------------------------------------
 
 DEV_MODE="false"
+LINUX_USERS_ENABLED="true"
 if [ "$OQTO_SINGLE_USER" = "true" ]; then
   DEV_MODE="true"
+  LINUX_USERS_ENABLED="false"
 fi
 
 cat > /home/oqto/.config/oqto/config.toml <<EOF
@@ -290,7 +292,7 @@ cleanup_on_startup = true
 stop_sessions_on_shutdown = true
 
 [local.linux_users]
-enabled = true
+enabled = ${LINUX_USERS_ENABLED}
 create_home = true
 use_sudo = true
 
@@ -412,35 +414,8 @@ su -s /bin/bash oqto -c "
 PIDS+=($!)
 wait_for_port "$EAVS_PORT" "eavs" 15
 
-# 3. oqto-usermgr (privileged helper for Linux user creation)
-if [ "$OQTO_SINGLE_USER" != "true" ]; then
-  log "Starting oqto-usermgr..."
-  oqto-usermgr 2>&1 | sed 's/^/[usermgr] /' &
-  PIDS+=($!)
-  # Wait for socket
-  USERMGR_WAITED=0
-  while [ ! -S /run/oqto/usermgr.sock ] && [ "$USERMGR_WAITED" -lt 10 ]; do
-    sleep 1
-    USERMGR_WAITED=$((USERMGR_WAITED + 1))
-  done
-  if [ -S /run/oqto/usermgr.sock ]; then
-    chown oqto:oqto /run/oqto/usermgr.sock 2>/dev/null || true
-    log "oqto-usermgr is ready (${USERMGR_WAITED}s)"
-  else
-    log_error "oqto-usermgr socket not found after 10s"
-  fi
-fi
-
-# 4. oqto backend (after usermgr so Linux user creation works)
+# 3. oqto backend
 log "Starting oqto backend..."
-
-# Test if oqto binary works at all
-su -s /bin/bash oqto -c "oqto --help" >/dev/null 2>&1 \
-  || { log_error "oqto binary failed to execute"; su -s /bin/bash oqto -c "oqto --help" 2>&1; }
-
-# Dump generated config for debugging
-log "Config file:"
-cat /home/oqto/.config/oqto/config.toml | sed 's/^/  /'
 
 OQTO_LOG="/tmp/oqto.log"
 su -s /bin/bash oqto -c "
@@ -469,7 +444,7 @@ if ! wait_for_port "$OQTO_BACKEND_PORT" "oqto" 30 "/api/health"; then
   exit 1
 fi
 
-# 5. Bootstrap admin user (first run only)
+# 4. Bootstrap admin user (first run only)
 if [ ! -f "${OQTO_DATA_DIR}/oqto/.bootstrapped" ] && [ "$DEV_MODE" = "false" ]; then
   if [ -z "$ADMIN_PASSWORD" ]; then
     ADMIN_PASSWORD=$(generate_secret 16)
@@ -497,7 +472,7 @@ if [ ! -f "${OQTO_DATA_DIR}/oqto/.bootstrapped" ] && [ "$DEV_MODE" = "false" ]; 
   touch "${OQTO_DATA_DIR}/oqto/.bootstrapped"
 fi
 
-# 6. caddy (reverse proxy + frontend)
+# 5. caddy (reverse proxy + frontend)
 log "Starting caddy..."
 caddy run --config /etc/caddy/Caddyfile --adapter caddyfile 2>&1 | sed 's/^/[caddy] /' &
 PIDS+=($!)

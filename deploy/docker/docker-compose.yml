@@ -18,10 +18,6 @@ services:
       dockerfile: deploy/docker/Dockerfile
     container_name: oqto
     restart: unless-stopped
-    tmpfs:
-      - /tmp
-      - /run
-      - /run/lock
     ports:
       - "${OQTO_PORT:-8080}:8080"
     environment:
@@ -45,11 +41,10 @@ services:
 
       # --- Optional tuning ---
       - OQTO_LOG_LEVEL=${OQTO_LOG_LEVEL:-info}
-      - OQTO_SINGLE_USER=${OQTO_SINGLE_USER:-false}
+      - OQTO_SINGLE_USER=${OQTO_SINGLE_USER:-true}
       - OQTO_HOST_PORT=${OQTO_PORT:-8080}
     volumes:
       - ${OQTO_DATA_PATH:-oqto-data}:/data
-      - /sys/fs/cgroup:/sys/fs/cgroup:rw
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://127.0.0.1:8080/api/health"]
       interval: 15s
