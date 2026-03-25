@@ -238,7 +238,9 @@ ENV LANG=en_US.UTF-8 \
 
 # --- Create oqto user ---
 
-RUN groupadd --gid 1000 oqto \
+# Remove default ubuntu user (UID/GID 1000) if present, then create oqto user
+RUN userdel -r ubuntu 2>/dev/null || true \
+    && groupadd --gid 1000 oqto 2>/dev/null || groupmod -n oqto "$(getent group 1000 | cut -d: -f1)" \
     && useradd --uid 1000 --gid 1000 -m -s /bin/zsh oqto \
     && echo "oqto ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers.d/oqto \
     && chmod 0440 /etc/sudoers.d/oqto
