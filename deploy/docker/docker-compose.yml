@@ -18,13 +18,11 @@ services:
       dockerfile: deploy/docker/Dockerfile
     container_name: oqto
     restart: unless-stopped
+    cgroupns: host
     tmpfs:
       - /tmp
       - /run
       - /run/lock
-    volumes:
-      - /sys/fs/cgroup:/sys/fs/cgroup:rw
-    cgroupns: host
     ports:
       - "${OQTO_PORT:-8080}:8080"
     environment:
@@ -52,6 +50,7 @@ services:
       - OQTO_HOST_PORT=${OQTO_PORT:-8080}
     volumes:
       - ${OQTO_DATA_PATH:-oqto-data}:/data
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://127.0.0.1:8080/api/health"]
       interval: 15s
