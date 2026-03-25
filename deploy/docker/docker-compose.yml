@@ -45,7 +45,7 @@ services:
     volumes:
       - ${OQTO_DATA_PATH:-oqto-data}:/data
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8080/health"]
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8080/api/health"]
       interval: 15s
       timeout: 5s
       retries: 5

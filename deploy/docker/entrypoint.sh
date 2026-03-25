@@ -60,11 +60,11 @@ generate_secret() {
 }
 
 wait_for_port() {
-  local port="$1" name="$2" timeout="${3:-30}"
+  local port="$1" name="$2" timeout="${3:-30}" path="${4:-/health}"
   local waited=0
-  while ! curl -sf "http://127.0.0.1:${port}/health" >/dev/null 2>&1; do
+  while ! curl -sf "http://127.0.0.1:${port}${path}" >/dev/null 2>&1; do
     if [ "$waited" -ge "$timeout" ]; then
-      log_error "${name} did not become healthy on port ${port} within ${timeout}s"
+      log_error "${name} did not become healthy on port ${port}${path} within ${timeout}s"
       return 1
     fi
     sleep 1
@@ -444,7 +444,7 @@ PIDS+=($!)
 tail -f "$OQTO_LOG" 2>/dev/null | sed 's/^/[oqto] /' &
 
 # Wait for oqto, dump log on failure
-if ! wait_for_port "$OQTO_BACKEND_PORT" "oqto" 30; then
+if ! wait_for_port "$OQTO_BACKEND_PORT" "oqto" 30 "/api/health"; then
   log_error "oqto startup log:"
   cat "$OQTO_LOG" 2>/dev/null | sed 's/^/  /' || true
   exit 1
