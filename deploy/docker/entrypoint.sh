@@ -122,6 +122,7 @@ mkdir -p \
 chown -R oqto:oqto "${OQTO_DATA_DIR}" /run/oqto /home/oqto 2>/dev/null || true
 
 # Symlink Pi sessions into the persistent volume so they survive container rebuilds
+mkdir -p /home/oqto/.pi/agent
 ln -sfn "${OQTO_DATA_DIR}/pi-sessions" /home/oqto/.pi/agent/sessions
 
 # ---------------------------------------------------------------------------
