@@ -18,6 +18,13 @@ services:
       dockerfile: deploy/docker/Dockerfile
     container_name: oqto
     restart: unless-stopped
+    tmpfs:
+      - /tmp
+      - /run
+      - /run/lock
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    cgroupns: host
     ports:
       - "${OQTO_PORT:-8080}:8080"
     environment:
