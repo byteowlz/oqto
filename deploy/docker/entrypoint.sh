@@ -423,6 +423,7 @@ su -s /bin/bash oqto -c "oqto --help" >/dev/null 2>&1 \
 log "Config file:"
 cat /home/oqto/.config/oqto/config.toml | sed 's/^/  /'
 
+OQTO_LOG="/tmp/oqto.log"
 su -s /bin/bash oqto -c "
   export HOME=/home/oqto
   export XDG_CONFIG_HOME=/home/oqto/.config
@@ -430,15 +431,24 @@ su -s /bin/bash oqto -c "
   export XDG_STATE_HOME=/home/oqto/.local/state
   export XDG_RUNTIME_DIR=/run/oqto
   export RUST_LOG=${OQTO_LOG_LEVEL:-info}
-  exec oqto --config /home/oqto/.config/oqto/config.toml serve \
+  oqto --config /home/oqto/.config/oqto/config.toml serve \
     --local-mode \
     --host 0.0.0.0 \
     --port ${OQTO_BACKEND_PORT} \
     --user-data-path ${OQTO_DATA_DIR}/users \
-    2>&1
-" | sed 's/^/[oqto] /' &
+    >$OQTO_LOG 2>&1
+" &
 PIDS+=($!)
-wait_for_port "$OQTO_BACKEND_PORT" "oqto" 30
+
+# Tail the log in background so we see output
+tail -f "$OQTO_LOG" 2>/dev/null | sed 's/^/[oqto] /' &
+
+# Wait for oqto, dump log on failure
+if ! wait_for_port "$OQTO_BACKEND_PORT" "oqto" 30; then
+  log_error "oqto startup log:"
+  cat "$OQTO_LOG" 2>/dev/null | sed 's/^/  /' || true
+  exit 1
+fi
 
 # 4. Bootstrap admin user (first run only)
 if [ ! -f "${OQTO_DATA_DIR}/oqto/.bootstrapped" ] && [ "$DEV_MODE" = "false" ]; then
