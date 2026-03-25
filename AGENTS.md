@@ -336,6 +336,27 @@ bun run lint                             # Verify everything passes
 - **Frontend dev server** runs in tmux pane `%5` (check with `tmux list-panes -a`).
 - **Rebuild backend**: `cd backend && cargo build --release` then restart the process in its tmux pane.
 
+## Pre-Commit Lint Checklist
+
+**Run ALL of these before every commit.** No exceptions.
+
+```bash
+# Backend (if Rust files changed)
+cd backend
+cargo fmt -p <crate>                       # Format
+cargo clippy -p <crate>                    # Lint (must be 0 warnings)
+cargo test -p <crate>                      # Tests pass
+cd ..
+just lint-rust-ai-guardrails               # ast-grep guardrails
+
+# Frontend (if TS/TSX files changed)
+cd frontend
+bun run build                              # Compiles without errors
+bun run lint                               # biome + oxlint + useEffect guardrail (must be 0 errors)
+```
+
+If you added or removed `useEffect` calls, also run `bun run lint:useeffect-guardrail:update` to update the baseline before `bun run lint`.
+
 ## Code Style
 
 **Rust**: Use `anyhow::Result` with `.context()` for errors. Group imports: std, external crates, internal modules. Run `cargo fmt` and `cargo check` after changes.
