@@ -42,13 +42,11 @@
 #   oqto:  oqto-{tag}-{target}.tar.gz         (binaries in bin/ subdir)
 #          oqto-frontend-{tag}.tar.gz          (static assets in dist/)
 #
-FROM ubuntu:24.04 AS downloader
+FROM alpine:3.21 AS downloader
 
 ARG TARGETARCH
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl ca-certificates xz-utils unzip \
-    && rm -rf /var/lib/apt/lists/*
+RUN apk add --no-cache curl ca-certificates xz unzip bash
 
 WORKDIR /out
 RUN mkdir -p /out/bin /out/frontend
