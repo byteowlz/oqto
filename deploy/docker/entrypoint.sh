@@ -450,39 +450,30 @@ if ! wait_for_port "$OQTO_BACKEND_PORT" "oqto" 30 "/api/health"; then
   exit 1
 fi
 
-# 4. Set admin password (first run only)
-# The DB migration creates default admin/dev users with default passwords.
-# On first Docker boot, update the admin password to a secure one.
-if [ ! -f "${OQTO_DATA_DIR}/oqto/.bootstrapped" ]; then
+# 4. Bootstrap admin user (first run only)
+if [ ! -f "${OQTO_DATA_DIR}/oqto/.bootstrapped" ] && [ "$DEV_MODE" = "false" ]; then
   if [ -z "$ADMIN_PASSWORD" ]; then
     ADMIN_PASSWORD=$(generate_secret 16)
     log "============================================"
     log "  Admin credentials:"
-    log "    Username: admin"
+    log "    Username: ${ADMIN_USER}"
     log "    Password: ${ADMIN_PASSWORD}"
     log "  Save these! They won't be shown again."
     log "============================================"
   fi
 
-  # Update admin password via direct DB access (oqtoctl doesn't have a password reset command)
-  HASH=$(python3 -c "import bcrypt; print(bcrypt.hashpw(b'${ADMIN_PASSWORD}', bcrypt.gensalt()).decode())" 2>/dev/null) \
-    || HASH=$(python3 -c "
-import hashlib, os, base64
-# fallback: use pbkdf2 if bcrypt not available
-salt = os.urandom(16)
-dk = hashlib.pbkdf2_hmac('sha256', b'${ADMIN_PASSWORD}', salt, 100000)
-print('\$pbkdf2-sha256\$100000\$' + base64.b64encode(salt).decode() + '\$' + base64.b64encode(dk).decode())
-" 2>/dev/null) \
-    || true
-
-  if [ -n "$HASH" ]; then
-    sqlite3 "${OQTO_DATA_DIR}/oqto/oqto.db" \
-      "UPDATE users SET password_hash = '${HASH}' WHERE username = 'admin';" 2>/dev/null \
-      && log "Admin password updated" \
-      || log_error "Failed to update admin password"
-  else
-    log "WARN: Could not hash password (bcrypt/python3 not available). Default password 'admin' remains."
-  fi
+  log "Creating admin user..."
+  su -s /bin/bash oqto -c "
+    export HOME=/home/oqto
+    export XDG_RUNTIME_DIR=/run/oqto
+    oqtoctl user create \
+      '${ADMIN_USER}' \
+      -e '${ADMIN_EMAIL}' \
+      -p '${ADMIN_PASSWORD}' \
+      -r admin \
+      2>&1
+  " && log "Admin user created" \
+    || log_error "Admin user creation failed"
 
   touch "${OQTO_DATA_DIR}/oqto/.bootstrapped"
 fi
