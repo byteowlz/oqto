@@ -561,6 +561,14 @@ impl Default for BackendConfig {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum RunnerTransportMode {
+    #[default]
+    Unix,
+    Tcp,
+}
+
 /// Runner configuration for user-plane isolation.
 ///
 /// When `user_plane_enabled` is true in local multi-user mode, all user data
@@ -581,8 +589,103 @@ struct RunnerConfig {
     /// - Only sandbox provides isolation (if enabled)
     user_plane_enabled: bool,
     /// Socket directory pattern for per-user runner sockets.
+    /// Used for Unix transport (and as fallback compatibility input).
     /// Default: /run/user/{uid}/oqto-runner.sock
     socket_pattern: Option<String>,
+    /// Runner transport used for user-plane routing.
+    transport: RunnerTransportMode,
+    /// TCP address pattern for per-user runner endpoints.
+    /// Supports `{user}` and `{uid}` placeholders, e.g. "runner-{user}:7001".
+    tcp_addr_pattern: Option<String>,
+    /// Optional static TCP auth token.
+    tcp_auth_token: Option<String>,
+    /// Environment variable name containing the TCP auth token.
+    /// Takes precedence over `tcp_auth_token`.
+    tcp_auth_token_env: Option<String>,
+}
+
+impl RunnerConfig {
+    fn resolve_socket_pattern(&self, local_fallback: Option<&str>) -> Result<Option<String>> {
+        match self.transport {
+            RunnerTransportMode::Unix => Ok(self
+                .socket_pattern
+                .as_deref()
+                .or(local_fallback)
+                .map(ToString::to_string)),
+            RunnerTransportMode::Tcp => {
+                let addr = self
+                    .tcp_addr_pattern
+                    .as_ref()
+                    .map(|s| s.trim())
+                    .filter(|s| !s.is_empty())
+                    .ok_or_else(|| {
+                        anyhow!(
+                            "backend.runner.transport=tcp requires backend.runner.tcp_addr_pattern"
+                        )
+                    })?;
+
+                let token = if let Some(env_name) = self
+                    .tcp_auth_token_env
+                    .as_ref()
+                    .map(|s| s.trim())
+                    .filter(|s| !s.is_empty())
+                {
+                    std::env::var(env_name).with_context(|| {
+                        format!(
+                            "backend.runner.tcp_auth_token_env '{}' is set but environment variable is missing",
+                            env_name
+                        )
+                    })?
+                } else {
+                    self.tcp_auth_token
+                        .as_ref()
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .ok_or_else(|| {
+                            anyhow!(
+                                "backend.runner.transport=tcp requires tcp_auth_token or tcp_auth_token_env"
+                            )
+                        })?
+                };
+
+                Ok(Some(format!("tcp://{}?token={}", addr, token)))
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod runner_config_tests {
+    use super::{RunnerConfig, RunnerTransportMode};
+
+    #[test]
+    fn unix_transport_uses_local_fallback() {
+        let cfg = RunnerConfig::default();
+        let resolved = cfg
+            .resolve_socket_pattern(Some("/run/oqto/runner-sockets/{user}/oqto-runner.sock"))
+            .expect("resolve should succeed");
+        assert_eq!(
+            resolved.as_deref(),
+            Some("/run/oqto/runner-sockets/{user}/oqto-runner.sock")
+        );
+    }
+
+    #[test]
+    fn tcp_transport_builds_endpoint_pattern() {
+        let cfg = RunnerConfig {
+            transport: RunnerTransportMode::Tcp,
+            tcp_addr_pattern: Some("runner-{user}.internal:7001".to_string()),
+            tcp_auth_token: Some("secret-token".to_string()),
+            ..RunnerConfig::default()
+        };
+        let resolved = cfg
+            .resolve_socket_pattern(None)
+            .expect("resolve should succeed");
+        assert_eq!(
+            resolved.as_deref(),
+            Some("tcp://runner-{user}.internal:7001?token=secret-token")
+        );
+    }
 }
 
 impl AppConfig {
@@ -1608,7 +1711,10 @@ fn resolve_frontend_dir() -> Option<PathBuf> {
         Some(PathBuf::from("/usr/local/share/oqto/frontend/dist")),
     ];
 
-    candidates.into_iter().flatten().find(|dir| dir.join("index.html").is_file())
+    candidates
+        .into_iter()
+        .flatten()
+        .find(|dir| dir.join("index.html").is_file())
 }
 
 fn with_frontend_static_if_available(api_router: axum::Router) -> axum::Router {
@@ -1891,6 +1997,13 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             .and_then(|e| e.container_url.clone())
     };
 
+    let resolved_runner_socket_pattern = ctx
+        .config
+        .backend
+        .runner
+        .resolve_socket_pattern(ctx.config.local.runner_socket_pattern.as_deref())
+        .context("resolving runner endpoint configuration")?;
+
     let session_config = session::SessionServiceConfig {
         default_image,
         base_port,
@@ -1917,7 +2030,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         pi_provider: ctx.config.pi.default_provider.clone(),
         pi_model: ctx.config.pi.default_model.clone(),
         agent_browser: ctx.config.agent_browser.clone(),
-        runner_socket_pattern: ctx.config.local.runner_socket_pattern.clone(),
+        runner_socket_pattern: resolved_runner_socket_pattern.clone(),
         linux_user_prefix: if ctx.config.local.linux_users.enabled {
             Some(ctx.config.local.linux_users.prefix.clone())
         } else {
@@ -2046,7 +2159,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
                     mmry_binary: ctx.config.mmry.binary.clone(),
                     base_port: ctx.config.mmry.user_base_port,
                     port_range: ctx.config.mmry.user_port_range,
-                    runner_socket_pattern: ctx.config.local.runner_socket_pattern.clone(),
+                    runner_socket_pattern: resolved_runner_socket_pattern.clone(),
                 },
                 move |user_id| linux_users.linux_username(user_id),
                 user_repo_for_services.clone(),
@@ -2070,7 +2183,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
                     sldr_binary: ctx.config.sldr.binary.clone(),
                     base_port: ctx.config.sldr.user_base_port,
                     port_range: ctx.config.sldr.user_port_range,
-                    runner_socket_pattern: ctx.config.local.runner_socket_pattern.clone(),
+                    runner_socket_pattern: resolved_runner_socket_pattern.clone(),
                 },
                 move |user_id| linux_users.linux_username(user_id),
                 user_repo_for_services.clone(),
@@ -2289,8 +2402,8 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             create_home: ctx.config.local.linux_users.create_home,
         };
         state = state.with_linux_users(config.clone());
-        // Also set runner socket pattern for multi-user chat history access
-        state = state.with_runner_socket_pattern(ctx.config.local.runner_socket_pattern.clone());
+        // Also set runner endpoint pattern for multi-user chat history access
+        state = state.with_runner_socket_pattern(resolved_runner_socket_pattern.clone());
         linux_users_config = Some(config);
     }
 
