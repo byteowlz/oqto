@@ -44,12 +44,15 @@ docker compose build
 | `OPENAI_API_KEY` | OpenAI API key |
 | `GEMINI_API_KEY` | Google Gemini API key |
 | `OPENROUTER_API_KEY` | OpenRouter API key |
+| `AZURE_API_KEY` | Azure OpenAI API key |
+| `DEEPSEEK_API_KEY` | DeepSeek API key |
+| `MISTRAL_API_KEY` | Mistral AI API key |
 
 ### Authentication
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `JWT_SECRET` | auto-generated | JWT signing key (min 32 chars). Persisted in `/data` volume across restarts. |
+| `JWT_SECRET` | auto-generated | JWT signing key. Persisted in `/data` volume across restarts. |
 | `ADMIN_USER` | `admin` | Bootstrap admin username (first run only) |
 | `ADMIN_PASSWORD` | auto-generated | Admin password. Printed in logs if auto-generated. |
 | `ADMIN_EMAIL` | `admin@oqto.local` | Admin email |
@@ -62,14 +65,6 @@ docker compose build
 | `OQTO_PORT` | `8080` | Port exposed to host |
 | `OQTO_LOG_LEVEL` | `info` | Log level: `error`, `warn`, `info`, `debug`, `trace` |
 | `OQTO_DATA_DIR` | `/data` | Data directory inside container (map to volume) |
-
-### Additional Provider Keys
-
-| Variable | Provider |
-|----------|----------|
-| `AZURE_API_KEY` | Azure OpenAI |
-| `DEEPSEEK_API_KEY` | DeepSeek |
-| `MISTRAL_API_KEY` | Mistral AI |
 
 ## Architecture
 
@@ -105,7 +100,8 @@ Everything runs inside one container, managed by `entrypoint.sh`:
 1. **hstry** starts first (chat history must be available)
 2. **eavs** starts next (LLM proxy for model metadata)
 3. **oqto** backend starts (depends on both)
-4. **caddy** starts last (reverse proxy + static frontend)
+4. Admin user bootstrapped (first run only)
+5. **caddy** starts last (reverse proxy + static frontend)
 
 If any process exits, the entrypoint triggers graceful shutdown of all services.
 
@@ -116,28 +112,31 @@ All state lives in `/data` (mount as a Docker volume):
 ```
 /data/
   oqto/
-    oqto.db          # User accounts, sessions (SQLite)
-    .jwt_secret       # Persisted JWT secret
-    .bootstrapped     # First-run marker
+    oqto.db           # User accounts, sessions (SQLite)
+    .jwt_secret        # Persisted JWT secret
+    .bootstrapped      # First-run marker
   hstry/
-    hstry.db          # Chat message history (SQLite)
+    hstry.db           # Chat message history (SQLite)
   eavs/
-    eavs.env          # Generated eavs environment
-    .admin_key        # Eavs admin API key
-  users/              # Per-user data
-  workspaces/         # Agent workspaces
+    eavs.env           # Generated eavs environment
+    .admin_key         # Eavs admin API key
+  users/               # Per-user data
+  workspaces/          # Agent workspaces
 ```
 
 ## What's Inside
 
-### Oqto Binaries
-`oqto`, `oqtoctl`, `oqto-runner`, `oqto-files`, `oqto-sandbox`, `oqto-scaffold`, `oqto-usermgr`, `pi-bridge`
+### Oqto Platform
+`oqto`, `oqtoctl`, `oqto-runner`, `oqto-files`, `oqto-sandbox`, `oqto-scaffold`, `oqto-usermgr`, `oqto-setup`, `pi-bridge`
+
+### Core Services
+`hstry`, `hstry-tui`, `eavs` (LLM proxy), `caddy` (reverse proxy)
 
 ### Agent Tools
-`hstry`, `hstry-tui`, `eavs`, `agntz`, `mmry`, `mmry-service`, `tmpltr`, `sldr`, `ignr`, `trx`, `scrpr`, `sx`
+`agntz`, `mmry`, `mmry-mcp`, `mmry-tui`, `mmry-service`, `tmpltr`, `sldr`, `sldr-server`, `ignr`, `trx`, `scrpr`, `sx`
 
-### Runtime
-`pi` (AI agent), `ttyd` (web terminal), `caddy` (reverse proxy)
+### Agent Runtime
+`pi` (AI agent), `ttyd` (web terminal)
 
 ### Shell Tools
 `tmux`, `rg` (ripgrep), `fd`, `fzf`, `zsh`, `neovim`, `yazi`, `zoxide`, `starship`, `jq`, `git`, `curl`
@@ -151,6 +150,10 @@ All state lives in `/data` (mount as a Docker volume):
 ### Fonts
 Liberation, Noto, Noto Emoji, DejaVu, Roboto, Inter
 
+## Multi-Architecture Support
+
+The image builds for both `linux/amd64` and `linux/arm64`. All byteowlz tools publish binaries for both architectures.
+
 ## Future: Split Architecture
 
 This monolithic image is designed to be split later when the runner gains TCP/IP support:
@@ -159,13 +162,3 @@ This monolithic image is designed to be split later when the runner gains TCP/IP
 - `ghcr.io/byteowlz/oqto-session:latest` -- per-session container (pi, tools, shell)
 
 The runner currently uses Unix sockets, so everything must live in one container for now.
-
-## CI/CD
-
-The Docker image is built and pushed automatically by `.github/workflows/docker.yml` when a release is published. It triggers after the release workflow creates GitHub releases with pre-built binaries.
-
-```bash
-# Image is published to:
-ghcr.io/byteowlz/oqto:latest
-ghcr.io/byteowlz/oqto:<version>
-```

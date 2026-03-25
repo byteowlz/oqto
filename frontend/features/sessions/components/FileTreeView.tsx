@@ -32,6 +32,13 @@ import {
 	watchFilesMux,
 } from "@/lib/mux-files";
 import { normalizeWorkspacePath } from "@/lib/session-utils";
+import {
+	buildWorkspaceFileUrl,
+	formatDuration,
+	isVideoFile,
+	supportsMediaThumbnail,
+	supportsThumbnail,
+} from "@/lib/thumbnail-utils";
 import { cn } from "@/lib/utils";
 import { getWsManager } from "@/lib/ws-manager";
 import {
@@ -48,6 +55,7 @@ import {
 	LayoutGrid,
 	List,
 	Loader2,
+	Maximize2,
 	MoveRight,
 	PaintBucket,
 	Pencil,
@@ -55,6 +63,9 @@ import {
 	Upload,
 } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { LightboxGallery, type LightboxItem } from "./LightboxGallery";
+import { MediaQuickAccessBar, type MediaType } from "./MediaQuickAccessBar";
+import { ThumbnailImage } from "./ThumbnailImage";
 
 export type FileNode = {
 	name: string;
@@ -319,6 +330,7 @@ export interface FileTreeState {
 	selectedFile: string | null;
 	selectedFiles: Set<string>;
 	viewMode: ViewMode;
+	mediaFilter: MediaType;
 }
 
 export const initialFileTreeState: FileTreeState = {
@@ -327,6 +339,7 @@ export const initialFileTreeState: FileTreeState = {
 	selectedFile: null,
 	selectedFiles: new Set(),
 	viewMode: "tree",
+	mediaFilter: "all",
 };
 
 interface FileTreeViewProps {
@@ -374,6 +387,11 @@ export function FileTreeView({
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const lastLoadRef = useRef<{ key: string; ts: number } | null>(null);
 
+	// Media gallery state
+	const [lightboxOpen, setLightboxOpen] = useState(false);
+	const [lightboxIndex, setLightboxIndex] = useState(0);
+	const [mediaSearchQuery, setMediaSearchQuery] = useState("");
+
 	// Use external state if provided, otherwise use internal state
 	const [internalExpanded, setInternalExpanded] = useState<
 		Record<string, boolean>
@@ -385,6 +403,8 @@ export function FileTreeView({
 		Set<string>
 	>(new Set());
 	const [internalViewMode, setInternalViewMode] = useState<ViewMode>("tree");
+	const [internalMediaFilter, setInternalMediaFilter] =
+		useState<MediaType>("all");
 	const [internalCurrentPath, setInternalCurrentPath] = useState<string>(".");
 
 	const expanded = state?.expanded ?? internalExpanded;
@@ -392,6 +412,7 @@ export function FileTreeView({
 	const selectedFiles = state?.selectedFiles ?? internalSelectedFiles;
 	const viewMode = state?.viewMode ?? internalViewMode;
 	const currentPath = state?.currentPath ?? internalCurrentPath;
+	const mediaFilter = state?.mediaFilter ?? internalMediaFilter;
 
 	// Use a ref for external state to avoid recreating updateState on every render.
 	// This breaks the dependency chain that caused loadTree to re-run on every
@@ -414,6 +435,8 @@ export function FileTreeView({
 					setInternalViewMode(updates.viewMode);
 				if (updates.currentPath !== undefined)
 					setInternalCurrentPath(updates.currentPath);
+				if (updates.mediaFilter !== undefined)
+					setInternalMediaFilter(updates.mediaFilter);
 			}
 		},
 		[onStateChange],
@@ -662,9 +685,14 @@ export function FileTreeView({
 			}
 			updateState({ selectedFiles: newSelection, selectedFile: path });
 		} else {
-			// Normal click: clear selection, preview file if previewable
+			// Normal click: clear selection
 			updateState({ selectedFile: path, selectedFiles: new Set() });
-			if (!isDirectory && onPreviewFile && isPreviewable(name)) {
+
+			if (isDirectory) {
+				// Click on folder: navigate into it
+				handleNavigateToFolder(path);
+			} else if (!isDirectory && onPreviewFile && isPreviewable(name)) {
+				// Other previewable file: use existing preview
 				onPreviewFile(path);
 			}
 		}
@@ -908,6 +936,157 @@ export function FileTreeView({
 		updateState({ selectedFiles: new Set(), selectedFile: null });
 	};
 
+	// Count media files in tree
+	const countMediaFiles = () => {
+		let imageCount = 0;
+		let videoCount = 0;
+		let audioCount = 0;
+
+		const countFiles = (nodes: FileNode[]) => {
+			for (const node of nodes) {
+				if (node.type === "directory") {
+					if (node.children) {
+						countFiles(node.children);
+					}
+				} else {
+					const ext = node.name
+						.substring(node.name.lastIndexOf("."))
+						.toLowerCase();
+					if (node.name === ".") continue;
+
+					if (isVideoFile(node.name)) {
+						videoCount++;
+					} else if (supportsThumbnail(node.name)) {
+						imageCount++;
+					} else if (
+						[".mp3", ".wav", ".flac", ".aac", ".m4a", ".opus"].includes(ext)
+					) {
+						audioCount++;
+					}
+				}
+			}
+		};
+
+		countFiles(tree);
+		return { imageCount, videoCount, audioCount };
+	};
+
+	// Filter files by media type
+	const filterFiles = (nodes: FileNode[], filter: MediaType): FileNode[] => {
+		if (filter === "all") return nodes;
+
+		return nodes
+			.filter((node) => {
+				if (node.type === "directory") {
+					// Always show directories, but filter their children
+					if (node.children) {
+						const filteredChildren = filterFiles(node.children, filter);
+						return filteredChildren.length > 0 || node.children.length === 0;
+					}
+					return true;
+				}
+
+				// Filter files by type
+				const ext = node.name
+					.substring(node.name.lastIndexOf("."))
+					.toLowerCase();
+				if (filter === "images") {
+					return supportsThumbnail(node.name);
+				}
+				if (filter === "videos") {
+					return isVideoFile(node.name);
+				}
+				if (filter === "audio") {
+					return [".mp3", ".wav", ".flac", ".aac", ".m4a", ".opus"].includes(
+						ext,
+					);
+				}
+				return true;
+			})
+			.map((node) => {
+				// Recursively filter children for directories
+				if (node.type === "directory" && node.children) {
+					return {
+						...node,
+						children: filterFiles(node.children, filter),
+					};
+				}
+				return node;
+			});
+	};
+
+	// Get filtered tree based on media filter and search query
+	// biome-ignore lint/correctness/useExhaustiveDependencies: filterFiles is a stable local function
+	const filteredTree = useMemo(() => {
+		let result = filterFiles(tree, viewMode === "tree" ? "all" : mediaFilter);
+
+		// Apply search filter
+		const query = mediaSearchQuery.trim().toLowerCase();
+		if (query && viewMode !== "tree") {
+			const searchFilter = (nodes: FileNode[]): FileNode[] => {
+				return nodes
+					.filter((node) => {
+						if (node.type === "directory") {
+							if (node.children) {
+								const filtered = searchFilter(node.children);
+								return filtered.length > 0;
+							}
+							return node.name.toLowerCase().includes(query);
+						}
+						return node.name.toLowerCase().includes(query);
+					})
+					.map((node) => {
+						if (node.type === "directory" && node.children) {
+							return { ...node, children: searchFilter(node.children) };
+						}
+						return node;
+					});
+			};
+			result = searchFilter(result);
+		}
+
+		return result;
+	}, [tree, mediaFilter, viewMode, mediaSearchQuery]);
+
+	// biome-ignore lint/correctness/useExhaustiveDependencies: countMediaFiles is a stable local function
+	const mediaCounts = useMemo(() => countMediaFiles(), [tree]);
+
+	// Build lightbox items from media files in current tree
+	const lightboxItems: LightboxItem[] = useMemo(() => {
+		const items: LightboxItem[] = [];
+		const collectMedia = (nodes: FileNode[]) => {
+			for (const node of nodes) {
+				if (node.type === "directory") {
+					if (node.children) collectMedia(node.children);
+				} else {
+					const isImg = supportsThumbnail(node.name);
+					const isVid = isVideoFile(node.name);
+					if (isImg || isVid) {
+						items.push({
+							type: isVid ? "video" : "image",
+							path: node.path,
+							filename: node.name,
+						});
+					}
+				}
+			}
+		};
+		collectMedia(filteredTree);
+		return items;
+	}, [filteredTree]);
+
+	// Open lightbox for a specific file
+	const handleOpenLightbox = useCallback(
+		(filePath: string) => {
+			const idx = lightboxItems.findIndex((item) => item.path === filePath);
+			if (idx >= 0) {
+				setLightboxIndex(idx);
+				setLightboxOpen(true);
+			}
+		},
+		[lightboxItems],
+	);
+
 	// Get breadcrumb parts from current path
 	const getBreadcrumbs = () => {
 		if (currentPath === ".") return [{ name: "Home", path: "." }];
@@ -964,6 +1143,19 @@ export function FileTreeView({
 				className="hidden"
 				onChange={handleFileChange}
 			/>
+
+			{/* Media Quick Access Bar */}
+			{viewMode !== "tree" && (
+				<MediaQuickAccessBar
+					activeFilter={mediaFilter}
+					onFilterChange={(filter) => updateState({ mediaFilter: filter })}
+					imageCount={mediaCounts.imageCount}
+					videoCount={mediaCounts.videoCount}
+					audioCount={mediaCounts.audioCount}
+					searchQuery={mediaSearchQuery}
+					onSearchChange={setMediaSearchQuery}
+				/>
+			)}
 
 			{/* Navigation bar */}
 			<div className="flex-shrink-0 flex items-center gap-1 p-2 border-b border-border">
@@ -1113,14 +1305,70 @@ export function FileTreeView({
 
 			{/* Selection info bar */}
 			{hasSelection && (
-				<div className="flex-shrink-0 flex items-center justify-between px-3 py-1.5 bg-primary/10 border-b border-border text-xs">
-					<span>{selectedFiles.size} item(s) selected</span>
+				<div className="flex-shrink-0 flex items-center gap-2 px-3 py-1.5 bg-primary/10 border-b border-border text-xs">
+					<span className="text-primary font-medium">
+						{selectedFiles.size} item(s) selected
+					</span>
+					<span className="text-muted-foreground">
+						{(() => {
+							let totalSize = 0;
+							const findSize = (nodes: FileNode[]) => {
+								for (const node of nodes) {
+									if (selectedFiles.has(node.path) && node.size) {
+										totalSize += node.size;
+									}
+									if (node.children) findSize(node.children);
+								}
+							};
+							findSize(tree);
+							return totalSize > 0 ? formatFileSize(totalSize) : "";
+						})()}
+					</span>
+					<div className="flex-1" />
+					<button
+						type="button"
+						onClick={handleDownloadSelected}
+						className="px-2 py-0.5 bg-primary text-primary-foreground rounded hover:bg-primary/90 transition-colors"
+						title="Download selected"
+					>
+						Download
+					</button>
+					<button
+						type="button"
+						onClick={() => {
+							// Open lightbox with only selected media files
+							const mediaFiles = Array.from(selectedFiles).filter((p) => {
+								const name = p.split("/").pop() ?? "";
+								return supportsThumbnail(name) || isVideoFile(name);
+							});
+							if (mediaFiles.length > 0) {
+								// Just open lightbox - it will match against lightboxItems
+								const idx = lightboxItems.findIndex((item) =>
+									mediaFiles.includes(item.path),
+								);
+								setLightboxIndex(idx >= 0 ? idx : 0);
+								setLightboxOpen(true);
+							}
+						}}
+						className="px-2 py-0.5 bg-muted text-foreground rounded hover:bg-muted/80 transition-colors"
+						title="View selected in gallery"
+					>
+						Gallery
+					</button>
+					<button
+						type="button"
+						onClick={handleDeleteSelected}
+						className="px-2 py-0.5 bg-destructive/10 text-destructive rounded hover:bg-destructive/20 transition-colors"
+						title="Delete selected"
+					>
+						Delete
+					</button>
 					<button
 						type="button"
 						onClick={clearSelection}
-						className="text-muted-foreground hover:text-foreground"
+						className="text-muted-foreground hover:text-foreground ml-1"
 					>
-						Clear selection
+						Clear
 					</button>
 				</div>
 			)}
@@ -1155,13 +1403,13 @@ export function FileTreeView({
 					}
 				}}
 			>
-				{tree.length === 0 ? (
+				{filteredTree.length === 0 ? (
 					<div className="text-sm text-muted-foreground p-4">
 						No files found.
 					</div>
 				) : viewMode === "tree" ? (
 					<TreeView
-						nodes={tree}
+						nodes={filteredTree}
 						expanded={expanded}
 						onToggle={toggle}
 						selectedFiles={selectedFiles}
@@ -1178,11 +1426,12 @@ export function FileTreeView({
 						onRenameCancel={handleCancelRename}
 						onOpenInCanvas={onOpenInCanvas}
 						onOpenAsApp={onOpenAsApp}
+						onOpenInGallery={handleOpenLightbox}
 						loadingDirs={loadingDirs}
 					/>
 				) : viewMode === "list" ? (
 					<ListView
-						files={tree}
+						files={filteredTree}
 						selectedFiles={selectedFiles}
 						onSelectFile={handleSelectFile}
 						onNavigateToFolder={handleNavigateToFolder}
@@ -1197,10 +1446,12 @@ export function FileTreeView({
 						onRenameCancel={handleCancelRename}
 						onOpenInCanvas={onOpenInCanvas}
 						onOpenAsApp={onOpenAsApp}
+						onOpenInGallery={handleOpenLightbox}
 					/>
 				) : (
 					<GridView
-						files={tree}
+						files={filteredTree}
+						workspacePath={normalizedWorkspacePath}
 						selectedFiles={selectedFiles}
 						onSelectFile={handleSelectFile}
 						onNavigateToFolder={handleNavigateToFolder}
@@ -1215,6 +1466,7 @@ export function FileTreeView({
 						onRenameCancel={handleCancelRename}
 						onOpenInCanvas={onOpenInCanvas}
 						onOpenAsApp={onOpenAsApp}
+						onOpenInGallery={handleOpenLightbox}
 					/>
 				)}
 			</div>
@@ -1224,7 +1476,7 @@ export function FileTreeView({
 				open={pathDialog !== null}
 				title={pathDialog?.title ?? ""}
 				sourcePath={pathDialog?.sourcePath ?? ""}
-				tree={tree}
+				tree={filteredTree}
 				onConfirm={(value) => {
 					pathDialog?.onConfirm(value);
 					setPathDialog(null);
@@ -1264,6 +1516,15 @@ export function FileTreeView({
 					}
 				}}
 				onCancel={() => setWorkspacePickerState(null)}
+			/>
+
+			{/* Lightbox Gallery */}
+			<LightboxGallery
+				open={lightboxOpen}
+				items={lightboxItems}
+				initialIndex={lightboxIndex}
+				onClose={() => setLightboxOpen(false)}
+				workspacePath={normalizedWorkspacePath}
 			/>
 		</div>
 	);
@@ -1583,6 +1844,7 @@ function FileContextMenu({
 	onMove,
 	onOpenInCanvas,
 	onOpenAsApp,
+	onOpenInGallery,
 	onCopyToWorkspace,
 }: {
 	children: React.ReactNode;
@@ -1594,6 +1856,8 @@ function FileContextMenu({
 	onMove: (path: string) => void;
 	onOpenInCanvas?: (path: string) => void;
 	onOpenAsApp?: (path: string) => void;
+	onOpenInGallery?: (path: string) => void;
+	onOpenInGallery?: (path: string) => void;
 	onCopyToWorkspace?: (
 		path: string,
 		name: string,
@@ -1601,12 +1865,23 @@ function FileContextMenu({
 	) => void;
 }) {
 	const isImage = node.type === "file" && isImageFile(node.name);
+	const isVideo = node.type === "file" && isVideoFile(node.name);
+	const isMedia = isImage || isVideo;
 	const isHtml = node.type === "file" && /\.html?$/i.test(node.name);
 
 	return (
 		<ContextMenu>
 			<ContextMenuTrigger className="contents">{children}</ContextMenuTrigger>
 			<ContextMenuContent>
+				{isMedia && onOpenInGallery && (
+					<>
+						<ContextMenuItem onClick={() => onOpenInGallery(node.path)}>
+							<Maximize2 className="w-4 h-4 mr-2" />
+							Open in Gallery
+						</ContextMenuItem>
+						<ContextMenuSeparator />
+					</>
+				)}
 				{isHtml && onOpenAsApp && (
 					<>
 						<ContextMenuItem onClick={() => onOpenAsApp(node.path)}>
@@ -1685,6 +1960,7 @@ function TreeView({
 	onRenameCancel,
 	onOpenInCanvas,
 	onOpenAsApp,
+	onOpenInGallery,
 	loadingDirs,
 }: {
 	nodes: FileNode[];
@@ -1713,6 +1989,7 @@ function TreeView({
 	onRenameCancel: () => void;
 	onOpenInCanvas?: (path: string) => void;
 	onOpenAsApp?: (path: string) => void;
+	onOpenInGallery?: (path: string) => void;
 	loadingDirs?: Set<string>;
 }) {
 	// Sort: directories first, then files, both alphabetically
@@ -1745,6 +2022,7 @@ function TreeView({
 					onRenameCancel={onRenameCancel}
 					onOpenInCanvas={onOpenInCanvas}
 					onOpenAsApp={onOpenAsApp}
+					onOpenInGallery={onOpenInGallery}
 					loadingDirs={loadingDirs}
 				/>
 			))}
@@ -1772,6 +2050,7 @@ function TreeRow({
 	onRenameCancel,
 	onOpenInCanvas,
 	onOpenAsApp,
+	onOpenInGallery,
 	loadingDirs,
 }: {
 	node: FileNode;
@@ -1801,6 +2080,7 @@ function TreeRow({
 	onRenameCancel: () => void;
 	onOpenInCanvas?: (path: string) => void;
 	onOpenAsApp?: (path: string) => void;
+	onOpenInGallery?: (path: string) => void;
 	loadingDirs?: Set<string>;
 }) {
 	const isDir = node.type === "directory";
@@ -1850,6 +2130,7 @@ function TreeRow({
 				onCopyToWorkspace={onCopyToWorkspace}
 				onOpenInCanvas={onOpenInCanvas}
 				onOpenAsApp={onOpenAsApp}
+				onOpenInGallery={onOpenInGallery}
 			>
 				<button
 					type="button"
@@ -1957,6 +2238,7 @@ function ListView({
 	onRenameCancel,
 	onOpenInCanvas,
 	onOpenAsApp,
+	onOpenInGallery,
 }: {
 	files: FileNode[];
 	selectedFiles: Set<string>;
@@ -1982,6 +2264,7 @@ function ListView({
 	onRenameCancel: () => void;
 	onOpenInCanvas?: (path: string) => void;
 	onOpenAsApp?: (path: string) => void;
+	onOpenInGallery?: (path: string) => void;
 }) {
 	// Sort: directories first, then files
 	const sortedFiles = [...files].sort((a, b) => {
@@ -2085,6 +2368,7 @@ function ListView({
 // Grid View Component
 function GridView({
 	files,
+	workspacePath,
 	selectedFiles,
 	onSelectFile,
 	onNavigateToFolder,
@@ -2099,8 +2383,10 @@ function GridView({
 	onRenameCancel,
 	onOpenInCanvas,
 	onOpenAsApp,
+	onOpenInGallery,
 }: {
 	files: FileNode[];
+	workspacePath?: string | null;
 	selectedFiles: Set<string>;
 	onSelectFile: (
 		path: string,
@@ -2124,6 +2410,7 @@ function GridView({
 	onRenameCancel: () => void;
 	onOpenInCanvas?: (path: string) => void;
 	onOpenAsApp?: (path: string) => void;
+	onOpenInGallery?: (path: string) => void;
 }) {
 	// Sort: directories first, then files
 	const sortedFiles = [...files].sort((a, b) => {
@@ -2149,6 +2436,7 @@ function GridView({
 						onCopyToWorkspace={onCopyToWorkspace}
 						onOpenInCanvas={onOpenInCanvas}
 						onOpenAsApp={onOpenAsApp}
+						onOpenInGallery={onOpenInGallery}
 					>
 						<button
 							type="button"
@@ -2174,11 +2462,31 @@ function GridView({
 								isSelected && "bg-primary/10 ring-1 ring-primary/30",
 							)}
 						>
-							<FileIcon
-								filename={file.name}
-								isDirectory={file.type === "directory"}
-								size={48}
-							/>
+							{file.type === "file" &&
+							supportsMediaThumbnail(file.name) &&
+							workspacePath ? (
+								<ThumbnailImage
+									workspacePath={workspacePath}
+									filePath={file.path}
+									filename={file.name}
+									isVideo={isVideoFile(file.name)}
+									videoSrc={
+										isVideoFile(file.name)
+											? buildWorkspaceFileUrl(workspacePath, file.path)
+											: undefined
+									}
+									size={96}
+									onClick={() => {
+										if (onOpenInGallery) onOpenInGallery(file.path);
+									}}
+								/>
+							) : (
+								<FileIcon
+									filename={file.name}
+									isDirectory={file.type === "directory"}
+									size={48}
+								/>
+							)}
 							{isRenaming ? (
 								<RenameInput
 									initialValue={file.name}

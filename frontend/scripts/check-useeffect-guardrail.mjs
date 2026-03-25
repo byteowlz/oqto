@@ -7,7 +7,7 @@ const BASELINE_PATH = path.join(
 	"scripts",
 	"useeffect-guardrail-baseline.json",
 );
-const TARGET_DIRS = ["src", "hooks"];
+const TARGET_DIRS = ["src", "hooks", "features", "apps", "components", "lib"];
 const FILE_EXTENSIONS = new Set([".ts", ".tsx"]);
 const EFFECT_PATTERN = /(?:\bReact\.)?useEffect\s*\(/g;
 const ALLOW_MARKER = "useeffect-guardrail: allow";

@@ -4,7 +4,7 @@ members = ["crates/*"]
 exclude = ["crates/oqto-browserd", "crates/octo-browserd"]
 
 [workspace.package]
-version = "0.3.23"
+version = "0.3.24"
 edition = "2024"
 license = "MIT"
 authors = ["Oqto Team"]
@@ -94,6 +94,9 @@ mime_guess = "2"
 walkdir = "2.5"
 notify = "8.2"
 zip = { version = "2.4", default-features = false, features = ["deflate"] }
+
+# Image processing
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif"] }
 
 # Dev dependencies
 tempfile = "3"

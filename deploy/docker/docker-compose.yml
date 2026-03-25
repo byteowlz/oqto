@@ -21,11 +21,17 @@ services:
     ports:
       - "${OQTO_PORT:-8080}:8080"
     environment:
-      # --- Required: at least one LLM provider key ---
+      # --- LLM provider keys (at least one, unless using local LLM) ---
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      - AZURE_API_KEY=${AZURE_API_KEY:-}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+      - MISTRAL_API_KEY=${MISTRAL_API_KEY:-}
+
+      # --- Local LLM (any OpenAI-compatible server) ---
+      - LOCAL_LLM_URL=${LOCAL_LLM_URL:-}
 
       # --- Auth ---
       - JWT_SECRET=${JWT_SECRET:-}
@@ -36,10 +42,11 @@ services:
       # --- Optional tuning ---
       - OQTO_LOG_LEVEL=${OQTO_LOG_LEVEL:-info}
       - OQTO_SINGLE_USER=${OQTO_SINGLE_USER:-false}
+      - OQTO_HOST_PORT=${OQTO_PORT:-8080}
     volumes:
-      - oqto-data:/data
+      - ${OQTO_DATA_PATH:-oqto-data}:/data
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8080/health"]
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8080/api/health"]
       interval: 15s
       timeout: 5s
       retries: 5
