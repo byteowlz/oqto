@@ -256,6 +256,9 @@ RUN mkdir -p \
     /run/oqto \
     && chown -R oqto:oqto /data /run/oqto
 
+# Stub loginctl (systemd linger not available in containers, oqto-usermgr calls it)
+RUN printf '#!/bin/sh\nexit 0\n' > /usr/bin/loginctl && chmod +x /usr/bin/loginctl
+
 # --- Caddy config (placeholder, overwritten by entrypoint) ---
 
 RUN mkdir -p /etc/caddy
