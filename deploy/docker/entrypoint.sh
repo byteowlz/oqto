@@ -393,6 +393,7 @@ su -s /bin/bash oqto -c "
   export XDG_CONFIG_HOME=/home/oqto/.config
   export XDG_DATA_HOME=/home/oqto/.local/share
   export XDG_STATE_HOME=/home/oqto/.local/state
+  hstry adapters update 2>&1 || true
   hstry service run 2>&1 | sed 's/^/[hstry] /'
 " &
 PIDS+=($!)
