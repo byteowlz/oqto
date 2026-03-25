@@ -462,27 +462,30 @@ if [ ! -f "${OQTO_DATA_DIR}/oqto/.bootstrapped" ] && [ "$DEV_MODE" = "false" ]; 
     log "============================================"
   fi
 
-  log "Bootstrapping admin user..."
-  BOOTSTRAP_OUTPUT=$(su -s /bin/bash oqto -c "
+  # Check if admin user already exists in the database
+  ADMIN_EXISTS=$(su -s /bin/bash oqto -c "
     export HOME=/home/oqto
     export XDG_RUNTIME_DIR=/run/oqto
-    oqtoctl user create \
-      '${ADMIN_USER}' \
-      -e '${ADMIN_EMAIL}' \
-      -p '${ADMIN_PASSWORD}' \
-      -r admin \
-      2>&1
-  ") && touch "${OQTO_DATA_DIR}/oqto/.bootstrapped" \
-    || {
-      echo "$BOOTSTRAP_OUTPUT"
-      # If user already exists (409), that's fine — mark as bootstrapped
-      if echo "$BOOTSTRAP_OUTPUT" | grep -q "409\|already"; then
-        log "Admin user already exists, skipping"
-        touch "${OQTO_DATA_DIR}/oqto/.bootstrapped"
-      else
-        log_error "Admin bootstrap failed"
-      fi
-    }
+    oqtoctl user list 2>&1
+  " | grep -c "${ADMIN_USER}" || true)
+
+  if [ "$ADMIN_EXISTS" -gt 0 ]; then
+    log "Admin user '${ADMIN_USER}' already exists, skipping bootstrap"
+    touch "${OQTO_DATA_DIR}/oqto/.bootstrapped"
+  else
+    log "Bootstrapping admin user..."
+    su -s /bin/bash oqto -c "
+      export HOME=/home/oqto
+      export XDG_RUNTIME_DIR=/run/oqto
+      oqtoctl user create \
+        '${ADMIN_USER}' \
+        -e '${ADMIN_EMAIL}' \
+        -p '${ADMIN_PASSWORD}' \
+        -r admin \
+        2>&1
+    " && touch "${OQTO_DATA_DIR}/oqto/.bootstrapped" \
+      || log_error "Admin bootstrap failed"
+  fi
 fi
 
 # 5. caddy (reverse proxy + frontend)
