@@ -1,8 +1,16 @@
 "use client";
 
 import { cn } from "@/lib/utils";
-import { ImageIcon, Film, Music, LayoutGrid, List, Search, X } from "lucide-react";
-import { memo, useState, useRef, useEffect, useCallback } from "react";
+import {
+	Film,
+	ImageIcon,
+	LayoutGrid,
+	List,
+	Music,
+	Search,
+	X,
+} from "lucide-react";
+import { memo, useCallback, useState } from "react";
 
 export type MediaType = "all" | "images" | "videos" | "audio";
 
@@ -33,20 +41,22 @@ export const MediaQuickAccessBar = memo(function MediaQuickAccessBar({
 	onSearchChange,
 }: MediaQuickAccessBarProps) {
 	const [searchOpen, setSearchOpen] = useState(false);
-	const searchRef = useRef<HTMLInputElement>(null);
 
-	const filters: Array<{ id: MediaType; label: string; icon: typeof ImageIcon; count?: number }> = [
+	const filters: Array<{
+		id: MediaType;
+		label: string;
+		icon: typeof ImageIcon;
+		count?: number;
+	}> = [
 		{ id: "images", label: "Images", icon: ImageIcon, count: imageCount },
 		{ id: "videos", label: "Videos", icon: Film, count: videoCount },
 		{ id: "audio", label: "Audio", icon: Music, count: audioCount },
 	];
 
-	// Focus search input when opened
-	useEffect(() => {
-		if (searchOpen && searchRef.current) {
-			searchRef.current.focus();
-		}
-	}, [searchOpen]);
+	// Auto-focus search input via ref callback
+	const searchRefCallback = useCallback((el: HTMLInputElement | null) => {
+		el?.focus();
+	}, []);
 
 	const handleToggleSearch = useCallback(() => {
 		if (searchOpen) {
@@ -92,7 +102,7 @@ export const MediaQuickAccessBar = memo(function MediaQuickAccessBar({
 			{searchOpen ? (
 				<div className="flex items-center gap-1 flex-1 max-w-[200px]">
 					<input
-						ref={searchRef}
+						ref={searchRefCallback}
 						type="text"
 						value={searchQuery}
 						onChange={(e) => onSearchChange?.(e.target.value)}

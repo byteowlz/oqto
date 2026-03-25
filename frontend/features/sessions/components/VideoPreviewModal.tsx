@@ -1,8 +1,8 @@
 "use client";
 
-import { X, Maximize2, Volume2, VolumeX, Download } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { memo, useState, useRef, useEffect, useCallback } from "react";
+import { Download, Maximize2, Volume2, VolumeX, X } from "lucide-react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 
 export interface VideoPreviewModalProps {
 	/** Whether modal is open */
@@ -38,44 +38,52 @@ export const VideoPreviewModal = memo(function VideoPreviewModal({
 	const containerRef = useRef<HTMLDivElement>(null);
 
 	// Handle keyboard shortcuts
-	const handleKeyDown = useCallback((e: KeyboardEvent) => {
-		if (!open) return;
+	const handleKeyDown = useCallback(
+		(e: KeyboardEvent) => {
+			if (!open) return;
 
-		switch (e.key) {
-			case "Escape":
-				onClose();
-				break;
-			case " ":
-			case "k":
-				if (isPlaying) setIsPlaying(false);
-				break;
-			case "ArrowRight":
-				e.preventDefault();
-				if (videoRef.current) videoRef.current.currentTime += 5;
-				break;
-			case "ArrowLeft":
-				e.preventDefault();
-				if (videoRef.current) videoRef.current.currentTime = Math.max(0, videoRef.current.currentTime - 5);
-				break;
-			case "m":
-				setIsMuted((prev) => !prev);
-				break;
-			case "ArrowUp":
-				e.preventDefault();
-				setVolume((prev) => Math.min(1, prev + 0.1));
-				break;
-			case "ArrowDown":
-				e.preventDefault();
-				setVolume((prev) => Math.max(0, prev - 0.1));
-				break;
-			case "f":
-				e.preventDefault();
-				onFullscreen?.();
-				break;
-		}
-	}, [open, isPlaying, onFullscreen]);
+			switch (e.key) {
+				case "Escape":
+					onClose();
+					break;
+				case " ":
+				case "k":
+					if (isPlaying) setIsPlaying(false);
+					break;
+				case "ArrowRight":
+					e.preventDefault();
+					if (videoRef.current) videoRef.current.currentTime += 5;
+					break;
+				case "ArrowLeft":
+					e.preventDefault();
+					if (videoRef.current)
+						videoRef.current.currentTime = Math.max(
+							0,
+							videoRef.current.currentTime - 5,
+						);
+					break;
+				case "m":
+					setIsMuted((prev) => !prev);
+					break;
+				case "ArrowUp":
+					e.preventDefault();
+					setVolume((prev) => Math.min(1, prev + 0.1));
+					break;
+				case "ArrowDown":
+					e.preventDefault();
+					setVolume((prev) => Math.max(0, prev - 0.1));
+					break;
+				case "f":
+					e.preventDefault();
+					onFullscreen?.();
+					break;
+			}
+		},
+		[open, isPlaying, onFullscreen, onClose],
+	);
 
 	// Setup keyboard listeners
+	// useeffect-guardrail: allow
 	useEffect(() => {
 		if (!open) return;
 
@@ -87,6 +95,7 @@ export const VideoPreviewModal = memo(function VideoPreviewModal({
 	}, [open, handleKeyDown]);
 
 	// Reset state when modal opens/closes
+	// useeffect-guardrail: allow
 	useEffect(() => {
 		if (!open) {
 			setIsPlaying(false);
@@ -106,7 +115,7 @@ export const VideoPreviewModal = memo(function VideoPreviewModal({
 	};
 
 	const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-		setVolume(parseFloat(e.target.value));
+		setVolume(Number.parseFloat(e.target.value));
 	};
 
 	const togglePlayPause = () => {
@@ -135,10 +144,12 @@ export const VideoPreviewModal = memo(function VideoPreviewModal({
 	if (!open) return null;
 
 	return (
+		// biome-ignore lint/a11y/useKeyWithClickEvents: keyboard handled via document listener
 		<div
 			className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
 			onClick={onClose}
 		>
+			{/* biome-ignore lint/a11y/useKeyWithClickEvents: keyboard handled via document listener */}
 			<div
 				ref={containerRef}
 				className={cn(
@@ -152,7 +163,10 @@ export const VideoPreviewModal = memo(function VideoPreviewModal({
 				{/* Header */}
 				<div className="flex items-center justify-between p-4 border-b border-border bg-muted/30">
 					<div className="flex-1 min-w-0">
-						<h3 className="text-sm font-medium text-foreground truncate" title={filename}>
+						<h3
+							className="text-sm font-medium text-foreground truncate"
+							title={filename}
+						>
 							{filename}
 						</h3>
 					</div>
@@ -178,6 +192,8 @@ export const VideoPreviewModal = memo(function VideoPreviewModal({
 
 				{/* Video player */}
 				<div className="relative flex-1 bg-black flex items-center justify-center min-h-[300px]">
+					{/* biome-ignore lint/a11y/useMediaCaption: video preview doesn't need captions */}
+					{/* biome-ignore lint/a11y/useKeyWithClickEvents: keyboard handled via document listener */}
 					<video
 						ref={videoRef}
 						src={src}
@@ -239,6 +255,7 @@ export const VideoPreviewModal = memo(function VideoPreviewModal({
 
 					{/* Progress bar */}
 					<div className="flex-1 h-1 bg-border rounded-full overflow-hidden">
+						{/* biome-ignore lint/a11y/useKeyWithClickEvents: seek handled via keyboard shortcuts */}
 						<div
 							className="h-full bg-primary transition-all duration-100 ease-out"
 							style={{ width: `${progress}%` }}
@@ -246,7 +263,8 @@ export const VideoPreviewModal = memo(function VideoPreviewModal({
 								const rect = (e.target as HTMLElement).getBoundingClientRect();
 								const video = videoRef.current;
 								if (video && rect) {
-									const time = (e.clientX - rect.left) / rect.width * video.duration;
+									const time =
+										((e.clientX - rect.left) / rect.width) * video.duration;
 									video.currentTime = time;
 								}
 							}}

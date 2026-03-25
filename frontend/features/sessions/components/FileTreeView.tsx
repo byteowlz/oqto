@@ -1,16 +1,6 @@
 "use client";
 
 import { FileIcon } from "@/components/data-display";
-import { ThumbnailImage } from "./ThumbnailImage";
-import { MediaQuickAccessBar, type MediaType } from "./MediaQuickAccessBar";
-import { LightboxGallery, type LightboxItem } from "./LightboxGallery";
-import {
-	supportsThumbnail,
-	supportsMediaThumbnail,
-	isVideoFile,
-	buildWorkspaceFileUrl,
-	formatDuration,
-} from "@/lib/thumbnail-utils";
 import {
 	ContextMenu,
 	ContextMenuContent,
@@ -42,6 +32,13 @@ import {
 	watchFilesMux,
 } from "@/lib/mux-files";
 import { normalizeWorkspacePath } from "@/lib/session-utils";
+import {
+	buildWorkspaceFileUrl,
+	formatDuration,
+	isVideoFile,
+	supportsMediaThumbnail,
+	supportsThumbnail,
+} from "@/lib/thumbnail-utils";
 import { cn } from "@/lib/utils";
 import { getWsManager } from "@/lib/ws-manager";
 import {
@@ -66,6 +63,9 @@ import {
 	Upload,
 } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { LightboxGallery, type LightboxItem } from "./LightboxGallery";
+import { MediaQuickAccessBar, type MediaType } from "./MediaQuickAccessBar";
+import { ThumbnailImage } from "./ThumbnailImage";
 
 export type FileNode = {
 	name: string;
@@ -403,7 +403,8 @@ export function FileTreeView({
 		Set<string>
 	>(new Set());
 	const [internalViewMode, setInternalViewMode] = useState<ViewMode>("tree");
-	const [internalMediaFilter, setInternalMediaFilter] = useState<MediaType>("all");
+	const [internalMediaFilter, setInternalMediaFilter] =
+		useState<MediaType>("all");
 	const [internalCurrentPath, setInternalCurrentPath] = useState<string>(".");
 
 	const expanded = state?.expanded ?? internalExpanded;
@@ -948,14 +949,18 @@ export function FileTreeView({
 						countFiles(node.children);
 					}
 				} else {
-					const ext = node.name.substring(node.name.lastIndexOf(".")).toLowerCase();
+					const ext = node.name
+						.substring(node.name.lastIndexOf("."))
+						.toLowerCase();
 					if (node.name === ".") continue;
 
 					if (isVideoFile(node.name)) {
 						videoCount++;
 					} else if (supportsThumbnail(node.name)) {
 						imageCount++;
-					} else if ([".mp3", ".wav", ".flac", ".aac", ".m4a", ".opus"].includes(ext)) {
+					} else if (
+						[".mp3", ".wav", ".flac", ".aac", ".m4a", ".opus"].includes(ext)
+					) {
 						audioCount++;
 					}
 				}
@@ -970,39 +975,48 @@ export function FileTreeView({
 	const filterFiles = (nodes: FileNode[], filter: MediaType): FileNode[] => {
 		if (filter === "all") return nodes;
 
-		return nodes.filter((node) => {
-			if (node.type === "directory") {
-				// Always show directories, but filter their children
-				if (node.children) {
-					const filteredChildren = filterFiles(node.children, filter);
-					return filteredChildren.length > 0 || node.children.length === 0;
+		return nodes
+			.filter((node) => {
+				if (node.type === "directory") {
+					// Always show directories, but filter their children
+					if (node.children) {
+						const filteredChildren = filterFiles(node.children, filter);
+						return filteredChildren.length > 0 || node.children.length === 0;
+					}
+					return true;
+				}
+
+				// Filter files by type
+				const ext = node.name
+					.substring(node.name.lastIndexOf("."))
+					.toLowerCase();
+				if (filter === "images") {
+					return supportsThumbnail(node.name);
+				}
+				if (filter === "videos") {
+					return isVideoFile(node.name);
+				}
+				if (filter === "audio") {
+					return [".mp3", ".wav", ".flac", ".aac", ".m4a", ".opus"].includes(
+						ext,
+					);
 				}
 				return true;
-			}
-
-			// Filter files by type
-			const ext = node.name.substring(node.name.lastIndexOf(".")).toLowerCase();
-			if (filter === "images") {
-				return supportsThumbnail(node.name);
-			} else if (filter === "videos") {
-				return isVideoFile(node.name);
-			} else if (filter === "audio") {
-				return [".mp3", ".wav", ".flac", ".aac", ".m4a", ".opus"].includes(ext);
-			}
-			return true;
-		}).map((node) => {
-			// Recursively filter children for directories
-			if (node.type === "directory" && node.children) {
-				return {
-					...node,
-					children: filterFiles(node.children, filter),
-				};
-			}
-			return node;
-		});
+			})
+			.map((node) => {
+				// Recursively filter children for directories
+				if (node.type === "directory" && node.children) {
+					return {
+						...node,
+						children: filterFiles(node.children, filter),
+					};
+				}
+				return node;
+			});
 	};
 
 	// Get filtered tree based on media filter and search query
+	// biome-ignore lint/correctness/useExhaustiveDependencies: filterFiles is a stable local function
 	const filteredTree = useMemo(() => {
 		let result = filterFiles(tree, viewMode === "tree" ? "all" : mediaFilter);
 
@@ -1010,21 +1024,23 @@ export function FileTreeView({
 		const query = mediaSearchQuery.trim().toLowerCase();
 		if (query && viewMode !== "tree") {
 			const searchFilter = (nodes: FileNode[]): FileNode[] => {
-				return nodes.filter((node) => {
-					if (node.type === "directory") {
-						if (node.children) {
-							const filtered = searchFilter(node.children);
-							return filtered.length > 0;
+				return nodes
+					.filter((node) => {
+						if (node.type === "directory") {
+							if (node.children) {
+								const filtered = searchFilter(node.children);
+								return filtered.length > 0;
+							}
+							return node.name.toLowerCase().includes(query);
 						}
 						return node.name.toLowerCase().includes(query);
-					}
-					return node.name.toLowerCase().includes(query);
-				}).map((node) => {
-					if (node.type === "directory" && node.children) {
-						return { ...node, children: searchFilter(node.children) };
-					}
-					return node;
-				});
+					})
+					.map((node) => {
+						if (node.type === "directory" && node.children) {
+							return { ...node, children: searchFilter(node.children) };
+						}
+						return node;
+					});
 			};
 			result = searchFilter(result);
 		}
@@ -1032,6 +1048,7 @@ export function FileTreeView({
 		return result;
 	}, [tree, mediaFilter, viewMode, mediaSearchQuery]);
 
+	// biome-ignore lint/correctness/useExhaustiveDependencies: countMediaFiles is a stable local function
 	const mediaCounts = useMemo(() => countMediaFiles(), [tree]);
 
 	// Build lightbox items from media files in current tree
@@ -1059,13 +1076,16 @@ export function FileTreeView({
 	}, [filteredTree]);
 
 	// Open lightbox for a specific file
-	const handleOpenLightbox = useCallback((filePath: string) => {
-		const idx = lightboxItems.findIndex((item) => item.path === filePath);
-		if (idx >= 0) {
-			setLightboxIndex(idx);
-			setLightboxOpen(true);
-		}
-	}, [lightboxItems]);
+	const handleOpenLightbox = useCallback(
+		(filePath: string) => {
+			const idx = lightboxItems.findIndex((item) => item.path === filePath);
+			if (idx >= 0) {
+				setLightboxIndex(idx);
+				setLightboxOpen(true);
+			}
+		},
+		[lightboxItems],
+	);
 
 	// Get breadcrumb parts from current path
 	const getBreadcrumbs = () => {
@@ -1323,7 +1343,9 @@ export function FileTreeView({
 							});
 							if (mediaFiles.length > 0) {
 								// Just open lightbox - it will match against lightboxItems
-								const idx = lightboxItems.findIndex((item) => mediaFiles.includes(item.path));
+								const idx = lightboxItems.findIndex((item) =>
+									mediaFiles.includes(item.path),
+								);
 								setLightboxIndex(idx >= 0 ? idx : 0);
 								setLightboxOpen(true);
 							}
@@ -2440,7 +2462,9 @@ function GridView({
 								isSelected && "bg-primary/10 ring-1 ring-primary/30",
 							)}
 						>
-							{file.type === "file" && supportsMediaThumbnail(file.name) && workspacePath ? (
+							{file.type === "file" &&
+							supportsMediaThumbnail(file.name) &&
+							workspacePath ? (
 								<ThumbnailImage
 									workspacePath={workspacePath}
 									filePath={file.path}

@@ -8,7 +8,11 @@ export type ThumbnailSize = 128 | 256 | 512;
 const thumbnailBlobCache = new Map<string, string>();
 const thumbnailInFlight = new Map<string, Promise<string | null>>();
 
-function thumbnailCacheKey(workspacePath: string, filePath: string, size: ThumbnailSize): string {
+function thumbnailCacheKey(
+	workspacePath: string,
+	filePath: string,
+	size: ThumbnailSize,
+): string {
 	return `${workspacePath}:${filePath}:${size}`;
 }
 
@@ -40,10 +44,13 @@ export async function fetchThumbnailUrl({
 				path: filePath,
 				size: String(size),
 			});
-			const response = await fetch(`/api/workspace/files/thumbnail?${params.toString()}`, {
-				method: "GET",
-				credentials: "include",
-			});
+			const response = await fetch(
+				`/api/workspace/files/thumbnail?${params.toString()}`,
+				{
+					method: "GET",
+					credentials: "include",
+				},
+			);
 			if (!response.ok) {
 				return null;
 			}
@@ -86,7 +93,10 @@ export function clearThumbnailCache(workspacePath?: string): void {
 /**
  * Build a proxied workspace file URL for direct media playback.
  */
-export function buildWorkspaceFileUrl(workspacePath: string, filePath: string): string {
+export function buildWorkspaceFileUrl(
+	workspacePath: string,
+	filePath: string,
+): string {
 	const params = new URLSearchParams({
 		workspace_path: workspacePath,
 		path: filePath,

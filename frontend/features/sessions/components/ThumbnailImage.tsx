@@ -1,9 +1,9 @@
 "use client";
 
-import { cn } from "@/lib/utils";
-import { Image as ImageIcon, Film, Loader2 } from "lucide-react";
-import { memo, useCallback, useState, useRef, useEffect } from "react";
 import { fetchThumbnailUrl } from "@/lib/thumbnail-utils";
+import { cn } from "@/lib/utils";
+import { Film, Image as ImageIcon, Loader2 } from "lucide-react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 
 export interface ThumbnailImageProps {
 	/** Workspace path for fetching via mux */
@@ -51,6 +51,7 @@ export const ThumbnailImage = memo(function ThumbnailImage({
 	const mountedRef = useRef(true);
 
 	// Fetch thumbnail via mux when visible
+	// useeffect-guardrail: allow
 	useEffect(() => {
 		mountedRef.current = true;
 		let cancelled = false;
@@ -97,6 +98,10 @@ export const ThumbnailImage = memo(function ThumbnailImage({
 		if (!isVideo || !videoSrc) return;
 		hoverTimerRef.current = setTimeout(() => {
 			setShowVideoPreview(true);
+			// Start playback directly when showing preview
+			requestAnimationFrame(() => {
+				videoPreviewRef.current?.play().catch(() => {});
+			});
 		}, 800);
 	}, [isVideo, videoSrc]);
 
@@ -112,21 +117,17 @@ export const ThumbnailImage = memo(function ThumbnailImage({
 		}
 	}, []);
 
+	// useeffect-guardrail: allow
 	useEffect(() => {
 		return () => {
 			if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
 		};
 	}, []);
 
-	useEffect(() => {
-		if (showVideoPreview && videoPreviewRef.current) {
-			videoPreviewRef.current.play().catch(() => {});
-		}
-	}, [showVideoPreview]);
-
 	const showThumbnail = blobUrl && !error;
 
 	return (
+		// biome-ignore lint/a11y/useKeyWithClickEvents: thumbnail click triggers gallery, keyboard nav handled at gallery level
 		<div
 			ref={containerRef}
 			className={cn(

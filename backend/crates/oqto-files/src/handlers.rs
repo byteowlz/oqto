@@ -12,8 +12,8 @@ use axum::{
     http::{StatusCode, header},
     response::{IntoResponse, Response},
 };
-use image::{DynamicImage, ImageEncoder, GenericImageView};
 use image::codecs::jpeg::JpegEncoder;
+use image::{DynamicImage, GenericImageView, ImageEncoder};
 use notify::{
     EventKind, RecursiveMode, Watcher,
     event::{CreateKind, RemoveKind},
@@ -1738,8 +1738,7 @@ pub async fn get_thumbnail(
     // Generate thumbnail
     debug!(
         "Generating thumbnail for {:?} at size {}",
-        file_path,
-        query.size
+        file_path, query.size
     );
 
     if is_video {
@@ -1798,11 +1797,9 @@ async fn generate_video_thumbnail(
     size: u32,
 ) -> Result<(), FileServerError> {
     let (source, dest) = (source_path.to_path_buf(), dest_path.to_path_buf());
-    tokio::task::spawn_blocking(move || {
-        generate_video_thumbnail_blocking(&source, &dest, size)
-    })
-    .await
-    .map_err(|e| FileServerError::Io(std::io::Error::other(e.to_string())))?
+    tokio::task::spawn_blocking(move || generate_video_thumbnail_blocking(&source, &dest, size))
+        .await
+        .map_err(|e| FileServerError::Io(std::io::Error::other(e.to_string())))?
 }
 
 fn generate_thumbnail_blocking(
@@ -1838,14 +1835,15 @@ fn generate_thumbnail_blocking(
     );
 
     // Save as JPEG
-    let parent_dir = dest_path
-        .parent()
-        .ok_or_else(|| FileServerError::Io(std::io::Error::other(
-            "Invalid thumbnail path".to_string(),
-        )))?;
+    let parent_dir = dest_path.parent().ok_or_else(|| {
+        FileServerError::Io(std::io::Error::other("Invalid thumbnail path".to_string()))
+    })?;
 
     std::fs::create_dir_all(parent_dir).map_err(|e| {
-        error!("Failed to create thumbnail cache dir {:?}: {}", parent_dir, e);
+        error!(
+            "Failed to create thumbnail cache dir {:?}: {}",
+            parent_dir, e
+        );
         FileServerError::Io(std::io::Error::other(e))
     })?;
 
@@ -1855,15 +1853,13 @@ fn generate_thumbnail_blocking(
         FileServerError::Io(std::io::Error::other(e.to_string()))
     })?;
     let encoder = JpegEncoder::new_with_quality(&file, 80);
-    thumbnail
-        .write_with_encoder(encoder)
-        .map_err(|e| {
-            error!("Failed to encode thumbnail {:?}: {}", dest_path, e);
-            FileServerError::Io(std::io::Error::other(format!(
-                "Failed to encode thumbnail: {}",
-                e
-            )))
-        })?;
+    thumbnail.write_with_encoder(encoder).map_err(|e| {
+        error!("Failed to encode thumbnail {:?}: {}", dest_path, e);
+        FileServerError::Io(std::io::Error::other(format!(
+            "Failed to encode thumbnail: {}",
+            e
+        )))
+    })?;
 
     debug!("Thumbnail saved to {:?}", dest_path);
     Ok(())
@@ -1928,23 +1924,31 @@ fn generate_video_thumbnail_blocking(
         .ok_or_else(|| FileServerError::Io(std::io::Error::other("Invalid thumbnail path")))?;
     std::fs::create_dir_all(parent_dir)?;
 
-    let source_str = source_path.to_str().ok_or_else(|| {
-        FileServerError::InvalidPath("Invalid source path encoding".to_string())
-    })?;
-    let dest_str = dest_path.to_str().ok_or_else(|| {
-        FileServerError::InvalidPath("Invalid dest path encoding".to_string())
-    })?;
+    let source_str = source_path
+        .to_str()
+        .ok_or_else(|| FileServerError::InvalidPath("Invalid source path encoding".to_string()))?;
+    let dest_str = dest_path
+        .to_str()
+        .ok_or_else(|| FileServerError::InvalidPath("Invalid dest path encoding".to_string()))?;
 
-    let scale_filter = format!("scale='min({s},iw)':'min({s},ih)':force_original_aspect_ratio=decrease", s = size);
+    let scale_filter = format!(
+        "scale='min({s},iw)':'min({s},ih)':force_original_aspect_ratio=decrease",
+        s = size
+    );
 
     let output = std::process::Command::new("ffmpeg")
         .args([
-            "-i", source_str,
-            "-ss", "1",          // seek to 1 second
-            "-frames:v", "1",    // extract 1 frame
-            "-vf", &scale_filter,
-            "-q:v", "5",         // JPEG quality (2=best, 31=worst)
-            "-y",                // overwrite output
+            "-i",
+            source_str,
+            "-ss",
+            "1", // seek to 1 second
+            "-frames:v",
+            "1", // extract 1 frame
+            "-vf",
+            &scale_filter,
+            "-q:v",
+            "5",  // JPEG quality (2=best, 31=worst)
+            "-y", // overwrite output
             dest_str,
         ])
         .stdout(std::process::Stdio::null())
