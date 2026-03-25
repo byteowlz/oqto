@@ -217,6 +217,18 @@ base_url = "https://openrouter.ai/api/v1"
 EOF
 fi
 
+# Local LLM (OpenAI-compatible: Ollama, LM Studio, llama.cpp, vLLM, etc.)
+if [ -n "${LOCAL_LLM_URL:-}" ]; then
+  cat >> "$EAVS_CONFIG_FILE" <<EOF
+
+[providers.local]
+type = "openai-compatible"
+base_url = "${LOCAL_LLM_URL}/v1"
+EOF
+  # Strip trailing /v1 if the user already included it
+  sed -i 's|/v1/v1|/v1|g' "$EAVS_CONFIG_FILE"
+fi
+
 chown -R oqto:oqto /home/oqto/.config/eavs
 
 # ---------------------------------------------------------------------------

@@ -21,7 +21,7 @@ services:
     ports:
       - "${OQTO_PORT:-8080}:8080"
     environment:
-      # --- Required: at least one LLM provider key ---
+      # --- LLM provider keys (at least one, unless using local LLM) ---
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
@@ -29,6 +29,9 @@ services:
       - AZURE_API_KEY=${AZURE_API_KEY:-}
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
       - MISTRAL_API_KEY=${MISTRAL_API_KEY:-}
+
+      # --- Local LLM (any OpenAI-compatible server) ---
+      - LOCAL_LLM_URL=${LOCAL_LLM_URL:-}
 
       # --- Auth ---
       - JWT_SECRET=${JWT_SECRET:-}
