@@ -117,9 +117,12 @@ mkdir -p \
   /home/oqto/.config/eavs \
   /home/oqto/.local/state/hstry \
   /home/oqto/.local/share/hstry \
-  /home/oqto/.pi/agent/sessions
+  "${OQTO_DATA_DIR}/pi-sessions"
 
 chown -R oqto:oqto "${OQTO_DATA_DIR}" /run/oqto /home/oqto 2>/dev/null || true
+
+# Symlink Pi sessions into the persistent volume so they survive container rebuilds
+ln -sfn "${OQTO_DATA_DIR}/pi-sessions" /home/oqto/.pi/agent/sessions
 
 # ---------------------------------------------------------------------------
 # Generate secrets if not provided
