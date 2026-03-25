@@ -41,7 +41,7 @@ services:
 
       # --- Optional tuning ---
       - OQTO_LOG_LEVEL=${OQTO_LOG_LEVEL:-info}
-      - OQTO_SINGLE_USER=${OQTO_SINGLE_USER:-false}
+      - OQTO_SINGLE_USER=${OQTO_SINGLE_USER:-true}
     volumes:
       - ${OQTO_DATA_PATH:-oqto-data}:/data
     healthcheck:
