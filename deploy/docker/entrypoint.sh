@@ -273,8 +273,6 @@ level = "${OQTO_LOG_LEVEL}"
 format = "pretty"
 
 [runtime]
-host = "0.0.0.0"
-port = ${OQTO_BACKEND_PORT}
 
 [paths]
 data_dir = "${OQTO_DATA_DIR}/oqto"
@@ -422,6 +420,7 @@ su -s /bin/bash oqto -c "
   export XDG_DATA_HOME=/home/oqto/.local/share
   export XDG_STATE_HOME=/home/oqto/.local/state
   export XDG_RUNTIME_DIR=/run/oqto
+  export RUST_LOG=${OQTO_LOG_LEVEL:-info}
   oqto --config /home/oqto/.config/oqto/config.toml serve \
     --local-mode \
     --host 0.0.0.0 \
@@ -430,7 +429,7 @@ su -s /bin/bash oqto -c "
     2>&1 | sed 's/^/[oqto] /'
 " &
 PIDS+=($!)
-wait_for_port "$OQTO_BACKEND_PORT" "oqto" 15
+wait_for_port "$OQTO_BACKEND_PORT" "oqto" 30
 
 # 4. Bootstrap admin user (first run only)
 if [ ! -f "${OQTO_DATA_DIR}/oqto/.bootstrapped" ] && [ "$DEV_MODE" = "false" ]; then
