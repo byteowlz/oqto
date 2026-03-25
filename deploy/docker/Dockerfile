@@ -177,8 +177,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     jq git curl wget unzip openssh-client sudo ca-certificates \
     # Media (for tmpltr, agent tools)
     imagemagick ffmpeg poppler-utils \
-    # Python (for uv, agent scripts)
-    python3 python3-venv \
+    # Python (for uv, agent scripts, password hashing)
+    python3 python3-venv python3-bcrypt \
+    # SQLite CLI (for admin password updates)
+    sqlite3 \
     # Fonts (for tmpltr PDF rendering)
     fonts-liberation fonts-noto fonts-noto-color-emoji fonts-dejavu \
     fonts-roboto fonts-inter \
