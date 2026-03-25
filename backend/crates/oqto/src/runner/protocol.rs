@@ -1,7 +1,8 @@
 //! Runner RPC protocol types.
 //!
 //! Defines the request/response types for communication between oqto and the runner daemon.
-//! The protocol uses JSON over Unix sockets with newline-delimited messages.
+//! The protocol uses JSON with newline-delimited messages over supported transports
+//! (Unix sockets by default, TCP in remote/container mode).
 //!
 //! ## Protocol Categories
 //!

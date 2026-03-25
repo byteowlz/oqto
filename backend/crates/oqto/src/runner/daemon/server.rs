@@ -1,13 +1,14 @@
 use anyhow::{Context, Result};
 use chrono::TimeZone;
 use log::{debug, error, info, warn};
+use serde::Deserialize;
 use sqlx::Row;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::{UnixListener, UnixStream};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
+use tokio::net::{TcpListener, UnixListener};
 use tokio::process::Command;
 use tokio::sync::{Mutex, RwLock, broadcast};
 
@@ -58,6 +59,13 @@ struct JsonlScanOutcome {
     skipped_files: usize,
     failed_files: usize,
     sessions: Vec<JsonlSessionMetadata>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RunnerTransportAuth {
+    #[serde(rename = "type")]
+    msg_type: String,
+    token: String,
 }
 
 fn parse_pi_session_id_from_path(path: &std::path::Path) -> Option<String> {
@@ -3111,11 +3119,14 @@ impl Runner {
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))
     }
 
-    async fn handle_pi_subscribe(
+    async fn handle_pi_subscribe<W>(
         &self,
         session_id: &str,
-        writer: &mut tokio::net::unix::OwnedWriteHalf,
-    ) -> Result<(), std::io::Error> {
+        writer: &mut W,
+    ) -> Result<(), std::io::Error>
+    where
+        W: AsyncWrite + Unpin,
+    {
         info!("handle_pi_subscribe: session_id={}", session_id);
 
         // Subscribe to the session's event stream
@@ -3171,17 +3182,78 @@ impl Runner {
         Ok(())
     }
 
-    /// Handle a client connection.
-    async fn handle_connection(&self, stream: UnixStream) {
-        let (reader, mut writer) = stream.into_split();
+    /// Handle a client connection over Unix transport (no auth prelude).
+    async fn handle_unix_connection(&self, stream: tokio::net::UnixStream) {
+        let (reader, writer) = stream.into_split();
+        self.handle_connection_io(reader, writer, None).await;
+    }
+
+    /// Handle a client connection over TCP transport (requires auth prelude).
+    async fn handle_tcp_connection(&self, stream: tokio::net::TcpStream, auth_token: String) {
+        let (reader, writer) = stream.into_split();
+        self.handle_connection_io(reader, writer, Some(auth_token.as_str()))
+            .await;
+    }
+
+    /// Common connection loop for all transports.
+    async fn handle_connection_io<R, W>(
+        &self,
+        reader: R,
+        mut writer: W,
+        expected_auth: Option<&str>,
+    ) where
+        R: AsyncRead + Unpin,
+        W: AsyncWrite + Unpin,
+    {
         let mut reader = BufReader::new(reader);
         let mut line = String::new();
+
+        // Optional auth handshake (TCP transport)
+        if let Some(expected) = expected_auth {
+            line.clear();
+            match reader.read_line(&mut line).await {
+                Ok(0) => return,
+                Ok(_) => {
+                    let auth: RunnerTransportAuth = match serde_json::from_str(&line) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            let resp = error_response(
+                                ErrorCode::PermissionDenied,
+                                format!("Invalid auth handshake JSON: {}", e),
+                            );
+                            if let Ok(line) = Self::serialize_response_line(&resp) {
+                                let _ = writer.write_all(line.as_bytes()).await;
+                            }
+                            return;
+                        }
+                    };
+
+                    if auth.msg_type != "auth" || auth.token != expected {
+                        let resp = error_response(
+                            ErrorCode::PermissionDenied,
+                            "Authentication failed".to_string(),
+                        );
+                        if let Ok(line) = Self::serialize_response_line(&resp) {
+                            let _ = writer.write_all(line.as_bytes()).await;
+                        }
+                        return;
+                    }
+
+                    let ok = RunnerResponse::Pong;
+                    if let Ok(line) = Self::serialize_response_line(&ok) {
+                        if writer.write_all(line.as_bytes()).await.is_err() {
+                            return;
+                        }
+                    }
+                }
+                Err(_) => return,
+            }
+        }
 
         loop {
             line.clear();
             match reader.read_line(&mut line).await {
                 Ok(0) => {
-                    // EOF
                     debug!("Client disconnected");
                     break;
                 }
@@ -3202,23 +3274,19 @@ impl Runner {
 
                     debug!("Received request: {:?}", req);
 
-                    // Handle PiSubscribe specially since it streams
                     if let RunnerRequest::PiSubscribe(ref sub_req) = req {
                         let session_id = sub_req.session_id.clone();
                         if let Err(e) = self.handle_pi_subscribe(&session_id, &mut writer).await {
                             error!("Failed to handle Pi subscription: {}", e);
                             break;
                         }
-                        // After subscription ends, continue the connection loop
                         continue;
                     }
 
-                    // Handle SubscribeStdout specially since it streams
                     if let RunnerRequest::SubscribeStdout(ref sub_req) = req {
                         let process_id = sub_req.id.clone();
                         match self.get_stdout_receiver(&process_id).await {
                             Ok((mut rx, buffered_lines)) => {
-                                // Send subscription confirmation
                                 let resp =
                                     RunnerResponse::StdoutSubscribed(StdoutSubscribedResponse {
                                         id: process_id.clone(),
@@ -3237,7 +3305,6 @@ impl Runner {
                                     break;
                                 }
 
-                                // Send any buffered lines first
                                 for buffered_line in buffered_lines {
                                     let resp = RunnerResponse::StdoutLine(StdoutLineResponse {
                                         id: process_id.clone(),
@@ -3258,7 +3325,6 @@ impl Runner {
                                     }
                                 }
 
-                                // Stream new lines as they arrive
                                 loop {
                                     match rx.recv().await {
                                         Ok(StdoutEvent::Line(stdout_line)) => {
@@ -3297,7 +3363,6 @@ impl Runner {
                                                 "Stdout subscription lagged, missed {} events",
                                                 n
                                             );
-                                            // Continue receiving
                                         }
                                         Err(broadcast::error::RecvError::Closed) => {
                                             let resp =
@@ -3312,8 +3377,6 @@ impl Runner {
                                         }
                                     }
                                 }
-                                // After subscription ends, continue the connection loop
-                                // (client can send more requests)
                                 continue;
                             }
                             Err(resp) => {
@@ -3429,7 +3492,7 @@ impl Runner {
                                 pi_manager: Arc::clone(&self.pi_manager),
                             };
                             tokio::spawn(async move {
-                                runner.handle_connection(stream).await;
+                                runner.handle_unix_connection(stream).await;
                             });
                         }
                         Err(e) => {
@@ -3455,6 +3518,63 @@ impl Runner {
 
         // Remove socket file
         let _ = tokio::fs::remove_file(socket_path).await;
+
+        info!("Runner stopped");
+        Ok(())
+    }
+
+    /// Run the daemon, listening on TCP transport.
+    pub async fn run_tcp(&self, listen_addr: &str, auth_token: String) -> Result<()> {
+        let listener = TcpListener::bind(listen_addr)
+            .await
+            .with_context(|| format!("binding TCP listener on {}", listen_addr))?;
+
+        info!("Runner listening on tcp://{}", listen_addr);
+
+        // Notifies callers waiting for readiness in service-managed mode.
+        sd_notify_ready();
+
+        let mut shutdown_rx = self.shutdown_tx.subscribe();
+
+        loop {
+            tokio::select! {
+                result = listener.accept() => {
+                    match result {
+                        Ok((stream, addr)) => {
+                            debug!("New TCP client connection from {}", addr);
+                            let runner = Runner {
+                                state: Arc::clone(&self.state),
+                                shutdown_tx: self.shutdown_tx.clone(),
+                                sandbox_config: self.sandbox_config.clone(),
+                                binaries: self.binaries.clone(),
+                                user_config: self.user_config.clone(),
+                                pi_manager: Arc::clone(&self.pi_manager),
+                            };
+                            let token = auth_token.clone();
+                            tokio::spawn(async move {
+                                runner.handle_tcp_connection(stream, token).await;
+                            });
+                        }
+                        Err(e) => {
+                            error!("TCP accept error: {}", e);
+                        }
+                    }
+                }
+                _ = shutdown_rx.recv() => {
+                    info!("Shutting down...");
+                    break;
+                }
+            }
+        }
+
+        // Cleanup: kill all managed processes
+        let mut state = self.state.write().await;
+        for (id, mut proc) in state.processes.drain() {
+            if proc.is_running() {
+                info!("Killing process '{}' on shutdown", id);
+                let _ = proc.child.kill().await;
+            }
+        }
 
         info!("Runner stopped");
         Ok(())

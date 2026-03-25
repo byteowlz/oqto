@@ -4,10 +4,11 @@
 //! through the runner daemon via Unix socket.
 
 use anyhow::{Context, Result};
+use serde::Serialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::UnixStream;
+use tokio::net::{TcpStream, UnixStream};
 
 use super::protocol::*;
 
@@ -25,10 +26,24 @@ pub const DEFAULT_SOCKET_PATTERN: &str = "{runtime_dir}/oqto-runner.sock";
 /// {uid} is replaced with the user's numeric UID.
 pub const USER_SOCKET_PATTERN: &str = "/run/user/{uid}/oqto-runner.sock";
 
+#[derive(Debug, Clone)]
+enum RunnerTransport {
+    Unix,
+    Tcp { addr: String, auth_token: String },
+}
+
+#[derive(Debug, Serialize)]
+struct RunnerAuthHandshake<'a> {
+    #[serde(rename = "type")]
+    msg_type: &'static str,
+    token: &'a str,
+}
+
 /// Client for communicating with the runner daemon.
 #[derive(Clone)]
 pub struct RunnerClient {
     socket_path: PathBuf,
+    transport: RunnerTransport,
 }
 
 impl RunnerClient {
@@ -36,6 +51,18 @@ impl RunnerClient {
     pub fn new(socket_path: impl Into<PathBuf>) -> Self {
         Self {
             socket_path: socket_path.into(),
+            transport: RunnerTransport::Unix,
+        }
+    }
+
+    /// Create a TCP runner client for remote/container mode.
+    pub fn new_tcp(addr: impl Into<String>, auth_token: impl Into<String>) -> Self {
+        Self {
+            socket_path: PathBuf::new(),
+            transport: RunnerTransport::Tcp {
+                addr: addr.into(),
+                auth_token: auth_token.into(),
+            },
         }
     }
 
@@ -68,12 +95,25 @@ impl RunnerClient {
     ///
     /// Example pattern: `/run/oqto/runner-sockets/{user}/oqto-runner.sock`
     pub fn for_user_with_pattern(username: &str, pattern: &str) -> Result<Self> {
-        let mut socket_path = pattern.replace("{user}", username);
-        if socket_path.contains("{uid}") {
+        let mut resolved = pattern.replace("{user}", username);
+        if resolved.contains("{uid}") {
             let uid = lookup_uid(username)?;
-            socket_path = socket_path.replace("{uid}", &uid.to_string());
+            resolved = resolved.replace("{uid}", &uid.to_string());
         }
-        Ok(Self::new(socket_path))
+
+        // TCP mode pattern: tcp://host:port?token=...
+        if let Some(rest) = resolved.strip_prefix("tcp://") {
+            let (addr, token) = match rest.split_once("?token=") {
+                Some((a, t)) if !a.is_empty() && !t.is_empty() => (a.to_string(), t.to_string()),
+                _ => anyhow::bail!(
+                    "invalid TCP runner pattern '{}': expected tcp://host:port?token=...",
+                    pattern
+                ),
+            };
+            return Ok(Self::new_tcp(addr, token));
+        }
+
+        Ok(Self::new(resolved))
     }
 
     /// Get the socket path.
@@ -82,7 +122,15 @@ impl RunnerClient {
     }
 
     fn is_default_socket_path(&self) -> bool {
-        self.socket_path == Self::default().socket_path
+        matches!(self.transport, RunnerTransport::Unix)
+            && self.socket_path == Self::default().socket_path
+    }
+
+    fn endpoint_label(&self) -> String {
+        match &self.transport {
+            RunnerTransport::Unix => format!("unix:{:?}", self.socket_path),
+            RunnerTransport::Tcp { addr, .. } => format!("tcp:{}", addr),
+        }
     }
 
     fn is_transient_connection_error(err: &anyhow::Error) -> bool {
@@ -233,42 +281,112 @@ impl RunnerClient {
             .await
             .map_err(|_| {
                 anyhow::anyhow!(
-                    "runner request timed out after {:?} (socket: {:?})",
+                    "runner request timed out after {:?} (endpoint: {})",
                     RUNNER_REQUEST_TIMEOUT,
-                    self.socket_path,
+                    self.endpoint_label(),
                 )
             })?
     }
 
     async fn request_once_inner(&self, req: &RunnerRequest) -> Result<RunnerResponse> {
-        let mut stream = UnixStream::connect(&self.socket_path)
-            .await
-            .with_context(|| format!("connecting to runner at {:?}", self.socket_path))?;
+        match &self.transport {
+            RunnerTransport::Unix => {
+                let mut stream = UnixStream::connect(&self.socket_path)
+                    .await
+                    .with_context(|| format!("connecting to runner at {:?}", self.socket_path))?;
 
-        // Send request as JSON line
-        let mut json = serde_json::to_string(req).context("serializing request")?;
-        json.push('\n');
-        stream
-            .write_all(json.as_bytes())
-            .await
-            .context("writing request")?;
+                let mut json = serde_json::to_string(req).context("serializing request")?;
+                json.push('\n');
+                stream
+                    .write_all(json.as_bytes())
+                    .await
+                    .context("writing request")?;
 
-        // Read response line
-        let mut reader = BufReader::new(stream);
-        let mut line = String::new();
-        reader
-            .read_line(&mut line)
-            .await
-            .context("reading response")?;
+                let mut reader = BufReader::new(stream);
+                let mut line = String::new();
+                reader
+                    .read_line(&mut line)
+                    .await
+                    .context("reading response")?;
 
-        let resp: RunnerResponse = serde_json::from_str(&line).context("parsing response")?;
+                let resp: RunnerResponse =
+                    serde_json::from_str(&line).context("parsing response")?;
 
-        // Check for error response
-        if let RunnerResponse::Error(e) = &resp {
-            anyhow::bail!("runner error ({:?}): {}", e.code, e.message);
+                if let RunnerResponse::Error(e) = &resp {
+                    anyhow::bail!("runner error ({:?}): {}", e.code, e.message);
+                }
+
+                Ok(resp)
+            }
+            RunnerTransport::Tcp { addr, auth_token } => {
+                let (mut lines, mut writer) = self
+                    .connect_tcp_with_auth(addr, auth_token)
+                    .await
+                    .context("establishing authenticated TCP runner stream")?;
+
+                let mut req_json = serde_json::to_string(req).context("serializing request")?;
+                req_json.push('\n');
+                writer
+                    .write_all(req_json.as_bytes())
+                    .await
+                    .context("writing request")?;
+
+                let line = lines
+                    .next_line()
+                    .await
+                    .context("reading response")?
+                    .ok_or_else(|| anyhow::anyhow!("connection closed"))?;
+                let resp: RunnerResponse =
+                    serde_json::from_str(&line).context("parsing response")?;
+
+                if let RunnerResponse::Error(e) = &resp {
+                    anyhow::bail!("runner error ({:?}): {}", e.code, e.message);
+                }
+
+                Ok(resp)
+            }
         }
+    }
 
-        Ok(resp)
+    async fn connect_tcp_with_auth(
+        &self,
+        addr: &str,
+        auth_token: &str,
+    ) -> Result<(
+        tokio::io::Lines<BufReader<tokio::net::tcp::OwnedReadHalf>>,
+        tokio::net::tcp::OwnedWriteHalf,
+    )> {
+        let stream = TcpStream::connect(addr)
+            .await
+            .with_context(|| format!("connecting to runner at {}", addr))?;
+        let (read_half, mut write_half) = stream.into_split();
+
+        let auth = RunnerAuthHandshake {
+            msg_type: "auth",
+            token: auth_token,
+        };
+        let mut auth_json = serde_json::to_string(&auth).context("serializing auth handshake")?;
+        auth_json.push('\n');
+        write_half
+            .write_all(auth_json.as_bytes())
+            .await
+            .context("writing auth handshake")?;
+
+        let mut lines = BufReader::new(read_half).lines();
+        let line = lines
+            .next_line()
+            .await
+            .context("reading auth response")?
+            .ok_or_else(|| anyhow::anyhow!("connection closed during auth handshake"))?;
+        let auth_resp: RunnerResponse =
+            serde_json::from_str(&line).context("parsing auth response")?;
+        match auth_resp {
+            RunnerResponse::Pong => Ok((lines, write_half)),
+            RunnerResponse::Error(e) => {
+                anyhow::bail!("runner auth error ({:?}): {}", e.code, e.message)
+            }
+            _ => anyhow::bail!("unexpected auth response from runner"),
+        }
     }
 
     /// Spawn an RPC process with stdin/stdout pipes.
@@ -377,29 +495,40 @@ impl RunnerClient {
     /// Subscribe to stdout stream. Returns a stream and a reader that should be
     /// used together. The stream yields lines as they arrive from the process.
     pub async fn subscribe_stdout(&self, id: impl Into<String>) -> Result<StdoutSubscription> {
-        let stream = UnixStream::connect(&self.socket_path)
-            .await
-            .with_context(|| format!("connecting to runner at {:?}", self.socket_path))?;
-
         let process_id = id.into();
         let req = RunnerRequest::SubscribeStdout(SubscribeStdoutRequest {
             id: process_id.clone(),
         });
 
-        let (reader, mut writer) = stream.into_split();
+        let (mut lines, mut writer) = match &self.transport {
+            RunnerTransport::Unix => {
+                let stream = UnixStream::connect(&self.socket_path)
+                    .await
+                    .with_context(|| format!("connecting to runner at {:?}", self.socket_path))?;
+                let (reader, writer) = stream.into_split();
+                (
+                    RunnerSubscriptionLines::Unix(BufReader::new(reader).lines()),
+                    RunnerSubscriptionWriter::Unix(writer),
+                )
+            }
+            RunnerTransport::Tcp { addr, auth_token } => {
+                let (tcp_lines, tcp_writer) = self
+                    .connect_tcp_with_auth(addr, auth_token)
+                    .await
+                    .context("establishing authenticated TCP runner stream")?;
+                (
+                    RunnerSubscriptionLines::Tcp(tcp_lines),
+                    RunnerSubscriptionWriter::Tcp(tcp_writer),
+                )
+            }
+        };
 
         // Send subscription request
         let mut json = serde_json::to_string(&req).context("serializing request")?;
         json.push('\n');
-        writer
-            .write_all(json.as_bytes())
-            .await
-            .context("writing request")?;
+        writer.write_all(json.as_bytes()).await?;
 
         // Read subscription confirmation
-        let reader = BufReader::new(reader);
-        let mut lines = reader.lines();
-
         let first_line = lines
             .next_line()
             .await
@@ -1159,9 +1288,9 @@ impl RunnerClient {
         .await
         .map_err(|_| {
             anyhow::anyhow!(
-                "pi_subscribe handshake timed out after {:?} (socket: {:?})",
+                "pi_subscribe handshake timed out after {:?} (endpoint: {})",
                 RUNNER_REQUEST_TIMEOUT,
-                self.socket_path,
+                self.endpoint_label(),
             )
         })??;
 
@@ -1183,36 +1312,44 @@ impl RunnerClient {
         &self,
         session_id: &str,
     ) -> Result<(
-        (
-            tokio::io::Lines<BufReader<tokio::net::unix::OwnedReadHalf>>,
-            tokio::net::unix::OwnedWriteHalf,
-        ),
+        (RunnerSubscriptionLines, RunnerSubscriptionWriter),
         String,
         RunnerResponse,
     )> {
-        let stream = UnixStream::connect(&self.socket_path)
-            .await
-            .with_context(|| format!("connecting to runner at {:?}", self.socket_path))?;
-
         let session_id = session_id.to_string();
         let req = RunnerRequest::PiSubscribe(PiSubscribeRequest {
             session_id: session_id.clone(),
         });
 
-        let (reader, mut writer) = stream.into_split();
+        let (mut lines, mut writer) = match &self.transport {
+            RunnerTransport::Unix => {
+                let stream = UnixStream::connect(&self.socket_path)
+                    .await
+                    .with_context(|| format!("connecting to runner at {:?}", self.socket_path))?;
+                let (reader, writer) = stream.into_split();
+                (
+                    RunnerSubscriptionLines::Unix(BufReader::new(reader).lines()),
+                    RunnerSubscriptionWriter::Unix(writer),
+                )
+            }
+            RunnerTransport::Tcp { addr, auth_token } => {
+                let (tcp_lines, tcp_writer) = self
+                    .connect_tcp_with_auth(addr, auth_token)
+                    .await
+                    .context("establishing authenticated TCP runner stream")?;
+                (
+                    RunnerSubscriptionLines::Tcp(tcp_lines),
+                    RunnerSubscriptionWriter::Tcp(tcp_writer),
+                )
+            }
+        };
 
         // Send subscription request
         let mut json = serde_json::to_string(&req).context("serializing request")?;
         json.push('\n');
-        writer
-            .write_all(json.as_bytes())
-            .await
-            .context("writing request")?;
+        writer.write_all(json.as_bytes()).await?;
 
         // Read subscription confirmation
-        let reader = BufReader::new(reader);
-        let mut lines = reader.lines();
-
         let first_line = lines
             .next_line()
             .await
@@ -1660,11 +1797,39 @@ impl Default for RunnerClient {
     }
 }
 
+enum RunnerSubscriptionLines {
+    Unix(tokio::io::Lines<BufReader<tokio::net::unix::OwnedReadHalf>>),
+    Tcp(tokio::io::Lines<BufReader<tokio::net::tcp::OwnedReadHalf>>),
+}
+
+impl RunnerSubscriptionLines {
+    async fn next_line(&mut self) -> std::io::Result<Option<String>> {
+        match self {
+            Self::Unix(lines) => lines.next_line().await,
+            Self::Tcp(lines) => lines.next_line().await,
+        }
+    }
+}
+
+enum RunnerSubscriptionWriter {
+    Unix(tokio::net::unix::OwnedWriteHalf),
+    Tcp(tokio::net::tcp::OwnedWriteHalf),
+}
+
+impl RunnerSubscriptionWriter {
+    async fn write_all(&mut self, data: &[u8]) -> std::io::Result<()> {
+        match self {
+            Self::Unix(writer) => writer.write_all(data).await,
+            Self::Tcp(writer) => writer.write_all(data).await,
+        }
+    }
+}
+
 /// An active stdout subscription that yields lines as they arrive.
 pub struct StdoutSubscription {
-    lines: tokio::io::Lines<BufReader<tokio::net::unix::OwnedReadHalf>>,
+    lines: RunnerSubscriptionLines,
     // Keep writer alive to maintain connection
-    _writer: tokio::net::unix::OwnedWriteHalf,
+    _writer: RunnerSubscriptionWriter,
 }
 
 impl StdoutSubscription {
@@ -1672,22 +1837,18 @@ impl StdoutSubscription {
     /// Returns None when the subscription ends (process exited or connection closed).
     pub async fn next(&mut self) -> Option<StdoutSubscriptionEvent> {
         match self.lines.next_line().await {
-            Ok(Some(line)) => {
-                match serde_json::from_str::<RunnerResponse>(&line) {
-                    Ok(RunnerResponse::StdoutLine(l)) => {
-                        Some(StdoutSubscriptionEvent::Line(l.line))
-                    }
-                    Ok(RunnerResponse::StdoutEnd(_e)) => Some(StdoutSubscriptionEvent::End),
-                    Ok(_) => {
-                        // Unexpected response, skip
-                        None
-                    }
-                    Err(_) => {
-                        // Parse error, skip
-                        None
-                    }
+            Ok(Some(line)) => match serde_json::from_str::<RunnerResponse>(&line) {
+                Ok(RunnerResponse::StdoutLine(l)) => Some(StdoutSubscriptionEvent::Line(l.line)),
+                Ok(RunnerResponse::StdoutEnd(_e)) => Some(StdoutSubscriptionEvent::End),
+                Ok(_) => {
+                    // Unexpected response, skip
+                    None
                 }
-            }
+                Err(_) => {
+                    // Parse error, skip
+                    None
+                }
+            },
             Ok(None) | Err(_) => None,
         }
     }
@@ -1705,9 +1866,9 @@ pub enum StdoutSubscriptionEvent {
 /// An active Pi event subscription that yields events as they arrive.
 pub struct PiSubscription {
     session_id: String,
-    lines: tokio::io::Lines<BufReader<tokio::net::unix::OwnedReadHalf>>,
+    lines: RunnerSubscriptionLines,
     // Keep writer alive to maintain connection
-    _writer: tokio::net::unix::OwnedWriteHalf,
+    _writer: RunnerSubscriptionWriter,
 }
 
 impl PiSubscription {
@@ -1761,7 +1922,7 @@ pub enum PiSubscriptionEvent {
 impl std::fmt::Debug for RunnerClient {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RunnerClient")
-            .field("socket_path", &self.socket_path)
+            .field("endpoint", &self.endpoint_label())
             .finish()
     }
 }
@@ -1857,6 +2018,33 @@ mod tests {
             bob.socket_path()
                 .to_string_lossy()
                 .contains("/run/user/1002/")
+        );
+    }
+
+    #[test]
+    fn test_for_user_with_pattern_tcp_transport() {
+        let client = RunnerClient::for_user_with_pattern(
+            "alice",
+            "tcp://runner-alice.internal:7001?token=secret-token",
+        )
+        .t();
+
+        match &client.transport {
+            RunnerTransport::Tcp { addr, auth_token } => {
+                assert_eq!(addr, "runner-alice.internal:7001");
+                assert_eq!(auth_token, "secret-token");
+            }
+            other => panic!("expected TCP transport, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_for_user_with_pattern_tcp_transport_invalid() {
+        let err = RunnerClient::for_user_with_pattern("alice", "tcp://runner-alice.internal:7001")
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("invalid TCP runner pattern"),
+            "unexpected error: {err}"
         );
     }
 
@@ -1980,6 +2168,93 @@ mod tests {
             Some(PiSubscriptionEvent::End { reason }) => assert_eq!(reason, "done"),
             other => panic!("expected subscription end, got {:?}", other),
         }
+
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn integration_tcp_runner_auth_and_request_flow() {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.t();
+        let addr = listener.local_addr().t();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.t();
+            let (read_half, mut write_half) = stream.into_split();
+            let mut lines = BufReader::new(read_half).lines();
+
+            let auth_line = lines.next_line().await.t().t();
+            let auth_json: serde_json::Value = serde_json::from_str(&auth_line).t();
+            assert_eq!(auth_json["type"], "auth");
+            assert_eq!(auth_json["token"], "token-123");
+            let pong = serde_json::to_string(&RunnerResponse::Pong).t();
+            write_half
+                .write_all(format!("{}\n", pong).as_bytes())
+                .await
+                .t();
+
+            let req_line = lines.next_line().await.t().t();
+            let req: RunnerRequest = serde_json::from_str(&req_line).t();
+            match req {
+                RunnerRequest::ListSessions => {
+                    let resp = RunnerResponse::SessionList(SessionListResponse {
+                        sessions: Vec::new(),
+                    });
+                    let payload = serde_json::to_string(&resp).t();
+                    write_half
+                        .write_all(format!("{}\n", payload).as_bytes())
+                        .await
+                        .t();
+                }
+                _ => panic!("unexpected request"),
+            }
+        });
+
+        let client = RunnerClient::new_tcp(addr.to_string(), "token-123");
+        let sessions = client.list_sessions().await.t();
+        assert!(sessions.sessions.is_empty());
+
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn integration_tcp_runner_auth_failure() {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.t();
+        let addr = listener.local_addr().t();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.t();
+            let (read_half, mut write_half) = stream.into_split();
+            let mut lines = BufReader::new(read_half).lines();
+
+            let auth_line = lines.next_line().await.t().t();
+            let auth_json: serde_json::Value = serde_json::from_str(&auth_line).t();
+            if auth_json["token"] != "expected-token" {
+                let err = RunnerResponse::Error(ErrorResponse {
+                    code: ErrorCode::PermissionDenied,
+                    message: "Authentication failed".to_string(),
+                });
+                let payload = serde_json::to_string(&err).t();
+                write_half
+                    .write_all(format!("{}\n", payload).as_bytes())
+                    .await
+                    .t();
+            }
+        });
+
+        let client = RunnerClient::new_tcp(addr.to_string(), "wrong-token");
+        let err = client.list_sessions().await.unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("runner auth error")
+                || msg.contains("Authentication failed")
+                || msg.contains("connection closed")
+                || msg.contains("establishing authenticated TCP runner stream"),
+            "unexpected error: {msg}"
+        );
 
         server.abort();
     }
