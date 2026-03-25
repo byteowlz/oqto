@@ -1,6 +1,6 @@
 # Oqto - AI Agent Workspace Platform
 
-Oqto is a self-hosted platform for managing AI coding agents. Supports local mode (native processes) and container mode (Docker/Podman).
+Oqto is a self-hosted platform for managing AI coding agents.
 
 **New to Oqto?** Start with the [SETUP.md](./SETUP.md) guide for installation and prerequisites.
 
