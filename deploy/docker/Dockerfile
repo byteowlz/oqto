@@ -127,6 +127,15 @@ RUN set -eux; \
     curl -fsSL https://starship.rs/install.sh | sh -s -- --yes --bin-dir /out/bin/ \
     || echo "WARN: starship download failed"; \
     \
+    echo "--- Downloading ttyd ---"; \
+    case "${TARGETARCH}" in \
+      amd64) TTYD_ARCH="x86_64" ;; \
+      arm64) TTYD_ARCH="aarch64" ;; \
+    esac; \
+    curl -fsSL "https://github.com/tsl0922/ttyd/releases/latest/download/ttyd.${TTYD_ARCH}" \
+      -o /out/bin/ttyd \
+    || echo "WARN: ttyd download failed"; \
+    \
     # ================================================================== \
     # Cleanup and verify \
     # ================================================================== \
@@ -139,7 +148,7 @@ RUN set -eux; \
     # Verify required binaries exist \
     # ================================================================== \
     MISSING=""; \
-    for bin in oqto oqtoctl oqto-runner oqto-files pi-bridge hstry eavs caddy; do \
+    for bin in oqto oqtoctl oqto-runner oqto-files pi-bridge hstry eavs caddy ttyd; do \
       if [ ! -f "/out/bin/$bin" ]; then MISSING="$MISSING $bin"; fi; \
     done; \
     if [ -n "$MISSING" ]; then \
@@ -158,8 +167,8 @@ LABEL org.opencontainers.image.title="oqto" \
 
 # Core system packages
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    # Shell and terminal
-    zsh tmux ttyd \
+    # Shell and terminal (ttyd installed from GitHub releases)
+    zsh tmux \
     # Search and navigation
     ripgrep fd-find fzf \
     # Editors
