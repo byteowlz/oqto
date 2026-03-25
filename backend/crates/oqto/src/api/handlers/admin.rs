@@ -876,12 +876,11 @@ async fn sync_eavs_models_json_inner(
 fn extract_first_model(models_json: &serde_json::Value) -> Option<(String, String)> {
     let providers = models_json.get("providers")?.as_object()?;
     for (provider_name, provider_val) in providers {
-        if let Some(models) = provider_val.get("models").and_then(|m| m.as_array()) {
-            if let Some(first) = models.first() {
-                if let Some(id) = first.get("id").and_then(|v| v.as_str()) {
-                    return Some((provider_name.clone(), id.to_string()));
-                }
-            }
+        if let Some(models) = provider_val.get("models").and_then(|m| m.as_array())
+            && let Some(first) = models.first()
+            && let Some(id) = first.get("id").and_then(|v| v.as_str())
+        {
+            return Some((provider_name.clone(), id.to_string()));
         }
     }
     None

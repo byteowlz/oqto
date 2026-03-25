@@ -42,7 +42,7 @@ impl BrowserAction {
 use crate::container::{ContainerConfig, ContainerRuntimeApi, ContainerStats};
 use crate::eavs::{CreateKeyRequest, EavsApi, KeyPermissions};
 use crate::local::{LocalRuntime, LocalRuntimeConfig, UserMmryManager};
-use crate::runner::client::RunnerClient;
+use crate::runner::client::{RunnerClient, RunnerEndpointPattern};
 use crate::wordlist;
 
 use super::models::{CreateSessionRequest, RuntimeMode, Session, SessionStatus};
@@ -162,10 +162,8 @@ pub struct SessionServiceConfig {
     pub pi_model: Option<String>,
     /// Agent-browser daemon configuration.
     pub agent_browser: AgentBrowserConfig,
-    /// Runner socket pattern for multi-user mode.
-    /// Supports `{user}` (Linux username) and `{uid}`.
-    /// Example: `/run/oqto/runner-sockets/{user}/oqto-runner.sock`
-    pub runner_socket_pattern: Option<String>,
+    /// Runner endpoint pattern for multi-user mode.
+    pub runner_endpoint: Option<RunnerEndpointPattern>,
     /// Linux user prefix for multi-user mode (e.g., "oqto_").
     /// Used to convert platform user_id to Linux username for runner socket paths.
     pub linux_user_prefix: Option<String>,
@@ -193,7 +191,7 @@ impl Default for SessionServiceConfig {
             pi_provider: None,
             pi_model: None,
             agent_browser: AgentBrowserConfig::default(),
-            runner_socket_pattern: None,
+            runner_endpoint: None,
             linux_user_prefix: None,
         }
     }
@@ -477,8 +475,8 @@ impl SessionService {
                 user_id.to_string()
             };
 
-            if let Some(pattern) = &self.config.runner_socket_pattern {
-                RunnerClient::for_user_with_pattern(&linux_user, pattern)
+            if let Some(endpoint) = &self.config.runner_endpoint {
+                RunnerClient::for_user_with_endpoint(&linux_user, endpoint)
             } else {
                 // Fallback to default pattern
                 RunnerClient::for_user(&linux_user)
@@ -3265,7 +3263,7 @@ mod tests {
             pi_provider: None,
             pi_model: None,
             agent_browser: AgentBrowserConfig::default(),
-            runner_socket_pattern: None,
+            runner_endpoint: None,
             linux_user_prefix: None,
         };
 

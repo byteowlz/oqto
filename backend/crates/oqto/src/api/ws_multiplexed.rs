@@ -936,8 +936,7 @@ fn runner_client_for_linux_user(
     user_id: &str,
     linux_username_override: Option<&str>,
 ) -> Option<RunnerClient> {
-    // Check if we have a socket pattern configured
-    if let Some(pattern) = state.runner_socket_pattern.as_deref() {
+    if state.runner_endpoint.is_some() {
         let linux_username = linux_username_override
             .map(|s| s.to_string())
             .unwrap_or_else(|| {
@@ -948,11 +947,9 @@ fn runner_client_for_linux_user(
                     .unwrap_or_else(|| user_id.to_string())
             });
 
-        // Use for_user_with_pattern which handles both {user} and {uid} placeholders.
-        // Don't pre-check socket existence -- the runner client retries on
-        // transient connection failures during service restarts.
-        match RunnerClient::for_user_with_pattern(&linux_username, pattern) {
-            Ok(c) => return Some(c),
+        match state.runner_client_for_linux_user(&linux_username) {
+            Ok(Some(c)) => return Some(c),
+            Ok(None) => {}
             Err(e) => {
                 warn!("Failed to create runner client for user {}: {}", user_id, e);
             }
@@ -2044,6 +2041,14 @@ async fn broadcast_user_message(
     }
 }
 
+fn live_pi_messages_timeout(is_active_subscription: bool) -> Duration {
+    if is_active_subscription {
+        Duration::from_secs(3)
+    } else {
+        Duration::from_millis(800)
+    }
+}
+
 /// Every command gets a `CommandResponse` event back (or `None` for fire-and-forget
 /// commands like prompt/steer/abort where streaming events are the real response).
 async fn handle_get_messages(
@@ -2093,48 +2098,43 @@ async fn handle_get_messages(
             Value::Object(data)
         };
 
-    // When the session is ACTIVE (has a running Pi process + subscription),
-    // prefer Pi's live messages over hstry. Pi has the complete current-turn
-    // context including messages not yet persisted to hstry. Without this,
-    // the frontend misses in-progress tool calls, streaming responses, and
-    // any messages between the last hstry persist and now.
-    if is_active {
-        // Use a short timeout: Pi may be busy with an LLM request and the
-        // runner's get_messages RPC can hang for 10+s. Fall through to
-        // hstry/cache quickly rather than blocking the WS response.
-        let pi_result = tokio::time::timeout(
-            std::time::Duration::from_secs(3),
-            runner.agent_get_messages(session_id),
-        )
-        .await;
-        match pi_result {
-            Ok(Ok(resp)) => {
-                let messages_value = serde_json::to_value(&resp.messages).unwrap_or_default();
-                cache_pi_messages(user_id, session_id, &messages_value).await;
-                return Some(agent_response(
-                    session_id,
-                    id,
-                    "get_messages",
-                    Ok(Some(response_data(
-                        messages_value,
-                        persisted_message_version.clone(),
-                    ))),
-                ));
-            }
-            Ok(Err(e)) => {
-                // Pi process may have exited between subscription and now.
-                // Fall through to hstry/cache as fallback.
-                debug!(
-                    "get_messages: active session Pi query failed for {}: {}, falling through to hstry",
-                    session_id, e
-                );
-            }
-            Err(_) => {
-                debug!(
-                    "get_messages: Pi query timed out for active session {}, falling through to hstry",
-                    session_id,
-                );
-            }
+    // Prefer Pi's live messages over hstry whenever possible. This is
+    // especially important for shared workspaces where this WS connection may
+    // not currently hold a local subscription even though the session is still
+    // active on another connection/user.
+    //
+    // Use a tighter timeout for non-subscribed sessions to avoid regressing
+    // cold-history fetch latency.
+    let pi_timeout = live_pi_messages_timeout(is_active);
+
+    let pi_result = tokio::time::timeout(pi_timeout, runner.agent_get_messages(session_id)).await;
+    match pi_result {
+        Ok(Ok(resp)) => {
+            let messages_value = serde_json::to_value(&resp.messages).unwrap_or_default();
+            cache_pi_messages(user_id, session_id, &messages_value).await;
+            return Some(agent_response(
+                session_id,
+                id,
+                "get_messages",
+                Ok(Some(response_data(
+                    messages_value,
+                    persisted_message_version.clone(),
+                ))),
+            ));
+        }
+        Ok(Err(e)) => {
+            // Pi process may be inactive (historical session) or unavailable.
+            // Fall through to hstry/cache as fallback.
+            debug!(
+                "get_messages: Pi query failed for {}: {}, falling through to hstry",
+                session_id, e
+            );
+        }
+        Err(_) => {
+            debug!(
+                "get_messages: Pi query timed out for session {}, falling through to hstry",
+                session_id,
+            );
         }
     }
 
@@ -2358,39 +2358,53 @@ async fn forward_pi_events(
                 }
             }
             Some(PiSubscriptionEvent::End { reason }) => {
-                clear_response_watchdog(&conn_state, session_id).await;
                 debug!(
                     "Pi subscription ended for session {}: {}",
                     session_id, reason
                 );
+                emit_terminal_send_failure(
+                    &conn_state,
+                    session_id,
+                    &runner_id,
+                    format!("Subscription ended: {}", reason),
+                )
+                .await;
                 break;
             }
             Some(PiSubscriptionEvent::Error { code, message }) => {
-                clear_response_watchdog(&conn_state, session_id).await;
                 error!(
                     "Pi subscription error for session {}: {:?} - {}",
                     session_id, code, message
                 );
-                // Emit error as canonical agent.error event
-                let error_event = oqto_protocol::events::Event {
-                    session_id: session_id.to_string(),
-                    runner_id: runner_id.clone(),
-                    ts: chrono::Utc::now().timestamp_millis(),
-                    payload: oqto_protocol::events::EventPayload::AgentError {
-                        error: format!("Subscription error ({:?}): {}", code, message),
-                        recoverable: false,
-                        phase: None,
-                    },
-                };
-                let _ = event_tx.send(WsEvent::Agent(error_event));
+                emit_terminal_send_failure(
+                    &conn_state,
+                    session_id,
+                    &runner_id,
+                    format!("Subscription error ({:?}): {}", code, message),
+                )
+                .await;
                 break;
             }
             None => {
-                clear_response_watchdog(&conn_state, session_id).await;
                 debug!("Pi subscription stream ended for session {}", session_id);
+                emit_terminal_send_failure(
+                    &conn_state,
+                    session_id,
+                    &runner_id,
+                    "Subscription stream ended unexpectedly".to_string(),
+                )
+                .await;
                 break;
             }
         }
+    }
+
+    // Prevent stale local subscription state. If the forwarder exits, this
+    // connection must no longer consider itself subscribed for the session.
+    {
+        let mut state_guard = conn_state.lock().await;
+        state_guard.pi_subscriptions.remove(session_id);
+        state_guard.pi_forwarders.remove(session_id);
     }
 
     Ok(())
@@ -2519,55 +2533,54 @@ async fn handle_copy_to_workspace(
         .map(|lu| lu.linux_username(user_id))
         .unwrap_or_else(|| user_id.to_string());
     let is_multi_user = state.linux_users.is_some();
-    let user_plane: Arc<dyn UserPlane> =
-        if let Some(pattern) = state.runner_socket_pattern.as_deref() {
-            match RunnerUserPlane::for_user_with_pattern(&linux_username, pattern) {
-                Ok(plane) => {
-                    let base: Arc<dyn UserPlane> = Arc::new(plane);
-                    Arc::new(MeteredUserPlane::new(
-                        base,
-                        UserPlanePath::Runner,
-                        state.user_plane_metrics.clone(),
-                    ))
-                }
-                Err(err) => {
-                    error!(
-                        "Failed to create RunnerUserPlane for {}: {:#}",
-                        linux_username, err
-                    );
-                    return Some(WsEvent::Files(FilesWsEvent::Error {
-                        id,
-                        error: "File access unavailable: user runner not reachable".into(),
-                    }));
-                }
+    let user_plane: Arc<dyn UserPlane> = if let Some(endpoint) = state.runner_endpoint.as_ref() {
+        match RunnerUserPlane::for_user_with_endpoint(&linux_username, endpoint) {
+            Ok(plane) => {
+                let base: Arc<dyn UserPlane> = Arc::new(plane);
+                Arc::new(MeteredUserPlane::new(
+                    base,
+                    UserPlanePath::Runner,
+                    state.user_plane_metrics.clone(),
+                ))
             }
-        } else if is_multi_user {
-            error!("Multi-user mode without runner_socket_pattern configured");
-            return Some(WsEvent::Files(FilesWsEvent::Error {
-                id,
-                error: "File access not configured for multi-user mode".into(),
-            }));
-        } else {
-            match RunnerUserPlane::new_default() {
-                Ok(plane) => {
-                    let base: Arc<dyn UserPlane> = Arc::new(plane);
-                    Arc::new(MeteredUserPlane::new(
-                        base,
-                        UserPlanePath::Runner,
-                        state.user_plane_metrics.clone(),
-                    ))
-                }
-                Err(runner_err) => {
-                    return Some(WsEvent::Files(FilesWsEvent::Error {
-                        id,
-                        error: format!(
-                            "File access unavailable: runner not reachable ({:#})",
-                            runner_err
-                        ),
-                    }));
-                }
+            Err(err) => {
+                error!(
+                    "Failed to create RunnerUserPlane for {}: {:#}",
+                    linux_username, err
+                );
+                return Some(WsEvent::Files(FilesWsEvent::Error {
+                    id,
+                    error: "File access unavailable: user runner not reachable".into(),
+                }));
             }
-        };
+        }
+    } else if is_multi_user {
+        error!("Multi-user mode without runner_endpoint configured");
+        return Some(WsEvent::Files(FilesWsEvent::Error {
+            id,
+            error: "File access not configured for multi-user mode".into(),
+        }));
+    } else {
+        match RunnerUserPlane::new_default() {
+            Ok(plane) => {
+                let base: Arc<dyn UserPlane> = Arc::new(plane);
+                Arc::new(MeteredUserPlane::new(
+                    base,
+                    UserPlanePath::Runner,
+                    state.user_plane_metrics.clone(),
+                ))
+            }
+            Err(runner_err) => {
+                return Some(WsEvent::Files(FilesWsEvent::Error {
+                    id,
+                    error: format!(
+                        "File access unavailable: runner not reachable ({:#})",
+                        runner_err
+                    ),
+                }));
+            }
+        }
+    };
 
     // Perform the copy (recursive for directories, returns file count)
     fn copy_recursive_cross<'a>(
@@ -3258,5 +3271,11 @@ mod tests {
 
         let state_guard = conn_state.lock().await;
         assert!(!state_guard.response_watchdogs.contains_key("ses-test"));
+    }
+
+    #[test]
+    fn test_live_pi_messages_timeout_prefers_live_pi_even_without_subscription() {
+        assert_eq!(live_pi_messages_timeout(true), Duration::from_secs(3));
+        assert_eq!(live_pi_messages_timeout(false), Duration::from_millis(800));
     }
 }

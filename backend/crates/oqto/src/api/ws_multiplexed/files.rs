@@ -132,61 +132,60 @@ pub(super) async fn handle_files_command(
     }
 
     let is_multi_user = state.linux_users.is_some();
-    let user_plane: Arc<dyn UserPlane> =
-        if let Some(pattern) = state.runner_socket_pattern.as_deref() {
-            match RunnerUserPlane::for_user_with_pattern(&linux_username, pattern) {
-                Ok(plane) => {
-                    let base: Arc<dyn UserPlane> = Arc::new(plane);
-                    Arc::new(MeteredUserPlane::new(
-                        base,
-                        UserPlanePath::Runner,
-                        state.user_plane_metrics.clone(),
-                    ))
-                }
-                Err(err) => {
-                    // SECURITY: In multi-user mode, NEVER fall back to DirectUserPlane.
-                    // DirectUserPlane runs as the oqto system user which has access to
-                    // ALL user workspaces. We must only access files through the
-                    // per-user runner.
-                    error!(
-                        "Failed to create RunnerUserPlane for {}: {:#}",
-                        linux_username, err
-                    );
-                    return Some(WsEvent::Files(FilesWsEvent::Error {
-                        id,
-                        error: "File access unavailable: user runner not reachable".to_string(),
-                    }));
-                }
+    let user_plane: Arc<dyn UserPlane> = if let Some(endpoint) = state.runner_endpoint.as_ref() {
+        match RunnerUserPlane::for_user_with_endpoint(&linux_username, endpoint) {
+            Ok(plane) => {
+                let base: Arc<dyn UserPlane> = Arc::new(plane);
+                Arc::new(MeteredUserPlane::new(
+                    base,
+                    UserPlanePath::Runner,
+                    state.user_plane_metrics.clone(),
+                ))
             }
-        } else if is_multi_user {
-            // Multi-user mode without runner socket pattern — configuration error.
-            error!("Multi-user mode without runner_socket_pattern configured");
-            return Some(WsEvent::Files(FilesWsEvent::Error {
-                id,
-                error: "File access not configured for multi-user mode".to_string(),
-            }));
-        } else {
-            // Single-user mode is also runner-only.
-            match RunnerUserPlane::new_default() {
-                Ok(plane) => {
-                    let base: Arc<dyn UserPlane> = Arc::new(plane);
-                    Arc::new(MeteredUserPlane::new(
-                        base,
-                        UserPlanePath::Runner,
-                        state.user_plane_metrics.clone(),
-                    ))
-                }
-                Err(runner_err) => {
-                    return Some(WsEvent::Files(FilesWsEvent::Error {
-                        id,
-                        error: format!(
-                            "File access unavailable: runner not reachable ({:#})",
-                            runner_err
-                        ),
-                    }));
-                }
+            Err(err) => {
+                // SECURITY: In multi-user mode, NEVER fall back to DirectUserPlane.
+                // DirectUserPlane runs as the oqto system user which has access to
+                // ALL user workspaces. We must only access files through the
+                // per-user runner.
+                error!(
+                    "Failed to create RunnerUserPlane for {}: {:#}",
+                    linux_username, err
+                );
+                return Some(WsEvent::Files(FilesWsEvent::Error {
+                    id,
+                    error: "File access unavailable: user runner not reachable".to_string(),
+                }));
             }
-        };
+        }
+    } else if is_multi_user {
+        // Multi-user mode without runner endpoint — configuration error.
+        error!("Multi-user mode without runner_endpoint configured");
+        return Some(WsEvent::Files(FilesWsEvent::Error {
+            id,
+            error: "File access not configured for multi-user mode".to_string(),
+        }));
+    } else {
+        // Single-user mode is also runner-only.
+        match RunnerUserPlane::new_default() {
+            Ok(plane) => {
+                let base: Arc<dyn UserPlane> = Arc::new(plane);
+                Arc::new(MeteredUserPlane::new(
+                    base,
+                    UserPlanePath::Runner,
+                    state.user_plane_metrics.clone(),
+                ))
+            }
+            Err(runner_err) => {
+                return Some(WsEvent::Files(FilesWsEvent::Error {
+                    id,
+                    error: format!(
+                        "File access unavailable: runner not reachable ({:#})",
+                        runner_err
+                    ),
+                }));
+            }
+        }
+    };
 
     fn build_tree<'a>(
         user_plane: &'a Arc<dyn crate::user_plane::UserPlane>,

@@ -14,6 +14,7 @@ use tracing::{debug, warn};
 
 use crate::history::HstryClient;
 use crate::local::UserSldrManager;
+use crate::runner::client::{RunnerClient, RunnerEndpointPattern};
 
 use super::a2ui::PendingA2uiRequests;
 
@@ -318,8 +319,8 @@ pub struct AppState {
     pub max_proxy_body_bytes: usize,
     /// Linux user isolation configuration (for multi-user mode).
     pub linux_users: Option<LinuxUsersConfig>,
-    /// Runner socket pattern for multi-user mode (e.g., "/run/oqto/runner-sockets/{user}/oqto-runner.sock").
-    pub runner_socket_pattern: Option<String>,
+    /// Runner endpoint pattern for multi-user mode.
+    pub runner_endpoint: Option<RunnerEndpointPattern>,
     /// Persistent mapping from chat session ID to canonical execution target.
     pub session_targets: Arc<SessionTargetRepository>,
     /// hstry client for unified chat history persistence.
@@ -404,7 +405,7 @@ impl AppState {
             pending_a2ui_requests: super::a2ui::new_pending_requests(),
             max_proxy_body_bytes,
             linux_users: None,
-            runner_socket_pattern: None,
+            runner_endpoint: None,
             session_targets: Arc::new(session_targets),
             hstry: None,
             audit_logger: None,
@@ -477,10 +478,24 @@ impl AppState {
         self
     }
 
-    /// Set the runner socket pattern for multi-user mode.
-    pub fn with_runner_socket_pattern(mut self, pattern: Option<String>) -> Self {
-        self.runner_socket_pattern = pattern;
+    /// Set the runner endpoint pattern for multi-user mode.
+    pub fn with_runner_endpoint(mut self, endpoint: Option<RunnerEndpointPattern>) -> Self {
+        self.runner_endpoint = endpoint;
         self
+    }
+
+    /// Build a runner client for a concrete Linux username.
+    pub fn runner_client_for_linux_user(
+        &self,
+        linux_username: &str,
+    ) -> anyhow::Result<Option<RunnerClient>> {
+        match self.runner_endpoint.as_ref() {
+            Some(endpoint) => Ok(Some(RunnerClient::for_user_with_endpoint(
+                linux_username,
+                endpoint,
+            )?)),
+            None => Ok(None),
+        }
     }
 
     /// Set the onboarding service.

@@ -605,13 +605,16 @@ struct RunnerConfig {
 }
 
 impl RunnerConfig {
-    fn resolve_socket_pattern(&self, local_fallback: Option<&str>) -> Result<Option<String>> {
+    fn resolve_endpoint_pattern(
+        &self,
+        local_fallback: Option<&str>,
+    ) -> Result<Option<runner::client::RunnerEndpointPattern>> {
         match self.transport {
             RunnerTransportMode::Unix => Ok(self
                 .socket_pattern
                 .as_deref()
                 .or(local_fallback)
-                .map(ToString::to_string)),
+                .map(|p| runner::client::RunnerEndpointPattern::unix(p.to_string()))),
             RunnerTransportMode::Tcp => {
                 let addr = self
                     .tcp_addr_pattern
@@ -648,7 +651,10 @@ impl RunnerConfig {
                         })?
                 };
 
-                Ok(Some(format!("tcp://{}?token={}", addr, token)))
+                Ok(Some(runner::client::RunnerEndpointPattern::tcp(
+                    addr.to_string(),
+                    token,
+                )))
             }
         }
     }
@@ -657,17 +663,23 @@ impl RunnerConfig {
 #[cfg(test)]
 mod runner_config_tests {
     use super::{RunnerConfig, RunnerTransportMode};
+    use crate::runner::client::RunnerEndpointPattern;
 
     #[test]
     fn unix_transport_uses_local_fallback() {
         let cfg = RunnerConfig::default();
         let resolved = cfg
-            .resolve_socket_pattern(Some("/run/oqto/runner-sockets/{user}/oqto-runner.sock"))
+            .resolve_endpoint_pattern(Some("/run/oqto/runner-sockets/{user}/oqto-runner.sock"))
             .expect("resolve should succeed");
-        assert_eq!(
-            resolved.as_deref(),
-            Some("/run/oqto/runner-sockets/{user}/oqto-runner.sock")
-        );
+        match resolved {
+            Some(RunnerEndpointPattern::Unix { socket_pattern }) => {
+                assert_eq!(
+                    socket_pattern,
+                    "/run/oqto/runner-sockets/{user}/oqto-runner.sock"
+                );
+            }
+            other => panic!("unexpected endpoint: {other:?}"),
+        }
     }
 
     #[test]
@@ -679,12 +691,18 @@ mod runner_config_tests {
             ..RunnerConfig::default()
         };
         let resolved = cfg
-            .resolve_socket_pattern(None)
+            .resolve_endpoint_pattern(None)
             .expect("resolve should succeed");
-        assert_eq!(
-            resolved.as_deref(),
-            Some("tcp://runner-{user}.internal:7001?token=secret-token")
-        );
+        match resolved {
+            Some(RunnerEndpointPattern::Tcp {
+                addr_pattern,
+                auth_token,
+            }) => {
+                assert_eq!(addr_pattern, "runner-{user}.internal:7001");
+                assert_eq!(auth_token, "secret-token");
+            }
+            other => panic!("unexpected endpoint: {other:?}"),
+        }
     }
 }
 
@@ -1997,11 +2015,11 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             .and_then(|e| e.container_url.clone())
     };
 
-    let resolved_runner_socket_pattern = ctx
+    let resolved_runner_endpoint = ctx
         .config
         .backend
         .runner
-        .resolve_socket_pattern(ctx.config.local.runner_socket_pattern.as_deref())
+        .resolve_endpoint_pattern(ctx.config.local.runner_socket_pattern.as_deref())
         .context("resolving runner endpoint configuration")?;
 
     let session_config = session::SessionServiceConfig {
@@ -2030,7 +2048,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         pi_provider: ctx.config.pi.default_provider.clone(),
         pi_model: ctx.config.pi.default_model.clone(),
         agent_browser: ctx.config.agent_browser.clone(),
-        runner_socket_pattern: resolved_runner_socket_pattern.clone(),
+        runner_endpoint: resolved_runner_endpoint.clone(),
         linux_user_prefix: if ctx.config.local.linux_users.enabled {
             Some(ctx.config.local.linux_users.prefix.clone())
         } else {
@@ -2159,7 +2177,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
                     mmry_binary: ctx.config.mmry.binary.clone(),
                     base_port: ctx.config.mmry.user_base_port,
                     port_range: ctx.config.mmry.user_port_range,
-                    runner_socket_pattern: resolved_runner_socket_pattern.clone(),
+                    runner_endpoint: resolved_runner_endpoint.clone(),
                 },
                 move |user_id| linux_users.linux_username(user_id),
                 user_repo_for_services.clone(),
@@ -2183,7 +2201,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
                     sldr_binary: ctx.config.sldr.binary.clone(),
                     base_port: ctx.config.sldr.user_base_port,
                     port_range: ctx.config.sldr.user_port_range,
-                    runner_socket_pattern: resolved_runner_socket_pattern.clone(),
+                    runner_endpoint: resolved_runner_endpoint.clone(),
                 },
                 move |user_id| linux_users.linux_username(user_id),
                 user_repo_for_services.clone(),
@@ -2403,7 +2421,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         };
         state = state.with_linux_users(config.clone());
         // Also set runner endpoint pattern for multi-user chat history access
-        state = state.with_runner_socket_pattern(resolved_runner_socket_pattern.clone());
+        state = state.with_runner_endpoint(resolved_runner_endpoint.clone());
         linux_users_config = Some(config);
     }
 
@@ -2414,8 +2432,8 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     if let Some(config) = linux_users_config {
         sw_service = sw_service.with_linux_users(config);
     }
-    if let Some(ref pattern) = state.runner_socket_pattern {
-        sw_service = sw_service.with_runner_socket_pattern(pattern.clone());
+    if let Some(ref endpoint) = state.runner_endpoint {
+        sw_service = sw_service.with_runner_endpoint(endpoint.clone());
     }
     // Wire up templates repo path for AGENTS.md provisioning.
     // Resolve from local_path > cache_path > data_dir default (same logic as templates service).

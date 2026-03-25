@@ -967,7 +967,7 @@ pub async fn get_workspace_pi_resources(
     let global_extensions = list_dir_entries(&global_extensions_dir, false)?;
 
     let selected_skills = list_dir_entries(&workspace_skills_dir, true).unwrap_or_default();
-    let selected_extensions =
+    let _selected_extensions =
         list_dir_entries(&workspace_extensions_dir, false).unwrap_or_default();
 
     let skills = global_skills

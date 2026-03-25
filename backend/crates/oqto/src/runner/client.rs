@@ -26,6 +26,36 @@ pub const DEFAULT_SOCKET_PATTERN: &str = "{runtime_dir}/oqto-runner.sock";
 /// {uid} is replaced with the user's numeric UID.
 pub const USER_SOCKET_PATTERN: &str = "/run/user/{uid}/oqto-runner.sock";
 
+/// Resolved runner endpoint template used to build per-user runner clients.
+#[derive(Debug, Clone)]
+pub enum RunnerEndpointPattern {
+    Unix {
+        /// Socket path pattern with `{user}` / `{uid}` placeholders.
+        socket_pattern: String,
+    },
+    Tcp {
+        /// TCP address pattern with `{user}` / `{uid}` placeholders.
+        addr_pattern: String,
+        /// Static auth token for TCP runner auth handshake.
+        auth_token: String,
+    },
+}
+
+impl RunnerEndpointPattern {
+    pub fn unix(socket_pattern: impl Into<String>) -> Self {
+        Self::Unix {
+            socket_pattern: socket_pattern.into(),
+        }
+    }
+
+    pub fn tcp(addr_pattern: impl Into<String>, auth_token: impl Into<String>) -> Self {
+        Self::Tcp {
+            addr_pattern: addr_pattern.into(),
+            auth_token: auth_token.into(),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 enum RunnerTransport {
     Unix,
@@ -87,33 +117,47 @@ impl RunnerClient {
         Ok(Self::for_uid(uid))
     }
 
-    /// Create a runner client for a Linux user using a custom socket pattern.
-    ///
-    /// The pattern supports placeholders:
-    /// - `{user}`: Linux username
-    /// - `{uid}`: User's numeric UID
-    ///
-    /// Example pattern: `/run/oqto/runner-sockets/{user}/oqto-runner.sock`
-    pub fn for_user_with_pattern(username: &str, pattern: &str) -> Result<Self> {
-        let mut resolved = pattern.replace("{user}", username);
-        if resolved.contains("{uid}") {
-            let uid = lookup_uid(username)?;
-            resolved = resolved.replace("{uid}", &uid.to_string());
+    /// Create a runner client for a Linux user from a structured endpoint template.
+    pub fn for_user_with_endpoint(
+        username: &str,
+        endpoint: &RunnerEndpointPattern,
+    ) -> Result<Self> {
+        match endpoint {
+            RunnerEndpointPattern::Unix { socket_pattern } => {
+                let resolved = apply_user_placeholders(socket_pattern, username)?;
+                Ok(Self::new(resolved))
+            }
+            RunnerEndpointPattern::Tcp {
+                addr_pattern,
+                auth_token,
+            } => {
+                let resolved_addr = apply_user_placeholders(addr_pattern, username)?;
+                Ok(Self::new_tcp(resolved_addr, auth_token.clone()))
+            }
         }
+    }
 
-        // TCP mode pattern: tcp://host:port?token=...
-        if let Some(rest) = resolved.strip_prefix("tcp://") {
-            let (addr, token) = match rest.split_once("?token=") {
+    /// Create a runner client for a Linux user using a legacy string pattern.
+    ///
+    /// Accepted formats:
+    /// - Unix pattern: `/run/oqto/runner-sockets/{user}/oqto-runner.sock`
+    /// - TCP pattern: `tcp://runner-{user}:7001?token=...`
+    pub fn for_user_with_pattern(username: &str, pattern: &str) -> Result<Self> {
+        if let Some(rest) = pattern.strip_prefix("tcp://") {
+            let (addr_pattern, token) = match rest.split_once("?token=") {
                 Some((a, t)) if !a.is_empty() && !t.is_empty() => (a.to_string(), t.to_string()),
                 _ => anyhow::bail!(
                     "invalid TCP runner pattern '{}': expected tcp://host:port?token=...",
                     pattern
                 ),
             };
-            return Ok(Self::new_tcp(addr, token));
+            return Self::for_user_with_endpoint(
+                username,
+                &RunnerEndpointPattern::tcp(addr_pattern, token),
+            );
         }
 
-        Ok(Self::new(resolved))
+        Self::for_user_with_endpoint(username, &RunnerEndpointPattern::unix(pattern.to_string()))
     }
 
     /// Get the socket path.
@@ -1925,6 +1969,15 @@ impl std::fmt::Debug for RunnerClient {
             .field("endpoint", &self.endpoint_label())
             .finish()
     }
+}
+
+fn apply_user_placeholders(pattern: &str, username: &str) -> Result<String> {
+    let mut resolved = pattern.replace("{user}", username);
+    if resolved.contains("{uid}") {
+        let uid = lookup_uid(username)?;
+        resolved = resolved.replace("{uid}", &uid.to_string());
+    }
+    Ok(resolved)
 }
 
 /// Look up a Linux user's UID by username.

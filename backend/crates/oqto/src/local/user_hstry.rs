@@ -16,21 +16,20 @@ use std::process::Command;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use crate::runner::client::RunnerClient;
+use crate::runner::client::{RunnerClient, RunnerEndpointPattern};
 
 #[derive(Debug, Clone)]
 pub struct UserHstryConfig {
     pub hstry_binary: String,
-    /// Runner socket path pattern.
-    /// Supports `{user}` (Linux username) and `{uid}`.
-    pub runner_socket_pattern: Option<String>,
+    /// Runner endpoint pattern.
+    pub runner_endpoint: Option<RunnerEndpointPattern>,
 }
 
 impl Default for UserHstryConfig {
     fn default() -> Self {
         Self {
             hstry_binary: "hstry".to_string(),
-            runner_socket_pattern: None,
+            runner_endpoint: None,
         }
     }
 }
@@ -97,13 +96,8 @@ impl UserHstryManager {
     }
 
     fn runner_client_for_linux_user(&self, linux_username: &str) -> Result<RunnerClient> {
-        if let Some(pattern) = self.config.runner_socket_pattern.as_deref() {
-            let mut socket = pattern.replace("{user}", linux_username);
-            if socket.contains("{uid}") {
-                let uid = Self::linux_user_uid(linux_username)?;
-                socket = socket.replace("{uid}", &uid.to_string());
-            }
-            Ok(RunnerClient::new(socket))
+        if let Some(endpoint) = self.config.runner_endpoint.as_ref() {
+            RunnerClient::for_user_with_endpoint(linux_username, endpoint)
         } else {
             // Fallback: same-user runner socket.
             Ok(RunnerClient::default())

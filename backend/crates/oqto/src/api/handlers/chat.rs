@@ -148,14 +148,14 @@ async fn resolve_session_target(
     Ok(ExecutionTarget::Personal)
 }
 
-/// Create a runner client for a user based on socket pattern.
+/// Create a runner client for a user based on configured runner endpoint.
 /// Returns the runner client if available, None for direct access.
 pub(crate) fn get_runner_for_user(
     state: &AppState,
     user_id: &str,
 ) -> Option<crate::runner::client::RunnerClient> {
-    // Need runner socket pattern for multi-user mode
-    let pattern = state.runner_socket_pattern.as_ref()?;
+    // Need runner endpoint for multi-user mode
+    let _endpoint = state.runner_endpoint.as_ref()?;
 
     // The socket path uses the linux_username (e.g., oqto_hansgerd-vyon),
     // not the platform user_id (e.g., hansgerd-vYoN).
@@ -165,8 +165,9 @@ pub(crate) fn get_runner_for_user(
         user_id.to_string()
     };
 
-    match crate::runner::client::RunnerClient::for_user_with_pattern(&effective_user, pattern) {
-        Ok(client) => Some(client),
+    match state.runner_client_for_linux_user(&effective_user) {
+        Ok(Some(client)) => Some(client),
+        Ok(None) => None,
         Err(e) => {
             tracing::warn!(
                 user_id = %user_id,
@@ -183,9 +184,9 @@ fn get_runner_for_linux_user(
     state: &AppState,
     linux_username: &str,
 ) -> Option<crate::runner::client::RunnerClient> {
-    let pattern = state.runner_socket_pattern.as_ref()?;
-    match crate::runner::client::RunnerClient::for_user_with_pattern(linux_username, pattern) {
-        Ok(client) => Some(client),
+    match state.runner_client_for_linux_user(linux_username) {
+        Ok(Some(client)) => Some(client),
+        Ok(None) => None,
         Err(e) => {
             tracing::warn!(
                 linux_user = %linux_username,

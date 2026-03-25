@@ -110,6 +110,63 @@
       },
       "additionalProperties": false
     },
+    "backend": {
+      "type": "object",
+      "description": "Backend mode and runner routing configuration",
+      "x-scope": "admin",
+      "x-category": "Infrastructure",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "description": "Backend mode selection",
+          "enum": ["local", "container", "auto"],
+          "default": "container"
+        },
+        "runner": {
+          "type": "object",
+          "description": "Runner transport and endpoint routing for per-user execution",
+          "properties": {
+            "user_plane_enabled": {
+              "type": "boolean",
+              "description": "Enable runner as user-plane boundary in local multi-user mode",
+              "default": false
+            },
+            "socket_pattern": {
+              "type": ["string", "null"],
+              "description": "Unix socket pattern override for runner routing (supports {user} and {uid})",
+              "examples": ["/run/oqto/runner-sockets/{user}/oqto-runner.sock", "/run/user/{uid}/oqto-runner.sock"],
+              "default": null
+            },
+            "transport": {
+              "type": "string",
+              "description": "Runner transport type",
+              "enum": ["unix", "tcp"],
+              "default": "unix"
+            },
+            "tcp_addr_pattern": {
+              "type": ["string", "null"],
+              "description": "TCP runner address pattern for backend->runner routing (supports {user} and {uid})",
+              "examples": ["runner-{user}.internal:7001", "127.0.0.1:7001"],
+              "default": null
+            },
+            "tcp_auth_token": {
+              "type": ["string", "null"],
+              "description": "Static TCP auth token for runner authentication",
+              "x-sensitive": true,
+              "default": null
+            },
+            "tcp_auth_token_env": {
+              "type": ["string", "null"],
+              "description": "Environment variable name containing TCP auth token (preferred over tcp_auth_token)",
+              "examples": ["RUNNER_AUTH_TOKEN", "OQTO_RUNNER_TOKEN"],
+              "default": null
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
     "container": {
       "type": "object",
       "description": "Container runtime configuration",

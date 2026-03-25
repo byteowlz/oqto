@@ -472,7 +472,7 @@ pub async fn register(
     // Fallback: if eavs was not configured (or failed), still write Pi config files
     // so the new user has a working model selection and can start chatting.
     if !pi_settings_written {
-        if let Some(ref linux_users) = state.linux_users {
+        if let Some(ref _linux_users) = state.linux_users {
             let linux_username = resolved_linux_username
                 .as_deref()
                 .or(user.linux_username.as_deref())
@@ -552,7 +552,7 @@ pub async fn register(
     }
 
     // Create the default "main" workspace so the user lands in a ready-to-use state.
-    if let Some(ref linux_users) = state.linux_users {
+    if let Some(ref _linux_users) = state.linux_users {
         let linux_username = resolved_linux_username
             .as_deref()
             .or(user.linux_username.as_deref())
