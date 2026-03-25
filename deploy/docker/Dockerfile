@@ -225,6 +225,8 @@ RUN mkdir -p /usr/local/share/hstry/adapters \
     && curl -fsSL "https://github.com/byteowlz/hstry/archive/refs/heads/main.tar.gz" \
        | tar xz --strip-components=2 -C /usr/local/share/hstry/adapters/ "*/adapters/" \
     || echo "Warning: could not fetch hstry adapters"
+# Make adapters writable by oqto user (hstry adapters update writes manifest here)
+RUN chown -R 1000:1000 /usr/local/share/hstry
 
 # --- Environment ---
 
