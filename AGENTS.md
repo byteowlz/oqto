@@ -307,6 +307,27 @@ just lint-rust-ai-report-prod    # Production-only report (excludes #[cfg(test)]
 - Use `just lint-rust-ai-report-prod` to inspect enforceable backlog and `just lint-rust-ai-report` for full visibility (including tests/fixtures debt).
 - Policy intent: keep runtime code strict (`unwrap/expect` disallowed) while allowing pragmatic test ergonomics.
 
+### Frontend useEffect Guardrail Policy
+
+**`bun run lint` includes a useEffect guardrail** (`scripts/check-useeffect-guardrail.mjs`) that prevents new unaudited `useEffect` calls. The baseline tracks every file with useEffect across `src/`, `hooks/`, `features/`, `apps/`, `components/`, and `lib/`. Adding a new useEffect to any file increases its count and fails the lint gate.
+
+**Do NOT use raw `useEffect`.** Use the approved hooks instead:
+
+| Hook | Location | Use Case |
+|------|----------|----------|
+| `useDocumentEvent(type, handler, enabled?)` | `hooks/use-document-event.ts` | Document-level event listeners (keydown, fullscreenchange, etc.) |
+| `useIntersectionOnce(callback, options?)` | `hooks/use-intersection-observer.ts` | Fire callback once when element enters viewport (lazy loading) |
+| `useResetOnOpen(open, reset, deps?)` | `hooks/use-reset-on-open.ts` | Reset state when a dialog/modal opens |
+| `useMountEffect(effect)` | `hooks/use-mount-effect.ts` | One-time setup on mount (replaces `useEffect(..., [])`) |
+
+**When raw useEffect is unavoidable** (e.g., async data fetch with cancellation), add a `// useeffect-guardrail: allow` comment on the line above to exclude it from the count, and explain why no hook covers the case.
+
+**After adding any useEffect (including via hooks):**
+```bash
+bun run lint:useeffect-guardrail:update  # Update the baseline
+bun run lint                             # Verify everything passes
+```
+
 ### Dev Workflow
 
 - **Frontend dev server**: Always use `just dev` (runs `cd frontend && bun dev`). The Vite dev server runs on port 3000.
@@ -319,7 +340,7 @@ just lint-rust-ai-report-prod    # Production-only report (excludes #[cfg(test)]
 
 **Rust**: Use `anyhow::Result` with `.context()` for errors. Group imports: std, external crates, internal modules. Run `cargo fmt` and `cargo check` after changes.
 
-**TypeScript**: Use `@/` import alias for internal modules. Functional components with named exports. Vitest for tests.
+**TypeScript**: Use `@/` import alias for internal modules. Functional components with named exports. Vitest for tests. Never use raw `useEffect` -- use the approved hooks (`useDocumentEvent`, `useIntersectionOnce`, `useResetOnOpen`, `useMountEffect`). See "Frontend useEffect Guardrail Policy" above.
 
 **General**: No emojis in code/docs/commits. Use `bun` for JS/TS, `uv` for Python. Never use `pip` directly; use `uv add`, `uv tool install`, or `uv pip` only when explicitly required for compatibility.
 
