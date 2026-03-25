@@ -1,5 +1,5 @@
 {
-	"generatedAt": "2026-03-25T06:01:34.856Z",
+	"generatedAt": "2026-03-25T06:08:47.507Z",
 	"allowMarker": "useeffect-guardrail: allow",
 	"files": {
 		"apps/admin/EventBusPanel.tsx": 4,
@@ -55,6 +55,7 @@
 		"features/sessions/components/CanvasView.tsx": 11,
 		"features/sessions/components/ChatInputArea.tsx": 1,
 		"features/sessions/components/FileTreeView.tsx": 7,
+		"features/sessions/components/LightboxGallery.tsx": 1,
 		"features/sessions/components/MemoriesView.tsx": 3,
 		"features/sessions/components/PreviewView.tsx": 4,
 		"features/sessions/components/TrxView.tsx": 3,

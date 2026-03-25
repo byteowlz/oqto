@@ -1,8 +1,10 @@
 "use client";
 
+import { useDocumentEvent } from "@/hooks/use-document-event";
+import { useResetOnOpen } from "@/hooks/use-reset-on-open";
 import { cn } from "@/lib/utils";
 import { Download, Maximize2, Volume2, VolumeX, X } from "lucide-react";
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useRef, useState } from "react";
 
 export interface VideoPreviewModalProps {
 	/** Whether modal is open */
@@ -37,72 +39,60 @@ export const VideoPreviewModal = memo(function VideoPreviewModal({
 	const videoRef = useRef<HTMLVideoElement>(null);
 	const containerRef = useRef<HTMLDivElement>(null);
 
-	// Handle keyboard shortcuts
-	const handleKeyDown = useCallback(
-		(e: KeyboardEvent) => {
-			if (!open) return;
+	// Reset state when modal closes
+	useResetOnOpen(open, () => {
+		setIsPlaying(false);
+		setCurrentTime(0);
+		setDuration(0);
+	});
 
-			switch (e.key) {
-				case "Escape":
-					onClose();
-					break;
-				case " ":
-				case "k":
-					if (isPlaying) setIsPlaying(false);
-					break;
-				case "ArrowRight":
-					e.preventDefault();
-					if (videoRef.current) videoRef.current.currentTime += 5;
-					break;
-				case "ArrowLeft":
-					e.preventDefault();
-					if (videoRef.current)
-						videoRef.current.currentTime = Math.max(
-							0,
-							videoRef.current.currentTime - 5,
-						);
-					break;
-				case "m":
-					setIsMuted((prev) => !prev);
-					break;
-				case "ArrowUp":
-					e.preventDefault();
-					setVolume((prev) => Math.min(1, prev + 0.1));
-					break;
-				case "ArrowDown":
-					e.preventDefault();
-					setVolume((prev) => Math.max(0, prev - 0.1));
-					break;
-				case "f":
-					e.preventDefault();
-					onFullscreen?.();
-					break;
-			}
-		},
-		[open, isPlaying, onFullscreen, onClose],
+	// Keyboard shortcuts via document event hook
+	useDocumentEvent(
+		"keydown",
+		useCallback(
+			(e: KeyboardEvent) => {
+				switch (e.key) {
+					case "Escape":
+						onClose();
+						break;
+					case " ":
+					case "k":
+						e.preventDefault();
+						togglePlayPause();
+						break;
+					case "ArrowRight":
+						e.preventDefault();
+						if (videoRef.current) videoRef.current.currentTime += 5;
+						break;
+					case "ArrowLeft":
+						e.preventDefault();
+						if (videoRef.current)
+							videoRef.current.currentTime = Math.max(
+								0,
+								videoRef.current.currentTime - 5,
+							);
+						break;
+					case "m":
+						setIsMuted((prev) => !prev);
+						break;
+					case "ArrowUp":
+						e.preventDefault();
+						setVolume((prev) => Math.min(1, prev + 0.1));
+						break;
+					case "ArrowDown":
+						e.preventDefault();
+						setVolume((prev) => Math.max(0, prev - 0.1));
+						break;
+					case "f":
+						e.preventDefault();
+						onFullscreen?.();
+						break;
+				}
+			},
+			[onClose, onFullscreen],
+		),
+		open,
 	);
-
-	// Setup keyboard listeners
-	// useeffect-guardrail: allow
-	useEffect(() => {
-		if (!open) return;
-
-		const handler = (e: KeyboardEvent) => handleKeyDown(e);
-		document.addEventListener("keydown", handler);
-		return () => {
-			document.removeEventListener("keydown", handler);
-		};
-	}, [open, handleKeyDown]);
-
-	// Reset state when modal opens/closes
-	// useeffect-guardrail: allow
-	useEffect(() => {
-		if (!open) {
-			setIsPlaying(false);
-			setCurrentTime(0);
-			setDuration(0);
-		}
-	}, [open]);
 
 	const handleTimeUpdate = () => {
 		const video = videoRef.current;

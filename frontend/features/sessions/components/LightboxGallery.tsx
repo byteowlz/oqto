@@ -1,5 +1,7 @@
 "use client";
 
+import { useDocumentEvent } from "@/hooks/use-document-event";
+import { useResetOnOpen } from "@/hooks/use-reset-on-open";
 import { readFileMux } from "@/lib/mux-files";
 import { cn } from "@/lib/utils";
 import {
@@ -62,28 +64,29 @@ export const LightboxGallery = memo(function LightboxGallery({
 	);
 	const [swipeOffset, setSwipeOffset] = useState(0);
 
-	// Reset state on open, cleanup on close
-	// useeffect-guardrail: allow — lifecycle sync for open/close transitions
-	useEffect(() => {
-		if (open) {
-			setCurrentIndex(initialIndex);
-			setZoom(1);
-			setRotation(0);
-		} else {
+	// Reset state when lightbox opens, cleanup blobs when it closes
+	useResetOnOpen(
+		open,
+		() => {
+			// Revoke old blobs before resetting
 			for (const url of blobCacheRef.current.values()) {
 				URL.revokeObjectURL(url);
 			}
 			blobCacheRef.current.clear();
 			setMediaBlobUrl(null);
-		}
-	}, [open, initialIndex]);
+			// Reset view state
+			setCurrentIndex(initialIndex);
+			setZoom(1);
+			setRotation(0);
+		},
+		[initialIndex],
+	);
 
 	const currentItem = items[currentIndex];
 	const isVideo = currentItem?.type === "video";
 	const isImage = currentItem?.type === "image";
 
 	// Fetch current media via mux
-	// useeffect-guardrail: allow
 	// biome-ignore lint/correctness/useExhaustiveDependencies: currentIndex drives currentItem, readFileMux is module-level
 	useEffect(() => {
 		if (!open || !currentItem || !workspacePath) return;
@@ -197,24 +200,14 @@ export const LightboxGallery = memo(function LightboxGallery({
 		[open, items.length, onClose],
 	);
 
-	// useeffect-guardrail: allow
-	useEffect(() => {
-		if (!open) return;
-		document.addEventListener("keydown", handleKeyDown);
-		return () => document.removeEventListener("keydown", handleKeyDown);
-	}, [open, handleKeyDown]);
+	useDocumentEvent("keydown", handleKeyDown, open);
 
-	// Handle fullscreen change
-	// useeffect-guardrail: allow
-	useEffect(() => {
-		const handleFullscreenChange = () => {
+	useDocumentEvent(
+		"fullscreenchange",
+		useCallback(() => {
 			setIsFullscreen(!!document.fullscreenElement);
-		};
-
-		document.addEventListener("fullscreenchange", handleFullscreenChange);
-		return () =>
-			document.removeEventListener("fullscreenchange", handleFullscreenChange);
-	}, []);
+		}, []),
+	);
 
 	const handleZoomIn = () => {
 		setZoom((prev) => Math.min(5, prev + 0.5));
