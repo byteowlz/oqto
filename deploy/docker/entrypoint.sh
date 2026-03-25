@@ -414,6 +414,15 @@ wait_for_port "$EAVS_PORT" "eavs" 15
 
 # 3. oqto backend
 log "Starting oqto backend..."
+
+# Test if oqto binary works at all
+su -s /bin/bash oqto -c "oqto --help" >/dev/null 2>&1 \
+  || { log_error "oqto binary failed to execute"; su -s /bin/bash oqto -c "oqto --help" 2>&1; }
+
+# Dump generated config for debugging
+log "Config file:"
+cat /home/oqto/.config/oqto/config.toml | sed 's/^/  /'
+
 su -s /bin/bash oqto -c "
   export HOME=/home/oqto
   export XDG_CONFIG_HOME=/home/oqto/.config
@@ -421,13 +430,13 @@ su -s /bin/bash oqto -c "
   export XDG_STATE_HOME=/home/oqto/.local/state
   export XDG_RUNTIME_DIR=/run/oqto
   export RUST_LOG=${OQTO_LOG_LEVEL:-info}
-  oqto --config /home/oqto/.config/oqto/config.toml serve \
+  exec oqto --config /home/oqto/.config/oqto/config.toml serve \
     --local-mode \
     --host 0.0.0.0 \
     --port ${OQTO_BACKEND_PORT} \
     --user-data-path ${OQTO_DATA_DIR}/users \
-    2>&1 | sed 's/^/[oqto] /'
-" &
+    2>&1
+" | sed 's/^/[oqto] /' &
 PIDS+=($!)
 wait_for_port "$OQTO_BACKEND_PORT" "oqto" 30
 
