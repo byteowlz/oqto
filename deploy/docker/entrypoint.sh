@@ -11,23 +11,18 @@
 #
 # Environment variables:
 #   Required:
-#     ANTHROPIC_API_KEY    - Anthropic API key (or other provider keys)
-#     JWT_SECRET           - JWT signing secret (min 32 chars, auto-generated if unset)
+#     At least one LLM provider key (ANTHROPIC_API_KEY, OPENAI_API_KEY, etc.)
 #
-#   Optional (providers):
-#     OPENAI_API_KEY       - OpenAI API key
-#     GEMINI_API_KEY       - Google Gemini API key
-#     OPENROUTER_API_KEY   - OpenRouter API key
-#
-#   Optional (configuration):
-#     OQTO_PORT            - External port (default: 8080)
-#     EAVS_PORT            - Eavs internal port (default: 3033)
+#   Optional:
+#     JWT_SECRET           - JWT signing secret (auto-generated + persisted if unset)
 #     ADMIN_USER           - Bootstrap admin username (default: admin)
 #     ADMIN_PASSWORD       - Bootstrap admin password (auto-generated if unset)
 #     ADMIN_EMAIL          - Bootstrap admin email (default: admin@oqto.local)
+#     OQTO_PORT            - External port (default: 8080)
+#     EAVS_PORT            - Eavs internal port (default: 3033)
 #     OQTO_LOG_LEVEL       - Log level: error/warn/info/debug/trace (default: info)
 #     OQTO_DATA_DIR        - Data directory (default: /data)
-#     OQTO_SINGLE_USER     - Single-user mode, skip auth (default: false)
+#     OQTO_SINGLE_USER     - Single-user dev mode, bypass auth (default: false)
 #
 # =============================================================================
 
@@ -48,14 +43,8 @@ ADMIN_EMAIL="${ADMIN_EMAIL:-admin@oqto.local}"
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
 JWT_SECRET="${JWT_SECRET:-}"
 
-# Derived paths
-HSTRY_DB="${OQTO_DATA_DIR}/hstry/hstry.db"
-EAVS_DATA="${OQTO_DATA_DIR}/eavs"
-OQTO_DB="${OQTO_DATA_DIR}/oqto/oqto.db"
-OQTO_USERS="${OQTO_DATA_DIR}/users"
-OQTO_WORKSPACES="${OQTO_DATA_DIR}/workspaces"
-RUNNER_SOCKET="/run/oqto/runner.sock"
-EAVS_CONFIG_DIR="${OQTO_DATA_DIR}/eavs"
+# Internal ports (not exposed)
+OQTO_BACKEND_PORT=8081
 
 PIDS=()
 
@@ -86,18 +75,15 @@ wait_for_port() {
 
 wait_for_hstry() {
   local timeout="${1:-30}" waited=0
-  # hstry uses gRPC, not HTTP -- just check if the process is alive
-  # and the port file exists
   while [ "$waited" -lt "$timeout" ]; do
-    if [ -f "${HOME}/.local/state/hstry/port" ] || \
-       [ -S "${HOME}/.local/state/hstry/service.sock" ]; then
+    if [ -f "/home/oqto/.local/state/hstry/port" ] || \
+       [ -S "/home/oqto/.local/state/hstry/service.sock" ]; then
       log "hstry is ready (${waited}s)"
       return 0
     fi
     sleep 1
     waited=$((waited + 1))
   done
-  # If the process is still alive, assume it's fine
   log "hstry startup wait complete (may still be initializing)"
 }
 
@@ -126,6 +112,7 @@ mkdir -p \
   "${OQTO_DATA_DIR}/users" \
   "${OQTO_DATA_DIR}/workspaces" \
   /run/oqto \
+  /home/oqto/.config/oqto \
   /home/oqto/.config/hstry \
   /home/oqto/.config/eavs \
   /home/oqto/.local/state/hstry \
@@ -139,7 +126,6 @@ chown -R oqto:oqto "${OQTO_DATA_DIR}" /run/oqto /home/oqto 2>/dev/null || true
 # ---------------------------------------------------------------------------
 
 if [ -z "$JWT_SECRET" ]; then
-  # Persist generated secret so it survives container restarts (with volume)
   JWT_SECRET_FILE="${OQTO_DATA_DIR}/oqto/.jwt_secret"
   if [ -f "$JWT_SECRET_FILE" ]; then
     JWT_SECRET=$(cat "$JWT_SECRET_FILE")
@@ -166,16 +152,13 @@ fi
 # Write eavs config
 # ---------------------------------------------------------------------------
 
-EAVS_ENV_FILE="${EAVS_CONFIG_DIR}/eavs.env"
-EAVS_CONFIG_FILE="/home/oqto/.config/eavs/config.toml"
+EAVS_ENV_FILE="${OQTO_DATA_DIR}/eavs/eavs.env"
 
-# Build eavs env file from provided API keys
 cat > "$EAVS_ENV_FILE" <<EOF
 EAVS_PORT=${EAVS_PORT}
 EAVS_ADMIN_KEY=${EAVS_ADMIN_KEY}
 EOF
 
-# Append provider keys if set
 [ -n "${ANTHROPIC_API_KEY:-}" ]    && echo "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}" >> "$EAVS_ENV_FILE"
 [ -n "${OPENAI_API_KEY:-}" ]       && echo "OPENAI_API_KEY=${OPENAI_API_KEY}" >> "$EAVS_ENV_FILE"
 [ -n "${GEMINI_API_KEY:-}" ]       && echo "GEMINI_API_KEY=${GEMINI_API_KEY}" >> "$EAVS_ENV_FILE"
@@ -186,8 +169,8 @@ EOF
 
 chmod 600 "$EAVS_ENV_FILE"
 
-# Write minimal eavs config.toml
-mkdir -p /home/oqto/.config/eavs
+# Write eavs config.toml
+EAVS_CONFIG_FILE="/home/oqto/.config/eavs/config.toml"
 cat > "$EAVS_CONFIG_FILE" <<EOF
 [server]
 host = "127.0.0.1"
@@ -197,7 +180,6 @@ port = ${EAVS_PORT}
 api_key = "${EAVS_ADMIN_KEY}"
 EOF
 
-# Add provider sections based on available keys
 if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
   cat >> "$EAVS_CONFIG_FILE" <<EOF
 
@@ -242,7 +224,7 @@ chown -R oqto:oqto /home/oqto/.config/eavs
 # ---------------------------------------------------------------------------
 
 cat > /home/oqto/.config/hstry/config.toml <<EOF
-database = "${HSTRY_DB}"
+database = "${OQTO_DATA_DIR}/hstry/hstry.db"
 adapter_paths = ["/usr/local/share/hstry/adapters"]
 js_runtime = "bun"
 
@@ -256,60 +238,83 @@ EOF
 chown -R oqto:oqto /home/oqto/.config/hstry
 
 # ---------------------------------------------------------------------------
-# Write oqto config
+# Write oqto config (matches AppConfig struct)
 # ---------------------------------------------------------------------------
 
-AUTH_MODE="multi"
+DEV_MODE="false"
 if [ "$OQTO_SINGLE_USER" = "true" ]; then
-  AUTH_MODE="none"
+  DEV_MODE="true"
 fi
 
-cat > /etc/oqto/config.toml <<EOF
-[server]
-host = "127.0.0.1"
-port = 8081
+cat > /home/oqto/.config/oqto/config.toml <<EOF
+# Oqto Docker All-in-One configuration
+# Generated by entrypoint.sh -- do not edit manually
 
-[auth]
-mode = "${AUTH_MODE}"
-
-[auth.jwt]
-secret = "${JWT_SECRET}"
-expiry = "7d"
-
-[database]
-path = "${OQTO_DB}"
-
-[storage]
-data_dir = "${OQTO_USERS}"
-
-[hstry]
-# oqto discovers hstry via port file / unix socket automatically
-
-[eavs]
-url = "http://127.0.0.1:${EAVS_PORT}"
-admin_key = "${EAVS_ADMIN_KEY}"
-
-[runner]
-mode = "local"
-
-[runner.local]
-fileserver_binary = "oqto-files"
-ttyd_binary = "ttyd"
-workspace_dir = "${OQTO_WORKSPACES}/{user_id}"
-single_user = ${OQTO_SINGLE_USER}
-
-[features]
-voice = false
-files = true
-terminal = true
+profile = "docker"
 
 [logging]
 level = "${OQTO_LOG_LEVEL}"
 format = "pretty"
+
+[runtime]
+host = "0.0.0.0"
+port = ${OQTO_BACKEND_PORT}
+
+[paths]
+data_dir = "${OQTO_DATA_DIR}/oqto"
+
+[backend]
+mode = "local"
+
+[local]
+enabled = true
+fileserver_binary = "oqto-files"
+ttyd_binary = "ttyd"
+workspace_dir = "${OQTO_DATA_DIR}/workspaces/{user_id}"
+single_user = ${OQTO_SINGLE_USER}
+cleanup_on_startup = true
+stop_sessions_on_shutdown = true
+
+[auth]
+dev_mode = ${DEV_MODE}
+jwt_secret = "${JWT_SECRET}"
+
+[eavs]
+enabled = true
+base_url = "http://127.0.0.1:${EAVS_PORT}"
+master_key = "${EAVS_ADMIN_KEY}"
+
+[hstry]
+
+[voice]
+enabled = false
+
+[sessions]
+
+[mmry]
+
+[sldr]
+
+[server]
+admin_socket_path = "/run/oqto/oqtoctl.sock"
+
+[container]
+
+[templates]
+
+[scaffold]
+
+[pi]
+
+[agent_browser]
+
+[onboarding_templates]
+
+[feedback]
 EOF
 
-chown oqto:oqto /etc/oqto/config.toml
-chmod 600 /etc/oqto/config.toml
+chown -R oqto:oqto /home/oqto/.config/oqto
+chmod 600 /home/oqto/.config/oqto/config.toml
 
 # ---------------------------------------------------------------------------
 # Write Caddyfile
@@ -317,18 +322,17 @@ chmod 600 /etc/oqto/config.toml
 
 cat > /etc/caddy/Caddyfile <<EOF
 :${OQTO_PORT} {
-    # Health check
     handle /health {
         respond "OK" 200
     }
 
     # API and WebSocket -> oqto backend
     handle /api/* {
-        reverse_proxy 127.0.0.1:8081
+        reverse_proxy 127.0.0.1:${OQTO_BACKEND_PORT}
     }
 
     handle /ws/* {
-        reverse_proxy 127.0.0.1:8081
+        reverse_proxy 127.0.0.1:${OQTO_BACKEND_PORT}
     }
 
     @websockets {
@@ -336,7 +340,7 @@ cat > /etc/caddy/Caddyfile <<EOF
         header Upgrade websocket
     }
     handle @websockets {
-        reverse_proxy 127.0.0.1:8081
+        reverse_proxy 127.0.0.1:${OQTO_BACKEND_PORT}
     }
 
     # Frontend static files
@@ -375,7 +379,6 @@ wait_for_hstry 15
 
 # 2. eavs (LLM proxy)
 log "Starting eavs..."
-# Source env file so provider keys are in the environment
 set -a
 # shellcheck source=/dev/null
 source "$EAVS_ENV_FILE"
@@ -393,18 +396,22 @@ wait_for_port "$EAVS_PORT" "eavs" 15
 log "Starting oqto backend..."
 su -s /bin/bash oqto -c "
   export HOME=/home/oqto
-  export OQTO_CONFIG=/etc/oqto/config.toml
   export XDG_CONFIG_HOME=/home/oqto/.config
   export XDG_DATA_HOME=/home/oqto/.local/share
   export XDG_STATE_HOME=/home/oqto/.local/state
   export XDG_RUNTIME_DIR=/run/oqto
-  oqto serve --config /etc/oqto/config.toml 2>&1 | sed 's/^/[oqto] /'
+  oqto --config /home/oqto/.config/oqto/config.toml serve \
+    --local-mode \
+    --host 0.0.0.0 \
+    --port ${OQTO_BACKEND_PORT} \
+    --user-data-path ${OQTO_DATA_DIR}/users \
+    2>&1 | sed 's/^/[oqto] /'
 " &
 PIDS+=($!)
-wait_for_port 8081 "oqto" 15
+wait_for_port "$OQTO_BACKEND_PORT" "oqto" 15
 
 # 4. Bootstrap admin user (first run only)
-if [ ! -f "${OQTO_DATA_DIR}/oqto/.bootstrapped" ] && [ "$AUTH_MODE" = "multi" ]; then
+if [ ! -f "${OQTO_DATA_DIR}/oqto/.bootstrapped" ] && [ "$DEV_MODE" = "false" ]; then
   if [ -z "$ADMIN_PASSWORD" ]; then
     ADMIN_PASSWORD=$(generate_secret 16)
     log "============================================"
@@ -418,12 +425,13 @@ if [ ! -f "${OQTO_DATA_DIR}/oqto/.bootstrapped" ] && [ "$AUTH_MODE" = "multi" ];
   log "Bootstrapping admin user..."
   su -s /bin/bash oqto -c "
     export HOME=/home/oqto
-    oqtoctl user bootstrap \
-      -u '${ADMIN_USER}' \
+    export XDG_RUNTIME_DIR=/run/oqto
+    oqtoctl user create \
+      '${ADMIN_USER}' \
       -e '${ADMIN_EMAIL}' \
       -p '${ADMIN_PASSWORD}' \
-      --no-linux-user \
-      --database '${OQTO_DB}' 2>&1
+      -r admin \
+      2>&1
   " && touch "${OQTO_DATA_DIR}/oqto/.bootstrapped" \
     || log_error "Admin bootstrap failed (may already exist)"
 fi

@@ -21,7 +21,6 @@
 # Run:
 #   docker run -d -p 8080:8080 \
 #     -e ANTHROPIC_API_KEY=sk-ant-... \
-#     -e JWT_SECRET=$(openssl rand -hex 32) \
 #     -v oqto-data:/data \
 #     oqto:latest
 #
@@ -32,15 +31,16 @@
 # ---------------------------------------------------------------------------
 #
 # Zero compilation. Everything comes from GitHub releases:
-#   - oqto workspace: oqto, oqtoctl, oqto-runner, oqto-files, pi-bridge, etc.
-#   - oqto frontend:  pre-built static assets (dist/)
-#   - byteowlz tools: hstry, eavs, agntz, mmry, tmpltr, sldr, ignr, trx, scrpr, sx
-#   - external tools:  typst, caddy, yazi, starship
+#   - oqto:            oqto, oqtoctl, oqto-runner, oqto-files, pi-bridge, etc.
+#   - oqto frontend:   pre-built static assets (dist/)
+#   - byteowlz tools:  hstry, eavs, agntz, mmry, tmpltr, sldr, ignr, trx, scrpr, sx
+#   - external tools:   typst, caddy, yazi, starship
 #
-# Rust release naming:  {repo}-{tag}-{target}.tar.gz
-# Go release naming:    {repo}_{OS}_{arch}.tar.gz
-# oqto release naming:  oqto-{tag}-{target}.tar.gz (binaries in bin/ subdir)
-#                        oqto-frontend-{tag}.tar.gz  (static assets in dist/)
+# Naming conventions:
+#   Rust:  {repo}-{tag}-{target}.tar.gz       (e.g. hstry-v0.5.10-x86_64-unknown-linux-gnu.tar.gz)
+#   Go:    {repo}_{OS}_{arch}.tar.gz           (e.g. sx_Linux_x86_64.tar.gz)
+#   oqto:  oqto-{tag}-{target}.tar.gz         (binaries in bin/ subdir)
+#          oqto-frontend-{tag}.tar.gz          (static assets in dist/)
 #
 FROM debian:bookworm-slim AS downloader
 
@@ -53,9 +53,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /out
 RUN mkdir -p /out/bin /out/frontend
 
-# Helper: resolve latest tag for a GitHub repo
-# Usage: latest_tag byteowlz/hstry -> v0.5.8
-# Uses redirect URL from /releases/latest to avoid API rate limits
 SHELL ["/bin/bash", "-c"]
 
 RUN set -eux; \
@@ -71,26 +68,23 @@ RUN set -eux; \
     tag() { curl -fsSL "$1/releases/latest" -o /dev/null -w '%{redirect_url}' | grep -o '[^/]*$'; }; \
     \
     # ================================================================== \
-    # Oqto platform (binaries in {prefix}/bin/, frontend in {prefix}/dist/) \
+    # Oqto platform \
+    # Tarball: oqto-{tag}-{target}.tar.gz with bin/ subdirectory \
     # ================================================================== \
     echo "--- Downloading oqto ---"; \
     TAG=$(tag "$GH/oqto"); \
     curl -fsSL "$GH/oqto/releases/download/${TAG}/oqto-${TAG}-${RUST_TARGET}.tar.gz" \
       | tar xz --strip-components=1 -C /tmp/ \
-    && cp /tmp/bin/* /out/bin/ \
-    || echo "WARN: oqto download failed"; \
+    && cp /tmp/bin/* /out/bin/; \
     \
     echo "--- Downloading oqto frontend ---"; \
     curl -fsSL "$GH/oqto/releases/download/${TAG}/oqto-frontend-${TAG}.tar.gz" \
-      | tar xz --strip-components=2 -C /out/frontend/ \
-    || echo "WARN: oqto frontend download failed"; \
+      | tar xz --strip-components=2 -C /out/frontend/; \
     \
     # ================================================================== \
     # Byteowlz Rust tools (tarballs contain binaries at root level) \
-    # Required: hstry, eavs (core services) \
-    # Optional: agntz, mmry, sldr, ignr, trx (agent tools) \
     # ================================================================== \
-    for repo in hstry eavs agntz mmry sldr ignr trx; do \
+    for repo in hstry eavs agntz mmry tmpltr sldr ignr trx; do \
       echo "--- Downloading $repo ---"; \
       TAG=$(tag "$GH/$repo"); \
       curl -fsSL "$GH/$repo/releases/download/${TAG}/${repo}-${TAG}-${RUST_TARGET}.tar.gz" \
@@ -98,10 +92,8 @@ RUN set -eux; \
       || echo "WARN: $repo download failed (may not have ${RUST_TARGET} build)"; \
     done; \
     \
-    # tmpltr (no releases yet -- skip, will be source-built) \
-    \
     # ================================================================== \
-    # Byteowlz Go tools (goreleaser: {repo}_{OS}_{arch}.tar.gz) \
+    # Byteowlz Go tools (goreleaser naming: {repo}_{OS}_{arch}.tar.gz) \
     # ================================================================== \
     for repo in scrpr sx; do \
       echo "--- Downloading $repo ---"; \
@@ -116,13 +108,11 @@ RUN set -eux; \
     # ================================================================== \
     echo "--- Downloading typst ---"; \
     curl -fsSL "https://github.com/typst/typst/releases/latest/download/typst-${TYPST_TARGET}.tar.xz" \
-      | tar -xJ --strip-components=1 -C /out/bin/ \
-    || echo "WARN: typst download failed"; \
+      | tar -xJ --strip-components=1 -C /out/bin/; \
     \
     echo "--- Downloading caddy ---"; \
     curl -fsSL "https://caddyserver.com/api/download?os=linux&arch=${CADDY_ARCH}" \
-      -o /out/bin/caddy \
-    || echo "WARN: caddy download failed"; \
+      -o /out/bin/caddy; \
     \
     echo "--- Downloading yazi ---"; \
     YAZI_TAG=$(curl -fsSL "https://api.github.com/repos/sxyazi/yazi/releases/latest" \
@@ -143,13 +133,13 @@ RUN set -eux; \
     rm -f /out/bin/LICENSE* /out/bin/README* /out/bin/CHANGELOG* /out/bin/checksums* 2>/dev/null || true; \
     chmod +x /out/bin/* 2>/dev/null || true; \
     echo "=== Downloaded binaries ==="; ls -la /out/bin/; \
-    echo "=== Frontend files ==="; ls /out/frontend/ | head -5; \
+    echo "=== Frontend files ==="; ls /out/frontend/ | head -10; \
     \
     # ================================================================== \
     # Verify required binaries exist \
     # ================================================================== \
     MISSING=""; \
-    for bin in oqto oqtoctl oqto-runner oqto-files hstry eavs caddy; do \
+    for bin in oqto oqtoctl oqto-runner oqto-files pi-bridge hstry eavs caddy; do \
       if [ ! -f "/out/bin/$bin" ]; then MISSING="$MISSING $bin"; fi; \
     done; \
     if [ -n "$MISSING" ]; then \
@@ -158,23 +148,7 @@ RUN set -eux; \
     echo "=== All required binaries present ==="
 
 # ---------------------------------------------------------------------------
-# Stage 2: Build tools without pre-built releases (source fallback)
-# ---------------------------------------------------------------------------
-FROM rust:bookworm AS tools-source-builder
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    pkg-config libssl-dev git \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN mkdir -p /out
-
-# tmpltr (no GitHub releases yet)
-RUN cargo install --git https://github.com/byteowlz/tmpltr.git --root /build \
-    && cp /build/bin/tmpltr /out/ \
-    || echo "WARN: tmpltr build failed"
-
-# ---------------------------------------------------------------------------
-# Stage 3: Final image
+# Stage 2: Final image
 # ---------------------------------------------------------------------------
 FROM debian:bookworm-slim
 
@@ -231,18 +205,13 @@ RUN bun install -g @mariozechner/pi-coding-agent \
     && chmod 755 /usr/local/bin/pi \
     && rm -rf /root/.bun/install
 
-# --- Copy binaries from builder stages ---
-
-# All pre-built binaries (oqto + byteowlz tools + external tools)
+# --- Copy binaries from downloader stage ---
 COPY --from=downloader /out/bin/ /usr/local/bin/
 
-# Source-built tools (no pre-built releases available)
-COPY --from=tools-source-builder /out/ /usr/local/bin/
-
-# Frontend static assets (pre-built from oqto release)
+# Frontend static assets
 COPY --from=downloader /out/frontend/ /usr/local/share/oqto/frontend/
 
-# hstry adapters (download from GitHub)
+# hstry adapters (JS scripts for parsing agent session files)
 RUN mkdir -p /usr/local/share/hstry/adapters \
     && curl -fsSL "https://github.com/byteowlz/hstry/archive/refs/heads/main.tar.gz" \
        | tar xz --strip-components=2 -C /usr/local/share/hstry/adapters/ "*/adapters/" \
@@ -254,13 +223,9 @@ ENV LANG=en_US.UTF-8 \
     LC_ALL=en_US.UTF-8 \
     TERM=xterm-256color \
     SHELL=/bin/zsh \
-    # Data directories (mountable volume)
     OQTO_DATA_DIR=/data \
-    # Ports (internal)
     OQTO_PORT=8080 \
-    EAVS_PORT=3033 \
-    # Config
-    OQTO_CONFIG=/etc/oqto/config.toml
+    EAVS_PORT=3033
 
 # --- Create oqto user ---
 
@@ -277,11 +242,10 @@ RUN mkdir -p \
     /data/eavs \
     /data/users \
     /data/workspaces \
-    /etc/oqto \
     /run/oqto \
-    && chown -R oqto:oqto /data /etc/oqto /run/oqto
+    && chown -R oqto:oqto /data /run/oqto
 
-# --- Caddy config (reverse proxy: frontend + API) ---
+# --- Caddy config (placeholder, overwritten by entrypoint) ---
 
 RUN mkdir -p /etc/caddy
 COPY deploy/docker/Caddyfile /etc/caddy/Caddyfile
@@ -291,9 +255,7 @@ COPY deploy/docker/Caddyfile /etc/caddy/Caddyfile
 COPY deploy/docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
-# Single exposed port (caddy fronts everything)
 EXPOSE 8080
-
 VOLUME ["/data"]
 
 ENTRYPOINT ["tini", "--"]
