@@ -65,7 +65,7 @@ RUN set -eux; \
     esac; \
     \
     GH="https://github.com/byteowlz"; \
-    tag() { curl -fsSL "$1/releases/latest" -o /dev/null -w '%{redirect_url}' | grep -o '[^/]*$'; }; \
+    tag() { curl -fsS -o /dev/null -w '%{redirect_url}' "$1/releases/latest" | grep -o '[^/]*$'; }; \
     \
     # ================================================================== \
     # Oqto platform \
