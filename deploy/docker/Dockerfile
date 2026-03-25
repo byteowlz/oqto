@@ -42,11 +42,13 @@
 #   oqto:  oqto-{tag}-{target}.tar.gz         (binaries in bin/ subdir)
 #          oqto-frontend-{tag}.tar.gz          (static assets in dist/)
 #
-FROM alpine:3.21 AS downloader
+FROM ubuntu:24.04 AS downloader
 
 ARG TARGETARCH
 
-RUN apk add --no-cache curl ca-certificates xz unzip bash
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl ca-certificates xz-utils unzip \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /out
 RUN mkdir -p /out/bin /out/frontend
@@ -180,8 +182,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # Fonts (for tmpltr PDF rendering)
     fonts-liberation fonts-noto fonts-noto-color-emoji fonts-dejavu \
     fonts-roboto fonts-inter \
+    # Init system (per-user systemd sessions for runner/hstry/mmry)
+    systemd systemd-sysv dbus \
     # Misc
-    procps tini locales \
+    procps locales \
     && rm -rf /var/lib/apt/lists/* \
     # Generate locale
     && locale-gen en_US.UTF-8 \
@@ -256,9 +260,6 @@ RUN mkdir -p \
     /run/oqto \
     && chown -R oqto:oqto /data /run/oqto
 
-# Stub loginctl (systemd linger not available in containers, oqto-usermgr calls it)
-RUN printf '#!/bin/sh\nexit 0\n' > /usr/bin/loginctl && chmod +x /usr/bin/loginctl
-
 # --- Caddy config (placeholder, overwritten by entrypoint) ---
 
 RUN mkdir -p /etc/caddy
@@ -269,8 +270,26 @@ COPY deploy/docker/Caddyfile /etc/caddy/Caddyfile
 COPY deploy/docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
-EXPOSE 8080
-VOLUME ["/data"]
+# Clean up systemd units we don't need in a container
+RUN (cd /lib/systemd/system/sysinit.target.wants/ && ls | grep -v systemd-tmpfiles-setup | xargs rm -f) \
+    && rm -f /lib/systemd/system/multi-user.target.wants/* \
+    && rm -f /etc/systemd/system/*.wants/* \
+    && rm -f /lib/systemd/system/local-fs.target.wants/* \
+    && rm -f /lib/systemd/system/sockets.target.wants/*udev* \
+    && rm -f /lib/systemd/system/sockets.target.wants/*initctl* \
+    && rm -f /lib/systemd/system/basic.target.wants/* \
+    && rm -f /lib/systemd/system/anaconda.target.wants/* \
+    && rm -f /lib/systemd/system/getty.target.wants/* \
+    && rm -f /lib/systemd/system/getty@.service \
+    && rm -f /lib/systemd/system/systemd-update-utmp*
 
-ENTRYPOINT ["tini", "--"]
-CMD ["/usr/local/bin/entrypoint.sh"]
+# Create oqto systemd service that runs the entrypoint
+RUN printf '[Unit]\nDescription=Oqto Platform\nAfter=dbus.service\n\n[Service]\nType=simple\nExecStart=/usr/local/bin/entrypoint.sh\nRestart=on-failure\nRestartSec=5\nStandardOutput=journal+console\nStandardError=journal+console\n\n[Install]\nWantedBy=multi-user.target\n' \
+    > /etc/systemd/system/oqto.service \
+    && systemctl enable oqto.service
+
+EXPOSE 8080
+VOLUME ["/data", "/run", "/tmp"]
+STOPSIGNAL SIGRTMIN+3
+
+ENTRYPOINT ["/sbin/init"]
