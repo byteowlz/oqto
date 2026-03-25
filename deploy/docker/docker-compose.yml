@@ -43,7 +43,7 @@ services:
       - OQTO_LOG_LEVEL=${OQTO_LOG_LEVEL:-info}
       - OQTO_SINGLE_USER=${OQTO_SINGLE_USER:-false}
     volumes:
-      - oqto-data:/data
+      - ${OQTO_DATA_PATH:-oqto-data}:/data
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://127.0.0.1:8080/health"]
       interval: 15s
