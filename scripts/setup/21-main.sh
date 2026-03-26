@@ -71,6 +71,7 @@ Environment Variables:
   OQTO_LOG_LEVEL          error, warn, info, debug, trace (default: info)
   OQTO_SETUP_CADDY        yes or no (default: prompt user in production mode)
   OQTO_DOMAIN             domain for HTTPS (e.g., oqto.example.com)
+  OQTO_CADDY_PORT         local/non-TLS Caddy port (default: 80, e.g. 8086)
 
 Server Hardening (Linux production mode only):
   OQTO_HARDEN_SERVER      yes or no (default: prompt in production mode)

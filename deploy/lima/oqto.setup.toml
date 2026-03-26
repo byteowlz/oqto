@@ -1,0 +1,23 @@
+$schema = "https://raw.githubusercontent.com/byteowlz/oqto_refactor/main/scripts/setup/oqto.setup.schema.json"
+
+[deployment]
+user_mode = "multi"
+backend_mode = "local"
+workspace_dir = "/home/oqto/workspaces"
+
+[network]
+log_level = "info"
+caddy = true
+domain = "localhost"
+caddy_port = 8086
+
+[admin]
+username = "admin"
+email = "admin@oqto.local"
+
+[tools]
+install_all = true
+searxng = true
+
+[hardening]
+enabled = false

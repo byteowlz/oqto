@@ -180,6 +180,7 @@ load_setup_config() {
         network.log_level)          OQTO_LOG_LEVEL="$val" ;;
         network.caddy)              [[ "$val" == "true" ]] && SETUP_CADDY="yes" && OQTO_SETUP_CADDY="yes" ;;
         network.domain)             DOMAIN="$val"; OQTO_DOMAIN="$val" ;;
+        network.caddy_port)         OQTO_CADDY_PORT="$val" ;;
         admin.username)             ADMIN_USERNAME="$val" ;;
         admin.email)                ADMIN_EMAIL="$val" ;;
         providers.enabled)

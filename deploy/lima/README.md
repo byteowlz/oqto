@@ -1,42 +1,40 @@
-# Oqto on Lima (macOS)
+# Oqto on Lima (native Linux mode, no Docker-in-Lima)
 
-This gives you a Linux VM with Docker, then runs `deploy/docker` inside that VM.
+Use Lima as a real Linux VM and run Oqto with `setup.sh`.
 
 ## Prerequisites
 
 - macOS
-- [Lima](https://lima-vm.io/) installed (`brew install lima`)
+- Lima installed (`brew install lima`)
 - `jq` installed (`brew install jq`)
 
-## Quick start
-
-From repo root:
+## 1) Start the VM
 
 ```bash
-./deploy/lima/bootstrap.sh up
+limactl start --name oqto deploy/lima/oqto.yaml
 ```
 
-Open:
+## 2) Run setup with Lima profile
+
+```bash
+limactl shell oqto -- bash -lc '
+  cd "$HOME/byteowlz/oqto_refactor" && \
+  ./setup.sh --config deploy/lima/oqto.setup.toml
+'
+```
+
+The profile sets:
+
+- multi-user mode (`deployment.user_mode = "multi"`)
+- local backend mode (`deployment.backend_mode = "local"`)
+- Caddy enabled on `localhost:8086`
+- `searxng = true`
+
+## 3) Open Oqto
 
 - http://localhost:8086
 
-Default local login (set by bootstrap if not present in `.env`):
-
-- username: `admin`
-- password: `admin123456`
-
-## Commands
-
-```bash
-./deploy/lima/bootstrap.sh up       # start VM + start oqto docker compose
-./deploy/lima/bootstrap.sh status   # VM + compose status
-./deploy/lima/bootstrap.sh logs     # follow oqto logs
-./deploy/lima/bootstrap.sh ssh      # shell into VM
-./deploy/lima/bootstrap.sh down     # stop compose + stop VM
-```
-
 ## Notes
 
-- The VM template is `deploy/lima/oqto.yaml`.
-- Host home is mounted into the VM, so your repo path is available unchanged.
-- This setup uses the Docker single-user runtime (`OQTO_SINGLE_USER=true`) for reliability.
+- Caddy is configured without Let's Encrypt in this profile (`domain = "localhost"`).
+- To change the local Caddy port, edit `network.caddy_port` in `deploy/lima/oqto.setup.toml`.
