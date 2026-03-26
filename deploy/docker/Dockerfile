@@ -205,14 +205,16 @@ RUN curl -fsSL https://astral.sh/uv/install.sh | sh \
 # Install zoxide (smart cd)
 RUN curl -fsSL https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | sh
 
-# Install Pi (AI agent runtime)
-RUN bun install -g @mariozechner/pi-coding-agent \
+# Install Pi (AI agent runtime) + agent-browser CLI
+RUN bun install -g @mariozechner/pi-coding-agent agent-browser \
     && PI_PKG="/root/.bun/install/global/node_modules/@mariozechner/pi-coding-agent" \
     && mkdir -p /usr/local/lib/pi-coding-agent \
     && cp -a "$PI_PKG/." /usr/local/lib/pi-coding-agent/ \
     && cd /usr/local/lib/pi-coding-agent && bun install 2>/dev/null || true \
     && printf '#!/bin/sh\nPI_PKG="/usr/local/lib/pi-coding-agent"\nexport PI_PACKAGE_DIR="$PI_PKG"\nexport NODE_PATH="$PI_PKG/node_modules${NODE_PATH:+:$NODE_PATH}"\nexec /usr/local/bin/bun "$PI_PKG/dist/cli.js" "$@"\n' > /usr/local/bin/pi \
     && chmod 755 /usr/local/bin/pi \
+    && if [ -f /root/.bun/bin/agent-browser ]; then cp /root/.bun/bin/agent-browser /usr/local/bin/agent-browser; fi \
+    && chmod 755 /usr/local/bin/agent-browser 2>/dev/null || true \
     && rm -rf /root/.bun/install
 
 # --- Copy binaries from downloader stage ---

@@ -45,6 +45,7 @@ JWT_SECRET="${JWT_SECRET:-}"
 
 # Internal ports (not exposed)
 OQTO_BACKEND_PORT=8081
+MMRY_PORT=40111
 
 PIDS=()
 
@@ -326,6 +327,9 @@ enabled = false
 [sessions]
 
 [mmry]
+enabled = true
+local_service_url = "http://127.0.0.1:${MMRY_PORT}"
+binary = "mmry"
 
 [sldr]
 
@@ -341,6 +345,11 @@ admin_socket_path = "/run/oqto/oqtoctl.sock"
 [pi]
 
 [agent_browser]
+enabled = true
+binary = "agent-browser"
+headed = false
+stream_port_base = 30000
+stream_port_range = 10000
 
 [onboarding_templates]
 
@@ -427,7 +436,18 @@ su -s /bin/bash oqto -c "
 PIDS+=($!)
 wait_for_port "$EAVS_PORT" "eavs" 15
 
-# 3. oqto-runner (single-user mode)
+# 3. mmry (memory service for frontend memory features)
+log "Starting mmry service..."
+su -s /bin/bash oqto -c "
+  export HOME=/home/oqto
+  export XDG_CONFIG_HOME=/home/oqto/.config
+  export XDG_DATA_HOME=/home/oqto/.local/share
+  export XDG_STATE_HOME=/home/oqto/.local/state
+  mmry service run 2>&1 | sed 's/^/[mmry] /'
+" &
+PIDS+=($!)
+
+# 4. oqto-runner (single-user mode)
 if [ "$OQTO_SINGLE_USER" = "true" ]; then
   log "Starting oqto-runner..."
   su -s /bin/bash oqto -c "
@@ -439,7 +459,7 @@ if [ "$OQTO_SINGLE_USER" = "true" ]; then
   wait_for_socket "/run/oqto/oqto-runner.sock" "oqto-runner" 20
 fi
 
-# 4. oqto backend
+# 5. oqto backend
 log "Starting oqto backend..."
 
 OQTO_LOG="/tmp/oqto.log"
@@ -469,7 +489,7 @@ if ! wait_for_port "$OQTO_BACKEND_PORT" "oqto" 30 "/api/health"; then
   exit 1
 fi
 
-# 4. Bootstrap admin user (first run only)
+# 6. Bootstrap admin user (first run only)
 # Note: even in single-user/dev mode we create an admin account because the
 # current frontend still uses the login screen.
 if [ ! -f "${OQTO_DATA_DIR}/oqto/.bootstrapped" ]; then
@@ -499,7 +519,7 @@ if [ ! -f "${OQTO_DATA_DIR}/oqto/.bootstrapped" ]; then
   touch "${OQTO_DATA_DIR}/oqto/.bootstrapped"
 fi
 
-# 5. caddy (reverse proxy + frontend)
+# 7. caddy (reverse proxy + frontend)
 log "Starting caddy..."
 caddy run --config /etc/caddy/Caddyfile --adapter caddyfile 2>&1 | sed 's/^/[caddy] /' &
 PIDS+=($!)
