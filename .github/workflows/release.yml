@@ -104,7 +104,12 @@ jobs:
             cp -r "$BROWSERD_DIR/bin" "$STAGING/lib/oqto-browserd/"
             cp -r "$BROWSERD_DIR/dist" "$STAGING/lib/oqto-browserd/"
             cp "$BROWSERD_DIR/package.json" "$STAGING/lib/oqto-browserd/"
-            cp "$BROWSERD_DIR/bun.lock" "$STAGING/lib/oqto-browserd/"
+            # bun lockfile is optional in repo (some setups don't track it)
+            if [[ -f "$BROWSERD_DIR/bun.lock" ]]; then
+              cp "$BROWSERD_DIR/bun.lock" "$STAGING/lib/oqto-browserd/"
+            elif [[ -f "$BROWSERD_DIR/bun.lockb" ]]; then
+              cp "$BROWSERD_DIR/bun.lockb" "$STAGING/lib/oqto-browserd/"
+            fi
           fi
 
           # Include systemd units
