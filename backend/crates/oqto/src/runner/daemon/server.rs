@@ -2398,8 +2398,9 @@ impl Runner {
 
         // Delete from hstry via direct SQLite as well, trying both the oqto ID and the
         // Pi native ID (covers cases where platform_id was not set).
+        // Must use the writable pool -- the default read-only pool silently drops mutations.
         if let Some(db_path) = crate::history::hstry_db_path()
-            && let Ok(pool) = crate::history::repository::open_hstry_pool(&db_path).await
+            && let Ok(pool) = crate::history::repository::open_hstry_write_pool(&db_path).await
         {
             // Delete by oqto session ID (platform_id) or Pi native ID (external_id)
             let _ = sqlx::query(
