@@ -1678,15 +1678,16 @@ impl Runner {
 
             // SECURITY: Only return sessions whose workspace belongs to this user.
             // Leaked cross-user sessions in hstry must never be exposed.
-            if let Ok(home) = std::env::var("HOME") {
-                if !workspace_path.starts_with(&home) && workspace_path != "global" {
-                    tracing::warn!(
-                        workspace = %workspace_path,
-                        home = %home,
-                        "Filtering out session with foreign workspace path"
-                    );
-                    continue;
-                }
+            if let Ok(home) = std::env::var("HOME")
+                && !workspace_path.starts_with(&home)
+                && workspace_path != "global"
+            {
+                tracing::warn!(
+                    workspace = %workspace_path,
+                    home = %home,
+                    "Filtering out session with foreign workspace path"
+                );
+                continue;
             }
 
             sessions.push(WorkspaceChatSessionInfo {
@@ -2052,10 +2053,17 @@ impl Runner {
                     .clone()
                     .unwrap_or_else(|| "global".to_string());
                 let project_name = crate::history::project_name_from_path(&workspace_path);
+                // Keep IDs stable with list/get endpoints: prefer platform_id
+                // (Oqto runner session ID) over external_id (Pi native ID).
+                let session_id = conv
+                    .platform_id
+                    .clone()
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or_else(|| conv.external_id.clone());
 
                 RunnerResponse::WorkspaceChatSessionUpdated(WorkspaceChatSessionUpdatedResponse {
                     session: WorkspaceChatSessionInfo {
-                        id: conv.external_id.clone(),
+                        id: session_id,
                         readable_id: conv.readable_id.clone().unwrap_or_default(),
                         title: conv.title.clone(),
                         parent_id: None,
@@ -2379,21 +2387,22 @@ impl Runner {
         let _ = self.pi_manager.close_session(&req.session_id).await;
 
         // Delete from hstry via gRPC.
-        if let Some(hstry_client) = self.pi_manager.hstry_client() {
-            if let Err(e) = hstry_client.delete_conversation(&hstry_external_id).await {
-                warn!(
-                    "Failed to delete conversation from hstry for session {}: {}",
-                    req.session_id, e
-                );
-            }
+        if let Some(hstry_client) = self.pi_manager.hstry_client()
+            && let Err(e) = hstry_client.delete_conversation(&hstry_external_id).await
+        {
+            warn!(
+                "Failed to delete conversation from hstry for session {}: {}",
+                req.session_id, e
+            );
         }
 
         // Delete from hstry via direct SQLite as well, trying both the oqto ID and the
         // Pi native ID (covers cases where platform_id was not set).
-        if let Some(db_path) = crate::history::hstry_db_path() {
-            if let Ok(pool) = crate::history::repository::open_hstry_pool(&db_path).await {
-                // Delete by oqto session ID (platform_id) or Pi native ID (external_id)
-                let _ = sqlx::query(
+        if let Some(db_path) = crate::history::hstry_db_path()
+            && let Ok(pool) = crate::history::repository::open_hstry_pool(&db_path).await
+        {
+            // Delete by oqto session ID (platform_id) or Pi native ID (external_id)
+            let _ = sqlx::query(
                     "DELETE FROM conversations WHERE source_id = 'pi' AND (external_id = ? OR platform_id = ? OR id = ?)"
                 )
                 .bind(&hstry_external_id)
@@ -2402,16 +2411,15 @@ impl Runner {
                 .execute(&pool)
                 .await;
 
-                // Also try with the oqto session ID as external_id (in case it was stored that way)
-                if hstry_external_id != req.session_id {
-                    let _ = sqlx::query(
+            // Also try with the oqto session ID as external_id (in case it was stored that way)
+            if hstry_external_id != req.session_id {
+                let _ = sqlx::query(
                         "DELETE FROM conversations WHERE source_id = 'pi' AND (external_id = ? OR platform_id = ?)"
                     )
                     .bind(&req.session_id)
                     .bind(&hstry_external_id)
                     .execute(&pool)
                     .await;
-                }
             }
         }
 
@@ -3240,10 +3248,10 @@ impl Runner {
                     }
 
                     let ok = RunnerResponse::Pong;
-                    if let Ok(line) = Self::serialize_response_line(&ok) {
-                        if writer.write_all(line.as_bytes()).await.is_err() {
-                            return;
-                        }
+                    if let Ok(line) = Self::serialize_response_line(&ok)
+                        && writer.write_all(line.as_bytes()).await.is_err()
+                    {
+                        return;
                     }
                 }
                 Err(_) => return,

@@ -1081,6 +1081,14 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 
 				const canonicalSessionId = updated.id || sessionId;
 				const canonicalTitle = (updated.title ?? title).trim();
+				const runnerAlias = runnerSessionsRef.current.find(
+					(s) =>
+						s.session_id === canonicalSessionId ||
+						s.hstry_id === canonicalSessionId ||
+						s.session_id === sessionId ||
+						s.hstry_id === sessionId,
+				);
+				const runnerSessionId = runnerAlias?.session_id;
 
 				// If backend canonicalized an optimistic ID, update local mappings.
 				if (canonicalSessionId !== sessionId) {
@@ -1115,10 +1123,16 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 				// title events from Pi don't overwrite the user's choice.
 				if (canonicalTitle) {
 					manuallyRenamedRef.current.set(canonicalSessionId, canonicalTitle);
+					manuallyRenamedRef.current.set(sessionId, canonicalTitle);
+					if (runnerSessionId) {
+						manuallyRenamedRef.current.set(runnerSessionId, canonicalTitle);
+					}
 				}
 				setChatHistory((prev) =>
 					prev.map((s) =>
-						s.id === canonicalSessionId || s.id === sessionId
+						s.id === canonicalSessionId ||
+						s.id === sessionId ||
+						(runnerSessionId != null && s.id === runnerSessionId)
 							? { ...s, id: canonicalSessionId, title: canonicalTitle }
 							: s,
 					),
@@ -1128,9 +1142,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 				// This prevents the runner from overwriting hstry with Pi's
 				// auto-generated title on the next state event.
 				const manager = getWsManager();
-				if (manager.isSessionReady(canonicalSessionId)) {
+				const runnerTargetId = runnerSessionId ?? canonicalSessionId;
+				if (manager.isSessionReady(runnerTargetId)) {
 					void manager
-						.agentSetSessionName(canonicalSessionId, canonicalTitle)
+						.agentSetSessionName(runnerTargetId, canonicalTitle)
 						.catch(() => {
 							// Best-effort -- runner notification is not critical.
 						});
