@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Easy Lima workflow for Oqto Docker dev runtime.
+# Native Lima workflow (no Docker-in-Lima)
 #
 # Commands:
 #   ./deploy/lima/bootstrap.sh up [vm-name]
+#   ./deploy/lima/bootstrap.sh setup [vm-name]
 #   ./deploy/lima/bootstrap.sh ssh [vm-name]
 #   ./deploy/lima/bootstrap.sh logs [vm-name]
 #   ./deploy/lima/bootstrap.sh status [vm-name]
@@ -15,6 +16,7 @@ VM_NAME="${2:-oqto}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 TEMPLATE="${SCRIPT_DIR}/oqto.yaml"
+SETUP_CONFIG="${SCRIPT_DIR}/oqto.setup.toml"
 
 require() {
   command -v "$1" >/dev/null 2>&1 || {
@@ -41,49 +43,16 @@ ensure_vm() {
   fi
 }
 
-start_oqto() {
-  local repo_in_vm="${REPO_ROOT}"
-
+run_setup() {
   run_in_vm bash -lc "
     set -euo pipefail
-
-    if [ ! -d '${repo_in_vm}/deploy/docker' ]; then
-      echo 'error: repo path not mounted in VM:' '${repo_in_vm}' >&2
-      echo 'hint: ensure your repo is inside your home directory (mounted by Lima).' >&2
-      exit 1
-    fi
-
-    cd '${repo_in_vm}/deploy/docker'
-
-    if [ ! -f .env ]; then
-      cp .env.example .env
-    fi
-
-    # Docker mode defaults to single-user. Keep that explicit.
-    if ! grep -q '^OQTO_SINGLE_USER=' .env; then
-      echo 'OQTO_SINGLE_USER=true' >> .env
-    else
-      sed -i 's/^OQTO_SINGLE_USER=.*/OQTO_SINGLE_USER=true/' .env
-    fi
-
-    # Make login deterministic for local dev.
-    if ! grep -q '^ADMIN_USER=' .env; then
-      echo 'ADMIN_USER=admin' >> .env
-    fi
-    if ! grep -q '^ADMIN_PASSWORD=' .env; then
-      echo 'ADMIN_PASSWORD=admin123456' >> .env
-    elif grep -q '^ADMIN_PASSWORD=$' .env; then
-      sed -i 's/^ADMIN_PASSWORD=$/ADMIN_PASSWORD=admin123456/' .env
-    fi
-
-    docker compose build
-    docker compose up -d
+    cd '${REPO_ROOT}'
+    ./setup.sh --config '${SETUP_CONFIG}'
   "
 
   echo
-  echo "[oqto] started in VM '${VM_NAME}'"
+  echo "[oqto] setup complete"
   echo "[oqto] URL: http://localhost:8086"
-  echo "[oqto] Login: admin / admin123456 (unless overridden in deploy/docker/.env)"
 }
 
 case "${CMD}" in
@@ -91,7 +60,12 @@ case "${CMD}" in
     require limactl
     require jq
     ensure_vm
-    start_oqto
+    ;;
+  setup)
+    require limactl
+    require jq
+    ensure_vm
+    run_setup
     ;;
   ssh)
     require limactl
@@ -99,21 +73,20 @@ case "${CMD}" in
     ;;
   logs)
     require limactl
-    run_in_vm bash -lc "cd '${REPO_ROOT}/deploy/docker' && docker compose logs -f"
+    run_in_vm bash -lc "sudo journalctl -u oqto -f"
     ;;
   status)
     require limactl
     limactl list
     echo
-    run_in_vm bash -lc "cd '${REPO_ROOT}/deploy/docker' && docker compose ps" || true
+    run_in_vm bash -lc "systemctl status oqto --no-pager || true"
     ;;
   down)
     require limactl
-    run_in_vm bash -lc "cd '${REPO_ROOT}/deploy/docker' && docker compose down" || true
     limactl stop "${VM_NAME}" || true
     ;;
   *)
-    echo "usage: $0 {up|ssh|logs|status|down} [vm-name]" >&2
+    echo "usage: $0 {up|setup|ssh|logs|status|down} [vm-name]" >&2
     exit 1
     ;;
 esac

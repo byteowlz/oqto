@@ -35,18 +35,10 @@ provision:
 
       apt-get update
       apt-get install -y --no-install-recommends \
-        ca-certificates curl git jq make \
-        docker.io docker-compose-v2
+        ca-certificates curl git jq make sudo
 
-      systemctl enable docker
-      systemctl start docker
-
-      # Allow the default lima user to run docker without sudo.
-      usermod -aG docker "${LIMA_CIDATA_USER}" || true
-
-      # Helpful for local dev ergonomics.
       mkdir -p /etc/oqto
       cat >/etc/oqto/README <<'EOF'
-      This VM is prepared for Oqto Docker development.
-      Use deploy/lima/bootstrap.sh to start Oqto.
+      This VM is prepared for native Oqto setup.
+      Run: ./deploy/lima/bootstrap.sh setup
       EOF

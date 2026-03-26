@@ -241,6 +241,9 @@ container-build:
 lima-up name="oqto":
     ./deploy/lima/bootstrap.sh up {{name}}
 
+lima-setup name="oqto":
+    ./deploy/lima/bootstrap.sh setup {{name}}
+
 lima-ssh name="oqto":
     ./deploy/lima/bootstrap.sh ssh {{name}}
 

@@ -22,6 +22,7 @@ PROJECT_TEMPLATES_PATH_DEFAULT="/usr/share/oqto/oqto-templates/agents/"
 : "${OQTO_LOG_LEVEL:=info}"          # error, warn, info, debug, trace
 : "${OQTO_SETUP_CADDY:=}"            # yes or no - empty = prompt
 : "${OQTO_DOMAIN:=}"                 # domain for HTTPS (e.g., oqto.example.com)
+: "${OQTO_CADDY_PORT:=80}"           # Caddy listen port (local/non-TLS; default 80)
 
 # Server hardening options (Linux only, requires root)
 : "${OQTO_HARDEN_SERVER:=}"         # yes or no - empty = prompt in production mode

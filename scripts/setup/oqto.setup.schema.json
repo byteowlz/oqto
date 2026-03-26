@@ -51,6 +51,12 @@
         "domain": {
           "type": "string",
           "description": "Primary domain for production deployments"
+        },
+        "caddy_port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "description": "Caddy listen port for local/non-TLS setups (e.g. 8086)"
         }
       },
       "additionalProperties": false
