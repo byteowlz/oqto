@@ -576,13 +576,13 @@ pub enum WsEvent {
     /// Canonical agent events (streaming, state, command responses, delegation, etc.).
     /// Serializes as `{"channel": "agent", "session_id": ..., "event": ..., ...}`.
     #[serde(rename = "agent")]
-    Agent(oqto_protocol::events::Event),
+    Agent(Box<oqto_protocol::events::Event>),
     Files(FilesWsEvent),
     Terminal(TerminalWsEvent),
     Hstry(HstryWsEvent),
     Trx(TrxWsEvent),
     System(SystemWsEvent),
-    Bus(crate::bus::BusWsEvent),
+    Bus(Box<crate::bus::BusWsEvent>),
 }
 
 /// Files channel events (placeholder).
@@ -1179,7 +1179,8 @@ async fn handle_multiplexed_ws(
     let event_tx_for_bus = event_tx.clone();
     let bus_forwarder = tokio::spawn(async move {
         while let Some(bus_event) = bus_rx.recv().await {
-            let ws_event = WsEvent::Bus(crate::bus::BusWsEvent::Event(bus_event));
+            let ws_event =
+                WsEvent::Bus(Box::new(crate::bus::BusWsEvent::Event(Box::new(bus_event))));
             if event_tx_for_bus.send(ws_event).is_err() {
                 break;
             }
@@ -1802,7 +1803,7 @@ fn agent_response_with_runner(
         Ok(data) => (true, data, None),
         Err(e) => (false, None, Some(e)),
     };
-    WsEvent::Agent(oqto_protocol::events::Event {
+    WsEvent::Agent(Box::new(oqto_protocol::events::Event {
         session_id: session_id.to_string(),
         runner_id: runner_id.to_string(),
         ts: Utc::now().timestamp_millis(),
@@ -1815,7 +1816,7 @@ fn agent_response_with_runner(
                 error,
             },
         ),
-    })
+    }))
 }
 
 const RESPONSE_WATCHDOG_TIMEOUT: Duration = Duration::from_secs(45);
@@ -1853,7 +1854,7 @@ async fn emit_terminal_send_failure(
             phase: Some(oqto_protocol::events::AgentPhase::Generating),
         },
     };
-    let _ = event_tx.send(WsEvent::Agent(error_event));
+    let _ = event_tx.send(WsEvent::Agent(Box::new(error_event)));
 
     let idle_event = oqto_protocol::events::Event {
         session_id: session_id.to_string(),
@@ -1863,7 +1864,7 @@ async fn emit_terminal_send_failure(
             message_version: None,
         },
     };
-    let _ = event_tx.send(WsEvent::Agent(idle_event));
+    let _ = event_tx.send(WsEvent::Agent(Box::new(idle_event)));
 }
 
 async fn arm_response_watchdog(
@@ -1896,7 +1897,7 @@ async fn arm_response_watchdog(
                 phase: Some(oqto_protocol::events::AgentPhase::Generating),
             },
         };
-        let _ = event_tx.send(WsEvent::Agent(error_event));
+        let _ = event_tx.send(WsEvent::Agent(Box::new(error_event)));
 
         let idle_event = oqto_protocol::events::Event {
             session_id: session_id_owned,
@@ -1906,7 +1907,7 @@ async fn arm_response_watchdog(
                 message_version: None,
             },
         };
-        let _ = event_tx.send(WsEvent::Agent(idle_event));
+        let _ = event_tx.send(WsEvent::Agent(Box::new(idle_event)));
     });
 
     let mut state_guard = conn_state.lock().await;
@@ -2090,10 +2091,10 @@ async fn handle_get_messages(
         |messages: Value, message_version: Option<oqto_protocol::events::MessageVersion>| {
             let mut data = serde_json::Map::new();
             data.insert("messages".to_string(), messages);
-            if let Some(version) = message_version {
-                if let Ok(version_json) = serde_json::to_value(version) {
-                    data.insert("message_version".to_string(), version_json);
-                }
+            if let Some(version) = message_version
+                && let Ok(version_json) = serde_json::to_value(version)
+            {
+                data.insert("message_version".to_string(), version_json);
             }
             Value::Object(data)
         };
@@ -2345,11 +2346,11 @@ async fn forward_pi_events(
                     oqto_protocol::events::EventPayload::AgentIdle { .. }
                 ) {
                     let mut cache = PI_MESSAGES_CACHE.write().await;
-                    if let Some(user_cache) = cache.get_mut(user_id) {
-                        if let Some(entry) = user_cache.entries.remove(session_id) {
-                            user_cache.total_bytes =
-                                user_cache.total_bytes.saturating_sub(entry.size_bytes);
-                        }
+                    if let Some(user_cache) = cache.get_mut(user_id)
+                        && let Some(entry) = user_cache.entries.remove(session_id)
+                    {
+                        user_cache.total_bytes =
+                            user_cache.total_bytes.saturating_sub(entry.size_bytes);
                     }
                 }
                 if event_tx.send(WsEvent::Agent(canonical_event)).is_err() {
@@ -2533,33 +2534,37 @@ async fn handle_copy_to_workspace(
         .map(|lu| lu.linux_username(user_id))
         .unwrap_or_else(|| user_id.to_string());
     let is_multi_user = state.linux_users.is_some();
-    let user_plane: Arc<dyn UserPlane> = if let Some(endpoint) = state.runner_endpoint.as_ref() {
-        match RunnerUserPlane::for_user_with_endpoint(&linux_username, endpoint) {
-            Ok(plane) => {
-                let base: Arc<dyn UserPlane> = Arc::new(plane);
-                Arc::new(MeteredUserPlane::new(
-                    base,
-                    UserPlanePath::Runner,
-                    state.user_plane_metrics.clone(),
-                ))
-            }
-            Err(err) => {
-                error!(
-                    "Failed to create RunnerUserPlane for {}: {:#}",
-                    linux_username, err
-                );
+    let user_plane: Arc<dyn UserPlane> = if is_multi_user {
+        match state.runner_endpoint.as_ref() {
+            Some(endpoint) => match RunnerUserPlane::for_user_with_endpoint(&linux_username, endpoint)
+            {
+                Ok(plane) => {
+                    let base: Arc<dyn UserPlane> = Arc::new(plane);
+                    Arc::new(MeteredUserPlane::new(
+                        base,
+                        UserPlanePath::Runner,
+                        state.user_plane_metrics.clone(),
+                    ))
+                }
+                Err(err) => {
+                    error!(
+                        "Failed to create RunnerUserPlane for {}: {:#}",
+                        linux_username, err
+                    );
+                    return Some(WsEvent::Files(FilesWsEvent::Error {
+                        id,
+                        error: "File access unavailable: user runner not reachable".into(),
+                    }));
+                }
+            },
+            None => {
+                error!("Multi-user mode without runner_endpoint configured");
                 return Some(WsEvent::Files(FilesWsEvent::Error {
                     id,
-                    error: "File access unavailable: user runner not reachable".into(),
+                    error: "File access not configured for multi-user mode".into(),
                 }));
             }
         }
-    } else if is_multi_user {
-        error!("Multi-user mode without runner_endpoint configured");
-        return Some(WsEvent::Files(FilesWsEvent::Error {
-            id,
-            error: "File access not configured for multi-user mode".into(),
-        }));
     } else {
         match RunnerUserPlane::new_default() {
             Ok(plane) => {
@@ -3028,7 +3033,7 @@ mod tests {
     fn test_serialize_agent_command_response() {
         use oqto_protocol::events::{CommandResponse, EventPayload};
 
-        let event = WsEvent::Agent(oqto_protocol::events::Event {
+        let event = WsEvent::Agent(Box::new(oqto_protocol::events::Event {
             session_id: "ses_123".into(),
             runner_id: "local".into(),
             ts: 1738764000000,
@@ -3039,7 +3044,7 @@ mod tests {
                 data: None,
                 error: None,
             }),
-        });
+        }));
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains(r#""channel":"agent""#));
         assert!(json.contains(r#""event":"response""#));
@@ -3071,7 +3076,7 @@ mod tests {
     fn test_serialize_canonical_agent_event() {
         use oqto_protocol::events::EventPayload;
 
-        let event = WsEvent::Agent(oqto_protocol::events::Event {
+        let event = WsEvent::Agent(Box::new(oqto_protocol::events::Event {
             session_id: "ses_abc".into(),
             runner_id: "local".into(),
             ts: 1738764000000,
@@ -3080,7 +3085,7 @@ mod tests {
                 delta: "Hello".into(),
                 content_index: 0,
             },
-        });
+        }));
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains(r#""channel":"agent""#));
         assert!(json.contains(r#""event":"stream.text_delta""#));
@@ -3092,14 +3097,14 @@ mod tests {
     fn test_serialize_canonical_agent_idle() {
         use oqto_protocol::events::EventPayload;
 
-        let event = WsEvent::Agent(oqto_protocol::events::Event {
+        let event = WsEvent::Agent(Box::new(oqto_protocol::events::Event {
             session_id: "ses_abc".into(),
             runner_id: "local".into(),
             ts: 1738764000000,
             payload: EventPayload::AgentIdle {
                 message_version: None,
             },
-        });
+        }));
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains(r#""channel":"agent""#));
         assert!(json.contains(r#""event":"agent.idle""#));

@@ -369,6 +369,12 @@ impl EventSubscribers {
     }
 }
 
+impl Default for EventSubscribers {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // ============================================================================
 // Internal Session Structure
 // ============================================================================
@@ -1622,10 +1628,10 @@ impl PiSessionManager {
         let models_path = PathBuf::from(&home).join(".pi/agent/models.json");
 
         // Track mtime for cache invalidation
-        if let Ok(meta) = std::fs::metadata(&models_path) {
-            if let Ok(mtime) = meta.modified() {
-                *self.models_json_mtime.write().await = Some(mtime);
-            }
+        if let Ok(meta) = std::fs::metadata(&models_path)
+            && let Ok(mtime) = meta.modified()
+        {
+            *self.models_json_mtime.write().await = Some(mtime);
         }
 
         let content = match std::fs::read_to_string(&models_path) {
@@ -1724,10 +1730,10 @@ impl PiSessionManager {
 
         let mut merged = primary_arr;
         for model in secondary_arr {
-            if let Some(id) = model.get("id").and_then(|id| id.as_str()) {
-                if !seen.contains(id) {
-                    merged.push(model);
-                }
+            if let Some(id) = model.get("id").and_then(|id| id.as_str())
+                && !seen.contains(id)
+            {
+                merged.push(model);
             }
         }
         serde_json::Value::Array(merged)
@@ -2510,32 +2516,28 @@ impl PiSessionManager {
             // resets to idle automatically.
             PiSessionCommand::Prompt { .. }
             | PiSessionCommand::Steer { .. }
-            | PiSessionCommand::FollowUp { .. } => {
-                if !(is_idle || is_starting || is_streaming || is_stopping) {
-                    anyhow::bail!(
-                        "Session '{}' not ready (state={})",
-                        session_id,
-                        current_state
-                    );
-                }
+            | PiSessionCommand::FollowUp { .. }
+                if !(is_idle || is_starting || is_streaming || is_stopping) =>
+            {
+                anyhow::bail!(
+                    "Session '{}' not ready (state={})",
+                    session_id,
+                    current_state
+                );
             }
-            PiSessionCommand::Compact(_) => {
-                if !is_idle {
-                    anyhow::bail!(
-                        "Session '{}' not idle for compaction (state={})",
-                        session_id,
-                        current_state
-                    );
-                }
+            PiSessionCommand::Compact(_) if !is_idle => {
+                anyhow::bail!(
+                    "Session '{}' not idle for compaction (state={})",
+                    session_id,
+                    current_state
+                );
             }
-            PiSessionCommand::NewSession(_) | PiSessionCommand::SwitchSession(_) => {
-                if !is_idle {
-                    anyhow::bail!(
-                        "Session '{}' not idle for session switch (state={})",
-                        session_id,
-                        current_state
-                    );
-                }
+            PiSessionCommand::NewSession(_) | PiSessionCommand::SwitchSession(_) if !is_idle => {
+                anyhow::bail!(
+                    "Session '{}' not idle for session switch (state={})",
+                    session_id,
+                    current_state
+                );
             }
             _ => {}
         }
@@ -2900,7 +2902,7 @@ impl PiSessionManager {
 
                 // Handle responses vs events
                 let pi_event = match msg {
-                    PiMessage::Event(e) => e,
+                    PiMessage::Event(e) => *e,
                     PiMessage::Response(response) => {
                         debug!("Pi[{}] response: {:?}", session_id, response);
 
@@ -3334,41 +3336,38 @@ impl PiSessionManager {
                     if matches!(
                         enriched_payload,
                         oqto_protocol::events::EventPayload::AgentIdle { .. }
-                    ) {
-                        if let Some(error_text) = pending_error_text.take() {
-                            if let Some(ref client) = hstry_client {
-                                let eid = hstry_external_id.read().await.clone();
-                                let error_parts = serde_json::json!([{
-                                    "type": "error",
-                                    "id": format!("err-{}", chrono::Utc::now().timestamp_millis()),
-                                    "text": error_text
-                                }]);
-                                let now_ms = chrono::Utc::now().timestamp_millis();
-                                let msg = hstry_core::service::proto::Message {
-                                    idx: -1,
-                                    role: "error".to_string(),
-                                    content: error_text.clone(),
-                                    parts_json: error_parts.to_string(),
-                                    created_at_ms: Some(now_ms),
-                                    model: None,
-                                    tokens: None,
-                                    cost_usd: None,
-                                    metadata_json: String::new(),
-                                    sender_json: String::new(),
-                                    provider: None,
-                                    harness: Some("pi".to_string()),
-                                    client_id: None,
-                                    id: None,
-                                };
-                                if let Err(e) =
-                                    client.append_messages(&eid, vec![msg], Some(now_ms)).await
-                                {
-                                    warn!(
-                                        "Pi[{}] failed to persist error to hstry: {:?}",
-                                        session_id, e
-                                    );
-                                }
-                            }
+                    ) && let Some(error_text) = pending_error_text.take()
+                        && let Some(ref client) = hstry_client
+                    {
+                        let eid = hstry_external_id.read().await.clone();
+                        let error_parts = serde_json::json!([{
+                            "type": "error",
+                            "id": format!("err-{}", chrono::Utc::now().timestamp_millis()),
+                            "text": error_text
+                        }]);
+                        let now_ms = chrono::Utc::now().timestamp_millis();
+                        let msg = hstry_core::service::proto::Message {
+                            idx: -1,
+                            role: "error".to_string(),
+                            content: error_text.clone(),
+                            parts_json: error_parts.to_string(),
+                            created_at_ms: Some(now_ms),
+                            model: None,
+                            tokens: None,
+                            cost_usd: None,
+                            metadata_json: String::new(),
+                            sender_json: String::new(),
+                            provider: None,
+                            harness: Some("pi".to_string()),
+                            client_id: None,
+                            id: None,
+                        };
+                        if let Err(e) = client.append_messages(&eid, vec![msg], Some(now_ms)).await
+                        {
+                            warn!(
+                                "Pi[{}] failed to persist error to hstry: {:?}",
+                                session_id, e
+                            );
                         }
                     }
 
@@ -3435,14 +3434,16 @@ impl PiSessionManager {
                         || matches!(
                             pi_event,
                             PiEvent::MessageUpdate {
-                                assistant_message_event:
-                                    crate::pi::AssistantMessageEvent::TextDelta { .. }
-                                        | crate::pi::AssistantMessageEvent::TextEnd { .. }
-                                        | crate::pi::AssistantMessageEvent::ThinkingDelta { .. }
-                                        | crate::pi::AssistantMessageEvent::ToolcallDelta { .. }
-                                        | crate::pi::AssistantMessageEvent::Done { .. },
+                                ref assistant_message_event,
                                 ..
-                            }
+                            } if matches!(
+                                assistant_message_event.as_ref(),
+                                crate::pi::AssistantMessageEvent::TextDelta { .. }
+                                    | crate::pi::AssistantMessageEvent::TextEnd { .. }
+                                    | crate::pi::AssistantMessageEvent::ThinkingDelta { .. }
+                                    | crate::pi::AssistantMessageEvent::ToolcallDelta { .. }
+                                    | crate::pi::AssistantMessageEvent::Done { .. }
+                            )
                         );
                 if incremental_trigger {
                     let elapsed = last_incremental_persist.elapsed();

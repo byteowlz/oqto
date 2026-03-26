@@ -775,6 +775,7 @@ struct EavsConfig {
 /// EAVS OAuth login configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
+#[derive(Default)]
 struct EavsOAuthConfig {
     /// Enable per-user OAuth logins (Anthropic, OpenAI Codex, etc.).
     enabled: bool,
@@ -782,16 +783,6 @@ struct EavsOAuthConfig {
     providers: Vec<String>,
     /// Redirect URI to send to providers (required for OpenAI Codex).
     redirect_uri: Option<String>,
-}
-
-impl Default for EavsOAuthConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            providers: Vec::new(),
-            redirect_uri: None,
-        }
-    }
 }
 
 /// Voice mode configuration.
@@ -2015,11 +2006,17 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             .and_then(|e| e.container_url.clone())
     };
 
+    let local_runner_fallback = if ctx.config.local.single_user {
+        Some(crate::runner::client::USER_SOCKET_PATTERN)
+    } else {
+        ctx.config.local.runner_socket_pattern.as_deref()
+    };
+
     let resolved_runner_endpoint = ctx
         .config
         .backend
         .runner
-        .resolve_endpoint_pattern(ctx.config.local.runner_socket_pattern.as_deref())
+        .resolve_endpoint_pattern(local_runner_fallback)
         .context("resolving runner endpoint configuration")?;
 
     let session_config = session::SessionServiceConfig {
@@ -2407,6 +2404,9 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     state = state.with_onboarding(onboarding_service);
     info!("Onboarding service initialized");
 
+    // Set runner endpoint for all modes (single-user and multi-user).
+    state = state.with_runner_endpoint(resolved_runner_endpoint.clone());
+
     // Add Linux users config for multi-user isolation
     let mut linux_users_config: Option<local::LinuxUsersConfig> = None;
     if ctx.config.local.linux_users.enabled {
@@ -2420,8 +2420,6 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             create_home: ctx.config.local.linux_users.create_home,
         };
         state = state.with_linux_users(config.clone());
-        // Also set runner endpoint pattern for multi-user chat history access
-        state = state.with_runner_endpoint(resolved_runner_endpoint.clone());
         linux_users_config = Some(config);
     }
 
@@ -3364,16 +3362,14 @@ async fn ensure_pi_models_json(eavs_base_url: &str) {
     let models_json = eavs::generate_pi_models_json(&providers, base, api_key.as_deref());
 
     // Check if content actually changed to avoid unnecessary writes
-    if models_path.exists() {
-        if let Ok(existing) = std::fs::read_to_string(&models_path) {
-            if let Ok(existing_json) = serde_json::from_str::<serde_json::Value>(&existing) {
-                if existing_json == models_json {
-                    debug!("models.json is up to date");
-                    ensure_pi_settings_json(&pi_dir, &models_json);
-                    return;
-                }
-            }
-        }
+    if models_path.exists()
+        && let Ok(existing) = std::fs::read_to_string(&models_path)
+        && let Ok(existing_json) = serde_json::from_str::<serde_json::Value>(&existing)
+        && existing_json == models_json
+    {
+        debug!("models.json is up to date");
+        ensure_pi_settings_json(&pi_dir, &models_json);
+        return;
     }
 
     // Write models.json
@@ -3426,14 +3422,14 @@ fn read_eavs_api_key() -> Option<String> {
         .or_else(|| dirs::home_dir().map(|h| h.join(".config")))
         .map(|c| c.join("oqto").join("eavs.env"));
 
-    if let Some(path) = oqto_env {
-        if let Ok(contents) = std::fs::read_to_string(&path) {
-            for line in contents.lines() {
-                if let Some(value) = line.trim().strip_prefix("EAVS_API_KEY=") {
-                    let value = value.trim();
-                    if !value.is_empty() {
-                        return Some(value.to_string());
-                    }
+    if let Some(path) = oqto_env
+        && let Ok(contents) = std::fs::read_to_string(&path)
+    {
+        for line in contents.lines() {
+            if let Some(value) = line.trim().strip_prefix("EAVS_API_KEY=") {
+                let value = value.trim();
+                if !value.is_empty() {
+                    return Some(value.to_string());
                 }
             }
         }

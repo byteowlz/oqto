@@ -132,40 +132,44 @@ pub(super) async fn handle_files_command(
     }
 
     let is_multi_user = state.linux_users.is_some();
-    let user_plane: Arc<dyn UserPlane> = if let Some(endpoint) = state.runner_endpoint.as_ref() {
-        match RunnerUserPlane::for_user_with_endpoint(&linux_username, endpoint) {
-            Ok(plane) => {
-                let base: Arc<dyn UserPlane> = Arc::new(plane);
-                Arc::new(MeteredUserPlane::new(
-                    base,
-                    UserPlanePath::Runner,
-                    state.user_plane_metrics.clone(),
-                ))
-            }
-            Err(err) => {
-                // SECURITY: In multi-user mode, NEVER fall back to DirectUserPlane.
-                // DirectUserPlane runs as the oqto system user which has access to
-                // ALL user workspaces. We must only access files through the
-                // per-user runner.
-                error!(
-                    "Failed to create RunnerUserPlane for {}: {:#}",
-                    linux_username, err
-                );
+    let user_plane: Arc<dyn UserPlane> = if is_multi_user {
+        match state.runner_endpoint.as_ref() {
+            Some(endpoint) => match RunnerUserPlane::for_user_with_endpoint(&linux_username, endpoint)
+            {
+                Ok(plane) => {
+                    let base: Arc<dyn UserPlane> = Arc::new(plane);
+                    Arc::new(MeteredUserPlane::new(
+                        base,
+                        UserPlanePath::Runner,
+                        state.user_plane_metrics.clone(),
+                    ))
+                }
+                Err(err) => {
+                    // SECURITY: In multi-user mode, NEVER fall back to DirectUserPlane.
+                    // DirectUserPlane runs as the oqto system user which has access to
+                    // ALL user workspaces. We must only access files through the
+                    // per-user runner.
+                    error!(
+                        "Failed to create RunnerUserPlane for {}: {:#}",
+                        linux_username, err
+                    );
+                    return Some(WsEvent::Files(FilesWsEvent::Error {
+                        id,
+                        error: "File access unavailable: user runner not reachable".to_string(),
+                    }));
+                }
+            },
+            None => {
+                // Multi-user mode without runner endpoint — configuration error.
+                error!("Multi-user mode without runner_endpoint configured");
                 return Some(WsEvent::Files(FilesWsEvent::Error {
                     id,
-                    error: "File access unavailable: user runner not reachable".to_string(),
+                    error: "File access not configured for multi-user mode".to_string(),
                 }));
             }
         }
-    } else if is_multi_user {
-        // Multi-user mode without runner endpoint — configuration error.
-        error!("Multi-user mode without runner_endpoint configured");
-        return Some(WsEvent::Files(FilesWsEvent::Error {
-            id,
-            error: "File access not configured for multi-user mode".to_string(),
-        }));
     } else {
-        // Single-user mode is also runner-only.
+        // Single-user mode uses the default local runner socket.
         match RunnerUserPlane::new_default() {
             Ok(plane) => {
                 let base: Arc<dyn UserPlane> = Arc::new(plane);

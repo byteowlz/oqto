@@ -3,23 +3,22 @@
 /**
  * Request to create a new session.
  */
-export type CreateSessionRequest = {
-	/**
-	 * Path to the workspace directory.
-	 */
-	workspace_path: string | null;
-	/**
-	 * Container image to use (optional, defaults to oqto-dev).
-	 */
-	image: string | null;
-	/**
-	 * Agent name for the session.
-	 * Agents are defined in Pi's config or the workspace's
-	 * agents directory.
-	 */
-	agent: string | null;
-	/**
-	 * Environment variables to inject.
-	 */
-	env: { [key in string]?: string };
-};
+export type CreateSessionRequest = { 
+/**
+ * Path to the workspace directory.
+ */
+workspace_path: string | null, 
+/**
+ * Container image to use (optional, defaults to oqto).
+ */
+image: string | null, 
+/**
+ * Agent name for the session.
+ * Agents are defined in Pi's config or the workspace's
+ * agents directory.
+ */
+agent: string | null, 
+/**
+ * Environment variables to inject.
+ */
+env: { [key in string]?: string }, };

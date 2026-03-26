@@ -155,7 +155,7 @@ impl PromptManager {
 
         // Broadcast to connected clients
         let _ = self.broadcast_tx.send(PromptMessage::Created {
-            prompt: prompt.clone(),
+            prompt: Box::new(prompt.clone()),
         });
 
         // Show desktop notification if enabled and no UI connected

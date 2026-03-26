@@ -247,24 +247,26 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
 				<CommandSeparator />
 
 				<CommandGroup heading={t("command.navigation")}>
-					{apps.map((app) => {
-						const Icon = getAppIcon(app.id);
-						const label =
-							typeof app.label === "string"
-								? app.label
-								: locale === "en"
-									? app.label.en
-									: app.label.de;
-						return (
-							<CommandItem
-								key={app.id}
-								onSelect={() => handleNavigation(app.id)}
-							>
-								<Icon className="mr-2 h-4 w-4" />
-								<span>{label}</span>
-							</CommandItem>
-						);
-					})}
+					{apps
+						.filter((app) => app.id !== "sldr" && app.id !== "agents")
+						.map((app) => {
+							const Icon = getAppIcon(app.id);
+							const label =
+								typeof app.label === "string"
+									? app.label
+									: locale === "en"
+										? app.label.en
+										: app.label.de;
+							return (
+								<CommandItem
+									key={app.id}
+									onSelect={() => handleNavigation(app.id)}
+								>
+									<Icon className="mr-2 h-4 w-4" />
+									<span>{label}</span>
+								</CommandItem>
+							);
+						})}
 				</CommandGroup>
 			</CommandList>
 		</CommandDialog>

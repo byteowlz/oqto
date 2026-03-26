@@ -406,54 +406,48 @@ pub async fn register(
                 // provider and model.
                 if let Ok(home) = linux_users.get_user_home(linux_username) {
                     let models_path = std::path::PathBuf::from(&home).join(".pi/agent/models.json");
-                    if let Ok(content) = std::fs::read_to_string(&models_path) {
-                        if let Ok(config) = serde_json::from_str::<serde_json::Value>(&content) {
-                            if let Some(providers) =
-                                config.get("providers").and_then(|p| p.as_object())
-                            {
-                                // Take the first provider and its first model
-                                if let Some((provider_name, provider_config)) =
-                                    providers.iter().next()
-                                {
-                                    if let Some(first_model) = provider_config
-                                        .get("models")
-                                        .and_then(|m| m.as_array())
-                                        .and_then(|a| a.first())
-                                        .and_then(|m| m.get("id"))
-                                        .and_then(|id| id.as_str())
-                                    {
-                                        let settings = serde_json::json!({
-                                            "defaultProvider": provider_name,
-                                            "defaultModel": first_model,
-                                        });
-                                        let settings_str = serde_json::to_string_pretty(&settings)
-                                            .unwrap_or_default();
-                                        let rel_path = ".pi/agent/settings.json";
-                                        if let Err(e) = crate::local::linux_users::usermgr_request(
-                                            "write-file",
-                                            serde_json::json!({
-                                                "username": linux_username,
-                                                "path": rel_path,
-                                                "content": settings_str,
-                                                "group": "oqto",
-                                            }),
-                                        ) {
-                                            warn!(
-                                                user_id = %user.id,
-                                                error = ?e,
-                                                "Failed to write Pi settings.json (non-fatal)"
-                                            );
-                                        } else {
-                                            pi_settings_written = true;
-                                            info!(
-                                                user_id = %user.id,
-                                                provider = %provider_name,
-                                                model = %first_model,
-                                                "Wrote default Pi settings.json"
-                                            );
-                                        }
-                                    }
-                                }
+                    if let Ok(content) = std::fs::read_to_string(&models_path)
+                        && let Ok(config) = serde_json::from_str::<serde_json::Value>(&content)
+                        && let Some(providers) = config.get("providers").and_then(|p| p.as_object())
+                    {
+                        // Take the first provider and its first model
+                        if let Some((provider_name, provider_config)) = providers.iter().next()
+                            && let Some(first_model) = provider_config
+                                .get("models")
+                                .and_then(|m| m.as_array())
+                                .and_then(|a| a.first())
+                                .and_then(|m| m.get("id"))
+                                .and_then(|id| id.as_str())
+                        {
+                            let settings = serde_json::json!({
+                                "defaultProvider": provider_name,
+                                "defaultModel": first_model,
+                            });
+                            let settings_str =
+                                serde_json::to_string_pretty(&settings).unwrap_or_default();
+                            let rel_path = ".pi/agent/settings.json";
+                            if let Err(e) = crate::local::linux_users::usermgr_request(
+                                "write-file",
+                                serde_json::json!({
+                                    "username": linux_username,
+                                    "path": rel_path,
+                                    "content": settings_str,
+                                    "group": "oqto",
+                                }),
+                            ) {
+                                warn!(
+                                    user_id = %user.id,
+                                    error = ?e,
+                                    "Failed to write Pi settings.json (non-fatal)"
+                                );
+                            } else {
+                                pi_settings_written = true;
+                                info!(
+                                    user_id = %user.id,
+                                    provider = %provider_name,
+                                    model = %first_model,
+                                    "Wrote default Pi settings.json"
+                                );
                             }
                         }
                     }
@@ -471,81 +465,78 @@ pub async fn register(
 
     // Fallback: if eavs was not configured (or failed), still write Pi config files
     // so the new user has a working model selection and can start chatting.
-    if !pi_settings_written {
-        if let Some(ref _linux_users) = state.linux_users {
-            let linux_username = resolved_linux_username
-                .as_deref()
-                .or(user.linux_username.as_deref())
-                .unwrap_or(&user.id);
+    if !pi_settings_written && let Some(ref _linux_users) = state.linux_users {
+        let linux_username = resolved_linux_username
+            .as_deref()
+            .or(user.linux_username.as_deref())
+            .unwrap_or(&user.id);
 
-            // Write settings.json from oqto config defaults
-            if let (Some(provider), Some(model)) =
-                (&state.pi_default_provider, &state.pi_default_model)
-            {
-                let settings = serde_json::json!({
-                    "defaultProvider": provider,
-                    "defaultModel": model,
-                });
-                let settings_str = serde_json::to_string_pretty(&settings).unwrap_or_default();
-                if let Err(e) = crate::local::linux_users::usermgr_request(
-                    "write-file",
-                    serde_json::json!({
-                        "username": linux_username,
-                        "path": ".pi/agent/settings.json",
-                        "content": settings_str,
-                        "group": "oqto",
-                    }),
-                ) {
+        // Write settings.json from oqto config defaults
+        if let (Some(provider), Some(model)) = (&state.pi_default_provider, &state.pi_default_model)
+        {
+            let settings = serde_json::json!({
+                "defaultProvider": provider,
+                "defaultModel": model,
+            });
+            let settings_str = serde_json::to_string_pretty(&settings).unwrap_or_default();
+            if let Err(e) = crate::local::linux_users::usermgr_request(
+                "write-file",
+                serde_json::json!({
+                    "username": linux_username,
+                    "path": ".pi/agent/settings.json",
+                    "content": settings_str,
+                    "group": "oqto",
+                }),
+            ) {
+                warn!(
+                    user_id = %user.id,
+                    error = ?e,
+                    "Failed to write fallback Pi settings.json (non-fatal)"
+                );
+            } else {
+                info!(
+                    user_id = %user.id,
+                    provider = %provider,
+                    model = %model,
+                    "Wrote Pi settings.json from config defaults (no eavs)"
+                );
+            }
+        }
+
+        // Copy models.json from admin user template if available
+        if let Some(ref template_path) = state.pi_models_template_path
+            && template_path.exists()
+        {
+            match std::fs::read_to_string(template_path) {
+                Ok(content) => {
+                    if let Err(e) = crate::local::linux_users::usermgr_request(
+                        "write-file",
+                        serde_json::json!({
+                            "username": linux_username,
+                            "path": ".pi/agent/models.json",
+                            "content": content,
+                            "group": "oqto",
+                        }),
+                    ) {
+                        warn!(
+                            user_id = %user.id,
+                            error = ?e,
+                            "Failed to copy models.json template (non-fatal)"
+                        );
+                    } else {
+                        info!(
+                            user_id = %user.id,
+                            template = %template_path.display(),
+                            "Copied models.json template to new user"
+                        );
+                    }
+                }
+                Err(e) => {
                     warn!(
                         user_id = %user.id,
                         error = ?e,
-                        "Failed to write fallback Pi settings.json (non-fatal)"
+                        "Failed to read models.json template (non-fatal)"
                     );
-                } else {
-                    info!(
-                        user_id = %user.id,
-                        provider = %provider,
-                        model = %model,
-                        "Wrote Pi settings.json from config defaults (no eavs)"
-                    );
-                }
-            }
-
-            // Copy models.json from admin user template if available
-            if let Some(ref template_path) = state.pi_models_template_path {
-                if template_path.exists() {
-                    match std::fs::read_to_string(template_path) {
-                        Ok(content) => {
-                            if let Err(e) = crate::local::linux_users::usermgr_request(
-                                "write-file",
-                                serde_json::json!({
-                                    "username": linux_username,
-                                    "path": ".pi/agent/models.json",
-                                    "content": content,
-                                    "group": "oqto",
-                                }),
-                            ) {
-                                warn!(
-                                    user_id = %user.id,
-                                    error = ?e,
-                                    "Failed to copy models.json template (non-fatal)"
-                                );
-                            } else {
-                                info!(
-                                    user_id = %user.id,
-                                    template = %template_path.display(),
-                                    "Copied models.json template to new user"
-                                );
-                            }
-                        }
-                        Err(e) => {
-                            warn!(
-                                user_id = %user.id,
-                                error = ?e,
-                                "Failed to read models.json template (non-fatal)"
-                            );
-                        }
-                    }
                 }
             }
         }
@@ -608,11 +599,11 @@ pub async fn register(
             "files": template_files,
         });
 
-        if let Some(ref src) = template_src {
-            if src.is_dir() {
-                create_args["template_src"] =
-                    serde_json::Value::String(src.to_string_lossy().into_owned());
-            }
+        if let Some(ref src) = template_src
+            && src.is_dir()
+        {
+            create_args["template_src"] =
+                serde_json::Value::String(src.to_string_lossy().into_owned());
         }
 
         match crate::local::linux_users::usermgr_request("create-workspace", create_args) {

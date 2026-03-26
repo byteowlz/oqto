@@ -532,32 +532,36 @@ mod tests {
 
     #[test]
     fn test_auth_state_dev_mode() {
-        let mut config = AuthConfig::default();
-        config.dev_mode = true;
+        let config = AuthConfig {
+            dev_mode: true,
+            ..AuthConfig::default()
+        };
         let state = AuthState::new(config);
         assert!(state.is_dev_mode());
     }
 
     #[test]
     fn test_validate_dev_credentials() {
-        let mut config = AuthConfig::default();
-        config.dev_mode = true;
-        config.dev_users = vec![
-            make_dev_user(
-                "dev",
-                "Developer",
-                "dev@localhost",
-                "devpassword123",
-                Role::Admin,
-            ),
-            make_dev_user(
-                "user",
-                "Test User",
-                "user@localhost",
-                "userpassword123",
-                Role::User,
-            ),
-        ];
+        let config = AuthConfig {
+            dev_mode: true,
+            dev_users: vec![
+                make_dev_user(
+                    "dev",
+                    "Developer",
+                    "dev@localhost",
+                    "devpassword123",
+                    Role::Admin,
+                ),
+                make_dev_user(
+                    "user",
+                    "Test User",
+                    "user@localhost",
+                    "userpassword123",
+                    Role::User,
+                ),
+            ],
+            ..AuthConfig::default()
+        };
         let state = AuthState::new(config);
 
         // Valid credentials (using the default dev passwords)
@@ -577,16 +581,18 @@ mod tests {
     #[test]
     fn test_generate_and_validate_token() {
         // Create config with a JWT secret for testing
-        let mut config = AuthConfig::default();
-        config.dev_mode = true;
-        config.dev_users = vec![make_dev_user(
-            "dev",
-            "Developer",
-            "dev@localhost",
-            "devpassword123",
-            Role::Admin,
-        )];
-        config.jwt_secret = Some("test-secret-for-unit-tests-minimum-32-chars-long".to_string());
+        let config = AuthConfig {
+            dev_mode: true,
+            dev_users: vec![make_dev_user(
+                "dev",
+                "Developer",
+                "dev@localhost",
+                "devpassword123",
+                Role::Admin,
+            )],
+            jwt_secret: Some("test-secret-for-unit-tests-minimum-32-chars-long".to_string()),
+            ..AuthConfig::default()
+        };
         let state = AuthState::new(config);
 
         let dev_user = &state.dev_users()[0];
@@ -599,15 +605,17 @@ mod tests {
 
     #[test]
     fn test_dev_token_validation() {
-        let mut config = AuthConfig::default();
-        config.dev_mode = true;
-        config.dev_users = vec![make_dev_user(
-            "dev",
-            "Developer",
-            "dev@localhost",
-            "devpassword123",
-            Role::Admin,
-        )];
+        let config = AuthConfig {
+            dev_mode: true,
+            dev_users: vec![make_dev_user(
+                "dev",
+                "Developer",
+                "dev@localhost",
+                "devpassword123",
+                Role::Admin,
+            )],
+            ..AuthConfig::default()
+        };
         let state = AuthState::new(config);
 
         // Valid dev token

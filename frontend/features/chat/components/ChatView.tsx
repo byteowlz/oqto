@@ -2661,6 +2661,10 @@ type MessageGroup = {
 	messages: DisplayMessage[];
 };
 
+function hasErrorPart(message: DisplayMessage): boolean {
+	return message.parts.some((part) => part.type === "error");
+}
+
 function groupMessages(messages: DisplayMessage[]): MessageGroup[] {
 	const groups: MessageGroup[] = [];
 	let current: MessageGroup | null = null;
@@ -2692,6 +2696,21 @@ function groupMessages(messages: DisplayMessage[]): MessageGroup[] {
 			groups.push(current);
 			continue;
 		}
+
+		// Keep assistant error messages in their own card.
+		// Retry/error flows can emit alternating assistant chunks + errors;
+		// collapsing them into one grouped card makes the rendering look broken
+		// (duplicate red rows mixed with regular text).
+		if (
+			message.role === "assistant" &&
+			(hasErrorPart(message) ||
+				hasErrorPart(current.messages[current.messages.length - 1]))
+		) {
+			current = { role: message.role, messages: [message] };
+			groups.push(current);
+			continue;
+		}
+
 		current.messages.push(message);
 	}
 

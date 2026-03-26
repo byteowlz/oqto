@@ -32,7 +32,7 @@ pub enum AuthMode {
     /// Standard JWT/cookie authentication.
     Jwt,
     /// Admin override for trusted local sockets.
-    Admin(CurrentUser),
+    Admin(Box<CurrentUser>),
 }
 
 /// Create the application router with configurable max upload size.
@@ -46,7 +46,11 @@ pub fn create_admin_router_with_config(
     max_upload_size_mb: usize,
     admin_user: CurrentUser,
 ) -> Router {
-    create_router_with_config_and_auth(state, max_upload_size_mb, AuthMode::Admin(admin_user))
+    create_router_with_config_and_auth(
+        state,
+        max_upload_size_mb,
+        AuthMode::Admin(Box::new(admin_user)),
+    )
 }
 
 fn create_router_with_config_and_auth(
@@ -527,7 +531,7 @@ fn apply_auth_layers(
     match auth_mode {
         AuthMode::Jwt => router.layer(middleware::from_fn_with_state(auth_state, auth_middleware)),
         AuthMode::Admin(admin_user) => {
-            let admin_user = admin_user.clone();
+            let admin_user = (*admin_user).clone();
             router.layer(middleware::from_fn(
                 move |mut req: axum::http::Request<axum::body::Body>,
                       next: axum::middleware::Next| {

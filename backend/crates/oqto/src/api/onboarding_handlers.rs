@@ -250,7 +250,7 @@ pub async fn bootstrap_onboarding(
             // then overlay the workspace metadata and any resolved template overrides.
             let template_src = templates_service
                 .templates_dir()
-                .join(&templates_service.subdirectory());
+                .join(templates_service.subdirectory());
             let mut files = serde_json::Map::new();
             files.insert(
                 ".oqto/workspace.toml".into(),
@@ -289,7 +289,7 @@ pub async fn bootstrap_onboarding(
             // Single-user: copy template dir then overlay files
             let template_src = templates_service
                 .templates_dir()
-                .join(&templates_service.subdirectory());
+                .join(templates_service.subdirectory());
             if template_src.is_dir() {
                 copy_dir_all(&template_src, &workspace_path)
                     .map_err(|e| ApiError::Internal(format!("Failed to copy template: {e}")))?;

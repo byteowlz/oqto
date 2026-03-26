@@ -3,25 +3,24 @@
 /**
  * Request to create a shared workspace.
  */
-export type CreateSharedWorkspaceRequest = {
-	/**
-	 * Human-readable name.
-	 */
-	name: string;
-	/**
-	 * Optional description.
-	 */
-	description: string | null;
-	/**
-	 * Lucide icon name (defaults to auto-assigned based on slug hash).
-	 */
-	icon: string | null;
-	/**
-	 * Hex color for accent (defaults to auto-assigned from palette).
-	 */
-	color: string | null;
-	/**
-	 * Initial member user IDs (the creator is added as owner automatically).
-	 */
-	member_ids: Array<string>;
-};
+export type CreateSharedWorkspaceRequest = { 
+/**
+ * Human-readable name.
+ */
+name: string, 
+/**
+ * Optional description.
+ */
+description: string | null, 
+/**
+ * Lucide icon name (defaults to auto-assigned based on slug hash).
+ */
+icon: string | null, 
+/**
+ * Hex color for accent (defaults to auto-assigned from palette).
+ */
+color: string | null, 
+/**
+ * Initial member user IDs (the creator is added as owner automatically).
+ */
+member_ids: Array<string>, };
