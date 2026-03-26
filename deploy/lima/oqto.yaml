@@ -1,0 +1,52 @@
+# Oqto Lima VM template
+#
+# Usage:
+#   limactl start --name oqto deploy/lima/oqto.yaml
+#
+# Exposes Oqto UI on host http://localhost:8086
+
+images:
+  - location: "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img"
+    arch: "x86_64"
+  - location: "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-arm64.img"
+    arch: "aarch64"
+
+cpus: 4
+memory: "8GiB"
+disk: "60GiB"
+
+# Keep host home mounted so your repo path works inside the VM.
+mounts:
+  - location: "~"
+    writable: true
+
+# Forward Oqto web UI from VM -> host.
+portForwards:
+  - guestPort: 8086
+    hostPort: 8086
+    proto: tcp
+
+provision:
+  - mode: system
+    script: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      export DEBIAN_FRONTEND=noninteractive
+
+      apt-get update
+      apt-get install -y --no-install-recommends \
+        ca-certificates curl git jq make \
+        docker.io docker-compose-v2
+
+      systemctl enable docker
+      systemctl start docker
+
+      # Allow the default lima user to run docker without sudo.
+      usermod -aG docker "${LIMA_CIDATA_USER}" || true
+
+      # Helpful for local dev ergonomics.
+      mkdir -p /etc/oqto
+      cat >/etc/oqto/README <<'EOF'
+      This VM is prepared for Oqto Docker development.
+      Use deploy/lima/bootstrap.sh to start Oqto.
+      EOF

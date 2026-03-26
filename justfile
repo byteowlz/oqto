@@ -234,6 +234,25 @@ install-system:
 container-build:
     docker build -t oqto-dev:latest -f container/Dockerfile .
 
+# =============================================================================
+# Lima (macOS Linux VM wrapper for Docker runtime)
+# =============================================================================
+
+lima-up name="oqto":
+    ./deploy/lima/bootstrap.sh up {{name}}
+
+lima-ssh name="oqto":
+    ./deploy/lima/bootstrap.sh ssh {{name}}
+
+lima-logs name="oqto":
+    ./deploy/lima/bootstrap.sh logs {{name}}
+
+lima-status name="oqto":
+    ./deploy/lima/bootstrap.sh status {{name}}
+
+lima-down name="oqto":
+    ./deploy/lima/bootstrap.sh down {{name}}
+
 # Show backend config
 config:
     cd backend && cargo run --bin oqto -- config show
