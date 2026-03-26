@@ -229,9 +229,12 @@ COPY --from=downloader /out/frontend/ /usr/local/share/oqto/frontend/
 # Optional oqto-browserd runtime assets (from oqto release tarball)
 COPY --from=downloader /out/lib/ /usr/local/lib/
 
-# Install oqto-browserd runtime dependencies when assets are present
+# Install oqto-browserd runtime dependencies and Playwright browser when assets are present
 RUN if [ -f /usr/local/lib/oqto-browserd/package.json ]; then \
       cd /usr/local/lib/oqto-browserd && bun install --production; \
+      mkdir -p /usr/local/share/playwright-browsers; \
+      PLAYWRIGHT_BROWSERS_PATH=/usr/local/share/playwright-browsers \
+        bunx playwright install --with-deps chromium; \
     fi
 
 # hstry adapters (JS scripts for parsing agent session files)
