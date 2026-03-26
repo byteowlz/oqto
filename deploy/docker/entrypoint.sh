@@ -445,7 +445,9 @@ if ! wait_for_port "$OQTO_BACKEND_PORT" "oqto" 30 "/api/health"; then
 fi
 
 # 4. Bootstrap admin user (first run only)
-if [ ! -f "${OQTO_DATA_DIR}/oqto/.bootstrapped" ] && [ "$DEV_MODE" = "false" ]; then
+# Note: even in single-user/dev mode we create an admin account because the
+# current frontend still uses the login screen.
+if [ ! -f "${OQTO_DATA_DIR}/oqto/.bootstrapped" ]; then
   if [ -z "$ADMIN_PASSWORD" ]; then
     ADMIN_PASSWORD=$(generate_secret 16)
     log "============================================"
