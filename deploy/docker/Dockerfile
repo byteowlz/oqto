@@ -215,6 +215,8 @@ RUN bun install -g @mariozechner/pi-coding-agent agent-browser \
     && chmod 755 /usr/local/bin/pi \
     && if [ -f /root/.bun/bin/agent-browser ]; then cp /root/.bun/bin/agent-browser /usr/local/bin/agent-browser; fi \
     && chmod 755 /usr/local/bin/agent-browser 2>/dev/null || true \
+    && printf '#!/bin/sh\nexec /usr/local/bin/agent-browser "$@"\n' > /usr/local/bin/oqto-browser \
+    && chmod 755 /usr/local/bin/oqto-browser \
     && rm -rf /root/.bun/install
 
 # --- Copy binaries from downloader stage ---

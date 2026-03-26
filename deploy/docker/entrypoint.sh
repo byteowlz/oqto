@@ -346,7 +346,7 @@ admin_socket_path = "/run/oqto/oqtoctl.sock"
 
 [agent_browser]
 enabled = true
-binary = "agent-browser"
+binary = "oqto-browser"
 headed = false
 stream_port_base = 30000
 stream_port_range = 10000
