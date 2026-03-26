@@ -2386,41 +2386,31 @@ impl Runner {
         // Close the Pi process (best-effort; may not be running).
         let _ = self.pi_manager.close_session(&req.session_id).await;
 
-        // Delete from hstry via gRPC.
-        if let Some(hstry_client) = self.pi_manager.hstry_client()
-            && let Err(e) = hstry_client.delete_conversation(&hstry_external_id).await
-        {
-            warn!(
-                "Failed to delete conversation from hstry for session {}: {}",
-                req.session_id, e
-            );
-        }
-
-        // Delete from hstry via direct SQLite as well, trying both the oqto ID and the
-        // Pi native ID (covers cases where platform_id was not set).
-        if let Some(db_path) = crate::history::hstry_db_path()
-            && let Ok(pool) = crate::history::repository::open_hstry_pool(&db_path).await
-        {
-            // Delete by oqto session ID (platform_id) or Pi native ID (external_id)
-            let _ = sqlx::query(
-                    "DELETE FROM conversations WHERE source_id = 'pi' AND (external_id = ? OR platform_id = ? OR id = ?)"
-                )
-                .bind(&hstry_external_id)
-                .bind(&req.session_id)
-                .bind(&hstry_external_id)
-                .execute(&pool)
-                .await;
-
-            // Also try with the oqto session ID as external_id (in case it was stored that way)
-            if hstry_external_id != req.session_id {
-                let _ = sqlx::query(
-                        "DELETE FROM conversations WHERE source_id = 'pi' AND (external_id = ? OR platform_id = ?)"
-                    )
-                    .bind(&req.session_id)
-                    .bind(&hstry_external_id)
-                    .execute(&pool)
-                    .await;
+        // Delete from hstry via gRPC. Try the resolved external_id first,
+        // then the oqto session ID (covers cases where the two differ and
+        // platform_id wasn't set on the conversation).
+        if let Some(hstry_client) = self.pi_manager.hstry_client() {
+            if let Err(e) = hstry_client.delete_conversation(&hstry_external_id).await {
+                debug!(
+                    "hstry delete by external_id '{}' failed (will retry with session_id): {}",
+                    hstry_external_id, e
+                );
             }
+            // Also try with the oqto session ID in case the conversation was
+            // stored with it as external_id or platform_id.
+            if hstry_external_id != req.session_id {
+                if let Err(e) = hstry_client.delete_conversation(&req.session_id).await {
+                    debug!(
+                        "hstry delete by session_id '{}' also failed: {}",
+                        req.session_id, e
+                    );
+                }
+            }
+        } else {
+            warn!(
+                "hstry client not available, cannot delete conversation for session {}",
+                req.session_id
+            );
         }
 
         // Delete the Pi JSONL session file.
