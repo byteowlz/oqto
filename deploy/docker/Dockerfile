@@ -52,7 +52,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /out
-RUN mkdir -p /out/bin /out/frontend
+RUN mkdir -p /out/bin /out/frontend /out/lib
 
 SHELL ["/bin/bash", "-c"]
 
@@ -76,7 +76,8 @@ RUN set -eux; \
     TAG=$(tag "$GH/oqto"); \
     curl -fsSL "$GH/oqto/releases/download/${TAG}/oqto-${TAG}-${RUST_TARGET}.tar.gz" \
       | tar xz --strip-components=1 -C /tmp/ \
-    && cp /tmp/bin/* /out/bin/; \
+    && cp /tmp/bin/* /out/bin/ \
+    && if [ -d /tmp/lib/oqto-browserd ]; then cp -r /tmp/lib/oqto-browserd /out/lib/; fi; \
     \
     echo "--- Downloading oqto frontend ---"; \
     curl -fsSL "$GH/oqto/releases/download/${TAG}/oqto-frontend-${TAG}.tar.gz" \
@@ -149,7 +150,7 @@ RUN set -eux; \
     # Verify required binaries exist \
     # ================================================================== \
     MISSING=""; \
-    for bin in oqto oqtoctl oqto-runner oqto-files pi-bridge hstry eavs caddy ttyd; do \
+    for bin in oqto oqtoctl oqto-runner oqto-browser oqto-files pi-bridge hstry eavs caddy ttyd; do \
       if [ ! -f "/out/bin/$bin" ]; then MISSING="$MISSING $bin"; fi; \
     done; \
     if [ -n "$MISSING" ]; then \
@@ -224,6 +225,14 @@ COPY --from=downloader /out/bin/ /usr/local/bin/
 
 # Frontend static assets
 COPY --from=downloader /out/frontend/ /usr/local/share/oqto/frontend/
+
+# Optional oqto-browserd runtime assets (from oqto release tarball)
+COPY --from=downloader /out/lib/ /usr/local/lib/
+
+# Install oqto-browserd runtime dependencies when assets are present
+RUN if [ -f /usr/local/lib/oqto-browserd/package.json ]; then \
+      cd /usr/local/lib/oqto-browserd && bun install --production; \
+    fi
 
 # hstry adapters (JS scripts for parsing agent session files)
 RUN mkdir -p /usr/local/share/hstry/adapters \

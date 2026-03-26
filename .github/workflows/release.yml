@@ -61,6 +61,11 @@ jobs:
         if: matrix.use_cross
         run: cargo install cross --git https://github.com/cross-rs/cross
 
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
       - name: Install native deps (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -85,11 +90,22 @@ jobs:
 
           # Collect all binaries
           BIN_DIR="backend/target/${{ matrix.target }}/release"
-          for bin in oqto oqtoctl oqto-runner oqto-sandbox pi-bridge oqto-files oqto-usermgr oqto-scaffold oqto-setup; do
+          for bin in oqto oqtoctl oqto-runner oqto-browser oqto-sandbox pi-bridge oqto-files oqto-usermgr oqto-scaffold oqto-setup; do
             if [[ -f "$BIN_DIR/$bin" ]]; then
               cp "$BIN_DIR/$bin" "$STAGING/bin/"
             fi
           done
+
+          # Build and include oqto-browserd runtime assets (required by oqto-browser)
+          BROWSERD_DIR="backend/crates/oqto-browserd"
+          if [[ -d "$BROWSERD_DIR" ]]; then
+            (cd "$BROWSERD_DIR" && bun install --frozen-lockfile && bun run build)
+            mkdir -p "$STAGING/lib/oqto-browserd"
+            cp -r "$BROWSERD_DIR/bin" "$STAGING/lib/oqto-browserd/"
+            cp -r "$BROWSERD_DIR/dist" "$STAGING/lib/oqto-browserd/"
+            cp "$BROWSERD_DIR/package.json" "$STAGING/lib/oqto-browserd/"
+            cp "$BROWSERD_DIR/bun.lock" "$STAGING/lib/oqto-browserd/"
+          fi
 
           # Include systemd units
           if [[ -d deploy/systemd ]]; then
