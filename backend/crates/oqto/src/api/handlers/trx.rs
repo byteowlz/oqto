@@ -225,21 +225,43 @@ async fn exec_trx_command(
             "XDG_DATA_HOME": xdg_data.to_string_lossy(),
         });
 
-        let result = tokio::task::spawn_blocking(move || {
-            crate::local::linux_users::usermgr_request_with_data(
-                "run-as-user",
-                serde_json::json!({
-                    "username": linux_username,
-                    "binary": "trx",
-                    "args": full_args,
-                    "env": env,
-                    "cwd": cwd,
-                }),
-            )
-        })
-        .await
-        .map_err(|e| ApiError::internal(format!("Task join error: {e}")))?
-        .map_err(|e| ApiError::internal(format!("trx command failed: {e}")))?;
+        let run_trx = |args: Vec<String>| {
+            let linux_username = linux_username.clone();
+            let env = env.clone();
+            let cwd = cwd.clone();
+            tokio::task::spawn_blocking(move || {
+                crate::local::linux_users::usermgr_request_with_data(
+                    "run-as-user",
+                    serde_json::json!({
+                        "username": linux_username,
+                        "binary": "trx",
+                        "args": args,
+                        "env": env,
+                        "cwd": cwd,
+                    }),
+                )
+            })
+        };
+
+        let mut result = run_trx(full_args.clone())
+            .await
+            .map_err(|e| ApiError::internal(format!("Task join error: {e}")))?;
+
+        if let Err(err) = &result {
+            let err_msg = err.to_string();
+            if err_msg.contains("Store not initialized") {
+                let _ = run_trx(vec!["init".to_string(), "--json".to_string()])
+                    .await
+                    .map_err(|e| ApiError::internal(format!("Task join error: {e}")))?
+                    .map_err(|e| ApiError::internal(format!("trx init failed: {e}")))?;
+
+                result = run_trx(full_args)
+                    .await
+                    .map_err(|e| ApiError::internal(format!("Task join error: {e}")))?;
+            }
+        }
+
+        let result = result.map_err(|e| ApiError::internal(format!("trx command failed: {e}")))?;
 
         let stdout = result
             .as_ref()
@@ -251,12 +273,36 @@ async fn exec_trx_command(
         Ok(stdout)
     } else {
         // Single-user mode: run directly
-        let output = Command::new("trx")
+        let mut output = Command::new("trx")
             .args(full_args.iter().map(String::as_str))
             .current_dir(&validated_path)
             .output()
             .await
             .map_err(|e| ApiError::internal(format!("Failed to execute trx: {}", e)))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            if stderr.contains("Store not initialized") {
+                let init_output = Command::new("trx")
+                    .args(["init", "--json"])
+                    .current_dir(&validated_path)
+                    .output()
+                    .await
+                    .map_err(|e| ApiError::internal(format!("Failed to execute trx init: {}", e)))?;
+
+                if !init_output.status.success() {
+                    let init_stderr = String::from_utf8_lossy(&init_output.stderr);
+                    return Err(ApiError::internal(format!("trx init failed: {}", init_stderr)));
+                }
+
+                output = Command::new("trx")
+                    .args(full_args.iter().map(String::as_str))
+                    .current_dir(&validated_path)
+                    .output()
+                    .await
+                    .map_err(|e| ApiError::internal(format!("Failed to execute trx: {}", e)))?;
+            }
+        }
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);

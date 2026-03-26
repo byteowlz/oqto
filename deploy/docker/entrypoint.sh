@@ -87,6 +87,19 @@ wait_for_hstry() {
   log "hstry startup wait complete (may still be initializing)"
 }
 
+wait_for_socket() {
+  local socket_path="$1" name="$2" timeout="${3:-15}" waited=0
+  while [ ! -S "$socket_path" ]; do
+    if [ "$waited" -ge "$timeout" ]; then
+      log_error "${name} socket not ready at ${socket_path} within ${timeout}s"
+      return 1
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  log "${name} socket ready at ${socket_path} (${waited}s)"
+}
+
 cleanup() {
   log "Shutting down services..."
   for pid in "${PIDS[@]}"; do
@@ -414,7 +427,19 @@ su -s /bin/bash oqto -c "
 PIDS+=($!)
 wait_for_port "$EAVS_PORT" "eavs" 15
 
-# 3. oqto backend
+# 3. oqto-runner (single-user mode)
+if [ "$OQTO_SINGLE_USER" = "true" ]; then
+  log "Starting oqto-runner..."
+  su -s /bin/bash oqto -c "
+    export HOME=/home/oqto
+    export XDG_RUNTIME_DIR=/run/oqto
+    oqto-runner --socket /run/oqto/oqto-runner.sock --no-sandbox 2>&1 | sed 's/^/[runner] /'
+  " &
+  PIDS+=($!)
+  wait_for_socket "/run/oqto/oqto-runner.sock" "oqto-runner" 20
+fi
+
+# 4. oqto backend
 log "Starting oqto backend..."
 
 OQTO_LOG="/tmp/oqto.log"
