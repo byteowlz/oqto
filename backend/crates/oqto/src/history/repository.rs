@@ -39,10 +39,10 @@ pub fn hstry_db_path() -> Option<PathBuf> {
     }
 
     // Try reading the database path from hstry config
-    if let Some(path) = hstry_db_path_from_config()
-        && path.exists()
-    {
-        return Some(path);
+    if let Some(path) = hstry_db_path_from_config() {
+        if path.exists() {
+            return Some(path);
+        }
     }
 
     let default = dirs::data_local_dir()
@@ -94,9 +94,6 @@ pub fn project_name_from_path(path: &str) -> String {
 static HSTRY_POOL_CACHE: Lazy<Mutex<HashMap<PathBuf, sqlx::SqlitePool>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
-static HSTRY_WRITE_POOL_CACHE: Lazy<Mutex<HashMap<PathBuf, sqlx::SqlitePool>>> =
-    Lazy::new(|| Mutex::new(HashMap::new()));
-
 pub async fn open_hstry_pool(db_path: &Path) -> Result<sqlx::SqlitePool> {
     let db_path = db_path.to_path_buf();
 
@@ -116,31 +113,6 @@ pub async fn open_hstry_pool(db_path: &Path) -> Result<sqlx::SqlitePool> {
         .await?;
 
     let mut cache = HSTRY_POOL_CACHE.lock().await;
-    cache.insert(db_path, pool.clone());
-    Ok(pool)
-}
-
-/// Open a writable hstry SQLite pool. Used for mutation operations (DELETE,
-/// UPDATE) that cannot go through the read-only pool.
-pub async fn open_hstry_write_pool(db_path: &Path) -> Result<sqlx::SqlitePool> {
-    let db_path = db_path.to_path_buf();
-
-    {
-        let cache = HSTRY_WRITE_POOL_CACHE.lock().await;
-        if let Some(pool) = cache.get(&db_path) {
-            return Ok(pool.clone());
-        }
-    }
-
-    let options = SqliteConnectOptions::new()
-        .filename(&db_path)
-        .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal);
-    let pool = SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect_with(options)
-        .await?;
-
-    let mut cache = HSTRY_WRITE_POOL_CACHE.lock().await;
     cache.insert(db_path, pool.clone());
     Ok(pool)
 }
