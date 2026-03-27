@@ -25,6 +25,14 @@ const SHARED_SESSION_MAP_STORAGE_KEY = "oqto:shared-session-map:v1";
 export const sharedWorkspaceSessionMap = new Map<string, string>();
 const runnerHistoryAliasMap = new Map<string, string>();
 
+function setRunnerHistoryAlias(sessionId: string, aliasId: string) {
+	if (!sessionId || !aliasId || sessionId === aliasId) return;
+	// Store both directions so callers can resolve from either Pi/native IDs
+	// or Oqto/platform IDs.
+	runnerHistoryAliasMap.set(sessionId, aliasId);
+	runnerHistoryAliasMap.set(aliasId, sessionId);
+}
+
 export function getRunnerHistoryAlias(sessionId: string): string | undefined {
 	return runnerHistoryAliasMap.get(sessionId);
 }
@@ -447,7 +455,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 
 				const historyAliasId = session.hstry_id?.trim();
 				if (historyAliasId && historyAliasId !== session.session_id) {
-					runnerHistoryAliasMap.set(session.session_id, historyAliasId);
+					setRunnerHistoryAlias(session.session_id, historyAliasId);
 					const aliasEntry = byId.get(historyAliasId);
 					if (aliasEntry && !byId.has(session.session_id)) {
 						byId.delete(historyAliasId);
@@ -760,7 +768,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 				for (const s of filtered) {
 					const alias = s.hstry_id?.trim();
 					if (alias && alias !== s.session_id) {
-						runnerHistoryAliasMap.set(s.session_id, alias);
+						setRunnerHistoryAlias(s.session_id, alias);
 					}
 				}
 				const nextBusy = new Set<string>();
