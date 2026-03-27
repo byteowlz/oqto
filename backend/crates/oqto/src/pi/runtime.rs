@@ -21,7 +21,7 @@ use tokio::process::{Child, Command};
 use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
 
 use super::PiClientConfig;
-use super::types::*;
+use super::*;
 
 /// Configuration for spawning a Pi process.
 #[derive(Debug, Clone)]

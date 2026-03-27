@@ -30,9 +30,9 @@
 //!
 //! ## Components
 //!
-//! - **protocol**: JSON-RPC protocol types for runner communication
-//! - **client**: Client library for oqto to communicate with runners
-//! - **daemon**: The runner daemon binary (see `bin/oqto-runner.rs`)
+//! - **protocol**: shared runner RPC types re-exported from `oqto-runner-protocol`
+//! - **client**: client library for oqto to communicate with per-user runners
+//! - **router**: target/affinity routing helpers to choose the correct runner endpoint
 //!
 //! ## Usage
 //!
@@ -41,8 +41,5 @@
 //! spawn processes that run with that user's privileges.
 
 pub mod client;
-pub mod daemon;
-pub mod pi_manager;
-pub mod pi_translator;
 pub mod protocol;
 pub mod router;

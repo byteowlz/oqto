@@ -1,0 +1,3 @@
+[
+  "runner/router.rs:3: use crate::api::AppState violates rule: runner layer must not import api layer"
+]

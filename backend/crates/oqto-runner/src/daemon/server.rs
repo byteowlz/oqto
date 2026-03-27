@@ -12,12 +12,10 @@ use tokio::net::{TcpListener, UnixListener};
 use tokio::process::Command;
 use tokio::sync::{Mutex, RwLock, broadcast};
 
-use crate::runner::daemon::config::RunnerUserConfig;
-use crate::runner::daemon::state::{
-    ManagedProcess, RunnerState, SessionState, StdoutBuffer, StdoutEvent,
-};
-use crate::runner::pi_manager::{PiManagerConfig, PiSessionManager};
-use crate::runner::protocol::*;
+use crate::daemon::config::RunnerUserConfig;
+use crate::daemon::state::{ManagedProcess, RunnerState, SessionState, StdoutBuffer, StdoutEvent};
+use crate::pi_manager::{PiManagerConfig, PiSessionManager};
+use crate::protocol::*;
 use oqto_sandbox::SandboxConfig;
 
 mod handlers;
@@ -1186,7 +1184,7 @@ impl Runner {
             });
         };
 
-        let pool = match crate::history::repository::open_hstry_pool(&db_path).await {
+        let pool = match crate::history::open_hstry_pool(&db_path).await {
             Ok(pool) => pool,
             Err(e) => {
                 return error_response(ErrorCode::IoError, format!("Failed to open hstry DB: {e}"));
@@ -1263,7 +1261,7 @@ impl Runner {
             });
         };
 
-        let pool = match crate::history::repository::open_hstry_pool(&db_path).await {
+        let pool = match crate::history::open_hstry_pool(&db_path).await {
             Ok(pool) => pool,
             Err(e) => {
                 return error_response(ErrorCode::IoError, format!("Failed to open hstry DB: {e}"));
@@ -1419,7 +1417,7 @@ impl Runner {
             });
         };
 
-        let pool = match crate::history::repository::open_hstry_pool(&db_path).await {
+        let pool = match crate::history::open_hstry_pool(&db_path).await {
             Ok(pool) => pool,
             Err(e) => {
                 return error_response(ErrorCode::IoError, format!("Failed to open hstry DB: {e}"));
@@ -1603,7 +1601,7 @@ impl Runner {
             });
         };
 
-        let pool = match crate::history::repository::open_hstry_pool(&db_path).await {
+        let pool = match crate::history::open_hstry_pool(&db_path).await {
             Ok(pool) => pool,
             Err(e) => {
                 return error_response(ErrorCode::IoError, format!("Failed to open hstry DB: {e}"));
@@ -1723,7 +1721,7 @@ impl Runner {
             });
         };
 
-        let pool = match crate::history::repository::open_hstry_pool(&db_path).await {
+        let pool = match crate::history::open_hstry_pool(&db_path).await {
             Ok(pool) => pool,
             Err(e) => {
                 return error_response(ErrorCode::IoError, format!("Failed to open hstry DB: {e}"));
@@ -1826,7 +1824,7 @@ impl Runner {
             );
         };
 
-        let messages = match crate::history::repository::get_session_messages_from_hstry(
+        let messages = match crate::history::get_session_messages_from_hstry(
             &req.session_id,
             &db_path,
         )
@@ -1904,11 +1902,8 @@ impl Runner {
                     error = %err,
                     "single-session JSONL recovery failed"
                 );
-            } else if let Ok(reloaded) = crate::history::repository::get_session_messages_from_hstry(
-                &req.session_id,
-                &db_path,
-            )
-            .await
+            } else if let Ok(reloaded) =
+                crate::history::get_session_messages_from_hstry(&req.session_id, &db_path).await
             {
                 messages = reloaded;
             }
@@ -2155,18 +2150,19 @@ impl Runner {
                 }
             }
 
-            let conversation_exists = match client.get_conversation(&session.external_id, None).await {
-                Ok(Some(_)) => true,
-                Ok(None) => false,
-                Err(err) => {
-                    failed += 1;
-                    warn!(
-                        "Failed to check conversation existence during repair for {}: {}",
-                        session.external_id, err
-                    );
-                    continue;
-                }
-            };
+            let conversation_exists =
+                match client.get_conversation(&session.external_id, None).await {
+                    Ok(Some(_)) => true,
+                    Ok(None) => false,
+                    Err(err) => {
+                        failed += 1;
+                        warn!(
+                            "Failed to check conversation existence during repair for {}: {}",
+                            session.external_id, err
+                        );
+                        continue;
+                    }
+                };
 
             if conversation_exists {
                 match self
@@ -2265,7 +2261,7 @@ impl Runner {
         );
 
         // Convert protocol config to pi_manager config
-        let pi_config = crate::runner::pi_manager::PiSessionConfig {
+        let pi_config = crate::pi_manager::PiSessionConfig {
             cwd: req.config.cwd,
             provider: req.config.provider,
             model: req.config.model,

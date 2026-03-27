@@ -17,7 +17,10 @@ build-frontend:
     cd frontend && bun run build
 
 # Run all linters
-lint: lint-backend lint-frontend lint-rust-ai-guardrails
+lint: lint-backend lint-frontend guardrails
+
+# Run all backend guardrails (includes ast-grep)
+guardrails: lint-rust-ai-guardrails lint-rust-file-size lint-crate-deps lint-module-boundaries lint-orphan-modules
 
 # Lint backend
 lint-backend:
@@ -37,15 +40,35 @@ lint-rust-ai-guardrails:
 
 # Guardrail metrics (all backend crates)
 lint-rust-ai-report:
-    ./scripts/lint/rust-ai-guardrails-report.py --paths backend/crates
+    uv run python scripts/lint/rust-ai-guardrails-report.py --paths backend/crates
 
 # Guardrail metrics, excluding findings under #[cfg(test)]
 lint-rust-ai-report-prod:
-    ./scripts/lint/rust-ai-guardrails-report.py --paths backend/crates --exclude-cfg-test
+    uv run python scripts/lint/rust-ai-guardrails-report.py --paths backend/crates --exclude-cfg-test
 
 # Guardrail metrics (changed rust files only)
 lint-rust-ai-report-changed:
-    ./scripts/lint/rust-ai-guardrails-report.py --changed
+    uv run python scripts/lint/rust-ai-guardrails-report.py --changed
+
+# Rust architecture guardrails (ratcheting)
+lint-rust-file-size:
+    uv run python scripts/lint/rust-file-size-guardrail.py
+
+# Update rust file-size baseline after intentional refactors
+lint-rust-file-size-update:
+    uv run python scripts/lint/rust-file-size-guardrail.py --update
+
+# Enforce crate dependency direction rules
+lint-crate-deps:
+    uv run python scripts/lint/crate-dependency-guardrail.py
+
+# Enforce internal module import boundaries
+lint-module-boundaries:
+    uv run python scripts/lint/module-boundary-guardrail.py
+
+# Detect orphan/unreachable Rust modules in the oqto crate
+lint-orphan-modules:
+    uv run python scripts/lint/orphan-module-guardrail.py
 
 # Run all tests
 test: test-backend test-frontend

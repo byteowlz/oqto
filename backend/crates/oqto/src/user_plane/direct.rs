@@ -240,33 +240,27 @@ impl UserPlane for DirectUserPlane {
         Ok(())
     }
 
-    // Session operations - these need to interact with a session database
-    // For DirectUserPlane, we'd need a DB connection. For now, return empty.
+    // Session operations are intentionally unsupported in test-only direct mode.
 
     async fn list_sessions(&self) -> Result<Vec<SessionInfo>> {
-        // TODO: Connect to user's session database
         Ok(Vec::new())
     }
 
     async fn get_session(&self, _session_id: &str) -> Result<Option<SessionInfo>> {
-        // TODO: Connect to user's session database
         Ok(None)
     }
 
     async fn start_session(&self, _request: StartSessionRequest) -> Result<StartSessionResponse> {
-        // TODO: Implement session starting
-        anyhow::bail!("Session management not implemented for DirectUserPlane")
+        anyhow::bail!("Session management is unsupported in test-only DirectUserPlane")
     }
 
     async fn stop_session(&self, _session_id: &str) -> Result<()> {
-        // TODO: Implement session stopping
-        anyhow::bail!("Session management not implemented for DirectUserPlane")
+        anyhow::bail!("Session management is unsupported in test-only DirectUserPlane")
     }
 
-    // Main chat operations
+    // Main chat operations are intentionally unsupported in test-only direct mode.
 
     async fn list_main_chat_sessions(&self) -> Result<Vec<MainChatSessionInfo>> {
-        // TODO: List Pi session files from ~/.pi/agent/sessions/
         Ok(Vec::new())
     }
 
@@ -275,11 +269,10 @@ impl UserPlane for DirectUserPlane {
         _session_id: &str,
         _limit: Option<usize>,
     ) -> Result<Vec<MainChatMessage>> {
-        // TODO: Parse Pi session .jsonl file
         Ok(Vec::new())
     }
 
-    // Memory operations
+    // Memory operations are intentionally unsupported in test-only direct mode.
 
     async fn search_memories(
         &self,
@@ -287,7 +280,6 @@ impl UserPlane for DirectUserPlane {
         _limit: usize,
         _category: Option<&str>,
     ) -> Result<MemorySearchResults> {
-        // TODO: Search mmry database
         Ok(MemorySearchResults {
             memories: Vec::new(),
             total: 0,
@@ -300,13 +292,11 @@ impl UserPlane for DirectUserPlane {
         _category: Option<&str>,
         _importance: Option<u8>,
     ) -> Result<String> {
-        // TODO: Add to mmry database
-        anyhow::bail!("Memory operations not implemented for DirectUserPlane")
+        anyhow::bail!("Memory operations are unsupported in test-only DirectUserPlane")
     }
 
     async fn delete_memory(&self, _memory_id: &str) -> Result<()> {
-        // TODO: Delete from mmry database
-        anyhow::bail!("Memory operations not implemented for DirectUserPlane")
+        anyhow::bail!("Memory operations are unsupported in test-only DirectUserPlane")
     }
 }
 

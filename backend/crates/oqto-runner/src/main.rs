@@ -4,12 +4,20 @@ use log::{info, warn};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use oqto::runner::daemon::bootstrap::{
+mod agent_browser;
+mod daemon;
+mod history;
+mod pi;
+mod pi_manager;
+mod pi_translator;
+mod protocol;
+
+use crate::daemon::bootstrap::{
     get_default_socket_path, load_env_file, load_sandbox_config, log_sandbox_state,
 };
-use oqto::runner::daemon::config::RunnerUserConfig;
-use oqto::runner::daemon::server::{Runner, SessionBinaries};
-use oqto::runner::pi_manager::{PiManagerConfig, PiSessionManager};
+use crate::daemon::config::RunnerUserConfig;
+use crate::daemon::server::{Runner, SessionBinaries};
+use crate::pi_manager::{PiManagerConfig, PiSessionManager};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -78,7 +86,7 @@ async fn main() -> Result<()> {
         idle_timeout_secs: 300,
         cleanup_interval_secs: 60,
         hstry_db_path: {
-            let db_path = oqto::history::hstry_db_path();
+            let db_path = history::hstry_db_path();
             match &db_path {
                 Some(p) => info!("hstry DB found: {}", p.display()),
                 None => warn!("hstry DB not found -- chat history persistence disabled"),

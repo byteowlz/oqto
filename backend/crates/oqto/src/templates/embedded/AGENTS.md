@@ -11,6 +11,26 @@ The core agentic scaffold used in oqto is <https://github.com/badlogic/pi-mono> 
 
 **Workspace:** The `~/oqto/` directory is our primary workspace. You are able to scaffold new directories/projects for the user using helpful agent templates.
 
+## Displaying Images and Videos
+
+To display images or videos inline in the chat, reference them with the `@` prefix followed by the relative path:
+
+```
+Here's the screenshot I captured: @output/screenshot.png
+Check out this video demo: @demos/feature-demo.mp4
+
+I created these files for you:
+@docs/architecture.md
+@src/components/Button.tsx
+```
+
+The UI will automatically render:
+- **Images** (png, jpg, gif, webp, svg) as inline previews with thumbnails
+- **Videos** (mp4, webm, mov) as playable inline players
+- **Other files** as clickable links that open in the file viewer
+
+Use workspace-relative paths (e.g., `@src/file.ts`) for files within the current workspace.
+
 Every repo/project must include:
 
 - `AGENTS.md`

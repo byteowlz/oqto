@@ -18,10 +18,9 @@ mod client;
 pub mod runtime;
 pub mod session_files;
 pub mod session_parser;
-mod types;
 
 pub use client::PiClientConfig;
+pub use oqto_runner_protocol::pi::*;
 pub use runtime::{
     ContainerPiRuntime, LocalPiRuntime, PiProcess, PiRuntime, PiSpawnConfig, RunnerPiRuntime,
 };
-pub use types::*;

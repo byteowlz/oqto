@@ -322,7 +322,11 @@ export const LightboxGallery = memo(function LightboxGallery({
 		// biome-ignore lint/a11y/useKeyWithClickEvents: keyboard handled via document listener
 		<div
 			className="fixed inset-0 z-[100] bg-black flex flex-col"
-			onClick={onClose}
+			onClick={(e) => {
+				if (e.target === e.currentTarget) {
+					onClose();
+				}
+			}}
 		>
 			{/* Header */}
 			<div className="flex-shrink-0 flex items-center justify-between p-4 bg-black/50 backdrop-blur-sm">

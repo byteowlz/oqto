@@ -21,7 +21,7 @@ use super::onboarding_handlers;
 use super::proxy;
 use super::state::AppState;
 use super::ui_control as ui_control_handlers;
-use super::ws;
+use super::ws_multiplexed;
 
 // Note: handlers module now provides all public handlers via re-exports in handlers/mod.rs
 // Routes continue to use `handlers::function_name` - no changes needed
@@ -77,7 +77,7 @@ fn create_router_with_config_and_auth(
     // Protected routes (require authentication)
     let protected_routes = Router::new()
         // Multiplexed WebSocket endpoint for Pi, files, terminal, hstry channels
-        .route("/ws/mux", get(ws::multiplexed::ws_multiplexed_handler))
+        .route("/ws/mux", get(ws_multiplexed::ws_multiplexed_handler))
         // sldr routes
         .route(
             "/sldr",

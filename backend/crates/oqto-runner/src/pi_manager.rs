@@ -32,8 +32,8 @@ use crate::pi::{
     AgentMessage, PiCommand, PiEvent, PiMessage, PiResponse, PiState, SessionStats,
     session_parser::ParsedTitle,
 };
-use crate::runner::pi_translator::PiTranslator;
-use crate::runner::protocol::{PiSessionInfo, PiSessionState};
+use crate::pi_translator::PiTranslator;
+use crate::protocol::{PiSessionInfo, PiSessionState};
 use oqto_protocol::events::{AgentPhase, Event as CanonicalEvent, EventPayload, MessageVersion};
 use oqto_sandbox::SandboxConfig;
 
@@ -528,9 +528,7 @@ impl PiSessionManager {
         workspace_path: Option<&str>,
     ) -> Result<usize> {
         self.ensure_hstry_running().await;
-        let client = self
-            .hstry_client()
-            .context("hstry client not available")?;
+        let client = self.hstry_client().context("hstry client not available")?;
         let work_dir = workspace_path.map(PathBuf::from);
         reconcile_hstry_with_jsonl_tail(client, session_id, work_dir.as_deref()).await
     }
@@ -545,9 +543,7 @@ impl PiSessionManager {
         use crate::history::agent_message_to_proto_with_client_id;
 
         self.ensure_hstry_running().await;
-        let client = self
-            .hstry_client()
-            .context("hstry client not available")?;
+        let client = self.hstry_client().context("hstry client not available")?;
 
         let work_dir = workspace_path.map(PathBuf::from);
         let session_file = crate::pi::session_files::find_session_file_async(
@@ -558,22 +554,24 @@ impl PiSessionManager {
         .context("session JSONL file not found")?;
 
         let session_file_for_msgs = session_file.clone();
-        let jsonl_messages = tokio::task::spawn_blocking(move || read_jsonl_agent_messages(session_file_for_msgs))
-            .await
-            .ok()
-            .and_then(|r| r.ok())
-            .unwrap_or_default();
+        let jsonl_messages =
+            tokio::task::spawn_blocking(move || read_jsonl_agent_messages(session_file_for_msgs))
+                .await
+                .ok()
+                .and_then(|r| r.ok())
+                .unwrap_or_default();
 
         if jsonl_messages.is_empty() {
             return Ok(false);
         }
 
         let session_file_for_name = session_file.clone();
-        let jsonl_name = tokio::task::spawn_blocking(move || read_jsonl_session_name(session_file_for_name))
-            .await
-            .ok()
-            .and_then(|r| r.ok())
-            .flatten();
+        let jsonl_name =
+            tokio::task::spawn_blocking(move || read_jsonl_session_name(session_file_for_name))
+                .await
+                .ok()
+                .and_then(|r| r.ok())
+                .flatten();
 
         let (title, readable_id) = jsonl_name
             .as_deref()
@@ -1592,9 +1590,7 @@ impl PiSessionManager {
     async fn resolve_workdir_from_hstry(&self, session_id: &str) -> Option<String> {
         let hstry = self.hstry_client.as_ref()?;
         let eid = self.hstry_external_id(session_id).await;
-        if let Ok(Some(session)) =
-            crate::history::repository::get_session_via_grpc(hstry, &eid).await
-        {
+        if let Ok(Some(session)) = crate::history::get_session_via_grpc(hstry, &eid).await {
             let wd = session.workspace_path;
             if !wd.is_empty() {
                 return Some(wd);
@@ -4653,9 +4649,7 @@ async fn read_hstry_message_version_snapshot(
     fallback_session_id: &str,
 ) -> Option<MessageVersion> {
     let db_path = crate::history::hstry_db_path()?;
-    let pool = crate::history::repository::open_hstry_pool(&db_path)
-        .await
-        .ok()?;
+    let pool = crate::history::open_hstry_pool(&db_path).await.ok()?;
 
     let has_version_col: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM pragma_table_info('conversations') WHERE name = 'version'",
@@ -4941,6 +4935,8 @@ mod tests {
     fn test_is_placeholder_session_title() {
         assert!(is_placeholder_session_title("Active Session"));
         assert!(is_placeholder_session_title("New Session"));
-        assert!(!is_placeholder_session_title("Git History, TRX, HSTRY Summary Request"));
+        assert!(!is_placeholder_session_title(
+            "Git History, TRX, HSTRY Summary Request"
+        ));
     }
 }

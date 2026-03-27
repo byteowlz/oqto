@@ -849,10 +849,7 @@ pub async fn get_chat_messages(
     if canonical.is_empty() {
         // Keep fallback bounded to avoid long blocking requests on large
         // workspaces when a single session is missing from hstry.
-        if let Err(err) = runner
-            .repair_workspace_chat_history(Some(500), None)
-            .await
-        {
+        if let Err(err) = runner.repair_workspace_chat_history(Some(500), None).await {
             tracing::debug!(
                 user_id = %user.id(),
                 session_id = %session_id,

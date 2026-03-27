@@ -2536,27 +2536,28 @@ async fn handle_copy_to_workspace(
     let is_multi_user = state.linux_users.is_some();
     let user_plane: Arc<dyn UserPlane> = if is_multi_user {
         match state.runner_endpoint.as_ref() {
-            Some(endpoint) => match RunnerUserPlane::for_user_with_endpoint(&linux_username, endpoint)
-            {
-                Ok(plane) => {
-                    let base: Arc<dyn UserPlane> = Arc::new(plane);
-                    Arc::new(MeteredUserPlane::new(
-                        base,
-                        UserPlanePath::Runner,
-                        state.user_plane_metrics.clone(),
-                    ))
+            Some(endpoint) => {
+                match RunnerUserPlane::for_user_with_endpoint(&linux_username, endpoint) {
+                    Ok(plane) => {
+                        let base: Arc<dyn UserPlane> = Arc::new(plane);
+                        Arc::new(MeteredUserPlane::new(
+                            base,
+                            UserPlanePath::Runner,
+                            state.user_plane_metrics.clone(),
+                        ))
+                    }
+                    Err(err) => {
+                        error!(
+                            "Failed to create RunnerUserPlane for {}: {:#}",
+                            linux_username, err
+                        );
+                        return Some(WsEvent::Files(FilesWsEvent::Error {
+                            id,
+                            error: "File access unavailable: user runner not reachable".into(),
+                        }));
+                    }
                 }
-                Err(err) => {
-                    error!(
-                        "Failed to create RunnerUserPlane for {}: {:#}",
-                        linux_username, err
-                    );
-                    return Some(WsEvent::Files(FilesWsEvent::Error {
-                        id,
-                        error: "File access unavailable: user runner not reachable".into(),
-                    }));
-                }
-            },
+            }
             None => {
                 error!("Multi-user mode without runner_endpoint configured");
                 return Some(WsEvent::Files(FilesWsEvent::Error {
