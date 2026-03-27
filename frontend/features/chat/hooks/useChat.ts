@@ -510,6 +510,23 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 					return;
 				}
 
+				// Guard: if a new turn started while the fetch was in flight,
+				// the server data may be stale (from a previous turn). Discard
+				// the result — the new turn's agent.idle will trigger a fresh
+				// fetch with up-to-date data.
+				const currentTurnKind = machineRef.current.turn.kind;
+				if (currentTurnKind === "streaming" || currentTurnKind === "sending") {
+					if (isPiDebugEnabled()) {
+						console.debug(
+							"[useChat] Discarding stale history fetch for",
+							sessionId,
+							"(new turn in progress:",
+							`${currentTurnKind})`,
+						);
+					}
+					return;
+				}
+
 				if (history.length === 0) {
 					if (!isStreamingRef.current && !sendInFlightRef.current) {
 						applyTurnState({ kind: "idle" });

@@ -179,10 +179,13 @@ export function selectMessageMergeMode(
 	machine: ChatStateMachine,
 	source: MessageSyncSource,
 ): MessageMergeMode {
-	// During active streaming, get_messages from WS is a sliding window.
-	// Keep partial merge semantics to avoid any possibility of clobbering
-	// in-flight local assembly during reconnect races.
-	if (source === "ws_get_messages" && machine.turn.kind === "streaming") {
+	// During active streaming, ANY source may return stale data from a
+	// previous turn. Use partial merge to preserve in-flight optimistic
+	// messages and streaming state. This prevents a race where a previous
+	// turn's agent.idle triggers a history fetch, but a new turn starts
+	// before the fetch completes — the stale authoritative merge would
+	// wipe the new turn's messages.
+	if (machine.turn.kind === "streaming") {
 		return "partial";
 	}
 	return "authoritative";

@@ -811,15 +811,25 @@ export function mergeServerMessages(
 
 	const preserved: DisplayMessage[] = [];
 	for (const msg of previous) {
-		// Only preserve truly in-flight streaming messages
+		// Preserve truly in-flight streaming messages
 		if (msg.isStreaming) {
 			preserved.push(msg);
+			continue;
 		}
-		// Do NOT preserve non-streaming user messages in authoritative mode.
-		// If the server doesn't have them, they were either:
-		// - From a different session (cache contamination)
-		// - Already persisted but lost their clientId on server serialization
-		// In both cases, we should NOT preserve them to avoid duplicates.
+		// Preserve optimistic user messages that the server hasn't
+		// acknowledged yet. These have a clientId assigned at send time.
+		// Without this, a race between a previous turn's history fetch
+		// and the current turn causes the user's message to vanish:
+		// the stale server data replaces local state before the new
+		// turn's messages are persisted to hstry.
+		if (
+			msg.role === "user" &&
+			msg.clientId &&
+			!serverClientIds.has(msg.clientId) &&
+			!serverFingerprints.has(messageFingerprint(msg))
+		) {
+			preserved.push(msg);
+		}
 	}
 
 	if (preserved.length === 0) return serverMessages;
