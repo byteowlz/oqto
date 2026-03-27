@@ -385,7 +385,10 @@ pub async fn list_chat_history(
         .await
         .map_err(|e| ApiError::internal(format!("runner list sessions failed: {}", e)))?;
 
+    // Auto-repair can be expensive on large workspaces. Only trigger it when
+    // the initial list is empty for unfiltered queries.
     if query.workspace.is_none()
+        && response.sessions.is_empty()
         && runner
             .repair_workspace_chat_history(Some(10_000), None)
             .await
@@ -844,8 +847,10 @@ pub async fn get_chat_messages(
 
     let mut canonical = convert_runner_response(response);
     if canonical.is_empty() {
+        // Keep fallback bounded to avoid long blocking requests on large
+        // workspaces when a single session is missing from hstry.
         if let Err(err) = runner
-            .repair_workspace_chat_history(Some(10_000), None)
+            .repair_workspace_chat_history(Some(500), None)
             .await
         {
             tracing::debug!(

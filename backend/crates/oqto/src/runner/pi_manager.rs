@@ -535,6 +535,97 @@ impl PiSessionManager {
         reconcile_hstry_with_jsonl_tail(client, session_id, work_dir.as_deref()).await
     }
 
+    /// Recover a missing hstry conversation directly from Pi JSONL for one session.
+    /// This is much faster than full workspace repair for message fetch fallbacks.
+    pub async fn recover_session_from_jsonl(
+        &self,
+        session_id: &str,
+        workspace_path: Option<&str>,
+    ) -> Result<bool> {
+        use crate::history::agent_message_to_proto_with_client_id;
+
+        self.ensure_hstry_running().await;
+        let client = self
+            .hstry_client()
+            .context("hstry client not available")?;
+
+        let work_dir = workspace_path.map(PathBuf::from);
+        let session_file = crate::pi::session_files::find_session_file_async(
+            session_id.to_string(),
+            work_dir.clone(),
+        )
+        .await
+        .context("session JSONL file not found")?;
+
+        let session_file_for_msgs = session_file.clone();
+        let jsonl_messages = tokio::task::spawn_blocking(move || read_jsonl_agent_messages(session_file_for_msgs))
+            .await
+            .ok()
+            .and_then(|r| r.ok())
+            .unwrap_or_default();
+
+        if jsonl_messages.is_empty() {
+            return Ok(false);
+        }
+
+        let session_file_for_name = session_file.clone();
+        let jsonl_name = tokio::task::spawn_blocking(move || read_jsonl_session_name(session_file_for_name))
+            .await
+            .ok()
+            .and_then(|r| r.ok())
+            .flatten();
+
+        let (title, readable_id) = jsonl_name
+            .as_deref()
+            .map(|name| {
+                let parsed = ParsedTitle::parse(name);
+                (
+                    Some(parsed.display_title().to_string()),
+                    parsed.get_readable_id().map(|id| id.to_string()),
+                )
+            })
+            .unwrap_or((None, None));
+
+        let model = jsonl_messages
+            .iter()
+            .rev()
+            .find_map(|(_, m)| m.model.clone());
+        let provider = jsonl_messages
+            .iter()
+            .rev()
+            .find_map(|(_, m)| m.provider.clone());
+
+        let proto_messages: Vec<_> = jsonl_messages
+            .iter()
+            .map(|(idx, msg)| agent_message_to_proto_with_client_id(msg, *idx, None))
+            .collect();
+
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+
+        client
+            .write_conversation(
+                session_id,
+                title,
+                workspace_path.map(|s| s.to_string()),
+                model,
+                provider,
+                Some("{\"recovered_from\":\"pi_jsonl_direct\"}".to_string()),
+                proto_messages,
+                now_ms,
+                Some(now_ms),
+                Some("pi".to_string()),
+                readable_id,
+                None,
+            )
+            .await
+            .context("write_conversation failed")?;
+
+        Ok(true)
+    }
+
     /// Create a new session.
     ///
     /// Returns the **real** session ID assigned by Pi (which may differ from

@@ -1889,6 +1889,31 @@ impl Runner {
         }
 
         // hstry-backed history (for inactive sessions, or Pi fallthrough above).
+        let mut messages = messages;
+
+        // Fast path for missing history: recover this single session directly
+        // from Pi JSONL instead of triggering expensive full-workspace repair.
+        if messages.is_empty() && !session_is_active {
+            if let Err(err) = self
+                .pi_manager
+                .recover_session_from_jsonl(&req.session_id, None)
+                .await
+            {
+                tracing::debug!(
+                    session_id = %req.session_id,
+                    error = %err,
+                    "single-session JSONL recovery failed"
+                );
+            } else if let Ok(reloaded) = crate::history::repository::get_session_messages_from_hstry(
+                &req.session_id,
+                &db_path,
+            )
+            .await
+            {
+                messages = reloaded;
+            }
+        }
+
         if !messages.is_empty() {
             let start = req
                 .limit
