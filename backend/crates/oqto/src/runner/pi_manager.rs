@@ -458,6 +458,8 @@ pub struct PiSessionManager {
     shutdown_tx: broadcast::Sender<()>,
     /// hstry gRPC client for persisting chat history.
     hstry_client: Option<HstryClient>,
+    /// hstry service manager for auto-restarting the daemon when it dies.
+    hstry_service: crate::history::HstryServiceManager,
     /// Sessions currently being created (guards against concurrent creation).
     /// Holds session IDs that are in the process of being spawned but not yet
     /// inserted into the `sessions` map. Prevents the TOQTOU race in
@@ -485,6 +487,10 @@ impl PiSessionManager {
         // data to the hstry service which creates the DB independently.
         let hstry_client = Some(HstryClient::new());
 
+        // Create hstry service manager so we can auto-restart the daemon if it dies.
+        let hstry_service =
+            crate::history::HstryServiceManager::new(crate::history::HstryServiceConfig::default());
+
         // Load persisted model cache from disk
         let model_cache = Self::load_model_cache_from_disk(config.model_cache_dir.as_deref());
 
@@ -493,6 +499,7 @@ impl PiSessionManager {
             config,
             shutdown_tx,
             hstry_client,
+            hstry_service,
             creating: tokio::sync::Mutex::new(std::collections::HashSet::new()),
             model_cache: RwLock::new(model_cache),
             models_json_mtime: RwLock::new(None),
@@ -503,6 +510,29 @@ impl PiSessionManager {
     /// Get a reference to the hstry client (if available).
     pub fn hstry_client(&self) -> Option<&HstryClient> {
         self.hstry_client.as_ref()
+    }
+
+    /// Ensure the hstry daemon is running, auto-restarting if needed.
+    /// Call this before critical gRPC operations (repair, persist, etc.).
+    pub async fn ensure_hstry_running(&self) {
+        if let Err(e) = self.hstry_service.ensure_running().await {
+            tracing::warn!("Failed to ensure hstry daemon is running: {e}");
+        }
+    }
+
+    /// Reconcile missing messages for a session by comparing hstry with
+    /// Pi JSONL ground truth and appending any missing tail messages.
+    pub async fn reconcile_session_history_from_jsonl(
+        &self,
+        session_id: &str,
+        workspace_path: Option<&str>,
+    ) -> Result<usize> {
+        self.ensure_hstry_running().await;
+        let client = self
+            .hstry_client()
+            .context("hstry client not available")?;
+        let work_dir = workspace_path.map(PathBuf::from);
+        reconcile_hstry_with_jsonl_tail(client, session_id, work_dir.as_deref()).await
     }
 
     /// Create a new session.
@@ -523,6 +553,10 @@ impl PiSessionManager {
                 anyhow::bail!("Session '{}' already exists", session_id);
             }
         }
+
+        // Ensure hstry daemon is running before creating a session that will
+        // persist messages via gRPC. Auto-restarts if it crashed.
+        self.ensure_hstry_running().await;
 
         info!("Creating Pi session '{}' in {:?}", session_id, config.cwd);
 
@@ -3396,6 +3430,7 @@ impl PiSessionManager {
                         title, ..
                     } = payload
                         && !title.is_empty()
+                        && !is_placeholder_session_title(title)
                         && last_synced_title != *title
                     {
                         last_synced_title = title.clone();
@@ -4169,7 +4204,7 @@ impl PiSessionManager {
                 .await;
 
             if let Ok(repaired) =
-                reconcile_hstry_with_jsonl_tail(client, hstry_external_id, work_dir).await
+                reconcile_hstry_with_jsonl_tail(client, hstry_external_id, Some(work_dir)).await
                 && repaired > 0
             {
                 warn!(
@@ -4267,7 +4302,7 @@ impl PiSessionManager {
         }
 
         if let Ok(repaired) =
-            reconcile_hstry_with_jsonl_tail(client, hstry_external_id, work_dir).await
+            reconcile_hstry_with_jsonl_tail(client, hstry_external_id, Some(work_dir)).await
             && repaired > 0
         {
             warn!(
@@ -4587,13 +4622,13 @@ async fn fetch_last_hstry_idx(client: &HstryClient, session_id: &str) -> Option<
 async fn reconcile_hstry_with_jsonl_tail(
     client: &HstryClient,
     session_id: &str,
-    work_dir: &Path,
+    work_dir: Option<&Path>,
 ) -> Result<usize> {
     use crate::history::agent_message_to_proto_with_client_id;
 
     let session_file = match crate::pi::session_files::find_session_file_async(
         session_id.to_string(),
-        Some(work_dir.to_path_buf()),
+        work_dir.map(|p| p.to_path_buf()),
     )
     .await
     {
@@ -4637,6 +4672,10 @@ async fn reconcile_hstry_with_jsonl_tail(
         .await?;
 
     Ok(missing.len())
+}
+
+fn is_placeholder_session_title(title: &str) -> bool {
+    matches!(title.trim(), "Active Session" | "New Session")
 }
 
 async fn resolve_jsonl_session_title(session_id: &str, work_dir: &Path) -> Option<String> {
@@ -4805,5 +4844,12 @@ mod tests {
 
         let parsed: PiSessionState = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, PiSessionState::Streaming);
+    }
+
+    #[test]
+    fn test_is_placeholder_session_title() {
+        assert!(is_placeholder_session_title("Active Session"));
+        assert!(is_placeholder_session_title("New Session"));
+        assert!(!is_placeholder_session_title("Git History, TRX, HSTRY Summary Request"));
     }
 }

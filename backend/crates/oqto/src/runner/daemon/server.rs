@@ -2094,6 +2094,10 @@ impl Runner {
         &self,
         req: RepairWorkspaceChatHistoryRequest,
     ) -> RunnerResponse {
+        // Ensure hstry daemon is running before attempting gRPC writes.
+        // If it crashed since startup, this will auto-restart it.
+        self.pi_manager.ensure_hstry_running().await;
+
         let Some(client) = self.pi_manager.hstry_client() else {
             return error_response(ErrorCode::Internal, "hstry client not available");
         };
@@ -2126,12 +2130,9 @@ impl Runner {
                 }
             }
 
-            match client.get_conversation(&session.external_id, None).await {
-                Ok(Some(_)) => {
-                    skipped += 1;
-                    continue;
-                }
-                Ok(None) => {}
+            let conversation_exists = match client.get_conversation(&session.external_id, None).await {
+                Ok(Some(_)) => true,
+                Ok(None) => false,
                 Err(err) => {
                     failed += 1;
                     warn!(
@@ -2140,6 +2141,33 @@ impl Runner {
                     );
                     continue;
                 }
+            };
+
+            if conversation_exists {
+                match self
+                    .pi_manager
+                    .reconcile_session_history_from_jsonl(
+                        &session.external_id,
+                        session.workspace_path.as_deref(),
+                    )
+                    .await
+                {
+                    Ok(repaired_msgs) => {
+                        if repaired_msgs > 0 {
+                            repaired += 1;
+                        } else {
+                            skipped += 1;
+                        }
+                    }
+                    Err(err) => {
+                        failed += 1;
+                        warn!(
+                            "Failed to reconcile existing conversation {} from JSONL: {}",
+                            session.external_id, err
+                        );
+                    }
+                }
+                continue;
             }
 
             if let Err(err) = client
@@ -2167,7 +2195,25 @@ impl Runner {
                 continue;
             }
 
-            repaired += 1;
+            match self
+                .pi_manager
+                .reconcile_session_history_from_jsonl(
+                    &session.external_id,
+                    session.workspace_path.as_deref(),
+                )
+                .await
+            {
+                Ok(_) => {
+                    repaired += 1;
+                }
+                Err(err) => {
+                    failed += 1;
+                    warn!(
+                        "Recovered conversation {} but failed JSONL message reconciliation: {}",
+                        session.external_id, err
+                    );
+                }
+            }
         }
 
         info!(
