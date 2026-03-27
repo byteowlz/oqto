@@ -547,10 +547,17 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 		[selectedChatSessionId],
 	);
 
+	const pendingForceRefreshRef = useRef(false);
 	const refreshChatHistory = useCallback(
 		async (opts?: { force?: boolean }) => {
 			const now = Date.now();
 			if (prefetchInFlightRef.current) {
+				// Queue a forced refresh if one was requested while in-flight.
+				// Without this, runner-detected sessions with generic titles
+				// stay stuck as "Active Session" until the next poll cycle.
+				if (opts?.force) {
+					pendingForceRefreshRef.current = true;
+				}
 				if (isPiDebugEnabled())
 					console.debug("[chat-context] refreshChatHistory skipped: in-flight");
 				return;
@@ -632,6 +639,16 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 				setChatHistoryError(msg);
 			} finally {
 				prefetchInFlightRef.current = false;
+				// If a forced refresh was queued while we were in-flight,
+				// trigger it now to resolve generic titles ASAP.
+				if (pendingForceRefreshRef.current) {
+					pendingForceRefreshRef.current = false;
+					// Use setTimeout to avoid infinite recursion within
+					// the same microtask.
+					setTimeout(() => {
+						void refreshChatHistory({ force: true });
+					}, 50);
+				}
 			}
 		},
 		[
@@ -683,9 +700,13 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 			}
 		}
 		if (hasMissing) {
+			// Merge runner sessions into the sidebar immediately so the user
+			// can see and click them. However, avoid persisting to cache —
+			// these entries have generic titles ("Active Session") and we
+			// don't want to cement them. The async refreshChatHistory below
+			// will fetch real titles from hstry.
 			const merged = mergeRunnerSessions(current);
 			setChatHistory(merged);
-			writeCachedChatHistory(merged);
 		}
 		// Fetch real titles from hstry for new or generically-titled sessions
 		if (hasMissing || hasGenericTitle) {
