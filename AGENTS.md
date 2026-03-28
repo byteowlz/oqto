@@ -9,6 +9,7 @@ Oqto is a self-hosted platform for managing AI coding agents.
 ## IMPORTANT
 
 - Keep this document up to date. Whenever we change functionality or the architecture, we need to also update it in here so that subsequent sessions are always aware of the current status.
+- Keep crate-level guidance up to date too: if behavior/boundaries change in `backend/crates/*`, update that crate's `AGENTS.md` in the same PR. Every crate under `backend/crates` must have a concise `AGENTS.md`.
 - Don't keep legacy alive. This project is still in it's infancy and there is 0 need for any backward compatibility. Remove any dead or legacy code you encounter without breaking the current system. If you stumble upon parts of the system that can be deprecated, suggest how we could best do this
 - Document your work: Use trx cli for epics, features, bugs etc. Use agntz memory for documenting learnings along the way. Future sessions have access to both.
 - **No hacky fixes.** We want proper John Carmack solutions -- clean, minimal, and correct. Understand the root cause before writing a single line. If a fix feels like duct tape, stop and rethink. Every change should make the codebase better, not just silence the symptom.
