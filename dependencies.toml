@@ -4,21 +4,21 @@
 # Run `just update-deps` to refresh this manifest from local repos and git tags.
 
 [oqto]
-version = "0.3.20"
+version = "0.3.28"
 description = "Main platform (this repo)"
 
 [byteowlz]
 # Core backend services
 eavs = "0.6.0"
-hstry = "0.5.7"
-mmry = "0.10.2"
-trx = "0.2.3"
+hstry = "0.5.11"
+mmry = "0.10.3"
+trx = "0.3.1"
 agntz = "0.3.0"
 mailz = "0.1.0"
-sx = "2.1.0"
+sx = "2.4.0"
 scrpr = "1.1.0"
 tmpltr = "0.3.0"
-sldr = "0.2.0"
+sldr = "0.2.1"
 ignr = "0.1.1"
 
 # Optional: Voice mode
