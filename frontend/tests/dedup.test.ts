@@ -295,8 +295,10 @@ describe("mergeServerMessages", () => {
 				textMsg("history-s1-0", "user", "hello", { timestamp: now }),
 			];
 			const result = mergeServerMessages(prev, server, "partial");
-			// Partial: all prev kept + server matched by ID (pi-msg-1 != history-s1-0, so appended)
-			expect(result).toHaveLength(3);
+			// Partial mode now also matches by content fingerprint, so the server
+			// user message reconciles with the existing local user message instead
+			// of being appended as a duplicate.
+			expect(result).toHaveLength(2);
 			expect(result.some((m) => m.isStreaming)).toBe(true);
 		});
 	});

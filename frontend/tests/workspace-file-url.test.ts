@@ -20,7 +20,7 @@ describe("workspaceFileUrl", () => {
 		const url = workspaceFileUrl("my workspace", "path/to file.png");
 		const parsed = new URL(url);
 
-		expect(parsed.origin).toBe("https://example.com");
+		expect(parsed.origin).toBe(window.location.origin);
 		expect(parsed.pathname).toBe("/api/workspace/files/file");
 		expect(parsed.searchParams.get("path")).toBe("path/to file.png");
 		expect(parsed.searchParams.get("workspace_path")).toBe("my workspace");
