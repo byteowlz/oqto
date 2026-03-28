@@ -234,6 +234,18 @@ pub enum BusCommand {
         scope: BusScope,
         scope_id: String,
     },
+    /// Pull recent events (degraded/reconnect fallback path).
+    Pull {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        topics: Vec<String>,
+        scope: BusScope,
+        scope_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        since_ts: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        limit: Option<usize>,
+    },
 }
 
 /// Events sent to clients on the "bus" channel.
@@ -242,12 +254,14 @@ pub enum BusCommand {
 pub enum BusWsEvent {
     /// A bus event delivered to a subscriber.
     Event(BusEvent),
-    /// Response to a subscribe/unsubscribe/publish command.
+    /// Response to a subscribe/unsubscribe/publish/pull command.
     Response {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
         success: bool,
         #[serde(skip_serializing_if = "Option::is_none")]
         error: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        data: Option<Value>,
     },
 }

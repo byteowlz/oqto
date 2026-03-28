@@ -1645,7 +1645,8 @@ fn ws_command_id(cmd: &WsCommand) -> Option<String> {
         WsCommand::Bus(bus_cmd) => match bus_cmd {
             crate::bus::BusCommand::Publish { id, .. }
             | crate::bus::BusCommand::Subscribe { id, .. }
-            | crate::bus::BusCommand::Unsubscribe { id, .. } => id.clone(),
+            | crate::bus::BusCommand::Unsubscribe { id, .. }
+            | crate::bus::BusCommand::Pull { id, .. } => id.clone(),
         },
     }
 }
@@ -1787,6 +1788,7 @@ fn ws_command_summary(cmd: &WsCommand) -> (String, Option<String>, Option<String
                 crate::bus::BusCommand::Publish { topic, .. } => format!("bus.publish.{}", topic),
                 crate::bus::BusCommand::Subscribe { .. } => "bus.subscribe".to_string(),
                 crate::bus::BusCommand::Unsubscribe { .. } => "bus.unsubscribe".to_string(),
+                crate::bus::BusCommand::Pull { .. } => "bus.pull".to_string(),
             };
             (label, None, None)
         }

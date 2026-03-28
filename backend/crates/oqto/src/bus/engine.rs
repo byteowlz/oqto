@@ -8,11 +8,11 @@ use crate::shared_workspace::SharedWorkspaceService;
 use dashmap::DashMap;
 use log::{debug, info, warn};
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
-use tokio::sync::mpsc;
+use tokio::sync::{Mutex, mpsc};
 
 use super::types::*;
 
@@ -110,6 +110,10 @@ const COALESCE_FLUSH_INTERVAL_MS: u64 = 250;
 const COALESCE_MAX_PENDING_PER_SUBSCRIBER: usize = 128;
 const COALESCE_PATTERNS: &[&str] = &["app.state.**", "cursor.**", "typing.**", "stream.text_delta"];
 
+const RECENT_EVENT_CAPACITY: usize = 5_000;
+const PULL_DEFAULT_LIMIT: usize = 200;
+const PULL_MAX_LIMIT: usize = 1_000;
+
 /// The bus engine. Create one per oqto backend instance.
 pub struct BusEngine {
     /// All subscribers keyed by ID.
@@ -120,6 +124,8 @@ pub struct BusEngine {
     next_id: AtomicU64,
     /// Shared workspace service for membership checks.
     shared_workspaces: Option<Arc<SharedWorkspaceService>>,
+    /// Recent event ring buffer for pull/reconnect paths.
+    recent_events: Mutex<VecDeque<BusEvent>>,
 
     // Stats
     events_published: AtomicU64,
@@ -139,6 +145,7 @@ impl BusEngine {
             rate_limits: DashMap::new(),
             next_id: AtomicU64::new(1),
             shared_workspaces,
+            recent_events: Mutex::new(VecDeque::with_capacity(RECENT_EVENT_CAPACITY)),
             events_published: AtomicU64::new(0),
             events_delivered: AtomicU64::new(0),
             events_dropped_authz: AtomicU64::new(0),
@@ -265,6 +272,7 @@ impl BusEngine {
         self.authorize_publish(&event).await?;
 
         self.events_published.fetch_add(1, Ordering::Relaxed);
+        self.push_recent_event(event.clone()).await;
 
         // Fan out to matching subscribers.
         // Coalesced topics use last-write-wins buffering per subscriber, then
@@ -373,6 +381,59 @@ impl BusEngine {
         for id in to_remove {
             self.unregister(id);
         }
+    }
+
+    async fn push_recent_event(&self, event: BusEvent) {
+        let mut recent = self.recent_events.lock().await;
+        recent.push_back(event);
+        while recent.len() > RECENT_EVENT_CAPACITY {
+            let _ = recent.pop_front();
+        }
+    }
+
+    /// Pull recent events for reconnect/degraded mode.
+    pub async fn pull_for_user(
+        &self,
+        user_id: &str,
+        is_admin: bool,
+        scope: BusScope,
+        scope_id: String,
+        topics: Vec<String>,
+        since_ts: Option<u64>,
+        limit: Option<usize>,
+    ) -> Result<Vec<BusEvent>, String> {
+        self.authorize_scope(user_id, is_admin, &scope, &scope_id).await?;
+
+        let mut out = Vec::new();
+        let topics = if topics.is_empty() {
+            vec!["**".to_string()]
+        } else {
+            topics
+        };
+        let max = limit.unwrap_or(PULL_DEFAULT_LIMIT).clamp(1, PULL_MAX_LIMIT);
+        let since = since_ts.unwrap_or(0);
+
+        let recent = self.recent_events.lock().await;
+        for event in recent.iter().rev() {
+            if event.ts < since {
+                continue;
+            }
+            if event.scope != scope {
+                continue;
+            }
+            if !(scope_id == "*" || event.scope_id == scope_id) {
+                continue;
+            }
+            if !topics.iter().any(|p| topic_matches(p, &event.topic)) {
+                continue;
+            }
+            out.push(event.clone());
+            if out.len() >= max {
+                break;
+            }
+        }
+        out.reverse();
+        Ok(out)
     }
 
     /// Get bus statistics.
@@ -1093,5 +1154,52 @@ mod tests {
         assert_eq!(received.topic, "app.state.cursor");
         assert_eq!(received.payload, json!({"x": 2}));
         assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn test_pull_recent_events_filters_scope_and_topic() {
+        let engine = BusEngine::new(None);
+
+        let event1 = BusEvent::new(
+            BusScope::Session,
+            "ses_1".to_string(),
+            "app.message".to_string(),
+            json!({"n": 1}),
+            EventSource::Frontend {
+                user_id: "alice".to_string(),
+                session_id: Some("ses_1".to_string()),
+            },
+        );
+        let ts1 = event1.ts;
+        engine.publish(None, event1).await.unwrap();
+
+        let event2 = BusEvent::new(
+            BusScope::Session,
+            "ses_1".to_string(),
+            "trx.issue_created".to_string(),
+            json!({"n": 2}),
+            EventSource::Frontend {
+                user_id: "alice".to_string(),
+                session_id: Some("ses_1".to_string()),
+            },
+        );
+        engine.publish(None, event2).await.unwrap();
+
+        let pulled = engine
+            .pull_for_user(
+                "alice",
+                false,
+                BusScope::Session,
+                "ses_1".to_string(),
+                vec!["app.*".to_string()],
+                Some(ts1),
+                Some(10),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(pulled.len(), 1);
+        assert_eq!(pulled[0].topic, "app.message");
+        assert_eq!(pulled[0].payload, json!({"n": 1}));
     }
 }

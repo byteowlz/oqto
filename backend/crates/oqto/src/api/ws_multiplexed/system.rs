@@ -52,11 +52,13 @@ pub(super) async fn handle_bus_command(
                     id,
                     success: true,
                     error: None,
+                    data: None,
                 })),
                 Err(e) => Some(WsEvent::Bus(BusWsEvent::Response {
                     id,
                     success: false,
                     error: Some(e),
+                    data: None,
                 })),
             }
         }
@@ -78,11 +80,13 @@ pub(super) async fn handle_bus_command(
                     id,
                     success: true,
                     error: None,
+                    data: None,
                 })),
                 Err(e) => Some(WsEvent::Bus(BusWsEvent::Response {
                     id,
                     success: false,
                     error: Some(e),
+                    data: None,
                 })),
             }
         }
@@ -99,7 +103,33 @@ pub(super) async fn handle_bus_command(
                 id,
                 success: true,
                 error: None,
+                data: None,
             }))
         }
+        BusCommand::Pull {
+            id,
+            topics,
+            scope,
+            scope_id,
+            since_ts,
+            limit,
+        } => match state
+            .bus
+            .pull_for_user(user_id, is_admin, scope, scope_id, topics, since_ts, limit)
+            .await
+        {
+            Ok(events) => Some(WsEvent::Bus(BusWsEvent::Response {
+                id,
+                success: true,
+                error: None,
+                data: Some(serde_json::json!({ "events": events })),
+            })),
+            Err(e) => Some(WsEvent::Bus(BusWsEvent::Response {
+                id,
+                success: false,
+                error: Some(e),
+                data: None,
+            })),
+        },
     }
 }
