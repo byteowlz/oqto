@@ -418,7 +418,11 @@ impl AppState {
             pi_default_model: None,
             pi_models_template_path: None,
             shared_workspaces: None,
-            bus: Arc::new(crate::bus::BusEngine::new(None)),
+            bus: {
+                let bus = Arc::new(crate::bus::BusEngine::new(None));
+                bus.start_background_flusher();
+                bus
+            },
             user_plane_metrics: Arc::new(crate::user_plane::UserPlaneMetrics::default()),
         }
     }
@@ -524,7 +528,9 @@ impl AppState {
         let sw = Arc::new(service);
         self.shared_workspaces = Some(sw.clone());
         // Rebuild bus engine with shared workspace access for membership checks
-        self.bus = Arc::new(crate::bus::BusEngine::new(Some(sw)));
+        let bus = Arc::new(crate::bus::BusEngine::new(Some(sw)));
+        bus.start_background_flusher();
+        self.bus = bus;
         self
     }
 

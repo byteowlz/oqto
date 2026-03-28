@@ -8,8 +8,10 @@ use crate::shared_workspace::SharedWorkspaceService;
 use dashmap::DashMap;
 use log::{debug, info, warn};
 use serde_json::Value;
+use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
 use super::types::*;
@@ -35,11 +37,18 @@ struct Subscription {
     filter: Option<Value>,
 }
 
+#[derive(Debug, Clone)]
+struct BufferedEvent {
+    event: BusEvent,
+    buffered_at: Instant,
+}
+
 /// A registered subscriber with a channel to send events.
 struct Subscriber {
     user_id: String,
     tx: mpsc::UnboundedSender<BusEvent>,
     subscriptions: Vec<Subscription>,
+    coalesced: HashMap<String, BufferedEvent>,
 }
 
 // ============================================================================
@@ -89,11 +98,17 @@ pub struct BusStats {
     pub events_delivered: u64,
     pub events_dropped_authz: u64,
     pub events_dropped_rate: u64,
+    pub events_coalesced_replaced: u64,
+    pub events_coalesced_flushed: u64,
 }
 
 // ============================================================================
 // Engine
 // ============================================================================
+
+const COALESCE_FLUSH_INTERVAL_MS: u64 = 250;
+const COALESCE_MAX_PENDING_PER_SUBSCRIBER: usize = 128;
+const COALESCE_PATTERNS: &[&str] = &["app.state.**", "cursor.**", "typing.**", "stream.text_delta"];
 
 /// The bus engine. Create one per oqto backend instance.
 pub struct BusEngine {
@@ -111,6 +126,9 @@ pub struct BusEngine {
     events_delivered: AtomicU64,
     events_dropped_authz: AtomicU64,
     events_dropped_rate: AtomicU64,
+    events_coalesced_replaced: AtomicU64,
+    events_coalesced_flushed: AtomicU64,
+    flusher_started: AtomicBool,
 }
 
 impl BusEngine {
@@ -125,6 +143,9 @@ impl BusEngine {
             events_delivered: AtomicU64::new(0),
             events_dropped_authz: AtomicU64::new(0),
             events_dropped_rate: AtomicU64::new(0),
+            events_coalesced_replaced: AtomicU64::new(0),
+            events_coalesced_flushed: AtomicU64::new(0),
+            flusher_started: AtomicBool::new(false),
         }
     }
 
@@ -138,6 +159,7 @@ impl BusEngine {
                 user_id: user_id.to_string(),
                 tx,
                 subscriptions: Vec::new(),
+                coalesced: HashMap::new(),
             },
         );
         // Default rate limit: 100 events/sec for publishing
@@ -244,15 +266,19 @@ impl BusEngine {
 
         self.events_published.fetch_add(1, Ordering::Relaxed);
 
-        // Fan out to matching subscribers
+        // Fan out to matching subscribers.
+        // Coalesced topics use last-write-wins buffering per subscriber, then
+        // flush on interval or when buffer grows too large.
         let mut delivered = 0u64;
         let mut to_remove = Vec::new();
+        let now = Instant::now();
+        let subscriber_ids: Vec<SubscriberId> = self.subscribers.iter().map(|s| *s.key()).collect();
 
-        for entry in self.subscribers.iter() {
-            let sub_id = *entry.key();
-            let subscriber = entry.value();
+        for sub_id in subscriber_ids {
+            let Some(mut subscriber) = self.subscribers.get_mut(&sub_id) else {
+                continue;
+            };
 
-            // Check if any subscription matches
             let matches = subscriber.subscriptions.iter().any(|s| {
                 let scope_matches =
                     s.scope == event.scope && (s.scope_id == event.scope_id || s.scope_id == "*");
@@ -261,20 +287,38 @@ impl BusEngine {
                     && filter_matches(&s.filter, &event.payload)
             });
 
-            if matches {
-                if subscriber.tx.send(event.clone()).is_err() {
-                    // Channel closed, mark for cleanup
-                    to_remove.push(sub_id);
-                } else {
-                    delivered += 1;
+            if !matches {
+                continue;
+            }
+
+            // First flush due coalesced entries for this subscriber.
+            delivered += self.flush_due_for_subscriber(now, &mut subscriber, sub_id, &mut to_remove);
+
+            if self.should_coalesce_topic(&event.topic) {
+                let key = self.coalesce_key(&event);
+                let replaced = subscriber.coalesced.insert(
+                    key,
+                    BufferedEvent {
+                        event: event.clone(),
+                        buffered_at: now,
+                    },
+                );
+                if replaced.is_some() {
+                    self.events_coalesced_replaced.fetch_add(1, Ordering::Relaxed);
                 }
+
+                if subscriber.coalesced.len() >= COALESCE_MAX_PENDING_PER_SUBSCRIBER {
+                    delivered += self.flush_all_for_subscriber(&mut subscriber, sub_id, &mut to_remove);
+                }
+            } else if subscriber.tx.send(event.clone()).is_err() {
+                to_remove.push(sub_id);
+            } else {
+                delivered += 1;
             }
         }
 
-        self.events_delivered
-            .fetch_add(delivered, Ordering::Relaxed);
+        self.events_delivered.fetch_add(delivered, Ordering::Relaxed);
 
-        // Clean up dead subscribers
         for id in to_remove {
             self.unregister(id);
         }
@@ -295,6 +339,42 @@ impl BusEngine {
         self.publish(None, event).await
     }
 
+    /// Start a background flusher for coalesced events.
+    pub fn start_background_flusher(self: &Arc<Self>) {
+        if self.flusher_started.swap(true, Ordering::Relaxed) {
+            return;
+        }
+
+        let engine = Arc::clone(self);
+        tokio::spawn(async move {
+            let interval = Duration::from_millis(COALESCE_FLUSH_INTERVAL_MS);
+            loop {
+                tokio::time::sleep(interval).await;
+                engine.flush_coalesced_due();
+            }
+        });
+    }
+
+    /// Flush coalesced events whose debounce window has elapsed.
+    pub fn flush_coalesced_due(&self) {
+        let mut delivered = 0u64;
+        let mut to_remove = Vec::new();
+        let now = Instant::now();
+        let subscriber_ids: Vec<SubscriberId> = self.subscribers.iter().map(|s| *s.key()).collect();
+
+        for sub_id in subscriber_ids {
+            let Some(mut subscriber) = self.subscribers.get_mut(&sub_id) else {
+                continue;
+            };
+            delivered += self.flush_due_for_subscriber(now, &mut subscriber, sub_id, &mut to_remove);
+        }
+
+        self.events_delivered.fetch_add(delivered, Ordering::Relaxed);
+        for id in to_remove {
+            self.unregister(id);
+        }
+    }
+
     /// Get bus statistics.
     pub fn stats(&self) -> BusStats {
         let total_subscriptions: usize = self
@@ -310,7 +390,72 @@ impl BusEngine {
             events_delivered: self.events_delivered.load(Ordering::Relaxed),
             events_dropped_authz: self.events_dropped_authz.load(Ordering::Relaxed),
             events_dropped_rate: self.events_dropped_rate.load(Ordering::Relaxed),
+            events_coalesced_replaced: self.events_coalesced_replaced.load(Ordering::Relaxed),
+            events_coalesced_flushed: self.events_coalesced_flushed.load(Ordering::Relaxed),
         }
+    }
+
+    fn should_coalesce_topic(&self, topic: &str) -> bool {
+        COALESCE_PATTERNS
+            .iter()
+            .any(|pattern| topic_matches(pattern, topic))
+    }
+
+    fn coalesce_key(&self, event: &BusEvent) -> String {
+        format!("{}:{}:{}", scope_str(&event.scope), event.scope_id, event.topic)
+    }
+
+    fn flush_due_for_subscriber(
+        &self,
+        now: Instant,
+        subscriber: &mut Subscriber,
+        sub_id: SubscriberId,
+        to_remove: &mut Vec<SubscriberId>,
+    ) -> u64 {
+        let mut delivered = 0u64;
+        let mut due_keys = Vec::new();
+
+        for (key, buffered) in &subscriber.coalesced {
+            if now.duration_since(buffered.buffered_at)
+                >= Duration::from_millis(COALESCE_FLUSH_INTERVAL_MS)
+            {
+                due_keys.push(key.clone());
+            }
+        }
+
+        for key in due_keys {
+            if let Some(buffered) = subscriber.coalesced.remove(&key) {
+                if subscriber.tx.send(buffered.event).is_err() {
+                    to_remove.push(sub_id);
+                    break;
+                }
+                delivered += 1;
+                self.events_coalesced_flushed.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+
+        delivered
+    }
+
+    fn flush_all_for_subscriber(
+        &self,
+        subscriber: &mut Subscriber,
+        sub_id: SubscriberId,
+        to_remove: &mut Vec<SubscriberId>,
+    ) -> u64 {
+        let mut delivered = 0u64;
+        let drained: Vec<BufferedEvent> = subscriber.coalesced.drain().map(|(_, v)| v).collect();
+
+        for buffered in drained {
+            if subscriber.tx.send(buffered.event).is_err() {
+                to_remove.push(sub_id);
+                break;
+            }
+            delivered += 1;
+            self.events_coalesced_flushed.fetch_add(1, Ordering::Relaxed);
+        }
+
+        delivered
     }
 
     // ========================================================================
@@ -894,5 +1039,59 @@ mod tests {
             .unwrap_err();
 
         assert!(err.contains("Only admin"));
+    }
+
+    #[tokio::test]
+    async fn test_coalesced_topic_last_write_wins() {
+        let engine = BusEngine::new(None);
+        let (sub_id, mut rx) = engine.register("alice");
+
+        engine
+            .subscribe(
+                sub_id,
+                "alice",
+                false,
+                BusScope::Session,
+                "ses_1".to_string(),
+                vec!["app.state.**".to_string()],
+                None,
+            )
+            .await
+            .unwrap();
+
+        let event1 = BusEvent::new(
+            BusScope::Session,
+            "ses_1".to_string(),
+            "app.state.cursor".to_string(),
+            json!({"x": 1}),
+            EventSource::Frontend {
+                user_id: "alice".to_string(),
+                session_id: Some("ses_1".to_string()),
+            },
+        );
+        engine.publish(None, event1).await.unwrap();
+
+        let event2 = BusEvent::new(
+            BusScope::Session,
+            "ses_1".to_string(),
+            "app.state.cursor".to_string(),
+            json!({"x": 2}),
+            EventSource::Frontend {
+                user_id: "alice".to_string(),
+                session_id: Some("ses_1".to_string()),
+            },
+        );
+        engine.publish(None, event2).await.unwrap();
+
+        // Coalesced topics are buffered until flush window elapses.
+        assert!(rx.try_recv().is_err());
+
+        tokio::time::sleep(Duration::from_millis(COALESCE_FLUSH_INTERVAL_MS + 20)).await;
+        engine.flush_coalesced_due();
+
+        let received = rx.try_recv().unwrap();
+        assert_eq!(received.topic, "app.state.cursor");
+        assert_eq!(received.payload, json!({"x": 2}));
+        assert!(rx.try_recv().is_err());
     }
 }
