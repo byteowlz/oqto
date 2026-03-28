@@ -364,6 +364,20 @@ bun run lint                             # Verify everything passes
 
 **Run ALL of these before every commit.** No exceptions.
 
+### Git Hook Enforcement (required)
+
+Enable repo-managed hooks once per clone:
+
+```bash
+git config core.hooksPath .githooks
+chmod +x .githooks/pre-commit
+```
+
+The pre-commit hook runs:
+
+- `scripts/update-deps-precommit.sh`
+- `just lint` (includes ast-grep + architecture guardrails + frontend/backend lint)
+
 ```bash
 # Backend (if Rust files changed)
 cd backend
