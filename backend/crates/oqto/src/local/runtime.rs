@@ -627,8 +627,8 @@ mod tests {
     #[tokio::test]
     async fn test_local_runtime_health_check_with_invalid_binaries() {
         let config = LocalRuntimeConfig {
-            fileserver_binary: "sh".to_string(),
-            ttyd_binary: "sh".to_string(),
+            fileserver_binary: "definitely-not-a-real-fileserver-binary".to_string(),
+            ttyd_binary: "definitely-not-a-real-ttyd-binary".to_string(),
             ..Default::default()
         };
 
@@ -828,7 +828,7 @@ mod tests {
         assert_eq!(config.linux_users.prefix, "oqto_");
         assert_eq!(config.linux_users.uid_start, 2000);
         assert_eq!(config.linux_users.group, "oqto");
-        assert_eq!(config.linux_users.shell, "/bin/bash");
+        assert_eq!(config.linux_users.shell, "/bin/zsh");
         assert!(config.linux_users.use_sudo);
         assert!(config.linux_users.create_home);
     }

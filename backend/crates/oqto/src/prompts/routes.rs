@@ -179,11 +179,12 @@ async fn handle_websocket(mut socket: WebSocket, state: PromptState) {
                             }
                         }
                     }
-                    Some(Ok(Message::Ping(data))) => {
-                        if socket.send(Message::Pong(data)).await.is_err() {
-                            break;
-                        }
+                    Some(Ok(Message::Ping(data)))
+                        if socket.send(Message::Pong(data.clone())).await.is_err() =>
+                    {
+                        break;
                     }
+                    Some(Ok(Message::Ping(_))) => {}
                     Some(Ok(Message::Close(_))) => {
                         debug!("Client sent close");
                         break;

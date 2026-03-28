@@ -47,6 +47,18 @@ setup.sh must correctly provision everything for a new platform user on a fresh 
 ...
 
 
+### [oqto-tacn.9] Clarify local/ vs runner/ ownership boundaries (P1, task)
+Document and enforce ownership: local/ handles per-user service provisioning, runner/ handles runner RPC client integration. Remove overlapping process management responsibilities.
+
+### [oqto-tacn.8] Decompose backend god files (pi_manager, daemon/server, session/service, ws_multiplexed) (P1, task)
+Split large files into lifecycle/state/persistence/channel modules with clear ownership boundaries and tests.
+
+### [oqto-tacn.3] Extract runner config tests and backfill logic out of main.rs (P1, task)
+main.rs is 3.5k lines. Move runner_config_tests module to runner/tests.rs, backfill_session_targets_once to session/backfill.rs, and keep main.rs to CLI parsing + server wiring only.
+
+### [oqto-tacn] Architecture guardrails: cleanup dead code and enforce structural invariants (P1, epic)
+Phase 1: Clean up dead/zombie code (ws/multiplexed shim, DirectUserPlane, main.rs bloat). Phase 2: Add CI-enforced guardrails - file size ratchet, crate dependency direction, module boundary imports. All guards run in 'just lint' and use baseline files that ratchet down automatically.
+
 ### [oqto-3kwc.8] Tests: transport parity + auth failure coverage for runner dispatch (P1, task)
 
 ### [oqto-3kwc.7] Security: integrate kyz-backed runner token provisioning and rotation (P1, task)
@@ -608,6 +620,8 @@ Build and distribute pre-compiled binaries for Linux (x86_64, arm64) and macOS (
 
 ### [octo-af5j] Release & Update System (P1, epic)
 Comprehensive system for distributing Octo releases, managing updates in the field, and expanding runtime options including Proxmox LXC support.
+
+### [oqto-w5kh] Pay down oqto clippy -D warnings backlog blocking strict gate (P2, task)
 
 ### [oqto-e8vx] Tool calls sometimes are shown duplicated (P2, bug)
 
@@ -1624,6 +1638,14 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [oqto-tacn.7] Extract runner daemon core from oqto crate into oqto-runner crate (closed 2026-03-27)
+- [oqto-tacn.2] Remove or feature-gate DirectUserPlane (zombie with 8 TODOs) (closed 2026-03-27)
+- [oqto-tacn.11] Integrate architecture guardrails into just lint + CI and update AGENTS.md (closed 2026-03-27)
+- [oqto-tacn.10] Add dead-code/orphan module guardrail (closed 2026-03-27)
+- [oqto-tacn.6] Add module boundary import guardrail (closed 2026-03-27)
+- [oqto-tacn.5] Add crate dependency direction guardrail (closed 2026-03-27)
+- [oqto-tacn.4] Add file size ratchet guardrail (god file preventer) (closed 2026-03-27)
+- [oqto-tacn.1] Delete api/ws/multiplexed/ transitional shim (dead code) (closed 2026-03-27)
 - [oqto-6k4b] Media Browsing & Discovery Improvements (closed 2026-03-24)
 - [oqto-wkcf] Video Gallery Mode (closed 2026-03-24)
 - [oqto-wx4h] Recent Media Sidebar (closed 2026-03-24)
@@ -2313,12 +2335,12 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
 - [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
-- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
 - [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
+- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
+- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
 - [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
 - [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
-- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )

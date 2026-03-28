@@ -42,6 +42,26 @@ fn emit_session_bus_event(
     });
 }
 
+fn reconcile_session_subscription_for_create(
+    state: &mut WsConnectionState,
+    session_id: &str,
+) -> bool {
+    let already_subscribed = state.pi_subscriptions.contains(session_id);
+    let forwarder_alive = state
+        .pi_forwarders
+        .get(session_id)
+        .map(|h| !h.is_finished())
+        .unwrap_or(false);
+
+    if already_subscribed && !forwarder_alive {
+        state.pi_subscriptions.remove(session_id);
+        state.pi_forwarders.remove(session_id);
+        return false;
+    }
+
+    already_subscribed && forwarder_alive
+}
+
 pub(super) async fn handle_agent_command(
     cmd: oqto_protocol::commands::Command,
     user_id: &str,
@@ -92,7 +112,7 @@ pub(super) async fn handle_agent_command(
                 resolved_target_for_command = Some(target.clone());
                 // Store override for subsequent commands on this session
                 let is_different =
-                    runner_client.map_or(true, |r| r.socket_path() != sw.socket_path());
+                    runner_client.is_none_or(|r| r.socket_path() != sw.socket_path());
                 if is_different {
                     let mut state_guard = conn_state.lock().await;
                     state_guard
@@ -406,8 +426,8 @@ pub(super) async fn handle_agent_command(
             // common case of React StrictMode double-invoke or reconnection
             // re-sending session.create for a session that's already alive.
             {
-                let state_guard = conn_state.lock().await;
-                if state_guard.pi_subscriptions.contains(&session_id) {
+                let mut state_guard = conn_state.lock().await;
+                if reconcile_session_subscription_for_create(&mut state_guard, &session_id) {
                     debug!(
                         "agent session.create: session {} already subscribed, returning success",
                         session_id
@@ -430,7 +450,7 @@ pub(super) async fn handle_agent_command(
             // Avoid sandboxing sessions at filesystem root; this causes agents to
             // attempt writing state under `/.oqto` and fail with permission errors.
             // Prefer persisted session target workspace path, then user home fallback.
-            if cwd == std::path::PathBuf::from("/") {
+            if cwd == *"/" {
                 if let Ok(Some(target)) = state.session_targets.get(&session_id).await
                     && let Some(workspace_path) = target.workspace_path
                     && !workspace_path.trim().is_empty()
@@ -575,18 +595,16 @@ pub(super) async fn handle_agent_command(
                     if matches!(target_for_persist, ExecutionTarget::Personal)
                         && (cwd_string.starts_with("/home/oqto_shared_")
                             || cwd_string.starts_with("/home/octo_shared_"))
-                    {
-                        if let Ok(resolved) =
+                        && let Ok(resolved) =
                             crate::runner::router::resolve_target_for_workspace_path(
                                 state,
                                 user_id,
                                 &cwd_string,
                             )
                             .await
-                            && matches!(resolved, ExecutionTarget::SharedWorkspace { .. })
-                        {
-                            target_for_persist = resolved;
-                        }
+                        && matches!(resolved, ExecutionTarget::SharedWorkspace { .. })
+                    {
+                        target_for_persist = resolved;
                     }
 
                     let (target_scope, target_workspace_id, target_record) =
@@ -1402,7 +1420,7 @@ pub(super) async fn handle_agent_command(
             {
                 Ok(resp) => {
                     // Emit ConfigModelChanged event so the frontend UI updates.
-                    let config_event = WsEvent::Agent(oqto_protocol::events::Event {
+                    let config_event = WsEvent::Agent(Box::new(oqto_protocol::events::Event {
                         session_id: session_id.clone(),
                         runner_id: runner_id.clone(),
                         ts: Utc::now().timestamp_millis(),
@@ -1410,7 +1428,7 @@ pub(super) async fn handle_agent_command(
                             provider: resp.model.provider.clone(),
                             model_id: resp.model.id.clone(),
                         },
-                    });
+                    }));
                     let state_guard = conn_state.lock().await;
                     let _ = state_guard.event_tx.send(config_event);
                     drop(state_guard);
@@ -1468,7 +1486,7 @@ pub(super) async fn handle_agent_command(
             match runner.agent_cycle_model(&session_id).await {
                 Ok(resp) => {
                     // Emit ConfigModelChanged event so the frontend UI updates.
-                    let config_event = WsEvent::Agent(oqto_protocol::events::Event {
+                    let config_event = WsEvent::Agent(Box::new(oqto_protocol::events::Event {
                         session_id: session_id.clone(),
                         runner_id: runner_id.clone(),
                         ts: Utc::now().timestamp_millis(),
@@ -1476,7 +1494,7 @@ pub(super) async fn handle_agent_command(
                             provider: resp.model.provider.clone(),
                             model_id: resp.model.id.clone(),
                         },
-                    });
+                    }));
                     let state_guard = conn_state.lock().await;
                     let _ = state_guard.event_tx.send(config_event);
                     drop(state_guard);
@@ -1708,64 +1726,61 @@ pub(super) async fn handle_agent_command(
             // Pre-store runner overrides so subsequent commands (get_messages,
             // get_state, prompt, etc.) route to the correct runner without
             // requiring the user to have sent session.create.
-            if let Some(sw_service) = state.shared_workspaces.as_ref() {
-                if let Ok(workspaces) = sw_service.list_for_user(user_id).await {
-                    for ws in &workspaces {
-                        if let Some(sw_runner) =
-                            runner_client_for_linux_user(state, user_id, Some(&ws.linux_user))
-                        {
-                            match sw_runner.agent_list_sessions().await {
-                                Ok(sessions) => {
-                                    // Store runner overrides for all discovered shared sessions
-                                    if !sessions.is_empty() {
-                                        let mut state_guard = conn_state.lock().await;
-                                        for s in &sessions {
-                                            state_guard
-                                                .session_runner_overrides
-                                                .insert(s.session_id.clone(), sw_runner.clone());
-                                            // Pre-populate session meta with cwd so
-                                            // prompt/steer handlers can resolve the
-                                            // shared workspace for username tagging
-                                            // without requiring session.create.
-                                            if !state_guard
-                                                .pi_session_meta
-                                                .contains_key(&s.session_id)
-                                            {
-                                                state_guard.pi_session_meta.insert(
-                                                    s.session_id.clone(),
-                                                    PiSessionMeta {
-                                                        scope: Some("pi".to_string()),
-                                                        cwd: Some(std::path::PathBuf::from(&s.cwd)),
-                                                    },
-                                                );
-                                            }
-                                        }
-                                        drop(state_guard);
-                                    }
+            if let Some(sw_service) = state.shared_workspaces.as_ref()
+                && let Ok(workspaces) = sw_service.list_for_user(user_id).await
+            {
+                for ws in &workspaces {
+                    if let Some(sw_runner) =
+                        runner_client_for_linux_user(state, user_id, Some(&ws.linux_user))
+                    {
+                        match sw_runner.agent_list_sessions().await {
+                            Ok(sessions) => {
+                                // Store runner overrides for all discovered shared sessions
+                                if !sessions.is_empty() {
+                                    let mut state_guard = conn_state.lock().await;
                                     for s in &sessions {
-                                        let mut obj = serde_json::json!({
-                                            "session_id": s.session_id,
-                                            "state": s.state,
-                                            "cwd": s.cwd,
-                                            "provider": s.provider,
-                                            "model": s.model,
-                                            "last_activity": s.last_activity,
-                                            "subscriber_count": s.subscriber_count,
-                                            "shared_workspace_id": ws.id,
-                                        });
-                                        if let Some(ref hid) = s.hstry_id {
-                                            obj["hstry_id"] =
-                                                serde_json::Value::String(hid.clone());
+                                        state_guard
+                                            .session_runner_overrides
+                                            .insert(s.session_id.clone(), sw_runner.clone());
+                                        // Pre-populate session meta with cwd so
+                                        // prompt/steer handlers can resolve the
+                                        // shared workspace for username tagging
+                                        // without requiring session.create.
+                                        if !state_guard.pi_session_meta.contains_key(&s.session_id)
+                                        {
+                                            state_guard.pi_session_meta.insert(
+                                                s.session_id.clone(),
+                                                PiSessionMeta {
+                                                    scope: Some("pi".to_string()),
+                                                    cwd: Some(std::path::PathBuf::from(&s.cwd)),
+                                                },
+                                            );
                                         }
-                                        all_sessions.push(obj);
                                     }
+                                    drop(state_guard);
                                 }
-                                Err(e) => {
-                                    debug!(
-                                        "list_sessions failed for shared workspace {}: {}",
-                                        ws.id, e
-                                    );
+                                for s in &sessions {
+                                    let mut obj = serde_json::json!({
+                                        "session_id": s.session_id,
+                                        "state": s.state,
+                                        "cwd": s.cwd,
+                                        "provider": s.provider,
+                                        "model": s.model,
+                                        "last_activity": s.last_activity,
+                                        "subscriber_count": s.subscriber_count,
+                                        "shared_workspace_id": ws.id,
+                                    });
+                                    if let Some(ref hid) = s.hstry_id {
+                                        obj["hstry_id"] = serde_json::Value::String(hid.clone());
+                                    }
+                                    all_sessions.push(obj);
                                 }
+                            }
+                            Err(e) => {
+                                debug!(
+                                    "list_sessions failed for shared workspace {}: {}",
+                                    ws.id, e
+                                );
                             }
                         }
                     }
@@ -1789,5 +1804,67 @@ pub(super) async fn handle_agent_command(
                 Err("Delegation not yet implemented".into()),
             ))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::{HashMap, HashSet};
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn test_reconcile_session_subscription_for_create_keeps_healthy_forwarder() {
+        let (event_tx, _event_rx) = mpsc::unbounded_channel::<WsEvent>();
+        let healthy = tokio::spawn(async {
+            tokio::time::sleep(Duration::from_secs(60)).await;
+        });
+
+        let mut state = WsConnectionState {
+            subscribed_sessions: HashSet::new(),
+            event_tx,
+            pi_subscriptions: HashSet::from(["ses-1".to_string()]),
+            pi_forwarders: HashMap::from([("ses-1".to_string(), healthy)]),
+            response_watchdogs: HashMap::new(),
+            pi_session_meta: HashMap::new(),
+            terminal_sessions: HashMap::new(),
+            file_watchers: HashMap::new(),
+            session_runner_overrides: HashMap::new(),
+            bus_subscriber_id: 0,
+        };
+
+        let already_healthy = reconcile_session_subscription_for_create(&mut state, "ses-1");
+        assert!(already_healthy);
+        assert!(state.pi_subscriptions.contains("ses-1"));
+        assert!(state.pi_forwarders.contains_key("ses-1"));
+
+        if let Some(handle) = state.pi_forwarders.remove("ses-1") {
+            handle.abort();
+        }
+    }
+
+    #[tokio::test]
+    async fn test_reconcile_session_subscription_for_create_cleans_stale_forwarder() {
+        let (event_tx, _event_rx) = mpsc::unbounded_channel::<WsEvent>();
+        let stale = tokio::spawn(async {});
+        tokio::task::yield_now().await;
+
+        let mut state = WsConnectionState {
+            subscribed_sessions: HashSet::new(),
+            event_tx,
+            pi_subscriptions: HashSet::from(["ses-2".to_string()]),
+            pi_forwarders: HashMap::from([("ses-2".to_string(), stale)]),
+            response_watchdogs: HashMap::new(),
+            pi_session_meta: HashMap::new(),
+            terminal_sessions: HashMap::new(),
+            file_watchers: HashMap::new(),
+            session_runner_overrides: HashMap::new(),
+            bus_subscriber_id: 0,
+        };
+
+        let already_healthy = reconcile_session_subscription_for_create(&mut state, "ses-2");
+        assert!(!already_healthy);
+        assert!(!state.pi_subscriptions.contains("ses-2"));
+        assert!(!state.pi_forwarders.contains_key("ses-2"));
     }
 }

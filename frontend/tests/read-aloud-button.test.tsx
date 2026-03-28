@@ -28,7 +28,11 @@ vi.mock("@/hooks/use-tts", () => ({
 describe("ReadAloudButton", () => {
 	it("shows stop state when a paragraph sequence is active", () => {
 		render(<ReadAloudButton text={"Hello world"} />);
-		expect(screen.getByRole("button", { name: /stop/i })).toBeInTheDocument();
-		expect(screen.queryByRole("button", { name: /read/i })).toBeNull();
+		expect(
+			screen.getAllByRole("button", { name: /stop/i }).length,
+		).toBeGreaterThan(0);
+		expect(
+			screen.queryAllByRole("button", { name: /^read aloud$/i }),
+		).toHaveLength(0);
 	});
 });

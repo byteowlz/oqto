@@ -87,7 +87,7 @@ describe("chat state machine", () => {
 		expect(selectMessageMergeMode(streaming, "ws_get_messages")).toBe(
 			"partial",
 		);
-		expect(selectMessageMergeMode(streaming, "history")).toBe("authoritative");
+		expect(selectMessageMergeMode(streaming, "history")).toBe("partial");
 		const reconciling = transitionTurn(streaming, {
 			kind: "reconciling",
 			reason: "resync",

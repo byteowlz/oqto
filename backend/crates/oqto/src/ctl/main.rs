@@ -790,7 +790,7 @@ enum OqtoTransport {
     Unix {
         socket_path: PathBuf,
         base_path: String,
-        client: UnixClient,
+        client: Box<UnixClient>,
     },
 }
 
@@ -832,7 +832,7 @@ impl OqtoClient {
                     transport: OqtoTransport::Unix {
                         socket_path,
                         base_path,
-                        client,
+                        client: Box::new(client),
                     },
                     dev_user,
                     auth_token,
@@ -2935,10 +2935,10 @@ async fn resolve_user_id(client: &OqtoClient, user_or_id: &str, _json: bool) -> 
     let response = client.get(&format!("/admin/users/{}", user_or_id)).await?;
     if response.status().is_success() {
         let body = response.text().await.unwrap_or_default();
-        if let Ok(user) = serde_json::from_str::<serde_json::Value>(&body) {
-            if let Some(id) = user["id"].as_str() {
-                return Ok(id.to_string());
-            }
+        if let Ok(user) = serde_json::from_str::<serde_json::Value>(&body)
+            && let Some(id) = user["id"].as_str()
+        {
+            return Ok(id.to_string());
         }
     }
 
@@ -2948,10 +2948,10 @@ async fn resolve_user_id(client: &OqtoClient, user_or_id: &str, _json: bool) -> 
         let body = response.text().await.unwrap_or_default();
         if let Ok(users) = serde_json::from_str::<Vec<serde_json::Value>>(&body) {
             for user in &users {
-                if user["username"].as_str() == Some(user_or_id) {
-                    if let Some(id) = user["id"].as_str() {
-                        return Ok(id.to_string());
-                    }
+                if user["username"].as_str() == Some(user_or_id)
+                    && let Some(id) = user["id"].as_str()
+                {
+                    return Ok(id.to_string());
                 }
             }
         }
@@ -4299,10 +4299,10 @@ async fn handle_bus(client: &OqtoClient, command: BusCommand, json: bool) -> Res
                             println!("[{scope}/{scope_id}] {topic} <- {source}");
                         }
 
-                        if let Some(max) = limit {
-                            if seen >= max {
-                                break;
-                            }
+                        if let Some(max) = limit
+                            && seen >= max
+                        {
+                            break;
                         }
                     }
                     Message::Close(_) => break,

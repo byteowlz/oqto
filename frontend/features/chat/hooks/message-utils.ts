@@ -809,22 +809,35 @@ export function mergeServerMessages(
 		serverMessages.map((m) => messageFingerprint(m)),
 	);
 
+	const latestServerTimestamp = serverMessages.reduce(
+		(maxTs, msg) => Math.max(maxTs, msg.timestamp ?? 0),
+		0,
+	);
+	const optimisticFreshnessWindowMs = 60_000;
+	const isPreservableTrailingMessage = (msg: DisplayMessage): boolean => {
+		if (msg.isStreaming) return true;
+		if (msg.role !== "user" || !msg.clientId) return false;
+		if (serverClientIds.has(msg.clientId)) return false;
+		if (serverFingerprints.has(messageFingerprint(msg))) return false;
+		// Keep only very recent optimistic messages. If a message has been
+		// missing from server snapshots for too long, treat it as stale to
+		// avoid pinning old user messages at the end forever.
+		const msgTs = msg.timestamp ?? 0;
+		const isRecentVsServer =
+			msgTs >= latestServerTimestamp - optimisticFreshnessWindowMs;
+		const isRecentVsNow = Date.now() - msgTs <= optimisticFreshnessWindowMs;
+		return isRecentVsServer && isRecentVsNow;
+	};
+
+	// Preserve only trailing in-flight messages. Scanning from the end avoids
+	// resurrecting older local messages from the middle of history.
 	const preserved: DisplayMessage[] = [];
-	for (const msg of previous) {
-		// Only preserve truly in-flight streaming messages
-		if (msg.isStreaming) {
-			preserved.push(msg);
-		}
-		// Do NOT preserve non-streaming user messages in authoritative mode.
-		// If the server doesn't have them, they were either:
-		// - From a different session (cache contamination)
-		// - Already persisted but lost their clientId on server serialization
-		// In both cases, we should NOT preserve them to avoid duplicates.
+	for (let i = previous.length - 1; i >= 0; i--) {
+		const msg = previous[i];
+		if (!isPreservableTrailingMessage(msg)) break;
+		preserved.unshift(msg);
 	}
 
 	if (preserved.length === 0) return serverMessages;
-	// Append preserved (in-flight) messages after server messages.
-	// Server messages are already in correct order from hstry.
-	// Preserved messages (streaming only) logically come after the last server message.
 	return [...serverMessages, ...preserved];
 }

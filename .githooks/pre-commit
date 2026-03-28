@@ -2,4 +2,12 @@
 set -euo pipefail
 
 ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+
+echo "[pre-commit] Running dependency manifest sync checks..."
 "$ROOT/scripts/update-deps-precommit.sh"
+
+echo "[pre-commit] Running full lint gate (just lint)..."
+just lint
+
+echo "[pre-commit] OK"

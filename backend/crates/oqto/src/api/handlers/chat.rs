@@ -148,14 +148,14 @@ async fn resolve_session_target(
     Ok(ExecutionTarget::Personal)
 }
 
-/// Create a runner client for a user based on socket pattern.
+/// Create a runner client for a user based on configured runner endpoint.
 /// Returns the runner client if available, None for direct access.
 pub(crate) fn get_runner_for_user(
     state: &AppState,
     user_id: &str,
 ) -> Option<crate::runner::client::RunnerClient> {
-    // Need runner socket pattern for multi-user mode
-    let pattern = state.runner_socket_pattern.as_ref()?;
+    // Need runner endpoint for multi-user mode
+    let _endpoint = state.runner_endpoint.as_ref()?;
 
     // The socket path uses the linux_username (e.g., oqto_hansgerd-vyon),
     // not the platform user_id (e.g., hansgerd-vYoN).
@@ -165,8 +165,9 @@ pub(crate) fn get_runner_for_user(
         user_id.to_string()
     };
 
-    match crate::runner::client::RunnerClient::for_user_with_pattern(&effective_user, pattern) {
-        Ok(client) => Some(client),
+    match state.runner_client_for_linux_user(&effective_user) {
+        Ok(Some(client)) => Some(client),
+        Ok(None) => None,
         Err(e) => {
             tracing::warn!(
                 user_id = %user_id,
@@ -183,9 +184,9 @@ fn get_runner_for_linux_user(
     state: &AppState,
     linux_username: &str,
 ) -> Option<crate::runner::client::RunnerClient> {
-    let pattern = state.runner_socket_pattern.as_ref()?;
-    match crate::runner::client::RunnerClient::for_user_with_pattern(linux_username, pattern) {
-        Ok(client) => Some(client),
+    match state.runner_client_for_linux_user(linux_username) {
+        Ok(Some(client)) => Some(client),
+        Ok(None) => None,
         Err(e) => {
             tracing::warn!(
                 linux_user = %linux_username,
@@ -384,7 +385,10 @@ pub async fn list_chat_history(
         .await
         .map_err(|e| ApiError::internal(format!("runner list sessions failed: {}", e)))?;
 
+    // Auto-repair can be expensive on large workspaces. Only trigger it when
+    // the initial list is empty for unfiltered queries.
     if query.workspace.is_none()
+        && response.sessions.is_empty()
         && runner
             .repair_workspace_chat_history(Some(10_000), None)
             .await
@@ -843,10 +847,9 @@ pub async fn get_chat_messages(
 
     let mut canonical = convert_runner_response(response);
     if canonical.is_empty() {
-        if let Err(err) = runner
-            .repair_workspace_chat_history(Some(10_000), None)
-            .await
-        {
+        // Keep fallback bounded to avoid long blocking requests on large
+        // workspaces when a single session is missing from hstry.
+        if let Err(err) = runner.repair_workspace_chat_history(Some(500), None).await {
             tracing::debug!(
                 user_id = %user.id(),
                 session_id = %session_id,

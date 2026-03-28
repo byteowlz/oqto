@@ -1,15 +1,23 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Parser;
 use log::{info, warn};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use oqto::runner::daemon::bootstrap::{
+mod agent_browser;
+mod daemon;
+mod history;
+mod pi;
+mod pi_manager;
+mod pi_translator;
+mod protocol;
+
+use crate::daemon::bootstrap::{
     get_default_socket_path, load_env_file, load_sandbox_config, log_sandbox_state,
 };
-use oqto::runner::daemon::config::RunnerUserConfig;
-use oqto::runner::daemon::server::{Runner, SessionBinaries};
-use oqto::runner::pi_manager::{PiManagerConfig, PiSessionManager};
+use crate::daemon::config::RunnerUserConfig;
+use crate::daemon::server::{Runner, SessionBinaries};
+use crate::pi_manager::{PiManagerConfig, PiSessionManager};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -19,8 +27,12 @@ use oqto::runner::pi_manager::{PiManagerConfig, PiSessionManager};
 struct Args {
     #[arg(short, long)]
     config: Option<PathBuf>,
-    #[arg(short, long)]
+    #[arg(short, long, conflicts_with = "listen")]
     socket: Option<PathBuf>,
+    #[arg(long, value_name = "HOST:PORT", conflicts_with = "socket")]
+    listen: Option<String>,
+    #[arg(long, env = "RUNNER_AUTH_TOKEN")]
+    auth_token: Option<String>,
     #[arg(long)]
     sandbox_config: Option<PathBuf>,
     #[arg(long)]
@@ -39,14 +51,6 @@ async fn main() -> Result<()> {
 
     let log_level = if args.verbose { "debug" } else { "info" };
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(log_level)).init();
-
-    let socket_path = args.socket.unwrap_or_else(get_default_socket_path);
-
-    info!(
-        "Starting oqto-runner (user={}, socket={:?})",
-        std::env::var("USER").unwrap_or_else(|_| "unknown".to_string()),
-        socket_path
-    );
 
     let sandbox_config = load_sandbox_config(args.no_sandbox, args.sandbox_config.as_ref())?;
     log_sandbox_state(&sandbox_config);
@@ -82,7 +86,7 @@ async fn main() -> Result<()> {
         idle_timeout_secs: 300,
         cleanup_interval_secs: 60,
         hstry_db_path: {
-            let db_path = oqto::history::hstry_db_path();
+            let db_path = history::hstry_db_path();
             match &db_path {
                 Some(p) => info!("hstry DB found: {}", p.display()),
                 None => warn!("hstry DB not found -- chat history persistence disabled"),
@@ -101,5 +105,24 @@ async fn main() -> Result<()> {
     });
 
     let runner = Runner::new(sandbox_config, binaries, user_config, pi_manager);
-    runner.run(&socket_path).await
+
+    if let Some(listen_addr) = args.listen {
+        let auth_token = args.auth_token.with_context(
+            || "RUNNER_AUTH_TOKEN (or --auth-token) is required when --listen is used",
+        )?;
+        info!(
+            "Starting oqto-runner (user={}, listen={})",
+            std::env::var("USER").unwrap_or_else(|_| "unknown".to_string()),
+            listen_addr
+        );
+        runner.run_tcp(&listen_addr, auth_token).await
+    } else {
+        let socket_path = args.socket.unwrap_or_else(get_default_socket_path);
+        info!(
+            "Starting oqto-runner (user={}, socket={:?})",
+            std::env::var("USER").unwrap_or_else(|_| "unknown".to_string()),
+            socket_path
+        );
+        runner.run(&socket_path).await
+    }
 }

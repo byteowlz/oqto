@@ -175,12 +175,11 @@ impl ApiKeyRepository {
             return Ok(None);
         };
 
-        if let Some(ref expires_at) = row.expires_at {
-            if let Some(expiry) = parse_timestamp(expires_at) {
-                if expiry < chrono::Utc::now() {
-                    return Ok(None);
-                }
-            }
+        if let Some(ref expires_at) = row.expires_at
+            && let Some(expiry) = parse_timestamp(expires_at)
+            && expiry < chrono::Utc::now()
+        {
+            return Ok(None);
         }
 
         Ok(Some(ApiKeyAuthUser {
