@@ -327,7 +327,7 @@ pub(super) async fn handle_files_command(
                     .await
                     .map_err(|e| e.to_string())?;
                 let entries = user_plane
-                    .list_directory(from_path, true)
+                    .list_directory(from_path, false)
                     .await
                     .map_err(|e| e.to_string())?;
                 for entry in entries {
