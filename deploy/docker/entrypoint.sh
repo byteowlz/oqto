@@ -273,9 +273,11 @@ chown -R oqto:oqto /home/oqto/.config/hstry
 
 DEV_MODE="false"
 LINUX_USERS_ENABLED="true"
+RUNNER_SOCKET_PATTERN="/run/oqto/runner-sockets/{user}/oqto-runner.sock"
 if [ "$OQTO_SINGLE_USER" = "true" ]; then
   DEV_MODE="true"
   LINUX_USERS_ENABLED="false"
+  RUNNER_SOCKET_PATTERN="/run/oqto/oqto-runner.sock"
 fi
 
 cat > /home/oqto/.config/oqto/config.toml <<EOF
@@ -301,6 +303,7 @@ enabled = true
 fileserver_binary = "oqto-files"
 ttyd_binary = "ttyd"
 workspace_dir = "${OQTO_DATA_DIR}/workspaces/{user_id}"
+runner_socket_pattern = "${RUNNER_SOCKET_PATTERN}"
 single_user = ${OQTO_SINGLE_USER}
 cleanup_on_startup = true
 stop_sessions_on_shutdown = true
