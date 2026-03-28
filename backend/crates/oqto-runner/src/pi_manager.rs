@@ -1561,12 +1561,60 @@ impl PiSessionManager {
             }
         };
 
-        // Merge: ephemeral Pi is freshest, then session, then disk.
-        // Later sources only add models not already present.
-        let models = Self::merge_model_lists(
-            &Self::merge_model_lists(&pi_models, &session_models),
-            &disk_models,
-        );
+        // Prefer disk models (admin/eavs-managed) as authoritative.
+        // Ephemeral/session sources may include provider catalogs that are not
+        // actually configured for this deployment (e.g. built-in OpenAI/Gemini
+        // catalogs without usable credentials). To avoid surfacing unavailable
+        // providers in the UI, only merge ephemeral/session models whose
+        // provider is already present in disk models.
+        let models = if let Some(disk_arr) = disk_models.as_array() {
+            if !disk_arr.is_empty() {
+                let allowed_providers: std::collections::HashSet<String> = disk_arr
+                    .iter()
+                    .filter_map(|m| {
+                        m.get("provider")
+                            .and_then(|p| p.as_str())
+                            .map(|s| s.to_string())
+                    })
+                    .collect();
+
+                let filter_by_provider = |value: &serde_json::Value| -> serde_json::Value {
+                    let filtered = value
+                        .as_array()
+                        .map(|arr| {
+                            arr.iter()
+                                .filter(|m| {
+                                    m.get("provider")
+                                        .and_then(|p| p.as_str())
+                                        .map(|p| allowed_providers.contains(p))
+                                        .unwrap_or(false)
+                                })
+                                .cloned()
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
+                    serde_json::Value::Array(filtered)
+                };
+
+                let pi_filtered = filter_by_provider(&pi_models);
+                let session_filtered = filter_by_provider(&session_models);
+                Self::merge_model_lists(
+                    &Self::merge_model_lists(&pi_filtered, &session_filtered),
+                    &disk_models,
+                )
+            } else {
+                // No disk models: keep previous merge behavior.
+                Self::merge_model_lists(
+                    &Self::merge_model_lists(&pi_models, &session_models),
+                    &disk_models,
+                )
+            }
+        } else {
+            Self::merge_model_lists(
+                &Self::merge_model_lists(&pi_models, &session_models),
+                &disk_models,
+            )
+        };
 
         if models.as_array().is_some_and(|a| !a.is_empty()) {
             let now = std::time::SystemTime::now()

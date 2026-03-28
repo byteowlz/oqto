@@ -61,6 +61,20 @@ pub fn generate_pi_models_json(
             continue;
         }
 
+        // Only include providers that are actually usable in this deployment.
+        // - API-key providers require a resolved key
+        // - OAuth providers are usable without static keys
+        // - OpenAI-compatible local providers are typically keyless by design
+        let usable_without_key = provider.oauth || provider.type_ == "openai-compatible";
+        if !provider.has_api_key && !usable_without_key {
+            continue;
+        }
+
+        // Ignore providers with no models to avoid empty provider sections in Pi UI.
+        if provider.models.is_empty() {
+            continue;
+        }
+
         let base_url = format!("{}/{}/v1", base, provider.name);
 
         let models: Vec<serde_json::Value> = provider
