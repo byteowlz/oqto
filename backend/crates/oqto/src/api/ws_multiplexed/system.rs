@@ -48,16 +48,16 @@ pub(super) async fn handle_bus_command(
             event.ack = ack;
 
             match state.bus.publish(Some(bus_sub_id), event).await {
-                Ok(()) => Some(WsEvent::Bus(Box::new(BusWsEvent::Response {
+                Ok(()) => Some(WsEvent::Bus(BusWsEvent::Response {
                     id,
                     success: true,
                     error: None,
-                }))),
-                Err(e) => Some(WsEvent::Bus(Box::new(BusWsEvent::Response {
+                })),
+                Err(e) => Some(WsEvent::Bus(BusWsEvent::Response {
                     id,
                     success: false,
                     error: Some(e),
-                }))),
+                })),
             }
         }
         BusCommand::Subscribe {
@@ -74,16 +74,16 @@ pub(super) async fn handle_bus_command(
                 )
                 .await
             {
-                Ok(()) => Some(WsEvent::Bus(Box::new(BusWsEvent::Response {
+                Ok(()) => Some(WsEvent::Bus(BusWsEvent::Response {
                     id,
                     success: true,
                     error: None,
-                }))),
-                Err(e) => Some(WsEvent::Bus(Box::new(BusWsEvent::Response {
+                })),
+                Err(e) => Some(WsEvent::Bus(BusWsEvent::Response {
                     id,
                     success: false,
                     error: Some(e),
-                }))),
+                })),
             }
         }
         BusCommand::Unsubscribe {
@@ -95,11 +95,11 @@ pub(super) async fn handle_bus_command(
             state
                 .bus
                 .unsubscribe(bus_sub_id, &scope, &scope_id, &topics);
-            Some(WsEvent::Bus(Box::new(BusWsEvent::Response {
+            Some(WsEvent::Bus(BusWsEvent::Response {
                 id,
                 success: true,
                 error: None,
-            })))
+            }))
         }
     }
 }

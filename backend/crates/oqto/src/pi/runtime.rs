@@ -21,7 +21,7 @@ use tokio::process::{Child, Command};
 use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
 
 use super::PiClientConfig;
-use super::*;
+use super::types::*;
 
 /// Configuration for spawning a Pi process.
 #[derive(Debug, Clone)]
@@ -296,7 +296,7 @@ impl LocalPiProcess {
                         }
                     }
                     Ok(PiMessage::Event(event)) => {
-                        let _ = event_tx.send(*event);
+                        let _ = event_tx.send(event);
                     }
                     Err(e) => {
                         let display_line: String = line.chars().take(200).collect();
@@ -568,7 +568,7 @@ impl RunnerPiProcess {
                     }
                 }
                 Ok(PiMessage::Event(event)) => {
-                    let _ = event_tx.send(*event);
+                    let _ = event_tx.send(event);
                 }
                 Err(e) => {
                     warn!("Failed to parse pi message: {}, line: {}", e, display_line);

@@ -42,14 +42,3 @@ pasted-image-*.png
 # Local reliability test secrets (never commit)
 scripts/e2e/.secrets/
 *.local.secrets.toml
-
-# Python/uv local environments and caches
-.venv/
-venv/
-.env/
-__pycache__/
-*.py[cod]
-.python-version
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/

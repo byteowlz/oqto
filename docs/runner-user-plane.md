@@ -198,18 +198,11 @@ Update `oqtoctl user create` to:
 
 ```toml
 [backend]
-mode = "local"                 # or "container" / "auto"
+mode = "local"           # or "container"
 
 [backend.runner]
-user_plane_enabled = true       # Enable runner-as-user-plane
-transport = "unix"             # "unix" or "tcp"
-socket_pattern = "/run/oqto/runner-sockets/{user}/oqto-runner.sock"
-
-# TCP mode (container/remote runners)
-# transport = "tcp"
-# tcp_addr_pattern = "runner-{user}.internal:7001"
-# tcp_auth_token_env = "RUNNER_AUTH_TOKEN"   # preferred
-# tcp_auth_token = "..."                     # fallback if env not used
+enabled = true           # Enable runner-as-user-plane
+socket_dir = "/run/user" # Where to find per-user sockets
 ```
 
 ### Feature Flags

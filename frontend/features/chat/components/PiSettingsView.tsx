@@ -17,7 +17,6 @@ import {
 	saveTTSSettings,
 } from "@/features/voice/hooks/useTTS";
 import { useModelSelection } from "@/hooks/use-model-selection";
-import { triggerChatHistoryBackfill } from "@/lib/api/chat";
 import { type ChatVerbosity, useChatVerbosity } from "@/lib/chat-verbosity";
 import { fuzzyMatch } from "@/lib/slash-commands";
 import { cn } from "@/lib/utils";
@@ -25,14 +24,12 @@ import { type WsMuxConnectionState, getWsManager } from "@/lib/ws-manager";
 import { Loader2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { toast } from "sonner";
 
 export interface PiSettingsViewProps {
 	className?: string;
 	locale?: "en" | "de";
 	sessionId?: string | null;
 	workspacePath?: string | null;
-	onHistorySynced?: () => Promise<void> | void;
 }
 
 export function PiSettingsView({
@@ -40,7 +37,6 @@ export function PiSettingsView({
 	locale = "en",
 	sessionId,
 	workspacePath,
-	onHistorySynced,
 }: PiSettingsViewProps) {
 	const { t } = useTranslation();
 	const { verbosity, setVerbosity } = useChatVerbosity();
@@ -50,7 +46,6 @@ export function PiSettingsView({
 	const [thinkingLoading, setThinkingLoading] = useState<boolean>(false);
 	const [sessionReady, setSessionReady] = useState<boolean>(false);
 	const [restartingAgent, setRestartingAgent] = useState<boolean>(false);
-	const [syncingHistory, setSyncingHistory] = useState<boolean>(false);
 	const [connectionState, setConnectionState] =
 		useState<WsMuxConnectionState>("connecting");
 	const [isWorking, setIsWorking] = useState<boolean>(false);
@@ -213,29 +208,6 @@ export function PiSettingsView({
 			setRestartingAgent(false);
 		}
 	}, [sessionId]);
-
-	const handleSyncChatHistory = useCallback(async () => {
-		setSyncingHistory(true);
-		try {
-			const result = await triggerChatHistoryBackfill(
-				workspacePath ? { workspace: workspacePath } : {},
-			);
-			if (onHistorySynced) {
-				await onHistorySynced();
-			}
-			if (sessionId) {
-				const manager = getWsManager();
-				manager.agentGetMessages(sessionId);
-			}
-			toast.success(
-				`Sync complete: repaired ${result.repaired_conversations}, scanned ${result.scanned_files}`,
-			);
-		} catch (err) {
-			toast.error(err instanceof Error ? err.message : "History sync failed");
-		} finally {
-			setSyncingHistory(false);
-		}
-	}, [workspacePath, onHistorySynced, sessionId]);
 
 	const {
 		availableModels,
@@ -473,28 +445,8 @@ export function PiSettingsView({
 							t("pi.restartAgent")
 						)}
 					</Button>
-					<Button
-						type="button"
-						variant="outline"
-						size="sm"
-						className="w-full"
-						onClick={handleSyncChatHistory}
-						disabled={syncingHistory}
-					>
-						{syncingHistory ? (
-							<span className="inline-flex items-center gap-2">
-								<Loader2 className="h-3 w-3 animate-spin" />
-								Syncing history...
-							</span>
-						) : (
-							"Sync chat history"
-						)}
-					</Button>
 					<p className="text-[10px] text-muted-foreground">
 						{t("pi.restartAgentDescription")}
-					</p>
-					<p className="text-[10px] text-muted-foreground">
-						Scan Pi JSONL and reconcile missing messages into hstry.
 					</p>
 				</div>
 

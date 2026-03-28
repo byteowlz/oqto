@@ -576,13 +576,13 @@ pub enum WsEvent {
     /// Canonical agent events (streaming, state, command responses, delegation, etc.).
     /// Serializes as `{"channel": "agent", "session_id": ..., "event": ..., ...}`.
     #[serde(rename = "agent")]
-    Agent(Box<oqto_protocol::events::Event>),
+    Agent(oqto_protocol::events::Event),
     Files(FilesWsEvent),
     Terminal(TerminalWsEvent),
     Hstry(HstryWsEvent),
     Trx(TrxWsEvent),
     System(SystemWsEvent),
-    Bus(Box<crate::bus::BusWsEvent>),
+    Bus(crate::bus::BusWsEvent),
 }
 
 /// Files channel events (placeholder).
@@ -936,7 +936,8 @@ fn runner_client_for_linux_user(
     user_id: &str,
     linux_username_override: Option<&str>,
 ) -> Option<RunnerClient> {
-    if state.runner_endpoint.is_some() {
+    // Check if we have a socket pattern configured
+    if let Some(pattern) = state.runner_socket_pattern.as_deref() {
         let linux_username = linux_username_override
             .map(|s| s.to_string())
             .unwrap_or_else(|| {
@@ -947,9 +948,11 @@ fn runner_client_for_linux_user(
                     .unwrap_or_else(|| user_id.to_string())
             });
 
-        match state.runner_client_for_linux_user(&linux_username) {
-            Ok(Some(c)) => return Some(c),
-            Ok(None) => {}
+        // Use for_user_with_pattern which handles both {user} and {uid} placeholders.
+        // Don't pre-check socket existence -- the runner client retries on
+        // transient connection failures during service restarts.
+        match RunnerClient::for_user_with_pattern(&linux_username, pattern) {
+            Ok(c) => return Some(c),
             Err(e) => {
                 warn!("Failed to create runner client for user {}: {}", user_id, e);
             }
@@ -1179,8 +1182,7 @@ async fn handle_multiplexed_ws(
     let event_tx_for_bus = event_tx.clone();
     let bus_forwarder = tokio::spawn(async move {
         while let Some(bus_event) = bus_rx.recv().await {
-            let ws_event =
-                WsEvent::Bus(Box::new(crate::bus::BusWsEvent::Event(Box::new(bus_event))));
+            let ws_event = WsEvent::Bus(crate::bus::BusWsEvent::Event(bus_event));
             if event_tx_for_bus.send(ws_event).is_err() {
                 break;
             }
@@ -1803,7 +1805,7 @@ fn agent_response_with_runner(
         Ok(data) => (true, data, None),
         Err(e) => (false, None, Some(e)),
     };
-    WsEvent::Agent(Box::new(oqto_protocol::events::Event {
+    WsEvent::Agent(oqto_protocol::events::Event {
         session_id: session_id.to_string(),
         runner_id: runner_id.to_string(),
         ts: Utc::now().timestamp_millis(),
@@ -1816,7 +1818,7 @@ fn agent_response_with_runner(
                 error,
             },
         ),
-    }))
+    })
 }
 
 const RESPONSE_WATCHDOG_TIMEOUT: Duration = Duration::from_secs(45);
@@ -1854,7 +1856,7 @@ async fn emit_terminal_send_failure(
             phase: Some(oqto_protocol::events::AgentPhase::Generating),
         },
     };
-    let _ = event_tx.send(WsEvent::Agent(Box::new(error_event)));
+    let _ = event_tx.send(WsEvent::Agent(error_event));
 
     let idle_event = oqto_protocol::events::Event {
         session_id: session_id.to_string(),
@@ -1864,7 +1866,7 @@ async fn emit_terminal_send_failure(
             message_version: None,
         },
     };
-    let _ = event_tx.send(WsEvent::Agent(Box::new(idle_event)));
+    let _ = event_tx.send(WsEvent::Agent(idle_event));
 }
 
 async fn arm_response_watchdog(
@@ -1897,7 +1899,7 @@ async fn arm_response_watchdog(
                 phase: Some(oqto_protocol::events::AgentPhase::Generating),
             },
         };
-        let _ = event_tx.send(WsEvent::Agent(Box::new(error_event)));
+        let _ = event_tx.send(WsEvent::Agent(error_event));
 
         let idle_event = oqto_protocol::events::Event {
             session_id: session_id_owned,
@@ -1907,7 +1909,7 @@ async fn arm_response_watchdog(
                 message_version: None,
             },
         };
-        let _ = event_tx.send(WsEvent::Agent(Box::new(idle_event)));
+        let _ = event_tx.send(WsEvent::Agent(idle_event));
     });
 
     let mut state_guard = conn_state.lock().await;
@@ -2042,14 +2044,6 @@ async fn broadcast_user_message(
     }
 }
 
-fn live_pi_messages_timeout(is_active_subscription: bool) -> Duration {
-    if is_active_subscription {
-        Duration::from_secs(3)
-    } else {
-        Duration::from_millis(800)
-    }
-}
-
 /// Every command gets a `CommandResponse` event back (or `None` for fire-and-forget
 /// commands like prompt/steer/abort where streaming events are the real response).
 async fn handle_get_messages(
@@ -2091,51 +2085,56 @@ async fn handle_get_messages(
         |messages: Value, message_version: Option<oqto_protocol::events::MessageVersion>| {
             let mut data = serde_json::Map::new();
             data.insert("messages".to_string(), messages);
-            if let Some(version) = message_version
-                && let Ok(version_json) = serde_json::to_value(version)
-            {
-                data.insert("message_version".to_string(), version_json);
+            if let Some(version) = message_version {
+                if let Ok(version_json) = serde_json::to_value(version) {
+                    data.insert("message_version".to_string(), version_json);
+                }
             }
             Value::Object(data)
         };
 
-    // Prefer Pi's live messages over hstry whenever possible. This is
-    // especially important for shared workspaces where this WS connection may
-    // not currently hold a local subscription even though the session is still
-    // active on another connection/user.
-    //
-    // Use a tighter timeout for non-subscribed sessions to avoid regressing
-    // cold-history fetch latency.
-    let pi_timeout = live_pi_messages_timeout(is_active);
-
-    let pi_result = tokio::time::timeout(pi_timeout, runner.agent_get_messages(session_id)).await;
-    match pi_result {
-        Ok(Ok(resp)) => {
-            let messages_value = serde_json::to_value(&resp.messages).unwrap_or_default();
-            cache_pi_messages(user_id, session_id, &messages_value).await;
-            return Some(agent_response(
-                session_id,
-                id,
-                "get_messages",
-                Ok(Some(response_data(
-                    messages_value,
-                    persisted_message_version.clone(),
-                ))),
-            ));
-        }
-        Ok(Err(e)) => {
-            // Pi process may be inactive (historical session) or unavailable.
-            // Fall through to hstry/cache as fallback.
-            debug!(
-                "get_messages: Pi query failed for {}: {}, falling through to hstry",
-                session_id, e
-            );
-        }
-        Err(_) => {
-            debug!(
-                "get_messages: Pi query timed out for session {}, falling through to hstry",
-                session_id,
-            );
+    // When the session is ACTIVE (has a running Pi process + subscription),
+    // prefer Pi's live messages over hstry. Pi has the complete current-turn
+    // context including messages not yet persisted to hstry. Without this,
+    // the frontend misses in-progress tool calls, streaming responses, and
+    // any messages between the last hstry persist and now.
+    if is_active {
+        // Use a short timeout: Pi may be busy with an LLM request and the
+        // runner's get_messages RPC can hang for 10+s. Fall through to
+        // hstry/cache quickly rather than blocking the WS response.
+        let pi_result = tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            runner.agent_get_messages(session_id),
+        )
+        .await;
+        match pi_result {
+            Ok(Ok(resp)) => {
+                let messages_value = serde_json::to_value(&resp.messages).unwrap_or_default();
+                cache_pi_messages(user_id, session_id, &messages_value).await;
+                return Some(agent_response(
+                    session_id,
+                    id,
+                    "get_messages",
+                    Ok(Some(response_data(
+                        messages_value,
+                        persisted_message_version.clone(),
+                    ))),
+                ));
+            }
+            Ok(Err(e)) => {
+                // Pi process may have exited between subscription and now.
+                // Fall through to hstry/cache as fallback.
+                debug!(
+                    "get_messages: active session Pi query failed for {}: {}, falling through to hstry",
+                    session_id, e
+                );
+            }
+            Err(_) => {
+                debug!(
+                    "get_messages: Pi query timed out for active session {}, falling through to hstry",
+                    session_id,
+                );
+            }
         }
     }
 
@@ -2346,11 +2345,11 @@ async fn forward_pi_events(
                     oqto_protocol::events::EventPayload::AgentIdle { .. }
                 ) {
                     let mut cache = PI_MESSAGES_CACHE.write().await;
-                    if let Some(user_cache) = cache.get_mut(user_id)
-                        && let Some(entry) = user_cache.entries.remove(session_id)
-                    {
-                        user_cache.total_bytes =
-                            user_cache.total_bytes.saturating_sub(entry.size_bytes);
+                    if let Some(user_cache) = cache.get_mut(user_id) {
+                        if let Some(entry) = user_cache.entries.remove(session_id) {
+                            user_cache.total_bytes =
+                                user_cache.total_bytes.saturating_sub(entry.size_bytes);
+                        }
                     }
                 }
                 if event_tx.send(WsEvent::Agent(canonical_event)).is_err() {
@@ -2359,53 +2358,39 @@ async fn forward_pi_events(
                 }
             }
             Some(PiSubscriptionEvent::End { reason }) => {
+                clear_response_watchdog(&conn_state, session_id).await;
                 debug!(
                     "Pi subscription ended for session {}: {}",
                     session_id, reason
                 );
-                emit_terminal_send_failure(
-                    &conn_state,
-                    session_id,
-                    &runner_id,
-                    format!("Subscription ended: {}", reason),
-                )
-                .await;
                 break;
             }
             Some(PiSubscriptionEvent::Error { code, message }) => {
+                clear_response_watchdog(&conn_state, session_id).await;
                 error!(
                     "Pi subscription error for session {}: {:?} - {}",
                     session_id, code, message
                 );
-                emit_terminal_send_failure(
-                    &conn_state,
-                    session_id,
-                    &runner_id,
-                    format!("Subscription error ({:?}): {}", code, message),
-                )
-                .await;
+                // Emit error as canonical agent.error event
+                let error_event = oqto_protocol::events::Event {
+                    session_id: session_id.to_string(),
+                    runner_id: runner_id.clone(),
+                    ts: chrono::Utc::now().timestamp_millis(),
+                    payload: oqto_protocol::events::EventPayload::AgentError {
+                        error: format!("Subscription error ({:?}): {}", code, message),
+                        recoverable: false,
+                        phase: None,
+                    },
+                };
+                let _ = event_tx.send(WsEvent::Agent(error_event));
                 break;
             }
             None => {
+                clear_response_watchdog(&conn_state, session_id).await;
                 debug!("Pi subscription stream ended for session {}", session_id);
-                emit_terminal_send_failure(
-                    &conn_state,
-                    session_id,
-                    &runner_id,
-                    "Subscription stream ended unexpectedly".to_string(),
-                )
-                .await;
                 break;
             }
         }
-    }
-
-    // Prevent stale local subscription state. If the forwarder exits, this
-    // connection must no longer consider itself subscribed for the session.
-    {
-        let mut state_guard = conn_state.lock().await;
-        state_guard.pi_subscriptions.remove(session_id);
-        state_guard.pi_forwarders.remove(session_id);
     }
 
     Ok(())
@@ -2534,59 +2519,55 @@ async fn handle_copy_to_workspace(
         .map(|lu| lu.linux_username(user_id))
         .unwrap_or_else(|| user_id.to_string());
     let is_multi_user = state.linux_users.is_some();
-    let user_plane: Arc<dyn UserPlane> = if is_multi_user {
-        match state.runner_endpoint.as_ref() {
-            Some(endpoint) => {
-                match RunnerUserPlane::for_user_with_endpoint(&linux_username, endpoint) {
-                    Ok(plane) => {
-                        let base: Arc<dyn UserPlane> = Arc::new(plane);
-                        Arc::new(MeteredUserPlane::new(
-                            base,
-                            UserPlanePath::Runner,
-                            state.user_plane_metrics.clone(),
-                        ))
-                    }
-                    Err(err) => {
-                        error!(
-                            "Failed to create RunnerUserPlane for {}: {:#}",
-                            linux_username, err
-                        );
-                        return Some(WsEvent::Files(FilesWsEvent::Error {
-                            id,
-                            error: "File access unavailable: user runner not reachable".into(),
-                        }));
-                    }
+    let user_plane: Arc<dyn UserPlane> =
+        if let Some(pattern) = state.runner_socket_pattern.as_deref() {
+            match RunnerUserPlane::for_user_with_pattern(&linux_username, pattern) {
+                Ok(plane) => {
+                    let base: Arc<dyn UserPlane> = Arc::new(plane);
+                    Arc::new(MeteredUserPlane::new(
+                        base,
+                        UserPlanePath::Runner,
+                        state.user_plane_metrics.clone(),
+                    ))
+                }
+                Err(err) => {
+                    error!(
+                        "Failed to create RunnerUserPlane for {}: {:#}",
+                        linux_username, err
+                    );
+                    return Some(WsEvent::Files(FilesWsEvent::Error {
+                        id,
+                        error: "File access unavailable: user runner not reachable".into(),
+                    }));
                 }
             }
-            None => {
-                error!("Multi-user mode without runner_endpoint configured");
-                return Some(WsEvent::Files(FilesWsEvent::Error {
-                    id,
-                    error: "File access not configured for multi-user mode".into(),
-                }));
+        } else if is_multi_user {
+            error!("Multi-user mode without runner_socket_pattern configured");
+            return Some(WsEvent::Files(FilesWsEvent::Error {
+                id,
+                error: "File access not configured for multi-user mode".into(),
+            }));
+        } else {
+            match RunnerUserPlane::new_default() {
+                Ok(plane) => {
+                    let base: Arc<dyn UserPlane> = Arc::new(plane);
+                    Arc::new(MeteredUserPlane::new(
+                        base,
+                        UserPlanePath::Runner,
+                        state.user_plane_metrics.clone(),
+                    ))
+                }
+                Err(runner_err) => {
+                    return Some(WsEvent::Files(FilesWsEvent::Error {
+                        id,
+                        error: format!(
+                            "File access unavailable: runner not reachable ({:#})",
+                            runner_err
+                        ),
+                    }));
+                }
             }
-        }
-    } else {
-        match RunnerUserPlane::new_default() {
-            Ok(plane) => {
-                let base: Arc<dyn UserPlane> = Arc::new(plane);
-                Arc::new(MeteredUserPlane::new(
-                    base,
-                    UserPlanePath::Runner,
-                    state.user_plane_metrics.clone(),
-                ))
-            }
-            Err(runner_err) => {
-                return Some(WsEvent::Files(FilesWsEvent::Error {
-                    id,
-                    error: format!(
-                        "File access unavailable: runner not reachable ({:#})",
-                        runner_err
-                    ),
-                }));
-            }
-        }
-    };
+        };
 
     // Perform the copy (recursive for directories, returns file count)
     fn copy_recursive_cross<'a>(
@@ -3034,7 +3015,7 @@ mod tests {
     fn test_serialize_agent_command_response() {
         use oqto_protocol::events::{CommandResponse, EventPayload};
 
-        let event = WsEvent::Agent(Box::new(oqto_protocol::events::Event {
+        let event = WsEvent::Agent(oqto_protocol::events::Event {
             session_id: "ses_123".into(),
             runner_id: "local".into(),
             ts: 1738764000000,
@@ -3045,7 +3026,7 @@ mod tests {
                 data: None,
                 error: None,
             }),
-        }));
+        });
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains(r#""channel":"agent""#));
         assert!(json.contains(r#""event":"response""#));
@@ -3077,7 +3058,7 @@ mod tests {
     fn test_serialize_canonical_agent_event() {
         use oqto_protocol::events::EventPayload;
 
-        let event = WsEvent::Agent(Box::new(oqto_protocol::events::Event {
+        let event = WsEvent::Agent(oqto_protocol::events::Event {
             session_id: "ses_abc".into(),
             runner_id: "local".into(),
             ts: 1738764000000,
@@ -3086,7 +3067,7 @@ mod tests {
                 delta: "Hello".into(),
                 content_index: 0,
             },
-        }));
+        });
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains(r#""channel":"agent""#));
         assert!(json.contains(r#""event":"stream.text_delta""#));
@@ -3098,14 +3079,14 @@ mod tests {
     fn test_serialize_canonical_agent_idle() {
         use oqto_protocol::events::EventPayload;
 
-        let event = WsEvent::Agent(Box::new(oqto_protocol::events::Event {
+        let event = WsEvent::Agent(oqto_protocol::events::Event {
             session_id: "ses_abc".into(),
             runner_id: "local".into(),
             ts: 1738764000000,
             payload: EventPayload::AgentIdle {
                 message_version: None,
             },
-        }));
+        });
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains(r#""channel":"agent""#));
         assert!(json.contains(r#""event":"agent.idle""#));
@@ -3277,11 +3258,5 @@ mod tests {
 
         let state_guard = conn_state.lock().await;
         assert!(!state_guard.response_watchdogs.contains_key("ses-test"));
-    }
-
-    #[test]
-    fn test_live_pi_messages_timeout_prefers_live_pi_even_without_subscription() {
-        assert_eq!(live_pi_messages_timeout(true), Duration::from_secs(3));
-        assert_eq!(live_pi_messages_timeout(false), Duration::from_millis(800));
     }
 }

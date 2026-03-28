@@ -359,9 +359,9 @@ pub async fn handle_terminal_proxy(
                         }
                     }
                 }
-                Ok(TungsteniteMessage::Binary(data))
+                Ok(TungsteniteMessage::Binary(data)) => {
                     // Binary message from ttyd
-                    if !data.is_empty() => {
+                    if !data.is_empty() {
                         match data[0] {
                             b'0' => {
                                 // Output data - strip the '0' prefix and send to client
@@ -390,6 +390,7 @@ pub async fn handle_terminal_proxy(
                             }
                         }
                     }
+                }
                 Ok(TungsteniteMessage::Close(_)) => break,
                 Err(_) => break,
                 _ => {}

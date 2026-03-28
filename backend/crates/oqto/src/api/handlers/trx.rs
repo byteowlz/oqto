@@ -288,16 +288,11 @@ async fn exec_trx_command(
                     .current_dir(&validated_path)
                     .output()
                     .await
-                    .map_err(|e| {
-                        ApiError::internal(format!("Failed to execute trx init: {}", e))
-                    })?;
+                    .map_err(|e| ApiError::internal(format!("Failed to execute trx init: {}", e)))?;
 
                 if !init_output.status.success() {
                     let init_stderr = String::from_utf8_lossy(&init_output.stderr);
-                    return Err(ApiError::internal(format!(
-                        "trx init failed: {}",
-                        init_stderr
-                    )));
+                    return Err(ApiError::internal(format!("trx init failed: {}", init_stderr)));
                 }
 
                 output = Command::new("trx")

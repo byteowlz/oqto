@@ -1171,7 +1171,6 @@ export const SessionScreen = memo(function SessionScreen() {
 									locale={locale}
 									sessionId={selectedChatSessionId}
 									workspacePath={normalizedWorkspacePath}
-									onHistorySynced={() => refreshChatHistory({ force: true })}
 								/>
 							</Suspense>
 						)}
@@ -1636,9 +1635,6 @@ export const SessionScreen = memo(function SessionScreen() {
 												locale={locale}
 												sessionId={selectedChatSessionId}
 												workspacePath={normalizedWorkspacePath}
-												onHistorySynced={() =>
-													refreshChatHistory({ force: true })
-												}
 											/>
 										</Suspense>
 									)}

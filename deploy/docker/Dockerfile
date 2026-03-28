@@ -234,7 +234,7 @@ RUN if [ -f /usr/local/lib/oqto-browserd/package.json ]; then \
       cd /usr/local/lib/oqto-browserd && bun install --production; \
       mkdir -p /usr/local/share/playwright-browsers; \
       PLAYWRIGHT_BROWSERS_PATH=/usr/local/share/playwright-browsers \
-        bunx playwright install --with-deps chromium; \
+        bun x playwright install --with-deps chromium; \
     fi
 
 # hstry adapters (JS scripts for parsing agent session files)

@@ -472,7 +472,7 @@ mod tests {
         let json = json!({
             "string": "hello",
             "number": 42,
-            "float": std::f64::consts::PI,
+            "float": 3.14,
             "bool": true,
             "nested": {
                 "value": "inner"

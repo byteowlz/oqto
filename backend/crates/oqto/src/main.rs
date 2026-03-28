@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::env;
 use std::fmt;
 use std::fs;
@@ -67,7 +68,10 @@ mod ws;
 
 const APP_NAME: &str = "oqto";
 
+use crate::runner::router::{ExecutionTarget, resolve_runner_for_target};
+use crate::session_target::{SessionTargetRecord, SessionTargetScope};
 use crate::session_ui::SessionAutoAttachMode;
+use crate::user::UserListQuery;
 
 fn main() {
     if let Err(err) = try_main() {
@@ -557,14 +561,6 @@ impl Default for BackendConfig {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-enum RunnerTransportMode {
-    #[default]
-    Unix,
-    Tcp,
-}
-
 /// Runner configuration for user-plane isolation.
 ///
 /// When `user_plane_enabled` is true in local multi-user mode, all user data
@@ -585,121 +581,8 @@ struct RunnerConfig {
     /// - Only sandbox provides isolation (if enabled)
     user_plane_enabled: bool,
     /// Socket directory pattern for per-user runner sockets.
-    /// Used for Unix transport (and as fallback compatibility input).
     /// Default: /run/user/{uid}/oqto-runner.sock
     socket_pattern: Option<String>,
-    /// Runner transport used for user-plane routing.
-    transport: RunnerTransportMode,
-    /// TCP address pattern for per-user runner endpoints.
-    /// Supports `{user}` and `{uid}` placeholders, e.g. "runner-{user}:7001".
-    tcp_addr_pattern: Option<String>,
-    /// Optional static TCP auth token.
-    tcp_auth_token: Option<String>,
-    /// Environment variable name containing the TCP auth token.
-    /// Takes precedence over `tcp_auth_token`.
-    tcp_auth_token_env: Option<String>,
-}
-
-impl RunnerConfig {
-    fn resolve_endpoint_pattern(
-        &self,
-        local_fallback: Option<&str>,
-    ) -> Result<Option<runner::client::RunnerEndpointPattern>> {
-        match self.transport {
-            RunnerTransportMode::Unix => Ok(self
-                .socket_pattern
-                .as_deref()
-                .or(local_fallback)
-                .map(|p| runner::client::RunnerEndpointPattern::unix(p.to_string()))),
-            RunnerTransportMode::Tcp => {
-                let addr = self
-                    .tcp_addr_pattern
-                    .as_ref()
-                    .map(|s| s.trim())
-                    .filter(|s| !s.is_empty())
-                    .ok_or_else(|| {
-                        anyhow!(
-                            "backend.runner.transport=tcp requires backend.runner.tcp_addr_pattern"
-                        )
-                    })?;
-
-                let token = if let Some(env_name) = self
-                    .tcp_auth_token_env
-                    .as_ref()
-                    .map(|s| s.trim())
-                    .filter(|s| !s.is_empty())
-                {
-                    std::env::var(env_name).with_context(|| {
-                        format!(
-                            "backend.runner.tcp_auth_token_env '{}' is set but environment variable is missing",
-                            env_name
-                        )
-                    })?
-                } else {
-                    self.tcp_auth_token
-                        .as_ref()
-                        .map(|s| s.trim().to_string())
-                        .filter(|s| !s.is_empty())
-                        .ok_or_else(|| {
-                            anyhow!(
-                                "backend.runner.transport=tcp requires tcp_auth_token or tcp_auth_token_env"
-                            )
-                        })?
-                };
-
-                Ok(Some(runner::client::RunnerEndpointPattern::tcp(
-                    addr.to_string(),
-                    token,
-                )))
-            }
-        }
-    }
-}
-
-#[cfg(test)]
-mod runner_config_tests {
-    use super::{RunnerConfig, RunnerTransportMode};
-    use crate::runner::client::RunnerEndpointPattern;
-
-    #[test]
-    fn unix_transport_uses_local_fallback() {
-        let cfg = RunnerConfig::default();
-        let resolved = cfg
-            .resolve_endpoint_pattern(Some("/run/oqto/runner-sockets/{user}/oqto-runner.sock"))
-            .expect("resolve should succeed");
-        match resolved {
-            Some(RunnerEndpointPattern::Unix { socket_pattern }) => {
-                assert_eq!(
-                    socket_pattern,
-                    "/run/oqto/runner-sockets/{user}/oqto-runner.sock"
-                );
-            }
-            other => panic!("unexpected endpoint: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn tcp_transport_builds_endpoint_pattern() {
-        let cfg = RunnerConfig {
-            transport: RunnerTransportMode::Tcp,
-            tcp_addr_pattern: Some("runner-{user}.internal:7001".to_string()),
-            tcp_auth_token: Some("secret-token".to_string()),
-            ..RunnerConfig::default()
-        };
-        let resolved = cfg
-            .resolve_endpoint_pattern(None)
-            .expect("resolve should succeed");
-        match resolved {
-            Some(RunnerEndpointPattern::Tcp {
-                addr_pattern,
-                auth_token,
-            }) => {
-                assert_eq!(addr_pattern, "runner-{user}.internal:7001");
-                assert_eq!(auth_token, "secret-token");
-            }
-            other => panic!("unexpected endpoint: {other:?}"),
-        }
-    }
 }
 
 impl AppConfig {
@@ -771,7 +654,6 @@ struct EavsConfig {
 /// EAVS OAuth login configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
-#[derive(Default)]
 struct EavsOAuthConfig {
     /// Enable per-user OAuth logins (Anthropic, OpenAI Codex, etc.).
     enabled: bool,
@@ -779,6 +661,16 @@ struct EavsOAuthConfig {
     providers: Vec<String>,
     /// Redirect URI to send to providers (required for OpenAI Codex).
     redirect_uri: Option<String>,
+}
+
+impl Default for EavsOAuthConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            providers: Vec::new(),
+            redirect_uri: None,
+        }
+    }
 }
 
 /// Voice mode configuration.
@@ -1716,10 +1608,7 @@ fn resolve_frontend_dir() -> Option<PathBuf> {
         Some(PathBuf::from("/usr/local/share/oqto/frontend/dist")),
     ];
 
-    candidates
-        .into_iter()
-        .flatten()
-        .find(|dir| dir.join("index.html").is_file())
+    candidates.into_iter().flatten().find(|dir| dir.join("index.html").is_file())
 }
 
 fn with_frontend_static_if_available(api_router: axum::Router) -> axum::Router {
@@ -2002,19 +1891,6 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             .and_then(|e| e.container_url.clone())
     };
 
-    let local_runner_fallback = if ctx.config.local.single_user {
-        Some(crate::runner::client::USER_SOCKET_PATTERN)
-    } else {
-        ctx.config.local.runner_socket_pattern.as_deref()
-    };
-
-    let resolved_runner_endpoint = ctx
-        .config
-        .backend
-        .runner
-        .resolve_endpoint_pattern(local_runner_fallback)
-        .context("resolving runner endpoint configuration")?;
-
     let session_config = session::SessionServiceConfig {
         default_image,
         base_port,
@@ -2041,7 +1917,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         pi_provider: ctx.config.pi.default_provider.clone(),
         pi_model: ctx.config.pi.default_model.clone(),
         agent_browser: ctx.config.agent_browser.clone(),
-        runner_endpoint: resolved_runner_endpoint.clone(),
+        runner_socket_pattern: ctx.config.local.runner_socket_pattern.clone(),
         linux_user_prefix: if ctx.config.local.linux_users.enabled {
             Some(ctx.config.local.linux_users.prefix.clone())
         } else {
@@ -2170,7 +2046,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
                     mmry_binary: ctx.config.mmry.binary.clone(),
                     base_port: ctx.config.mmry.user_base_port,
                     port_range: ctx.config.mmry.user_port_range,
-                    runner_endpoint: resolved_runner_endpoint.clone(),
+                    runner_socket_pattern: ctx.config.local.runner_socket_pattern.clone(),
                 },
                 move |user_id| linux_users.linux_username(user_id),
                 user_repo_for_services.clone(),
@@ -2194,7 +2070,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
                     sldr_binary: ctx.config.sldr.binary.clone(),
                     base_port: ctx.config.sldr.user_base_port,
                     port_range: ctx.config.sldr.user_port_range,
-                    runner_endpoint: resolved_runner_endpoint.clone(),
+                    runner_socket_pattern: ctx.config.local.runner_socket_pattern.clone(),
                 },
                 move |user_id| linux_users.linux_username(user_id),
                 user_repo_for_services.clone(),
@@ -2400,9 +2276,6 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     state = state.with_onboarding(onboarding_service);
     info!("Onboarding service initialized");
 
-    // Set runner endpoint for all modes (single-user and multi-user).
-    state = state.with_runner_endpoint(resolved_runner_endpoint.clone());
-
     // Add Linux users config for multi-user isolation
     let mut linux_users_config: Option<local::LinuxUsersConfig> = None;
     if ctx.config.local.linux_users.enabled {
@@ -2416,6 +2289,8 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             create_home: ctx.config.local.linux_users.create_home,
         };
         state = state.with_linux_users(config.clone());
+        // Also set runner socket pattern for multi-user chat history access
+        state = state.with_runner_socket_pattern(ctx.config.local.runner_socket_pattern.clone());
         linux_users_config = Some(config);
     }
 
@@ -2426,8 +2301,8 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     if let Some(config) = linux_users_config {
         sw_service = sw_service.with_linux_users(config);
     }
-    if let Some(ref endpoint) = state.runner_endpoint {
-        sw_service = sw_service.with_runner_endpoint(endpoint.clone());
+    if let Some(ref pattern) = state.runner_socket_pattern {
+        sw_service = sw_service.with_runner_socket_pattern(pattern.clone());
     }
     // Wire up templates repo path for AGENTS.md provisioning.
     // Resolve from local_path > cache_path > data_dir default (same logic as templates service).
@@ -2630,7 +2505,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     // One-time deterministic backfill for canonical chat session target metadata.
     // This runs from authoritative runner session listings and keeps routing
     // independent of runtime fallback heuristics.
-    if let Err(err) = session::backfill_session_targets_once(&state).await {
+    if let Err(err) = backfill_session_targets_once(&state).await {
         warn!("Session target backfill failed: {}", err);
     }
 
@@ -2752,6 +2627,121 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     .with_graceful_shutdown(shutdown_signal)
     .await
     .context("running server")?;
+
+    Ok(())
+}
+
+async fn backfill_sessions_for_target(
+    state: &api::AppState,
+    user_id: &str,
+    target: &ExecutionTarget,
+    owner_user_id: Option<&str>,
+) -> Result<usize> {
+    let Some(runner) = resolve_runner_for_target(state, user_id, target).await? else {
+        return Ok(0);
+    };
+
+    if let Err(err) = runner
+        .repair_workspace_chat_history(Some(10_000), None)
+        .await
+    {
+        warn!(
+            "workspace chat history repair failed before session target backfill (user={} target={:?}): {}",
+            user_id, target, err
+        );
+    }
+
+    let response = runner
+        .list_workspace_chat_sessions(None, true, None)
+        .await
+        .with_context(|| {
+            format!(
+                "list_workspace_chat_sessions failed for target {:?}",
+                target
+            )
+        })?;
+
+    let mut upserted = 0usize;
+    for session in response.sessions {
+        let record = match target {
+            ExecutionTarget::Personal => SessionTargetRecord {
+                session_id: session.id,
+                owner_user_id: owner_user_id.map(ToOwned::to_owned),
+                scope: SessionTargetScope::Personal,
+                workspace_id: None,
+                workspace_path: Some(session.workspace_path),
+            },
+            ExecutionTarget::SharedWorkspace { workspace_id } => SessionTargetRecord {
+                session_id: session.id,
+                owner_user_id: None,
+                scope: SessionTargetScope::SharedWorkspace,
+                workspace_id: Some(workspace_id.clone()),
+                workspace_path: Some(session.workspace_path),
+            },
+        };
+
+        state.session_targets.upsert(&record).await?;
+        upserted += 1;
+    }
+
+    Ok(upserted)
+}
+
+async fn backfill_session_targets_once(state: &api::AppState) -> Result<()> {
+    let users = state
+        .users
+        .list_users(UserListQuery {
+            limit: Some(10_000),
+            ..Default::default()
+        })
+        .await
+        .context("listing users for session target backfill")?;
+
+    let mut upserted_total = 0usize;
+    let mut processed_shared_workspaces: HashSet<String> = HashSet::new();
+
+    for user in &users {
+        upserted_total += backfill_sessions_for_target(
+            state,
+            &user.id,
+            &ExecutionTarget::Personal,
+            Some(&user.id),
+        )
+        .await
+        .with_context(|| format!("personal target backfill for user {}", user.id))?;
+
+        let Some(sw_service) = state.shared_workspaces.as_ref() else {
+            continue;
+        };
+
+        let workspaces = sw_service
+            .list_for_user(&user.id)
+            .await
+            .with_context(|| format!("listing shared workspaces for user {}", user.id))?;
+
+        for workspace in workspaces {
+            if !processed_shared_workspaces.insert(workspace.id.clone()) {
+                continue;
+            }
+
+            let target = ExecutionTarget::SharedWorkspace {
+                workspace_id: workspace.id.clone(),
+            };
+
+            upserted_total += backfill_sessions_for_target(state, &user.id, &target, None)
+                .await
+                .with_context(|| {
+                    format!("shared target backfill for workspace {}", workspace.id)
+                })?;
+        }
+    }
+
+    info!(
+        "session target backfill completed: users={}, shared_workspaces={}, upserted={}",
+        users.len(),
+        processed_shared_workspaces.len(),
+        upserted_total
+    );
 
     Ok(())
 }
@@ -3243,14 +3233,16 @@ async fn ensure_pi_models_json(eavs_base_url: &str) {
     let models_json = eavs::generate_pi_models_json(&providers, base, api_key.as_deref());
 
     // Check if content actually changed to avoid unnecessary writes
-    if models_path.exists()
-        && let Ok(existing) = std::fs::read_to_string(&models_path)
-        && let Ok(existing_json) = serde_json::from_str::<serde_json::Value>(&existing)
-        && existing_json == models_json
-    {
-        debug!("models.json is up to date");
-        ensure_pi_settings_json(&pi_dir, &models_json);
-        return;
+    if models_path.exists() {
+        if let Ok(existing) = std::fs::read_to_string(&models_path) {
+            if let Ok(existing_json) = serde_json::from_str::<serde_json::Value>(&existing) {
+                if existing_json == models_json {
+                    debug!("models.json is up to date");
+                    ensure_pi_settings_json(&pi_dir, &models_json);
+                    return;
+                }
+            }
+        }
     }
 
     // Write models.json
@@ -3303,14 +3295,14 @@ fn read_eavs_api_key() -> Option<String> {
         .or_else(|| dirs::home_dir().map(|h| h.join(".config")))
         .map(|c| c.join("oqto").join("eavs.env"));
 
-    if let Some(path) = oqto_env
-        && let Ok(contents) = std::fs::read_to_string(&path)
-    {
-        for line in contents.lines() {
-            if let Some(value) = line.trim().strip_prefix("EAVS_API_KEY=") {
-                let value = value.trim();
-                if !value.is_empty() {
-                    return Some(value.to_string());
+    if let Some(path) = oqto_env {
+        if let Ok(contents) = std::fs::read_to_string(&path) {
+            for line in contents.lines() {
+                if let Some(value) = line.trim().strip_prefix("EAVS_API_KEY=") {
+                    let value = value.trim();
+                    if !value.is_empty() {
+                        return Some(value.to_string());
+                    }
                 }
             }
         }

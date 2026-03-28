@@ -25,14 +25,6 @@ const SHARED_SESSION_MAP_STORAGE_KEY = "oqto:shared-session-map:v1";
 export const sharedWorkspaceSessionMap = new Map<string, string>();
 const runnerHistoryAliasMap = new Map<string, string>();
 
-function setRunnerHistoryAlias(sessionId: string, aliasId: string) {
-	if (!sessionId || !aliasId || sessionId === aliasId) return;
-	// Store both directions so callers can resolve from either Pi/native IDs
-	// or Oqto/platform IDs.
-	runnerHistoryAliasMap.set(sessionId, aliasId);
-	runnerHistoryAliasMap.set(aliasId, sessionId);
-}
-
 export function getRunnerHistoryAlias(sessionId: string): string | undefined {
 	return runnerHistoryAliasMap.get(sessionId);
 }
@@ -455,7 +447,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 
 				const historyAliasId = session.hstry_id?.trim();
 				if (historyAliasId && historyAliasId !== session.session_id) {
-					setRunnerHistoryAlias(session.session_id, historyAliasId);
+					runnerHistoryAliasMap.set(session.session_id, historyAliasId);
 					const aliasEntry = byId.get(historyAliasId);
 					if (aliasEntry && !byId.has(session.session_id)) {
 						byId.delete(historyAliasId);
@@ -555,17 +547,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 		[selectedChatSessionId],
 	);
 
-	const pendingForceRefreshRef = useRef(false);
 	const refreshChatHistory = useCallback(
 		async (opts?: { force?: boolean }) => {
 			const now = Date.now();
 			if (prefetchInFlightRef.current) {
-				// Queue a forced refresh if one was requested while in-flight.
-				// Without this, runner-detected sessions with generic titles
-				// stay stuck as "Active Session" until the next poll cycle.
-				if (opts?.force) {
-					pendingForceRefreshRef.current = true;
-				}
 				if (isPiDebugEnabled())
 					console.debug("[chat-context] refreshChatHistory skipped: in-flight");
 				return;
@@ -647,16 +632,6 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 				setChatHistoryError(msg);
 			} finally {
 				prefetchInFlightRef.current = false;
-				// If a forced refresh was queued while we were in-flight,
-				// trigger it now to resolve generic titles ASAP.
-				if (pendingForceRefreshRef.current) {
-					pendingForceRefreshRef.current = false;
-					// Use setTimeout to avoid infinite recursion within
-					// the same microtask.
-					setTimeout(() => {
-						void refreshChatHistory({ force: true });
-					}, 50);
-				}
 			}
 		},
 		[
@@ -708,13 +683,9 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 			}
 		}
 		if (hasMissing) {
-			// Merge runner sessions into the sidebar immediately so the user
-			// can see and click them. However, avoid persisting to cache —
-			// these entries have generic titles ("Active Session") and we
-			// don't want to cement them. The async refreshChatHistory below
-			// will fetch real titles from hstry.
 			const merged = mergeRunnerSessions(current);
 			setChatHistory(merged);
+			writeCachedChatHistory(merged);
 		}
 		// Fetch real titles from hstry for new or generically-titled sessions
 		if (hasMissing || hasGenericTitle) {
@@ -768,7 +739,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 				for (const s of filtered) {
 					const alias = s.hstry_id?.trim();
 					if (alias && alias !== s.session_id) {
-						setRunnerHistoryAlias(s.session_id, alias);
+						runnerHistoryAliasMap.set(s.session_id, alias);
 					}
 				}
 				const nextBusy = new Set<string>();
@@ -1110,14 +1081,6 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 
 				const canonicalSessionId = updated.id || sessionId;
 				const canonicalTitle = (updated.title ?? title).trim();
-				const runnerAlias = runnerSessionsRef.current.find(
-					(s) =>
-						s.session_id === canonicalSessionId ||
-						s.hstry_id === canonicalSessionId ||
-						s.session_id === sessionId ||
-						s.hstry_id === sessionId,
-				);
-				const runnerSessionId = runnerAlias?.session_id;
 
 				// If backend canonicalized an optimistic ID, update local mappings.
 				if (canonicalSessionId !== sessionId) {
@@ -1152,16 +1115,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 				// title events from Pi don't overwrite the user's choice.
 				if (canonicalTitle) {
 					manuallyRenamedRef.current.set(canonicalSessionId, canonicalTitle);
-					manuallyRenamedRef.current.set(sessionId, canonicalTitle);
-					if (runnerSessionId) {
-						manuallyRenamedRef.current.set(runnerSessionId, canonicalTitle);
-					}
 				}
 				setChatHistory((prev) =>
 					prev.map((s) =>
-						s.id === canonicalSessionId ||
-						s.id === sessionId ||
-						(runnerSessionId != null && s.id === runnerSessionId)
+						s.id === canonicalSessionId || s.id === sessionId
 							? { ...s, id: canonicalSessionId, title: canonicalTitle }
 							: s,
 					),
@@ -1171,10 +1128,9 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 				// This prevents the runner from overwriting hstry with Pi's
 				// auto-generated title on the next state event.
 				const manager = getWsManager();
-				const runnerTargetId = runnerSessionId ?? canonicalSessionId;
-				if (manager.isSessionReady(runnerTargetId)) {
+				if (manager.isSessionReady(canonicalSessionId)) {
 					void manager
-						.agentSetSessionName(runnerTargetId, canonicalTitle)
+						.agentSetSessionName(canonicalSessionId, canonicalTitle)
 						.catch(() => {
 							// Best-effort -- runner notification is not critical.
 						});

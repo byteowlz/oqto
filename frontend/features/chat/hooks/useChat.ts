@@ -188,9 +188,6 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 
 	const machineRef = useRef(createInitialChatStateMachine(activeSessionId));
 	const transportEpochRef = useRef(0);
-	const turnEpochRef = useRef(0);
-	const historyFetchSeqRef = useRef(0);
-	const latestHistoryFetchBySessionRef = useRef<Map<string, number>>(new Map());
 
 	const applyTurnState = useCallback(
 		(next: Parameters<typeof transitionTurn>[1]) => {
@@ -470,9 +467,6 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 
 	const fetchHistoryMessages = useCallback(
 		async (sessionId: string, expectedVersion?: number) => {
-			const fetchSeq = ++historyFetchSeqRef.current;
-			latestHistoryFetchBySessionRef.current.set(sessionId, fetchSeq);
-			const turnEpochAtStart = turnEpochRef.current;
 			try {
 				const swId = sharedWorkspaceSessionMap.get(sessionId);
 				let history = await getChatMessages(sessionId, swId).catch(
@@ -511,38 +505,6 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 							sessionId,
 							"(active is now",
 							`${activeSessionIdRef.current})`,
-						);
-					}
-					return;
-				}
-
-				// Strict state-machine guardrails:
-				// 1) Only the latest in-flight fetch for this session may apply.
-				// 2) If a new turn started while this fetch was in flight,
-				//    discard this result as stale.
-				const latestSeq = latestHistoryFetchBySessionRef.current.get(sessionId);
-				if (latestSeq !== fetchSeq) {
-					if (isPiDebugEnabled()) {
-						console.debug(
-							"[useChat] Discarding stale history fetch for",
-							sessionId,
-							"(newer fetch exists)",
-							fetchSeq,
-							"<",
-							latestSeq,
-						);
-					}
-					return;
-				}
-				if (turnEpochRef.current !== turnEpochAtStart) {
-					if (isPiDebugEnabled()) {
-						console.debug(
-							"[useChat] Discarding stale history fetch for",
-							sessionId,
-							"(turn advanced)",
-							turnEpochAtStart,
-							"->",
-							turnEpochRef.current,
 						);
 					}
 					return;
@@ -656,11 +618,6 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 				case "stream.message_start": {
 					clearResponseWatchdog();
 					setBusyForEvent(event.session_id ?? activeSessionIdRef.current, true);
-					if (!streamingMessageRef.current) {
-						// Covers externally-started turns (e.g. shared sessions) where
-						// no local send() happened in this hook.
-						turnEpochRef.current += 1;
-					}
 					// Only create a display message for assistant-role messages.
 					// The backend sends message_start for every Pi message
 					// including user echoes (steer) and tool-result messages
@@ -1828,8 +1785,6 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 	const send = useCallback(
 		async (message: string, options?: SendOptions) => {
 			sendInFlightRef.current = true;
-			// Start a new logical turn epoch for strict stale-response rejection.
-			turnEpochRef.current += 1;
 			const mode: SendMode = options?.mode ?? "steer";
 			let sessionId = options?.sessionId ?? activeSessionIdRef.current;
 			if (

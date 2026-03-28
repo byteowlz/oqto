@@ -21,7 +21,7 @@ use super::onboarding_handlers;
 use super::proxy;
 use super::state::AppState;
 use super::ui_control as ui_control_handlers;
-use super::ws_multiplexed;
+use super::ws;
 
 // Note: handlers module now provides all public handlers via re-exports in handlers/mod.rs
 // Routes continue to use `handlers::function_name` - no changes needed
@@ -32,7 +32,7 @@ pub enum AuthMode {
     /// Standard JWT/cookie authentication.
     Jwt,
     /// Admin override for trusted local sockets.
-    Admin(Box<CurrentUser>),
+    Admin(CurrentUser),
 }
 
 /// Create the application router with configurable max upload size.
@@ -46,11 +46,7 @@ pub fn create_admin_router_with_config(
     max_upload_size_mb: usize,
     admin_user: CurrentUser,
 ) -> Router {
-    create_router_with_config_and_auth(
-        state,
-        max_upload_size_mb,
-        AuthMode::Admin(Box::new(admin_user)),
-    )
+    create_router_with_config_and_auth(state, max_upload_size_mb, AuthMode::Admin(admin_user))
 }
 
 fn create_router_with_config_and_auth(
@@ -77,7 +73,7 @@ fn create_router_with_config_and_auth(
     // Protected routes (require authentication)
     let protected_routes = Router::new()
         // Multiplexed WebSocket endpoint for Pi, files, terminal, hstry channels
-        .route("/ws/mux", get(ws_multiplexed::ws_multiplexed_handler))
+        .route("/ws/mux", get(ws::multiplexed::ws_multiplexed_handler))
         // sldr routes
         .route(
             "/sldr",
@@ -531,7 +527,7 @@ fn apply_auth_layers(
     match auth_mode {
         AuthMode::Jwt => router.layer(middleware::from_fn_with_state(auth_state, auth_middleware)),
         AuthMode::Admin(admin_user) => {
-            let admin_user = (*admin_user).clone();
+            let admin_user = admin_user.clone();
             router.layer(middleware::from_fn(
                 move |mut req: axum::http::Request<axum::body::Body>,
                       next: axum::middleware::Next| {

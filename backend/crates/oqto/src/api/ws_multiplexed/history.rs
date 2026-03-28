@@ -56,6 +56,7 @@ pub(super) async fn handle_hstry_command(cmd: HstryWsCommand, state: &AppState) 
 }
 
 /// Handle TRX channel commands.
+
 pub(super) async fn handle_trx_command(
     cmd: TrxWsCommand,
     user_id: &str,
@@ -215,6 +216,7 @@ pub(super) async fn handle_trx_command(
 }
 
 /// Handle Bus channel commands.
+
 pub(super) async fn handle_session_command(
     cmd: SessionWsCommand,
     _user_id: &str,

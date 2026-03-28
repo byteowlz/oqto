@@ -818,15 +818,15 @@ pub mod hstry_search_tests {
     #[test]
     fn hstry_filters_support_multiple() {
         let filters = parse_agent_filters("pi_agent,custom_agent").expect("filters");
+        assert!(filters.contains("pi_agent"));
         assert!(filters.contains("pi"));
-        assert!(filters.contains("custom_agent"));
     }
 
     #[test]
     fn hstry_filters_trim_tokens() {
         let filters = parse_agent_filters(" pi_agent , custom_agent , ").expect("filters");
+        assert!(filters.contains("pi_agent"));
         assert!(filters.contains("pi"));
-        assert!(filters.contains("custom_agent"));
     }
 
     #[test]

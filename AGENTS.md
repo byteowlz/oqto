@@ -9,7 +9,6 @@ Oqto is a self-hosted platform for managing AI coding agents.
 ## IMPORTANT
 
 - Keep this document up to date. Whenever we change functionality or the architecture, we need to also update it in here so that subsequent sessions are always aware of the current status.
-- Keep crate-level guidance up to date too: if behavior/boundaries change in `backend/crates/*`, update that crate's `AGENTS.md` in the same PR. Every crate under `backend/crates` must have a concise `AGENTS.md`.
 - Don't keep legacy alive. This project is still in it's infancy and there is 0 need for any backward compatibility. Remove any dead or legacy code you encounter without breaking the current system. If you stumble upon parts of the system that can be deprecated, suggest how we could best do this
 - Document your work: Use trx cli for epics, features, bugs etc. Use agntz memory for documenting learnings along the way. Future sessions have access to both.
 - **No hacky fixes.** We want proper John Carmack solutions -- clean, minimal, and correct. Understand the root cause before writing a single line. If a fix feels like duct tape, stop and rethink. Every change should make the codebase better, not just silence the symptom.
@@ -308,30 +307,6 @@ just lint-rust-ai-report-prod    # Production-only report (excludes #[cfg(test)]
 - Use `just lint-rust-ai-report-prod` to inspect enforceable backlog and `just lint-rust-ai-report` for full visibility (including tests/fixtures debt).
 - Policy intent: keep runtime code strict (`unwrap/expect` disallowed) while allowing pragmatic test ergonomics.
 
-### Backend Architecture Guardrail Policy
-
-`just lint` now enforces architecture-level guardrails in addition to clippy/fmt:
-
-- `just lint-rust-file-size` — ratcheting Rust file size budget from `scripts/lint/rust-file-size-baseline.json`
-- `just lint-crate-deps` — forbidden dependency edges between workspace crates
-- `just lint-module-boundaries` — import boundary checks inside `backend/crates/oqto/src`
-- `just lint-orphan-modules` — detect unreachable/orphan `.rs` files in the oqto crate
-
-When intentionally reshaping module boundaries:
-
-```bash
-just lint-rust-file-size-update   # refresh baseline after planned refactors
-just lint                         # verify full guardrail suite
-```
-
-Rules of thumb:
-
-- Do not grow monolithic files without splitting responsibilities.
-- Do not add cross-layer imports that bypass established boundaries.
-- Do not add transitional shim modules without a tracked removal task.
-- Keep `main.rs` and crate roots focused on wiring, not business logic.
-- Runner RPC schema is centralized in `backend/crates/oqto-runner-protocol`; `oqto` and `oqto-runner` must only re-export it from their local `runner/protocol.rs` files.
-
 ### Frontend useEffect Guardrail Policy
 
 **`bun run lint` includes a useEffect guardrail** (`scripts/check-useeffect-guardrail.mjs`) that prevents new unaudited `useEffect` calls. The baseline tracks every file with useEffect across `src/`, `hooks/`, `features/`, `apps/`, `components/`, and `lib/`. Adding a new useEffect to any file increases its count and fails the lint gate.
@@ -365,20 +340,6 @@ bun run lint                             # Verify everything passes
 
 **Run ALL of these before every commit.** No exceptions.
 
-### Git Hook Enforcement (required)
-
-Enable repo-managed hooks once per clone:
-
-```bash
-git config core.hooksPath .githooks
-chmod +x .githooks/pre-commit
-```
-
-The pre-commit hook runs:
-
-- `scripts/update-deps-precommit.sh`
-- `just lint` (includes ast-grep + architecture guardrails + frontend/backend lint)
-
 ```bash
 # Backend (if Rust files changed)
 cd backend
@@ -387,10 +348,6 @@ cargo clippy -p <crate>                    # Lint (must be 0 warnings)
 cargo test -p <crate>                      # Tests pass
 cd ..
 just lint-rust-ai-guardrails               # ast-grep guardrails
-just lint-rust-file-size                   # ratcheting Rust file size budgets
-just lint-crate-deps                       # workspace crate dependency direction
-just lint-module-boundaries                # oqto module import boundaries
-just lint-orphan-modules                   # orphan/unreachable module detection
 
 # Frontend (if TS/TSX files changed)
 cd frontend

@@ -267,21 +267,17 @@ mod tests {
 
     #[test]
     fn test_config_validation_dev_mode() {
-        let config = AuthConfig {
-            dev_mode: true,
-            ..AuthConfig::default()
-        };
+        let mut config = AuthConfig::default();
+        config.dev_mode = true;
         // Dev mode should be valid without JWT secret
         assert!(config.validate().is_ok());
     }
 
     #[test]
     fn test_config_validation_production_mode_no_secret() {
-        let config = AuthConfig {
-            dev_mode: false,
-            jwt_secret: None,
-            ..AuthConfig::default()
-        };
+        let mut config = AuthConfig::default();
+        config.dev_mode = false;
+        config.jwt_secret = None;
 
         assert_eq!(
             config.validate().unwrap_err(),
@@ -291,11 +287,9 @@ mod tests {
 
     #[test]
     fn test_config_validation_production_mode_insecure_secret() {
-        let config = AuthConfig {
-            dev_mode: false,
-            jwt_secret: Some("dev-secret-change-in-production".to_string()),
-            ..AuthConfig::default()
-        };
+        let mut config = AuthConfig::default();
+        config.dev_mode = false;
+        config.jwt_secret = Some("dev-secret-change-in-production".to_string());
 
         assert_eq!(
             config.validate().unwrap_err(),
@@ -305,11 +299,9 @@ mod tests {
 
     #[test]
     fn test_config_validation_production_mode_short_secret() {
-        let config = AuthConfig {
-            dev_mode: false,
-            jwt_secret: Some("tooshort".to_string()),
-            ..AuthConfig::default()
-        };
+        let mut config = AuthConfig::default();
+        config.dev_mode = false;
+        config.jwt_secret = Some("tooshort".to_string());
 
         assert_eq!(
             config.validate().unwrap_err(),
@@ -319,13 +311,10 @@ mod tests {
 
     #[test]
     fn test_config_validation_production_mode_valid() {
-        let config = AuthConfig {
-            dev_mode: false,
-            jwt_secret: Some(
-                "a-very-long-and-secure-jwt-secret-that-is-at-least-32-chars".to_string(),
-            ),
-            ..AuthConfig::default()
-        };
+        let mut config = AuthConfig::default();
+        config.dev_mode = false;
+        config.jwt_secret =
+            Some("a-very-long-and-secure-jwt-secret-that-is-at-least-32-chars".to_string());
 
         assert!(config.validate().is_ok());
     }
@@ -401,11 +390,9 @@ mod tests {
         );
 
         // Verify it passes our own validation
-        let config = AuthConfig {
-            dev_mode: false,
-            jwt_secret: Some(secret),
-            ..AuthConfig::default()
-        };
+        let mut config = AuthConfig::default();
+        config.dev_mode = false;
+        config.jwt_secret = Some(secret);
         assert!(
             config.validate().is_ok(),
             "Generated secret should pass validation"
@@ -414,10 +401,8 @@ mod tests {
 
     #[test]
     fn test_resolve_jwt_secret_literal() {
-        let config = AuthConfig {
-            jwt_secret: Some("my-literal-secret".to_string()),
-            ..AuthConfig::default()
-        };
+        let mut config = AuthConfig::default();
+        config.jwt_secret = Some("my-literal-secret".to_string());
 
         let resolved = config.resolve_jwt_secret().unwrap();
         assert_eq!(resolved, Some("my-literal-secret".to_string()));
@@ -434,10 +419,8 @@ mod tests {
             );
         }
 
-        let config = AuthConfig {
-            jwt_secret: Some("env:TEST_JWT_SECRET_12345".to_string()),
-            ..AuthConfig::default()
-        };
+        let mut config = AuthConfig::default();
+        config.jwt_secret = Some("env:TEST_JWT_SECRET_12345".to_string());
 
         let resolved = config.resolve_jwt_secret().unwrap();
         assert_eq!(
@@ -454,10 +437,8 @@ mod tests {
 
     #[test]
     fn test_resolve_jwt_secret_env_var_not_found() {
-        let config = AuthConfig {
-            jwt_secret: Some("env:NONEXISTENT_VAR_12345".to_string()),
-            ..AuthConfig::default()
-        };
+        let mut config = AuthConfig::default();
+        config.jwt_secret = Some("env:NONEXISTENT_VAR_12345".to_string());
 
         let result = config.resolve_jwt_secret();
         assert_eq!(
@@ -473,10 +454,8 @@ mod tests {
             std::env::set_var("TEST_EMPTY_JWT_SECRET", "");
         }
 
-        let config = AuthConfig {
-            jwt_secret: Some("env:TEST_EMPTY_JWT_SECRET".to_string()),
-            ..AuthConfig::default()
-        };
+        let mut config = AuthConfig::default();
+        config.jwt_secret = Some("env:TEST_EMPTY_JWT_SECRET".to_string());
 
         let result = config.resolve_jwt_secret();
         assert_eq!(

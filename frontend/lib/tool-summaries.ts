@@ -92,29 +92,12 @@ const bashPatterns: BashPattern[] = [
 		match: (cmd) => /\b(ls|dir|tree)\s/.test(cmd) || /^ls\s*$/.test(cmd.trim()),
 		summary: () => i18n.t("tools.listingFiles"),
 	},
-	// File operations (cat/head/tail on a file directly, NOT as pipe tail)
+	// File operations
 	{
-		match: (cmd) => {
-			if (!/\b(cat|head|tail|less|more)\s/.test(cmd)) return false;
-			// Skip when cat/head/tail is only used as a pipe tail (e.g. `cmd | head -20`).
-			// Only match when it's the primary command (start of line or after &&/;).
-			return /(?:^|[;&]\s*)(cat|head|tail|less|more)\s/.test(cmd.trim());
-		},
+		match: (cmd) => /\b(cat|head|tail|less|more)\s/.test(cmd),
 		summary: (cmd) => {
-			// Extract the actual file argument, skipping flags like -N, -n, -f
-			const m = cmd.match(
-				/(?:^|[;&]\s*)(?:cat|head|tail|less|more)\s+((?:-\S+\s+)*)(.+?)(?:\s*[|;]|$)/,
-			);
-			const rawFile = m ? m[2]?.trim().replace(/^["']|["']$/g, "") : null;
-			// Only use as file path if it looks like a real path
-			const file =
-				rawFile &&
-				!rawFile.startsWith("-") &&
-				rawFile.length > 1 &&
-				!rawFile.startsWith("2>") &&
-				rawFile !== "|"
-					? truncPath(rawFile)
-					: null;
+			const m = cmd.match(/(?:cat|head|tail|less|more)\s+(.+?)(?:\s*[|;]|$)/);
+			const file = m ? truncPath(m[1].trim()) : null;
 			if (file) return i18n.t("tools.readingPath", { path: file });
 			return i18n.t("tools.readingFile");
 		},

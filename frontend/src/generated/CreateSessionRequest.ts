@@ -9,7 +9,7 @@ export type CreateSessionRequest = {
 	 */
 	workspace_path: string | null;
 	/**
-	 * Container image to use (optional, defaults to oqto).
+	 * Container image to use (optional, defaults to oqto-dev).
 	 */
 	image: string | null;
 	/**

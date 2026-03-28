@@ -226,16 +226,17 @@ impl BusEngine {
         event: BusEvent,
     ) -> Result<(), String> {
         // Rate limit check for non-backend publishers
-        if let Some(pid) = publisher_id
-            && let Some(mut rl) = self.rate_limits.get_mut(&pid)
-            && !rl.check_and_increment()
-        {
-            self.events_dropped_rate.fetch_add(1, Ordering::Relaxed);
-            warn!(
-                "Bus: rate limit exceeded for subscriber {} on topic {}",
-                pid, event.topic
-            );
-            return Err("Rate limit exceeded".to_string());
+        if let Some(pid) = publisher_id {
+            if let Some(mut rl) = self.rate_limits.get_mut(&pid) {
+                if !rl.check_and_increment() {
+                    self.events_dropped_rate.fetch_add(1, Ordering::Relaxed);
+                    warn!(
+                        "Bus: rate limit exceeded for subscriber {} on topic {}",
+                        pid, event.topic
+                    );
+                    return Err("Rate limit exceeded".to_string());
+                }
+            }
         }
 
         // Authorize the publish
@@ -389,8 +390,9 @@ impl BusEngine {
                         if let Some(user_id) = event.source.user_id() {
                             self.check_workspace_access(user_id, &event.scope_id)
                                 .await
-                                .inspect_err(|_e| {
+                                .map_err(|e| {
                                     self.events_dropped_authz.fetch_add(1, Ordering::Relaxed);
+                                    e
                                 })
                         } else {
                             self.events_dropped_authz.fetch_add(1, Ordering::Relaxed);
@@ -421,11 +423,12 @@ impl BusEngine {
         }
 
         // Check 2: Shared workspace membership.
-        if let Some(sw) = &self.shared_workspaces
-            && let Ok(Some(workspace)) = sw.repo().find_workspace_for_path(workspace_path).await
-            && let Ok(Some(_member)) = sw.repo().get_member(&workspace.id, user_id).await
-        {
-            return Ok(());
+        if let Some(sw) = &self.shared_workspaces {
+            if let Ok(Some(workspace)) = sw.repo().find_workspace_for_path(workspace_path).await {
+                if let Ok(Some(_member)) = sw.repo().get_member(&workspace.id, user_id).await {
+                    return Ok(());
+                }
+            }
         }
 
         Err(format!(
@@ -477,7 +480,13 @@ fn topic_match_recursive(pat: &[&str], topic: &[&str]) -> bool {
             // * matches exactly one segment
             topic_match_recursive(&pat[1..], &topic[1..])
         }
-        (Some(p), Some(t)) if p == t => topic_match_recursive(&pat[1..], &topic[1..]),
+        (Some(p), Some(t)) => {
+            if p == t {
+                topic_match_recursive(&pat[1..], &topic[1..])
+            } else {
+                false
+            }
+        }
         _ => false,
     }
 }
@@ -500,10 +509,10 @@ pub fn filter_matches(filter: &Option<Value>, payload: &Value) -> bool {
             for (op, val) in ops {
                 match op.as_str() {
                     "$in" => {
-                        if let Value::Array(arr) = val
-                            && !arr.iter().any(|v| Some(v) == actual)
-                        {
-                            return false;
+                        if let Value::Array(arr) = val {
+                            if !arr.iter().any(|v| Some(v) == actual) {
+                                return false;
+                            }
                         }
                     }
                     "$exists" => {
@@ -513,8 +522,10 @@ pub fn filter_matches(filter: &Option<Value>, payload: &Value) -> bool {
                             return false;
                         }
                     }
-                    "$not" if actual == Some(val) => {
-                        return false;
+                    "$not" => {
+                        if actual == Some(val) {
+                            return false;
+                        }
                     }
                     _ => {} // Unknown operators ignored
                 }

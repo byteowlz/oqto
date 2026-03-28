@@ -128,7 +128,6 @@ hstry-core.workspace = true
 
 # Canonical protocol types
 oqto-protocol = { path = "../oqto-protocol" }
-oqto-runner-protocol = { path = "../oqto-runner-protocol" }
 
 [dev-dependencies]
 tower = { workspace = true, features = ["util"] }

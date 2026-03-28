@@ -408,14 +408,10 @@ mod tests {
         let service = OnboardingTemplatesService::new(config, temp_dir.path());
 
         let templates = service.resolve(None).await.unwrap();
-        assert!(templates.onboard.contains("Welcome to Oqto"));
-        assert!(
-            templates
-                .personality
-                .contains("helpful, professional AI coding assistant")
-        );
-        assert!(templates.user.contains("User Context"));
-        assert!(templates.agents.contains("Global agent instructions"));
+        assert!(templates.onboard.contains("BOOTSTRAP"));
+        assert!(templates.personality.contains("Identity"));
+        assert!(templates.user.contains("About the User"));
+        assert!(templates.agents.contains("Main Chat Assistant"));
     }
 
     #[tokio::test]

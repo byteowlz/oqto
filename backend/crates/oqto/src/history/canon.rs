@@ -108,10 +108,7 @@ fn legacy_part_to_canon(part: ChatMessagePart) -> Option<Part> {
                 id,
                 tool_call_id,
                 name: part.tool_name,
-                output: part
-                    .tool_output
-                    .as_ref()
-                    .map(|output| parse_tool_output(output.as_str())),
+                output: part.tool_output.as_ref().map(parse_tool_output),
                 is_error: part
                     .tool_status
                     .as_deref()
@@ -128,8 +125,8 @@ fn legacy_part_to_canon(part: ChatMessagePart) -> Option<Part> {
     }
 }
 
-fn parse_tool_output(output: &str) -> Value {
-    serde_json::from_str(output).unwrap_or_else(|_| Value::String(output.to_owned()))
+fn parse_tool_output(output: &String) -> Value {
+    serde_json::from_str(output).unwrap_or_else(|_| Value::String(output.clone()))
 }
 
 fn tool_result_metadata(part: &Part) -> Option<(Option<String>, Option<String>, Option<bool>)> {

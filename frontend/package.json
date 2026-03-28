@@ -1,6 +1,6 @@
 {
 	"name": "workspace-frontend",
-	"version": "0.3.28",
+	"version": "0.3.24",
 	"private": true,
 	"type": "module",
 	"scripts": {
