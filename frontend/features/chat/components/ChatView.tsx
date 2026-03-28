@@ -2833,7 +2833,11 @@ function ToolGutterIcon({
 					)}
 				</button>
 			</PopoverTrigger>
-			<PopoverContent side="left" align="start" className="w-64 p-2">
+			<PopoverContent
+				side="left"
+				align="start"
+				className="w-64 max-w-[calc(100vw-2rem)] p-2"
+			>
 				<div className="space-y-1">
 					{collapsed.map((entry, i) => {
 						const icon = getToolIcon(entry.toolName, entry.input);
@@ -2842,10 +2846,10 @@ function ToolGutterIcon({
 						return (
 							<div
 								key={`${entry.toolName}-${i}`}
-								className="flex items-start gap-2 px-1.5 py-1 rounded text-xs text-muted-foreground"
+								className="flex min-w-0 items-start gap-2 rounded px-1.5 py-1 text-xs text-muted-foreground"
 							>
-								<span className="shrink-0 mt-0.5">{icon}</span>
-								<span className="leading-snug">
+								<span className="mt-0.5 shrink-0">{icon}</span>
+								<span className="min-w-0 flex-1 leading-snug break-words [overflow-wrap:anywhere]">
 									{label}
 									{entry.count > 1 && (
 										<span className="ml-1 opacity-60">x{entry.count}</span>
@@ -3260,6 +3264,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 			data-message-id={messageId}
 			className={cn(
 				"group transition-all duration-200 overflow-hidden",
+				!isUser && verbosity === 1 && "overflow-visible",
 				isUser
 					? "sm:ml-8 bg-primary/20 dark:bg-primary/10 border border-primary/40 dark:border-primary/30"
 					: "sm:mr-8 bg-muted/50 border border-border",
@@ -3288,7 +3293,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 				{group.messages.length > 1 && (
 					<span
 						className={cn(
-							"text-[9px] sm:text-[10px] px-1 border leading-none flex-shrink-0",
+							"inline-flex min-h-4 items-center justify-center rounded-sm border px-1 text-[9px] sm:text-[10px] leading-tight flex-shrink-0",
 							isUser
 								? "border-primary/30 text-primary"
 								: "border-border text-muted-foreground",
@@ -3377,7 +3382,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 						return (
 							<div key={key} className="relative">
 								{content}
-								<div className="absolute right-[-2.625rem] sm:right-[-3.375rem] top-0 bottom-0 flex items-center">
+								<div className="absolute right-1.5 sm:right-2.5 top-0 bottom-0 flex items-center">
 									<ToolGutterIcon
 										toolGroup={attachedToolGroup}
 										locale={locale}
@@ -3554,7 +3559,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 									)}
 								>
 									<span>{t("chat.toolsUsed", "Used tools")}</span>
-									<div className="absolute right-[-2.625rem] sm:right-[-3.375rem] top-0 bottom-0 flex items-center">
+									<div className="absolute right-1.5 sm:right-2.5 top-0 bottom-0 flex items-center">
 										<ToolGutterIcon toolGroup={segment} locale={locale} />
 									</div>
 								</div>
