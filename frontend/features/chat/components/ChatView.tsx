@@ -2661,6 +2661,40 @@ type MessageGroup = {
 	messages: DisplayMessage[];
 };
 
+function fingerprintPartForRender(part: DisplayPart): string {
+	switch (part.type) {
+		case "text":
+			return `text:${part.text}`;
+		case "thinking":
+			return `thinking:${part.text}`;
+		case "tool_call":
+			return `tool_call:${part.toolCallId}:${part.name}:${JSON.stringify(part.input ?? null)}`;
+		case "tool_result":
+			return `tool_result:${part.toolCallId}:${part.name ?? ""}:${JSON.stringify(part.output ?? null)}:${part.isError ? "1" : "0"}`;
+		case "compaction":
+			return `compaction:${part.text}`;
+		case "error":
+			return `error:${part.text}`;
+		case "image":
+			return "image";
+		case "file_ref":
+			return `file_ref:${part.uri}`;
+		default:
+			return part.type;
+	}
+}
+
+function hasToolParts(message: DisplayMessage): boolean {
+	return message.parts.some(
+		(part) => part.type === "tool_call" || part.type === "tool_result",
+	);
+}
+
+function messageRenderFingerprint(message: DisplayMessage): string {
+	const parts = message.parts.map(fingerprintPartForRender);
+	return `${message.role}|${parts.join("|")}`;
+}
+
 function groupMessages(messages: DisplayMessage[]): MessageGroup[] {
 	const groups: MessageGroup[] = [];
 	let current: MessageGroup | null = null;
@@ -2692,6 +2726,21 @@ function groupMessages(messages: DisplayMessage[]): MessageGroup[] {
 			groups.push(current);
 			continue;
 		}
+
+		// Guard against duplicated assistant messages containing identical
+		// tool lifecycle parts (can happen when the same completed turn arrives
+		// through two sync paths during reconnect races).
+		const prev = current.messages[current.messages.length - 1];
+		if (
+			message.role === "assistant" &&
+			prev &&
+			hasToolParts(prev) &&
+			hasToolParts(message) &&
+			messageRenderFingerprint(prev) === messageRenderFingerprint(message)
+		) {
+			continue;
+		}
+
 		current.messages.push(message);
 	}
 
