@@ -2,3 +2,4 @@
 dist
 node_modules
 src-tauri/gen
+public/visual-runtime/vendor

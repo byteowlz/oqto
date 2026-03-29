@@ -337,7 +337,7 @@ Location: `templates/apps/`
 | `kanban.html` | Drag-and-drop board with saveState persistence |
 | `markdown-viewer.html` | Renders markdown files from workspace |
 
-All templates are single-file, self-contained (inline CSS/JS), and use only `--app-*` variables for styling. They include marked.js/mermaid via CDN `<script>` tags where needed.
+All templates are single-file, self-contained (inline CSS/JS), and use only `--app-*` variables for styling. In the new offline-first runtime, templates should target `window.VisualRuntime` (for Mermaid/Chart/morphdom access) and avoid direct CDN `<script>` tags.
 
 ### Template API Documentation
 

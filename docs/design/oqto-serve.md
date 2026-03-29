@@ -102,7 +102,7 @@ The agent starts this in the background and keeps editing files. Every save trig
 
 TypeScript transpilation uses `swc` (Rust-native, compiled into the binary). No Node, no Bun, no external process. Transpiled output is cached in memory and invalidated on file change. For agent-generated content (single files or a handful of modules) this is instant.
 
-**CDN imports** (`https://esm.sh/...`, `https://cdn.jsdelivr.net/...`) pass through untouched -- the browser fetches them directly. This is how agents pull in Chart.js, Mermaid, Three.js, p5.js, or anything else.
+Legacy note: CDN imports used to pass through untouched. As of the offline-first visual runtime work (`oqto-jty7`), default behavior for app surfaces is to run in `offline_strict` mode with local bundled assets and sanitizer/CSP enforcement. CDN passthrough is now considered transitional/developer-only behavior (`online_flexible`).
 
 #### `scaffold` command
 
