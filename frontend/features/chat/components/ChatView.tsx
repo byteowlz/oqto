@@ -558,6 +558,13 @@ export function ChatView({
 		if (!c) return;
 		programmaticScrollRef.current = true;
 		c.scrollTop = c.scrollHeight;
+		// Re-apply on next frame to handle late layout growth (streaming/tool rows)
+		requestAnimationFrame(() => {
+			const next = messagesContainerRef.current;
+			if (!next) return;
+			programmaticScrollRef.current = true;
+			next.scrollTop = next.scrollHeight;
+		});
 	}, []);
 
 	const LOAD_MORE_COUNT = 30;
