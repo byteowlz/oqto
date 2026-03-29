@@ -1,4 +1,4 @@
-import { act, renderHook } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const managerMock = {
@@ -39,10 +39,18 @@ vi.mock("@/components/contexts", () => ({
 import { useChat } from "@/features/chat/hooks/useChat";
 
 describe("useChat send reliability", () => {
+	let sessionHandler: ((event: Record<string, unknown>) => void) | null = null;
+
 	beforeEach(() => {
 		vi.clearAllMocks();
+		sessionHandler = null;
 		managerMock.isSessionReady.mockReturnValue(false);
-		managerMock.subscribeAgentSession.mockReturnValue(() => {});
+		managerMock.subscribeAgentSession.mockImplementation((_, handler) => {
+			sessionHandler = handler as (event: Record<string, unknown>) => void;
+			return () => {
+				sessionHandler = null;
+			};
+		});
 		managerMock.ensureConnected.mockRejectedValue(new Error("ws down"));
 		managerMock.waitForSessionReady.mockRejectedValue(
 			new Error("session not ready"),
@@ -73,5 +81,80 @@ describe("useChat send reliability", () => {
 		// send(), otherwise ChatView restores the draft and the user perceives a
 		// dropped message.
 		expect(managerMock.ensureConnected).toHaveBeenCalled();
+	});
+
+	it("dedupes duplicate tool lifecycle events while streaming", async () => {
+		const { result } = renderHook(() =>
+			useChat({
+				autoConnect: false,
+				selectedSessionId: "sess-1",
+				workspacePath: "/tmp/ws",
+			}),
+		);
+
+		await waitFor(() => expect(sessionHandler).not.toBeNull());
+		const emit = (event: Record<string, unknown>) => {
+			act(() => {
+				sessionHandler?.(event);
+			});
+		};
+
+		emit({
+			channel: "agent",
+			session_id: "sess-1",
+			event: "stream.message_start",
+			role: "assistant",
+		});
+		emit({
+			channel: "agent",
+			session_id: "sess-1",
+			event: "stream.tool_call_start",
+			tool_call_id: "call-a",
+			name: "bash",
+		});
+		emit({
+			channel: "agent",
+			session_id: "sess-1",
+			event: "stream.tool_call_start",
+			tool_call_id: "call-b",
+			name: "bash",
+		});
+		emit({
+			channel: "agent",
+			session_id: "sess-1",
+			event: "tool.start",
+			tool_call_id: "call-c",
+			name: "bash",
+			input: { command: "ls" },
+		});
+		emit({
+			channel: "agent",
+			session_id: "sess-1",
+			event: "tool.end",
+			tool_call_id: "call-d",
+			name: "bash",
+			output: "ok",
+			is_error: false,
+		});
+		emit({
+			channel: "agent",
+			session_id: "sess-1",
+			event: "tool.end",
+			tool_call_id: "call-e",
+			name: "bash",
+			output: "ok-again",
+			is_error: false,
+		});
+
+		const assistant = result.current.messages.find(
+			(m) => m.role === "assistant",
+		);
+		expect(assistant).toBeDefined();
+		const toolCalls =
+			assistant?.parts.filter((part) => part.type === "tool_call") ?? [];
+		const toolResults =
+			assistant?.parts.filter((part) => part.type === "tool_result") ?? [];
+		expect(toolCalls).toHaveLength(1);
+		expect(toolResults).toHaveLength(1);
 	});
 });

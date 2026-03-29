@@ -723,13 +723,36 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 
 				// -- Tool call being assembled by LLM --
 				case "stream.tool_call_start": {
-					const toolCallId = event.tool_call_id as string;
+					const toolCallId =
+						typeof event.tool_call_id === "string" ? event.tool_call_id : "";
 					const name = event.name as string;
 					const targetMessage = ensureAssistantMessage(true);
-					const alreadyPresent = targetMessage.parts.some(
-						(p) => p.type === "tool_call" && p.toolCallId === toolCallId,
+					const existingById = targetMessage.parts.find(
+						(p) =>
+							p.type === "tool_call" &&
+							toolCallId.length > 0 &&
+							p.toolCallId === toolCallId,
 					);
-					if (!alreadyPresent) {
+					const existingRunningByName = targetMessage.parts.find((p) => {
+						if (p.type !== "tool_call") return false;
+						if (p.name !== name || p.status !== "running") return false;
+						return !targetMessage.parts.some(
+							(r) => r.type === "tool_result" && r.toolCallId === p.toolCallId,
+						);
+					});
+					if (existingById && existingById.type === "tool_call") {
+						existingById.status = "running";
+						scheduleStreamingUpdate();
+					} else if (
+						existingRunningByName &&
+						existingRunningByName.type === "tool_call"
+					) {
+						if (toolCallId.length > 0 && !existingRunningByName.toolCallId) {
+							existingRunningByName.toolCallId = toolCallId;
+						}
+						existingRunningByName.status = "running";
+						scheduleStreamingUpdate();
+					} else {
 						const part: DisplayPart = {
 							type: "tool_call",
 							id: nextPartId(),
@@ -756,10 +779,25 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 						| undefined;
 					if (!toolCall) break;
 					const targetMessage = ensureAssistantMessage(true);
-					const existingPart = targetMessage.parts.find(
+					const existingById = targetMessage.parts.find(
 						(p) => p.type === "tool_call" && p.toolCallId === toolCall.id,
 					);
-					if (existingPart && existingPart.type === "tool_call") {
+					const existingByName = targetMessage.parts.find(
+						(p) =>
+							p.type === "tool_call" &&
+							p.name === toolCall.name &&
+							p.status === "running",
+					);
+					const existingPart =
+						existingById && existingById.type === "tool_call"
+							? existingById
+							: existingByName && existingByName.type === "tool_call"
+								? existingByName
+								: undefined;
+					if (existingPart) {
+						if (toolCall.id && !existingPart.toolCallId) {
+							existingPart.toolCallId = toolCall.id;
+						}
 						existingPart.input = toolCall.input;
 						scheduleStreamingUpdate();
 					}
@@ -768,16 +806,41 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 
 				// -- Tool execution started --
 				case "tool.start": {
-					const toolCallId = event.tool_call_id as string;
+					const toolCallId =
+						typeof event.tool_call_id === "string" ? event.tool_call_id : "";
 					const name = event.name as string;
 					const input = event.input;
 					// Ensure there's a tool_call part for this tool (in case we missed
 					// stream.tool_call_start, e.g. on reconnect)
 					const targetMessage = ensureAssistantMessage(true);
-					const existing = targetMessage.parts.find(
-						(p) => p.type === "tool_call" && p.toolCallId === toolCallId,
+					const existingById = targetMessage.parts.find(
+						(p) =>
+							p.type === "tool_call" &&
+							toolCallId.length > 0 &&
+							p.toolCallId === toolCallId,
 					);
-					if (!existing) {
+					const existingRunningByName = targetMessage.parts.find((p) => {
+						if (p.type !== "tool_call") return false;
+						if (p.name !== name || p.status !== "running") return false;
+						return !targetMessage.parts.some(
+							(r) => r.type === "tool_result" && r.toolCallId === p.toolCallId,
+						);
+					});
+					if (existingById && existingById.type === "tool_call") {
+						existingById.input = input;
+						existingById.status = "running";
+						scheduleStreamingUpdate();
+					} else if (
+						existingRunningByName &&
+						existingRunningByName.type === "tool_call"
+					) {
+						if (toolCallId.length > 0) {
+							existingRunningByName.toolCallId = toolCallId;
+						}
+						existingRunningByName.input = input;
+						existingRunningByName.status = "running";
+						scheduleStreamingUpdate();
+					} else {
 						const part: DisplayPart = {
 							type: "tool_call",
 							id: nextPartId(),
@@ -799,16 +862,49 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 
 				// -- Tool execution completed --
 				case "tool.end": {
-					const toolCallId = event.tool_call_id as string;
+					const toolCallId =
+						typeof event.tool_call_id === "string" ? event.tool_call_id : "";
 					const name = event.name as string;
 					const output = event.output;
 					const isError = event.is_error as boolean;
 					const targetMessage = ensureAssistantMessage(false);
-					const matchingToolCall = targetMessage.parts.find(
-						(p) => p.type === "tool_call" && p.toolCallId === toolCallId,
+					const matchingById = targetMessage.parts.find(
+						(p) =>
+							p.type === "tool_call" &&
+							toolCallId.length > 0 &&
+							p.toolCallId === toolCallId,
 					);
-					if (matchingToolCall && matchingToolCall.type === "tool_call") {
+					const matchingByName = targetMessage.parts.find(
+						(p) =>
+							p.type === "tool_call" &&
+							p.name === name &&
+							p.status === "running",
+					);
+					const matchingToolCall =
+						matchingById && matchingById.type === "tool_call"
+							? matchingById
+							: matchingByName && matchingByName.type === "tool_call"
+								? matchingByName
+								: undefined;
+					if (matchingToolCall) {
+						if (toolCallId.length > 0 && !matchingToolCall.toolCallId) {
+							matchingToolCall.toolCallId = toolCallId;
+						}
 						matchingToolCall.status = isError ? "error" : "success";
+					}
+					const duplicateResult = targetMessage.parts.find((p) => {
+						if (p.type !== "tool_result") return false;
+						if (toolCallId.length > 0 && p.toolCallId === toolCallId)
+							return true;
+						if (name && p.name === name) return true;
+						return false;
+					});
+					if (duplicateResult && duplicateResult.type === "tool_result") {
+						duplicateResult.output = output;
+						duplicateResult.isError = isError;
+						scheduleStreamingUpdate();
+						applyTurnState({ kind: "streaming" });
+						break;
 					}
 					const part: DisplayPart = {
 						type: "tool_result",

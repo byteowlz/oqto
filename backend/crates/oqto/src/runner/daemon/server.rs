@@ -1945,29 +1945,27 @@ impl Runner {
         // For inactive sessions created/continued outside Oqto (bare Pi),
         // hstry can lag behind the JSONL source of truth. If JSONL has more
         // messages, serve JSONL immediately so session opens are up-to-date.
-        if !session_is_active {
-            if let Some(jsonl_messages) = load_pi_jsonl_messages_for_session(&req.session_id).await
-            {
-                if jsonl_messages.len() > messages.len() {
-                    let start = req
-                        .limit
-                        .and_then(|limit| jsonl_messages.len().checked_sub(limit))
-                        .unwrap_or(0);
-                    let session_id_clone = req.session_id.clone();
-                    let mapped: Vec<ChatMessageProto> = jsonl_messages
-                        .into_iter()
-                        .enumerate()
-                        .skip(start)
-                        .map(|(idx, msg)| pi_agent_msg_to_chat_proto(msg, idx, &session_id_clone))
-                        .collect();
-                    return RunnerResponse::WorkspaceChatSessionMessages(
-                        WorkspaceChatSessionMessagesResponse {
-                            session_id: req.session_id,
-                            messages: mapped,
-                        },
-                    );
-                }
-            }
+        if !session_is_active
+            && let Some(jsonl_messages) = load_pi_jsonl_messages_for_session(&req.session_id).await
+            && jsonl_messages.len() > messages.len()
+        {
+            let start = req
+                .limit
+                .and_then(|limit| jsonl_messages.len().checked_sub(limit))
+                .unwrap_or(0);
+            let session_id_clone = req.session_id.clone();
+            let mapped: Vec<ChatMessageProto> = jsonl_messages
+                .into_iter()
+                .enumerate()
+                .skip(start)
+                .map(|(idx, msg)| pi_agent_msg_to_chat_proto(msg, idx, &session_id_clone))
+                .collect();
+            return RunnerResponse::WorkspaceChatSessionMessages(
+                WorkspaceChatSessionMessagesResponse {
+                    session_id: req.session_id,
+                    messages: mapped,
+                },
+            );
         }
 
         // hstry-backed history (for inactive sessions, or Pi fallthrough above).
