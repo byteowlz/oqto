@@ -42,6 +42,10 @@ fn emit_session_bus_event(
     });
 }
 
+fn should_filter_personal_runner_sessions(user_isolation_enabled: bool) -> bool {
+    user_isolation_enabled
+}
+
 pub(super) async fn handle_agent_command(
     cmd: oqto_protocol::commands::Command,
     user_id: &str,
@@ -92,7 +96,7 @@ pub(super) async fn handle_agent_command(
                 resolved_target_for_command = Some(target.clone());
                 // Store override for subsequent commands on this session
                 let is_different =
-                    runner_client.map_or(true, |r| r.socket_path() != sw.socket_path());
+                    runner_client.is_none_or(|r| r.socket_path() != sw.socket_path());
                 if is_different {
                     let mut state_guard = conn_state.lock().await;
                     state_guard
@@ -430,7 +434,7 @@ pub(super) async fn handle_agent_command(
             // Avoid sandboxing sessions at filesystem root; this causes agents to
             // attempt writing state under `/.oqto` and fail with permission errors.
             // Prefer persisted session target workspace path, then user home fallback.
-            if cwd == std::path::PathBuf::from("/") {
+            if cwd == std::path::Path::new("/") {
                 if let Ok(Some(target)) = state.session_targets.get(&session_id).await
                     && let Some(workspace_path) = target.workspace_path
                     && !workspace_path.trim().is_empty()
@@ -575,18 +579,16 @@ pub(super) async fn handle_agent_command(
                     if matches!(target_for_persist, ExecutionTarget::Personal)
                         && (cwd_string.starts_with("/home/oqto_shared_")
                             || cwd_string.starts_with("/home/octo_shared_"))
-                    {
-                        if let Ok(resolved) =
+                        && let Ok(resolved) =
                             crate::runner::router::resolve_target_for_workspace_path(
                                 state,
                                 user_id,
                                 &cwd_string,
                             )
                             .await
-                            && matches!(resolved, ExecutionTarget::SharedWorkspace { .. })
-                        {
-                            target_for_persist = resolved;
-                        }
+                        && matches!(resolved, ExecutionTarget::SharedWorkspace { .. })
+                    {
+                        target_for_persist = resolved;
                     }
 
                     let (target_scope, target_workspace_id, target_record) =
@@ -1402,7 +1404,7 @@ pub(super) async fn handle_agent_command(
             {
                 Ok(resp) => {
                     // Emit ConfigModelChanged event so the frontend UI updates.
-                    let config_event = WsEvent::Agent(oqto_protocol::events::Event {
+                    let config_event = WsEvent::Agent(Box::new(oqto_protocol::events::Event {
                         session_id: session_id.clone(),
                         runner_id: runner_id.clone(),
                         ts: Utc::now().timestamp_millis(),
@@ -1410,7 +1412,7 @@ pub(super) async fn handle_agent_command(
                             provider: resp.model.provider.clone(),
                             model_id: resp.model.id.clone(),
                         },
-                    });
+                    }));
                     let state_guard = conn_state.lock().await;
                     let _ = state_guard.event_tx.send(config_event);
                     drop(state_guard);
@@ -1468,7 +1470,7 @@ pub(super) async fn handle_agent_command(
             match runner.agent_cycle_model(&session_id).await {
                 Ok(resp) => {
                     // Emit ConfigModelChanged event so the frontend UI updates.
-                    let config_event = WsEvent::Agent(oqto_protocol::events::Event {
+                    let config_event = WsEvent::Agent(Box::new(oqto_protocol::events::Event {
                         session_id: session_id.clone(),
                         runner_id: runner_id.clone(),
                         ts: Utc::now().timestamp_millis(),
@@ -1476,7 +1478,7 @@ pub(super) async fn handle_agent_command(
                             provider: resp.model.provider.clone(),
                             model_id: resp.model.id.clone(),
                         },
-                    });
+                    }));
                     let state_guard = conn_state.lock().await;
                     let _ = state_guard.event_tx.send(config_event);
                     drop(state_guard);
@@ -1680,92 +1682,92 @@ pub(super) async fn handle_agent_command(
                 }
             };
 
-            // The runner is shared across all Oqto users (especially in local
-            // mode). Filter out sessions that were created by a different user
-            // by checking session_targets ownership. Sessions without a target
-            // record are assumed to belong to the requesting user (freshly
-            // created sessions whose target hasn't been persisted yet).
-            let mut filtered = Vec::with_capacity(all_sessions.len());
-            for s in all_sessions {
-                let sid = s.get("session_id").and_then(|v| v.as_str()).unwrap_or("");
-                match state.session_targets.get(sid).await {
-                    Ok(Some(record)) => {
-                        if record.owner_user_id.as_deref() == Some(user_id)
-                            || record.owner_user_id.is_none()
-                        {
+            // In isolated multi-user mode the personal runner can be shared by
+            // multiple Oqto auth identities over time. Filter by persisted
+            // session ownership to prevent cross-user leakage.
+            //
+            // In non-isolated mode (single Linux user), keep all sessions so we
+            // don't accidentally hide valid history due to auth-id drift.
+            if should_filter_personal_runner_sessions(state.user_isolation_enabled()) {
+                let mut filtered = Vec::with_capacity(all_sessions.len());
+                for s in all_sessions {
+                    let sid = s.get("session_id").and_then(|v| v.as_str()).unwrap_or("");
+                    match state.session_targets.get(sid).await {
+                        Ok(Some(record)) => {
+                            if record.owner_user_id.as_deref() == Some(user_id)
+                                || record.owner_user_id.is_none()
+                            {
+                                filtered.push(s);
+                            }
+                        }
+                        _ => {
+                            // No target record or lookup error — include it
                             filtered.push(s);
                         }
                     }
-                    _ => {
-                        // No target record or lookup error — include it
-                        filtered.push(s);
-                    }
                 }
+                all_sessions = filtered;
             }
-            all_sessions = filtered;
 
             // Also query shared workspace runners the user has access to.
             // Pre-store runner overrides so subsequent commands (get_messages,
             // get_state, prompt, etc.) route to the correct runner without
             // requiring the user to have sent session.create.
-            if let Some(sw_service) = state.shared_workspaces.as_ref() {
-                if let Ok(workspaces) = sw_service.list_for_user(user_id).await {
-                    for ws in &workspaces {
-                        if let Some(sw_runner) =
-                            runner_client_for_linux_user(state, user_id, Some(&ws.linux_user))
-                        {
-                            match sw_runner.agent_list_sessions().await {
-                                Ok(sessions) => {
-                                    // Store runner overrides for all discovered shared sessions
-                                    if !sessions.is_empty() {
-                                        let mut state_guard = conn_state.lock().await;
-                                        for s in &sessions {
-                                            state_guard
-                                                .session_runner_overrides
-                                                .insert(s.session_id.clone(), sw_runner.clone());
-                                            // Pre-populate session meta with cwd so
-                                            // prompt/steer handlers can resolve the
-                                            // shared workspace for username tagging
-                                            // without requiring session.create.
-                                            if !state_guard
-                                                .pi_session_meta
-                                                .contains_key(&s.session_id)
-                                            {
-                                                state_guard.pi_session_meta.insert(
-                                                    s.session_id.clone(),
-                                                    PiSessionMeta {
-                                                        scope: Some("pi".to_string()),
-                                                        cwd: Some(std::path::PathBuf::from(&s.cwd)),
-                                                    },
-                                                );
-                                            }
-                                        }
-                                        drop(state_guard);
-                                    }
+            if let Some(sw_service) = state.shared_workspaces.as_ref()
+                && let Ok(workspaces) = sw_service.list_for_user(user_id).await
+            {
+                for ws in &workspaces {
+                    if let Some(sw_runner) =
+                        runner_client_for_linux_user(state, user_id, Some(&ws.linux_user))
+                    {
+                        match sw_runner.agent_list_sessions().await {
+                            Ok(sessions) => {
+                                // Store runner overrides for all discovered shared sessions
+                                if !sessions.is_empty() {
+                                    let mut state_guard = conn_state.lock().await;
                                     for s in &sessions {
-                                        let mut obj = serde_json::json!({
-                                            "session_id": s.session_id,
-                                            "state": s.state,
-                                            "cwd": s.cwd,
-                                            "provider": s.provider,
-                                            "model": s.model,
-                                            "last_activity": s.last_activity,
-                                            "subscriber_count": s.subscriber_count,
-                                            "shared_workspace_id": ws.id,
-                                        });
-                                        if let Some(ref hid) = s.hstry_id {
-                                            obj["hstry_id"] =
-                                                serde_json::Value::String(hid.clone());
+                                        state_guard
+                                            .session_runner_overrides
+                                            .insert(s.session_id.clone(), sw_runner.clone());
+                                        // Pre-populate session meta with cwd so
+                                        // prompt/steer handlers can resolve the
+                                        // shared workspace for username tagging
+                                        // without requiring session.create.
+                                        if !state_guard.pi_session_meta.contains_key(&s.session_id)
+                                        {
+                                            state_guard.pi_session_meta.insert(
+                                                s.session_id.clone(),
+                                                PiSessionMeta {
+                                                    scope: Some("pi".to_string()),
+                                                    cwd: Some(std::path::PathBuf::from(&s.cwd)),
+                                                },
+                                            );
                                         }
-                                        all_sessions.push(obj);
                                     }
+                                    drop(state_guard);
                                 }
-                                Err(e) => {
-                                    debug!(
-                                        "list_sessions failed for shared workspace {}: {}",
-                                        ws.id, e
-                                    );
+                                for s in &sessions {
+                                    let mut obj = serde_json::json!({
+                                        "session_id": s.session_id,
+                                        "state": s.state,
+                                        "cwd": s.cwd,
+                                        "provider": s.provider,
+                                        "model": s.model,
+                                        "last_activity": s.last_activity,
+                                        "subscriber_count": s.subscriber_count,
+                                        "shared_workspace_id": ws.id,
+                                    });
+                                    if let Some(ref hid) = s.hstry_id {
+                                        obj["hstry_id"] = serde_json::Value::String(hid.clone());
+                                    }
+                                    all_sessions.push(obj);
                                 }
+                            }
+                            Err(e) => {
+                                debug!(
+                                    "list_sessions failed for shared workspace {}: {}",
+                                    ws.id, e
+                                );
                             }
                         }
                     }
@@ -1789,5 +1791,16 @@ pub(super) async fn handle_agent_command(
                 Err("Delegation not yet implemented".into()),
             ))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_filter_personal_runner_sessions;
+
+    #[test]
+    fn personal_runner_session_filter_enabled_only_in_isolated_mode() {
+        assert!(should_filter_personal_runner_sessions(true));
+        assert!(!should_filter_personal_runner_sessions(false));
     }
 }

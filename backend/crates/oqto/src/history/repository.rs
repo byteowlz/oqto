@@ -39,10 +39,10 @@ pub fn hstry_db_path() -> Option<PathBuf> {
     }
 
     // Try reading the database path from hstry config
-    if let Some(path) = hstry_db_path_from_config() {
-        if path.exists() {
-            return Some(path);
-        }
+    if let Some(path) = hstry_db_path_from_config()
+        && path.exists()
+    {
+        return Some(path);
     }
 
     let default = dirs::data_local_dir()

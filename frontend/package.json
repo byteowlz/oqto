@@ -13,7 +13,8 @@
 		"tauri:dev": "bunx tauri dev",
 		"tauri:build": "bunx tauri build",
 		"test": "vitest",
-		"test:run": "vitest run"
+		"test:run": "vitest run",
+		"format:generated-types": "bunx biome format --write src/generated"
 	},
 	"dependencies": {
 		"@hookform/resolvers": "^5.2.2",

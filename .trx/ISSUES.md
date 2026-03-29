@@ -47,6 +47,9 @@ setup.sh must correctly provision everything for a new platform user on a fresh 
 ...
 
 
+### [oqto-jty7] Offline-first cross-harness visual runtime (no-CDN except LLM) (P1, epic)
+Design document: docs/design/offline-cross-harness-visual-runtime.md\n\nScope:\n- shared harness-agnostic visual runtime core\n- offline_strict default with local bundled assets\n- thin Pi/Oqto harness adapters\n- sanitizer + CSP enforcement\n- migration from CDN-oriented visual generation patterns
+
 ### [oqto-3kwc.8] Tests: transport parity + auth failure coverage for runner dispatch (P1, task)
 
 ### [oqto-3kwc.7] Security: integrate kyz-backed runner token provisioning and rotation (P1, task)
@@ -1624,6 +1627,7 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [oqto-y6rq] Chat history sidebar empty: backend wrongly reports no runner in single-user mode (closed 2026-03-29)
 - [oqto-nerf] WebSocket HOL: files commands blocked by list_directory(hidden=true) in copy operations (closed 2026-03-28)
 - [oqto-6k4b] Media Browsing & Discovery Improvements (closed 2026-03-24)
 - [oqto-wkcf] Video Gallery Mode (closed 2026-03-24)
@@ -2314,12 +2318,12 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
 - [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
 - [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
-- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
 - [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
 - [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
+- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
+- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )

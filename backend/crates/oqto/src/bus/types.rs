@@ -253,7 +253,7 @@ pub enum BusCommand {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum BusWsEvent {
     /// A bus event delivered to a subscriber.
-    Event(BusEvent),
+    Event(Box<BusEvent>),
     /// Response to a subscribe/unsubscribe/publish/pull command.
     Response {
         #[serde(skip_serializing_if = "Option::is_none")]

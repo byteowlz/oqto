@@ -15,6 +15,8 @@ Oqto is a self-hosted platform for managing AI coding agents.
 - **Respect the architecture.** Actions go through Runners. History goes through hstry. Memory goes through mmry. Do not bypass established data flows. If you think you need a shortcut, you are missing something -- re-read the architecture section above and the canonical protocol docs.
 - **"Let me just..." is ALWAYS wrong.** That phrase is the preamble to a hack. We do not "just" add a quick workaround, "just" hardcode a value, or "just" skip the proper path. Every solution must be designed to scale. If it would not survive 10x users or 10x sessions, it is the wrong approach.
 - **Todo list discipline**: Your todo list is a real-time status bar the user watches. At the start of a task, create todos with `TodoWrite`. As you work, **always** update the list: set tasks to `in_progress` when you start them and `completed` when you finish them. Do not leave completed tasks as `pending`. Rewrite the full list after each significant step.
+- **Fix all failures before done.** We always leave the tree green: if lint/tests/checks fail, fix them regardless of who introduced the failure. No "not my change" exceptions.
+- **No warning debt handoff.** Clippy/lint warnings count as unfinished work unless they are explicitly documented as accepted in-code with a reason (`#[allow(...)]` + rationale). Default is zero warnings.
 - Oqto is made up of many separate tools that we are building in parallel. If you encounter bugs or potential improvements, file trx in the respective repos (e.g. ../mmry etc)
 - During development, use the agent-browser for end to end debugging. You can use wismut:dev to log in. The frontend is accessible under localhost:3000
 

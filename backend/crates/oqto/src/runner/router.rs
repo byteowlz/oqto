@@ -116,11 +116,7 @@ async fn resolve_personal_runner(state: &AppState, user_id: &str) -> Result<Opti
         None => return Ok(None),
     };
 
-    let effective_user = if let Some(ref lu) = state.linux_users {
-        lu.linux_username(user_id)
-    } else {
-        user_id.to_string()
-    };
+    let effective_user = state.effective_linux_username(user_id);
 
     let client = RunnerClient::for_user_with_pattern(&effective_user, pattern)
         .with_context(|| format!("creating runner client for linux user {}", effective_user))?;
@@ -135,16 +131,15 @@ pub async fn resolve_target_for_workspace_path(
     user_id: &str,
     workspace_path: &str,
 ) -> Result<ExecutionTarget> {
-    if let Some(sw_service) = state.shared_workspaces.as_ref() {
-        if let Some((ws, _role)) = sw_service
+    if let Some(sw_service) = state.shared_workspaces.as_ref()
+        && let Some((ws, _role)) = sw_service
             .check_access_for_path(workspace_path, user_id)
             .await
             .with_context(|| format!("shared workspace access check for path {}", workspace_path))?
-        {
-            return Ok(ExecutionTarget::SharedWorkspace {
-                workspace_id: ws.id,
-            });
-        }
+    {
+        return Ok(ExecutionTarget::SharedWorkspace {
+            workspace_id: ws.id,
+        });
     }
 
     Ok(ExecutionTarget::Personal)

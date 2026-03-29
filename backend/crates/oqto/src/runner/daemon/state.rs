@@ -37,6 +37,12 @@ impl StdoutBuffer {
     }
 }
 
+impl Default for StdoutBuffer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Message sent on the stdout broadcast channel.
 #[derive(Debug, Clone)]
 pub enum StdoutEvent {
@@ -82,6 +88,12 @@ impl RunnerState {
             processes: HashMap::new(),
             sessions: HashMap::new(),
         }
+    }
+}
+
+impl Default for RunnerState {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

@@ -159,11 +159,7 @@ pub(crate) fn get_runner_for_user(
 
     // The socket path uses the linux_username (e.g., oqto_hansgerd-vyon),
     // not the platform user_id (e.g., hansgerd-vYoN).
-    let effective_user = if let Some(ref lu) = state.linux_users {
-        lu.linux_username(user_id)
-    } else {
-        user_id.to_string()
-    };
+    let effective_user = state.effective_linux_username(user_id);
 
     match crate::runner::client::RunnerClient::for_user_with_pattern(&effective_user, pattern) {
         Ok(client) => Some(client),
@@ -379,26 +375,14 @@ pub async fn list_chat_history(
         .map_err(|e| ApiError::internal(format!("runner target resolution: {}", e)))?
         .ok_or_else(|| ApiError::internal("Runner is required but not available for this user."))?;
 
-    let mut response = runner
+    let response = runner
         .list_workspace_chat_sessions(query.workspace.clone(), query.include_children, query.limit)
         .await
         .map_err(|e| ApiError::internal(format!("runner list sessions failed: {}", e)))?;
 
-    if query.workspace.is_none()
-        && runner
-            .repair_workspace_chat_history(Some(10_000), None)
-            .await
-            .is_ok()
-        && let Ok(repaired_response) = runner
-            .list_workspace_chat_sessions(
-                query.workspace.clone(),
-                query.include_children,
-                query.limit,
-            )
-            .await
-    {
-        response = repaired_response;
-    }
+    // Important UX invariant: chat history endpoint must return immediately.
+    // Heavy JSONL->hstry repair is handled explicitly via backfill endpoint,
+    // never on this hot path.
 
     let mut sessions: Vec<ChatSession> = response
         .sessions
@@ -841,25 +825,7 @@ pub async fn get_chat_messages(
         .await
         .map_err(|e| ApiError::internal(format!("runner get messages failed: {}", e)))?;
 
-    let mut canonical = convert_runner_response(response);
-    if canonical.is_empty() {
-        if let Err(err) = runner
-            .repair_workspace_chat_history(Some(10_000), None)
-            .await
-        {
-            tracing::debug!(
-                user_id = %user.id(),
-                session_id = %session_id,
-                error = %err,
-                "workspace chat history repair before get_chat_messages failed"
-            );
-        } else if let Ok(repaired_response) = runner
-            .get_workspace_chat_session_messages(&session_id, query.render, None)
-            .await
-        {
-            canonical = convert_runner_response(repaired_response);
-        }
-    }
+    let canonical = convert_runner_response(response);
 
     info!(
         user_id = %user.id(),

@@ -77,14 +77,10 @@ pub(super) async fn handle_files_command(
         }
     };
 
-    let mut linux_username = state
-        .linux_users
-        .as_ref()
-        .map(|lu| lu.linux_username(user_id))
-        .unwrap_or_else(|| user_id.to_string());
+    let mut linux_username = state.effective_linux_username(user_id);
 
     // Shared workspace file operations must use the workspace Linux user.
-    if state.linux_users.is_some()
+    if state.user_isolation_enabled()
         && let Some(ws_path) = workspace_path
         && let Ok(ExecutionTarget::SharedWorkspace { workspace_id }) =
             resolve_target_for_workspace_path(state, user_id, ws_path).await
@@ -131,7 +127,7 @@ pub(super) async fn handle_files_command(
         }
     }
 
-    let is_multi_user = state.linux_users.is_some();
+    let is_multi_user = state.user_isolation_enabled();
     let user_plane: Arc<dyn UserPlane> =
         if let Some(pattern) = state.runner_socket_pattern.as_deref() {
             match RunnerUserPlane::for_user_with_pattern(&linux_username, pattern) {

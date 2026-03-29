@@ -20,7 +20,7 @@ import {
 	setSharedWorkspaceSessionId,
 	sharedWorkspaceSessionMap,
 } from "@/components/contexts/chat-context";
-import { getChatMessages } from "@/lib/api";
+import { getChatMessages, triggerChatHistoryBackfill } from "@/lib/api/chat";
 import type { CommandResponse, SessionConfig } from "@/lib/canonical-types";
 import {
 	createPiSessionId,
@@ -36,7 +36,6 @@ import { getWsManager } from "@/lib/ws-manager";
 import type { AgentWsEvent, WsMuxConnectionState } from "@/lib/ws-mux-types";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-	clearStoragePrefixCache,
 	readCachedSessionMessages,
 	sanitizeStorageKey,
 	transferCachedSessionMessages,
@@ -155,6 +154,8 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 	const responseWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(
 		null,
 	);
+	const autoBackfillAttemptCountsRef = useRef<Map<string, number>>(new Map());
+	const autoBackfillInFlightSessionsRef = useRef<Set<string>>(new Set());
 	const persistedMessageVersionRef = useRef<number | null>(null);
 	// (deferredServerMessagesRef removed — messages are always merged immediately)
 	// Force a full server sync after reattaching to an active runner session.
@@ -511,6 +512,34 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 				}
 
 				if (history.length === 0) {
+					const backfillKey = swId ? `${swId}:${sessionId}` : sessionId;
+					const attempts =
+						autoBackfillAttemptCountsRef.current.get(backfillKey) ?? 0;
+					const inFlight =
+						autoBackfillInFlightSessionsRef.current.has(backfillKey);
+					if (attempts < 2 && !inFlight) {
+						autoBackfillAttemptCountsRef.current.set(backfillKey, attempts + 1);
+						autoBackfillInFlightSessionsRef.current.add(backfillKey);
+						void triggerChatHistoryBackfill({
+							workspace: swId
+								? undefined
+								: (normalizedWorkspacePath ?? undefined),
+							shared_workspace_id: swId,
+							limit: 20_000,
+						})
+							.then(() => fetchHistoryMessages(sessionId, expectedVersion))
+							.catch((err) => {
+								if (isPiDebugEnabled()) {
+									console.debug(
+										"[useChat] automatic history backfill failed:",
+										err,
+									);
+								}
+							})
+							.finally(() => {
+								autoBackfillInFlightSessionsRef.current.delete(backfillKey);
+							});
+					}
 					if (!isStreamingRef.current && !sendInFlightRef.current) {
 						applyTurnState({ kind: "idle" });
 					}
@@ -543,7 +572,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 				}
 			}
 		},
-		[applyServerMessages, applyTurnState],
+		[applyServerMessages, applyTurnState, normalizedWorkspacePath],
 	);
 
 	const clearResponseWatchdog = useCallback(() => {
@@ -2178,9 +2207,6 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 		// same) prevents clobbering in-flight streaming and the optimistic user
 		// message.
 		if (sessionActuallyChanged) {
-			// Clear in-memory cache for this storage prefix to prevent contamination
-			// from previous sessions. localStorage entries remain intact.
-			clearStoragePrefixCache(resolvedStorageKeyPrefix);
 			// Load cached messages for this session.
 			const cached = readCachedSessionMessages(
 				activeSessionId,

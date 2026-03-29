@@ -303,7 +303,7 @@ fn generate_prompt_id() -> String {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum PromptMessage {
     /// New prompt created
-    Created { prompt: Prompt },
+    Created { prompt: Box<Prompt> },
 
     /// Prompt was responded to
     Responded {

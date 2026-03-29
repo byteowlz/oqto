@@ -546,4 +546,14 @@ impl AppState {
         self.pi_models_template_path = models_template;
         self
     }
+
+    /// Returns true when Linux user isolation is enabled (multi-user mode).
+    pub fn user_isolation_enabled(&self) -> bool {
+        crate::identity::runtime::user_isolation_enabled(self.linux_users.as_ref())
+    }
+
+    /// Resolve the effective Linux username used for runner/user-plane routing.
+    pub fn effective_linux_username(&self, user_id: &str) -> String {
+        crate::identity::runtime::effective_linux_username(self.linux_users.as_ref(), user_id)
+    }
 }

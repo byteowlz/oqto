@@ -301,7 +301,7 @@ pub enum PiEvent {
     MessageUpdate {
         message: AgentMessage,
         #[serde(rename = "assistantMessageEvent")]
-        assistant_message_event: AssistantMessageEvent,
+        assistant_message_event: Box<AssistantMessageEvent>,
     },
     /// Message completes.
     MessageEnd { message: AgentMessage },
@@ -687,7 +687,7 @@ pub struct SessionTokens {
 #[derive(Debug, Clone)]
 pub enum PiMessage {
     Response(PiResponse),
-    Event(PiEvent),
+    Event(Box<PiEvent>),
 }
 
 impl PiMessage {
@@ -705,7 +705,7 @@ impl PiMessage {
 
         // Otherwise, try to parse as an event
         let event: PiEvent = serde_json::from_value(value)?;
-        Ok(PiMessage::Event(event))
+        Ok(PiMessage::Event(Box::new(event)))
     }
 
     /// Parse a line that may contain one or more concatenated JSON objects.
@@ -746,13 +746,13 @@ impl PiMessage {
                             }
                         } else {
                             match serde_json::from_value::<PiEvent>(value) {
-                                Ok(evt) => results.push(Ok(PiMessage::Event(evt))),
+                                Ok(evt) => results.push(Ok(PiMessage::Event(Box::new(evt)))),
                                 Err(e) => results.push(Err(format!("event parse: {e}"))),
                             }
                         }
                     } else {
                         match serde_json::from_value::<PiEvent>(value) {
-                            Ok(evt) => results.push(Ok(PiMessage::Event(evt))),
+                            Ok(evt) => results.push(Ok(PiMessage::Event(Box::new(evt)))),
                             Err(e) => results.push(Err(format!("event parse (no type): {e}"))),
                         }
                     }

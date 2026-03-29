@@ -274,12 +274,11 @@ describe("mergeServerMessages", () => {
 				textMsg("history-s1-2", "user", "some other msg", { timestamp: now }),
 			];
 			const result = mergeServerMessages(prev, server, "authoritative");
-			expect(result).toHaveLength(5);
+			expect(result).toHaveLength(4);
 			expect(result[0].id).toBe("history-s1-0");
 			expect(result[1].id).toBe("history-s1-1");
 			expect(result[2].id).toBe("history-s1-2");
-			expect(result[3].id).toBe("pi-msg-2"); // optimistic user msg
-			expect(result[4].id).toBe("pi-msg-3"); // streaming
+			expect(result[3].id).toBe("pi-msg-3"); // streaming
 		});
 
 		it("keeps streaming message in incremental path too", () => {
@@ -295,8 +294,8 @@ describe("mergeServerMessages", () => {
 				textMsg("history-s1-0", "user", "hello", { timestamp: now }),
 			];
 			const result = mergeServerMessages(prev, server, "partial");
-			// Partial: all prev kept + server matched by ID (pi-msg-1 != history-s1-0, so appended)
-			expect(result).toHaveLength(3);
+			// Partial merge now de-dupes by fingerprint, so server user message replaces local pi-msg-1.
+			expect(result).toHaveLength(2);
 			expect(result.some((m) => m.isStreaming)).toBe(true);
 		});
 	});
@@ -313,8 +312,8 @@ describe("mergeServerMessages", () => {
 				textMsg("history-s1-0", "user", "earlier", { timestamp: now }),
 			];
 			const result = mergeServerMessages(prev, server, "authoritative");
-			expect(result).toHaveLength(2);
-			expect(result[1].id).toBe("pi-msg-1");
+			expect(result).toHaveLength(1);
+			expect(result[0].id).toBe("history-s1-0");
 		});
 
 		it("drops user message when server has matching clientId", () => {
@@ -426,10 +425,10 @@ describe("mergeServerMessages", () => {
 				}),
 			];
 			const result = mergeServerMessages(prev, server, "authoritative");
-			// Server (4) + only pi-msg-3 (tail in-flight)
-			expect(result).toHaveLength(5);
+			// Authoritative mode preserves only streaming local messages.
+			expect(result).toHaveLength(4);
 			expect(result[0].id).toBe("history-s1-0");
-			expect(result[4].id).toBe("pi-msg-3");
+			expect(result[3].id).toBe("history-s1-3");
 		});
 	});
 

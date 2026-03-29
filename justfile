@@ -63,8 +63,10 @@ fmt:
     cd backend && cargo fmt
 
 # Generate TypeScript types from Rust structs
+# Ensures generated files are Biome-formatted immediately to keep tree clean.
 gen-types:
     cd backend && remote-build test -p oqto export_typescript_bindings -- --nocapture
+    cd frontend && bun run format:generated-types
 
 # Check all Rust code compiles
 check:

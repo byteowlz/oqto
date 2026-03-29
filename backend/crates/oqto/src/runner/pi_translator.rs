@@ -217,15 +217,14 @@ impl PiTranslator {
             for msg in messages {
                 if (msg.role == "assistant" || msg.role == "agent")
                     && msg.stop_reason.as_deref() == Some("error")
+                    && let Some(error_text) = extract_error_message(msg)
                 {
-                    if let Some(error_text) = extract_error_message(msg) {
-                        events.push(EventPayload::AgentError {
-                            error: error_text,
-                            recoverable: true,
-                            phase: Some(AgentPhase::Generating),
-                        });
-                        break;
-                    }
+                    events.push(EventPayload::AgentError {
+                        error: error_text,
+                        recoverable: true,
+                        phase: Some(AgentPhase::Generating),
+                    });
+                    break;
                 }
             }
         }
@@ -428,23 +427,24 @@ impl PiTranslator {
         // errors like "400 Unexpected message role" result in empty assistant
         // bubbles with no visible error.
         // Skip during retry cycles: the final error comes from on_retry_end.
-        if !self.in_retry_cycle && matches!(canonical.stop_reason, Some(StopReason::Error)) {
-            if let Some(error_text) = extract_error_message(message) {
-                let is_fatal = is_payload_too_large_error(&error_text);
-                events.push(EventPayload::AgentError {
-                    error: error_text,
-                    // Payload-too-large errors are not recoverable (session is stuck).
-                    // Other errors (API 400s, model errors) are recoverable: the user
-                    // can retry with a different model or message.
-                    recoverable: !is_fatal,
-                    phase: Some(AgentPhase::Generating),
-                });
+        if !self.in_retry_cycle
+            && matches!(canonical.stop_reason, Some(StopReason::Error))
+            && let Some(error_text) = extract_error_message(message)
+        {
+            let is_fatal = is_payload_too_large_error(&error_text);
+            events.push(EventPayload::AgentError {
+                error: error_text,
+                // Payload-too-large errors are not recoverable (session is stuck).
+                // Other errors (API 400s, model errors) are recoverable: the user
+                // can retry with a different model or message.
+                recoverable: !is_fatal,
+                phase: Some(AgentPhase::Generating),
+            });
 
-                // Payload-too-large failures can leave Pi in a stuck working state
-                // without a timely agent_end. Force idle to keep session recoverable.
-                if is_fatal && self.state.is_working() {
-                    events.push(self.state.on_agent_end());
-                }
+            // Payload-too-large failures can leave Pi in a stuck working state
+            // without a timely agent_end. Force idle to keep session recoverable.
+            if is_fatal && self.state.is_working() {
+                events.push(self.state.on_agent_end());
             }
         }
 
@@ -1059,11 +1059,11 @@ mod tests {
         // TextDelta
         let events = t.translate(&PiEvent::MessageUpdate {
             message: msg.clone(),
-            assistant_message_event: AssistantMessageEvent::TextDelta {
+            assistant_message_event: Box::new(AssistantMessageEvent::TextDelta {
                 content_index: 0,
                 delta: "Hello".to_string(),
                 partial: Value::Null,
-            },
+            }),
         });
         assert_eq!(events.len(), 1);
         if let EventPayload::StreamTextDelta { delta, .. } = &events[0] {
@@ -1075,11 +1075,11 @@ mod tests {
         // ThinkingDelta
         let events = t.translate(&PiEvent::MessageUpdate {
             message: msg.clone(),
-            assistant_message_event: AssistantMessageEvent::ThinkingDelta {
+            assistant_message_event: Box::new(AssistantMessageEvent::ThinkingDelta {
                 content_index: 0,
                 delta: "Hmm...".to_string(),
                 partial: Value::Null,
-            },
+            }),
         });
         assert_eq!(events.len(), 1);
         assert!(matches!(
@@ -1365,8 +1365,12 @@ mod tests {
         assert_eq!(canonical.tool_call_id.as_deref(), Some("tc_123"));
         assert_eq!(canonical.tool_name.as_deref(), Some("read"));
         assert_eq!(canonical.is_error, Some(false));
-        // Should have text part + tool_result part
-        assert!(canonical.parts.len() >= 2);
+        // Tool result messages only emit a single tool_result part.
+        assert_eq!(canonical.parts.len(), 1);
+        assert!(matches!(
+            canonical.parts.first(),
+            Some(Part::ToolResult { .. })
+        ));
     }
 
     #[test]
@@ -1622,10 +1626,10 @@ mod tests {
 
         let events = t.translate(&PiEvent::MessageUpdate {
             message: msg,
-            assistant_message_event: AssistantMessageEvent::Error {
+            assistant_message_event: Box::new(AssistantMessageEvent::Error {
                 reason: "error".to_string(),
                 error: Some(error),
-            },
+            }),
         });
 
         assert!(

@@ -296,7 +296,7 @@ impl LocalPiProcess {
                         }
                     }
                     Ok(PiMessage::Event(event)) => {
-                        let _ = event_tx.send(event);
+                        let _ = event_tx.send(*event);
                     }
                     Err(e) => {
                         let display_line: String = line.chars().take(200).collect();
@@ -568,7 +568,7 @@ impl RunnerPiProcess {
                     }
                 }
                 Ok(PiMessage::Event(event)) => {
-                    let _ = event_tx.send(event);
+                    let _ = event_tx.send(*event);
                 }
                 Err(e) => {
                     warn!("Failed to parse pi message: {}, line: {}", e, display_line);

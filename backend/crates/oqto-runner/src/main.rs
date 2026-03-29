@@ -59,8 +59,12 @@ async fn main() -> Result<()> {
         .unwrap_or_else(RunnerUserConfig::load);
 
     info!(
-        "User config: workspace_dir={:?}, pi_sessions={:?}, memories={:?}",
-        user_config.workspace_dir, user_config.pi_sessions_dir, user_config.memories_dir
+        "User config: workspace_dir={:?}, pi_sessions={:?}, memories={:?}, single_user={}, linux_users_enabled={}",
+        user_config.workspace_dir,
+        user_config.pi_sessions_dir,
+        user_config.memories_dir,
+        user_config.single_user,
+        user_config.linux_users_enabled
     );
 
     let binaries = SessionBinaries {

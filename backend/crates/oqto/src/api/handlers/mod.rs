@@ -13,7 +13,7 @@
 //! - `trx`: TRX issue tracking
 //! - `misc`: Health checks, features, and utilities
 
-mod admin;
+pub(crate) mod admin;
 mod api_keys;
 mod auth;
 mod chat;

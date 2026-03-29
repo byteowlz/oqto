@@ -359,34 +359,32 @@ pub async fn handle_terminal_proxy(
                         }
                     }
                 }
-                Ok(TungsteniteMessage::Binary(data)) => {
+                Ok(TungsteniteMessage::Binary(data)) if !data.is_empty() => {
                     // Binary message from ttyd
-                    if !data.is_empty() {
-                        match data[0] {
-                            b'0' => {
-                                // Output data - strip the '0' prefix and send to client
-                                let output = &data[1..];
-                                if client_write
-                                    .send(AxumMessage::Binary(output.to_vec().into()))
-                                    .await
-                                    .is_err()
-                                {
-                                    break;
-                                }
+                    match data[0] {
+                        b'0' => {
+                            // Output data - strip the '0' prefix and send to client
+                            let output = &data[1..];
+                            if client_write
+                                .send(AxumMessage::Binary(output.to_vec().into()))
+                                .await
+                                .is_err()
+                            {
+                                break;
                             }
-                            b'1' | b'2' => {
-                                // Window title or preferences - ignore
-                                debug!("Received ttyd control message type: {}", data[0] as char);
-                            }
-                            _ => {
-                                // Unknown, pass through as-is
-                                if client_write
-                                    .send(AxumMessage::Binary(data.to_vec().into()))
-                                    .await
-                                    .is_err()
-                                {
-                                    break;
-                                }
+                        }
+                        b'1' | b'2' => {
+                            // Window title or preferences - ignore
+                            debug!("Received ttyd control message type: {}", data[0] as char);
+                        }
+                        _ => {
+                            // Unknown, pass through as-is
+                            if client_write
+                                .send(AxumMessage::Binary(data.to_vec().into()))
+                                .await
+                                .is_err()
+                            {
+                                break;
                             }
                         }
                     }

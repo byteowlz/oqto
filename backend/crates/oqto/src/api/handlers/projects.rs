@@ -664,15 +664,14 @@ pub async fn create_project_from_template(
     }
 
     // Regenerate USERS.md for the new workdir in shared workspaces.
-    if let Some(ref sw_id) = request.shared_workspace_id {
-        if let Some(sw_service) = state.shared_workspaces.as_ref() {
-            if let Err(e) = sw_service.regenerate_users_md_by_id(sw_id).await {
-                tracing::warn!(
-                    sw_id,
-                    "Failed to regenerate USERS.md after project creation: {e}"
-                );
-            }
-        }
+    if let Some(ref sw_id) = request.shared_workspace_id
+        && let Some(sw_service) = state.shared_workspaces.as_ref()
+        && let Err(e) = sw_service.regenerate_users_md_by_id(sw_id).await
+    {
+        tracing::warn!(
+            sw_id,
+            "Failed to regenerate USERS.md after project creation: {e}"
+        );
     }
 
     let name = project_rel
@@ -967,8 +966,6 @@ pub async fn get_workspace_pi_resources(
     let global_extensions = list_dir_entries(&global_extensions_dir, false)?;
 
     let selected_skills = list_dir_entries(&workspace_skills_dir, true).unwrap_or_default();
-    let selected_extensions =
-        list_dir_entries(&workspace_extensions_dir, false).unwrap_or_default();
 
     let skills = global_skills
         .iter()
@@ -1098,20 +1095,20 @@ fn expand_path(path: &str) -> Result<PathBuf, ApiError> {
 /// Expand a path like `~/.pi/agent/skills` relative to a specific user's home.
 /// In multi-user mode, `~` must resolve to the user's home, not the backend's.
 fn expand_path_for_user(path: &str, state: &AppState, user_id: &str) -> Result<PathBuf, ApiError> {
-    if let Some(ref lu) = state.linux_users {
-        if lu.enabled {
-            let linux_username = lu.linux_username(user_id);
-            let user_home = format!("/home/{}", linux_username);
-            // Replace ~ with user's home
-            let expanded = if path.starts_with("~/") {
-                format!("{}{}", user_home, &path[1..])
-            } else if path == "~" {
-                user_home
-            } else {
-                path.to_string()
-            };
-            return Ok(PathBuf::from(expanded));
-        }
+    if let Some(ref lu) = state.linux_users
+        && lu.enabled
+    {
+        let linux_username = lu.linux_username(user_id);
+        let user_home = format!("/home/{}", linux_username);
+        // Replace ~ with user's home
+        let expanded = if path.starts_with("~/") {
+            format!("{}{}", user_home, &path[1..])
+        } else if path == "~" {
+            user_home
+        } else {
+            path.to_string()
+        };
+        return Ok(PathBuf::from(expanded));
     }
     // Single-user mode: use default expansion
     expand_path(path)

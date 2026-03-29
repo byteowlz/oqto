@@ -486,10 +486,10 @@ fn cmd_delete_user(args: &serde_json::Value) -> Response {
 
     // 4. Clean up runner socket directory
     let socket_dir = format!("/run/oqto/runner-sockets/{username}");
-    if std::path::Path::new(&socket_dir).exists() {
-        if let Err(e) = run_cmd("/bin/rm", &["-rf", &socket_dir]) {
-            warnings.push(format!("rm {socket_dir}: {e}"));
-        }
+    if std::path::Path::new(&socket_dir).exists()
+        && let Err(e) = run_cmd("/bin/rm", &["-rf", &socket_dir])
+    {
+        warnings.push(format!("rm {socket_dir}: {e}"));
     }
 
     // 5. Kill any remaining processes owned by this user
@@ -510,10 +510,10 @@ fn cmd_delete_user(args: &serde_json::Value) -> Response {
             }
             // Home dir remains, try to remove it manually
             let home = format!("/home/{username}");
-            if std::path::Path::new(&home).exists() {
-                if let Err(e3) = run_cmd("/bin/rm", &["-rf", &home]) {
-                    warnings.push(format!("rm home {home}: {e3}"));
-                }
+            if std::path::Path::new(&home).exists()
+                && let Err(e3) = run_cmd("/bin/rm", &["-rf", &home])
+            {
+                warnings.push(format!("rm home {home}: {e3}"));
             }
         }
     }
@@ -847,11 +847,11 @@ WantedBy=default.target
     let _ = std::fs::create_dir_all(format!("{home}/.local/share/hstry"));
     if std::path::Path::new(&hstry_config_path).exists() {
         // Patch existing: flip enabled = false -> true
-        if let Ok(content) = std::fs::read_to_string(&hstry_config_path) {
-            if content.contains("enabled = false") {
-                let patched = content.replace("enabled = false", "enabled = true");
-                let _ = std::fs::write(&hstry_config_path, patched);
-            }
+        if let Ok(content) = std::fs::read_to_string(&hstry_config_path)
+            && content.contains("enabled = false")
+        {
+            let patched = content.replace("enabled = false", "enabled = true");
+            let _ = std::fs::write(&hstry_config_path, patched);
         }
     } else {
         // Write config with service enabled, system-wide adapters, and pi source
@@ -877,7 +877,6 @@ WantedBy=default.target
     // This patches configs from older setups that are missing them.
     if let Ok(content) = std::fs::read_to_string(&hstry_config_path) {
         let mut patched = content.clone();
-        let needs_write;
 
         // Add adapter_paths if missing
         if !patched.contains("adapter_paths") {
@@ -912,7 +911,7 @@ WantedBy=default.target
             ));
         }
 
-        needs_write = patched != content;
+        let needs_write = patched != content;
         if needs_write {
             let _ = std::fs::write(&hstry_config_path, patched);
         }
@@ -1283,10 +1282,10 @@ fn cmd_create_workspace(args: &serde_json::Value) -> Response {
             if let Some(text) = content.as_str() {
                 let file_path = format!("{path}/{name}");
                 // Create parent directories for nested paths like .oqto/workspace.toml
-                if let Some(parent) = std::path::Path::new(&file_path).parent() {
-                    if let Err(e) = std::fs::create_dir_all(parent) {
-                        return Response::error(format!("creating dir for {file_path}: {e}"));
-                    }
+                if let Some(parent) = std::path::Path::new(&file_path).parent()
+                    && let Err(e) = std::fs::create_dir_all(parent)
+                {
+                    return Response::error(format!("creating dir for {file_path}: {e}"));
                 }
                 if let Err(e) = std::fs::write(&file_path, text) {
                     return Response::error(format!("writing {file_path}: {e}"));
@@ -1404,7 +1403,7 @@ fn cmd_install_pi_extensions(args: &serde_json::Value) -> Response {
         // Remove old version if present
         let _ = std::fs::remove_dir_all(&dest_dir);
 
-        if let Err(e) = copy_dir_recursive(&src_dir, &std::path::Path::new(&dest_dir)) {
+        if let Err(e) = copy_dir_recursive(&src_dir, std::path::Path::new(&dest_dir)) {
             eprintln!("warning: copying extension {ext_name}: {e}");
             continue;
         }
@@ -1463,21 +1462,21 @@ fn cmd_write_file(args: &serde_json::Value) -> Response {
     let full_path = format!("{home}/{rel_path}");
 
     // Create parent directories
-    if let Some(parent) = std::path::Path::new(&full_path).parent() {
-        if !parent.exists() {
-            if let Err(e) = std::fs::create_dir_all(parent) {
-                return Response::error(format!("mkdir {}: {e}", parent.display()));
-            }
-            // chown the created directories
-            let _ = run_cmd(
-                "/usr/bin/chown",
-                &[
-                    "-R",
-                    &format!("{username}:{group}"),
-                    &parent.to_string_lossy(),
-                ],
-            );
+    if let Some(parent) = std::path::Path::new(&full_path).parent()
+        && !parent.exists()
+    {
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            return Response::error(format!("mkdir {}: {e}", parent.display()));
         }
+        // chown the created directories
+        let _ = run_cmd(
+            "/usr/bin/chown",
+            &[
+                "-R",
+                &format!("{username}:{group}"),
+                &parent.to_string_lossy(),
+            ],
+        );
     }
 
     // Write the file

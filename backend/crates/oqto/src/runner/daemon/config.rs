@@ -11,6 +11,8 @@ pub struct RunnerUserConfig {
     pub workspace_dir: PathBuf,
     pub pi_sessions_dir: PathBuf,
     pub memories_dir: PathBuf,
+    pub single_user: bool,
+    pub linux_users_enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -41,6 +43,8 @@ struct LocalSection {
     fileserver_binary: String,
     ttyd_binary: String,
     workspace_dir: String,
+    single_user: bool,
+    linux_users: LinuxUsersSection,
 }
 
 impl Default for LocalSection {
@@ -49,8 +53,16 @@ impl Default for LocalSection {
             fileserver_binary: "oqto-files".to_string(),
             ttyd_binary: "ttyd".to_string(),
             workspace_dir: "~/oqto".to_string(),
+            single_user: false,
+            linux_users: LinuxUsersSection::default(),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+struct LinuxUsersSection {
+    enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -175,6 +187,8 @@ impl RunnerUserConfig {
                 .memories_dir
                 .map(|p| Self::expand_path(&p, &home))
                 .unwrap_or_else(|| data_dir.join("mmry")),
+            single_user: config_file.local.single_user,
+            linux_users_enabled: config_file.local.linux_users.enabled,
         }
     }
 
@@ -186,5 +200,32 @@ impl RunnerUserConfig {
         } else {
             PathBuf::from(path)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn local_section_defaults_do_not_enable_linux_isolation() {
+        let cfg = ConfigFile::default();
+        assert!(!cfg.local.single_user);
+        assert!(!cfg.local.linux_users.enabled);
+    }
+
+    #[test]
+    fn local_section_parses_single_user_and_linux_users_enabled() {
+        let toml = r#"
+            [local]
+            single_user = true
+
+            [local.linux_users]
+            enabled = true
+        "#;
+
+        let parsed: ConfigFile = toml::from_str(toml).expect("parse config");
+        assert!(parsed.local.single_user);
+        assert!(parsed.local.linux_users.enabled);
     }
 }

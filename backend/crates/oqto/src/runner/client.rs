@@ -1722,7 +1722,7 @@ impl PiSubscription {
         match self.lines.next_line().await {
             Ok(Some(line)) => match serde_json::from_str::<RunnerResponse>(&line) {
                 Ok(RunnerResponse::PiEvent(canonical_event)) => {
-                    Some(PiSubscriptionEvent::Event(canonical_event))
+                    Some(PiSubscriptionEvent::Event(Box::new(canonical_event)))
                 }
                 Ok(RunnerResponse::PiSubscriptionEnd(end)) => {
                     Some(PiSubscriptionEvent::End { reason: end.reason })
@@ -1751,7 +1751,7 @@ impl PiSubscription {
 #[derive(Debug, Clone)]
 pub enum PiSubscriptionEvent {
     /// A canonical event from the session (translated from Pi native events).
-    Event(oqto_protocol::events::Event),
+    Event(Box<oqto_protocol::events::Event>),
     /// The subscription ended.
     End { reason: String },
     /// An error occurred.

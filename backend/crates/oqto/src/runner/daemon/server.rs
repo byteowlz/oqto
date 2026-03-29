@@ -45,6 +45,7 @@ pub struct Runner {
 #[derive(Debug, Clone)]
 struct JsonlSessionMetadata {
     external_id: String,
+    session_file: std::path::PathBuf,
     title: Option<String>,
     readable_id: Option<String>,
     workspace_path: Option<String>,
@@ -120,6 +121,60 @@ fn read_last_session_info_name(path: &std::path::Path) -> Option<String> {
     }
 
     last_name
+}
+
+#[derive(serde::Deserialize)]
+struct JsonlMessageEntry {
+    #[serde(rename = "type")]
+    entry_type: String,
+    message: Option<crate::pi::AgentMessage>,
+}
+
+fn read_jsonl_agent_messages(path: &std::path::Path) -> Vec<crate::pi::AgentMessage> {
+    use std::io::BufRead;
+
+    let file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(err) => {
+            warn!("Failed to open Pi session file {}: {}", path.display(), err);
+            return Vec::new();
+        }
+    };
+
+    let reader = std::io::BufReader::new(file);
+    let mut messages = Vec::new();
+
+    for line in reader.lines().map_while(Result::ok) {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let entry: JsonlMessageEntry = match serde_json::from_str(trimmed) {
+            Ok(entry) => entry,
+            Err(_) => continue,
+        };
+
+        if entry.entry_type != "message" {
+            continue;
+        }
+
+        if let Some(message) = entry.message {
+            messages.push(message);
+        }
+    }
+
+    messages
+}
+
+async fn load_pi_jsonl_messages_for_session(
+    session_id: &str,
+) -> Option<Vec<crate::pi::AgentMessage>> {
+    let path =
+        crate::pi::session_files::find_session_file_async(session_id.to_string(), None).await?;
+    tokio::task::spawn_blocking(move || read_jsonl_agent_messages(&path))
+        .await
+        .ok()
 }
 
 fn scan_pi_jsonl_session_metadata(limit: Option<usize>) -> JsonlScanOutcome {
@@ -210,6 +265,7 @@ fn scan_pi_jsonl_session_metadata(limit: Option<usize>) -> JsonlScanOutcome {
 
         outcome.sessions.push(JsonlSessionMetadata {
             external_id,
+            session_file: path,
             title,
             readable_id,
             workspace_path,
@@ -260,6 +316,9 @@ impl Runner {
             RunnerRequest::PiCreateSession(_)
             | RunnerRequest::PiDeleteSession(_)
             | RunnerRequest::PiCloseSession(_) => std::time::Duration::from_secs(20),
+            // Scanning and repairing JSONL chat metadata can be expensive for
+            // users with large session histories.
+            RunnerRequest::RepairWorkspaceChatHistory(_) => std::time::Duration::from_secs(120),
             _ => std::time::Duration::from_secs(10),
         }
     }
@@ -1668,17 +1727,21 @@ impl Runner {
             let readable_id = readable_id.unwrap_or_default();
             let updated_at_ms = updated_at.unwrap_or(created_at) * 1000;
 
-            // SECURITY: Only return sessions whose workspace belongs to this user.
-            // Leaked cross-user sessions in hstry must never be exposed.
-            if let Ok(home) = std::env::var("HOME") {
-                if !workspace_path.starts_with(&home) && workspace_path != "global" {
-                    tracing::warn!(
-                        workspace = %workspace_path,
-                        home = %home,
-                        "Filtering out session with foreign workspace path"
-                    );
-                    continue;
-                }
+            // SECURITY: In isolated multi-user mode, only return sessions whose
+            // workspace belongs to this Linux user. In single-user mode we allow
+            // any local workspace path under the user's history.
+            if self.user_config.linux_users_enabled
+                && !self.user_config.single_user
+                && let Ok(home) = std::env::var("HOME")
+                && !workspace_path.starts_with(&home)
+                && workspace_path != "global"
+            {
+                tracing::warn!(
+                    workspace = %workspace_path,
+                    home = %home,
+                    "Filtering out session with foreign workspace path"
+                );
+                continue;
             }
 
             sessions.push(WorkspaceChatSessionInfo {
@@ -1877,6 +1940,34 @@ impl Runner {
                 }
             }
             // Pi process may have exited or returned empty -- fall through to hstry.
+        }
+
+        // For inactive sessions created/continued outside Oqto (bare Pi),
+        // hstry can lag behind the JSONL source of truth. If JSONL has more
+        // messages, serve JSONL immediately so session opens are up-to-date.
+        if !session_is_active {
+            if let Some(jsonl_messages) = load_pi_jsonl_messages_for_session(&req.session_id).await
+            {
+                if jsonl_messages.len() > messages.len() {
+                    let start = req
+                        .limit
+                        .and_then(|limit| jsonl_messages.len().checked_sub(limit))
+                        .unwrap_or(0);
+                    let session_id_clone = req.session_id.clone();
+                    let mapped: Vec<ChatMessageProto> = jsonl_messages
+                        .into_iter()
+                        .enumerate()
+                        .skip(start)
+                        .map(|(idx, msg)| pi_agent_msg_to_chat_proto(msg, idx, &session_id_clone))
+                        .collect();
+                    return RunnerResponse::WorkspaceChatSessionMessages(
+                        WorkspaceChatSessionMessagesResponse {
+                            session_id: req.session_id,
+                            messages: mapped,
+                        },
+                    );
+                }
+            }
         }
 
         // hstry-backed history (for inactive sessions, or Pi fallthrough above).
@@ -2110,10 +2201,55 @@ impl Runner {
                 }
             }
 
+            let recovered_messages = read_jsonl_agent_messages(&session.session_file);
+            let proto_messages: Vec<_> = recovered_messages
+                .iter()
+                .enumerate()
+                .map(|(idx, msg)| {
+                    crate::history::agent_message_to_proto_with_client_id(msg, idx as i32, None)
+                })
+                .collect();
+
             match client.get_conversation(&session.external_id, None).await {
                 Ok(Some(_)) => {
-                    skipped += 1;
-                    continue;
+                    if proto_messages.is_empty() {
+                        skipped += 1;
+                        continue;
+                    }
+
+                    match client.get_messages(&session.external_id, None, None).await {
+                        Ok(existing) if existing.is_empty() => {
+                            if let Err(err) = client
+                                .append_messages(
+                                    &session.external_id,
+                                    proto_messages,
+                                    Some(session.updated_at_ms),
+                                )
+                                .await
+                            {
+                                failed += 1;
+                                warn!(
+                                    "Failed to append recovered messages for {}: {}",
+                                    session.external_id, err
+                                );
+                                continue;
+                            }
+                            repaired += 1;
+                            continue;
+                        }
+                        Ok(_) => {
+                            skipped += 1;
+                            continue;
+                        }
+                        Err(err) => {
+                            failed += 1;
+                            warn!(
+                                "Failed to read existing messages during repair for {}: {}",
+                                session.external_id, err
+                            );
+                            continue;
+                        }
+                    }
                 }
                 Ok(None) => {}
                 Err(err) => {
@@ -2134,7 +2270,7 @@ impl Runner {
                     None,
                     None,
                     Some("{\"recovered_from\":\"pi_jsonl\"}".to_string()),
-                    Vec::new(),
+                    proto_messages,
                     session.created_at_ms,
                     Some(session.updated_at_ms),
                     Some("pi".to_string()),
@@ -2371,39 +2507,39 @@ impl Runner {
         let _ = self.pi_manager.close_session(&req.session_id).await;
 
         // Delete from hstry via gRPC.
-        if let Some(hstry_client) = self.pi_manager.hstry_client() {
-            if let Err(e) = hstry_client.delete_conversation(&hstry_external_id).await {
-                warn!(
-                    "Failed to delete conversation from hstry for session {}: {}",
-                    req.session_id, e
-                );
-            }
+        if let Some(hstry_client) = self.pi_manager.hstry_client()
+            && let Err(e) = hstry_client.delete_conversation(&hstry_external_id).await
+        {
+            warn!(
+                "Failed to delete conversation from hstry for session {}: {}",
+                req.session_id, e
+            );
         }
 
         // Delete from hstry via direct SQLite as well, trying both the oqto ID and the
         // Pi native ID (covers cases where platform_id was not set).
-        if let Some(db_path) = crate::history::hstry_db_path() {
-            if let Ok(pool) = crate::history::repository::open_hstry_pool(&db_path).await {
-                // Delete by oqto session ID (platform_id) or Pi native ID (external_id)
+        if let Some(db_path) = crate::history::hstry_db_path()
+            && let Ok(pool) = crate::history::repository::open_hstry_pool(&db_path).await
+        {
+            // Delete by oqto session ID (platform_id) or Pi native ID (external_id)
+            let _ = sqlx::query(
+                "DELETE FROM conversations WHERE source_id = 'pi' AND (external_id = ? OR platform_id = ? OR id = ?)"
+            )
+            .bind(&hstry_external_id)
+            .bind(&req.session_id)
+            .bind(&hstry_external_id)
+            .execute(&pool)
+            .await;
+
+            // Also try with the oqto session ID as external_id (in case it was stored that way)
+            if hstry_external_id != req.session_id {
                 let _ = sqlx::query(
-                    "DELETE FROM conversations WHERE source_id = 'pi' AND (external_id = ? OR platform_id = ? OR id = ?)"
+                    "DELETE FROM conversations WHERE source_id = 'pi' AND (external_id = ? OR platform_id = ?)"
                 )
-                .bind(&hstry_external_id)
                 .bind(&req.session_id)
                 .bind(&hstry_external_id)
                 .execute(&pool)
                 .await;
-
-                // Also try with the oqto session ID as external_id (in case it was stored that way)
-                if hstry_external_id != req.session_id {
-                    let _ = sqlx::query(
-                        "DELETE FROM conversations WHERE source_id = 'pi' AND (external_id = ? OR platform_id = ?)"
-                    )
-                    .bind(&req.session_id)
-                    .bind(&hstry_external_id)
-                    .execute(&pool)
-                    .await;
-                }
             }
         }
 
@@ -3561,5 +3697,21 @@ fn sd_notify_ready() {
     };
     if let Ok(sock) = std::os::unix::net::UnixDatagram::unbound() {
         let _ = sock.send_to(b"READY=1", &addr);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn repair_workspace_chat_history_has_extended_timeout_budget() {
+        let repair = RunnerRequest::RepairWorkspaceChatHistory(RepairWorkspaceChatHistoryRequest {
+            limit: Some(500),
+            workspace: None,
+        });
+
+        assert_eq!(Runner::request_timeout(&repair).as_secs(), 120);
+        assert_eq!(Runner::request_timeout(&RunnerRequest::Ping).as_secs(), 10);
     }
 }

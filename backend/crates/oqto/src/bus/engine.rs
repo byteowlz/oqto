@@ -108,7 +108,12 @@ pub struct BusStats {
 
 const COALESCE_FLUSH_INTERVAL_MS: u64 = 250;
 const COALESCE_MAX_PENDING_PER_SUBSCRIBER: usize = 128;
-const COALESCE_PATTERNS: &[&str] = &["app.state.**", "cursor.**", "typing.**", "stream.text_delta"];
+const COALESCE_PATTERNS: &[&str] = &[
+    "app.state.**",
+    "cursor.**",
+    "typing.**",
+    "stream.text_delta",
+];
 
 const RECENT_EVENT_CAPACITY: usize = 5_000;
 const PULL_DEFAULT_LIMIT: usize = 200;
@@ -255,17 +260,16 @@ impl BusEngine {
         event: BusEvent,
     ) -> Result<(), String> {
         // Rate limit check for non-backend publishers
-        if let Some(pid) = publisher_id {
-            if let Some(mut rl) = self.rate_limits.get_mut(&pid) {
-                if !rl.check_and_increment() {
-                    self.events_dropped_rate.fetch_add(1, Ordering::Relaxed);
-                    warn!(
-                        "Bus: rate limit exceeded for subscriber {} on topic {}",
-                        pid, event.topic
-                    );
-                    return Err("Rate limit exceeded".to_string());
-                }
-            }
+        if let Some(pid) = publisher_id
+            && let Some(mut rl) = self.rate_limits.get_mut(&pid)
+            && !rl.check_and_increment()
+        {
+            self.events_dropped_rate.fetch_add(1, Ordering::Relaxed);
+            warn!(
+                "Bus: rate limit exceeded for subscriber {} on topic {}",
+                pid, event.topic
+            );
+            return Err("Rate limit exceeded".to_string());
         }
 
         // Authorize the publish
@@ -300,7 +304,8 @@ impl BusEngine {
             }
 
             // First flush due coalesced entries for this subscriber.
-            delivered += self.flush_due_for_subscriber(now, &mut subscriber, sub_id, &mut to_remove);
+            delivered +=
+                self.flush_due_for_subscriber(now, &mut subscriber, sub_id, &mut to_remove);
 
             if self.should_coalesce_topic(&event.topic) {
                 let key = self.coalesce_key(&event);
@@ -312,11 +317,13 @@ impl BusEngine {
                     },
                 );
                 if replaced.is_some() {
-                    self.events_coalesced_replaced.fetch_add(1, Ordering::Relaxed);
+                    self.events_coalesced_replaced
+                        .fetch_add(1, Ordering::Relaxed);
                 }
 
                 if subscriber.coalesced.len() >= COALESCE_MAX_PENDING_PER_SUBSCRIBER {
-                    delivered += self.flush_all_for_subscriber(&mut subscriber, sub_id, &mut to_remove);
+                    delivered +=
+                        self.flush_all_for_subscriber(&mut subscriber, sub_id, &mut to_remove);
                 }
             } else if subscriber.tx.send(event.clone()).is_err() {
                 to_remove.push(sub_id);
@@ -325,7 +332,8 @@ impl BusEngine {
             }
         }
 
-        self.events_delivered.fetch_add(delivered, Ordering::Relaxed);
+        self.events_delivered
+            .fetch_add(delivered, Ordering::Relaxed);
 
         for id in to_remove {
             self.unregister(id);
@@ -374,10 +382,12 @@ impl BusEngine {
             let Some(mut subscriber) = self.subscribers.get_mut(&sub_id) else {
                 continue;
             };
-            delivered += self.flush_due_for_subscriber(now, &mut subscriber, sub_id, &mut to_remove);
+            delivered +=
+                self.flush_due_for_subscriber(now, &mut subscriber, sub_id, &mut to_remove);
         }
 
-        self.events_delivered.fetch_add(delivered, Ordering::Relaxed);
+        self.events_delivered
+            .fetch_add(delivered, Ordering::Relaxed);
         for id in to_remove {
             self.unregister(id);
         }
@@ -402,7 +412,8 @@ impl BusEngine {
         since_ts: Option<u64>,
         limit: Option<usize>,
     ) -> Result<Vec<BusEvent>, String> {
-        self.authorize_scope(user_id, is_admin, &scope, &scope_id).await?;
+        self.authorize_scope(user_id, is_admin, &scope, &scope_id)
+            .await?;
 
         let mut out = Vec::new();
         let topics = if topics.is_empty() {
@@ -463,7 +474,12 @@ impl BusEngine {
     }
 
     fn coalesce_key(&self, event: &BusEvent) -> String {
-        format!("{}:{}:{}", scope_str(&event.scope), event.scope_id, event.topic)
+        format!(
+            "{}:{}:{}",
+            scope_str(&event.scope),
+            event.scope_id,
+            event.topic
+        )
     }
 
     fn flush_due_for_subscriber(
@@ -491,7 +507,8 @@ impl BusEngine {
                     break;
                 }
                 delivered += 1;
-                self.events_coalesced_flushed.fetch_add(1, Ordering::Relaxed);
+                self.events_coalesced_flushed
+                    .fetch_add(1, Ordering::Relaxed);
             }
         }
 
@@ -513,7 +530,8 @@ impl BusEngine {
                 break;
             }
             delivered += 1;
-            self.events_coalesced_flushed.fetch_add(1, Ordering::Relaxed);
+            self.events_coalesced_flushed
+                .fetch_add(1, Ordering::Relaxed);
         }
 
         delivered
@@ -596,9 +614,8 @@ impl BusEngine {
                         if let Some(user_id) = event.source.user_id() {
                             self.check_workspace_access(user_id, &event.scope_id)
                                 .await
-                                .map_err(|e| {
+                                .inspect_err(|_e| {
                                     self.events_dropped_authz.fetch_add(1, Ordering::Relaxed);
-                                    e
                                 })
                         } else {
                             self.events_dropped_authz.fetch_add(1, Ordering::Relaxed);
@@ -629,12 +646,11 @@ impl BusEngine {
         }
 
         // Check 2: Shared workspace membership.
-        if let Some(sw) = &self.shared_workspaces {
-            if let Ok(Some(workspace)) = sw.repo().find_workspace_for_path(workspace_path).await {
-                if let Ok(Some(_member)) = sw.repo().get_member(&workspace.id, user_id).await {
-                    return Ok(());
-                }
-            }
+        if let Some(sw) = &self.shared_workspaces
+            && let Ok(Some(workspace)) = sw.repo().find_workspace_for_path(workspace_path).await
+            && let Ok(Some(_member)) = sw.repo().get_member(&workspace.id, user_id).await
+        {
+            return Ok(());
         }
 
         Err(format!(
@@ -686,13 +702,8 @@ fn topic_match_recursive(pat: &[&str], topic: &[&str]) -> bool {
             // * matches exactly one segment
             topic_match_recursive(&pat[1..], &topic[1..])
         }
-        (Some(p), Some(t)) => {
-            if p == t {
-                topic_match_recursive(&pat[1..], &topic[1..])
-            } else {
-                false
-            }
-        }
+        (Some(p), Some(t)) if p == t => topic_match_recursive(&pat[1..], &topic[1..]),
+        (Some(_), Some(_)) => false,
         _ => false,
     }
 }
@@ -715,10 +726,10 @@ pub fn filter_matches(filter: &Option<Value>, payload: &Value) -> bool {
             for (op, val) in ops {
                 match op.as_str() {
                     "$in" => {
-                        if let Value::Array(arr) = val {
-                            if !arr.iter().any(|v| Some(v) == actual) {
-                                return false;
-                            }
+                        if let Value::Array(arr) = val
+                            && !arr.iter().any(|v| Some(v) == actual)
+                        {
+                            return false;
                         }
                     }
                     "$exists" => {
@@ -728,11 +739,10 @@ pub fn filter_matches(filter: &Option<Value>, payload: &Value) -> bool {
                             return false;
                         }
                     }
-                    "$not" => {
-                        if actual == Some(val) {
-                            return false;
-                        }
+                    "$not" if actual == Some(val) => {
+                        return false;
                     }
+                    "$not" => {}
                     _ => {} // Unknown operators ignored
                 }
             }

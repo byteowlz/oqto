@@ -45,6 +45,7 @@ mod eavs;
 mod feedback;
 mod history;
 mod hstry;
+mod identity;
 mod invite;
 mod local;
 mod markdown;
@@ -652,7 +653,7 @@ struct EavsConfig {
 }
 
 /// EAVS OAuth login configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
 struct EavsOAuthConfig {
     /// Enable per-user OAuth logins (Anthropic, OpenAI Codex, etc.).
@@ -661,16 +662,6 @@ struct EavsOAuthConfig {
     providers: Vec<String>,
     /// Redirect URI to send to providers (required for OpenAI Codex).
     redirect_uri: Option<String>,
-}
-
-impl Default for EavsOAuthConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            providers: Vec::new(),
-            redirect_uri: None,
-        }
-    }
 }
 
 /// Voice mode configuration.
@@ -1223,6 +1214,36 @@ impl Default for LocalModeConfig {
     }
 }
 
+fn resolve_runner_socket_pattern(config: &AppConfig) -> Option<String> {
+    config
+        .backend
+        .runner
+        .socket_pattern
+        .clone()
+        .or_else(|| config.local.runner_socket_pattern.clone())
+}
+
+fn resolve_local_runtime_wiring(
+    local_cfg: &LocalModeConfig,
+    runner_socket_pattern: Option<String>,
+) -> (Option<local::LinuxUsersConfig>, Option<String>) {
+    let linux_users = if local_cfg.linux_users.enabled {
+        Some(local::LinuxUsersConfig {
+            enabled: local_cfg.linux_users.enabled,
+            prefix: local_cfg.linux_users.prefix.clone(),
+            uid_start: local_cfg.linux_users.uid_start,
+            group: local_cfg.linux_users.group.clone(),
+            shell: local_cfg.linux_users.shell.clone(),
+            use_sudo: local_cfg.linux_users.use_sudo,
+            create_home: local_cfg.linux_users.create_home,
+        })
+    } else {
+        None
+    };
+
+    (linux_users, runner_socket_pattern)
+}
+
 fn handle_init(ctx: &RuntimeContext, cmd: InitCommand) -> Result<()> {
     if ctx.paths.config_file.exists() && !(cmd.force || ctx.common.assume_yes) {
         return Err(anyhow!(
@@ -1608,7 +1629,10 @@ fn resolve_frontend_dir() -> Option<PathBuf> {
         Some(PathBuf::from("/usr/local/share/oqto/frontend/dist")),
     ];
 
-    candidates.into_iter().flatten().find(|dir| dir.join("index.html").is_file())
+    candidates
+        .into_iter()
+        .flatten()
+        .find(|dir| dir.join("index.html").is_file())
 }
 
 fn with_frontend_static_if_available(api_router: axum::Router) -> axum::Router {
@@ -1891,6 +1915,8 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             .and_then(|e| e.container_url.clone())
     };
 
+    let resolved_runner_socket_pattern = resolve_runner_socket_pattern(&ctx.config);
+
     let session_config = session::SessionServiceConfig {
         default_image,
         base_port,
@@ -1917,7 +1943,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         pi_provider: ctx.config.pi.default_provider.clone(),
         pi_model: ctx.config.pi.default_model.clone(),
         agent_browser: ctx.config.agent_browser.clone(),
-        runner_socket_pattern: ctx.config.local.runner_socket_pattern.clone(),
+        runner_socket_pattern: resolved_runner_socket_pattern.clone(),
         linux_user_prefix: if ctx.config.local.linux_users.enabled {
             Some(ctx.config.local.linux_users.prefix.clone())
         } else {
@@ -2046,7 +2072,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
                     mmry_binary: ctx.config.mmry.binary.clone(),
                     base_port: ctx.config.mmry.user_base_port,
                     port_range: ctx.config.mmry.user_port_range,
-                    runner_socket_pattern: ctx.config.local.runner_socket_pattern.clone(),
+                    runner_socket_pattern: resolved_runner_socket_pattern.clone(),
                 },
                 move |user_id| linux_users.linux_username(user_id),
                 user_repo_for_services.clone(),
@@ -2070,7 +2096,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
                     sldr_binary: ctx.config.sldr.binary.clone(),
                     base_port: ctx.config.sldr.user_base_port,
                     port_range: ctx.config.sldr.user_port_range,
-                    runner_socket_pattern: ctx.config.local.runner_socket_pattern.clone(),
+                    runner_socket_pattern: resolved_runner_socket_pattern.clone(),
                 },
                 move |user_id| linux_users.linux_username(user_id),
                 user_repo_for_services.clone(),
@@ -2276,22 +2302,14 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     state = state.with_onboarding(onboarding_service);
     info!("Onboarding service initialized");
 
-    // Add Linux users config for multi-user isolation
-    let mut linux_users_config: Option<local::LinuxUsersConfig> = None;
-    if ctx.config.local.linux_users.enabled {
-        let config = local::LinuxUsersConfig {
-            enabled: ctx.config.local.linux_users.enabled,
-            prefix: ctx.config.local.linux_users.prefix.clone(),
-            uid_start: ctx.config.local.linux_users.uid_start,
-            group: ctx.config.local.linux_users.group.clone(),
-            shell: ctx.config.local.linux_users.shell.clone(),
-            use_sudo: ctx.config.local.linux_users.use_sudo,
-            create_home: ctx.config.local.linux_users.create_home,
-        };
-        state = state.with_linux_users(config.clone());
-        // Also set runner socket pattern for multi-user chat history access
-        state = state.with_runner_socket_pattern(ctx.config.local.runner_socket_pattern.clone());
-        linux_users_config = Some(config);
+    // Wire local runtime settings.
+    // Runner socket pattern is required in both single-user and multi-user modes.
+    let (linux_users_config, runner_socket_pattern) =
+        resolve_local_runtime_wiring(&ctx.config.local, resolved_runner_socket_pattern.clone());
+
+    state = state.with_runner_socket_pattern(runner_socket_pattern);
+    if let Some(config) = linux_users_config.clone() {
+        state = state.with_linux_users(config);
     }
 
     // Initialize shared workspaces service
@@ -2640,16 +2658,6 @@ async fn backfill_sessions_for_target(
     let Some(runner) = resolve_runner_for_target(state, user_id, target).await? else {
         return Ok(0);
     };
-
-    if let Err(err) = runner
-        .repair_workspace_chat_history(Some(10_000), None)
-        .await
-    {
-        warn!(
-            "workspace chat history repair failed before session target backfill (user={} target={:?}): {}",
-            user_id, target, err
-        );
-    }
 
     let response = runner
         .list_workspace_chat_sessions(None, true, None)
@@ -3233,16 +3241,14 @@ async fn ensure_pi_models_json(eavs_base_url: &str) {
     let models_json = eavs::generate_pi_models_json(&providers, base, api_key.as_deref());
 
     // Check if content actually changed to avoid unnecessary writes
-    if models_path.exists() {
-        if let Ok(existing) = std::fs::read_to_string(&models_path) {
-            if let Ok(existing_json) = serde_json::from_str::<serde_json::Value>(&existing) {
-                if existing_json == models_json {
-                    debug!("models.json is up to date");
-                    ensure_pi_settings_json(&pi_dir, &models_json);
-                    return;
-                }
-            }
-        }
+    if models_path.exists()
+        && let Ok(existing) = std::fs::read_to_string(&models_path)
+        && let Ok(existing_json) = serde_json::from_str::<serde_json::Value>(&existing)
+        && existing_json == models_json
+    {
+        debug!("models.json is up to date");
+        ensure_pi_settings_json(&pi_dir, &models_json);
+        return;
     }
 
     // Write models.json
@@ -3295,14 +3301,14 @@ fn read_eavs_api_key() -> Option<String> {
         .or_else(|| dirs::home_dir().map(|h| h.join(".config")))
         .map(|c| c.join("oqto").join("eavs.env"));
 
-    if let Some(path) = oqto_env {
-        if let Ok(contents) = std::fs::read_to_string(&path) {
-            for line in contents.lines() {
-                if let Some(value) = line.trim().strip_prefix("EAVS_API_KEY=") {
-                    let value = value.trim();
-                    if !value.is_empty() {
-                        return Some(value.to_string());
-                    }
+    if let Some(path) = oqto_env
+        && let Ok(contents) = std::fs::read_to_string(&path)
+    {
+        for line in contents.lines() {
+            if let Some(value) = line.trim().strip_prefix("EAVS_API_KEY=") {
+                let value = value.trim();
+                if !value.is_empty() {
+                    return Some(value.to_string());
                 }
             }
         }
@@ -3363,5 +3369,54 @@ fn ensure_pi_settings_json(pi_dir: &std::path::Path, models_json: &serde_json::V
             Err(e) => warn!("Failed to write settings.json: {}", e),
         },
         Err(e) => warn!("Failed to serialize settings.json: {}", e),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn local_runtime_wiring_sets_runner_pattern_in_single_user_mode() {
+        let mut local = LocalModeConfig::default();
+        local.single_user = true;
+        local.linux_users.enabled = false;
+        local.runner_socket_pattern = Some("/run/user/{uid}/oqto-runner.sock".to_string());
+
+        let (linux_users, pattern) =
+            resolve_local_runtime_wiring(&local, local.runner_socket_pattern.clone());
+        assert!(linux_users.is_none());
+        assert_eq!(
+            pattern,
+            Some("/run/user/{uid}/oqto-runner.sock".to_string())
+        );
+    }
+
+    #[test]
+    fn local_runtime_wiring_preserves_linux_user_config_when_enabled() {
+        let mut local = LocalModeConfig::default();
+        local.linux_users.enabled = true;
+        local.linux_users.prefix = "oqto_".to_string();
+        local.runner_socket_pattern = Some("/run/oqto/runner-{user}.sock".to_string());
+
+        let (linux_users, pattern) =
+            resolve_local_runtime_wiring(&local, local.runner_socket_pattern.clone());
+        let linux = linux_users.expect("linux users config should be set");
+        assert!(linux.enabled);
+        assert_eq!(linux.prefix, "oqto_");
+        assert_eq!(pattern, Some("/run/oqto/runner-{user}.sock".to_string()));
+    }
+
+    #[test]
+    fn resolve_runner_socket_pattern_prefers_backend_runner_config() {
+        let mut config = AppConfig::default();
+        config.local.runner_socket_pattern = Some("/run/oqto/local-{user}.sock".to_string());
+        config.backend.runner.socket_pattern = Some("/run/user/{uid}/oqto-runner.sock".to_string());
+
+        let pattern = resolve_runner_socket_pattern(&config);
+        assert_eq!(
+            pattern,
+            Some("/run/user/{uid}/oqto-runner.sock".to_string())
+        );
     }
 }
