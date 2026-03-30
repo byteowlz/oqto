@@ -1,0 +1,57 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Visual Runtime E2E</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+      body { font-family: system-ui, sans-serif; padding: 16px; }
+      .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+      .card { border: 1px solid #9994; border-radius: 10px; padding: 12px; }
+      #diag { font-size: 12px; color: #666; margin-top: 8px; }
+    </style>
+  </head>
+  <body>
+    <h1>Visual Runtime E2E Fixture</h1>
+    <div class="grid">
+      <div class="card">
+        <h2>Mermaid</h2>
+        <pre class="mermaid">graph TD; A[Start] --> B{Works?}; B -->|Yes| C[Pass]; B -->|No| D[Fail]</pre>
+      </div>
+      <div class="card">
+        <h2>Chart.js</h2>
+        <canvas id="c" width="360" height="220" data-chartjs></canvas>
+      </div>
+    </div>
+    <div id="diag">waiting...</div>
+
+    <script>
+      const diag = document.getElementById('diag');
+      const checks = {
+        visualRuntime: !!window.VisualRuntime,
+        mermaid: !!(window.VisualRuntime?.libs?.mermaid || window.mermaid),
+        chart: !!(window.VisualRuntime?.libs?.Chart || window.Chart),
+      };
+
+      const Mermaid = window.VisualRuntime?.libs?.mermaid || window.mermaid;
+      const ChartLib = window.VisualRuntime?.libs?.Chart || window.Chart;
+
+      if (Mermaid) {
+        Mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' });
+      }
+
+      if (ChartLib) {
+        new ChartLib(document.getElementById('c'), {
+          type: 'bar',
+          data: {
+            labels: ['A', 'B', 'C'],
+            datasets: [{ label: 'Runtime', data: [3, 5, 4] }],
+          },
+        });
+      }
+
+      diag.textContent = JSON.stringify(checks);
+    </script>
+  </body>
+</html>

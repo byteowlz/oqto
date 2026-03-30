@@ -2429,11 +2429,18 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 		//
 		// If the session is NOT on the runner (just a history entry), we
 		// fetch state and messages directly.
+		// Track whether this effect cycle has been cleaned up.
+		// All async callbacks below check this flag and bail out if
+		// the effect was torn down, preventing leaked subscriptions
+		// that cause duplicate event delivery.
+		let aborted = false;
+
 		if (!manager.isSessionReady(activeSessionId) && !isStreamingRef.current) {
 			const sid = activeSessionId;
 			manager
 				.ensureConnected(4000)
 				.then(async () => {
+					if (aborted) return;
 					// Re-check streaming state after async wait
 					if (isStreamingRef.current) return;
 
@@ -2444,6 +2451,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 					// Check if this session is active on the runner
 					try {
 						const activeSessions = await manager.agentListSessions();
+						if (aborted) return;
 						// Re-check after async wait
 						if (activeSessionIdRef.current !== sid) return;
 						const activeSession = activeSessions.find(
@@ -2499,11 +2507,13 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 								setBusyForEvent(sid, true);
 							}
 						} else {
+							if (aborted) return;
 							// Session ID didn't appear in list_sessions. It may still
 							// be active under a different alias (e.g. Pi native ID), so
 							// probe with get_state before falling back to history.
 							try {
 								await manager.agentGetStateWait(sid);
+								if (aborted) return;
 								// Re-check after async wait
 								if (activeSessionIdRef.current !== sid) return;
 
@@ -2518,6 +2528,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 									{ create: true },
 								);
 							} catch {
+								if (aborted) return;
 								// Session is not on the runner -- just fetch
 								// historical state and messages.
 								manager.agentGetState(sid);
@@ -2525,6 +2536,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 							}
 						}
 					} catch {
+						if (aborted) return;
 						// list_sessions failed -- fall back to direct fetch
 						manager.agentGetState(sid);
 						void fetchHistoryMessages(sid);
@@ -2536,6 +2548,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 		}
 
 		return () => {
+			aborted = true;
 			if (unsubscribeRef.current) {
 				unsubscribeRef.current();
 				unsubscribeRef.current = null;

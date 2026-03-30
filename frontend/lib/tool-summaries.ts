@@ -96,9 +96,20 @@ const bashPatterns: BashPattern[] = [
 	{
 		match: (cmd) => /\b(cat|head|tail|less|more)\s/.test(cmd),
 		summary: (cmd) => {
+			// Extract file path, stripping flags like -n 20, -20, -c 100, etc.
 			const m = cmd.match(/(?:cat|head|tail|less|more)\s+(.+?)(?:\s*[|;]|$)/);
-			const file = m ? truncPath(m[1].trim()) : null;
-			if (file) return i18n.t("tools.readingPath", { path: file });
+			if (m) {
+				// Remove flags and their numeric arguments to isolate the file path
+				const cleaned = m[1]
+					.replace(/(?:^|\s)-[a-zA-Z]+\s*\d*/g, "") // -n 20, -c 100
+					.replace(/(?:^|\s)-\d+/g, "") // -20 (shorthand)
+					.trim();
+				if (cleaned && !cleaned.startsWith("-")) {
+					return i18n.t("tools.readingPath", {
+						path: truncPath(cleaned),
+					});
+				}
+			}
 			return i18n.t("tools.readingFile");
 		},
 	},
@@ -230,21 +241,40 @@ export function getToolSummary(
 				.trim();
 			return truncStr(clean, 60);
 		}
+		// Input not yet available (streaming) — return generic label
+		return i18n.t("tools.runningCommand", {
+			defaultValue: "Running command",
+		});
 	}
 
 	if (name === "read") {
-		const path = (input?.path as string) ?? null;
+		const path =
+			(input?.path as string) ??
+			(input?.file_path as string) ??
+			(input?.filePath as string) ??
+			null;
 		if (path) return i18n.t("tools.readingPath", { path: truncPath(path) });
+		return i18n.t("tools.readingFile");
 	}
 
 	if (name === "write") {
-		const path = (input?.path as string) ?? null;
+		const path =
+			(input?.path as string) ??
+			(input?.file_path as string) ??
+			(input?.filePath as string) ??
+			null;
 		if (path) return i18n.t("tools.writingPath", { path: truncPath(path) });
+		return i18n.t("tools.writingFile", { defaultValue: "Writing file" });
 	}
 
 	if (name === "edit") {
-		const path = (input?.path as string) ?? null;
+		const path =
+			(input?.path as string) ??
+			(input?.file_path as string) ??
+			(input?.filePath as string) ??
+			null;
 		if (path) return i18n.t("tools.editingPath", { path: truncPath(path) });
+		return i18n.t("tools.editingFile", { defaultValue: "Editing file" });
 	}
 
 	if (name === "glob") {
