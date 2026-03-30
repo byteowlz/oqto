@@ -2938,7 +2938,7 @@ function ToolGutterIcon({
 				>
 					{primaryIcon}
 					{totalCount > 1 && (
-						<span className="absolute -top-0.5 -right-0.5 min-w-[14px] h-[14px] px-0.5 bg-muted-foreground/20 text-muted-foreground text-[8px] rounded-full inline-flex items-center justify-center leading-none">
+						<span className="absolute top-0 right-0 min-w-[12px] h-[12px] bg-muted-foreground/20 text-muted-foreground text-[8px] rounded-full inline-flex items-center justify-center leading-none">
 							{totalCount}
 						</span>
 					)}
@@ -3486,18 +3486,40 @@ const MessageGroupCard = memo(function MessageGroupCard({
 						}
 					)._toolGroup;
 
-					const wrapWithGutter = (key: string, content: React.ReactNode) => {
+					const wrapWithGutter = (
+						key: string,
+						content: React.ReactNode,
+						isThinking = false,
+					) => {
 						if (!attachedToolGroup || verbosity !== 1) {
 							return content;
 						}
+						const runs = splitToolGroupIntoRuns(attachedToolGroup);
 						return (
-							<div key={key} className="relative">
+							<div
+								key={key}
+								className={cn(
+									"relative",
+									isThinking &&
+										"[&>.tool-gutter]:hidden [&:has(details[open])>.tool-gutter]:flex",
+								)}
+							>
 								{content}
-								<div className="absolute right-[-2.625rem] sm:right-[-3.375rem] top-0 bottom-0 flex items-center">
-									<ToolGutterIcon
-										toolGroup={attachedToolGroup}
-										locale={locale}
-									/>
+								<div
+									className={cn(
+										"absolute right-[-2.625rem] sm:right-[-3.375rem] top-0 bottom-0 items-center",
+										isThinking ? "tool-gutter" : "flex",
+									)}
+								>
+									<div className="flex flex-col items-center gap-1 py-0.5">
+										{runs.map((run) => (
+											<ToolGutterIcon
+												key={run.key}
+												toolGroup={run}
+												locale={locale}
+											/>
+										))}
+									</div>
 								</div>
 							</div>
 						);
@@ -3564,7 +3586,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 								/>
 							</div>
 						);
-						return wrapWithGutter(segment.key, inner);
+						return wrapWithGutter(segment.key, inner, true);
 					}
 					if (segment.type === "error") {
 						const isRetrying = segment.retrying;
@@ -3661,26 +3683,17 @@ const MessageGroupCard = memo(function MessageGroupCard({
 						// messages can produce a standalone tool_group. Render a compact
 						// fallback row so the bubble is never empty.
 						if (verbosity === 1) {
-							const runs = splitToolGroupIntoRuns(segment);
 							return (
 								<div
 									key={segment.key}
 									className={cn(
-										"relative min-h-7 py-0.5 text-xs text-muted-foreground",
+										"relative h-6 leading-none text-xs text-muted-foreground",
 										needsTopMargin && "mt-2",
 									)}
 								>
 									<span>{t("chat.toolsUsed", "Used tools")}</span>
-									<div className="absolute right-[-2.625rem] sm:right-[-3.375rem] top-0 flex">
-										<div className="flex flex-col items-center gap-1 pt-0.5">
-											{runs.map((run) => (
-												<ToolGutterIcon
-													key={run.key}
-													toolGroup={run}
-													locale={locale}
-												/>
-											))}
-										</div>
+									<div className="absolute right-[-2.625rem] sm:right-[-3.375rem] top-0 bottom-0 flex items-center">
+										<ToolGutterIcon toolGroup={segment} locale={locale} />
 									</div>
 								</div>
 							);
