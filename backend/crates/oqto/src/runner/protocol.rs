@@ -128,6 +128,9 @@ pub enum RunnerRequest {
     /// Repair missing workspace chat session metadata by scanning Pi JSONL session files.
     RepairWorkspaceChatHistory(RepairWorkspaceChatHistoryRequest),
 
+    /// Search chat history via hstry in the runner user's context.
+    SearchHstry(SearchHstryRequest),
+
     // ========================================================================
     // Memory Operations (user-plane)
     // ========================================================================
@@ -389,6 +392,9 @@ pub enum RunnerResponse {
 
     /// Workspace chat history repair result.
     WorkspaceChatHistoryRepaired(WorkspaceChatHistoryRepairResponse),
+
+    /// hstry search results.
+    HstrySearchResults(HstrySearchResultsResponse),
 
     // ========================================================================
     // Memory Responses
@@ -761,6 +767,20 @@ pub struct RepairWorkspaceChatHistoryRequest {
     /// workspace path matches this prefix are repaired.
     #[serde(default)]
     pub workspace: Option<String>,
+}
+
+/// Request to search hstry chat history.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SearchHstryRequest {
+    /// Search query.
+    pub query: String,
+    /// Maximum results to return.
+    #[serde(default = "default_hstry_limit")]
+    pub limit: usize,
+}
+
+fn default_hstry_limit() -> usize {
+    50
 }
 
 // ============================================================================
@@ -1535,6 +1555,17 @@ pub struct WorkspaceChatHistoryRepairResponse {
     pub skipped_files: usize,
     /// Number of files that failed during repair.
     pub failed_files: usize,
+}
+
+/// Response with hstry search results.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HstrySearchResultsResponse {
+    /// Search query.
+    pub query: String,
+    /// Matching search hits.
+    pub hits: Vec<crate::history::HstrySearchHit>,
+    /// Total matches available.
+    pub total: usize,
 }
 
 /// Chat message part (protocol type for runner communication).

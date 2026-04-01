@@ -120,6 +120,90 @@ type ViewKey =
 	| "settings"
 	| "app";
 
+const CHAT_PREVIEWABLE_EXTENSIONS = new Set([
+	".txt",
+	".md",
+	".mdx",
+	".markdown",
+	".json",
+	".jsonc",
+	".xml",
+	".yaml",
+	".yml",
+	".toml",
+	".js",
+	".ts",
+	".jsx",
+	".tsx",
+	".css",
+	".scss",
+	".html",
+	".py",
+	".rb",
+	".go",
+	".rs",
+	".java",
+	".c",
+	".cpp",
+	".h",
+	".sh",
+	".bash",
+	".zsh",
+	".fish",
+	".sql",
+	".graphql",
+	".env",
+	".gitignore",
+	".dockerignore",
+	".config",
+	".conf",
+	".ini",
+	".cfg",
+	".log",
+	".png",
+	".jpg",
+	".jpeg",
+	".gif",
+	".webp",
+	".svg",
+	".bmp",
+	".ico",
+	".mp4",
+	".webm",
+	".ogg",
+	".ogv",
+	".mov",
+	".avi",
+	".mkv",
+	".m4v",
+	".mp3",
+	".wav",
+	".flac",
+	".aac",
+	".m4a",
+	".opus",
+	".pdf",
+	".typ",
+]);
+
+function isChatPreviewableFile(filePath: string): boolean {
+	const normalized = filePath.trim().replace(/^[./]+/, "");
+	const slash = normalized.lastIndexOf("/");
+	const fileName = slash >= 0 ? normalized.slice(slash + 1) : normalized;
+	if (!fileName) return false;
+	if (!fileName.includes(".")) return true;
+	const dot = fileName.lastIndexOf(".");
+	const ext = fileName.slice(dot).toLowerCase();
+	return CHAT_PREVIEWABLE_EXTENSIONS.has(ext);
+}
+
+function getParentPath(filePath: string): string {
+	const normalized = filePath.trim().replace(/^[./]+/, "");
+	const slash = normalized.lastIndexOf("/");
+	if (slash <= 0) return ".";
+	return normalized.slice(0, slash);
+}
+
 const viewLoadingFallback = (
 	<div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">
 		Loading...
@@ -579,6 +663,38 @@ export const SessionScreen = memo(function SessionScreen() {
 		selectedChatSessionId,
 	]);
 
+	const handleOpenChatFileReference = useCallback(
+		(filePath: string) => {
+			const trimmed = filePath.trim();
+			if (!trimmed) return;
+			const withoutAt = trimmed.replace(/^@+/, "");
+			const workspaceRelative = normalizedWorkspacePath
+				? withoutAt.replace(
+						new RegExp(
+							`^${normalizedWorkspacePath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/?`,
+						),
+						"",
+					)
+				: withoutAt;
+			const normalizedPath = workspaceRelative.replace(/^\.\//, "");
+
+			setActiveView("files");
+			if (isChatPreviewableFile(normalizedPath)) {
+				setPreviewFilePath(normalizedPath);
+				return;
+			}
+
+			setPreviewFilePath(null);
+			setFileTreeState((prev) => ({
+				...prev,
+				currentPath: getParentPath(normalizedPath),
+				selectedFile: normalizedPath,
+				selectedFiles: new Set([normalizedPath]),
+			}));
+		},
+		[normalizedWorkspacePath, setActiveView],
+	);
+
 	const normalizedOverviewPath = useMemo(
 		() =>
 			selectedWorkspaceOverviewPath
@@ -820,6 +936,7 @@ export const SessionScreen = memo(function SessionScreen() {
 			onPendingFileAttachmentConsumed={handlePendingFileAttachmentConsumed}
 			pendingChatInput={pendingChatInput}
 			onPendingChatInputConsumed={() => setPendingChatInput(null)}
+			onFileReferenceOpen={handleOpenChatFileReference}
 		/>
 	) : (
 		<EmptyWorkspacePanel label={t("chat.loadingChat")} />
@@ -1417,18 +1534,20 @@ export const SessionScreen = memo(function SessionScreen() {
 									label="Settings"
 								/>
 							</div>
-						) : expandedView === "canvas" ? (
+						) : expandedView === "canvas" || expandedView === "files" ? (
 							<div className="flex-1 min-h-0 flex flex-col">
-								{sessionHeader}
-								{showEmptyChat ? (
-									<div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">
-										{t("chat.noSessions")}
-									</div>
-								) : isOverviewActive ? (
-									overviewPanel
-								) : (
-									chatPanel
-								)}
+								<div className="px-3 pt-3">{sessionHeader}</div>
+								<div className="flex-1 min-h-0">
+									{showEmptyChat ? (
+										<div className="h-full flex items-center justify-center text-sm text-muted-foreground">
+											{t("chat.noSessions")}
+										</div>
+									) : isOverviewActive ? (
+										overviewPanel
+									) : (
+										chatPanel
+									)}
+								</div>
 							</div>
 						) : (
 							<>

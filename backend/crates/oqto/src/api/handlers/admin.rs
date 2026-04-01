@@ -422,7 +422,13 @@ pub async fn sync_user_configs(
 
                     if has_eavs_key {
                         // Key exists, just sync models.json (no key rotation)
-                        match sync_eavs_models_json(eavs_client, linux_users, &linux_username, Some(&state.auto_rename_config)).await
+                        match sync_eavs_models_json(
+                            eavs_client,
+                            linux_users,
+                            &linux_username,
+                            Some(&state.auto_rename_config),
+                        )
+                        .await
                         {
                             Ok(()) => {
                                 result.eavs_configured = true;
@@ -632,7 +638,15 @@ pub async fn create_user(
     if let (Some(eavs_client), Some(linux_users)) = (&state.eavs_client, &state.linux_users) {
         let linux_username = user.linux_username.as_deref().unwrap_or(&user.id);
 
-        match provision_eavs_for_user(eavs_client, linux_users, linux_username, &user.id, Some(&state.auto_rename_config)).await {
+        match provision_eavs_for_user(
+            eavs_client,
+            linux_users,
+            linux_username,
+            &user.id,
+            Some(&state.auto_rename_config),
+        )
+        .await
+        {
             Ok(key_id) => {
                 info!(
                     user_id = %user.id,
@@ -783,7 +797,14 @@ pub(crate) async fn provision_eavs_for_user(
     // 2. Write models.json with the virtual key embedded directly.
     // The key is written as a literal value in the apiKey field so Pi uses it
     // as a Bearer token when calling eavs. No eavs.env indirection needed.
-    sync_eavs_models_json_with_key(eavs_client, linux_users, linux_username, &key_resp.key, auto_rename_config).await?;
+    sync_eavs_models_json_with_key(
+        eavs_client,
+        linux_users,
+        linux_username,
+        &key_resp.key,
+        auto_rename_config,
+    )
+    .await?;
 
     Ok(key_resp.key_id)
 }
@@ -809,7 +830,14 @@ pub(crate) async fn sync_eavs_models_json(
         read_eavs_key_from_env(&eavs_env_path)
     });
 
-    sync_eavs_models_json_inner(eavs_client, linux_users, linux_username, api_key.as_deref(), auto_rename_config).await
+    sync_eavs_models_json_inner(
+        eavs_client,
+        linux_users,
+        linux_username,
+        api_key.as_deref(),
+        auto_rename_config,
+    )
+    .await
 }
 
 /// Same as `sync_eavs_models_json` but with the key already in hand (avoids re-reading eavs.env).
@@ -820,7 +848,14 @@ pub(crate) async fn sync_eavs_models_json_with_key(
     api_key: &str,
     auto_rename_config: Option<&serde_json::Value>,
 ) -> anyhow::Result<()> {
-    sync_eavs_models_json_inner(eavs_client, linux_users, linux_username, Some(api_key), auto_rename_config).await
+    sync_eavs_models_json_inner(
+        eavs_client,
+        linux_users,
+        linux_username,
+        Some(api_key),
+        auto_rename_config,
+    )
+    .await
 }
 
 async fn sync_eavs_models_json_inner(
@@ -861,7 +896,6 @@ async fn sync_eavs_models_json_inner(
 
     Ok(())
 }
-
 
 /// Read the EAVS_API_KEY value from an eavs.env file.
 /// Returns None if the file doesn't exist or the key isn't found.
@@ -1230,7 +1264,14 @@ pub async fn sync_all_models(
             if !linux_username.starts_with("oqto_") {
                 continue;
             }
-            match sync_eavs_models_json(eavs_client.as_ref(), linux_users, linux_username, Some(&state.auto_rename_config)).await {
+            match sync_eavs_models_json(
+                eavs_client.as_ref(),
+                linux_users,
+                linux_username,
+                Some(&state.auto_rename_config),
+            )
+            .await
+            {
                 Ok(()) => synced += 1,
                 Err(e) => errors.push(format!("{}: {}", user.id, e)),
             }
