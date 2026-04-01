@@ -1206,7 +1206,11 @@ fn default_auto_rename_config() -> serde_json::Value {
     serde_json::json!({
         "enabled": true,
         "model": null,
-        "modelSelection": "current",
+        // Use cheapest available model for title generation.
+        // "current" is problematic: reasoning models (Kimi-K2.5, DeepSeek)
+        // emit <think> traces that leak into titles, and expensive models
+        // waste tokens on a trivial 6-word generation task.
+        "modelSelection": "cheapest",
         "prefixCommand": "basename $(git rev-parse --show-toplevel 2>/dev/null || pwd)",
         "readableIdSuffix": true,
         "fallbackDeterministic": "words",
