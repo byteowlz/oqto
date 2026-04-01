@@ -1895,16 +1895,14 @@ impl Runner {
             }
         };
 
-        // When the session has an active Pi process, prefer Pi's live messages.
-        // Pi has the complete current-turn context including messages not yet
-        // persisted to hstry (tool calls, streaming responses, etc.). Without
-        // this, the frontend sees stale data during active sessions and
-        // "loses" messages until the next agent.idle triggers hstry persistence.
+        // For active sessions, Pi can expose not-yet-persisted tail messages,
+        // but it may only return a compacted context window (subset of history).
+        // To avoid dropping older turns in the frontend, only prefer Pi when it
+        // is clearly more complete than hstry (strictly more messages).
         let session_is_active = self.pi_manager.has_session(&req.session_id).await;
         if session_is_active {
-            // Use a short timeout: Pi may be busy with an LLM request and won't
-            // respond to RPC for 10+s. We'd rather return hstry data quickly
-            // than block the entire request on a busy Pi process.
+            // Keep timeout short: Pi may be busy and we'd rather return hstry
+            // history than block this request.
             let pi_result = tokio::time::timeout(
                 std::time::Duration::from_secs(2),
                 self.pi_manager.get_messages(&req.session_id),
@@ -1919,7 +1917,7 @@ impl Runner {
                             .collect()
                     })
                     .unwrap_or_default();
-                if !pi_msgs.is_empty() {
+                if pi_msgs.len() > messages.len() {
                     let start = req
                         .limit
                         .and_then(|limit| pi_msgs.len().checked_sub(limit))
@@ -1939,7 +1937,7 @@ impl Runner {
                     );
                 }
             }
-            // Pi process may have exited or returned empty -- fall through to hstry.
+            // Otherwise fall through to hstry/jsonl, which is more complete.
         }
 
         // For inactive sessions created/continued outside Oqto (bare Pi),

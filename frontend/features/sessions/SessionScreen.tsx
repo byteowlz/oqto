@@ -1534,21 +1534,6 @@ export const SessionScreen = memo(function SessionScreen() {
 									label="Settings"
 								/>
 							</div>
-						) : expandedView === "canvas" || expandedView === "files" ? (
-							<div className="flex-1 min-h-0 flex flex-col">
-								<div className="px-3 pt-3">{sessionHeader}</div>
-								<div className="flex-1 min-h-0">
-									{showEmptyChat ? (
-										<div className="h-full flex items-center justify-center text-sm text-muted-foreground">
-											{t("chat.noSessions")}
-										</div>
-									) : isOverviewActive ? (
-										overviewPanel
-									) : (
-										chatPanel
-									)}
-								</div>
-							</div>
 						) : (
 							<>
 								<div className="flex gap-1 p-2 border-b border-border overflow-x-auto scrollbar-none [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
