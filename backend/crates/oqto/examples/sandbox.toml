@@ -1,6 +1,11 @@
 # Sandbox configuration for Oqto agents.
 # Copy this file to ~/.config/oqto/sandbox.toml to enable process sandboxing.
 #
+# Also shipped templates:
+# - sandbox.template.strict-infra.toml
+# - sandbox.template.development-safe.toml
+# - sandbox.template.networked-dev.toml
+#
 # SECURITY NOTE: This file is kept separate from config.toml intentionally.
 # Agents can modify config.toml but cannot modify sandbox.toml, ensuring
 # they cannot weaken their own security restrictions.
