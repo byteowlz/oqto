@@ -45,6 +45,10 @@ import {
 	type VoiceMode,
 } from "@/components/voice/VoiceMenuButton";
 import type { Features, PiModelInfo } from "@/features/chat/api";
+import {
+	buildLegacyDraftStorageKey,
+	buildSessionDraftStorageKey,
+} from "@/features/chat/hooks/draft-storage";
 import { type A2UISurfaceState, useA2UI } from "@/hooks/use-a2ui";
 import { useDictation } from "@/hooks/use-dictation";
 import {
@@ -284,7 +288,13 @@ export function ChatView({
 			/[^a-zA-Z0-9._-]+/g,
 			"_",
 		)}`;
-	const draftStorageKey = `${resolvedStorageKeyPrefix}:draft`;
+	const legacyDraftStorageKey = buildLegacyDraftStorageKey(
+		resolvedStorageKeyPrefix,
+	);
+	const draftStorageKey = buildSessionDraftStorageKey(
+		resolvedStorageKeyPrefix,
+		selectedSessionId,
+	);
 	const scrollStorageKey = `${resolvedStorageKeyPrefix}:scrollPosition`;
 	const { updateChatSessionTitleLocal, selectedChatFromHistory } =
 		useChatContext();
@@ -461,11 +471,26 @@ export function ChatView({
 	useEffect(() => {
 		if (typeof window === "undefined") return;
 		try {
-			setInput(localStorage.getItem(draftStorageKey) || "");
+			const sessionDraft = localStorage.getItem(draftStorageKey);
+			if (sessionDraft !== null) {
+				setInput(sessionDraft);
+				return;
+			}
+
+			// One-time migration from legacy workspace-scoped draft key.
+			const legacyDraft = localStorage.getItem(legacyDraftStorageKey);
+			if (legacyDraft !== null) {
+				localStorage.setItem(draftStorageKey, legacyDraft);
+				localStorage.removeItem(legacyDraftStorageKey);
+				setInput(legacyDraft);
+				return;
+			}
+
+			setInput("");
 		} catch {
 			setInput("");
 		}
-	}, [draftStorageKey]);
+	}, [draftStorageKey, legacyDraftStorageKey]);
 	const sendPendingRef = useRef(sendPending);
 	sendPendingRef.current = sendPending;
 	useEffect(() => {
