@@ -13,6 +13,7 @@ pub fn get_default_socket_path() -> PathBuf {
 pub fn load_sandbox_config(
     no_sandbox: bool,
     sandbox_config_path: Option<&PathBuf>,
+    allow_user_fallback: bool,
 ) -> Result<Option<SandboxConfig>> {
     if no_sandbox {
         info!("Sandboxing disabled via --no-sandbox flag");
@@ -37,7 +38,16 @@ pub fn load_sandbox_config(
         .join("oqto")
         .join("sandbox.toml");
 
-    let candidates: &[&Path] = &[system_path, &user_path];
+    let mut candidates: Vec<&Path> = vec![system_path];
+    if allow_user_fallback {
+        candidates.push(&user_path);
+        info!(
+            "Sandbox config lookup mode: system+user fallback (single-user mode)"
+        );
+    } else {
+        info!("Sandbox config lookup mode: system-only (fail-closed)");
+    }
+
     for config_path in candidates {
         if !config_path.exists() {
             continue;
@@ -77,7 +87,14 @@ pub fn load_sandbox_config(
         }
     }
 
-    Ok(None)
+    if allow_user_fallback {
+        Ok(None)
+    } else {
+        Err(anyhow::anyhow!(
+            "No valid sandbox config found at /etc/oqto/sandbox.toml (system-only mode). \
+             Either install a system config or start runner with --sandbox-config."
+        ))
+    }
 }
 
 pub fn log_sandbox_state(sandbox_config: &Option<SandboxConfig>) {

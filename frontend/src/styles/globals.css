@@ -344,8 +344,19 @@
 .markdown-content {
 	overflow-wrap: break-word;
 	word-wrap: break-word;
-	word-break: break-word;
+	word-break: normal;
 	hyphens: auto;
+	-webkit-hyphens: auto;
+	text-wrap: pretty;
+}
+
+.markdown-content p,
+.markdown-content li > span {
+	text-align: left;
+	hyphens: auto;
+	-webkit-hyphens: auto;
+	overflow-wrap: normal;
+	word-break: normal;
 }
 
 .markdown-content pre {

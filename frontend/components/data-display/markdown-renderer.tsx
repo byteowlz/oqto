@@ -170,9 +170,7 @@ const markdownComponents: Components = {
 		);
 	},
 	p({ children }) {
-		return (
-			<p className="mb-3 last:mb-0 leading-relaxed text-justify">{children}</p>
-		);
+		return <p className="mb-3 last:mb-0 leading-relaxed">{children}</p>;
 	},
 	h1({ children }) {
 		return (
@@ -213,7 +211,7 @@ const markdownComponents: Components = {
 		return (
 			<li className="flex items-start gap-2 text-foreground leading-relaxed">
 				<span className="text-foreground/70 shrink-0">{marker}</span>
-				<span className="[&>p]:m-0 [&>p]:inline text-justify">{children}</span>
+				<span className="min-w-0 flex-1 [&>p]:m-0 [&>p]:block">{children}</span>
 			</li>
 		);
 	},
@@ -292,13 +290,29 @@ function stripPiCitations(content: string) {
 		.trimEnd();
 }
 
+function resolveHyphenationLang() {
+	if (typeof document !== "undefined") {
+		const htmlLang = document.documentElement.lang.trim();
+		if (htmlLang.length > 0) {
+			return htmlLang;
+		}
+	}
+
+	if (typeof navigator !== "undefined" && navigator.language) {
+		return navigator.language;
+	}
+
+	return "en";
+}
+
 export const MarkdownRenderer = memo(function MarkdownRenderer({
 	content,
 	className,
 }: MarkdownRendererProps) {
 	const sanitizedContent = stripPiCitations(content);
+	const hyphenationLang = resolveHyphenationLang();
 	return (
-		<div className={cn("markdown-content", className)}>
+		<div className={cn("markdown-content", className)} lang={hyphenationLang}>
 			<ReactMarkdown
 				remarkPlugins={remarkPlugins}
 				components={markdownComponents}

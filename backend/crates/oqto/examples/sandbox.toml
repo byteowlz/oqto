@@ -62,6 +62,14 @@ allow_write = ["~/.cargo", "~/.npm", "/tmp"]
 deny_write = []
 isolate_network = false
 isolate_pid = true
+# Additional hardening toggles
+# drop_all_caps = true            # adds: --cap-drop ALL
+# disable_userns = true           # adds: --disable-userns
+# assert_userns_disabled = true   # adds: --assert-userns-disabled
+# no_new_privs = true             # sets PR_SET_NO_NEW_PRIVS
+# landlock_mode = "audit"         # off | audit | enforce (enforce fail-closed if unsupported)
+# seccomp_mode = "audit"          # off | audit | enforce
+# seccomp_bpf_path = "/etc/oqto/seccomp/default.bpf"
 
 # --- Guarded paths (oqto-guard / FUSE) ---
 # These paths are accessible but require runtime approval
@@ -156,6 +164,7 @@ log_requests = true
 # - deny_write: Union (workspace can ADD paths, not remove)
 # - allow_write: Intersection (must be allowed by BOTH global and workspace)
 # - isolate_network/isolate_pid: OR (if either enables, it's enabled)
+# - drop_all_caps/disable_userns/assert_userns_disabled: OR (stricter wins)
 # - Workspace can reference profiles defined in global config
 #
 # This ensures workspaces can only STRENGTHEN security, never weaken it.
