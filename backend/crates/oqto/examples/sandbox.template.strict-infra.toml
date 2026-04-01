@@ -1,0 +1,25 @@
+# Oqto sandbox template: strict-infra
+# Use for security-critical repos (runner/auth/secrets/control-plane).
+# Recommended targets: oqto/oqto_refactor, kyz, eavs, hstry, mmry, agntz, trx.
+
+"$schema" = "https://raw.githubusercontent.com/byteowlz/schemas/refs/heads/main/oqto/oqto.sandbox.schema.json"
+
+enabled = true
+profile = "strict"
+
+# Linux hardening
+no_new_privs = true
+drop_all_caps = true
+disable_userns = true
+assert_userns_disabled = true
+
+# Rollout-safe defaults: audit first, then switch to enforce after validation.
+landlock_mode = "audit"
+seccomp_mode = "audit"
+# seccomp_bpf_path = "/etc/oqto/seccomp/default.bpf"
+
+# Optional additional hard-deny paths for infra repos.
+deny_read = ["~/.ssh", "~/.gnupg", "~/.aws", "~/.kube", "~/.config"]
+
+# Strict mode normally keeps writes to workspace + /tmp only.
+allow_write = ["/tmp"]

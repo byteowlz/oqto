@@ -1,0 +1,21 @@
+# Oqto sandbox template: development-safe
+# Use for normal coding repos that need package/tool installs.
+
+"$schema" = "https://raw.githubusercontent.com/byteowlz/schemas/refs/heads/main/oqto/oqto.sandbox.schema.json"
+
+enabled = true
+profile = "development"
+
+# Keep privilege hardening on.
+no_new_privs = true
+disable_userns = true
+
+# Keep seccomp/landlock in audit while you tune workloads.
+landlock_mode = "audit"
+seccomp_mode = "audit"
+# seccomp_bpf_path = "/etc/oqto/seccomp/default.bpf"
+
+# Development profile already includes standard toolchain paths in allow_write.
+# Keep network open initially; migrate to proxy mode per repo once host/domain allowlists are defined.
+isolate_network = false
+isolate_pid = true

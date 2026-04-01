@@ -1,0 +1,21 @@
+# Oqto sandbox template: networked-dev
+# Use for repos that must talk to external APIs/model registries during development.
+# Examples: comfyui-lab, OCR/data-ingest repos, research/prototyping workdirs.
+
+"$schema" = "https://raw.githubusercontent.com/byteowlz/schemas/refs/heads/main/oqto/oqto.sandbox.schema.json"
+
+enabled = true
+profile = "development"
+
+no_new_privs = true
+disable_userns = true
+landlock_mode = "audit"
+seccomp_mode = "audit"
+# seccomp_bpf_path = "/etc/oqto/seccomp/default.bpf"
+
+isolate_network = false
+isolate_pid = true
+
+# If you need eavs network policy, define a custom profile in this file under:
+# [profiles.<name>.network]
+# and set `profile = "<name>"`.

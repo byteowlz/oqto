@@ -12,6 +12,11 @@
 #   sudo ./scripts/install-sandbox-config.sh
 #   sudo ./scripts/install-sandbox-config.sh /path/to/custom/sandbox.toml
 #
+# Template presets shipped with Oqto:
+#   backend/crates/oqto/examples/sandbox.template.strict-infra.toml
+#   backend/crates/oqto/examples/sandbox.template.development-safe.toml
+#   backend/crates/oqto/examples/sandbox.template.networked-dev.toml
+#
 # The script must be run as root or with sudo.
 
 set -euo pipefail
@@ -63,9 +68,9 @@ if [[ ! -f "$SOURCE_FILE" ]]; then
     echo ""
     echo "Create a sandbox.toml first:"
     echo ""
-    echo "  # Copy the example config"
+    echo "  # Copy one of the shipped templates"
     echo "  mkdir -p ~/.config/oqto"
-    echo "  cp backend/crates/oqto/examples/sandbox.toml ~/.config/oqto/"
+    echo "  cp backend/crates/oqto/examples/sandbox.template.development-safe.toml ~/.config/oqto/sandbox.toml"
     echo ""
     echo "  # Then run this script again"
     echo "  sudo $0"

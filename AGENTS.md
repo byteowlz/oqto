@@ -11,7 +11,10 @@ Oqto is a self-hosted platform for managing AI coding agents.
 - Keep this document up to date. Whenever we change functionality or the architecture, we need to also update it in here so that subsequent sessions are always aware of the current status.
 - Don't keep legacy alive. This project is still in it's infancy and there is 0 need for any backward compatibility. Remove any dead or legacy code you encounter without breaking the current system. If you stumble upon parts of the system that can be deprecated, suggest how we could best do this
 - Document your work: Use trx cli for epics, features, bugs etc. Use agntz memory for documenting learnings along the way. Future sessions have access to both.
-- **TRX-first workflow**: Document work in trx before implementation whenever possible (create/update the issue first, then code). If immediate hotfixing is required, create/update the trx item right after stabilizing.
+- **TRX-first workflow (MANDATORY)**: Before making any code/config/docs change, you must first check/create/update trx.
+  - Required start-of-task flow: `trx ready` (or `trx list`) -> find existing issue or `trx create` -> `trx update <id> --status in_progress` -> then implement.
+  - This is not optional and does not depend on task size. "Whenever possible" does not apply.
+  - Exception: urgent break/fix hotfixes may start implementation immediately, but the trx item must be created/updated as the very next step after stabilization in the same session.
 - **No hacky fixes.** We want proper John Carmack solutions -- clean, minimal, and correct. Understand the root cause before writing a single line. If a fix feels like duct tape, stop and rethink. Every change should make the codebase better, not just silence the symptom.
 - **Respect the architecture.** Actions go through Runners. History goes through hstry. Memory goes through mmry. Do not bypass established data flows. If you think you need a shortcut, you are missing something -- re-read the architecture section above and the canonical protocol docs.
 - **"Let me just..." is ALWAYS wrong.** That phrase is the preamble to a hack. We do not "just" add a quick workaround, "just" hardcode a value, or "just" skip the proper path. Every solution must be designed to scale. If it would not survive 10x users or 10x sessions, it is the wrong approach.
@@ -426,8 +429,18 @@ For a complete list, see `dependencies.toml`.
 
 ## Issue Tracking (trx)
 
+### Mandatory workflow gate (apply at task start)
+
+1. Run `trx ready` (or `trx list`) before implementation.
+2. Reuse an existing issue when possible; otherwise create one.
+3. Set it to in progress before editing code: `trx update <id> --status in_progress`.
+4. Close/update it with resolution before final commit.
+
+If this order is violated, treat the task as out-of-process and correct it immediately.
+
 ```bash
 trx ready              # Show unblocked issues
+trx list               # List all issues
 trx create "Title" -t task -p 2   # Create issue (types: bug/feature/task/epic/chore, priority: 0-4)
 trx update <id> --status in_progress
 trx close <id> -r "Done"
