@@ -84,7 +84,7 @@ const CodeBlockWithTheme = memo(function CodeBlockWithTheme({
 	if (isInline) {
 		return (
 			<code
-				className="px-1 py-0.5 rounded text-[0.85em] font-mono text-foreground/90 whitespace-nowrap break-keep"
+				className="px-1 py-0.5 rounded text-[0.85em] font-mono text-foreground/90 whitespace-normal break-words [overflow-wrap:anywhere]"
 				style={{
 					backgroundColor: "var(--code-inline-bg)",
 				}}
