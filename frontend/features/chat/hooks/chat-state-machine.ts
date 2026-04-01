@@ -108,7 +108,9 @@ export function transitionTurn(
 	const to = next.kind;
 
 	const allowed: Record<TurnState["kind"], TurnState["kind"][]> = {
-		idle: ["sending", "reconciling", "error", "idle"],
+		// Allow idle -> streaming for runner-initiated turns where we receive
+		// stream.message_start without a local send() transition first.
+		idle: ["sending", "streaming", "reconciling", "error", "idle"],
 		sending: ["streaming", "reconciling", "error", "idle"],
 		streaming: ["reconciling", "error", "idle", "streaming"],
 		reconciling: ["idle", "streaming", "error", "reconciling"],
