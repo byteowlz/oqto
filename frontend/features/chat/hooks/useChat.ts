@@ -1154,6 +1154,12 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 				// -- Agent working (streaming started) --
 				case "agent.working": {
 					setBusyForEvent(event.session_id ?? activeSessionIdRef.current, true);
+					// If this turn was not initiated locally (no prior send->sending),
+					// move idle -> sending so the working indicator is shown until
+					// stream.message_start transitions to streaming.
+					if (machineRef.current.turn.kind === "idle") {
+						applyTurnState({ kind: "sending" });
+					}
 					// Keep isAwaitingResponse true — it will be cleared when
 					// streaming actually starts (stream.message_start / text_delta)
 					// or when the agent goes idle/error. Clearing it here causes

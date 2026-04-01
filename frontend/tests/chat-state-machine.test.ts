@@ -60,6 +60,21 @@ describe("chat state machine", () => {
 		});
 	});
 
+	it("allows idle -> streaming for runner-initiated turns", () => {
+		const bound = bindIdentity(createInitialChatStateMachine("oqto-abc"), {
+			runnerId: "runner-session-1",
+		});
+		const streaming = transitionTurn(bound, {
+			kind: "streaming",
+			turnId: "remote-turn-1",
+		});
+		expect(streaming.turn.kind).toBe("streaming");
+		expect(deriveUiFlags(streaming.turn)).toEqual({
+			isStreaming: true,
+			isAwaitingResponse: false,
+		});
+	});
+
 	it("ignores stale transport epochs", () => {
 		const machine = createInitialChatStateMachine("oqto-abc");
 		const connected = transitionTransport(machine, "connected", 2);
@@ -71,7 +86,7 @@ describe("chat state machine", () => {
 		expect(stale.transport.epoch).toBe(2);
 	});
 
-	it("uses partial merge for ws_get_messages during streaming, authoritative otherwise", () => {
+	it("uses partial merge for ws_get_messages and authoritative only for history", () => {
 		const machine = bindIdentity(createInitialChatStateMachine("oqto-abc"), {
 			runnerId: "runner-session-1",
 		});
@@ -93,7 +108,7 @@ describe("chat state machine", () => {
 			reason: "resync",
 		});
 		expect(selectMessageMergeMode(reconciling, "ws_get_messages")).toBe(
-			"authoritative",
+			"partial",
 		);
 	});
 
