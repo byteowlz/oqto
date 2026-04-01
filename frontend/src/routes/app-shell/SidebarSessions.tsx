@@ -122,6 +122,11 @@ export interface SidebarSessionsProps {
 	onSearchResultClick: (hit: HstrySearchHit) => void;
 	messageSearchExtraHits: HstrySearchHit[];
 	isMobile?: boolean;
+	/** If true, the outer container owns vertical scrolling. */
+	externalScroll?: boolean;
+	/** If false, hide the sessions list (keeps header/actions visible). */
+	sessionsExpanded?: boolean;
+	onToggleSessionsExpanded?: () => void;
 	// Search props - for external control of search input
 	sessionSearch?: string;
 	onSessionSearchChange?: (query: string) => void;
@@ -171,6 +176,9 @@ export const SidebarSessions = memo(function SidebarSessions({
 	onSearchResultClick,
 	messageSearchExtraHits,
 	isMobile = false,
+	externalScroll = false,
+	sessionsExpanded = true,
+	onToggleSessionsExpanded,
 	sessionSearch: controlledSessionSearch,
 	onSessionSearchChange: controlledOnSessionSearchChange,
 	searchMode: controlledSearchMode,
@@ -420,7 +428,12 @@ export const SidebarSessions = memo(function SidebarSessions({
 	};
 
 	return (
-		<div className="flex-1 min-h-0 flex flex-col overflow-x-hidden">
+		<div
+			className={cn(
+				"overflow-x-hidden",
+				externalScroll ? "w-full" : "flex-1 min-h-0 flex flex-col",
+			)}
+		>
 			<DeleteConfirmDialog
 				open={deleteDialogOpen}
 				onOpenChange={(open) => {
@@ -574,6 +587,20 @@ export const SidebarSessions = memo(function SidebarSessions({
 				{/* Sessions header - between search and chat list */}
 				<div className="flex items-center justify-between gap-2 py-1.5 px-1">
 					<div className="flex items-center gap-2">
+						{onToggleSessionsExpanded && (
+							<button
+								type="button"
+								onClick={onToggleSessionsExpanded}
+								className="text-muted-foreground hover:text-foreground hover:bg-sidebar-accent rounded p-0.5"
+								aria-label={t("sessions.title")}
+							>
+								{sessionsExpanded ? (
+									<ChevronDown className={sizeClasses.iconSize} />
+								) : (
+									<ChevronRight className={sizeClasses.iconSize} />
+								)}
+							</button>
+						)}
 						<span
 							className={cn(
 								"uppercase tracking-wide text-muted-foreground",
@@ -687,498 +714,521 @@ export const SidebarSessions = memo(function SidebarSessions({
 				</div>
 			</div>
 			{/* Scrollable chat list - grouped by project OR search results */}
-			<div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden space-y-1 px-1">
-				{/* Message search results (when in messages mode with query) */}
-				{searchMode === "messages" && sessionSearch.trim() ? (
-					<SearchResults
-						query={sessionSearch}
-						agentFilter={agentFilter}
-						locale={locale}
-						onResultClick={onSearchResultClick}
-						extraHits={messageSearchExtraHits}
-						className={isMobile ? "mb-2" : undefined}
-					/>
-				) : (
-					<>
-						{filteredSessions.length === 0 && deferredSearch && (
-							<div
-								className={cn(
-									"text-muted-foreground/50 text-center py-4",
-									sizeClasses.sessionText,
-								)}
-							>
-								{t("common.noResults")}
-							</div>
-						)}
-						{sessionsByProject.map((project) => {
-							// Auto-expand all when searching
-							const isProjectExpanded =
-								deferredSearch || expandedProjects.has(project.key);
-							const isProjectPinned = pinnedProjects.includes(project.key);
-							const projectSessionsForMode =
-								sessionViewMode === "tree"
-									? project.sessions.filter((session) => !session.parent_id)
-									: project.sessions;
-							return (
+			{sessionsExpanded && (
+				<div
+					className={cn(
+						externalScroll
+							? "space-y-1 px-1"
+							: "flex-1 min-h-0 overflow-y-auto overflow-x-hidden space-y-1 px-1",
+					)}
+				>
+					{/* Message search results (when in messages mode with query) */}
+					{searchMode === "messages" && sessionSearch.trim() ? (
+						<SearchResults
+							query={sessionSearch}
+							agentFilter={agentFilter}
+							locale={locale}
+							onResultClick={onSearchResultClick}
+							extraHits={messageSearchExtraHits}
+							className={isMobile ? "mb-2" : undefined}
+						/>
+					) : (
+						<>
+							{filteredSessions.length === 0 && deferredSearch && (
 								<div
-									key={project.key}
-									className="border-b border-sidebar-border/50 last:border-b-0"
+									className={cn(
+										"text-muted-foreground/50 text-center py-4",
+										sizeClasses.sessionText,
+									)}
 								>
-									{/* Project header */}
-									<ContextMenu>
-										<ContextMenuTrigger className="contents">
-											<div className="flex items-center gap-1 px-1 py-1.5 group">
-												<button
-													type="button"
-													onClick={() => toggleProjectExpanded(project.key)}
-													className="flex items-center gap-1.5 text-left hover:bg-sidebar-accent/50 px-1 py-0.5 -mx-1"
-												>
-													{isProjectExpanded ? (
-														<ChevronDown
-															className={cn(
-																"text-muted-foreground flex-shrink-0",
-																sizeClasses.iconSize,
-															)}
-														/>
-													) : (
-														<ChevronRight
-															className={cn(
-																"text-muted-foreground flex-shrink-0",
-																sizeClasses.iconSize,
-															)}
-														/>
-													)}
-												</button>
-												<button
-													type="button"
-													onClick={() => toggleProjectExpanded(project.key)}
-													className="flex-1 flex items-center gap-1.5 text-left hover:bg-sidebar-accent/50 px-1 py-0.5 -mx-1"
-												>
-													{isProjectPinned && (
-														<Pin
+									{t("common.noResults")}
+								</div>
+							)}
+							{sessionsByProject.map((project) => {
+								// Auto-expand all when searching
+								const isProjectExpanded =
+									deferredSearch || expandedProjects.has(project.key);
+								const isProjectPinned = pinnedProjects.includes(project.key);
+								const projectSessionsForMode =
+									sessionViewMode === "tree"
+										? project.sessions.filter((session) => !session.parent_id)
+										: project.sessions;
+								return (
+									<div
+										key={project.key}
+										className="border-b border-sidebar-border/50 last:border-b-0"
+									>
+										{/* Project header */}
+										<ContextMenu>
+											<ContextMenuTrigger className="contents">
+												<div className="flex items-center gap-1 px-1 py-1.5 group">
+													<button
+														type="button"
+														onClick={() => toggleProjectExpanded(project.key)}
+														className="flex items-center gap-1.5 text-left hover:bg-sidebar-accent/50 px-1 py-0.5 -mx-1"
+													>
+														{isProjectExpanded ? (
+															<ChevronDown
+																className={cn(
+																	"text-muted-foreground flex-shrink-0",
+																	sizeClasses.iconSize,
+																)}
+															/>
+														) : (
+															<ChevronRight
+																className={cn(
+																	"text-muted-foreground flex-shrink-0",
+																	sizeClasses.iconSize,
+																)}
+															/>
+														)}
+													</button>
+													<button
+														type="button"
+														onClick={() => toggleProjectExpanded(project.key)}
+														className="flex-1 flex items-center gap-1.5 text-left hover:bg-sidebar-accent/50 px-1 py-0.5 -mx-1"
+													>
+														{isProjectPinned && (
+															<Pin
+																className={cn(
+																	"text-primary/70 flex-shrink-0",
+																	sizeClasses.iconSize,
+																)}
+															/>
+														)}
+														<FolderKanban
 															className={cn(
 																"text-primary/70 flex-shrink-0",
-																sizeClasses.iconSize,
+																sizeClasses.projectIcon,
 															)}
 														/>
-													)}
-													<FolderKanban
-														className={cn(
-															"text-primary/70 flex-shrink-0",
-															sizeClasses.projectIcon,
-														)}
-													/>
-													<span
-														className={cn(
-															"font-medium text-foreground truncate",
-															sizeClasses.projectText,
-														)}
-													>
-														{project.name}
-													</span>
-													<span className="text-[10px] text-muted-foreground">
-														({project.sessions.length})
-													</span>
-												</button>
-												{project.directory ? (
-													<>
-														<button
-															type="button"
-															onClick={() =>
-																onProjectOverview(project.directory as string)
-															}
+														<span
 															className={cn(
-																"text-muted-foreground hover:text-primary hover:bg-sidebar-accent opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity",
-																sizeClasses.buttonSize,
+																"font-medium text-foreground truncate",
+																sizeClasses.projectText,
 															)}
-															title={t("projects.workspaceOverview")}
 														>
-															<Settings className={sizeClasses.iconSize} />
-														</button>
-														<button
-															type="button"
+															{project.name}
+														</span>
+														<span className="text-[10px] text-muted-foreground">
+															({project.sessions.length})
+														</span>
+													</button>
+													{project.directory ? (
+														<>
+															<button
+																type="button"
+																onClick={() =>
+																	onProjectOverview(project.directory as string)
+																}
+																className={cn(
+																	"text-muted-foreground hover:text-primary hover:bg-sidebar-accent opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity",
+																	sizeClasses.buttonSize,
+																)}
+																title={t("projects.workspaceOverview")}
+															>
+																<Settings className={sizeClasses.iconSize} />
+															</button>
+															<button
+																type="button"
+																onClick={() =>
+																	onNewChatInProject(
+																		project.directory as string,
+																	)
+																}
+																className={cn(
+																	"text-muted-foreground hover:text-primary hover:bg-sidebar-accent opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity",
+																	sizeClasses.buttonSize,
+																)}
+																title={t("projects.newChatInProject")}
+															>
+																<Plus className={sizeClasses.iconSize} />
+															</button>
+														</>
+													) : null}
+												</div>
+											</ContextMenuTrigger>
+											<ContextMenuContent>
+												{project.directory && (
+													<>
+														<ContextMenuItem
 															onClick={() =>
 																onNewChatInProject(project.directory as string)
 															}
-															className={cn(
-																"text-muted-foreground hover:text-primary hover:bg-sidebar-accent opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity",
-																sizeClasses.buttonSize,
-															)}
-															title={t("projects.newChatInProject")}
 														>
-															<Plus className={sizeClasses.iconSize} />
-														</button>
-													</>
-												) : null}
-											</div>
-										</ContextMenuTrigger>
-										<ContextMenuContent>
-											{project.directory && (
-												<>
-													<ContextMenuItem
-														onClick={() =>
-															onNewChatInProject(project.directory as string)
-														}
-													>
-														<Plus className="w-4 h-4 mr-2" />
-														{t("sessions.newSession")}
-													</ContextMenuItem>
-													{onBackfillProject && (
-														<ContextMenuItem
-															onClick={() =>
-																onBackfillProject(project.directory as string)
-															}
-														>
-															<RefreshCw className="w-4 h-4 mr-2" />
-															Backfill sessions
+															<Plus className="w-4 h-4 mr-2" />
+															{t("sessions.newSession")}
 														</ContextMenuItem>
-													)}
-													<ContextMenuSeparator />
-												</>
-											)}
-											<ContextMenuItem
-												onClick={() => onPinProject(project.key)}
-											>
-												<Pin className="w-4 h-4 mr-2" />
-												{isProjectPinned
-													? t("projects.unpin")
-													: t("projects.pin")}
-											</ContextMenuItem>
-											<ContextMenuItem
-												onClick={() =>
-													onRenameProject(project.key, project.name)
-												}
-											>
-												<Pencil className="w-4 h-4 mr-2" />
-												{t("common.rename")}
-											</ContextMenuItem>
-											{onShareProject && project.directory && (
+														{onBackfillProject && (
+															<ContextMenuItem
+																onClick={() =>
+																	onBackfillProject(project.directory as string)
+																}
+															>
+																<RefreshCw className="w-4 h-4 mr-2" />
+																Backfill sessions
+															</ContextMenuItem>
+														)}
+														<ContextMenuSeparator />
+													</>
+												)}
+												<ContextMenuItem
+													onClick={() => onPinProject(project.key)}
+												>
+													<Pin className="w-4 h-4 mr-2" />
+													{isProjectPinned
+														? t("projects.unpin")
+														: t("projects.pin")}
+												</ContextMenuItem>
 												<ContextMenuItem
 													onClick={() =>
-														onShareProject(
-															project.directory as string,
-															project.name,
-														)
+														onRenameProject(project.key, project.name)
 													}
 												>
-													<Share2 className="w-4 h-4 mr-2" />
-													{t("sharedWorkspaces.shareProject", "Share...")}
+													<Pencil className="w-4 h-4 mr-2" />
+													{t("common.rename")}
 												</ContextMenuItem>
-											)}
-											<ContextMenuSeparator />
-											<ContextMenuItem
-												variant="destructive"
-												onClick={() =>
-													onDeleteProject(project.key, project.name)
-												}
-											>
-												<Trash2 className="w-4 h-4 mr-2" />
-												{t("common.delete")} ({project.sessions.length}{" "}
-												{project.sessions.length === 1 ? "chat" : "chats"})
-											</ContextMenuItem>
-										</ContextMenuContent>
-									</ContextMenu>
-									{/* Project sessions */}
-									{isProjectExpanded && (
-										<div className="space-y-0.5 pb-1">
-											{project.sessions
-												.filter((session) => !hiddenSessionIds.has(session.id))
-												.map((session) => {
-													const isSelected =
-														selectedChatSessionId === session.id;
-													const isMultiSelected = selectedSessionIds.has(
-														session.id,
-													);
-													const children =
-														sessionHierarchy.childSessionsByParent.get(
+												{onShareProject && project.directory && (
+													<ContextMenuItem
+														onClick={() =>
+															onShareProject(
+																project.directory as string,
+																project.name,
+															)
+														}
+													>
+														<Share2 className="w-4 h-4 mr-2" />
+														{t("sharedWorkspaces.shareProject", "Share...")}
+													</ContextMenuItem>
+												)}
+												<ContextMenuSeparator />
+												<ContextMenuItem
+													variant="destructive"
+													onClick={() =>
+														onDeleteProject(project.key, project.name)
+													}
+												>
+													<Trash2 className="w-4 h-4 mr-2" />
+													{t("common.delete")} ({project.sessions.length}{" "}
+													{project.sessions.length === 1 ? "chat" : "chats"})
+												</ContextMenuItem>
+											</ContextMenuContent>
+										</ContextMenu>
+										{/* Project sessions */}
+										{isProjectExpanded && (
+											<div className="space-y-0.5 pb-1">
+												{project.sessions
+													.filter(
+														(session) => !hiddenSessionIds.has(session.id),
+													)
+													.map((session) => {
+														const isSelected =
+															selectedChatSessionId === session.id;
+														const isMultiSelected = selectedSessionIds.has(
 															session.id,
-														) || [];
-													const hasChildren = children.length > 0;
-													const isExpanded = expandedSessions.has(session.id);
-													const tempId = getTempIdFromSession(session);
-													const formattedDate = session.updated_at
-														? formatSessionDate(session.updated_at)
-														: null;
-													return (
-														<div
-															key={session.id}
-															className={isMobile ? "ml-4" : "ml-3"}
-														>
-															<ContextMenu>
-																<ContextMenuTrigger className="contents">
-																	<div
-																		className={cn(
-																			"w-full px-2 text-left transition-colors flex items-start gap-1.5 cursor-pointer",
-																			isMobile ? "py-2" : "py-1",
-																			isSelected
-																				? "bg-primary/15 border border-primary text-foreground"
-																				: isMultiSelected
-																					? "bg-primary/10 border border-primary/50 text-foreground"
-																					: "text-muted-foreground hover:bg-sidebar-accent border border-transparent",
-																		)}
-																	>
-																		{hasChildren ? (
+														);
+														const children =
+															sessionHierarchy.childSessionsByParent.get(
+																session.id,
+															) || [];
+														const hasChildren = children.length > 0;
+														const isExpanded = expandedSessions.has(session.id);
+														const tempId = getTempIdFromSession(session);
+														const formattedDate = session.updated_at
+															? formatSessionDate(session.updated_at)
+															: null;
+														return (
+															<div
+																key={session.id}
+																className={isMobile ? "ml-4" : "ml-3"}
+															>
+																<ContextMenu>
+																	<ContextMenuTrigger className="contents">
+																		<div
+																			className={cn(
+																				"w-full px-2 text-left transition-colors flex items-start gap-1.5 cursor-pointer",
+																				isMobile ? "py-2" : "py-1",
+																				isSelected
+																					? "bg-primary/15 border border-primary text-foreground"
+																					: isMultiSelected
+																						? "bg-primary/10 border border-primary/50 text-foreground"
+																						: "text-muted-foreground hover:bg-sidebar-accent border border-transparent",
+																			)}
+																		>
+																			{hasChildren ? (
+																				<button
+																					type="button"
+																					onClick={() =>
+																						toggleSessionExpanded(session.id)
+																					}
+																					onMouseDown={(e) =>
+																						e.stopPropagation()
+																					}
+																					className={cn(
+																						"mt-0.5 hover:bg-muted flex-shrink-0 cursor-pointer",
+																						isMobile ? "p-1" : "p-0.5",
+																					)}
+																				>
+																					{isExpanded ? (
+																						<ChevronDown
+																							className={
+																								isMobile ? "w-4 h-4" : "w-3 h-3"
+																							}
+																						/>
+																					) : (
+																						<ChevronRight
+																							className={
+																								isMobile ? "w-4 h-4" : "w-3 h-3"
+																							}
+																						/>
+																					)}
+																				</button>
+																			) : (
+																				<MessageSquare
+																					className={cn(
+																						"mt-0.5 flex-shrink-0 text-primary/70",
+																						isMobile ? "w-4 h-4" : "w-3 h-3",
+																					)}
+																				/>
+																			)}
 																			<button
 																				type="button"
-																				onClick={() =>
-																					toggleSessionExpanded(session.id)
+																				onClick={(e) =>
+																					handleSessionRowClick(e, session.id)
 																				}
-																				onMouseDown={(e) => e.stopPropagation()}
-																				className={cn(
-																					"mt-0.5 hover:bg-muted flex-shrink-0 cursor-pointer",
-																					isMobile ? "p-1" : "p-0.5",
-																				)}
+																				className="flex-1 min-w-0 text-left"
 																			>
-																				{isExpanded ? (
-																					<ChevronDown
-																						className={
-																							isMobile ? "w-4 h-4" : "w-3 h-3"
-																						}
-																					/>
-																				) : (
-																					<ChevronRight
-																						className={
-																							isMobile ? "w-4 h-4" : "w-3 h-3"
-																						}
-																					/>
+																				<div className="flex items-center gap-1">
+																					{pinnedSessions.has(session.id) && (
+																						<Pin className="w-3 h-3 flex-shrink-0 text-primary/70" />
+																					)}
+																					<span
+																						className={cn(
+																							"truncate font-medium",
+																							sizeClasses.sessionText,
+																						)}
+																					>
+																						{getDisplayPiTitle(session)}
+																					</span>
+																					{hasChildren && (
+																						<span className="text-[10px] text-primary/70">
+																							({children.length})
+																						</span>
+																					)}
+																					{busySessions.has(session.id) && (
+																						<Loader2 className="w-3 h-3 flex-shrink-0 text-primary animate-spin" />
+																					)}
+																				</div>
+																				{formattedDate && (
+																					<div
+																						className={cn(
+																							"text-muted-foreground mt-0.5",
+																							sizeClasses.dateText,
+																						)}
+																					>
+																						{formattedDate}
+																					</div>
 																				)}
 																			</button>
-																		) : (
-																			<MessageSquare
-																				className={cn(
-																					"mt-0.5 flex-shrink-0 text-primary/70",
-																					isMobile ? "w-4 h-4" : "w-3 h-3",
-																				)}
-																			/>
+																		</div>
+																	</ContextMenuTrigger>
+																	<ContextMenuContent>
+																		{tempId && (
+																			<ContextMenuItem
+																				onClick={() => {
+																					navigator.clipboard.writeText(tempId);
+																				}}
+																			>
+																				<Copy className="w-4 h-4 mr-2" />
+																				{t("sessions.copyTempId")}
+																			</ContextMenuItem>
 																		)}
-																		<button
-																			type="button"
-																			onClick={(e) =>
-																				handleSessionRowClick(e, session.id)
-																			}
-																			className="flex-1 min-w-0 text-left"
-																		>
-																			<div className="flex items-center gap-1">
-																				{pinnedSessions.has(session.id) && (
-																					<Pin className="w-3 h-3 flex-shrink-0 text-primary/70" />
-																				)}
-																				<span
-																					className={cn(
-																						"truncate font-medium",
-																						sizeClasses.sessionText,
-																					)}
-																				>
-																					{getDisplayPiTitle(session)}
-																				</span>
-																				{hasChildren && (
-																					<span className="text-[10px] text-primary/70">
-																						({children.length})
-																					</span>
-																				)}
-																				{busySessions.has(session.id) && (
-																					<Loader2 className="w-3 h-3 flex-shrink-0 text-primary animate-spin" />
-																				)}
-																			</div>
-																			{formattedDate && (
-																				<div
-																					className={cn(
-																						"text-muted-foreground mt-0.5",
-																						sizeClasses.dateText,
-																					)}
-																				>
-																					{formattedDate}
-																				</div>
-																			)}
-																		</button>
-																	</div>
-																</ContextMenuTrigger>
-																<ContextMenuContent>
-																	{tempId && (
 																		<ContextMenuItem
 																			onClick={() => {
-																				navigator.clipboard.writeText(tempId);
+																				navigator.clipboard.writeText(
+																					session.id,
+																				);
 																			}}
 																		>
 																			<Copy className="w-4 h-4 mr-2" />
-																			{t("sessions.copyTempId")}
+																			{session.id.slice(0, 16)}...
 																		</ContextMenuItem>
-																	)}
-																	<ContextMenuItem
-																		onClick={() => {
-																			navigator.clipboard.writeText(session.id);
-																		}}
+																		<ContextMenuSeparator />
+																		<ContextMenuItem
+																			onClick={() => onPinSession(session.id)}
+																		>
+																			<Pin className="w-4 h-4 mr-2" />
+																			{pinnedSessions.has(session.id)
+																				? t("projects.unpin")
+																				: t("projects.pin")}
+																		</ContextMenuItem>
+																		<ContextMenuItem
+																			onClick={() =>
+																				onRenameSession(session.id)
+																			}
+																		>
+																			<Pencil className="w-4 h-4 mr-2" />
+																			{t("common.rename")}
+																		</ContextMenuItem>
+																		<ContextMenuSeparator />
+																		<ContextMenuItem
+																			variant="destructive"
+																			onClick={() =>
+																				handleDeleteSession(session.id)
+																			}
+																		>
+																			<Trash2 className="w-4 h-4 mr-2" />
+																			{t("common.delete")}
+																		</ContextMenuItem>
+																	</ContextMenuContent>
+																</ContextMenu>
+																{/* Child sessions (subagents) */}
+																{hasChildren && isExpanded && (
+																	<div
+																		className={cn(
+																			"border-l border-muted pl-2 space-y-0.5 mt-0.5",
+																			isMobile ? "ml-6 space-y-1 mt-1" : "ml-4",
+																		)}
 																	>
-																		<Copy className="w-4 h-4 mr-2" />
-																		{session.id.slice(0, 16)}...
-																	</ContextMenuItem>
-																	<ContextMenuSeparator />
-																	<ContextMenuItem
-																		onClick={() => onPinSession(session.id)}
-																	>
-																		<Pin className="w-4 h-4 mr-2" />
-																		{pinnedSessions.has(session.id)
-																			? t("projects.unpin")
-																			: t("projects.pin")}
-																	</ContextMenuItem>
-																	<ContextMenuItem
-																		onClick={() => onRenameSession(session.id)}
-																	>
-																		<Pencil className="w-4 h-4 mr-2" />
-																		{t("common.rename")}
-																	</ContextMenuItem>
-																	<ContextMenuSeparator />
-																	<ContextMenuItem
-																		variant="destructive"
-																		onClick={() =>
-																			handleDeleteSession(session.id)
-																		}
-																	>
-																		<Trash2 className="w-4 h-4 mr-2" />
-																		{t("common.delete")}
-																	</ContextMenuItem>
-																</ContextMenuContent>
-															</ContextMenu>
-															{/* Child sessions (subagents) */}
-															{hasChildren && isExpanded && (
-																<div
-																	className={cn(
-																		"border-l border-muted pl-2 space-y-0.5 mt-0.5",
-																		isMobile ? "ml-6 space-y-1 mt-1" : "ml-4",
-																	)}
-																>
-																	{children
-																		.filter(
-																			(child) =>
-																				!hiddenSessionIds.has(child.id),
-																		)
-																		.map((child) => {
-																			const isChildSelected =
-																				selectedChatSessionId === child.id;
-																			const isChildMultiSelected =
-																				selectedSessionIds.has(child.id);
-																			const childTempId =
-																				getTempIdFromSession(child);
-																			const childTempIdLabel =
-																				formatTempId(childTempId);
-																			const childFormattedDate =
-																				child.updated_at
-																					? formatSessionDate(child.updated_at)
-																					: null;
-																			return (
-																				<ContextMenu key={child.id}>
-																					<ContextMenuTrigger className="contents">
-																						<button
-																							type="button"
-																							onClick={(e) =>
-																								handleSessionRowClick(
-																									e,
-																									child.id,
-																								)
-																							}
-																							className={cn(
-																								"w-full px-2 text-left transition-colors",
-																								isMobile
-																									? "py-2 text-sm"
-																									: "py-1 text-xs",
-																								isChildSelected
-																									? "bg-primary/15 border border-primary text-foreground"
-																									: isChildMultiSelected
-																										? "bg-primary/10 border border-primary/50 text-foreground"
-																										: "text-muted-foreground hover:bg-sidebar-accent border border-transparent",
-																							)}
-																						>
-																							<div className="flex items-center gap-1">
-																								<Bot
-																									className={cn(
-																										"flex-shrink-0 text-primary/70",
-																										isMobile
-																											? "w-3.5 h-3.5"
-																											: "w-3 h-3",
-																									)}
-																								/>
-																								<span className="truncate font-medium">
-																									{getDisplayPiTitle(child) !==
-																									"New Session"
-																										? getDisplayPiTitle(child)
-																										: "Subagent"}
-																								</span>
-																								{busySessions.has(child.id) && (
-																									<Loader2 className="w-3 h-3 flex-shrink-0 text-primary animate-spin" />
+																		{children
+																			.filter(
+																				(child) =>
+																					!hiddenSessionIds.has(child.id),
+																			)
+																			.map((child) => {
+																				const isChildSelected =
+																					selectedChatSessionId === child.id;
+																				const isChildMultiSelected =
+																					selectedSessionIds.has(child.id);
+																				const childTempId =
+																					getTempIdFromSession(child);
+																				const childTempIdLabel =
+																					formatTempId(childTempId);
+																				const childFormattedDate =
+																					child.updated_at
+																						? formatSessionDate(
+																								child.updated_at,
+																							)
+																						: null;
+																				return (
+																					<ContextMenu key={child.id}>
+																						<ContextMenuTrigger className="contents">
+																							<button
+																								type="button"
+																								onClick={(e) =>
+																									handleSessionRowClick(
+																										e,
+																										child.id,
+																									)
+																								}
+																								className={cn(
+																									"w-full px-2 text-left transition-colors",
+																									isMobile
+																										? "py-2 text-sm"
+																										: "py-1 text-xs",
+																									isChildSelected
+																										? "bg-primary/15 border border-primary text-foreground"
+																										: isChildMultiSelected
+																											? "bg-primary/10 border border-primary/50 text-foreground"
+																											: "text-muted-foreground hover:bg-sidebar-accent border border-transparent",
 																								)}
-																							</div>
-																							{childFormattedDate && (
-																								<div
-																									className={cn(
-																										"text-muted-foreground mt-0.5",
-																										isMobile
-																											? "text-xs ml-5"
-																											: "text-[9px] ml-4",
+																							>
+																								<div className="flex items-center gap-1">
+																									<Bot
+																										className={cn(
+																											"flex-shrink-0 text-primary/70",
+																											isMobile
+																												? "w-3.5 h-3.5"
+																												: "w-3 h-3",
+																										)}
+																									/>
+																									<span className="truncate font-medium">
+																										{getDisplayPiTitle(
+																											child,
+																										) !== "New Session"
+																											? getDisplayPiTitle(child)
+																											: "Subagent"}
+																									</span>
+																									{busySessions.has(
+																										child.id,
+																									) && (
+																										<Loader2 className="w-3 h-3 flex-shrink-0 text-primary animate-spin" />
 																									)}
-																								>
-																									{childFormattedDate}
 																								</div>
-																							)}
-																						</button>
-																					</ContextMenuTrigger>
-																					<ContextMenuContent>
-																						<ContextMenuItem
-																							onClick={() => {
-																								navigator.clipboard.writeText(
-																									childTempId ?? "",
-																								);
-																							}}
-																						>
-																							<Copy className="w-4 h-4 mr-2" />
-																							{childTempIdLabel
-																								? `${t("sessions.copyTempId")} (${childTempIdLabel})`
-																								: t("sessions.copyTempId")}
-																						</ContextMenuItem>
-																						<ContextMenuItem
-																							onClick={() => {
-																								navigator.clipboard.writeText(
-																									child.id,
-																								);
-																							}}
-																						>
-																							<Copy className="w-4 h-4 mr-2" />
-																							{child.id.slice(0, 16)}...
-																						</ContextMenuItem>
-																						<ContextMenuSeparator />
-																						<ContextMenuItem
-																							onClick={() =>
-																								onRenameSession(child.id)
-																							}
-																						>
-																							<Pencil className="w-4 h-4 mr-2" />
-																							{t("common.rename")}
-																						</ContextMenuItem>
-																						<ContextMenuSeparator />
-																						<ContextMenuItem
-																							variant="destructive"
-																							onClick={() =>
-																								handleDeleteSession(child.id)
-																							}
-																						>
-																							<Trash2 className="w-4 h-4 mr-2" />
-																							{t("common.delete")}
-																						</ContextMenuItem>
-																					</ContextMenuContent>
-																				</ContextMenu>
-																			);
-																		})}
-																</div>
-															)}
-														</div>
-													);
-												})}
-										</div>
-									)}
-								</div>
-							);
-						})}
-					</>
-				)}
-			</div>
+																								{childFormattedDate && (
+																									<div
+																										className={cn(
+																											"text-muted-foreground mt-0.5",
+																											isMobile
+																												? "text-xs ml-5"
+																												: "text-[9px] ml-4",
+																										)}
+																									>
+																										{childFormattedDate}
+																									</div>
+																								)}
+																							</button>
+																						</ContextMenuTrigger>
+																						<ContextMenuContent>
+																							<ContextMenuItem
+																								onClick={() => {
+																									navigator.clipboard.writeText(
+																										childTempId ?? "",
+																									);
+																								}}
+																							>
+																								<Copy className="w-4 h-4 mr-2" />
+																								{childTempIdLabel
+																									? `${t("sessions.copyTempId")} (${childTempIdLabel})`
+																									: t("sessions.copyTempId")}
+																							</ContextMenuItem>
+																							<ContextMenuItem
+																								onClick={() => {
+																									navigator.clipboard.writeText(
+																										child.id,
+																									);
+																								}}
+																							>
+																								<Copy className="w-4 h-4 mr-2" />
+																								{child.id.slice(0, 16)}...
+																							</ContextMenuItem>
+																							<ContextMenuSeparator />
+																							<ContextMenuItem
+																								onClick={() =>
+																									onRenameSession(child.id)
+																								}
+																							>
+																								<Pencil className="w-4 h-4 mr-2" />
+																								{t("common.rename")}
+																							</ContextMenuItem>
+																							<ContextMenuSeparator />
+																							<ContextMenuItem
+																								variant="destructive"
+																								onClick={() =>
+																									handleDeleteSession(child.id)
+																								}
+																							>
+																								<Trash2 className="w-4 h-4 mr-2" />
+																								{t("common.delete")}
+																							</ContextMenuItem>
+																						</ContextMenuContent>
+																					</ContextMenu>
+																				);
+																			})}
+																	</div>
+																)}
+															</div>
+														);
+													})}
+											</div>
+										)}
+									</div>
+								);
+							})}
+						</>
+					)}
+				</div>
+			)}
 		</div>
 	);
 });

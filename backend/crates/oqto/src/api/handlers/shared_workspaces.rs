@@ -51,6 +51,7 @@ pub async fn create_shared_workspace(
             linux_users,
             &workspace.linux_user,
             &sw_user_id,
+            Some(&state.auto_rename_config),
         )
         .await
         {

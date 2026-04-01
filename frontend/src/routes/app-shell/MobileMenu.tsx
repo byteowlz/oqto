@@ -7,6 +7,8 @@ import { formatSessionDate } from "@/lib/session-utils";
 import { cn } from "@/lib/utils";
 import {
 	Bot,
+	ChevronDown,
+	ChevronRight,
 	FolderKanban,
 	Globe2,
 	LayoutDashboard,
@@ -17,7 +19,7 @@ import {
 	SunMedium,
 	X,
 } from "lucide-react";
-import { memo } from "react";
+import { memo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
 	type SessionHierarchy,
@@ -54,7 +56,7 @@ export interface MobileMenuProps {
 	toggleProjectExpanded: (projectKey: string) => void;
 	pinnedSessions: Set<string>;
 	togglePinSession: (sessionId: string) => void;
-	pinnedProjects: Set<string>;
+	pinnedProjects: string[];
 	togglePinProject: (projectKey: string) => void;
 	projectSortBy: "date" | "name" | "sessions";
 	setProjectSortBy: (sort: "date" | "name" | "sessions") => void;
@@ -188,6 +190,8 @@ export const MobileMenu = memo(function MobileMenu({
 	onSharedSessionClick,
 }: MobileMenuProps) {
 	const { t } = useTranslation();
+	const [sharedSectionExpanded, setSharedSectionExpanded] = useState(true);
+	const [sessionsSectionExpanded, setSessionsSectionExpanded] = useState(true);
 
 	return (
 		<div
@@ -221,7 +225,7 @@ export const MobileMenu = memo(function MobileMenu({
 				<div className="h-px w-full bg-primary/50" />
 			</div>
 
-			<nav className="flex-1 w-full px-3 pt-3 flex flex-col min-h-0 overflow-x-hidden">
+			<nav className="flex-1 w-full px-3 pt-3 flex flex-col min-h-0 overflow-y-auto overflow-x-hidden">
 				{chatHistory.length > 0 && (
 					<SidebarSessions
 						locale={locale}
@@ -265,6 +269,11 @@ export const MobileMenu = memo(function MobileMenu({
 						searchMode={searchMode}
 						onSearchModeChange={onSearchModeChange}
 						isMobile
+						externalScroll
+						sessionsExpanded={sessionsSectionExpanded}
+						onToggleSessionsExpanded={() =>
+							setSessionsSectionExpanded((prev) => !prev)
+						}
 						belowSearchSlot={
 							sharedWorkspaces &&
 							sharedWorkspaces.length > 0 &&
@@ -276,32 +285,53 @@ export const MobileMenu = memo(function MobileMenu({
 							onNewChatInWorkspace &&
 							onDeleteWorkspace ? (
 								<>
-									<SidebarSharedWorkspaces
-										sharedWorkspaces={sharedWorkspaces}
-										expandedWorkspaces={expandedWorkspaces}
-										toggleWorkspaceExpanded={toggleWorkspaceExpanded}
-										onNewSharedWorkspace={onNewSharedWorkspace}
-										onManageWorkspace={onManageWorkspace}
-										onManageMembers={onManageMembers}
-										onNewChatInWorkspace={onNewChatInWorkspace}
-										onNewProjectInWorkspace={onNewProjectInWorkspace}
-										onDeleteWorkspace={onDeleteWorkspace}
-										onSelectWorkdir={onSelectWorkdir}
-										chatHistory={chatHistory}
-										runnerSessions={runnerSessions}
-										busySessions={busySessions}
-										selectedChatSessionId={selectedChatSessionId}
-										onSessionClick={onSharedSessionClick}
-										onRenameSession={onRenameSession}
-										onDeleteSession={onDeleteSession}
-										onPinSession={onPinSession}
-										pinnedSessions={pinnedSessions}
-										onPinProject={onPinProject}
-										onRenameProject={onRenameProject}
-										onDeleteProject={onDeleteProject}
-										pinnedProjects={pinnedProjects}
-										isMobile
-									/>
+									<div className="flex items-center justify-between gap-2 py-1.5 px-1">
+										<button
+											type="button"
+											onClick={() => setSharedSectionExpanded((prev) => !prev)}
+											className="flex items-center gap-2 text-muted-foreground hover:text-foreground"
+										>
+											{sharedSectionExpanded ? (
+												<ChevronDown className="w-4 h-4" />
+											) : (
+												<ChevronRight className="w-4 h-4" />
+											)}
+											<span className="text-xs uppercase tracking-wide">
+												{t("sharedWorkspaces.title", "Shared workspaces")}
+											</span>
+											<span className="text-xs text-muted-foreground/50">
+												({sharedWorkspaces.length})
+											</span>
+										</button>
+									</div>
+									{sharedSectionExpanded && (
+										<SidebarSharedWorkspaces
+											sharedWorkspaces={sharedWorkspaces}
+											expandedWorkspaces={expandedWorkspaces}
+											toggleWorkspaceExpanded={toggleWorkspaceExpanded}
+											onNewSharedWorkspace={onNewSharedWorkspace}
+											onManageWorkspace={onManageWorkspace}
+											onManageMembers={onManageMembers}
+											onNewChatInWorkspace={onNewChatInWorkspace}
+											onNewProjectInWorkspace={onNewProjectInWorkspace}
+											onDeleteWorkspace={onDeleteWorkspace}
+											onSelectWorkdir={onSelectWorkdir}
+											chatHistory={chatHistory}
+											runnerSessions={runnerSessions}
+											busySessions={busySessions}
+											selectedChatSessionId={selectedChatSessionId}
+											onSessionClick={onSharedSessionClick}
+											onRenameSession={onRenameSession}
+											onDeleteSession={onDeleteSession}
+											onPinSession={onPinSession}
+											pinnedSessions={pinnedSessions}
+											onPinProject={onPinProject}
+											onRenameProject={onRenameProject}
+											onDeleteProject={onDeleteProject}
+											pinnedProjects={pinnedProjects}
+											isMobile
+										/>
+									)}
 									<div className="w-full px-2 my-1">
 										<div className="h-px w-full bg-sidebar-border/50" />
 									</div>
