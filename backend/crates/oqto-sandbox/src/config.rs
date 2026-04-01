@@ -46,6 +46,8 @@ use log::{debug, info, warn};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+#[cfg(target_os = "linux")]
+use std::{ffi::CString, os::unix::ffi::OsStrExt};
 
 #[allow(unused_imports)]
 use std::io::Write;
@@ -185,6 +187,105 @@ fn default_prompt_timeout() -> u64 {
     30
 }
 
+/// Seccomp enforcement mode.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum SeccompMode {
+    /// Disable seccomp integration.
+    #[default]
+    Off,
+    /// Log missing/misconfigured seccomp policy but continue.
+    Audit,
+    /// Enforce seccomp policy; fail if policy is unavailable.
+    Enforce,
+}
+
+fn stricter_seccomp_mode(a: SeccompMode, b: SeccompMode) -> SeccompMode {
+    use SeccompMode::{Audit, Enforce, Off};
+    match (a, b) {
+        (Enforce, _) | (_, Enforce) => Enforce,
+        (Audit, _) | (_, Audit) => Audit,
+        _ => Off,
+    }
+}
+
+/// Landlock enforcement mode.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum LandlockMode {
+    #[default]
+    Off,
+    Audit,
+    Enforce,
+}
+
+fn stricter_landlock_mode(a: LandlockMode, b: LandlockMode) -> LandlockMode {
+    use LandlockMode::{Audit, Enforce, Off};
+    match (a, b) {
+        (Enforce, _) | (_, Enforce) => Enforce,
+        (Audit, _) | (_, Audit) => Audit,
+        _ => Off,
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[repr(C)]
+struct LandlockRulesetAttr {
+    handled_access_fs: u64,
+}
+
+#[cfg(target_os = "linux")]
+#[repr(C)]
+struct LandlockPathBeneathAttr {
+    allowed_access: u64,
+    parent_fd: i32,
+    reserved1: u32,
+}
+
+#[cfg(target_os = "linux")]
+const LANDLOCK_RULE_PATH_BENEATH: u32 = 1;
+#[cfg(target_os = "linux")]
+const LANDLOCK_CREATE_RULESET_VERSION: u32 = 1;
+
+#[cfg(target_os = "linux")]
+const LANDLOCK_ACCESS_FS_WRITE_FILE: u64 = 1u64 << 1;
+#[cfg(target_os = "linux")]
+const LANDLOCK_ACCESS_FS_REMOVE_DIR: u64 = 1u64 << 4;
+#[cfg(target_os = "linux")]
+const LANDLOCK_ACCESS_FS_REMOVE_FILE: u64 = 1u64 << 5;
+#[cfg(target_os = "linux")]
+const LANDLOCK_ACCESS_FS_MAKE_CHAR: u64 = 1u64 << 6;
+#[cfg(target_os = "linux")]
+const LANDLOCK_ACCESS_FS_MAKE_DIR: u64 = 1u64 << 7;
+#[cfg(target_os = "linux")]
+const LANDLOCK_ACCESS_FS_MAKE_REG: u64 = 1u64 << 8;
+#[cfg(target_os = "linux")]
+const LANDLOCK_ACCESS_FS_MAKE_SOCK: u64 = 1u64 << 9;
+#[cfg(target_os = "linux")]
+const LANDLOCK_ACCESS_FS_MAKE_FIFO: u64 = 1u64 << 10;
+#[cfg(target_os = "linux")]
+const LANDLOCK_ACCESS_FS_MAKE_BLOCK: u64 = 1u64 << 11;
+#[cfg(target_os = "linux")]
+const LANDLOCK_ACCESS_FS_MAKE_SYM: u64 = 1u64 << 12;
+#[cfg(target_os = "linux")]
+const LANDLOCK_ACCESS_FS_REFER: u64 = 1u64 << 13;
+#[cfg(target_os = "linux")]
+const LANDLOCK_ACCESS_FS_TRUNCATE: u64 = 1u64 << 14;
+
+#[cfg(target_os = "linux")]
+const LANDLOCK_WRITE_ACCESS_MASK: u64 = LANDLOCK_ACCESS_FS_WRITE_FILE
+    | LANDLOCK_ACCESS_FS_REMOVE_DIR
+    | LANDLOCK_ACCESS_FS_REMOVE_FILE
+    | LANDLOCK_ACCESS_FS_MAKE_CHAR
+    | LANDLOCK_ACCESS_FS_MAKE_DIR
+    | LANDLOCK_ACCESS_FS_MAKE_REG
+    | LANDLOCK_ACCESS_FS_MAKE_SOCK
+    | LANDLOCK_ACCESS_FS_MAKE_FIFO
+    | LANDLOCK_ACCESS_FS_MAKE_BLOCK
+    | LANDLOCK_ACCESS_FS_MAKE_SYM
+    | LANDLOCK_ACCESS_FS_REFER
+    | LANDLOCK_ACCESS_FS_TRUNCATE;
+
 // ============================================================================
 // Sandbox Profile
 // ============================================================================
@@ -220,6 +321,34 @@ pub struct SandboxProfile {
 
     /// Whether to isolate PID namespace (--unshare-pid).
     pub isolate_pid: bool,
+
+    /// Drop all Linux capabilities inside the sandbox.
+    #[serde(default)]
+    pub drop_all_caps: bool,
+
+    /// Disable nested user namespace creation inside sandbox.
+    #[serde(default)]
+    pub disable_userns: bool,
+
+    /// Assert that nested user namespaces are disabled (fail if not).
+    #[serde(default)]
+    pub assert_userns_disabled: bool,
+
+    /// Set PR_SET_NO_NEW_PRIVS before exec.
+    #[serde(default = "default_true")]
+    pub no_new_privs: bool,
+
+    /// Seccomp mode (off/audit/enforce).
+    #[serde(default)]
+    pub seccomp_mode: SeccompMode,
+
+    /// Landlock mode (off/audit/enforce).
+    #[serde(default)]
+    pub landlock_mode: LandlockMode,
+
+    /// Path to precompiled seccomp-bpf policy file for bwrap (--seccomp FD).
+    #[serde(default)]
+    pub seccomp_bpf_path: Option<String>,
 
     /// Additional paths to bind read-only.
     pub extra_ro_bind: Vec<String>,
@@ -271,6 +400,13 @@ impl SandboxProfile {
             deny_write: vec![],
             isolate_network: false,
             isolate_pid: false,
+            drop_all_caps: false,
+            disable_userns: false,
+            assert_userns_disabled: false,
+            no_new_privs: true,
+            seccomp_mode: SeccompMode::Off,
+            landlock_mode: LandlockMode::Off,
+            seccomp_bpf_path: None,
             extra_ro_bind: vec![],
             extra_rw_bind: vec![],
             guard: None,
@@ -318,6 +454,13 @@ impl SandboxProfile {
             deny_write: vec!["~/.config/oqto/sandbox.toml".to_string()],
             isolate_network: false,
             isolate_pid: true,
+            drop_all_caps: false,
+            disable_userns: true,
+            assert_userns_disabled: false,
+            no_new_privs: true,
+            seccomp_mode: SeccompMode::Audit,
+            landlock_mode: LandlockMode::Audit,
+            seccomp_bpf_path: None,
             extra_ro_bind: vec![],
             extra_rw_bind: vec![],
             // Development profile enables SSH proxy by default
@@ -358,6 +501,13 @@ impl SandboxProfile {
             deny_write: vec![],
             isolate_network: true,
             isolate_pid: true,
+            drop_all_caps: true,
+            disable_userns: true,
+            assert_userns_disabled: true,
+            no_new_privs: true,
+            seccomp_mode: SeccompMode::Audit,
+            landlock_mode: LandlockMode::Audit,
+            seccomp_bpf_path: None,
             extra_ro_bind: vec![],
             extra_rw_bind: vec![],
             guard: None,
@@ -444,6 +594,27 @@ pub struct SandboxConfig {
     /// Whether to isolate PID namespace (--unshare-pid).
     pub isolate_pid: bool,
 
+    /// Drop all Linux capabilities inside the sandbox.
+    pub drop_all_caps: bool,
+
+    /// Disable nested user namespace creation inside sandbox.
+    pub disable_userns: bool,
+
+    /// Assert that nested user namespaces are disabled (fail if not).
+    pub assert_userns_disabled: bool,
+
+    /// Set PR_SET_NO_NEW_PRIVS before exec.
+    pub no_new_privs: bool,
+
+    /// Seccomp mode (off/audit/enforce).
+    pub seccomp_mode: SeccompMode,
+
+    /// Landlock mode (off/audit/enforce).
+    pub landlock_mode: LandlockMode,
+
+    /// Path to precompiled seccomp-bpf policy file for bwrap (--seccomp FD).
+    pub seccomp_bpf_path: Option<String>,
+
     /// Additional paths to bind read-only.
     pub extra_ro_bind: Vec<String>,
 
@@ -471,6 +642,13 @@ impl Default for SandboxConfig {
             deny_write: profile.deny_write,
             isolate_network: profile.isolate_network,
             isolate_pid: profile.isolate_pid,
+            drop_all_caps: profile.drop_all_caps,
+            disable_userns: profile.disable_userns,
+            assert_userns_disabled: profile.assert_userns_disabled,
+            no_new_privs: profile.no_new_privs,
+            seccomp_mode: profile.seccomp_mode,
+            landlock_mode: profile.landlock_mode,
+            seccomp_bpf_path: profile.seccomp_bpf_path,
             extra_ro_bind: profile.extra_ro_bind,
             extra_rw_bind: profile.extra_rw_bind,
             profiles: HashMap::new(),
@@ -508,6 +686,13 @@ impl From<SandboxConfigFile> for SandboxConfig {
             deny_write: profile.deny_write,
             isolate_network: profile.isolate_network,
             isolate_pid: profile.isolate_pid,
+            drop_all_caps: profile.drop_all_caps,
+            disable_userns: profile.disable_userns,
+            assert_userns_disabled: profile.assert_userns_disabled,
+            no_new_privs: profile.no_new_privs,
+            seccomp_mode: profile.seccomp_mode,
+            landlock_mode: profile.landlock_mode,
+            seccomp_bpf_path: profile.seccomp_bpf_path,
             extra_ro_bind: profile.extra_ro_bind,
             extra_rw_bind: profile.extra_rw_bind,
             profiles: file.profiles,
@@ -535,6 +720,13 @@ impl SandboxConfig {
             deny_write: profile.deny_write,
             isolate_network: profile.isolate_network,
             isolate_pid: profile.isolate_pid,
+            drop_all_caps: profile.drop_all_caps,
+            disable_userns: profile.disable_userns,
+            assert_userns_disabled: profile.assert_userns_disabled,
+            no_new_privs: profile.no_new_privs,
+            seccomp_mode: profile.seccomp_mode,
+            landlock_mode: profile.landlock_mode,
+            seccomp_bpf_path: profile.seccomp_bpf_path,
             extra_ro_bind: profile.extra_ro_bind,
             extra_rw_bind: profile.extra_rw_bind,
             profiles: HashMap::new(),
@@ -552,6 +744,13 @@ impl SandboxConfig {
             deny_write: profile.deny_write,
             isolate_network: profile.isolate_network,
             isolate_pid: profile.isolate_pid,
+            drop_all_caps: profile.drop_all_caps,
+            disable_userns: profile.disable_userns,
+            assert_userns_disabled: profile.assert_userns_disabled,
+            no_new_privs: profile.no_new_privs,
+            seccomp_mode: profile.seccomp_mode,
+            landlock_mode: profile.landlock_mode,
+            seccomp_bpf_path: profile.seccomp_bpf_path,
             extra_ro_bind: profile.extra_ro_bind,
             extra_rw_bind: profile.extra_rw_bind,
             profiles: HashMap::new(),
@@ -590,6 +789,13 @@ impl SandboxConfig {
             deny_write: profile.deny_write,
             isolate_network: profile.isolate_network,
             isolate_pid: profile.isolate_pid,
+            drop_all_caps: profile.drop_all_caps,
+            disable_userns: profile.disable_userns,
+            assert_userns_disabled: profile.assert_userns_disabled,
+            no_new_privs: profile.no_new_privs,
+            seccomp_mode: profile.seccomp_mode,
+            landlock_mode: profile.landlock_mode,
+            seccomp_bpf_path: profile.seccomp_bpf_path,
             extra_ro_bind: profile.extra_ro_bind,
             extra_rw_bind: profile.extra_rw_bind,
             profiles: custom_profiles.clone(),
@@ -692,6 +898,13 @@ impl SandboxConfig {
                         deny_write: profile.deny_write,
                         isolate_network: profile.isolate_network,
                         isolate_pid: profile.isolate_pid,
+                        drop_all_caps: profile.drop_all_caps,
+                        disable_userns: profile.disable_userns,
+                        assert_userns_disabled: profile.assert_userns_disabled,
+                        no_new_privs: profile.no_new_privs,
+                        seccomp_mode: profile.seccomp_mode,
+                        landlock_mode: profile.landlock_mode,
+                        seccomp_bpf_path: profile.seccomp_bpf_path,
                         extra_ro_bind: profile.extra_ro_bind,
                         extra_rw_bind: profile.extra_rw_bind,
                         profiles: merged_profiles,
@@ -778,6 +991,23 @@ impl SandboxConfig {
             // Isolation: OR (stricter wins)
             isolate_network: self.isolate_network || workspace_config.isolate_network,
             isolate_pid: self.isolate_pid || workspace_config.isolate_pid,
+            drop_all_caps: self.drop_all_caps || workspace_config.drop_all_caps,
+            disable_userns: self.disable_userns || workspace_config.disable_userns,
+            assert_userns_disabled: self.assert_userns_disabled
+                || workspace_config.assert_userns_disabled,
+            no_new_privs: self.no_new_privs || workspace_config.no_new_privs,
+            seccomp_mode: stricter_seccomp_mode(
+                self.seccomp_mode.clone(),
+                workspace_config.seccomp_mode.clone(),
+            ),
+            landlock_mode: stricter_landlock_mode(
+                self.landlock_mode.clone(),
+                workspace_config.landlock_mode.clone(),
+            ),
+            seccomp_bpf_path: workspace_config
+                .seccomp_bpf_path
+                .clone()
+                .or_else(|| self.seccomp_bpf_path.clone()),
             extra_ro_bind: extra_ro_bind.into_iter().collect(),
             extra_rw_bind: extra_rw_bind.into_iter().collect(),
             profiles,
@@ -1107,7 +1337,7 @@ impl SandboxConfig {
             }
         }
 
-        // Namespace isolation
+        // Namespace and kernel-surface hardening
         if self.isolate_pid {
             args.push("--unshare-pid".to_string());
             debug!("PID namespace isolation enabled");
@@ -1116,6 +1346,63 @@ impl SandboxConfig {
         if self.isolate_network {
             args.push("--unshare-net".to_string());
             debug!("Network namespace isolation enabled");
+        }
+
+        if self.drop_all_caps {
+            args.push("--cap-drop".to_string());
+            args.push("ALL".to_string());
+            debug!("Capability dropping enabled (--cap-drop ALL)");
+        }
+
+        if self.disable_userns {
+            args.push("--disable-userns".to_string());
+            debug!("Nested user namespaces disabled");
+        }
+
+        if self.assert_userns_disabled {
+            args.push("--assert-userns-disabled".to_string());
+            debug!("Asserting nested user namespaces are disabled");
+        }
+
+        match self.landlock_mode {
+            LandlockMode::Off => {}
+            LandlockMode::Audit | LandlockMode::Enforce => {
+                if !Self::is_landlock_supported() {
+                    let msg = "landlock requested but kernel/runtime support not detected";
+                    if self.landlock_mode == LandlockMode::Enforce {
+                        warn!("{} (enforce mode)", msg);
+                        return None;
+                    }
+                    warn!("{} (audit mode)", msg);
+                } else {
+                    // Note: landlock ruleset application is handled in spawn pre_exec
+                    // hooks where available. Here we only validate support and policy mode.
+                    debug!("Landlock support detected (mode={:?})", self.landlock_mode);
+                }
+            }
+        }
+
+        match self.seccomp_mode {
+            SeccompMode::Off => {}
+            SeccompMode::Audit | SeccompMode::Enforce => {
+                let seccomp_path = self.resolve_seccomp_bpf_path(username);
+                if seccomp_path.as_ref().is_some_and(|p| p.exists()) {
+                    args.push("--seccomp".to_string());
+                    args.push("3".to_string());
+                    debug!("Seccomp enabled via bwrap fd 3");
+                } else if self.seccomp_mode == SeccompMode::Enforce {
+                    warn!(
+                        "seccomp_mode=enforce but seccomp_bpf_path missing/unreadable: {:?}",
+                        self.seccomp_bpf_path
+                    );
+                    return None;
+                } else {
+                    warn!(
+                        "seccomp_mode=audit but seccomp_bpf_path missing/unreadable: {:?}",
+                        self.seccomp_bpf_path
+                    );
+                }
+            }
         }
 
         // Workspace model catalog override.
@@ -1200,6 +1487,182 @@ impl SandboxConfig {
         debug!("Full bwrap args: {:?}", args);
 
         Some(args)
+    }
+
+    /// Resolve seccomp policy path from config.
+    pub fn resolve_seccomp_bpf_path(&self, username: Option<&str>) -> Option<PathBuf> {
+        self.seccomp_bpf_path
+            .as_ref()
+            .map(|p| Self::expand_home_for_user(p, username))
+    }
+
+    /// Best-effort runtime probe for Landlock support.
+    pub fn is_landlock_supported() -> bool {
+        #[cfg(target_os = "linux")]
+        {
+            // SAFETY: Syscall interface is used read-only for feature probing.
+            let abi = unsafe {
+                libc::syscall(
+                    libc::SYS_landlock_create_ruleset,
+                    std::ptr::null::<LandlockRulesetAttr>(),
+                    0,
+                    LANDLOCK_CREATE_RULESET_VERSION,
+                )
+            };
+            abi >= 1
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            false
+        }
+    }
+
+    /// Apply Landlock write restrictions (workspace + allow_write).
+    pub fn apply_landlock(&self, workspace: &Path, username: Option<&str>) -> std::io::Result<()> {
+        if self.landlock_mode == LandlockMode::Off {
+            return Ok(());
+        }
+
+        #[cfg(not(target_os = "linux"))]
+        {
+            if self.landlock_mode == LandlockMode::Enforce {
+                return Err(std::io::Error::other("landlock enforce requested on non-Linux platform"));
+            }
+            return Ok(());
+        }
+
+        #[cfg(target_os = "linux")]
+        {
+            if !Self::is_landlock_supported() {
+                if self.landlock_mode == LandlockMode::Enforce {
+                    return Err(std::io::Error::other("landlock enforce requested but kernel does not support landlock"));
+                }
+                return Ok(());
+            }
+
+            let ruleset_attr = LandlockRulesetAttr {
+                handled_access_fs: LANDLOCK_WRITE_ACCESS_MASK,
+            };
+
+            // SAFETY: Syscall with valid pointer/size to create ruleset.
+            let ruleset_fd = unsafe {
+                libc::syscall(
+                    libc::SYS_landlock_create_ruleset,
+                    &ruleset_attr as *const LandlockRulesetAttr,
+                    std::mem::size_of::<LandlockRulesetAttr>(),
+                    0,
+                ) as i32
+            };
+
+            if ruleset_fd < 0 {
+                if self.landlock_mode == LandlockMode::Enforce {
+                    return Err(std::io::Error::last_os_error());
+                }
+                return Ok(());
+            }
+
+            let mut writable_paths: HashSet<PathBuf> = HashSet::new();
+            writable_paths.insert(workspace.to_path_buf());
+            for p in &self.allow_write {
+                writable_paths.insert(Self::expand_home_for_user(p, username));
+            }
+
+            for path in writable_paths {
+                if !path.exists() {
+                    continue;
+                }
+
+                let c_path = CString::new(path.as_os_str().as_bytes()).map_err(|_| {
+                    std::io::Error::new(std::io::ErrorKind::InvalidInput, "path contains NUL byte")
+                })?;
+
+                // SAFETY: Open path for Landlock rule registration.
+                let parent_fd = unsafe { libc::open(c_path.as_ptr(), libc::O_PATH | libc::O_CLOEXEC) };
+                if parent_fd < 0 {
+                    if self.landlock_mode == LandlockMode::Enforce {
+                        // SAFETY: close best-effort on previously created fd.
+                        unsafe {
+                            libc::close(ruleset_fd);
+                        }
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    continue;
+                }
+
+                let path_beneath = LandlockPathBeneathAttr {
+                    allowed_access: LANDLOCK_WRITE_ACCESS_MASK,
+                    parent_fd,
+                    reserved1: 0,
+                };
+
+                // SAFETY: Syscall with valid fds/pointers.
+                let rc = unsafe {
+                    libc::syscall(
+                        libc::SYS_landlock_add_rule,
+                        ruleset_fd,
+                        LANDLOCK_RULE_PATH_BENEATH,
+                        &path_beneath as *const LandlockPathBeneathAttr,
+                        0,
+                    )
+                };
+
+                // SAFETY: close temporary opened path fd.
+                unsafe {
+                    libc::close(parent_fd);
+                }
+
+                if rc != 0 && self.landlock_mode == LandlockMode::Enforce {
+                    // SAFETY: close ruleset fd before returning.
+                    unsafe {
+                        libc::close(ruleset_fd);
+                    }
+                    return Err(std::io::Error::last_os_error());
+                }
+            }
+
+            // SAFETY: apply Landlock restrictions to current process.
+            let restrict_rc = unsafe { libc::syscall(libc::SYS_landlock_restrict_self, ruleset_fd, 0) };
+            // SAFETY: close ruleset fd after use.
+            unsafe {
+                libc::close(ruleset_fd);
+            }
+
+            if restrict_rc != 0 && self.landlock_mode == LandlockMode::Enforce {
+                return Err(std::io::Error::last_os_error());
+            }
+
+            Ok(())
+        }
+    }
+
+    /// Open seccomp bpf policy file if seccomp is active and policy exists.
+    pub fn open_seccomp_bpf_file(&self, username: Option<&str>) -> Result<Option<std::fs::File>> {
+        if self.seccomp_mode == SeccompMode::Off {
+            return Ok(None);
+        }
+
+        let Some(path) = self.resolve_seccomp_bpf_path(username) else {
+            if self.seccomp_mode == SeccompMode::Enforce {
+                anyhow::bail!(
+                    "seccomp_mode=enforce requires seccomp_bpf_path to be configured"
+                );
+            }
+            return Ok(None);
+        };
+
+        if !path.exists() {
+            if self.seccomp_mode == SeccompMode::Enforce {
+                anyhow::bail!(
+                    "seccomp_mode=enforce requires existing seccomp_bpf_path: {}",
+                    path.display()
+                );
+            }
+            return Ok(None);
+        }
+
+        std::fs::File::open(&path)
+            .with_context(|| format!("opening seccomp policy file: {}", path.display()))
+            .map(Some)
     }
 
     /// Check if bubblewrap is available.

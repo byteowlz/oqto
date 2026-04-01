@@ -6,6 +6,8 @@ use std::process::Command;
 
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
+#[cfg(target_os = "linux")]
+use std::os::fd::AsRawFd;
 
 use crate::{SandboxConfig, SandboxConfigFile};
 
@@ -95,7 +97,41 @@ fn exec_sandboxed(
     }
 
     debug!("Executing: bwrap {:?}", full_args);
-    let err = Command::new("bwrap").args(&full_args).exec();
+    let mut cmd = Command::new("bwrap");
+    cmd.args(&full_args);
+
+    let seccomp_file = config.open_seccomp_bpf_file(None)?;
+    let seccomp_fd = seccomp_file.as_ref().map(AsRawFd::as_raw_fd);
+    let no_new_privs = config.no_new_privs;
+    let landlock_cfg = config.clone();
+    let landlock_workspace = workspace.to_path_buf();
+
+    if seccomp_fd.is_some() || no_new_privs || landlock_cfg.landlock_mode != crate::LandlockMode::Off {
+        // Keep file alive until exec by moving into closure.
+        let _keep_alive = seccomp_file;
+        // SAFETY: pre_exec runs in child after fork, before exec.
+        unsafe {
+            cmd.pre_exec(move || {
+                if no_new_privs {
+                    let rc = libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0);
+                    if rc != 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                }
+
+                landlock_cfg.apply_landlock(&landlock_workspace, None)?;
+
+                if let Some(fd) = seccomp_fd {
+                    if libc::dup2(fd, 3) == -1 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                }
+                Ok(())
+            });
+        }
+    }
+
+    let err = cmd.exec();
 
     error!("Failed to exec bwrap: {:?}", err);
     Err(err.into())

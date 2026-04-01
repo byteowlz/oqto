@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Result, bail};
 use clap::Parser;
 use log::{info, warn};
 use std::path::PathBuf;
@@ -48,15 +48,37 @@ async fn main() -> Result<()> {
         socket_path
     );
 
-    let sandbox_config = load_sandbox_config(args.no_sandbox, args.sandbox_config.as_ref())?;
-    log_sandbox_state(&sandbox_config);
-
     load_env_file();
 
     let user_config = args
         .config
         .map(RunnerUserConfig::load_from_path)
         .unwrap_or_else(RunnerUserConfig::load);
+
+    let allow_user_sandbox_fallback = user_config.single_user && !user_config.linux_users_enabled;
+
+    #[cfg(not(target_os = "linux"))]
+    if !args.no_sandbox && !allow_user_sandbox_fallback {
+        bail!(
+            "Sandbox v2 hardened runner mode requires Linux. \
+             Non-Linux platforms are supported only for single-user/dev fallback mode."
+        );
+    }
+
+    let sandbox_config = load_sandbox_config(
+        args.no_sandbox,
+        args.sandbox_config.as_ref(),
+        allow_user_sandbox_fallback,
+    )?;
+    log_sandbox_state(&sandbox_config);
+
+    #[cfg(not(target_os = "linux"))]
+    if sandbox_config.is_some() {
+        warn!(
+            "Sandbox enabled on non-Linux platform: running reduced-security mode \
+             (no bwrap/seccomp/landlock/cgroups parity)."
+        );
+    }
 
     info!(
         "User config: workspace_dir={:?}, pi_sessions={:?}, memories={:?}, single_user={}, linux_users_enabled={}",
