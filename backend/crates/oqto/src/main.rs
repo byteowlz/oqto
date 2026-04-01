@@ -1173,6 +1173,12 @@ pub struct PiConfig {
     /// Idle timeout in seconds before stopping inactive Pi processes.
     /// Default: 300 (5 minutes).
     pub idle_timeout_secs: Option<u64>,
+
+    /// Auto-rename extension configuration.
+    /// Written to ~/.pi/agent/auto-rename.json during user provisioning.
+    /// See pi-auto-rename extension schema for available fields.
+    #[serde(default = "default_auto_rename_config")]
+    pub auto_rename: serde_json::Value,
 }
 
 impl Default for PiConfig {
@@ -1191,8 +1197,21 @@ impl Default for PiConfig {
             sandboxed: None,
 
             idle_timeout_secs: None,
+            auto_rename: default_auto_rename_config(),
         }
     }
+}
+
+fn default_auto_rename_config() -> serde_json::Value {
+    serde_json::json!({
+        "enabled": true,
+        "model": null,
+        "modelSelection": "current",
+        "prefixCommand": "basename $(git rev-parse --show-toplevel 2>/dev/null || pwd)",
+        "readableIdSuffix": true,
+        "fallbackDeterministic": "words",
+        "maxNameLength": 60
+    })
 }
 
 impl Default for LocalModeConfig {
@@ -2514,6 +2533,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             models_template,
         );
     }
+    state = state.with_auto_rename_config(ctx.config.pi.auto_rename.clone());
 
     // models.json is managed manually:
     //   - Initial generation: setup script (scripts/setup/)

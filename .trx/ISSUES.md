@@ -47,6 +47,9 @@ setup.sh must correctly provision everything for a new platform user on a fresh 
 ...
 
 
+### [oqto-6er8] Sandbox v2 hardening program (runner-first, remote-ready) (P1, epic)
+Unify and execute Oqto sandbox hardening as a single program for local + remote runners.\n\nGoals\n- Defense-in-depth isolation in oqto-sandbox (not just bwrap).\n- Runner-owned sandbox orchestration with fail-closed behavior.\n- Secret isolation integrated with sandbox/network policy for remote runners.\n- Production docs/tests/observability for operations.\n\nScope\n1) Linux hardening baseline\n   - no_new_privs\n   - capability drop\n   - seccomp-bpf default-deny allowlist\n   - landlock layer where available\n   - cgroup resource limits + kill semantics\n2) Policy/config hardening\n   - system read-only global sandbox config\n   - deterministic workspace restriction merge\n   - explicit proxy-only network mode for secret flows\n3) Secret isolation integration\n   - runner-side credential proxy / placeholder substitution\n   - host allowlist pinning and audit logs\n   - approval workflow + process allowlist\n4) Verification\n   - sandbox escape regression suite\n   - secret-injection test matrix\n   - docs + runbooks + telemetry\n\nIncluded open issues\n- oqto-cxxr\n- octo-1ddx\n- oqto-3c42\n- oqto-cv3f\n- oqto-ctpz\n- oqto-dv37\n- oqto-05c1\n- oqto-8kx4\n- oqto-q5yb\n- oqto-xf80\n- oqto-g3wq\n\nDefinition of done\n- strict profile enforces seccomp + cap-drop + no_new_privs in CI-tested paths\n- remote runner path enforces secret-safe egress via runner mediation\n- documented threat model and operational playbook shipped\n- all listed child issues closed or explicitly descoped with rationale
+
 ### [oqto-jty7] Offline-first cross-harness visual runtime (no-CDN except LLM) (P1, epic)
 Design document: docs/design/offline-cross-harness-visual-runtime.md\n\nScope:\n- shared harness-agnostic visual runtime core\n- offline_strict default with local bundled assets\n- thin Pi/Oqto harness adapters\n- sanitizer + CSP enforcement\n- migration from CDN-oriented visual generation patterns
 
@@ -1627,6 +1630,7 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [oqto-r2gw] Mobile sidebar: collapsible shared/private sections + unified scroll (closed 2026-04-01)
 - [oqto-y6rq] Chat history sidebar empty: backend wrongly reports no runner in single-user mode (closed 2026-03-29)
 - [oqto-nerf] WebSocket HOL: files commands blocked by list_directory(hidden=true) in copy operations (closed 2026-03-28)
 - [oqto-6k4b] Media Browsing & Discovery Improvements (closed 2026-03-24)
@@ -2318,12 +2322,12 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
-- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
-- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
 - [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
 - [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
+- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
+- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
 - [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
+- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
+- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )

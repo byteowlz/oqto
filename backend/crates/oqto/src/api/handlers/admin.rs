@@ -422,7 +422,7 @@ pub async fn sync_user_configs(
 
                     if has_eavs_key {
                         // Key exists, just sync models.json (no key rotation)
-                        match sync_eavs_models_json(eavs_client, linux_users, &linux_username).await
+                        match sync_eavs_models_json(eavs_client, linux_users, &linux_username, Some(&state.auto_rename_config)).await
                         {
                             Ok(()) => {
                                 result.eavs_configured = true;
@@ -444,6 +444,7 @@ pub async fn sync_user_configs(
                             linux_users,
                             &linux_username,
                             &user.id,
+                            Some(&state.auto_rename_config),
                         )
                         .await
                         {
@@ -631,7 +632,7 @@ pub async fn create_user(
     if let (Some(eavs_client), Some(linux_users)) = (&state.eavs_client, &state.linux_users) {
         let linux_username = user.linux_username.as_deref().unwrap_or(&user.id);
 
-        match provision_eavs_for_user(eavs_client, linux_users, linux_username, &user.id).await {
+        match provision_eavs_for_user(eavs_client, linux_users, linux_username, &user.id, Some(&state.auto_rename_config)).await {
             Ok(key_id) => {
                 info!(
                     user_id = %user.id,
@@ -767,6 +768,7 @@ pub(crate) async fn provision_eavs_for_user(
     linux_users: &crate::local::LinuxUsersConfig,
     linux_username: &str,
     oqto_user_id: &str,
+    auto_rename_config: Option<&serde_json::Value>,
 ) -> anyhow::Result<String> {
     use crate::eavs::CreateKeyRequest;
 
@@ -781,7 +783,7 @@ pub(crate) async fn provision_eavs_for_user(
     // 2. Write models.json with the virtual key embedded directly.
     // The key is written as a literal value in the apiKey field so Pi uses it
     // as a Bearer token when calling eavs. No eavs.env indirection needed.
-    sync_eavs_models_json_with_key(eavs_client, linux_users, linux_username, &key_resp.key).await?;
+    sync_eavs_models_json_with_key(eavs_client, linux_users, linux_username, &key_resp.key, auto_rename_config).await?;
 
     Ok(key_resp.key_id)
 }
@@ -796,6 +798,7 @@ pub(crate) async fn sync_eavs_models_json(
     eavs_client: &crate::eavs::EavsClient,
     linux_users: &crate::local::LinuxUsersConfig,
     linux_username: &str,
+    auto_rename_config: Option<&serde_json::Value>,
 ) -> anyhow::Result<()> {
     // Read existing eavs key from models.json (embedded in apiKey field).
     // Fall back to legacy eavs.env for migration from older installs.
@@ -806,7 +809,7 @@ pub(crate) async fn sync_eavs_models_json(
         read_eavs_key_from_env(&eavs_env_path)
     });
 
-    sync_eavs_models_json_inner(eavs_client, linux_users, linux_username, api_key.as_deref()).await
+    sync_eavs_models_json_inner(eavs_client, linux_users, linux_username, api_key.as_deref(), auto_rename_config).await
 }
 
 /// Same as `sync_eavs_models_json` but with the key already in hand (avoids re-reading eavs.env).
@@ -815,8 +818,9 @@ pub(crate) async fn sync_eavs_models_json_with_key(
     linux_users: &crate::local::LinuxUsersConfig,
     linux_username: &str,
     api_key: &str,
+    auto_rename_config: Option<&serde_json::Value>,
 ) -> anyhow::Result<()> {
-    sync_eavs_models_json_inner(eavs_client, linux_users, linux_username, Some(api_key)).await
+    sync_eavs_models_json_inner(eavs_client, linux_users, linux_username, Some(api_key), auto_rename_config).await
 }
 
 async fn sync_eavs_models_json_inner(
@@ -824,6 +828,7 @@ async fn sync_eavs_models_json_inner(
     linux_users: &crate::local::LinuxUsersConfig,
     linux_username: &str,
     api_key: Option<&str>,
+    auto_rename_config: Option<&serde_json::Value>,
 ) -> anyhow::Result<()> {
     use crate::eavs::generate_pi_models_json;
 
@@ -840,51 +845,23 @@ async fn sync_eavs_models_json_inner(
     let pi_dir = format!("{}/.pi/agent", home);
     linux_users.write_file_as_user(linux_username, &pi_dir, "models.json", &models_content)?;
 
-    // Generate auto-rename.json with the first available model so the
-    // auto-rename extension can generate LLM-based session titles.
-    if let Some(first_model) = extract_first_model(&models_json) {
-        let auto_rename = serde_json::json!({
-            "enabled": true,
-            "model": {
-                "provider": first_model.0,
-                "id": first_model.1,
-            },
-            "prefixCommand": "basename $(git rev-parse --show-toplevel 2>/dev/null || pwd)",
-            "readableIdSuffix": true,
-            // If model generation fails, prefer a human-readable fallback
-            // over raw adjective-noun-noun IDs as the visible title.
-            "fallbackDeterministic": "words",
-            "maxNameLength": 60
-        });
-        let auto_rename_content = serde_json::to_string_pretty(&auto_rename).unwrap_or_default();
-        if !auto_rename_content.is_empty() {
-            // Best-effort: don't fail provisioning if this doesn't work
-            let _ = linux_users.write_file_as_user(
-                linux_username,
-                &pi_dir,
-                "auto-rename.json",
-                &auto_rename_content,
-            );
+    // Write auto-rename.json from config (configurable via [pi.auto_rename] in config.toml).
+    if let Some(auto_rename) = auto_rename_config {
+        if !auto_rename.is_null() && auto_rename.is_object() {
+            if let Ok(content) = serde_json::to_string_pretty(auto_rename) {
+                let _ = linux_users.write_file_as_user(
+                    linux_username,
+                    &pi_dir,
+                    "auto-rename.json",
+                    &content,
+                );
+            }
         }
     }
 
     Ok(())
 }
 
-/// Extract the first (provider, model_id) from a Pi models.json value.
-/// Used to configure auto-rename with an available model.
-fn extract_first_model(models_json: &serde_json::Value) -> Option<(String, String)> {
-    let providers = models_json.get("providers")?.as_object()?;
-    for (provider_name, provider_val) in providers {
-        if let Some(models) = provider_val.get("models").and_then(|m| m.as_array())
-            && let Some(first) = models.first()
-            && let Some(id) = first.get("id").and_then(|v| v.as_str())
-        {
-            return Some((provider_name.clone(), id.to_string()));
-        }
-    }
-    None
-}
 
 /// Read the EAVS_API_KEY value from an eavs.env file.
 /// Returns None if the file doesn't exist or the key isn't found.
@@ -1253,7 +1230,7 @@ pub async fn sync_all_models(
             if !linux_username.starts_with("oqto_") {
                 continue;
             }
-            match sync_eavs_models_json(eavs_client.as_ref(), linux_users, linux_username).await {
+            match sync_eavs_models_json(eavs_client.as_ref(), linux_users, linux_username, Some(&state.auto_rename_config)).await {
                 Ok(()) => synced += 1,
                 Err(e) => errors.push(format!("{}: {}", user.id, e)),
             }

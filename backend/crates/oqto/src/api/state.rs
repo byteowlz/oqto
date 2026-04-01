@@ -334,6 +334,9 @@ pub struct AppState {
     pub eavs_config: Option<EavsConfigPaths>,
     /// Whether per-user EAVS OAuth logins are enabled.
     pub eavs_oauth_enabled: bool,
+    /// Auto-rename extension config (from [pi] section of config.toml).
+    /// Written to ~/.pi/agent/auto-rename.json during user provisioning.
+    pub auto_rename_config: serde_json::Value,
     /// Allowed OAuth providers (e.g., "anthropic", "openai-codex").
     pub eavs_oauth_providers: Vec<String>,
     /// Optional redirect URI used for OAuth flows (passed to EAVS).
@@ -412,6 +415,7 @@ impl AppState {
             eavs_client: None,
             eavs_config: None,
             eavs_oauth_enabled: false,
+            auto_rename_config: serde_json::json!({}),
             eavs_oauth_providers: Vec::new(),
             eavs_oauth_redirect_uri: None,
             pi_default_provider: None,
@@ -520,6 +524,12 @@ impl AppState {
     /// Set the EAVS client for LLM proxy integration.
     pub fn with_eavs_client(mut self, client: crate::eavs::EavsClient) -> Self {
         self.eavs_client = Some(Arc::new(client));
+        self
+    }
+
+    /// Set the auto-rename extension config (from [pi] config section).
+    pub fn with_auto_rename_config(mut self, config: serde_json::Value) -> Self {
+        self.auto_rename_config = config;
         self
     }
 
