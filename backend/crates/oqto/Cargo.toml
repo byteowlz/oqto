@@ -117,7 +117,7 @@ notify-rust = { version = "4", optional = true }
 notify.workspace = true
 
 # TypeScript type generation
-ts-rs = { version = "10", features = ["serde-compat", "chrono-impl", "serde-json-impl"] }
+ts-rs = { version = "10", features = ["serde-compat", "no-serde-warnings", "chrono-impl", "serde-json-impl"] }
 
 # gRPC for hstry communication
 tonic.workspace = true
