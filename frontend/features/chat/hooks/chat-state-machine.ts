@@ -176,14 +176,14 @@ export function completeMessageSync(
 }
 
 export function selectMessageMergeMode(
-	machine: ChatStateMachine,
+	_machine: ChatStateMachine,
 	source: MessageSyncSource,
 ): MessageMergeMode {
-	// During active streaming, get_messages from WS is a sliding window.
-	// Keep partial merge semantics to avoid any possibility of clobbering
-	// in-flight local assembly during reconnect races.
-	if (source === "ws_get_messages" && machine.turn.kind === "streaming") {
-		return "partial";
+	// Only hstry-backed history is guaranteed complete. All other sync sources
+	// (ws_get_messages/resync/ws_messages/watchdog) can be partial snapshots
+	// from a live Pi context window, so they must never replace local history.
+	if (source === "history") {
+		return "authoritative";
 	}
-	return "authoritative";
+	return "partial";
 }
