@@ -236,6 +236,8 @@ export interface ChatViewProps {
 	pendingChatInput?: string | null;
 	/** Called after the pending chat input has been consumed */
 	onPendingChatInputConsumed?: () => void;
+	/** Called when a chat file reference is activated. */
+	onFileReferenceOpen?: (filePath: string) => void;
 }
 
 /**
@@ -262,6 +264,7 @@ export function ChatView({
 	onPendingFileAttachmentConsumed,
 	pendingChatInput,
 	onPendingChatInputConsumed,
+	onFileReferenceOpen,
 }: ChatViewProps) {
 	const [sendPending, setSendPending] = useState(false);
 	const [sendPendingSessionId, setSendPendingSessionId] = useState<
@@ -2127,6 +2130,7 @@ export function ChatView({
 																}
 															: undefined
 													}
+													onFileReferenceOpen={onFileReferenceOpen}
 													showWorkingIndicator={
 														isWorking && isLastAssistantGroup
 													}
@@ -2986,6 +2990,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 	messageId,
 	showWorkingIndicator = false,
 	onForkHere,
+	onFileReferenceOpen,
 }: {
 	group: MessageGroup;
 	assistantName?: string | null;
@@ -2997,6 +3002,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 	messageId?: string;
 	showWorkingIndicator?: boolean;
 	onForkHere?: (messagePreview: string) => void;
+	onFileReferenceOpen?: (filePath: string) => void;
 }) {
 	const isUser = group.role === "user";
 	const { t } = useTranslation();
@@ -3532,6 +3538,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 								content={segment.text}
 								workspacePath={workspacePath}
 								locale={locale}
+								onFileReferenceOpen={onFileReferenceOpen}
 							/>
 						);
 						return wrapWithGutter(segment.key, inner);
@@ -4114,10 +4121,12 @@ function TextWithFileReferences({
 	content,
 	workspacePath,
 	locale = "en",
+	onFileReferenceOpen,
 }: {
 	content: string;
 	workspacePath?: string | null;
 	locale?: "en" | "de";
+	onFileReferenceOpen?: (filePath: string) => void;
 }) {
 	const { t } = useTranslation();
 	// Strip ANSI escape codes and fix indentation before rendering.
@@ -4174,6 +4183,7 @@ function TextWithFileReferences({
 							filePath={ref.filePath}
 							workspacePath={workspacePath}
 							label={ref.label}
+							onOpenFileReference={onFileReferenceOpen}
 						/>
 					))}
 				</div>
@@ -4212,11 +4222,13 @@ export const FileReferenceCard = memo(function FileReferenceCard({
 	workspacePath,
 	directUrl,
 	label,
+	onOpenFileReference,
 }: {
 	filePath: string;
 	workspacePath: string;
 	directUrl?: string;
 	label?: string;
+	onOpenFileReference?: (filePath: string) => void;
 }) {
 	const [isLoading, setIsLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
@@ -4411,6 +4423,10 @@ export const FileReferenceCard = memo(function FileReferenceCard({
 		<button
 			type="button"
 			onClick={() => {
+				if (onOpenFileReference) {
+					onOpenFileReference(filePath);
+					return;
+				}
 				if (directUrl) {
 					window.open(directUrl, "_blank", "noopener");
 					return;

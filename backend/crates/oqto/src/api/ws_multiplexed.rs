@@ -1564,7 +1564,9 @@ async fn handle_ws_command(
         WsCommand::Terminal(term_cmd) => {
             terminal::handle_terminal_command(term_cmd, user_id, state, conn_state).await
         }
-        WsCommand::Hstry(hstry_cmd) => history::handle_hstry_command(hstry_cmd, state).await,
+        WsCommand::Hstry(hstry_cmd) => {
+            history::handle_hstry_command(hstry_cmd, user_id, state).await
+        }
         WsCommand::Trx(trx_cmd) => history::handle_trx_command(trx_cmd, user_id, state).await,
         WsCommand::Session(session_cmd) => {
             history::handle_session_command(session_cmd, user_id, state).await

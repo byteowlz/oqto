@@ -38,7 +38,15 @@ pub async fn bootstrap_new_user_environment(
             .or(user.linux_username.as_deref())
             .unwrap_or(&user.id);
 
-        match provision_eavs_for_user(eavs_client, linux_users, linux_username, &user.id, Some(&state.auto_rename_config)).await {
+        match provision_eavs_for_user(
+            eavs_client,
+            linux_users,
+            linux_username,
+            &user.id,
+            Some(&state.auto_rename_config),
+        )
+        .await
+        {
             Ok(key_id) => {
                 info!(
                     user_id = %user.id,

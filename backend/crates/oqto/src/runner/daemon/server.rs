@@ -2301,6 +2301,27 @@ impl Runner {
         })
     }
 
+    /// Search chat history via hstry in the runner user's context.
+    async fn search_hstry(&self, req: SearchHstryRequest) -> RunnerResponse {
+        let query = req.query.trim();
+        if query.is_empty() {
+            return RunnerResponse::HstrySearchResults(HstrySearchResultsResponse {
+                query: req.query,
+                hits: Vec::new(),
+                total: 0,
+            });
+        }
+
+        match crate::history::search_hstry(query, req.limit).await {
+            Ok(hits) => RunnerResponse::HstrySearchResults(HstrySearchResultsResponse {
+                query: query.to_string(),
+                total: hits.len(),
+                hits,
+            }),
+            Err(err) => error_response(ErrorCode::Internal, format!("hstry search failed: {err}")),
+        }
+    }
+
     // Pi Session Management Operations
     // ========================================================================
 
