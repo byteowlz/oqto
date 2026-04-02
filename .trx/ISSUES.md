@@ -47,9 +47,6 @@ setup.sh must correctly provision everything for a new platform user on a fresh 
 ...
 
 
-### [oqto-cxxr.1.1] Sandbox seccomp: add policy compiler to produce default-<arch>.bpf artifacts (P1, task)
-Implement build tooling that compiles backend/crates/oqto/examples/seccomp/default.policy.toml into default-x86_64.bpf and default-aarch64.bpf artifacts; integrate into release/install pipeline and add verification tests.
-
 ### [oqto-cxxr.3] Sandbox: harden Landlock policy beyond write-only baseline (P1, task)
 Extend landlock implementation with profile-specific read/execute constraints and kernel ABI capability detection matrix. Preserve audit/enforce semantics and add regression tests for allowed toolchains vs denied sensitive paths.
 
@@ -1636,6 +1633,7 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [oqto-cxxr.1.1] Sandbox seccomp: add policy compiler to produce default-<arch>.bpf artifacts (closed 2026-04-02)
 - [octo-1ddx] Move global sandbox config to read-only path (closed 2026-04-02)
 - [oqto-cv3f] Architecture + threat model for secret injection system (closed 2026-04-01)
 - [oqto-ege0] Fix inline markdown code clipping for long paths (closed 2026-04-01)
@@ -2336,12 +2334,12 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
-- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
 - [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
 - [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
-- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
 - [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
+- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
+- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
