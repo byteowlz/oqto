@@ -616,7 +616,7 @@ Separate templates into dedicated repo with version control. Enable template upd
 Build and distribute pre-compiled binaries for Linux (x86_64, arm64) and macOS (Intel, Apple Silicon). Eliminates need for Rust toolchain on user machines.
 
 ### [octo-af5j] Release & Update System (P1, epic)
-Comprehensive system for distributing Octo releases, managing updates in the field, and expanding runtime options including Proxmox LXC support.
+Comprehensive, bullet-proof release and update system for Oqto with transactional deployment semantics, strict preflight gates, staged rollout, and automatic rollback.\n\nGoals\n- Never leave host in half-updated state.\n- Fail fast before deployment when prerequisites are missing.\n- Guarantee mode-aware safety (single-user dev vs multi-user production).\n- Provide deterministic rollback on failed health checks.\n- Emit auditable update lifecycle events.\n\nScope\n1) Preflight gate engine (hard-stop)\n   - Validate target mode and required sandbox prerequisites.\n   - Multi-user checks: /etc/oqto/sandbox.toml presence + owner/perms + readability.\n   - If seccomp enforce configured: require /etc/oqto/seccomp/default.bpf.\n   - Validate service dependencies, disk space, binary availability, and schema/config parse.\n\n2) Transactional deployment layout\n   - Versioned release directories + atomic symlink switch.\n   - Prepare phase (build/upload/verify) separate from activate phase.\n   - Auto-rollback to last known-good release on post-activate health failure.\n\n3) Staged activation and health verification\n   - Ordered restarts (runner/control-plane/dependent services).\n   - Bounded readiness checks: runner socket, spawn smoke test, hstry/mmry connectivity.\n   - Canary mode: update one host first, then fleet rollout.\n\n4) Idempotent update CLI/API\n   - Re-running update converges safely to desired state.\n   - Resume support for interrupted updates with clear status reporting.\n\n5) Observability and audit trail\n   - Structured events: preflight.start/pass/fail, deploy.start/pass/fail, rollback.start/pass/fail.\n   - Persist update metadata: release ID, host, actor, timestamps, decision reason codes.\n\nDefinition of done\n- Multi-user host update fails before activation if sandbox prerequisites are missing.\n- Successful update is atomic from operator perspective (no mixed-version runtime).\n- Failed update auto-rolls back and restores previous healthy state.\n- Update process is idempotent and documented with operator runbook.\n- Canary + fleet rollout path is documented and tested.
 
 ### [oqto-e8vx] Tool calls sometimes are shown duplicated (P2, bug)
 
@@ -2334,12 +2334,12 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
-- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
+- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
 - [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
-- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
-- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
 - [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
+- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
+- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
+- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
+- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
