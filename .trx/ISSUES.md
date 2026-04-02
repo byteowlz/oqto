@@ -47,6 +47,15 @@ setup.sh must correctly provision everything for a new platform user on a fresh 
 ...
 
 
+### [oqto-cxxr.3] Sandbox: harden Landlock policy beyond write-only baseline (P1, task)
+Extend landlock implementation with profile-specific read/execute constraints and kernel ABI capability detection matrix. Preserve audit/enforce semantics and add regression tests for allowed toolchains vs denied sensitive paths.
+
+### [oqto-cxxr.2] Sandbox: add cgroup resource enforcement to runner sandbox spawns (P1, task)
+Add per-process cgroup limits (cpu/memory/pids/io where available) and deterministic kill semantics for sandboxed processes. Expose profile defaults and safe overrides. Include tests for OOM/limit behavior and cleanup.
+
+### [oqto-cxxr.1] Sandbox: ship multi-arch seccomp-bpf policy artifacts and installer selection (P1, task)
+Deliver precompiled seccomp BPF artifacts for supported architectures (x86_64, aarch64), add policy source + generation script, and install to /etc/oqto/seccomp/default.bpf with architecture selection. Keep audit default until validation passes, then document enforce rollout.
+
 ### [oqto-6er8] Sandbox v2 hardening program (runner-first, remote-ready) (P1, epic)
 Unify and execute Oqto sandbox hardening as a single program for local + remote runners.\n\nGoals\n- Defense-in-depth isolation in oqto-sandbox (not just bwrap).\n- Runner-owned sandbox orchestration with fail-closed behavior.\n- Secret isolation integrated with sandbox/network policy for remote runners.\n- Production docs/tests/observability for operations.\n\nScope\n1) Linux hardening baseline\n   - no_new_privs\n   - capability drop\n   - seccomp-bpf default-deny allowlist\n   - landlock layer where available\n   - cgroup resource limits + kill semantics\n2) Policy/config hardening\n   - system read-only global sandbox config\n   - deterministic workspace restriction merge\n   - explicit proxy-only network mode for secret flows\n3) Secret isolation integration\n   - runner-side credential proxy / placeholder substitution\n   - host allowlist pinning and audit logs\n   - approval workflow + process allowlist\n4) Verification\n   - sandbox escape regression suite\n   - secret-injection test matrix\n   - docs + runbooks + telemetry\n\nIncluded open issues\n- oqto-cxxr\n- octo-1ddx\n- oqto-3c42\n- oqto-cv3f\n- oqto-ctpz\n- oqto-dv37\n- oqto-05c1\n- oqto-8kx4\n- oqto-q5yb\n- oqto-xf80\n- oqto-g3wq\n\nDefinition of done\n- strict profile enforces seccomp + cap-drop + no_new_privs in CI-tested paths\n- remote runner path enforces secret-safe egress via runner mediation\n- documented threat model and operational playbook shipped\n- all listed child issues closed or explicitly descoped with rationale
 
@@ -485,9 +494,6 @@ Add workspace_locations (workspace_id, runner_id, path, kind, repo_fingerprint, 
 
 ### [octo-pdb4] Shared workspaces with multi-location runners (P1, epic)
 Support team shared workspaces with per-workspace hstry/mmry, local+remote locations, and explicit agent targeting. Includes runner bootstrap over SSH, workspace location routing, UI grouping/merge-split, and security model for remote execution + history sync.
-
-### [octo-1ddx] Move global sandbox config to read-only path (P1, task)
-Global sandbox config must be read-only (not user-writable). Implement loading from system path (e.g., /etc/octo/sandbox.toml) with user config for overrides or removal of user-writable global config. Ensure sandbox.toml itself is protected and update docs/install.
 
 ### [octo-t2bf] Multi-Runner & Workspace Sharing (P1, epic)
 Epic for enabling users to connect to multiple runners across different machines (laptop, desktop, cloud) and share workspaces with other users.
@@ -1627,6 +1633,7 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [octo-1ddx] Move global sandbox config to read-only path (closed 2026-04-02)
 - [oqto-cv3f] Architecture + threat model for secret injection system (closed 2026-04-01)
 - [oqto-ege0] Fix inline markdown code clipping for long paths (closed 2026-04-01)
 - [oqto-0zd0] Fix missing working indicator on runner-initiated assistant turns (closed 2026-04-01)
@@ -2326,12 +2333,12 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
+- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
 - [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
 - [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
 - [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
-- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
-- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
-- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
 - [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
+- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
+- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
