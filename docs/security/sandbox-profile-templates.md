@@ -21,6 +21,15 @@ Start with:
 
 Then move to `"enforce"` per repo after validating workloads.
 
+For seccomp enforce mode, install an architecture-specific BPF artifact:
+
+```bash
+sudo ./scripts/sandbox/install-seccomp-policy.sh
+```
+
+Policy source is shipped at:
+- `backend/crates/oqto/examples/seccomp/default.policy.toml`
+
 ## Install as system policy
 
 ```bash

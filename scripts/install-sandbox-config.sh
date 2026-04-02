@@ -158,13 +158,16 @@ fi
 # Show next steps
 echo ""
 info "Next steps:"
-echo "  1. Restart oqto-runner to pick up the new config:"
+echo "  1. (Optional) Install seccomp artifact for enforce mode:"
+echo "     sudo ./scripts/sandbox/install-seccomp-policy.sh"
+echo ""
+echo "  2. Restart oqto-runner to pick up the new config:"
 echo "     systemctl --user restart oqto-runner"
 echo ""
-echo "  2. Or for system-wide oqto-runner:"
+echo "  3. Or for system-wide oqto-runner:"
 echo "     sudo systemctl restart oqto-runner"
 echo ""
-echo "  3. Verify sandbox is active by checking logs for:"
+echo "  4. Verify sandbox is active by checking logs for:"
 echo "     'Sandbox enabled - processes will be wrapped with bwrap'"
 
 # Optional: Validate TOML syntax

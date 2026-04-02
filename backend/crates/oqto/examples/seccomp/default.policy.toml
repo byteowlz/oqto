@@ -1,0 +1,62 @@
+# Canonical seccomp source policy for Oqto sandboxed agent workloads.
+#
+# This is a human-readable source definition used to generate architecture-specific
+# BPF artifacts (e.g. default-x86_64.bpf, default-aarch64.bpf).
+#
+# NOTE: This file is NOT consumed directly by bwrap. bwrap requires compiled BPF.
+
+[policy]
+name = "oqto-default"
+default_action = "errno"
+errno = 1
+
+# Runtime classes are for policy maintainability. The compiler tool should flatten
+# these into final syscall allowlists for each architecture.
+
+[[policy.classes]]
+name = "io_basic"
+syscalls = [
+  "read", "write", "close", "lseek",
+  "readv", "writev", "pread64", "pwrite64",
+  "fstat", "newfstatat", "statx", "access", "faccessat2"
+]
+
+[[policy.classes]]
+name = "memory_threads"
+syscalls = [
+  "mmap", "mprotect", "munmap", "brk", "madvise",
+  "futex", "set_robust_list", "rt_sigaction", "rt_sigprocmask",
+  "rt_sigreturn", "clone", "clone3", "getpid", "gettid", "tgkill"
+]
+
+[[policy.classes]]
+name = "files_dirs"
+syscalls = [
+  "openat", "openat2", "getdents64", "mkdirat", "unlinkat", "renameat2",
+  "fchmod", "fchmodat", "fchown", "fchownat", "readlinkat", "symlinkat"
+]
+
+[[policy.classes]]
+name = "process_exec"
+syscalls = [
+  "execve", "execveat", "wait4", "waitid", "exit", "exit_group",
+  "prlimit64", "getrlimit", "setrlimit"
+]
+
+[[policy.classes]]
+name = "time_random"
+syscalls = ["clock_gettime", "nanosleep", "gettimeofday", "getrandom"]
+
+[[policy.classes]]
+name = "network_basic"
+syscalls = [
+  "socket", "connect", "bind", "listen", "accept", "accept4",
+  "sendto", "recvfrom", "sendmsg", "recvmsg", "shutdown", "getsockopt", "setsockopt"
+]
+
+# Explicit high-risk deny list (documentary; default_action=errno already denies unknowns).
+[policy.explicit_deny]
+syscalls = [
+  "ptrace", "kexec_load", "init_module", "finit_module", "delete_module",
+  "mount", "umount2", "swapon", "swapoff", "reboot"
+]
