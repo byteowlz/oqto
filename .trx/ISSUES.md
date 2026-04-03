@@ -3,6 +3,7 @@
 ## Open
 
 ### [oqto-4ryr] Session rename reverts: update_chat_session returns external_id while list returns platform_id (P0, bug)
+Root cause: ID contract regression. update_workspace_chat_session returned hstry external_id (Pi native) while list/get paths prefer platform_id (Oqto canonical). This caused rename/manual-title protections to key under wrong ID and revert on refresh. Hardening: backend now returns canonical session ID (platform_id fallback req/external), frontend rename stores manual-title guards across canonical/original/runner alias IDs and routes set_session_name to resolved runner session ID.
 
 ### [oqto-heye] P0: Chat send must always terminate (response or explicit error), never infinite spinner (P0, bug)
 Repro at 23:57 (jolly-moves-kernel): backend accepted prompt commands but no user-visible terminal recovery when runner send failed/stalled, resulting in bogus working state and perceived message loss.\n\nBackend hardening added:\n- on prompt/steer/follow_up send failure, ws now emits canonical terminal events immediately (agent.error + agent.idle) and logs failure details with session id.\n- clears response watchdog on failure path before terminal emission.\n\nDeployed to archvm backend.
@@ -48,6 +49,9 @@ setup.sh must correctly provision everything for a new platform user on a fresh 
 3. Per-user provisioning on login/creation:
 ...
 
+
+### [oqto-3c42.1] Runner egress policy hardening: add enforceable host-allowlist boundary with audit semantics (P1, task)
+Implement runner-native egress policy boundary for secret-bearing operations: host/domain allowlist enforcement, deny-by-default behavior, and structured allow/deny reason codes. Use iron-proxy as design reference only; do not introduce external MITM dependency.
 
 ### [oqto-kmap] Force MiniMax provider API adapter to openai-completions-convert-think-tags in generated models.json (P1, bug)
 
@@ -1637,6 +1641,7 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [oqto-m5js] Evaluate iron-proxy for potential Oqto integration (closed 2026-04-03)
 - [oqto-cxxr.1.1] Sandbox seccomp: add policy compiler to produce default-<arch>.bpf artifacts (closed 2026-04-02)
 - [octo-1ddx] Move global sandbox config to read-only path (closed 2026-04-02)
 - [oqto-cv3f] Architecture + threat model for secret injection system (closed 2026-04-01)
@@ -2338,12 +2343,12 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
 - [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
-- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
 - [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
+- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
 - [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
+- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
