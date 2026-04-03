@@ -582,10 +582,19 @@ preflight_host() {
         return 1
     fi
 
-    if ! host_exec "$is_local" "$ssh_target" "command -v systemctl >/dev/null && command -v install >/dev/null"; then
+    if ! host_exec "$is_local" "$ssh_target" "command -v install >/dev/null"; then
         emit_event "$is_local" "$ssh_target" "$name" "preflight" "fail" "deps.missing"
-        err "Missing required runtime dependencies on $name"
+        err "Missing 'install' command on $name"
         return 1
+    fi
+
+    # systemctl is required for multi-user mode; optional for single-user (Docker support)
+    if [[ "$mode" == "multi-user" ]]; then
+        if ! host_exec "$is_local" "$ssh_target" "command -v systemctl >/dev/null"; then
+            emit_event "$is_local" "$ssh_target" "$name" "preflight" "fail" "deps.systemctl.missing"
+            err "Multi-user mode requires systemctl on $name"
+            return 1
+        fi
     fi
 
     if ! check_dependency_compatibility "$name" "$ssh_target" "$is_local"; then
@@ -713,6 +722,37 @@ install_current_symlinks() {
     done
 }
 
+# Restart a single-user service: try systemctl --user, fall back to SIGHUP.
+# Works in both systemd and non-systemd (Docker) environments.
+restart_single_user_service() {
+    local is_local="$1" ssh_target="$2" svc="$3"
+
+    # Try systemd --user first
+    if host_exec "$is_local" "$ssh_target" "systemctl --user is-active '$svc' &>/dev/null" 2>/dev/null; then
+        host_exec "$is_local" "$ssh_target" "systemctl --user restart '$svc'" || true
+        return
+    fi
+
+    # No systemd service: find process by name and send SIGHUP for graceful restart,
+    # or SIGTERM + wait if SIGHUP is not supported.
+    local pids
+    pids=$(host_exec "$is_local" "$ssh_target" "pgrep -x '$svc' 2>/dev/null" 2>/dev/null || true)
+    if [[ -n "$pids" ]]; then
+        log "No systemd service for $svc, sending SIGTERM to PID(s): $pids"
+        host_exec "$is_local" "$ssh_target" "kill -TERM $pids" || true
+        # Wait briefly for shutdown
+        sleep 2
+        # Verify process stopped
+        if host_exec "$is_local" "$ssh_target" "pgrep -x '$svc' &>/dev/null" 2>/dev/null; then
+            warn "$svc still running after SIGTERM, sending SIGKILL"
+            host_exec "$is_local" "$ssh_target" "kill -KILL $pids" || true
+        fi
+        warn "$svc was stopped but must be restarted manually (no systemd service found)"
+    else
+        warn "$svc: no systemd service and no running process found, skipping restart"
+    fi
+}
+
 restart_services_ordered() {
     local is_local="$1" ssh_target="$2" mode="$3" services="$4"
 
@@ -722,16 +762,17 @@ restart_services_ordered() {
 
     # Ordered restarts: runner -> control plane (oqto) -> everything else.
     if [[ "$mode" == "single-user" ]]; then
-        # Single-user: both oqto and oqto-runner run as user systemd services
-        host_exec "$is_local" "$ssh_target" "systemctl --user restart oqto-runner" || true
-        host_exec "$is_local" "$ssh_target" "systemctl --user restart oqto" || true
+        # Single-user: try systemd --user first, fall back to process signal.
+        # This keeps Docker/non-systemd environments working.
+        restart_single_user_service "$is_local" "$ssh_target" "oqto-runner"
+        restart_single_user_service "$is_local" "$ssh_target" "oqto"
 
         local svc
         for svc in $services; do
             if [[ "$svc" == "oqto" || "$svc" == "oqto-runner" ]]; then
                 continue
             fi
-            host_exec "$is_local" "$ssh_target" "systemctl --user restart '$svc'" || true
+            restart_single_user_service "$is_local" "$ssh_target" "$svc"
         done
     else
         # Multi-user: runner is per-user, oqto is system service
