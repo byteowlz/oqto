@@ -83,7 +83,7 @@ describe("useChat send reliability", () => {
 		expect(managerMock.ensureConnected).toHaveBeenCalled();
 	});
 
-	it("dedupes duplicate tool lifecycle events while streaming", async () => {
+	it("dedupes repeated tool lifecycle events for the same tool_call_id", async () => {
 		const { result } = renderHook(() =>
 			useChat({
 				autoConnect: false,
@@ -109,21 +109,23 @@ describe("useChat send reliability", () => {
 			channel: "agent",
 			session_id: "sess-1",
 			event: "stream.tool_call_start",
-			tool_call_id: "call-a",
-			name: "bash",
-		});
-		emit({
-			channel: "agent",
-			session_id: "sess-1",
-			event: "stream.tool_call_start",
-			tool_call_id: "call-b",
+			tool_call_id: "call-1",
 			name: "bash",
 		});
 		emit({
 			channel: "agent",
 			session_id: "sess-1",
 			event: "tool.start",
-			tool_call_id: "call-c",
+			tool_call_id: "call-1",
+			name: "bash",
+			input: { command: "ls" },
+		});
+		// Duplicate start replay for same tool_call_id should be idempotent.
+		emit({
+			channel: "agent",
+			session_id: "sess-1",
+			event: "tool.start",
+			tool_call_id: "call-1",
 			name: "bash",
 			input: { command: "ls" },
 		});
@@ -131,16 +133,17 @@ describe("useChat send reliability", () => {
 			channel: "agent",
 			session_id: "sess-1",
 			event: "tool.end",
-			tool_call_id: "call-d",
+			tool_call_id: "call-1",
 			name: "bash",
 			output: "ok",
 			is_error: false,
 		});
+		// Duplicate end replay for same tool_call_id should update, not append.
 		emit({
 			channel: "agent",
 			session_id: "sess-1",
 			event: "tool.end",
-			tool_call_id: "call-e",
+			tool_call_id: "call-1",
 			name: "bash",
 			output: "ok-again",
 			is_error: false,
@@ -156,5 +159,89 @@ describe("useChat send reliability", () => {
 			assistant?.parts.filter((part) => part.type === "tool_result") ?? [];
 		expect(toolCalls).toHaveLength(1);
 		expect(toolResults).toHaveLength(1);
+		expect(toolResults[0]).toMatchObject({ output: "ok-again" });
+	});
+
+	it("keeps distinct tool calls separate when ids differ but names match", async () => {
+		const { result } = renderHook(() =>
+			useChat({
+				autoConnect: false,
+				selectedSessionId: "sess-1",
+				workspacePath: "/tmp/ws",
+			}),
+		);
+
+		await waitFor(() => expect(sessionHandler).not.toBeNull());
+		const emit = (event: Record<string, unknown>) => {
+			act(() => {
+				sessionHandler?.(event);
+			});
+		};
+
+		emit({
+			channel: "agent",
+			session_id: "sess-1",
+			event: "stream.message_start",
+			role: "assistant",
+		});
+		emit({
+			channel: "agent",
+			session_id: "sess-1",
+			event: "tool.start",
+			tool_call_id: "call-a",
+			name: "bash",
+			input: { command: "ls" },
+		});
+		emit({
+			channel: "agent",
+			session_id: "sess-1",
+			event: "tool.end",
+			tool_call_id: "call-a",
+			name: "bash",
+			output: "ok-a",
+			is_error: false,
+		});
+		emit({
+			channel: "agent",
+			session_id: "sess-1",
+			event: "tool.start",
+			tool_call_id: "call-b",
+			name: "bash",
+			input: { command: "pwd" },
+		});
+		emit({
+			channel: "agent",
+			session_id: "sess-1",
+			event: "tool.end",
+			tool_call_id: "call-b",
+			name: "bash",
+			output: "ok-b",
+			is_error: false,
+		});
+
+		const assistantMessages = result.current.messages.filter(
+			(m) => m.role === "assistant",
+		);
+		expect(assistantMessages.length).toBeGreaterThan(0);
+		const toolCalls = assistantMessages.flatMap((message) =>
+			message.parts.filter((part) => part.type === "tool_call"),
+		);
+		const toolResults = assistantMessages.flatMap((message) =>
+			message.parts.filter((part) => part.type === "tool_result"),
+		);
+		const toolCallIds = new Set(
+			toolCalls.map((part) =>
+				part.type === "tool_call" ? part.toolCallId : undefined,
+			),
+		);
+		const toolResultIds = new Set(
+			toolResults.map((part) =>
+				part.type === "tool_result" ? part.toolCallId : undefined,
+			),
+		);
+		expect(toolCallIds.has("call-a")).toBe(true);
+		expect(toolCallIds.has("call-b")).toBe(true);
+		expect(toolResultIds.has("call-a")).toBe(true);
+		expect(toolResultIds.has("call-b")).toBe(true);
 	});
 });

@@ -342,6 +342,19 @@ bun run lint                             # Verify everything passes
 - **Frontend dev server** runs in tmux pane `%5` (check with `tmux list-panes -a`).
 - **Rebuild backend**: `cd backend && cargo build --release` then restart the process in its tmux pane.
 
+## Deployment (Transactional)
+
+`just deploy` now uses `scripts/deploy.sh` with transactional releases.
+
+- Releases are staged under `/var/lib/oqto/releases/<release-id>/`.
+- Activation is an atomic symlink switch (`current -> <release-id>`).
+- Preflight gates hard-stop before activation (mode checks, disk checks, multi-user sandbox/seccomp prerequisites).
+- Failed post-activate health checks trigger automatic rollback to previous release.
+- Structured update lifecycle events are written to `/var/log/oqto/update-events.jsonl`.
+- Canary rollout is supported via `canary = true` in `deploy/hosts.toml` and `--canary` / `--canary-then-fleet`.
+
+Runbook details: `deploy/DEPLOY.md`.
+
 ## Pre-Commit Lint Checklist
 
 **Run ALL of these before every commit.** No exceptions.

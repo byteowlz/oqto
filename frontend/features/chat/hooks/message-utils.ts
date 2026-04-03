@@ -716,6 +716,23 @@ function messageTextSignature(message: DisplayMessage): string {
 		.trim();
 }
 
+function messageToolCallIds(message: DisplayMessage): Set<string> {
+	const ids = new Set<string>();
+	for (const part of message.parts) {
+		if (part.type === "tool_call" || part.type === "tool_result") {
+			if (part.toolCallId) ids.add(part.toolCallId);
+		}
+	}
+	return ids;
+}
+
+function hasToolCallIntersection(a: Set<string>, b: Set<string>): boolean {
+	for (const id of a) {
+		if (b.has(id)) return true;
+	}
+	return false;
+}
+
 /**
  * Merge server messages with local messages, preserving in-flight optimistic updates.
  *
@@ -799,32 +816,48 @@ export function mergeServerMessages(
 	}
 
 	// mode === "authoritative"
-	// Server is the complete source of truth. Preserve in-flight local
-	// messages the server doesn't know yet, even across reload/resync order
-	// changes, so user messages never disappear.
+	// Server is the complete source of truth. Preserve only in-flight local
+	// streaming messages that are truly absent on the server. When history
+	// fetch races with live streaming, the same assistant message can appear in
+	// both sources with different IDs; preserving blindly would duplicate tool
+	// cards in the UI.
 	const serverClientIds = new Set(
-		serverMessages.filter((m) => m.clientId).map((m) => m.clientId),
+		serverMessages
+			.filter((m) => typeof m.clientId === "string" && m.clientId.length > 0)
+			.map((m) => m.clientId as string),
 	);
 	const serverFingerprints = new Set(
 		serverMessages.map((m) => messageFingerprint(m)),
 	);
+	const serverTextSignatures = new Set(
+		serverMessages
+			.map((m) => messageTextSignature(m))
+			.filter((s) => s.length > 0),
+	);
+	const serverToolCallIds = new Set<string>();
+	for (const msg of serverMessages) {
+		for (const id of messageToolCallIds(msg)) {
+			serverToolCallIds.add(id);
+		}
+	}
 
 	const preserved: DisplayMessage[] = [];
 	for (const msg of previous) {
-		// Only preserve truly in-flight streaming messages
-		if (msg.isStreaming) {
-			preserved.push(msg);
+		if (!msg.isStreaming) continue;
+		if (msg.clientId && serverClientIds.has(msg.clientId)) continue;
+		if (serverFingerprints.has(messageFingerprint(msg))) continue;
+		const textSig = messageTextSignature(msg);
+		if (textSig.length > 0 && serverTextSignatures.has(textSig)) continue;
+		const toolIds = messageToolCallIds(msg);
+		if (
+			toolIds.size > 0 &&
+			hasToolCallIntersection(toolIds, serverToolCallIds)
+		) {
+			continue;
 		}
-		// Do NOT preserve non-streaming user messages in authoritative mode.
-		// If the server doesn't have them, they were either:
-		// - From a different session (cache contamination)
-		// - Already persisted but lost their clientId on server serialization
-		// In both cases, we should NOT preserve them to avoid duplicates.
+		preserved.push(msg);
 	}
 
 	if (preserved.length === 0) return serverMessages;
-	// Append preserved (in-flight) messages after server messages.
-	// Server messages are already in correct order from hstry.
-	// Preserved messages (streaming only) logically come after the last server message.
 	return [...serverMessages, ...preserved];
 }

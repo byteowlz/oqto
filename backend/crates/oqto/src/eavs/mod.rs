@@ -63,6 +63,15 @@ pub fn generate_pi_models_json(
 
         let base_url = format!("{}/{}/v1", base, provider.name);
 
+        // MiniMax models frequently emit inline <think> traces in text output.
+        // Route them through Pi's think-tag conversion adapter so downstream
+        // consumers (e.g. auto-rename) receive clean text.
+        let provider_api = if provider.models.iter().any(|m| m.id.contains("MiniMax")) {
+            "openai-completions-convert-think-tags"
+        } else {
+            pi_api
+        };
+
         let models: Vec<serde_json::Value> = provider
             .models
             .iter()
@@ -97,7 +106,7 @@ pub fn generate_pi_models_json(
         let key_value = api_key.unwrap_or("not-needed");
         let mut pi_provider = serde_json::json!({
             "baseUrl": base_url,
-            "api": pi_api,
+            "api": provider_api,
             "apiKey": key_value,
             "models": models,
         });

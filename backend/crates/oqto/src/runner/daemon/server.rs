@@ -2192,9 +2192,27 @@ impl Runner {
                     .unwrap_or_else(|| "global".to_string());
                 let project_name = crate::history::project_name_from_path(&workspace_path);
 
+                // Prefer platform_id (Oqto session ID) over external_id (Pi native ID)
+                // to stay consistent with list_workspace_chat_sessions. The frontend
+                // routes everything by the Oqto UUID; returning the Pi native ID here
+                // causes manuallyRenamedRef to be keyed under the wrong ID and the
+                // rename gets reverted on the next refreshChatHistory cycle.
+                let session_id = conv
+                    .platform_id
+                    .as_ref()
+                    .filter(|s| !s.is_empty())
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        if conv.external_id.is_empty() {
+                            req.session_id.clone()
+                        } else {
+                            conv.external_id.clone()
+                        }
+                    });
+
                 RunnerResponse::WorkspaceChatSessionUpdated(WorkspaceChatSessionUpdatedResponse {
                     session: WorkspaceChatSessionInfo {
-                        id: conv.external_id.clone(),
+                        id: session_id,
                         readable_id: conv.readable_id.clone().unwrap_or_default(),
                         title: conv.title.clone(),
                         parent_id: None,
