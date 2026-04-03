@@ -15,9 +15,11 @@ use crate::{SandboxConfig, SandboxConfigFile};
 #[command(
     name = "oqto-sandbox",
     about = "Sandbox wrapper for agent processes",
+    trailing_var_arg = true,
     after_help = "Examples:\n  \
+        oqto-sandbox ls -la\n  \
         oqto-sandbox --profile development -- agent serve\n  \
-        oqto-sandbox --config ./sandbox.toml -- cargo build\n  \
+        oqto-sandbox --config ./sandbox.toml cargo build\n  \
         oqto-sandbox --dry-run --profile strict -- npm install"
 )]
 struct Args {
@@ -39,7 +41,7 @@ struct Args {
     #[arg(short, long)]
     verbose: bool,
 
-    #[arg(last = true, required = true)]
+    #[arg(trailing_var_arg = true, required = true)]
     command: Vec<String>,
 }
 
