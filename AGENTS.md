@@ -341,6 +341,7 @@ bun run lint                             # Verify everything passes
 - **Backend is at** `archlinux:8080` (tmux pane `0:1.1`).
 - **Frontend dev server** runs in tmux pane `%5` (check with `tmux list-panes -a`).
 - **Rebuild backend**: `cd backend && cargo build --release` then restart the process in its tmux pane.
+- **Version bumps**: Always use `just bump patch` (or `minor`/`major`). Never edit `backend/Cargo.toml` version manually -- `just bump` updates Cargo.toml, regenerates Cargo.lock, and updates frontend package versions atomically. Deploy will fail if Cargo.lock is stale.
 
 ## Deployment (Transactional)
 
