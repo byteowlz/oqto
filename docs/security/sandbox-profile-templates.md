@@ -14,6 +14,18 @@ Oqto ships ready-to-use sandbox templates in:
 
 ## Rollout advice
 
+### Optional overlayfs package/toolchain isolation
+
+`development-safe` can optionally enable overlayfs path redirection:
+
+```toml
+overlay_enabled = true
+overlay_root = "~/.oqto/overlays"
+overlay_paths = ["~/.cargo", "~/.npm", "~/.bun", "~/.local/share/uv", "~/.cache/uv"]
+```
+
+When enabled, writes for `overlay_paths` are redirected to per-workspace upperdirs under `overlay_root`, while reads continue from the original paths.
+
 Start with:
 
 - `seccomp_mode = "audit"`

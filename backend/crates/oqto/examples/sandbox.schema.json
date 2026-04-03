@@ -107,6 +107,24 @@
         "type": "string"
       },
       "default": []
+    },
+    "overlay_enabled": {
+      "type": "boolean",
+      "description": "Enable overlayfs redirection for overlay_paths using bwrap --overlay.",
+      "default": false
+    },
+    "overlay_root": {
+      "type": "string",
+      "description": "Root directory for per-workspace overlay upper/work dirs.",
+      "default": "~/.oqto/overlays"
+    },
+    "overlay_paths": {
+      "type": "array",
+      "description": "Paths to mount via overlayfs (reads from original path, writes redirected).",
+      "items": {
+        "type": "string"
+      },
+      "default": []
     }
   },
   "additionalProperties": false,
@@ -124,6 +142,9 @@
     "no_new_privs": "OR - if either enables, it's enabled",
     "landlock_mode": "Stricter mode wins (off < audit < enforce)",
     "seccomp_mode": "Stricter mode wins (off < audit < enforce)",
-    "seccomp_bpf_path": "Workspace path preferred when set; otherwise global value"
+    "seccomp_bpf_path": "Workspace path preferred when set; otherwise global value",
+    "overlay_enabled": "OR - if either enables, it's enabled",
+    "overlay_paths": "Union - workspace can add overlay targets",
+    "overlay_root": "Workspace value preferred when set to non-default"
   }
 }

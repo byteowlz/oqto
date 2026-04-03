@@ -75,6 +75,9 @@ isolate_pid = true
 # landlock_mode = "audit"         # off | audit | enforce (enforce fail-closed if unsupported)
 # seccomp_mode = "audit"          # off | audit | enforce
 # seccomp_bpf_path = "/etc/oqto/seccomp/default.bpf"
+# overlay_enabled = true           # route writes for selected paths into overlayfs upperdirs
+# overlay_root = "~/.oqto/overlays"
+# overlay_paths = ["~/.npm", "~/.cargo", "~/.local/share/uv"]
 
 # --- Guarded paths (oqto-guard / FUSE) ---
 # These paths are accessible but require runtime approval
@@ -170,6 +173,9 @@ log_requests = true
 # - allow_write: Intersection (must be allowed by BOTH global and workspace)
 # - isolate_network/isolate_pid: OR (if either enables, it's enabled)
 # - drop_all_caps/disable_userns/assert_userns_disabled: OR (stricter wins)
+# - overlay_enabled: OR (if either enables, overlays are enabled)
+# - overlay_paths: Union (workspace can add overlay targets)
+# - overlay_root: workspace value used if explicitly set; otherwise global
 # - Workspace can reference profiles defined in global config
 #
 # This ensures workspaces can only STRENGTHEN security, never weaken it.

@@ -132,6 +132,10 @@ fn default_true() -> bool {
     true
 }
 
+fn default_overlay_root() -> String {
+    "~/.oqto/overlays".to_string()
+}
+
 // ============================================================================
 // Network Configuration (integrates with eavs)
 // ============================================================================
@@ -356,6 +360,24 @@ pub struct SandboxProfile {
     /// Additional paths to bind read-write.
     pub extra_rw_bind: Vec<String>,
 
+    /// Enable overlayfs redirection for selected paths.
+    ///
+    /// When enabled, each path in `overlay_paths` is mounted with bwrap overlay
+    /// so writes go to a per-workspace upperdir under `overlay_root` while reads
+    /// come from the original path.
+    #[serde(default)]
+    pub overlay_enabled: bool,
+
+    /// Root directory for per-workspace overlay upper/work dirs.
+    ///
+    /// Example: `~/.oqto/overlays`
+    #[serde(default = "default_overlay_root")]
+    pub overlay_root: String,
+
+    /// Paths to overlay (typically package/toolchain directories).
+    #[serde(default)]
+    pub overlay_paths: Vec<String>,
+
     // --- oqto-guard (FUSE) layer ---
     /// Configuration for runtime file access control.
     #[serde(default)]
@@ -409,6 +431,9 @@ impl SandboxProfile {
             seccomp_bpf_path: None,
             extra_ro_bind: vec![],
             extra_rw_bind: vec![],
+            overlay_enabled: false,
+            overlay_root: default_overlay_root(),
+            overlay_paths: vec![],
             guard: None,
             ssh: None,
             network: None,
@@ -463,6 +488,15 @@ impl SandboxProfile {
             seccomp_bpf_path: None,
             extra_ro_bind: vec![],
             extra_rw_bind: vec![],
+            overlay_enabled: false,
+            overlay_root: default_overlay_root(),
+            overlay_paths: vec![
+                "~/.cargo".to_string(),
+                "~/.npm".to_string(),
+                "~/.bun".to_string(),
+                "~/.local/share/uv".to_string(),
+                "~/.cache/uv".to_string(),
+            ],
             // Development profile enables SSH proxy by default
             guard: None,
             ssh: Some(SshProxyConfig {
@@ -510,6 +544,9 @@ impl SandboxProfile {
             seccomp_bpf_path: None,
             extra_ro_bind: vec![],
             extra_rw_bind: vec![],
+            overlay_enabled: false,
+            overlay_root: default_overlay_root(),
+            overlay_paths: vec![],
             guard: None,
             ssh: Some(SshProxyConfig {
                 enabled: false,
@@ -621,6 +658,15 @@ pub struct SandboxConfig {
     /// Additional paths to bind read-write.
     pub extra_rw_bind: Vec<String>,
 
+    /// Enable overlayfs redirection for selected paths.
+    pub overlay_enabled: bool,
+
+    /// Root directory for per-workspace overlay upper/work dirs.
+    pub overlay_root: String,
+
+    /// Paths to overlay (typically package/toolchain directories).
+    pub overlay_paths: Vec<String>,
+
     /// Custom profiles loaded from config (for workspace merging).
     #[serde(skip_serializing_if = "HashMap::is_empty", default)]
     pub profiles: HashMap<String, SandboxProfile>,
@@ -651,6 +697,9 @@ impl Default for SandboxConfig {
             seccomp_bpf_path: profile.seccomp_bpf_path,
             extra_ro_bind: profile.extra_ro_bind,
             extra_rw_bind: profile.extra_rw_bind,
+            overlay_enabled: profile.overlay_enabled,
+            overlay_root: profile.overlay_root,
+            overlay_paths: profile.overlay_paths,
             profiles: HashMap::new(),
         }
     }
@@ -695,6 +744,9 @@ impl From<SandboxConfigFile> for SandboxConfig {
             seccomp_bpf_path: profile.seccomp_bpf_path,
             extra_ro_bind: profile.extra_ro_bind,
             extra_rw_bind: profile.extra_rw_bind,
+            overlay_enabled: profile.overlay_enabled,
+            overlay_root: profile.overlay_root,
+            overlay_paths: profile.overlay_paths,
             profiles: file.profiles,
         };
 
@@ -729,6 +781,9 @@ impl SandboxConfig {
             seccomp_bpf_path: profile.seccomp_bpf_path,
             extra_ro_bind: profile.extra_ro_bind,
             extra_rw_bind: profile.extra_rw_bind,
+            overlay_enabled: profile.overlay_enabled,
+            overlay_root: profile.overlay_root,
+            overlay_paths: profile.overlay_paths,
             profiles: HashMap::new(),
         }
     }
@@ -753,6 +808,9 @@ impl SandboxConfig {
             seccomp_bpf_path: profile.seccomp_bpf_path,
             extra_ro_bind: profile.extra_ro_bind,
             extra_rw_bind: profile.extra_rw_bind,
+            overlay_enabled: profile.overlay_enabled,
+            overlay_root: profile.overlay_root,
+            overlay_paths: profile.overlay_paths,
             profiles: HashMap::new(),
         }
     }
@@ -798,6 +856,9 @@ impl SandboxConfig {
             seccomp_bpf_path: profile.seccomp_bpf_path,
             extra_ro_bind: profile.extra_ro_bind,
             extra_rw_bind: profile.extra_rw_bind,
+            overlay_enabled: profile.overlay_enabled,
+            overlay_root: profile.overlay_root,
+            overlay_paths: profile.overlay_paths,
             profiles: custom_profiles.clone(),
         };
 
@@ -907,6 +968,9 @@ impl SandboxConfig {
                         seccomp_bpf_path: profile.seccomp_bpf_path,
                         extra_ro_bind: profile.extra_ro_bind,
                         extra_rw_bind: profile.extra_rw_bind,
+                        overlay_enabled: profile.overlay_enabled,
+                        overlay_root: profile.overlay_root,
+                        overlay_paths: profile.overlay_paths,
                         profiles: merged_profiles,
                     };
 
@@ -970,6 +1034,10 @@ impl SandboxConfig {
         let mut extra_rw_bind: HashSet<String> = self.extra_rw_bind.iter().cloned().collect();
         extra_rw_bind.extend(workspace_config.extra_rw_bind.iter().cloned());
 
+        // overlay paths are additive
+        let mut overlay_paths: HashSet<String> = self.overlay_paths.iter().cloned().collect();
+        overlay_paths.extend(workspace_config.overlay_paths.iter().cloned());
+
         // Merge profiles (workspace can add, global takes precedence for same name)
         let mut profiles = workspace_config.profiles.clone();
         profiles.extend(self.profiles.clone());
@@ -1010,6 +1078,13 @@ impl SandboxConfig {
                 .or_else(|| self.seccomp_bpf_path.clone()),
             extra_ro_bind: extra_ro_bind.into_iter().collect(),
             extra_rw_bind: extra_rw_bind.into_iter().collect(),
+            overlay_enabled: self.overlay_enabled || workspace_config.overlay_enabled,
+            overlay_root: if workspace_config.overlay_root != default_overlay_root() {
+                workspace_config.overlay_root.clone()
+            } else {
+                self.overlay_root.clone()
+            },
+            overlay_paths: overlay_paths.into_iter().collect(),
             profiles,
         }
     }
@@ -1077,6 +1152,23 @@ impl SandboxConfig {
             }
         }
         PathBuf::from(path)
+    }
+
+    /// Build a stable workspace identifier for overlay directory layout.
+    fn workspace_overlay_id(workspace: &Path) -> String {
+        use std::hash::{Hash, Hasher};
+
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        workspace.to_string_lossy().hash(&mut hasher);
+        format!("{:016x}", hasher.finish())
+    }
+
+    /// Build a filesystem-safe key from a path.
+    fn overlay_path_key(path: &Path) -> String {
+        path.to_string_lossy()
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+            .collect()
     }
 
     /// Get home directory for a specific user by looking up passwd.
@@ -1337,6 +1429,87 @@ impl SandboxConfig {
             }
         }
 
+        // Overlayfs redirection for selected paths.
+        // This keeps original paths readable while redirecting writes to
+        // per-workspace upperdirs under overlay_root.
+        if self.overlay_enabled {
+            let overlay_root = Self::expand_home_for_user(&self.overlay_root, username);
+            let workspace_id = Self::workspace_overlay_id(workspace);
+            let mut mounted_overlays = 0usize;
+
+            for path in &self.overlay_paths {
+                let expanded = Self::expand_home_for_user(path, username);
+
+                if !expanded.exists()
+                    && let Err(e) = std::fs::create_dir_all(&expanded)
+                {
+                    warn!(
+                        "overlay: failed to create missing target '{}' (from '{}'): {}",
+                        expanded.display(),
+                        path,
+                        e
+                    );
+                    continue;
+                }
+
+                let target = expanded.to_string_lossy().to_string();
+                let path_key = Self::overlay_path_key(&expanded);
+                let overlay_base = overlay_root.join(&workspace_id).join(path_key);
+                let upper = overlay_base.join("upper");
+                let work = overlay_base.join("work");
+
+                if let Err(e) = std::fs::create_dir_all(&upper) {
+                    warn!(
+                        "overlay: failed to create upperdir '{}': {}",
+                        upper.display(),
+                        e
+                    );
+                    continue;
+                }
+
+                // workdir must be empty for overlayfs.
+                if work.exists()
+                    && let Err(e) = std::fs::remove_dir_all(&work)
+                {
+                    warn!(
+                        "overlay: failed to reset workdir '{}': {}",
+                        work.display(),
+                        e
+                    );
+                    continue;
+                }
+                if let Err(e) = std::fs::create_dir_all(&work) {
+                    warn!(
+                        "overlay: failed to create workdir '{}': {}",
+                        work.display(),
+                        e
+                    );
+                    continue;
+                }
+
+                args.push("--overlay-src".to_string());
+                args.push(target.clone());
+                args.push("--overlay".to_string());
+                args.push(upper.to_string_lossy().to_string());
+                args.push(work.to_string_lossy().to_string());
+                args.push(target.clone());
+
+                mounted_overlays += 1;
+                debug!(
+                    "overlay mounted: target='{}', upper='{}', work='{}'",
+                    target,
+                    upper.display(),
+                    work.display()
+                );
+            }
+
+            info!(
+                "Overlayfs enabled: mounted {} path(s) under {}",
+                mounted_overlays,
+                overlay_root.display()
+            );
+        }
+
         // Namespace and kernel-surface hardening
         if self.isolate_pid {
             args.push("--unshare-pid".to_string());
@@ -1528,7 +1701,9 @@ impl SandboxConfig {
         #[cfg(not(target_os = "linux"))]
         {
             if self.landlock_mode == LandlockMode::Enforce {
-                return Err(std::io::Error::other("landlock enforce requested on non-Linux platform"));
+                return Err(std::io::Error::other(
+                    "landlock enforce requested on non-Linux platform",
+                ));
             }
             return Ok(());
         }
@@ -1537,7 +1712,9 @@ impl SandboxConfig {
         {
             if !Self::is_landlock_supported() {
                 if self.landlock_mode == LandlockMode::Enforce {
-                    return Err(std::io::Error::other("landlock enforce requested but kernel does not support landlock"));
+                    return Err(std::io::Error::other(
+                        "landlock enforce requested but kernel does not support landlock",
+                    ));
                 }
                 return Ok(());
             }
@@ -1579,7 +1756,8 @@ impl SandboxConfig {
                 })?;
 
                 // SAFETY: Open path for Landlock rule registration.
-                let parent_fd = unsafe { libc::open(c_path.as_ptr(), libc::O_PATH | libc::O_CLOEXEC) };
+                let parent_fd =
+                    unsafe { libc::open(c_path.as_ptr(), libc::O_PATH | libc::O_CLOEXEC) };
                 if parent_fd < 0 {
                     if self.landlock_mode == LandlockMode::Enforce {
                         // SAFETY: close best-effort on previously created fd.
@@ -1623,7 +1801,8 @@ impl SandboxConfig {
             }
 
             // SAFETY: apply Landlock restrictions to current process.
-            let restrict_rc = unsafe { libc::syscall(libc::SYS_landlock_restrict_self, ruleset_fd, 0) };
+            let restrict_rc =
+                unsafe { libc::syscall(libc::SYS_landlock_restrict_self, ruleset_fd, 0) };
             // SAFETY: close ruleset fd after use.
             unsafe {
                 libc::close(ruleset_fd);
@@ -1645,9 +1824,7 @@ impl SandboxConfig {
 
         let Some(path) = self.resolve_seccomp_bpf_path(username) else {
             if self.seccomp_mode == SeccompMode::Enforce {
-                anyhow::bail!(
-                    "seccomp_mode=enforce requires seccomp_bpf_path to be configured"
-                );
+                anyhow::bail!("seccomp_mode=enforce requires seccomp_bpf_path to be configured");
             }
             return Ok(None);
         };
