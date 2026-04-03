@@ -45,20 +45,60 @@ struct Args {
     command: Vec<String>,
 }
 
+/// Config lookup chain (first match wins):
+/// 1. Explicit `--config` flag
+/// 2. `/etc/oqto/sandbox.toml` (system, trusted)
+/// 3. `~/.config/oqto/sandbox.toml` (user)
+/// 4. Hardcoded profile defaults
+///
+/// Workspace config (`.oqto/sandbox.toml`) is merged on top in `run_cli`
+/// and can only add restrictions, never weaken them.
 fn load_config(args: &Args) -> Result<SandboxConfig> {
-    if let Some(config_path) = &args.config {
+    let mut config = if let Some(config_path) = &args.config {
+        info!("Loading sandbox config from explicit path: {:?}", config_path);
         let content = std::fs::read_to_string(config_path)
             .with_context(|| format!("reading config file: {:?}", config_path))?;
         let file: SandboxConfigFile =
             toml::from_str(&content).with_context(|| "parsing config file")?;
-        let mut config: SandboxConfig = file.into();
-        config.enabled = !args.no_sandbox;
-        Ok(config)
+        file.into()
     } else {
-        let mut config = SandboxConfig::from_profile(&args.profile);
-        config.enabled = !args.no_sandbox;
-        Ok(config)
+        load_config_from_chain(&args.profile)?
+    };
+
+    config.enabled = !args.no_sandbox;
+    Ok(config)
+}
+
+const SYSTEM_SANDBOX_CONFIG: &str = "/etc/oqto/sandbox.toml";
+
+/// Load config from the standard lookup chain:
+/// 1. `/etc/oqto/sandbox.toml` (system)
+/// 2. `~/.config/oqto/sandbox.toml` (user)
+/// 3. Hardcoded profile defaults
+fn load_config_from_chain(profile: &str) -> Result<SandboxConfig> {
+    let system_path = PathBuf::from(SYSTEM_SANDBOX_CONFIG);
+    if system_path.exists() {
+        info!("Loading sandbox config from system path: {:?}", system_path);
+        let content = std::fs::read_to_string(&system_path)
+            .with_context(|| format!("reading system config: {:?}", system_path))?;
+        let file: SandboxConfigFile =
+            toml::from_str(&content).with_context(|| format!("parsing system config: {:?}", system_path))?;
+        return Ok(file.into());
     }
+
+    let user_path = dirs::config_dir()
+        .unwrap_or_else(|| PathBuf::from("~/.config"))
+        .join("oqto")
+        .join("sandbox.toml");
+
+    if user_path.exists() {
+        info!("Loading sandbox config from user path: {:?}", user_path);
+        return SandboxConfig::load_user_config()
+            .context("user sandbox config exists but failed to parse");
+    }
+
+    info!("No config file found, using hardcoded profile '{}'", profile);
+    Ok(SandboxConfig::from_profile(profile))
 }
 
 #[cfg(unix)]
@@ -252,6 +292,9 @@ pub fn run_cli() -> Result<()> {
         .clone()
         .or_else(|| std::env::current_dir().ok())
         .unwrap_or_else(|| PathBuf::from("."));
+
+    // Merge workspace config on top (can only add restrictions, never weaken)
+    let config = config.with_workspace_config(&workspace);
 
     info!(
         "oqto-sandbox: platform={}, profile={}, workspace={:?}, command={:?}",
