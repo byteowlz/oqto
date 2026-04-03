@@ -50,6 +50,21 @@ setup.sh must correctly provision everything for a new platform user on a fresh 
 ...
 
 
+### [oqto-pwa1] Sandbox profile hierarchy: strict/development/privileged/godmode (P1, task)
+Implement four-tier profile hierarchy for sandbox configuration.\n\n- strict: overlay isolation, deny secrets, network isolated, seccomp+landlock enforce.\n- development: overlay isolation, deny secrets, network open, seccomp+landlock audit.\n- privileged: no overlay, full home write, deny secrets, no seccomp/landlock.\n- godmode: no sandbox at all, full access (explicit opt-in only, user/system config, not workspace).\n\nGodmode constraints:\n- Cannot be set via workspace .oqto/sandbox.toml (only user or system config).\n- Audited and logged.\n- Cannot be set by agent itself.
+
+### [oqto-w2xs] Overlay filesystem isolation for agent toolchains (P1, epic)
+Use bwrap --overlay to isolate agent package installs from user environment.\n\nGoals\n- Agent npm/pip/cargo installs never modify user real paths.\n- User environment stays clean even if agent installs malicious packages.\n- Cleanup is trivial: discard overlay directory.\n- Shared read-only base for cache efficiency.\n\nDesign\n- Mount real toolchain paths (~/.npm, ~/.cargo, ~/.local/share/uv) as read-only lower layer.\n- Agent writes go to per-workspace overlay: ~/.oqto/overlays/{workspace-hash}/\n- Agent sees merged view (upper wins), user sees clean original.\n- Overlay handles conflicts, deletes (whiteout), and modifications (copy-up) transparently.\n\nProfile integration\n- strict/development profiles: overlay enabled.\n- privileged profile: no overlay, direct write.\n- godmode profile: no sandbox at all.\n\nDefinition of done\n- Agent package installs are isolated via overlay.\n- User toolchains are never modified by agent activity.\n- Overlay cleanup is one command per workspace.\n- Configurable per profile.
+
+### [oqto-razr.2] Privileged operation policy engine with risk tiers (P1, task)
+Define operation categories (package install, service restart, config write, etc.) with risk tiers. Implement policy evaluation that determines approval requirements per operation. Integrates with kyz lease model.
+
+### [oqto-razr.1] Sudo shim: intercept sudo calls and route to runner (P1, task)
+Create a sudo wrapper binary that sits in sandbox PATH before real sudo. Intercepts command, sends structured request to runner via socket, streams result back. Agent sees normal sudo behavior.
+
+### [oqto-razr] Runner-mediated privileged operations (sudo proxy) (P1, epic)
+Agents cannot have sudo/root inside the sandbox (by design: no_new_privs + bwrap). Instead, privileged operations are mediated through the runner using the same approval/lease model as SSH and secrets.\n\nGoals\n- Agent can request privileged operations without holding real sudo.\n- Runner executes outside sandbox after user approval.\n- Result piped back to agent transparently.\n- Full audit trail of privileged operations.\n\nScope\n1) Privileged operation wrapper (sudo shim)\n   - Intercepts sudo/pkexec calls inside sandbox.\n   - Routes to runner as structured capability request.\n   - Agent sees normal command output.\n\n2) Operation categories and risk tiers\n   - Low: package install (apt/pacman/brew), read system info.\n   - Medium: service restart, port binding, device access.\n   - High: write to /etc, modify system config, user management.\n\n3) Approval model (reuses kyz lease engine)\n   - Per-command, per-session, or TTL-based approvals.\n   - Risk-tiered prompts (low=auto+audit, high=explicit).\n   - Presets for common patterns (e.g. allow apt install for session).\n\n4) Runner execution path\n   - Runner validates request against policy.\n   - Executes command outside sandbox with real privileges.\n   - Streams stdout/stderr back to agent.\n   - Logs operation with full context.\n\n5) Safety constraints\n   - Allowlist of mediated commands (not arbitrary sudo).\n   - Deny dangerous operations by default (rm -rf /, passwd, etc.).\n   - Max privilege scope per session.\n   - Cannot modify sandbox config or runner config.\n\nDefinition of done\n- Agent can run apt install / systemctl restart via mediated path.\n- User gets clear approval prompt with risk tier.\n- Runner executes privileged op and pipes result back.\n- All privileged operations are auditable and revocable.\n- Dangerous operations are denied by default.
+
 ### [oqto-3c42.1] Runner egress policy hardening: add enforceable host-allowlist boundary with audit semantics (P1, task)
 Implement runner-native egress policy boundary for secret-bearing operations: host/domain allowlist enforcement, deny-by-default behavior, and structured allow/deny reason codes. Use iron-proxy as design reference only; do not introduce external MITM dependency.
 
@@ -625,6 +640,9 @@ Build and distribute pre-compiled binaries for Linux (x86_64, arm64) and macOS (
 
 ### [octo-af5j] Release & Update System (P1, epic)
 Comprehensive, bullet-proof release and update system for Oqto with transactional deployment semantics, strict preflight gates, staged rollout, and automatic rollback.\n\nGoals\n- Never leave host in half-updated state.\n- Fail fast before deployment when prerequisites are missing.\n- Guarantee mode-aware safety (single-user dev vs multi-user production).\n- Provide deterministic rollback on failed health checks.\n- Emit auditable update lifecycle events.\n\nScope\n1) Preflight gate engine (hard-stop)\n   - Validate target mode and required sandbox prerequisites.\n   - Multi-user checks: /etc/oqto/sandbox.toml presence + owner/perms + readability.\n   - If seccomp enforce configured: require /etc/oqto/seccomp/default.bpf.\n   - Validate service dependencies, disk space, binary availability, and schema/config parse.\n\n2) Transactional deployment layout\n   - Versioned release directories + atomic symlink switch.\n   - Prepare phase (build/upload/verify) separate from activate phase.\n   - Auto-rollback to last known-good release on post-activate health failure.\n\n3) Staged activation and health verification\n   - Ordered restarts (runner/control-plane/dependent services).\n   - Bounded readiness checks: runner socket, spawn smoke test, hstry/mmry connectivity.\n   - Canary mode: update one host first, then fleet rollout.\n\n4) Idempotent update CLI/API\n   - Re-running update converges safely to desired state.\n   - Resume support for interrupted updates with clear status reporting.\n\n5) Observability and audit trail\n   - Structured events: preflight.start/pass/fail, deploy.start/pass/fail, rollback.start/pass/fail.\n   - Persist update metadata: release ID, host, actor, timestamps, decision reason codes.\n\nDefinition of done\n- Multi-user host update fails before activation if sandbox prerequisites are missing.\n- Successful update is atomic from operator perspective (no mixed-version runtime).\n- Failed update auto-rolls back and restores previous healthy state.\n- Update process is idempotent and documented with operator runbook.\n- Canary + fleet rollout path is documented and tested.
+
+### [oqto-razr.3] Runner privileged execution path (P2, task)
+Runner-side handler that receives privileged operation requests, validates against policy, executes outside sandbox with real privileges, and streams stdout/stderr back to the requesting agent process.
 
 ### [oqto-e8vx] Tool calls sometimes are shown duplicated (P2, bug)
 
@@ -2345,11 +2363,11 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
 - [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
-- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
 - [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
 - [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
-- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
 - [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
+- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
