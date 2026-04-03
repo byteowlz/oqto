@@ -6,8 +6,15 @@ import {
 	searchSessions,
 } from "@/lib/control-plane-client";
 import { cn } from "@/lib/utils";
-import { Bot, Loader2, MessageSquare, Search, User } from "lucide-react";
-import { useEffect, useState } from "react";
+import {
+	Bot,
+	FileText,
+	Loader2,
+	MessageSquare,
+	Search,
+	User,
+} from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 export type SearchMode = "sessions" | "messages";
@@ -50,14 +57,165 @@ function formatTimestamp(timestamp: number | undefined): string {
 	}
 }
 
-function getAgentLabel(agent: string, t: (key: string) => string): string {
-	if (agent === "pi_agent") return t("search.piAgent");
-	return agent;
+/**
+ * Strip HTML tags, markdown syntax, and clean up whitespace from a text snippet.
+ */
+function cleanSnippet(raw: string): string {
+	let text = raw;
+	// Remove HTML tags
+	text = text.replace(/<[^>]*>/g, "");
+	// Remove markdown bold/italic
+	text = text.replace(/\*{1,3}([^*]+)\*{1,3}/g, "$1");
+	text = text.replace(/_{1,3}([^_]+)_{1,3}/g, "$1");
+	// Remove markdown headers
+	text = text.replace(/^#{1,6}\s+/gm, "");
+	// Remove markdown links [text](url)
+	text = text.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
+	// Remove markdown images ![alt](url)
+	text = text.replace(/!\[([^\]]*)\]\([^)]+\)/g, "$1");
+	// Remove markdown code backticks
+	text = text.replace(/```[^`]*```/gs, "[code]");
+	text = text.replace(/`([^`]+)`/g, "$1");
+	// Remove markdown list markers
+	text = text.replace(/^[\s]*[-*+]\s+/gm, "");
+	text = text.replace(/^[\s]*\d+\.\s+/gm, "");
+	// Remove markdown blockquotes
+	text = text.replace(/^>\s*/gm, "");
+	// Remove markdown horizontal rules
+	text = text.replace(/^[-*_]{3,}\s*$/gm, "");
+	// Decode common HTML entities
+	text = text.replace(/&amp;/g, "&");
+	text = text.replace(/&lt;/g, "<");
+	text = text.replace(/&gt;/g, ">");
+	text = text.replace(/&quot;/g, '"');
+	text = text.replace(/&#39;/g, "'");
+	text = text.replace(/&nbsp;/g, " ");
+	// Collapse multiple whitespace/newlines
+	text = text.replace(/\s+/g, " ").trim();
+	return text;
+}
+
+/**
+ * Extract surrounding context from full content around a snippet match.
+ * Returns ~5 lines before and after the match for context.
+ */
+function extractContext(
+	content: string | undefined,
+	snippet: string | undefined,
+): string | null {
+	if (!content || !snippet) return null;
+	const cleaned = cleanSnippet(snippet).slice(0, 60);
+	if (!cleaned) return null;
+
+	const lines = content.split("\n");
+	const lowerCleaned = cleaned.toLowerCase();
+
+	// Find the line containing the snippet
+	let matchLineIdx = -1;
+	for (let i = 0; i < lines.length; i++) {
+		if (lines[i].toLowerCase().includes(lowerCleaned)) {
+			matchLineIdx = i;
+			break;
+		}
+	}
+
+	// If exact match fails, try first few words
+	if (matchLineIdx === -1) {
+		const words = lowerCleaned.split(/\s+/).slice(0, 4).join(" ");
+		if (words.length > 10) {
+			for (let i = 0; i < lines.length; i++) {
+				if (lines[i].toLowerCase().includes(words)) {
+					matchLineIdx = i;
+					break;
+				}
+			}
+		}
+	}
+
+	if (matchLineIdx === -1) {
+		// Return first ~10 lines as fallback
+		return cleanSnippet(lines.slice(0, 10).join("\n"));
+	}
+
+	const start = Math.max(0, matchLineIdx - 5);
+	const end = Math.min(lines.length, matchLineIdx + 6);
+	return lines.slice(start, end).join("\n");
+}
+
+/**
+ * Highlight search query terms in text.
+ */
+function highlightTerms(text: string, query: string): React.ReactNode {
+	if (!query.trim()) return text;
+	const terms = query
+		.trim()
+		.split(/\s+/)
+		.filter((t) => t.length > 1);
+	if (terms.length === 0) return text;
+
+	const pattern = terms
+		.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+		.join("|");
+	const regex = new RegExp(`(${pattern})`, "gi");
+	const parts = text.split(regex);
+
+	return parts.map((part, i) => {
+		const key = `${i}-${part.slice(0, 16)}`;
+		if (regex.test(part)) {
+			return (
+				<mark
+					key={key}
+					className="bg-primary/30 text-foreground rounded px-0.5"
+				>
+					{part}
+				</mark>
+			);
+		}
+		// Reset lastIndex since we're reusing the regex
+		regex.lastIndex = 0;
+		return part;
+	});
 }
 
 function getAgentColor(agent: string): string {
 	if (agent === "pi_agent") return "text-purple-500";
 	return "text-muted-foreground";
+}
+
+/** Context preview popover on hover */
+function ContextPopover({
+	hit,
+	query,
+}: {
+	hit: HstrySearchHit;
+	query: string;
+}) {
+	const context = extractContext(hit.content, hit.snippet);
+	if (!context) return null;
+
+	const lines = context.split("\n");
+
+	return (
+		<div className="max-w-md max-h-64 overflow-auto p-3 space-y-1">
+			{hit.title && (
+				<div className="text-xs font-semibold text-foreground mb-2 pb-1 border-b border-border truncate">
+					{hit.title}
+				</div>
+			)}
+			<div className="font-mono text-[11px] leading-relaxed text-muted-foreground space-y-0.5">
+				{lines.map((line, i) => {
+					const cleaned = cleanSnippet(line);
+					const key = `${i}-${cleaned.slice(0, 20)}`;
+					if (!cleaned) return <div key={key} className="h-1" />;
+					return (
+						<div key={key} className="whitespace-pre-wrap break-words">
+							{highlightTerms(cleaned, query)}
+						</div>
+					);
+				})}
+			</div>
+		</div>
+	);
 }
 
 export function SearchResults({
@@ -72,8 +230,12 @@ export function SearchResults({
 	const [results, setResults] = useState<HstrySearchResponse | null>(null);
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
+	const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const resultListRef = useRef<HTMLDivElement>(null);
 
 	// Debounced search (hstry-backed)
+	// useeffect-guardrail: allow - async debounced fetch with cancellation
 	useEffect(() => {
 		if (!query.trim()) {
 			setResults(null);
@@ -106,6 +268,19 @@ export function SearchResults({
 
 		return () => clearTimeout(timer);
 	}, [query, agentFilter, t]);
+
+	const handleMouseEnter = useCallback((index: number) => {
+		if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+		hoverTimerRef.current = setTimeout(() => {
+			setHoveredIndex(index);
+		}, 300); // 300ms hover delay
+	}, []);
+
+	const handleMouseLeave = useCallback(() => {
+		if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+		hoverTimerRef.current = null;
+		setHoveredIndex(null);
+	}, []);
 
 	if (loading) {
 		return (
@@ -159,67 +334,80 @@ export function SearchResults({
 	}
 
 	return (
-		<div className={cn("flex flex-col", className)}>
+		<div
+			className={cn("flex flex-col relative", className)}
+			ref={resultListRef}
+		>
 			{mergedHits.map((hit, index) => (
-				<button
+				<div
 					key={`${hit.source_path}-${hit.line_number ?? index}`}
-					type="button"
-					onClick={() => onResultClick(hit)}
-					className={cn(
-						"flex flex-col gap-1 px-3 py-2 text-left transition-colors",
-						"hover:bg-sidebar-accent/50 border-b border-sidebar-border last:border-0",
-					)}
+					className="relative"
+					onMouseEnter={() => handleMouseEnter(index)}
+					onMouseLeave={handleMouseLeave}
 				>
-					{/* Header: agent badge + timestamp */}
-					<div className="flex items-center justify-between gap-2">
-						<div className="flex items-center gap-1.5">
-							<MessageSquare
-								className={cn("w-3 h-3", getAgentColor(hit.agent))}
-							/>
-							<span
-								className={cn(
-									"text-[10px] font-medium uppercase tracking-wide",
-									getAgentColor(hit.agent),
+					<button
+						type="button"
+						onClick={() => onResultClick(hit)}
+						className={cn(
+							"w-full flex flex-col gap-0.5 px-3 py-2 text-left transition-colors",
+							"hover:bg-sidebar-accent/50 border-b border-sidebar-border last:border-0",
+						)}
+					>
+						{/* Header: role icon + timestamp */}
+						<div className="flex items-center justify-between gap-2">
+							<div className="flex items-center gap-1.5">
+								{hit.role === "user" ? (
+									<User className="w-3 h-3 text-muted-foreground" />
+								) : (
+									<Bot className={cn("w-3 h-3", getAgentColor(hit.agent))} />
 								)}
-							>
-								{getAgentLabel(hit.agent, t)}
+								{hit.workspace && (
+									<span className="text-[10px] text-muted-foreground/70 truncate max-w-[140px]">
+										{hit.workspace.replace(/^\/home\/[^/]+\//, "~/")}
+									</span>
+								)}
+							</div>
+							<span className="text-[10px] text-muted-foreground flex-shrink-0">
+								{formatTimestamp(hit.timestamp)}
 							</span>
-							{hit.role && (
-								<span className="text-[10px] text-muted-foreground">
-									{hit.role === "user" ? (
-										<User className="w-3 h-3 inline" />
-									) : (
-										<Bot className="w-3 h-3 inline" />
-									)}
-								</span>
+						</div>
+
+						{/* Title */}
+						{hit.title && (
+							<div className="text-xs font-medium text-foreground truncate">
+								{highlightTerms(hit.title, query)}
+							</div>
+						)}
+
+						{/* Clean snippet */}
+						{(hit.snippet || hit.title) && (
+							<div className="text-[11px] text-muted-foreground line-clamp-2 leading-relaxed">
+								{highlightTerms(
+									cleanSnippet(hit.snippet || hit.title || ""),
+									query,
+								)}
+							</div>
+						)}
+					</button>
+
+					{/* Hover context popover */}
+					{hoveredIndex === index && hit.content && (
+						<div
+							className={cn(
+								"absolute left-full top-0 ml-2 z-50",
+								"bg-popover border border-border rounded-lg shadow-xl",
+								"animate-in fade-in-0 zoom-in-95 duration-150",
 							)}
-						</div>
-						<span className="text-[10px] text-muted-foreground">
-							{formatTimestamp(hit.timestamp)}
-						</span>
-					</div>
-
-					{/* Title if available */}
-					{hit.title && (
-						<div className="text-xs font-medium text-foreground truncate">
-							{hit.title}
+							onMouseEnter={() => {
+								// Keep popover open when hovering over it
+								if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+							}}
+							onMouseLeave={handleMouseLeave}
+						>
+							<ContextPopover hit={hit} query={query} />
 						</div>
 					)}
-
-					{/* Snippet or title fallback */}
-					{(hit.snippet || hit.title) && (
-						<div className="text-xs text-muted-foreground line-clamp-2">
-							{(hit.snippet || hit.title || "").replace(/\*\*/g, "")}
-						</div>
-					)}
-
-					{/* Workspace path (truncated) */}
-					{hit.workspace && (
-						<div className="text-[10px] text-muted-foreground/50 truncate">
-							{hit.workspace.replace(/^\/home\/[^/]+\//, "~/")}
-						</div>
-					)}
-				</button>
+				</div>
 			))}
 		</div>
 	);

@@ -209,7 +209,8 @@ export const SidebarSessions = memo(function SidebarSessions({
 	const setSearchMode = controlledOnSearchModeChange ?? setLocalSearchMode;
 
 	const deferredSearch = useDeferredValue(sessionSearch);
-	const [agentFilter, setAgentFilter] = useState<AgentFilter>("all");
+	// Default to pi_agent for message search
+	const [agentFilter, setAgentFilter] = useState<AgentFilter>("pi_agent");
 	const [selectedSessionIds, setSelectedSessionIds] = useState<Set<string>>(
 		() => new Set(),
 	);
@@ -537,6 +538,14 @@ export const SidebarSessions = memo(function SidebarSessions({
 						}
 						value={sessionSearch}
 						onChange={(e) => setSessionSearch(e.target.value)}
+						onKeyDown={(e) => {
+							if (e.key === "Tab" && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+								e.preventDefault();
+								setSearchMode((prev) =>
+									prev === "sessions" ? "messages" : "sessions",
+								);
+							}
+						}}
 						className={cn(
 							"w-full bg-sidebar-accent/50 border border-sidebar-border rounded placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/50",
 							sizeClasses.searchInput,

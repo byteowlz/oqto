@@ -330,6 +330,8 @@ export const MobileMenu = memo(function MobileMenu({
 											onDeleteProject={onDeleteProject}
 											pinnedProjects={pinnedProjects}
 											isMobile
+											searchQuery={sessionSearch}
+											searchMode={searchMode}
 										/>
 									)}
 									<div className="w-full px-2 my-1">
