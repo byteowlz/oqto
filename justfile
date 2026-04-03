@@ -346,6 +346,10 @@ bump version:
     # Update frontend/src-tauri/Cargo.toml
     sed -i '0,/^version = /s/^version = ".*"/version = "'"$new_version"'"/' "$ROOT/frontend/src-tauri/Cargo.toml"
     
+    # Regenerate Cargo.lock to match new version
+    cd "$ROOT/backend" && cargo check --quiet 2>/dev/null || cargo generate-lockfile
+    echo "Cargo.lock regenerated"
+
     # Update package.json files
     cd "$ROOT/frontend" && bun pm pkg set version="$new_version"
     
