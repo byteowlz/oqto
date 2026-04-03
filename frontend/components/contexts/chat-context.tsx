@@ -25,6 +25,14 @@ const SHARED_SESSION_MAP_STORAGE_KEY = "oqto:shared-session-map:v1";
 export const sharedWorkspaceSessionMap = new Map<string, string>();
 const runnerHistoryAliasMap = new Map<string, string>();
 
+function setRunnerHistoryAlias(sessionId: string, aliasId: string) {
+	if (!sessionId || !aliasId || sessionId === aliasId) return;
+	// Store both directions so callers can resolve from either Pi/native IDs
+	// or Oqto/platform IDs.
+	runnerHistoryAliasMap.set(sessionId, aliasId);
+	runnerHistoryAliasMap.set(aliasId, sessionId);
+}
+
 export function getRunnerHistoryAlias(sessionId: string): string | undefined {
 	return runnerHistoryAliasMap.get(sessionId);
 }
@@ -447,7 +455,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 
 				const historyAliasId = session.hstry_id?.trim();
 				if (historyAliasId && historyAliasId !== session.session_id) {
-					runnerHistoryAliasMap.set(session.session_id, historyAliasId);
+					setRunnerHistoryAlias(session.session_id, historyAliasId);
 					const aliasEntry = byId.get(historyAliasId);
 					if (aliasEntry && !byId.has(session.session_id)) {
 						byId.delete(historyAliasId);
@@ -739,7 +747,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 				for (const s of filtered) {
 					const alias = s.hstry_id?.trim();
 					if (alias && alias !== s.session_id) {
-						runnerHistoryAliasMap.set(s.session_id, alias);
+						setRunnerHistoryAlias(s.session_id, alias);
 					}
 				}
 				const nextBusy = new Set<string>();
@@ -1081,6 +1089,14 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 
 				const canonicalSessionId = updated.id || sessionId;
 				const canonicalTitle = (updated.title ?? title).trim();
+				const runnerAlias = runnerSessionsRef.current.find(
+					(s) =>
+						s.session_id === canonicalSessionId ||
+						s.hstry_id === canonicalSessionId ||
+						s.session_id === sessionId ||
+						s.hstry_id === sessionId,
+				);
+				const runnerSessionId = runnerAlias?.session_id;
 
 				// If backend canonicalized an optimistic ID, update local mappings.
 				if (canonicalSessionId !== sessionId) {
@@ -1115,10 +1131,16 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 				// title events from Pi don't overwrite the user's choice.
 				if (canonicalTitle) {
 					manuallyRenamedRef.current.set(canonicalSessionId, canonicalTitle);
+					manuallyRenamedRef.current.set(sessionId, canonicalTitle);
+					if (runnerSessionId) {
+						manuallyRenamedRef.current.set(runnerSessionId, canonicalTitle);
+					}
 				}
 				setChatHistory((prev) =>
 					prev.map((s) =>
-						s.id === canonicalSessionId || s.id === sessionId
+						s.id === canonicalSessionId ||
+						s.id === sessionId ||
+						(runnerSessionId != null && s.id === runnerSessionId)
 							? { ...s, id: canonicalSessionId, title: canonicalTitle }
 							: s,
 					),
@@ -1128,9 +1150,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 				// This prevents the runner from overwriting hstry with Pi's
 				// auto-generated title on the next state event.
 				const manager = getWsManager();
-				if (manager.isSessionReady(canonicalSessionId)) {
+				const runnerTargetId = runnerSessionId ?? canonicalSessionId;
+				if (manager.isSessionReady(runnerTargetId)) {
 					void manager
-						.agentSetSessionName(canonicalSessionId, canonicalTitle)
+						.agentSetSessionName(runnerTargetId, canonicalTitle)
 						.catch(() => {
 							// Best-effort -- runner notification is not critical.
 						});

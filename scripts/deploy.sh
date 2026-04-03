@@ -227,6 +227,142 @@ PY
 )
 }
 
+# Map tool names to their GitHub repo, cargo package, and language.
+# Format: "repo:package:lang" (package empty = same as tool, lang = rust|go)
+dep_install_meta() {
+    local dep="$1"
+    case "$dep" in
+        eavs)  echo "eavs::rust" ;;
+        hstry) echo "hstry:hstry-cli:rust" ;;
+        mmry)  echo "mmry:mmry-cli:rust" ;;
+        trx)   echo "trx:trx-cli:rust" ;;
+        agntz) echo "agntz::rust" ;;
+        sx)    echo "sx::go" ;;
+        skdlr) echo "skdlr::rust" ;;
+        *)     echo "$dep::rust" ;;
+    esac
+}
+
+get_release_target() {
+    local arch os
+    arch="$(uname -m)"
+    os="$(uname -s)"
+    case "$os" in
+        Linux)
+            case "$arch" in
+                x86_64)  echo "x86_64-unknown-linux-gnu" ;;
+                aarch64) echo "aarch64-unknown-linux-gnu" ;;
+                *)       echo "" ;;
+            esac ;;
+        Darwin)
+            case "$arch" in
+                x86_64)  echo "x86_64-apple-darwin" ;;
+                arm64)   echo "aarch64-apple-darwin" ;;
+                *)       echo "" ;;
+            esac ;;
+        *) echo "" ;;
+    esac
+}
+
+remediate_dependency() {
+    local dep="$1" required="$2" is_local="$3" ssh_target="$4" name="$5"
+    local meta repo pkg lang
+    meta="$(dep_install_meta "$dep")"
+    IFS=':' read -r repo pkg lang <<< "$meta"
+    [[ -z "$repo" ]] && repo="$dep"
+    [[ -z "$pkg" ]] && pkg=""
+    [[ -z "$lang" ]] && lang="rust"
+
+    local tag="v${required}"
+    local target
+    target="$(get_release_target)"
+    local BYTEOWLZ_GITHUB="https://github.com/byteowlz"
+
+    emit_event "$is_local" "$ssh_target" "$name" "deps.remediate" "start" "deps.${dep}.remediate.start"
+    log "  Remediating $dep (need >= $required)..."
+
+    # Build the install script that runs on the target host.
+    # It tries GitHub release download first, then cargo install.
+    local install_script
+    install_script="$(
+        cat <<REMEDIATE_EOF
+set -euo pipefail
+tmpdir=\$(mktemp -d)
+trap 'rm -rf \$tmpdir' EXIT
+
+# --- Try GitHub release download ---
+downloaded=false
+if [[ -n "$target" ]]; then
+    urls=()
+    urls+=("${BYTEOWLZ_GITHUB}/${repo}/releases/download/${tag}/${repo}-${tag}-${target}.tar.gz")
+REMEDIATE_EOF
+
+        # Add Go-style URL for Go tools
+        if [[ "$lang" == "go" ]]; then
+            local go_os go_arch
+            case "$target" in
+                x86_64-unknown-linux-gnu)  go_os="Linux"; go_arch="x86_64" ;;
+                aarch64-unknown-linux-gnu) go_os="Linux"; go_arch="arm64" ;;
+                x86_64-apple-darwin)       go_os="Darwin"; go_arch="x86_64" ;;
+                aarch64-apple-darwin)       go_os="Darwin"; go_arch="arm64" ;;
+            esac
+            if [[ -n "${go_os:-}" ]]; then
+                echo "    urls+=(\"${BYTEOWLZ_GITHUB}/${repo}/releases/download/${tag}/${repo}_${go_os}_${go_arch}.tar.gz\")"
+            fi
+        fi
+
+        cat <<REMEDIATE_EOF
+    for url in "\${urls[@]}"; do
+        if curl -fsSL "\$url" | tar xz -C "\$tmpdir" 2>/dev/null; then
+            if [[ -x "\$tmpdir/$dep" ]]; then
+                install -m 755 "\$tmpdir/$dep" /usr/local/bin/$dep
+                downloaded=true
+                break
+            fi
+        fi
+    done
+fi
+
+if [[ "\$downloaded" == "true" ]]; then
+    echo "INSTALLED_FROM=release"
+    exit 0
+fi
+
+# --- Fallback: cargo install from source ---
+if command -v cargo >/dev/null 2>&1; then
+    sibling_repo="$ROOT_DIR/../$repo"
+    if [[ -d "\$sibling_repo" ]]; then
+REMEDIATE_EOF
+
+        # Determine cargo install path
+        if [[ -n "$pkg" ]]; then
+            echo "        cargo install --path \"\$sibling_repo/crates/$pkg\" --force 2>&1"
+        else
+            echo "        cargo install --path \"\$sibling_repo\" --force 2>&1"
+        fi
+
+        cat <<REMEDIATE_EOF
+        echo "INSTALLED_FROM=source"
+        exit 0
+    fi
+fi
+
+echo "REMEDIATE_FAILED=true"
+exit 1
+REMEDIATE_EOF
+    )"
+
+    if host_exec_sudo "$is_local" "$ssh_target" "$install_script"; then
+        emit_event "$is_local" "$ssh_target" "$name" "deps.remediate" "pass" "deps.${dep}.remediate.pass"
+        ok "  Remediated $dep on $name"
+        return 0
+    else
+        emit_event "$is_local" "$ssh_target" "$name" "deps.remediate" "fail" "deps.${dep}.remediate.fail"
+        err "  Failed to remediate $dep on $name"
+        return 1
+    fi
+}
+
 check_dependency_compatibility() {
     local name="$1" ssh_target="$2" is_local="$3"
 
@@ -242,35 +378,79 @@ check_dependency_compatibility() {
         return 0
     fi
 
+    # Pass 1: detect issues
+    local -a needs_remediation=()
     local dep required current
     for dep in "${REQUIRED_DEP_BINARIES[@]}"; do
         required="${REQUIRED_DEP_VERSIONS[$dep]}"
+        local needs_fix="false"
 
-        if ! host_exec "$is_local" "$ssh_target" "command -v '$dep' >/dev/null"; then
-            emit_event "$is_local" "$ssh_target" "$name" "preflight" "fail" "deps.${dep}.missing"
-            err "Missing dependency '$dep' on $name"
-            return 1
+        if ! host_exec "$is_local" "$ssh_target" "command -v '$dep' >/dev/null" 2>/dev/null; then
+            warn "  $dep: not installed (need >= $required)"
+            needs_fix="true"
+        else
+            current="$(host_exec "$is_local" "$ssh_target" "$dep --version 2>/dev/null | grep -oE '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1" 2>/dev/null || true)"
+            if [[ -z "$current" ]]; then
+                warn "  $dep: version unknown (need >= $required)"
+                needs_fix="true"
+            elif ! version_ge "$current" "$required"; then
+                warn "  $dep: $current installed, need >= $required"
+                needs_fix="true"
+            else
+                log "  $dep: $current (ok)"
+            fi
         fi
 
-        current="$(host_exec "$is_local" "$ssh_target" "$dep --version 2>/dev/null | grep -oE '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1")"
-        if [[ -z "$current" ]]; then
-            emit_event "$is_local" "$ssh_target" "$name" "preflight" "fail" "deps.${dep}.version_unknown"
-            err "Could not detect $dep version on $name"
-            return 1
-        fi
-
-        if ! version_ge "$current" "$required"; then
-            emit_event "$is_local" "$ssh_target" "$name" "preflight" "fail" "deps.${dep}.version_mismatch"
-            err "Dependency version mismatch on $name: $dep=$current, required >= $required"
-            return 1
+        if [[ "$needs_fix" == "true" ]]; then
+            needs_remediation+=("$dep")
         fi
     done
 
+    # Pass 2: remediate
+    if [[ "${#needs_remediation[@]}" -gt 0 ]]; then
+        log "Remediating ${#needs_remediation[@]} dependency issue(s) on $name..."
+        local failed="false"
+        for dep in "${needs_remediation[@]}"; do
+            if ! remediate_dependency "$dep" "${REQUIRED_DEP_VERSIONS[$dep]}" "$is_local" "$ssh_target" "$name"; then
+                failed="true"
+            fi
+        done
+
+        if [[ "$failed" == "true" ]]; then
+            emit_event "$is_local" "$ssh_target" "$name" "preflight" "fail" "deps.remediation_incomplete"
+            err "Some dependencies could not be remediated on $name"
+            return 1
+        fi
+
+        # Pass 3: re-verify
+        log "Re-verifying dependencies on $name..."
+        for dep in "${needs_remediation[@]}"; do
+            required="${REQUIRED_DEP_VERSIONS[$dep]}"
+            if ! host_exec "$is_local" "$ssh_target" "command -v '$dep' >/dev/null" 2>/dev/null; then
+                emit_event "$is_local" "$ssh_target" "$name" "preflight" "fail" "deps.${dep}.still_missing"
+                err "$dep still missing on $name after remediation"
+                return 1
+            fi
+            current="$(host_exec "$is_local" "$ssh_target" "$dep --version 2>/dev/null | grep -oE '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1" 2>/dev/null || true)"
+            if [[ -z "$current" ]] || ! version_ge "$current" "$required"; then
+                emit_event "$is_local" "$ssh_target" "$name" "preflight" "fail" "deps.${dep}.still_outdated"
+                err "$dep still outdated on $name after remediation ($current, need >= $required)"
+                return 1
+            fi
+            ok "  $dep: $current (remediated)"
+        done
+    fi
+
     # Extra compatibility guard: hstry adapters CLI must be functional.
     if ! host_exec "$is_local" "$ssh_target" "hstry adapters --help >/dev/null 2>&1"; then
-        emit_event "$is_local" "$ssh_target" "$name" "preflight" "fail" "deps.hstry.adapters_unavailable"
-        err "hstry adapters command unavailable on $name"
-        return 1
+        log "  hstry adapters unavailable, running adapters update..."
+        if host_exec "$is_local" "$ssh_target" "hstry adapters update >/dev/null 2>&1"; then
+            ok "  hstry adapters updated"
+        else
+            emit_event "$is_local" "$ssh_target" "$name" "preflight" "fail" "deps.hstry.adapters_unavailable"
+            err "hstry adapters command unavailable on $name"
+            return 1
+        fi
     fi
 
     return 0

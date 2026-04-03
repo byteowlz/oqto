@@ -99,10 +99,37 @@ const bashPatterns: BashPattern[] = [
 		summary: () => i18n.t("tools.installingPythonPackages"),
 	},
 	{
-		match: (cmd) => /\bcargo\s+(install|add|build)\b/.test(cmd),
+		match: (cmd) =>
+			/^cargo\s+/.test(cmd.replace(/^(cd\s+[^\s;]+\s*[;&|]+\s*)+/, "").trim()),
 		summary: (cmd) => {
-			if (/\bbuild\b/.test(cmd)) return i18n.t("tools.buildingRustProject");
-			return i18n.t("tools.installingRustPackages");
+			const clean = cmd.replace(/^(cd\s+[^\s;]+\s*[;&|]+\s*)+/, "").trim();
+			if (/^cargo\s+install\b/.test(clean))
+				return i18n.t("tools.installingRustPackages");
+			if (/^cargo\s+(build|b)\b/.test(clean))
+				return i18n.t("tools.buildingRustProject");
+			if (/^cargo\s+(check|c)\b/.test(clean))
+				return i18n.t("tools.checkingRustProject", {
+					defaultValue: "Checking Rust project",
+				});
+			if (/^cargo\s+(test|t)\b/.test(clean))
+				return i18n.t("tools.runningTests");
+			if (/^cargo\s+(clippy)\b/.test(clean))
+				return i18n.t("tools.lintingRustProject", {
+					defaultValue: "Linting Rust project",
+				});
+			if (/^cargo\s+fmt\b/.test(clean))
+				return i18n.t("tools.formattingRustCode", {
+					defaultValue: "Formatting Rust code",
+				});
+			if (/^cargo\s+add\b/.test(clean))
+				return i18n.t("tools.installingRustPackages");
+			if (/^cargo\s+run\b/.test(clean))
+				return i18n.t("tools.runningRustProject", {
+					defaultValue: "Running Rust project",
+				});
+			return i18n.t("tools.runningCargoCommand", {
+				defaultValue: "Running cargo command",
+			});
 		},
 	},
 	// Git

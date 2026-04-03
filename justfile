@@ -494,6 +494,7 @@ install-deps *ARGS:
     PIDS=()
     NAMES=()
     LOGS=()
+    BINS=()
 
     for key in "${!TOOLS[@]}"; do
       manifest_ver="${TOOLS[$key]}"
@@ -521,8 +522,14 @@ install-deps *ARGS:
         kokorox) bin="koko" ;;
         mailz) bin="mailz-cli" ;;
       esac
-      installed_ver=$($bin --version 2>/dev/null | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
-      [[ -z "$installed_ver" ]] && installed_ver=$($bin version 2>/dev/null | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
+      # Check /usr/local/bin first (where we install), then fall back to PATH.
+      if [[ -x "/usr/local/bin/$bin" ]]; then
+        installed_ver=$(/usr/local/bin/$bin --version 2>/dev/null | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
+        [[ -z "$installed_ver" ]] && installed_ver=$(/usr/local/bin/$bin version 2>/dev/null | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
+      else
+        installed_ver=$($bin --version 2>/dev/null | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
+        [[ -z "$installed_ver" ]] && installed_ver=$($bin version 2>/dev/null | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
+      fi
 
       if [[ "$installed_ver" == "$manifest_ver" && -z "$FILTER" ]]; then
         echo "OK   $key ($manifest_ver already installed)"
@@ -563,6 +570,7 @@ install-deps *ARGS:
       PIDS+=($!)
       NAMES+=("$key")
       LOGS+=("$logfile")
+      BINS+=("$bin")
     done
 
     # Wait for all builds
@@ -582,6 +590,45 @@ install-deps *ARGS:
       echo ""
       echo "$FAILED tool(s) failed to install"
       exit 1
+    fi
+
+    # Copy cargo-installed binaries to /usr/local/bin so they are on the
+    # global PATH and don't get shadowed by stale copies.
+    if [[ ${#NAMES[@]} -gt 0 ]]; then
+      echo ""
+      echo "Installing to /usr/local/bin..."
+      for i in "${!NAMES[@]}"; do
+        b="${BINS[$i]}"
+        cargo_bin="$HOME/.cargo/bin/$b"
+        if [[ -x "$cargo_bin" ]]; then
+          sudo install -m 755 "$cargo_bin" "/usr/local/bin/$b"
+          echo "  $b -> /usr/local/bin/$b"
+        fi
+      done
+    fi
+
+    # Post-install verification: confirm installed versions match manifest.
+    VERIFY_FAIL=0
+    if [[ ${#NAMES[@]} -gt 0 ]]; then
+      echo ""
+      echo "Verifying installed versions..."
+      for i in "${!NAMES[@]}"; do
+        b="${BINS[$i]}"
+        k="${NAMES[$i]}"
+        want="${TOOLS[$k]}"
+        got=$(/usr/local/bin/$b --version 2>/dev/null | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
+        if [[ "$got" == "$want" ]]; then
+          echo "  $b: $got (ok)"
+        else
+          echo "  $b: expected $want, got ${got:-unknown} (MISMATCH)"
+          VERIFY_FAIL=$((VERIFY_FAIL + 1))
+        fi
+      done
+      if [[ $VERIFY_FAIL -gt 0 ]]; then
+        echo ""
+        echo "WARNING: $VERIFY_FAIL tool(s) did not match expected version."
+        echo "Try: cd ../<tool> && cargo install --path <crate> --force"
+      fi
     fi
 
     echo ""
