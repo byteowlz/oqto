@@ -960,6 +960,8 @@ const AppShell = memo(function AppShell() {
 																sessionDialogs.handleDeleteProject
 															}
 															pinnedProjects={sidebarState.pinnedProjects}
+															searchQuery={sessionSearch}
+															searchMode={searchMode}
 														/>
 													)}
 													<div className="w-full px-2 my-1">

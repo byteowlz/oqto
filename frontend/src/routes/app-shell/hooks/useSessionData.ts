@@ -4,6 +4,7 @@ import type {
 	ProjectLogo,
 } from "@/lib/control-plane-client";
 import { formatSessionDate, getTempIdFromSession } from "@/lib/session-utils";
+import Fuse from "fuse.js";
 import { useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import type { SessionHierarchy, SessionsByProject } from "../SidebarSessions";
@@ -152,9 +153,45 @@ export function useSessionData({
 		[t],
 	);
 
-	// Filter and sort sessions
+	// Build Fuse index for fuzzy session search
+	const sessionFuse = useMemo(() => {
+		const items = sessionHierarchy.parentSessions.map((session) => {
+			const tempId = getTempIdFromSession(session);
+			const dirName = session.workspace_path
+				? (session.workspace_path.split("/").filter(Boolean).pop() ?? "")
+				: "";
+			const projectName = session.project_name ?? dirName;
+			const dateStr = session.updated_at
+				? formatSessionDate(session.updated_at)
+				: "";
+			return {
+				session,
+				title: session.title ?? "",
+				tempId: tempId ?? "",
+				dirName,
+				projectName,
+				workspacePath: session.workspace_path ?? "",
+				dateStr,
+			};
+		});
+		return new Fuse(items, {
+			keys: [
+				{ name: "title", weight: 0.4 },
+				{ name: "projectName", weight: 0.3 },
+				{ name: "dirName", weight: 0.2 },
+				{ name: "workspacePath", weight: 0.1 },
+				{ name: "tempId", weight: 0.05 },
+				{ name: "dateStr", weight: 0.05 },
+			],
+			threshold: 0.4,
+			ignoreLocation: true,
+			includeScore: true,
+		});
+	}, [sessionHierarchy.parentSessions]);
+
+	// Filter and sort sessions (fuzzy)
 	const filteredSessions = useMemo(() => {
-		const searchLower = deferredSearch.toLowerCase().trim();
+		const query = deferredSearch.trim();
 		let sessions = sessionHierarchy.parentSessions;
 
 		if (selectedProjectKey) {
@@ -163,26 +200,18 @@ export function useSessionData({
 			);
 		}
 
-		if (searchLower) {
-			sessions = sessions.filter((session) => {
-				if (session.title?.toLowerCase().includes(searchLower)) return true;
-				const tempId = getTempIdFromSession(session);
-				if (tempId?.toLowerCase().includes(searchLower)) {
-					return true;
-				}
-				if (session.updated_at) {
-					const dateStr = formatSessionDate(session.updated_at);
-					if (dateStr.toLowerCase().includes(searchLower)) return true;
-				}
-				if ("workspace_path" in session && session.workspace_path) {
-					const dirName = session.workspace_path
-						.split("/")
-						.filter(Boolean)
-						.pop();
-					if (dirName?.toLowerCase().includes(searchLower)) return true;
-				}
-				return false;
-			});
+		if (query) {
+			const fuseResults = sessionFuse.search(query);
+			const matchedIds = new Set(fuseResults.map((r) => r.item.session.id));
+			// If a project key is selected, intersect with that subset
+			if (selectedProjectKey) {
+				const projectIds = new Set(sessions.map((s) => s.id));
+				sessions = fuseResults
+					.filter((r) => projectIds.has(r.item.session.id))
+					.map((r) => r.item.session);
+			} else {
+				sessions = fuseResults.map((r) => r.item.session);
+			}
 		}
 
 		return [...sessions].sort((a, b) => {
@@ -198,6 +227,7 @@ export function useSessionData({
 		pinnedSessions,
 		projectKeyForSession,
 		selectedProjectKey,
+		sessionFuse,
 	]);
 
 	const sessionTitleHits = useMemo(() => {
