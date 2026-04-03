@@ -281,6 +281,48 @@ describe("mergeServerMessages", () => {
 			expect(result[3].id).toBe("pi-msg-3"); // streaming
 		});
 
+		it("drops local streaming copy when server already contains same tool_call_id", () => {
+			const prev = [
+				makeMessage({
+					id: "pi-msg-local",
+					role: "assistant",
+					isStreaming: true,
+					timestamp: now,
+					parts: [
+						{
+							type: "tool_call",
+							id: "tc-local",
+							toolCallId: "call-123",
+							name: "read",
+							input: { path: "a" },
+							status: "running",
+						},
+					],
+				}),
+			];
+			const server = [
+				makeMessage({
+					id: "history-msg",
+					role: "assistant",
+					timestamp: now,
+					parts: [
+						{
+							type: "tool_call",
+							id: "tc-server",
+							toolCallId: "call-123",
+							name: "read",
+							input: { path: "a" },
+							status: "success",
+						},
+					],
+				}),
+			];
+
+			const result = mergeServerMessages(prev, server, "authoritative");
+			expect(result).toHaveLength(1);
+			expect(result[0].id).toBe("history-msg");
+		});
+
 		it("keeps streaming message in incremental path too", () => {
 			const prev = [
 				textMsg("pi-msg-1", "user", "hello", { timestamp: now }),

@@ -21,6 +21,66 @@ function truncStr(s: string, max = 60): string {
 	return `${s.slice(0, max - 3)}...`;
 }
 
+function stripLeadingEnvAssignments(command: string): string {
+	let rest = command.trim();
+	const envPrefix = /^[A-Za-z_][A-Za-z0-9_]*=[^\s]+\s+/;
+	while (envPrefix.test(rest)) {
+		rest = rest.replace(envPrefix, "").trimStart();
+	}
+	return rest;
+}
+
+function summarizeAgentBrowser(command: string): string | null {
+	const normalized = stripLeadingEnvAssignments(command);
+	const m = normalized.match(/^(agent-browser|oqto-browser)\s+([a-z-]+)/i);
+	if (!m) return null;
+	const sub = (m[2] || "").toLowerCase();
+	switch (sub) {
+		case "open":
+			return i18n.t("tools.browserOpen", { defaultValue: "Opening browser" });
+		case "snapshot":
+			return i18n.t("tools.browserSnapshot", {
+				defaultValue: "Capturing browser snapshot",
+			});
+		case "click":
+			return i18n.t("tools.browserClick", {
+				defaultValue: "Clicking in browser",
+			});
+		case "fill":
+			return i18n.t("tools.browserFill", {
+				defaultValue: "Filling browser input",
+			});
+		case "press":
+			return i18n.t("tools.browserPress", {
+				defaultValue: "Pressing key in browser",
+			});
+		case "screenshot":
+			return i18n.t("tools.browserScreenshot", {
+				defaultValue: "Taking browser screenshot",
+			});
+		case "console":
+			return i18n.t("tools.browserConsole", {
+				defaultValue: "Reading browser console",
+			});
+		case "eval":
+			return i18n.t("tools.browserEval", {
+				defaultValue: "Running browser script",
+			});
+		case "wait":
+			return i18n.t("tools.browserWait", {
+				defaultValue: "Waiting in browser",
+			});
+		case "scroll":
+			return i18n.t("tools.browserScroll", {
+				defaultValue: "Scrolling browser page",
+			});
+		case "close":
+			return i18n.t("tools.browserClose", { defaultValue: "Closing browser" });
+		default:
+			return i18n.t("tools.browserInteraction");
+	}
+}
+
 // -- Bash command patterns --
 
 type BashPattern = {
@@ -208,6 +268,8 @@ const bashPatterns: BashPattern[] = [
 
 function summarizeBash(command: string): string | null {
 	const cmd = command.trim();
+	const browserSummary = summarizeAgentBrowser(cmd);
+	if (browserSummary) return browserSummary;
 	for (const pattern of bashPatterns) {
 		if (pattern.match(cmd)) {
 			return pattern.summary(cmd);

@@ -1,20 +1,6 @@
 #!/usr/bin/env bash
-# Oqto deployment script - deploys built binaries and frontend to configured hosts.
-#
-# Usage:
-#   ./scripts/deploy.sh [OPTIONS]
-#
-# Options:
-#   --host NAME       Deploy only to this host (can be repeated)
-#   --skip-build      Skip building, deploy existing artifacts
-#   --skip-frontend   Skip frontend deployment
-#   --skip-backend    Skip backend binary deployment
-#   --skip-services   Skip service restarts
-#   --dry-run         Show what would be done without doing it
-#   --config FILE     Use alternate hosts config (default: deploy/hosts.toml)
-#   --help            Show this help
-#
-# Requires: bash 4+, toml parsing via sed/awk (no external deps)
+# Oqto deployment script with transactional activation, preflight gates,
+# canary rollout, health checks, and automatic rollback.
 
 set -euo pipefail
 
@@ -25,7 +11,18 @@ SKIP_BUILD=false
 SKIP_FRONTEND=false
 SKIP_BACKEND=false
 SKIP_SERVICES=false
-declare -a HOST_FILTER=()
+PREPARE_ONLY=false
+ACTIVATE_ONLY=false
+RESUME=false
+STATUS_ONLY=false
+CANARY_ONLY=false
+CANARY_THEN_FLEET=false
+HEALTH_TIMEOUT_SECONDS=90
+MIN_FREE_MB=1024
+RELEASE_ID=""
+EVENT_LOG_PATH="/var/log/oqto/update-events.jsonl"
+RELEASES_ROOT="/var/lib/oqto/releases"
+DEPENDENCY_POLICY_FILE="$ROOT_DIR/dependencies.toml"
 
 # Colors
 RED='\033[0;31m'
@@ -39,117 +36,60 @@ log()  { echo -e "${BLUE}[deploy]${NC} $*"; }
 ok()   { echo -e "${GREEN}[deploy]${NC} $*"; }
 warn() { echo -e "${YELLOW}[deploy]${NC} $*"; }
 err()  { echo -e "${RED}[deploy]${NC} $*" >&2; }
-run()  {
-    if $DRY_RUN; then
-        echo -e "${YELLOW}  [dry-run]${NC} $*"
-    else
-        "$@"
-    fi
-}
-
-log_multiline_prefixed() {
-    local prefix="$1"
-    local text="$2"
-    while IFS= read -r line; do
-        [[ -n "$line" ]] && log "${prefix}${line}"
-    done <<< "$text"
-}
-
-sync_configs_with_retry() {
-    local is_local="$1"
-    local ssh_target="${2:-}"
-    local host_name="${3:-local}"
-    local attempts=10
-    local delay_seconds=2
-    local attempt output
-
-    for ((attempt=1; attempt<=attempts; attempt++)); do
-        if [[ "$is_local" == "true" ]]; then
-            if output="$(oqtoctl user sync-configs 2>&1)"; then
-                log_multiline_prefixed "    " "$output"
-                return 0
-            fi
-        else
-            if output="$(ssh "$ssh_target" "sudo oqtoctl user sync-configs 2>&1" 2>&1)"; then
-                log_multiline_prefixed "    " "$output"
-                return 0
-            fi
-        fi
-
-        log_multiline_prefixed "    " "$output"
-        warn "  sync-configs attempt ${attempt}/${attempts} failed on ${host_name}; retrying in ${delay_seconds}s"
-        sleep "$delay_seconds"
-    done
-
-    return 1
-}
-
-ensure_single_user_runner() {
-    local is_local="$1"
-    local ssh_target="${2:-}"
-    local host_name="${3:-local}"
-
-    log "  Ensuring oqto-runner is active (single-user mode)..."
-
-    if [[ "$is_local" == "true" ]]; then
-        if systemctl --user is-active --quiet oqto-runner; then
-            ok "  oqto-runner already active"
-            return 0
-        fi
-
-        run systemctl --user enable --now oqto-runner || {
-            warn "  Failed to enable/start oqto-runner on ${host_name}"
-            return 1
-        }
-
-        local uid socket
-        uid="$(id -u)"
-        socket="/run/user/${uid}/oqto-runner.sock"
-        if [[ -S "$socket" ]]; then
-            ok "  Runner socket available: $socket"
-        else
-            warn "  Runner service started but socket missing: $socket"
-        fi
-        return 0
-    fi
-
-    if ssh "$ssh_target" "systemctl --user is-active --quiet oqto-runner"; then
-        ok "  oqto-runner already active on ${host_name}"
-        return 0
-    fi
-
-    if ! ssh "$ssh_target" "systemctl --user enable --now oqto-runner"; then
-        warn "  Failed to enable/start oqto-runner on ${host_name}"
-        return 1
-    fi
-
-    local remote_socket_check
-    remote_socket_check="uid=\$(id -u); test -S /run/user/\${uid}/oqto-runner.sock"
-    if ssh "$ssh_target" "$remote_socket_check"; then
-        ok "  Runner socket available on ${host_name}"
-    else
-        warn "  Runner service started on ${host_name} but socket missing"
-    fi
-
-    return 0
-}
 
 usage() {
-    sed -n '/^# Usage:/,/^[^#]/p' "$0" | grep '^#' | sed 's/^# \?//'
+    cat <<'EOF'
+Usage:
+  ./scripts/deploy.sh [OPTIONS]
+
+Options:
+  --host NAME              Deploy only to this host (can be repeated)
+  --release-id ID          Explicit release ID (default: timestamp-gitsha)
+  --skip-build             Skip local build phase
+  --skip-frontend          Skip frontend staging and deploy
+  --skip-backend           Skip backend binary staging and deploy
+  --skip-services          Skip service restarts
+  --prepare-only           Run preflight + prepare, do not activate
+  --activate-only          Activate previously prepared release
+  --resume                 Resume interrupted deployment (skip prepared/active phases)
+  --status                 Show release status per host, no changes
+  --canary                 Deploy only canary hosts
+  --canary-then-fleet      Deploy canary hosts first, then remaining hosts
+  --health-timeout SEC     Health check timeout after activation (default: 90)
+  --min-free-mb MB         Minimum free disk required for preflight (default: 1024)
+  --dry-run                Print actions without executing
+  --config FILE            Use alternate hosts config
+  --help                   Show this help
+EOF
     exit 0
 }
 
-# --- Parse arguments ---
+declare -a HOST_FILTER=()
+declare -a H_NAME=() H_SSH=() H_MODE=() H_USER=() H_FRONTEND=() H_WEB_ROOT=()
+declare -a H_BINARIES=() H_SERVICES=() H_LOCAL=() H_CANARY=()
+declare -a REQUIRED_DEP_BINARIES=()
+declare -A REQUIRED_DEP_VERSIONS=()
+
+# --- Argument parsing ---
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --host)      HOST_FILTER+=("$2"); shift 2 ;;
-        --skip-build)    SKIP_BUILD=true; shift ;;
+        --host) HOST_FILTER+=("$2"); shift 2 ;;
+        --release-id) RELEASE_ID="$2"; shift 2 ;;
+        --skip-build) SKIP_BUILD=true; shift ;;
         --skip-frontend) SKIP_FRONTEND=true; shift ;;
-        --skip-backend)  SKIP_BACKEND=true; shift ;;
+        --skip-backend) SKIP_BACKEND=true; shift ;;
         --skip-services) SKIP_SERVICES=true; shift ;;
-        --dry-run)       DRY_RUN=true; shift ;;
-        --config)        CONFIG="$2"; shift 2 ;;
-        --help|-h)       usage ;;
+        --prepare-only) PREPARE_ONLY=true; shift ;;
+        --activate-only) ACTIVATE_ONLY=true; shift ;;
+        --resume) RESUME=true; shift ;;
+        --status) STATUS_ONLY=true; shift ;;
+        --canary) CANARY_ONLY=true; shift ;;
+        --canary-then-fleet) CANARY_THEN_FLEET=true; shift ;;
+        --health-timeout) HEALTH_TIMEOUT_SECONDS="$2"; shift 2 ;;
+        --min-free-mb) MIN_FREE_MB="$2"; shift 2 ;;
+        --dry-run) DRY_RUN=true; shift ;;
+        --config) CONFIG="$2"; shift 2 ;;
+        --help|-h) usage ;;
         *) err "Unknown option: $1"; usage ;;
     esac
 done
@@ -159,59 +99,227 @@ if [[ ! -f "$CONFIG" ]]; then
     exit 1
 fi
 
-# --- Parse hosts.toml ---
-# Simple TOML parser for our specific format. Reads [[host]] blocks
-# into parallel arrays. Handles strings, booleans, and arrays.
+if [[ "$PREPARE_ONLY" == "true" && "$ACTIVATE_ONLY" == "true" ]]; then
+    err "--prepare-only and --activate-only are mutually exclusive"
+    exit 1
+fi
 
-declare -a H_NAME=() H_SSH=() H_MODE=() H_USER=() H_FRONTEND=() H_WEB_ROOT=()
-declare -a H_BINARIES=() H_SERVICES=() H_LOCAL=()
+if [[ "$CANARY_ONLY" == "true" && "$CANARY_THEN_FLEET" == "true" ]]; then
+    err "--canary and --canary-then-fleet are mutually exclusive"
+    exit 1
+fi
+
+if [[ -z "$RELEASE_ID" ]]; then
+    git_sha="$(git -C "$ROOT_DIR" rev-parse --short=10 HEAD 2>/dev/null || echo nogit)"
+    RELEASE_ID="$(date +%Y%m%d%H%M%S)-${git_sha}"
+fi
+
+# Validate hosts config TOML once up front.
+if ! python3 - <<PY >/dev/null 2>&1
+import tomllib
+with open("$CONFIG", "rb") as f:
+    tomllib.load(f)
+PY
+then
+    err "Invalid TOML: $CONFIG"
+    exit 1
+fi
+
+host_exec() {
+    local is_local="$1"
+    local ssh_target="$2"
+    local cmd="$3"
+    if [[ "$DRY_RUN" == "true" ]]; then
+        if [[ "$is_local" == "true" ]]; then
+            echo -e "${YELLOW}  [dry-run]${NC} local :: $cmd"
+        else
+            echo -e "${YELLOW}  [dry-run]${NC} ssh $ssh_target :: $cmd"
+        fi
+        return 0
+    fi
+
+    if [[ "$is_local" == "true" ]]; then
+        bash -lc "$cmd"
+    else
+        ssh "$ssh_target" "bash -lc $(printf '%q' "$cmd")"
+    fi
+}
+
+host_exec_sudo() {
+    local is_local="$1"
+    local ssh_target="$2"
+    local inner="$3"
+    host_exec "$is_local" "$ssh_target" "sudo bash -lc $(printf '%q' "$inner")"
+}
+
+emit_event() {
+    local is_local="$1"
+    local ssh_target="$2"
+    local host_name="$3"
+    local phase="$4"
+    local result="$5"
+    local reason_code="$6"
+
+    local actor="${USER:-unknown}"
+    local ts
+    ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+    local payload
+    payload="$(python3 - <<PY
+import json
+print(json.dumps({
+  "timestamp": "$ts",
+  "release_id": "$RELEASE_ID",
+  "host": "$host_name",
+  "actor": "$actor",
+  "phase": "$phase",
+  "result": "$result",
+  "reason_code": "$reason_code"
+}, separators=(",", ":")))
+PY
+)"
+
+    local escaped
+    escaped="$(printf '%q' "$payload")"
+    host_exec_sudo "$is_local" "$ssh_target" "mkdir -p '$(dirname "$EVENT_LOG_PATH")' && printf '%s\\n' $escaped >> '$EVENT_LOG_PATH'" || true
+}
+
+normalize_mode() {
+    local mode="$1"
+    case "$mode" in
+        local|single-user) echo "single-user" ;;
+        multi-user) echo "multi-user" ;;
+        *) echo "invalid" ;;
+    esac
+}
+
+version_ge() {
+    local current="$1"
+    local required="$2"
+    [[ "$(printf '%s\n%s\n' "$required" "$current" | sort -V | head -n1)" == "$required" ]]
+}
+
+load_dependency_requirements() {
+    if [[ ! -f "$DEPENDENCY_POLICY_FILE" ]]; then
+        warn "Dependency policy file missing: $DEPENDENCY_POLICY_FILE"
+        return 0
+    fi
+
+    while IFS='=' read -r bin ver; do
+        [[ -z "$bin" || -z "$ver" ]] && continue
+        REQUIRED_DEP_BINARIES+=("$bin")
+        REQUIRED_DEP_VERSIONS["$bin"]="$ver"
+    done < <(python3 - <<PY
+import tomllib
+from pathlib import Path
+
+p = Path(r"$DEPENDENCY_POLICY_FILE")
+data = tomllib.loads(p.read_text())
+byteowlz = data.get("byteowlz", {})
+# Deploy/runtime-critical CLI dependencies.
+keys = ("eavs", "hstry", "mmry", "trx", "agntz", "sx", "skdlr")
+for key in keys:
+    v = str(byteowlz.get(key, "")).strip()
+    if not v or v == "latest":
+        continue
+    print(f"{key}={v}")
+PY
+)
+}
+
+check_dependency_compatibility() {
+    local name="$1" ssh_target="$2" is_local="$3"
+
+    if [[ "${#REQUIRED_DEP_BINARIES[@]}" -eq 0 ]]; then
+        return 0
+    fi
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+        local dep
+        for dep in "${REQUIRED_DEP_BINARIES[@]}"; do
+            echo -e "${YELLOW}  [dry-run]${NC} dependency gate: $dep >= ${REQUIRED_DEP_VERSIONS[$dep]}"
+        done
+        return 0
+    fi
+
+    local dep required current
+    for dep in "${REQUIRED_DEP_BINARIES[@]}"; do
+        required="${REQUIRED_DEP_VERSIONS[$dep]}"
+
+        if ! host_exec "$is_local" "$ssh_target" "command -v '$dep' >/dev/null"; then
+            emit_event "$is_local" "$ssh_target" "$name" "preflight" "fail" "deps.${dep}.missing"
+            err "Missing dependency '$dep' on $name"
+            return 1
+        fi
+
+        current="$(host_exec "$is_local" "$ssh_target" "$dep --version 2>/dev/null | grep -oE '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1")"
+        if [[ -z "$current" ]]; then
+            emit_event "$is_local" "$ssh_target" "$name" "preflight" "fail" "deps.${dep}.version_unknown"
+            err "Could not detect $dep version on $name"
+            return 1
+        fi
+
+        if ! version_ge "$current" "$required"; then
+            emit_event "$is_local" "$ssh_target" "$name" "preflight" "fail" "deps.${dep}.version_mismatch"
+            err "Dependency version mismatch on $name: $dep=$current, required >= $required"
+            return 1
+        fi
+    done
+
+    # Extra compatibility guard: hstry adapters CLI must be functional.
+    if ! host_exec "$is_local" "$ssh_target" "hstry adapters --help >/dev/null 2>&1"; then
+        emit_event "$is_local" "$ssh_target" "$name" "preflight" "fail" "deps.hstry.adapters_unavailable"
+        err "hstry adapters command unavailable on $name"
+        return 1
+    fi
+
+    return 0
+}
 
 parse_hosts() {
     local idx=-1
     local in_host=false
 
     while IFS= read -r line; do
-        # Strip comments and leading/trailing whitespace
         line="${line%%#*}"
         line="$(echo "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
         [[ -z "$line" ]] && continue
 
-        # New host block
         if [[ "$line" == "[[host]]" ]]; then
             idx=$((idx + 1))
             in_host=true
             H_NAME[$idx]=""
             H_SSH[$idx]=""
-            H_MODE[$idx]="local"
+            H_MODE[$idx]="single-user"
             H_USER[$idx]=""
             H_FRONTEND[$idx]="false"
             H_WEB_ROOT[$idx]=""
             H_BINARIES[$idx]=""
             H_SERVICES[$idx]=""
             H_LOCAL[$idx]="false"
+            H_CANARY[$idx]="false"
             continue
         fi
 
-        if ! $in_host; then continue; fi
+        if [[ "$in_host" != "true" ]]; then
+            continue
+        fi
 
-        # Parse key = value
         local key val
         key="$(echo "$line" | sed 's/[[:space:]]*=.*//')"
         val="$(echo "$line" | sed 's/[^=]*=[[:space:]]*//')"
-
-        # Remove surrounding quotes from strings
         val="$(echo "$val" | sed 's/^"//;s/"$//')"
 
         case "$key" in
-            name)      H_NAME[$idx]="$val" ;;
-            ssh)       H_SSH[$idx]="$val" ;;
-            mode)      H_MODE[$idx]="$val" ;;
-            user)      H_USER[$idx]="$val" ;;
-            frontend)  H_FRONTEND[$idx]="$val" ;;
-            web_root)  H_WEB_ROOT[$idx]="$val" ;;
-            local)     H_LOCAL[$idx]="$val" ;;
+            name) H_NAME[$idx]="$val" ;;
+            ssh) H_SSH[$idx]="$val" ;;
+            mode) H_MODE[$idx]="$val" ;;
+            user) H_USER[$idx]="$val" ;;
+            frontend) H_FRONTEND[$idx]="$val" ;;
+            web_root) H_WEB_ROOT[$idx]="$val" ;;
+            local) H_LOCAL[$idx]="$val" ;;
+            canary) H_CANARY[$idx]="$val" ;;
             binaries)
-                # Parse TOML array: ["a", "b", "c"] -> space-separated
                 val="$(echo "$val" | tr -d '[]"' | tr ',' ' ')"
                 H_BINARIES[$idx]="$val"
                 ;;
@@ -224,276 +332,490 @@ parse_hosts() {
 }
 
 parse_hosts
+load_dependency_requirements
 HOST_COUNT="${#H_NAME[@]}"
-
 if [[ "$HOST_COUNT" -eq 0 ]]; then
     err "No hosts found in $CONFIG"
     exit 1
 fi
 
-# --- Filter hosts ---
 should_deploy() {
     local name="$1"
     if [[ ${#HOST_FILTER[@]} -eq 0 ]]; then
-        return 0  # No filter = deploy all
+        return 0
     fi
     for f in "${HOST_FILTER[@]}"; do
-        if [[ "$f" == "$name" ]]; then
-            return 0
-        fi
+        [[ "$f" == "$name" ]] && return 0
     done
     return 1
 }
 
-# --- Build phase ---
-if ! $SKIP_BUILD; then
-    log "Building backend and frontend..."
+is_canary_host() {
+    local index="$1"
+    if [[ "${H_CANARY[$index]}" == "true" ]]; then
+        return 0
+    fi
+    return 1
+}
 
-    if ! $SKIP_BACKEND; then
-        log "Building backend binaries (remote-build)..."
-        run bash -c "cd '$ROOT_DIR/backend' && remote-build build --release -p oqto --bin oqto --bin oqto-sandbox"
-        run bash -c "cd '$ROOT_DIR/backend' && remote-build build --release -p oqto-runner --bin oqto-runner"
-        run bash -c "cd '$ROOT_DIR/backend' && remote-build build --release -p oqto-files --bin oqto-files"
-        run bash -c "cd '$ROOT_DIR/backend' && remote-build build --release -p oqto-usermgr --bin oqto-usermgr"
+preflight_host() {
+    local name="$1" ssh_target="$2" mode="$3" is_local="$4" binaries="$5"
+
+    emit_event "$is_local" "$ssh_target" "$name" "preflight" "start" "preflight.start"
+
+    if [[ "$is_local" != "true" ]]; then
+        if [[ "$DRY_RUN" == "true" ]]; then
+            echo -e "${YELLOW}  [dry-run]${NC} ssh connectivity check: $ssh_target"
+        else
+            log "Checking SSH connectivity to $ssh_target..."
+            if ! ssh -o ConnectTimeout=5 "$ssh_target" "echo ok" &>/dev/null; then
+                emit_event "$is_local" "$ssh_target" "$name" "preflight" "fail" "ssh.unreachable"
+                err "Cannot reach $ssh_target"
+                return 1
+            fi
+        fi
     fi
 
-    if ! $SKIP_FRONTEND; then
-        log "Building frontend..."
-        run bash -c "cd '$ROOT_DIR/frontend' && bun run build"
+    if [[ "$mode" == "invalid" ]]; then
+        emit_event "$is_local" "$ssh_target" "$name" "preflight" "fail" "mode.invalid"
+        err "Host $name has invalid mode"
+        return 1
     fi
 
-    ok "Build complete"
-fi
+    if [[ "$SKIP_BACKEND" != "true" ]]; then
+        local bin
+        for bin in $binaries; do
+            if [[ ! -f "$ROOT_DIR/backend/target/release/$bin" ]]; then
+                emit_event "$is_local" "$ssh_target" "$name" "preflight" "fail" "binary.missing.$bin"
+                err "Missing local build artifact: backend/target/release/$bin"
+                return 1
+            fi
+        done
+    fi
 
-# --- Deploy to a single host ---
+    local disk_cmd
+    disk_cmd="free_mb=\$(df -Pm '$RELEASES_ROOT' 2>/dev/null | awk 'NR==2{print \$4}'); if [[ -z \"\$free_mb\" ]]; then free_mb=\$(df -Pm /var/lib | awk 'NR==2{print \$4}'); fi; [[ \$free_mb -ge $MIN_FREE_MB ]]"
+    if ! host_exec_sudo "$is_local" "$ssh_target" "$disk_cmd"; then
+        emit_event "$is_local" "$ssh_target" "$name" "preflight" "fail" "disk.low"
+        err "Preflight disk check failed on $name"
+        return 1
+    fi
+
+    if ! host_exec "$is_local" "$ssh_target" "command -v systemctl >/dev/null && command -v install >/dev/null"; then
+        emit_event "$is_local" "$ssh_target" "$name" "preflight" "fail" "deps.missing"
+        err "Missing required runtime dependencies on $name"
+        return 1
+    fi
+
+    if ! check_dependency_compatibility "$name" "$ssh_target" "$is_local"; then
+        return 1
+    fi
+
+    if [[ "$mode" == "multi-user" ]]; then
+        if [[ "$DRY_RUN" == "true" ]]; then
+            echo -e "${YELLOW}  [dry-run]${NC} multi-user sandbox/seccomp preflight checks"
+            emit_event "$is_local" "$ssh_target" "$name" "preflight" "pass" "preflight.pass"
+            ok "Preflight passed on $name"
+            return 0
+        fi
+
+        local sandbox_stat_cmd
+        sandbox_stat_cmd="test -f /etc/oqto/sandbox.toml && test -r /etc/oqto/sandbox.toml && stat -c '%U:%G %a' /etc/oqto/sandbox.toml"
+        local sandbox_stat
+        if ! sandbox_stat="$(host_exec_sudo "$is_local" "$ssh_target" "$sandbox_stat_cmd")"; then
+            emit_event "$is_local" "$ssh_target" "$name" "preflight" "fail" "sandbox.missing"
+            err "Missing or unreadable /etc/oqto/sandbox.toml on $name"
+            return 1
+        fi
+
+        local owner perm
+        owner="$(echo "$sandbox_stat" | awk '{print $1}')"
+        perm="$(echo "$sandbox_stat" | awk '{print $2}')"
+        if [[ "$owner" != "root:root" ]]; then
+            emit_event "$is_local" "$ssh_target" "$name" "preflight" "fail" "sandbox.owner"
+            err "sandbox.toml must be owned by root:root on $name"
+            return 1
+        fi
+        if [[ "$perm" -gt 644 ]]; then
+            emit_event "$is_local" "$ssh_target" "$name" "preflight" "fail" "sandbox.perms"
+            err "sandbox.toml permissions too open ($perm) on $name"
+            return 1
+        fi
+
+        local seccomp_enforced
+        seccomp_enforced="$(host_exec_sudo "$is_local" "$ssh_target" "python3 - <<'PY'
+from pathlib import Path
+p=Path('/etc/oqto/sandbox.toml')
+text=p.read_text(errors='ignore') if p.exists() else ''
+needle=('seccomp_enforce = true','seccomp_mode = \"enforce\"','seccomp = \"enforce\"')
+print('true' if any(n in text for n in needle) else 'false')
+PY
+")"
+        if [[ "$seccomp_enforced" == "true" ]]; then
+            if ! host_exec_sudo "$is_local" "$ssh_target" "test -r /etc/oqto/seccomp/default.bpf"; then
+                emit_event "$is_local" "$ssh_target" "$name" "preflight" "fail" "seccomp.bpf.missing"
+                err "seccomp enforce configured but /etc/oqto/seccomp/default.bpf missing on $name"
+                return 1
+            fi
+        fi
+    fi
+
+    emit_event "$is_local" "$ssh_target" "$name" "preflight" "pass" "preflight.pass"
+    ok "Preflight passed on $name"
+}
+
+prepare_host() {
+    local name="$1" ssh_target="$2" is_local="$3" binaries="$4" frontend="$5" web_root="$6"
+    local release_dir="$RELEASES_ROOT/$RELEASE_ID"
+
+    emit_event "$is_local" "$ssh_target" "$name" "deploy.prepare" "start" "deploy.prepare.start"
+
+    if [[ "$RESUME" == "true" ]]; then
+        if host_exec_sudo "$is_local" "$ssh_target" "test -f '$release_dir/.prepared'"; then
+            log "Prepare already completed on $name (resume mode)"
+            emit_event "$is_local" "$ssh_target" "$name" "deploy.prepare" "pass" "prepare.resume.skip"
+            return 0
+        fi
+    fi
+
+    host_exec_sudo "$is_local" "$ssh_target" "mkdir -p '$release_dir/bin' '$release_dir/meta'"
+
+    if [[ "$SKIP_BACKEND" != "true" ]]; then
+        local bin
+        for bin in $binaries; do
+            local src="$ROOT_DIR/backend/target/release/$bin"
+            if [[ "$is_local" == "true" ]]; then
+                host_exec_sudo "$is_local" "$ssh_target" "install -m 0755 '$src' '$release_dir/bin/$bin'"
+            else
+                if [[ "$DRY_RUN" == "true" ]]; then
+                    echo -e "${YELLOW}  [dry-run]${NC} scp $src $ssh_target:/tmp/oqto-${bin}-${RELEASE_ID}"
+                else
+                    local tmp_remote="/tmp/oqto-${bin}-${RELEASE_ID}"
+                    scp -q "$src" "$ssh_target:$tmp_remote"
+                    host_exec_sudo "$is_local" "$ssh_target" "install -m 0755 '$tmp_remote' '$release_dir/bin/$bin' && rm -f '$tmp_remote'"
+                fi
+            fi
+        done
+    fi
+
+    if [[ "$SKIP_FRONTEND" != "true" && "$frontend" == "true" ]]; then
+        local dist_dir="$ROOT_DIR/frontend/dist"
+        if [[ -d "$dist_dir" ]]; then
+            host_exec_sudo "$is_local" "$ssh_target" "mkdir -p '$release_dir/frontend'"
+            if [[ "$is_local" == "true" ]]; then
+                host_exec_sudo "$is_local" "$ssh_target" "rsync -a --delete '$dist_dir/' '$release_dir/frontend/'"
+            else
+                if [[ "$DRY_RUN" == "true" ]]; then
+                    echo -e "${YELLOW}  [dry-run]${NC} rsync -az --delete $dist_dir/ $ssh_target:$release_dir/frontend/"
+                else
+                    local tmp_frontend="/tmp/oqto-frontend-${RELEASE_ID}"
+                    ssh "$ssh_target" "rm -rf '$tmp_frontend' && mkdir -p '$tmp_frontend'"
+                    rsync -az --delete "$dist_dir/" "$ssh_target:$tmp_frontend/"
+                    host_exec_sudo "$is_local" "$ssh_target" "mkdir -p '$release_dir/frontend' && rsync -a --delete '$tmp_frontend/' '$release_dir/frontend/' && rm -rf '$tmp_frontend'"
+                fi
+            fi
+        fi
+        host_exec_sudo "$is_local" "$ssh_target" "printf '%s\n' '$web_root' > '$release_dir/meta/web_root'"
+    fi
+
+    host_exec_sudo "$is_local" "$ssh_target" "printf '%s\n' '$RELEASE_ID' > '$release_dir/meta/release_id' && touch '$release_dir/.prepared'"
+    emit_event "$is_local" "$ssh_target" "$name" "deploy.prepare" "pass" "deploy.prepare.pass"
+    ok "Prepared release $RELEASE_ID on $name"
+}
+
+install_current_symlinks() {
+    local is_local="$1" ssh_target="$2" binaries="$3"
+    local current_link="$RELEASES_ROOT/current"
+    local bin
+    for bin in $binaries; do
+        host_exec_sudo "$is_local" "$ssh_target" "ln -sfn '$current_link/bin/$bin' '/usr/local/bin/$bin'"
+    done
+}
+
+restart_services_ordered() {
+    local is_local="$1" ssh_target="$2" mode="$3" services="$4"
+
+    if [[ "$SKIP_SERVICES" == "true" ]]; then
+        return 0
+    fi
+
+    # Ordered restarts: runner -> control plane (oqto) -> everything else.
+    if [[ "$mode" == "single-user" ]]; then
+        host_exec "$is_local" "$ssh_target" "systemctl --user restart oqto-runner" || true
+    fi
+
+    host_exec_sudo "$is_local" "$ssh_target" "systemctl restart oqto" || true
+
+    local svc
+    for svc in $services; do
+        if [[ "$svc" == "oqto" || "$svc" == "oqto-runner" ]]; then
+            continue
+        fi
+        host_exec_sudo "$is_local" "$ssh_target" "systemctl restart '$svc'" || true
+    done
+
+    if [[ "$mode" == "multi-user" ]]; then
+        host_exec "$is_local" "$ssh_target" "oqtoctl user sync-configs" || true
+    fi
+}
+
+health_check_host() {
+    local is_local="$1" ssh_target="$2" mode="$3"
+    local start
+    start="$(date +%s)"
+
+    while true; do
+        local elapsed
+        elapsed=$(( $(date +%s) - start ))
+        if [[ "$elapsed" -ge "$HEALTH_TIMEOUT_SECONDS" ]]; then
+            return 1
+        fi
+
+        local ok_backend="false" ok_runner="false" ok_deps="false"
+
+        if host_exec "$is_local" "$ssh_target" "curl -sf http://127.0.0.1:8080/api/health >/dev/null"; then
+            ok_backend="true"
+        fi
+
+        if [[ "$mode" == "single-user" ]]; then
+            if host_exec "$is_local" "$ssh_target" "uid=\$(id -u); test -S /run/user/\${uid}/oqto-runner.sock"; then
+                ok_runner="true"
+            fi
+        else
+            ok_runner="true"
+        fi
+
+        if host_exec "$is_local" "$ssh_target" "command -v hstry >/dev/null && command -v mmry >/dev/null"; then
+            ok_deps="true"
+        fi
+
+        if [[ "$ok_backend" == "true" && "$ok_runner" == "true" && "$ok_deps" == "true" ]]; then
+            return 0
+        fi
+
+        sleep 2
+    done
+}
+
+rollback_host() {
+    local name="$1" ssh_target="$2" is_local="$3" binaries="$4" mode="$5" services="$6"
+    local previous_release="$7"
+
+    emit_event "$is_local" "$ssh_target" "$name" "rollback" "start" "rollback.start"
+
+    if [[ -z "$previous_release" ]]; then
+        emit_event "$is_local" "$ssh_target" "$name" "rollback" "fail" "rollback.no_previous_release"
+        err "Rollback failed on $name: no previous release"
+        return 1
+    fi
+
+    host_exec_sudo "$is_local" "$ssh_target" "ln -sfn '$RELEASES_ROOT/$previous_release' '$RELEASES_ROOT/current'"
+    install_current_symlinks "$is_local" "$ssh_target" "$binaries"
+    restart_services_ordered "$is_local" "$ssh_target" "$mode" "$services"
+
+    if health_check_host "$is_local" "$ssh_target" "$mode"; then
+        host_exec_sudo "$is_local" "$ssh_target" "ln -sfn '$RELEASES_ROOT/$previous_release' '$RELEASES_ROOT/last-good'"
+        emit_event "$is_local" "$ssh_target" "$name" "rollback" "pass" "rollback.pass"
+        ok "Rollback succeeded on $name"
+        return 0
+    fi
+
+    emit_event "$is_local" "$ssh_target" "$name" "rollback" "fail" "rollback.health_failed"
+    err "Rollback health checks failed on $name"
+    return 1
+}
+
+activate_host() {
+    local name="$1" ssh_target="$2" is_local="$3" mode="$4" binaries="$5" services="$6" frontend="$7" web_root="$8"
+    local release_dir="$RELEASES_ROOT/$RELEASE_ID"
+
+    emit_event "$is_local" "$ssh_target" "$name" "deploy.activate" "start" "deploy.activate.start"
+
+    if ! host_exec_sudo "$is_local" "$ssh_target" "test -f '$release_dir/.prepared'"; then
+        emit_event "$is_local" "$ssh_target" "$name" "deploy.activate" "fail" "activate.not_prepared"
+        err "Release $RELEASE_ID not prepared on $name"
+        return 1
+    fi
+
+    if [[ "$RESUME" == "true" ]]; then
+        if host_exec_sudo "$is_local" "$ssh_target" "[[ \"\$(readlink -f '$RELEASES_ROOT/current' 2>/dev/null || true)\" == \"$release_dir\" ]]"; then
+            log "Activation already applied on $name (resume mode)"
+            if health_check_host "$is_local" "$ssh_target" "$mode"; then
+                emit_event "$is_local" "$ssh_target" "$name" "deploy.activate" "pass" "activate.resume.skip"
+                return 0
+            fi
+        fi
+    fi
+
+    local previous_release
+    previous_release="$(host_exec_sudo "$is_local" "$ssh_target" "basename \"\$(readlink -f '$RELEASES_ROOT/current' 2>/dev/null || true)\"")"
+
+    host_exec_sudo "$is_local" "$ssh_target" "ln -sfn '$release_dir' '$RELEASES_ROOT/current'"
+    install_current_symlinks "$is_local" "$ssh_target" "$binaries"
+
+    if [[ "$SKIP_FRONTEND" != "true" && "$frontend" == "true" ]]; then
+        host_exec_sudo "$is_local" "$ssh_target" "mkdir -p '$web_root' && rsync -a --delete '$release_dir/frontend/' '$web_root/'"
+    fi
+
+    restart_services_ordered "$is_local" "$ssh_target" "$mode" "$services"
+
+    if health_check_host "$is_local" "$ssh_target" "$mode"; then
+        host_exec_sudo "$is_local" "$ssh_target" "ln -sfn '$release_dir' '$RELEASES_ROOT/last-good'"
+        emit_event "$is_local" "$ssh_target" "$name" "deploy.activate" "pass" "deploy.activate.pass"
+        ok "Activated release $RELEASE_ID on $name"
+        return 0
+    fi
+
+    emit_event "$is_local" "$ssh_target" "$name" "deploy.activate" "fail" "health.failed"
+    warn "Health check failed on $name, attempting rollback..."
+    rollback_host "$name" "$ssh_target" "$is_local" "$binaries" "$mode" "$services" "$previous_release"
+}
+
+print_status_host() {
+    local name="$1" ssh_target="$2" is_local="$3"
+    local current last_good prepared
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+        log "[$name] release_id=$RELEASE_ID prepared=? current=? last_good=? (dry-run)"
+        return 0
+    fi
+
+    current="$(host_exec_sudo "$is_local" "$ssh_target" "basename \"\$(readlink -f '$RELEASES_ROOT/current' 2>/dev/null || true)\"")"
+    last_good="$(host_exec_sudo "$is_local" "$ssh_target" "basename \"\$(readlink -f '$RELEASES_ROOT/last-good' 2>/dev/null || true)\"")"
+    prepared="$(host_exec_sudo "$is_local" "$ssh_target" "test -f '$RELEASES_ROOT/$RELEASE_ID/.prepared' && echo yes || echo no")"
+
+    log "[$name] release_id=$RELEASE_ID prepared=$prepared current=${current:-none} last_good=${last_good:-none}"
+}
+
+build_artifacts() {
+    if [[ "$SKIP_BUILD" == "true" ]]; then
+        return 0
+    fi
+
+    log "Building artifacts..."
+    if [[ "$SKIP_BACKEND" != "true" ]]; then
+        host_exec "true" "" "cd '$ROOT_DIR/backend' && remote-build build --release -p oqto --bin oqto --bin oqto-sandbox"
+        host_exec "true" "" "cd '$ROOT_DIR/backend' && remote-build build --release -p oqto-runner --bin oqto-runner"
+        host_exec "true" "" "cd '$ROOT_DIR/backend' && remote-build build --release -p oqto-files --bin oqto-files"
+        host_exec "true" "" "cd '$ROOT_DIR/backend' && remote-build build --release -p oqto-usermgr --bin oqto-usermgr"
+    fi
+
+    if [[ "$SKIP_FRONTEND" != "true" ]]; then
+        host_exec "true" "" "cd '$ROOT_DIR/frontend' && bun run build"
+    fi
+
+    ok "Build completed"
+}
+
 deploy_host() {
-    local name="$1"
-    local ssh_target="$2"
-    local mode="$3"
-    local user="$4"
-    local is_frontend="$5"
-    local web_root="$6"
-    local binaries="$7"
-    local services="$8"
-    local is_local="$9"
+    local i="$1"
+    local name="${H_NAME[$i]}"
+    local ssh_target="${H_SSH[$i]}"
+    local mode
+    mode="$(normalize_mode "${H_MODE[$i]}")"
+    local frontend="${H_FRONTEND[$i]}"
+    local web_root="${H_WEB_ROOT[$i]}"
+    local binaries="${H_BINARIES[$i]}"
+    local services="${H_SERVICES[$i]}"
+    local is_local="${H_LOCAL[$i]}"
 
     echo ""
     log "=========================================="
-    log "Deploying to ${BOLD}$name${NC} ($mode mode)"
+    log "Deploying ${BOLD}$name${NC} release ${BOLD}$RELEASE_ID${NC}"
     log "=========================================="
 
-    # --- Check connectivity ---
-    if [[ "$is_local" != "true" ]]; then
-        log "Checking SSH connectivity to $ssh_target..."
-        if ! ssh -o ConnectTimeout=5 "$ssh_target" "echo ok" &>/dev/null; then
-            err "Cannot reach $ssh_target via SSH. Skipping."
+    if ! preflight_host "$name" "$ssh_target" "$mode" "$is_local" "$binaries"; then
+        return 1
+    fi
+
+    if [[ "$STATUS_ONLY" == "true" ]]; then
+        print_status_host "$name" "$ssh_target" "$is_local"
+        return 0
+    fi
+
+    if [[ "$ACTIVATE_ONLY" != "true" ]]; then
+        if ! prepare_host "$name" "$ssh_target" "$is_local" "$binaries" "$frontend" "$web_root"; then
             return 1
         fi
-        ok "SSH connected to $ssh_target"
     fi
 
-    # --- Deploy backend binaries ---
-    if ! $SKIP_BACKEND && [[ -n "$binaries" ]]; then
-        log "Deploying binaries: $binaries"
-        local bin bin_path tmp
-        for bin in $binaries; do
-            bin_path="$ROOT_DIR/backend/target/release/$bin"
-            if [[ ! -f "$bin_path" ]]; then
-                warn "Binary not found: $bin_path (skipping)"
-                continue
-            fi
-
-            if [[ "$is_local" == "true" ]]; then
-                log "  Installing $bin -> /usr/local/bin/$bin"
-                run sudo install -m 0755 "$bin_path" "/usr/local/bin/$bin"
-                run mkdir -p "${HOME}/.local/bin"
-                run ln -sf "/usr/local/bin/$bin" "${HOME}/.local/bin/$bin"
-            else
-                log "  Uploading $bin -> $ssh_target:/usr/local/bin/$bin"
-                if $DRY_RUN; then
-                    echo -e "${YELLOW}  [dry-run]${NC} scp $bin_path -> /usr/local/bin/$bin"
-                else
-                    tmp="/tmp/oqto-deploy-${bin}"
-                    scp -q "$bin_path" "${ssh_target}:${tmp}"
-                    ssh "$ssh_target" "sudo install -m 0755 '$tmp' '/usr/local/bin/$bin' && rm -f '$tmp'"
-                fi
-            fi
-        done
-        ok "Binaries deployed"
-    fi
-
-    # --- Deploy frontend ---
-    if ! $SKIP_FRONTEND && [[ "$is_frontend" == "true" ]] && [[ -n "$web_root" ]]; then
-        local dist_dir="$ROOT_DIR/frontend/dist"
-        if [[ ! -d "$dist_dir" ]]; then
-            warn "Frontend dist not found at $dist_dir (skipping)"
-        else
-            log "Deploying frontend to $web_root"
-            if [[ "$is_local" == "true" ]]; then
-                # Do NOT delete existing assets eagerly.
-                # Keep previous hashed chunks around so active clients don't hit
-                # dynamic import 404s during rolling frontend updates.
-                run sudo cp -a "${dist_dir}/." "${web_root}/"
-            else
-                if $DRY_RUN; then
-                    echo -e "${YELLOW}  [dry-run]${NC} rsync frontend/dist/ -> $ssh_target:$web_root/ (no eager asset deletion)"
-                else
-                    local tmp_dir="/tmp/oqto-deploy-frontend"
-                    ssh "$ssh_target" "rm -rf $tmp_dir && mkdir -p $tmp_dir"
-                    # Upload the new build exactly to tmp, then overlay into web root.
-                    rsync -az --delete "${dist_dir}/" "${ssh_target}:${tmp_dir}/"
-                    ssh "$ssh_target" "sudo cp -a '${tmp_dir}/.' '${web_root}/' && sudo chown -R ${user}:${user} '${web_root}' && rm -rf '$tmp_dir'"
-                fi
-            fi
-            ok "Frontend deployed"
+    if [[ "$PREPARE_ONLY" != "true" ]]; then
+        if ! activate_host "$name" "$ssh_target" "$is_local" "$mode" "$binaries" "$services" "$frontend" "$web_root"; then
+            return 1
         fi
     fi
 
-    # --- Restart services ---
-    if ! $SKIP_SERVICES && [[ -n "$services" ]]; then
-        log "Restarting services: $services"
-        local svc
-        for svc in $services; do
-            log "  Restarting $svc..."
-            if [[ "$is_local" == "true" ]]; then
-                # For oqto: kill stale port holders, use system service in multi-user mode
-                if [[ "$svc" == "oqto" && "$mode" == "multi-user" ]]; then
-                    run sudo fuser -k 8080/tcp 2>/dev/null || true
-                    sleep 1
-                    run sudo systemctl restart oqto || warn "  Failed to restart oqto"
-                else
-                    run systemctl --user restart "$svc" || warn "  Failed to restart $svc"
-                fi
-            else
-                if $DRY_RUN; then
-                    echo -e "${YELLOW}  [dry-run]${NC} ssh $ssh_target sudo systemctl restart $svc"
-                else
-                    # Kill stale port holders before restart to prevent "Address already in use"
-                    if [[ "$svc" == "oqto" ]]; then
-                        ssh "$ssh_target" "sudo fuser -k 8080/tcp 2>/dev/null; sleep 1; sudo systemctl restart oqto" || warn "  Failed to restart oqto on $name"
-                    else
-                        ssh "$ssh_target" "sudo systemctl restart $svc 2>/dev/null || systemctl --user restart $svc" || warn "  Failed to restart $svc on $name"
-                    fi
-                fi
-            fi
-        done
-
-        # Multi-user mode: sync user configs, update hstry adapters, restart runners
-        if [[ "$mode" == "multi-user" ]]; then
-            # Sync per-user config files (models.json with embedded eavs keys,
-            # Pi settings, AGENTS.md, etc.). Must run after oqto restart since
-            # it talks to the admin API. Without this, models.json can contain
-            # stale placeholder values (e.g. "EAVS_API_KEY" literal) from older
-            # oqto versions, causing 401 errors on all LLM requests.
-            log "  Syncing per-user configs (models.json, Pi settings)..."
-            if $DRY_RUN; then
-                echo -e "${YELLOW}  [dry-run]${NC} oqtoctl user sync-configs"
-            else
-                # Give oqto a brief startup window; sync call itself retries if
-                # unix socket/admin API isn't ready yet.
-                sleep 2
-                if sync_configs_with_retry "$is_local" "$ssh_target" "$name"; then
-                    ok "Per-user configs synced"
-                else
-                    warn "  sync-configs failed on $name (non-fatal)"
-                fi
-            fi
-
-            # Update hstry adapters globally BEFORE restarting services.
-            # hstry refuses to start if adapters version doesn't match binary version,
-            # causing a crash-loop that silently drops all chat messages.
-            log "  Updating hstry adapters..."
-            if $DRY_RUN; then
-                echo -e "${YELLOW}  [dry-run]${NC} ssh $ssh_target: hstry adapters update (global + per-user)"
-            else
-                # Update global adapters (root)
-                ssh "$ssh_target" "sudo /usr/local/bin/hstry adapters update 2>/dev/null && sudo cp -r /root/.config/hstry/adapters/* /usr/local/share/hstry/adapters/ 2>/dev/null && sudo cp /root/.config/hstry/adapters/.hstry-adapters.json /usr/local/share/hstry/adapters/.hstry-adapters.json 2>/dev/null" || warn "  Failed to update global hstry adapters"
-                # Update per-user adapters (for users that have their own adapters dir)
-                local oqto_users_adapters
-                oqto_users_adapters="$(ssh "$ssh_target" "getent passwd | grep '^oqto_' | cut -d: -f1 | head -50" || true)"
-                if [[ -n "$oqto_users_adapters" ]]; then
-                    for oqto_user in $oqto_users_adapters; do
-                        if ssh "$ssh_target" "test -d /home/${oqto_user}/.config/hstry/adapters" 2>/dev/null; then
-                            ssh "$ssh_target" "sudo -u ${oqto_user} bash -c 'HOME=/home/${oqto_user} /usr/local/bin/hstry adapters update' 2>/dev/null" || true
-                        fi
-                    done
-                fi
-                ok "hstry adapters updated"
-            fi
-
-            log "  Restarting per-user runners (multi-user mode)..."
-            if $DRY_RUN; then
-                echo -e "${YELLOW}  [dry-run]${NC} ssh $ssh_target: restart all per-user oqto-runner processes"
-            else
-                local runner_pids
-                runner_pids="$(ssh "$ssh_target" "pgrep -f 'oqto-runner --socket' 2>/dev/null" || true)"
-                if [[ -n "$runner_pids" ]]; then
-                    ssh "$ssh_target" "sudo pkill -f 'oqto-runner --socket' || true"
-                    log "  Killed running per-user runners. They will respawn on next session."
-                else
-                    log "  No per-user runners running."
-                fi
-
-                local oqto_users oqto_user uid
-                oqto_users="$(ssh "$ssh_target" "getent passwd | grep '^oqto_' | cut -d: -f1 | head -50" || true)"
-                if [[ -n "$oqto_users" ]]; then
-                    log "  Restarting per-user services for platform users..."
-                    for oqto_user in $oqto_users; do
-                        uid="$(ssh "$ssh_target" "id -u '$oqto_user' 2>/dev/null" || true)"
-                        if [[ -n "$uid" ]]; then
-                            ssh "$ssh_target" "sudo systemctl restart user@${uid}.service 2>/dev/null" || true
-                        fi
-                    done
-                fi
-            fi
-        fi
-
-        # Single-user mode: runner must always be up (runner-only architecture)
-        if [[ "$mode" == "single-user" ]]; then
-            if $DRY_RUN; then
-                echo -e "${YELLOW}  [dry-run]${NC} ensure oqto-runner is enabled and running"
-            else
-                ensure_single_user_runner "$is_local" "$ssh_target" "$name" || warn "  oqto-runner availability check failed"
-            fi
-        fi
-
-        ok "Services restarted"
-    fi
-
-    # Even when service restart is skipped, enforce runner availability in single-user mode.
-    if [[ "$mode" == "single-user" && "$SKIP_SERVICES" == "true" ]]; then
-        log "Service restart skipped; still verifying oqto-runner availability (single-user mode)"
-        if $DRY_RUN; then
-            echo -e "${YELLOW}  [dry-run]${NC} ensure oqto-runner is enabled and running"
-        else
-            ensure_single_user_runner "$is_local" "$ssh_target" "$name" || warn "  oqto-runner availability check failed"
-        fi
-    fi
-
-    ok "Deployment to ${BOLD}$name${NC} complete"
+    ok "Deployment finished for $name"
 }
 
-# --- Deploy to each host ---
-for ((i=0; i<HOST_COUNT; i++)); do
-    if ! should_deploy "${H_NAME[$i]}"; then
-        log "Skipping ${BOLD}${H_NAME[$i]}${NC} (filtered out)"
-        continue
+collect_targets() {
+    local include_canary="$1"
+    local include_non_canary="$2"
+    local -n out_ref=$3
+
+    out_ref=()
+    local i
+    for ((i=0; i<HOST_COUNT; i++)); do
+        should_deploy "${H_NAME[$i]}" || continue
+
+        if is_canary_host "$i"; then
+            [[ "$include_canary" == "true" ]] || continue
+        else
+            [[ "$include_non_canary" == "true" ]] || continue
+        fi
+
+        out_ref+=("$i")
+    done
+}
+
+run_targets() {
+    local -n target_ref=$1
+    local i
+    for i in "${target_ref[@]}"; do
+        if ! deploy_host "$i"; then
+            err "Deployment failed for ${H_NAME[$i]}"
+            return 1
+        fi
+    done
+}
+
+build_artifacts
+
+if [[ "$CANARY_THEN_FLEET" == "true" ]]; then
+    declare -a canary_targets fleet_targets
+    collect_targets "true" "false" canary_targets
+    if [[ "${#canary_targets[@]}" -eq 0 ]]; then
+        err "No canary hosts selected"
+        exit 1
     fi
 
-    deploy_host \
-        "${H_NAME[$i]}" \
-        "${H_SSH[$i]}" \
-        "${H_MODE[$i]}" \
-        "${H_USER[$i]}" \
-        "${H_FRONTEND[$i]}" \
-        "${H_WEB_ROOT[$i]}" \
-        "${H_BINARIES[$i]}" \
-        "${H_SERVICES[$i]}" \
-        "${H_LOCAL[$i]}" \
-        || warn "Deployment to ${H_NAME[$i]} had errors"
-done
+    log "Starting canary deployment..."
+    run_targets canary_targets
+    ok "Canary deployment passed"
 
-echo ""
+    collect_targets "false" "true" fleet_targets
+    if [[ "${#fleet_targets[@]}" -gt 0 ]]; then
+        log "Starting fleet rollout..."
+        run_targets fleet_targets
+    fi
+elif [[ "$CANARY_ONLY" == "true" ]]; then
+    declare -a canary_targets
+    collect_targets "true" "false" canary_targets
+    if [[ "${#canary_targets[@]}" -eq 0 ]]; then
+        err "No canary hosts selected"
+        exit 1
+    fi
+    run_targets canary_targets
+else
+    declare -a all_targets
+    collect_targets "true" "true" all_targets
+    if [[ "${#all_targets[@]}" -eq 0 ]]; then
+        err "No hosts matched filters"
+        exit 1
+    fi
+    run_targets all_targets
+fi
+
 ok "=========================================="
-ok "All deployments complete"
+ok "Deployment complete (release: $RELEASE_ID)"
 ok "=========================================="

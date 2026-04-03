@@ -217,6 +217,14 @@ type TodoItem = {
 	priority: "high" | "medium" | "low";
 };
 
+interface IssueAttachment {
+	id: string;
+	issueId: string;
+	title: string;
+	description?: string;
+	type: "issue";
+}
+
 const TodoListView = memo(function TodoListView({
 	todos,
 	emptyMessage,
@@ -952,6 +960,62 @@ export const SessionScreen = memo(function SessionScreen() {
 		</Suspense>
 	) : null;
 
+	// Callbacks for TRX issue handling
+	const handleStartIssue = useCallback(
+		async (issueId: string, title: string, description?: string) => {
+			// Switch to chat view
+			setActiveView("chat");
+
+			// Ensure we have a selected chat session
+			if (!selectedChatSessionId) {
+				const newSessionId = await createNewChat(normalizedWorkspacePath);
+				if (!newSessionId) return;
+				setSelectedChatSessionId(newSessionId);
+			}
+
+			// Prefill the chat input with issue text
+			const issueText = `Working on issue #${issueId}: ${title}${description ? `\n\n${description}` : ""}`;
+			setPendingChatInput(issueText);
+		},
+		[
+			selectedChatSessionId,
+			normalizedWorkspacePath,
+			setActiveView,
+			createNewChat,
+			setSelectedChatSessionId,
+		],
+	);
+
+	const handleStartIssueNewSession = useCallback(
+		async (issueIds: string, title: string, attachments: IssueAttachment[]) => {
+			// Create a new chat session
+			const newSessionId = await createNewChat(normalizedWorkspacePath);
+			if (!newSessionId) return;
+
+			// Select the new session
+			setSelectedChatSessionId(newSessionId);
+
+			// Switch to chat view
+			setActiveView("chat");
+
+			// Prefill the chat input with issue text
+			const issueText = attachments
+				.map(
+					(a: IssueAttachment) =>
+						`Issue #${a.issueId}: ${a.title}${a.description ? `\n\n${a.description}` : ""}`,
+				)
+				.join("\n\n---\n\n");
+			const fullText = `Working on the following issues:\n\n${issueText}`;
+			setPendingChatInput(fullText);
+		},
+		[
+			normalizedWorkspacePath,
+			setActiveView,
+			createNewChat,
+			setSelectedChatSessionId,
+		],
+	);
+
 	const tasksPanel = (
 		<div className="flex flex-col h-full overflow-hidden">
 			<div className="flex-shrink-0 flex border-b border-border bg-muted/30">
@@ -1008,6 +1072,8 @@ export const SessionScreen = memo(function SessionScreen() {
 								key={normalizedWorkspacePath}
 								workspacePath={normalizedWorkspacePath}
 								className="flex-1 min-h-0"
+								onStartIssue={handleStartIssue}
+								onStartIssueNewSession={handleStartIssueNewSession}
 							/>
 						</Suspense>
 					) : (

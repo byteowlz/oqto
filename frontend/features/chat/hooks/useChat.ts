@@ -725,32 +725,19 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 				case "stream.tool_call_start": {
 					const toolCallId =
 						typeof event.tool_call_id === "string" ? event.tool_call_id : "";
+					if (!toolCallId) {
+						// Canonical protocol requires tool_call_id for lifecycle events.
+						// Ignore malformed events to keep lifecycle reconciliation deterministic.
+						break;
+					}
 					const name = event.name as string;
 					const targetMessage = ensureAssistantMessage(true);
 					const existingById = targetMessage.parts.find(
-						(p) =>
-							p.type === "tool_call" &&
-							toolCallId.length > 0 &&
-							p.toolCallId === toolCallId,
+						(p) => p.type === "tool_call" && p.toolCallId === toolCallId,
 					);
-					const existingRunningByName = targetMessage.parts.find((p) => {
-						if (p.type !== "tool_call") return false;
-						if (p.name !== name || p.status !== "running") return false;
-						return !targetMessage.parts.some(
-							(r) => r.type === "tool_result" && r.toolCallId === p.toolCallId,
-						);
-					});
 					if (existingById && existingById.type === "tool_call") {
 						existingById.status = "running";
-						scheduleStreamingUpdate();
-					} else if (
-						existingRunningByName &&
-						existingRunningByName.type === "tool_call"
-					) {
-						if (toolCallId.length > 0 && !existingRunningByName.toolCallId) {
-							existingRunningByName.toolCallId = toolCallId;
-						}
-						existingRunningByName.status = "running";
+						existingById.name = name || existingById.name;
 						scheduleStreamingUpdate();
 					} else {
 						const part: DisplayPart = {
@@ -777,29 +764,30 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 					const toolCall = event.tool_call as
 						| { id: string; name: string; input: unknown }
 						| undefined;
-					if (!toolCall) break;
+					if (!toolCall?.id) break;
 					const targetMessage = ensureAssistantMessage(true);
 					const existingById = targetMessage.parts.find(
 						(p) => p.type === "tool_call" && p.toolCallId === toolCall.id,
 					);
-					const existingByName = targetMessage.parts.find(
-						(p) =>
-							p.type === "tool_call" &&
-							p.name === toolCall.name &&
-							p.status === "running",
-					);
-					const existingPart =
-						existingById && existingById.type === "tool_call"
-							? existingById
-							: existingByName && existingByName.type === "tool_call"
-								? existingByName
-								: undefined;
-					if (existingPart) {
-						if (toolCall.id && !existingPart.toolCallId) {
-							existingPart.toolCallId = toolCall.id;
-						}
-						existingPart.input = toolCall.input;
+					if (existingById && existingById.type === "tool_call") {
+						existingById.name = toolCall.name || existingById.name;
+						existingById.input = toolCall.input;
 						scheduleStreamingUpdate();
+					} else {
+						const part: DisplayPart = {
+							type: "tool_call",
+							id: nextPartId(),
+							toolCallId: toolCall.id,
+							name: toolCall.name,
+							input: toolCall.input,
+							status: "running",
+						};
+						if (streamingMessageRef.current?.id === targetMessage.id) {
+							targetMessage.parts.push(part);
+							scheduleStreamingUpdate();
+						} else {
+							appendPartToMessage(targetMessage.id, part);
+						}
 					}
 					break;
 				}
@@ -808,37 +796,21 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 				case "tool.start": {
 					const toolCallId =
 						typeof event.tool_call_id === "string" ? event.tool_call_id : "";
+					if (!toolCallId) {
+						break;
+					}
 					const name = event.name as string;
 					const input = event.input;
 					// Ensure there's a tool_call part for this tool (in case we missed
-					// stream.tool_call_start, e.g. on reconnect)
+					// stream.tool_call_* events, e.g. on reconnect)
 					const targetMessage = ensureAssistantMessage(true);
 					const existingById = targetMessage.parts.find(
-						(p) =>
-							p.type === "tool_call" &&
-							toolCallId.length > 0 &&
-							p.toolCallId === toolCallId,
+						(p) => p.type === "tool_call" && p.toolCallId === toolCallId,
 					);
-					const existingRunningByName = targetMessage.parts.find((p) => {
-						if (p.type !== "tool_call") return false;
-						if (p.name !== name || p.status !== "running") return false;
-						return !targetMessage.parts.some(
-							(r) => r.type === "tool_result" && r.toolCallId === p.toolCallId,
-						);
-					});
 					if (existingById && existingById.type === "tool_call") {
 						existingById.input = input;
+						existingById.name = name || existingById.name;
 						existingById.status = "running";
-						scheduleStreamingUpdate();
-					} else if (
-						existingRunningByName &&
-						existingRunningByName.type === "tool_call"
-					) {
-						if (toolCallId.length > 0) {
-							existingRunningByName.toolCallId = toolCallId;
-						}
-						existingRunningByName.input = input;
-						existingRunningByName.status = "running";
 						scheduleStreamingUpdate();
 					} else {
 						const part: DisplayPart = {
@@ -864,44 +836,27 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 				case "tool.end": {
 					const toolCallId =
 						typeof event.tool_call_id === "string" ? event.tool_call_id : "";
+					if (!toolCallId) {
+						break;
+					}
 					const name = event.name as string;
 					const output = event.output;
 					const isError = event.is_error as boolean;
 					const targetMessage = ensureAssistantMessage(false);
-					const matchingById = targetMessage.parts.find(
-						(p) =>
-							p.type === "tool_call" &&
-							toolCallId.length > 0 &&
-							p.toolCallId === toolCallId,
+					const matchingToolCall = targetMessage.parts.find(
+						(p) => p.type === "tool_call" && p.toolCallId === toolCallId,
 					);
-					const matchingByName = targetMessage.parts.find(
-						(p) =>
-							p.type === "tool_call" &&
-							p.name === name &&
-							p.status === "running",
-					);
-					const matchingToolCall =
-						matchingById && matchingById.type === "tool_call"
-							? matchingById
-							: matchingByName && matchingByName.type === "tool_call"
-								? matchingByName
-								: undefined;
-					if (matchingToolCall) {
-						if (toolCallId.length > 0 && !matchingToolCall.toolCallId) {
-							matchingToolCall.toolCallId = toolCallId;
-						}
+					if (matchingToolCall && matchingToolCall.type === "tool_call") {
 						matchingToolCall.status = isError ? "error" : "success";
+						matchingToolCall.name = name || matchingToolCall.name;
 					}
-					const duplicateResult = targetMessage.parts.find((p) => {
-						if (p.type !== "tool_result") return false;
-						if (toolCallId.length > 0 && p.toolCallId === toolCallId)
-							return true;
-						if (name && p.name === name) return true;
-						return false;
-					});
+					const duplicateResult = targetMessage.parts.find(
+						(p) => p.type === "tool_result" && p.toolCallId === toolCallId,
+					);
 					if (duplicateResult && duplicateResult.type === "tool_result") {
 						duplicateResult.output = output;
 						duplicateResult.isError = isError;
+						duplicateResult.name = name || duplicateResult.name;
 						scheduleStreamingUpdate();
 						applyTurnState({ kind: "streaming" });
 						break;
