@@ -385,11 +385,12 @@ check_dependency_compatibility() {
         required="${REQUIRED_DEP_VERSIONS[$dep]}"
         local needs_fix="false"
 
-        if ! host_exec "$is_local" "$ssh_target" "command -v '$dep' >/dev/null" 2>/dev/null; then
+        if ! host_exec "$is_local" "$ssh_target" "test -x '/usr/local/bin/$dep' || command -v '$dep' >/dev/null" 2>/dev/null; then
             warn "  $dep: not installed (need >= $required)"
             needs_fix="true"
         else
-            current="$(host_exec "$is_local" "$ssh_target" "$dep --version 2>/dev/null | grep -oE '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1" 2>/dev/null || true)"
+            # Check /usr/local/bin first (where we install), then fall back to PATH.
+            current="$(host_exec "$is_local" "$ssh_target" "{ /usr/local/bin/$dep --version 2>/dev/null || $dep --version 2>/dev/null; } | grep -oE '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1" 2>/dev/null || true)"
             if [[ -z "$current" ]]; then
                 warn "  $dep: version unknown (need >= $required)"
                 needs_fix="true"
@@ -426,12 +427,12 @@ check_dependency_compatibility() {
         log "Re-verifying dependencies on $name..."
         for dep in "${needs_remediation[@]}"; do
             required="${REQUIRED_DEP_VERSIONS[$dep]}"
-            if ! host_exec "$is_local" "$ssh_target" "command -v '$dep' >/dev/null" 2>/dev/null; then
+            if ! host_exec "$is_local" "$ssh_target" "test -x '/usr/local/bin/$dep'" 2>/dev/null; then
                 emit_event "$is_local" "$ssh_target" "$name" "preflight" "fail" "deps.${dep}.still_missing"
                 err "$dep still missing on $name after remediation"
                 return 1
             fi
-            current="$(host_exec "$is_local" "$ssh_target" "$dep --version 2>/dev/null | grep -oE '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1" 2>/dev/null || true)"
+            current="$(host_exec "$is_local" "$ssh_target" "/usr/local/bin/$dep --version 2>/dev/null | grep -oE '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1" 2>/dev/null || true)"
             if [[ -z "$current" ]] || ! version_ge "$current" "$required"; then
                 emit_event "$is_local" "$ssh_target" "$name" "preflight" "fail" "deps.${dep}.still_outdated"
                 err "$dep still outdated on $name after remediation ($current, need >= $required)"
@@ -874,6 +875,14 @@ build_artifacts() {
 
     log "Building artifacts..."
     if [[ "$SKIP_BACKEND" != "true" ]]; then
+        # Verify Cargo.lock is in sync with Cargo.toml
+        local toml_ver lock_ver
+        toml_ver=$(grep -m1 '^version = ' "$ROOT_DIR/backend/Cargo.toml" | sed 's/version = "\(.*\)"/\1/')
+        lock_ver=$(grep -A1 '^name = "oqto"$' "$ROOT_DIR/backend/Cargo.lock" | grep 'version' | head -1 | sed 's/.*"\(.*\)"/\1/')
+        if [[ "$toml_ver" != "$lock_ver" ]]; then
+            err "Cargo.lock is stale (Cargo.toml=$toml_ver, Cargo.lock=$lock_ver). Run 'just bump patch' or 'cd backend && cargo check' to regenerate."
+            return 1
+        fi
         host_exec "true" "" "cd '$ROOT_DIR/backend' && remote-build build --release -p oqto --bin oqto --bin oqto-sandbox"
         host_exec "true" "" "cd '$ROOT_DIR/backend' && remote-build build --release -p oqto-runner --bin oqto-runner"
         host_exec "true" "" "cd '$ROOT_DIR/backend' && remote-build build --release -p oqto-files --bin oqto-files"
