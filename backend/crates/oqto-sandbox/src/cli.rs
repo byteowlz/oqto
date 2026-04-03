@@ -4,10 +4,10 @@ use log::{debug, error, info};
 use std::path::PathBuf;
 use std::process::Command;
 
-#[cfg(unix)]
-use std::os::unix::process::CommandExt;
 #[cfg(target_os = "linux")]
 use std::os::fd::AsRawFd;
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 
 use crate::{SandboxConfig, SandboxConfigFile};
 
@@ -55,7 +55,10 @@ struct Args {
 /// and can only add restrictions, never weaken them.
 fn load_config(args: &Args) -> Result<SandboxConfig> {
     let mut config = if let Some(config_path) = &args.config {
-        info!("Loading sandbox config from explicit path: {:?}", config_path);
+        info!(
+            "Loading sandbox config from explicit path: {:?}",
+            config_path
+        );
         let content = std::fs::read_to_string(config_path)
             .with_context(|| format!("reading config file: {:?}", config_path))?;
         let file: SandboxConfigFile =
@@ -81,8 +84,8 @@ fn load_config_from_chain(profile: &str) -> Result<SandboxConfig> {
         info!("Loading sandbox config from system path: {:?}", system_path);
         let content = std::fs::read_to_string(&system_path)
             .with_context(|| format!("reading system config: {:?}", system_path))?;
-        let file: SandboxConfigFile =
-            toml::from_str(&content).with_context(|| format!("parsing system config: {:?}", system_path))?;
+        let file: SandboxConfigFile = toml::from_str(&content)
+            .with_context(|| format!("parsing system config: {:?}", system_path))?;
         return Ok(file.into());
     }
 
@@ -97,7 +100,10 @@ fn load_config_from_chain(profile: &str) -> Result<SandboxConfig> {
             .context("user sandbox config exists but failed to parse");
     }
 
-    info!("No config file found, using hardcoded profile '{}'", profile);
+    info!(
+        "No config file found, using hardcoded profile '{}'",
+        profile
+    );
     Ok(SandboxConfig::from_profile(profile))
 }
 
@@ -148,7 +154,10 @@ fn exec_sandboxed(
     let landlock_cfg = config.clone();
     let landlock_workspace = workspace.to_path_buf();
 
-    if seccomp_fd.is_some() || no_new_privs || landlock_cfg.landlock_mode != crate::LandlockMode::Off {
+    if seccomp_fd.is_some()
+        || no_new_privs
+        || landlock_cfg.landlock_mode != crate::LandlockMode::Off
+    {
         // Keep file alive until exec by moving into closure.
         let _keep_alive = seccomp_file;
         // SAFETY: pre_exec runs in child after fork, before exec.
@@ -163,10 +172,10 @@ fn exec_sandboxed(
 
                 landlock_cfg.apply_landlock(&landlock_workspace, None)?;
 
-                if let Some(fd) = seccomp_fd {
-                    if libc::dup2(fd, 3) == -1 {
-                        return Err(std::io::Error::last_os_error());
-                    }
+                if let Some(fd) = seccomp_fd
+                    && libc::dup2(fd, 3) == -1
+                {
+                    return Err(std::io::Error::last_os_error());
                 }
                 Ok(())
             });

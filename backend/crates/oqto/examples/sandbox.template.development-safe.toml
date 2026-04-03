@@ -19,3 +19,10 @@ seccomp_mode = "audit"
 # Keep network open initially; migrate to proxy mode per repo once host/domain allowlists are defined.
 isolate_network = false
 isolate_pid = true
+
+# Optional: isolate package/toolchain writes using overlayfs (bwrap --overlay).
+# When enabled, writes to overlay_paths are redirected into per-workspace dirs
+# under overlay_root, keeping the real user paths unchanged.
+overlay_enabled = false
+overlay_root = "~/.oqto/overlays"
+overlay_paths = ["~/.cargo", "~/.npm", "~/.bun", "~/.local/share/uv", "~/.cache/uv"]
