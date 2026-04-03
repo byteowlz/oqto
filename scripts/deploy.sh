@@ -722,20 +722,30 @@ restart_services_ordered() {
 
     # Ordered restarts: runner -> control plane (oqto) -> everything else.
     if [[ "$mode" == "single-user" ]]; then
+        # Single-user: both oqto and oqto-runner run as user systemd services
         host_exec "$is_local" "$ssh_target" "systemctl --user restart oqto-runner" || true
-    fi
+        host_exec "$is_local" "$ssh_target" "systemctl --user restart oqto" || true
 
-    host_exec_sudo "$is_local" "$ssh_target" "systemctl restart oqto" || true
+        local svc
+        for svc in $services; do
+            if [[ "$svc" == "oqto" || "$svc" == "oqto-runner" ]]; then
+                continue
+            fi
+            host_exec "$is_local" "$ssh_target" "systemctl --user restart '$svc'" || true
+        done
+    else
+        # Multi-user: runner is per-user, oqto is system service
+        host_exec "$is_local" "$ssh_target" "systemctl --user restart oqto-runner" || true
+        host_exec_sudo "$is_local" "$ssh_target" "systemctl restart oqto" || true
 
-    local svc
-    for svc in $services; do
-        if [[ "$svc" == "oqto" || "$svc" == "oqto-runner" ]]; then
-            continue
-        fi
-        host_exec_sudo "$is_local" "$ssh_target" "systemctl restart '$svc'" || true
-    done
+        local svc
+        for svc in $services; do
+            if [[ "$svc" == "oqto" || "$svc" == "oqto-runner" ]]; then
+                continue
+            fi
+            host_exec_sudo "$is_local" "$ssh_target" "systemctl restart '$svc'" || true
+        done
 
-    if [[ "$mode" == "multi-user" ]]; then
         host_exec "$is_local" "$ssh_target" "oqtoctl user sync-configs" || true
     fi
 }
