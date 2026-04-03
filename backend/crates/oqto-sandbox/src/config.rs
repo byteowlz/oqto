@@ -1355,8 +1355,10 @@ impl SandboxConfig {
         }
 
         if self.disable_userns {
+            // bwrap requires --unshare-user when --disable-userns is used
+            args.push("--unshare-user".to_string());
             args.push("--disable-userns".to_string());
-            debug!("Nested user namespaces disabled");
+            debug!("User namespace unshared + nested user namespaces disabled");
         }
 
         if self.assert_userns_disabled {
