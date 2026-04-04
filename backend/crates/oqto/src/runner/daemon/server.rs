@@ -3,12 +3,12 @@ use chrono::TimeZone;
 use log::{debug, error, info, warn};
 use sqlx::Row;
 use std::collections::HashMap;
-use std::path::PathBuf;
-use std::process::Stdio;
 #[cfg(target_os = "linux")]
 use std::os::fd::AsRawFd;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
+use std::path::PathBuf;
+use std::process::Stdio;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
@@ -125,6 +125,57 @@ fn read_last_session_info_name(path: &std::path::Path) -> Option<String> {
     }
 
     last_name
+}
+
+fn append_session_info_name(path: &std::path::Path, name: &str) -> Result<()> {
+    use std::io::{BufRead, Write};
+
+    let clean_name = name.trim();
+    if clean_name.is_empty() {
+        return Ok(());
+    }
+
+    let file = std::fs::File::open(path)
+        .with_context(|| format!("open session jsonl for read: {}", path.display()))?;
+    let reader = std::io::BufReader::new(file);
+    let mut last_id: Option<String> = None;
+
+    for line in reader.lines().map_while(Result::ok) {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) else {
+            continue;
+        };
+        if let Some(id) = value.get("id").and_then(|v| v.as_str()) {
+            let clean = id.trim();
+            if !clean.is_empty() {
+                last_id = Some(clean.to_string());
+            }
+        }
+    }
+
+    let entry = serde_json::json!({
+        "type": "session_info",
+        "id": format!("si_{}", uuid::Uuid::new_v4().simple()),
+        "parentId": last_id,
+        "timestamp": chrono::Utc::now().to_rfc3339(),
+        "name": clean_name,
+    });
+
+    let mut out = std::fs::OpenOptions::new()
+        .append(true)
+        .open(path)
+        .with_context(|| format!("open session jsonl for append: {}", path.display()))?;
+    serde_json::to_writer(&mut out, &entry)
+        .with_context(|| format!("write session_info entry: {}", path.display()))?;
+    out.write_all(b"\n")
+        .with_context(|| format!("write newline after session_info: {}", path.display()))?;
+    out.flush()
+        .with_context(|| format!("flush session_info append: {}", path.display()))?;
+
+    Ok(())
 }
 
 #[derive(serde::Deserialize)]
@@ -2183,6 +2234,19 @@ impl Runner {
             );
         }
 
+        // Keep Pi JSONL in sync with manual rename.
+        // If the session is currently live, prefer sending SetSessionName to Pi.
+        // For inactive sessions, append a session_info entry directly to JSONL.
+        let mut live_set_name_applied = false;
+        if self
+            .pi_manager
+            .set_session_name(&req.session_id, &title)
+            .await
+            .is_ok()
+        {
+            live_set_name_applied = true;
+        }
+
         // Fetch updated session to return
         match client.get_conversation(&req.session_id, None).await {
             Ok(Some(conv)) => {
@@ -2209,6 +2273,53 @@ impl Runner {
                             conv.external_id.clone()
                         }
                     });
+
+                if !live_set_name_applied {
+                    let external_id = conv.external_id.clone();
+                    let jsonl_title = conv.title.clone().unwrap_or_else(|| title.clone());
+                    tokio::spawn(async move {
+                        let Some(path) = crate::pi::session_files::find_session_file_async(
+                            external_id.clone(),
+                            None,
+                        )
+                        .await
+                        else {
+                            debug!(
+                                "No JSONL session file found for external_id={} while applying rename fallback",
+                                external_id
+                            );
+                            return;
+                        };
+
+                        let path_for_log = path.clone();
+                        match tokio::task::spawn_blocking(move || {
+                            append_session_info_name(&path, &jsonl_title)
+                        })
+                        .await
+                        {
+                            Ok(Ok(())) => {
+                                debug!(
+                                    "Appended session_info rename fallback to {}",
+                                    path_for_log.display()
+                                );
+                            }
+                            Ok(Err(err)) => {
+                                warn!(
+                                    "Failed to append session_info rename fallback to {}: {}",
+                                    path_for_log.display(),
+                                    err
+                                );
+                            }
+                            Err(err) => {
+                                warn!(
+                                    "rename fallback task failed for {}: {}",
+                                    path_for_log.display(),
+                                    err
+                                );
+                            }
+                        }
+                    });
+                }
 
                 RunnerResponse::WorkspaceChatSessionUpdated(WorkspaceChatSessionUpdatedResponse {
                     session: WorkspaceChatSessionInfo {

@@ -1087,7 +1087,15 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 					sharedWorkspaceId,
 				);
 
-				const canonicalSessionId = updated.id || sessionId;
+				// Rename must not re-key established sessions. Keep the existing
+				// Oqto session ID stable and only canonicalize IDs for optimistic
+				// placeholders that haven't been bound yet.
+				const isOptimisticSession =
+					sessionId.startsWith("pending-") ||
+					optimisticChatSessionsRef.current.has(sessionId);
+				const canonicalSessionId = isOptimisticSession
+					? updated.id || sessionId
+					: sessionId;
 				const canonicalTitle = (updated.title ?? title).trim();
 				const runnerAlias = runnerSessionsRef.current.find(
 					(s) =>

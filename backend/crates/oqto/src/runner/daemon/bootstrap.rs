@@ -41,9 +41,7 @@ pub fn load_sandbox_config(
     let mut candidates: Vec<&Path> = vec![system_path];
     if allow_user_fallback {
         candidates.push(&user_path);
-        info!(
-            "Sandbox config lookup mode: system+user fallback (single-user mode)"
-        );
+        info!("Sandbox config lookup mode: system+user fallback (single-user mode)");
     } else {
         info!("Sandbox config lookup mode: system-only (fail-closed)");
     }
