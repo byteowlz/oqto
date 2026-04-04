@@ -212,10 +212,29 @@ pub fn base_system_env() -> HashMap<String, String> {
         }
     }
 
-    // PATH is handled by sandbox (--setenv PATH with toolchain dirs).
-    // Include it here as fallback for non-sandboxed spawns.
-    if let Ok(path) = std::env::var("PATH") {
-        env.insert("PATH".to_string(), path);
+    // Extend PATH with common user toolchain bin directories.
+    // Non-interactive shells (systemd) don't source ~/.bashrc so these are missing.
+    // For sandboxed spawns, bwrap --setenv PATH overrides this anyway.
+    if let Ok(current_path) = std::env::var("PATH") {
+        let home = std::env::var("HOME").unwrap_or_default();
+        if !home.is_empty() {
+            let extra = [
+                format!("{home}/.cargo/bin"),
+                format!("{home}/go/bin"),
+                format!("{home}/.local/bin"),
+                format!("{home}/.bun/bin"),
+                format!("{home}/.npm-global/bin"),
+            ];
+            let mut parts: Vec<&str> = current_path.split(':').collect();
+            for p in &extra {
+                if !parts.contains(&p.as_str()) && Path::new(p).exists() {
+                    parts.push(p);
+                }
+            }
+            env.insert("PATH".to_string(), parts.join(":"));
+        } else {
+            env.insert("PATH".to_string(), current_path);
+        }
     }
 
     env
