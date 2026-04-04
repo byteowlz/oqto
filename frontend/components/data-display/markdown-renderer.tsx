@@ -1,9 +1,17 @@
 "use client";
 
 import { cn } from "@/lib/utils";
-import { Check, Copy } from "lucide-react";
+import { Check, Code, Copy, Minus, Plus, RotateCcw } from "lucide-react";
 import { useTheme } from "next-themes";
-import { memo, useCallback, useState } from "react";
+import {
+	Children,
+	createContext,
+	memo,
+	useCallback,
+	useContext,
+	useEffect,
+	useState,
+} from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import {
@@ -15,7 +23,10 @@ import remarkGfm from "remark-gfm";
 interface MarkdownRendererProps {
 	content: string;
 	className?: string;
+	enableMermaid?: boolean;
 }
+
+const MermaidEnabledContext = createContext(true);
 
 const CopyButton = memo(function CopyButton({
 	text,
@@ -61,6 +72,218 @@ const CopyButton = memo(function CopyButton({
 	);
 });
 
+function normalizeCodeContent(children: React.ReactNode): string {
+	return Children.toArray(children)
+		.map((child) => {
+			if (typeof child === "string" || typeof child === "number") {
+				return String(child);
+			}
+			return "";
+		})
+		.join("")
+		.replace(/\n$/, "");
+}
+
+const MermaidCodeBlock = memo(function MermaidCodeBlock({
+	codeString,
+}: {
+	codeString: string;
+}) {
+	const { resolvedTheme } = useTheme();
+	const isDarkMode = resolvedTheme === "dark";
+	const [viewMode, setViewMode] = useState<"diagram" | "code">("diagram");
+	const [svg, setSvg] = useState<string | null>(null);
+	const mermaidSource = codeString.trim();
+	const [error, setError] = useState<string | null>(null);
+	const [isRendering, setIsRendering] = useState(true);
+	const [zoomLevel, setZoomLevel] = useState(1);
+	const ZOOM_MIN = 0.5;
+	const ZOOM_MAX = 3;
+	const ZOOM_STEP = 0.25;
+
+	// useeffect-guardrail: allow - async mermaid rendering for content/theme changes
+	useEffect(() => {
+		let cancelled = false;
+
+		const renderDiagram = async () => {
+			setIsRendering(true);
+			setError(null);
+			setSvg(null);
+			setZoomLevel(1);
+
+			try {
+				const mermaidModule = await import("mermaid");
+				const mermaid = mermaidModule.default;
+				mermaid.initialize({
+					startOnLoad: false,
+					securityLevel: "strict",
+					theme: isDarkMode ? "dark" : "default",
+				});
+				const renderId = `mermaid-${Math.random().toString(36).slice(2, 10)}`;
+				if (!mermaidSource) {
+					throw new Error("Mermaid block is empty");
+				}
+				const { svg: renderedSvg } = await mermaid.render(
+					renderId,
+					mermaidSource,
+				);
+
+				if (cancelled) {
+					return;
+				}
+
+				setSvg(renderedSvg);
+				setIsRendering(false);
+			} catch (renderError) {
+				if (cancelled) {
+					return;
+				}
+				setError(
+					renderError instanceof Error
+						? renderError.message
+						: "Failed to render Mermaid diagram",
+				);
+				setIsRendering(false);
+			}
+		};
+
+		void renderDiagram();
+
+		return () => {
+			cancelled = true;
+		};
+	}, [isDarkMode, mermaidSource]);
+
+	return (
+		<div
+			className="relative group my-3 overflow-hidden rounded-sm"
+			style={{ borderColor: "var(--code-border)", borderWidth: "1px" }}
+		>
+			<div
+				className="flex items-center justify-between px-3 py-1.5"
+				style={{
+					backgroundColor: "var(--code-bg)",
+					borderBottomColor: "var(--code-border)",
+					borderBottomWidth: "1px",
+				}}
+			>
+				<div className="flex items-center gap-2">
+					<span
+						className="text-xs font-mono"
+						style={{ color: "var(--code-muted)" }}
+					>
+						mermaid
+					</span>
+					<button
+						type="button"
+						onClick={() =>
+							setViewMode((m) => (m === "diagram" ? "code" : "diagram"))
+						}
+						className={cn(
+							"p-1.5 rounded text-muted-foreground hover:text-foreground",
+							viewMode === "code" && "bg-primary/20 text-primary",
+						)}
+						title={viewMode === "diagram" ? "Show code" : "Show diagram"}
+						aria-label={viewMode === "diagram" ? "Show code" : "Show diagram"}
+					>
+						<Code className="w-3.5 h-3.5" />
+					</button>
+				</div>
+				<div className="flex items-center gap-1">
+					{viewMode === "diagram" && (
+						<>
+							<button
+								type="button"
+								onClick={() =>
+									setZoomLevel((z) => Math.max(ZOOM_MIN, z - ZOOM_STEP))
+								}
+								disabled={zoomLevel <= ZOOM_MIN}
+								className="p-1.5 text-muted-foreground enabled:hover:text-foreground disabled:opacity-40"
+								title="Zoom out"
+							>
+								<Minus className="w-3.5 h-3.5" />
+							</button>
+							<span className="text-[11px] tabular-nums text-muted-foreground min-w-10 text-center">
+								{Math.round(zoomLevel * 100)}%
+							</span>
+							<button
+								type="button"
+								onClick={() =>
+									setZoomLevel((z) => Math.min(ZOOM_MAX, z + ZOOM_STEP))
+								}
+								disabled={zoomLevel >= ZOOM_MAX}
+								className="p-1.5 text-muted-foreground enabled:hover:text-foreground disabled:opacity-40"
+								title="Zoom in"
+							>
+								<Plus className="w-3.5 h-3.5" />
+							</button>
+							<button
+								type="button"
+								onClick={() => setZoomLevel(1)}
+								className="p-1.5 text-muted-foreground hover:text-foreground"
+								title="Reset zoom"
+							>
+								<RotateCcw className="w-3.5 h-3.5" />
+							</button>
+						</>
+					)}
+					<CopyButton text={codeString} />
+				</div>
+			</div>
+
+			{viewMode === "diagram" ? (
+				<div className="p-4 overflow-auto bg-[var(--code-bg)] max-h-[70vh]">
+					{isRendering && (
+						<div className="text-xs text-muted-foreground">
+							Rendering diagram…
+						</div>
+					)}
+					{!isRendering && error && (
+						<div className="text-xs text-destructive whitespace-pre-wrap">
+							Failed to render Mermaid diagram: {error}
+						</div>
+					)}
+					{!isRendering && !error && svg && (
+						<div
+							className="origin-top-left"
+							style={{ width: `${zoomLevel * 100}%` }}
+						>
+							<img
+								src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`}
+								alt="Mermaid diagram"
+								className="w-full h-auto max-w-none"
+							/>
+						</div>
+					)}
+				</div>
+			) : (
+				<div className="overflow-x-auto">
+					<SyntaxHighlighter
+						style={
+							(isDarkMode ? oneDark : oneLight) as Record<
+								string,
+								React.CSSProperties
+							>
+						}
+						language="mermaid"
+						PreTag="div"
+						wrapLongLines={false}
+						customStyle={{
+							margin: 0,
+							padding: "1rem",
+							backgroundColor: "var(--code-bg)",
+							fontSize: "0.75rem",
+							minWidth: "fit-content",
+						}}
+					>
+						{codeString}
+					</SyntaxHighlighter>
+				</div>
+			)}
+		</div>
+	);
+});
+
 // Code block with theme awareness and auto-collapse for large blocks
 const CodeBlockWithTheme = memo(function CodeBlockWithTheme({
 	className,
@@ -72,8 +295,10 @@ const CodeBlockWithTheme = memo(function CodeBlockWithTheme({
 	const { resolvedTheme } = useTheme();
 	const isDarkMode = resolvedTheme === "dark";
 
+	const enableMermaid = useContext(MermaidEnabledContext);
 	const match = /language-(\w+)/.exec(className || "");
-	const codeString = String(children).replace(/\n$/, "");
+	const codeString = normalizeCodeContent(children);
+	const language = match ? match[1].toLowerCase() : "text";
 	const isInline = !match && !codeString.includes("\n");
 	const lineCount = codeString.split("\n").length;
 
@@ -92,6 +317,10 @@ const CodeBlockWithTheme = memo(function CodeBlockWithTheme({
 				{children}
 			</code>
 		);
+	}
+
+	if (enableMermaid && language === "mermaid") {
+		return <MermaidCodeBlock codeString={codeString} />;
 	}
 
 	return (
@@ -308,17 +537,20 @@ function resolveHyphenationLang() {
 export const MarkdownRenderer = memo(function MarkdownRenderer({
 	content,
 	className,
+	enableMermaid = true,
 }: MarkdownRendererProps) {
 	const sanitizedContent = stripPiCitations(content);
 	const hyphenationLang = resolveHyphenationLang();
 	return (
 		<div className={cn("markdown-content", className)} lang={hyphenationLang}>
-			<ReactMarkdown
-				remarkPlugins={remarkPlugins}
-				components={markdownComponents}
-			>
-				{sanitizedContent}
-			</ReactMarkdown>
+			<MermaidEnabledContext.Provider value={enableMermaid}>
+				<ReactMarkdown
+					remarkPlugins={remarkPlugins}
+					components={markdownComponents}
+				>
+					{sanitizedContent}
+				</ReactMarkdown>
+			</MermaidEnabledContext.Provider>
 		</div>
 	);
 });

@@ -3564,6 +3564,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 								workspacePath={workspacePath}
 								locale={locale}
 								onFileReferenceOpen={onFileReferenceOpen}
+								deferMermaidUntilFinal={showWorkingIndicator && !isUser}
 							/>
 						);
 						return wrapWithGutter(segment.key, inner);
@@ -4147,11 +4148,13 @@ function TextWithFileReferences({
 	workspacePath,
 	locale = "en",
 	onFileReferenceOpen,
+	deferMermaidUntilFinal = false,
 }: {
 	content: string;
 	workspacePath?: string | null;
 	locale?: "en" | "de";
 	onFileReferenceOpen?: (filePath: string) => void;
+	deferMermaidUntilFinal?: boolean;
 }) {
 	const { t } = useTranslation();
 	// Strip ANSI escape codes and fix indentation before rendering.
@@ -4198,6 +4201,7 @@ function TextWithFileReferences({
 			<MarkdownRenderer
 				content={markdownContent}
 				className="text-sm text-foreground leading-relaxed overflow-hidden"
+				enableMermaid={!deferMermaidUntilFinal}
 			/>
 			{/* Render file reference cards */}
 			{fileRefs.length > 0 && workspacePath && (
