@@ -96,6 +96,7 @@ const MermaidCodeBlock = memo(function MermaidCodeBlock({
 	const mermaidSource = codeString.trim();
 	const [error, setError] = useState<string | null>(null);
 	const [isRendering, setIsRendering] = useState(true);
+	const [isDiagramValid, setIsDiagramValid] = useState(true);
 	const [zoomLevel, setZoomLevel] = useState(1);
 	const ZOOM_MIN = 0.5;
 	const ZOOM_MAX = 3;
@@ -110,6 +111,7 @@ const MermaidCodeBlock = memo(function MermaidCodeBlock({
 			setError(null);
 			setSvg(null);
 			setZoomLevel(1);
+			setIsDiagramValid(true);
 
 			try {
 				const mermaidModule = await import("mermaid");
@@ -123,6 +125,7 @@ const MermaidCodeBlock = memo(function MermaidCodeBlock({
 				if (!mermaidSource) {
 					throw new Error("Mermaid block is empty");
 				}
+				await mermaid.parse(mermaidSource);
 				const { svg: renderedSvg } = await mermaid.render(
 					renderId,
 					mermaidSource,
@@ -133,16 +136,19 @@ const MermaidCodeBlock = memo(function MermaidCodeBlock({
 				}
 
 				setSvg(renderedSvg);
+				setIsDiagramValid(true);
 				setIsRendering(false);
 			} catch (renderError) {
 				if (cancelled) {
 					return;
 				}
-				setError(
+				const message =
 					renderError instanceof Error
 						? renderError.message
-						: "Failed to render Mermaid diagram",
-				);
+						: "Failed to render Mermaid diagram";
+				setError(message);
+				setIsDiagramValid(false);
+				setViewMode("code");
 				setIsRendering(false);
 			}
 		};
@@ -179,18 +185,31 @@ const MermaidCodeBlock = memo(function MermaidCodeBlock({
 						onClick={() =>
 							setViewMode((m) => (m === "diagram" ? "code" : "diagram"))
 						}
+						disabled={!isDiagramValid}
 						className={cn(
-							"p-1.5 rounded text-muted-foreground hover:text-foreground",
+							"p-1.5 rounded text-muted-foreground hover:text-foreground disabled:opacity-40 disabled:cursor-not-allowed",
 							viewMode === "code" && "bg-primary/20 text-primary",
 						)}
-						title={viewMode === "diagram" ? "Show code" : "Show diagram"}
-						aria-label={viewMode === "diagram" ? "Show code" : "Show diagram"}
+						title={
+							isDiagramValid
+								? viewMode === "diagram"
+									? "Show code"
+									: "Show diagram"
+								: "Malformed Mermaid - showing code"
+						}
+						aria-label={
+							isDiagramValid
+								? viewMode === "diagram"
+									? "Show code"
+									: "Show diagram"
+								: "Malformed Mermaid - showing code"
+						}
 					>
 						<Code className="w-3.5 h-3.5" />
 					</button>
 				</div>
 				<div className="flex items-center gap-1">
-					{viewMode === "diagram" && (
+					{viewMode === "diagram" && isDiagramValid && (
 						<>
 							<button
 								type="button"
@@ -258,6 +277,11 @@ const MermaidCodeBlock = memo(function MermaidCodeBlock({
 				</div>
 			) : (
 				<div className="overflow-x-auto">
+					{!isDiagramValid && error && (
+						<div className="px-3 py-2 text-xs text-destructive border-b border-destructive/20 bg-destructive/5">
+							Malformed Mermaid: {error}
+						</div>
+					)}
 					<SyntaxHighlighter
 						style={
 							(isDarkMode ? oneDark : oneLight) as Record<
