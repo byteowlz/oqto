@@ -1510,6 +1510,32 @@ impl SandboxConfig {
             );
         }
 
+        // Ensure common user toolchain bin paths are in PATH.
+        // Non-interactive shells (systemd, cron) typically don't source
+        // ~/.bashrc/.zshrc, so ~/go/bin, ~/.cargo/bin, etc. are missing.
+        if let Some(ref home) = target_home {
+            let home_str = home.to_string_lossy();
+            let extra_paths = [
+                format!("{home_str}/.cargo/bin"),
+                format!("{home_str}/go/bin"),
+                format!("{home_str}/.local/bin"),
+                format!("{home_str}/.bun/bin"),
+                format!("{home_str}/.npm-global/bin"),
+            ];
+            let current_path = std::env::var("PATH").unwrap_or_default();
+            let mut path_parts: Vec<&str> = current_path.split(':').collect();
+            for p in &extra_paths {
+                if !path_parts.contains(&p.as_str()) && Path::new(p).exists() {
+                    path_parts.push(p);
+                }
+            }
+            let new_path = path_parts.join(":");
+            args.push("--setenv".to_string());
+            args.push("PATH".to_string());
+            args.push(new_path);
+            debug!("Extended PATH with user toolchain bin directories");
+        }
+
         // Namespace and kernel-surface hardening
         if self.isolate_pid {
             args.push("--unshare-pid".to_string());
