@@ -2077,7 +2077,13 @@ export function ChatView({
 									const visibleMessages = messages.slice(-visibleCount);
 									const grouped = groupMessages(visibleMessages);
 									const lastGroup = grouped[grouped.length - 1];
-									const isWorking = isStreaming || isAwaitingResponse;
+									// Also treat the last message's isStreaming flag as working
+									// (covers the render between setMessages and turn-state update).
+									const lastMsg = visibleMessages[visibleMessages.length - 1];
+									const isWorking =
+										isStreaming ||
+										isAwaitingResponse ||
+										lastMsg?.isStreaming === true;
 									const needsPendingAssistant =
 										isWorking && (!lastGroup || lastGroup.role === "user");
 									const groupsToRender = needsPendingAssistant
