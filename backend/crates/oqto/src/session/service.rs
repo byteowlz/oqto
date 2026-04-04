@@ -1464,8 +1464,10 @@ impl SessionService {
             }
         }
 
-        // Build environment variables for the processes
-        let mut env = std::collections::HashMap::new();
+        // Build environment variables for the processes.
+        // This is the SINGLE authority for what env vars the agent sees.
+        // spawn_as_user() calls env_clear() so only vars in this map are passed.
+        let mut env = crate::local::base_system_env();
         if let Some(ref eavs_url) = self.config.eavs_container_url {
             env.insert("EAVS_URL".to_string(), eavs_url.clone());
         }
@@ -1922,8 +1924,8 @@ impl SessionService {
                     }
                 }
 
-                // Build environment variables
-                let mut env = std::collections::HashMap::new();
+                // Build environment variables (single authority for agent env)
+                let mut env = crate::local::base_system_env();
                 if let Some(ref eavs_url) = self.config.eavs_container_url {
                     env.insert("EAVS_URL".to_string(), eavs_url.clone());
                 }
