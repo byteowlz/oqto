@@ -90,7 +90,9 @@ export function useSessionData({
 		for (const [parentId, children] of childSessionsByParent) {
 			childSessionsByParent.set(
 				parentId,
-				children.sort((a, b) => b.updated_at - a.updated_at),
+				children.sort(
+					(a, b) => b.updated_at - a.updated_at || a.id.localeCompare(b.id),
+				),
 			);
 		}
 
@@ -219,7 +221,7 @@ export function useSessionData({
 			const bPinned = pinnedSessions.has(b.id);
 			if (aPinned && !bPinned) return -1;
 			if (!aPinned && bPinned) return 1;
-			return b.updated_at - a.updated_at;
+			return b.updated_at - a.updated_at || a.id.localeCompare(b.id);
 		});
 	}, [
 		sessionHierarchy.parentSessions,
@@ -299,7 +301,9 @@ export function useSessionData({
 			});
 		}
 
-		return [...entries.values()].sort((a, b) => b.lastActive - a.lastActive);
+		return [...entries.values()].sort(
+			(a, b) => b.lastActive - a.lastActive || a.key.localeCompare(b.key),
+		);
 	}, [
 		projectKeyForSession,
 		projectLabelForSession,
@@ -385,7 +389,7 @@ export function useSessionData({
 					...b.sessions.map((s) => s.updated_at ?? 0),
 					0,
 				);
-				comparison = bLatest - aLatest;
+				comparison = bLatest - aLatest || a.key.localeCompare(b.key);
 			} else if (projectSortBy === "name") {
 				comparison = a.name.localeCompare(b.name);
 			} else if (projectSortBy === "sessions") {
