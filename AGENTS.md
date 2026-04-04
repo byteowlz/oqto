@@ -383,6 +383,8 @@ If you added or removed `useEffect` calls, also run `bun run lint:useeffect-guar
 
 **TypeScript**: Use `@/` import alias for internal modules. Functional components with named exports. Vitest for tests. Never use raw `useEffect` -- use the approved hooks (`useDocumentEvent`, `useIntersectionOnce`, `useResetOnOpen`, `useMountEffect`). See "Frontend useEffect Guardrail Policy" above.
 
+**Markdown rendering**: Chat messages and markdown file preview both use the shared `frontend/components/data-display/markdown-renderer.tsx`. Mermaid fenced blocks (```mermaid) render as diagrams with a built-in Diagram/Code toggle; keep behavior centralized in this renderer so both surfaces stay consistent.
+
 **General**: No emojis in code/docs/commits. Use `bun` for JS/TS, `uv` for Python. Never use `pip` directly; use `uv add`, `uv tool install`, or `uv pip` only when explicitly required for compatibility.
 
 ---
