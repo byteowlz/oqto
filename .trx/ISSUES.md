@@ -47,6 +47,9 @@ setup.sh must correctly provision everything for a new platform user on a fresh 
 ...
 
 
+### [oqto-pkm6] Prompt-injection defense-in-depth pipeline for untrusted content (P1, epic)
+Plan and implement a centralized 6-layer prompt-injection defense pipeline for Oqto across runner/backend boundaries: deterministic sanitizer, frontier scanner, outbound leak gate, redaction, runtime LLM governor, and path/URL access control with tests and ops telemetry.
+
 ### [oqto-pwa1] Sandbox profile hierarchy: strict/development/privileged/godmode (P1, task)
 Implement four-tier profile hierarchy for sandbox configuration.\n\n- strict: overlay isolation, deny secrets, network isolated, seccomp+landlock enforce.\n- development: overlay isolation, deny secrets, network open, seccomp+landlock audit.\n- privileged: no overlay, full home write, deny secrets, no seccomp/landlock.\n- godmode: no sandbox at all, full access (explicit opt-in only, user/system config, not workspace).\n\nGodmode constraints:\n- Cannot be set via workspace .oqto/sandbox.toml (only user or system config).\n- Audited and logged.\n- Cannot be set by agent itself.
 
@@ -2361,13 +2364,13 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
-- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
-- [oqto-4ryr] Session rename reverts: update_chat_session returns external_id while list returns platform_id (closed )
-- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
 - [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
-- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
+- [oqto-4ryr] Session rename reverts: update_chat_session returns external_id while list returns platform_id (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
+- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
 - [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
+- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
