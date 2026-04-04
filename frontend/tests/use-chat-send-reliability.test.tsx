@@ -162,6 +162,126 @@ describe("useChat send reliability", () => {
 		expect(toolResults[0]).toMatchObject({ output: "ok-again" });
 	});
 
+	it("preserves existing tool input when replayed tool.start omits input", async () => {
+		const { result } = renderHook(() =>
+			useChat({
+				autoConnect: false,
+				selectedSessionId: "sess-1",
+				workspacePath: "/tmp/ws",
+			}),
+		);
+
+		await waitFor(() => expect(sessionHandler).not.toBeNull());
+		const emit = (event: Record<string, unknown>) => {
+			act(() => {
+				sessionHandler?.(event);
+			});
+		};
+
+		emit({
+			channel: "agent",
+			session_id: "sess-1",
+			event: "stream.message_start",
+			role: "assistant",
+		});
+		emit({
+			channel: "agent",
+			session_id: "sess-1",
+			event: "tool.start",
+			tool_call_id: "call-keep-input",
+			name: "bash",
+			input: { command: 'rg -n "cargo install --path" justfile' },
+		});
+		// Replay/out-of-order update without input should not erase known input.
+		emit({
+			channel: "agent",
+			session_id: "sess-1",
+			event: "tool.start",
+			tool_call_id: "call-keep-input",
+			name: "bash",
+		});
+		emit({
+			channel: "agent",
+			session_id: "sess-1",
+			event: "tool.end",
+			tool_call_id: "call-keep-input",
+			name: "bash",
+			output: "ok",
+			is_error: false,
+		});
+
+		const toolCall = result.current.messages
+			.flatMap((m) => m.parts)
+			.find(
+				(part) =>
+					part.type === "tool_call" && part.toolCallId === "call-keep-input",
+			);
+		expect(toolCall).toBeDefined();
+		if (toolCall?.type === "tool_call") {
+			expect(toolCall.input).toEqual({
+				command: 'rg -n "cargo install --path" justfile',
+			});
+		}
+	});
+
+	it("preserves existing tool input when stream.tool_call_end omits input", async () => {
+		const { result } = renderHook(() =>
+			useChat({
+				autoConnect: false,
+				selectedSessionId: "sess-1",
+				workspacePath: "/tmp/ws",
+			}),
+		);
+
+		await waitFor(() => expect(sessionHandler).not.toBeNull());
+		const emit = (event: Record<string, unknown>) => {
+			act(() => {
+				sessionHandler?.(event);
+			});
+		};
+
+		emit({
+			channel: "agent",
+			session_id: "sess-1",
+			event: "stream.message_start",
+			role: "assistant",
+		});
+		emit({
+			channel: "agent",
+			session_id: "sess-1",
+			event: "tool.start",
+			tool_call_id: "call-keep-input-2",
+			name: "bash",
+			input: { command: "cargo check -p oqto" },
+		});
+		emit({
+			channel: "agent",
+			session_id: "sess-1",
+			event: "stream.tool_call_end",
+			tool_call: { id: "call-keep-input-2", name: "bash" },
+		});
+		emit({
+			channel: "agent",
+			session_id: "sess-1",
+			event: "tool.end",
+			tool_call_id: "call-keep-input-2",
+			name: "bash",
+			output: "ok",
+			is_error: false,
+		});
+
+		const toolCall = result.current.messages
+			.flatMap((m) => m.parts)
+			.find(
+				(part) =>
+					part.type === "tool_call" && part.toolCallId === "call-keep-input-2",
+			);
+		expect(toolCall).toBeDefined();
+		if (toolCall?.type === "tool_call") {
+			expect(toolCall.input).toEqual({ command: "cargo check -p oqto" });
+		}
+	});
+
 	it("keeps distinct tool calls separate when ids differ but names match", async () => {
 		const { result } = renderHook(() =>
 			useChat({

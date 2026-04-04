@@ -771,7 +771,9 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 					);
 					if (existingById && existingById.type === "tool_call") {
 						existingById.name = toolCall.name || existingById.name;
-						existingById.input = toolCall.input;
+						if (toolCall.input !== undefined) {
+							existingById.input = toolCall.input;
+						}
 						scheduleStreamingUpdate();
 					} else {
 						const part: DisplayPart = {
@@ -808,7 +810,9 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 						(p) => p.type === "tool_call" && p.toolCallId === toolCallId,
 					);
 					if (existingById && existingById.type === "tool_call") {
-						existingById.input = input;
+						if (input !== undefined) {
+							existingById.input = input;
+						}
 						existingById.name = name || existingById.name;
 						existingById.status = "running";
 						scheduleStreamingUpdate();
