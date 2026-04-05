@@ -4,61 +4,60 @@ import type { ChatSessionStats } from "./ChatSessionStats";
 /**
  * A chat session with its project context.
  */
-export type ChatSession = {
-	/**
-	 * Session ID (e.g., "ses_xxx")
-	 */
-	id: string;
-	/**
-	 * Human-readable ID (e.g., "cold-lamp") - deterministically generated from session ID
-	 */
-	readable_id: string;
-	/**
-	 * Session title
-	 */
-	title: string | null;
-	/**
-	 * Parent session ID (for child sessions)
-	 */
-	parent_id: string | null;
-	/**
-	 * Workspace/project path
-	 */
-	workspace_path: string;
-	/**
-	 * Project name (derived from path)
-	 */
-	project_name: string;
-	/**
-	 * Created timestamp (ms since epoch)
-	 */
-	created_at: bigint;
-	/**
-	 * Updated timestamp (ms since epoch)
-	 */
-	updated_at: bigint;
-	/**
-	 * Version that created this session
-	 */
-	version: string | null;
-	/**
-	 * Whether this session is a child session
-	 */
-	is_child: boolean;
-	/**
-	 * Path to the session JSON file (for loading messages later)
-	 */
-	source_path: string | null;
-	/**
-	 * Persisted stats from hstry metadata (when available)
-	 */
-	stats: ChatSessionStats | null;
-	/**
-	 * Last used model ID (from hstry conversation)
-	 */
-	model: string | null;
-	/**
-	 * Last used provider ID (from hstry conversation)
-	 */
-	provider: string | null;
-};
+export type ChatSession = { 
+/**
+ * Session ID (e.g., "ses_xxx")
+ */
+id: string, 
+/**
+ * Human-readable ID (e.g., "cold-lamp") - deterministically generated from session ID
+ */
+readable_id: string, 
+/**
+ * Session title
+ */
+title: string | null, 
+/**
+ * Parent session ID (for child sessions)
+ */
+parent_id: string | null, 
+/**
+ * Workspace/project path
+ */
+workspace_path: string, 
+/**
+ * Project name (derived from path)
+ */
+project_name: string, 
+/**
+ * Created timestamp (ms since epoch)
+ */
+created_at: bigint, 
+/**
+ * Updated timestamp (ms since epoch)
+ */
+updated_at: bigint, 
+/**
+ * Version that created this session
+ */
+version: string | null, 
+/**
+ * Whether this session is a child session
+ */
+is_child: boolean, 
+/**
+ * Path to the session JSON file (for loading messages later)
+ */
+source_path: string | null, 
+/**
+ * Persisted stats from hstry metadata (when available)
+ */
+stats: ChatSessionStats | null, 
+/**
+ * Last used model ID (from hstry conversation)
+ */
+model: string | null, 
+/**
+ * Last used provider ID (from hstry conversation)
+ */
+provider: string | null, };

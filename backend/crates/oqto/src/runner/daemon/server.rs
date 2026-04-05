@@ -1775,11 +1775,10 @@ impl Runner {
         let rows = if let Some(ref workspace) = req.workspace {
             match sqlx::query(
                 r#"
-                SELECT c.id, c.external_id, c.platform_id, c.readable_id, c.title, c.created_at, c.updated_at, c.workspace, c.model, c.provider, c.parent_conversation_id, c.fork_type, p.external_id AS parent_external_id
-                FROM conversations c
-                LEFT JOIN conversations p ON c.parent_conversation_id = p.id
-                WHERE c.source_id = 'pi' AND c.workspace = ?
-                ORDER BY COALESCE(c.updated_at, c.created_at) DESC
+                SELECT id, external_id, platform_id, readable_id, title, created_at, updated_at, workspace, model, provider
+                FROM conversations
+                WHERE source_id = 'pi' AND workspace = ?
+                ORDER BY COALESCE(updated_at, created_at) DESC
                 "#,
             )
             .bind(workspace)
@@ -1797,11 +1796,10 @@ impl Runner {
         } else {
             match sqlx::query(
                 r#"
-                SELECT c.id, c.external_id, c.platform_id, c.readable_id, c.title, c.created_at, c.updated_at, c.workspace, c.model, c.provider, c.parent_conversation_id, c.fork_type, p.external_id AS parent_external_id
-                FROM conversations c
-                LEFT JOIN conversations p ON c.parent_conversation_id = p.id
-                WHERE c.source_id = 'pi'
-                ORDER BY COALESCE(c.updated_at, c.created_at) DESC
+                SELECT id, external_id, platform_id, readable_id, title, created_at, updated_at, workspace, model, provider
+                FROM conversations
+                WHERE source_id = 'pi'
+                ORDER BY COALESCE(updated_at, created_at) DESC
                 "#,
             )
             .fetch_all(&pool)
@@ -1829,8 +1827,6 @@ impl Runner {
             let workspace: Option<String> = row.get("workspace");
             let model: Option<String> = row.get("model");
             let provider: Option<String> = row.get("provider");
-            let parent_external_id: Option<String> = row.try_get("parent_external_id").ok().flatten();
-            let fork_type: Option<String> = row.try_get("fork_type").ok().flatten();
 
             // Prefer platform_id (Oqto session ID) over external_id (Pi native ID)
             let session_id = platform_id
@@ -1841,7 +1837,7 @@ impl Runner {
             let project_name = crate::history::project_name_from_path(&workspace_path);
             let readable_id = readable_id.unwrap_or_default();
             let updated_at_ms = updated_at.unwrap_or(created_at) * 1000;
-            let is_child = parent_external_id.is_some() || fork_type.is_some();
+            let is_child = false;
 
             // SECURITY: In isolated multi-user mode, only return sessions whose
             // workspace belongs to this Linux user. In single-user mode we allow
@@ -1864,7 +1860,7 @@ impl Runner {
                 id: session_id,
                 readable_id,
                 title,
-                parent_id: parent_external_id,
+                parent_id: None,
                 workspace_path,
                 project_name,
                 created_at: created_at * 1000,
@@ -1912,13 +1908,9 @@ impl Runner {
                 c.updated_at,
                 c.workspace,
                 c.model,
-                c.provider,
-                c.parent_conversation_id,
-                c.fork_type,
-                p.external_id AS parent_external_id
+                c.provider
             FROM conversations c
             LEFT JOIN messages m ON m.conversation_id = c.id
-            LEFT JOIN conversations p ON c.parent_conversation_id = p.id
             WHERE c.source_id = 'pi' AND (c.external_id = ? OR c.platform_id = ? OR c.readable_id = ? OR c.id = ?)
             GROUP BY c.id
             ORDER BY COUNT(m.id) DESC, COALESCE(c.updated_at, c.created_at) DESC
@@ -1957,8 +1949,6 @@ impl Runner {
         let workspace: Option<String> = row.get("workspace");
         let model: Option<String> = row.get("model");
         let provider: Option<String> = row.get("provider");
-        let parent_external_id: Option<String> = row.try_get("parent_external_id").ok().flatten();
-        let fork_type: Option<String> = row.try_get("fork_type").ok().flatten();
 
         let session_id = platform_id
             .filter(|s| !s.is_empty())
@@ -1968,13 +1958,13 @@ impl Runner {
         let project_name = crate::history::project_name_from_path(&workspace_path);
         let readable_id = readable_id.unwrap_or_default();
         let updated_at_ms = updated_at.unwrap_or(created_at) * 1000;
-        let is_child = parent_external_id.is_some() || fork_type.is_some();
+        let is_child = false;
 
         let session = WorkspaceChatSessionInfo {
             id: session_id,
             readable_id,
             title,
-            parent_id: parent_external_id,
+            parent_id: None,
             workspace_path,
             project_name,
             created_at: created_at * 1000,
@@ -3225,6 +3215,39 @@ impl Runner {
             req.session_id, req.entry_id
         );
 
+        // Fail closed for non-Pi synthetic IDs. Fork must target a real
+        // Pi entry identifier from get_fork_messages.
+        if req.entry_id.starts_with("history-") {
+            return error_response(
+                ErrorCode::PiSessionInvalidState,
+                format!(
+                    "Invalid fork entry_id '{}' (frontend sent synthetic history id). Reload fork points and retry.",
+                    req.entry_id
+                ),
+            );
+        }
+
+        // Transactional fork guard: exactly one in-flight fork per session.
+        let _fork_txn_guard = match self
+            .pi_manager
+            .try_begin_fork_transaction(&req.session_id)
+            .await
+        {
+            Ok(Some(permit)) => permit,
+            Ok(None) => {
+                return error_response(
+                    ErrorCode::PiSessionInvalidState,
+                    "Fork already in progress for this session",
+                );
+            }
+            Err(e) => {
+                return error_response(
+                    ErrorCode::PiSessionNotFound,
+                    format!("Failed to start fork transaction: {}", e),
+                );
+            }
+        };
+
         let fork_result = match self.pi_manager.fork(&req.session_id, &req.entry_id).await {
             Ok(r) => r,
             Err(e) => {
@@ -3246,15 +3269,40 @@ impl Runner {
 
         // Spawn a new Pi process for the forked session.
         // Get the old session's config to reuse workspace/env.
-        let old_config = self.pi_manager.get_session_config(&req.session_id).await;
+        let old_config = match self.pi_manager.get_session_config(&req.session_id).await {
+            Some(cfg) => cfg,
+            None => {
+                return error_response(
+                    ErrorCode::PiSessionNotFound,
+                    format!(
+                        "Failed to create child session after fork: parent session '{}' not active",
+                        req.session_id
+                    ),
+                );
+            }
+        };
         let new_oqto_id = format!("oqto-{}", uuid::Uuid::new_v4());
 
-        let mut child_config = old_config.unwrap_or_default();
+        let fork_session_file = if let Some(ref file) = fork_result.new_session_file {
+            Some(std::path::PathBuf::from(file))
+        } else if let Some(ref pi_id) = fork_result.new_session_id {
+            crate::pi::session_files::find_session_file(pi_id, Some(&old_config.cwd))
+        } else {
+            None
+        };
+
+        let Some(fork_session_file) = fork_session_file else {
+            return error_response(
+                ErrorCode::Internal,
+                "Fork succeeded but forked session file could not be resolved",
+            );
+        };
+
+        let mut child_config = old_config;
         // Point at the forked JSONL so the new process resumes from it
-        if let Some(ref file) = fork_result.new_session_file {
-            child_config.session_file = Some(std::path::PathBuf::from(file));
-        }
+        child_config.session_file = Some(fork_session_file.clone());
         child_config.continue_session = None; // session_file takes precedence
+        let child_workspace = child_config.cwd.to_string_lossy().to_string();
 
         let new_session_id = match self
             .pi_manager
@@ -3263,15 +3311,10 @@ impl Runner {
         {
             Ok(sid) => sid,
             Err(e) => {
-                warn!("Failed to create child session after fork: {}", e);
-                // Fork succeeded in Pi but we failed to spawn the child.
-                // Return the fork result anyway so the frontend knows about the file.
-                return RunnerResponse::PiForkResult(PiForkResultResponse {
-                    session_id: req.session_id,
-                    text: fork_result.text,
-                    cancelled: false,
-                    new_session_id: None,
-                });
+                return error_response(
+                    ErrorCode::Internal,
+                    format!("Failed to create child session after fork: {}", e),
+                );
             }
         };
 
@@ -3283,14 +3326,34 @@ impl Runner {
             req.session_id
         );
 
-        // Write child conversation to hstry with parent linkage
+        // Write child conversation to hstry with parent linkage and platform_id.
         if let Some(ref client) = self.pi_manager.hstry_client() {
-            let pi_id = fork_result.new_session_id.as_deref().unwrap_or(&new_session_id);
+            let pi_id = fork_result
+                .new_session_id
+                .as_deref()
+                .unwrap_or(&new_session_id);
+            let parent_external_id = self.pi_manager.hstry_external_id(&req.session_id).await;
             if let Err(e) = client
-                .set_conversation_parent(pi_id, &req.session_id, Some("fork"))
+                .update_conversation_full(
+                    pi_id,
+                    None,
+                    Some(child_workspace.clone()),
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some("pi".to_string()),
+                    Some(new_session_id.clone()),
+                    Some(parent_external_id),
+                    None,
+                    Some("fork".to_string()),
+                )
                 .await
             {
-                warn!("Failed to set fork parent in hstry: {}", e);
+                warn!(
+                    "Failed to persist fork parent/platform linkage in hstry: {}",
+                    e
+                );
             }
         }
 
@@ -3308,15 +3371,43 @@ impl Runner {
 
         match self.pi_manager.get_fork_messages(&req.session_id).await {
             Ok(messages) => {
-                // Parse JSON response to typed PiForkMessage vec
-                let messages_vec: Vec<PiForkMessage> = messages
+                // Parse JSON response to typed PiForkMessage vec.
+                // Be liberal with accepted field names because Pi versions may
+                // return e.g. entryId/preview instead of entry_id/text.
+                let messages_arr = messages
                     .as_array()
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|v| serde_json::from_value(v.clone()).ok())
-                            .collect()
-                    })
+                    .cloned()
+                    .or_else(|| messages.get("messages").and_then(|m| m.as_array()).cloned())
                     .unwrap_or_default();
+
+                let messages_vec: Vec<PiForkMessage> = messages_arr
+                    .iter()
+                    .filter_map(|v| {
+                        let obj = v.as_object()?;
+                        let entry_id = obj
+                            .get("entry_id")
+                            .and_then(|x| x.as_str())
+                            .or_else(|| obj.get("entryId").and_then(|x| x.as_str()))
+                            .or_else(|| obj.get("id").and_then(|x| x.as_str()))?
+                            .to_string();
+
+                        let text = obj
+                            .get("text")
+                            .and_then(|x| x.as_str())
+                            .or_else(|| obj.get("preview").and_then(|x| x.as_str()))
+                            .or_else(|| obj.get("content").and_then(|x| x.as_str()))
+                            .or_else(|| {
+                                obj.get("message")
+                                    .and_then(|m| m.as_object())
+                                    .and_then(|m| m.get("content"))
+                                    .and_then(|c| c.as_str())
+                            })
+                            .unwrap_or("")
+                            .to_string();
+
+                        Some(PiForkMessage { entry_id, text })
+                    })
+                    .collect();
                 RunnerResponse::PiForkMessages(PiForkMessagesResponse {
                     session_id: req.session_id,
                     messages: messages_vec,

@@ -44,6 +44,7 @@ For each host, deploy executes these phases:
      - `eavs`, `hstry`, `mmry`, `trx`, `agntz`, `sx`, `skdlr`
      - Host versions must satisfy `installed >= required`.
      - `hstry adapters --help` must succeed (adapter CLI compatibility guard).
+     - If hstry DB exists, `conversations.parent_conversation_id` and `conversations.fork_type` must exist (session-tree schema guard).
    - Multi-user security gates:
      - `/etc/oqto/sandbox.toml` must exist, be readable, owner `root:root`, perms `<= 0644`
      - If seccomp enforce is configured in sandbox config, `/etc/oqto/seccomp/default.bpf` must exist
