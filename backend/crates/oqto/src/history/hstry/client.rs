@@ -124,6 +124,11 @@ impl HstryClient {
                 harness,
                 readable_id,
                 platform_id,
+                version: 0,
+                message_count: 0,
+                parent_conversation_id: None,
+                parent_message_idx: None,
+                fork_type: None,
             }),
             messages,
         };
@@ -149,6 +154,29 @@ impl HstryClient {
         harness: Option<String>,
         platform_id: Option<String>,
     ) -> Result<UpdateConversationResponse> {
+        self.update_conversation_full(
+            session_id, title, workspace, model, provider,
+            metadata_json, readable_id, harness, platform_id,
+            None, None, None,
+        ).await
+    }
+
+    /// Full update including session tree fields.
+    pub async fn update_conversation_full(
+        &self,
+        session_id: &str,
+        title: Option<String>,
+        workspace: Option<String>,
+        model: Option<String>,
+        provider: Option<String>,
+        metadata_json: Option<String>,
+        readable_id: Option<String>,
+        harness: Option<String>,
+        platform_id: Option<String>,
+        parent_conversation_id: Option<String>,
+        parent_message_idx: Option<i32>,
+        fork_type: Option<String>,
+    ) -> Result<UpdateConversationResponse> {
         let mut client = self.ensure_write_connected().await?;
 
         let request = UpdateConversationRequest {
@@ -162,6 +190,9 @@ impl HstryClient {
             readable_id,
             harness,
             platform_id,
+            parent_conversation_id,
+            parent_message_idx,
+            fork_type,
         };
 
         let response = client
@@ -170,6 +201,23 @@ impl HstryClient {
             .context("Failed to update conversation in hstry")?;
 
         Ok(response.into_inner())
+    }
+
+    /// Set parent-child relationship for a forked conversation.
+    pub async fn set_conversation_parent(
+        &self,
+        session_id: &str,
+        parent_session_id: &str,
+        fork_type: Option<&str>,
+    ) -> Result<UpdateConversationResponse> {
+        self.update_conversation_full(
+            session_id,
+            None, None, None, None, None, None, None, None,
+            Some(parent_session_id.to_string()),
+            None,
+            fork_type.map(String::from),
+        )
+        .await
     }
 
     /// Delete a conversation and all its messages.

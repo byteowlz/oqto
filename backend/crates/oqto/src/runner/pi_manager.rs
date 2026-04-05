@@ -167,6 +167,23 @@ impl Default for PiSessionConfig {
 // use the protocol types directly.
 
 // ============================================================================
+// Fork Result
+// ============================================================================
+
+/// Result of a fork operation.
+#[derive(Debug)]
+pub struct ForkResult {
+    /// The text of the message being forked from.
+    pub text: String,
+    /// Whether the fork was cancelled (e.g., by an extension).
+    pub cancelled: bool,
+    /// Pi's native session ID for the new forked session.
+    pub new_session_id: Option<String>,
+    /// Path to the new forked session's JSONL file.
+    pub new_session_file: Option<String>,
+}
+
+// ============================================================================
 // Internal Session Command
 // ============================================================================
 
@@ -1193,6 +1210,12 @@ impl PiSessionManager {
 
     /// Get all messages from a session.
     /// Check if the given session (or its resolved key) has an active Pi process.
+    /// Get a clone of the session config (for forking/cloning sessions).
+    pub async fn get_session_config(&self, session_id: &str) -> Option<PiSessionConfig> {
+        let sessions = self.sessions.read().await;
+        sessions.get(session_id).map(|s| s.config.clone())
+    }
+
     pub async fn has_session(&self, session_id: &str) -> bool {
         let resolved_id = self
             .resolve_session_key(session_id)
@@ -2215,9 +2238,29 @@ impl PiSessionManager {
     }
 
     /// Fork from a previous user message.
-    pub async fn fork(&self, session_id: &str, entry_id: &str) -> Result<serde_json::Value> {
-        let request_id = "fork".to_string();
+    /// Fork from a previous message.
+    ///
+    /// Flow:
+    /// 1. Get old session file path via get_state
+    /// 2. Tell Pi to fork (Pi creates new JSONL + switches internally)
+    /// 3. Get new session file path via get_state
+    /// 4. Tell Pi to switch back to the old session
+    /// 5. Return fork result with the new session file path
+    ///
+    /// The caller (server.rs) is responsible for creating the new Oqto session
+    /// by spawning a fresh Pi process that resumes from the forked JSONL.
+    pub async fn fork(
+        &self,
+        session_id: &str,
+        entry_id: &str,
+    ) -> Result<ForkResult> {
+        // 1. Get old session file path
+        let old_state = self.get_state(session_id).await
+            .context("Failed to get state before fork")?;
+        let old_session_file = old_state.session_file.clone();
 
+        // 2. Send fork command to Pi
+        let request_id = "fork".to_string();
         let (pending_responses, cmd_tx) = {
             let sessions = self.sessions.read().await;
             let session = sessions
@@ -2254,9 +2297,53 @@ impl PiSessionManager {
             );
         }
 
-        response
+        let data = response
             .data
-            .ok_or_else(|| anyhow::anyhow!("Fork response missing data"))
+            .ok_or_else(|| anyhow::anyhow!("Fork response missing data"))?;
+
+        let text = data
+            .get("text")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let cancelled = data
+            .get("cancelled")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        if cancelled {
+            return Ok(ForkResult {
+                text,
+                cancelled: true,
+                new_session_id: None,
+                new_session_file: None,
+            });
+        }
+
+        // 3. Get new session info (Pi has switched to the forked session)
+        let new_state = self.get_state(session_id).await
+            .context("Failed to get state after fork")?;
+        let new_session_file = new_state.session_file.clone();
+        let new_pi_session_id = new_state.session_id.clone();
+
+        // 4. Switch Pi back to the old session
+        if let Some(ref old_file) = old_session_file {
+            self.switch_session(session_id, old_file).await
+                .context("Failed to switch Pi back to original session after fork")?;
+            info!(
+                "Fork: Pi switched back to original session file: {}",
+                old_file
+            );
+        } else {
+            warn!("Fork: no old session file to switch back to");
+        }
+
+        Ok(ForkResult {
+            text,
+            cancelled: false,
+            new_session_id: new_pi_session_id,
+            new_session_file,
+        })
     }
 
     /// Get messages available for forking.

@@ -1775,10 +1775,11 @@ impl Runner {
         let rows = if let Some(ref workspace) = req.workspace {
             match sqlx::query(
                 r#"
-                SELECT id, external_id, platform_id, readable_id, title, created_at, updated_at, workspace, model, provider
-                FROM conversations
-                WHERE source_id = 'pi' AND workspace = ?
-                ORDER BY COALESCE(updated_at, created_at) DESC
+                SELECT c.id, c.external_id, c.platform_id, c.readable_id, c.title, c.created_at, c.updated_at, c.workspace, c.model, c.provider, c.parent_conversation_id, c.fork_type, p.external_id AS parent_external_id
+                FROM conversations c
+                LEFT JOIN conversations p ON c.parent_conversation_id = p.id
+                WHERE c.source_id = 'pi' AND c.workspace = ?
+                ORDER BY COALESCE(c.updated_at, c.created_at) DESC
                 "#,
             )
             .bind(workspace)
@@ -1796,10 +1797,11 @@ impl Runner {
         } else {
             match sqlx::query(
                 r#"
-                SELECT id, external_id, platform_id, readable_id, title, created_at, updated_at, workspace, model, provider
-                FROM conversations
-                WHERE source_id = 'pi'
-                ORDER BY COALESCE(updated_at, created_at) DESC
+                SELECT c.id, c.external_id, c.platform_id, c.readable_id, c.title, c.created_at, c.updated_at, c.workspace, c.model, c.provider, c.parent_conversation_id, c.fork_type, p.external_id AS parent_external_id
+                FROM conversations c
+                LEFT JOIN conversations p ON c.parent_conversation_id = p.id
+                WHERE c.source_id = 'pi'
+                ORDER BY COALESCE(c.updated_at, c.created_at) DESC
                 "#,
             )
             .fetch_all(&pool)
@@ -1827,6 +1829,8 @@ impl Runner {
             let workspace: Option<String> = row.get("workspace");
             let model: Option<String> = row.get("model");
             let provider: Option<String> = row.get("provider");
+            let parent_external_id: Option<String> = row.try_get("parent_external_id").ok().flatten();
+            let fork_type: Option<String> = row.try_get("fork_type").ok().flatten();
 
             // Prefer platform_id (Oqto session ID) over external_id (Pi native ID)
             let session_id = platform_id
@@ -1837,6 +1841,7 @@ impl Runner {
             let project_name = crate::history::project_name_from_path(&workspace_path);
             let readable_id = readable_id.unwrap_or_default();
             let updated_at_ms = updated_at.unwrap_or(created_at) * 1000;
+            let is_child = parent_external_id.is_some() || fork_type.is_some();
 
             // SECURITY: In isolated multi-user mode, only return sessions whose
             // workspace belongs to this Linux user. In single-user mode we allow
@@ -1859,13 +1864,13 @@ impl Runner {
                 id: session_id,
                 readable_id,
                 title,
-                parent_id: None,
+                parent_id: parent_external_id,
                 workspace_path,
                 project_name,
                 created_at: created_at * 1000,
                 updated_at: updated_at_ms,
                 version: None,
-                is_child: false,
+                is_child,
                 model,
                 provider,
             });
@@ -1907,9 +1912,13 @@ impl Runner {
                 c.updated_at,
                 c.workspace,
                 c.model,
-                c.provider
+                c.provider,
+                c.parent_conversation_id,
+                c.fork_type,
+                p.external_id AS parent_external_id
             FROM conversations c
             LEFT JOIN messages m ON m.conversation_id = c.id
+            LEFT JOIN conversations p ON c.parent_conversation_id = p.id
             WHERE c.source_id = 'pi' AND (c.external_id = ? OR c.platform_id = ? OR c.readable_id = ? OR c.id = ?)
             GROUP BY c.id
             ORDER BY COUNT(m.id) DESC, COALESCE(c.updated_at, c.created_at) DESC
@@ -1948,6 +1957,8 @@ impl Runner {
         let workspace: Option<String> = row.get("workspace");
         let model: Option<String> = row.get("model");
         let provider: Option<String> = row.get("provider");
+        let parent_external_id: Option<String> = row.try_get("parent_external_id").ok().flatten();
+        let fork_type: Option<String> = row.try_get("fork_type").ok().flatten();
 
         let session_id = platform_id
             .filter(|s| !s.is_empty())
@@ -1957,18 +1968,19 @@ impl Runner {
         let project_name = crate::history::project_name_from_path(&workspace_path);
         let readable_id = readable_id.unwrap_or_default();
         let updated_at_ms = updated_at.unwrap_or(created_at) * 1000;
+        let is_child = parent_external_id.is_some() || fork_type.is_some();
 
         let session = WorkspaceChatSessionInfo {
             id: session_id,
             readable_id,
             title,
-            parent_id: None,
+            parent_id: parent_external_id,
             workspace_path,
             project_name,
             created_at: created_at * 1000,
             updated_at: updated_at_ms,
             version: None,
-            is_child: false,
+            is_child,
             model,
             provider,
         };
@@ -2321,18 +2333,23 @@ impl Runner {
                     });
                 }
 
+                // parent_conversation_id is an internal UUID; we pass it as-is
+                // (the frontend will match by parent_id if it knows this session)
+                let parent_id = conv.parent_conversation_id.clone();
+                let is_child = parent_id.is_some() || conv.fork_type.is_some();
+
                 RunnerResponse::WorkspaceChatSessionUpdated(WorkspaceChatSessionUpdatedResponse {
                     session: WorkspaceChatSessionInfo {
                         id: session_id,
                         readable_id: conv.readable_id.clone().unwrap_or_default(),
                         title: conv.title.clone(),
-                        parent_id: None,
+                        parent_id,
                         workspace_path,
                         project_name,
                         created_at: conv.created_at_ms,
                         updated_at: conv.updated_at_ms.unwrap_or(conv.created_at_ms),
                         version: None,
-                        is_child: false,
+                        is_child,
                         model: conv.model.clone(),
                         provider: conv.provider.clone(),
                     },
@@ -3208,29 +3225,81 @@ impl Runner {
             req.session_id, req.entry_id
         );
 
-        match self.pi_manager.fork(&req.session_id, &req.entry_id).await {
-            Ok(result) => {
-                // Parse fork result from JSON response
-                let text = result
-                    .get("text")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let cancelled = result
-                    .get("cancelled")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
-                RunnerResponse::PiForkResult(PiForkResultResponse {
-                    session_id: req.session_id,
-                    text,
-                    cancelled,
-                })
+        let fork_result = match self.pi_manager.fork(&req.session_id, &req.entry_id).await {
+            Ok(r) => r,
+            Err(e) => {
+                return error_response(
+                    ErrorCode::PiSessionNotFound,
+                    format!("Failed to fork: {}", e),
+                );
             }
-            Err(e) => error_response(
-                ErrorCode::PiSessionNotFound,
-                format!("Failed to fork: {}", e),
-            ),
+        };
+
+        if fork_result.cancelled {
+            return RunnerResponse::PiForkResult(PiForkResultResponse {
+                session_id: req.session_id,
+                text: fork_result.text,
+                cancelled: true,
+                new_session_id: None,
+            });
         }
+
+        // Spawn a new Pi process for the forked session.
+        // Get the old session's config to reuse workspace/env.
+        let old_config = self.pi_manager.get_session_config(&req.session_id).await;
+        let new_oqto_id = format!("oqto-{}", uuid::Uuid::new_v4());
+
+        let mut child_config = old_config.unwrap_or_default();
+        // Point at the forked JSONL so the new process resumes from it
+        if let Some(ref file) = fork_result.new_session_file {
+            child_config.session_file = Some(std::path::PathBuf::from(file));
+        }
+        child_config.continue_session = None; // session_file takes precedence
+
+        let new_session_id = match self
+            .pi_manager
+            .create_session(new_oqto_id.clone(), child_config)
+            .await
+        {
+            Ok(sid) => sid,
+            Err(e) => {
+                warn!("Failed to create child session after fork: {}", e);
+                // Fork succeeded in Pi but we failed to spawn the child.
+                // Return the fork result anyway so the frontend knows about the file.
+                return RunnerResponse::PiForkResult(PiForkResultResponse {
+                    session_id: req.session_id,
+                    text: fork_result.text,
+                    cancelled: false,
+                    new_session_id: None,
+                });
+            }
+        };
+
+        info!(
+            "Fork: created child session '{}' (pi_id={:?}, file={:?}) from parent '{}'",
+            new_session_id,
+            fork_result.new_session_id,
+            fork_result.new_session_file,
+            req.session_id
+        );
+
+        // Write child conversation to hstry with parent linkage
+        if let Some(ref client) = self.pi_manager.hstry_client() {
+            let pi_id = fork_result.new_session_id.as_deref().unwrap_or(&new_session_id);
+            if let Err(e) = client
+                .set_conversation_parent(pi_id, &req.session_id, Some("fork"))
+                .await
+            {
+                warn!("Failed to set fork parent in hstry: {}", e);
+            }
+        }
+
+        RunnerResponse::PiForkResult(PiForkResultResponse {
+            session_id: req.session_id,
+            text: fork_result.text,
+            cancelled: false,
+            new_session_id: Some(new_session_id),
+        })
     }
 
     /// Get messages available for forking.

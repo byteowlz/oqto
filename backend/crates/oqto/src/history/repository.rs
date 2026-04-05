@@ -121,11 +121,25 @@ pub fn hstry_timestamp_ms(value: Option<i64>) -> Option<i64> {
     value.map(|ts| ts * 1000)
 }
 
+/// Resolve a hstry internal conversation UUID to its external_id (Pi session ID).
+async fn resolve_parent_external_id(
+    pool: &sqlx::SqlitePool,
+    parent_conversation_id: &str,
+) -> Result<Option<String>> {
+    let row = sqlx::query(
+        "SELECT external_id FROM conversations WHERE id = ? LIMIT 1",
+    )
+    .bind(parent_conversation_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.and_then(|r| r.try_get::<Option<String>, _>("external_id").ok().flatten()))
+}
+
 pub async fn list_sessions_from_hstry(db_path: &Path) -> Result<Vec<ChatSession>> {
     let pool = open_hstry_pool(db_path).await?;
     let rows = sqlx::query(
         r#"
-        SELECT id, external_id, readable_id, title, created_at, updated_at, workspace, model, provider
+        SELECT id, external_id, readable_id, title, created_at, updated_at, workspace, model, provider, parent_conversation_id, fork_type
         FROM conversations
         ORDER BY created_at DESC
         "#,
@@ -145,22 +159,33 @@ pub async fn list_sessions_from_hstry(db_path: &Path) -> Result<Vec<ChatSession>
         let model: Option<String> = row.get("model");
         let provider: Option<String> = row.get("provider");
 
+        let parent_conversation_id: Option<String> = row.try_get("parent_conversation_id").ok().flatten();
+        let fork_type: Option<String> = row.try_get("fork_type").ok().flatten();
+
         let session_id = external_id.clone().unwrap_or_else(|| id.clone());
         let workspace_path = workspace.unwrap_or_else(|| "global".to_string());
         let project_name = project_name_from_path(&workspace_path);
         let readable_id = readable_id.unwrap_or_default();
 
+        // Resolve parent: look up the external_id for the parent conversation UUID
+        let parent_id = if let Some(ref parent_conv_id) = parent_conversation_id {
+            resolve_parent_external_id(&pool, parent_conv_id).await.ok().flatten()
+        } else {
+            None
+        };
+        let is_child = parent_id.is_some() || fork_type.is_some();
+
         sessions.push(ChatSession {
             id: session_id,
             readable_id,
             title,
-            parent_id: None,
+            parent_id,
             workspace_path,
             project_name,
             created_at: created_at * 1000,
             updated_at: updated_at.map(|ts| ts * 1000).unwrap_or(created_at * 1000),
             version: None,
-            is_child: false,
+            is_child,
             source_path: None,
             stats: None,
             model,
@@ -188,7 +213,9 @@ pub async fn get_session_from_hstry(
             c.updated_at,
             c.workspace,
             c.model,
-            c.provider
+            c.provider,
+            c.parent_conversation_id,
+            c.fork_type
         FROM conversations c
         LEFT JOIN messages m ON m.conversation_id = c.id
         WHERE c.external_id = ? OR c.platform_id = ? OR c.readable_id = ? OR c.id = ?
@@ -219,6 +246,9 @@ pub async fn get_session_from_hstry(
     let model: Option<String> = row.get("model");
     let provider: Option<String> = row.get("provider");
 
+    let parent_conversation_id: Option<String> = row.try_get("parent_conversation_id").ok().flatten();
+    let fork_type: Option<String> = row.try_get("fork_type").ok().flatten();
+
     let session_id = platform_id
         .filter(|s| !s.is_empty())
         .or(external_id.clone())
@@ -227,17 +257,24 @@ pub async fn get_session_from_hstry(
     let project_name = project_name_from_path(&workspace_path);
     let readable_id = readable_id.unwrap_or_default();
 
+    let parent_id = if let Some(ref parent_conv_id) = parent_conversation_id {
+        resolve_parent_external_id(&pool, parent_conv_id).await.ok().flatten()
+    } else {
+        None
+    };
+    let is_child = parent_id.is_some() || fork_type.is_some();
+
     Ok(Some(ChatSession {
         id: session_id,
         readable_id,
         title,
-        parent_id: None,
+        parent_id,
         workspace_path,
         project_name,
         created_at: created_at * 1000,
         updated_at: updated_at.map(|ts| ts * 1000).unwrap_or(created_at * 1000),
         version: None,
-        is_child: false,
+        is_child,
         source_path: None,
         stats: None,
         model,

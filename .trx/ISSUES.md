@@ -47,6 +47,10 @@ setup.sh must correctly provision everything for a new platform user on a fresh 
 ...
 
 
+### [oqto-ceat] Session fork: fork creates child session with new Pi process, navigates frontend to it (P1, feature)
+
+### [oqto-kzdp] Session fork/branch: wire hstry session tree to frontend (P1, feature)
+
 ### [oqto-pkm6] Prompt-injection defense-in-depth pipeline for untrusted content (P1, epic)
 Plan and implement a centralized 6-layer prompt-injection defense pipeline for Oqto across runner/backend boundaries: deterministic sanitizer, frontier scanner, outbound leak gate, redaction, runtime LLM governor, and path/URL access control with tests and ops telemetry.
 
@@ -640,8 +644,6 @@ Build and distribute pre-compiled binaries for Linux (x86_64, arm64) and macOS (
 
 ### [octo-af5j] Release & Update System (P1, epic)
 Comprehensive, bullet-proof release and update system for Oqto with transactional deployment semantics, strict preflight gates, staged rollout, and automatic rollback.\n\nGoals\n- Never leave host in half-updated state.\n- Fail fast before deployment when prerequisites are missing.\n- Guarantee mode-aware safety (single-user dev vs multi-user production).\n- Provide deterministic rollback on failed health checks.\n- Emit auditable update lifecycle events.\n\nScope\n1) Preflight gate engine (hard-stop)\n   - Validate target mode and required sandbox prerequisites.\n   - Multi-user checks: /etc/oqto/sandbox.toml presence + owner/perms + readability.\n   - If seccomp enforce configured: require /etc/oqto/seccomp/default.bpf.\n   - Validate service dependencies, disk space, binary availability, and schema/config parse.\n\n2) Transactional deployment layout\n   - Versioned release directories + atomic symlink switch.\n   - Prepare phase (build/upload/verify) separate from activate phase.\n   - Auto-rollback to last known-good release on post-activate health failure.\n\n3) Staged activation and health verification\n   - Ordered restarts (runner/control-plane/dependent services).\n   - Bounded readiness checks: runner socket, spawn smoke test, hstry/mmry connectivity.\n   - Canary mode: update one host first, then fleet rollout.\n\n4) Idempotent update CLI/API\n   - Re-running update converges safely to desired state.\n   - Resume support for interrupted updates with clear status reporting.\n\n5) Observability and audit trail\n   - Structured events: preflight.start/pass/fail, deploy.start/pass/fail, rollback.start/pass/fail.\n   - Persist update metadata: release ID, host, actor, timestamps, decision reason codes.\n\nDefinition of done\n- Multi-user host update fails before activation if sandbox prerequisites are missing.\n- Successful update is atomic from operator perspective (no mixed-version runtime).\n- Failed update auto-rolls back and restores previous healthy state.\n- Update process is idempotent and documented with operator runbook.\n- Canary + fleet rollout path is documented and tested.
-
-### [oqto-th7v] Sessions with same updated_at timestamp flicker/swap positions in sidebar sort (P2, bug)
 
 ### [oqto-razr.3] Runner privileged execution path (P2, task)
 Runner-side handler that receives privileged operation requests, validates against policy, executes outside sandbox with real privileges, and streams stdout/stderr back to the requesting agent process.
@@ -1661,6 +1663,7 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [oqto-th7v] Sessions with same updated_at timestamp flicker/swap positions in sidebar sort (closed 2026-04-04)
 - [oqto-t9bb] Clean env for agent processes: env_clear + explicit allowlist (closed 2026-04-04)
 - [oqto-phma] Guard markdown Mermaid renderer against malformed diagrams (closed 2026-04-04)
 - [oqto-8xzj] Use icon-only Mermaid view toggle in markdown renderer (closed 2026-04-04)
@@ -2374,12 +2377,12 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
 - [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
-- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
-- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
-- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
 - [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
 - [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
+- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
 - [oqto-4ryr] Session rename reverts: update_chat_session returns external_id while list returns platform_id (closed )
+- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
+- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )

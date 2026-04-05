@@ -1647,6 +1647,7 @@ pub(super) async fn handle_agent_command(
                     Ok(Some(serde_json::json!({
                         "text": resp.text,
                         "cancelled": resp.cancelled,
+                        "new_session_id": resp.new_session_id,
                     }))),
                 )),
                 Err(e) => Some(agent_response(&session_id, id, "fork", Err(e.to_string()))),
