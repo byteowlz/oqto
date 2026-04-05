@@ -1866,12 +1866,14 @@ pub struct PiForkMessagesResponse {
 /// Response with fork result.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PiForkResultResponse {
-    /// Session ID.
+    /// Session ID (original/parent session).
     pub session_id: String,
     /// The text of the message being forked from.
     pub text: String,
     /// Whether an extension cancelled the fork.
     pub cancelled: bool,
+    /// The new (forked) session ID, if available.
+    pub new_session_id: Option<String>,
 }
 
 /// Command info (extension, template, or skill).

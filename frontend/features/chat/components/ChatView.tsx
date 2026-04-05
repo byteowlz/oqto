@@ -409,10 +409,23 @@ export function ChatView({
 			}
 			setForkingEntryId(entryId);
 			try {
-				await getWsManager().agentFork(selectedSessionId, entryId);
-				await refresh();
-				toast.success("Fork created.");
+				const result = await getWsManager().agentFork(
+					selectedSessionId,
+					entryId,
+				);
+				if (result.cancelled) {
+					toast.info("Fork cancelled.");
+					return;
+				}
 				setForkListOpen(false);
+				if (result.new_session_id && onSelectedSessionIdChange) {
+					// Navigate to the newly created child session
+					onSelectedSessionIdChange(result.new_session_id);
+					toast.success("Forked to new session.");
+				} else {
+					await refresh();
+					toast.success("Fork created.");
+				}
 			} catch (err) {
 				toast.error(
 					err instanceof Error ? err.message : "Failed to fork session.",
@@ -421,7 +434,7 @@ export function ChatView({
 				setForkingEntryId(null);
 			}
 		},
-		[selectedSessionId, refresh],
+		[selectedSessionId, refresh, onSelectedSessionIdChange],
 	);
 
 	const handleForkFromMessage = useCallback(

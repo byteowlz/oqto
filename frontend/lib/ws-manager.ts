@@ -1035,7 +1035,7 @@ class WsConnectionManager {
 	async agentFork(
 		sessionId: string,
 		entryId: string,
-	): Promise<{ text?: string; cancelled?: boolean }> {
+	): Promise<{ text?: string; cancelled?: boolean; new_session_id?: string }> {
 		const event = await this.sendAndWait({
 			channel: "agent",
 			session_id: sessionId,
@@ -1046,8 +1046,16 @@ class WsConnectionManager {
 		if (!resp?.success) {
 			throw new Error(resp?.error ?? "Failed to fork session");
 		}
-		const data = (resp.data ?? {}) as { text?: string; cancelled?: boolean };
-		return { text: data.text, cancelled: data.cancelled };
+		const data = (resp.data ?? {}) as {
+			text?: string;
+			cancelled?: boolean;
+			new_session_id?: string;
+		};
+		return {
+			text: data.text,
+			cancelled: data.cancelled,
+			new_session_id: data.new_session_id,
+		};
 	}
 
 	/**
