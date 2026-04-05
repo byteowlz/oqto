@@ -19,6 +19,7 @@ tokio.workspace = true
 
 oqto = { path = "../oqto" }
 oqto-sandbox = { path = "../oqto-sandbox" }
+hstry-core.workspace = true
 
 [lints]
 workspace = true

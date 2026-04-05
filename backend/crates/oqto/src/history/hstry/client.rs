@@ -19,26 +19,53 @@ use hstry_core::service::{ReadServiceClient, WriteServiceClient};
 /// Source ID for Pi sessions (used for deduplication with hstry daemon).
 pub const PI_SOURCE_ID: &str = "pi";
 
+/// Explicit endpoint for connecting to a hstry daemon.
+///
+/// In single-user mode, `Discover` probes the local user's Unix socket and
+/// port-file. In multi-user mode, the runner must supply a per-user endpoint
+/// so connections never cross user boundaries.
+#[derive(Debug, Clone)]
+pub enum HstryEndpoint {
+    /// Auto-discover from the current user's XDG paths (single-user only).
+    Discover,
+    /// Connect via a specific Unix socket path.
+    UnixSocket(std::path::PathBuf),
+    /// Connect via a specific TCP port on localhost.
+    Tcp(u16),
+}
+
+impl Default for HstryEndpoint {
+    fn default() -> Self {
+        Self::Discover
+    }
+}
+
 /// Client for communicating with hstry daemon's WriteService.
 #[derive(Clone)]
 pub struct HstryClient {
     write: Arc<RwLock<Option<WriteServiceClient<Channel>>>>,
     read: Arc<RwLock<Option<ReadServiceClient<Channel>>>>,
+    endpoint: HstryEndpoint,
 }
 
 impl HstryClient {
-    /// Create a new client (not connected yet).
+    /// Create a new client with auto-discovery (single-user mode).
     pub fn new() -> Self {
+        Self::with_endpoint(HstryEndpoint::Discover)
+    }
+
+    /// Create a new client with an explicit endpoint.
+    pub fn with_endpoint(endpoint: HstryEndpoint) -> Self {
         Self {
             write: Arc::new(RwLock::new(None)),
             read: Arc::new(RwLock::new(None)),
+            endpoint,
         }
     }
 
-    /// Connect to the hstry daemon.
-    /// Tries Unix socket first, then falls back to TCP.
+    /// Connect to the hstry daemon using the configured endpoint.
     pub async fn connect(&self) -> Result<()> {
-        let channel = try_connect_channel().await?;
+        let channel = connect_for_endpoint(&self.endpoint).await?;
         *self.write.write().await = Some(WriteServiceClient::new(channel.clone()));
         *self.read.write().await = Some(ReadServiceClient::new(channel));
         Ok(())
@@ -59,7 +86,7 @@ impl HstryClient {
         }
 
         // Try to connect
-        let channel = try_connect_channel().await?;
+        let channel = connect_for_endpoint(&self.endpoint).await?;
         let write_client = WriteServiceClient::new(channel.clone());
         *self.write.write().await = Some(write_client.clone());
         if self.read.read().await.is_none() {
@@ -76,7 +103,7 @@ impl HstryClient {
             }
         }
 
-        let channel = try_connect_channel().await?;
+        let channel = connect_for_endpoint(&self.endpoint).await?;
         let read_client = ReadServiceClient::new(channel.clone());
         *self.read.write().await = Some(read_client.clone());
         if self.write.read().await.is_none() {
@@ -414,10 +441,30 @@ impl Default for HstryClient {
     }
 }
 
-/// Try to connect to hstry daemon.
-/// Attempts Unix socket first, then falls back to TCP.
-async fn try_connect_channel() -> Result<Channel> {
-    // Try Unix socket first (more secure)
+/// Connect to hstry using an explicit endpoint strategy.
+async fn connect_for_endpoint(endpoint: &HstryEndpoint) -> Result<Channel> {
+    match endpoint {
+        HstryEndpoint::UnixSocket(path) => {
+            #[cfg(unix)]
+            {
+                try_connect_unix(path).await.with_context(|| {
+                    format!("Failed to connect to hstry via Unix socket {:?}", path)
+                })
+            }
+            #[cfg(not(unix))]
+            {
+                let _ = path;
+                anyhow::bail!("Unix socket endpoint not supported on this platform")
+            }
+        }
+        HstryEndpoint::Tcp(port) => try_connect_tcp(*port).await,
+        HstryEndpoint::Discover => discover_and_connect().await,
+    }
+}
+
+/// Auto-discover the local user's hstry daemon (single-user mode).
+/// Tries Unix socket first, then port-file TCP.
+async fn discover_and_connect() -> Result<Channel> {
     #[cfg(unix)]
     {
         let socket_path = hstry_core::paths::service_socket_path();
@@ -429,19 +476,22 @@ async fn try_connect_channel() -> Result<Channel> {
         }
     }
 
-    // Fall back to TCP
     let port = read_port().ok_or_else(|| {
         anyhow::anyhow!(
-            "hstry daemon not running. Start it with `hstry service start` or ensure it's running."
+            "hstry daemon not running (no port file or socket). \
+             Start it with `hstry service start` or ensure it's running."
         )
     })?;
 
+    try_connect_tcp(port).await
+}
+
+async fn try_connect_tcp(port: u16) -> Result<Channel> {
     let endpoint = format!("http://127.0.0.1:{port}");
     let channel = Channel::from_shared(endpoint)?
         .connect()
         .await
         .context("Failed to connect to hstry daemon via TCP")?;
-
     tracing::debug!("Connected to hstry via TCP on port {port}");
     Ok(channel)
 }

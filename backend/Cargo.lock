@@ -2823,6 +2823,7 @@ dependencies = [
  "anyhow",
  "clap",
  "env_logger",
+ "hstry-core",
  "log",
  "oqto",
  "oqto-sandbox",
