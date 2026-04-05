@@ -388,7 +388,12 @@ export function ChatView({
 		}
 		setForkPointsLoading(true);
 		try {
-			const points = await getWsManager().agentGetForkPoints(selectedSessionId);
+			// Ensure a live Pi session exists (history-only sessions need resume first).
+			const ws = getWsManager();
+			ws.agentCreateSession(selectedSessionId);
+			await ws.waitForSessionReady(selectedSessionId, 6000);
+
+			const points = await ws.agentGetForkPoints(selectedSessionId);
 			setForkPoints(points);
 			return points;
 		} catch (err) {
@@ -435,36 +440,6 @@ export function ChatView({
 			}
 		},
 		[selectedSessionId, refresh, onSelectedSessionIdChange],
-	);
-
-	const handleForkFromMessage = useCallback(
-		async (messagePreview: string) => {
-			const points =
-				forkPoints.length > 0 ? forkPoints : await loadForkPoints();
-			if (points.length === 0) return;
-			const normalizedTarget = messagePreview
-				.replace(/\s+/g, " ")
-				.trim()
-				.toLowerCase();
-			const directMatch = points.find((point) => {
-				const normalizedPreview = point.preview
-					.replace(/\s+/g, " ")
-					.trim()
-					.toLowerCase();
-				return (
-					normalizedPreview === normalizedTarget ||
-					normalizedTarget.startsWith(normalizedPreview) ||
-					normalizedPreview.startsWith(normalizedTarget)
-				);
-			});
-			if (!directMatch) {
-				setForkListOpen(true);
-				toast.info("Select a message from the fork list.");
-				return;
-			}
-			await handleForkAtEntry(directMatch.entry_id);
-		},
-		[forkPoints, handleForkAtEntry, loadForkPoints],
 	);
 
 	// Consume pending chat input from external source (e.g. browser "Send to chat")
@@ -2169,8 +2144,9 @@ export function ChatView({
 													messageId={groupMessageId}
 													onForkHere={
 														group.role === "user"
-															? (preview) => {
-																	void handleForkFromMessage(preview);
+															? () => {
+																	setForkListOpen(true);
+																	void loadForkPoints();
 																}
 															: undefined
 													}
@@ -3045,7 +3021,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 	onA2UIAction?: (action: import("@/lib/a2ui/types").A2UIUserAction) => void;
 	messageId?: string;
 	showWorkingIndicator?: boolean;
-	onForkHere?: (messagePreview: string) => void;
+	onForkHere?: () => void;
 	onFileReferenceOpen?: (filePath: string) => void;
 }) {
 	const isUser = group.role === "user";
@@ -3470,12 +3446,12 @@ const MessageGroupCard = memo(function MessageGroupCard({
 						className="ml-1 flex-shrink-0"
 					/>
 				)}
-				{isUser && allTextContent && onForkHere && (
+				{isUser && onForkHere && (
 					<button
 						type="button"
 						onClick={(e) => {
 							e.stopPropagation();
-							onForkHere(allTextContent);
+							onForkHere();
 						}}
 						className="text-muted-foreground hover:text-foreground transition-colors"
 						title={t("chat.forkHere", "Fork here")}
@@ -3832,11 +3808,8 @@ const MessageGroupCard = memo(function MessageGroupCard({
 				{messageCard}
 			</ContextMenuTrigger>
 			<ContextMenuContent>
-				{isUser && allTextContent && onForkHere && (
-					<ContextMenuItem
-						onClick={() => onForkHere(allTextContent)}
-						className="gap-2"
-					>
+				{isUser && onForkHere && (
+					<ContextMenuItem onClick={() => onForkHere()} className="gap-2">
 						<GitBranch className="w-4 h-4" />
 						{t("chat.forkHere", "Fork here")}
 					</ContextMenuItem>

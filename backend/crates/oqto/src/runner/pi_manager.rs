@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, Command};
-use tokio::sync::{RwLock, broadcast, mpsc, oneshot};
+use tokio::sync::{OwnedSemaphorePermit, RwLock, Semaphore, broadcast, mpsc, oneshot};
 
 use crate::agent_browser::{agent_browser_session_dir, browser_session_name};
 use crate::history::HstryClient;
@@ -233,7 +233,7 @@ pub enum PiSessionCommand {
     // State Queries (response via pending_responses)
     // ========================================================================
     /// Get current Pi state.
-    GetState,
+    GetState { request_id: String },
     /// Get all messages in the conversation.
     GetMessages,
     /// Get the last assistant message text.
@@ -297,9 +297,12 @@ pub enum PiSessionCommand {
     // Forking (response via pending_responses)
     // ========================================================================
     /// Fork from a previous user message.
-    Fork(String),
+    Fork {
+        entry_id: String,
+        request_id: String,
+    },
     /// Get messages available for forking.
-    GetForkMessages,
+    GetForkMessages { request_id: String },
 
     // ========================================================================
     // Bash Execution (response via pending_responses)
@@ -433,6 +436,8 @@ struct PiSession {
     cmd_tx: mpsc::Sender<PiSessionCommand>,
     /// Pending response waiters (shared with reader task).
     pending_responses: PendingResponses,
+    /// Fork transaction semaphore (single in-flight fork per session).
+    fork_txn: Arc<Semaphore>,
     /// Pending client_id for the next prompt (shared between command and reader tasks).
     #[allow(dead_code)]
     pending_client_id: PendingClientId,
@@ -601,6 +606,38 @@ impl PiSessionManager {
                     }
                 }
             }
+
+            // Fallback: resolve external_id directly from local hstry DB by
+            // platform_id/readable_id/internal id, then locate Pi session file.
+            if found.is_none()
+                && let Some(db_path) = crate::history::hstry_db_path()
+                && let Ok(pool) = crate::history::repository::open_hstry_pool(&db_path).await
+                && let Ok(row_opt) = sqlx::query(
+                    r#"
+                    SELECT external_id
+                    FROM conversations
+                    WHERE source_id = 'pi' AND (platform_id = ? OR readable_id = ? OR id = ?)
+                    ORDER BY COALESCE(updated_at, created_at) DESC
+                    LIMIT 1
+                    "#,
+                )
+                .bind(&session_id)
+                .bind(&session_id)
+                .bind(&session_id)
+                .fetch_optional(&pool)
+                .await
+                && let Some(row) = row_opt
+            {
+                let pi_id: Option<String> = row.try_get("external_id").ok().flatten();
+                if let Some(pi_id) = pi_id.filter(|s| !s.is_empty()) {
+                    debug!(
+                        "Resolved Pi native ID for '{}' via local hstry DB -> '{}'",
+                        session_id, pi_id
+                    );
+                    found = crate::pi::session_files::find_session_file(&pi_id, Some(&config.cwd));
+                }
+            }
+
             found
         };
 
@@ -782,6 +819,8 @@ impl PiSessionManager {
         let state = Arc::new(RwLock::new(PiSessionState::Starting));
         let last_activity = Arc::new(RwLock::new(Instant::now()));
         let pending_responses: PendingResponses = Arc::new(RwLock::new(HashMap::new()));
+        // Fork transaction semaphore: allow exactly one in-flight fork per session
+        let fork_txn = Arc::new(Semaphore::new(1));
         // Pending client_id for optimistic message matching (shared between command and reader tasks)
         let pending_client_id: PendingClientId = Arc::new(RwLock::new(None));
         // hstry external_id -- starts as Oqto UUID, updated to Pi native ID by reader task
@@ -854,6 +893,7 @@ impl PiSessionManager {
             subscribers,
             cmd_tx,
             pending_responses,
+            fork_txn,
             pending_client_id,
             _reader_handle: reader_handle,
             _cmd_handle: cmd_handle,
@@ -1150,7 +1190,10 @@ impl PiSessionManager {
             )
         };
 
-        let request_id = "get_state".to_string();
+        let request_id = format!(
+            "get_state_{}",
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        );
 
         // Register waiter before sending command
         let (tx, rx) = oneshot::channel();
@@ -1161,7 +1204,9 @@ impl PiSessionManager {
 
         // Send the command
         cmd_tx
-            .send(PiSessionCommand::GetState)
+            .send(PiSessionCommand::GetState {
+                request_id: request_id.clone(),
+            })
             .await
             .context("Failed to send GetState command")?;
 
@@ -1212,8 +1257,37 @@ impl PiSessionManager {
     /// Check if the given session (or its resolved key) has an active Pi process.
     /// Get a clone of the session config (for forking/cloning sessions).
     pub async fn get_session_config(&self, session_id: &str) -> Option<PiSessionConfig> {
+        let resolved_id = self
+            .resolve_session_key(session_id)
+            .await
+            .unwrap_or_else(|| session_id.to_string());
         let sessions = self.sessions.read().await;
-        sessions.get(session_id).map(|s| s.config.clone())
+        sessions.get(&resolved_id).map(|s| s.config.clone())
+    }
+
+    /// Try to begin a fork transaction for a session.
+    /// Returns None if another fork is already in progress.
+    pub async fn try_begin_fork_transaction(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<OwnedSemaphorePermit>> {
+        let resolved_id = self
+            .resolve_session_key(session_id)
+            .await
+            .unwrap_or_else(|| session_id.to_string());
+        let fork_txn = {
+            let sessions = self.sessions.read().await;
+            let session = sessions
+                .get(&resolved_id)
+                .ok_or_else(|| anyhow::anyhow!("Session '{}' not found", session_id))?;
+            Arc::clone(&session.fork_txn)
+        };
+
+        match fork_txn.try_acquire_owned() {
+            Ok(permit) => Ok(Some(permit)),
+            Err(tokio::sync::TryAcquireError::NoPermits) => Ok(None),
+            Err(tokio::sync::TryAcquireError::Closed) => Ok(None),
+        }
     }
 
     pub async fn has_session(&self, session_id: &str) -> bool {
@@ -2249,18 +2323,19 @@ impl PiSessionManager {
     ///
     /// The caller (server.rs) is responsible for creating the new Oqto session
     /// by spawning a fresh Pi process that resumes from the forked JSONL.
-    pub async fn fork(
-        &self,
-        session_id: &str,
-        entry_id: &str,
-    ) -> Result<ForkResult> {
+    pub async fn fork(&self, session_id: &str, entry_id: &str) -> Result<ForkResult> {
         // 1. Get old session file path
-        let old_state = self.get_state(session_id).await
+        let old_state = self
+            .get_state(session_id)
+            .await
             .context("Failed to get state before fork")?;
         let old_session_file = old_state.session_file.clone();
 
         // 2. Send fork command to Pi
-        let request_id = "fork".to_string();
+        let request_id = format!(
+            "fork_{}",
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        );
         let (pending_responses, cmd_tx) = {
             let sessions = self.sessions.read().await;
             let session = sessions
@@ -2279,7 +2354,10 @@ impl PiSessionManager {
         }
 
         cmd_tx
-            .send(PiSessionCommand::Fork(entry_id.to_string()))
+            .send(PiSessionCommand::Fork {
+                entry_id: entry_id.to_string(),
+                request_id: request_id.clone(),
+            })
             .await
             .context("Failed to send Fork command")?;
 
@@ -2321,14 +2399,17 @@ impl PiSessionManager {
         }
 
         // 3. Get new session info (Pi has switched to the forked session)
-        let new_state = self.get_state(session_id).await
+        let new_state = self
+            .get_state(session_id)
+            .await
             .context("Failed to get state after fork")?;
         let new_session_file = new_state.session_file.clone();
         let new_pi_session_id = new_state.session_id.clone();
 
         // 4. Switch Pi back to the old session
         if let Some(ref old_file) = old_session_file {
-            self.switch_session(session_id, old_file).await
+            self.switch_session(session_id, old_file)
+                .await
                 .context("Failed to switch Pi back to original session after fork")?;
             info!(
                 "Fork: Pi switched back to original session file: {}",
@@ -2348,12 +2429,19 @@ impl PiSessionManager {
 
     /// Get messages available for forking.
     pub async fn get_fork_messages(&self, session_id: &str) -> Result<serde_json::Value> {
-        let request_id = "get_fork_messages".to_string();
+        let request_id = format!(
+            "get_fork_messages_{}",
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        );
+        let resolved_id = self
+            .resolve_session_key(session_id)
+            .await
+            .unwrap_or_else(|| session_id.to_string());
 
         let (pending_responses, cmd_tx) = {
             let sessions = self.sessions.read().await;
             let session = sessions
-                .get(session_id)
+                .get(&resolved_id)
                 .ok_or_else(|| anyhow::anyhow!("Session '{}' not found", session_id))?;
             (
                 Arc::clone(&session.pending_responses),
@@ -2368,7 +2456,9 @@ impl PiSessionManager {
         }
 
         cmd_tx
-            .send(PiSessionCommand::GetForkMessages)
+            .send(PiSessionCommand::GetForkMessages {
+                request_id: request_id.clone(),
+            })
             .await
             .context("Failed to send GetForkMessages command")?;
 
@@ -2790,7 +2880,12 @@ impl PiSessionManager {
                             "Session '{}' in {:?} for {:?} with no stdout -- sending health check",
                             id, current_state, elapsed,
                         );
-                        let _ = cmd_tx.try_send(PiSessionCommand::GetState);
+                        let _ = cmd_tx.try_send(PiSessionCommand::GetState {
+                            request_id: format!(
+                                "get_state_probe_{}",
+                                chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+                            ),
+                        });
                     }
                     continue;
                 }
@@ -3283,7 +3378,15 @@ impl PiSessionManager {
                     }
                     // Send get_state immediately so we learn Pi's native session ID
                     // before the first AgentEnd triggers hstry persistence.
-                    if let Err(e) = cmd_tx.send(PiSessionCommand::GetState).await {
+                    if let Err(e) = cmd_tx
+                        .send(PiSessionCommand::GetState {
+                            request_id: format!(
+                                "get_state_proactive_{}",
+                                chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+                            ),
+                        })
+                        .await
+                    {
                         warn!(
                             "Pi[{}] failed to send proactive get_state: {}",
                             session_id, e
@@ -3565,7 +3668,14 @@ impl PiSessionManager {
                     let probe_cmd_tx = cmd_tx.clone();
                     tokio::spawn(async move {
                         tokio::time::sleep(Duration::from_secs(3)).await;
-                        let _ = probe_cmd_tx.send(PiSessionCommand::GetState).await;
+                        let _ = probe_cmd_tx
+                            .send(PiSessionCommand::GetState {
+                                request_id: format!(
+                                    "get_state_idle_probe_{}",
+                                    chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+                                ),
+                            })
+                            .await;
                     });
                 }
             } // end for parse_result in parsed_messages
@@ -3738,10 +3848,10 @@ impl PiSessionManager {
                     *state.write().await = PiSessionState::Compacting;
                     Self::write_command(&mut stdin, &pi_cmd).await
                 }
-                PiSessionCommand::GetState => {
+                PiSessionCommand::GetState { request_id } => {
                     // Response coordination happens via pending_responses map
                     let pi_cmd = PiCommand::GetState {
-                        id: Some("get_state".to_string()),
+                        id: Some(request_id),
                     };
                     Self::write_command(&mut stdin, &pi_cmd).await
                 }
@@ -3883,16 +3993,19 @@ impl PiSessionManager {
                     Self::write_command(&mut stdin, &pi_cmd).await
                 }
                 // Forking
-                PiSessionCommand::Fork(entry_id) => {
+                PiSessionCommand::Fork {
+                    entry_id,
+                    request_id,
+                } => {
                     let pi_cmd = PiCommand::Fork {
-                        id: Some("fork".to_string()),
+                        id: Some(request_id),
                         entry_id,
                     };
                     Self::write_command(&mut stdin, &pi_cmd).await
                 }
-                PiSessionCommand::GetForkMessages => {
+                PiSessionCommand::GetForkMessages { request_id } => {
                     let pi_cmd = PiCommand::GetForkMessages {
-                        id: Some("get_fork_messages".to_string()),
+                        id: Some(request_id),
                     };
                     Self::write_command(&mut stdin, &pi_cmd).await
                 }

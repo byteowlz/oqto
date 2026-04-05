@@ -2,17 +2,10 @@
 
 ## Open
 
+### [oqto-hybn] Deploy preflight: enforce minimum hstry version/schema for session tree queries (P0, bug)
+
 ### [oqto-heye] P0: Chat send must always terminate (response or explicit error), never infinite spinner (P0, bug)
 Repro at 23:57 (jolly-moves-kernel): backend accepted prompt commands but no user-visible terminal recovery when runner send failed/stalled, resulting in bogus working state and perceived message loss.\n\nBackend hardening added:\n- on prompt/steer/follow_up send failure, ws now emits canonical terminal events immediately (agent.error + agent.idle) and logs failure details with session id.\n- clears response watchdog on failure path before terminal emission.\n\nDeployed to archvm backend.
-
-### [oqto-8zvw] Shared workspace sessions: frontend creates new session ID instead of reusing existing hstry session ID (P0, bug)
-When a user navigates to a shared workspace session (e.g. nimble-tests-ladder with session ID f3ce6d6b), the frontend:
-1. Fetches history using the correct ID (f3ce6d6b) -> gets 101 messages
-2. But creates a FRESH oqto-UUID for session.create (e.g. oqto-7d09d46b)
-3. Runner spawns a brand new Pi process for oqto-7d09d46b
-4. Prompt goes to the new Pi (empty context)
-...
-
 
 ### [oqto-vh8v] Critical: terminal routing integrity violation across users/workspaces (P0, bug)
 
@@ -47,7 +40,11 @@ setup.sh must correctly provision everything for a new platform user on a fresh 
 ...
 
 
-### [oqto-ceat] Session fork: fork creates child session with new Pi process, navigates frontend to it (P1, feature)
+### [oqto-57nd] Runner: transactional fork state machine (single in-flight fork per session) (P1, feature)
+
+### [oqto-ep9v] Deploy preflight: fix hstry schema check shell quoting (line 489) (P1, bug)
+
+### [oqto-5s09] Mobile: fork icon tap does nothing in chat message actions (P1, bug)
 
 ### [oqto-kzdp] Session fork/branch: wire hstry session tree to frontend (P1, feature)
 
@@ -1663,6 +1660,8 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [oqto-8zvw] Shared workspace sessions: frontend creates new session ID instead of reusing existing hstry session ID (closed 2026-04-05)
+- [oqto-ceat] Session fork: fork creates child session with new Pi process, navigates frontend to it (closed 2026-04-05)
 - [oqto-th7v] Sessions with same updated_at timestamp flicker/swap positions in sidebar sort (closed 2026-04-04)
 - [oqto-t9bb] Clean env for agent processes: env_clear + explicit allowlist (closed 2026-04-04)
 - [oqto-phma] Guard markdown Mermaid renderer against malformed diagrams (closed 2026-04-04)
@@ -2376,13 +2375,13 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
-- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
-- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
-- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
 - [oqto-4ryr] Session rename reverts: update_chat_session returns external_id while list returns platform_id (closed )
 - [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
+- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
+- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
 - [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
+- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )

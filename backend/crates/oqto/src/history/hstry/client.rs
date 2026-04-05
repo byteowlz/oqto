@@ -155,10 +155,20 @@ impl HstryClient {
         platform_id: Option<String>,
     ) -> Result<UpdateConversationResponse> {
         self.update_conversation_full(
-            session_id, title, workspace, model, provider,
-            metadata_json, readable_id, harness, platform_id,
-            None, None, None,
-        ).await
+            session_id,
+            title,
+            workspace,
+            model,
+            provider,
+            metadata_json,
+            readable_id,
+            harness,
+            platform_id,
+            None,
+            None,
+            None,
+        )
+        .await
     }
 
     /// Full update including session tree fields.
@@ -212,7 +222,14 @@ impl HstryClient {
     ) -> Result<UpdateConversationResponse> {
         self.update_conversation_full(
             session_id,
-            None, None, None, None, None, None, None, None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
             Some(parent_session_id.to_string()),
             None,
             fork_type.map(String::from),

@@ -35,12 +35,10 @@ pub async fn list_conversations_from_hstry(db_path: &Path) -> Result<Vec<CanonCo
         SELECT 
             c.id, c.external_id, c.readable_id, c.title, c.workspace,
             c.created_at, c.updated_at, c.model, c.tokens_in, c.tokens_out,
-            c.cost_usd, c.metadata, c.parent_conversation_id,
-            s.adapter as source_adapter,
-            p.external_id as parent_external_id
+            c.cost_usd, c.metadata,
+            s.adapter as source_adapter
         FROM conversations c
         LEFT JOIN sources s ON c.source_id = s.id
-        LEFT JOIN conversations p ON c.parent_conversation_id = p.id
         ORDER BY c.updated_at DESC
         "#,
     )
@@ -62,7 +60,6 @@ pub async fn list_conversations_from_hstry(db_path: &Path) -> Result<Vec<CanonCo
         let cost_usd: Option<f64> = row.get("cost_usd");
         let metadata_json: Option<String> = row.get("metadata");
         let source_adapter: Option<String> = row.get("source_adapter");
-        let parent_external_id: Option<String> = row.try_get("parent_external_id").ok().flatten();
 
         let project_name = workspace.as_ref().and_then(|w| {
             std::path::Path::new(w)
@@ -84,7 +81,7 @@ pub async fn list_conversations_from_hstry(db_path: &Path) -> Result<Vec<CanonCo
             tokens_in,
             tokens_out,
             cost_usd,
-            parent_id: parent_external_id,
+            parent_id: None,
             agent: source_adapter,
             is_active: false,
             messages: Vec::new(),
@@ -107,12 +104,10 @@ pub async fn get_conversation_from_hstry(
         SELECT 
             c.id, c.external_id, c.readable_id, c.title, c.workspace,
             c.created_at, c.updated_at, c.model, c.tokens_in, c.tokens_out,
-            c.cost_usd, c.metadata, c.parent_conversation_id,
-            s.adapter as source_adapter,
-            p.external_id as parent_external_id
+            c.cost_usd, c.metadata,
+            s.adapter as source_adapter
         FROM conversations c
         LEFT JOIN sources s ON c.source_id = s.id
-        LEFT JOIN conversations p ON c.parent_conversation_id = p.id
         WHERE c.external_id = ? OR c.readable_id = ? OR c.id = ?
         LIMIT 1
         "#,
@@ -140,7 +135,6 @@ pub async fn get_conversation_from_hstry(
     let cost_usd: Option<f64> = row.get("cost_usd");
     let metadata_json: Option<String> = row.get("metadata");
     let source_adapter: Option<String> = row.get("source_adapter");
-    let parent_external_id: Option<String> = row.try_get("parent_external_id").ok().flatten();
 
     let project_name = workspace.as_ref().and_then(|w| {
         std::path::Path::new(w)
@@ -162,7 +156,7 @@ pub async fn get_conversation_from_hstry(
         tokens_in,
         tokens_out,
         cost_usd,
-        parent_id: parent_external_id,
+        parent_id: None,
         agent: source_adapter,
         is_active: false,
         messages: Vec::new(),

@@ -189,6 +189,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 
 	const machineRef = useRef(createInitialChatStateMachine(activeSessionId));
 	const transportEpochRef = useRef(0);
+	const reconnectTxnRef = useRef<Set<string>>(new Set());
 
 	const applyTurnState = useCallback(
 		(next: Parameters<typeof transitionTurn>[1]) => {
@@ -603,6 +604,43 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 			}, 30000);
 		},
 		[applyTurnState, clearResponseWatchdog, fetchHistoryMessages],
+	);
+
+	const runReconnectReconcile = useCallback(
+		async (
+			sessionId: string,
+			preferPartial: boolean,
+			expectedEpoch: number,
+		) => {
+			if (reconnectTxnRef.current.has(sessionId)) {
+				if (isPiDebugEnabled()) {
+					console.debug(
+						"[useChat] reconnect reconcile skipped: transaction already in flight",
+						sessionId,
+					);
+				}
+				return;
+			}
+			reconnectTxnRef.current.add(sessionId);
+			const manager = getWsManager();
+			try {
+				if (
+					transportEpochRef.current !== expectedEpoch ||
+					activeSessionIdRef.current !== sessionId
+				) {
+					return;
+				}
+				manager.agentGetState(sessionId);
+				if (preferPartial) {
+					manager.agentGetMessages(sessionId);
+				} else {
+					await fetchHistoryMessages(sessionId);
+				}
+			} finally {
+				reconnectTxnRef.current.delete(sessionId);
+			}
+		},
+		[fetchHistoryMessages],
 	);
 
 	// ========================================================================
@@ -1752,124 +1790,152 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 		}
 	}, []);
 
-	const ensureSession = useCallback(async (): Promise<string> => {
-		let sessionId = activeSessionIdRef.current;
-		if (!sessionId) {
-			sessionId = createPiSessionId();
-			activeSessionIdRef.current = sessionId;
-			onSelectedSessionIdChange?.(sessionId);
-		}
-		const manager = getWsManager();
+	type EnsureSessionOptions = {
+		createIfMissing: boolean;
+		source: "send" | "new_session" | "reconnect";
+	};
 
-		// If history selected a legacy/external ID, map it to a currently active
-		// runner session ID before issuing session.create. Shared workspaces can
-		// return history IDs that differ from the runner's in-memory session_id.
-		try {
-			const activeSessions = await manager.agentListSessions();
-			const alias = activeSessions.find(
-				(s) => s.session_id === sessionId || s.hstry_id === sessionId,
-			);
-			if (alias) {
-				if (alias.session_id !== sessionId) {
-					const previousId = sessionId;
-					sessionId = alias.session_id;
-					activeSessionIdRef.current = sessionId;
-					onSelectedSessionIdChange?.(sessionId);
-					const sharedWorkspaceId = sharedWorkspaceSessionMap.get(previousId);
-					if (sharedWorkspaceId) {
-						setSharedWorkspaceSessionId(sessionId, sharedWorkspaceId);
-					}
-					if (isPiDebugEnabled()) {
-						console.debug(
-							"[useChat] ensureSession: remapped history session alias",
-							previousId,
-							"->",
-							sessionId,
-						);
-					}
+	const ensureSession = useCallback(
+		async ({
+			createIfMissing,
+			source,
+		}: EnsureSessionOptions): Promise<string> => {
+			let sessionId = activeSessionIdRef.current;
+			if (!sessionId) {
+				const identity = machineRef.current.identity;
+				const hadPriorSession =
+					Boolean(lastActiveSessionIdRef.current) ||
+					(identity.kind === "bound" && Boolean(identity.runnerId));
+				if (!createIfMissing || hadPriorSession) {
+					throw new Error(
+						"Session selection lost during reconnect. Please reselect the chat and retry.",
+					);
 				}
-				bindSessionIdentity({
-					runnerId: alias.session_id,
-					hstryId: alias.hstry_id,
-				});
+				sessionId = createPiSessionId();
+				activeSessionIdRef.current = sessionId;
+				onSelectedSessionIdChange?.(sessionId);
+				if (isPiDebugEnabled()) {
+					console.warn(
+						"[useChat] ensureSession: created new session id",
+						sessionId,
+						"source=",
+						source,
+					);
+				}
 			}
-		} catch {
-			// Best-effort alias resolution; continue with original session ID.
-		}
+			const manager = getWsManager();
 
-		// If the session is already ready and we have an active subscription,
-		// there is nothing to do.  Re-subscribing would kill the existing
-		// event handler and create a gap where streaming events are lost.
-		if (manager.isSessionReady(sessionId) && unsubscribeRef.current) {
-			bindSessionIdentity({ runnerId: sessionId });
-			return sessionId;
-		}
+			// If history selected a legacy/external ID, map it to a currently active
+			// runner session ID before issuing session.create. Shared workspaces can
+			// return history IDs that differ from the runner's in-memory session_id.
+			try {
+				const activeSessions = await manager.agentListSessions();
+				const alias = activeSessions.find(
+					(s) => s.session_id === sessionId || s.hstry_id === sessionId,
+				);
+				if (alias) {
+					if (alias.session_id !== sessionId) {
+						const previousId = sessionId;
+						sessionId = alias.session_id;
+						activeSessionIdRef.current = sessionId;
+						onSelectedSessionIdChange?.(sessionId);
+						const sharedWorkspaceId = sharedWorkspaceSessionMap.get(previousId);
+						if (sharedWorkspaceId) {
+							setSharedWorkspaceSessionId(sessionId, sharedWorkspaceId);
+						}
+						if (isPiDebugEnabled()) {
+							console.debug(
+								"[useChat] ensureSession: remapped history session alias",
+								previousId,
+								"->",
+								sessionId,
+							);
+						}
+					}
+					bindSessionIdentity({
+						runnerId: alias.session_id,
+						hstryId: alias.hstry_id,
+					});
+				}
+			} catch {
+				// Best-effort alias resolution; continue with original session ID.
+			}
 
-		const sessionConfig = getSessionConfig();
-		const stableHandler = (event: AgentWsEvent) => {
-			handleAgentEventRef.current?.(event);
-		};
-		unsubscribeRef.current?.();
+			// If the session is already ready and we have an active subscription,
+			// there is nothing to do.  Re-subscribing would kill the existing
+			// event handler and create a gap where streaming events are lost.
+			if (manager.isSessionReady(sessionId) && unsubscribeRef.current) {
+				bindSessionIdentity({ runnerId: sessionId });
+				return sessionId;
+			}
 
-		if (manager.isSessionReady(sessionId)) {
+			const sessionConfig = getSessionConfig();
+			const stableHandler = (event: AgentWsEvent) => {
+				handleAgentEventRef.current?.(event);
+			};
+			unsubscribeRef.current?.();
+
+			if (manager.isSessionReady(sessionId)) {
+				unsubscribeRef.current = manager.subscribeAgentSession(
+					sessionId,
+					stableHandler,
+					sessionConfig,
+					{ create: false },
+				);
+				bindSessionIdentity({ runnerId: sessionId });
+				return sessionId;
+			}
+
 			unsubscribeRef.current = manager.subscribeAgentSession(
 				sessionId,
 				stableHandler,
 				sessionConfig,
-				{ create: false },
+				{ create: true },
 			);
-			bindSessionIdentity({ runnerId: sessionId });
-			return sessionId;
-		}
 
-		unsubscribeRef.current = manager.subscribeAgentSession(
-			sessionId,
-			stableHandler,
-			sessionConfig,
-			{ create: true },
-		);
-
-		try {
-			await manager.ensureConnected(4000);
 			try {
-				await manager.waitForSessionReady(sessionId, 1500);
-			} catch {
-				// If session wasn't created by the client (e.g. from history),
-				// avoid spawning a duplicate. Verify existence with get_state.
+				await manager.ensureConnected(4000);
 				try {
-					await manager.agentGetStateWait(sessionId);
-					unsubscribeRef.current?.();
-					unsubscribeRef.current = manager.subscribeAgentSession(
-						sessionId,
-						stableHandler,
-						sessionConfig,
-						{ create: false },
-					);
+					await manager.waitForSessionReady(sessionId, 1500);
 				} catch {
-					// Do not fail hard here. We keep the subscription and return
-					// the session ID so outbound messages can queue until the
-					// runner/session becomes ready.
-					if (isPiDebugEnabled()) {
-						console.warn(
-							"[useChat] ensureSession: session not ready yet, continuing with queued sends",
+					// If session wasn't created by the client (e.g. from history),
+					// avoid spawning a duplicate. Verify existence with get_state.
+					try {
+						await manager.agentGetStateWait(sessionId);
+						unsubscribeRef.current?.();
+						unsubscribeRef.current = manager.subscribeAgentSession(
 							sessionId,
+							stableHandler,
+							sessionConfig,
+							{ create: false },
 						);
+					} catch {
+						// Do not fail hard here. We keep the subscription and return
+						// the session ID so outbound messages can queue until the
+						// runner/session becomes ready.
+						if (isPiDebugEnabled()) {
+							console.warn(
+								"[useChat] ensureSession: session not ready yet, continuing with queued sends",
+								sessionId,
+							);
+						}
 					}
 				}
+			} catch {
+				// Keep going in degraded mode: ws-manager will queue outbound
+				// messages and flush after reconnect.
+				if (isPiDebugEnabled()) {
+					console.warn(
+						"[useChat] ensureSession: ws connect failed, continuing with queued sends",
+						sessionId,
+					);
+				}
 			}
-		} catch {
-			// Keep going in degraded mode: ws-manager will queue outbound
-			// messages and flush after reconnect.
-			if (isPiDebugEnabled()) {
-				console.warn(
-					"[useChat] ensureSession: ws connect failed, continuing with queued sends",
-					sessionId,
-				);
-			}
-		}
-		bindSessionIdentity({ runnerId: sessionId });
-		return sessionId;
-	}, [bindSessionIdentity, getSessionConfig, onSelectedSessionIdChange]);
+			bindSessionIdentity({ runnerId: sessionId });
+			return sessionId;
+		},
+		[bindSessionIdentity, getSessionConfig, onSelectedSessionIdChange],
+	);
 
 	// Send message
 	const send = useCallback(
@@ -1906,10 +1972,21 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 				messageIdRef.current = 0;
 			}
 			try {
-				sessionId = await ensureSession();
+				sessionId = await ensureSession({
+					createIfMissing: true,
+					source: "send",
+				});
 			} catch (err) {
 				sendInFlightRef.current = false;
-				throw err;
+				const reconnectErr =
+					err instanceof Error
+						? err
+						: new Error(
+								"Session is not ready. Please reselect the chat and retry.",
+							);
+				setError(reconnectErr);
+				onError?.(reconnectErr);
+				throw reconnectErr;
 			}
 
 			const identity = machineRef.current.identity;
@@ -1971,7 +2048,10 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 				// outbound prompt/steer/follow_up until session.create response arrives.
 				try {
 					await new Promise((resolve) => setTimeout(resolve, 200));
-					sessionId = await ensureSession();
+					sessionId = await ensureSession({
+						createIfMissing: false,
+						source: "reconnect",
+					});
 					await manager.ensureConnected(6000);
 					await manager.waitForSessionReady(sessionId, 6000);
 				} catch {
@@ -2005,6 +2085,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 			ensureSession,
 			getSessionConfig,
 			nextMessageId,
+			onError,
 			onSelectedSessionIdChange,
 			senderName,
 		],
@@ -2031,15 +2112,28 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 
 	// New session - creates a brand new session with a new UUID
 	const newSession = useCallback(async () => {
+		const previousSessionId = activeSessionIdRef.current;
+		const newSessionId = createPiSessionId();
+		activeSessionIdRef.current = newSessionId;
+		onSelectedSessionIdChange?.(newSessionId);
+
 		// Clear local state
 		setMessages([]);
 		streamingMessageRef.current = null;
 		applyTurnState({ kind: "idle" });
 		setError(null);
 		messageIdRef.current = 0;
-		resetSessionIdentity(activeSessionIdRef.current);
-		await ensureSession();
-	}, [applyTurnState, ensureSession, resetSessionIdentity]);
+		resetSessionIdentity(previousSessionId);
+		await ensureSession({
+			createIfMissing: false,
+			source: "new_session",
+		});
+	}, [
+		applyTurnState,
+		ensureSession,
+		onSelectedSessionIdChange,
+		resetSessionIdentity,
+	]);
 
 	// Reset session - closes and recreates
 	const resetSession = useCallback(async () => {
@@ -2133,24 +2227,24 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 					setError(new Error("Connection lost. Reconnecting..."));
 				} else {
 					setError(null);
-					// On reconnect, fetch latest state.
-					// If we're mid-stream, use partial merge to avoid
-					// clobbering the in-flight streaming message.
+					// On reconnect, run a single in-flight reconcile transaction
+					// for the active session. This prevents duplicate concurrent
+					// get_state/get_messages fetch races from multiple reconnect
+					// notifications in quick succession.
 					const sid = activeSessionIdRef.current;
 					if (sid) {
-						manager.agentGetState(sid);
-						if (isStreamingRef.current || streamingMessageRef.current) {
-							manager.agentGetMessages(sid);
-						} else {
-							void fetchHistoryMessages(sid);
-						}
+						const epoch = transportEpochRef.current;
+						const preferPartial = Boolean(
+							isStreamingRef.current || streamingMessageRef.current,
+						);
+						void runReconnectReconcile(sid, preferPartial, epoch);
 					}
 				}
 			},
 		);
 
 		return unsubscribe;
-	}, [applyTurnState, clearResponseWatchdog, fetchHistoryMessages]);
+	}, [applyTurnState, clearResponseWatchdog, runReconnectReconcile]);
 
 	// Periodic sync + watchdog: while streaming, periodically fetch
 	// authoritative messages so the UI stays current even if WS events

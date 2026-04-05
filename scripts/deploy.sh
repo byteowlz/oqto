@@ -454,6 +454,60 @@ check_dependency_compatibility() {
         fi
     fi
 
+    # Schema compatibility guard: if hstry DB exists, require session-tree columns
+    # used by oqto session APIs.
+    local hstry_db_check
+    hstry_db_check="$(host_exec "$is_local" "$ssh_target" '
+        DB="${XDG_DATA_HOME:-$HOME/.local/share}/hstry/hstry.db"
+        if [[ ! -f "$DB" ]]; then
+            echo "missing"
+            exit 0
+        fi
+        if ! command -v sqlite3 >/dev/null 2>&1; then
+            echo "no-sqlite3"
+            exit 0
+        fi
+        cols=$(sqlite3 "$DB" "PRAGMA table_info(conversations);" 2>/dev/null || true)
+        p=$(printf "%s\n" "$cols" | grep -c "|parent_conversation_id|" || true)
+        f=$(printf "%s\n" "$cols" | grep -c "|fork_type|" || true)
+        if [[ "$p" -ge 1 && "$f" -ge 1 ]]; then
+            echo "ok"
+        else
+            echo "incompatible"
+        fi
+    ' 2>/dev/null || echo "unknown")"
+
+    case "$hstry_db_check" in
+        ok)
+            log "  hstry schema: session-tree columns present (ok)"
+            ;;
+        missing)
+            log "  hstry schema: DB not found yet (skipping check)"
+            ;;
+        no-sqlite3)
+            warn "  sqlite3 not available; cannot verify hstry schema compatibility"
+            ;;
+        incompatible)
+            emit_event "$is_local" "$ssh_target" "$name" "preflight" "fail" "deps.hstry.schema_incompatible"
+            err "hstry DB schema on $name is incompatible (missing parent_conversation_id/fork_type in conversations). Upgrade/migrate hstry before deploy."
+            host_exec "$is_local" "$ssh_target" '
+                DB="${XDG_DATA_HOME:-$HOME/.local/share}/hstry/hstry.db"
+                echo "debug: USER=$USER HOME=$HOME DB=$DB"
+                if command -v sqlite3 >/dev/null 2>&1 && [[ -f "$DB" ]]; then
+                    cols=$(sqlite3 "$DB" "PRAGMA table_info(conversations);" 2>/dev/null || true)
+                    p=$(printf "%s\n" "$cols" | grep -c "|parent_conversation_id|" || true)
+                    f=$(printf "%s\n" "$cols" | grep -c "|fork_type|" || true)
+                    echo "debug: p=$p f=$f"
+                    echo "debug: first_cols=$(printf "%s" "$cols" | head -c 120 | tr "\n" ";")"
+                fi
+            ' || true
+            return 1
+            ;;
+        *)
+            warn "  hstry schema check returned '$hstry_db_check' (continuing)"
+            ;;
+    esac
+
     return 0
 }
 
