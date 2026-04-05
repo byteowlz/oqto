@@ -31,6 +31,6 @@ pub use service::{
 };
 
 pub use hstry::{
-    HstryClient, HstryServiceConfig, HstryServiceManager, SerializableMessage,
+    HstryClient, HstryEndpoint, HstryServiceConfig, HstryServiceManager, SerializableMessage,
     agent_message_to_proto, agent_message_to_proto_with_client_id, proto_messages_to_serializable,
 };

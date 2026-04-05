@@ -4,6 +4,7 @@ use log::{info, warn};
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use oqto::history::HstryEndpoint;
 use oqto::runner::daemon::bootstrap::{
     get_default_socket_path, load_env_file, load_sandbox_config, log_sandbox_state,
 };
@@ -102,6 +103,52 @@ async fn main() -> Result<()> {
             let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
             PathBuf::from(home).join(".local").join("state")
         });
+    // Resolve hstry endpoint: in single-user mode, read the port file written by
+    // systemd/hstry-service and use an explicit Tcp endpoint. This avoids stale
+    // port-file races by resolving the port once at startup.
+    // In multi-user mode the runner would receive a per-user endpoint; for now
+    // single-user runners always use Discover which probes socket then port file.
+    let hstry_endpoint = {
+        let socket_path = hstry_core::paths::service_socket_path();
+        if socket_path.exists() {
+            info!("hstry endpoint: Unix socket {:?}", socket_path);
+            HstryEndpoint::UnixSocket(socket_path)
+        } else {
+            let port_path = hstry_core::paths::service_port_path();
+            match std::fs::read_to_string(&port_path)
+                .ok()
+                .and_then(|s| s.trim().parse::<u16>().ok())
+            {
+                Some(port) => {
+                    // Verify connectivity at startup so stale ports fail fast.
+                    let addr = std::net::SocketAddr::new(
+                        std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+                        port,
+                    );
+                    if std::net::TcpStream::connect_timeout(
+                        &addr,
+                        std::time::Duration::from_millis(500),
+                    )
+                    .is_ok()
+                    {
+                        info!("hstry endpoint: TCP port {} (verified reachable)", port);
+                        HstryEndpoint::Tcp(port)
+                    } else {
+                        warn!(
+                            "hstry port file says {} but endpoint unreachable; falling back to auto-discover",
+                            port
+                        );
+                        HstryEndpoint::Discover
+                    }
+                }
+                None => {
+                    warn!("hstry port file not found; using auto-discover");
+                    HstryEndpoint::Discover
+                }
+            }
+        }
+    };
+
     let pi_config = PiManagerConfig {
         pi_binary: PathBuf::from(&user_config.pi_binary),
         default_cwd: user_config.workspace_dir.clone(),
@@ -115,6 +162,7 @@ async fn main() -> Result<()> {
             }
             db_path
         },
+        hstry_endpoint,
         sandbox_config: sandbox_config.clone(),
         runner_id: user_config.runner_id.clone(),
         model_cache_dir: Some(state_dir.join("oqto").join("model-cache")),

@@ -27,7 +27,7 @@ use tokio::process::{Child, ChildStdin, Command};
 use tokio::sync::{OwnedSemaphorePermit, RwLock, Semaphore, broadcast, mpsc, oneshot};
 
 use crate::agent_browser::{agent_browser_session_dir, browser_session_name};
-use crate::history::HstryClient;
+use crate::history::{HstryClient, HstryEndpoint};
 use crate::pi::{
     AgentMessage, PiCommand, PiEvent, PiMessage, PiResponse, PiState, SessionStats,
     session_parser::ParsedTitle,
@@ -52,8 +52,11 @@ pub struct PiManagerConfig {
     pub idle_timeout_secs: u64,
     /// Cleanup check interval (seconds).
     pub cleanup_interval_secs: u64,
-    /// Path to hstry database (for direct writes).
+    /// Path to hstry database (for direct reads via SQLite).
     pub hstry_db_path: Option<PathBuf>,
+    /// Explicit hstry gRPC endpoint. `Discover` for single-user auto-detection;
+    /// `UnixSocket`/`Tcp` for multi-user per-user isolation.
+    pub hstry_endpoint: HstryEndpoint,
     /// Sandbox configuration (if sandboxing is enabled).
     pub sandbox_config: Option<SandboxConfig>,
     /// Runner identifier (human-readable).
@@ -91,6 +94,7 @@ impl Default for PiManagerConfig {
             idle_timeout_secs: 300, // 5 minutes
             cleanup_interval_secs: 60,
             hstry_db_path: Some(data_dir.join("hstry").join("hstry.db")),
+            hstry_endpoint: HstryEndpoint::Discover,
             sandbox_config: None,
             runner_id: "local".to_string(),
             model_cache_dir: Some(state_dir.join("oqto").join("model-cache")),
@@ -505,7 +509,7 @@ impl PiSessionManager {
         // Previously this was gated on hstry_db_path existing, but the DB file may not
         // exist yet at runner startup (race with hstry service). The gRPC client streams
         // data to the hstry service which creates the DB independently.
-        let hstry_client = Some(HstryClient::new());
+        let hstry_client = Some(HstryClient::with_endpoint(config.hstry_endpoint.clone()));
 
         // Load persisted model cache from disk
         let model_cache = Self::load_model_cache_from_disk(config.model_cache_dir.as_deref());

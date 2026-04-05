@@ -274,11 +274,12 @@ describe("mergeServerMessages", () => {
 				textMsg("history-s1-2", "user", "some other msg", { timestamp: now }),
 			];
 			const result = mergeServerMessages(prev, server, "authoritative");
-			expect(result).toHaveLength(4);
+			expect(result).toHaveLength(5);
 			expect(result[0].id).toBe("history-s1-0");
 			expect(result[1].id).toBe("history-s1-1");
 			expect(result[2].id).toBe("history-s1-2");
-			expect(result[3].id).toBe("pi-msg-3"); // streaming
+			expect(result[3].id).toBe("pi-msg-2"); // optimistic user preserved
+			expect(result[4].id).toBe("pi-msg-3"); // streaming
 		});
 
 		it("drops local streaming copy when server already contains same tool_call_id", () => {
@@ -354,8 +355,9 @@ describe("mergeServerMessages", () => {
 				textMsg("history-s1-0", "user", "earlier", { timestamp: now }),
 			];
 			const result = mergeServerMessages(prev, server, "authoritative");
-			expect(result).toHaveLength(1);
+			expect(result).toHaveLength(2);
 			expect(result[0].id).toBe("history-s1-0");
+			expect(result[1].id).toBe("pi-msg-1");
 		});
 
 		it("drops user message when server has matching clientId", () => {
@@ -439,17 +441,14 @@ describe("mergeServerMessages", () => {
 		});
 	});
 
-	describe("in-flight scanning stops at non-in-flight message", () => {
-		it("only preserves trailing in-flight messages, not earlier ones", () => {
+	describe("optimistic user preservation in authoritative mode", () => {
+		it("preserves recent optimistic user message even if not trailing", () => {
 			const prev = [
-				// This user msg with clientId is NOT at the tail (there's a completed
-				// assistant msg after it), so it should NOT be preserved.
 				textMsg("pi-msg-1", "user", "old question", {
 					timestamp: now,
 					clientId: "c-old",
 				}),
 				textMsg("pi-msg-2", "assistant", "old answer", { timestamp: now }),
-				// This IS at the tail and is in-flight
 				textMsg("pi-msg-3", "user", "new question", {
 					timestamp: now,
 					clientId: "c-new",
@@ -467,10 +466,12 @@ describe("mergeServerMessages", () => {
 				}),
 			];
 			const result = mergeServerMessages(prev, server, "authoritative");
-			// Authoritative mode preserves only streaming local messages.
-			expect(result).toHaveLength(4);
+			// Old optimistic user with matching content is dropped, but the new
+			// recent optimistic user remains visible until persisted.
+			expect(result).toHaveLength(5);
 			expect(result[0].id).toBe("history-s1-0");
 			expect(result[3].id).toBe("history-s1-3");
+			expect(result[4].id).toBe("pi-msg-3");
 		});
 	});
 
@@ -520,6 +521,52 @@ describe("mergeServerMessages", () => {
 			const result = mergeServerMessages(prev, server, "partial");
 			expect(result).toHaveLength(3);
 			expect(result[1].parts[0]).toHaveProperty("text", "updated reply");
+		});
+
+		it("preserves local tool_call input when partial server update omits it", () => {
+			const prev: DisplayMessage[] = [
+				makeMessage({
+					id: "s-tool",
+					role: "assistant",
+					timestamp: now,
+					parts: [
+						{
+							type: "tool_call",
+							id: "tc-local",
+							toolCallId: "call-1",
+							name: "bash",
+							input: { command: "cargo check -p oqto" },
+							status: "running",
+						},
+					],
+				}),
+			];
+			const server: DisplayMessage[] = [
+				makeMessage({
+					id: "s-tool",
+					role: "assistant",
+					timestamp: now,
+					parts: [
+						{
+							type: "tool_call",
+							id: "tc-server",
+							toolCallId: "call-1",
+							name: "bash",
+							status: "running",
+						},
+					],
+				}),
+			];
+
+			const result = mergeServerMessages(prev, server, "partial");
+			expect(result).toHaveLength(1);
+			const part = result[0].parts.find(
+				(p) => p.type === "tool_call" && p.toolCallId === "call-1",
+			);
+			expect(part).toBeDefined();
+			if (part?.type === "tool_call") {
+				expect(part.input).toEqual({ command: "cargo check -p oqto" });
+			}
 		});
 
 		it("updates via clientId match in incremental path", () => {

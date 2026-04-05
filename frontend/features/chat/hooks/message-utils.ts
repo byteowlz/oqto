@@ -733,6 +733,85 @@ function hasToolCallIntersection(a: Set<string>, b: Set<string>): boolean {
 	return false;
 }
 
+function mergeMessageKeepingLocalToolDetails(
+	localMessage: DisplayMessage,
+	serverMessage: DisplayMessage,
+): DisplayMessage {
+	const localToolCalls = new Map<
+		string,
+		Extract<DisplayPart, { type: "tool_call" }>
+	>();
+	const localToolResults = new Map<
+		string,
+		Extract<DisplayPart, { type: "tool_result" }>
+	>();
+
+	for (const part of localMessage.parts) {
+		if (part.type === "tool_call" && part.toolCallId) {
+			localToolCalls.set(part.toolCallId, part);
+		}
+		if (part.type === "tool_result" && part.toolCallId) {
+			localToolResults.set(part.toolCallId, part);
+		}
+	}
+
+	const mergedParts: DisplayPart[] = serverMessage.parts.map((part) => {
+		if (part.type === "tool_call" && part.toolCallId) {
+			const local = localToolCalls.get(part.toolCallId);
+			if (!local) return part;
+			return {
+				...part,
+				name: part.name || local.name,
+				input: part.input !== undefined ? part.input : local.input,
+			};
+		}
+		if (part.type === "tool_result" && part.toolCallId) {
+			const local = localToolResults.get(part.toolCallId);
+			if (!local) return part;
+			return {
+				...part,
+				name: part.name || local.name,
+				output: part.output !== undefined ? part.output : local.output,
+				isError: part.isError ?? local.isError,
+			};
+		}
+		return part;
+	});
+
+	const seenToolCalls = new Set(
+		mergedParts
+			.filter(
+				(part): part is Extract<DisplayPart, { type: "tool_call" }> =>
+					part.type === "tool_call" && Boolean(part.toolCallId),
+			)
+			.map((part) => part.toolCallId),
+	);
+	const seenToolResults = new Set(
+		mergedParts
+			.filter(
+				(part): part is Extract<DisplayPart, { type: "tool_result" }> =>
+					part.type === "tool_result" && Boolean(part.toolCallId),
+			)
+			.map((part) => part.toolCallId),
+	);
+
+	for (const local of localToolCalls.values()) {
+		if (!seenToolCalls.has(local.toolCallId)) {
+			mergedParts.push(local);
+		}
+	}
+	for (const local of localToolResults.values()) {
+		if (!seenToolResults.has(local.toolCallId)) {
+			mergedParts.push(local);
+		}
+	}
+
+	return {
+		...serverMessage,
+		parts: mergedParts,
+	};
+}
+
 /**
  * Merge server messages with local messages, preserving in-flight optimistic updates.
  *
@@ -780,7 +859,7 @@ export function mergeServerMessages(
 			// 1. Match by ID
 			for (let i = 0; i < result.length; i++) {
 				if (result[i].id === serverMsg.id) {
-					result[i] = serverMsg;
+					result[i] = mergeMessageKeepingLocalToolDetails(result[i], serverMsg);
 					matched = true;
 					break;
 				}
@@ -793,7 +872,10 @@ export function mergeServerMessages(
 						serverMsg.clientId &&
 						result[i].clientId === serverMsg.clientId
 					) {
-						result[i] = serverMsg;
+						result[i] = mergeMessageKeepingLocalToolDetails(
+							result[i],
+							serverMsg,
+						);
 						matched = true;
 						break;
 					}
@@ -804,7 +886,10 @@ export function mergeServerMessages(
 				const serverFp = messageFingerprint(serverMsg);
 				const fpIdx = resultFingerprints.get(serverFp);
 				if (fpIdx !== undefined && result[fpIdx].role === serverMsg.role) {
-					result[fpIdx] = serverMsg;
+					result[fpIdx] = mergeMessageKeepingLocalToolDetails(
+						result[fpIdx],
+						serverMsg,
+					);
 					matched = true;
 				}
 			}
@@ -841,9 +926,18 @@ export function mergeServerMessages(
 		}
 	}
 
+	const OPTIMISTIC_USER_TTL_MS = 2 * 60 * 1000;
+	const nowMs = Date.now();
+
 	const preserved: DisplayMessage[] = [];
 	for (const msg of previous) {
-		if (!msg.isStreaming) continue;
+		const isRecentOptimisticUser =
+			msg.role === "user" &&
+			typeof msg.clientId === "string" &&
+			msg.clientId.length > 0 &&
+			typeof msg.timestamp === "number" &&
+			nowMs - msg.timestamp <= OPTIMISTIC_USER_TTL_MS;
+		if (!msg.isStreaming && !isRecentOptimisticUser) continue;
 		if (msg.clientId && serverClientIds.has(msg.clientId)) continue;
 		if (serverFingerprints.has(messageFingerprint(msg))) continue;
 		const textSig = messageTextSignature(msg);
