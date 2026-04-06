@@ -33,7 +33,9 @@ use crate::pi::{
     session_parser::ParsedTitle,
 };
 use crate::runner::pi_translator::PiTranslator;
-use crate::runner::protocol::{PiSessionInfo, PiSessionState};
+use crate::runner::protocol::{
+    ChatMessageProto, PiSessionInfo, PiSessionState, agent_msg_to_chat_proto,
+};
 use oqto_protocol::events::{AgentPhase, Event as CanonicalEvent, EventPayload, MessageVersion};
 use oqto_sandbox::SandboxConfig;
 
@@ -418,6 +420,14 @@ type PendingClientId = Arc<RwLock<Option<String>>>;
 /// reads/writes should use this value, not the Oqto session_id directly.
 type HstryExternalId = Arc<RwLock<String>>;
 
+/// Thread-safe message buffer.
+///
+/// The single source of truth for messages in an active session. Populated
+/// from AgentEnd messages and incremental persist responses. Seeded from
+/// hstry on session resume. `get_messages` for active sessions returns this
+/// buffer directly, bypassing the Pi `get_messages` RPC entirely.
+type MessageBuffer = Arc<RwLock<Vec<ChatMessageProto>>>;
+
 /// Internal session state (held by the manager).
 struct PiSession {
     /// Session ID (Oqto UUID -- the routing key used by frontend/API).
@@ -445,6 +455,10 @@ struct PiSession {
     /// Pending client_id for the next prompt (shared between command and reader tasks).
     #[allow(dead_code)]
     pending_client_id: PendingClientId,
+    /// Authoritative message buffer for this active session.
+    /// Populated on AgentEnd and incremental persist. Seeded from hstry on resume.
+    /// `get_message_buffer()` returns this directly -- no Pi RPC needed.
+    message_buffer: MessageBuffer,
     /// Handle to the background reader task.
     _reader_handle: tokio::task::JoinHandle<()>,
     /// Handle to the command processor task.
@@ -821,6 +835,45 @@ impl PiSessionManager {
         // hstry external_id -- starts as Oqto UUID, updated to Pi native ID by reader task
         let hstry_external_id: HstryExternalId = Arc::new(RwLock::new(session_id.clone()));
 
+        // Seed message buffer from hstry so resumed sessions have history immediately.
+        // This runs synchronously before the reader task starts, ensuring get_message_buffer()
+        // returns existing messages even before Pi emits its first event.
+        let seed_messages = if let Some(ref client) = self.hstry_client {
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(3),
+                client.get_messages(&session_id, None, None),
+            )
+            .await
+            {
+                Ok(Ok(hstry_msgs)) if !hstry_msgs.is_empty() => {
+                    debug!(
+                        "Seeded message buffer for '{}' with {} messages from hstry",
+                        session_id,
+                        hstry_msgs.len()
+                    );
+                    crate::runner::protocol::hstry_protos_to_chat_protos(hstry_msgs, &session_id)
+                }
+                Ok(Ok(_)) => Vec::new(),
+                Ok(Err(e)) => {
+                    warn!(
+                        "Failed to seed message buffer from hstry for '{}': {}",
+                        session_id, e
+                    );
+                    Vec::new()
+                }
+                Err(_) => {
+                    warn!(
+                        "Timed out seeding message buffer from hstry for '{}'",
+                        session_id
+                    );
+                    Vec::new()
+                }
+            }
+        } else {
+            Vec::new()
+        };
+        let message_buffer: MessageBuffer = Arc::new(RwLock::new(seed_messages));
+
         // Spawn stdout reader task
         let reader_handle = {
             let session_id = session_id.clone();
@@ -834,6 +887,7 @@ impl PiSessionManager {
             let cmd_tx_for_reader = cmd_tx.clone();
             let hstry_eid = Arc::clone(&hstry_external_id);
             let session_aliases = Arc::clone(&self.session_aliases);
+            let msg_buf = Arc::clone(&message_buffer);
 
             let runner_id = self.config.runner_id.clone();
             tokio::spawn(async move {
@@ -852,6 +906,7 @@ impl PiSessionManager {
                     hstry_eid,
                     session_aliases,
                     runner_id,
+                    msg_buf,
                 )
                 .await;
             })
@@ -890,6 +945,7 @@ impl PiSessionManager {
             pending_responses,
             fork_txn,
             pending_client_id,
+            message_buffer,
             _reader_handle: reader_handle,
             _cmd_handle: cmd_handle,
         };
@@ -1292,6 +1348,27 @@ impl PiSessionManager {
             .unwrap_or_else(|| session_id.to_string());
         let sessions = self.sessions.read().await;
         sessions.contains_key(&resolved_id)
+    }
+
+    /// Return the in-memory message buffer for an active session.
+    ///
+    /// This is the authoritative source of messages for active sessions.
+    /// Returns `None` if the session doesn't exist (inactive/dead).
+    /// The buffer is populated from:
+    ///   - hstry seed on session creation (existing history)
+    ///   - AgentEnd events (complete message list from Pi)
+    ///   - Incremental persist responses (mid-stream updates)
+    pub async fn get_message_buffer(&self, session_id: &str) -> Option<Vec<ChatMessageProto>> {
+        let resolved_id = self
+            .resolve_session_key(session_id)
+            .await
+            .unwrap_or_else(|| session_id.to_string());
+        let sessions = self.sessions.read().await;
+        if let Some(session) = sessions.get(&resolved_id) {
+            Some(session.message_buffer.read().await.clone())
+        } else {
+            None
+        }
     }
 
     pub async fn get_messages(&self, session_id: &str) -> Result<serde_json::Value> {
@@ -2393,11 +2470,47 @@ impl PiSessionManager {
             });
         }
 
-        // 3. Get new session info (Pi has switched to the forked session)
-        let new_state = self
+        // 3. Get new session info (Pi has switched to the forked session).
+        // Pi's fork response does not include the new session metadata, so we
+        // must observe the session switch via get_state. Poll until either the
+        // session id or session file differs from the pre-fork state.
+        let old_pi_session_id = old_state.session_id.clone();
+        let mut new_state = self
             .get_state(session_id)
             .await
             .context("Failed to get state after fork")?;
+
+        let switched = |state: &PiState| {
+            let id_changed = state.session_id != old_pi_session_id;
+            let file_changed = match (&state.session_file, &old_session_file) {
+                (Some(new_file), Some(old_file)) => new_file != old_file,
+                (Some(_), None) => true,
+                _ => false,
+            };
+            id_changed || file_changed
+        };
+
+        if !switched(&new_state) {
+            for _ in 0..20 {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                let candidate = self
+                    .get_state(session_id)
+                    .await
+                    .context("Failed to poll state after fork")?;
+                if switched(&candidate) {
+                    new_state = candidate;
+                    break;
+                }
+            }
+        }
+
+        if !switched(&new_state) {
+            anyhow::bail!(
+                "Fork completed but Pi did not switch to a distinct child session (entry_id='{}')",
+                entry_id
+            );
+        }
+
         let new_session_file = new_state.session_file.clone();
         let new_pi_session_id = new_state.session_id.clone();
 
@@ -2922,6 +3035,7 @@ impl PiSessionManager {
         hstry_external_id: HstryExternalId,
         session_aliases: Arc<RwLock<HashMap<String, String>>>,
         runner_id: String,
+        message_buffer: MessageBuffer,
     ) {
         // Read stderr in a separate task, keeping last N lines in a ring buffer
         // so we can include them in the crash error event.
@@ -3268,6 +3382,27 @@ impl PiSessionManager {
                                         msgs_val.clone(),
                                     ) {
                                         Ok(messages) if !messages.is_empty() => {
+                                            // Update message buffer from incremental
+                                            // persist response (mid-stream snapshot).
+                                            {
+                                                let buffer_msgs: Vec<ChatMessageProto> = messages
+                                                    .iter()
+                                                    .enumerate()
+                                                    .map(|(idx, msg)| {
+                                                        agent_msg_to_chat_proto(
+                                                            msg,
+                                                            idx,
+                                                            &session_id,
+                                                        )
+                                                    })
+                                                    .collect();
+                                                debug!(
+                                                    "Pi[{}] updating message buffer with {} messages from incremental persist",
+                                                    session_id,
+                                                    buffer_msgs.len()
+                                                );
+                                                *message_buffer.write().await = buffer_msgs;
+                                            }
                                             if let Some(ref client) = hstry_client {
                                                 let client = client.clone();
                                                 let eid = hstry_external_id.read().await.clone();
@@ -3463,6 +3598,23 @@ impl PiSessionManager {
                                 }
                             });
                         }
+                    }
+                    // Update the authoritative message buffer from AgentEnd data.
+                    // This is a full replacement since AgentEnd provides the complete
+                    // message list (possibly compacted by Pi, but that's the current
+                    // truth). The buffer was seeded from hstry on session creation.
+                    {
+                        let buffer_msgs: Vec<ChatMessageProto> = pending_messages
+                            .iter()
+                            .enumerate()
+                            .map(|(idx, msg)| agent_msg_to_chat_proto(msg, idx, &session_id))
+                            .collect();
+                        debug!(
+                            "Pi[{}] updating message buffer with {} messages from AgentEnd",
+                            session_id,
+                            buffer_msgs.len()
+                        );
+                        *message_buffer.write().await = buffer_msgs;
                     }
                     pending_messages.clear();
                 }
