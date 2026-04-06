@@ -2780,9 +2780,27 @@ impl Runner {
     async fn pi_get_messages(&self, req: PiGetMessagesRequest) -> RunnerResponse {
         debug!("pi_get_messages: session_id={}", req.session_id);
 
+        // Prefer the in-memory message buffer (authoritative for active sessions).
+        // Falls back to Pi RPC only if the buffer is empty (session just started).
+        if let Some(buffer) = self.pi_manager.get_message_buffer(&req.session_id).await
+            && !buffer.is_empty()
+        {
+            // Convert ChatMessageProto back to AgentMessage for protocol compat.
+            // This is temporary until we migrate ws_multiplexed to use
+            // ChatMessageProto directly (scope 5 completion).
+            let agent_msgs: Vec<crate::pi::AgentMessage> = buffer
+                .into_iter()
+                .map(crate::runner::protocol::chat_proto_to_agent_msg)
+                .collect();
+            return RunnerResponse::PiMessages(PiMessagesResponse {
+                session_id: req.session_id,
+                messages: agent_msgs,
+            });
+        }
+
+        // Buffer empty -- fall back to Pi RPC
         match self.pi_manager.get_messages(&req.session_id).await {
             Ok(messages) => {
-                // Parse JSON response to typed AgentMessage vec
                 let messages_vec: Vec<crate::pi::AgentMessage> = messages
                     .as_array()
                     .map(|arr| {
