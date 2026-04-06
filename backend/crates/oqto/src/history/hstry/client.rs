@@ -4,6 +4,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
+use tokio::process::Command;
 use tokio::sync::RwLock;
 use tonic::transport::Channel;
 
@@ -442,14 +443,31 @@ impl Default for HstryClient {
 }
 
 /// Connect to hstry using an explicit endpoint strategy.
+///
+/// If connection fails for local-user endpoints (Discover/UnixSocket), we
+/// attempt a one-shot `hstry service start` self-heal and retry once.
 async fn connect_for_endpoint(endpoint: &HstryEndpoint) -> Result<Channel> {
     match endpoint {
         HstryEndpoint::UnixSocket(path) => {
             #[cfg(unix)]
             {
-                try_connect_unix(path).await.with_context(|| {
-                    format!("Failed to connect to hstry via Unix socket {:?}", path)
-                })
+                match try_connect_unix(path).await {
+                    Ok(channel) => Ok(channel),
+                    Err(first_err) => {
+                        tracing::warn!(
+                            "Failed to connect to hstry via Unix socket {:?}: {}. Attempting service start + retry.",
+                            path,
+                            first_err
+                        );
+                        let _ = attempt_start_hstry_service().await;
+                        try_connect_unix(path).await.with_context(|| {
+                            format!(
+                                "Failed to connect to hstry via Unix socket {:?} after restart attempt",
+                                path
+                            )
+                        })
+                    }
+                }
             }
             #[cfg(not(unix))]
             {
@@ -458,7 +476,22 @@ async fn connect_for_endpoint(endpoint: &HstryEndpoint) -> Result<Channel> {
             }
         }
         HstryEndpoint::Tcp(port) => try_connect_tcp(*port).await,
-        HstryEndpoint::Discover => discover_and_connect().await,
+        HstryEndpoint::Discover => match discover_and_connect().await {
+            Ok(channel) => Ok(channel),
+            Err(first_err) => {
+                tracing::warn!(
+                    "Failed to auto-discover/connect hstry: {}. Attempting service start + retry.",
+                    first_err
+                );
+                let _ = attempt_start_hstry_service().await;
+                discover_and_connect().await.with_context(|| {
+                    format!(
+                        "hstry discover/connect failed after restart attempt: {}",
+                        first_err
+                    )
+                })
+            }
+        },
     }
 }
 
@@ -484,6 +517,34 @@ async fn discover_and_connect() -> Result<Channel> {
     })?;
 
     try_connect_tcp(port).await
+}
+
+/// Best-effort local self-heal for hstry availability.
+async fn attempt_start_hstry_service() -> Result<()> {
+    let output = Command::new("hstry")
+        .args(["service", "start"])
+        .output()
+        .await
+        .context("failed to execute `hstry service start`")?;
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let combined = format!("{}{}", stdout, stderr).to_lowercase();
+
+    if combined.contains("already running") {
+        return Ok(());
+    }
+
+    anyhow::bail!(
+        "`hstry service start` failed (exit={}): {}{}",
+        output.status,
+        stdout,
+        stderr
+    )
 }
 
 async fn try_connect_tcp(port: u16) -> Result<Channel> {

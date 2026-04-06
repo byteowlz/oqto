@@ -123,8 +123,18 @@ impl HstryServiceManager {
 
         info!("hstry service start succeeded: {}", stdout.trim());
 
-        // Wait for the daemon to become ready
-        self.wait_for_ready().await
+        // Wait for the daemon to become ready. If startup races with stale
+        // state, do one restart attempt before giving up.
+        if let Err(first_err) = self.wait_for_ready().await {
+            debug!(
+                "hstry not ready after start ({}); attempting one restart",
+                first_err
+            );
+            self.restart().await?;
+            self.wait_for_ready().await?;
+        }
+
+        Ok(())
     }
 
     /// Restart the hstry daemon via `hstry service restart`.

@@ -2436,29 +2436,29 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         };
         let hstry_manager = history::HstryServiceManager::new(hstry_config);
 
-        // Ensure daemon is running (auto-starts if needed)
-        match hstry_manager.ensure_running().await {
-            Ok(()) => {
-                info!("hstry daemon is running");
-                // Create client and connect
-                let hstry_client = history::HstryClient::new();
-                if let Err(e) = hstry_client.connect().await {
-                    warn!(
-                        "Failed to connect to hstry daemon: {}. Will retry on first use.",
-                        e
-                    );
-                } else {
-                    info!("hstry client connected");
-                }
-                state = state.with_hstry(hstry_client);
-            }
-            Err(e) => {
-                warn!(
-                    "Failed to start hstry daemon: {}. Chat history persistence disabled.",
-                    e
-                );
-            }
+        // Ensure daemon is running (auto-starts if needed). Even if this
+        // readiness check fails, keep hstry client enabled so runtime calls can
+        // self-heal and reconnect (important during restarts/redeploy races).
+        if let Err(e) = hstry_manager.ensure_running().await {
+            warn!(
+                "Failed to start/verify hstry daemon: {}. Keeping client enabled and retrying lazily.",
+                e
+            );
+        } else {
+            info!("hstry daemon is running");
         }
+
+        // Create client and connect (best effort).
+        let hstry_client = history::HstryClient::new();
+        if let Err(e) = hstry_client.connect().await {
+            warn!(
+                "Failed to connect to hstry daemon: {}. Will retry on first use.",
+                e
+            );
+        } else {
+            info!("hstry client connected");
+        }
+        state = state.with_hstry(hstry_client);
     } else {
         debug!("hstry integration disabled");
     }
