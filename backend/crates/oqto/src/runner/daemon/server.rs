@@ -1987,185 +1987,25 @@ impl Runner {
             }
         };
 
-        // For active sessions, Pi exposes not-yet-persisted tail messages.
-        // Pi may only return a compacted context window (subset of history),
-        // so we merge: use hstry as the base and append any Pi tail messages
-        // that hstry doesn't have yet. This ensures in-flight messages are
-        // never lost during reconnect/page-reload.
+        // For active sessions, the runner maintains an authoritative in-memory
+        // message buffer (populated from AgentEnd and incremental persist).
+        // This replaces the old approach of calling Pi's get_messages RPC and
+        // merging with hstry -- the buffer IS the single source of truth.
         let session_is_active = self.pi_manager.has_session(&req.session_id).await;
-        if session_is_active {
-            let pi_result = tokio::time::timeout(
-                std::time::Duration::from_secs(2),
-                self.pi_manager.get_messages(&req.session_id),
-            )
-            .await;
-            if let Ok(Ok(raw)) = pi_result {
-                let pi_msgs: Vec<crate::pi::AgentMessage> = raw
-                    .as_array()
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|v| serde_json::from_value(v.clone()).ok())
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                if pi_msgs.len() > messages.len() {
-                    // Pi has strictly more messages -- use Pi directly.
-                    let start = req
-                        .limit
-                        .and_then(|limit| pi_msgs.len().checked_sub(limit))
-                        .unwrap_or(0);
-                    let session_id_clone = req.session_id.clone();
-                    let mapped: Vec<ChatMessageProto> = pi_msgs
-                        .into_iter()
-                        .enumerate()
-                        .skip(start)
-                        .map(|(idx, msg)| pi_agent_msg_to_chat_proto(msg, idx, &session_id_clone))
-                        .collect();
-                    return RunnerResponse::WorkspaceChatSessionMessages(
-                        WorkspaceChatSessionMessagesResponse {
-                            session_id: req.session_id,
-                            messages: mapped,
-                        },
-                    );
-                }
-                // Pi has equal or fewer messages (compacted). Append any Pi
-                // tail messages beyond what hstry has. This covers the window
-                // between the last incremental persist and now.
-                if !pi_msgs.is_empty() && pi_msgs.len() <= messages.len() {
-                    // hstry has `messages.len()` messages. Pi's context starts
-                    // from some compaction point. Any Pi messages beyond the
-                    // hstry count are in-flight (not yet persisted).
-                    // Since Pi can be compacted, we check if Pi's LAST messages
-                    // extend beyond hstry by comparing counts.
-                    // Simple heuristic: if Pi has N messages and hstry has M >= N,
-                    // the last `N` Pi messages correspond to hstry indices
-                    // [M-N..M) possibly plus trailing new ones. We need to find
-                    // Pi messages that are truly new.
-                    //
-                    // Robust approach: compare the role+content of Pi's last
-                    // message against hstry's last message. If they differ,
-                    // Pi has newer tail messages.
-                    let pi_last = &pi_msgs[pi_msgs.len() - 1];
-                    let hstry_last = &messages[messages.len() - 1];
-                    let pi_last_text = if let Some(s) = pi_last.content.as_str() {
-                        s.to_string()
-                    } else {
-                        pi_last.content.to_string()
-                    };
-                    let hstry_last_text = hstry_last
-                        .parts
-                        .iter()
-                        .filter_map(|p| p.text.as_deref())
-                        .collect::<Vec<_>>()
-                        .join("");
-                    let pi_last_role = &pi_last.role;
-                    let hstry_last_role = &hstry_last.role;
-
-                    if pi_last_role != hstry_last_role || pi_last_text != hstry_last_text {
-                        // Pi has messages beyond what hstry persisted.
-                        // Find the divergence point: walk backwards through Pi
-                        // to find where it matches hstry's tail, then append
-                        // the rest.
-                        let mut overlap_end = 0;
-                        for i in (0..pi_msgs.len()).rev() {
-                            if i >= messages.len() {
-                                continue;
-                            }
-                            let pi_role = &pi_msgs[i].role;
-                            let h_role = &messages[i].role;
-                            let pi_text = if let Some(s) = pi_msgs[i].content.as_str() {
-                                s.to_string()
-                            } else {
-                                pi_msgs[i].content.to_string()
-                            };
-                            let h_text = messages[i]
-                                .parts
-                                .iter()
-                                .filter_map(|p| p.text.as_deref())
-                                .collect::<Vec<_>>()
-                                .join("");
-                            if pi_role == h_role && pi_text == h_text {
-                                overlap_end = i + 1;
-                                break;
-                            }
-                        }
-
-                        // Append Pi messages from overlap_end onward to hstry.
-                        if overlap_end < pi_msgs.len() {
-                            let session_id_clone = req.session_id.clone();
-                            let base_idx = messages.len();
-                            let mut merged = messages
-                                .into_iter()
-                                .map(|message| {
-                                    let parts = message
-                                        .parts
-                                        .into_iter()
-                                        .map(|part| ChatMessagePartProto {
-                                            id: part.id,
-                                            part_type: part.part_type,
-                                            text: part.text,
-                                            text_html: if req.render {
-                                                part.text_html
-                                            } else {
-                                                None
-                                            },
-                                            tool_name: part.tool_name,
-                                            tool_call_id: part.tool_call_id,
-                                            tool_input: part.tool_input,
-                                            tool_output: part.tool_output,
-                                            tool_status: part.tool_status,
-                                            tool_title: part.tool_title,
-                                        })
-                                        .collect();
-                                    ChatMessageProto {
-                                        id: message.id,
-                                        session_id: message.session_id,
-                                        role: message.role,
-                                        created_at: message.created_at,
-                                        completed_at: message.completed_at,
-                                        parent_id: message.parent_id,
-                                        model_id: message.model_id,
-                                        provider_id: message.provider_id,
-                                        agent: message.agent,
-                                        summary_title: message.summary_title,
-                                        tokens_input: message.tokens_input,
-                                        tokens_output: message.tokens_output,
-                                        tokens_reasoning: message.tokens_reasoning,
-                                        cost: message.cost,
-                                        parts,
-                                    }
-                                })
-                                .collect::<Vec<_>>();
-
-                            let tail: Vec<ChatMessageProto> = pi_msgs
-                                .into_iter()
-                                .enumerate()
-                                .skip(overlap_end)
-                                .map(|(idx, msg)| {
-                                    pi_agent_msg_to_chat_proto(
-                                        msg,
-                                        base_idx + idx - overlap_end,
-                                        &session_id_clone,
-                                    )
-                                })
-                                .collect();
-                            merged.extend(tail);
-
-                            let start = req
-                                .limit
-                                .and_then(|limit| merged.len().checked_sub(limit))
-                                .unwrap_or(0);
-                            return RunnerResponse::WorkspaceChatSessionMessages(
-                                WorkspaceChatSessionMessagesResponse {
-                                    session_id: req.session_id,
-                                    messages: merged.into_iter().skip(start).collect(),
-                                },
-                            );
-                        }
-                    }
-                }
-            }
-            // Pi unavailable or no new tail messages -- fall through to hstry.
+        if session_is_active
+            && let Some(buffer) = self.pi_manager.get_message_buffer(&req.session_id).await
+            && !buffer.is_empty()
+        {
+            let start = req
+                .limit
+                .and_then(|limit| buffer.len().checked_sub(limit))
+                .unwrap_or(0);
+            return RunnerResponse::WorkspaceChatSessionMessages(
+                WorkspaceChatSessionMessagesResponse {
+                    session_id: req.session_id,
+                    messages: buffer.into_iter().skip(start).collect(),
+                },
+            );
         }
 
         // For inactive sessions created/continued outside Oqto (bare Pi),
@@ -2250,45 +2090,28 @@ impl Runner {
             );
         }
 
-        // Last resort: hstry empty and no active Pi process found above.
-        // Try Pi live messages one more time in case the session resolved
-        // differently (e.g., via session key mapping).
-        match self.pi_manager.get_messages(&req.session_id).await {
-            Ok(raw) => {
-                let msgs: Vec<crate::pi::AgentMessage> = raw
-                    .as_array()
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|v| serde_json::from_value(v.clone()).ok())
-                            .collect()
-                    })
-                    .unwrap_or_default();
-
-                let start = req
-                    .limit
-                    .and_then(|limit| msgs.len().checked_sub(limit))
-                    .unwrap_or(0);
-
-                let session_id_clone = req.session_id.clone();
-                let mapped: Vec<ChatMessageProto> = msgs
-                    .into_iter()
-                    .enumerate()
-                    .skip(start)
-                    .map(|(idx, msg)| pi_agent_msg_to_chat_proto(msg, idx, &session_id_clone))
-                    .collect();
-
-                RunnerResponse::WorkspaceChatSessionMessages(WorkspaceChatSessionMessagesResponse {
+        // Last resort: hstry empty. Try the message buffer one more time
+        // in case the session resolved via alias mapping.
+        if let Some(buffer) = self.pi_manager.get_message_buffer(&req.session_id).await
+            && !buffer.is_empty()
+        {
+            let start = req
+                .limit
+                .and_then(|limit| buffer.len().checked_sub(limit))
+                .unwrap_or(0);
+            return RunnerResponse::WorkspaceChatSessionMessages(
+                WorkspaceChatSessionMessagesResponse {
                     session_id: req.session_id,
-                    messages: mapped,
-                })
-            }
-            Err(_) => {
-                RunnerResponse::WorkspaceChatSessionMessages(WorkspaceChatSessionMessagesResponse {
-                    session_id: req.session_id,
-                    messages: Vec::new(),
-                })
-            }
+                    messages: buffer.into_iter().skip(start).collect(),
+                },
+            );
         }
+
+        // Truly empty: no buffer, no hstry, no JSONL.
+        RunnerResponse::WorkspaceChatSessionMessages(WorkspaceChatSessionMessagesResponse {
+            session_id: req.session_id,
+            messages: Vec::new(),
+        })
     }
 
     // ========================================================================
@@ -4078,89 +3901,14 @@ impl Runner {
     }
 }
 
+/// Convert a Pi `AgentMessage` to a `ChatMessageProto`.
+/// Delegates to the shared implementation in `protocol`.
 fn pi_agent_msg_to_chat_proto(
     msg: crate::pi::AgentMessage,
     idx: usize,
     session_id: &str,
 ) -> ChatMessageProto {
-    // Normalize Pi timestamps to milliseconds. Pi may report seconds or ms
-    // depending on the harness/event source. Heuristic: if < 1e12, it's seconds.
-    let created_at = msg
-        .timestamp
-        .map(|t| {
-            let v = t as i64;
-            if v > 0 && v < 1_000_000_000_000 {
-                v * 1000
-            } else {
-                v
-            }
-        })
-        .unwrap_or(0);
-    let part_id = format!("part_{}", idx);
-    let message_id = format!("pi_msg_{}", idx);
-
-    let (part_type, text, tool_name, tool_call_id, tool_input, tool_output, tool_status) =
-        if msg.role == "tool" || msg.role == "toolResult" {
-            (
-                "tool_result".to_string(),
-                None,
-                msg.tool_name.clone(),
-                msg.tool_call_id.clone(),
-                None,
-                Some(msg.content.to_string()),
-                Some(
-                    if msg.is_error.unwrap_or(false) {
-                        "error"
-                    } else {
-                        "success"
-                    }
-                    .to_string(),
-                ),
-            )
-        } else {
-            (
-                "text".to_string(),
-                Some(if let Some(s) = msg.content.as_str() {
-                    s.to_string()
-                } else {
-                    msg.content.to_string()
-                }),
-                None,
-                None,
-                None,
-                None,
-                None,
-            )
-        };
-
-    ChatMessageProto {
-        id: message_id,
-        session_id: session_id.to_string(),
-        role: msg.role,
-        created_at,
-        completed_at: None,
-        parent_id: None,
-        model_id: msg.model,
-        provider_id: msg.provider,
-        agent: None,
-        summary_title: None,
-        tokens_input: msg.usage.as_ref().map(|u| u.input as i64),
-        tokens_output: msg.usage.as_ref().map(|u| u.output as i64),
-        tokens_reasoning: None,
-        cost: msg.usage.and_then(|u| u.cost.map(|c| c.total)),
-        parts: vec![ChatMessagePartProto {
-            id: part_id,
-            part_type,
-            text,
-            text_html: None,
-            tool_name,
-            tool_call_id,
-            tool_input,
-            tool_output,
-            tool_status,
-            tool_title: None,
-        }],
-    }
+    crate::runner::protocol::agent_msg_to_chat_proto(&msg, idx, session_id)
 }
 
 fn error_response(code: ErrorCode, message: impl Into<String>) -> RunnerResponse {

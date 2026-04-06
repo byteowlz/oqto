@@ -1630,6 +1630,243 @@ pub struct ChatMessageProto {
 }
 
 // ============================================================================
+// AgentMessage -> ChatMessageProto conversion
+// ============================================================================
+
+/// Convert hstry proto messages to `ChatMessageProto` for the message buffer.
+///
+/// Used to seed the runner message buffer from hstry on session resume.
+pub fn hstry_proto_to_chat_proto(
+    msg: &hstry_core::service::proto::Message,
+    session_id: &str,
+) -> ChatMessageProto {
+    let created_at = msg.created_at_ms.unwrap_or(0);
+    let message_id = msg
+        .id
+        .clone()
+        .unwrap_or_else(|| format!("hstry_msg_{}", msg.idx));
+
+    // Parse parts_json to extract structured parts
+    let parts: Vec<ChatMessagePartProto> =
+        if let Ok(parts_arr) = serde_json::from_str::<Vec<serde_json::Value>>(&msg.parts_json) {
+            parts_arr
+                .iter()
+                .enumerate()
+                .map(|(i, part)| {
+                    let part_type = part
+                        .get("type")
+                        .and_then(|t| t.as_str())
+                        .unwrap_or("text")
+                        .to_string();
+                    let id = part
+                        .get("id")
+                        .and_then(|v| v.as_str())
+                        .map(String::from)
+                        .unwrap_or_else(|| format!("part_{}_{}", msg.idx, i));
+
+                    match part_type.as_str() {
+                        "tool_call" => ChatMessagePartProto {
+                            id,
+                            part_type: "tool_call".to_string(),
+                            text: None,
+                            text_html: None,
+                            tool_name: part.get("name").and_then(|v| v.as_str()).map(String::from),
+                            tool_call_id: part.get("id").and_then(|v| v.as_str()).map(String::from),
+                            tool_input: part.get("input").cloned(),
+                            tool_output: None,
+                            tool_status: None,
+                            tool_title: None,
+                        },
+                        "tool_result" => ChatMessagePartProto {
+                            id,
+                            part_type: "tool_result".to_string(),
+                            text: None,
+                            text_html: None,
+                            tool_name: part.get("name").and_then(|v| v.as_str()).map(String::from),
+                            tool_call_id: part
+                                .get("toolCallId")
+                                .and_then(|v| v.as_str())
+                                .map(String::from),
+                            tool_input: None,
+                            tool_output: part.get("output").map(|v| v.to_string()),
+                            tool_status: Some(
+                                if part
+                                    .get("is_error")
+                                    .and_then(|v| v.as_bool())
+                                    .unwrap_or(false)
+                                {
+                                    "error"
+                                } else {
+                                    "success"
+                                }
+                                .to_string(),
+                            ),
+                            tool_title: None,
+                        },
+                        _ => ChatMessagePartProto {
+                            id,
+                            part_type,
+                            text: part.get("text").and_then(|v| v.as_str()).map(String::from),
+                            text_html: None,
+                            tool_name: None,
+                            tool_call_id: None,
+                            tool_input: None,
+                            tool_output: None,
+                            tool_status: None,
+                            tool_title: None,
+                        },
+                    }
+                })
+                .collect()
+        } else {
+            // Fallback: single text part from content
+            vec![ChatMessagePartProto {
+                id: format!("part_{}", msg.idx),
+                part_type: "text".to_string(),
+                text: Some(msg.content.clone()),
+                text_html: None,
+                tool_name: None,
+                tool_call_id: None,
+                tool_input: None,
+                tool_output: None,
+                tool_status: None,
+                tool_title: None,
+            }]
+        };
+
+    // Split model string "provider/model" if present
+    let (provider_id, model_id) = match &msg.model {
+        Some(m) if m.contains('/') => {
+            let (p, model) = m.split_once('/').expect("checked contains");
+            (Some(p.to_string()), Some(model.to_string()))
+        }
+        Some(m) => (msg.provider.clone(), Some(m.clone())),
+        None => (msg.provider.clone(), None),
+    };
+
+    ChatMessageProto {
+        id: message_id,
+        session_id: session_id.to_string(),
+        role: msg.role.clone(),
+        created_at,
+        completed_at: None,
+        parent_id: None,
+        model_id,
+        provider_id,
+        agent: None,
+        summary_title: None,
+        tokens_input: msg.tokens.map(|t| t / 2), // hstry stores total, estimate split
+        tokens_output: msg.tokens.map(|t| t / 2),
+        tokens_reasoning: None,
+        cost: msg.cost_usd,
+        parts,
+    }
+}
+
+/// Convert a batch of hstry proto messages to `ChatMessageProto`.
+pub fn hstry_protos_to_chat_protos(
+    messages: Vec<hstry_core::service::proto::Message>,
+    session_id: &str,
+) -> Vec<ChatMessageProto> {
+    messages
+        .iter()
+        .map(|msg| hstry_proto_to_chat_proto(msg, session_id))
+        .collect()
+}
+
+/// Convert a Pi `AgentMessage` into a `ChatMessageProto`.
+///
+/// Used by both the runner daemon (get_workspace_chat_session_messages) and
+/// the pi_manager's message buffer. Centralised here to prevent divergence.
+pub fn agent_msg_to_chat_proto(
+    msg: &crate::pi::AgentMessage,
+    idx: usize,
+    session_id: &str,
+) -> ChatMessageProto {
+    // Normalize Pi timestamps to milliseconds. Pi may report seconds or ms
+    // depending on the harness/event source. Heuristic: if < 1e12, it's seconds.
+    let created_at = msg
+        .timestamp
+        .map(|t| {
+            let v = t as i64;
+            if v > 0 && v < 1_000_000_000_000 {
+                v * 1000
+            } else {
+                v
+            }
+        })
+        .unwrap_or(0);
+    let part_id = format!("part_{}", idx);
+    let message_id = format!("pi_msg_{}", idx);
+
+    let (part_type, text, tool_name, tool_call_id, tool_input, tool_output, tool_status) =
+        if msg.role == "tool" || msg.role == "toolResult" {
+            (
+                "tool_result".to_string(),
+                None,
+                msg.tool_name.clone(),
+                msg.tool_call_id.clone(),
+                None,
+                Some(msg.content.to_string()),
+                Some(
+                    if msg.is_error.unwrap_or(false) {
+                        "error"
+                    } else {
+                        "success"
+                    }
+                    .to_string(),
+                ),
+            )
+        } else {
+            (
+                "text".to_string(),
+                Some(if let Some(s) = msg.content.as_str() {
+                    s.to_string()
+                } else {
+                    msg.content.to_string()
+                }),
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+        };
+
+    ChatMessageProto {
+        id: message_id,
+        session_id: session_id.to_string(),
+        role: msg.role.clone(),
+        created_at,
+        completed_at: None,
+        parent_id: None,
+        model_id: msg.model.clone(),
+        provider_id: msg.provider.clone(),
+        agent: None,
+        summary_title: None,
+        tokens_input: msg.usage.as_ref().map(|u| u.input as i64),
+        tokens_output: msg.usage.as_ref().map(|u| u.output as i64),
+        tokens_reasoning: None,
+        cost: msg
+            .usage
+            .as_ref()
+            .and_then(|u| u.cost.as_ref().map(|c| c.total)),
+        parts: vec![ChatMessagePartProto {
+            id: part_id,
+            part_type,
+            text,
+            text_html: None,
+            tool_name,
+            tool_call_id,
+            tool_input,
+            tool_output,
+            tool_status,
+            tool_title: None,
+        }],
+    }
+}
+
+// ============================================================================
 // Memory Response Types
 // ============================================================================
 

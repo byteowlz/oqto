@@ -237,7 +237,21 @@ async fn read_hstry_message_version_snapshot(
         return None;
     }
 
-    let query = r#"
+    let has_updated_at_col: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM pragma_table_info('conversations') WHERE name = 'updated_at'",
+    )
+    .fetch_one(&pool)
+    .await
+    .ok()?;
+    let has_created_at_col: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM pragma_table_info('conversations') WHERE name = 'created_at'",
+    )
+    .fetch_one(&pool)
+    .await
+    .ok()?;
+
+    let query = if has_updated_at_col > 0 && has_created_at_col > 0 {
+        r#"
         SELECT c.version as version,
                (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) as message_count
         FROM conversations c
@@ -245,7 +259,17 @@ async fn read_hstry_message_version_snapshot(
           AND (c.external_id = ? OR c.platform_id = ? OR c.id = ?)
         ORDER BY COALESCE(c.updated_at, c.created_at) DESC
         LIMIT 1
-        "#;
+        "#
+    } else {
+        r#"
+        SELECT c.version as version,
+               (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) as message_count
+        FROM conversations c
+        WHERE c.source_id = 'pi'
+          AND (c.external_id = ? OR c.platform_id = ? OR c.id = ?)
+        LIMIT 1
+        "#
+    };
 
     let mut row = None;
     for attempt in 0..3 {
