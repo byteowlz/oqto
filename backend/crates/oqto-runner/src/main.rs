@@ -103,49 +103,20 @@ async fn main() -> Result<()> {
             let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
             PathBuf::from(home).join(".local").join("state")
         });
-    // Resolve hstry endpoint: in single-user mode, read the port file written by
-    // systemd/hstry-service and use an explicit Tcp endpoint. This avoids stale
-    // port-file races by resolving the port once at startup.
-    // In multi-user mode the runner would receive a per-user endpoint; for now
-    // single-user runners always use Discover which probes socket then port file.
+    // Resolve hstry endpoint.
+    // Multi-user: each runner runs as the target Linux user. hstry always uses
+    //   a per-user Unix socket, so we resolve service_socket_path() which is
+    //   scoped to that user's XDG_RUNTIME_DIR.
+    // Single-user: same logic -- prefer socket, fall back to Discover which
+    //   probes socket then port-file.
     let hstry_endpoint = {
         let socket_path = hstry_core::paths::service_socket_path();
         if socket_path.exists() {
             info!("hstry endpoint: Unix socket {:?}", socket_path);
             HstryEndpoint::UnixSocket(socket_path)
         } else {
-            let port_path = hstry_core::paths::service_port_path();
-            match std::fs::read_to_string(&port_path)
-                .ok()
-                .and_then(|s| s.trim().parse::<u16>().ok())
-            {
-                Some(port) => {
-                    // Verify connectivity at startup so stale ports fail fast.
-                    let addr = std::net::SocketAddr::new(
-                        std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
-                        port,
-                    );
-                    if std::net::TcpStream::connect_timeout(
-                        &addr,
-                        std::time::Duration::from_millis(500),
-                    )
-                    .is_ok()
-                    {
-                        info!("hstry endpoint: TCP port {} (verified reachable)", port);
-                        HstryEndpoint::Tcp(port)
-                    } else {
-                        warn!(
-                            "hstry port file says {} but endpoint unreachable; falling back to auto-discover",
-                            port
-                        );
-                        HstryEndpoint::Discover
-                    }
-                }
-                None => {
-                    warn!("hstry port file not found; using auto-discover");
-                    HstryEndpoint::Discover
-                }
-            }
+            info!("hstry Unix socket not found at {:?}; using auto-discover", socket_path);
+            HstryEndpoint::Discover
         }
     };
 

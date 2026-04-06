@@ -133,6 +133,108 @@ async fn resolve_parent_external_id(
     Ok(row.and_then(|r| r.try_get::<Option<String>, _>("external_id").ok().flatten()))
 }
 
+/// Resolve a conversation deterministically from a session identifier.
+///
+/// Priority order:
+/// 1) Exact identity match (external_id/platform_id/internal id)
+/// 2) Readable slug match only if it resolves to exactly one conversation
+///
+/// We intentionally fail closed on ambiguous readable_id matches to avoid
+/// cross-session message bleed/disappearing timelines.
+pub(crate) async fn resolve_conversation_identity(
+    pool: &sqlx::SqlitePool,
+    session_id: &str,
+    workspace: Option<&str>,
+) -> Result<Option<(String, Option<String>)>> {
+    let exact = if let Some(workspace) = workspace {
+        sqlx::query(
+            r#"
+            SELECT id, external_id
+            FROM conversations
+            WHERE (external_id = ? OR platform_id = ? OR id = ?)
+              AND workspace = ?
+            ORDER BY COALESCE(updated_at, created_at) DESC
+            LIMIT 1
+            "#,
+        )
+        .bind(session_id)
+        .bind(session_id)
+        .bind(session_id)
+        .bind(workspace)
+        .fetch_optional(pool)
+        .await?
+    } else {
+        sqlx::query(
+            r#"
+            SELECT id, external_id
+            FROM conversations
+            WHERE external_id = ? OR platform_id = ? OR id = ?
+            ORDER BY COALESCE(updated_at, created_at) DESC
+            LIMIT 1
+            "#,
+        )
+        .bind(session_id)
+        .bind(session_id)
+        .bind(session_id)
+        .fetch_optional(pool)
+        .await?
+    };
+
+    if let Some(row) = exact {
+        let id: String = row.get("id");
+        let external_id: Option<String> = row.get("external_id");
+        return Ok(Some((id, external_id)));
+    }
+
+    let readable_rows = if let Some(workspace) = workspace {
+        sqlx::query(
+            r#"
+            SELECT id, external_id
+            FROM conversations
+            WHERE readable_id = ?
+              AND workspace = ?
+            ORDER BY COALESCE(updated_at, created_at) DESC
+            LIMIT 2
+            "#,
+        )
+        .bind(session_id)
+        .bind(workspace)
+        .fetch_all(pool)
+        .await?
+    } else {
+        sqlx::query(
+            r#"
+            SELECT id, external_id
+            FROM conversations
+            WHERE readable_id = ?
+            ORDER BY COALESCE(updated_at, created_at) DESC
+            LIMIT 2
+            "#,
+        )
+        .bind(session_id)
+        .fetch_all(pool)
+        .await?
+    };
+
+    match readable_rows.len() {
+        0 => Ok(None),
+        1 => {
+            let row = &readable_rows[0];
+            let id: String = row.get("id");
+            let external_id: Option<String> = row.get("external_id");
+            Ok(Some((id, external_id)))
+        }
+        _ => {
+            tracing::warn!(
+                session_id,
+                workspace = workspace.unwrap_or("<any>"),
+                "Ambiguous readable_id during conversation resolution; refusing fallback"
+            );
+            Ok(None)
+        }
+    }
+}
+
 pub async fn list_sessions_from_hstry(db_path: &Path) -> Result<Vec<ChatSession>> {
     let pool = open_hstry_pool(db_path).await?;
     let rows = sqlx::query(
@@ -191,6 +293,12 @@ pub async fn get_session_from_hstry(
     db_path: &Path,
 ) -> Result<Option<ChatSession>> {
     let pool = open_hstry_pool(db_path).await?;
+    let Some((conversation_id, _resolved_external_id)) =
+        resolve_conversation_identity(&pool, session_id, None).await?
+    else {
+        return Ok(None);
+    };
+
     let row = sqlx::query(
         r#"
         SELECT
@@ -205,23 +313,13 @@ pub async fn get_session_from_hstry(
             c.model,
             c.provider
         FROM conversations c
-        LEFT JOIN messages m ON m.conversation_id = c.id
-        WHERE c.external_id = ? OR c.platform_id = ? OR c.readable_id = ? OR c.id = ?
-        GROUP BY c.id
-        ORDER BY COUNT(m.id) DESC, COALESCE(c.updated_at, c.created_at) DESC
+        WHERE c.id = ?
         LIMIT 1
         "#,
     )
-    .bind(session_id)
-    .bind(session_id)
-    .bind(session_id)
-    .bind(session_id)
-    .fetch_optional(&pool)
+    .bind(&conversation_id)
+    .fetch_one(&pool)
     .await?;
-
-    let Some(row) = row else {
-        return Ok(None);
-    };
 
     let id: String = row.get("id");
     let external_id: Option<String> = row.get("external_id");
@@ -268,28 +366,11 @@ pub async fn get_session_messages_from_hstry(
     db_path: &Path,
 ) -> Result<Vec<ChatMessage>> {
     let pool = open_hstry_pool(db_path).await?;
-    let conversation_row = sqlx::query(
-        r#"
-        SELECT c.id
-        FROM conversations c
-        LEFT JOIN messages m ON m.conversation_id = c.id
-        WHERE c.external_id = ? OR c.platform_id = ? OR c.readable_id = ? OR c.id = ?
-        GROUP BY c.id
-        ORDER BY COUNT(m.id) DESC, COALESCE(c.updated_at, c.created_at) DESC
-        LIMIT 1
-        "#,
-    )
-    .bind(session_id)
-    .bind(session_id)
-    .bind(session_id)
-    .bind(session_id)
-    .fetch_optional(&pool)
-    .await?;
-
-    let Some(conversation_row) = conversation_row else {
+    let Some((conversation_id, _resolved_external_id)) =
+        resolve_conversation_identity(&pool, session_id, None).await?
+    else {
         return Ok(Vec::new());
     };
-    let conversation_id: String = conversation_row.get("id");
 
     let rows = sqlx::query(
         r#"
@@ -1226,6 +1307,34 @@ fn load_message_parts(message_id: &str, session_id: &str, part_dir: &Path) -> Ve
 mod tests {
     use super::*;
 
+    async fn setup_test_pool() -> sqlx::SqlitePool {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("in-memory sqlite should open");
+
+        sqlx::query(
+            r#"
+            CREATE TABLE conversations (
+                id TEXT PRIMARY KEY,
+                source_id TEXT NOT NULL,
+                external_id TEXT,
+                platform_id TEXT,
+                readable_id TEXT,
+                workspace TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER
+            )
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .expect("schema should create");
+
+        pool
+    }
+
     #[test]
     fn test_project_name_from_path() {
         assert_eq!(project_name_from_path("global"), "Global");
@@ -1239,5 +1348,81 @@ mod tests {
             project_name_from_path("/home/wismut/byteowlz/govnr"),
             "govnr"
         );
+    }
+
+    #[tokio::test]
+    async fn resolve_conversation_identity_prefers_exact_external_id() {
+        let pool = setup_test_pool().await;
+
+        sqlx::query(
+            "INSERT INTO conversations (id, source_id, external_id, platform_id, readable_id, workspace, created_at, updated_at) VALUES (?, 'pi', ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("conv_new")
+        .bind("oqto-1")
+        .bind("oqto-1")
+        .bind("same-readable")
+        .bind("/ws")
+        .bind(10_i64)
+        .bind(20_i64)
+        .execute(&pool)
+        .await
+        .expect("insert conv_new");
+
+        sqlx::query(
+            "INSERT INTO conversations (id, source_id, external_id, platform_id, readable_id, workspace, created_at, updated_at) VALUES (?, 'pi', ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("conv_old")
+        .bind("oqto-2")
+        .bind("oqto-2")
+        .bind("same-readable")
+        .bind("/ws")
+        .bind(1_i64)
+        .bind(2_i64)
+        .execute(&pool)
+        .await
+        .expect("insert conv_old");
+
+        let resolved = resolve_conversation_identity(&pool, "oqto-1", None)
+            .await
+            .expect("resolve should succeed");
+        assert_eq!(resolved, Some(("conv_new".to_string(), Some("oqto-1".to_string()))));
+    }
+
+    #[tokio::test]
+    async fn resolve_conversation_identity_rejects_ambiguous_readable_id() {
+        let pool = setup_test_pool().await;
+
+        sqlx::query(
+            "INSERT INTO conversations (id, source_id, external_id, platform_id, readable_id, workspace, created_at, updated_at) VALUES (?, 'pi', ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("conv_a")
+        .bind("oqto-a")
+        .bind("oqto-a")
+        .bind("dupe-readable")
+        .bind("/ws")
+        .bind(1_i64)
+        .bind(3_i64)
+        .execute(&pool)
+        .await
+        .expect("insert conv_a");
+
+        sqlx::query(
+            "INSERT INTO conversations (id, source_id, external_id, platform_id, readable_id, workspace, created_at, updated_at) VALUES (?, 'pi', ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("conv_b")
+        .bind("oqto-b")
+        .bind("oqto-b")
+        .bind("dupe-readable")
+        .bind("/ws")
+        .bind(2_i64)
+        .bind(4_i64)
+        .execute(&pool)
+        .await
+        .expect("insert conv_b");
+
+        let resolved = resolve_conversation_identity(&pool, "dupe-readable", None)
+            .await
+            .expect("resolve should succeed");
+        assert!(resolved.is_none(), "ambiguous readable_id must fail closed");
     }
 }
