@@ -473,6 +473,22 @@ describe("mergeServerMessages", () => {
 			expect(result[3].id).toBe("history-s1-3");
 			expect(result[4].id).toBe("pi-msg-3");
 		});
+
+		it("preserves recent local assistant response until persistence catches up", () => {
+			const prev = [
+				textMsg("history-s1-0", "user", "question", { timestamp: now - 2000 }),
+				textMsg("pi-msg-42", "assistant", "fresh streamed answer", {
+					timestamp: now - 500,
+				}),
+			];
+			const server = [
+				textMsg("history-s1-0", "user", "question", { timestamp: now - 2000 }),
+			];
+
+			const result = mergeServerMessages(prev, server, "authoritative");
+			expect(result).toHaveLength(2);
+			expect(result[1].id).toBe("pi-msg-42");
+		});
 	});
 
 	describe("incremental merge (server has fewer messages = partial view)", () => {

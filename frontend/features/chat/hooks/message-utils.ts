@@ -927,6 +927,7 @@ export function mergeServerMessages(
 	}
 
 	const OPTIMISTIC_USER_TTL_MS = 2 * 60 * 1000;
+	const OPTIMISTIC_ASSISTANT_TTL_MS = 2 * 60 * 1000;
 	const nowMs = Date.now();
 
 	const preserved: DisplayMessage[] = [];
@@ -937,7 +938,12 @@ export function mergeServerMessages(
 			msg.clientId.length > 0 &&
 			typeof msg.timestamp === "number" &&
 			nowMs - msg.timestamp <= OPTIMISTIC_USER_TTL_MS;
-		if (!msg.isStreaming && !isRecentOptimisticUser) continue;
+		const isRecentAssistant =
+			msg.role === "assistant" &&
+			typeof msg.timestamp === "number" &&
+			nowMs - msg.timestamp <= OPTIMISTIC_ASSISTANT_TTL_MS;
+		if (!msg.isStreaming && !isRecentOptimisticUser && !isRecentAssistant)
+			continue;
 		if (msg.clientId && serverClientIds.has(msg.clientId)) continue;
 		if (serverFingerprints.has(messageFingerprint(msg))) continue;
 		const textSig = messageTextSignature(msg);
