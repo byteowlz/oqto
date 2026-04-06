@@ -55,7 +55,6 @@ import {
 } from "./chat-state-machine";
 import {
 	convertCanonicalMessageToDisplay,
-	getMaxMessageId,
 	mergeServerMessages,
 	nextPartId,
 	normalizeContentToParts,
@@ -91,6 +90,13 @@ function isPiDebugEnabled(): boolean {
 		// ignore
 	}
 	return import.meta.env.VITE_DEBUG_PI_V2 === "1";
+}
+
+function createTempMessageId(): string {
+	if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+		return `tmp:${crypto.randomUUID()}`;
+	}
+	return `tmp:${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
 /**
@@ -142,7 +148,6 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 	const { setSessionBusy } = useBusySessions();
 
 	// Refs
-	const messageIdRef = useRef(getMaxMessageId(messages));
 	const streamingMessageRef = useRef<DisplayMessage | null>(null);
 	const lastAssistantMessageIdRef = useRef<string | null>(null);
 	const unsubscribeRef = useRef<(() => void) | null>(null);
@@ -224,12 +229,6 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 		[applyTurnState],
 	);
 
-	// Generate unique message ID
-	const nextMessageId = useCallback(() => {
-		messageIdRef.current += 1;
-		return `pi-msg-${messageIdRef.current}`;
-	}, []);
-
 	const setBusyForEvent = useCallback(
 		(sessionId: string | null | undefined, busy: boolean) => {
 			if (!sessionId) return;
@@ -241,7 +240,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 	const appendLocalAssistantMessage = useCallback(
 		(content: string) => {
 			const assistantMessage: DisplayMessage = {
-				id: nextMessageId(),
+				id: createTempMessageId(),
 				role: "assistant",
 				parts: [{ type: "text", id: nextPartId(), text: content }],
 				timestamp: Date.now(),
@@ -250,7 +249,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 			lastAssistantMessageIdRef.current = assistantMessage.id;
 			onMessageComplete?.(assistantMessage);
 		},
-		[nextMessageId, onMessageComplete],
+		[onMessageComplete],
 	);
 
 	const getSessionConfig = useCallback((): SessionConfig | undefined => {
@@ -301,7 +300,6 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 			setMessages((prev) =>
 				mergeServerMessages(prev, displayMessages, mergeMode),
 			);
-			messageIdRef.current = getMaxMessageId(displayMessages);
 			const lastAssistant = [...displayMessages]
 				.reverse()
 				.find((msg) => msg.role === "assistant");
@@ -328,32 +326,29 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 		[],
 	);
 
-	const ensureAssistantMessage = useCallback(
-		(preferStreaming: boolean) => {
-			if (streamingMessageRef.current) return streamingMessageRef.current;
-			const lastId = lastAssistantMessageIdRef.current;
-			if (lastId) {
-				const existing = messagesRef.current.find((m) => m.id === lastId);
-				if (existing && existing.role === "assistant") {
-					return existing;
-				}
+	const ensureAssistantMessage = useCallback((preferStreaming: boolean) => {
+		if (streamingMessageRef.current) return streamingMessageRef.current;
+		const lastId = lastAssistantMessageIdRef.current;
+		if (lastId) {
+			const existing = messagesRef.current.find((m) => m.id === lastId);
+			if (existing && existing.role === "assistant") {
+				return existing;
 			}
-			const assistantMessage: DisplayMessage = {
-				id: nextMessageId(),
-				role: "assistant",
-				parts: [],
-				timestamp: Date.now(),
-				isStreaming: preferStreaming,
-			};
-			if (preferStreaming) {
-				streamingMessageRef.current = assistantMessage;
-			}
-			lastAssistantMessageIdRef.current = assistantMessage.id;
-			setMessages((prev) => [...prev, assistantMessage]);
-			return assistantMessage;
-		},
-		[nextMessageId],
-	);
+		}
+		const assistantMessage: DisplayMessage = {
+			id: createTempMessageId(),
+			role: "assistant",
+			parts: [],
+			timestamp: Date.now(),
+			isStreaming: preferStreaming,
+		};
+		if (preferStreaming) {
+			streamingMessageRef.current = assistantMessage;
+		}
+		lastAssistantMessageIdRef.current = assistantMessage.id;
+		setMessages((prev) => [...prev, assistantMessage]);
+		return assistantMessage;
+	}, []);
 
 	// Flush batched streaming update
 	const flushStreamingUpdate = useCallback(() => {
@@ -695,7 +690,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 						!msgRole || msgRole === "assistant" || msgRole === "agent";
 					if (isAssistant && !streamingMessageRef.current) {
 						const assistantMessage: DisplayMessage = {
-							id: nextMessageId(),
+							id: createTempMessageId(),
 							role: "assistant",
 							parts: [],
 							timestamp: Date.now(),
@@ -1267,11 +1262,11 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 
 					// Show error immediately as a standalone message.
 					// The runner also persists it to hstry on agent.idle.
-					// The agent.idle hstry fetch will dedupe by fingerprint.
+					// The next authoritative history sync reconciles by id/client_id.
 					setMessages((prev) => [
 						...prev,
 						{
-							id: nextMessageId(),
+							id: createTempMessageId(),
 							role: "assistant" as const,
 							parts: [
 								{ type: "error" as const, id: nextPartId(), text: errMsg },
@@ -1611,11 +1606,9 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 						}
 
 						case "get_messages": {
-							// Always merge immediately using authoritative mode.
-							// get_messages returns the full conversation from
-							// the backend (Pi live or hstry), so it replaces
-							// local state. Streaming/optimistic messages are
-							// preserved by the authoritative merge strategy.
+							// Always merge immediately as a server upsert.
+							// get_messages can be partial in live Pi paths, so
+							// reconciliation stays strictly id/client_id based.
 							forceMessageSyncRef.current.delete(event.session_id ?? "");
 							if (resp.success && resp.data) {
 								const data = resp.data as {
@@ -1730,7 +1723,6 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 			bindSessionIdentity,
 			ensureAssistantMessage,
 			fetchHistoryMessages,
-			nextMessageId,
 			scheduleStreamingUpdate,
 			throttledStreamingUpdate,
 			setBusyForEvent,
@@ -1969,7 +1961,6 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 				streamingMessageRef.current = null;
 				applyTurnState({ kind: "idle" });
 				setError(null);
-				messageIdRef.current = 0;
 			}
 			try {
 				sessionId = await ensureSession({
@@ -2014,7 +2005,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 
 			// Add user message to display with client_id for later matching
 			const userMessage: DisplayMessage = {
-				id: nextMessageId(),
+				id: createTempMessageId(),
 				role: "user",
 				parts: [{ type: "text", id: nextPartId(), text: message }],
 				timestamp: Date.now(),
@@ -2084,7 +2075,6 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 			bindSessionIdentity,
 			ensureSession,
 			getSessionConfig,
-			nextMessageId,
 			onError,
 			onSelectedSessionIdChange,
 			senderName,
@@ -2122,7 +2112,6 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 		streamingMessageRef.current = null;
 		applyTurnState({ kind: "idle" });
 		setError(null);
-		messageIdRef.current = 0;
 		resetSessionIdentity(previousSessionId);
 		await ensureSession({
 			createIfMissing: false,
@@ -2148,7 +2137,6 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 		streamingMessageRef.current = null;
 		applyTurnState({ kind: "idle" });
 		setError(null);
-		messageIdRef.current = 0;
 		resetSessionIdentity(sessionId);
 
 		// Close and recreate session
@@ -2369,7 +2357,6 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 			);
 			if (cached.length > 0) {
 				setMessages(cached);
-				messageIdRef.current = getMaxMessageId(cached);
 				const lastAssistant = [...cached]
 					.reverse()
 					.find((msg) => msg.role === "assistant");
@@ -2377,7 +2364,6 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 				setHistoryLoading(false);
 			} else {
 				setMessages([]);
-				messageIdRef.current = 0;
 				lastAssistantMessageIdRef.current = null;
 				setHistoryLoading(true);
 			}

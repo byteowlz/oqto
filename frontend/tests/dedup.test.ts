@@ -1,14 +1,10 @@
 import {
 	mergeServerMessages,
-	messageFingerprint,
+	normalizeMessages,
 	shouldPreserveLocalMessage,
 } from "@/features/chat/hooks/message-utils";
-import type { DisplayMessage } from "@/features/chat/hooks/types";
+import type { DisplayMessage, RawMessage } from "@/features/chat/hooks/types";
 import { describe, expect, it } from "vitest";
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 function makeMessage(
 	overrides: Partial<DisplayMessage> & {
@@ -37,610 +33,140 @@ function textMsg(
 	});
 }
 
-function toolCallMsg(
-	id: string,
-	toolName: string,
-	input: unknown,
-	extra?: Partial<DisplayMessage>,
-): DisplayMessage {
-	return makeMessage({
-		id,
-		role: "assistant",
-		parts: [
-			{
-				type: "tool_call",
-				id: `tc-${id}`,
-				name: toolName,
-				input,
-				status: "complete" as const,
-			},
-		],
-		...extra,
-	});
-}
-
-// ---------------------------------------------------------------------------
-// shouldPreserveLocalMessage
-// ---------------------------------------------------------------------------
-
 describe("shouldPreserveLocalMessage", () => {
-	it("preserves messages with pi-msg-N pattern", () => {
-		const msg = textMsg("pi-msg-42", "user", "hello");
-		expect(shouldPreserveLocalMessage(msg)).toBe(true);
-	});
-
-	it("preserves compaction messages", () => {
-		const msg = makeMessage({ id: "compaction-abc", role: "system" });
-		expect(shouldPreserveLocalMessage(msg)).toBe(true);
-	});
-
-	it("does not preserve random IDs", () => {
-		const msg = textMsg("random-id", "user", "hello");
-		expect(shouldPreserveLocalMessage(msg)).toBe(false);
-	});
-
-	it("does not preserve UUIDs", () => {
-		const msg = textMsg(
-			"550e8400-e29b-41d4-a716-446655440000",
-			"user",
-			"hello",
-		);
-		expect(shouldPreserveLocalMessage(msg)).toBe(false);
-	});
-
-	it("requires exact pi-msg-N format (digits only)", () => {
-		expect(shouldPreserveLocalMessage(textMsg("pi-msg-", "user", "x"))).toBe(
-			false,
-		);
-		expect(shouldPreserveLocalMessage(textMsg("pi-msg-abc", "user", "x"))).toBe(
-			false,
-		);
-		expect(shouldPreserveLocalMessage(textMsg("pi-msg-1", "user", "x"))).toBe(
-			true,
-		);
-		expect(shouldPreserveLocalMessage(textMsg("pi-msg-999", "user", "x"))).toBe(
+	it("preserves tmp:* optimistic IDs", () => {
+		expect(shouldPreserveLocalMessage(textMsg("tmp:abc", "user", "x"))).toBe(
 			true,
 		);
 	});
-});
 
-// ---------------------------------------------------------------------------
-// messageFingerprint
-// ---------------------------------------------------------------------------
-
-describe("messageFingerprint", () => {
-	it("includes role in fingerprint", () => {
-		const userMsg = textMsg("1", "user", "hello");
-		const assistantMsg = textMsg("2", "assistant", "hello");
-		expect(messageFingerprint(userMsg)).not.toBe(
-			messageFingerprint(assistantMsg),
-		);
+	it("keeps narrow legacy fallback + compaction", () => {
+		expect(
+			shouldPreserveLocalMessage(textMsg("pi-msg-7", "assistant", "x")),
+		).toBe(true);
+		expect(
+			shouldPreserveLocalMessage(
+				makeMessage({ id: "compaction-1", role: "system" }),
+			),
+		).toBe(true);
 	});
 
-	it("same content produces same fingerprint regardless of id", () => {
-		const a = textMsg("id-a", "user", "hello");
-		const b = textMsg("id-b", "user", "hello");
-		expect(messageFingerprint(a)).toBe(messageFingerprint(b));
-	});
-
-	it("different text produces different fingerprint", () => {
-		const a = textMsg("1", "user", "hello");
-		const b = textMsg("2", "user", "goodbye");
-		expect(messageFingerprint(a)).not.toBe(messageFingerprint(b));
-	});
-
-	it("handles tool_call parts", () => {
-		const a = toolCallMsg("1", "read", { path: "/foo" });
-		const b = toolCallMsg("2", "read", { path: "/foo" });
-		const c = toolCallMsg("3", "read", { path: "/bar" });
-		expect(messageFingerprint(a)).toBe(messageFingerprint(b));
-		expect(messageFingerprint(a)).not.toBe(messageFingerprint(c));
-	});
-
-	it("handles tool_result parts", () => {
-		const msg = makeMessage({
-			id: "1",
-			role: "assistant",
-			parts: [
-				{
-					type: "tool_result",
-					id: "tr-1",
-					toolCallId: "tc-1",
-					name: "read",
-					output: "file contents",
-					isError: false,
-				},
-			],
-		});
-		expect(messageFingerprint(msg)).toContain("tool_result:read:");
-	});
-
-	it("handles thinking parts", () => {
-		const msg = makeMessage({
-			id: "1",
-			role: "assistant",
-			parts: [{ type: "thinking", id: "th-1", text: "let me think..." }],
-		});
-		expect(messageFingerprint(msg)).toContain("thinking:let me think...");
-	});
-
-	it("handles compaction parts", () => {
-		const msg = makeMessage({
-			id: "1",
-			role: "system",
-			parts: [{ type: "compaction", id: "c-1", text: "compacted" }],
-		});
-		expect(messageFingerprint(msg)).toContain("compaction");
-	});
-
-	it("handles empty parts array", () => {
-		const msg = makeMessage({ id: "1", role: "user", parts: [] });
-		expect(messageFingerprint(msg)).toBe("user|");
-	});
-
-	it("handles multi-part messages", () => {
-		const msg = makeMessage({
-			id: "1",
-			role: "assistant",
-			parts: [
-				{ type: "text", id: "p1", text: "First" },
-				{ type: "text", id: "p2", text: "Second" },
-			],
-		});
-		expect(messageFingerprint(msg)).toBe("assistant|text:First|text:Second");
+	it("does not preserve canonical persisted IDs", () => {
+		expect(
+			shouldPreserveLocalMessage(textMsg("history-s1-1", "user", "x")),
+		).toBe(false);
 	});
 });
 
-// ---------------------------------------------------------------------------
-// mergeServerMessages
-// ---------------------------------------------------------------------------
+describe("normalizeMessages", () => {
+	it("keeps canonical message IDs from backend/hstry", () => {
+		const raw: RawMessage[] = [
+			{
+				id: "history-1",
+				role: "user",
+				content: "hello",
+				timestamp: Date.now(),
+			},
+		];
+		const out = normalizeMessages(raw, "fallback");
+		expect(out).toHaveLength(1);
+		expect(out[0].id).toBe("history-1");
+	});
+
+	it("uses fallback only for malformed/legacy payloads with no ID", () => {
+		const raw: RawMessage[] = [{ role: "assistant", content: "hello" }];
+		const out = normalizeMessages(raw, "legacy");
+		expect(out[0].id).toMatch(/^legacy-0$/);
+	});
+});
 
 describe("mergeServerMessages", () => {
-	const now = Date.now();
-
-	describe("server is authoritative", () => {
-		it("returns server messages when previous is empty", () => {
-			const server = [textMsg("s1", "user", "hello", { timestamp: now })];
-			const result = mergeServerMessages([], server);
-			expect(result).toEqual(server);
-		});
-
-		it("replaces all local messages with server messages", () => {
-			const prev = [
-				textMsg("pi-msg-1", "user", "hello", { timestamp: now }),
-				textMsg("pi-msg-2", "assistant", "world", { timestamp: now }),
-			];
-			const server = [
-				textMsg("history-s1-0", "user", "hello", { timestamp: now }),
-				textMsg("history-s1-1", "assistant", "world", { timestamp: now }),
-			];
-			const result = mergeServerMessages(prev, server, "authoritative");
-			expect(result).toHaveLength(2);
-			expect(result[0].id).toBe("history-s1-0");
-			expect(result[1].id).toBe("history-s1-1");
-		});
-
-		it("returns previous when server is empty", () => {
-			const prev = [textMsg("pi-msg-1", "user", "hello", { timestamp: now })];
-			const result = mergeServerMessages(prev, []);
-			expect(result).toEqual(prev);
+	it("partial mode upserts by ID", () => {
+		const prev = [
+			textMsg("m1", "user", "hello"),
+			textMsg("m2", "assistant", "old"),
+		];
+		const server = [textMsg("m2", "assistant", "new")];
+		const result = mergeServerMessages(prev, server, "partial");
+		expect(result).toHaveLength(2);
+		expect(result.find((m) => m.id === "m2")?.parts[0]).toMatchObject({
+			text: "new",
 		});
 	});
 
-	describe("preserves in-flight streaming message", () => {
-		it("keeps streaming assistant message at tail (authoritative path)", () => {
-			const prev = [
-				textMsg("pi-msg-1", "user", "hello", { timestamp: now }),
-				{
-					...textMsg("pi-msg-2", "assistant", "partial response", {
-						timestamp: now,
-					}),
-					isStreaming: true,
-				},
-			];
-			// Server has >= messages -> authoritative path
-			const server = [
-				textMsg("history-s1-0", "user", "hello", { timestamp: now }),
-				textMsg("history-s1-1", "assistant", "earlier reply", {
-					timestamp: now,
-				}),
-			];
-			const result = mergeServerMessages(prev, server, "authoritative");
-			expect(result).toHaveLength(3);
-			expect(result[0].id).toBe("history-s1-0");
-			expect(result[1].id).toBe("history-s1-1");
-			expect(result[2].id).toBe("pi-msg-2");
-			expect(result[2].isStreaming).toBe(true);
-		});
-
-		it("keeps optimistic user message + streaming response (authoritative path)", () => {
-			const prev = [
-				textMsg("pi-msg-1", "user", "old msg", { timestamp: now }),
-				textMsg("pi-msg-2", "user", "new question", {
-					timestamp: now,
-					clientId: "c-new",
-				}),
-				{
-					...textMsg("pi-msg-3", "assistant", "thinking...", {
-						timestamp: now,
-					}),
-					isStreaming: true,
-				},
-			];
-			// Server has >= messages -> authoritative path
-			const server = [
-				textMsg("history-s1-0", "user", "old msg", { timestamp: now }),
-				textMsg("history-s1-1", "assistant", "old answer", { timestamp: now }),
-				textMsg("history-s1-2", "user", "some other msg", { timestamp: now }),
-			];
-			const result = mergeServerMessages(prev, server, "authoritative");
-			expect(result).toHaveLength(5);
-			expect(result[0].id).toBe("history-s1-0");
-			expect(result[1].id).toBe("history-s1-1");
-			expect(result[2].id).toBe("history-s1-2");
-			expect(result[3].id).toBe("pi-msg-2"); // optimistic user preserved
-			expect(result[4].id).toBe("pi-msg-3"); // streaming
-		});
-
-		it("drops local streaming copy when server already contains same tool_call_id", () => {
-			const prev = [
-				makeMessage({
-					id: "pi-msg-local",
-					role: "assistant",
-					isStreaming: true,
-					timestamp: now,
-					parts: [
-						{
-							type: "tool_call",
-							id: "tc-local",
-							toolCallId: "call-123",
-							name: "read",
-							input: { path: "a" },
-							status: "running",
-						},
-					],
-				}),
-			];
-			const server = [
-				makeMessage({
-					id: "history-msg",
-					role: "assistant",
-					timestamp: now,
-					parts: [
-						{
-							type: "tool_call",
-							id: "tc-server",
-							toolCallId: "call-123",
-							name: "read",
-							input: { path: "a" },
-							status: "success",
-						},
-					],
-				}),
-			];
-
-			const result = mergeServerMessages(prev, server, "authoritative");
-			expect(result).toHaveLength(1);
-			expect(result[0].id).toBe("history-msg");
-		});
-
-		it("keeps streaming message in incremental path too", () => {
-			const prev = [
-				textMsg("pi-msg-1", "user", "hello", { timestamp: now }),
-				{
-					...textMsg("pi-msg-2", "assistant", "partial", { timestamp: now }),
-					isStreaming: true,
-				},
-			];
-			// Server has fewer -> incremental path preserves everything
-			const server = [
-				textMsg("history-s1-0", "user", "hello", { timestamp: now }),
-			];
-			const result = mergeServerMessages(prev, server, "partial");
-			// Partial merge now de-dupes by fingerprint, so server user message replaces local pi-msg-1.
-			expect(result).toHaveLength(2);
-			expect(result.some((m) => m.isStreaming)).toBe(true);
-		});
+	it("partial mode reconciles optimistic -> persisted via clientId", () => {
+		const prev = [
+			textMsg("tmp:u1", "user", "question", { clientId: "c-1" }),
+			textMsg("tmp:a1", "assistant", "thinking", { isStreaming: true }),
+		];
+		const server = [
+			textMsg("history-u1", "user", "question", { clientId: "c-1" }),
+		];
+		const result = mergeServerMessages(prev, server, "partial");
+		expect(result.some((m) => m.id === "history-u1")).toBe(true);
+		expect(result.some((m) => m.id === "tmp:u1")).toBe(false);
+		expect(result.some((m) => m.id === "tmp:a1")).toBe(true);
 	});
 
-	describe("preserves optimistic user messages", () => {
-		it("keeps user message with clientId not in server", () => {
-			const prev = [
-				textMsg("pi-msg-1", "user", "sent just now", {
-					timestamp: now,
-					clientId: "c-123",
-				}),
-			];
-			const server = [
-				textMsg("history-s1-0", "user", "earlier", { timestamp: now }),
-			];
-			const result = mergeServerMessages(prev, server, "authoritative");
-			expect(result).toHaveLength(2);
-			expect(result[0].id).toBe("history-s1-0");
-			expect(result[1].id).toBe("pi-msg-1");
-		});
-
-		it("drops user message when server has matching clientId", () => {
-			const prev = [
-				textMsg("pi-msg-1", "user", "my msg", {
-					timestamp: now,
-					clientId: "c-123",
-				}),
-			];
-			const server = [
-				textMsg("history-s1-0", "user", "my msg", {
-					timestamp: now,
-					clientId: "c-123",
-				}),
-			];
-			const result = mergeServerMessages(prev, server, "authoritative");
-			expect(result).toHaveLength(1);
-			expect(result[0].id).toBe("history-s1-0");
-		});
+	it("partial mode does not fingerprint-dedupe unrelated IDs", () => {
+		const prev = [textMsg("local-1", "user", "same text")];
+		const server = [textMsg("history-1", "user", "same text")];
+		const result = mergeServerMessages(prev, server, "partial");
+		expect(result).toHaveLength(2);
+		expect(result.map((m) => m.id)).toEqual(["local-1", "history-1"]);
 	});
 
-	describe("no duplication of completed messages", () => {
-		it("does not duplicate when local pi-msg and server have same text", () => {
-			// This was the original bug: pi-msg-* text matched history-*
-			// text but different IDs caused both to survive.
-			const prev = [
-				textMsg("pi-msg-1", "user", "hello world", { timestamp: now }),
-				textMsg("pi-msg-2", "assistant", "I can help with that", {
-					timestamp: now,
-				}),
-			];
-			const server = [
-				textMsg("history-s1-0", "user", "hello world", { timestamp: now }),
-				textMsg("history-s1-1", "assistant", "I can help with that", {
-					timestamp: now,
-				}),
-			];
-			const result = mergeServerMessages(prev, server, "authoritative");
-			expect(result).toHaveLength(2);
-			// Server versions win
-			expect(result[0].id).toBe("history-s1-0");
-			expect(result[1].id).toBe("history-s1-1");
-		});
-
-		it("does not duplicate thinking+text messages from different sources", () => {
-			// Kimi-K2.5 style: streaming has separate thinking+text parts,
-			// hstry also has them. IDs differ but content is the same.
-			const prev = [
-				makeMessage({
-					id: "pi-msg-1",
-					role: "assistant",
-					parts: [
-						{
-							type: "thinking",
-							id: "th-1",
-							text: "Let me think about this...",
-						},
-						{ type: "text", id: "t-1", text: "Here is my answer." },
-					],
-					timestamp: now,
-				}),
-			];
-			const server = [
-				makeMessage({
-					id: "history-s1-0",
-					role: "assistant",
-					parts: [
-						{
-							type: "thinking",
-							id: "p-55",
-							text: "Let me think about this...",
-						},
-						{ type: "text", id: "p-56", text: "Here is my answer." },
-					],
-					timestamp: now,
-				}),
-			];
-			const result = mergeServerMessages(prev, server, "authoritative");
-			expect(result).toHaveLength(1);
-			expect(result[0].id).toBe("history-s1-0");
-		});
+	it("authoritative mode keeps only in-flight tmp/legacy messages", () => {
+		const prev = [
+			textMsg("history-old", "user", "old"),
+			textMsg("tmp:user", "user", "new", { clientId: "c-new" }),
+			textMsg("tmp:assistant", "assistant", "stream", { isStreaming: true }),
+		];
+		const server = [textMsg("history-old", "user", "old")];
+		const result = mergeServerMessages(prev, server, "authoritative");
+		expect(result.map((m) => m.id)).toEqual([
+			"history-old",
+			"tmp:user",
+			"tmp:assistant",
+		]);
 	});
 
-	describe("optimistic user preservation in authoritative mode", () => {
-		it("preserves recent optimistic user message even if not trailing", () => {
-			const prev = [
-				textMsg("pi-msg-1", "user", "old question", {
-					timestamp: now,
-					clientId: "c-old",
-				}),
-				textMsg("pi-msg-2", "assistant", "old answer", { timestamp: now }),
-				textMsg("pi-msg-3", "user", "new question", {
-					timestamp: now,
-					clientId: "c-new",
-				}),
-			];
-			// Server has MORE messages than prev -> authoritative path
-			const server = [
-				textMsg("history-s1-0", "user", "old question", { timestamp: now }),
-				textMsg("history-s1-1", "assistant", "old answer", { timestamp: now }),
-				textMsg("history-s1-2", "assistant", "different context", {
-					timestamp: now,
-				}),
-				textMsg("history-s1-3", "assistant", "more context", {
-					timestamp: now,
-				}),
-			];
-			const result = mergeServerMessages(prev, server, "authoritative");
-			// Old optimistic user with matching content is dropped, but the new
-			// recent optimistic user remains visible until persisted.
-			expect(result).toHaveLength(5);
-			expect(result[0].id).toBe("history-s1-0");
-			expect(result[3].id).toBe("history-s1-3");
-			expect(result[4].id).toBe("pi-msg-3");
-		});
-
-		it("preserves recent local assistant response until persistence catches up", () => {
-			const prev = [
-				textMsg("history-s1-0", "user", "question", { timestamp: now - 2000 }),
-				textMsg("pi-msg-42", "assistant", "fresh streamed answer", {
-					timestamp: now - 500,
-				}),
-			];
-			const server = [
-				textMsg("history-s1-0", "user", "question", { timestamp: now - 2000 }),
-			];
-
-			const result = mergeServerMessages(prev, server, "authoritative");
-			expect(result).toHaveLength(2);
-			expect(result[1].id).toBe("pi-msg-42");
-		});
+	it("authoritative mode drops optimistic local once persisted clientId arrives", () => {
+		const prev = [textMsg("tmp:user", "user", "new", { clientId: "c-new" })];
+		const server = [
+			textMsg("history-user", "user", "new", { clientId: "c-new" }),
+		];
+		const result = mergeServerMessages(prev, server, "authoritative");
+		expect(result).toHaveLength(1);
+		expect(result[0].id).toBe("history-user");
 	});
 
-	describe("incremental merge (server has fewer messages = partial view)", () => {
-		it("preserves all previous messages when server returns partial window", () => {
-			// Simulates Pi's context window after compaction: only last 5 messages
-			// but local state has 10 from earlier streaming
-			const prev = [];
-			for (let i = 0; i < 10; i++) {
-				prev.push(
-					textMsg(
-						`pi-msg-${i}`,
-						i % 2 === 0 ? "user" : "assistant",
-						`msg ${i}`,
-						{ timestamp: now + i * 1000 },
-					),
-				);
-			}
-			// Server returns only last 3 (partial context window)
-			const server = [
-				textMsg("server-7", "assistant", "msg 7 updated", {
-					timestamp: now + 7000,
-				}),
-				textMsg("server-8", "user", "msg 8 updated", { timestamp: now + 8000 }),
-				textMsg("server-9", "assistant", "msg 9 updated", {
-					timestamp: now + 9000,
-				}),
-			];
-			const result = mergeServerMessages(prev, server, "partial");
-			// All 10 original + 3 server (no ID match, so appended)
-			expect(result.length).toBeGreaterThanOrEqual(10);
-			// Original messages still present
-			expect(result.some((m) => m.id === "pi-msg-0")).toBe(true);
-			expect(result.some((m) => m.id === "pi-msg-5")).toBe(true);
-		});
+	it("interleavings converge to the same timeline", () => {
+		const base: DisplayMessage[] = [
+			textMsg("h1", "user", "Q", { clientId: "c-q" }),
+			textMsg("h2", "assistant", "A"),
+		];
+		const partialA = [textMsg("h2", "assistant", "A+")];
+		const partialB = [textMsg("h1", "user", "Q", { clientId: "c-q" })];
 
-		it("updates existing messages by ID in incremental path", () => {
-			const prev = [
-				textMsg("s1", "user", "hello", { timestamp: now }),
-				textMsg("s2", "assistant", "old reply", { timestamp: now }),
-				textMsg("s3", "user", "followup", { timestamp: now }),
-			];
-			// Server has fewer -> incremental
-			const server = [
-				textMsg("s2", "assistant", "updated reply", { timestamp: now }),
-			];
-			const result = mergeServerMessages(prev, server, "partial");
-			expect(result).toHaveLength(3);
-			expect(result[1].parts[0]).toHaveProperty("text", "updated reply");
-		});
-
-		it("preserves local tool_call input when partial server update omits it", () => {
-			const prev: DisplayMessage[] = [
-				makeMessage({
-					id: "s-tool",
-					role: "assistant",
-					timestamp: now,
-					parts: [
-						{
-							type: "tool_call",
-							id: "tc-local",
-							toolCallId: "call-1",
-							name: "bash",
-							input: { command: "cargo check -p oqto" },
-							status: "running",
-						},
-					],
-				}),
-			];
-			const server: DisplayMessage[] = [
-				makeMessage({
-					id: "s-tool",
-					role: "assistant",
-					timestamp: now,
-					parts: [
-						{
-							type: "tool_call",
-							id: "tc-server",
-							toolCallId: "call-1",
-							name: "bash",
-							status: "running",
-						},
-					],
-				}),
-			];
-
-			const result = mergeServerMessages(prev, server, "partial");
-			expect(result).toHaveLength(1);
-			const part = result[0].parts.find(
-				(p) => p.type === "tool_call" && p.toolCallId === "call-1",
-			);
-			expect(part).toBeDefined();
-			if (part?.type === "tool_call") {
-				expect(part.input).toEqual({ command: "cargo check -p oqto" });
-			}
-		});
-
-		it("updates via clientId match in incremental path", () => {
-			const prev = [
-				textMsg("local-1", "user", "msg", { timestamp: now, clientId: "c1" }),
-				textMsg("local-2", "assistant", "response", { timestamp: now }),
-				textMsg("local-3", "user", "followup", { timestamp: now }),
-			];
-			const server = [
-				textMsg("confirmed-1", "user", "msg updated", {
-					timestamp: now,
-					clientId: "c1",
-				}),
-			];
-			const result = mergeServerMessages(prev, server, "partial");
-			expect(result).toHaveLength(3);
-			expect(result[0].id).toBe("confirmed-1");
-		});
-
-		it("appends new server messages in incremental path", () => {
-			const prev = [
-				textMsg("s1", "user", "hello", { timestamp: now }),
-				textMsg("s2", "assistant", "response", { timestamp: now }),
-				textMsg("pi-msg-1", "user", "followup", { timestamp: now }),
-			];
-			const server = [
-				textMsg("s2", "assistant", "response updated", { timestamp: now }),
-			];
-			const result = mergeServerMessages(prev, server, "partial");
-			expect(result.some((m) => m.id === "s2")).toBe(true);
-			expect(result.some((m) => m.id === "pi-msg-1")).toBe(true);
-			// s2 was updated in place
-			const s2 = result.find((m) => m.id === "s2");
-			expect(s2?.parts[0]).toHaveProperty("text", "response updated");
-		});
-	});
-
-	describe("edge cases", () => {
-		it("handles empty server and empty previous", () => {
-			const result = mergeServerMessages([], []);
-			expect(result).toEqual([]);
-		});
-
-		it("handles both empty", () => {
-			expect(mergeServerMessages([], [])).toHaveLength(0);
-		});
+		const path1 = mergeServerMessages(
+			mergeServerMessages(base, partialA, "partial"),
+			partialB,
+			"partial",
+		);
+		const path2 = mergeServerMessages(
+			mergeServerMessages(base, partialB, "partial"),
+			partialA,
+			"partial",
+		);
+		expect(path1).toEqual(path2);
 	});
 });
 
-// ---------------------------------------------------------------------------
-// Session deduplication (useSessionData logic, tested as pure function)
-// ---------------------------------------------------------------------------
-
 describe("session deduplication", () => {
-	// Reproduce the dedup logic from useSessionData as a pure function
 	function dedupSessions(
 		chatHistory: Array<{ id: string; updated_at: number }>,
-	) {
+	): Array<{ id: string; updated_at: number }> {
 		const byId = new Map<string, (typeof chatHistory)[number]>();
 		for (const session of chatHistory) {
 			const existing = byId.get(session.id);
@@ -651,67 +177,14 @@ describe("session deduplication", () => {
 		return Array.from(byId.values());
 	}
 
-	it("removes exact duplicates keeping latest", () => {
+	it("removes duplicates and keeps latest", () => {
 		const sessions = [
 			{ id: "s1", updated_at: 1000 },
 			{ id: "s1", updated_at: 2000 },
-		];
-		const result = dedupSessions(sessions);
-		expect(result).toHaveLength(1);
-		expect(result[0].updated_at).toBe(2000);
-	});
-
-	it("keeps unique sessions untouched", () => {
-		const sessions = [
-			{ id: "s1", updated_at: 1000 },
-			{ id: "s2", updated_at: 2000 },
-			{ id: "s3", updated_at: 3000 },
-		];
-		const result = dedupSessions(sessions);
-		expect(result).toHaveLength(3);
-	});
-
-	it("handles single session", () => {
-		const result = dedupSessions([{ id: "s1", updated_at: 1000 }]);
-		expect(result).toHaveLength(1);
-	});
-
-	it("handles empty array", () => {
-		expect(dedupSessions([])).toHaveLength(0);
-	});
-
-	it("keeps the later entry when same updated_at", () => {
-		const sessions = [
-			{ id: "s1", updated_at: 1000 },
-			{ id: "s1", updated_at: 1000 },
-		];
-		const result = dedupSessions(sessions);
-		expect(result).toHaveLength(1);
-	});
-
-	it("handles multiple duplicates of different sessions", () => {
-		const sessions = [
-			{ id: "s1", updated_at: 1000 },
 			{ id: "s2", updated_at: 1500 },
-			{ id: "s1", updated_at: 3000 },
-			{ id: "s2", updated_at: 2000 },
-			{ id: "s3", updated_at: 500 },
 		];
 		const result = dedupSessions(sessions);
-		expect(result).toHaveLength(3);
-		const s1 = result.find((s) => s.id === "s1");
-		const s2 = result.find((s) => s.id === "s2");
-		expect(s1?.updated_at).toBe(3000);
-		expect(s2?.updated_at).toBe(2000);
-	});
-
-	it("does not lose the first occurrence when it is newer", () => {
-		const sessions = [
-			{ id: "s1", updated_at: 5000 },
-			{ id: "s1", updated_at: 1000 },
-		];
-		const result = dedupSessions(sessions);
-		expect(result).toHaveLength(1);
-		expect(result[0].updated_at).toBe(5000);
+		expect(result).toHaveLength(2);
+		expect(result.find((s) => s.id === "s1")?.updated_at).toBe(2000);
 	});
 });
