@@ -2683,6 +2683,50 @@ impl PiSessionManager {
             let _ = cmd_tx.send(PiSessionCommand::Close).await;
         }
 
+        // Flush message buffer to hstry before removing the session.
+        // This covers the gap between the last incremental persist and now
+        // (e.g. session killed while streaming, no AgentEnd fired).
+        if let Some(ref hstry_client) = self.hstry_client {
+            let sessions = self.sessions.read().await;
+            if let Some(session) = sessions.get(resolved_id) {
+                let buffer = session.message_buffer.read().await;
+                if !buffer.is_empty() {
+                    let eid = session.hstry_external_id.read().await.clone();
+                    // Convert buffer to AgentMessage for persist_to_hstry_grpc
+                    let agent_msgs: Vec<AgentMessage> = buffer
+                        .iter()
+                        .map(|proto| {
+                            crate::runner::protocol::chat_proto_to_agent_msg(proto.clone())
+                        })
+                        .collect();
+                    if let Err(e) = Self::persist_to_hstry_grpc(
+                        hstry_client,
+                        &eid,
+                        resolved_id,
+                        &self.config.runner_id,
+                        &agent_msgs,
+                        &session.config.cwd,
+                        None,
+                    )
+                    .await
+                    {
+                        warn!(
+                            "Pi[{}] failed to flush buffer to hstry on close: {:?}",
+                            resolved_id, e
+                        );
+                    } else {
+                        debug!(
+                            "Pi[{}] flushed {} messages to hstry on close",
+                            resolved_id,
+                            agent_msgs.len()
+                        );
+                    }
+                }
+            }
+            // Drop read lock before acquiring write lock
+            drop(sessions);
+        }
+
         // Remove from sessions map
         let mut sessions = self.sessions.write().await;
         if let Some(mut session) = sessions.remove(resolved_id) {
