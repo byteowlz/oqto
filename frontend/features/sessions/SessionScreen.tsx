@@ -906,20 +906,20 @@ export const SessionScreen = memo(function SessionScreen() {
 	// Check both the session map (populated from runner sessions / optimistic create)
 	// and the session's workspace_path against known shared workspace paths.
 	const { sharedWorkspaces } = useSharedWorkspaces();
-	const isSharedSession = useMemo(() => {
-		if (!selectedChatSessionId) return false;
-		// Fast path: check the module-level map
-		if (sharedWorkspaceSessionMap.has(selectedChatSessionId)) return true;
-		// Fallback: check if the selected session's workspace_path is inside
-		// any shared workspace path.
+	const selectedSharedWorkspaceId = useMemo(() => {
+		if (!selectedChatSessionId) return null;
+		const mapped = sharedWorkspaceSessionMap.get(selectedChatSessionId);
+		if (mapped) return mapped;
 		const session = chatHistory?.find((s) => s.id === selectedChatSessionId);
 		const wp = session?.workspace_path?.replace(/\/$/, "");
-		if (!wp || sharedWorkspaces.length === 0) return false;
-		return sharedWorkspaces.some((sw) => {
+		if (!wp || sharedWorkspaces.length === 0) return null;
+		const owner = sharedWorkspaces.find((sw) => {
 			const swp = sw.path.replace(/\/$/, "");
 			return wp === swp || wp.startsWith(`${swp}/`);
 		});
+		return owner?.id ?? null;
 	}, [selectedChatSessionId, sharedWorkspaces, chatHistory]);
+	const isSharedSession = selectedSharedWorkspaceId !== null;
 	const senderName = isSharedSession
 		? getUserDisplayName(currentUser)
 		: undefined;
@@ -1354,6 +1354,7 @@ export const SessionScreen = memo(function SessionScreen() {
 									locale={locale}
 									sessionId={selectedChatSessionId}
 									workspacePath={normalizedWorkspacePath}
+									sharedWorkspaceId={selectedSharedWorkspaceId}
 								/>
 							</Suspense>
 						)}
@@ -1805,6 +1806,7 @@ export const SessionScreen = memo(function SessionScreen() {
 												locale={locale}
 												sessionId={selectedChatSessionId}
 												workspacePath={normalizedWorkspacePath}
+												sharedWorkspaceId={selectedSharedWorkspaceId}
 											/>
 										</Suspense>
 									)}

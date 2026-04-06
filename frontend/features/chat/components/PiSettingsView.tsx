@@ -17,6 +17,7 @@ import {
 	saveTTSSettings,
 } from "@/features/voice/hooks/useTTS";
 import { useModelSelection } from "@/hooks/use-model-selection";
+import { triggerChatHistoryBackfill } from "@/lib/api/chat";
 import { type ChatVerbosity, useChatVerbosity } from "@/lib/chat-verbosity";
 import { fuzzyMatch } from "@/lib/slash-commands";
 import { cn } from "@/lib/utils";
@@ -24,12 +25,14 @@ import { type WsMuxConnectionState, getWsManager } from "@/lib/ws-manager";
 import { Loader2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
 
 export interface PiSettingsViewProps {
 	className?: string;
 	locale?: "en" | "de";
 	sessionId?: string | null;
 	workspacePath?: string | null;
+	sharedWorkspaceId?: string | null;
 }
 
 export function PiSettingsView({
@@ -37,6 +40,7 @@ export function PiSettingsView({
 	locale = "en",
 	sessionId,
 	workspacePath,
+	sharedWorkspaceId,
 }: PiSettingsViewProps) {
 	const { t } = useTranslation();
 	const { verbosity, setVerbosity } = useChatVerbosity();
@@ -50,6 +54,8 @@ export function PiSettingsView({
 		useState<WsMuxConnectionState>("connecting");
 	const [isWorking, setIsWorking] = useState<boolean>(false);
 	const [runtimeSessionId, setRuntimeSessionId] = useState<string | null>(null);
+	const [isBackfillingHistory, setIsBackfillingHistory] =
+		useState<boolean>(false);
 
 	const handleTtsVoiceChange = useCallback(
 		(e: React.ChangeEvent<HTMLInputElement>) => {
@@ -208,6 +214,26 @@ export function PiSettingsView({
 			setRestartingAgent(false);
 		}
 	}, [sessionId]);
+
+	const handleImportPiSessions = useCallback(async () => {
+		if (!workspacePath || isBackfillingHistory) return;
+		setIsBackfillingHistory(true);
+		try {
+			const result = await triggerChatHistoryBackfill({
+				workspace: workspacePath,
+				shared_workspace_id: sharedWorkspaceId ?? undefined,
+			});
+			toast.success(
+				`Pi import complete: repaired ${result.repaired_conversations}, scanned ${result.scanned_files}`,
+			);
+		} catch (error) {
+			const message =
+				error instanceof Error ? error.message : "Pi import failed";
+			toast.error(message);
+		} finally {
+			setIsBackfillingHistory(false);
+		}
+	}, [workspacePath, sharedWorkspaceId, isBackfillingHistory]);
 
 	const {
 		availableModels,
@@ -447,6 +473,40 @@ export function PiSettingsView({
 					</Button>
 					<p className="text-[10px] text-muted-foreground">
 						{t("pi.restartAgentDescription")}
+					</p>
+				</div>
+
+				<div className="space-y-2">
+					<Label className="text-xs font-medium text-muted-foreground">
+						{t("pi.importSessions", "Import Pi Sessions")}
+					</Label>
+					<Button
+						type="button"
+						variant="outline"
+						size="sm"
+						className="w-full"
+						onClick={handleImportPiSessions}
+						disabled={!workspacePath || isBackfillingHistory}
+					>
+						{isBackfillingHistory ? (
+							<span className="inline-flex items-center gap-2">
+								<Loader2 className="h-3 w-3 animate-spin" />
+								{t("pi.importingSessions", "Importing sessions...")}
+							</span>
+						) : (
+							t("pi.importFromWorkspace", "Import from this workspace")
+						)}
+					</Button>
+					<p className="text-[10px] text-muted-foreground">
+						{workspacePath
+							? t(
+									"pi.importSessionsDescription",
+									"Triggers JSONL -> hstry import for the current workspace path.",
+								)
+							: t(
+									"pi.importSessionsNeedsWorkspace",
+									"Select a workspace chat to enable import.",
+								)}
 					</p>
 				</div>
 
