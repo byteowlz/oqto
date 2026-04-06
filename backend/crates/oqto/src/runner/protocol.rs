@@ -1866,6 +1866,55 @@ pub fn agent_msg_to_chat_proto(
     }
 }
 
+/// Convert a `ChatMessageProto` back to a Pi `AgentMessage`.
+///
+/// Lossy reverse of `agent_msg_to_chat_proto` -- used as a temporary bridge
+/// while `ws_multiplexed` still expects `AgentMessage` from `pi_get_messages`.
+pub fn chat_proto_to_agent_msg(proto: ChatMessageProto) -> crate::pi::AgentMessage {
+    // Extract text content from parts
+    let (content, tool_call_id, tool_name, is_error) =
+        if proto.parts.len() == 1 && (proto.parts[0].part_type == "tool_result") {
+            let p = &proto.parts[0];
+            let output = p.tool_output.as_deref().unwrap_or("").to_string();
+            let err = p.tool_status.as_deref().is_some_and(|s| s == "error");
+            (
+                serde_json::Value::String(output),
+                p.tool_call_id.clone(),
+                p.tool_name.clone(),
+                Some(err),
+            )
+        } else {
+            let text = proto
+                .parts
+                .iter()
+                .filter_map(|p| p.text.as_deref())
+                .collect::<Vec<_>>()
+                .join("");
+            (serde_json::Value::String(text), None, None, None)
+        };
+
+    let timestamp = if proto.created_at > 0 {
+        Some(proto.created_at as u64)
+    } else {
+        None
+    };
+
+    crate::pi::AgentMessage {
+        role: proto.role,
+        content,
+        timestamp,
+        tool_call_id,
+        tool_name,
+        is_error,
+        api: None,
+        provider: proto.provider_id,
+        model: proto.model_id,
+        usage: None, // Token info is split in proto, not easily reconstructed
+        stop_reason: None,
+        extra: std::collections::HashMap::new(),
+    }
+}
+
 // ============================================================================
 // Memory Response Types
 // ============================================================================
