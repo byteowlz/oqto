@@ -1717,10 +1717,14 @@ impl Runner {
         let rows = if let Some(ref workspace) = req.workspace {
             match sqlx::query(
                 r#"
-                SELECT id, external_id, platform_id, readable_id, title, created_at, updated_at, workspace, model, provider
-                FROM conversations
-                WHERE source_id = 'pi' AND workspace = ?
-                ORDER BY COALESCE(updated_at, created_at) DESC
+                SELECT c.id, c.external_id, c.platform_id, c.readable_id, c.title, c.created_at, c.updated_at, c.workspace, c.model, c.provider,
+                       c.parent_conversation_id, c.fork_type,
+                       p.external_id AS parent_external_id,
+                       p.platform_id AS parent_platform_id
+                FROM conversations c
+                LEFT JOIN conversations p ON c.parent_conversation_id = p.id
+                WHERE c.source_id = 'pi' AND c.workspace = ?
+                ORDER BY COALESCE(c.updated_at, c.created_at) DESC
                 "#,
             )
             .bind(workspace)
@@ -1738,10 +1742,14 @@ impl Runner {
         } else {
             match sqlx::query(
                 r#"
-                SELECT id, external_id, platform_id, readable_id, title, created_at, updated_at, workspace, model, provider
-                FROM conversations
-                WHERE source_id = 'pi'
-                ORDER BY COALESCE(updated_at, created_at) DESC
+                SELECT c.id, c.external_id, c.platform_id, c.readable_id, c.title, c.created_at, c.updated_at, c.workspace, c.model, c.provider,
+                       c.parent_conversation_id, c.fork_type,
+                       p.external_id AS parent_external_id,
+                       p.platform_id AS parent_platform_id
+                FROM conversations c
+                LEFT JOIN conversations p ON c.parent_conversation_id = p.id
+                WHERE c.source_id = 'pi'
+                ORDER BY COALESCE(c.updated_at, c.created_at) DESC
                 "#,
             )
             .fetch_all(&pool)
@@ -1769,6 +1777,11 @@ impl Runner {
             let workspace: Option<String> = row.get("workspace");
             let model: Option<String> = row.get("model");
             let provider: Option<String> = row.get("provider");
+            let parent_external_id: Option<String> =
+                row.try_get("parent_external_id").ok().flatten();
+            let parent_platform_id: Option<String> =
+                row.try_get("parent_platform_id").ok().flatten();
+            let fork_type: Option<String> = row.try_get("fork_type").ok().flatten();
 
             // Prefer platform_id (Oqto session ID) over external_id (Pi native ID)
             let session_id = platform_id
@@ -1779,7 +1792,10 @@ impl Runner {
             let project_name = crate::history::project_name_from_path(&workspace_path);
             let readable_id = readable_id.unwrap_or_default();
             let updated_at_ms = updated_at.unwrap_or(created_at) * 1000;
-            let is_child = false;
+            let parent_id = parent_platform_id
+                .filter(|s| !s.is_empty())
+                .or(parent_external_id);
+            let is_child = parent_id.is_some() || fork_type.is_some();
 
             // SECURITY: In isolated multi-user mode, only return sessions whose
             // workspace belongs to this Linux user. In single-user mode we allow
@@ -1802,7 +1818,7 @@ impl Runner {
                 id: session_id,
                 readable_id,
                 title,
-                parent_id: None,
+                parent_id,
                 workspace_path,
                 project_name,
                 created_at: created_at * 1000,
@@ -1872,8 +1888,13 @@ impl Runner {
                 c.updated_at,
                 c.workspace,
                 c.model,
-                c.provider
+                c.provider,
+                c.parent_conversation_id,
+                c.fork_type,
+                p.external_id AS parent_external_id,
+                p.platform_id AS parent_platform_id
             FROM conversations c
+            LEFT JOIN conversations p ON c.parent_conversation_id = p.id
             WHERE c.id = ?
             LIMIT 1
             "#,
@@ -1901,6 +1922,9 @@ impl Runner {
         let workspace: Option<String> = row.get("workspace");
         let model: Option<String> = row.get("model");
         let provider: Option<String> = row.get("provider");
+        let parent_external_id: Option<String> = row.try_get("parent_external_id").ok().flatten();
+        let parent_platform_id: Option<String> = row.try_get("parent_platform_id").ok().flatten();
+        let fork_type: Option<String> = row.try_get("fork_type").ok().flatten();
 
         let session_id = platform_id
             .filter(|s| !s.is_empty())
@@ -1910,13 +1934,16 @@ impl Runner {
         let project_name = crate::history::project_name_from_path(&workspace_path);
         let readable_id = readable_id.unwrap_or_default();
         let updated_at_ms = updated_at.unwrap_or(created_at) * 1000;
-        let is_child = false;
+        let parent_id = parent_platform_id
+            .filter(|s| !s.is_empty())
+            .or(parent_external_id);
+        let is_child = parent_id.is_some() || fork_type.is_some();
 
         let session = WorkspaceChatSessionInfo {
             id: session_id,
             readable_id,
             title,
-            parent_id: None,
+            parent_id,
             workspace_path,
             project_name,
             created_at: created_at * 1000,
@@ -1960,14 +1987,13 @@ impl Runner {
             }
         };
 
-        // For active sessions, Pi can expose not-yet-persisted tail messages,
-        // but it may only return a compacted context window (subset of history).
-        // To avoid dropping older turns in the frontend, only prefer Pi when it
-        // is clearly more complete than hstry (strictly more messages).
+        // For active sessions, Pi exposes not-yet-persisted tail messages.
+        // Pi may only return a compacted context window (subset of history),
+        // so we merge: use hstry as the base and append any Pi tail messages
+        // that hstry doesn't have yet. This ensures in-flight messages are
+        // never lost during reconnect/page-reload.
         let session_is_active = self.pi_manager.has_session(&req.session_id).await;
         if session_is_active {
-            // Keep timeout short: Pi may be busy and we'd rather return hstry
-            // history than block this request.
             let pi_result = tokio::time::timeout(
                 std::time::Duration::from_secs(2),
                 self.pi_manager.get_messages(&req.session_id),
@@ -1983,6 +2009,7 @@ impl Runner {
                     })
                     .unwrap_or_default();
                 if pi_msgs.len() > messages.len() {
+                    // Pi has strictly more messages -- use Pi directly.
                     let start = req
                         .limit
                         .and_then(|limit| pi_msgs.len().checked_sub(limit))
@@ -2001,8 +2028,144 @@ impl Runner {
                         },
                     );
                 }
+                // Pi has equal or fewer messages (compacted). Append any Pi
+                // tail messages beyond what hstry has. This covers the window
+                // between the last incremental persist and now.
+                if !pi_msgs.is_empty() && pi_msgs.len() <= messages.len() {
+                    // hstry has `messages.len()` messages. Pi's context starts
+                    // from some compaction point. Any Pi messages beyond the
+                    // hstry count are in-flight (not yet persisted).
+                    // Since Pi can be compacted, we check if Pi's LAST messages
+                    // extend beyond hstry by comparing counts.
+                    // Simple heuristic: if Pi has N messages and hstry has M >= N,
+                    // the last `N` Pi messages correspond to hstry indices
+                    // [M-N..M) possibly plus trailing new ones. We need to find
+                    // Pi messages that are truly new.
+                    //
+                    // Robust approach: compare the role+content of Pi's last
+                    // message against hstry's last message. If they differ,
+                    // Pi has newer tail messages.
+                    let pi_last = &pi_msgs[pi_msgs.len() - 1];
+                    let hstry_last = &messages[messages.len() - 1];
+                    let pi_last_text = if let Some(s) = pi_last.content.as_str() {
+                        s.to_string()
+                    } else {
+                        pi_last.content.to_string()
+                    };
+                    let hstry_last_text = hstry_last
+                        .parts
+                        .iter()
+                        .filter_map(|p| p.text.as_deref())
+                        .collect::<Vec<_>>()
+                        .join("");
+                    let pi_last_role = &pi_last.role;
+                    let hstry_last_role = &hstry_last.role;
+
+                    if pi_last_role != hstry_last_role || pi_last_text != hstry_last_text {
+                        // Pi has messages beyond what hstry persisted.
+                        // Find the divergence point: walk backwards through Pi
+                        // to find where it matches hstry's tail, then append
+                        // the rest.
+                        let mut overlap_end = 0;
+                        for i in (0..pi_msgs.len()).rev() {
+                            if i >= messages.len() {
+                                continue;
+                            }
+                            let pi_role = &pi_msgs[i].role;
+                            let h_role = &messages[i].role;
+                            let pi_text = if let Some(s) = pi_msgs[i].content.as_str() {
+                                s.to_string()
+                            } else {
+                                pi_msgs[i].content.to_string()
+                            };
+                            let h_text = messages[i]
+                                .parts
+                                .iter()
+                                .filter_map(|p| p.text.as_deref())
+                                .collect::<Vec<_>>()
+                                .join("");
+                            if pi_role == h_role && pi_text == h_text {
+                                overlap_end = i + 1;
+                                break;
+                            }
+                        }
+
+                        // Append Pi messages from overlap_end onward to hstry.
+                        if overlap_end < pi_msgs.len() {
+                            let session_id_clone = req.session_id.clone();
+                            let base_idx = messages.len();
+                            let mut merged = messages
+                                .into_iter()
+                                .map(|message| {
+                                    let parts = message
+                                        .parts
+                                        .into_iter()
+                                        .map(|part| ChatMessagePartProto {
+                                            id: part.id,
+                                            part_type: part.part_type,
+                                            text: part.text,
+                                            text_html: if req.render {
+                                                part.text_html
+                                            } else {
+                                                None
+                                            },
+                                            tool_name: part.tool_name,
+                                            tool_call_id: part.tool_call_id,
+                                            tool_input: part.tool_input,
+                                            tool_output: part.tool_output,
+                                            tool_status: part.tool_status,
+                                            tool_title: part.tool_title,
+                                        })
+                                        .collect();
+                                    ChatMessageProto {
+                                        id: message.id,
+                                        session_id: message.session_id,
+                                        role: message.role,
+                                        created_at: message.created_at,
+                                        completed_at: message.completed_at,
+                                        parent_id: message.parent_id,
+                                        model_id: message.model_id,
+                                        provider_id: message.provider_id,
+                                        agent: message.agent,
+                                        summary_title: message.summary_title,
+                                        tokens_input: message.tokens_input,
+                                        tokens_output: message.tokens_output,
+                                        tokens_reasoning: message.tokens_reasoning,
+                                        cost: message.cost,
+                                        parts,
+                                    }
+                                })
+                                .collect::<Vec<_>>();
+
+                            let tail: Vec<ChatMessageProto> = pi_msgs
+                                .into_iter()
+                                .enumerate()
+                                .skip(overlap_end)
+                                .map(|(idx, msg)| {
+                                    pi_agent_msg_to_chat_proto(
+                                        msg,
+                                        base_idx + idx - overlap_end,
+                                        &session_id_clone,
+                                    )
+                                })
+                                .collect();
+                            merged.extend(tail);
+
+                            let start = req
+                                .limit
+                                .and_then(|limit| merged.len().checked_sub(limit))
+                                .unwrap_or(0);
+                            return RunnerResponse::WorkspaceChatSessionMessages(
+                                WorkspaceChatSessionMessagesResponse {
+                                    session_id: req.session_id,
+                                    messages: merged.into_iter().skip(start).collect(),
+                                },
+                            );
+                        }
+                    }
+                }
             }
-            // Otherwise fall through to hstry/jsonl, which is more complete.
+            // Pi unavailable or no new tail messages -- fall through to hstry.
         }
 
         // For inactive sessions created/continued outside Oqto (bare Pi),

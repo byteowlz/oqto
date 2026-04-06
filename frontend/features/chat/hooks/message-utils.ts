@@ -11,7 +11,8 @@ import type { PiAgentMessage, PiSessionMessage } from "@/lib/api/default-chat";
 import type { Part, Sender, ToolStatus } from "@/lib/canonical-types";
 import type { DisplayMessage, DisplayPart, RawMessage } from "./types";
 
-const MESSAGE_ID_PATTERN = /^pi-msg-(\d+)$/;
+const LEGACY_PI_TMP_ID_PATTERN = /^pi-msg-(\d+)$/;
+const TMP_MESSAGE_ID_PREFIX = "tmp:";
 
 /**
  * Pattern matching `[Name] ...` prefix prepended by the backend for shared
@@ -543,7 +544,10 @@ export function normalizeMessages(
 				}
 			} else {
 				display.push({
-					id: `${idPrefix}-${idx}`,
+					id:
+						typeof message.id === "string" && message.id.length > 0
+							? message.id
+							: `${idPrefix}-${idx}`,
 					role: "assistant",
 					parts: [toolResultPart],
 					timestamp,
@@ -567,8 +571,12 @@ export function normalizeMessages(
 		if (normalizedRole === "user") {
 			sender = extractSenderFromParts(parts);
 		}
+		const canonicalId =
+			typeof message.id === "string" && message.id.length > 0
+				? message.id
+				: `${idPrefix}-${idx}`;
 		const displayMessage: DisplayMessage = {
-			id: `${idPrefix}-${idx}`,
+			id: canonicalId,
 			role: normalizedRole,
 			parts,
 			timestamp,
@@ -658,11 +666,11 @@ export function convertSessionMessagesToDisplay(
 // Message ID utilities
 // ============================================================================
 
-/** Get the maximum message ID number from a list of messages. */
+/** Get the maximum legacy pi-msg-N number from a list of messages. */
 export function getMaxMessageId(messages: DisplayMessage[]): number {
 	let maxId = 0;
 	for (const message of messages) {
-		const match = MESSAGE_ID_PATTERN.exec(message.id);
+		const match = LEGACY_PI_TMP_ID_PATTERN.exec(message.id);
 		if (!match) continue;
 		const value = Number.parseInt(match[1] ?? "0", 10);
 		if (!Number.isNaN(value) && value > maxId) {
@@ -675,9 +683,11 @@ export function getMaxMessageId(messages: DisplayMessage[]): number {
 /** @deprecated Use getMaxMessageId */
 export const getMaxPiMessageId = getMaxMessageId;
 
-/** Check if a message should be preserved during server refresh. */
+/** Check if a message is frontend-ephemeral and may need preservation. */
 export function shouldPreserveLocalMessage(message: DisplayMessage): boolean {
-	if (MESSAGE_ID_PATTERN.test(message.id)) return true;
+	if (message.id.startsWith(TMP_MESSAGE_ID_PREFIX)) return true;
+	// Narrow legacy fallback while old caches/event payloads are phased out.
+	if (LEGACY_PI_TMP_ID_PATTERN.test(message.id)) return true;
 	if (message.id.startsWith("compaction-")) return true;
 	return false;
 }
@@ -686,7 +696,10 @@ export function shouldPreserveLocalMessage(message: DisplayMessage): boolean {
 // Fingerprinting and merge
 // ============================================================================
 
-/** Create a fingerprint for a message (used for deduplication). */
+/**
+ * Legacy helper kept for tests/diagnostics. Merge logic is ID/client_id based
+ * and does not use fingerprints for reconciliation.
+ */
 export function messageFingerprint(message: DisplayMessage): string {
 	const parts = message.parts.map((part) => {
 		switch (part.type) {
@@ -707,30 +720,6 @@ export function messageFingerprint(message: DisplayMessage): string {
 		}
 	});
 	return `${message.role}|${parts.join("|")}`;
-}
-
-function messageTextSignature(message: DisplayMessage): string {
-	return message.parts
-		.flatMap((p) => (p.type === "text" ? [p.text] : []))
-		.join("")
-		.trim();
-}
-
-function messageToolCallIds(message: DisplayMessage): Set<string> {
-	const ids = new Set<string>();
-	for (const part of message.parts) {
-		if (part.type === "tool_call" || part.type === "tool_result") {
-			if (part.toolCallId) ids.add(part.toolCallId);
-		}
-	}
-	return ids;
-}
-
-function hasToolCallIntersection(a: Set<string>, b: Set<string>): boolean {
-	for (const id of a) {
-		if (b.has(id)) return true;
-	}
-	return false;
 }
 
 function mergeMessageKeepingLocalToolDetails(
@@ -812,25 +801,77 @@ function mergeMessageKeepingLocalToolDetails(
 	};
 }
 
+function buildIndex(messages: DisplayMessage[]): {
+	byId: Map<string, number>;
+	byClientId: Map<string, number>;
+} {
+	const byId = new Map<string, number>();
+	const byClientId = new Map<string, number>();
+	for (let i = 0; i < messages.length; i++) {
+		const msg = messages[i];
+		byId.set(msg.id, i);
+		if (typeof msg.clientId === "string" && msg.clientId.length > 0) {
+			byClientId.set(msg.clientId, i);
+		}
+	}
+	return { byId, byClientId };
+}
+
+function upsertFromServer(
+	base: DisplayMessage[],
+	serverMessages: DisplayMessage[],
+): DisplayMessage[] {
+	const result = [...base];
+	const index = buildIndex(result);
+
+	for (const serverMsg of serverMessages) {
+		const idMatch = index.byId.get(serverMsg.id);
+		if (idMatch !== undefined) {
+			result[idMatch] = mergeMessageKeepingLocalToolDetails(
+				result[idMatch],
+				serverMsg,
+			);
+			index.byId.set(serverMsg.id, idMatch);
+			if (serverMsg.clientId) index.byClientId.set(serverMsg.clientId, idMatch);
+			continue;
+		}
+
+		const clientId =
+			typeof serverMsg.clientId === "string" && serverMsg.clientId.length > 0
+				? serverMsg.clientId
+				: null;
+		if (clientId) {
+			const clientMatch = index.byClientId.get(clientId);
+			if (clientMatch !== undefined) {
+				const prevId = result[clientMatch].id;
+				result[clientMatch] = mergeMessageKeepingLocalToolDetails(
+					result[clientMatch],
+					serverMsg,
+				);
+				if (prevId !== serverMsg.id) {
+					index.byId.delete(prevId);
+				}
+				index.byId.set(serverMsg.id, clientMatch);
+				index.byClientId.set(clientId, clientMatch);
+				continue;
+			}
+		}
+
+		result.push(serverMsg);
+		const idx = result.length - 1;
+		index.byId.set(serverMsg.id, idx);
+		if (clientId) index.byClientId.set(clientId, idx);
+	}
+
+	return result;
+}
+
 /**
- * Merge server messages with local messages, preserving in-flight optimistic updates.
+ * Merge mode declares the caller's intent explicitly.
  *
- * Matching strategy (in order of priority):
- * 1. client_id match: If a server message has a client_id that matches a local
- *    optimistic message, they represent the same message.
- * 2. id match: Direct ID match means the same message.
- * 3. content/fingerprint match: Same text content around the same time = same message.
- */
-/**
- * Merge mode declares the caller's intent explicitly, rather than
- * guessing from message counts.
- *
- * - "authoritative": server has the complete history (e.g., hstry).
- *   Replaces local state entirely, preserving only trailing in-flight
- *   messages (streaming + optimistic sends).
- *
- * - "partial": server has a subset (e.g., Pi's context window).
- *   Keeps all local messages and updates/appends from the server set.
+ * - "authoritative": server has complete history. Apply server state, then
+ *   preserve only truly in-flight local messages (tmp IDs + explicit legacy fallback).
+ * - "partial": server is a subset. Upsert by id/client_id into current state.
  */
 export type MergeMode = "authoritative" | "partial";
 
@@ -843,121 +884,30 @@ export function mergeServerMessages(
 	if (previous.length === 0) return serverMessages;
 
 	if (mode === "partial") {
-		// Keep all previous messages. Update any that match by ID, clientId,
-		// or content fingerprint. New (unmatched) server messages are appended
-		// in order. We do NOT re-sort by timestamp — timestamps from different
-		// sources (Pi seconds, hstry ms, Date.now() ms) are incomparable and
-		// sorting them produces wrong message order.
-		const result = [...previous];
-		const resultFingerprints = new Map<string, number>();
-		for (let i = 0; i < result.length; i++) {
-			resultFingerprints.set(messageFingerprint(result[i]), i);
-		}
-
-		for (const serverMsg of serverMessages) {
-			let matched = false;
-			// 1. Match by ID
-			for (let i = 0; i < result.length; i++) {
-				if (result[i].id === serverMsg.id) {
-					result[i] = mergeMessageKeepingLocalToolDetails(result[i], serverMsg);
-					matched = true;
-					break;
-				}
-			}
-			// 2. Match by clientId
-			if (!matched) {
-				for (let i = 0; i < result.length; i++) {
-					if (
-						result[i].clientId &&
-						serverMsg.clientId &&
-						result[i].clientId === serverMsg.clientId
-					) {
-						result[i] = mergeMessageKeepingLocalToolDetails(
-							result[i],
-							serverMsg,
-						);
-						matched = true;
-						break;
-					}
-				}
-			}
-			// 3. Match by content fingerprint (same role + content = same message)
-			if (!matched) {
-				const serverFp = messageFingerprint(serverMsg);
-				const fpIdx = resultFingerprints.get(serverFp);
-				if (fpIdx !== undefined && result[fpIdx].role === serverMsg.role) {
-					result[fpIdx] = mergeMessageKeepingLocalToolDetails(
-						result[fpIdx],
-						serverMsg,
-					);
-					matched = true;
-				}
-			}
-			if (!matched) {
-				result.push(serverMsg);
-			}
-		}
-		return result;
+		return upsertFromServer(previous, serverMessages);
 	}
 
-	// mode === "authoritative"
-	// Server is the complete source of truth. Preserve only in-flight local
-	// streaming messages that are truly absent on the server. When history
-	// fetch races with live streaming, the same assistant message can appear in
-	// both sources with different IDs; preserving blindly would duplicate tool
-	// cards in the UI.
-	const serverClientIds = new Set(
-		serverMessages
-			.filter((m) => typeof m.clientId === "string" && m.clientId.length > 0)
-			.map((m) => m.clientId as string),
-	);
-	const serverFingerprints = new Set(
-		serverMessages.map((m) => messageFingerprint(m)),
-	);
-	const serverTextSignatures = new Set(
-		serverMessages
-			.map((m) => messageTextSignature(m))
-			.filter((s) => s.length > 0),
-	);
-	const serverToolCallIds = new Set<string>();
-	for (const msg of serverMessages) {
-		for (const id of messageToolCallIds(msg)) {
-			serverToolCallIds.add(id);
-		}
-	}
+	const merged = upsertFromServer([], serverMessages);
+	const mergedIndex = buildIndex(merged);
 
-	const OPTIMISTIC_USER_TTL_MS = 2 * 60 * 1000;
-	const OPTIMISTIC_ASSISTANT_TTL_MS = 2 * 60 * 1000;
-	const nowMs = Date.now();
-
-	const preserved: DisplayMessage[] = [];
-	for (const msg of previous) {
-		const isRecentOptimisticUser =
-			msg.role === "user" &&
-			typeof msg.clientId === "string" &&
-			msg.clientId.length > 0 &&
-			typeof msg.timestamp === "number" &&
-			nowMs - msg.timestamp <= OPTIMISTIC_USER_TTL_MS;
-		const isRecentAssistant =
-			msg.role === "assistant" &&
-			typeof msg.timestamp === "number" &&
-			nowMs - msg.timestamp <= OPTIMISTIC_ASSISTANT_TTL_MS;
-		if (!msg.isStreaming && !isRecentOptimisticUser && !isRecentAssistant)
-			continue;
-		if (msg.clientId && serverClientIds.has(msg.clientId)) continue;
-		if (serverFingerprints.has(messageFingerprint(msg))) continue;
-		const textSig = messageTextSignature(msg);
-		if (textSig.length > 0 && serverTextSignatures.has(textSig)) continue;
-		const toolIds = messageToolCallIds(msg);
+	for (const local of previous) {
+		if (!shouldPreserveLocalMessage(local)) continue;
+		if (mergedIndex.byId.has(local.id)) continue;
 		if (
-			toolIds.size > 0 &&
-			hasToolCallIntersection(toolIds, serverToolCallIds)
+			typeof local.clientId === "string" &&
+			local.clientId.length > 0 &&
+			mergedIndex.byClientId.has(local.clientId)
 		) {
 			continue;
 		}
-		preserved.push(msg);
+		// Preserve only in-flight local items.
+		const shouldKeep = Boolean(local.isStreaming) || Boolean(local.clientId);
+		if (!shouldKeep) continue;
+		merged.push(local);
+		const idx = merged.length - 1;
+		mergedIndex.byId.set(local.id, idx);
+		if (local.clientId) mergedIndex.byClientId.set(local.clientId, idx);
 	}
 
-	if (preserved.length === 0) return serverMessages;
-	return [...serverMessages, ...preserved];
+	return merged;
 }
