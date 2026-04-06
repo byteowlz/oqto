@@ -437,180 +437,94 @@ fn hstry_parts_to_chat_parts(
 ) -> Vec<ChatMessagePart> {
     let mut parts = Vec::new();
 
+    if let Some(parts_json) = parts_json
+        && let Ok(canon_parts) = serde_json::from_str::<Vec<crate::canon::CanonPart>>(parts_json)
+    {
+        for (idx, part) in canon_parts.into_iter().enumerate() {
+            let id = format!("{message_id}-part-{idx}");
+            match part {
+                crate::canon::CanonPart::Text { text, .. } => parts.push(ChatMessagePart {
+                    id,
+                    part_type: "text".to_string(),
+                    text: Some(text),
+                    text_html: None,
+                    tool_name: None,
+                    tool_call_id: None,
+                    tool_input: None,
+                    tool_output: None,
+                    tool_status: None,
+                    tool_title: None,
+                }),
+                crate::canon::CanonPart::Thinking { text, .. } => parts.push(ChatMessagePart {
+                    id,
+                    part_type: "thinking".to_string(),
+                    text: Some(text),
+                    text_html: None,
+                    tool_name: None,
+                    tool_call_id: None,
+                    tool_input: None,
+                    tool_output: None,
+                    tool_status: None,
+                    tool_title: None,
+                }),
+                crate::canon::CanonPart::ToolCall {
+                    name,
+                    input,
+                    status,
+                    tool_call_id,
+                    ..
+                } => parts.push(ChatMessagePart {
+                    id,
+                    part_type: "tool_call".to_string(),
+                    text: None,
+                    text_html: None,
+                    tool_name: Some(name),
+                    tool_call_id: Some(tool_call_id),
+                    tool_input: input,
+                    tool_output: None,
+                    tool_status: Some(match status {
+                        crate::canon::ToolStatus::Pending => "pending".to_string(),
+                        crate::canon::ToolStatus::Running => "running".to_string(),
+                        crate::canon::ToolStatus::Success => "success".to_string(),
+                        crate::canon::ToolStatus::Error => "error".to_string(),
+                    }),
+                    tool_title: None,
+                }),
+                crate::canon::CanonPart::ToolResult {
+                    name,
+                    output,
+                    is_error,
+                    title,
+                    tool_call_id,
+                    ..
+                } => parts.push(ChatMessagePart {
+                    id,
+                    part_type: "tool_result".to_string(),
+                    text: None,
+                    text_html: None,
+                    tool_name: name,
+                    tool_call_id: Some(tool_call_id),
+                    tool_input: None,
+                    tool_output: output.as_ref().map(|v| v.to_string()),
+                    tool_status: Some(if is_error { "error" } else { "success" }.to_string()),
+                    tool_title: title,
+                }),
+                _ => {}
+            }
+        }
+        if !parts.is_empty() {
+            return parts;
+        }
+    }
+
     if let Some(parts_json) = parts_json {
-        if let Ok(canon_parts) = serde_json::from_str::<Vec<crate::canon::CanonPart>>(parts_json) {
-            for (idx, part) in canon_parts.into_iter().enumerate() {
-                let id = format!("{message_id}-part-{idx}");
-                match part {
-                    crate::canon::CanonPart::Text { text, .. } => parts.push(ChatMessagePart {
-                        id,
-                        part_type: "text".to_string(),
-                        text: Some(text),
-                        text_html: None,
-                        tool_name: None,
-                        tool_call_id: None,
-                        tool_input: None,
-                        tool_output: None,
-                        tool_status: None,
-                        tool_title: None,
-                    }),
-                    crate::canon::CanonPart::Thinking { text, .. } => parts.push(ChatMessagePart {
-                        id,
-                        part_type: "thinking".to_string(),
-                        text: Some(text),
-                        text_html: None,
-                        tool_name: None,
-                        tool_call_id: None,
-                        tool_input: None,
-                        tool_output: None,
-                        tool_status: None,
-                        tool_title: None,
-                    }),
-                    crate::canon::CanonPart::ToolCall {
-                        name,
-                        input,
-                        status,
-                        tool_call_id,
-                        ..
-                    } => parts.push(ChatMessagePart {
-                        id,
-                        part_type: "tool_call".to_string(),
-                        text: None,
-                        text_html: None,
-                        tool_name: Some(name),
-                        tool_call_id: Some(tool_call_id),
-                        tool_input: input,
-                        tool_output: None,
-                        tool_status: Some(match status {
-                            crate::canon::ToolStatus::Pending => "pending".to_string(),
-                            crate::canon::ToolStatus::Running => "running".to_string(),
-                            crate::canon::ToolStatus::Success => "success".to_string(),
-                            crate::canon::ToolStatus::Error => "error".to_string(),
-                        }),
-                        tool_title: None,
-                    }),
-                    crate::canon::CanonPart::ToolResult {
-                        name,
-                        output,
-                        is_error,
-                        title,
-                        tool_call_id,
-                        ..
-                    } => parts.push(ChatMessagePart {
-                        id,
-                        part_type: "tool_result".to_string(),
-                        text: None,
-                        text_html: None,
-                        tool_name: name,
-                        tool_call_id: Some(tool_call_id),
-                        tool_input: None,
-                        tool_output: output.as_ref().map(|v| v.to_string()),
-                        tool_status: Some(if is_error { "error" } else { "success" }.to_string()),
-                        tool_title: title,
-                    }),
-                    _ => {}
-                }
-            }
-            return parts;
-        }
+        append_parts_from_json_array_stream(&mut parts, parts_json, message_id);
+    }
 
-        if let Ok(serde_json::Value::Array(values)) = serde_json::from_str(parts_json) {
-            for (idx, value) in values.iter().enumerate() {
-                let serde_json::Value::Object(obj) = value else {
-                    continue;
-                };
-                let part_type_raw = obj.get("type").and_then(|v| v.as_str()).unwrap_or("text");
-                let part_type = part_type_raw.to_string();
-                let normalized_type = part_type_raw.to_lowercase();
-                let tool_call_id = obj
-                    .get("toolCallId")
-                    .or_else(|| obj.get("tool_call_id"))
-                    .and_then(|v| v.as_str())
-                    .map(|v| v.to_string());
-                let tool_name = obj
-                    .get("name")
-                    .and_then(|v| v.as_str())
-                    .map(|v| v.to_string());
-                let text = match part_type.as_str() {
-                    "text" | "thinking" => obj.get("text").and_then(|v| v.as_str()),
-                    "status" | "error" => obj
-                        .get("message")
-                        .or_else(|| obj.get("text"))
-                        .and_then(|v| v.as_str()),
-                    _ => None,
-                };
-
-                let is_tool_call = matches!(
-                    normalized_type.as_str(),
-                    "tool_call" | "tool_use" | "toolcall"
-                );
-                let is_tool_result =
-                    matches!(normalized_type.as_str(), "tool_result" | "toolresult");
-
-                if is_tool_call {
-                    let input = obj.get("input").or_else(|| obj.get("arguments")).cloned();
-                    let call_id = tool_call_id.or_else(|| {
-                        obj.get("id")
-                            .and_then(|v| v.as_str())
-                            .map(|v| v.to_string())
-                    });
-                    parts.push(ChatMessagePart {
-                        id: format!("{message_id}-part-{idx}"),
-                        part_type: "tool_call".to_string(),
-                        text: None,
-                        text_html: None,
-                        tool_name: tool_name.clone(),
-                        tool_call_id: call_id,
-                        tool_input: input,
-                        tool_output: None,
-                        tool_status: None,
-                        tool_title: None,
-                    });
-                    continue;
-                }
-
-                if is_tool_result {
-                    let output = obj.get("output").cloned();
-                    let call_id = tool_call_id.or_else(|| {
-                        obj.get("id")
-                            .and_then(|v| v.as_str())
-                            .map(|v| v.to_string())
-                    });
-                    parts.push(ChatMessagePart {
-                        id: format!("{message_id}-part-{idx}"),
-                        part_type: "tool_result".to_string(),
-                        text: None,
-                        text_html: None,
-                        tool_name,
-                        tool_call_id: call_id,
-                        tool_input: None,
-                        tool_output: output.map(|v| v.to_string()),
-                        tool_status: obj
-                            .get("is_error")
-                            .and_then(|v| v.as_bool())
-                            .map(|is_error| if is_error { "error" } else { "success" }.to_string()),
-                        tool_title: None,
-                    });
-                    continue;
-                }
-
-                if let Some(text) = text {
-                    parts.push(ChatMessagePart {
-                        id: format!("{message_id}-part-{idx}"),
-                        part_type,
-                        text: Some(text.to_string()),
-                        text_html: None,
-                        tool_name: None,
-                        tool_call_id: None,
-                        tool_input: None,
-                        tool_output: None,
-                        tool_status: None,
-                        tool_title: None,
-                    });
-                }
-            }
-            return parts;
-        }
+    // Repair malformed legacy payloads where multiple JSON arrays were
+    // concatenated into `content` (e.g. "[... ]\n\n[ ... ]").
+    if parts.is_empty() {
+        append_parts_from_json_array_stream(&mut parts, content, message_id);
     }
 
     if parts.is_empty() && !content.trim().is_empty() {
@@ -629,6 +543,130 @@ fn hstry_parts_to_chat_parts(
     }
 
     parts
+}
+
+fn parse_json_array_stream(raw: &str) -> Vec<Vec<serde_json::Value>> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Vec::new();
+    }
+
+    let mut arrays = Vec::new();
+    let deserializer = serde_json::Deserializer::from_str(trimmed);
+    for value in deserializer.into_iter::<serde_json::Value>() {
+        match value {
+            Ok(serde_json::Value::Array(values)) => arrays.push(values),
+            Ok(_) => {}
+            Err(_) => return Vec::new(),
+        }
+    }
+    arrays
+}
+
+fn append_parts_from_json_array_stream(
+    parts: &mut Vec<ChatMessagePart>,
+    raw: &str,
+    message_id: &str,
+) {
+    let mut idx = parts.len();
+    for values in parse_json_array_stream(raw) {
+        for value in values {
+            let serde_json::Value::Object(obj) = value else {
+                continue;
+            };
+            let part_type_raw = obj.get("type").and_then(|v| v.as_str()).unwrap_or("text");
+            let part_type = part_type_raw.to_string();
+            let normalized_type = part_type_raw.to_lowercase();
+            let tool_call_id = obj
+                .get("toolCallId")
+                .or_else(|| obj.get("tool_call_id"))
+                .and_then(|v| v.as_str())
+                .map(|v| v.to_string());
+            let tool_name = obj
+                .get("name")
+                .and_then(|v| v.as_str())
+                .map(|v| v.to_string());
+            let text = match part_type.as_str() {
+                "text" | "thinking" => obj.get("text").and_then(|v| v.as_str()),
+                "status" | "error" => obj
+                    .get("message")
+                    .or_else(|| obj.get("text"))
+                    .and_then(|v| v.as_str()),
+                _ => None,
+            };
+
+            let is_tool_call = matches!(
+                normalized_type.as_str(),
+                "tool_call" | "tool_use" | "toolcall"
+            );
+            let is_tool_result = matches!(normalized_type.as_str(), "tool_result" | "toolresult");
+
+            if is_tool_call {
+                let input = obj.get("input").or_else(|| obj.get("arguments")).cloned();
+                let call_id = tool_call_id.or_else(|| {
+                    obj.get("id")
+                        .and_then(|v| v.as_str())
+                        .map(|v| v.to_string())
+                });
+                parts.push(ChatMessagePart {
+                    id: format!("{message_id}-part-{idx}"),
+                    part_type: "tool_call".to_string(),
+                    text: None,
+                    text_html: None,
+                    tool_name: tool_name.clone(),
+                    tool_call_id: call_id,
+                    tool_input: input,
+                    tool_output: None,
+                    tool_status: None,
+                    tool_title: None,
+                });
+                idx += 1;
+                continue;
+            }
+
+            if is_tool_result {
+                let output = obj.get("output").cloned();
+                let call_id = tool_call_id.or_else(|| {
+                    obj.get("id")
+                        .and_then(|v| v.as_str())
+                        .map(|v| v.to_string())
+                });
+                parts.push(ChatMessagePart {
+                    id: format!("{message_id}-part-{idx}"),
+                    part_type: "tool_result".to_string(),
+                    text: None,
+                    text_html: None,
+                    tool_name,
+                    tool_call_id: call_id,
+                    tool_input: None,
+                    tool_output: output.map(|v| v.to_string()),
+                    tool_status: obj
+                        .get("is_error")
+                        .and_then(|v| v.as_bool())
+                        .map(|is_error| if is_error { "error" } else { "success" }.to_string()),
+                    tool_title: None,
+                });
+                idx += 1;
+                continue;
+            }
+
+            if let Some(text) = text {
+                parts.push(ChatMessagePart {
+                    id: format!("{message_id}-part-{idx}"),
+                    part_type,
+                    text: Some(text.to_string()),
+                    text_html: None,
+                    tool_name: None,
+                    tool_call_id: None,
+                    tool_input: None,
+                    tool_output: None,
+                    tool_status: None,
+                    tool_title: None,
+                });
+                idx += 1;
+            }
+        }
+    }
 }
 
 // ============================================================================
@@ -1427,5 +1465,19 @@ mod tests {
             .await
             .expect("resolve should succeed");
         assert!(resolved.is_none(), "ambiguous readable_id must fail closed");
+    }
+
+    #[test]
+    fn hstry_parts_to_chat_parts_repairs_multi_array_content_blob() {
+        let content = r#"[{"type":"thinking","thinking":"hidden"},{"type":"text","text":"hello"}]
+
+[{"type":"text","text":"world"}]"#;
+
+        let parts = hstry_parts_to_chat_parts(None, content, "msg_1");
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0].part_type, "text");
+        assert_eq!(parts[0].text.as_deref(), Some("hello"));
+        assert_eq!(parts[1].part_type, "text");
+        assert_eq!(parts[1].text.as_deref(), Some("world"));
     }
 }
