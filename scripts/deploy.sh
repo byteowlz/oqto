@@ -807,6 +807,31 @@ restart_single_user_service() {
     fi
 }
 
+restart_all_multi_user_runners() {
+    local is_local="$1" ssh_target="$2"
+
+    # Reconcile per-user runner service files first.
+    host_exec "$is_local" "$ssh_target" "oqtoctl user sync-configs" || true
+
+    # Restart/provision each user runner via usermgr API path.
+    host_exec "$is_local" "$ssh_target" '
+        users_json="$(oqtoctl user list --json 2>/dev/null || echo "[]")"
+        python3 - "$users_json" <<"PY"
+import json, subprocess, sys
+raw = sys.argv[1] if len(sys.argv) > 1 else "[]"
+try:
+    users = json.loads(raw)
+except Exception:
+    users = []
+for u in users:
+    username = u.get("username")
+    if not username:
+        continue
+    subprocess.run(["oqtoctl", "user", "setup-runner", username], check=False)
+PY
+    ' || true
+}
+
 restart_services_ordered() {
     local is_local="$1" ssh_target="$2" mode="$3" services="$4"
 
@@ -820,28 +845,28 @@ restart_services_ordered() {
         # This keeps Docker/non-systemd environments working.
         restart_single_user_service "$is_local" "$ssh_target" "oqto-runner"
         restart_single_user_service "$is_local" "$ssh_target" "oqto"
+        restart_single_user_service "$is_local" "$ssh_target" "hstry"
+        restart_single_user_service "$is_local" "$ssh_target" "mmry"
 
         local svc
         for svc in $services; do
-            if [[ "$svc" == "oqto" || "$svc" == "oqto-runner" ]]; then
+            if [[ "$svc" == "oqto" || "$svc" == "oqto-runner" || "$svc" == "hstry" || "$svc" == "mmry" ]]; then
                 continue
             fi
             restart_single_user_service "$is_local" "$ssh_target" "$svc"
         done
     else
-        # Multi-user: runner is per-user, oqto is system service
-        host_exec "$is_local" "$ssh_target" "systemctl --user restart oqto-runner" || true
+        # Multi-user: oqto is system service; user runners/hstry are managed per-user via oqtoctl/usermgr.
         host_exec_sudo "$is_local" "$ssh_target" "systemctl restart oqto" || true
+        restart_all_multi_user_runners "$is_local" "$ssh_target"
 
         local svc
         for svc in $services; do
-            if [[ "$svc" == "oqto" || "$svc" == "oqto-runner" ]]; then
+            if [[ "$svc" == "oqto" || "$svc" == "oqto-runner" || "$svc" == "hstry" || "$svc" == "mmry" ]]; then
                 continue
             fi
             host_exec_sudo "$is_local" "$ssh_target" "systemctl restart '$svc'" || true
         done
-
-        host_exec "$is_local" "$ssh_target" "oqtoctl user sync-configs" || true
     fi
 }
 
@@ -857,7 +882,7 @@ health_check_host() {
             return 1
         fi
 
-        local ok_backend="false" ok_runner="false" ok_deps="false"
+        local ok_backend="false" ok_runner="false" ok_hstry="false" ok_deps="false"
 
         if host_exec "$is_local" "$ssh_target" "curl -sf http://127.0.0.1:8080/api/health >/dev/null"; then
             ok_backend="true"
@@ -867,15 +892,46 @@ health_check_host() {
             if host_exec "$is_local" "$ssh_target" "uid=\$(id -u); test -S /run/user/\${uid}/oqto-runner.sock"; then
                 ok_runner="true"
             fi
+            # Single-user hstry must be connectable (not just binary present).
+            if host_exec "$is_local" "$ssh_target" "hstry service status 2>/dev/null | grep -qi running"; then
+                ok_hstry="true"
+            fi
         else
-            ok_runner="true"
+            # Multi-user: ensure at least one installed user's runner socket exists.
+            if host_exec "$is_local" "$ssh_target" '
+                users_json="$(oqtoctl user list --json 2>/dev/null || echo "[]")"
+                python3 - "$users_json" <<"PY"
+import json, os, sys
+raw = sys.argv[1] if len(sys.argv) > 1 else "[]"
+try:
+    users = json.loads(raw)
+except Exception:
+    users = []
+installed = [u for u in users if u.get("runner_installed")]
+if not installed:
+    sys.exit(0)
+for u in installed:
+    name = u.get("username")
+    if not name:
+        continue
+    sock = f"/run/oqto/runner-sockets/{name}/oqto-runner.sock"
+    if os.path.exists(sock):
+        sys.exit(0)
+sys.exit(1)
+PY
+            '; then
+                ok_runner="true"
+            fi
+            # In multi-user mode, hstry is per-user via runner; backend must be
+            # healthy and runner sockets present.
+            ok_hstry="true"
         fi
 
         if host_exec "$is_local" "$ssh_target" "command -v hstry >/dev/null && command -v mmry >/dev/null"; then
             ok_deps="true"
         fi
 
-        if [[ "$ok_backend" == "true" && "$ok_runner" == "true" && "$ok_deps" == "true" ]]; then
+        if [[ "$ok_backend" == "true" && "$ok_runner" == "true" && "$ok_hstry" == "true" && "$ok_deps" == "true" ]]; then
             return 0
         fi
 

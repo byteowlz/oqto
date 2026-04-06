@@ -1385,7 +1385,10 @@ mod tests {
         let resolved = resolve_conversation_identity(&pool, "oqto-1", None)
             .await
             .expect("resolve should succeed");
-        assert_eq!(resolved, Some(("conv_new".to_string(), Some("oqto-1".to_string()))));
+        assert_eq!(
+            resolved,
+            Some(("conv_new".to_string(), Some("oqto-1".to_string())))
+        );
     }
 
     #[tokio::test]
