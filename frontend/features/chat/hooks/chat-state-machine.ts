@@ -1,3 +1,12 @@
+/**
+ * Chat state machine.
+ *
+ * Tracks session identity, agent turn lifecycle, transport state, and message
+ * sync revision. With the runner message buffer as single authority for active
+ * sessions, the state machine no longer needs to track which source to trust
+ * or what merge mode to use — all server data is authoritative.
+ */
+
 export type SessionIdentityState =
 	| { kind: "unbound"; clientId: string }
 	| { kind: "bound"; runnerId: string; hstryId?: string; piId?: string };
@@ -6,7 +15,7 @@ export type TurnState =
 	| { kind: "idle" }
 	| { kind: "sending"; commandId?: string; clientMessageId?: string }
 	| { kind: "streaming"; turnId?: string }
-	| { kind: "reconciling"; reason: "idle" | "resync" | "reconnect" }
+	| { kind: "syncing" }
 	| { kind: "error"; recoverable: boolean; message: string };
 
 export type TransportState =
@@ -15,18 +24,8 @@ export type TransportState =
 	| { kind: "connected"; epoch: number }
 	| { kind: "reconnecting"; epoch: number };
 
-export type MessageSyncSource =
-	| "history"
-	| "resync"
-	| "ws_get_messages"
-	| "ws_messages"
-	| "watchdog";
-
-export type MessageMergeMode = "authoritative" | "partial";
-
 export interface MessageSyncState {
 	phase: "idle" | "syncing";
-	lastSource?: MessageSyncSource;
 	revision: number;
 }
 
@@ -110,11 +109,11 @@ export function transitionTurn(
 	const allowed: Record<TurnState["kind"], TurnState["kind"][]> = {
 		// Allow idle -> streaming for runner-initiated turns where we receive
 		// stream.message_start without a local send() transition first.
-		idle: ["sending", "streaming", "reconciling", "error", "idle"],
-		sending: ["streaming", "reconciling", "error", "idle"],
-		streaming: ["reconciling", "error", "idle", "streaming"],
-		reconciling: ["idle", "streaming", "error", "reconciling"],
-		error: ["idle", "reconciling", "sending", "error"],
+		idle: ["sending", "streaming", "syncing", "error", "idle"],
+		sending: ["streaming", "syncing", "error", "idle"],
+		streaming: ["syncing", "error", "idle", "streaming"],
+		syncing: ["idle", "streaming", "error", "syncing"],
+		error: ["idle", "syncing", "sending", "error"],
 	};
 
 	if (!allowed[from].includes(to)) {
@@ -149,43 +148,30 @@ export function deriveUiFlags(turn: TurnState): {
 	};
 }
 
-export function beginMessageSync(
-	machine: ChatStateMachine,
-	source: MessageSyncSource,
-): ChatStateMachine {
+/**
+ * Begin a message sync operation. Bumps the sync state to "syncing".
+ */
+export function beginMessageSync(machine: ChatStateMachine): ChatStateMachine {
 	return {
 		...machine,
 		sync: {
 			...machine.sync,
 			phase: "syncing",
-			lastSource: source,
 		},
 	};
 }
 
+/**
+ * Complete a message sync operation. Bumps the revision counter.
+ */
 export function completeMessageSync(
 	machine: ChatStateMachine,
-	source: MessageSyncSource,
 ): ChatStateMachine {
 	return {
 		...machine,
 		sync: {
 			phase: "idle",
-			lastSource: source,
 			revision: machine.sync.revision + 1,
 		},
 	};
-}
-
-export function selectMessageMergeMode(
-	_machine: ChatStateMachine,
-	source: MessageSyncSource,
-): MessageMergeMode {
-	// Only hstry-backed history is guaranteed complete. All other sync sources
-	// (ws_get_messages/resync/ws_messages/watchdog) can be partial snapshots
-	// from a live Pi context window, so they must never replace local history.
-	if (source === "history") {
-		return "authoritative";
-	}
-	return "partial";
 }

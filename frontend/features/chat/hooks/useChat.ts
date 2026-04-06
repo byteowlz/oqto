@@ -42,14 +42,12 @@ import {
 	writeCachedSessionMessages,
 } from "./cache";
 import {
-	type MessageSyncSource,
 	beginMessageSync,
 	bindIdentity,
 	completeMessageSync,
 	createInitialChatStateMachine,
 	deriveUiFlags,
 	resetIdentity,
-	selectMessageMergeMode,
 	transitionTransport,
 	transitionTurn,
 } from "./chat-state-machine";
@@ -164,7 +162,6 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 	const persistedMessageVersionRef = useRef<number | null>(null);
 	// (deferredServerMessagesRef removed — messages are always merged immediately)
 	// Force a full server sync after reattaching to an active runner session.
-	const forceMessageSyncRef = useRef<Set<string>>(new Set());
 	// Stable ref for the agent event handler so the subscription effect doesn't
 	// re-run when callback identity changes (which would reset streaming state).
 	const handleAgentEventRef = useRef<((event: AgentWsEvent) => void) | null>(
@@ -276,7 +273,6 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 	const applyServerMessages = useCallback(
 		(
 			rawMessages: RawMessage[] | unknown[],
-			source: MessageSyncSource,
 			sessionId: string,
 			serverVersion?: number,
 		) => {
@@ -287,24 +283,25 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 				);
 			}
 			if (!Array.isArray(rawMessages) || rawMessages.length === 0) return;
-			machineRef.current = beginMessageSync(machineRef.current, source);
+			machineRef.current = beginMessageSync(machineRef.current);
 			const displayMessages = normalizeMessages(
 				rawMessages as RawMessage[],
-				`${source}-${sessionId}`,
+				`srv-${sessionId}`,
 			);
 			if (displayMessages.length === 0) {
-				machineRef.current = completeMessageSync(machineRef.current, source);
+				machineRef.current = completeMessageSync(machineRef.current);
 				return;
 			}
-			const mergeMode = selectMessageMergeMode(machineRef.current, source);
+			// Always authoritative: the runner buffer / hstry is the single source
+			// of truth. Preserve only in-flight optimistic messages.
 			setMessages((prev) =>
-				mergeServerMessages(prev, displayMessages, mergeMode),
+				mergeServerMessages(prev, displayMessages, "authoritative"),
 			);
 			const lastAssistant = [...displayMessages]
 				.reverse()
 				.find((msg) => msg.role === "assistant");
 			lastAssistantMessageIdRef.current = lastAssistant?.id ?? null;
-			machineRef.current = completeMessageSync(machineRef.current, source);
+			machineRef.current = completeMessageSync(machineRef.current);
 		},
 		[],
 	);
@@ -543,7 +540,6 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 				}
 				applyServerMessages(
 					history as RawMessage[],
-					"history",
 					sessionId,
 					expectedVersion,
 				);
@@ -1066,7 +1062,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 					// subsequent assistant turn) creates a new message.
 					onMessageComplete?.(updated);
 					streamingMessageRef.current = null;
-					applyTurnState({ kind: "reconciling", reason: "idle" });
+					applyTurnState({ kind: "syncing" });
 					break;
 				}
 
@@ -1090,7 +1086,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 							throttleFlushTimerRef.current = null;
 						}
 					}
-					applyTurnState({ kind: "reconciling", reason: "idle" });
+					applyTurnState({ kind: "syncing" });
 					// Clear transient error banner (retry indicators).
 					// Permanent errors are in hstry and render as messages.
 					setError(null);
@@ -1127,7 +1123,6 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 								const manager = getWsManager();
 								manager.agentGetState(sessionId);
 								if (needsSync) {
-									forceMessageSyncRef.current.delete(sessionId);
 									void fetchHistoryMessages(
 										sessionId,
 										Number.isFinite(messageVersion)
@@ -1187,7 +1182,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 					const resyncSessionId =
 						event.session_id ?? activeSessionIdRef.current;
 					if (resyncSessionId) {
-						applyTurnState({ kind: "reconciling", reason: "resync" });
+						applyTurnState({ kind: "syncing" });
 						const manager = getWsManager();
 						manager.agentGetState(resyncSessionId);
 						void fetchHistoryMessages(resyncSessionId);
@@ -1457,7 +1452,6 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 					if (Array.isArray(msgs)) {
 						applyServerMessages(
 							msgs,
-							"ws_messages",
 							event.session_id ?? activeSessionIdRef.current ?? "unknown",
 						);
 						if (isPiDebugEnabled()) {
@@ -1543,7 +1537,6 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 									!isStreamingRef.current &&
 									!sendInFlightRef.current
 								) {
-									forceMessageSyncRef.current.delete(event.session_id);
 									void fetchHistoryMessages(event.session_id);
 									if (isPiDebugEnabled()) {
 										console.debug(
@@ -1609,7 +1602,6 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 							// Always merge immediately as a server upsert.
 							// get_messages can be partial in live Pi paths, so
 							// reconciliation stays strictly id/client_id based.
-							forceMessageSyncRef.current.delete(event.session_id ?? "");
 							if (resp.success && resp.data) {
 								const data = resp.data as {
 									messages?: RawMessage[];
@@ -1623,7 +1615,6 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 								if (Array.isArray(msgs)) {
 									applyServerMessages(
 										msgs,
-										"ws_get_messages",
 										event.session_id ?? activeSessionIdRef.current ?? "unknown",
 										serverVersion,
 									);
@@ -2234,11 +2225,10 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 		return unsubscribe;
 	}, [applyTurnState, clearResponseWatchdog, runReconnectReconcile]);
 
-	// Periodic sync + watchdog: while streaming, periodically fetch
-	// authoritative messages so the UI stays current even if WS events
-	// are dropped (broadcast overflow, flaky connection, etc.).
-	// Also acts as a watchdog: if no events arrive for too long, clear
-	// the stuck spinner state.
+	// Watchdog: while streaming, periodically check for stalled connections.
+	// The runner message buffer is always current, so a simple get_messages
+	// call self-heals any dropped WebSocket events.
+	// useeffect-guardrail: allow
 	useEffect(() => {
 		if (!isConnected) return;
 		if (!activeSessionId) return;
@@ -2247,19 +2237,14 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 		const manager = getWsManager();
 		const sessionId = activeSessionId;
 
-		// Periodic message sync every 5s while streaming.
-		// Uses get_messages (which triggers a "partial" merge via the
-		// get_messages response handler) so in-flight streaming messages
-		// and optimistic user messages are never clobbered.
-		// Do NOT call fetchHistoryMessages here — it uses "authoritative"
-		// mode which replaces all local messages with hstry data and can
-		// drop messages that haven't been persisted yet.
+		// Periodic sync every 5s: fetch from runner buffer to repair any
+		// dropped streaming events. Buffer is authoritative.
 		const syncTimer = setInterval(() => {
 			if (activeSessionIdRef.current !== sessionId) return;
 			manager.agentGetMessages(sessionId);
 		}, 5000);
 
-		// Watchdog: detect stalled streaming faster.
+		// Watchdog: detect stalled streaming.
 		const watchdogTimer = setInterval(() => {
 			const idleMs = Date.now() - lastAgentEventAtRef.current;
 			if (idleMs < 8000) return;
@@ -2272,8 +2257,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 
 			manager.agentGetState(sessionId);
 
-			// After 12s of silence, stop showing an infinite spinner
-			// and do an authoritative recovery from hstry.
+			// After 12s of silence, recover from hstry and clear spinner.
 			if (idleMs >= 12000) {
 				applyTurnState({ kind: "idle" });
 				void fetchHistoryMessages(sessionId);
@@ -2283,8 +2267,6 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 					),
 				);
 			} else {
-				// Still potentially streaming (e.g. long tool call).
-				// Use partial merge to avoid clobbering in-flight messages.
 				manager.agentGetMessages(sessionId);
 			}
 		}, 2000);
@@ -2441,11 +2423,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 				// (not the full history), so replacing would discard earlier turns.
 				// Also fetch from hstry for the complete history.
 				if (serverMessages.length > 0) {
-					applyServerMessages(
-						serverMessages as RawMessage[],
-						"resync",
-						_sessionId,
-					);
+					applyServerMessages(serverMessages as RawMessage[], _sessionId);
 				}
 
 				// Reset throttle state since we just rebuilt everything
