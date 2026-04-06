@@ -212,6 +212,69 @@ async fn get_cached_pi_messages(
     None
 }
 
+fn workspace_chat_messages_to_json(
+    messages: Vec<crate::runner::protocol::ChatMessageProto>,
+) -> serde_json::Value {
+    let mapped: Vec<serde_json::Value> = messages
+        .into_iter()
+        .map(|m| {
+            let parts: Vec<serde_json::Value> = m
+                .parts
+                .into_iter()
+                .map(|p| {
+                    let mut part = serde_json::Map::new();
+                    part.insert("id".to_string(), serde_json::Value::String(p.id));
+                    part.insert(
+                        "type".to_string(),
+                        serde_json::Value::String(p.part_type),
+                    );
+                    if let Some(text) = p.text {
+                        part.insert("text".to_string(), serde_json::Value::String(text));
+                    }
+                    if let Some(tool_name) = p.tool_name {
+                        part.insert("name".to_string(), serde_json::Value::String(tool_name));
+                    }
+                    if let Some(tool_call_id) = p.tool_call_id {
+                        part.insert(
+                            "toolCallId".to_string(),
+                            serde_json::Value::String(tool_call_id.clone()),
+                        );
+                        part.insert(
+                            "tool_use_id".to_string(),
+                            serde_json::Value::String(tool_call_id),
+                        );
+                    }
+                    if let Some(tool_input) = p.tool_input {
+                        part.insert("input".to_string(), tool_input);
+                    }
+                    if let Some(tool_output) = p.tool_output {
+                        part.insert(
+                            "output".to_string(),
+                            serde_json::Value::String(tool_output),
+                        );
+                    }
+                    if let Some(tool_status) = p.tool_status {
+                        part.insert("status".to_string(), serde_json::Value::String(tool_status));
+                    }
+                    serde_json::Value::Object(part)
+                })
+                .collect();
+
+            serde_json::json!({
+                "id": m.id,
+                "role": m.role,
+                "created_at": m.created_at,
+                "parts": parts,
+                "content": parts,
+                "model": m.model_id,
+                "provider": m.provider_id,
+            })
+        })
+        .collect();
+
+    serde_json::Value::Array(mapped)
+}
+
 async fn read_hstry_message_version_snapshot(
     session_id: &str,
     _workspace: Option<String>,
@@ -2115,15 +2178,53 @@ async fn handle_get_messages(
             Value::Object(data)
         };
 
-    // When the session is ACTIVE (has a running Pi process + subscription),
-    // prefer Pi's live messages over hstry. Pi has the complete current-turn
-    // context including messages not yet persisted to hstry. Without this,
-    // the frontend misses in-progress tool calls, streaming responses, and
-    // any messages between the last hstry persist and now.
+    // When the session is ACTIVE, prefer runner's workspace chat message path
+    // for workspace/pi sessions. It preserves structured parts and stable ids.
+    // Falling back to legacy Pi get_messages can flatten assistant parts.
     if is_active {
-        // Use a short timeout: Pi may be busy with an LLM request and the
-        // runner's get_messages RPC can hang for 10+s. Fall through to
-        // hstry/cache quickly rather than blocking the WS response.
+        let workspace_scoped = session_meta
+            .as_ref()
+            .and_then(|m| m.scope.as_deref())
+            .is_some_and(|scope| scope == "workspace" || scope == "pi");
+
+        if workspace_scoped {
+            let workspace_result = tokio::time::timeout(
+                std::time::Duration::from_secs(3),
+                runner.get_workspace_chat_session_messages(session_id, false, None),
+            )
+            .await;
+
+            match workspace_result {
+                Ok(Ok(resp)) if !resp.messages.is_empty() => {
+                    let messages_value = workspace_chat_messages_to_json(resp.messages);
+                    cache_pi_messages(user_id, session_id, &messages_value).await;
+                    return Some(agent_response(
+                        session_id,
+                        id,
+                        "get_messages",
+                        Ok(Some(response_data(
+                            messages_value,
+                            persisted_message_version.clone(),
+                        ))),
+                    ));
+                }
+                Ok(Ok(_)) => {}
+                Ok(Err(e)) => {
+                    debug!(
+                        "get_messages: active workspace query failed for {}: {}, falling through",
+                        session_id, e
+                    );
+                }
+                Err(_) => {
+                    debug!(
+                        "get_messages: active workspace query timed out for {}, falling through",
+                        session_id,
+                    );
+                }
+            }
+        }
+
+        // Non-workspace fallback: live Pi get_messages.
         let pi_result = tokio::time::timeout(
             std::time::Duration::from_secs(3),
             runner.agent_get_messages(session_id),
@@ -2144,8 +2245,6 @@ async fn handle_get_messages(
                 ));
             }
             Ok(Err(e)) => {
-                // Pi process may have exited between subscription and now.
-                // Fall through to hstry/cache as fallback.
                 debug!(
                     "get_messages: active session Pi query failed for {}: {}, falling through to hstry",
                     session_id, e
