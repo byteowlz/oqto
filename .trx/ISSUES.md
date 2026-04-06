@@ -42,6 +42,8 @@ setup.sh must correctly provision everything for a new platform user on a fresh 
 ...
 
 
+### [oqto-fmbr] Duplicate messages in hstry from repeated persist_to_hstry_grpc calls (P1, bug)
+
 ### [oqto-57nd] Runner: transactional fork state machine (single in-flight fork per session) (P1, feature)
 
 ### [oqto-ep9v] Deploy preflight: fix hstry schema check shell quoting (line 489) (P1, bug)
@@ -2382,13 +2384,13 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
-- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
-- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
 - [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
-- [oqto-4ryr] Session rename reverts: update_chat_session returns external_id while list returns platform_id (closed )
-- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
 - [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
-- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
+- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
 - [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
+- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
+- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
+- [oqto-4ryr] Session rename reverts: update_chat_session returns external_id while list returns platform_id (closed )
 - [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
+- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )

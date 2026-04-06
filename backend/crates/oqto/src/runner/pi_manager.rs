@@ -628,6 +628,8 @@ impl PiSessionManager {
             // Fallback: resolve external_id directly from local hstry DB by
             // deterministic identity (external/platform/internal; readable only
             // when unique), then locate Pi session file.
+            // Direct SQLite read is intentional here -- the runner runs as the
+            // target user on the same machine, so this is fast and secure.
             if found.is_none()
                 && let Some(db_path) = crate::history::hstry_db_path()
                 && let Ok(pool) = crate::history::repository::open_hstry_pool(&db_path).await
@@ -4470,20 +4472,6 @@ impl PiSessionManager {
         )
         .await?;
 
-        let jsonl_indices =
-            resolve_jsonl_message_indices(hstry_external_id, work_dir, messages).await;
-        let needs_fallback = jsonl_indices
-            .as_ref()
-            .map(|indices| indices.iter().any(|value| value.is_none()))
-            .unwrap_or(true);
-        let fallback_start_idx = if needs_fallback {
-            fetch_last_hstry_idx(client, hstry_external_id)
-                .await
-                .map(|idx| idx + 1)
-        } else {
-            None
-        };
-
         let jsonl_title = resolve_jsonl_session_title(hstry_external_id, work_dir).await;
         let (title, readable_id) = jsonl_title
             .as_deref()
@@ -4496,82 +4484,47 @@ impl PiSessionManager {
             })
             .unwrap_or((None, None));
 
-        // Convert messages to proto format.
-        // Use AppendMessages if the conversation likely exists (most common case),
-        // falling back to WriteConversation if not found.
-        // Guard against compaction: if Pi's message count is fewer than what's
-        // already in hstry, a context compaction happened. Don't overwrite the
-        // complete history with the truncated context window — only update
-        // metadata/stats.
+        // Guard against compaction: if Pi's message count is fewer than
+        // what hstry already has, a context compaction happened. Don't
+        // overwrite the complete history with the truncated window -- only
+        // update metadata/stats. Uses gRPC (not direct SQLite).
         let existing_max_idx = fetch_last_hstry_idx(client, hstry_external_id).await;
-        let skip_messages = if let Some(max_idx) = existing_max_idx {
+        if let Some(max_idx) = existing_max_idx {
             let existing_count = (max_idx + 1) as usize;
             if messages.len() < existing_count {
-                // Compaction can reduce Pi's in-memory message window, but the
-                // current window may still contain *new* messages that have not
-                // been persisted yet (e.g. final assistant reply after tool use).
-                // If JSONL index mapping shows any message idx beyond current
-                // hstry max_idx, we must persist instead of skipping.
-                let has_newer_jsonl_idx = jsonl_indices
-                    .as_ref()
-                    .map(|indices| indices.iter().flatten().any(|idx| *idx > max_idx))
-                    .unwrap_or(false);
-
-                if has_newer_jsonl_idx {
-                    info!(
-                        "Compacted Pi window detected ({} < {}) but found JSONL idx newer than hstry max_idx={} — persisting messages.",
-                        messages.len(),
-                        existing_count,
-                        max_idx,
-                    );
-                    false
-                } else {
-                    info!(
-                        "Skipping hstry message persist: Pi has {} messages but hstry already has {} \
-                         (context compaction detected, no newer JSONL idx). Updating metadata only.",
-                        messages.len(),
-                        existing_count,
-                    );
-                    true
-                }
-            } else {
-                false
-            }
-        } else {
-            false
-        };
-
-        if skip_messages {
-            // Update metadata (stats, title, platform_id, etc.), don't touch messages.
-            // Always call update to ensure platform_id is set even when no other
-            // metadata has changed.
-            let _ = client
-                .update_conversation(
-                    hstry_external_id,
-                    title,
-                    Some(work_dir.to_string_lossy().to_string()),
-                    None,
-                    None,
-                    Some(metadata_json),
-                    readable_id,
-                    Some("pi".to_string()),
-                    Some(oqto_session_id.to_string()),
-                )
-                .await;
-
-            if let Ok(repaired) =
-                reconcile_hstry_with_jsonl_tail(client, hstry_external_id, work_dir).await
-                && repaired > 0
-            {
-                warn!(
-                    "Reconciled {} missing JSONL message(s) into hstry for '{}' after compaction skip",
-                    repaired, hstry_external_id
+                info!(
+                    "Skipping hstry message persist: Pi has {} messages but hstry already has {} \
+                     (context compaction detected). Updating metadata only.",
+                    messages.len(),
+                    existing_count,
                 );
+                let _ = client
+                    .update_conversation(
+                        hstry_external_id,
+                        title,
+                        Some(work_dir.to_string_lossy().to_string()),
+                        None,
+                        None,
+                        Some(metadata_json),
+                        readable_id,
+                        Some("pi".to_string()),
+                        Some(oqto_session_id.to_string()),
+                    )
+                    .await;
+                return Ok(());
             }
-
-            return Ok(());
         }
 
+        // Convert messages to proto format using position-based indices.
+        // Pi sends the complete message array (position 0..N). hstry uses
+        // ON CONFLICT(conversation_id, idx) DO UPDATE, so using `i` as idx
+        // is idempotent: repeated persists upsert in place rather than
+        // creating duplicates.
+        //
+        // REMOVED: resolve_jsonl_message_indices + fallback_start_idx.
+        // That approach used (hstry_max_idx + 1 + i) which appended at
+        // ever-increasing indices, causing duplicate messages on every
+        // incremental persist + AgentEnd cycle. (oqto-fmbr)
         let last_user_idx = messages
             .iter()
             .rposition(|msg| matches!(msg.role.as_str(), "user" | "human"));
@@ -4585,14 +4538,7 @@ impl PiSessionManager {
                 } else {
                     None
                 };
-                let jsonl_idx = jsonl_indices
-                    .as_ref()
-                    .and_then(|indices| indices.get(i))
-                    .and_then(|value| *value);
-                let idx = jsonl_idx
-                    .or_else(|| fallback_start_idx.map(|base| base + i as i32))
-                    .unwrap_or(i as i32);
-                agent_message_to_proto_with_client_id(msg, idx, client_id_for_msg)
+                agent_message_to_proto_with_client_id(msg, i as i32, client_id_for_msg)
             })
             .collect();
 

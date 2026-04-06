@@ -300,6 +300,32 @@ function coerceBlockToPart(b: Record<string, unknown>): DisplayPart | null {
 		};
 	}
 
+	// --- heuristic: Pi tool_use blocks stored without a type field ---
+	// Pi stores tool calls as {arguments, id, name, partialJson} without
+	// type: "tool_use". Detect by presence of `arguments` + `name`.
+	if (
+		!blockType &&
+		"arguments" in b &&
+		typeof b.name === "string"
+	) {
+		return {
+			type: "tool_call",
+			id: (typeof b.id === "string" && b.id) || nextPartId(),
+			toolCallId:
+				(typeof b.id === "string" && b.id) ||
+				(typeof b.toolCallId === "string" && b.toolCallId) ||
+				"",
+			name: b.name as string,
+			input:
+				typeof b.arguments === "object" && b.arguments !== null
+					? b.arguments
+					: b.input,
+			status: (typeof b.status === "string"
+				? b.status
+				: "success") as ToolStatus,
+		};
+	}
+
 	return null;
 }
 
