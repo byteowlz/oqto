@@ -124,12 +124,15 @@ impl HstryServiceManager {
         info!("hstry service start succeeded: {}", stdout.trim());
 
         // Wait for the daemon to become ready. If startup races with stale
-        // state, do one restart attempt before giving up.
+        // state, try adapter refresh + restart once before giving up.
         if let Err(first_err) = self.wait_for_ready().await {
             debug!(
-                "hstry not ready after start ({}); attempting one restart",
+                "hstry not ready after start ({}); attempting adapter refresh + restart",
                 first_err
             );
+            if let Err(e) = self.update_adapters().await {
+                debug!("hstry adapters update failed (continuing): {}", e);
+            }
             self.restart().await?;
             self.wait_for_ready().await?;
         }
@@ -157,6 +160,29 @@ impl HstryServiceManager {
         }
 
         self.wait_for_ready().await
+    }
+
+    /// Best-effort adapter refresh for binary/adapter version drift.
+    async fn update_adapters(&self) -> Result<()> {
+        let output = Command::new(&self.config.binary)
+            .args(["adapters", "update"])
+            .output()
+            .await
+            .context("Failed to run hstry adapters update")?;
+
+        if output.status.success() {
+            info!("hstry adapters updated successfully");
+            return Ok(());
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!(
+            "hstry adapters update failed (exit {}): {}{}",
+            output.status,
+            stdout,
+            stderr
+        )
     }
 
     /// Wait for the daemon to become ready (socket/port connectivity).

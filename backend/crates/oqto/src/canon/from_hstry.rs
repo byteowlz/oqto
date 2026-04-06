@@ -312,13 +312,13 @@ fn parse_hstry_parts(parts_json: Option<&str>, content: &str, message_id: &str) 
     let mut parts = Vec::new();
 
     if let Some(json_str) = parts_json {
-        if let Ok(Value::Array(values)) = serde_json::from_str(json_str) {
-            for (idx, value) in values.iter().enumerate() {
-                if let Some(part) = parse_single_part(value, message_id, idx) {
-                    parts.push(part);
-                }
-            }
-        }
+        append_canon_parts_from_json_array_stream(&mut parts, json_str, message_id);
+    }
+
+    // Repair malformed legacy payloads where multiple JSON arrays were
+    // concatenated into `content` (e.g. "[... ]\n\n[ ... ]").
+    if parts.is_empty() {
+        append_canon_parts_from_json_array_stream(&mut parts, content, message_id);
     }
 
     // Fallback: if no parts parsed, create a text part from content
@@ -332,6 +332,37 @@ fn parse_hstry_parts(parts_json: Option<&str>, content: &str, message_id: &str) 
     }
 
     parts
+}
+
+fn parse_json_array_stream(raw: &str) -> Vec<Vec<Value>> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Vec::new();
+    }
+
+    let mut arrays = Vec::new();
+    let deserializer = serde_json::Deserializer::from_str(trimmed);
+    for value in deserializer.into_iter::<Value>() {
+        match value {
+            Ok(Value::Array(values)) => arrays.push(values),
+            Ok(_) => {}
+            Err(_) => return Vec::new(),
+        }
+    }
+
+    arrays
+}
+
+fn append_canon_parts_from_json_array_stream(parts: &mut Vec<CanonPart>, raw: &str, message_id: &str) {
+    let mut idx = parts.len();
+    for values in parse_json_array_stream(raw) {
+        for value in values {
+            if let Some(part) = parse_single_part(&value, message_id, idx) {
+                parts.push(part);
+                idx += 1;
+            }
+        }
+    }
 }
 
 /// Parse a single part from hstry's JSON format.
@@ -653,5 +684,23 @@ mod tests {
         assert_eq!(hstry_timestamp_ms(Some(1700000000000)), Some(1700000000000));
         // None
         assert_eq!(hstry_timestamp_ms(None), None);
+    }
+
+    #[test]
+    fn test_parse_hstry_parts_repairs_multi_array_content_blob() {
+        let content = r#"[{"type":"thinking","thinking":"hidden"},{"type":"text","text":"hello"}]
+
+[{"type":"text","text":"world"}]"#;
+        let parts = parse_hstry_parts(None, content, "msg_1");
+        assert_eq!(parts.len(), 2);
+
+        match &parts[0] {
+            CanonPart::Text { text, .. } => assert_eq!(text, "hello"),
+            _ => panic!("expected text part"),
+        }
+        match &parts[1] {
+            CanonPart::Text { text, .. } => assert_eq!(text, "world"),
+            _ => panic!("expected text part"),
+        }
     }
 }

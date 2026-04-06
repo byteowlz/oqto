@@ -527,16 +527,50 @@ async fn attempt_start_hstry_service() -> Result<()> {
         .await
         .context("failed to execute `hstry service start`")?;
 
-    if output.status.success() {
-        return Ok(());
-    }
-
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     let combined = format!("{}{}", stdout, stderr).to_lowercase();
 
-    if combined.contains("already running") {
+    if output.status.success() || combined.contains("already running") {
         return Ok(());
+    }
+
+    if combined.contains("adapter version mismatch") {
+        tracing::warn!("hstry adapter version mismatch detected; running `hstry adapters update`");
+        let upd = Command::new("hstry")
+            .args(["adapters", "update"])
+            .output()
+            .await
+            .context("failed to execute `hstry adapters update`")?;
+        if !upd.status.success() {
+            let uout = String::from_utf8_lossy(&upd.stdout);
+            let uerr = String::from_utf8_lossy(&upd.stderr);
+            anyhow::bail!(
+                "`hstry adapters update` failed (exit={}): {}{}",
+                upd.status,
+                uout,
+                uerr
+            );
+        }
+
+        let retry = Command::new("hstry")
+            .args(["service", "start"])
+            .output()
+            .await
+            .context("failed to execute retry `hstry service start`")?;
+        let rout = String::from_utf8_lossy(&retry.stdout);
+        let rerr = String::from_utf8_lossy(&retry.stderr);
+        let rcombined = format!("{}{}", rout, rerr).to_lowercase();
+        if retry.status.success() || rcombined.contains("already running") {
+            return Ok(());
+        }
+
+        anyhow::bail!(
+            "`hstry service start` failed after adapters update (exit={}): {}{}",
+            retry.status,
+            rout,
+            rerr
+        );
     }
 
     anyhow::bail!(
