@@ -612,34 +612,25 @@ impl PiSessionManager {
             }
 
             // Fallback: resolve external_id directly from local hstry DB by
-            // platform_id/readable_id/internal id, then locate Pi session file.
+            // deterministic identity (external/platform/internal; readable only
+            // when unique), then locate Pi session file.
             if found.is_none()
                 && let Some(db_path) = crate::history::hstry_db_path()
                 && let Ok(pool) = crate::history::repository::open_hstry_pool(&db_path).await
-                && let Ok(row_opt) = sqlx::query(
-                    r#"
-                    SELECT external_id
-                    FROM conversations
-                    WHERE source_id = 'pi' AND (platform_id = ? OR readable_id = ? OR id = ?)
-                    ORDER BY COALESCE(updated_at, created_at) DESC
-                    LIMIT 1
-                    "#,
+                && let Ok(identity_opt) = crate::history::repository::resolve_conversation_identity(
+                    &pool,
+                    &session_id,
+                    None,
                 )
-                .bind(&session_id)
-                .bind(&session_id)
-                .bind(&session_id)
-                .fetch_optional(&pool)
                 .await
-                && let Some(row) = row_opt
+                && let Some((_conversation_id, external_id)) = identity_opt
+                && let Some(pi_id) = external_id.filter(|s| !s.is_empty())
             {
-                let pi_id: Option<String> = row.try_get("external_id").ok().flatten();
-                if let Some(pi_id) = pi_id.filter(|s| !s.is_empty()) {
-                    debug!(
-                        "Resolved Pi native ID for '{}' via local hstry DB -> '{}'",
-                        session_id, pi_id
-                    );
-                    found = crate::pi::session_files::find_session_file(&pi_id, Some(&config.cwd));
-                }
+                debug!(
+                    "Resolved Pi native ID for '{}' via local hstry DB -> '{}'",
+                    session_id, pi_id
+                );
+                found = crate::pi::session_files::find_session_file(&pi_id, Some(&config.cwd));
             }
 
             found

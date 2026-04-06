@@ -242,14 +242,14 @@ async fn read_hstry_message_version_snapshot(
                (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) as message_count
         FROM conversations c
         WHERE c.source_id = 'pi'
-          AND (c.external_id = ? OR c.platform_id = ? OR c.readable_id = ? OR c.id = ?)
+          AND (c.external_id = ? OR c.platform_id = ? OR c.id = ?)
+        ORDER BY COALESCE(c.updated_at, c.created_at) DESC
         LIMIT 1
         "#;
 
     let mut row = None;
     for attempt in 0..3 {
         row = sqlx::query(query)
-            .bind(session_id)
             .bind(session_id)
             .bind(session_id)
             .bind(session_id)

@@ -92,14 +92,16 @@ pub async fn list_conversations_from_hstry(db_path: &Path) -> Result<Vec<CanonCo
     Ok(conversations)
 }
 
-/// Get a single conversation by ID (external_id, readable_id, or internal id).
+/// Get a single conversation by deterministic identity.
+///
+/// Priority: external_id/internal id, then readable_id only if unique.
 pub async fn get_conversation_from_hstry(
     session_id: &str,
     db_path: &Path,
 ) -> Result<Option<CanonConversation>> {
     let pool = open_hstry_pool(db_path).await?;
 
-    let row = sqlx::query(
+    let row = if let Some(row) = sqlx::query(
         r#"
         SELECT 
             c.id, c.external_id, c.readable_id, c.title, c.workspace,
@@ -108,18 +110,43 @@ pub async fn get_conversation_from_hstry(
             s.adapter as source_adapter
         FROM conversations c
         LEFT JOIN sources s ON c.source_id = s.id
-        WHERE c.external_id = ? OR c.readable_id = ? OR c.id = ?
+        WHERE c.external_id = ? OR c.id = ?
+        ORDER BY COALESCE(c.updated_at, c.created_at) DESC
         LIMIT 1
         "#,
     )
     .bind(session_id)
     .bind(session_id)
-    .bind(session_id)
     .fetch_optional(&pool)
-    .await?;
+    .await?
+    {
+        row
+    } else {
+        let rows = sqlx::query(
+            r#"
+            SELECT 
+                c.id, c.external_id, c.readable_id, c.title, c.workspace,
+                c.created_at, c.updated_at, c.model, c.tokens_in, c.tokens_out,
+                c.cost_usd, c.metadata,
+                s.adapter as source_adapter
+            FROM conversations c
+            LEFT JOIN sources s ON c.source_id = s.id
+            WHERE c.readable_id = ?
+            ORDER BY COALESCE(c.updated_at, c.created_at) DESC
+            LIMIT 2
+            "#,
+        )
+        .bind(session_id)
+        .fetch_all(&pool)
+        .await?;
 
-    let Some(row) = row else {
-        return Ok(None);
+        if rows.len() != 1 {
+            return Ok(None);
+        }
+        match rows.into_iter().next() {
+            Some(row) => row,
+            None => return Ok(None),
+        }
     };
 
     let id: String = row.get("id");
@@ -171,25 +198,41 @@ pub async fn get_messages_from_hstry(
 ) -> Result<Vec<CanonMessage>> {
     let pool = open_hstry_pool(db_path).await?;
 
-    // First find the conversation
-    let conversation_row = sqlx::query(
+    // First find the conversation deterministically.
+    let conversation_id = if let Some(row) = sqlx::query(
         r#"
         SELECT id
         FROM conversations
-        WHERE external_id = ? OR readable_id = ? OR id = ?
+        WHERE external_id = ? OR id = ?
+        ORDER BY COALESCE(updated_at, created_at) DESC
         LIMIT 1
         "#,
     )
     .bind(session_id)
     .bind(session_id)
-    .bind(session_id)
     .fetch_optional(&pool)
-    .await?;
+    .await?
+    {
+        row.get::<String, _>("id")
+    } else {
+        let rows = sqlx::query(
+            r#"
+            SELECT id
+            FROM conversations
+            WHERE readable_id = ?
+            ORDER BY COALESCE(updated_at, created_at) DESC
+            LIMIT 2
+            "#,
+        )
+        .bind(session_id)
+        .fetch_all(&pool)
+        .await?;
 
-    let Some(conversation_row) = conversation_row else {
-        return Ok(Vec::new());
+        if rows.len() != 1 {
+            return Ok(Vec::new());
+        }
+        rows[0].get::<String, _>("id")
     };
-    let conversation_id: String = conversation_row.get("id");
 
     let rows = sqlx::query(
         r#"

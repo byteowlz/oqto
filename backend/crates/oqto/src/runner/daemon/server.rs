@@ -1432,51 +1432,30 @@ impl Runner {
             }
         };
 
-        let conv_row = match sqlx::query(
-            r#"
-            SELECT id, external_id
-            FROM conversations
-            WHERE source_id = 'pi' AND (external_id = ? OR platform_id = ? OR readable_id = ? OR id = ?)
-            LIMIT 1
-            "#,
-        )
-        .bind(&req.session_id)
-        .bind(&req.session_id)
-        .bind(&req.session_id)
-        .bind(&req.session_id)
-        .fetch_optional(&pool)
-        .await
-        {
-            Ok(row) => row,
-            Err(e) => {
-                return error_response(
-                    ErrorCode::IoError,
-                    format!("Failed to resolve conversation: {e}"),
-                );
-            }
-        };
+        let (conversation_id, resolved_external_id) =
+            match crate::history::repository::resolve_conversation_identity(
+                &pool,
+                &req.session_id,
+                None,
+            )
+            .await
+            {
+                Ok(Some(identity)) => identity,
+                Ok(None) => {
+                    return RunnerResponse::MainChatMessages(MainChatMessagesResponse {
+                        session_id: req.session_id,
+                        messages: Vec::new(),
+                    });
+                }
+                Err(e) => {
+                    return error_response(
+                        ErrorCode::IoError,
+                        format!("Failed to resolve conversation: {e}"),
+                    );
+                }
+            };
 
-        let Some(conv_row) = conv_row else {
-            return RunnerResponse::MainChatMessages(MainChatMessagesResponse {
-                session_id: req.session_id,
-                messages: Vec::new(),
-            });
-        };
-
-        let conversation_id: String = match conv_row.try_get("id") {
-            Ok(v) => v,
-            Err(e) => {
-                return error_response(
-                    ErrorCode::IoError,
-                    format!("Failed to read conversation id: {e}"),
-                );
-            }
-        };
-
-        let session_id: String = match conv_row.try_get::<Option<String>, _>("external_id") {
-            Ok(Some(v)) => v,
-            _ => req.session_id.clone(),
-        };
+        let session_id = resolved_external_id.unwrap_or_else(|| req.session_id.clone());
 
         let rows = if let Some(limit) = req.limit {
             match sqlx::query(
@@ -1588,25 +1567,36 @@ impl Runner {
             }
         };
 
-        let conv_row = match sqlx::query(
-            r#"
-            SELECT id, external_id
-            FROM conversations
-            WHERE source_id = 'pi'
-              AND (external_id = ? OR platform_id = ? OR readable_id = ? OR id = ?)
-              AND workspace = ?
-            LIMIT 1
-            "#,
+        let identity_in_workspace = crate::history::repository::resolve_conversation_identity(
+            &pool,
+            &req.session_id,
+            Some(&req.workspace_path),
         )
-        .bind(&req.session_id)
-        .bind(&req.session_id)
-        .bind(&req.session_id)
-        .bind(&req.session_id)
-        .bind(&req.workspace_path)
-        .fetch_optional(&pool)
-        .await
-        {
-            Ok(row) => row,
+        .await;
+
+        let (conversation_id, resolved_external_id) = match identity_in_workspace {
+            Ok(Some(identity)) => identity,
+            Ok(None) => match crate::history::repository::resolve_conversation_identity(
+                &pool,
+                &req.session_id,
+                None,
+            )
+            .await
+            {
+                Ok(Some(identity)) => identity,
+                Ok(None) => {
+                    return RunnerResponse::WorkspaceChatMessages(MainChatMessagesResponse {
+                        session_id: req.session_id,
+                        messages: Vec::new(),
+                    });
+                }
+                Err(e) => {
+                    return error_response(
+                        ErrorCode::IoError,
+                        format!("Failed to resolve conversation: {e}"),
+                    );
+                }
+            },
             Err(e) => {
                 return error_response(
                     ErrorCode::IoError,
@@ -1615,55 +1605,7 @@ impl Runner {
             }
         };
 
-        let conv_row = if let Some(row) = conv_row {
-            Some(row)
-        } else {
-            match sqlx::query(
-                r#"
-                SELECT id, external_id
-                FROM conversations
-                WHERE source_id = 'pi' AND (external_id = ? OR platform_id = ? OR readable_id = ? OR id = ?)
-                LIMIT 1
-                "#,
-            )
-            .bind(&req.session_id)
-            .bind(&req.session_id)
-            .bind(&req.session_id)
-            .bind(&req.session_id)
-            .fetch_optional(&pool)
-            .await
-            {
-                Ok(row) => row,
-                Err(e) => {
-                    return error_response(
-                        ErrorCode::IoError,
-                        format!("Failed to resolve conversation: {e}"),
-                    );
-                }
-            }
-        };
-
-        let Some(conv_row) = conv_row else {
-            return RunnerResponse::WorkspaceChatMessages(MainChatMessagesResponse {
-                session_id: req.session_id,
-                messages: Vec::new(),
-            });
-        };
-
-        let conversation_id: String = match conv_row.try_get("id") {
-            Ok(v) => v,
-            Err(e) => {
-                return error_response(
-                    ErrorCode::IoError,
-                    format!("Failed to read conversation id: {e}"),
-                );
-            }
-        };
-
-        let session_id: String = match conv_row.try_get::<Option<String>, _>("external_id") {
-            Ok(Some(v)) => v,
-            _ => req.session_id.clone(),
-        };
+        let session_id = resolved_external_id.unwrap_or_else(|| req.session_id.clone());
 
         let rows = if let Some(limit) = req.limit {
             match sqlx::query(
@@ -1896,6 +1838,28 @@ impl Runner {
             }
         };
 
+        let (conversation_id, _resolved_external_id) =
+            match crate::history::repository::resolve_conversation_identity(
+                &pool,
+                &req.session_id,
+                None,
+            )
+            .await
+            {
+                Ok(Some(identity)) => identity,
+                Ok(None) => {
+                    return RunnerResponse::WorkspaceChatSession(WorkspaceChatSessionResponse {
+                        session: None,
+                    });
+                }
+                Err(e) => {
+                    return error_response(
+                        ErrorCode::IoError,
+                        format!("Failed to resolve conversation: {e}"),
+                    );
+                }
+            };
+
         let row = match sqlx::query(
             r#"
             SELECT
@@ -1910,33 +1874,21 @@ impl Runner {
                 c.model,
                 c.provider
             FROM conversations c
-            LEFT JOIN messages m ON m.conversation_id = c.id
-            WHERE c.source_id = 'pi' AND (c.external_id = ? OR c.platform_id = ? OR c.readable_id = ? OR c.id = ?)
-            GROUP BY c.id
-            ORDER BY COUNT(m.id) DESC, COALESCE(c.updated_at, c.created_at) DESC
+            WHERE c.id = ?
             LIMIT 1
             "#,
         )
-        .bind(&req.session_id)
-        .bind(&req.session_id)
-        .bind(&req.session_id)
-        .bind(&req.session_id)
-        .fetch_optional(&pool)
+        .bind(&conversation_id)
+        .fetch_one(&pool)
         .await
         {
             Ok(row) => row,
             Err(e) => {
                 return error_response(
                     ErrorCode::IoError,
-                    format!("Failed to resolve conversation: {e}"),
+                    format!("Failed to load conversation: {e}"),
                 );
             }
-        };
-
-        let Some(row) = row else {
-            return RunnerResponse::WorkspaceChatSession(WorkspaceChatSessionResponse {
-                session: None,
-            });
         };
 
         let id: String = row.get("id");
