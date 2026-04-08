@@ -222,16 +222,6 @@ fn read_jsonl_agent_messages(path: &std::path::Path) -> Vec<crate::pi::AgentMess
     messages
 }
 
-async fn load_pi_jsonl_messages_for_session(
-    session_id: &str,
-) -> Option<Vec<crate::pi::AgentMessage>> {
-    let path =
-        crate::pi::session_files::find_session_file_async(session_id.to_string(), None).await?;
-    tokio::task::spawn_blocking(move || read_jsonl_agent_messages(&path))
-        .await
-        .ok()
-}
-
 fn scan_pi_jsonl_session_metadata(limit: Option<usize>) -> JsonlScanOutcome {
     let mut outcome = JsonlScanOutcome::default();
 
@@ -1963,6 +1953,10 @@ impl Runner {
         &self,
         req: GetWorkspaceChatSessionMessagesRequest,
     ) -> RunnerResponse {
+        // Durable authority: always read chat history from hstry projection.
+        // Active stream UI state is delivered via events, not this snapshot API.
+        let session_is_active = self.pi_manager.has_session(&req.session_id).await;
+
         let Some(db_path) = crate::history::hstry_db_path() else {
             return RunnerResponse::WorkspaceChatSessionMessages(
                 WorkspaceChatSessionMessagesResponse {
@@ -1987,130 +1981,62 @@ impl Runner {
             }
         };
 
-        // For active sessions, the runner maintains an authoritative in-memory
-        // message buffer (populated from AgentEnd and incremental persist).
-        // This replaces the old approach of calling Pi's get_messages RPC and
-        // merging with hstry -- the buffer IS the single source of truth.
-        let session_is_active = self.pi_manager.has_session(&req.session_id).await;
-        if session_is_active
-            && let Some(buffer) = self.pi_manager.get_message_buffer(&req.session_id).await
-            && !buffer.is_empty()
-        {
-            let start = req
-                .limit
-                .and_then(|limit| buffer.len().checked_sub(limit))
-                .unwrap_or(0);
-            return RunnerResponse::WorkspaceChatSessionMessages(
-                WorkspaceChatSessionMessagesResponse {
-                    session_id: req.session_id,
-                    messages: buffer.into_iter().skip(start).collect(),
-                },
-            );
-        }
+        let start = req
+            .limit
+            .and_then(|limit| messages.len().checked_sub(limit))
+            .unwrap_or(0);
 
-        // For inactive sessions created/continued outside Oqto (bare Pi),
-        // hstry can lag behind the JSONL source of truth. If JSONL has more
-        // messages, serve JSONL immediately so session opens are up-to-date.
-        if !session_is_active
-            && let Some(jsonl_messages) = load_pi_jsonl_messages_for_session(&req.session_id).await
-            && jsonl_messages.len() > messages.len()
-        {
-            let start = req
-                .limit
-                .and_then(|limit| jsonl_messages.len().checked_sub(limit))
-                .unwrap_or(0);
-            let session_id_clone = req.session_id.clone();
-            let mapped: Vec<ChatMessageProto> = jsonl_messages
-                .into_iter()
-                .enumerate()
-                .skip(start)
-                .map(|(idx, msg)| pi_agent_msg_to_chat_proto(msg, idx, &session_id_clone))
-                .collect();
-            return RunnerResponse::WorkspaceChatSessionMessages(
-                WorkspaceChatSessionMessagesResponse {
-                    session_id: req.session_id,
-                    messages: mapped,
-                },
-            );
-        }
+        let mapped: Vec<ChatMessageProto> = messages
+            .into_iter()
+            .skip(start)
+            .map(|message| {
+                let parts = message
+                    .parts
+                    .into_iter()
+                    .map(|part| ChatMessagePartProto {
+                        id: part.id,
+                        part_type: part.part_type,
+                        text: part.text,
+                        text_html: if req.render { part.text_html } else { None },
+                        tool_name: part.tool_name,
+                        tool_call_id: part.tool_call_id,
+                        tool_input: part.tool_input,
+                        tool_output: part.tool_output,
+                        tool_status: part.tool_status,
+                        tool_title: part.tool_title,
+                    })
+                    .collect();
 
-        // hstry-backed history (for inactive sessions, or Pi fallthrough above).
-        if !messages.is_empty() {
-            let start = req
-                .limit
-                .and_then(|limit| messages.len().checked_sub(limit))
-                .unwrap_or(0);
+                ChatMessageProto {
+                    id: message.id,
+                    session_id: message.session_id,
+                    role: message.role,
+                    created_at: message.created_at,
+                    completed_at: message.completed_at,
+                    parent_id: message.parent_id,
+                    model_id: message.model_id,
+                    provider_id: message.provider_id,
+                    agent: message.agent,
+                    summary_title: message.summary_title,
+                    tokens_input: message.tokens_input,
+                    tokens_output: message.tokens_output,
+                    tokens_reasoning: message.tokens_reasoning,
+                    cost: message.cost,
+                    parts,
+                }
+            })
+            .collect();
 
-            let mapped: Vec<ChatMessageProto> = messages
-                .into_iter()
-                .skip(start)
-                .map(|message| {
-                    let parts = message
-                        .parts
-                        .into_iter()
-                        .map(|part| ChatMessagePartProto {
-                            id: part.id,
-                            part_type: part.part_type,
-                            text: part.text,
-                            text_html: if req.render { part.text_html } else { None },
-                            tool_name: part.tool_name,
-                            tool_call_id: part.tool_call_id,
-                            tool_input: part.tool_input,
-                            tool_output: part.tool_output,
-                            tool_status: part.tool_status,
-                            tool_title: part.tool_title,
-                        })
-                        .collect();
+        debug!(
+            "get_workspace_chat_session_messages session={} active={} source=hstry count={}",
+            req.session_id,
+            session_is_active,
+            mapped.len()
+        );
 
-                    ChatMessageProto {
-                        id: message.id,
-                        session_id: message.session_id,
-                        role: message.role,
-                        created_at: message.created_at,
-                        completed_at: message.completed_at,
-                        parent_id: message.parent_id,
-                        model_id: message.model_id,
-                        provider_id: message.provider_id,
-                        agent: message.agent,
-                        summary_title: message.summary_title,
-                        tokens_input: message.tokens_input,
-                        tokens_output: message.tokens_output,
-                        tokens_reasoning: message.tokens_reasoning,
-                        cost: message.cost,
-                        parts,
-                    }
-                })
-                .collect();
-
-            return RunnerResponse::WorkspaceChatSessionMessages(
-                WorkspaceChatSessionMessagesResponse {
-                    session_id: req.session_id,
-                    messages: mapped,
-                },
-            );
-        }
-
-        // Last resort: hstry empty. Try the message buffer one more time
-        // in case the session resolved via alias mapping.
-        if let Some(buffer) = self.pi_manager.get_message_buffer(&req.session_id).await
-            && !buffer.is_empty()
-        {
-            let start = req
-                .limit
-                .and_then(|limit| buffer.len().checked_sub(limit))
-                .unwrap_or(0);
-            return RunnerResponse::WorkspaceChatSessionMessages(
-                WorkspaceChatSessionMessagesResponse {
-                    session_id: req.session_id,
-                    messages: buffer.into_iter().skip(start).collect(),
-                },
-            );
-        }
-
-        // Truly empty: no buffer, no hstry, no JSONL.
         RunnerResponse::WorkspaceChatSessionMessages(WorkspaceChatSessionMessagesResponse {
             session_id: req.session_id,
-            messages: Vec::new(),
+            messages: mapped,
         })
     }
 
@@ -3917,16 +3843,6 @@ impl Runner {
         info!("Runner stopped");
         Ok(())
     }
-}
-
-/// Convert a Pi `AgentMessage` to a `ChatMessageProto`.
-/// Delegates to the shared implementation in `protocol`.
-fn pi_agent_msg_to_chat_proto(
-    msg: crate::pi::AgentMessage,
-    idx: usize,
-    session_id: &str,
-) -> ChatMessageProto {
-    crate::runner::protocol::agent_msg_to_chat_proto(&msg, idx, session_id)
 }
 
 fn error_response(code: ErrorCode, message: impl Into<String>) -> RunnerResponse {

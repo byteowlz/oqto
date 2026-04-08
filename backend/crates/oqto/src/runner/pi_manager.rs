@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, Command};
-use tokio::sync::{OwnedSemaphorePermit, RwLock, Semaphore, broadcast, mpsc, oneshot};
+use tokio::sync::{Mutex, OwnedSemaphorePermit, RwLock, Semaphore, broadcast, mpsc, oneshot};
 
 use crate::agent_browser::{agent_browser_session_dir, browser_session_name};
 use crate::history::{HstryClient, HstryEndpoint};
@@ -292,14 +292,6 @@ pub enum PiSessionCommand {
     AbortRetry,
 
     // ========================================================================
-    // Internal: Incremental hstry persistence
-    // ========================================================================
-    /// Request Pi's current messages for incremental hstry persistence.
-    /// Triggered on TurnEnd events so hstry stays current during streaming.
-    /// Response is intercepted by the reader task (not routed to callers).
-    IncrementalPersist,
-
-    // ========================================================================
     // Forking (response via pending_responses)
     // ========================================================================
     /// Fork from a previous user message.
@@ -408,24 +400,25 @@ impl Default for EventSubscribers {
 /// Pending response waiters - maps request ID to oneshot sender.
 type PendingResponses = Arc<RwLock<HashMap<String, oneshot::Sender<PiResponse>>>>;
 
-/// Pending client_id for optimistic message matching.
-/// Set by command_processor_task when a Prompt is sent, consumed by stdout_reader_task
-/// when translating the agent_end messages.
-type PendingClientId = Arc<RwLock<Option<String>>>;
+/// FIFO queue of pending client_ids for optimistic message matching.
+///
+/// Each prompt/steer/follow_up with a client_id pushes one entry.
+/// On AgentEnd, stdout_reader_task pops one entry and assigns it to the
+/// corresponding persisted user message.
+type PendingClientId = Arc<Mutex<VecDeque<String>>>;
 
 /// The hstry external_id for a session.
 ///
-/// Starts as the Oqto UUID (for optimistic session creation), then gets
-/// updated to Pi's native session ID once `get_state` returns it. All hstry
-/// reads/writes should use this value, not the Oqto session_id directly.
+/// Empty until Pi reports its native `sessionId` via `get_state`, then fixed
+/// to that Pi ID for all hstry message persistence.
 type HstryExternalId = Arc<RwLock<String>>;
 
 /// Thread-safe message buffer.
 ///
 /// The single source of truth for messages in an active session. Populated
-/// from AgentEnd messages and incremental persist responses. Seeded from
-/// hstry on session resume. `get_messages` for active sessions returns this
-/// buffer directly, bypassing the Pi `get_messages` RPC entirely.
+/// from AgentEnd messages and seeded from hstry on session resume.
+/// `get_messages` for active sessions returns this buffer directly, bypassing
+/// the Pi `get_messages` RPC entirely.
 type MessageBuffer = Arc<RwLock<Vec<ChatMessageProto>>>;
 
 /// Internal session state (held by the manager).
@@ -439,8 +432,8 @@ struct PiSession {
     process: Child,
     /// Current state.
     state: Arc<RwLock<PiSessionState>>,
-    /// The external_id used in hstry for this session. Initially the Oqto UUID,
-    /// updated to Pi's native session ID once known via `get_state`.
+    /// The external_id used in hstry for this session.
+    /// Empty until Pi's native session ID is known via `get_state`.
     hstry_external_id: HstryExternalId,
     /// Last activity timestamp (shared with reader/command tasks).
     last_activity: Arc<RwLock<Instant>>,
@@ -452,11 +445,11 @@ struct PiSession {
     pending_responses: PendingResponses,
     /// Fork transaction semaphore (single in-flight fork per session).
     fork_txn: Arc<Semaphore>,
-    /// Pending client_id for the next prompt (shared between command and reader tasks).
+    /// Pending client_id queue (shared between command and reader tasks).
     #[allow(dead_code)]
     pending_client_id: PendingClientId,
     /// Authoritative message buffer for this active session.
-    /// Populated on AgentEnd and incremental persist. Seeded from hstry on resume.
+    /// Populated on AgentEnd and seeded from hstry on resume.
     /// `get_message_buffer()` returns this directly -- no Pi RPC needed.
     message_buffer: MessageBuffer,
     /// Handle to the background reader task.
@@ -832,10 +825,15 @@ impl PiSessionManager {
         let pending_responses: PendingResponses = Arc::new(RwLock::new(HashMap::new()));
         // Fork transaction semaphore: allow exactly one in-flight fork per session
         let fork_txn = Arc::new(Semaphore::new(1));
-        // Pending client_id for optimistic message matching (shared between command and reader tasks)
-        let pending_client_id: PendingClientId = Arc::new(RwLock::new(None));
+        // Pending client_id queue for optimistic message matching
+        let pending_client_id: PendingClientId = Arc::new(Mutex::new(VecDeque::new()));
         // hstry external_id -- starts as Oqto UUID, updated to Pi native ID by reader task
-        let hstry_external_id: HstryExternalId = Arc::new(RwLock::new(session_id.clone()));
+        let initial_external_id = if session_id.starts_with("oqto-") {
+            String::new()
+        } else {
+            session_id.clone()
+        };
+        let hstry_external_id: HstryExternalId = Arc::new(RwLock::new(initial_external_id));
 
         // Seed message buffer from hstry so resumed sessions have history immediately.
         // This runs synchronously before the reader task starts, ensuring get_message_buffer()
@@ -1207,8 +1205,8 @@ impl PiSessionManager {
 
     /// Resolve the hstry external_id for a session.
     ///
-    /// Returns Pi's native session ID if known, otherwise the Oqto UUID.
-    /// This should be used for all hstry lookups instead of the raw session_id.
+    /// Returns Pi's native session ID when known; otherwise falls back to the
+    /// platform_id for lookup-only paths.
     pub async fn hstry_external_id(&self, session_id: &str) -> String {
         let resolved_id = self
             .resolve_session_key(session_id)
@@ -1216,10 +1214,14 @@ impl PiSessionManager {
             .unwrap_or_else(|| session_id.to_string());
         let sessions = self.sessions.read().await;
         if let Some(session) = sessions.get(&resolved_id) {
-            session.hstry_external_id.read().await.clone()
+            let external_id = session.hstry_external_id.read().await.clone();
+            if external_id.trim().is_empty() {
+                resolved_id
+            } else {
+                external_id
+            }
         } else {
-            // Session not running -- fall back to session_id (Oqto UUID).
-            // hstry will try matching against external_id, readable_id, and id.
+            // Session not running: use platform_id fallback for lookup paths.
             session_id.to_string()
         }
     }
@@ -1524,10 +1526,10 @@ impl PiSessionManager {
                 .unwrap_or_else(|| self.config.default_cwd.to_string_lossy().to_string())
         };
 
-        // Check cache — return immediately if fresh.
-        if let Some(models) = self.get_cached_models_for_workdir(&target_workdir).await {
-            return Ok(models);
-        }
+        // Read cache as fallback, but do not return early.
+        // OAuth/login-backed model availability can change independently of
+        // models.json, so we must still probe live Pi sources.
+        let cached_models = self.get_cached_models_for_workdir(&target_workdir).await;
 
         // Cache miss or expired — build a fresh model list.
         //
@@ -1611,10 +1613,17 @@ impl PiSessionManager {
 
         // Merge: ephemeral Pi is freshest, then session, then disk.
         // Later sources only add models not already present.
-        let models = Self::merge_model_lists(
+        let mut models = Self::merge_model_lists(
             &Self::merge_model_lists(&pi_models, &session_models),
             &disk_models,
         );
+
+        // If all live sources failed, fall back to the last known good cache.
+        if models.as_array().is_none_or(|a| a.is_empty())
+            && let Some(cached) = cached_models
+        {
+            models = cached;
+        }
 
         if models.as_array().is_some_and(|a| !a.is_empty()) {
             let now = std::time::SystemTime::now()
@@ -1881,8 +1890,14 @@ impl PiSessionManager {
         serde_json::Value::Array(all_models)
     }
 
-    /// Merge two model arrays. Models from `primary` take precedence; models
-    /// from `secondary` are appended only if their `id` is not already present.
+    /// Merge two model arrays.
+    ///
+    /// Models from `primary` take precedence; models from `secondary` are
+    /// appended only if their `(provider, id)` identity is not already present.
+    ///
+    /// We intentionally key by provider+id (not id alone), because different
+    /// providers can expose the same model id (e.g. Azure Foundry Codex and
+    /// OpenAI Codex). Deduping by id alone incorrectly drops one provider.
     fn merge_model_lists(
         primary: &serde_json::Value,
         secondary: &serde_json::Value,
@@ -1894,15 +1909,19 @@ impl PiSessionManager {
             return serde_json::Value::Array(primary_arr);
         }
 
-        let seen: std::collections::HashSet<String> = primary_arr
-            .iter()
-            .filter_map(|m| m.get("id").and_then(|id| id.as_str()).map(String::from))
-            .collect();
+        fn model_key(model: &serde_json::Value) -> Option<String> {
+            let id = model.get("id").and_then(|v| v.as_str())?;
+            let provider = model.get("provider").and_then(|v| v.as_str()).unwrap_or("");
+            Some(format!("{provider}/{id}"))
+        }
+
+        let mut seen: std::collections::HashSet<String> =
+            primary_arr.iter().filter_map(model_key).collect();
 
         let mut merged = primary_arr;
         for model in secondary_arr {
-            if let Some(id) = model.get("id").and_then(|id| id.as_str())
-                && !seen.contains(id)
+            if let Some(key) = model_key(&model)
+                && seen.insert(key)
             {
                 merged.push(model);
             }
@@ -2670,6 +2689,35 @@ impl PiSessionManager {
         let resolved_id = resolved_id.as_deref().unwrap_or(session_id);
         info!("Closing session '{}'", resolved_id);
 
+        // Resolve Pi native session ID before shutdown when we still have only
+        // an Oqto ID. This avoids persisting final buffered messages under a
+        // temporary identity.
+        if resolved_id.starts_with("oqto-")
+            && let Ok(Ok(state)) = tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                self.get_state(resolved_id),
+            )
+            .await
+            && let Some(pi_sid) = state.session_id
+            && !pi_sid.trim().is_empty()
+            && pi_sid != resolved_id
+        {
+            let hstry_eid = {
+                let sessions = self.sessions.read().await;
+                sessions
+                    .get(resolved_id)
+                    .map(|s| Arc::clone(&s.hstry_external_id))
+            };
+            if let Some(hstry_eid) = hstry_eid {
+                let old = hstry_eid.read().await.clone();
+                *hstry_eid.write().await = pi_sid.clone();
+                info!(
+                    "Pi[{}] close-session identity resolved: hstry external_id {} -> {}",
+                    resolved_id, old, pi_sid
+                );
+            }
+        }
+
         // IMPORTANT: never hold the sessions RwLock guard across .await.
         // Doing so can deadlock concurrent session.create (writer waits behind
         // this read lock while we're blocked on cmd_tx backpressure).
@@ -2686,42 +2734,50 @@ impl PiSessionManager {
         }
 
         // Flush message buffer to hstry before removing the session.
-        // This covers the gap between the last incremental persist and now
-        // (e.g. session killed while streaming, no AgentEnd fired).
+        // This covers in-flight data when the session is closed while streaming
+        // (no AgentEnd fired).
         if let Some(ref hstry_client) = self.hstry_client {
             let sessions = self.sessions.read().await;
             if let Some(session) = sessions.get(resolved_id) {
                 let buffer = session.message_buffer.read().await;
                 if !buffer.is_empty() {
                     let eid = session.hstry_external_id.read().await.clone();
-                    // Convert buffer to AgentMessage for persist_to_hstry_grpc
-                    let agent_msgs: Vec<AgentMessage> = buffer
-                        .iter()
-                        .map(|proto| {
-                            crate::runner::protocol::chat_proto_to_agent_msg(proto.clone())
-                        })
-                        .collect();
-                    if let Err(e) = Self::persist_to_hstry_grpc(
-                        hstry_client,
-                        &eid,
-                        resolved_id,
-                        &self.config.runner_id,
-                        &agent_msgs,
-                        &session.config.cwd,
-                        None,
-                    )
-                    .await
-                    {
-                        warn!(
-                            "Pi[{}] failed to flush buffer to hstry on close: {:?}",
-                            resolved_id, e
+                    if eid.trim().is_empty() {
+                        debug!(
+                            "Pi[{}] skipping close flush: external_id unresolved",
+                            resolved_id
                         );
                     } else {
-                        debug!(
-                            "Pi[{}] flushed {} messages to hstry on close",
+                        // Convert buffer to AgentMessage for persist_to_hstry_grpc
+                        let agent_msgs: Vec<AgentMessage> = buffer
+                            .iter()
+                            .map(|proto| {
+                                crate::runner::protocol::chat_proto_to_agent_msg(proto.clone())
+                            })
+                            .collect();
+                        if let Err(e) = Self::persist_to_hstry_grpc(
+                            hstry_client,
+                            &eid,
                             resolved_id,
-                            agent_msgs.len()
-                        );
+                            &self.config.runner_id,
+                            &agent_msgs,
+                            &session.config.cwd,
+                            None,
+                            false,
+                        )
+                        .await
+                        {
+                            warn!(
+                                "Pi[{}] failed to flush buffer to hstry on close: {:?}",
+                                resolved_id, e
+                            );
+                        } else {
+                            debug!(
+                                "Pi[{}] flushed {} messages to hstry on close",
+                                resolved_id,
+                                agent_msgs.len()
+                            );
+                        }
                     }
                 }
             }
@@ -3121,22 +3177,13 @@ impl PiSessionManager {
         let mut last_synced_title = String::new();
 
         // Whether we've already resolved Pi's native session ID.
-        let mut pi_native_id_known = false;
+        // Sessions keyed directly by a non-oqto ID are already native.
+        let mut pi_native_id_known = !session_id.starts_with("oqto-");
 
         // Mark as Idle after first successful read (Pi is ready)
         let mut first_event_seen = false;
 
-        // Debounce incremental hstry persistence: persist at most once per second
-        // during streaming (triggered on AgentStart/MessageUpdate/TurnEnd events).
-        // Initialize as elapsed so the first trigger (AgentStart) flushes immediately.
-        let incremental_persist_interval = Duration::from_secs(1);
-        let mut last_incremental_persist = Instant::now() - incremental_persist_interval;
-        // Track whether an incremental persist is already in flight to avoid
-        // queuing multiple get_messages requests.
-        let mut incremental_persist_in_flight = false;
-        // Serialize hstry persists so an in-flight incremental persist finishes
-        // before the authoritative AgentEnd persist runs (prevents duplicate
-        // messages from concurrent index resolution).
+        // Serialize hstry writes and post-persist client_id updates.
         let hstry_persist_lock = Arc::new(tokio::sync::Mutex::new(()));
 
         loop {
@@ -3243,15 +3290,16 @@ impl PiSessionManager {
                     PiMessage::Response(response) => {
                         debug!("Pi[{}] response: {:?}", session_id, response);
 
-                        // Intercept get_state responses to capture Pi's native session
-                        // ID and sync session title to hstry.
-                        if response.id.as_deref() == Some("get_state")
+                        // Intercept get_state responses (including proactive/idle probes)
+                        // to capture Pi's native session ID and sync session title.
+                        if response
+                            .id
+                            .as_deref()
+                            .is_some_and(|rid| rid.starts_with("get_state"))
                             && let Some(ref data) = response.data
                         {
-                            // Capture Pi's native session ID from the JSONL header.
-                            // This is the authoritative external_id for hstry -- the
-                            // same ID that hstry's adapter sync will use when importing
-                            // the JSONL file, so using it here prevents duplicates.
+                            // Capture Pi's native session ID from get_state.
+                            // This is the authoritative hstry external_id.
                             if let Some(pi_sid) = data.get("sessionId").and_then(|v| v.as_str())
                                 && !pi_sid.is_empty()
                                 && !pi_native_id_known
@@ -3263,38 +3311,6 @@ impl PiSessionManager {
                                     "Pi[{}] native session ID: {} (hstry external_id: {} -> {})",
                                     session_id, pi_sid, old_eid, pi_sid
                                 );
-
-                                // If we already wrote to hstry under the old Oqto UUID
-                                // (AgentEnd fired before get_state -- unlikely due to
-                                // proactive get_state but defensive), delete the stale
-                                // record so the next persist creates it correctly.
-                                if old_eid != pi_sid
-                                    && let Some(ref client) = hstry_client
-                                {
-                                    let client = client.clone();
-                                    let old = old_eid.clone();
-                                    let new_id = pi_sid.to_string();
-                                    let oqto_session_id = session_id.clone();
-                                    let runner_id = runner_id.clone();
-                                    let work_dir = work_dir.clone();
-                                    tokio::spawn(async move {
-                                        if let Err(e) = Self::migrate_hstry_conversation_on_rekey(
-                                            &client,
-                                            &old,
-                                            &new_id,
-                                            &oqto_session_id,
-                                            &runner_id,
-                                            &work_dir,
-                                        )
-                                        .await
-                                        {
-                                            warn!(
-                                                "Failed to migrate hstry conversation {} -> {}: {}",
-                                                old, new_id, e
-                                            );
-                                        }
-                                    });
-                                }
 
                                 if pi_sid != session_id {
                                     session_aliases
@@ -3309,6 +3325,8 @@ impl PiSessionManager {
                                     let oqto_session_id = session_id.clone();
                                     let runner_id = runner_id.clone();
                                     let work_dir = work_dir.clone();
+                                    let lock = hstry_persist_lock.clone();
+                                    let msg_buf = message_buffer.clone();
                                     tokio::spawn(async move {
                                         if let Err(e) = Self::ensure_hstry_conversation(
                                             &client,
@@ -3322,6 +3340,38 @@ impl PiSessionManager {
                                             warn!(
                                                 "Pi[{}] failed to ensure hstry conversation: {:?}",
                                                 eid, e
+                                            );
+                                            return;
+                                        }
+
+                                        let buffered: Vec<AgentMessage> = {
+                                            let msgs = msg_buf.read().await;
+                                            msgs.iter()
+                                                .cloned()
+                                                .map(crate::runner::protocol::chat_proto_to_agent_msg)
+                                                .collect()
+                                        };
+
+                                        if buffered.is_empty() {
+                                            return;
+                                        }
+
+                                        let _guard = lock.lock().await;
+                                        if let Err(e) = Self::persist_to_hstry_grpc(
+                                            &client,
+                                            &eid,
+                                            &oqto_session_id,
+                                            &runner_id,
+                                            &buffered,
+                                            &work_dir,
+                                            None,
+                                            false,
+                                        )
+                                        .await
+                                        {
+                                            warn!(
+                                                "Pi[{}] failed to bootstrap persist buffered messages: {:?}",
+                                                oqto_session_id, e
                                             );
                                         }
                                     });
@@ -3416,93 +3466,6 @@ impl PiSessionManager {
                             }
                         }
 
-                        // Intercept incremental persistence responses (internal use only).
-                        // These are NOT routed to external callers.
-                        if response.id.as_deref() == Some("_incremental_persist") {
-                            incremental_persist_in_flight = false;
-                            if response.success {
-                                if let Some(ref data) = response.data
-                                    && let Some(msgs_val) = data.get("messages")
-                                {
-                                    match serde_json::from_value::<Vec<AgentMessage>>(
-                                        msgs_val.clone(),
-                                    ) {
-                                        Ok(messages) if !messages.is_empty() => {
-                                            // Update message buffer from incremental
-                                            // persist response (mid-stream snapshot).
-                                            {
-                                                let buffer_msgs: Vec<ChatMessageProto> = messages
-                                                    .iter()
-                                                    .enumerate()
-                                                    .map(|(idx, msg)| {
-                                                        agent_msg_to_chat_proto(
-                                                            msg,
-                                                            idx,
-                                                            &session_id,
-                                                        )
-                                                    })
-                                                    .collect();
-                                                debug!(
-                                                    "Pi[{}] updating message buffer with {} messages from incremental persist",
-                                                    session_id,
-                                                    buffer_msgs.len()
-                                                );
-                                                *message_buffer.write().await = buffer_msgs;
-                                            }
-                                            if let Some(ref client) = hstry_client {
-                                                let client = client.clone();
-                                                let eid = hstry_external_id.read().await.clone();
-                                                let sid = session_id.clone();
-                                                let rid = runner_id.clone();
-                                                let wd = work_dir.clone();
-                                                let lock = hstry_persist_lock.clone();
-                                                // Read pending_client_id without taking it.
-                                                // If client_id was set (e.g., from a Prompt),
-                                                // we include it so the hstry upsert doesn't
-                                                // overwrite an existing client_id with NULL.
-                                                let pcid = Arc::clone(&pending_client_id);
-                                                tokio::spawn(async move {
-                                                    let _guard = lock.lock().await;
-                                                    let cid = pcid.read().await.clone();
-                                                    if let Err(e) = Self::persist_to_hstry_grpc(
-                                                        &client, &eid, &sid, &rid, &messages, &wd,
-                                                        cid,
-                                                    )
-                                                    .await
-                                                    {
-                                                        warn!(
-                                                            "Pi[{}] incremental hstry persist failed: {:?}",
-                                                            sid, e
-                                                        );
-                                                    } else {
-                                                        debug!(
-                                                            "Pi[{}] incremental hstry persist: {} messages (eid={})",
-                                                            sid,
-                                                            messages.len(),
-                                                            eid,
-                                                        );
-                                                    }
-                                                });
-                                            }
-                                        }
-                                        Ok(_) => {} // empty messages, skip
-                                        Err(e) => {
-                                            warn!(
-                                                "Pi[{}] failed to parse incremental persist messages: {}",
-                                                session_id, e
-                                            );
-                                        }
-                                    }
-                                }
-                            } else {
-                                debug!(
-                                    "Pi[{}] incremental persist get_messages failed: {:?}",
-                                    session_id, response.error
-                                );
-                            }
-                            continue; // Don't route to external callers
-                        }
-
                         // Route response to waiting caller if there's a matching ID
                         if let Some(ref id) = response.id {
                             let mut pending = pending_responses.write().await;
@@ -3573,13 +3536,9 @@ impl PiSessionManager {
                 // For AgentEnd, transfer the pending client_id to the translator before translating.
                 // This ensures the client_id is included in the user message for optimistic matching.
                 if matches!(pi_event, PiEvent::AgentEnd { .. }) {
-                    // Read without taking — the incremental persist (spawned async)
-                    // also needs to read this value to set client_id on the correct
-                    // message. The value is naturally overwritten by the next command
-                    // in the command_processor_task.
-                    let client_id = pending_client_id.read().await.clone();
+                    let client_id = pending_client_id.lock().await.pop_front();
                     debug!(
-                        "Pi[{}] AgentEnd: pending_client_id = {:?}",
+                        "Pi[{}] AgentEnd: dequeued pending_client_id = {:?}",
                         session_id, client_id
                     );
                     translator.set_pending_client_id(client_id.clone());
@@ -3589,78 +3548,105 @@ impl PiSessionManager {
                 // Persist to hstry on AgentEnd BEFORE broadcasting canonical events.
                 // This ensures hstry has the complete history before the frontend
                 // receives agent.idle and potentially fetches/switches sessions.
-                // Acquire the persist lock to wait for any in-flight incremental
-                // persist to finish first (prevents duplicate messages from
-                // concurrent index resolution).
+                // The lock serializes hstry writes and client_id repair updates.
                 if matches!(pi_event, PiEvent::AgentEnd { .. }) && !pending_messages.is_empty() {
-                    if let Some(ref client) = hstry_client {
+                    if !pi_native_id_known {
+                        debug!(
+                            "Pi[{}] skipping hstry persist on AgentEnd: native session ID not known yet",
+                            session_id
+                        );
+                    } else if let Some(ref client) = hstry_client {
                         let _guard = hstry_persist_lock.lock().await;
                         let eid = hstry_external_id.read().await.clone();
-                        let client_id = pending_hstry_client_id.take();
-                        if let Err(e) = Self::persist_to_hstry_grpc(
-                            client,
-                            &eid,
-                            &session_id,
-                            &runner_id,
-                            &pending_messages,
-                            &work_dir,
-                            client_id.clone(),
-                        )
-                        .await
-                        {
-                            warn!("Pi[{}] failed to persist to hstry: {:?}", session_id, e);
-                        } else {
+                        if eid.trim().is_empty() {
                             debug!(
-                                "Pi[{}] persisted {} messages to hstry (external_id={})",
-                                session_id,
-                                pending_messages.len(),
-                                eid,
+                                "Pi[{}] skipping hstry persist on AgentEnd: external_id unresolved",
+                                session_id
                             );
-                        }
-                        // If client_id is set, schedule a deferred update to ensure
-                        // the correct user message gets it. This runs AFTER any pending
-                        // incremental persist (which may add the actual user message to
-                        // hstry if compaction skipped the message writes above).
-                        if let Some(cid) = client_id {
-                            let client = client.clone();
-                            let eid = eid.clone();
-                            let lock = hstry_persist_lock.clone();
-                            let sid = session_id.clone();
-                            tokio::spawn(async move {
-                                // Acquire lock to wait for incremental persist to complete
-                                let _guard = lock.lock().await;
-                                if let Err(e) =
-                                    client.set_last_user_message_client_id(&eid, &cid).await
-                                {
-                                    warn!(
-                                        "Pi[{}] failed to set client_id on last user message: {:?}",
-                                        sid, e
-                                    );
-                                } else {
-                                    debug!(
-                                        "Pi[{}] set client_id='{}' on last user message (eid='{}')",
-                                        sid, cid, eid,
-                                    );
-                                }
-                            });
+                        } else {
+                            let client_id = pending_hstry_client_id.take();
+                            if let Err(e) = Self::persist_to_hstry_grpc(
+                                client,
+                                &eid,
+                                &session_id,
+                                &runner_id,
+                                &pending_messages,
+                                &work_dir,
+                                client_id.clone(),
+                                true,
+                            )
+                            .await
+                            {
+                                warn!("Pi[{}] failed to persist to hstry: {:?}", session_id, e);
+                            } else {
+                                debug!(
+                                    "Pi[{}] persisted {} messages to hstry (external_id={})",
+                                    session_id,
+                                    pending_messages.len(),
+                                    eid,
+                                );
+                            }
+                            // If client_id is set, schedule a deferred update to ensure
+                            // the correct last user message gets it.
+                            if let Some(cid) = client_id {
+                                let client = client.clone();
+                                let eid = eid.clone();
+                                let lock = hstry_persist_lock.clone();
+                                let sid = session_id.clone();
+                                tokio::spawn(async move {
+                                    let _guard = lock.lock().await;
+                                    if let Err(e) =
+                                        client.set_last_user_message_client_id(&eid, &cid).await
+                                    {
+                                        warn!(
+                                            "Pi[{}] failed to set client_id on last user message: {:?}",
+                                            sid, e
+                                        );
+                                    } else {
+                                        debug!(
+                                            "Pi[{}] set client_id='{}' on last user message (eid='{}')",
+                                            sid, cid, eid,
+                                        );
+                                    }
+                                });
+                            }
                         }
                     }
                     // Update the authoritative message buffer from AgentEnd data.
-                    // This is a full replacement since AgentEnd provides the complete
-                    // message list (possibly compacted by Pi, but that's the current
-                    // truth). The buffer was seeded from hstry on session creation.
+                    // Pi commonly emits only the turn delta (user+assistant). Append
+                    // these to preserve full active-session history; if a larger
+                    // snapshot arrives, replace with that snapshot as ground truth.
                     {
-                        let buffer_msgs: Vec<ChatMessageProto> = pending_messages
-                            .iter()
-                            .enumerate()
-                            .map(|(idx, msg)| agent_msg_to_chat_proto(msg, idx, &session_id))
-                            .collect();
-                        debug!(
-                            "Pi[{}] updating message buffer with {} messages from AgentEnd",
-                            session_id,
-                            buffer_msgs.len()
-                        );
-                        *message_buffer.write().await = buffer_msgs;
+                        let mut buffer = message_buffer.write().await;
+                        if pending_messages.len() <= 2 && !buffer.is_empty() {
+                            let start_idx = buffer.len();
+                            let delta_msgs: Vec<ChatMessageProto> = pending_messages
+                                .iter()
+                                .enumerate()
+                                .map(|(i, msg)| {
+                                    agent_msg_to_chat_proto(msg, start_idx + i, &session_id)
+                                })
+                                .collect();
+                            debug!(
+                                "Pi[{}] appending {} AgentEnd delta message(s) to buffer (prev_len={})",
+                                session_id,
+                                delta_msgs.len(),
+                                start_idx
+                            );
+                            buffer.extend(delta_msgs);
+                        } else {
+                            let snapshot_msgs: Vec<ChatMessageProto> = pending_messages
+                                .iter()
+                                .enumerate()
+                                .map(|(idx, msg)| agent_msg_to_chat_proto(msg, idx, &session_id))
+                                .collect();
+                            debug!(
+                                "Pi[{}] replacing message buffer with {} AgentEnd snapshot message(s)",
+                                session_id,
+                                snapshot_msgs.len()
+                            );
+                            *buffer = snapshot_msgs;
+                        }
                     }
                     pending_messages.clear();
                 }
@@ -3721,36 +3707,40 @@ impl PiSessionManager {
                         oqto_protocol::events::EventPayload::AgentIdle { .. }
                     ) && let Some(error_text) = pending_error_text.take()
                         && let Some(ref client) = hstry_client
+                        && pi_native_id_known
                     {
                         let eid = hstry_external_id.read().await.clone();
-                        let error_parts = serde_json::json!([{
-                            "type": "error",
-                            "id": format!("err-{}", chrono::Utc::now().timestamp_millis()),
-                            "text": error_text
-                        }]);
-                        let now_ms = chrono::Utc::now().timestamp_millis();
-                        let msg = hstry_core::service::proto::Message {
-                            idx: -1,
-                            role: "error".to_string(),
-                            content: error_text.clone(),
-                            parts_json: error_parts.to_string(),
-                            created_at_ms: Some(now_ms),
-                            model: None,
-                            tokens: None,
-                            cost_usd: None,
-                            metadata_json: String::new(),
-                            sender_json: String::new(),
-                            provider: None,
-                            harness: Some("pi".to_string()),
-                            client_id: None,
-                            id: None,
-                        };
-                        if let Err(e) = client.append_messages(&eid, vec![msg], Some(now_ms)).await
-                        {
-                            warn!(
-                                "Pi[{}] failed to persist error to hstry: {:?}",
-                                session_id, e
-                            );
+                        if !eid.trim().is_empty() {
+                            let error_parts = serde_json::json!([{
+                                "type": "error",
+                                "id": format!("err-{}", chrono::Utc::now().timestamp_millis()),
+                                "text": error_text
+                            }]);
+                            let now_ms = chrono::Utc::now().timestamp_millis();
+                            let msg = hstry_core::service::proto::Message {
+                                idx: -1,
+                                role: "error".to_string(),
+                                content: error_text.clone(),
+                                parts_json: error_parts.to_string(),
+                                created_at_ms: Some(now_ms),
+                                model: None,
+                                tokens: None,
+                                cost_usd: None,
+                                metadata_json: String::new(),
+                                sender_json: String::new(),
+                                provider: None,
+                                harness: Some("pi".to_string()),
+                                client_id: None,
+                                id: None,
+                            };
+                            if let Err(e) =
+                                client.append_messages(&eid, vec![msg], Some(now_ms)).await
+                            {
+                                warn!(
+                                    "Pi[{}] failed to persist error to hstry: {:?}",
+                                    session_id, e
+                                );
+                            }
                         }
                     }
 
@@ -3804,49 +3794,6 @@ impl PiSessionManager {
                                     warn!("Failed to sync title to hstry: {}", e);
                                 }
                             });
-                        }
-                    }
-                }
-
-                // Incremental hstry persistence during streaming.
-                // This keeps hstry current enough that a page reload can restore
-                // the most recent user prompt and partial assistant output.
-                // Debounced to avoid hammering hstry on high-frequency deltas.
-                let incremental_trigger =
-                    matches!(pi_event, PiEvent::AgentStart | PiEvent::TurnEnd { .. })
-                        || matches!(
-                            pi_event,
-                            PiEvent::MessageUpdate {
-                                ref assistant_message_event,
-                                ..
-                            } if matches!(
-                                assistant_message_event.as_ref(),
-                                crate::pi::AssistantMessageEvent::TextDelta { .. }
-                                    | crate::pi::AssistantMessageEvent::TextEnd { .. }
-                                    | crate::pi::AssistantMessageEvent::ThinkingDelta { .. }
-                                    | crate::pi::AssistantMessageEvent::ToolcallDelta { .. }
-                                    | crate::pi::AssistantMessageEvent::Done { .. }
-                            )
-                        );
-                if incremental_trigger {
-                    let elapsed = last_incremental_persist.elapsed();
-                    if elapsed >= incremental_persist_interval
-                        && hstry_client.is_some()
-                        && !incremental_persist_in_flight
-                    {
-                        last_incremental_persist = Instant::now();
-                        incremental_persist_in_flight = true;
-                        if let Err(e) = cmd_tx.send(PiSessionCommand::IncrementalPersist).await {
-                            warn!(
-                                "Pi[{}] failed to send IncrementalPersist command: {}",
-                                session_id, e
-                            );
-                            incremental_persist_in_flight = false;
-                        } else {
-                            debug!(
-                                "Pi[{}] triggered incremental hstry persist during streaming",
-                                session_id
-                            );
                         }
                     }
                 }
@@ -3919,9 +3866,10 @@ impl PiSessionManager {
         while let Some(cmd) = cmd_rx.recv().await {
             let result = match cmd {
                 PiSessionCommand::Prompt { message, client_id } => {
-                    // Store client_id in shared state for the reader task's translator
-                    // to include in the persisted messages when agent_end arrives.
-                    *pending_client_id.write().await = client_id;
+                    // Queue client_id for the corresponding AgentEnd turn.
+                    if let Some(cid) = client_id.clone().filter(|v| !v.trim().is_empty()) {
+                        pending_client_id.lock().await.push_back(cid);
+                    }
                     // If already streaming, send as prompt with
                     // streamingBehavior="steer" so Pi queues it as a steer.
                     // Pi natively handles this: idle → new turn,
@@ -3949,12 +3897,14 @@ impl PiSessionManager {
                     message: msg,
                     client_id,
                 } => {
-                    // Store client_id for hstry persistence (same as Prompt).
+                    // Queue client_id for hstry persistence (same as Prompt).
                     debug!(
                         "Pi[{}] cmd_processor: Steer received, client_id = {:?}",
                         session_id, client_id
                     );
-                    *pending_client_id.write().await = client_id;
+                    if let Some(cid) = client_id.clone().filter(|v| !v.trim().is_empty()) {
+                        pending_client_id.lock().await.push_back(cid);
+                    }
                     // The runner decides how to deliver based on session state:
                     // - Streaming: send as steer (interrupt mid-run)
                     // - Idle/Starting/Stopping/Aborting: send as prompt (new turn or zombie session)
@@ -3990,8 +3940,10 @@ impl PiSessionManager {
                     message: msg,
                     client_id,
                 } => {
-                    // Store client_id for hstry persistence (same as Prompt).
-                    *pending_client_id.write().await = client_id;
+                    // Queue client_id for hstry persistence (same as Prompt).
+                    if let Some(cid) = client_id.clone().filter(|v| !v.trim().is_empty()) {
+                        pending_client_id.lock().await.push_back(cid);
+                    }
                     // The runner decides how to deliver based on session state:
                     // - Streaming: send as follow_up (queued until done)
                     // - Idle/Starting/Stopping/Aborting: send as prompt (new turn or zombie session)
@@ -4059,15 +4011,6 @@ impl PiSessionManager {
                     // Response coordination happens via pending_responses map
                     let pi_cmd = PiCommand::GetMessages {
                         id: Some("get_messages".to_string()),
-                    };
-                    Self::write_command(&mut stdin, &pi_cmd).await
-                }
-                PiSessionCommand::IncrementalPersist => {
-                    // Internal command: fetch messages for incremental hstry persistence.
-                    // Uses a distinct request ID so the reader task can intercept it
-                    // without interfering with external get_messages requests.
-                    let pi_cmd = PiCommand::GetMessages {
-                        id: Some("_incremental_persist".to_string()),
                     };
                     Self::write_command(&mut stdin, &pi_cmd).await
                 }
@@ -4354,97 +4297,10 @@ impl PiSessionManager {
         Ok(())
     }
 
-    async fn migrate_hstry_conversation_on_rekey(
-        client: &HstryClient,
-        old_external_id: &str,
-        new_external_id: &str,
-        oqto_session_id: &str,
-        runner_id: &str,
-        work_dir: &Path,
-    ) -> Result<()> {
-        if old_external_id == new_external_id {
-            return Ok(());
-        }
-
-        let Some(old_conv) = client.get_conversation(old_external_id, None).await? else {
-            return Ok(());
-        };
-
-        let new_conv = client.get_conversation(new_external_id, None).await?;
-        if new_conv.is_some() {
-            let new_messages = client.get_messages(new_external_id, None, None).await?;
-            if !new_messages.is_empty() {
-                client.delete_conversation(old_external_id).await?;
-                info!(
-                    "Deleted stale hstry record under old external_id={}",
-                    old_external_id
-                );
-                return Ok(());
-            }
-        }
-
-        let old_messages = client.get_messages(old_external_id, None, None).await?;
-        if old_messages.is_empty() {
-            if new_conv.is_some() {
-                client.delete_conversation(old_external_id).await?;
-                info!(
-                    "Deleted empty hstry record under old external_id={}",
-                    old_external_id
-                );
-            }
-            return Ok(());
-        }
-
-        let metadata_json = build_metadata_json(
-            client,
-            old_external_id,
-            oqto_session_id,
-            runner_id,
-            work_dir,
-            None,
-        )
-        .await?;
-        let workspace = old_conv
-            .workspace
-            .clone()
-            .filter(|value| !value.trim().is_empty())
-            .or_else(|| Some(work_dir.to_string_lossy().to_string()));
-        let readable_id = old_conv
-            .readable_id
-            .clone()
-            .filter(|value| !value.trim().is_empty());
-
-        client
-            .write_conversation(
-                new_external_id,
-                old_conv.title.clone(),
-                workspace,
-                old_conv.model.clone(),
-                old_conv.provider.clone(),
-                Some(metadata_json),
-                old_messages,
-                old_conv.created_at_ms,
-                old_conv.updated_at_ms,
-                Some("pi".to_string()),
-                readable_id,
-                Some(oqto_session_id.to_string()),
-            )
-            .await?;
-
-        client.delete_conversation(old_external_id).await?;
-        info!(
-            "Migrated hstry conversation {} -> {}",
-            old_external_id, new_external_id
-        );
-
-        Ok(())
-    }
-
     /// Persist messages to hstry via gRPC.
     ///
-    /// `hstry_external_id` is the key used in hstry (Pi's native session ID when
-    /// known, otherwise Oqto's UUID as a fallback). `oqto_session_id` is always
-    /// Oqto's UUID, stored in metadata for reverse mapping.
+    /// `hstry_external_id` must be Pi's native session ID. `oqto_session_id`
+    /// (platform_id) is stored in metadata for reverse mapping.
     async fn persist_to_hstry_grpc(
         client: &HstryClient,
         hstry_external_id: &str,
@@ -4453,8 +4309,17 @@ impl PiSessionManager {
         messages: &[AgentMessage],
         work_dir: &Path,
         client_id: Option<String>,
+        prefer_append_delta: bool,
     ) -> Result<()> {
         use crate::history::agent_message_to_proto_with_client_id;
+
+        if hstry_external_id.trim().is_empty() {
+            debug!(
+                "Skipping hstry persist for session '{}': external_id unresolved",
+                oqto_session_id
+            );
+            return Ok(());
+        }
 
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -4484,17 +4349,76 @@ impl PiSessionManager {
             })
             .unwrap_or((None, None));
 
-        // Guard against compaction: if Pi's message count is fewer than
-        // what hstry already has, a context compaction happened. Don't
-        // overwrite the complete history with the truncated window -- only
-        // update metadata/stats. Uses gRPC (not direct SQLite).
         let existing_max_idx = fetch_last_hstry_idx(client, hstry_external_id).await;
-        if let Some(max_idx) = existing_max_idx {
-            let existing_count = (max_idx + 1) as usize;
+        let existing_count = existing_max_idx.map_or(0usize, |max_idx| (max_idx + 1) as usize);
+
+        info!(
+            "hstry persist plan: session={} external_id={} existing_count={} incoming={} append_delta={}",
+            oqto_session_id,
+            hstry_external_id,
+            existing_count,
+            messages.len(),
+            prefer_append_delta
+        );
+
+        let proto_messages: Vec<_> = if prefer_append_delta {
+            // AgentEnd path: append-only. Never rewrite idx 0..N for active sessions.
+            // - If Pi sends a small delta (<=2), append it directly.
+            // - If Pi sends a full snapshot, append only the unseen tail.
+            let delta_messages: Vec<&AgentMessage> = if messages.len() <= 2 {
+                messages.iter().collect()
+            } else if messages.len() > existing_count {
+                messages[existing_count..].iter().collect()
+            } else {
+                Vec::new()
+            };
+
+            if delta_messages.is_empty() {
+                debug!(
+                    "No new AgentEnd delta to persist for '{}' (existing_count={}, incoming={})",
+                    hstry_external_id,
+                    existing_count,
+                    messages.len()
+                );
+                let _ = client
+                    .update_conversation(
+                        hstry_external_id,
+                        title,
+                        Some(work_dir.to_string_lossy().to_string()),
+                        None,
+                        None,
+                        Some(metadata_json),
+                        readable_id,
+                        Some("pi".to_string()),
+                        Some(oqto_session_id.to_string()),
+                    )
+                    .await;
+                return Ok(());
+            }
+
+            let last_user_idx = delta_messages
+                .iter()
+                .rposition(|msg| matches!(msg.role.as_str(), "user" | "human"));
+
+            delta_messages
+                .iter()
+                .enumerate()
+                .map(|(i, msg)| {
+                    let client_id_for_msg = if Some(i) == last_user_idx {
+                        client_id.clone()
+                    } else {
+                        None
+                    };
+                    let idx = (existing_count + i) as i32;
+                    agent_message_to_proto_with_client_id(msg, idx, client_id_for_msg)
+                })
+                .collect()
+        } else {
+            // Snapshot path (bootstrap/close flush): idempotent positional upsert,
+            // but never overwrite when hstry already has more rows.
             if messages.len() < existing_count {
                 info!(
-                    "Skipping hstry message persist: Pi has {} messages but hstry already has {} \
-                     (context compaction detected). Updating metadata only.",
+                    "Skipping hstry snapshot persist: incoming {} < existing {} (compaction/partial window). Metadata only.",
                     messages.len(),
                     existing_count,
                 );
@@ -4513,34 +4437,24 @@ impl PiSessionManager {
                     .await;
                 return Ok(());
             }
-        }
 
-        // Convert messages to proto format using position-based indices.
-        // Pi sends the complete message array (position 0..N). hstry uses
-        // ON CONFLICT(conversation_id, idx) DO UPDATE, so using `i` as idx
-        // is idempotent: repeated persists upsert in place rather than
-        // creating duplicates.
-        //
-        // REMOVED: resolve_jsonl_message_indices + fallback_start_idx.
-        // That approach used (hstry_max_idx + 1 + i) which appended at
-        // ever-increasing indices, causing duplicate messages on every
-        // incremental persist + AgentEnd cycle. (oqto-fmbr)
-        let last_user_idx = messages
-            .iter()
-            .rposition(|msg| matches!(msg.role.as_str(), "user" | "human"));
+            let last_user_idx = messages
+                .iter()
+                .rposition(|msg| matches!(msg.role.as_str(), "user" | "human"));
 
-        let proto_messages: Vec<_> = messages
-            .iter()
-            .enumerate()
-            .map(|(i, msg)| {
-                let client_id_for_msg = if Some(i) == last_user_idx {
-                    client_id.clone()
-                } else {
-                    None
-                };
-                agent_message_to_proto_with_client_id(msg, i as i32, client_id_for_msg)
-            })
-            .collect();
+            messages
+                .iter()
+                .enumerate()
+                .map(|(i, msg)| {
+                    let client_id_for_msg = if Some(i) == last_user_idx {
+                        client_id.clone()
+                    } else {
+                        None
+                    };
+                    agent_message_to_proto_with_client_id(msg, i as i32, client_id_for_msg)
+                })
+                .collect()
+        };
 
         // Try append first (fast path -- conversation already exists)
         match client
@@ -4601,16 +4515,6 @@ impl PiSessionManager {
                     )
                     .await?;
             }
-        }
-
-        if let Ok(repaired) =
-            reconcile_hstry_with_jsonl_tail(client, hstry_external_id, work_dir).await
-            && repaired > 0
-        {
-            warn!(
-                "Reconciled {} missing JSONL message(s) into hstry for '{}'",
-                repaired, hstry_external_id
-            );
         }
 
         info!(
@@ -4738,42 +4642,6 @@ fn read_jsonl_message_entries(path: PathBuf) -> Result<Vec<JsonlMessageEntry>> {
 
         entries.push(JsonlMessageEntry { idx, key });
         idx += 1;
-    }
-
-    Ok(entries)
-}
-
-fn read_jsonl_agent_messages(path: PathBuf) -> Result<Vec<(i32, AgentMessage)>> {
-    use std::io::BufRead;
-
-    let file = std::fs::File::open(&path)
-        .with_context(|| format!("Failed to open Pi session file {}", path.display()))?;
-    let reader = std::io::BufReader::new(file);
-    let mut entries = Vec::new();
-    let mut idx: i32 = 0;
-
-    for line in reader.lines() {
-        let line = line?;
-        if line.trim().is_empty() {
-            continue;
-        }
-
-        let entry: JsonlEntry = match serde_json::from_str(&line) {
-            Ok(parsed) => parsed,
-            Err(err) => {
-                warn!("Failed to parse Pi JSONL entry for reconciliation: {}", err);
-                continue;
-            }
-        };
-
-        if entry.entry_type != "message" {
-            continue;
-        }
-
-        if let Some(message) = entry.message {
-            entries.push((idx, message));
-            idx += 1;
-        }
     }
 
     Ok(entries)
@@ -4921,61 +4789,6 @@ async fn fetch_last_hstry_idx(client: &HstryClient, session_id: &str) -> Option<
     }
 }
 
-async fn reconcile_hstry_with_jsonl_tail(
-    client: &HstryClient,
-    session_id: &str,
-    work_dir: &Path,
-) -> Result<usize> {
-    use crate::history::agent_message_to_proto_with_client_id;
-
-    let session_file = match crate::pi::session_files::find_session_file_async(
-        session_id.to_string(),
-        Some(work_dir.to_path_buf()),
-    )
-    .await
-    {
-        Some(path) => path,
-        None => return Ok(0),
-    };
-
-    let jsonl_messages =
-        tokio::task::spawn_blocking(move || read_jsonl_agent_messages(session_file))
-            .await
-            .ok()
-            .and_then(|r| r.ok())
-            .unwrap_or_default();
-
-    if jsonl_messages.is_empty() {
-        return Ok(0);
-    }
-
-    let max_idx = fetch_last_hstry_idx(client, session_id).await.unwrap_or(-1);
-    let missing: Vec<_> = jsonl_messages
-        .into_iter()
-        .filter(|(idx, _)| *idx > max_idx)
-        .collect();
-
-    if missing.is_empty() {
-        return Ok(0);
-    }
-
-    let now_ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0);
-
-    let proto: Vec<_> = missing
-        .iter()
-        .map(|(idx, msg)| agent_message_to_proto_with_client_id(msg, *idx, None))
-        .collect();
-
-    client
-        .append_messages(session_id, proto, Some(now_ms))
-        .await?;
-
-    Ok(missing.len())
-}
-
 async fn resolve_jsonl_session_title(session_id: &str, work_dir: &Path) -> Option<String> {
     let session_file = crate::pi::session_files::find_session_file_async(
         session_id.to_string(),
@@ -5020,9 +4833,9 @@ fn compute_stats_delta(messages: &[AgentMessage]) -> Option<StatsDelta> {
 
 /// Build metadata JSON for hstry conversation.
 ///
-/// `hstry_external_id` is the key in hstry (Pi native ID or Oqto UUID).
-/// `oqto_session_id` is always Oqto's UUID -- stored in metadata so we can
-/// always map between the two identifiers.
+/// `hstry_external_id` is the key in hstry (Pi native session ID).
+/// `oqto_session_id` is the Oqto platform_id, stored in metadata so we can
+/// map between the two identifiers.
 async fn build_metadata_json(
     client: &HstryClient,
     hstry_external_id: &str,

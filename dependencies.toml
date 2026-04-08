@@ -23,8 +23,8 @@ skdlr = "0.2.1"
 ignr = "0.1.1"
 
 # Optional: Voice mode
-eaRS = "0.4.5"
-kokorox = "0.2.2"
+eaRS = "0.4.8"
+kokorox = "0.2.3"
 
 [external]
 # Not byteowlz, but required for Oqto

@@ -522,7 +522,6 @@ pub(super) async fn handle_agent_command(
                         let event_tx = state_guard.event_tx.clone();
                         let runner = runner.clone();
                         let sid = session_id.clone();
-                        let uid = user_id.to_string();
 
                         // Use a oneshot channel to wait for subscription confirmation
                         let (sub_ready_tx, sub_ready_rx) = oneshot::channel::<()>();
@@ -532,7 +531,6 @@ pub(super) async fn handle_agent_command(
                             if let Err(e) = forward_pi_events(
                                 &runner,
                                 &sid,
-                                &uid,
                                 event_tx,
                                 conn_state_for_fwd,
                                 Some(sub_ready_tx),
@@ -895,7 +893,6 @@ pub(super) async fn handle_agent_command(
                     let event_tx = state_guard.event_tx.clone();
                     let runner = runner.clone();
                     let sid = session_id.clone();
-                    let uid = user_id.to_string();
                     let (sub_ready_tx, sub_ready_rx) = oneshot::channel::<()>();
                     let runner_id = runner_id.clone();
                     let conn_state_for_fwd = Arc::clone(&conn_state);
@@ -903,7 +900,6 @@ pub(super) async fn handle_agent_command(
                         if let Err(e) = forward_pi_events(
                             &runner,
                             &sid,
-                            &uid,
                             event_tx,
                             conn_state_for_fwd,
                             Some(sub_ready_tx),
@@ -1256,16 +1252,7 @@ pub(super) async fn handle_agent_command(
                 "agent get_messages: user={}, session_id={}",
                 user_id, session_id
             );
-            handle_get_messages(
-                id,
-                &session_id,
-                user_id,
-                state,
-                runner,
-                conn_state,
-                &runner_id,
-            )
-            .await
+            handle_get_messages(id, &session_id, state, runner, conn_state, &runner_id).await
         }
 
         CommandPayload::GetStats => {

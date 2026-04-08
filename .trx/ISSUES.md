@@ -2,6 +2,15 @@
 
 ## Open
 
+### [oqto-c4x3] Pi-authoritative history pipeline: zero-loss external-session compatibility with canonical+hstry projection (P0, epic)
+Goal
+- Preserve instant history load/search while guaranteeing zero message loss and full fork/tree compatibility for Pi sessions, including sessions started/continued outside Oqto.
+
+Architecture Decision
+- For Pi sessions, Pi JSONL/native metadata is authoritative.
+...
+
+
 ### [oqto-3yqp] P0: Assistant responses disappear from frontend despite existing in JSONL/hstry (P0, bug)
 
 ### [oqto-hybn] Deploy preflight: enforce minimum hstry version/schema for session tree queries (P0, bug)
@@ -39,6 +48,60 @@ setup.sh must correctly provision everything for a new platform user on a fresh 
 1. Pi installation: install pi-coding-agent system-wide with a bun wrapper that works for all users (not hardcoded to installer's HOME)
 2. Eavs config: always generate proper config under oqto user with [keys] enabled, master key, and env file
 3. Per-user provisioning on login/creation:
+...
+
+
+### [oqto-c4x3.6] E2E regression suite: external start/continue, compaction, tool streams, forks (P1, task)
+End-to-end regression matrix for zero-loss Pi compatibility.
+
+Scenarios:
+- Start in Pi -> open in Oqto.
+- Continue outside Oqto -> reopen/refresh in Oqto.
+...
+
+
+### [oqto-c4x3.5] Fork/tree lineage import for external Pi sessions (P1, task)
+Import and persist Pi fork/tree lineage deterministically.
+
+Deliverables:
+- Parent/child/root lineage extraction for sessions started/continued outside Oqto.
+- Persist lineage in canonical/history model used by frontend tree UI.
+...
+
+
+### [oqto-c4x3.4] Eliminate lossy active-session message paths from WS API (P1, task)
+Remove/guard lossy message fetch paths for workspace Pi sessions.
+
+Deliverables:
+- WS get_messages always prefers canonical structured path for workspace/pi scope.
+- Legacy AgentMessage path not used in primary workspace read path.
+...
+
+
+### [oqto-c4x3.3] Add reindex/repair command: rebuild Pi session projection from JSONL (P1, task)
+Add explicit repair/reindex operation for Pi sessions.
+
+Deliverables:
+- Command/API to purge + rebuild hstry projection from authoritative JSONL.
+- Safe run while session inactive; guarded behavior while active.
+...
+
+
+### [oqto-c4x3.2] Implement deterministic JSONL->canonical projection engine (idempotent) (P1, task)
+Build deterministic JSONL->canonical projection engine.
+
+Deliverables:
+- Lossless parser for message parts (text/thinking/tool_call/tool_result/system/compaction markers).
+- Idempotent upsert behavior (repeat projection produces identical rows, no duplicates).
+...
+
+
+### [oqto-c4x3.1] Define Pi/Oqto/hstry identity + authority contract (P1, task)
+Define authoritative identity mapping and sync contract for Pi sessions.
+
+Deliverables:
+- Mapping schema: pi_session_id, oqto_session_id, hstry_conversation_id, readable_id, parent/root ids.
+- Authority rules: JSONL authoritative for Pi; hstry projection semantics.
 ...
 
 
@@ -2385,13 +2448,13 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
-- [oqto-4ryr] Session rename reverts: update_chat_session returns external_id while list returns platform_id (closed )
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
-- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
+- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
-- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
 - [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
+- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
+- [oqto-4ryr] Session rename reverts: update_chat_session returns external_id while list returns platform_id (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
 - [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )

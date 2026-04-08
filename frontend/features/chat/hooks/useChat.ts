@@ -275,6 +275,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 			rawMessages: RawMessage[] | unknown[],
 			sessionId: string,
 			serverVersion?: number,
+			mode: "authoritative" | "partial" = "authoritative",
 		) => {
 			if (typeof serverVersion === "number") {
 				persistedMessageVersionRef.current = Math.max(
@@ -292,11 +293,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 				machineRef.current = completeMessageSync(machineRef.current);
 				return;
 			}
-			// Always authoritative: the runner buffer / hstry is the single source
-			// of truth. Preserve only in-flight optimistic messages.
-			setMessages((prev) =>
-				mergeServerMessages(prev, displayMessages, "authoritative"),
-			);
+			setMessages((prev) => mergeServerMessages(prev, displayMessages, mode));
 			const lastAssistant = [...displayMessages]
 				.reverse()
 				.find((msg) => msg.role === "assistant");
@@ -542,6 +539,9 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 					history as RawMessage[],
 					sessionId,
 					expectedVersion,
+					isStreamingRef.current || sendInFlightRef.current
+						? "partial"
+						: "authoritative",
 				);
 				if (!isStreamingRef.current && !sendInFlightRef.current) {
 					applyTurnState({ kind: "idle" });
@@ -550,7 +550,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 					console.debug(
 						"[useChat] Loaded history messages:",
 						sessionId,
-						displayMessages.length,
+						history.length,
 					);
 				}
 			} catch (err) {
@@ -1444,15 +1444,15 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 
 				// -- Messages sync --
 				case "messages": {
-					// Always merge immediately using authoritative mode.
-					// Server messages are the complete conversation state;
-					// streaming/optimistic messages are preserved by the
-					// authoritative merge.
+					// This stream can be partial during live sessions (e.g. assistant-only
+					// snapshots). Merge by id/client_id instead of replacing history.
 					const msgs = event.messages;
 					if (Array.isArray(msgs)) {
 						applyServerMessages(
 							msgs,
 							event.session_id ?? activeSessionIdRef.current ?? "unknown",
+							undefined,
+							"partial",
 						);
 						if (isPiDebugEnabled()) {
 							console.debug(
@@ -1599,24 +1599,30 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 						}
 
 						case "get_messages": {
-							// Always merge immediately as a server upsert.
-							// get_messages can be partial in live Pi paths, so
-							// reconciliation stays strictly id/client_id based.
+							// get_messages can return either a direct messages array or an
+							// object wrapper ({ messages, message_version }). Treat as partial
+							// because live Pi paths may only include a context window.
 							if (resp.success && resp.data) {
-								const data = resp.data as {
-									messages?: RawMessage[];
-									message_version?: { version?: number };
-								};
-								const msgs = data.messages;
+								const payload = resp.data as
+									| RawMessage[]
+									| {
+											messages?: RawMessage[];
+											message_version?: { version?: number };
+									  };
+								const msgs = Array.isArray(payload)
+									? payload
+									: payload.messages;
 								const serverVersion =
-									typeof data.message_version?.version === "number"
-										? data.message_version.version
+									!Array.isArray(payload) &&
+									typeof payload.message_version?.version === "number"
+										? payload.message_version.version
 										: undefined;
 								if (Array.isArray(msgs)) {
 									applyServerMessages(
 										msgs,
 										event.session_id ?? activeSessionIdRef.current ?? "unknown",
 										serverVersion,
+										"partial",
 									);
 									if (isPiDebugEnabled()) {
 										console.debug(
@@ -2226,8 +2232,8 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 	}, [applyTurnState, clearResponseWatchdog, runReconnectReconcile]);
 
 	// Watchdog: while streaming, periodically check for stalled connections.
-	// The runner message buffer is always current, so a simple get_messages
-	// call self-heals any dropped WebSocket events.
+	// We request get_messages snapshots to repair dropped WebSocket events;
+	// these are merged as partial updates to avoid clobbering optimistic turns.
 	// useeffect-guardrail: allow
 	useEffect(() => {
 		if (!isConnected) return;
@@ -2237,8 +2243,8 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 		const manager = getWsManager();
 		const sessionId = activeSessionId;
 
-		// Periodic sync every 5s: fetch from runner buffer to repair any
-		// dropped streaming events. Buffer is authoritative.
+		// Periodic sync every 5s: fetch a snapshot to repair any dropped
+		// streaming events.
 		const syncTimer = setInterval(() => {
 			if (activeSessionIdRef.current !== sessionId) return;
 			manager.agentGetMessages(sessionId);
@@ -2423,7 +2429,12 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 				// (not the full history), so replacing would discard earlier turns.
 				// Also fetch from hstry for the complete history.
 				if (serverMessages.length > 0) {
-					applyServerMessages(serverMessages as RawMessage[], _sessionId);
+					applyServerMessages(
+						serverMessages as RawMessage[],
+						_sessionId,
+						undefined,
+						"partial",
+					);
 				}
 
 				// Reset throttle state since we just rebuilt everything
