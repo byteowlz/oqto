@@ -1796,42 +1796,9 @@ pub fn agent_msg_to_chat_proto(
             }
         })
         .unwrap_or(0);
-    let part_id = format!("part_{}", idx);
     let message_id = format!("pi_msg_{}", idx);
 
-    let (part_type, text, tool_name, tool_call_id, tool_input, tool_output, tool_status) =
-        if msg.role == "tool" || msg.role == "toolResult" {
-            (
-                "tool_result".to_string(),
-                None,
-                msg.tool_name.clone(),
-                msg.tool_call_id.clone(),
-                None,
-                Some(msg.content.to_string()),
-                Some(
-                    if msg.is_error.unwrap_or(false) {
-                        "error"
-                    } else {
-                        "success"
-                    }
-                    .to_string(),
-                ),
-            )
-        } else {
-            (
-                "text".to_string(),
-                Some(if let Some(s) = msg.content.as_str() {
-                    s.to_string()
-                } else {
-                    msg.content.to_string()
-                }),
-                None,
-                None,
-                None,
-                None,
-                None,
-            )
-        };
+    let parts = decode_agent_message_parts(msg, idx);
 
     ChatMessageProto {
         id: message_id,
@@ -1851,19 +1818,193 @@ pub fn agent_msg_to_chat_proto(
             .usage
             .as_ref()
             .and_then(|u| u.cost.as_ref().map(|c| c.total)),
-        parts: vec![ChatMessagePartProto {
-            id: part_id,
-            part_type,
-            text,
-            text_html: None,
-            tool_name,
-            tool_call_id,
-            tool_input,
-            tool_output,
-            tool_status,
-            tool_title: None,
-        }],
+        parts,
     }
+}
+
+/// Decode a Pi `AgentMessage`'s `content` field into structured
+/// `ChatMessagePartProto` entries.
+///
+/// Pi's `content` is typically a JSON array of blocks
+/// (`{type: "text", text: ...}`, `{type: "thinking", thinking: ...}`,
+/// `{type: "tool_use", id, name, input, ...}`). The old runner just stored
+/// the raw JSON as a single text part, which caused assistant answers to
+/// render as literal JSON in the frontend.
+///
+/// Tool-result messages keep their historical shape (a single tool_result
+/// part carrying the raw content) to preserve compatibility with the
+/// existing rendering path.
+fn decode_agent_message_parts(
+    msg: &crate::pi::AgentMessage,
+    message_idx: usize,
+) -> Vec<ChatMessagePartProto> {
+    // Tool-result messages: preserve the single-part shape.
+    if msg.role == "tool" || msg.role == "toolResult" {
+        let text = match msg.content.as_str() {
+            Some(s) => Some(s.to_string()),
+            None => Some(msg.content.to_string()),
+        };
+        return vec![ChatMessagePartProto {
+            id: format!("part_{}_0", message_idx),
+            part_type: "tool_result".to_string(),
+            text: None,
+            text_html: None,
+            tool_name: msg.tool_name.clone(),
+            tool_call_id: msg.tool_call_id.clone(),
+            tool_input: None,
+            tool_output: text,
+            tool_status: Some(
+                if msg.is_error.unwrap_or(false) {
+                    "error"
+                } else {
+                    "success"
+                }
+                .to_string(),
+            ),
+            tool_title: None,
+        }];
+    }
+
+    // Assistant / user messages: decode the content array into structured
+    // parts. Fall back to a single text part for plain strings or unknown
+    // shapes.
+    if let serde_json::Value::Array(blocks) = &msg.content {
+        let mut parts: Vec<ChatMessagePartProto> = Vec::with_capacity(blocks.len());
+        for (block_idx, block) in blocks.iter().enumerate() {
+            let Some(obj) = block.as_object() else {
+                continue;
+            };
+            let block_type = obj.get("type").and_then(|v| v.as_str()).unwrap_or("");
+            let part_id = format!("part_{}_{}", message_idx, block_idx);
+            match block_type {
+                "text" => {
+                    let text = obj.get("text").and_then(|v| v.as_str()).unwrap_or("");
+                    if text.is_empty() {
+                        continue;
+                    }
+                    parts.push(ChatMessagePartProto {
+                        id: part_id,
+                        part_type: "text".to_string(),
+                        text: Some(text.to_string()),
+                        text_html: None,
+                        tool_name: None,
+                        tool_call_id: None,
+                        tool_input: None,
+                        tool_output: None,
+                        tool_status: None,
+                        tool_title: None,
+                    });
+                }
+                "thinking" => {
+                    let text = obj
+                        .get("thinking")
+                        .and_then(|v| v.as_str())
+                        .or_else(|| obj.get("text").and_then(|v| v.as_str()))
+                        .unwrap_or("");
+                    if text.is_empty() {
+                        continue;
+                    }
+                    parts.push(ChatMessagePartProto {
+                        id: part_id,
+                        part_type: "thinking".to_string(),
+                        text: Some(text.to_string()),
+                        text_html: None,
+                        tool_name: None,
+                        tool_call_id: None,
+                        tool_input: None,
+                        tool_output: None,
+                        tool_status: None,
+                        tool_title: None,
+                    });
+                }
+                "tool_use" | "tool_call" | "toolCall" => {
+                    let name = obj
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let tool_call_id = obj
+                        .get("id")
+                        .and_then(|v| v.as_str())
+                        .map(String::from)
+                        .unwrap_or_default();
+                    let input = obj
+                        .get("input")
+                        .cloned()
+                        .or_else(|| obj.get("arguments").cloned());
+                    parts.push(ChatMessagePartProto {
+                        id: part_id,
+                        part_type: "tool_call".to_string(),
+                        text: None,
+                        text_html: None,
+                        tool_name: Some(name),
+                        tool_call_id: Some(tool_call_id),
+                        tool_input: input,
+                        tool_output: None,
+                        tool_status: Some("success".to_string()),
+                        tool_title: None,
+                    });
+                }
+                "tool_result" | "toolResult" => {
+                    let tool_call_id = obj
+                        .get("tool_use_id")
+                        .and_then(|v| v.as_str())
+                        .or_else(|| obj.get("toolCallId").and_then(|v| v.as_str()))
+                        .or_else(|| obj.get("tool_call_id").and_then(|v| v.as_str()))
+                        .map(String::from)
+                        .unwrap_or_default();
+                    let output_value = obj
+                        .get("output")
+                        .or_else(|| obj.get("content"))
+                        .or_else(|| obj.get("text"));
+                    let output_text = output_value.map(|v| {
+                        v.as_str()
+                            .map(String::from)
+                            .unwrap_or_else(|| v.to_string())
+                    });
+                    let is_error = obj
+                        .get("is_error")
+                        .and_then(|v| v.as_bool())
+                        .or_else(|| obj.get("isError").and_then(|v| v.as_bool()))
+                        .unwrap_or(false);
+                    parts.push(ChatMessagePartProto {
+                        id: part_id,
+                        part_type: "tool_result".to_string(),
+                        text: None,
+                        text_html: None,
+                        tool_name: obj.get("name").and_then(|v| v.as_str()).map(String::from),
+                        tool_call_id: Some(tool_call_id),
+                        tool_input: None,
+                        tool_output: output_text,
+                        tool_status: Some(if is_error { "error" } else { "success" }.to_string()),
+                        tool_title: None,
+                    });
+                }
+                _ => {}
+            }
+        }
+        if !parts.is_empty() {
+            return parts;
+        }
+    }
+
+    // Fallback: treat content as a single text part (plain strings, etc.).
+    let text = match msg.content.as_str() {
+        Some(s) => s.to_string(),
+        None => msg.content.to_string(),
+    };
+    vec![ChatMessagePartProto {
+        id: format!("part_{}_0", message_idx),
+        part_type: "text".to_string(),
+        text: Some(text),
+        text_html: None,
+        tool_name: None,
+        tool_call_id: None,
+        tool_input: None,
+        tool_output: None,
+        tool_status: None,
+        tool_title: None,
+    }]
 }
 
 /// Convert a `ChatMessageProto` back to a Pi `AgentMessage`.

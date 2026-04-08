@@ -87,6 +87,25 @@ function safeStringify(value: unknown): string {
 	}
 }
 
+function stableHash(input: string): string {
+	let hash = 5381;
+	for (let i = 0; i < input.length; i++) {
+		hash = ((hash << 5) + hash + input.charCodeAt(i)) | 0;
+	}
+	return (hash >>> 0).toString(16);
+}
+
+function fallbackMessageId(
+	idPrefix: string,
+	role: string,
+	timestamp: number,
+	content: unknown,
+	idx: number,
+): string {
+	const signature = `${role}|${timestamp}|${safeStringify(content)}|${idx}`;
+	return `${idPrefix}-fallback-${stableHash(signature)}`;
+}
+
 // ============================================================================
 // Coercion: untyped objects → canonical Part
 // ============================================================================
@@ -573,7 +592,7 @@ export function normalizeMessages(
 					id:
 						typeof message.id === "string" && message.id.length > 0
 							? message.id
-							: `${idPrefix}-${idx}`,
+							: fallbackMessageId(idPrefix, "assistant", timestamp, content, idx),
 					role: "assistant",
 					parts: [toolResultPart],
 					timestamp,
@@ -600,7 +619,7 @@ export function normalizeMessages(
 		const canonicalId =
 			typeof message.id === "string" && message.id.length > 0
 				? message.id
-				: `${idPrefix}-${idx}`;
+				: fallbackMessageId(idPrefix, normalizedRole, timestamp, content, idx);
 		const displayMessage: DisplayMessage = {
 			id: canonicalId,
 			role: normalizedRole,
@@ -926,8 +945,11 @@ export function mergeServerMessages(
 		) {
 			continue;
 		}
-		// Preserve only in-flight local items.
-		const shouldKeep = Boolean(local.isStreaming) || Boolean(local.clientId);
+		// Preserve only actively streaming local items.
+		// Do NOT keep stale optimistic user messages here: if the server
+		// snapshot is authoritative and no stream is active, local tmp messages
+		// without a confirmed server match must be dropped to prevent duplicates.
+		const shouldKeep = Boolean(local.isStreaming);
 		if (!shouldKeep) continue;
 		merged.push(local);
 		const idx = merged.length - 1;

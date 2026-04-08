@@ -774,6 +774,55 @@ install_current_symlinks() {
     for bin in $binaries; do
         host_exec_sudo "$is_local" "$ssh_target" "ln -sfn '$current_link/bin/$bin' '/usr/local/bin/$bin'"
     done
+
+    # Replace any stale per-user shadows of the same binary names with symlinks
+    # to the canonical /usr/local/bin path. Without this, a stale binary in
+    # ~/.local/bin or ~/.cargo/bin can win the PATH lookup of a user systemd
+    # service that uses ExecSearchPath, leaving the running daemon on an old
+    # version even after a successful deploy. Idempotent: noops if missing.
+    for bin in $binaries; do
+        host_exec "$is_local" "$ssh_target" "
+            for d in \"\$HOME/.local/bin\" \"\$HOME/.cargo/bin\"; do
+                target=\"\$d/$bin\"
+                if [[ -e \"\$target\" || -L \"\$target\" ]]; then
+                    if [[ -L \"\$target\" ]] && [[ \"\$(readlink -f \"\$target\")\" == \"$current_link/bin/$bin\" ]]; then
+                        continue
+                    fi
+                    mkdir -p \"\$d\" && ln -sfn '/usr/local/bin/$bin' \"\$target\"
+                fi
+            done
+        " || true
+    done
+}
+
+# Reinstall the user-scoped oqto-runner systemd unit from the repo so any
+# stale on-disk unit (e.g. one with ExecSearchPath pointing at ~/.local/bin)
+# is overwritten with the canonical version that uses an absolute ExecStart.
+#
+# We deliberately only sync oqto-runner here: other units in deploy/systemd/
+# (oqto.service etc.) are system-scope templates with User=/Group= directives
+# and are not valid for user systemd. Touching them would break single-user
+# deployments.
+#
+# Only runs on local deploys where we can read the repo directly.
+sync_single_user_unit_files() {
+    local is_local="$1" ssh_target="$2"
+    if [[ "$is_local" != "true" ]]; then
+        return 0
+    fi
+
+    local src="$ROOT_DIR/deploy/systemd/oqto-runner.service"
+    if [[ ! -f "$src" ]]; then
+        return 0
+    fi
+
+    # Only install into user scope if a user unit already exists there; we do
+    # not want to create a brand new unit file for hosts that don't have one.
+    local user_unit="$HOME/.config/systemd/user/oqto-runner.service"
+    if [[ -f "$user_unit" ]]; then
+        install -m 0644 "$src" "$user_unit"
+        systemctl --user daemon-reload >/dev/null 2>&1 || true
+    fi
 }
 
 # Restart a single-user service: try systemctl --user, fall back to SIGHUP.
@@ -843,6 +892,7 @@ restart_services_ordered() {
     if [[ "$mode" == "single-user" ]]; then
         # Single-user: try systemd --user first, fall back to process signal.
         # This keeps Docker/non-systemd environments working.
+        sync_single_user_unit_files "$is_local" "$ssh_target"
         restart_single_user_service "$is_local" "$ssh_target" "oqto-runner"
         restart_single_user_service "$is_local" "$ssh_target" "oqto"
         restart_single_user_service "$is_local" "$ssh_target" "hstry"

@@ -25,13 +25,14 @@ After=hstry.service mmry.service eavs.service
 Wants=hstry.service mmry.service eavs.service
 
 [Service]
-Type=simple
+Type=notify
 
 # Socket path uses XDG_RUNTIME_DIR (%t in systemd), which is /run/user/<uid>
-ExecStart=/usr/local/bin/oqto-runner
+ExecStart=/usr/local/bin/oqto-runner --socket %t/oqto-runner.sock
 
 Restart=on-failure
 RestartSec=5
+TimeoutStartSec=30
 
 # Environment
 Environment=RUST_LOG=info

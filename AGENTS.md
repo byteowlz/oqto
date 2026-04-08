@@ -188,6 +188,27 @@ Pi writes its own JSONL session files -- **Oqto must NEVER create or write JSONL
 - hstry is authoritative for structured message content
 - `pending-` prefixed IDs are internal runner/frontend placeholders for optimistic session matching; they must never leak into files or hstry
 
+### Session ID Contract (MUST FOLLOW)
+
+To avoid history loss/duplication, Oqto uses dual IDs with strict roles:
+
+- **`platform_id` (Oqto session ID)**
+  - Used by frontend/WS/backend for session control (`prompt`, `abort`, `get_messages`, etc.)
+  - Stable within Oqto UX and routing
+- **`external_id` (Pi session ID)**
+  - Used as hstry conversation identity for Pi-backed sessions
+  - Comes from Pi `get_state` (`sessionId`) and must be treated as authoritative once known
+- **Optimistic temp IDs (`tmp:*`, `pending-*`)**
+  - Frontend-local only during pre-ack/new-session flows
+  - Must never be persisted to hstry or JSONL
+
+Persistence rules:
+
+1. Keep both IDs; never "replace" platform_id with external_id in Oqto control paths.
+2. Store both in hstry (`external_id = Pi session id`, `platform_id = Oqto session id`).
+3. For active sessions, message durability is append-only delta writes on `AgentEnd` (no full-window overwrite).
+4. If Pi session id is not known yet, keep data in runner buffer and defer hstry write until identity is resolved.
+
 ## Agent Tools
 
 Two CLI tools are available for agent workflows:

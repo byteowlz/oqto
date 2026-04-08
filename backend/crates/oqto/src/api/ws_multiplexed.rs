@@ -46,9 +46,6 @@ use crate::ws::types::{WsCommand as LegacyWsCommand, WsEvent as LegacyHubEvent};
 
 use super::error::ApiError;
 
-const PI_MESSAGES_CACHE_TTL: Duration = Duration::from_secs(15 * 60);
-const PI_MESSAGES_CACHE_MAX_BYTES_PER_USER: usize = 100 * 1024 * 1024;
-const PI_MESSAGES_CACHE_MAX_MESSAGES_PER_SESSION: usize = 200;
 const RECENT_CLIENT_IDS_MAX_PER_SESSION: usize = 512;
 
 // File tree traversal budgets (reliability + latency guardrails)
@@ -59,21 +56,6 @@ const TREE_MAX_CONCURRENCY: usize = 16;
 const TREE_PAGE_DEFAULT_LIMIT: usize = 1_000;
 const TREE_PAGE_MAX_LIMIT: usize = 5_000;
 
-struct CachedPiMessages {
-    cached_at: Instant,
-    last_access: Instant,
-    messages: Value,
-    size_bytes: usize,
-}
-
-struct CachedPiUserMessages {
-    total_bytes: usize,
-    entries: HashMap<String, CachedPiMessages>,
-}
-
-static PI_MESSAGES_CACHE: Lazy<tokio::sync::RwLock<HashMap<String, CachedPiUserMessages>>> =
-    Lazy::new(|| tokio::sync::RwLock::new(HashMap::new()));
-
 static RECENT_CLIENT_IDS: Lazy<tokio::sync::RwLock<HashMap<String, Vec<String>>>> =
     Lazy::new(|| tokio::sync::RwLock::new(HashMap::new()));
 
@@ -82,26 +64,6 @@ mod files;
 mod history;
 mod system;
 mod terminal;
-
-fn trim_messages_for_cache(messages: &Value) -> Value {
-    match messages {
-        Value::Array(items) => {
-            if items.len() <= PI_MESSAGES_CACHE_MAX_MESSAGES_PER_SESSION {
-                Value::Array(items.clone())
-            } else {
-                let start = items.len() - PI_MESSAGES_CACHE_MAX_MESSAGES_PER_SESSION;
-                Value::Array(items[start..].to_vec())
-            }
-        }
-        _ => messages.clone(),
-    }
-}
-
-fn estimate_messages_size(messages: &Value) -> usize {
-    serde_json::to_string(messages)
-        .map(|s| s.len())
-        .unwrap_or(0)
-}
 
 fn normalized_client_id(client_id: Option<&str>) -> Option<&str> {
     let client_id = client_id?;
@@ -143,75 +105,6 @@ async fn clear_client_ids_for_session(session_id: &str) {
     map.remove(session_id);
 }
 
-async fn cache_pi_messages(user_id: &str, session_id: &str, messages: &Value) {
-    let trimmed = trim_messages_for_cache(messages);
-    let size_bytes = estimate_messages_size(&trimmed);
-    let now = Instant::now();
-    let mut cache = PI_MESSAGES_CACHE.write().await;
-    let user_cache = cache
-        .entry(user_id.to_string())
-        .or_insert_with(|| CachedPiUserMessages {
-            total_bytes: 0,
-            entries: HashMap::new(),
-        });
-
-    if let Some(existing) = user_cache.entries.remove(session_id) {
-        user_cache.total_bytes = user_cache.total_bytes.saturating_sub(existing.size_bytes);
-    }
-
-    user_cache.total_bytes = user_cache.total_bytes.saturating_add(size_bytes);
-    user_cache.entries.insert(
-        session_id.to_string(),
-        CachedPiMessages {
-            cached_at: now,
-            last_access: now,
-            messages: trimmed,
-            size_bytes,
-        },
-    );
-
-    while user_cache.total_bytes > PI_MESSAGES_CACHE_MAX_BYTES_PER_USER {
-        if let Some((oldest_key, oldest_entry)) = user_cache
-            .entries
-            .iter()
-            .min_by_key(|(_, entry)| entry.last_access)
-            .map(|(k, v)| (k.clone(), v.size_bytes))
-        {
-            user_cache.entries.remove(&oldest_key);
-            user_cache.total_bytes = user_cache.total_bytes.saturating_sub(oldest_entry);
-        } else {
-            break;
-        }
-    }
-}
-
-struct CachedPiMessagesSnapshot {
-    messages: Value,
-    age: Duration,
-}
-
-async fn get_cached_pi_messages(
-    user_id: &str,
-    session_id: &str,
-) -> Option<CachedPiMessagesSnapshot> {
-    let mut cache = PI_MESSAGES_CACHE.write().await;
-    let user_cache = cache.get_mut(user_id)?;
-    if let Some(entry) = user_cache.entries.get_mut(session_id) {
-        let age = entry.cached_at.elapsed();
-        if age <= PI_MESSAGES_CACHE_TTL {
-            entry.last_access = Instant::now();
-            return Some(CachedPiMessagesSnapshot {
-                messages: entry.messages.clone(),
-                age,
-            });
-        }
-        let size = entry.size_bytes;
-        user_cache.entries.remove(session_id);
-        user_cache.total_bytes = user_cache.total_bytes.saturating_sub(size);
-    }
-    None
-}
-
 fn workspace_chat_messages_to_json(
     messages: Vec<crate::runner::protocol::ChatMessageProto>,
 ) -> serde_json::Value {
@@ -224,10 +117,7 @@ fn workspace_chat_messages_to_json(
                 .map(|p| {
                     let mut part = serde_json::Map::new();
                     part.insert("id".to_string(), serde_json::Value::String(p.id));
-                    part.insert(
-                        "type".to_string(),
-                        serde_json::Value::String(p.part_type),
-                    );
+                    part.insert("type".to_string(), serde_json::Value::String(p.part_type));
                     if let Some(text) = p.text {
                         part.insert("text".to_string(), serde_json::Value::String(text));
                     }
@@ -248,10 +138,7 @@ fn workspace_chat_messages_to_json(
                         part.insert("input".to_string(), tool_input);
                     }
                     if let Some(tool_output) = p.tool_output {
-                        part.insert(
-                            "output".to_string(),
-                            serde_json::Value::String(tool_output),
-                        );
+                        part.insert("output".to_string(), serde_json::Value::String(tool_output));
                     }
                     if let Some(tool_status) = p.tool_status {
                         part.insert("status".to_string(), serde_json::Value::String(tool_status));
@@ -2134,7 +2021,6 @@ async fn broadcast_user_message(
 async fn handle_get_messages(
     id: Option<String>,
     session_id: &str,
-    user_id: &str,
     state: &AppState,
     runner: &RunnerClient,
     conn_state: Arc<tokio::sync::Mutex<WsConnectionState>>,
@@ -2178,62 +2064,23 @@ async fn handle_get_messages(
             Value::Object(data)
         };
 
-    // When the session is ACTIVE, prefer runner's workspace chat message path
-    // for workspace/pi sessions. It preserves structured parts and stable ids.
-    // Falling back to legacy Pi get_messages can flatten assistant parts.
+    // Two-branch authority model:
+    // 1) Active session -> runner message buffer snapshot
+    // 2) Inactive session -> durable hstry projection
     if is_active {
-        let workspace_scoped = session_meta
-            .as_ref()
-            .and_then(|m| m.scope.as_deref())
-            .is_some_and(|scope| scope == "workspace" || scope == "pi");
-
-        if workspace_scoped {
-            let workspace_result = tokio::time::timeout(
-                std::time::Duration::from_secs(3),
-                runner.get_workspace_chat_session_messages(session_id, false, None),
-            )
-            .await;
-
-            match workspace_result {
-                Ok(Ok(resp)) if !resp.messages.is_empty() => {
-                    let messages_value = workspace_chat_messages_to_json(resp.messages);
-                    cache_pi_messages(user_id, session_id, &messages_value).await;
-                    return Some(agent_response(
-                        session_id,
-                        id,
-                        "get_messages",
-                        Ok(Some(response_data(
-                            messages_value,
-                            persisted_message_version.clone(),
-                        ))),
-                    ));
-                }
-                Ok(Ok(_)) => {}
-                Ok(Err(e)) => {
-                    debug!(
-                        "get_messages: active workspace query failed for {}: {}, falling through",
-                        session_id, e
-                    );
-                }
-                Err(_) => {
-                    debug!(
-                        "get_messages: active workspace query timed out for {}, falling through",
-                        session_id,
-                    );
-                }
-            }
-        }
-
-        // Non-workspace fallback: live Pi get_messages.
-        let pi_result = tokio::time::timeout(
+        match tokio::time::timeout(
             std::time::Duration::from_secs(3),
-            runner.agent_get_messages(session_id),
+            runner.get_workspace_chat_session_messages(session_id, false, None),
         )
-        .await;
-        match pi_result {
-            Ok(Ok(resp)) => {
-                let messages_value = serde_json::to_value(&resp.messages).unwrap_or_default();
-                cache_pi_messages(user_id, session_id, &messages_value).await;
+        .await
+        {
+            Ok(Ok(resp)) if !resp.messages.is_empty() => {
+                debug!(
+                    "ws get_messages session={} active=true source=runner_buffer count={}",
+                    session_id,
+                    resp.messages.len()
+                );
+                let messages_value = workspace_chat_messages_to_json(resp.messages);
                 return Some(agent_response(
                     session_id,
                     id,
@@ -2244,38 +2091,28 @@ async fn handle_get_messages(
                     ))),
                 ));
             }
+            Ok(Ok(_)) => {
+                debug!(
+                    "get_messages: active buffer empty for {}, falling back to hstry",
+                    session_id
+                );
+            }
             Ok(Err(e)) => {
                 debug!(
-                    "get_messages: active session Pi query failed for {}: {}, falling through to hstry",
+                    "get_messages: active buffer read failed for {}: {}, falling back to hstry",
                     session_id, e
                 );
             }
             Err(_) => {
                 debug!(
-                    "get_messages: Pi query timed out for active session {}, falling through to hstry",
-                    session_id,
+                    "get_messages: active buffer timed out for {}, falling back to hstry",
+                    session_id
                 );
             }
         }
     }
 
-    // Check cache (only for inactive sessions or when Pi query failed above)
-    if let Some(cached) = get_cached_pi_messages(user_id, session_id).await {
-        let use_cached = !is_active || cached.age <= Duration::from_secs(2);
-        if use_cached {
-            return Some(agent_response(
-                session_id,
-                id,
-                "get_messages",
-                Ok(Some(response_data(
-                    cached.messages,
-                    persisted_message_version.clone(),
-                ))),
-            ));
-        }
-    }
-
-    // Try hstry for historical messages
+    // Inactive sessions read from hstry (runner-mediated in multi-user mode).
     if let Some(meta) = session_meta.as_ref()
         && (meta.scope.as_deref() == Some("workspace") || meta.scope.as_deref() == Some("pi"))
         && let Some(work_dir) = meta.cwd.as_ref()
@@ -2289,7 +2126,12 @@ async fn handle_get_messages(
                 )
                 .await
             {
-                Ok(resp) if !resp.messages.is_empty() => {
+                Ok(resp) => {
+                    debug!(
+                        "ws get_messages session={} active=false source=runner_main_chat count={}",
+                        session_id,
+                        resp.messages.len()
+                    );
                     let messages: Vec<serde_json::Value> = resp
                         .messages
                         .into_iter()
@@ -2298,7 +2140,6 @@ async fn handle_get_messages(
                         }))
                         .collect();
                     let messages_value = serde_json::Value::Array(messages);
-                    cache_pi_messages(user_id, session_id, &messages_value).await;
                     return Some(agent_response(
                         session_id,
                         id,
@@ -2309,43 +2150,58 @@ async fn handle_get_messages(
                         ))),
                     ));
                 }
-                Ok(_) => {}
                 Err(e) => {
-                    debug!(
-                        "get_messages: hstry (workspace via runner) error for {}: {}",
-                        session_id, e
-                    );
-                }
-            }
-        } else if let Some(hstry_client) = state.hstry.as_ref() {
-            match hstry_client.get_messages(session_id, None, None).await {
-                Ok(hstry_messages) if !hstry_messages.is_empty() => {
-                    let serializable =
-                        crate::history::proto_messages_to_serializable(hstry_messages);
-                    let messages_value = serde_json::to_value(&serializable).unwrap_or_default();
-                    cache_pi_messages(user_id, session_id, &messages_value).await;
                     return Some(agent_response(
                         session_id,
                         id,
                         "get_messages",
-                        Ok(Some(response_data(
-                            messages_value,
-                            persisted_message_version.clone(),
-                        ))),
+                        Err(e.to_string()),
                     ));
-                }
-                Ok(_) => {}
-                Err(e) => {
-                    debug!(
-                        "get_messages: hstry (workspace) error for {}: {}",
-                        session_id, e
-                    );
                 }
             }
         }
-    } else if is_multi_user {
-        match runner.get_main_chat_messages(session_id, None).await {
-            Ok(resp) if !resp.messages.is_empty() => {
+
+        if let Some(hstry_client) = state.hstry.as_ref() {
+            match hstry_client.get_messages(session_id, None, None).await {
+                Ok(hstry_messages) => {
+                    debug!(
+                        "ws get_messages session={} active=false source=hstry_direct count={}",
+                        session_id,
+                        hstry_messages.len()
+                    );
+                    let serializable =
+                        crate::history::proto_messages_to_serializable(hstry_messages);
+                    let messages_value = serde_json::to_value(&serializable).unwrap_or_default();
+                    return Some(agent_response(
+                        session_id,
+                        id,
+                        "get_messages",
+                        Ok(Some(response_data(
+                            messages_value,
+                            persisted_message_version.clone(),
+                        ))),
+                    ));
+                }
+                Err(e) => {
+                    return Some(agent_response(
+                        session_id,
+                        id,
+                        "get_messages",
+                        Err(e.to_string()),
+                    ));
+                }
+            }
+        }
+    }
+
+    if is_multi_user {
+        return match runner.get_main_chat_messages(session_id, None).await {
+            Ok(resp) => {
+                debug!(
+                    "ws get_messages session={} active=false source=runner_main_chat_fallback count={}",
+                    session_id,
+                    resp.messages.len()
+                );
                 let messages: Vec<serde_json::Value> = resp
                     .messages
                     .into_iter()
@@ -2354,8 +2210,7 @@ async fn handle_get_messages(
                     }))
                     .collect();
                 let messages_value = serde_json::Value::Array(messages);
-                cache_pi_messages(user_id, session_id, &messages_value).await;
-                return Some(agent_response(
+                Some(agent_response(
                     session_id,
                     id,
                     "get_messages",
@@ -2363,61 +2218,59 @@ async fn handle_get_messages(
                         messages_value,
                         persisted_message_version.clone(),
                     ))),
-                ));
+                ))
             }
-            Ok(_) => {}
-            Err(e) => {
-                debug!(
-                    "get_messages: hstry (via runner) error for {}: {}",
-                    session_id, e
-                );
-            }
-        }
-    } else if let Some(hstry_client) = state.hstry.as_ref() {
-        match hstry_client.get_messages(session_id, None, None).await {
-            Ok(hstry_messages) if !hstry_messages.is_empty() => {
-                let serializable = crate::history::proto_messages_to_serializable(hstry_messages);
-                let messages_value = serde_json::to_value(&serializable).unwrap_or_default();
-                cache_pi_messages(user_id, session_id, &messages_value).await;
-                return Some(agent_response(
-                    session_id,
-                    id,
-                    "get_messages",
-                    Ok(Some(response_data(
-                        messages_value,
-                        persisted_message_version.clone(),
-                    ))),
-                ));
-            }
-            Ok(_) => {}
-            Err(e) => {
-                debug!("get_messages: hstry error for {}: {}", session_id, e);
-            }
-        }
-    }
-
-    // Last resort: try runner's live Pi process
-    match runner.agent_get_messages(session_id).await {
-        Ok(resp) => {
-            let messages_value = serde_json::to_value(&resp.messages).unwrap_or_default();
-            cache_pi_messages(user_id, session_id, &messages_value).await;
-            Some(agent_response(
+            Err(e) => Some(agent_response(
                 session_id,
                 id,
                 "get_messages",
-                Ok(Some(response_data(
-                    messages_value,
-                    persisted_message_version.clone(),
-                ))),
-            ))
-        }
-        Err(e) => Some(agent_response(
-            session_id,
-            id,
-            "get_messages",
-            Err(e.to_string()),
-        )),
+                Err(e.to_string()),
+            )),
+        };
     }
+
+    if let Some(hstry_client) = state.hstry.as_ref() {
+        return match hstry_client.get_messages(session_id, None, None).await {
+            Ok(hstry_messages) => {
+                debug!(
+                    "ws get_messages session={} active=false source=hstry_direct_fallback count={}",
+                    session_id,
+                    hstry_messages.len()
+                );
+                let serializable = crate::history::proto_messages_to_serializable(hstry_messages);
+                let messages_value = serde_json::to_value(&serializable).unwrap_or_default();
+                Some(agent_response(
+                    session_id,
+                    id,
+                    "get_messages",
+                    Ok(Some(response_data(
+                        messages_value,
+                        persisted_message_version.clone(),
+                    ))),
+                ))
+            }
+            Err(e) => Some(agent_response(
+                session_id,
+                id,
+                "get_messages",
+                Err(e.to_string()),
+            )),
+        };
+    }
+
+    debug!(
+        "ws get_messages session={} active={} source=empty count=0",
+        session_id, is_active
+    );
+    Some(agent_response(
+        session_id,
+        id,
+        "get_messages",
+        Ok(Some(response_data(
+            serde_json::Value::Array(Vec::new()),
+            persisted_message_version,
+        ))),
+    ))
 }
 
 /// Forward canonical events from runner subscription to WebSocket.
@@ -2431,7 +2284,6 @@ async fn handle_get_messages(
 async fn forward_pi_events(
     runner: &RunnerClient,
     session_id: &str,
-    user_id: &str,
     event_tx: mpsc::UnboundedSender<WsEvent>,
     conn_state: Arc<tokio::sync::Mutex<WsConnectionState>>,
     sub_ready_tx: Option<oneshot::Sender<()>>,
@@ -2458,21 +2310,6 @@ async fn forward_pi_events(
                 // Any real agent event means the command made progress.
                 clear_response_watchdog(&conn_state, session_id).await;
 
-                // Invalidate the messages cache on agent.idle so subsequent
-                // get_messages requests fetch fresh data from hstry instead
-                // of serving stale cached messages.
-                if matches!(
-                    canonical_event.payload,
-                    oqto_protocol::events::EventPayload::AgentIdle { .. }
-                ) {
-                    let mut cache = PI_MESSAGES_CACHE.write().await;
-                    if let Some(user_cache) = cache.get_mut(user_id)
-                        && let Some(entry) = user_cache.entries.remove(session_id)
-                    {
-                        user_cache.total_bytes =
-                            user_cache.total_bytes.saturating_sub(entry.size_bytes);
-                    }
-                }
                 if event_tx.send(WsEvent::Agent(canonical_event)).is_err() {
                     // WebSocket closed
                     break;
