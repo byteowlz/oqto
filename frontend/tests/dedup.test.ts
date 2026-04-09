@@ -141,6 +141,18 @@ describe("mergeServerMessages", () => {
 		expect(result[0].id).toBe("history-user");
 	});
 
+	it("authoritative mode removes stale tmp assistant once persisted assistant exists", () => {
+		const prev = [
+			textMsg("tmp:assistant-1", "assistant", "in-flight", {
+				isStreaming: false,
+			}),
+		];
+		const server = [textMsg("history-assistant-1", "assistant", "in-flight")];
+		const result = mergeServerMessages(prev, server, "authoritative");
+		expect(result).toHaveLength(1);
+		expect(result[0].id).toBe("history-assistant-1");
+	});
+
 	it("authoritative mode preserves unmatched local tail messages append-only", () => {
 		const prev = [
 			textMsg("history-1", "user", "first", { timestamp: 1000 }),
