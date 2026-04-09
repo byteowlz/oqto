@@ -950,8 +950,16 @@ export function mergeServerMessages(
 	// only clearly-ephemeral snapshot IDs, then upsert server messages in-place.
 	const base = previous.filter((msg) => {
 		const id = msg.id ?? "";
+		const isTmpId = id.startsWith(TMP_MESSAGE_ID_PREFIX);
 		const isEphemeralSnapshotId =
 			/^pi[-_]msg[-_]/.test(id) || /^srv-.*-fallback-/.test(id);
+
+		// Drop stale optimistic assistant placeholders once authoritative data
+		// arrives. Keep only currently streaming assistant temp messages.
+		if (isTmpId && msg.role === "assistant") {
+			return Boolean(msg.isStreaming);
+		}
+
 		if (!isEphemeralSnapshotId) return true;
 		return shouldPreserveLocalMessage(msg) || Boolean(msg.isStreaming);
 	});
