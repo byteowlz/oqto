@@ -48,7 +48,8 @@ profile = "development"
 #
 # "strict" profile:
 #   - Protects secrets and all config (~/.config)
-#   - No tool installation
+#   - Allows Pi to function: ~/.pi (sessions), ~/.config/oqto (config read-only)
+#   - No tool installation (other than Pi itself)
 #   - Full network and PID isolation
 #   - No SSH access
 

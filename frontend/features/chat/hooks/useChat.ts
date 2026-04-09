@@ -944,25 +944,31 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 					batch.pendingUpdate = false;
 
 					if (streamingMessageRef.current) {
+						const hasParts = streamingMessageRef.current.parts.length > 0;
 						streamingMessageRef.current.isStreaming = false;
-						const completedMessage = {
-							...streamingMessageRef.current,
-							parts: streamingMessageRef.current.parts.map((p) => ({
-								...p,
-							})),
-						};
+						if (hasParts) {
+							const completedMessage = {
+								...streamingMessageRef.current,
+								parts: streamingMessageRef.current.parts.map((p) => ({
+									...p,
+								})),
+							};
 
-						setMessages((prev) => {
-							const idx = prev.findIndex((m) => m.id === completedMessage.id);
-							if (idx >= 0) {
-								const updated = [...prev];
-								updated[idx] = completedMessage;
-								return updated;
-							}
-							return prev;
-						});
+							setMessages((prev) => {
+								const idx = prev.findIndex((m) => m.id === completedMessage.id);
+								if (idx >= 0) {
+									const updated = [...prev];
+									updated[idx] = completedMessage;
+									return updated;
+								}
+								return prev;
+							});
 
-						onMessageComplete?.(completedMessage);
+							onMessageComplete?.(completedMessage);
+						} else {
+							const emptyId = streamingMessageRef.current.id;
+							setMessages((prev) => prev.filter((m) => m.id !== emptyId));
+						}
 						streamingMessageRef.current = null;
 					}
 					// Clear streaming state. The Messages event from agent.end
@@ -1191,38 +1197,50 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 				}
 
 				case "agent.error": {
-					clearResponseWatchdog();
+					const errMsg = (event.error as string) || "Unknown error";
+					const recoverable = event.recoverable as boolean;
 					const wasInFlight = sendInFlightRef.current;
+					const isSessionNotFound =
+						errMsg.includes("PiSessionNotFound") ||
+						errMsg.includes("SessionNotFound") ||
+						errMsg.includes("Response channel closed");
+
+					if (!wasInFlight && isSessionNotFound) {
+						// Background session lookup failure while idle (e.g. viewing history)
+						// should not surface as a user-visible error.
+						break;
+					}
+
+					if (recoverable) {
+						// Retry-attempt failures are turn-local and transient.
+						// Keep the assistant container alive and keep "working" state
+						// so we don't flicker to an empty bubble between attempts.
+						setBusyForEvent(
+							event.session_id ?? activeSessionIdRef.current,
+							true,
+						);
+						isStreamingRef.current = true;
+						ensureAssistantMessage(true);
+						applyTurnState({ kind: "streaming" });
+						break;
+					}
+
+					// Terminal error path
+					clearResponseWatchdog();
 					sendInFlightRef.current = false;
 					isStreamingRef.current = false;
 					setBusyForEvent(
 						event.session_id ?? activeSessionIdRef.current,
 						false,
 					);
-					const errMsg = (event.error as string) || "Unknown error";
-					const recoverable = event.recoverable as boolean;
-					const isSessionNotFound =
-						errMsg.includes("PiSessionNotFound") ||
-						errMsg.includes("SessionNotFound") ||
-						errMsg.includes("Response channel closed");
-					if (!wasInFlight && isSessionNotFound) {
-						// Background session lookup failure while idle (e.g. viewing history)
-						// should not surface as a user-visible error.
-						break;
-					}
-					const err = new Error(errMsg);
-					setError(err);
-					onError?.(err);
-					applyTurnState({ kind: "error", recoverable, message: errMsg });
+					onError?.(new Error(errMsg));
+					applyTurnState({ kind: "error", recoverable: false, message: errMsg });
 
 					// Auto-recover for session-not-found errors
 					const sessionId = activeSessionIdRef.current;
 					const now = Date.now();
 					const shouldRecover =
-						Boolean(sessionId) &&
-						wasInFlight &&
-						!recoverable &&
-						isSessionNotFound;
+						Boolean(sessionId) && wasInFlight && isSessionNotFound;
 					if (shouldRecover && now - lastSessionRecoveryRef.current > 5000) {
 						lastSessionRecoveryRef.current = now;
 						const manager = getWsManager();
@@ -1233,66 +1251,54 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 						}, 250);
 					}
 
-					// Finalize any in-flight streaming message (stop spinner)
+					// Replace the in-flight working bubble with a terminal error part
+					// so the visual container remains stable until authoritative sync.
 					if (streamingMessageRef.current) {
-						streamingMessageRef.current.isStreaming = false;
-						const completedMessage = {
+						const msgId = streamingMessageRef.current.id;
+						const completedMessage: DisplayMessage = {
 							...streamingMessageRef.current,
-							parts: streamingMessageRef.current.parts.map((p) => ({
-								...p,
-							})),
+							isStreaming: false,
+							parts: [
+								{ type: "error", id: nextPartId(), text: errMsg },
+							],
 						};
 						setMessages((prev) => {
-							const idx = prev.findIndex((m) => m.id === completedMessage.id);
+							const idx = prev.findIndex((m) => m.id === msgId);
 							if (idx >= 0) {
 								const updated = [...prev];
 								updated[idx] = completedMessage;
 								return updated;
 							}
-							return prev;
+							return [...prev, completedMessage];
 						});
 						onMessageComplete?.(completedMessage);
 						streamingMessageRef.current = null;
 					}
-
-					// Show error immediately as a standalone message.
-					// The runner also persists it to hstry on agent.idle.
-					// The next authoritative history sync reconciles by id/client_id.
-					setMessages((prev) => [
-						...prev,
-						{
-							id: createTempMessageId(),
-							role: "assistant" as const,
-							parts: [
-								{ type: "error" as const, id: nextPartId(), text: errMsg },
-							],
-							timestamp: Date.now(),
-							isStreaming: false,
-						},
-					]);
 					break;
 				}
 
 				// -- Retry progress --
 				case "retry.start": {
-					// Show retry status via the error banner, not message parts.
-					// Message parts get wiped by authoritative hstry fetches.
-					const attempt = (event.attempt as number) ?? 1;
-					const maxAttempts = (event.max_attempts as number) ?? 3;
-					const retryError = (event.error as string) || "LLM error";
-					setError(
-						new Error(
-							`${retryError} -- retrying (${attempt}/${maxAttempts})...`,
-						),
-					);
+					// Keep container in working/streaming mode during retries.
+					const currentMsg = ensureAssistantMessage(true);
+					if (streamingMessageRef.current?.id !== currentMsg.id) {
+						streamingMessageRef.current = {
+							...currentMsg,
+							isStreaming: true,
+						};
+					}
+					setBusyForEvent(event.session_id ?? activeSessionIdRef.current, true);
+					isStreamingRef.current = true;
+					applyTurnState({ kind: "streaming" });
 					break;
 				}
 
 				case "retry.end": {
 					const retrySuccess = event.success as boolean;
 					if (retrySuccess) {
-						// Retry succeeded -- clear the retry error banner.
-						setError(null);
+						setBusyForEvent(event.session_id ?? activeSessionIdRef.current, true);
+						isStreamingRef.current = true;
+						applyTurnState({ kind: "streaming" });
 					}
 					// On failure, backend emits agent.error(recoverable=false)
 					// which persists the error to hstry and is fetched below.

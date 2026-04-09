@@ -184,6 +184,8 @@ fn sanitize_large_inline_data(value: &Value) -> Value {
 fn build_parts_json(content: &Value, msg: &AgentMessage) -> String {
     let mut parts: Vec<Value> = Vec::new();
     let is_tool_result = msg.role == "tool" || msg.role == "toolResult";
+    let is_assistant_error = (msg.role == "assistant" || msg.role == "agent")
+        && msg.stop_reason.as_deref() == Some("error");
 
     // For tool result messages, only emit the tool_result part.
     // Text content is redundant with the tool output and would leak into
@@ -201,8 +203,9 @@ fn build_parts_json(content: &Value, msg: &AgentMessage) -> String {
     } else {
         match content {
             Value::String(text) => {
+                let part_type = if is_assistant_error { "error" } else { "text" };
                 parts.push(serde_json::json!({
-                    "type": "text",
+                    "type": part_type,
                     "text": text
                 }));
             }
@@ -213,8 +216,9 @@ fn build_parts_json(content: &Value, msg: &AgentMessage) -> String {
                         match block_type {
                             "text" => {
                                 if let Some(text) = obj.get("text") {
+                                    let part_type = if is_assistant_error { "error" } else { "text" };
                                     parts.push(serde_json::json!({
-                                        "type": "text",
+                                        "type": part_type,
                                         "text": text
                                     }));
                                 }
@@ -277,6 +281,29 @@ mod tests {
         assert_eq!(proto.role, "user");
         assert_eq!(proto.content, "Hello");
         assert_eq!(proto.created_at_ms, Some(1700000000000));
+    }
+
+    #[test]
+    fn test_assistant_error_stop_reason_maps_to_error_part() {
+        let msg = AgentMessage {
+            role: "assistant".to_string(),
+            content: Value::String("rate limit".to_string()),
+            timestamp: Some(1700000000000),
+            tool_call_id: None,
+            tool_name: None,
+            is_error: None,
+            api: None,
+            provider: None,
+            model: None,
+            usage: None,
+            stop_reason: Some("error".to_string()),
+            extra: Default::default(),
+        };
+
+        let proto = agent_message_to_proto(&msg, 1);
+        let parts: Value = serde_json::from_str(&proto.parts_json).expect("valid parts json");
+        assert_eq!(parts[0]["type"], "error");
+        assert_eq!(parts[0]["text"], "rate limit");
     }
 
     #[test]

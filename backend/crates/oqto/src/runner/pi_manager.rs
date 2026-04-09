@@ -22,6 +22,7 @@ use futures::FutureExt;
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
+use tokio::fs::OpenOptions;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, Command};
 use tokio::sync::{Mutex, OwnedSemaphorePermit, RwLock, Semaphore, broadcast, mpsc, oneshot};
@@ -3169,9 +3170,14 @@ impl PiSessionManager {
         let mut raw_buf = Vec::new();
         let mut pending_json_fragment = String::new();
         let mut pending_messages: Vec<AgentMessage> = Vec::new();
+        let mut pending_agent_end_retry_placeholder = false;
+        let mut retry_cycle_user_persisted = false;
         let mut pending_error_text: Option<String> = None;
+        let mut pending_error_recoverable: bool = true;
         let mut pending_hstry_client_id: Option<String> = None;
+        let mut retry_cycle_active = false;
         let mut translator = PiTranslator::new();
+        let mut stream_trace_file = open_stream_trace_file(&session_id).await;
 
         // Track the last session title synced to hstry to avoid redundant updates
         let mut last_synced_title = String::new();
@@ -3205,6 +3211,16 @@ impl PiSessionManager {
             if raw_line.trim().is_empty() {
                 continue;
             }
+
+            write_stream_trace(
+                stream_trace_file.as_mut(),
+                serde_json::json!({
+                    "kind": "pi.raw_line",
+                    "ts": chrono::Utc::now().timestamp_millis(),
+                    "line": raw_line,
+                }),
+            )
+            .await;
 
             // Update last activity
             *last_activity.write().await = Instant::now();
@@ -3272,7 +3288,18 @@ impl PiSessionManager {
 
             for parse_result in parsed_messages {
                 let msg = match parse_result {
-                    Ok(m) => m,
+                    Ok(m) => {
+                        write_stream_trace(
+                            stream_trace_file.as_mut(),
+                            serde_json::json!({
+                                "kind": "pi.parsed_message",
+                                "ts": chrono::Utc::now().timestamp_millis(),
+                                "message_debug": format!("{:?}", m),
+                            }),
+                        )
+                        .await;
+                        m
+                    }
                     Err(e) => {
                         warn!(
                             "Pi[{}] failed to parse message: {} - line: {}",
@@ -3477,11 +3504,43 @@ impl PiSessionManager {
                     }
                 };
 
+                write_stream_trace(
+                    stream_trace_file.as_mut(),
+                    serde_json::json!({
+                        "kind": "pi.event",
+                        "ts": chrono::Utc::now().timestamp_millis(),
+                        "event": &pi_event,
+                    }),
+                )
+                .await;
+
+                match &pi_event {
+                    PiEvent::AutoRetryStart { .. } => {
+                        retry_cycle_active = true;
+                    }
+                    PiEvent::AutoRetryEnd { success, .. } => {
+                        // Keep retry guard active through terminal failure handling.
+                        // Some providers emit a final AgentEnd snapshot after
+                        // retry.end(success=false), which must not be persisted as
+                        // normal assistant text.
+                        retry_cycle_active = !*success;
+                    }
+                    _ => {}
+                }
+
                 // Update internal state based on Pi event
                 let new_state = match &pi_event {
                     PiEvent::AgentStart => {
                         debug!("Pi[{}] AgentStart", session_id);
                         Some(PiSessionState::Streaming)
+                    }
+                    PiEvent::MessageStart { message }
+                        if message.role.eq_ignore_ascii_case("user") =>
+                    {
+                        // New user prompt boundary: allow exactly one pre-retry
+                        // user snapshot persist for this turn.
+                        retry_cycle_user_persisted = false;
+                        None
                     }
                     PiEvent::AgentEnd { messages } => {
                         debug!(
@@ -3489,7 +3548,17 @@ impl PiSessionManager {
                             session_id,
                             messages.len()
                         );
-                        pending_messages = messages.clone();
+                        pending_messages = messages
+                            .iter()
+                            .filter(|msg| !is_empty_assistant_placeholder(msg))
+                            .cloned()
+                            .collect();
+                        pending_agent_end_retry_placeholder =
+                            messages.iter().any(is_assistant_error_placeholder)
+                                && pending_messages.len() == 1
+                                && pending_messages
+                                    .first()
+                                    .is_some_and(|m| m.role.eq_ignore_ascii_case("user"));
                         Some(PiSessionState::Idle)
                     }
                     PiEvent::AutoCompactionStart { .. } => {
@@ -3536,13 +3605,25 @@ impl PiSessionManager {
                 // For AgentEnd, transfer the pending client_id to the translator before translating.
                 // This ensures the client_id is included in the user message for optimistic matching.
                 if matches!(pi_event, PiEvent::AgentEnd { .. }) {
-                    let client_id = pending_client_id.lock().await.pop_front();
-                    debug!(
-                        "Pi[{}] AgentEnd: dequeued pending_client_id = {:?}",
-                        session_id, client_id
-                    );
-                    translator.set_pending_client_id(client_id.clone());
-                    pending_hstry_client_id = client_id;
+                    if retry_cycle_active {
+                        debug!(
+                            "Pi[{}] AgentEnd during retry cycle: preserving pending_client_id",
+                            session_id
+                        );
+                    } else if pending_agent_end_retry_placeholder && retry_cycle_user_persisted {
+                        debug!(
+                            "Pi[{}] AgentEnd duplicate pre-retry placeholder: preserving pending_client_id",
+                            session_id
+                        );
+                    } else {
+                        let client_id = pending_client_id.lock().await.pop_front();
+                        debug!(
+                            "Pi[{}] AgentEnd: dequeued pending_client_id = {:?}",
+                            session_id, client_id
+                        );
+                        translator.set_pending_client_id(client_id.clone());
+                        pending_hstry_client_id = client_id;
+                    }
                 }
 
                 // Persist to hstry on AgentEnd BEFORE broadcasting canonical events.
@@ -3550,6 +3631,30 @@ impl PiSessionManager {
                 // receives agent.idle and potentially fetches/switches sessions.
                 // The lock serializes hstry writes and client_id repair updates.
                 if matches!(pi_event, PiEvent::AgentEnd { .. }) && !pending_messages.is_empty() {
+                    if pending_agent_end_retry_placeholder {
+                        if retry_cycle_user_persisted {
+                            debug!(
+                                "Pi[{}] skipping duplicate pre-retry AgentEnd user snapshot",
+                                session_id
+                            );
+                            pending_messages.clear();
+                            pending_agent_end_retry_placeholder = false;
+                            continue;
+                        }
+                        pending_messages.retain(|m| m.role.eq_ignore_ascii_case("user"));
+                        retry_cycle_user_persisted = true;
+                        pending_agent_end_retry_placeholder = false;
+                    }
+
+                    if retry_cycle_active {
+                        debug!(
+                            "Pi[{}] skipping hstry persist on AgentEnd during retry cycle ({} message(s))",
+                            session_id,
+                            pending_messages.len()
+                        );
+                        pending_messages.clear();
+                        continue;
+                    }
                     if !pi_native_id_known {
                         debug!(
                             "Pi[{}] skipping hstry persist on AgentEnd: native session ID not known yet",
@@ -3692,20 +3797,82 @@ impl PiSessionManager {
                             payload.clone()
                         };
 
-                    // Buffer the last error text. Only persisted to hstry
-                    // when AgentIdle fires (one error per turn, not per retry).
-                    if let oqto_protocol::events::EventPayload::AgentError { ref error, .. } =
-                        enriched_payload
+                    // Persist only terminal (non-recoverable) errors here.
+                    // Recoverable errors are represented by the AgentEnd snapshot,
+                    // which avoids duplicate durable error rows.
+                    if let oqto_protocol::events::EventPayload::AgentError {
+                        ref error,
+                        recoverable,
+                        ..
+                    } = enriched_payload
                     {
-                        pending_error_text = Some(error.clone());
+                        if !recoverable {
+                            retry_cycle_active = false;
+                        }
+                        pending_error_text = if recoverable {
+                            None
+                        } else {
+                            Some(error.clone())
+                        };
+                        pending_error_recoverable = recoverable;
+
+                        if !recoverable
+                            && let Some(ref client) = hstry_client
+                            && pi_native_id_known
+                        {
+                            let eid = hstry_external_id.read().await.clone();
+                            if !eid.trim().is_empty() {
+                                let error_parts = serde_json::json!([{
+                                    "type": "error",
+                                    "id": format!("err-{}", chrono::Utc::now().timestamp_millis()),
+                                    "text": error
+                                }]);
+                                let now_ms = chrono::Utc::now().timestamp_millis();
+                                let next_idx = fetch_last_hstry_idx(client, &eid).await.unwrap_or(-1) + 1;
+                                let msg = hstry_core::service::proto::Message {
+                                    idx: next_idx,
+                                    role: "assistant".to_string(),
+                                    content: error.clone(),
+                                    parts_json: error_parts.to_string(),
+                                    created_at_ms: Some(now_ms),
+                                    model: None,
+                                    tokens: None,
+                                    cost_usd: None,
+                                    metadata_json: String::new(),
+                                    sender_json: String::new(),
+                                    provider: None,
+                                    harness: Some("pi".to_string()),
+                                    client_id: None,
+                                    id: None,
+                                };
+                                match client.append_messages(&eid, vec![msg], Some(now_ms)).await {
+                                    Ok(_) => {
+                                        pending_error_text = None;
+                                    }
+                                    Err(e) => {
+                                        warn!(
+                                            "Pi[{}] failed to persist terminal error to hstry on agent.error: {:?}",
+                                            session_id, e
+                                        );
+                                    }
+                                }
+                            }
+                        }
                     }
 
-                    // On AgentIdle, persist the buffered error (if any) to hstry
-                    // BEFORE broadcasting, so fetchHistoryMessages finds it.
+                    // Fallback persistence at AgentIdle for cases where we buffered
+                    // an error before the native Pi session id was known.
+                    if matches!(
+                        enriched_payload,
+                        oqto_protocol::events::EventPayload::AgentIdle { .. }
+                    ) {
+                        retry_cycle_active = false;
+                    }
                     if matches!(
                         enriched_payload,
                         oqto_protocol::events::EventPayload::AgentIdle { .. }
                     ) && let Some(error_text) = pending_error_text.take()
+                        && !pending_error_recoverable
                         && let Some(ref client) = hstry_client
                         && pi_native_id_known
                     {
@@ -3717,9 +3884,10 @@ impl PiSessionManager {
                                 "text": error_text
                             }]);
                             let now_ms = chrono::Utc::now().timestamp_millis();
+                            let next_idx = fetch_last_hstry_idx(client, &eid).await.unwrap_or(-1) + 1;
                             let msg = hstry_core::service::proto::Message {
-                                idx: -1,
-                                role: "error".to_string(),
+                                idx: next_idx,
+                                role: "assistant".to_string(),
                                 content: error_text.clone(),
                                 parts_json: error_parts.to_string(),
                                 created_at_ms: Some(now_ms),
@@ -3737,7 +3905,7 @@ impl PiSessionManager {
                                 client.append_messages(&eid, vec![msg], Some(now_ms)).await
                             {
                                 warn!(
-                                    "Pi[{}] failed to persist error to hstry: {:?}",
+                                    "Pi[{}] failed to persist buffered error to hstry on agent.idle: {:?}",
                                     session_id, e
                                 );
                             }
@@ -3756,6 +3924,16 @@ impl PiSessionManager {
                     }
 
                     // Now broadcast the event to subscribers
+                    write_stream_trace(
+                        stream_trace_file.as_mut(),
+                        serde_json::json!({
+                            "kind": "runner.canonical_payload",
+                            "ts": chrono::Utc::now().timestamp_millis(),
+                            "payload": &enriched_payload,
+                        }),
+                    )
+                    .await;
+
                     let canonical_event = CanonicalEvent {
                         session_id: session_id.clone(),
                         runner_id: runner_id.clone(),
@@ -4773,6 +4951,96 @@ async fn read_hstry_message_version_snapshot(
         message_count: message_count.map(|v| v.max(0) as u64),
         last_message_hash: None,
     })
+}
+
+fn is_empty_assistant_placeholder(msg: &AgentMessage) -> bool {
+    let is_assistant = msg.role.eq_ignore_ascii_case("assistant") || msg.role.eq_ignore_ascii_case("agent");
+    if !is_assistant {
+        return false;
+    }
+
+    match &msg.content {
+        serde_json::Value::Array(values) => values.is_empty(),
+        serde_json::Value::String(text) => {
+            let trimmed = text.trim();
+            trimmed.is_empty() || trimmed == "[]"
+        }
+        serde_json::Value::Null => true,
+        _ => false,
+    }
+}
+
+fn is_assistant_error_placeholder(msg: &AgentMessage) -> bool {
+    let is_assistant = msg.role.eq_ignore_ascii_case("assistant") || msg.role.eq_ignore_ascii_case("agent");
+    if !is_assistant {
+        return false;
+    }
+    if msg.stop_reason.as_deref() != Some("error") {
+        return false;
+    }
+    is_empty_assistant_placeholder(msg)
+}
+
+fn stream_trace_enabled() -> bool {
+    std::env::var("OQTO_TRACE_STREAMS")
+        .map(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+        .unwrap_or(false)
+}
+
+fn sanitize_for_filename(input: &str) -> String {
+    input
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .collect()
+}
+
+async fn open_stream_trace_file(session_id: &str) -> Option<tokio::fs::File> {
+    if !stream_trace_enabled() {
+        return None;
+    }
+
+    let dir = std::env::var("OQTO_TRACE_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("/tmp/oqto-stream-traces"));
+
+    if let Err(e) = tokio::fs::create_dir_all(&dir).await {
+        warn!("Failed to create stream trace dir {:?}: {}", dir, e);
+        return None;
+    }
+
+    let filename = format!(
+        "{}_{}.jsonl",
+        sanitize_for_filename(session_id),
+        chrono::Utc::now().format("%Y%m%dT%H%M%S%.3fZ")
+    );
+    let path = dir.join(filename);
+
+    match OpenOptions::new().create(true).append(true).open(&path).await {
+        Ok(file) => {
+            info!("Pi[{}] stream tracing enabled: {}", session_id, path.display());
+            Some(file)
+        }
+        Err(e) => {
+            warn!("Failed to open stream trace file {:?}: {}", path, e);
+            None
+        }
+    }
+}
+
+async fn write_stream_trace(file: Option<&mut tokio::fs::File>, value: serde_json::Value) {
+    if let Some(file) = file {
+        let mut line = match serde_json::to_vec(&value) {
+            Ok(v) => v,
+            Err(e) => {
+                warn!("Failed to serialize stream trace event: {}", e);
+                return;
+            }
+        };
+        line.push(b'\n');
+        if let Err(e) = file.write_all(&line).await {
+            warn!("Failed to write stream trace event: {}", e);
+        }
+    }
 }
 
 async fn fetch_last_hstry_idx(client: &HstryClient, session_id: &str) -> Option<i32> {

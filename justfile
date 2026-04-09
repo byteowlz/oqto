@@ -279,6 +279,14 @@ restart-runner:
     sudo pkill -f "/usr/local/bin/oqto-runner --socket /run/oqto/runner-sockets/$(id -un)/oqto-runner.sock" || true
     nohup /usr/local/bin/oqto-runner --socket "/run/oqto/runner-sockets/$(id -un)/oqto-runner.sock" >/tmp/oqto-runner.log 2>&1 &
 
+# Restart services with runner stream tracing enabled (systemd --user)
+restart-debug trace_dir="/tmp/oqto-stream-traces":
+    ./scripts/restart-debug.sh --trace-dir {{trace_dir}}
+
+# Disable runner stream tracing and restart runner
+restart-debug-off:
+    ./scripts/restart-debug.sh --disable
+
 # Build, install, and restart runner + backend
 update-runner:
     cd backend && remote-build build --release -p oqto --bin oqto
@@ -888,6 +896,11 @@ deploy *ARGS:
 deploy-host name *ARGS:
     ./scripts/deploy.sh --host {{name}} {{ARGS}}
 
+# Deploy to a specific host with runner stream tracing enabled
+# Example: just deploy-host-debug octo-azure /tmp/oqto-stream-traces --skip-build
+deploy-host-debug name trace_dir="/tmp/oqto-stream-traces" *ARGS:
+    ./scripts/deploy.sh --host {{name}} --trace-streams --trace-dir {{trace_dir}} {{ARGS}}
+
 # Deploy without rebuilding (use existing artifacts)
 deploy-quick *ARGS:
     ./scripts/deploy.sh --skip-build {{ARGS}}
@@ -903,6 +916,10 @@ deploy-frontend *ARGS:
 # Show what deploy would do without doing it
 deploy-dry-run *ARGS:
     ./scripts/deploy.sh --dry-run {{ARGS}}
+
+# End-to-end retry/error trace capture via agent-browser + frontend console + runner traces
+trace-retry-e2e *ARGS:
+    ./scripts/debug-e2e-retry-trace.sh {{ARGS}}
 
 # =============================================================================
 # VM Deployment Testing (Proxmox)

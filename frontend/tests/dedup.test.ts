@@ -76,7 +76,7 @@ describe("normalizeMessages", () => {
 	it("uses fallback only for malformed/legacy payloads with no ID", () => {
 		const raw: RawMessage[] = [{ role: "assistant", content: "hello" }];
 		const out = normalizeMessages(raw, "legacy");
-		expect(out[0].id).toMatch(/^legacy-0$/);
+		expect(out[0].id).toMatch(/^legacy-fallback-/);
 	});
 });
 
@@ -139,6 +139,27 @@ describe("mergeServerMessages", () => {
 		const result = mergeServerMessages(prev, server, "authoritative");
 		expect(result).toHaveLength(1);
 		expect(result[0].id).toBe("history-user");
+	});
+
+	it("authoritative mode preserves unmatched local tail messages append-only", () => {
+		const prev = [
+			textMsg("history-1", "user", "first", { timestamp: 1000 }),
+			textMsg("history-2", "assistant", "reply", { timestamp: 2000 }),
+			textMsg("local-3", "user", "latest local", {
+				timestamp: 3000,
+				clientId: "c-local-3",
+			}),
+		];
+		const server = [
+			textMsg("history-1", "user", "first", { timestamp: 1000 }),
+			textMsg("history-2", "assistant", "reply", { timestamp: 2000 }),
+		];
+		const result = mergeServerMessages(prev, server, "authoritative");
+		expect(result.map((m) => m.id)).toEqual([
+			"history-1",
+			"history-2",
+			"local-3",
+		]);
 	});
 
 	it("interleavings converge to the same timeline", () => {

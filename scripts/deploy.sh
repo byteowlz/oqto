@@ -13,6 +13,8 @@ SKIP_BACKEND=false
 SKIP_SERVICES=false
 PREPARE_ONLY=false
 ACTIVATE_ONLY=false
+TRACE_STREAMS=false
+TRACE_DIR="/tmp/oqto-stream-traces"
 RESUME=false
 STATUS_ONLY=false
 CANARY_ONLY=false
@@ -49,6 +51,8 @@ Options:
   --skip-frontend          Skip frontend staging and deploy
   --skip-backend           Skip backend binary staging and deploy
   --skip-services          Skip service restarts
+  --trace-streams          Enable runner stream tracing (OQTO_TRACE_STREAMS=1)
+  --trace-dir DIR          Runner stream trace directory (default: /tmp/oqto-stream-traces)
   --prepare-only           Run preflight + prepare, do not activate
   --activate-only          Activate previously prepared release
   --resume                 Resume interrupted deployment (skip prepared/active phases)
@@ -79,6 +83,8 @@ while [[ $# -gt 0 ]]; do
         --skip-frontend) SKIP_FRONTEND=true; shift ;;
         --skip-backend) SKIP_BACKEND=true; shift ;;
         --skip-services) SKIP_SERVICES=true; shift ;;
+        --trace-streams) TRACE_STREAMS=true; shift ;;
+        --trace-dir) TRACE_DIR="$2"; shift 2 ;;
         --prepare-only) PREPARE_ONLY=true; shift ;;
         --activate-only) ACTIVATE_ONLY=true; shift ;;
         --resume) RESUME=true; shift ;;
@@ -881,12 +887,33 @@ PY
     ' || true
 }
 
+configure_trace_environment() {
+    local is_local="$1" ssh_target="$2" mode="$3"
+
+    if [[ "$TRACE_STREAMS" != "true" ]]; then
+        return 0
+    fi
+
+    local qdir
+    qdir=$(printf '%q' "$TRACE_DIR")
+
+    if [[ "$mode" == "single-user" ]]; then
+        log "Enabling runner stream tracing (dir=$TRACE_DIR)"
+        host_exec "$is_local" "$ssh_target" "systemctl --user set-environment OQTO_TRACE_STREAMS=1 OQTO_TRACE_DIR=$qdir" || true
+    else
+        warn "--trace-streams currently auto-configures single-user runner env only"
+        warn "For multi-user, configure per-user runner env separately"
+    fi
+}
+
 restart_services_ordered() {
     local is_local="$1" ssh_target="$2" mode="$3" services="$4"
 
     if [[ "$SKIP_SERVICES" == "true" ]]; then
         return 0
     fi
+
+    configure_trace_environment "$is_local" "$ssh_target" "$mode"
 
     # Ordered restarts: runner -> control plane (oqto) -> everything else.
     if [[ "$mode" == "single-user" ]]; then

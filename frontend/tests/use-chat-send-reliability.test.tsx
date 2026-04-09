@@ -282,6 +282,99 @@ describe("useChat send reliability", () => {
 		}
 	});
 
+	it("keeps recoverable retry errors in working state without durable-looking error rows", async () => {
+		const { result } = renderHook(() =>
+			useChat({
+				autoConnect: false,
+				selectedSessionId: "sess-1",
+				workspacePath: "/tmp/ws",
+			}),
+		);
+
+		await waitFor(() => expect(sessionHandler).not.toBeNull());
+		const emit = (event: Record<string, unknown>) => {
+			act(() => {
+				sessionHandler?.(event);
+			});
+		};
+
+		emit({
+			channel: "agent",
+			session_id: "sess-1",
+			event: "stream.message_start",
+			role: "assistant",
+		});
+		emit({
+			channel: "agent",
+			session_id: "sess-1",
+			event: "retry.start",
+			attempt: 1,
+			max_attempts: 3,
+			error: "429 Rate limit exceeded",
+		});
+		emit({
+			channel: "agent",
+			session_id: "sess-1",
+			event: "agent.error",
+			error: "429 Rate limit exceeded",
+			recoverable: true,
+		});
+
+		expect(result.current.error).toBeNull();
+		const assistantMessages = result.current.messages.filter(
+			(m) => m.role === "assistant",
+		);
+		const assistant = assistantMessages[assistantMessages.length - 1];
+		expect(assistant).toBeDefined();
+		expect(assistant?.isStreaming).toBe(true);
+		const errorParts = assistant?.parts.filter((part) => part.type === "error") ?? [];
+		expect(errorParts).toHaveLength(0);
+	});
+
+	it("replaces working bubble with inline terminal error part on non-recoverable agent.error", async () => {
+		const { result } = renderHook(() =>
+			useChat({
+				autoConnect: false,
+				selectedSessionId: "sess-1",
+				workspacePath: "/tmp/ws",
+			}),
+		);
+
+		await waitFor(() => expect(sessionHandler).not.toBeNull());
+		const emit = (event: Record<string, unknown>) => {
+			act(() => {
+				sessionHandler?.(event);
+			});
+		};
+
+		emit({
+			channel: "agent",
+			session_id: "sess-1",
+			event: "stream.message_start",
+			role: "assistant",
+		});
+		emit({
+			channel: "agent",
+			session_id: "sess-1",
+			event: "agent.error",
+			error: "Internal server error during generation",
+			recoverable: false,
+		});
+
+		expect(result.current.isStreaming).toBe(false);
+		const assistantMessages = result.current.messages.filter(
+			(m) => m.role === "assistant",
+		);
+		const assistant = assistantMessages[assistantMessages.length - 1];
+		expect(assistant).toBeDefined();
+		const errorParts = assistant?.parts.filter((part) => part.type === "error") ?? [];
+		expect(errorParts.length).toBeGreaterThan(0);
+		expect(errorParts[0]).toMatchObject({
+			type: "error",
+			text: "Internal server error during generation",
+		});
+	});
+
 	it("keeps distinct tool calls separate when ids differ but names match", async () => {
 		const { result } = renderHook(() =>
 			useChat({

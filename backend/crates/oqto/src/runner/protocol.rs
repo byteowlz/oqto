@@ -1838,6 +1838,8 @@ fn decode_agent_message_parts(
     msg: &crate::pi::AgentMessage,
     message_idx: usize,
 ) -> Vec<ChatMessagePartProto> {
+    let is_assistant_error = (msg.role == "assistant" || msg.role == "agent")
+        && msg.stop_reason.as_deref() == Some("error");
     // Tool-result messages: preserve the single-part shape.
     if msg.role == "tool" || msg.role == "toolResult" {
         let text = match msg.content.as_str() {
@@ -1884,7 +1886,11 @@ fn decode_agent_message_parts(
                     }
                     parts.push(ChatMessagePartProto {
                         id: part_id,
-                        part_type: "text".to_string(),
+                        part_type: if is_assistant_error {
+                            "error".to_string()
+                        } else {
+                            "text".to_string()
+                        },
                         text: Some(text.to_string()),
                         text_html: None,
                         tool_name: None,
@@ -1988,15 +1994,33 @@ fn decode_agent_message_parts(
         }
     }
 
-    // Fallback: treat content as a single text part (plain strings, etc.).
-    let text = match msg.content.as_str() {
-        Some(s) => s.to_string(),
-        None => msg.content.to_string(),
+    // Fallback: treat content as a single text/error part.
+    let fallback_text = if is_assistant_error {
+        msg.extra
+            .get("errorMessage")
+            .and_then(|v| v.as_str())
+            .or_else(|| msg.extra.get("message").and_then(|v| v.as_str()))
+            .or_else(|| msg.extra.get("error").and_then(|v| v.as_str()))
+            .map(str::to_string)
+            .unwrap_or_else(|| match msg.content.as_str() {
+                Some(s) => s.to_string(),
+                None => msg.content.to_string(),
+            })
+    } else {
+        match msg.content.as_str() {
+            Some(s) => s.to_string(),
+            None => msg.content.to_string(),
+        }
     };
+
     vec![ChatMessagePartProto {
         id: format!("part_{}_0", message_idx),
-        part_type: "text".to_string(),
-        text: Some(text),
+        part_type: if is_assistant_error {
+            "error".to_string()
+        } else {
+            "text".to_string()
+        },
+        text: Some(fallback_text),
         text_html: None,
         tool_name: None,
         tool_call_id: None,
