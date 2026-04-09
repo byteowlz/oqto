@@ -149,11 +149,14 @@ pub(crate) async fn resolve_conversation_identity(
     let exact = if let Some(workspace) = workspace {
         sqlx::query(
             r#"
-            SELECT id, external_id
-            FROM conversations
-            WHERE (external_id = ? OR platform_id = ? OR id = ?)
-              AND workspace = ?
-            ORDER BY COALESCE(updated_at, created_at) DESC
+            SELECT c.id,
+                   c.external_id,
+                   c.platform_id,
+                   (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) AS msg_count
+            FROM conversations c
+            WHERE (c.external_id = ? OR c.platform_id = ? OR c.id = ?)
+              AND c.workspace = ?
+            ORDER BY COALESCE(c.updated_at, c.created_at) DESC
             LIMIT 1
             "#,
         )
@@ -166,10 +169,13 @@ pub(crate) async fn resolve_conversation_identity(
     } else {
         sqlx::query(
             r#"
-            SELECT id, external_id
-            FROM conversations
-            WHERE external_id = ? OR platform_id = ? OR id = ?
-            ORDER BY COALESCE(updated_at, created_at) DESC
+            SELECT c.id,
+                   c.external_id,
+                   c.platform_id,
+                   (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) AS msg_count
+            FROM conversations c
+            WHERE c.external_id = ? OR c.platform_id = ? OR c.id = ?
+            ORDER BY COALESCE(c.updated_at, c.created_at) DESC
             LIMIT 1
             "#,
         )
@@ -183,6 +189,59 @@ pub(crate) async fn resolve_conversation_identity(
     if let Some(row) = exact {
         let id: String = row.get("id");
         let external_id: Option<String> = row.get("external_id");
+        let platform_id: Option<String> = row.try_get("platform_id").ok();
+        let msg_count: i64 = row.try_get("msg_count").unwrap_or(0);
+
+        // Guard against stale/empty external-id aliases: if the exact match has
+        // no messages but shares a platform_id with a populated conversation,
+        // prefer the populated sibling to avoid transient "vanished history".
+        if msg_count == 0 {
+            if let Some(pid) = platform_id.as_deref().filter(|p| !p.is_empty()) {
+                let sibling = if let Some(workspace) = workspace {
+                    sqlx::query(
+                        r#"
+                        SELECT c.id,
+                               c.external_id,
+                               (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) AS msg_count
+                        FROM conversations c
+                        WHERE c.platform_id = ?
+                          AND c.workspace = ?
+                        ORDER BY msg_count DESC, COALESCE(c.updated_at, c.created_at) DESC
+                        LIMIT 1
+                        "#,
+                    )
+                    .bind(pid)
+                    .bind(workspace)
+                    .fetch_optional(pool)
+                    .await?
+                } else {
+                    sqlx::query(
+                        r#"
+                        SELECT c.id,
+                               c.external_id,
+                               (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) AS msg_count
+                        FROM conversations c
+                        WHERE c.platform_id = ?
+                        ORDER BY msg_count DESC, COALESCE(c.updated_at, c.created_at) DESC
+                        LIMIT 1
+                        "#,
+                    )
+                    .bind(pid)
+                    .fetch_optional(pool)
+                    .await?
+                };
+
+                if let Some(sibling_row) = sibling {
+                    let sibling_count: i64 = sibling_row.try_get("msg_count").unwrap_or(0);
+                    if sibling_count > 0 {
+                        let sid: String = sibling_row.get("id");
+                        let sexternal: Option<String> = sibling_row.get("external_id");
+                        return Ok(Some((sid, sexternal)));
+                    }
+                }
+            }
+        }
+
         return Ok(Some((id, external_id)));
     }
 
@@ -1370,6 +1429,19 @@ mod tests {
         .await
         .expect("schema should create");
 
+        sqlx::query(
+            r#"
+            CREATE TABLE messages (
+                id TEXT PRIMARY KEY,
+                conversation_id TEXT NOT NULL,
+                idx INTEGER NOT NULL
+            )
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .expect("messages schema should create");
+
         pool
     }
 
@@ -1465,6 +1537,56 @@ mod tests {
             .await
             .expect("resolve should succeed");
         assert!(resolved.is_none(), "ambiguous readable_id must fail closed");
+    }
+
+    #[tokio::test]
+    async fn resolve_conversation_identity_prefers_populated_platform_sibling_for_empty_exact() {
+        let pool = setup_test_pool().await;
+
+        sqlx::query(
+            "INSERT INTO conversations (id, source_id, external_id, platform_id, readable_id, workspace, created_at, updated_at) VALUES (?, 'pi', ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("conv_empty")
+        .bind("pi-empty")
+        .bind("oqto-shared")
+        .bind("readable")
+        .bind("/ws")
+        .bind(10_i64)
+        .bind(20_i64)
+        .execute(&pool)
+        .await
+        .expect("insert empty conversation");
+
+        sqlx::query(
+            "INSERT INTO conversations (id, source_id, external_id, platform_id, readable_id, workspace, created_at, updated_at) VALUES (?, 'pi', ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("conv_full")
+        .bind("pi-full")
+        .bind("oqto-shared")
+        .bind("readable")
+        .bind("/ws")
+        .bind(9_i64)
+        .bind(19_i64)
+        .execute(&pool)
+        .await
+        .expect("insert full conversation");
+
+        sqlx::query("INSERT INTO messages (id, conversation_id, idx) VALUES (?, ?, ?)")
+            .bind("m1")
+            .bind("conv_full")
+            .bind(0_i64)
+            .execute(&pool)
+            .await
+            .expect("insert message");
+
+        let resolved = resolve_conversation_identity(&pool, "pi-empty", Some("/ws"))
+            .await
+            .expect("resolve should succeed");
+
+        assert_eq!(
+            resolved,
+            Some(("conv_full".to_string(), Some("pi-full".to_string())))
+        );
     }
 
     #[test]
