@@ -460,6 +460,13 @@ export function convertCanonicalMessageToDisplay(
 	};
 }
 
+function isEmptyAssistantPlaceholderParts(parts: DisplayPart[]): boolean {
+	if (parts.length === 0) return true;
+	if (parts.length !== 1) return false;
+	const [part] = parts;
+	return part.type === "text" && part.text.trim() === "[]";
+}
+
 /**
  * Normalize raw messages (from any source) into DisplayMessage[].
  *
@@ -620,6 +627,12 @@ export function normalizeMessages(
 			typeof message.id === "string" && message.id.length > 0
 				? message.id
 				: fallbackMessageId(idPrefix, normalizedRole, timestamp, content, idx);
+		if (
+			normalizedRole === "assistant" &&
+			isEmptyAssistantPlaceholderParts(parts)
+		) {
+			continue;
+		}
 		const displayMessage: DisplayMessage = {
 			id: canonicalId,
 			role: normalizedRole,
@@ -932,30 +945,16 @@ export function mergeServerMessages(
 		return upsertFromServer(previous, serverMessages);
 	}
 
-	const merged = upsertFromServer([], serverMessages);
-	const mergedIndex = buildIndex(merged);
+	// Authoritative mode is still append-only in the live UI: server snapshots
+	// may lag behind active turns, so never rebuild from scratch. Instead, drop
+	// only clearly-ephemeral snapshot IDs, then upsert server messages in-place.
+	const base = previous.filter((msg) => {
+		const id = msg.id ?? "";
+		const isEphemeralSnapshotId =
+			/^pi[-_]msg[-_]/.test(id) || /^srv-.*-fallback-/.test(id);
+		if (!isEphemeralSnapshotId) return true;
+		return shouldPreserveLocalMessage(msg) || Boolean(msg.isStreaming);
+	});
 
-	for (const local of previous) {
-		if (!shouldPreserveLocalMessage(local)) continue;
-		if (mergedIndex.byId.has(local.id)) continue;
-		if (
-			typeof local.clientId === "string" &&
-			local.clientId.length > 0 &&
-			mergedIndex.byClientId.has(local.clientId)
-		) {
-			continue;
-		}
-		// Preserve only actively streaming local items.
-		// Do NOT keep stale optimistic user messages here: if the server
-		// snapshot is authoritative and no stream is active, local tmp messages
-		// without a confirmed server match must be dropped to prevent duplicates.
-		const shouldKeep = Boolean(local.isStreaming);
-		if (!shouldKeep) continue;
-		merged.push(local);
-		const idx = merged.length - 1;
-		mergedIndex.byId.set(local.id, idx);
-		if (local.clientId) mergedIndex.byClientId.set(local.clientId, idx);
-	}
-
-	return merged;
+	return upsertFromServer(base, serverMessages);
 }

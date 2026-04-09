@@ -519,6 +519,10 @@ impl SandboxProfile {
     }
 
     /// Create a strict profile (most restrictive).
+    ///
+    /// Note on ordering: extra_ro_bind is applied AFTER deny_read tmpfs mounts,
+    /// so we can selectively allow read access to paths under ~/.config (like ~/.config/oqto)
+    /// even though ~/.config itself is blocked.
     pub fn strict() -> Self {
         Self {
             deny_read: vec![
@@ -531,7 +535,8 @@ impl SandboxProfile {
                 "/usr/bin/systemd-run".to_string(),
                 "/bin/systemd-run".to_string(),
             ],
-            allow_write: vec!["/tmp".to_string()],
+            // Note: ~/.pi must be writable for Pi session files
+            allow_write: vec!["/tmp".to_string(), "~/.pi".to_string()],
             deny_write: vec![],
             isolate_network: true,
             isolate_pid: true,
@@ -542,7 +547,9 @@ impl SandboxProfile {
             seccomp_mode: SeccompMode::Audit,
             landlock_mode: LandlockMode::Audit,
             seccomp_bpf_path: None,
-            extra_ro_bind: vec![],
+            // extra_ro_bind is applied AFTER deny_read, so these paths
+            // under ~/.config are accessible even though ~/.config is blocked
+            extra_ro_bind: vec!["~/.config/oqto".to_string()],
             extra_rw_bind: vec![],
             overlay_enabled: false,
             overlay_root: default_overlay_root(),

@@ -48,6 +48,11 @@ DISPLAY=:0 agent-browser close                           # Close browser
 
 Enable frontend debug logging: `DISPLAY=:0 agent-browser eval "localStorage.setItem('debug:pi-v2', '1')"`
 
+Retry/error stream tracing helpers:
+- `just restart-debug` -- restart with runner stream tracing enabled (`OQTO_TRACE_STREAMS=1`)
+- `just restart-debug-off` -- disable runner stream tracing and restart runner
+- `just trace-retry-e2e` -- automated frontend + runner trace capture across mock retry/error models
+
 ---
 
 ## Architecture Overview
