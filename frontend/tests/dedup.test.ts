@@ -174,6 +174,16 @@ describe("mergeServerMessages", () => {
 		]);
 	});
 
+	it("partial mode is treated as authoritative after oqto-log cutover", () => {
+		const prev = [
+			textMsg("history-old", "user", "old"),
+			textMsg("tmp:assistant", "assistant", "stream", { isStreaming: false }),
+		];
+		const server = [textMsg("history-old", "user", "old")];
+		const result = mergeServerMessages(prev, server, "partial");
+		expect(result.map((m) => m.id)).toEqual(["history-old"]);
+	});
+
 	it("interleavings converge to the same timeline", () => {
 		const base: DisplayMessage[] = [
 			textMsg("h1", "user", "Q", { clientId: "c-q" }),

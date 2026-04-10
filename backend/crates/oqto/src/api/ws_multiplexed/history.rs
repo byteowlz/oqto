@@ -23,27 +23,57 @@ pub(super) async fn handle_hstry_command(
     }
 
     if let Some(session_id) = session_id {
-        let limit = limit.unwrap_or(0) as i64;
-        let client = match state.hstry.as_ref() {
-            Some(client) => client,
-            None => {
+        // Tree projection endpoint over ws history channel.
+        if query.trim() == ":tree" {
+            let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+            match crate::oqto_log::projector::project_session_tree_auto(
+                std::path::Path::new(&home),
+                &session_id,
+            )
+            .await
+            {
+                Ok(Some(tree)) => {
+                    let data = serde_json::json!({"session_id":session_id,"tree":tree});
+                    return Some(WsEvent::Hstry(HstryWsEvent::Result { id, data }));
+                }
+                Ok(None) => {
+                    // continue to legacy path below
+                }
+                Err(err) => {
+                    return Some(WsEvent::Hstry(HstryWsEvent::Error {
+                        id,
+                        error: err.to_string(),
+                    }));
+                }
+            }
+        }
+
+        // Primary read path: oqto-log projector, fallback legacy hstry.
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+        match crate::oqto_log::projector::project_session_messages_auto(
+            std::path::Path::new(&home),
+            &session_id,
+            limit.map(|v| v as usize),
+        )
+        .await
+        {
+            Ok(Some(messages)) => {
+                let data = serde_json::to_value(&messages).unwrap_or(Value::Null);
+                return Some(WsEvent::Hstry(HstryWsEvent::Result { id, data }));
+            }
+            Ok(None) => {}
+            Err(err) => {
                 return Some(WsEvent::Hstry(HstryWsEvent::Error {
                     id,
-                    error: "hstry client is not configured".into(),
+                    error: err.to_string(),
                 }));
             }
-        };
-        match client.get_messages(&session_id, None, Some(limit)).await {
-            Ok(messages) => {
-                let serializable = crate::history::proto_messages_to_serializable(messages);
-                let data = serde_json::to_value(&serializable).unwrap_or(Value::Null);
-                Some(WsEvent::Hstry(HstryWsEvent::Result { id, data }))
-            }
-            Err(err) => Some(WsEvent::Hstry(HstryWsEvent::Error {
-                id,
-                error: err.to_string(),
-            })),
         }
+
+        Some(WsEvent::Hstry(HstryWsEvent::Result {
+            id,
+            data: serde_json::json!([]),
+        }))
     } else {
         let Some(pattern) = state.runner_socket_pattern.as_ref() else {
             return Some(WsEvent::Hstry(HstryWsEvent::Error {

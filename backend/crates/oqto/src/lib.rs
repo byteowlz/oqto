@@ -21,6 +21,7 @@ pub mod local;
 pub mod markdown;
 pub mod observability;
 pub mod onboarding;
+pub mod oqto_log;
 pub mod pi;
 pub mod projects;
 pub mod prompts;

@@ -13,8 +13,8 @@
 		"lint:useeffect-guardrail:update": "bun scripts/check-useeffect-guardrail.mjs --update-baseline",
 		"tauri:dev": "bunx tauri dev",
 		"tauri:build": "bunx tauri build",
-		"test": "vitest",
-		"test:run": "vitest run",
+		"test": "mkdir -p .tmp && TMPDIR=$PWD/.tmp vitest --maxWorkers=1",
+		"test:run": "mkdir -p .tmp && TMPDIR=$PWD/.tmp vitest run --maxWorkers=1",
 		"format:generated-types": "bunx biome format --write src/generated"
 	},
 	"dependencies": {

@@ -51,6 +51,7 @@ mod local;
 mod markdown;
 mod observability;
 mod onboarding;
+mod oqto_log;
 mod pi;
 // pi_workspace removed -- JSONL scanning replaced by hstry-only session listing
 mod projects;
@@ -272,6 +273,15 @@ enum RunnerCommand {
     Enable,
     /// Disable the runner systemd service
     Disable,
+    /// Run oqto-log migration/import tasks
+    MigrateOqtoLog(RunnerMigrateOqtoLogCommand),
+}
+
+#[derive(Debug, Clone, Args)]
+struct RunnerMigrateOqtoLogCommand {
+    /// Migration mode: bootstrap | validate | diagnostics | reindex
+    #[arg(long, default_value = "bootstrap")]
+    mode: String,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -1500,6 +1510,91 @@ WantedBy=default.target
                 .status()?;
             println!("Disabled oqto-runner.service");
             Ok(())
+        }
+        RunnerCommand::MigrateOqtoLog(cmd) => {
+            let home = env::var("HOME").context("HOME not set")?;
+            let user = env::var("USER").unwrap_or_else(|_| "unknown".to_string());
+            let rt = tokio::runtime::Runtime::new()?;
+
+            match cmd.mode.as_str() {
+                "bootstrap" => {
+                    let stats = rt.block_on(async {
+                        crate::oqto_log::importer::bootstrap_import_from_pi_jsonl(
+                            Path::new(&home),
+                            &user,
+                        )
+                        .await
+                    })?;
+
+                    println!(
+                        "oqto-log bootstrap migration complete: scanned_files={}, imported_sessions={}, imported_messages={}, skipped_files={}, failed_files={}",
+                        stats.scanned_files,
+                        stats.imported_sessions,
+                        stats.imported_messages,
+                        stats.skipped_files,
+                        stats.failed_files
+                    );
+                    if stats.failed_files > 0 {
+                        return Err(anyhow!("oqto-log bootstrap migration had failures"));
+                    }
+                    Ok(())
+                }
+                "validate" => {
+                    let report = rt.block_on(async {
+                        crate::oqto_log::validator::validate_bootstrap_import(Path::new(&home))
+                            .await
+                    })?;
+
+                    println!(
+                        "oqto-log validation: sessions_checked={}, sessions_ok={}, sessions_mismatch={}, jsonl_messages_total={}, oqto_log_messages_total={}",
+                        report.sessions_checked,
+                        report.sessions_ok,
+                        report.sessions_mismatch,
+                        report.jsonl_messages_total,
+                        report.oqto_log_messages_total
+                    );
+                    if !report.mismatches.is_empty() {
+                        for mismatch in report.mismatches.iter().take(20) {
+                            println!("mismatch: {}", mismatch);
+                        }
+                    }
+                    if report.sessions_mismatch > 0 {
+                        return Err(anyhow!(
+                            "oqto-log validation failed: {} session mismatch(es)",
+                            report.sessions_mismatch
+                        ));
+                    }
+                    Ok(())
+                }
+                "diagnostics" => {
+                    let summary = rt.block_on(async {
+                        crate::oqto_log::ops::diagnostics(Path::new(&home)).await
+                    })?;
+                    println!(
+                        "oqto-log diagnostics: databases={}, sessions={}, turns={}, messages={}, checkpoints={}",
+                        summary.databases,
+                        summary.sessions,
+                        summary.turns,
+                        summary.messages,
+                        summary.checkpoints
+                    );
+                    Ok(())
+                }
+                "reindex" => {
+                    let rebuilt = rt.block_on(async {
+                        crate::oqto_log::ops::reindex_fts(Path::new(&home)).await
+                    })?;
+                    println!(
+                        "oqto-log fts reindex complete: rebuilt_databases={}",
+                        rebuilt
+                    );
+                    Ok(())
+                }
+                other => Err(anyhow!(
+                    "unsupported oqto-log migration mode '{}'; supported: bootstrap|validate|diagnostics|reindex",
+                    other
+                )),
+            }
         }
     }
 }
