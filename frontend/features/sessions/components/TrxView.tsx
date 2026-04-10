@@ -29,7 +29,6 @@ import { getWsManager } from "@/lib/ws-manager";
 import type { TrxWsEvent } from "@/lib/ws-mux-types";
 import {
 	AlertCircle,
-	ArrowDownAZ,
 	ArrowUpDown,
 	Bug,
 	Check,
@@ -40,7 +39,6 @@ import {
 	CircleDot,
 	ClipboardList,
 	ExternalLink,
-	Filter,
 	Loader2,
 	Mountain,
 	Package,
@@ -231,12 +229,12 @@ const priorityColors: Record<number, string> = {
 	4: "bg-gray-500/20 text-gray-400 border-gray-500/30",
 };
 
-// Status colors
-const statusColors: Record<string, string> = {
-	open: "bg-blue-500/20 text-blue-400",
-	in_progress: "bg-purple-500/20 text-purple-400",
-	closed: "bg-green-500/20 text-green-400",
-	blocked: "bg-red-500/20 text-red-400",
+// Status indicator colors (slim left bar)
+const statusBarColors: Record<string, string> = {
+	open: "bg-blue-400",
+	in_progress: "bg-purple-400",
+	closed: "bg-green-400",
+	blocked: "bg-red-400",
 };
 
 // Issue card component
@@ -261,6 +259,8 @@ const IssueCard = memo(function IssueCard({
 	depth = 0,
 	isSelected,
 	onToggleSelection,
+	detailExpandedIds,
+	onToggleDetailsById,
 }: {
 	issue: TrxIssue;
 	childIssues?: TrxIssue[];
@@ -282,146 +282,150 @@ const IssueCard = memo(function IssueCard({
 	depth?: number;
 	isSelected?: boolean;
 	onToggleSelection?: () => void;
+	detailExpandedIds?: Set<string>;
+	onToggleDetailsById?: (issueId: string) => void;
 }) {
 	const typeConfig = issueTypeConfig[issue.issue_type] || issueTypeConfig.task;
 	const TypeIcon = typeConfig.icon;
 	const hasChildren = childIssues && childIssues.length > 0;
 	const isClosed = issue.status === "closed";
+	const isDetailsExpanded = detailExpandedIds?.has(issue.id) ?? false;
+	const toggleDetails = () => onToggleDetailsById?.(issue.id);
+	const summaryText = issue.description?.trim()
+		? issue.description
+		: `${typeConfig.label} • ${issue.status.replace("_", " ")}${issue.blocked_by.length > 0 ? ` • blocked by ${issue.blocked_by.length}` : ""}`;
 
 	return (
-		<div className={cn("space-y-1", depth > 0 && "ml-6")}>
+		<div className={cn("space-y-0.5", depth > 0 && "ml-3")}>
 			<ContextMenu>
 				<ContextMenuTrigger className="contents">
 					<div
 						className={cn(
-							"group p-2 transition-colors cursor-context-menu flex gap-2",
-							isClosed ? "opacity-50" : "hover:bg-muted/50",
+							"group px-1.5 py-0.5 rounded-md transition-colors cursor-context-menu overflow-hidden",
+							isClosed ? "opacity-55" : "hover:bg-muted/40",
 							isEditing && "bg-muted/50 ring-1 ring-primary/50",
 							isSelected && "bg-primary/10 ring-1 ring-primary/30",
 						)}
 					>
-						{/* Left column: Checkbox + Chevron below (aligned with row 2 or 3) */}
-						<div className="flex flex-col items-center flex-shrink-0 pt-0.5 w-6">
-							{onToggleSelection && (
-								<button
-									type="button"
-									onClick={(e) => {
-										e.stopPropagation();
-										onToggleSelection();
-									}}
-									className="hover:bg-muted p-0.5"
-								>
-									{isSelected ? (
-										<CheckSquare className="w-3.5 h-3.5 text-primary" />
-									) : (
-										<Square className="w-3.5 h-3.5 text-muted-foreground" />
-									)}
-								</button>
-							)}
-							{hasChildren && (
-								<button
-									type="button"
-									onClick={onToggle}
-									className={cn(
-										"p-0.5 hover:bg-muted",
-										issue.description ? "mt-1" : "mt-2.5",
-									)}
-								>
-									{isExpanded ? (
-										<ChevronDown className="w-3 h-3 text-muted-foreground" />
-									) : (
-										<ChevronRight className="w-3 h-3 text-muted-foreground" />
-									)}
-								</button>
-							)}
-						</div>
-
-						{/* Right column: Content rows */}
-						<div className="flex-1 min-w-0">
-							{/* Row 1: Title + ID */}
-							{isEditing ? (
-								<div className="flex items-center gap-1">
-									<Input
-										value={editTitle}
-										onChange={(e) => onEditTitleChange?.(e.target.value)}
-										onKeyDown={(e) => {
-											if (e.key === "Enter") onEditSave?.();
-											if (e.key === "Escape") onEditCancel?.();
+						<div className="flex items-center gap-1">
+							<div className="flex items-center w-10 shrink-0 gap-0.5">
+								{onToggleSelection && (
+									<button
+										type="button"
+										onClick={(e) => {
+											e.stopPropagation();
+											onToggleSelection();
 										}}
-										className="h-6 text-sm py-0"
-										autoFocus
-									/>
-									<Button
-										type="button"
-										variant="ghost"
-										size="sm"
-										onClick={onEditSave}
-										className="h-6 w-6 p-0"
+										className="hover:bg-muted rounded p-0.5"
 									>
-										<Check className="w-3 h-3 text-green-500" />
-									</Button>
-									<Button
+										{isSelected ? (
+											<CheckSquare className="w-3.5 h-3.5 text-primary" />
+										) : (
+											<Square className="w-3.5 h-3.5 text-muted-foreground" />
+										)}
+									</button>
+								)}
+								{hasChildren && (
+									<button
 										type="button"
-										variant="ghost"
-										size="sm"
-										onClick={onEditCancel}
-										className="h-6 w-6 p-0"
+										onClick={(e) => {
+											e.stopPropagation();
+											onToggle();
+										}}
+										className="p-0.5 hover:bg-muted rounded"
 									>
-										<X className="w-3 h-3" />
-									</Button>
-								</div>
-							) : (
-								<div className="flex items-center gap-2">
-									<Tooltip>
-										<TooltipTrigger asChild>
+										{isExpanded ? (
+											<ChevronDown className="w-3 h-3 text-muted-foreground" />
+										) : (
+											<ChevronRight className="w-3 h-3 text-muted-foreground" />
+										)}
+									</button>
+								)}
+							</div>
+
+							<button
+								type="button"
+								className="flex-1 min-w-0 text-left"
+								onClick={toggleDetails}
+							>
+								{isEditing ? (
+									<div className="flex items-center gap-1">
+										<Input
+											value={editTitle}
+											onChange={(e) => onEditTitleChange?.(e.target.value)}
+											onKeyDown={(e) => {
+												if (e.key === "Enter") onEditSave?.();
+												if (e.key === "Escape") onEditCancel?.();
+											}}
+											className="h-6 text-xs py-0"
+											autoFocus
+										/>
+										<Button
+											type="button"
+											variant="ghost"
+											size="sm"
+											onClick={onEditSave}
+											className="h-5 w-5 p-0"
+										>
+											<Check className="w-3 h-3 text-green-500" />
+										</Button>
+										<Button
+											type="button"
+											variant="ghost"
+											size="sm"
+											onClick={onEditCancel}
+											className="h-5 w-5 p-0"
+										>
+											<X className="w-3 h-3" />
+										</Button>
+									</div>
+								) : (
+									<div className="min-w-0">
+										<div className="grid grid-cols-[12px_2px_1fr_auto] grid-rows-[auto_auto] items-start gap-x-1.5 min-w-0">
+											<TypeIcon
+												className={cn(
+													"w-3 h-3 shrink-0 row-span-2 place-self-center",
+													typeConfig.color,
+												)}
+											/>
 											<span
 												className={cn(
-													"text-sm font-medium truncate cursor-default flex-1",
-													isClosed && "line-through text-muted-foreground",
+													"w-0.5 row-span-2 self-stretch rounded-full my-0.5",
+													statusBarColors[issue.status] || statusBarColors.open,
 												)}
-											>
-												{issue.title}
+											/>
+											<Tooltip>
+												<TooltipTrigger asChild>
+													<span
+														className={cn(
+															"text-xs font-medium truncate",
+															isClosed && "line-through text-muted-foreground",
+														)}
+													>
+														{issue.title}
+													</span>
+												</TooltipTrigger>
+												<TooltipContent side="top" className="max-w-xs p-2">
+													<p className="font-medium text-xs">{issue.title}</p>
+													{issue.description && (
+														<p className="text-[11px] text-muted-foreground mt-1 line-clamp-3">
+															{issue.description}
+														</p>
+													)}
+												</TooltipContent>
+											</Tooltip>
+											<span className="text-[10px] font-mono text-muted-foreground shrink-0">
+												{issue.id}
 											</span>
-										</TooltipTrigger>
-										<TooltipContent
-											side="top"
-											className="max-w-xs bg-popover text-popover-foreground border border-border p-2"
-										>
-											<p className="font-medium text-sm">{issue.title}</p>
-											{issue.description && (
-												<p className="text-xs text-muted-foreground mt-1 line-clamp-3">
-													{issue.description}
-												</p>
-											)}
-										</TooltipContent>
-									</Tooltip>
-									<span className="text-[10px] font-mono text-muted-foreground flex-shrink-0">
-										{issue.id}
-									</span>
-								</div>
-							)}
+											<p className="col-start-3 col-span-2 text-[10px] text-muted-foreground truncate">
+												{summaryText}
+											</p>
+										</div>
+									</div>
+								)}
+							</button>
 
-							{/* Row 2: Description */}
-							{!isEditing && issue.description && (
-								<p className="text-[11px] text-muted-foreground truncate mt-0.5">
-									{issue.description}
-								</p>
-							)}
-
-							{/* Row 3: Status, Priority, Actions */}
-							<div className="flex items-center gap-1 mt-1">
-								<TypeIcon
-									className={cn("w-3 h-3 flex-shrink-0", typeConfig.color)}
-								/>
-								<Badge
-									variant="outline"
-									className={cn(
-										"text-[9px] px-1 py-0 h-4",
-										statusColors[issue.status] || statusColors.open,
-									)}
-								>
-									{issue.status.replace("_", " ")}
-								</Badge>
+							<div className="flex items-center gap-0.5 shrink-0 w-[34px] justify-end">
 								<Badge
 									variant="outline"
 									className={cn(
@@ -431,81 +435,108 @@ const IssueCard = memo(function IssueCard({
 								>
 									P{issue.priority}
 								</Badge>
+							</div>
 
-								<div className="flex-1" />
-
-								{/* Actions */}
-								{!isClosed && (
-									<div className="flex items-center gap-0.5">
-										{issue.status !== "in_progress" &&
-											(onStartHere || onStartNewSession) && (
-												<DropdownMenu>
-													<DropdownMenuTrigger asChild>
-														<Button
-															type="button"
-															variant="ghost"
-															size="sm"
-															onClick={(e) => e.stopPropagation()}
-															className="h-5 w-5 p-0"
-															title="Start working"
+							{!isClosed && (
+								<div className="flex items-center gap-0.5 shrink-0 w-[56px] justify-end">
+									{issue.status !== "in_progress" &&
+										(onStartHere || onStartNewSession) && (
+											<DropdownMenu>
+												<DropdownMenuTrigger asChild>
+													<Button
+														type="button"
+														variant="ghost"
+														size="sm"
+														onClick={(e) => e.stopPropagation()}
+														className="h-5 w-5 p-0"
+														title="Start working"
+													>
+														<Play className="w-3 h-3 text-muted-foreground" />
+													</Button>
+												</DropdownMenuTrigger>
+												<DropdownMenuContent align="end" className="w-40">
+													{onStartHere && (
+														<DropdownMenuItem
+															onClick={onStartHere}
+															className="text-xs"
 														>
-															<Play className="w-3 h-3 text-muted-foreground" />
-														</Button>
-													</DropdownMenuTrigger>
-													<DropdownMenuContent align="end" className="w-40">
-														{onStartHere && (
-															<DropdownMenuItem
-																onClick={onStartHere}
-																className="text-xs"
-															>
-																<Play className="w-3 h-3 mr-2" />
-																Start here
-															</DropdownMenuItem>
-														)}
-														{onStartNewSession && (
-															<DropdownMenuItem
-																onClick={onStartNewSession}
-																className="text-xs"
-															>
-																<ExternalLink className="w-3 h-3 mr-2" />
-																Start in new session
-															</DropdownMenuItem>
-														)}
-													</DropdownMenuContent>
-												</DropdownMenu>
-											)}
-										{issue.status === "in_progress" && (
-											<Button
-												type="button"
-												variant="ghost"
-												size="sm"
-												onClick={(e) => {
-													e.stopPropagation();
-													onStatusChange("open");
-												}}
-												className="h-5 w-5 p-0"
-												title="Pause"
-											>
-												<Pause className="w-3 h-3 text-muted-foreground" />
-											</Button>
+															<Play className="w-3 h-3 mr-2" />
+															Start here
+														</DropdownMenuItem>
+													)}
+													{onStartNewSession && (
+														<DropdownMenuItem
+															onClick={onStartNewSession}
+															className="text-xs"
+														>
+															<ExternalLink className="w-3 h-3 mr-2" />
+															Start in new session
+														</DropdownMenuItem>
+													)}
+												</DropdownMenuContent>
+											</DropdownMenu>
 										)}
+									{issue.status === "in_progress" && (
 										<Button
 											type="button"
 											variant="ghost"
 											size="sm"
 											onClick={(e) => {
 												e.stopPropagation();
-												onStatusChange("closed");
+												onStatusChange("open");
 											}}
 											className="h-5 w-5 p-0"
-											title="Mark as done"
+											title="Pause"
 										>
-											<CheckCircle2 className="w-3 h-3 text-muted-foreground" />
+											<Pause className="w-3 h-3 text-muted-foreground" />
 										</Button>
-									</div>
+									)}
+									<Button
+										type="button"
+										variant="ghost"
+										size="sm"
+										onClick={(e) => {
+											e.stopPropagation();
+											onStatusChange("closed");
+										}}
+										className="h-5 w-5 p-0"
+										title="Mark as done"
+									>
+										<CheckCircle2 className="w-3 h-3 text-muted-foreground" />
+									</Button>
+								</div>
+							)}
+						</div>
+
+						{isDetailsExpanded && !isEditing && (
+							<div className="mt-1 ml-10 rounded bg-muted/30 px-2 py-1.5 text-[10px] text-muted-foreground space-y-1">
+								{issue.description && (
+									<p className="text-[11px] text-foreground/85 whitespace-pre-wrap">
+										{issue.description}
+									</p>
+								)}
+								<div className="flex items-center gap-3">
+									<span>type: {typeConfig.label}</span>
+									<span>
+										created: {new Date(issue.created_at).toLocaleDateString()}
+									</span>
+									<span>
+										updated: {new Date(issue.updated_at).toLocaleDateString()}
+									</span>
+								</div>
+								{issue.parent_id && (
+									<p>
+										parent: <span className="font-mono">{issue.parent_id}</span>
+									</p>
+								)}
+								{issue.blocked_by.length > 0 && (
+									<p>blocked by: {issue.blocked_by.join(", ")}</p>
+								)}
+								{issue.labels.length > 0 && (
+									<p>labels: {issue.labels.join(", ")}</p>
 								)}
 							</div>
-						</div>
+						)}
 					</div>
 				</ContextMenuTrigger>
 				<ContextMenuContent>
@@ -554,9 +585,8 @@ const IssueCard = memo(function IssueCard({
 				</ContextMenuContent>
 			</ContextMenu>
 
-			{/* Children (recursive for multi-level nesting) */}
 			{hasChildren && isExpanded && (
-				<div className="space-y-1">
+				<div className="space-y-0.5">
 					{childIssues.map((child) => {
 						const grandchildren = childrenByParent?.get(child.id);
 						const childIsExpanded = expandedIssues?.has(child.id) ?? false;
@@ -578,6 +608,8 @@ const IssueCard = memo(function IssueCard({
 								depth={depth + 1}
 								isSelected={isSelected}
 								onToggleSelection={onToggleSelection}
+								detailExpandedIds={detailExpandedIds}
+								onToggleDetailsById={onToggleDetailsById}
 							/>
 						);
 					})}
@@ -717,7 +749,6 @@ export const TrxView = memo(function TrxView({
 	const [filterType, setFilterType] = useState<FilterType>("all");
 	const [hideClosed, setHideClosed] = useState(false);
 	const [searchQuery, setSearchQuery] = useState("");
-	const [searchQueryInput, setSearchQueryInput] = useState("");
 	const deferredSearchQuery = useDeferredValue(searchQuery);
 	const searchInputRef = useRef<HTMLInputElement>(null);
 	const [searchIncludeDescription, setSearchIncludeDescription] =
@@ -725,10 +756,9 @@ export const TrxView = memo(function TrxView({
 	const [selectedIssueIds, setSelectedIssueIds] = useState<Set<string>>(
 		new Set(),
 	);
-
-	useEffect(() => {
-		setSearchQueryInput(searchQuery);
-	}, [searchQuery]);
+	const [expandedIssueDetails, setExpandedIssueDetails] = useState<Set<string>>(
+		new Set(),
+	);
 
 	useEffect(() => {
 		if (filterStatus === "closed" && hideClosed) {
@@ -1021,6 +1051,18 @@ export const TrxView = memo(function TrxView({
 
 	const handleToggleIssueSelection = useCallback((issueId: string) => {
 		setSelectedIssueIds((prev) => {
+			const next = new Set(prev);
+			if (next.has(issueId)) {
+				next.delete(issueId);
+			} else {
+				next.add(issueId);
+			}
+			return next;
+		});
+	}, []);
+
+	const handleToggleIssueDetails = useCallback((issueId: string) => {
+		setExpandedIssueDetails((prev) => {
 			const next = new Set(prev);
 			if (next.has(issueId)) {
 				next.delete(issueId);
@@ -1352,22 +1394,16 @@ export const TrxView = memo(function TrxView({
 
 						<input
 							ref={searchInputRef}
-							value={searchQueryInput}
-							onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-								setSearchQueryInput(e.target.value)
-							}
-							onBlur={() => setSearchQuery(searchQueryInput)}
+							value={searchQuery}
+							onChange={(e) => setSearchQuery(e.target.value)}
 							placeholder="Search tasks..."
 							className="h-full flex-1 border-none bg-transparent px-2 shadow-none outline-none text-foreground placeholder:text-muted-foreground"
 						/>
 
-						{searchQueryInput && (
+						{searchQuery && (
 							<button
 								type="button"
-								onClick={() => {
-									setSearchQuery("");
-									setSearchQueryInput("");
-								}}
+								onClick={() => setSearchQuery("")}
 								className="text-muted-foreground hover:text-foreground shrink-0"
 							>
 								<X className="w-3 h-3" />
@@ -1414,7 +1450,7 @@ export const TrxView = memo(function TrxView({
 			)}
 
 			{/* Issues list */}
-			<div className="flex-1 overflow-auto pl-3 pr-0.5 pt-0.5 space-y-1">
+			<div className="flex-1 overflow-y-auto overflow-x-hidden pl-2 pr-0.5 pt-0.5 space-y-0.5">
 				{issues.length === 0 ? (
 					<div className="flex items-center justify-center h-full">
 						<div className="text-center text-muted-foreground">
@@ -1459,6 +1495,8 @@ export const TrxView = memo(function TrxView({
 								onEditCancel={handleCancelEdit}
 								isSelected={selectedIssueIds.has(parent.id)}
 								onToggleSelection={() => handleToggleIssueSelection(parent.id)}
+								detailExpandedIds={expandedIssueDetails}
+								onToggleDetailsById={handleToggleIssueDetails}
 							/>
 						))}
 						{/* Then standalone issues */}
@@ -1491,6 +1529,8 @@ export const TrxView = memo(function TrxView({
 								onEditCancel={handleCancelEdit}
 								isSelected={selectedIssueIds.has(issue.id)}
 								onToggleSelection={() => handleToggleIssueSelection(issue.id)}
+								detailExpandedIds={expandedIssueDetails}
+								onToggleDetailsById={handleToggleIssueDetails}
 							/>
 						))}
 					</>
