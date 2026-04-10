@@ -2,6 +2,48 @@
 
 ## Open
 
+### [oqto-jj9k.14] Migration health gate: fail deployment if oqto-log bootstrap validation is incomplete (P0, task)
+Add pre-activation/post-migration validation gate in deployment pipeline. Validate migrated session/message counts + checkpoint consistency; fail/rollback on threshold breach.
+
+### [oqto-jj9k.13] Deploy/install/update: run oqto-log bootstrap migration as mandatory lifecycle step (P0, task)
+Wire install, deploy, and update scripts to execute oqto-log bootstrap migration once per user/workspace before enabling oqto-log reads. Include structured logs and explicit failure semantics.
+
+### [oqto-jj9k.11] Regression matrix + chaos tests for message correctness (P0, task)
+Add integration/e2e tests: reconnect mid-stream, retries, compaction, forks/tree nav, multi-tab, external continuation, restart recovery.
+
+### [oqto-jj9k.9] Delete legacy paths aggressively (P0, task)
+Remove obsolete hstry-authority/message-buffer/fallback code and old merge helpers. Add CI guardrails to block reintroduction.
+
+### [oqto-jj9k.8] Cutover reads: WS get_messages and REST chat-history to projector (P0, task)
+Switch all timeline reads to single projector codepath. Remove multi-branch fallback logic and format divergence.
+
+### [oqto-jj9k.7] Frontend state refactor: durable timeline + streaming overlay (P0, task)
+Remove generic merge heuristics. Render authoritative projected timeline plus bounded in-flight overlay. Reconcile by deterministic IDs and version.
+
+### [oqto-jj9k.5] Projector: timeline + tree projections from turn DAG (P0, task)
+Build single projector used by both WS and REST: ordered timeline by branch/head plus tree snapshot endpoints.
+
+### [oqto-jj9k.4] Deterministic ID generator: turn_id/message_id derivation (P0, task)
+Implement deterministic ID derivation utilities with replay safety. Preserve source IDs when available; always persist canonical IDs.
+
+### [oqto-jj9k.3] Runner write path: transactional append_turn + stream commit (P0, task)
+Add runner LogStore abstraction and SqlxLogStore implementation. Write turns/messages/version in one transaction. Keep streaming ephemeral until commit.
+
+### [oqto-jj9k.2] Schema v1: sessions/branches/turns/messages/events + FTS tables (P0, task)
+Implement oqto-log SQLite schema (sqlx migrations) with turn-DAG model and FTS5 index tables. Include constraints, indexes, and idempotency keys.
+
+### [oqto-jj9k.1] ADR + invariants: single authority, ID contract, version semantics (P0, task)
+Write and ratify ADR defining: authoritative store, session/platform/external ID contract, deterministic turn/message IDs, append-only guarantees, and compatibility policy.
+
+### [oqto-jj9k] oqto-log: authoritative turn-DAG history store and migration off fragile chain (P0, epic)
+Replace fragile Pi-RPC -> runner -> hstry/frontend message chain with an authoritative Oqto-native durable chat log (oqto-log), first-class branch/tree support, and deterministic projection.
+
+Goals:
+- Eliminate disappearing/duplicated/misordered messages.
+- Make fork/tree/compaction first-class and replay-safe.
+...
+
+
 ### [oqto-c4x3] Pi-authoritative history pipeline: zero-loss external-session compatibility with canonical+hstry projection (P0, epic)
 Goal
 - Preserve instant history load/search while guaranteeing zero message loss and full fork/tree compatibility for Pi sessions, including sessions started/continued outside Oqto.
@@ -50,6 +92,27 @@ setup.sh must correctly provision everything for a new platform user on a fresh 
 3. Per-user provisioning on login/creation:
 ...
 
+
+### [oqto-jj9k.12] Operational tooling: repair/reindex/version diagnostics (P1, task)
+Add commands/admin endpoints for reindexing projections, integrity checks, per-session version diagnostics, and FTS rebuild.
+
+Expanded scope:
+- Add deploy/install/update migration hook command(s) for oqto-log bootstrap ingestion.
+- Emit structured migration progress and validation metrics.
+...
+
+
+### [oqto-jj9k.10] Backfill/import pipeline: Pi JSONL -> oqto-log idempotent sync (P1, task)
+Implement deterministic importer with checkpoints for sessions continued outside oqto; safe replay and repair tooling.
+
+Expanded scope:
+- Build bootstrap command for one-shot migration from Pi JSONL to oqto-log.
+- Idempotent ingest keys (source_session_id + source_entry_id/hash) with uniqueness constraints.
+...
+
+
+### [oqto-jj9k.6] Dual-write phase: legacy + oqto-log with divergence telemetry (P1, task)
+Enable dual-write and comparison metrics/hashes between legacy output and oqto-log projection to detect drift before cutover.
 
 ### [oqto-bcqj.1] Retry/error UX regression: spinner drops, empty assistant bubble, error lost on reload (P1, bug)
 ## Summary
@@ -130,9 +193,6 @@ Plan and implement a centralized 6-layer prompt-injection defense pipeline for O
 ### [oqto-pwa1] Sandbox profile hierarchy: strict/development/privileged/godmode (P1, task)
 Implement four-tier profile hierarchy for sandbox configuration.\n\n- strict: overlay isolation, deny secrets, network isolated, seccomp+landlock enforce.\n- development: overlay isolation, deny secrets, network open, seccomp+landlock audit.\n- privileged: no overlay, full home write, deny secrets, no seccomp/landlock.\n- godmode: no sandbox at all, full access (explicit opt-in only, user/system config, not workspace).\n\nGodmode constraints:\n- Cannot be set via workspace .oqto/sandbox.toml (only user or system config).\n- Audited and logged.\n- Cannot be set by agent itself.
 
-### [oqto-w2xs] Overlay filesystem isolation for agent toolchains (P1, epic)
-Use bwrap --overlay to isolate agent package installs from user environment.\n\nGoals\n- Agent npm/pip/cargo installs never modify user real paths.\n- User environment stays clean even if agent installs malicious packages.\n- Cleanup is trivial: discard overlay directory.\n- Shared read-only base for cache efficiency.\n\nDesign\n- Mount real toolchain paths (~/.npm, ~/.cargo, ~/.local/share/uv) as read-only lower layer.\n- Agent writes go to per-workspace overlay: ~/.oqto/overlays/{workspace-hash}/\n- Agent sees merged view (upper wins), user sees clean original.\n- Overlay handles conflicts, deletes (whiteout), and modifications (copy-up) transparently.\n\nProfile integration\n- strict/development profiles: overlay enabled.\n- privileged profile: no overlay, direct write.\n- godmode profile: no sandbox at all.\n\nDefinition of done\n- Agent package installs are isolated via overlay.\n- User toolchains are never modified by agent activity.\n- Overlay cleanup is one command per workspace.\n- Configurable per profile.
-
 ### [oqto-razr.2] Privileged operation policy engine with risk tiers (P1, task)
 Define operation categories (package install, service restart, config write, etc.) with risk tiers. Implement policy evaluation that determines approval requirements per operation. Integrates with kyz lease model.
 
@@ -187,9 +247,6 @@ Context
 ...
 
 
-### [oqto-a0z4] Instant chat history UX: cached-first rendering with hydration gating (P1, epic)
-Hard requirement: opening any chat must render history instantly with no visible empty-state flash.\n\nStatus: Partially complete\n\nCompleted:\n- Added explicit frontend hydration state in chat hook (historyHydrated, historyLoading)\n- Render cached messages immediately, then authoritative hstry sync in background\n- Prevent 'No messages yet' from appearing before first authoritative fetch settles\n- Fixed cache contamination: clear in-memory cache on session switch\n- Fixed authoritative merge: only preserve isStreaming messages (no timestamp-based leaks)\n- Frontend lint passes\n\nRemaining:\n- Session prewarm: prefetch latest messages for visible sessions (child task oqto-a0z4.1)\n\nSuccess criteria:\n- Opening an existing chat never flashes an empty timeline before history appears.\n- If cache exists, content appears immediately (<1 frame) and later reconciles.\n- If cache missing, show loading/skeleton until first authoritative response, then either messages or true empty state.\n- Frontend lint passes.
-
 ### [oqto-nb6s] Reduce oqto cold-start time and add readiness-gated deploy sync-configs (P1, task)
 Observed on octo-azure: systemd reports oqto started, but admin unix socket (/run/oqto/oqtoctl.sock) and HTTP listener come up ~10s later. deploy sync-configs currently races this window, causing repeated 'Connection refused (os error 111)' on oqtoctl unix requests.
 
@@ -223,15 +280,6 @@ Create foundational hooks that replace common useEffect patterns.
 ## useMountEffect (hooks/useMountEffect.ts)
 ```ts
 export function useMountEffect(effect: () => void | (() => void)) {
-...
-
-
-### [oqto-hn80] Ban useEffect: strict linting and full migration (P1, epic)
-Ban direct useEffect usage across the frontend codebase. Introduce strict lint rules, a useMountEffect escape hatch, and migrate all 46 occurrences across 12 files.
-
-Reference: Factory's 'Why we banned useEffect' (Alvin Sng, 2026-03-17), React official 'You Might Not Need an Effect' guide.
-
-## Current state
 ...
 
 
@@ -445,15 +493,6 @@ Currently, oqto lacks graceful shutdown for sessions during updates. When restar
 **Problem:**
 - Sessions receive SIGKILL (no SIGTERM, no wait period)
 - Active LLM responses are interrupted mid-stream
-...
-
-
-### [oqto-cxxr] Security: Defense-in-depth sandboxing with seccomp-bpf fallback (P1, feature)
-Current sandboxing relies solely on bwrap (bubblewrap). This is a single point of failure—if bwrap has vulnerabilities or is not available, agents run completely unsandboxed. Additionally, bwrap requires elevated privileges (setuid) which is a security risk itself.
-
-## Current State
-
-- Primary: bwrap with configurable profiles
 ...
 
 
@@ -717,6 +756,11 @@ Build and distribute pre-compiled binaries for Linux (x86_64, arm64) and macOS (
 
 ### [octo-af5j] Release & Update System (P1, epic)
 Comprehensive, bullet-proof release and update system for Oqto with transactional deployment semantics, strict preflight gates, staged rollout, and automatic rollback.\n\nGoals\n- Never leave host in half-updated state.\n- Fail fast before deployment when prerequisites are missing.\n- Guarantee mode-aware safety (single-user dev vs multi-user production).\n- Provide deterministic rollback on failed health checks.\n- Emit auditable update lifecycle events.\n\nScope\n1) Preflight gate engine (hard-stop)\n   - Validate target mode and required sandbox prerequisites.\n   - Multi-user checks: /etc/oqto/sandbox.toml presence + owner/perms + readability.\n   - If seccomp enforce configured: require /etc/oqto/seccomp/default.bpf.\n   - Validate service dependencies, disk space, binary availability, and schema/config parse.\n\n2) Transactional deployment layout\n   - Versioned release directories + atomic symlink switch.\n   - Prepare phase (build/upload/verify) separate from activate phase.\n   - Auto-rollback to last known-good release on post-activate health failure.\n\n3) Staged activation and health verification\n   - Ordered restarts (runner/control-plane/dependent services).\n   - Bounded readiness checks: runner socket, spawn smoke test, hstry/mmry connectivity.\n   - Canary mode: update one host first, then fleet rollout.\n\n4) Idempotent update CLI/API\n   - Re-running update converges safely to desired state.\n   - Resume support for interrupted updates with clear status reporting.\n\n5) Observability and audit trail\n   - Structured events: preflight.start/pass/fail, deploy.start/pass/fail, rollback.start/pass/fail.\n   - Persist update metadata: release ID, host, actor, timestamps, decision reason codes.\n\nDefinition of done\n- Multi-user host update fails before activation if sandbox prerequisites are missing.\n- Successful update is atomic from operator perspective (no mixed-version runtime).\n- Failed update auto-rolls back and restores previous healthy state.\n- Update process is idempotent and documented with operator runbook.\n- Canary + fleet rollout path is documented and tested.
+
+### [oqto-95n6] UI: move session accent bar between icon and title and make it span both text rows (P2, task)
+
+### [oqto-q49f] Docs cleanup: archive old design docs under docs/old (P2, task)
+Audit docs/ for stale design docs, move superseded design documents into docs/old/, and keep active docs in place. Update links if needed after move.
 
 ### [oqto-razr.3] Runner privileged execution path (P2, task)
 Runner-side handler that receives privileged operation requests, validates against policy, executes outside sandbox with real privileges, and streams stdout/stderr back to the requesting agent process.
@@ -1736,6 +1780,18 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [oqto-01e0] TRX sidebar: center type icon across title+summary two-line block (closed 2026-04-10)
+- [oqto-vdr2] TRX sidebar: optical type-icon baseline tweak for mobile (closed 2026-04-10)
+- [oqto-9xse] TRX sidebar: fix issue type icon vertical alignment (closed 2026-04-10)
+- [oqto-s69x] TRX sidebar: replace status tags with slim left status bar (closed 2026-04-10)
+- [oqto-vbpv] TRX sidebar overflow correction: disable horizontal scroll only (closed 2026-04-10)
+- [oqto-etmd] TRX sidebar: disable vertical scrolling in container (closed 2026-04-10)
+- [oqto-2r9h] TRX sidebar pass 2: denser vertical spacing + better at-a-glance issue context (closed 2026-04-10)
+- [oqto-25vr] Right sidebar trx: compact layout, clean icon alignment, issue details expansion, and fix fuzzy search (closed 2026-04-10)
+- [oqto-hn80] Ban useEffect: strict linting and full migration (closed 2026-04-10)
+- [oqto-a0z4] Instant chat history UX: cached-first rendering with hydration gating (closed 2026-04-10)
+- [oqto-w2xs] Overlay filesystem isolation for agent toolchains (closed 2026-04-10)
+- [oqto-cxxr] Security: Defense-in-depth sandboxing with seccomp-bpf fallback (closed 2026-04-10)
 - [oqto-fmbr] Duplicate messages in hstry from repeated persist_to_hstry_grpc calls (closed 2026-04-06)
 - [oqto-36ey] Canonical message identity pipeline (no-heuristic chat sync) (closed 2026-04-06)
 - [oqto-trea] Frontend: trigger Pi session import/backfill per workspace from settings panel (closed 2026-04-06)
@@ -2457,13 +2513,13 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
-- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
 - [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
+- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
+- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
 - [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
 - [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
-- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
 - [oqto-4ryr] Session rename reverts: update_chat_session returns external_id while list returns platform_id (closed )
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )

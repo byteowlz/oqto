@@ -8,7 +8,7 @@ We're refactoring Pi session management to move it from the oqto backend into oq
 - Backend becomes a stateless relay
 - Clean user isolation (one runner per user)
 
-**Design doc:** `docs/design/pi-session-refactor.md`
+**Design doc (archived):** `docs/archive/legacy/design/20260201-pi-session-refactor.md`
 
 ---
 
@@ -201,7 +201,7 @@ These can be migrated to runner-backed implementations in a future refactor.
 
 ```
 # Design
-docs/design/pi-session-refactor.md      # Full spec
+docs/archive/legacy/design/20260201-pi-session-refactor.md  # Archived full spec
 
 # Backend - Protocol
 backend/crates/oqto/src/runner/protocol.rs   # All types
