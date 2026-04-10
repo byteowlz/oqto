@@ -26,6 +26,13 @@ fn parse_pi_session_id_from_path(path: &Path) -> Option<String> {
     }
 }
 
+#[derive(Debug, serde::Deserialize)]
+struct JsonlMessageEntry {
+    #[serde(rename = "type")]
+    entry_type: String,
+    message: Option<crate::pi::AgentMessage>,
+}
+
 fn count_jsonl_message_entries(path: &Path) -> usize {
     use std::io::BufRead;
 
@@ -35,11 +42,26 @@ fn count_jsonl_message_entries(path: &Path) -> usize {
     };
 
     let reader = std::io::BufReader::new(file);
-    reader
-        .lines()
-        .map_while(Result::ok)
-        .filter(|line| line.contains("\"type\":\"message\""))
-        .count()
+    let mut count = 0usize;
+
+    for line in reader.lines().map_while(Result::ok) {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let Ok(entry) = serde_json::from_str::<JsonlMessageEntry>(trimmed) else {
+            continue;
+        };
+
+        // Must match importer semantics exactly: only parseable message entries
+        // with a concrete AgentMessage payload are considered importable.
+        if entry.entry_type == "message" && entry.message.is_some() {
+            count += 1;
+        }
+    }
+
+    count
 }
 
 #[derive(Debug, Default, Clone)]
