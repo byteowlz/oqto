@@ -147,7 +147,7 @@ These should be completed before opening to untrusted users or scaling beyond a 
 **Problem:** No version negotiation. Adding new Part types or Event variants will break older runners/frontends with no graceful degradation.
 
 **Current state:**
-- `docs/design/canonical-protocol.md`: No version field defined
+- `docs/active/design/20260205-canonical-protocol.md`: No version field defined
 - Runner registration has no version exchange
 - Frontend WebSocket handshake has no version
 

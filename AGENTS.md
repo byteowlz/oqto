@@ -87,7 +87,7 @@ The frontend speaks a **harness-agnostic canonical protocol**. Users can select 
 - **Events** are ephemeral UI signals: stream.text_delta, agent.working, tool.start, agent.idle, etc.
 - **Commands** flow from frontend to runner: prompt, abort, set_model, compact, fork, etc.
 
-See `docs/design/canonical-protocol.md` for the full specification.
+See `docs/active/design/20260205-canonical-protocol.md` for the full specification.
 
 ### Harnesses
 

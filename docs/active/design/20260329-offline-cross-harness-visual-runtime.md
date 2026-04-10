@@ -391,4 +391,4 @@ interface VisualHarnessAdapter {
 - `https://github.com/nicobailon/visual-explainer`
 - `https://github.com/nicobailon/pi-design-deck`
 - `https://github.com/Michaelliv/pi-generative-ui`
-- `docs/design/oqto-serve.md`
+- `docs/active/design/20260227-oqto-serve.md`
