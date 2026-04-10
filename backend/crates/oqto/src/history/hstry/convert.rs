@@ -216,7 +216,8 @@ fn build_parts_json(content: &Value, msg: &AgentMessage) -> String {
                         match block_type {
                             "text" => {
                                 if let Some(text) = obj.get("text") {
-                                    let part_type = if is_assistant_error { "error" } else { "text" };
+                                    let part_type =
+                                        if is_assistant_error { "error" } else { "text" };
                                     parts.push(serde_json::json!({
                                         "type": part_type,
                                         "text": text

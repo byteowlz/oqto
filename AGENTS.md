@@ -16,7 +16,7 @@ Oqto is a self-hosted platform for managing AI coding agents.
   - This is not optional and does not depend on task size. "Whenever possible" does not apply.
   - Exception: urgent break/fix hotfixes may start implementation immediately, but the trx item must be created/updated as the very next step after stabilization in the same session.
 - **No hacky fixes.** We want proper John Carmack solutions -- clean, minimal, and correct. Understand the root cause before writing a single line. If a fix feels like duct tape, stop and rethink. Every change should make the codebase better, not just silence the symptom.
-- **Respect the architecture.** Actions go through Runners. History goes through hstry. Memory goes through mmry. Do not bypass established data flows. If you think you need a shortcut, you are missing something -- re-read the architecture section above and the canonical protocol docs.
+- **Respect the architecture.** Actions go through Runners. History goes through the authoritative store for the runtime mode (`oqto-log` for oqto-runner sessions; hstry for legacy/interop paths during migration). Memory goes through mmry. Do not bypass established data flows. If you think you need a shortcut, you are missing something -- re-read the architecture section above and the canonical protocol docs.
 - **"Let me just..." is ALWAYS wrong.** That phrase is the preamble to a hack. We do not "just" add a quick workaround, "just" hardcode a value, or "just" skip the proper path. Every solution must be designed to scale. If it would not survive 10x users or 10x sessions, it is the wrong approach.
 - **Todo list discipline**: Your todo list is a real-time status bar the user watches. At the start of a task, create todos with `TodoWrite`. As you work, **always** update the list: set tasks to `in_progress` when you start them and `completed` when you finish them. Do not leave completed tasks as `pending`. Rewrite the full list after each significant step.
 - **Fix all failures before done.** We always leave the tree green: if lint/tests/checks fail, fix them regardless of who introduced the failure. No "not my change" exceptions.
@@ -175,14 +175,25 @@ The runner maintains a state machine per session (idle, working, error) and emit
 
 ## Storage
 
-### hstry (Chat History)
+### oqto-log (authoritative chat history for oqto-runner sessions)
 
-All chat history access goes through hstry's gRPC API - no raw SQLite access from `oqto`.
+`oqto-log` is the durable authority for timeline/tree reads in the new history architecture.
 
-- **WriteService**: Persist messages after agent turns complete (via `HstryClient` gRPC)
-- **ReadService**: Query messages, sessions, search (via `HstryClient` gRPC)
-- Stores canonical `Message` format directly (no translation at read time)
-- **Runner exception**: `oqto-runner` reads hstry SQLite directly for speed (runs as target user, same machine). This is intentional and secure.
+- **Scope/placement**: one SQLite DB per workspace, stored in the owning Linux user's home:
+  - `~/.local/share/oqto/oqto-log/<workspace_hash>/oqto-log.sqlite`
+- **Shared workspace rule**: DB lives under the shared workspace Linux user and is shared by collaborators.
+- **Search access model**:
+  - Agents must search via runner-mediated APIs/tools (no raw DB access from agent process).
+  - Effective search scope is derived from oqto-sandbox read permissions (workdir/workspace allowlist), then optionally narrowed further.
+  - Bare Pi sessions are not an implicit oqto-log search client; access requires explicit oqto runner/oqtoctl mediation.
+
+### hstry (legacy/interop during migration)
+
+`hstry` remains available for compatibility and transition paths while oqto-log cutover completes.
+
+- Existing gRPC services remain valid for legacy reads/writes.
+- Do not introduce new primary timeline authority paths in hstry.
+- New history features should target oqto-log first.
 
 ### Session Files (Pi-Owned)
 
@@ -190,8 +201,8 @@ Pi writes its own JSONL session files -- **Oqto must NEVER create or write JSONL
 
 - **Pi**: `~/.pi/agent/sessions/--{safe_cwd}--/{timestamp}_{session_id}.jsonl`
 - These are authoritative for harness-specific metadata (titles, fork points)
-- hstry is authoritative for structured message content
-- `pending-` prefixed IDs are internal runner/frontend placeholders for optimistic session matching; they must never leak into files or hstry
+- oqto-log is authoritative for structured message content in oqto-runner mode (hstry remains legacy/interop during migration)
+- `pending-` prefixed IDs are internal runner/frontend placeholders for optimistic session matching; they must never leak into files or durable history stores
 
 ### Session ID Contract (MUST FOLLOW)
 
@@ -201,18 +212,18 @@ To avoid history loss/duplication, Oqto uses dual IDs with strict roles:
   - Used by frontend/WS/backend for session control (`prompt`, `abort`, `get_messages`, etc.)
   - Stable within Oqto UX and routing
 - **`external_id` (Pi session ID)**
-  - Used as hstry conversation identity for Pi-backed sessions
+  - Used as source identity for import/interop (and legacy hstry conversation identity during migration)
   - Comes from Pi `get_state` (`sessionId`) and must be treated as authoritative once known
 - **Optimistic temp IDs (`tmp:*`, `pending-*`)**
   - Frontend-local only during pre-ack/new-session flows
-  - Must never be persisted to hstry or JSONL
+  - Must never be persisted to oqto-log/hstry or JSONL
 
 Persistence rules:
 
 1. Keep both IDs; never "replace" platform_id with external_id in Oqto control paths.
-2. Store both in hstry (`external_id = Pi session id`, `platform_id = Oqto session id`).
+2. Store both in authoritative history (`external_id = Pi session id`, `platform_id = Oqto session id`).
 3. For active sessions, message durability is append-only delta writes on `AgentEnd` (no full-window overwrite).
-4. If Pi session id is not known yet, keep data in runner buffer and defer hstry write until identity is resolved.
+4. If Pi session id is not known yet, keep data in runner buffer and defer durable write until identity is resolved.
 
 ## Agent Tools
 
@@ -259,7 +270,7 @@ Create a memory when you discover:
 
 - **Reusable patterns** - "Voice mode uses eaRS for STT and kokorox for TTS via WebSocket"
 - **Existing interfaces** - "Pi PATCH /api/chat-history/{id} renames sessions via session_info JSONL entry"
-- **Architecture decisions** - "hstry is mandatory, writes go through gRPC WriteService not raw SQLite"
+- **Architecture decisions** - "oqto-log is authoritative for runner sessions; writes go through the runner/store abstraction, not ad-hoc raw SQLite from agent flows"
 - **Debugging insights** - "Port cleanup requires waiting for process exit to prevent zombies"
 - **Integration points** - "PiTranslator converts PiEvent to Vec<EventPayload> for canonical broadcast"
 

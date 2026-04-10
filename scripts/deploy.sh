@@ -1078,6 +1078,22 @@ activate_host() {
 
     restart_services_ordered "$is_local" "$ssh_target" "$mode" "$services"
 
+    # Mandatory oqto-log bootstrap migration (idempotent, safe to rerun).
+    if ! host_exec "$is_local" "$ssh_target" "oqto runner migrate-oqto-log --mode bootstrap"; then
+        emit_event "$is_local" "$ssh_target" "$name" "deploy.activate" "fail" "oqto_log.bootstrap_migration_failed"
+        warn "oqto-log bootstrap migration failed on $name, attempting rollback..."
+        rollback_host "$name" "$ssh_target" "$is_local" "$binaries" "$mode" "$services" "$previous_release"
+        return 1
+    fi
+
+    # Health gate: validation must pass before marking activation successful.
+    if ! host_exec "$is_local" "$ssh_target" "oqto runner migrate-oqto-log --mode validate"; then
+        emit_event "$is_local" "$ssh_target" "$name" "deploy.activate" "fail" "oqto_log.validation_failed"
+        warn "oqto-log validation failed on $name, attempting rollback..."
+        rollback_host "$name" "$ssh_target" "$is_local" "$binaries" "$mode" "$services" "$previous_release"
+        return 1
+    fi
+
     if health_check_host "$is_local" "$ssh_target" "$mode"; then
         host_exec_sudo "$is_local" "$ssh_target" "ln -sfn '$release_dir' '$RELEASES_ROOT/last-good'"
         emit_event "$is_local" "$ssh_target" "$name" "deploy.activate" "pass" "deploy.activate.pass"

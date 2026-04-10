@@ -2,48 +2,6 @@
 
 ## Open
 
-### [oqto-jj9k.14] Migration health gate: fail deployment if oqto-log bootstrap validation is incomplete (P0, task)
-Add pre-activation/post-migration validation gate in deployment pipeline. Validate migrated session/message counts + checkpoint consistency; fail/rollback on threshold breach.
-
-### [oqto-jj9k.13] Deploy/install/update: run oqto-log bootstrap migration as mandatory lifecycle step (P0, task)
-Wire install, deploy, and update scripts to execute oqto-log bootstrap migration once per user/workspace before enabling oqto-log reads. Include structured logs and explicit failure semantics.
-
-### [oqto-jj9k.11] Regression matrix + chaos tests for message correctness (P0, task)
-Add integration/e2e tests: reconnect mid-stream, retries, compaction, forks/tree nav, multi-tab, external continuation, restart recovery.
-
-### [oqto-jj9k.9] Delete legacy paths aggressively (P0, task)
-Remove obsolete hstry-authority/message-buffer/fallback code and old merge helpers. Add CI guardrails to block reintroduction.
-
-### [oqto-jj9k.8] Cutover reads: WS get_messages and REST chat-history to projector (P0, task)
-Switch all timeline reads to single projector codepath. Remove multi-branch fallback logic and format divergence.
-
-### [oqto-jj9k.7] Frontend state refactor: durable timeline + streaming overlay (P0, task)
-Remove generic merge heuristics. Render authoritative projected timeline plus bounded in-flight overlay. Reconcile by deterministic IDs and version.
-
-### [oqto-jj9k.5] Projector: timeline + tree projections from turn DAG (P0, task)
-Build single projector used by both WS and REST: ordered timeline by branch/head plus tree snapshot endpoints.
-
-### [oqto-jj9k.4] Deterministic ID generator: turn_id/message_id derivation (P0, task)
-Implement deterministic ID derivation utilities with replay safety. Preserve source IDs when available; always persist canonical IDs.
-
-### [oqto-jj9k.3] Runner write path: transactional append_turn + stream commit (P0, task)
-Add runner LogStore abstraction and SqlxLogStore implementation. Write turns/messages/version in one transaction. Keep streaming ephemeral until commit.
-
-### [oqto-jj9k.2] Schema v1: sessions/branches/turns/messages/events + FTS tables (P0, task)
-Implement oqto-log SQLite schema (sqlx migrations) with turn-DAG model and FTS5 index tables. Include constraints, indexes, and idempotency keys.
-
-### [oqto-jj9k.1] ADR + invariants: single authority, ID contract, version semantics (P0, task)
-Write and ratify ADR defining: authoritative store, session/platform/external ID contract, deterministic turn/message IDs, append-only guarantees, and compatibility policy.
-
-### [oqto-jj9k] oqto-log: authoritative turn-DAG history store and migration off fragile chain (P0, epic)
-Replace fragile Pi-RPC -> runner -> hstry/frontend message chain with an authoritative Oqto-native durable chat log (oqto-log), first-class branch/tree support, and deterministic projection.
-
-Goals:
-- Eliminate disappearing/duplicated/misordered messages.
-- Make fork/tree/compaction first-class and replay-safe.
-...
-
-
 ### [oqto-c4x3] Pi-authoritative history pipeline: zero-loss external-session compatibility with canonical+hstry projection (P0, epic)
 Goal
 - Preserve instant history load/search while guaranteeing zero message loss and full fork/tree compatibility for Pi sessions, including sessions started/continued outside Oqto.
@@ -92,27 +50,6 @@ setup.sh must correctly provision everything for a new platform user on a fresh 
 3. Per-user provisioning on login/creation:
 ...
 
-
-### [oqto-jj9k.12] Operational tooling: repair/reindex/version diagnostics (P1, task)
-Add commands/admin endpoints for reindexing projections, integrity checks, per-session version diagnostics, and FTS rebuild.
-
-Expanded scope:
-- Add deploy/install/update migration hook command(s) for oqto-log bootstrap ingestion.
-- Emit structured migration progress and validation metrics.
-...
-
-
-### [oqto-jj9k.10] Backfill/import pipeline: Pi JSONL -> oqto-log idempotent sync (P1, task)
-Implement deterministic importer with checkpoints for sessions continued outside oqto; safe replay and repair tooling.
-
-Expanded scope:
-- Build bootstrap command for one-shot migration from Pi JSONL to oqto-log.
-- Idempotent ingest keys (source_session_id + source_entry_id/hash) with uniqueness constraints.
-...
-
-
-### [oqto-jj9k.6] Dual-write phase: legacy + oqto-log with divergence telemetry (P1, task)
-Enable dual-write and comparison metrics/hashes between legacy output and oqto-log projection to detect drift before cutover.
 
 ### [oqto-bcqj.1] Retry/error UX regression: spinner drops, empty assistant bubble, error lost on reload (P1, bug)
 ## Summary
@@ -1780,6 +1717,23 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [oqto-rf16] Fix frontend vitest write failure (Unknown system error -122) (closed 2026-04-10)
+- [oqto-jj9k] oqto-log: authoritative turn-DAG history store and migration off fragile chain (closed 2026-04-10)
+- [oqto-jj9k.11] Regression matrix + chaos tests for message correctness (closed 2026-04-10)
+- [oqto-jj9k.9] Delete legacy paths aggressively (closed 2026-04-10)
+- [oqto-jj9k.7] Frontend state refactor: durable timeline + streaming overlay (closed 2026-04-10)
+- [oqto-jj9k.12] Operational tooling: repair/reindex/version diagnostics (closed 2026-04-10)
+- [oqto-jj9k.10] Backfill/import pipeline: Pi JSONL -> oqto-log idempotent sync (closed 2026-04-10)
+- [oqto-jj9k.8] Cutover reads: WS get_messages and REST chat-history to projector (closed 2026-04-10)
+- [oqto-jj9k.6] Dual-write phase: legacy + oqto-log with divergence telemetry (closed 2026-04-10)
+- [oqto-jj9k.5] Projector: timeline + tree projections from turn DAG (closed 2026-04-10)
+- [oqto-jj9k.3] Runner write path: transactional append_turn + stream commit (closed 2026-04-10)
+- [oqto-jj9k.14] Migration health gate: fail deployment if oqto-log bootstrap validation is incomplete (closed 2026-04-10)
+- [oqto-jj9k.13] Deploy/install/update: run oqto-log bootstrap migration as mandatory lifecycle step (closed 2026-04-10)
+- [oqto-jj9k.15] Document oqto-log access/search policy in AGENTS.md (closed 2026-04-10)
+- [oqto-jj9k.4] Deterministic ID generator: turn_id/message_id derivation (closed 2026-04-10)
+- [oqto-jj9k.2] Schema v1: sessions/branches/turns/messages/events + FTS tables (closed 2026-04-10)
+- [oqto-jj9k.1] ADR + invariants: single authority, ID contract, version semantics (closed 2026-04-10)
 - [oqto-01e0] TRX sidebar: center type icon across title+summary two-line block (closed 2026-04-10)
 - [oqto-vdr2] TRX sidebar: optical type-icon baseline tweak for mobile (closed 2026-04-10)
 - [oqto-9xse] TRX sidebar: fix issue type icon vertical alignment (closed 2026-04-10)
@@ -2513,13 +2467,13 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
-- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
-- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
-- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
-- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
 - [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
+- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
 - [oqto-4ryr] Session rename reverts: update_chat_session returns external_id while list returns platform_id (closed )
+- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
+- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )

@@ -322,11 +322,7 @@ function coerceBlockToPart(b: Record<string, unknown>): DisplayPart | null {
 	// --- heuristic: Pi tool_use blocks stored without a type field ---
 	// Pi stores tool calls as {arguments, id, name, partialJson} without
 	// type: "tool_use". Detect by presence of `arguments` + `name`.
-	if (
-		!blockType &&
-		"arguments" in b &&
-		typeof b.name === "string"
-	) {
+	if (!blockType && "arguments" in b && typeof b.name === "string") {
 		return {
 			type: "tool_call",
 			id: (typeof b.id === "string" && b.id) || nextPartId(),
@@ -599,7 +595,13 @@ export function normalizeMessages(
 					id:
 						typeof message.id === "string" && message.id.length > 0
 							? message.id
-							: fallbackMessageId(idPrefix, "assistant", timestamp, content, idx),
+							: fallbackMessageId(
+									idPrefix,
+									"assistant",
+									timestamp,
+									content,
+									idx,
+								),
 					role: "assistant",
 					parts: [toolResultPart],
 					timestamp,
@@ -941,7 +943,9 @@ export function mergeServerMessages(
 	if (serverMessages.length === 0) return previous;
 	if (previous.length === 0) return serverMessages;
 
-	if (mode === "partial") {
+	const effectiveMode: MergeMode = mode === "partial" ? "authoritative" : mode;
+
+	if (effectiveMode === "partial") {
 		return upsertFromServer(previous, serverMessages);
 	}
 

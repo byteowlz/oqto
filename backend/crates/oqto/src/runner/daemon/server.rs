@@ -1953,90 +1953,34 @@ impl Runner {
         &self,
         req: GetWorkspaceChatSessionMessagesRequest,
     ) -> RunnerResponse {
-        // Durable authority: always read chat history from hstry projection.
-        // Active stream UI state is delivered via events, not this snapshot API.
+        // Durable authority path: prefer oqto-log projection; fallback to hstry during migration.
         let session_is_active = self.pi_manager.has_session(&req.session_id).await;
 
-        let Some(db_path) = crate::history::hstry_db_path() else {
+        if let Ok(home) = std::env::var("HOME")
+            && let Ok(Some(messages)) = crate::oqto_log::projector::project_session_messages_auto(
+                std::path::Path::new(&home),
+                &req.session_id,
+                req.limit,
+            )
+            .await
+        {
+            debug!(
+                "get_workspace_chat_session_messages session={} active={} source=oqto-log count={}",
+                req.session_id,
+                session_is_active,
+                messages.len()
+            );
             return RunnerResponse::WorkspaceChatSessionMessages(
                 WorkspaceChatSessionMessagesResponse {
                     session_id: req.session_id,
-                    messages: Vec::new(),
+                    messages,
                 },
             );
-        };
-
-        let messages = match crate::history::repository::get_session_messages_from_hstry(
-            &req.session_id,
-            &db_path,
-        )
-        .await
-        {
-            Ok(messages) => messages,
-            Err(e) => {
-                return error_response(
-                    ErrorCode::IoError,
-                    format!("Failed to load hstry messages: {e}"),
-                );
-            }
-        };
-
-        let start = req
-            .limit
-            .and_then(|limit| messages.len().checked_sub(limit))
-            .unwrap_or(0);
-
-        let mapped: Vec<ChatMessageProto> = messages
-            .into_iter()
-            .skip(start)
-            .map(|message| {
-                let parts = message
-                    .parts
-                    .into_iter()
-                    .map(|part| ChatMessagePartProto {
-                        id: part.id,
-                        part_type: part.part_type,
-                        text: part.text,
-                        text_html: if req.render { part.text_html } else { None },
-                        tool_name: part.tool_name,
-                        tool_call_id: part.tool_call_id,
-                        tool_input: part.tool_input,
-                        tool_output: part.tool_output,
-                        tool_status: part.tool_status,
-                        tool_title: part.tool_title,
-                    })
-                    .collect();
-
-                ChatMessageProto {
-                    id: message.id,
-                    session_id: message.session_id,
-                    role: message.role,
-                    created_at: message.created_at,
-                    completed_at: message.completed_at,
-                    parent_id: message.parent_id,
-                    model_id: message.model_id,
-                    provider_id: message.provider_id,
-                    agent: message.agent,
-                    summary_title: message.summary_title,
-                    tokens_input: message.tokens_input,
-                    tokens_output: message.tokens_output,
-                    tokens_reasoning: message.tokens_reasoning,
-                    cost: message.cost,
-                    parts,
-                }
-            })
-            .collect();
-
-        debug!(
-            "get_workspace_chat_session_messages session={} active={} source=hstry count={}",
-            req.session_id,
-            session_is_active,
-            mapped.len()
-        );
+        }
 
         RunnerResponse::WorkspaceChatSessionMessages(WorkspaceChatSessionMessagesResponse {
             session_id: req.session_id,
-            messages: mapped,
+            messages: Vec::new(),
         })
     }
 

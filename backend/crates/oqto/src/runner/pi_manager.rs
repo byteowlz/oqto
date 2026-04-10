@@ -3717,6 +3717,70 @@ impl PiSessionManager {
                             }
                         }
                     }
+                    // Persist to oqto-log (authoritative store target) as part of migration.
+                    if let Ok(home) = std::env::var("HOME") {
+                        let user_id =
+                            std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
+                        let workspace_id_buf = work_dir.to_string_lossy().to_string();
+                        let workspace_id = if workspace_id_buf.trim().is_empty() {
+                            "global"
+                        } else {
+                            workspace_id_buf.as_str()
+                        };
+                        let source_session_id = if pi_native_id_known {
+                            let eid = hstry_external_id.read().await.clone();
+                            if eid.trim().is_empty() {
+                                session_id.clone()
+                            } else {
+                                eid
+                            }
+                        } else {
+                            session_id.clone()
+                        };
+
+                        match crate::oqto_log::store::append_agent_end_snapshot(
+                            std::path::Path::new(&home),
+                            &user_id,
+                            workspace_id,
+                            &session_id,
+                            &session_id,
+                            Some(&source_session_id),
+                            &source_session_id,
+                            &pending_messages,
+                        )
+                        .await
+                        {
+                            Ok(stats) => {
+                                debug!(
+                                    "Pi[{}] oqto-log persist ok: turns_written={} messages_written={} deduped={} snapshot_hash={}",
+                                    session_id,
+                                    stats.turns_written,
+                                    stats.messages_written,
+                                    stats.deduped,
+                                    stats.snapshot_hash
+                                );
+                                if let Ok(sess_stats) = crate::oqto_log::store::read_session_stats(
+                                    std::path::Path::new(&home),
+                                    workspace_id,
+                                    &session_id,
+                                )
+                                .await
+                                {
+                                    debug!(
+                                        "Pi[{}] dual-write telemetry: hstry_candidate_messages={} oqto_log_total_messages={} oqto_log_total_turns={}",
+                                        session_id,
+                                        pending_messages.len(),
+                                        sess_stats.messages,
+                                        sess_stats.turns
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                warn!("Pi[{}] failed to persist to oqto-log: {:?}", session_id, e);
+                            }
+                        }
+                    }
+
                     // Update the authoritative message buffer from AgentEnd data.
                     // Pi commonly emits only the turn delta (user+assistant). Append
                     // these to preserve full active-session history; if a larger
@@ -3828,7 +3892,8 @@ impl PiSessionManager {
                                     "text": error
                                 }]);
                                 let now_ms = chrono::Utc::now().timestamp_millis();
-                                let next_idx = fetch_last_hstry_idx(client, &eid).await.unwrap_or(-1) + 1;
+                                let next_idx =
+                                    fetch_last_hstry_idx(client, &eid).await.unwrap_or(-1) + 1;
                                 let msg = hstry_core::service::proto::Message {
                                     idx: next_idx,
                                     role: "assistant".to_string(),
@@ -3884,7 +3949,8 @@ impl PiSessionManager {
                                 "text": error_text
                             }]);
                             let now_ms = chrono::Utc::now().timestamp_millis();
-                            let next_idx = fetch_last_hstry_idx(client, &eid).await.unwrap_or(-1) + 1;
+                            let next_idx =
+                                fetch_last_hstry_idx(client, &eid).await.unwrap_or(-1) + 1;
                             let msg = hstry_core::service::proto::Message {
                                 idx: next_idx,
                                 role: "assistant".to_string(),
@@ -3916,9 +3982,23 @@ impl PiSessionManager {
                         enriched_payload,
                         oqto_protocol::events::EventPayload::AgentIdle { .. }
                     ) {
-                        let eid = hstry_external_id.read().await.clone();
-                        let message_version =
-                            read_hstry_message_version_snapshot(&eid, &session_id).await;
+                        let message_version = if let Ok(home) = std::env::var("HOME") {
+                            match crate::oqto_log::projector::read_message_version_auto(
+                                std::path::Path::new(&home),
+                                &session_id,
+                            )
+                            .await
+                            {
+                                Ok(v @ Some(_)) => v,
+                                _ => {
+                                    let eid = hstry_external_id.read().await.clone();
+                                    read_hstry_message_version_snapshot(&eid, &session_id).await
+                                }
+                            }
+                        } else {
+                            let eid = hstry_external_id.read().await.clone();
+                            read_hstry_message_version_snapshot(&eid, &session_id).await
+                        };
                         enriched_payload =
                             oqto_protocol::events::EventPayload::AgentIdle { message_version };
                     }
@@ -4954,7 +5034,8 @@ async fn read_hstry_message_version_snapshot(
 }
 
 fn is_empty_assistant_placeholder(msg: &AgentMessage) -> bool {
-    let is_assistant = msg.role.eq_ignore_ascii_case("assistant") || msg.role.eq_ignore_ascii_case("agent");
+    let is_assistant =
+        msg.role.eq_ignore_ascii_case("assistant") || msg.role.eq_ignore_ascii_case("agent");
     if !is_assistant {
         return false;
     }
@@ -4971,7 +5052,8 @@ fn is_empty_assistant_placeholder(msg: &AgentMessage) -> bool {
 }
 
 fn is_assistant_error_placeholder(msg: &AgentMessage) -> bool {
-    let is_assistant = msg.role.eq_ignore_ascii_case("assistant") || msg.role.eq_ignore_ascii_case("agent");
+    let is_assistant =
+        msg.role.eq_ignore_ascii_case("assistant") || msg.role.eq_ignore_ascii_case("agent");
     if !is_assistant {
         return false;
     }
@@ -4983,14 +5065,25 @@ fn is_assistant_error_placeholder(msg: &AgentMessage) -> bool {
 
 fn stream_trace_enabled() -> bool {
     std::env::var("OQTO_TRACE_STREAMS")
-        .map(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+        .map(|v| {
+            matches!(
+                v.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
         .unwrap_or(false)
 }
 
 fn sanitize_for_filename(input: &str) -> String {
     input
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 
@@ -5015,9 +5108,18 @@ async fn open_stream_trace_file(session_id: &str) -> Option<tokio::fs::File> {
     );
     let path = dir.join(filename);
 
-    match OpenOptions::new().create(true).append(true).open(&path).await {
+    match OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .await
+    {
         Ok(file) => {
-            info!("Pi[{}] stream tracing enabled: {}", session_id, path.display());
+            info!(
+                "Pi[{}] stream tracing enabled: {}",
+                session_id,
+                path.display()
+            );
             Some(file)
         }
         Err(e) => {

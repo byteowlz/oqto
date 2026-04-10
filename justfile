@@ -17,7 +17,7 @@ build-frontend:
     cd frontend && bun run build
 
 # Run all linters
-lint: lint-backend lint-frontend lint-rust-ai-guardrails
+lint: lint-backend lint-frontend lint-rust-ai-guardrails lint-no-legacy-history-authority
 
 # Lint backend
 lint-backend:
@@ -46,6 +46,10 @@ lint-rust-ai-report-prod:
 # Guardrail metrics (changed rust files only)
 lint-rust-ai-report-changed:
     ./scripts/lint/rust-ai-guardrails-report.py --changed
+
+# Guardrail: prevent reintroduction of hstry-as-authority read paths
+lint-no-legacy-history-authority:
+    ./scripts/lint/no-legacy-history-authority.sh
 
 # Run all tests
 test: test-backend test-frontend
