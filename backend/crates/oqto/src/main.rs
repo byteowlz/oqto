@@ -1534,8 +1534,15 @@ WantedBy=default.target
                         stats.skipped_files,
                         stats.failed_files
                     );
+                    if !stats.failure_samples.is_empty() {
+                        for sample in stats.failure_samples.iter().take(25) {
+                            println!("bootstrap-failure: {}", sample);
+                        }
+                    }
                     if stats.failed_files > 0 {
-                        return Err(anyhow!("oqto-log bootstrap migration had failures"));
+                        return Err(anyhow!(
+                            "oqto-log bootstrap migration had failures (see bootstrap-failure lines)"
+                        ));
                     }
                     Ok(())
                 }

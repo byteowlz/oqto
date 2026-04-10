@@ -2,6 +2,9 @@
 
 ## Open
 
+### [oqto-bhaj] oqto-log hardening pass: typed store/projector interfaces and deterministic resolver (P0, task)
+Refactor oqto-log integration to use explicit LogStore/Projector interfaces, central path resolver usage, remove ad-hoc projector scanning from read paths, and add golden regression tests for parts + dedupe.
+
 ### [oqto-c4x3] Pi-authoritative history pipeline: zero-loss external-session compatibility with canonical+hstry projection (P0, epic)
 Goal
 - Preserve instant history load/search while guaranteeing zero message loss and full fork/tree compatibility for Pi sessions, including sessions started/continued outside Oqto.
@@ -50,6 +53,9 @@ setup.sh must correctly provision everything for a new platform user on a fresh 
 3. Per-user provisioning on login/creation:
 ...
 
+
+### [oqto-ctvc] Deploy ergonomics: make just deploy-host resilient to /tmp quota by setting TMPDIR automatically (P1, bug)
+Ensure deploy script exports TMPDIR to a user-home tmp path for all local/remote command execution so just deploy-host works without manual env exports when /tmp is quota-limited.
 
 ### [oqto-bcqj.1] Retry/error UX regression: spinner drops, empty assistant bubble, error lost on reload (P1, bug)
 ## Summary
@@ -1717,6 +1723,10 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [oqto-bhaj.1] Frontend: render missing canonical part types (file_ref/audio/video/attachment/x-*) (closed 2026-04-10)
+- [oqto-p8zx] oqto-log projection correctness: preserve thinking/tool parts and prevent duplicated user messages (closed 2026-04-10)
+- [oqto-8bhg] oqto-log validation mismatch gate: align validator message counting with importer semantics (closed 2026-04-10)
+- [oqto-j58r] oqto-log bootstrap: diagnose and harden per-file import failures during deploy (closed 2026-04-10)
 - [oqto-rf16] Fix frontend vitest write failure (Unknown system error -122) (closed 2026-04-10)
 - [oqto-jj9k] oqto-log: authoritative turn-DAG history store and migration off fragile chain (closed 2026-04-10)
 - [oqto-jj9k.11] Regression matrix + chaos tests for message correctness (closed 2026-04-10)
@@ -2467,13 +2477,13 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
+- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
+- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
+- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
+- [oqto-4ryr] Session rename reverts: update_chat_session returns external_id while list returns platform_id (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
 - [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
 - [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
-- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
-- [oqto-4ryr] Session rename reverts: update_chat_session returns external_id while list returns platform_id (closed )
-- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
+- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
-- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )

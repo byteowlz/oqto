@@ -103,6 +103,22 @@ pub struct SessionStats {
     pub latest_source_hash: Option<String>,
 }
 
+fn stable_message_fingerprint(msg: &AgentMessage) -> String {
+    use sha2::{Digest, Sha256};
+
+    let mut hasher = Sha256::new();
+    hasher.update(msg.role.as_bytes());
+    hasher.update(b"|");
+    hasher.update(msg.tool_call_id.as_deref().unwrap_or("").as_bytes());
+    hasher.update(b"|");
+    hasher.update(msg.tool_name.as_deref().unwrap_or("").as_bytes());
+    hasher.update(b"|");
+    hasher.update(if msg.is_error.unwrap_or(false) { b"1" } else { b"0" });
+    hasher.update(b"|");
+    hasher.update(serde_json::to_string(&msg.content).unwrap_or_default().as_bytes());
+    hex::encode(&hasher.finalize()[..10])
+}
+
 pub async fn append_agent_end_snapshot(
     user_home: &Path,
     user_id: &str,
@@ -205,11 +221,43 @@ pub async fn append_agent_end_snapshot(
     .await
     .unwrap_or(None);
 
-    for (idx, msg) in messages.iter().enumerate() {
-        turn_version += 1;
-        let role = normalize_role(&msg.role);
-        let source_entry_id = format!("{}:{}", snapshot_hash, idx);
+    let mut turns_written = 0usize;
+    let mut messages_written = 0usize;
 
+    let mut occurrence_by_fingerprint: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
+
+    for msg in messages {
+        let role = normalize_role(&msg.role);
+        let fingerprint = stable_message_fingerprint(msg);
+        let occ = occurrence_by_fingerprint
+            .entry(fingerprint.clone())
+            .and_modify(|v| *v += 1)
+            .or_insert(0);
+        let source_entry_id = format!("{}:{}", fingerprint, *occ);
+
+        if let Some(existing_turn_id) = sqlx::query_scalar::<_, Option<String>>(
+            r#"
+            SELECT turn_id
+            FROM oqto_log_turns
+            WHERE source_kind = 'pi_agent_end'
+              AND source_session_id = ?
+              AND source_entry_id = ?
+            LIMIT 1
+            "#,
+        )
+        .bind(source_session_id)
+        .bind(&source_entry_id)
+        .fetch_one(&mut *tx)
+        .await
+        .ok()
+        .flatten()
+        {
+            parent_turn_id = Some(existing_turn_id);
+            continue;
+        }
+
+        turn_version += 1;
         let turn_id = derive_turn_id(&TurnIdInput {
             session_id,
             branch_id: &branch_id,
@@ -275,6 +323,8 @@ pub async fn append_agent_end_snapshot(
         .await
         .context("insert oqto_log_message")?;
 
+        turns_written += 1;
+        messages_written += 1;
         parent_turn_id = Some(turn_id);
     }
 
@@ -293,9 +343,9 @@ pub async fn append_agent_end_snapshot(
 
     tx.commit().await.context("commit oqto-log tx")?;
     Ok(AppendStats {
-        turns_written: messages.len(),
-        messages_written: messages.len(),
-        deduped: false,
+        turns_written,
+        messages_written,
+        deduped: turns_written == 0,
         snapshot_hash,
     })
 }

@@ -4110,7 +4110,113 @@ function PiPartRenderer({
 			);
 		}
 
+		case "file_ref": {
+			const fileRef = part as Extract<DisplayPart, { type: "file_ref" }>;
+			const uri = fileRef.uri ?? "";
+			const filePath = uri.startsWith("file://")
+				? decodeURIComponent(uri.replace("file://", ""))
+				: uri;
+			if (workspacePath && filePath) {
+				return (
+					<FileReferenceCard
+						filePath={filePath}
+						workspacePath={workspacePath}
+						label={fileRef.label}
+					/>
+				);
+			}
+			return (
+				<div className="rounded-md border border-border/60 px-3 py-2 text-sm text-foreground/80">
+					<ExternalLink className="mr-2 inline-block h-4 w-4" />
+					{fileRef.label ?? uri}
+				</div>
+			);
+		}
+
+		case "audio": {
+			const media = part as Extract<Part, { type: "audio" }>;
+			let href = "";
+			if (media.source === "base64") {
+				href = `data:${media.mimeType ?? "audio/mpeg"};base64,${media.data}`;
+			} else if (media.source === "url") {
+				href = media.url;
+			}
+			if (!href) return null;
+			return (
+				<a
+					href={href}
+					target="_blank"
+					rel="noreferrer"
+					className="inline-flex items-center gap-2 rounded-md border border-border/60 px-3 py-2 text-sm hover:bg-muted/40"
+				>
+					<ExternalLink className="h-4 w-4" />
+					Audio attachment
+				</a>
+			);
+		}
+
+		case "video": {
+			const media = part as Extract<Part, { type: "video" }>;
+			let href = "";
+			if (media.source === "base64") {
+				href = `data:${media.mimeType ?? "video/mp4"};base64,${media.data}`;
+			} else if (media.source === "url") {
+				href = media.url;
+			}
+			if (!href) return null;
+			return (
+				<a
+					href={href}
+					target="_blank"
+					rel="noreferrer"
+					className="inline-flex items-center gap-2 rounded-md border border-border/60 px-3 py-2 text-sm hover:bg-muted/40"
+				>
+					<ExternalLink className="h-4 w-4" />
+					Video attachment
+				</a>
+			);
+		}
+
+		case "attachment": {
+			const media = part as Extract<Part, { type: "attachment" }>;
+			let href = "";
+			if (media.source === "base64") {
+				href = `data:${media.mimeType ?? "application/octet-stream"};base64,${media.data}`;
+			} else if (media.source === "url") {
+				href = media.url;
+			}
+			if (!href) return null;
+			return (
+				<a
+					href={href}
+					target="_blank"
+					rel="noreferrer"
+					className="inline-flex items-center gap-2 rounded-md border border-border/60 px-3 py-2 text-sm hover:bg-muted/40"
+				>
+					<Paperclip className="h-4 w-4" />
+					{media.filename || "Attachment"}
+				</a>
+			);
+		}
+
 		default: {
+			if (typeof part.type === "string" && part.type.startsWith("x-")) {
+				const extensionPart = part as Extract<Part, { type: `x-${string}` }>;
+				return (
+					<div className="rounded-md border border-dashed border-border/60 bg-muted/30 p-3 text-xs">
+						<div className="mb-1 font-medium text-foreground/80">
+							Extension part: {extensionPart.type}
+						</div>
+						<pre className="whitespace-pre-wrap break-words text-foreground/70">
+							{JSON.stringify(
+								extensionPart.payload ?? extensionPart.meta ?? null,
+								null,
+								2,
+							)}
+						</pre>
+					</div>
+				);
+			}
 			console.warn("Unknown Pi message part type:", part);
 			return null;
 		}

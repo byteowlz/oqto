@@ -13,6 +13,7 @@ pub struct ImportStats {
     pub skipped_files: usize,
     pub failed_files: usize,
     pub imported_messages: usize,
+    pub failure_samples: Vec<String>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -126,35 +127,56 @@ pub async fn bootstrap_import_from_pi_jsonl(
         }
 
         let last_offset = (messages.len() as i64).saturating_sub(1);
-        match append_agent_end_snapshot(
-            user_home,
-            user_id,
-            &workspace_id,
-            &session_id,
-            &session_id,
-            Some(&session_id),
-            &session_id,
-            &messages,
-        )
-        .await
-        {
-            Ok(append_stats) => {
-                let _ = crate::oqto_log::store::upsert_import_checkpoint(
-                    user_home,
-                    &workspace_id,
-                    "pi_jsonl",
-                    &session_id,
-                    &session_id,
-                    Some(last_offset),
-                    Some(&format!("entry:{}", last_offset)),
-                    Some(&append_stats.snapshot_hash),
-                )
-                .await;
-                stats.imported_sessions += 1;
-                stats.imported_messages += append_stats.messages_written;
+        let mut last_err: Option<anyhow::Error> = None;
+        let mut appended = None;
+        for _attempt in 0..3 {
+            match append_agent_end_snapshot(
+                user_home,
+                user_id,
+                &workspace_id,
+                &session_id,
+                &session_id,
+                Some(&session_id),
+                &session_id,
+                &messages,
+            )
+            .await
+            {
+                Ok(append_stats) => {
+                    appended = Some(append_stats);
+                    break;
+                }
+                Err(err) => {
+                    last_err = Some(err);
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                }
             }
-            Err(_) => {
-                stats.failed_files += 1;
+        }
+
+        if let Some(append_stats) = appended {
+            let _ = crate::oqto_log::store::upsert_import_checkpoint(
+                user_home,
+                &workspace_id,
+                "pi_jsonl",
+                &session_id,
+                &session_id,
+                Some(last_offset),
+                Some(&format!("entry:{}", last_offset)),
+                Some(&append_stats.snapshot_hash),
+            )
+            .await;
+            stats.imported_sessions += 1;
+            stats.imported_messages += append_stats.messages_written;
+        } else {
+            stats.failed_files += 1;
+            if stats.failure_samples.len() < 25 {
+                let err_text = last_err
+                    .map(|e| e.to_string())
+                    .unwrap_or_else(|| "unknown error".to_string());
+                stats.failure_samples.push(format!(
+                    "file={} workspace={} session={} error={}",
+                    path.display(), workspace_id, session_id, err_text
+                ));
             }
         }
     }

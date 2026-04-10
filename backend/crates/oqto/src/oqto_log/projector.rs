@@ -114,6 +114,7 @@ pub async fn project_session_messages_auto(
               t.parent_turn_id AS parent_turn_id,
               t.role AS role,
               m.content AS content,
+              m.json_payload AS json_payload,
               CAST(strftime('%s', COALESCE(t.committed_at, t.created_at)) * 1000 AS INTEGER) AS created_at_ms
             FROM oqto_log_turns t
             JOIN oqto_log_messages m ON m.turn_id = t.turn_id
@@ -134,13 +135,32 @@ pub async fn project_session_messages_auto(
 
         let mapped = rows
             .into_iter()
-            .map(|row| {
+            .enumerate()
+            .map(|(idx, row)| {
                 let msg_id: String = row.get("message_id");
-                let role: String = row.get("role");
-                let content: Option<String> = row.try_get("content").ok();
-                let created_at: i64 = row.try_get("created_at_ms").unwrap_or(0);
                 let parent_id: Option<String> = row.try_get("parent_turn_id").ok();
+                let created_at: i64 = row.try_get("created_at_ms").unwrap_or(0);
+                let fallback_content: Option<String> = row.try_get("content").ok();
+                let json_payload: Option<String> = row.try_get("json_payload").ok();
 
+                if let Some(payload) = json_payload
+                    && let Ok(agent_msg) = serde_json::from_str::<crate::pi::AgentMessage>(&payload)
+                {
+                    let mut proto = crate::runner::protocol::agent_msg_to_chat_proto(
+                        &agent_msg,
+                        idx,
+                        session_id,
+                    );
+                    proto.id = msg_id;
+                    proto.parent_id = parent_id;
+                    if created_at > 0 {
+                        proto.created_at = created_at;
+                        proto.completed_at = Some(created_at);
+                    }
+                    return proto;
+                }
+
+                let role: String = row.get("role");
                 ChatMessageProto {
                     id: msg_id.clone(),
                     session_id: session_id.to_string(),
@@ -159,7 +179,7 @@ pub async fn project_session_messages_auto(
                     parts: vec![ChatMessagePartProto {
                         id: format!("{}:part:0", msg_id),
                         part_type: "text".to_string(),
-                        text: content,
+                        text: fallback_content,
                         text_html: None,
                         tool_name: None,
                         tool_call_id: None,

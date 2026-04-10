@@ -3174,6 +3174,7 @@ impl PiSessionManager {
         let mut retry_cycle_user_persisted = false;
         let mut pending_error_text: Option<String> = None;
         let mut pending_error_recoverable: bool = true;
+        let mut pending_error_persisted_oqto: bool = false;
         let mut pending_hstry_client_id: Option<String> = None;
         let mut retry_cycle_active = false;
         let mut translator = PiTranslator::new();
@@ -3879,6 +3880,7 @@ impl PiSessionManager {
                             Some(error.clone())
                         };
                         pending_error_recoverable = recoverable;
+                        pending_error_persisted_oqto = false;
 
                         if !recoverable
                             && let Some(ref client) = hstry_client
@@ -3921,6 +3923,67 @@ impl PiSessionManager {
                                         );
                                     }
                                 }
+                            }
+                        }
+
+                        // Persist terminal error to oqto-log so projected durable timeline
+                        // includes non-recoverable failures (frontend error row parity).
+                        if !recoverable && !pending_error_persisted_oqto
+                            && let Ok(home) = std::env::var("HOME")
+                        {
+                            let user_id =
+                                std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
+                            let workspace_id_buf = work_dir.to_string_lossy().to_string();
+                            let workspace_id = if workspace_id_buf.trim().is_empty() {
+                                "global"
+                            } else {
+                                workspace_id_buf.as_str()
+                            };
+                            let source_session_id = if pi_native_id_known {
+                                let eid = hstry_external_id.read().await.clone();
+                                if eid.trim().is_empty() {
+                                    session_id.clone()
+                                } else {
+                                    eid
+                                }
+                            } else {
+                                session_id.clone()
+                            };
+                            let error_msg = crate::pi::AgentMessage {
+                                role: "assistant".to_string(),
+                                content: serde_json::json!([{
+                                    "type": "text",
+                                    "text": error.clone()
+                                }]),
+                                timestamp: Some((chrono::Utc::now().timestamp_millis() / 1000) as u64),
+                                tool_call_id: None,
+                                tool_name: None,
+                                is_error: Some(true),
+                                api: None,
+                                provider: None,
+                                model: None,
+                                usage: None,
+                                stop_reason: Some("error".to_string()),
+                                extra: std::collections::HashMap::new(),
+                            };
+                            if let Err(e) = crate::oqto_log::store::append_agent_end_snapshot(
+                                std::path::Path::new(&home),
+                                &user_id,
+                                workspace_id,
+                                &session_id,
+                                &session_id,
+                                Some(&source_session_id),
+                                &source_session_id,
+                                &[error_msg],
+                            )
+                            .await
+                            {
+                                warn!(
+                                    "Pi[{}] failed to persist terminal error to oqto-log on agent.error: {:?}",
+                                    session_id, e
+                                );
+                            } else {
+                                pending_error_persisted_oqto = true;
                             }
                         }
                     }
@@ -3974,6 +4037,63 @@ impl PiSessionManager {
                                     "Pi[{}] failed to persist buffered error to hstry on agent.idle: {:?}",
                                     session_id, e
                                 );
+                            }
+                        }
+
+                        if !pending_error_persisted_oqto
+                            && let Ok(home) = std::env::var("HOME")
+                        {
+                            let user_id =
+                                std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
+                            let workspace_id_buf = work_dir.to_string_lossy().to_string();
+                            let workspace_id = if workspace_id_buf.trim().is_empty() {
+                                "global"
+                            } else {
+                                workspace_id_buf.as_str()
+                            };
+                            let source_session_id = {
+                                let eid = hstry_external_id.read().await.clone();
+                                if eid.trim().is_empty() {
+                                    session_id.clone()
+                                } else {
+                                    eid
+                                }
+                            };
+                            let error_msg = crate::pi::AgentMessage {
+                                role: "assistant".to_string(),
+                                content: serde_json::json!([{
+                                    "type": "text",
+                                    "text": error_text.clone()
+                                }]),
+                                timestamp: Some((chrono::Utc::now().timestamp_millis() / 1000) as u64),
+                                tool_call_id: None,
+                                tool_name: None,
+                                is_error: Some(true),
+                                api: None,
+                                provider: None,
+                                model: None,
+                                usage: None,
+                                stop_reason: Some("error".to_string()),
+                                extra: std::collections::HashMap::new(),
+                            };
+                            if let Err(e) = crate::oqto_log::store::append_agent_end_snapshot(
+                                std::path::Path::new(&home),
+                                &user_id,
+                                workspace_id,
+                                &session_id,
+                                &session_id,
+                                Some(&source_session_id),
+                                &source_session_id,
+                                &[error_msg],
+                            )
+                            .await
+                            {
+                                warn!(
+                                    "Pi[{}] failed to persist buffered error to oqto-log on agent.idle: {:?}",
+                                    session_id, e
+                                );
+                            } else {
+                                pending_error_persisted_oqto = true;
                             }
                         }
                     }
