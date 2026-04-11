@@ -102,6 +102,13 @@ export type UseChatOptions = {
 	) => void;
 };
 
+export type PromptQueueItem = {
+	bridgeSeq?: number;
+	clientId: string;
+	intent: "default" | "steer" | "followUp";
+	enqueuedAt: number;
+};
+
 /** Hook return type */
 export type UseChatReturn = {
 	/** Current agent state */
@@ -116,6 +123,8 @@ export type UseChatReturn = {
 	isAwaitingResponse: boolean;
 	/** Current error if any */
 	error: Error | null;
+	/** Live runner queue derived from oqto-bridge oqto_queue_event status stream */
+	promptQueue: PromptQueueItem[];
 	/** True after first authoritative history load completed for current session */
 	historyHydrated: boolean;
 	/** True while waiting for first authoritative history for current session */

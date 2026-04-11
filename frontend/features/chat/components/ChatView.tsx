@@ -308,6 +308,7 @@ export function ChatView({
 		isStreaming,
 		isAwaitingResponse,
 		error,
+		promptQueue,
 		historyHydrated,
 		historyLoading,
 		send,
@@ -372,6 +373,8 @@ export function ChatView({
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const queueSendInFlightRef = useRef(false);
 	const queueCooldownRef = useRef<number | null>(null);
+	const lastScrollTopRef = useRef<number | null>(null);
+	const lastScrollHeightRef = useRef<number | null>(null);
 	const draftSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
 		null,
 	);
@@ -547,6 +550,14 @@ export function ChatView({
 	const [showFileMentionPopup, setShowFileMentionPopup] = useState(false);
 	const [fileMentionQuery, setFileMentionQuery] = useState("");
 	const [showSlashPopup, setShowSlashPopup] = useState(false);
+	const showPromptQueueDebug = useMemo(() => {
+		if (typeof window === "undefined") return false;
+		try {
+			return localStorage.getItem("debug:oqto-queue") === "1";
+		} catch {
+			return false;
+		}
+	}, []);
 	const [voiceMode, setVoiceMode] = useState<VoiceMode>(null);
 	const [isUploading, setIsUploading] = useState(false);
 	const [availableModels, setAvailableModels] = useState<PiModelInfo[]>([]);
@@ -1190,6 +1201,36 @@ export function ChatView({
 		isUserScrolledRef.current = isUserScrolled;
 	}, [isUserScrolled]);
 
+	// Preserve viewport position across authoritative message replacement.
+	// This keeps agent_end sync visually stable when the message list is
+	// reconciled to durable history.
+	useLayoutEffect(() => {
+		void messages;
+		const container = messagesContainerRef.current;
+		if (!container || !initialScrollDoneRef.current) return;
+
+		// Never compensate during active streaming. That can fight with user
+		// wheel/touch scrolling and produce visible twitching.
+		if (!isStreaming && !isAwaitingResponse) {
+			const prevTop = lastScrollTopRef.current;
+			const prevHeight = lastScrollHeightRef.current;
+			if (prevTop !== null && prevHeight !== null) {
+				const wasNearBottom =
+					prevHeight - prevTop - container.clientHeight < 80;
+				if (isUserScrolledRef.current || !wasNearBottom) {
+					const delta = container.scrollHeight - prevHeight;
+					if (delta !== 0) {
+						programmaticScrollRef.current = true;
+						container.scrollTop = prevTop + delta;
+					}
+				}
+			}
+		}
+
+		lastScrollTopRef.current = container.scrollTop;
+		lastScrollHeightRef.current = container.scrollHeight;
+	}, [isAwaitingResponse, isStreaming, messages]);
+
 	// Auto-scroll when messages change (new message, streaming token update,
 	// tool call result). Only scrolls if user hasn't manually scrolled up.
 	// biome-ignore lint/correctness/useExhaustiveDependencies: setBusyForEvent is stable callback
@@ -1253,6 +1294,8 @@ export function ChatView({
 			programmaticScrollRef.current = true;
 			messagesEndRef.current?.scrollIntoView();
 		}
+		lastScrollTopRef.current = container.scrollTop;
+		lastScrollHeightRef.current = container.scrollHeight;
 	}, [messages.length, scrollStorageKey]);
 
 	const handleScroll = useCallback(() => {
@@ -1301,6 +1344,8 @@ export function ChatView({
 		} else {
 			setCachedScrollPosition(container.scrollTop, scrollStorageKey);
 		}
+		lastScrollTopRef.current = container.scrollTop;
+		lastScrollHeightRef.current = container.scrollHeight;
 	}, [scrollStorageKey, visibleCount, messages.length]);
 
 	// Focus input on mount - only on desktop to avoid opening keyboard on mobile
@@ -2319,6 +2364,33 @@ export function ChatView({
 									setFileMentionQuery("");
 								}}
 							/>
+
+							{showPromptQueueDebug && promptQueue.length > 0 && (
+								<div className="mb-2 rounded-md border border-primary/20 bg-primary/5 p-2">
+									<div className="flex items-center justify-between text-xs text-muted-foreground mb-2">
+										<span>Runner prompt queue</span>
+										<span>{promptQueue.length}</span>
+									</div>
+									<div className="space-y-1 max-h-28 overflow-y-auto pr-1">
+										{promptQueue.map((item, index) => (
+											<div
+												key={`${item.bridgeSeq ?? item.clientId}-${index}`}
+												className="flex items-center justify-between rounded-md bg-background/70 px-2 py-1 text-xs"
+											>
+												<span className="text-muted-foreground">
+													#{index + 1}
+												</span>
+												<span className="truncate mx-2 flex-1">
+													{item.clientId}
+												</span>
+												<span className="uppercase text-[10px] text-muted-foreground">
+													{item.intent}
+												</span>
+											</div>
+										))}
+									</div>
+								</div>
+							)}
 
 							{queuedMessages.length > 0 && (
 								<div className="mb-2 rounded-md border border-border/60 bg-muted/20 p-2">
@@ -4107,6 +4179,22 @@ function PiPartRenderer({
 					className="max-w-[300px] max-h-[300px] rounded-md border border-border object-contain"
 					loading="lazy"
 				/>
+			);
+		}
+
+		case "compaction": {
+			return (
+				<div className="rounded-md border border-border/60 bg-muted/40 px-3 py-2 text-xs text-foreground/70">
+					{part.text}
+				</div>
+			);
+		}
+
+		case "error": {
+			return (
+				<div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+					{part.text}
+				</div>
 			);
 		}
 

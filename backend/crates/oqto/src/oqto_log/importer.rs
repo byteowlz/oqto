@@ -20,7 +20,7 @@ pub struct ImportStats {
 struct JsonlMessageEntry {
     #[serde(rename = "type")]
     entry_type: String,
-    message: Option<AgentMessage>,
+    message: Option<serde_json::Value>,
 }
 
 fn decode_workspace_path_from_safe_dirname(dirname: &str) -> Option<String> {
@@ -43,6 +43,73 @@ fn parse_pi_session_id_from_path(path: &Path) -> Option<String> {
     } else {
         Some(session_id.to_string())
     }
+}
+
+fn parse_agent_message(value: serde_json::Value) -> Option<AgentMessage> {
+    if let Ok(parsed) = serde_json::from_value::<AgentMessage>(value.clone()) {
+        return Some(parsed);
+    }
+
+    let obj = value.as_object()?;
+    let role = obj
+        .get("role")
+        .and_then(|v| v.as_str())
+        .unwrap_or("assistant")
+        .to_string();
+
+    let content = obj
+        .get("content")
+        .cloned()
+        .unwrap_or_else(|| serde_json::Value::Array(Vec::new()));
+
+    let timestamp = obj
+        .get("timestamp")
+        .and_then(|v| v.as_u64().or_else(|| v.as_i64().map(|x| x.max(0) as u64)));
+
+    let tool_call_id = obj
+        .get("toolCallId")
+        .or_else(|| obj.get("tool_call_id"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    let tool_name = obj
+        .get("toolName")
+        .or_else(|| obj.get("tool_name"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    let is_error = obj
+        .get("isError")
+        .or_else(|| obj.get("is_error"))
+        .and_then(|v| v.as_bool());
+
+    Some(AgentMessage {
+        role,
+        content,
+        timestamp,
+        tool_call_id,
+        tool_name,
+        is_error,
+        api: obj
+            .get("api")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        provider: obj
+            .get("provider")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        model: obj
+            .get("model")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        usage: None,
+        stop_reason: obj
+            .get("stopReason")
+            .or_else(|| obj.get("stop_reason"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        extra: std::collections::HashMap::new(),
+    })
 }
 
 fn read_jsonl_agent_messages(path: &Path) -> Vec<AgentMessage> {
@@ -68,12 +135,73 @@ fn read_jsonl_agent_messages(path: &Path) -> Vec<AgentMessage> {
         if entry.entry_type != "message" {
             continue;
         }
-        if let Some(message) = entry.message {
+        if let Some(message_value) = entry.message
+            && let Some(message) = parse_agent_message(message_value)
+        {
             messages.push(message);
         }
     }
 
     messages
+}
+
+fn find_session_jsonl_path(
+    user_home: &Path,
+    workspace_id: &str,
+    session_id: &str,
+) -> Option<PathBuf> {
+    let base = user_home.join(".pi").join("agent").join("sessions");
+    let Ok(workspaces) = std::fs::read_dir(base) else {
+        return None;
+    };
+
+    for workspace in workspaces.flatten() {
+        let workspace_dir_path = workspace.path();
+        if !workspace_dir_path.is_dir() {
+            continue;
+        }
+
+        let decoded = workspace_dir_path
+            .file_name()
+            .and_then(|v| v.to_str())
+            .and_then(decode_workspace_path_from_safe_dirname)
+            .unwrap_or_else(|| "global".to_string());
+        if decoded != workspace_id {
+            continue;
+        }
+
+        let Ok(entries) = std::fs::read_dir(&workspace_dir_path) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_file() || path.extension().and_then(|v| v.to_str()) != Some("jsonl") {
+                continue;
+            }
+            if parse_pi_session_id_from_path(&path).as_deref() == Some(session_id) {
+                return Some(path);
+            }
+        }
+    }
+
+    None
+}
+
+fn parse_mismatch_row(row: &str) -> Option<(String, String)> {
+    // format: workspace=... session=... jsonl_messages=... oqto_log_messages=...
+    let mut workspace: Option<String> = None;
+    let mut session: Option<String> = None;
+    for token in row.split_whitespace() {
+        if let Some(v) = token.strip_prefix("workspace=") {
+            workspace = Some(v.to_string());
+        } else if let Some(v) = token.strip_prefix("session=") {
+            session = Some(v.to_string());
+        }
+    }
+    match (workspace, session) {
+        (Some(w), Some(s)) => Some((w, s)),
+        _ => None,
+    }
 }
 
 pub async fn bootstrap_import_from_pi_jsonl(
@@ -153,7 +281,56 @@ pub async fn bootstrap_import_from_pi_jsonl(
             }
         }
 
-        if let Some(append_stats) = appended {
+        if let Some(mut append_stats) = appended {
+            if let Ok(sess_stats) =
+                crate::oqto_log::store::read_session_stats(user_home, &workspace_id, &session_id)
+                    .await
+                && sess_stats.messages < messages.len()
+            {
+                // Self-heal partial historical sessions by replacing with the
+                // exact JSONL snapshot deterministically.
+                let mut replaced_ok = None;
+                let mut replace_err: Option<anyhow::Error> = None;
+                for _attempt in 0..3 {
+                    match crate::oqto_log::store::replace_session_with_snapshot(
+                        user_home,
+                        user_id,
+                        &workspace_id,
+                        &session_id,
+                        &session_id,
+                        Some(&session_id),
+                        &session_id,
+                        &messages,
+                    )
+                    .await
+                    {
+                        Ok(replaced) => {
+                            replaced_ok = Some(replaced);
+                            break;
+                        }
+                        Err(err) => {
+                            replace_err = Some(err);
+                            tokio::time::sleep(std::time::Duration::from_millis(75)).await;
+                        }
+                    }
+                }
+
+                if let Some(replaced) = replaced_ok {
+                    append_stats = replaced;
+                } else {
+                    let err_text = replace_err
+                        .map(|e| e.to_string())
+                        .unwrap_or_else(|| "unknown replace error".to_string());
+                    stats.failed_files += 1;
+                    if stats.failure_samples.len() < 25 {
+                        stats.failure_samples.push(format!(
+                            "replace_failed workspace={} session={} error={}",
+                            workspace_id, session_id, err_text
+                        ));
+                    }
+                }
+            }
+
             let _ = crate::oqto_log::store::upsert_import_checkpoint(
                 user_home,
                 &workspace_id,
@@ -175,10 +352,83 @@ pub async fn bootstrap_import_from_pi_jsonl(
                     .unwrap_or_else(|| "unknown error".to_string());
                 stats.failure_samples.push(format!(
                     "file={} workspace={} session={} error={}",
-                    path.display(), workspace_id, session_id, err_text
+                    path.display(),
+                    workspace_id,
+                    session_id,
+                    err_text
                 ));
             }
         }
+    }
+
+    // Post-pass repair: if validator still reports mismatches, force-replace
+    // those sessions from JSONL to guarantee deploy gate consistency.
+    if let Ok(report) = crate::oqto_log::validator::validate_bootstrap_import(user_home).await
+        && report.sessions_mismatch > 0
+    {
+        for row in report.mismatches {
+            let Some((workspace_id, session_id)) = parse_mismatch_row(&row) else {
+                continue;
+            };
+            let Some(path) = find_session_jsonl_path(user_home, &workspace_id, &session_id) else {
+                continue;
+            };
+            let messages = read_jsonl_agent_messages(&path);
+            if messages.is_empty() {
+                continue;
+            }
+            let mut replaced_ok = None;
+            let mut replace_err: Option<anyhow::Error> = None;
+            for _attempt in 0..3 {
+                match crate::oqto_log::store::replace_session_with_snapshot(
+                    user_home,
+                    user_id,
+                    &workspace_id,
+                    &session_id,
+                    &session_id,
+                    Some(&session_id),
+                    &session_id,
+                    &messages,
+                )
+                .await
+                {
+                    Ok(replaced) => {
+                        replaced_ok = Some(replaced);
+                        break;
+                    }
+                    Err(err) => {
+                        replace_err = Some(err);
+                        tokio::time::sleep(std::time::Duration::from_millis(75)).await;
+                    }
+                }
+            }
+
+            if let Some(replaced) = replaced_ok {
+                stats.imported_messages += replaced.messages_written;
+            } else {
+                let err_text = replace_err
+                    .map(|e| e.to_string())
+                    .unwrap_or_else(|| "unknown replace error".to_string());
+                stats.failed_files += 1;
+                if stats.failure_samples.len() < 25 {
+                    stats.failure_samples.push(format!(
+                        "postpass_replace_failed workspace={} session={} error={}",
+                        workspace_id, session_id, err_text
+                    ));
+                }
+            }
+        }
+    }
+
+    if stats
+        .failure_samples
+        .iter()
+        .any(|s| s.contains("replace_failed") || s.contains("postpass_replace_failed"))
+    {
+        anyhow::bail!(
+            "oqto-log bootstrap repair failed for one or more sessions: {}",
+            stats.failure_samples.join(" | ")
+        );
     }
 
     Ok(stats)

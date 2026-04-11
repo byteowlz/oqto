@@ -2,6 +2,9 @@
 
 ## Open
 
+### [oqto-bhaj.13] Chat scroll: prevent viewport tug-of-war during live streaming (P0, bug)
+Current scroll anchor compensation runs on every message update and can fight user scrolling during active agent streaming. Restrict compensation to post-stream authoritative sync windows.
+
 ### [oqto-bhaj] oqto-log hardening pass: typed store/projector interfaces and deterministic resolver (P0, task)
 Refactor oqto-log integration to use explicit LogStore/Projector interfaces, central path resolver usage, remove ad-hoc projector scanning from read paths, and add golden regression tests for parts + dedupe.
 
@@ -1723,6 +1726,17 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [oqto-bhaj.12] Chat UX: preserve scroll position on agent_end authoritative message replacement (closed 2026-04-11)
+- [oqto-bhaj.11] Hide prompt queue debug UI + strip oqto_meta from user-visible/persisted text (closed 2026-04-11)
+- [oqto-bhaj.10] oqto-log repair: non-destructive bootstrap replacement + validator placeholder filtering (closed 2026-04-11)
+- [oqto-bhaj.9] Deploy: quiesce oqto-runner before oqto-log migration (closed 2026-04-11)
+- [oqto-bhaj.8] Deploy ordering: run oqto-log migration before service restarts (closed 2026-04-11)
+- [oqto-bhaj.7] oqto-log importer: stop swallowing snapshot-repair failures (closed 2026-04-11)
+- [oqto-bhaj.6] Deploy: convergent oqto-log import/validate loop for latest JSONL (closed 2026-04-11)
+- [oqto-bhaj.5] Frontend: queue panel from oqto_queue_event stream (closed 2026-04-11)
+- [oqto-bhaj.4] Runner: consume oqto_queue_event and bind client_id deterministically (closed 2026-04-11)
+- [oqto-bhaj.3] oqto-bridge: RPC-only queue ledger + client_id turn binding events (closed 2026-04-11)
+- [oqto-bhaj.2] P0: Persisted errors not rendered as error cards + user duplication on start (closed 2026-04-11)
 - [oqto-bhaj.1] Frontend: render missing canonical part types (file_ref/audio/video/attachment/x-*) (closed 2026-04-10)
 - [oqto-p8zx] oqto-log projection correctness: preserve thinking/tool parts and prevent duplicated user messages (closed 2026-04-10)
 - [oqto-8bhg] oqto-log validation mismatch gate: align validator message counting with importer semantics (closed 2026-04-10)
@@ -2477,13 +2491,13 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
 - [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
-- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
-- [oqto-4ryr] Session rename reverts: update_chat_session returns external_id while list returns platform_id (closed )
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
 - [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
 - [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
 - [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
+- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
 - [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
+- [oqto-4ryr] Session rename reverts: update_chat_session returns external_id while list returns platform_id (closed )
+- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )

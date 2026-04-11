@@ -21,6 +21,10 @@ CANARY_ONLY=false
 CANARY_THEN_FLEET=false
 HEALTH_TIMEOUT_SECONDS=90
 MIN_FREE_MB=1024
+# Convergent oqto-log migration passes during activation.
+# We rerun bootstrap+validate up to this many times so deploy converges on
+# the latest JSONL snapshot even when files change during migration.
+OQTO_LOG_MAX_PASSES="${OQTO_LOG_MAX_PASSES:-5}"
 RELEASE_ID=""
 EVENT_LOG_PATH="/var/log/oqto/update-events.jsonl"
 RELEASES_ROOT="/var/lib/oqto/releases"
@@ -947,6 +951,22 @@ restart_services_ordered() {
     fi
 }
 
+quiesce_oqto_log_writers() {
+    local is_local="$1" ssh_target="$2" mode="$3"
+
+    log "Quiescing oqto-log writers before migration ($mode)..."
+
+    if [[ "$mode" == "single-user" ]]; then
+        host_exec "$is_local" "$ssh_target" "systemctl --user stop oqto-runner >/dev/null 2>&1 || true; pkill -x oqto-runner >/dev/null 2>&1 || true" || true
+    else
+        # Multi-user: stop all per-user runner daemons to avoid SQLite write contention.
+        host_exec_sudo "$is_local" "$ssh_target" "pkill -x oqto-runner >/dev/null 2>&1 || true" || true
+    fi
+
+    # Give processes a brief grace period to release SQLite locks.
+    sleep 1
+}
+
 health_check_host() {
     local is_local="$1" ssh_target="$2" mode="$3"
     local start
@@ -1076,23 +1096,48 @@ activate_host() {
         host_exec_sudo "$is_local" "$ssh_target" "mkdir -p '$web_root' && rsync -a --delete '$release_dir/frontend/' '$web_root/'"
     fi
 
-    restart_services_ordered "$is_local" "$ssh_target" "$mode" "$services"
+    # Mandatory oqto-log migration/validation gate.
+    # First quiesce runner writers so snapshot replacement can take exclusive
+    # SQLite write locks.
+    quiesce_oqto_log_writers "$is_local" "$ssh_target" "$mode"
 
-    # Mandatory oqto-log bootstrap migration (idempotent, safe to rerun).
-    if ! host_exec "$is_local" "$ssh_target" "oqto runner migrate-oqto-log --mode bootstrap"; then
-        emit_event "$is_local" "$ssh_target" "$name" "deploy.activate" "fail" "oqto_log.bootstrap_migration_failed"
-        warn "oqto-log bootstrap migration failed on $name, attempting rollback..."
-        rollback_host "$name" "$ssh_target" "$is_local" "$binaries" "$mode" "$services" "$previous_release"
-        return 1
-    fi
+    # Run this BEFORE service restarts so migration gets an exclusive window
+    # without live writer contention from freshly restarted runners.
+    # Convergent fixed-point loop: run bootstrap+validate repeatedly so deploy
+    # can catch up with JSONL changes that occur during activation.
+    local oqto_log_pass=1
+    local oqto_log_converged=false
+    while [[ "$oqto_log_pass" -le "$OQTO_LOG_MAX_PASSES" ]]; do
+        log "[$name] oqto-log migrate/validate pass ${oqto_log_pass}/${OQTO_LOG_MAX_PASSES}"
 
-    # Health gate: validation must pass before marking activation successful.
-    if ! host_exec "$is_local" "$ssh_target" "oqto runner migrate-oqto-log --mode validate"; then
+        if ! host_exec "$is_local" "$ssh_target" "oqto runner migrate-oqto-log --mode bootstrap"; then
+            emit_event "$is_local" "$ssh_target" "$name" "deploy.activate" "fail" "oqto_log.bootstrap_migration_failed"
+            warn "oqto-log bootstrap migration failed on $name, attempting rollback..."
+            rollback_host "$name" "$ssh_target" "$is_local" "$binaries" "$mode" "$services" "$previous_release"
+            return 1
+        fi
+
+        # Validation must pass once after a bootstrap pass.
+        if host_exec "$is_local" "$ssh_target" "oqto runner migrate-oqto-log --mode validate"; then
+            oqto_log_converged=true
+            break
+        fi
+
+        if [[ "$oqto_log_pass" -lt "$OQTO_LOG_MAX_PASSES" ]]; then
+            warn "[$name] oqto-log validation mismatch after pass ${oqto_log_pass}; retrying bootstrap+validate to converge on latest JSONL"
+            sleep 1
+        fi
+        oqto_log_pass=$((oqto_log_pass + 1))
+    done
+
+    if [[ "$oqto_log_converged" != "true" ]]; then
         emit_event "$is_local" "$ssh_target" "$name" "deploy.activate" "fail" "oqto_log.validation_failed"
-        warn "oqto-log validation failed on $name, attempting rollback..."
+        warn "oqto-log validation failed after ${OQTO_LOG_MAX_PASSES} pass(es) on $name, attempting rollback..."
         rollback_host "$name" "$ssh_target" "$is_local" "$binaries" "$mode" "$services" "$previous_release"
         return 1
     fi
+
+    restart_services_ordered "$is_local" "$ssh_target" "$mode" "$services"
 
     if health_check_host "$is_local" "$ssh_target" "$mode"; then
         host_exec_sudo "$is_local" "$ssh_target" "ln -sfn '$release_dir' '$RELEASES_ROOT/last-good'"

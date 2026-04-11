@@ -147,9 +147,7 @@ pub async fn project_session_messages_auto(
                     && let Ok(agent_msg) = serde_json::from_str::<crate::pi::AgentMessage>(&payload)
                 {
                     let mut proto = crate::runner::protocol::agent_msg_to_chat_proto(
-                        &agent_msg,
-                        idx,
-                        session_id,
+                        &agent_msg, idx, session_id,
                     );
                     proto.id = msg_id;
                     proto.parent_id = parent_id;
@@ -176,6 +174,7 @@ pub async fn project_session_messages_auto(
                     tokens_output: None,
                     tokens_reasoning: None,
                     cost: None,
+                    client_id: None,
                     parts: vec![ChatMessagePartProto {
                         id: format!("{}:part:0", msg_id),
                         part_type: "text".to_string(),
@@ -375,6 +374,7 @@ pub async fn project_session_messages_for_workspace(
                 tokens_output: None,
                 tokens_reasoning: None,
                 cost: None,
+                client_id: None,
                 parts: vec![ChatMessagePartProto {
                     id: format!("{}:part:0", msg_id),
                     part_type: "text".to_string(),

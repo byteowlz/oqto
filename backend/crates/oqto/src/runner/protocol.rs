@@ -1625,6 +1625,8 @@ pub struct ChatMessageProto {
     pub tokens_reasoning: Option<i64>,
     /// Cost in USD.
     pub cost: Option<f64>,
+    /// Client-generated correlation ID for optimistic user message reconciliation.
+    pub client_id: Option<String>,
     /// Message parts.
     pub parts: Vec<ChatMessagePartProto>,
 }
@@ -1759,6 +1761,7 @@ pub fn hstry_proto_to_chat_proto(
         tokens_output: msg.tokens.map(|t| t / 2),
         tokens_reasoning: None,
         cost: msg.cost_usd,
+        client_id: msg.client_id.clone(),
         parts,
     }
 }
@@ -1818,6 +1821,11 @@ pub fn agent_msg_to_chat_proto(
             .usage
             .as_ref()
             .and_then(|u| u.cost.as_ref().map(|c| c.total)),
+        client_id: msg
+            .extra
+            .get("client_id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
         parts,
     }
 }

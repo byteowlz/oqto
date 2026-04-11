@@ -403,9 +403,9 @@ type PendingResponses = Arc<RwLock<HashMap<String, oneshot::Sender<PiResponse>>>
 
 /// FIFO queue of pending client_ids for optimistic message matching.
 ///
-/// Each prompt/steer/follow_up with a client_id pushes one entry.
-/// On AgentEnd, stdout_reader_task pops one entry and assigns it to the
-/// corresponding persisted user message.
+/// Each outbound user command with a client_id pushes one entry.
+/// It is retained as a fallback ledger for sessions where oqto-bridge queue
+/// events are unavailable.
 type PendingClientId = Arc<Mutex<VecDeque<String>>>;
 
 /// The hstry external_id for a session.
@@ -2763,7 +2763,6 @@ impl PiSessionManager {
                             &self.config.runner_id,
                             &agent_msgs,
                             &session.config.cwd,
-                            None,
                             false,
                         )
                         .await
@@ -3175,7 +3174,8 @@ impl PiSessionManager {
         let mut pending_error_text: Option<String> = None;
         let mut pending_error_recoverable: bool = true;
         let mut pending_error_persisted_oqto: bool = false;
-        let mut pending_hstry_client_id: Option<String> = None;
+        let mut pending_hstry_client_ids: Vec<String> = Vec::new();
+        let mut bridge_turn_bound_client_ids: VecDeque<String> = VecDeque::new();
         let mut retry_cycle_active = false;
         let mut translator = PiTranslator::new();
         let mut stream_trace_file = open_stream_trace_file(&session_id).await;
@@ -3392,7 +3392,6 @@ impl PiSessionManager {
                                             &runner_id,
                                             &buffered,
                                             &work_dir,
-                                            None,
                                             false,
                                         )
                                         .await
@@ -3529,6 +3528,10 @@ impl PiSessionManager {
                     _ => {}
                 }
 
+                if let Some(bound_client_id) = parse_oqto_turn_bound_client_id(&pi_event) {
+                    bridge_turn_bound_client_ids.push_back(bound_client_id);
+                }
+
                 // Update internal state based on Pi event
                 let new_state = match &pi_event {
                     PiEvent::AgentStart => {
@@ -3603,27 +3606,66 @@ impl PiSessionManager {
                     }
                 }
 
-                // For AgentEnd, transfer the pending client_id to the translator before translating.
-                // This ensures the client_id is included in the user message for optimistic matching.
+                // For AgentEnd, bind client_ids deterministically from oqto-bridge
+                // turn_bound events and attach them to user messages in order.
                 if matches!(pi_event, PiEvent::AgentEnd { .. }) {
                     if retry_cycle_active {
                         debug!(
-                            "Pi[{}] AgentEnd during retry cycle: preserving pending_client_id",
+                            "Pi[{}] AgentEnd during retry cycle: preserving pending client_id bindings",
                             session_id
                         );
                     } else if pending_agent_end_retry_placeholder && retry_cycle_user_persisted {
                         debug!(
-                            "Pi[{}] AgentEnd duplicate pre-retry placeholder: preserving pending_client_id",
+                            "Pi[{}] AgentEnd duplicate pre-retry placeholder: preserving pending client_id bindings",
                             session_id
                         );
                     } else {
-                        let client_id = pending_client_id.lock().await.pop_front();
-                        debug!(
-                            "Pi[{}] AgentEnd: dequeued pending_client_id = {:?}",
-                            session_id, client_id
-                        );
-                        translator.set_pending_client_id(client_id.clone());
-                        pending_hstry_client_id = client_id;
+                        let user_count = pending_messages
+                            .iter()
+                            .filter(|m| {
+                                m.role.eq_ignore_ascii_case("user")
+                                    || m.role.eq_ignore_ascii_case("human")
+                            })
+                            .count();
+
+                        let mut bound_client_ids: Vec<String> = Vec::with_capacity(user_count);
+                        for _ in 0..user_count {
+                            if let Some(cid) = bridge_turn_bound_client_ids.pop_front() {
+                                bound_client_ids.push(cid);
+                            }
+                        }
+
+                        // Fallback queue for sessions without oqto-bridge turn_bound events.
+                        if bound_client_ids.len() < user_count {
+                            let missing = user_count - bound_client_ids.len();
+                            let mut pending = pending_client_id.lock().await;
+                            for _ in 0..missing {
+                                if let Some(cid) = pending.pop_front() {
+                                    bound_client_ids.push(cid);
+                                }
+                            }
+                        }
+
+                        if !bound_client_ids.is_empty() {
+                            let assigned = attach_client_ids_to_user_messages(
+                                &mut pending_messages,
+                                &bound_client_ids,
+                            );
+                            if assigned < bound_client_ids.len() {
+                                warn!(
+                                    "Pi[{}] client_id binding mismatch: assigned={} queued={} user_count={}",
+                                    session_id,
+                                    assigned,
+                                    bound_client_ids.len(),
+                                    user_count
+                                );
+                            }
+                            pending_hstry_client_ids = bound_client_ids;
+                        } else {
+                            pending_hstry_client_ids.clear();
+                        }
+
+                        translator.set_pending_client_id(pending_hstry_client_ids.last().cloned());
                     }
                 }
 
@@ -3669,57 +3711,30 @@ impl PiSessionManager {
                                 "Pi[{}] skipping hstry persist on AgentEnd: external_id unresolved",
                                 session_id
                             );
+                        } else if let Err(e) = Self::persist_to_hstry_grpc(
+                            client,
+                            &eid,
+                            &session_id,
+                            &runner_id,
+                            &pending_messages,
+                            &work_dir,
+                            true,
+                        )
+                        .await
+                        {
+                            warn!("Pi[{}] failed to persist to hstry: {:?}", session_id, e);
                         } else {
-                            let client_id = pending_hstry_client_id.take();
-                            if let Err(e) = Self::persist_to_hstry_grpc(
-                                client,
-                                &eid,
-                                &session_id,
-                                &runner_id,
-                                &pending_messages,
-                                &work_dir,
-                                client_id.clone(),
-                                true,
-                            )
-                            .await
-                            {
-                                warn!("Pi[{}] failed to persist to hstry: {:?}", session_id, e);
-                            } else {
-                                debug!(
-                                    "Pi[{}] persisted {} messages to hstry (external_id={})",
-                                    session_id,
-                                    pending_messages.len(),
-                                    eid,
-                                );
-                            }
-                            // If client_id is set, schedule a deferred update to ensure
-                            // the correct last user message gets it.
-                            if let Some(cid) = client_id {
-                                let client = client.clone();
-                                let eid = eid.clone();
-                                let lock = hstry_persist_lock.clone();
-                                let sid = session_id.clone();
-                                tokio::spawn(async move {
-                                    let _guard = lock.lock().await;
-                                    if let Err(e) =
-                                        client.set_last_user_message_client_id(&eid, &cid).await
-                                    {
-                                        warn!(
-                                            "Pi[{}] failed to set client_id on last user message: {:?}",
-                                            sid, e
-                                        );
-                                    } else {
-                                        debug!(
-                                            "Pi[{}] set client_id='{}' on last user message (eid='{}')",
-                                            sid, cid, eid,
-                                        );
-                                    }
-                                });
-                            }
+                            debug!(
+                                "Pi[{}] persisted {} messages to hstry (external_id={})",
+                                session_id,
+                                pending_messages.len(),
+                                eid,
+                            );
                         }
                     }
                     // Persist to oqto-log (authoritative store target) as part of migration.
                     if let Ok(home) = std::env::var("HOME") {
+                        let pending_messages_for_oqto = pending_messages.clone();
                         let user_id =
                             std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
                         let workspace_id_buf = work_dir.to_string_lossy().to_string();
@@ -3747,7 +3762,7 @@ impl PiSessionManager {
                             &session_id,
                             Some(&source_session_id),
                             &source_session_id,
-                            &pending_messages,
+                            &pending_messages_for_oqto,
                         )
                         .await
                         {
@@ -3928,7 +3943,8 @@ impl PiSessionManager {
 
                         // Persist terminal error to oqto-log so projected durable timeline
                         // includes non-recoverable failures (frontend error row parity).
-                        if !recoverable && !pending_error_persisted_oqto
+                        if !recoverable
+                            && !pending_error_persisted_oqto
                             && let Ok(home) = std::env::var("HOME")
                         {
                             let user_id =
@@ -3955,7 +3971,9 @@ impl PiSessionManager {
                                     "type": "text",
                                     "text": error.clone()
                                 }]),
-                                timestamp: Some((chrono::Utc::now().timestamp_millis() / 1000) as u64),
+                                timestamp: Some(
+                                    (chrono::Utc::now().timestamp_millis() / 1000) as u64,
+                                ),
                                 tool_call_id: None,
                                 tool_name: None,
                                 is_error: Some(true),
@@ -4040,9 +4058,7 @@ impl PiSessionManager {
                             }
                         }
 
-                        if !pending_error_persisted_oqto
-                            && let Ok(home) = std::env::var("HOME")
-                        {
+                        if !pending_error_persisted_oqto && let Ok(home) = std::env::var("HOME") {
                             let user_id =
                                 std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
                             let workspace_id_buf = work_dir.to_string_lossy().to_string();
@@ -4065,7 +4081,9 @@ impl PiSessionManager {
                                     "type": "text",
                                     "text": error_text.clone()
                                 }]),
-                                timestamp: Some((chrono::Utc::now().timestamp_millis() / 1000) as u64),
+                                timestamp: Some(
+                                    (chrono::Utc::now().timestamp_millis() / 1000) as u64,
+                                ),
                                 tool_call_id: None,
                                 tool_name: None,
                                 is_error: Some(true),
@@ -4244,28 +4262,27 @@ impl PiSessionManager {
         while let Some(cmd) = cmd_rx.recv().await {
             let result = match cmd {
                 PiSessionCommand::Prompt { message, client_id } => {
-                    // Queue client_id for the corresponding AgentEnd turn.
                     if let Some(cid) = client_id.clone().filter(|v| !v.trim().is_empty()) {
                         pending_client_id.lock().await.push_back(cid);
                     }
-                    // If already streaming, send as prompt with
-                    // streamingBehavior="steer" so Pi queues it as a steer.
-                    // Pi natively handles this: idle → new turn,
-                    // streaming → queue via steer/followUp.
+
                     let current_state = *state.read().await;
                     let streaming_behavior = if current_state == PiSessionState::Streaming {
-                        debug!(
-                            "Session '{}' is streaming, sending prompt with streamingBehavior=steer",
-                            session_id
-                        );
                         Some("steer".to_string())
                     } else {
                         *state.write().await = PiSessionState::Streaming;
                         None
                     };
+
+                    let outbound_message = append_oqto_meta(
+                        message,
+                        client_id.as_deref(),
+                        streaming_behavior.as_deref().unwrap_or("default"),
+                    );
+
                     let pi_cmd = PiCommand::Prompt {
                         id: None,
-                        message,
+                        message: outbound_message,
                         images: None,
                         streaming_behavior,
                     };
@@ -4275,7 +4292,6 @@ impl PiSessionManager {
                     message: msg,
                     client_id,
                 } => {
-                    // Queue client_id for hstry persistence (same as Prompt).
                     debug!(
                         "Pi[{}] cmd_processor: Steer received, client_id = {:?}",
                         session_id, client_id
@@ -4283,34 +4299,24 @@ impl PiSessionManager {
                     if let Some(cid) = client_id.clone().filter(|v| !v.trim().is_empty()) {
                         pending_client_id.lock().await.push_back(cid);
                     }
-                    // The runner decides how to deliver based on session state:
-                    // - Streaming: send as steer (interrupt mid-run)
-                    // - Idle/Starting/Stopping/Aborting: send as prompt (new turn or zombie session)
-                    // - Other states: send as steer and let Pi handle it
+
                     let current_state = *state.read().await;
-                    let pi_cmd = if matches!(
+                    if matches!(
                         current_state,
                         PiSessionState::Idle
                             | PiSessionState::Starting
                             | PiSessionState::Stopping
                             | PiSessionState::Aborting
                     ) {
-                        debug!(
-                            "Session '{}' is in {:?}, routing steer as prompt",
-                            session_id, current_state
-                        );
                         *state.write().await = PiSessionState::Streaming;
-                        PiCommand::Prompt {
-                            id: None,
-                            message: msg,
-                            images: None,
-                            streaming_behavior: None,
-                        }
-                    } else {
-                        PiCommand::Steer {
-                            id: None,
-                            message: msg,
-                        }
+                    }
+
+                    let outbound_message = append_oqto_meta(msg, client_id.as_deref(), "steer");
+                    let pi_cmd = PiCommand::Prompt {
+                        id: None,
+                        message: outbound_message,
+                        images: None,
+                        streaming_behavior: Some("steer".to_string()),
                     };
                     Self::write_command(&mut stdin, &pi_cmd).await
                 }
@@ -4318,38 +4324,27 @@ impl PiSessionManager {
                     message: msg,
                     client_id,
                 } => {
-                    // Queue client_id for hstry persistence (same as Prompt).
                     if let Some(cid) = client_id.clone().filter(|v| !v.trim().is_empty()) {
                         pending_client_id.lock().await.push_back(cid);
                     }
-                    // The runner decides how to deliver based on session state:
-                    // - Streaming: send as follow_up (queued until done)
-                    // - Idle/Starting/Stopping/Aborting: send as prompt (new turn or zombie session)
-                    // - Other states: send as follow_up and let Pi handle it
+
                     let current_state = *state.read().await;
-                    let pi_cmd = if matches!(
+                    if matches!(
                         current_state,
                         PiSessionState::Idle
                             | PiSessionState::Starting
                             | PiSessionState::Stopping
                             | PiSessionState::Aborting
                     ) {
-                        debug!(
-                            "Session '{}' is in {:?}, routing follow_up as prompt",
-                            session_id, current_state
-                        );
                         *state.write().await = PiSessionState::Streaming;
-                        PiCommand::Prompt {
-                            id: None,
-                            message: msg,
-                            images: None,
-                            streaming_behavior: None,
-                        }
-                    } else {
-                        PiCommand::FollowUp {
-                            id: None,
-                            message: msg,
-                        }
+                    }
+
+                    let outbound_message = append_oqto_meta(msg, client_id.as_deref(), "followUp");
+                    let pi_cmd = PiCommand::Prompt {
+                        id: None,
+                        message: outbound_message,
+                        images: None,
+                        streaming_behavior: Some("followUp".to_string()),
                     };
                     Self::write_command(&mut stdin, &pi_cmd).await
                 }
@@ -4686,7 +4681,6 @@ impl PiSessionManager {
         runner_id: &str,
         messages: &[AgentMessage],
         work_dir: &Path,
-        client_id: Option<String>,
         prefer_append_delta: bool,
     ) -> Result<()> {
         use crate::history::agent_message_to_proto_with_client_id;
@@ -4774,19 +4768,15 @@ impl PiSessionManager {
                 return Ok(());
             }
 
-            let last_user_idx = delta_messages
-                .iter()
-                .rposition(|msg| matches!(msg.role.as_str(), "user" | "human"));
-
             delta_messages
                 .iter()
                 .enumerate()
                 .map(|(i, msg)| {
-                    let client_id_for_msg = if Some(i) == last_user_idx {
-                        client_id.clone()
-                    } else {
-                        None
-                    };
+                    let client_id_for_msg = msg
+                        .extra
+                        .get("client_id")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
                     let idx = (existing_count + i) as i32;
                     agent_message_to_proto_with_client_id(msg, idx, client_id_for_msg)
                 })
@@ -4816,19 +4806,15 @@ impl PiSessionManager {
                 return Ok(());
             }
 
-            let last_user_idx = messages
-                .iter()
-                .rposition(|msg| matches!(msg.role.as_str(), "user" | "human"));
-
             messages
                 .iter()
                 .enumerate()
                 .map(|(i, msg)| {
-                    let client_id_for_msg = if Some(i) == last_user_idx {
-                        client_id.clone()
-                    } else {
-                        None
-                    };
+                    let client_id_for_msg = msg
+                        .extra
+                        .get("client_id")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
                     agent_message_to_proto_with_client_id(msg, i as i32, client_id_for_msg)
                 })
                 .collect()
@@ -5181,6 +5167,90 @@ fn is_assistant_error_placeholder(msg: &AgentMessage) -> bool {
         return false;
     }
     is_empty_assistant_placeholder(msg)
+}
+
+#[derive(Debug, Deserialize)]
+struct OqtoQueueEvent {
+    #[serde(rename = "type")]
+    event_type: String,
+    #[serde(rename = "clientId")]
+    client_id: Option<String>,
+}
+
+fn parse_oqto_turn_bound_client_id(pi_event: &PiEvent) -> Option<String> {
+    let PiEvent::ExtensionUiRequest(req) = pi_event else {
+        return None;
+    };
+    if req.method != "setStatus" || req.status_key.as_deref() != Some("oqto_queue_event") {
+        return None;
+    }
+    let raw = req.status_text.as_deref()?;
+    let parsed: OqtoQueueEvent = serde_json::from_str(raw).ok()?;
+    if parsed.event_type != "turn_bound" {
+        return None;
+    }
+    parsed
+        .client_id
+        .and_then(|cid| (!cid.trim().is_empty()).then_some(cid))
+}
+
+fn attach_client_ids_to_user_messages(
+    messages: &mut [AgentMessage],
+    ordered_client_ids: &[String],
+) -> usize {
+    let mut assigned = 0usize;
+    let user_indices: Vec<usize> = messages
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, msg)| {
+            (msg.role.eq_ignore_ascii_case("user") || msg.role.eq_ignore_ascii_case("human"))
+                .then_some(idx)
+        })
+        .collect();
+
+    for (i, msg_idx) in user_indices.iter().enumerate() {
+        let Some(client_id) = ordered_client_ids.get(i) else {
+            break;
+        };
+        if let Some(msg) = messages.get_mut(*msg_idx) {
+            msg.extra.insert(
+                "client_id".to_string(),
+                serde_json::Value::String(client_id.clone()),
+            );
+            assigned += 1;
+        }
+    }
+
+    assigned
+}
+
+fn build_oqto_meta_suffix(client_id: Option<&str>, intent: &str) -> Option<String> {
+    let cid = client_id?.trim();
+    if cid.is_empty() {
+        return None;
+    }
+
+    let normalized_intent = match intent {
+        "steer" => "steer",
+        "followUp" => "followUp",
+        _ => "default",
+    };
+
+    let meta = serde_json::json!({
+        "clientId": cid,
+        "intent": normalized_intent,
+    });
+    Some(format!(" [[oqto_meta:{}]]", meta))
+}
+
+fn append_oqto_meta(message: String, client_id: Option<&str>, intent: &str) -> String {
+    let Some(suffix) = build_oqto_meta_suffix(client_id, intent) else {
+        return message;
+    };
+    if message.contains("[[oqto_meta:") {
+        return message;
+    }
+    format!("{}{}", message, suffix)
 }
 
 fn stream_trace_enabled() -> bool {

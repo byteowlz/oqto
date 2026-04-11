@@ -113,9 +113,17 @@ fn stable_message_fingerprint(msg: &AgentMessage) -> String {
     hasher.update(b"|");
     hasher.update(msg.tool_name.as_deref().unwrap_or("").as_bytes());
     hasher.update(b"|");
-    hasher.update(if msg.is_error.unwrap_or(false) { b"1" } else { b"0" });
+    hasher.update(if msg.is_error.unwrap_or(false) {
+        b"1"
+    } else {
+        b"0"
+    });
     hasher.update(b"|");
-    hasher.update(serde_json::to_string(&msg.content).unwrap_or_default().as_bytes());
+    hasher.update(
+        serde_json::to_string(&msg.content)
+            .unwrap_or_default()
+            .as_bytes(),
+    );
     hex::encode(&hasher.finalize()[..10])
 }
 
@@ -346,6 +354,190 @@ pub async fn append_agent_end_snapshot(
         turns_written,
         messages_written,
         deduped: turns_written == 0,
+        snapshot_hash,
+    })
+}
+
+pub async fn replace_session_with_snapshot(
+    user_home: &Path,
+    user_id: &str,
+    workspace_id: &str,
+    session_id: &str,
+    platform_id: &str,
+    external_id: Option<&str>,
+    source_session_id: &str,
+    messages: &[AgentMessage],
+) -> Result<AppendStats> {
+    let pool = open_workspace_pool(user_home, workspace_id).await?;
+    let mut tx = pool.begin().await.context("begin oqto-log replace tx")?;
+
+    sqlx::query(
+        r#"
+        INSERT INTO oqto_log_sessions (
+          session_id, platform_id, external_id, user_id, workspace_id, updated_at
+        ) VALUES (?, ?, ?, ?, ?, datetime('now'))
+        ON CONFLICT(session_id) DO UPDATE SET
+          platform_id = excluded.platform_id,
+          external_id = COALESCE(excluded.external_id, oqto_log_sessions.external_id),
+          user_id = excluded.user_id,
+          workspace_id = excluded.workspace_id,
+          updated_at = datetime('now')
+        "#,
+    )
+    .bind(session_id)
+    .bind(platform_id)
+    .bind(external_id)
+    .bind(user_id)
+    .bind(workspace_id)
+    .execute(&mut *tx)
+    .await
+    .context("upsert oqto_log_sessions (replace)")?;
+
+    let branch_id = format!("branch:{}:main", session_id);
+    sqlx::query(
+        r#"
+        INSERT OR IGNORE INTO oqto_log_branches (branch_id, session_id)
+        VALUES (?, ?)
+        "#,
+    )
+    .bind(&branch_id)
+    .bind(session_id)
+    .execute(&mut *tx)
+    .await
+    .context("upsert oqto_log_branches (replace)")?;
+
+    let snapshot_json = serde_json::to_string(messages).unwrap_or_default();
+    let snapshot_hash = {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(snapshot_json.as_bytes());
+        hex::encode(&hasher.finalize()[..16])
+    };
+    let snapshot_marker = format!("snapshot:{}", snapshot_hash);
+
+    // Avoid destructive DELETE-based replacement during deploy-time repair.
+    // Instead, append deterministic bootstrap turns idempotently.
+    let mut turn_version = sqlx::query_scalar::<_, Option<i64>>(
+        "SELECT MAX(turn_version) FROM oqto_log_turns WHERE session_id = ?",
+    )
+    .bind(session_id)
+    .fetch_one(&mut *tx)
+    .await
+    .unwrap_or(None)
+    .unwrap_or(0);
+
+    let mut parent_turn_id = sqlx::query_scalar::<_, Option<String>>(
+        "SELECT head_turn_id FROM oqto_log_branches WHERE branch_id = ?",
+    )
+    .bind(&branch_id)
+    .fetch_one(&mut *tx)
+    .await
+    .unwrap_or(None);
+
+    let mut turns_written = 0usize;
+    let mut messages_written = 0usize;
+
+    for (idx, msg) in messages.iter().enumerate() {
+        let role = normalize_role(&msg.role);
+        turn_version += 1;
+        let source_entry_id = format!("line:{}", idx);
+
+        let turn_id = derive_turn_id(&TurnIdInput {
+            session_id,
+            branch_id: &branch_id,
+            parent_turn_id: parent_turn_id.as_deref(),
+            turn_version,
+            role,
+            source_kind: Some("pi_jsonl_bootstrap"),
+            source_session_id: Some(source_session_id),
+            source_entry_id: Some(&source_entry_id),
+            source_hash: Some(&snapshot_marker),
+        });
+
+        let turn_inserted = sqlx::query(
+            r#"
+            INSERT OR IGNORE INTO oqto_log_turns (
+              turn_id, session_id, branch_id, parent_turn_id, turn_version, role,
+              status, source_kind, source_session_id, source_entry_id, source_hash,
+              source_timestamp, committed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, 'committed', ?, ?, ?, ?, ?, datetime('now'))
+            "#,
+        )
+        .bind(&turn_id)
+        .bind(session_id)
+        .bind(&branch_id)
+        .bind(&parent_turn_id)
+        .bind(turn_version)
+        .bind(role)
+        .bind("pi_jsonl_bootstrap")
+        .bind(source_session_id)
+        .bind(&source_entry_id)
+        .bind(&snapshot_marker)
+        .bind(msg.timestamp.map(|v| v.to_string()))
+        .execute(&mut *tx)
+        .await
+        .context("insert oqto_log_turn (replace)")?
+        .rows_affected()
+            > 0;
+
+        let text = extract_text(&msg.content);
+        let json_payload = serde_json::to_string(msg).unwrap_or_default();
+        let message_id = derive_message_id(&MessageIdInput {
+            turn_id: &turn_id,
+            seq: 0,
+            kind: "message",
+            role: Some(role),
+            source_message_id: None,
+            content: Some(&text),
+        });
+
+        let msg_inserted = sqlx::query(
+            r#"
+            INSERT OR IGNORE INTO oqto_log_messages (
+              message_id, turn_id, seq, kind, role, content, json_payload
+            ) VALUES (?, ?, 0, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(&message_id)
+        .bind(&turn_id)
+        .bind("message")
+        .bind(role)
+        .bind(&text)
+        .bind(&json_payload)
+        .execute(&mut *tx)
+        .await
+        .context("insert oqto_log_message (replace)")?
+        .rows_affected()
+            > 0;
+
+        if turn_inserted {
+            turns_written += 1;
+        }
+        if msg_inserted {
+            messages_written += 1;
+        }
+        parent_turn_id = Some(turn_id);
+    }
+
+    sqlx::query(
+        r#"
+        UPDATE oqto_log_branches
+        SET head_turn_id = ?
+        WHERE branch_id = ?
+        "#,
+    )
+    .bind(&parent_turn_id)
+    .bind(&branch_id)
+    .execute(&mut *tx)
+    .await
+    .context("update oqto_log_branches head (replace)")?;
+
+    tx.commit().await.context("commit oqto-log replace tx")?;
+
+    Ok(AppendStats {
+        turns_written,
+        messages_written,
+        deduped: false,
         snapshot_hash,
     })
 }
