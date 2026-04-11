@@ -63,6 +63,7 @@ import type {
 	DisplayMessage,
 	DisplayPart,
 	ErrorPart,
+	PromptQueueItem,
 	RawMessage,
 	SendMode,
 	SendOptions,
@@ -137,6 +138,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 	const [isStreaming, setIsStreaming] = useState(false);
 	const [isAwaitingResponse, setIsAwaitingResponse] = useState(false);
 	const [error, setError] = useState<Error | null>(null);
+	const [promptQueue, setPromptQueue] = useState<PromptQueueItem[]>([]);
 	const [historyHydrated, setHistoryHydrated] = useState(
 		!activeSessionId || messages.length > 0,
 	);
@@ -1234,7 +1236,11 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 						false,
 					);
 					onError?.(new Error(errMsg));
-					applyTurnState({ kind: "error", recoverable: false, message: errMsg });
+					applyTurnState({
+						kind: "error",
+						recoverable: false,
+						message: errMsg,
+					});
 
 					// Auto-recover for session-not-found errors
 					const sessionId = activeSessionIdRef.current;
@@ -1258,9 +1264,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 						const completedMessage: DisplayMessage = {
 							...streamingMessageRef.current,
 							isStreaming: false,
-							parts: [
-								{ type: "error", id: nextPartId(), text: errMsg },
-							],
+							parts: [{ type: "error", id: nextPartId(), text: errMsg }],
 						};
 						setMessages((prev) => {
 							const idx = prev.findIndex((m) => m.id === msgId);
@@ -1296,7 +1300,10 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 				case "retry.end": {
 					const retrySuccess = event.success as boolean;
 					if (retrySuccess) {
-						setBusyForEvent(event.session_id ?? activeSessionIdRef.current, true);
+						setBusyForEvent(
+							event.session_id ?? activeSessionIdRef.current,
+							true,
+						);
 						isStreamingRef.current = true;
 						applyTurnState({ kind: "streaming" });
 					}
@@ -1444,6 +1451,78 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 							sessionId,
 							event.level,
 						);
+					}
+					break;
+				}
+
+				case "status": {
+					if (event.key !== "oqto_queue_event") break;
+					const text = typeof event.text === "string" ? event.text : null;
+					if (!text) break;
+					try {
+						const payload = JSON.parse(text) as {
+							type?: string;
+							clientId?: string;
+							intent?: "default" | "steer" | "followUp";
+							bridgeSeq?: number;
+							ts?: number;
+						};
+						const eventType = payload.type;
+						if (!eventType) break;
+
+						if (eventType === "queue_reset") {
+							setPromptQueue([]);
+							break;
+						}
+
+						if (eventType === "enqueued") {
+							const clientId = payload.clientId;
+							if (!clientId) break;
+							setPromptQueue((prev) => {
+								if (
+									prev.some((item) =>
+										payload.bridgeSeq != null
+											? item.bridgeSeq === payload.bridgeSeq
+											: item.clientId === clientId,
+									)
+								) {
+									return prev;
+								}
+								return [
+									...prev,
+									{
+										bridgeSeq:
+											typeof payload.bridgeSeq === "number"
+												? payload.bridgeSeq
+												: undefined,
+										clientId,
+										intent: payload.intent ?? "default",
+										enqueuedAt:
+											typeof payload.ts === "number" ? payload.ts : Date.now(),
+									},
+								];
+							});
+							break;
+						}
+
+						if (eventType === "turn_bound") {
+							setPromptQueue((prev) =>
+								prev.filter((item) => {
+									if (
+										typeof payload.bridgeSeq === "number" &&
+										item.bridgeSeq != null
+									) {
+										return item.bridgeSeq !== payload.bridgeSeq;
+									}
+									if (payload.clientId) {
+										return item.clientId !== payload.clientId;
+									}
+									return true;
+								}),
+							);
+						}
+					} catch {
+						// ignore malformed status payloads
 					}
 					break;
 				}
@@ -2645,6 +2724,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 		isStreaming,
 		isAwaitingResponse,
 		error,
+		promptQueue,
 		historyHydrated,
 		historyLoading,
 		send,

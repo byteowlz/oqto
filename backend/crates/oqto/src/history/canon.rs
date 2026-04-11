@@ -16,6 +16,11 @@ pub fn legacy_messages_to_canon(messages: Vec<ChatMessage>) -> Vec<Message> {
 
 pub fn legacy_message_to_canon(message: ChatMessage, idx: u32) -> Message {
     let role = parse_role(&message.role);
+    let is_assistant_error = message.role.eq_ignore_ascii_case("error")
+        || message
+            .parts
+            .iter()
+            .any(|p| p.part_type.eq_ignore_ascii_case("error"));
     let parts: Vec<Part> = message
         .parts
         .into_iter()
@@ -42,6 +47,8 @@ pub fn legacy_message_to_canon(message: ChatMessage, idx: u32) -> Message {
             .iter()
             .find_map(tool_result_metadata)
             .unwrap_or((None, None, None))
+    } else if role == Role::Assistant && is_assistant_error {
+        (None, None, Some(true))
     } else {
         (None, None, None)
     };

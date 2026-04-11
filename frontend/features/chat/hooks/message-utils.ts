@@ -24,6 +24,7 @@ const TMP_MESSAGE_ID_PREFIX = "tmp:";
  */
 const SENDER_TAG_NEW_RE = /^@sender:\s*(.+)\n/;
 const SENDER_TAG_LEGACY_RE = /^\[([^\]]+)\]\s*/;
+const OQTO_META_SUFFIX_RE = /\s*\[\[oqto_meta:\{[\s\S]*\}\]\]\s*$/;
 
 /**
  * Extract a sender tag from user-message text parts.
@@ -32,6 +33,15 @@ const SENDER_TAG_LEGACY_RE = /^\[([^\]]+)\]\s*/;
  * tag prefix from the first text part so it doesn't render in the bubble.
  * Returns `undefined` when no tag is found.
  */
+function stripOqtoMetaSuffix(parts: DisplayPart[]): void {
+	for (const part of parts) {
+		if (part.type !== "text") continue;
+		const textPart = part as { type: "text"; text: string };
+		textPart.text = textPart.text.replace(OQTO_META_SUFFIX_RE, "").trimEnd();
+		break;
+	}
+}
+
 function extractSenderFromParts(parts: DisplayPart[]): Sender | undefined {
 	for (const part of parts) {
 		if (part.type !== "text") continue;
@@ -616,13 +626,24 @@ export function normalizeMessages(
 				? role
 				: // "error" role displays on assistant side
 					"assistant";
-		const parts = normalizeContentToParts(content);
+		let parts = normalizeContentToParts(content);
 		const clientId = message.client_id ?? message.clientId;
+		const messageIsError = Boolean(message.is_error ?? message.isError);
+		if (
+			normalizedRole === "assistant" &&
+			messageIsError &&
+			!parts.some((p) => p.type === "error")
+		) {
+			parts = parts.map((p) =>
+				p.type === "text" ? { type: "error", id: p.id, text: p.text } : p,
+			);
+		}
 		const msgModel = message.model_id ?? message.model ?? null;
 		const msgProvider = message.provider_id ?? message.provider ?? null;
 		// Extract [Name] sender tag from user messages in shared workspaces
 		let sender: Sender | undefined;
 		if (normalizedRole === "user") {
+			stripOqtoMetaSuffix(parts);
 			sender = extractSenderFromParts(parts);
 		}
 		const canonicalId =
@@ -949,24 +970,30 @@ export function mergeServerMessages(
 		return upsertFromServer(previous, serverMessages);
 	}
 
-	// Authoritative mode is still append-only in the live UI: server snapshots
-	// may lag behind active turns, so never rebuild from scratch. Instead, drop
-	// only clearly-ephemeral snapshot IDs, then upsert server messages in-place.
-	const base = previous.filter((msg) => {
-		const id = msg.id ?? "";
-		const isTmpId = id.startsWith(TMP_MESSAGE_ID_PREFIX);
-		const isEphemeralSnapshotId =
-			/^pi[-_]msg[-_]/.test(id) || /^srv-.*-fallback-/.test(id);
+	// Authoritative mode should preserve server ordering while minimizing DOM
+	// churn by reusing existing message identity when possible.
+	const prevById = new Map<string, DisplayMessage>();
+	const prevByClientId = new Map<string, DisplayMessage>();
+	for (const msg of previous) {
+		prevById.set(msg.id, msg);
+		if (msg.clientId) prevByClientId.set(msg.clientId, msg);
+	}
 
-		// Drop stale optimistic assistant placeholders once authoritative data
-		// arrives. Keep only currently streaming assistant temp messages.
-		if (isTmpId && msg.role === "assistant") {
-			return Boolean(msg.isStreaming);
-		}
-
-		if (!isEphemeralSnapshotId) return true;
-		return shouldPreserveLocalMessage(msg) || Boolean(msg.isStreaming);
+	const mergedInServerOrder = serverMessages.map((serverMsg) => {
+		const byId = prevById.get(serverMsg.id);
+		const byClient = serverMsg.clientId
+			? prevByClientId.get(serverMsg.clientId)
+			: undefined;
+		const prior = byId ?? byClient;
+		if (!prior) return serverMsg;
+		return mergeMessageKeepingLocalToolDetails(prior, serverMsg);
 	});
 
-	return upsertFromServer(base, serverMessages);
+	const inFlightLocals = previous.filter(
+		(msg) => Boolean(msg.isStreaming) || shouldPreserveLocalMessage(msg),
+	);
+	if (inFlightLocals.length === 0) {
+		return mergedInServerOrder;
+	}
+	return upsertFromServer(mergedInServerOrder, inFlightLocals);
 }

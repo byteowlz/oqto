@@ -767,7 +767,7 @@ fn convert_runner_response(
             tokens_output: m.tokens_output,
             tokens_reasoning: m.tokens_reasoning,
             cost: m.cost,
-            client_id: None,
+            client_id: m.client_id,
             parts: m
                 .parts
                 .into_iter()
