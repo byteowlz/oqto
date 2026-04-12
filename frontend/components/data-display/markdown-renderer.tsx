@@ -167,6 +167,10 @@ const MermaidCodeBlock = memo(function MermaidCodeBlock({
 
 	// useeffect-guardrail: allow - inject rendered Mermaid SVG inline to avoid mobile img/blob/data URL failures
 	useEffect(() => {
+		if (viewMode !== "diagram") {
+			return;
+		}
+
 		const container = svgContainerRef.current;
 		if (!container) {
 			return;
@@ -177,21 +181,10 @@ const MermaidCodeBlock = memo(function MermaidCodeBlock({
 			return;
 		}
 
-		const parsedSvgDocument = new DOMParser().parseFromString(
-			svg,
-			"image/svg+xml",
-		);
-		if (parsedSvgDocument.querySelector("parsererror")) {
-			setError("Browser failed to parse Mermaid SVG output");
-			setIsDiagramValid(false);
-			setViewMode("code");
-			return;
-		}
-
-		const svgElement = parsedSvgDocument.documentElement;
-		const rootNodeName = svgElement.nodeName.toLowerCase();
-		if (rootNodeName !== "svg" && !rootNodeName.endsWith(":svg")) {
-			setError(`Unexpected Mermaid SVG root node: ${rootNodeName}`);
+		container.insertAdjacentHTML("afterbegin", svg);
+		const svgElement = container.querySelector("svg");
+		if (!svgElement) {
+			setError("Browser failed to mount Mermaid SVG output");
 			setIsDiagramValid(false);
 			setViewMode("code");
 			return;
@@ -216,18 +209,16 @@ const MermaidCodeBlock = memo(function MermaidCodeBlock({
 
 		svgElement.removeAttribute("width");
 		svgElement.removeAttribute("height");
+		svgElement.setAttribute("width", "100%");
 		svgElement.style.width = "100%";
 		svgElement.style.maxWidth = "100%";
 		svgElement.style.height = "auto";
 		svgElement.style.display = "block";
 
-		const adoptedSvgElement = document.importNode(svgElement, true);
-		container.appendChild(adoptedSvgElement);
-
 		return () => {
 			container.replaceChildren();
 		};
-	}, [svg]);
+	}, [svg, viewMode]);
 
 	return (
 		<div
