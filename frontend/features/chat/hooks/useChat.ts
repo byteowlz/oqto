@@ -286,11 +286,20 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 				);
 			}
 			if (!Array.isArray(rawMessages) || rawMessages.length === 0) return;
+			let incoming = rawMessages as RawMessage[];
+			// Partial/live snapshots can include transient user echoes while local
+			// optimistic user messages are already rendered. Exclude user-role
+			// rows here to avoid random live duplicates/reordering; authoritative
+			// sync on agent.idle remains the source of truth.
+			if (mode === "partial") {
+				incoming = incoming.filter((m) => {
+					const role = (m.role || "").toLowerCase();
+					return role !== "user" && role !== "human";
+				});
+			}
+			if (incoming.length === 0) return;
 			machineRef.current = beginMessageSync(machineRef.current);
-			const displayMessages = normalizeMessages(
-				rawMessages as RawMessage[],
-				`srv-${sessionId}`,
-			);
+			const displayMessages = normalizeMessages(incoming, `srv-${sessionId}`);
 			if (displayMessages.length === 0) {
 				machineRef.current = completeMessageSync(machineRef.current);
 				return;
