@@ -3472,7 +3472,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 		<div
 			data-message-id={messageId}
 			className={cn(
-				"group transition-all duration-200 overflow-hidden",
+				"group transition-colors duration-200 overflow-hidden min-w-0 max-w-full",
 				!isUser && verbosity === 1 && "overflow-visible",
 				isUser
 					? "sm:ml-8 bg-primary/20 dark:bg-primary/10 border border-primary/40 dark:border-primary/30"
@@ -3552,7 +3552,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 
 			<div
 				className={cn(
-					"relative px-2 sm:px-4 py-2 sm:py-3 group space-y-2 overflow-hidden",
+					"relative px-2 sm:px-4 py-2 sm:py-3 group space-y-2 overflow-hidden min-w-0 max-w-full",
 					!isUser && verbosity === 1 && "pr-12 sm:pr-16",
 				)}
 			>
@@ -4386,7 +4386,11 @@ function TextWithFileReferences({
 		<div className="space-y-2 select-none sm:select-auto">
 			<MarkdownRenderer
 				content={markdownContent}
-				className="text-sm text-foreground leading-relaxed overflow-hidden"
+				className={cn(
+					"text-sm text-foreground leading-relaxed overflow-hidden min-w-0 max-w-full",
+					deferMermaidUntilFinal &&
+						"[text-wrap:wrap] [&_p]:[overflow-wrap:anywhere] [&_li>span]:[overflow-wrap:anywhere]",
+				)}
 				enableMermaid={!deferMermaidUntilFinal}
 			/>
 			{/* Render file reference cards */}
