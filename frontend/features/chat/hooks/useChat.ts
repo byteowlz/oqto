@@ -76,8 +76,9 @@ const BATCH_FLUSH_INTERVAL_MS = 50;
 // Streaming delta coalescing interval. During fast streaming, text_delta and
 // thinking_delta events arrive much faster than React can usefully re-render.
 // We coalesce intermediate accumulated snapshots and emit at this cadence.
-// Inspired by pi-mobile's UiUpdateThrottler (80ms text, 100ms tools).
-const TEXT_DELTA_THROTTLE_MS = 80;
+// Inspired by pi-mobile's UiUpdateThrottler. We use a slightly higher
+// cadence to reduce visible layout twitch during very fast token bursts.
+const TEXT_DELTA_THROTTLE_MS = 100;
 
 function isPiDebugEnabled(): boolean {
 	if (!import.meta.env.DEV) return false;

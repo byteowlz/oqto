@@ -11,7 +11,6 @@ import {
 	Bot,
 	CheckCircle2,
 	CheckSquare,
-	ChevronRight,
 	CircleDot,
 	Clock,
 	FileEdit,
@@ -912,16 +911,6 @@ export function ToolCallCard({
 						!hasContent && "cursor-default",
 					)}
 				>
-					{collapsible && hasContent && (
-						<ChevronRight
-							className={cn(
-								"w-4 h-4 text-muted-foreground transition-transform duration-200 flex-shrink-0",
-								resolvedOpen && "rotate-90",
-							)}
-						/>
-					)}
-					{(!collapsible || !hasContent) && <div className="w-4" />}
-
 					{getStatusIcon(status, toolName, input, output)}
 
 					<span className="flex-1 text-sm font-medium text-foreground truncate">
