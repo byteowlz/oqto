@@ -332,6 +332,40 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 		[],
 	);
 
+	const snapshotMessagesForSessionSwitch = useCallback((): DisplayMessage[] => {
+		const snapshot = messagesRef.current.map((m) => ({
+			...m,
+			parts: m.parts.map((p) => ({ ...p })),
+		}));
+
+		const throttled = streamingThrottleRef.current.flush();
+		if (throttled) {
+			const idx = snapshot.findIndex((m) => m.id === throttled.id);
+			if (idx >= 0) {
+				snapshot[idx] = {
+					...snapshot[idx],
+					parts: throttled.parts.map((p) => ({ ...p })),
+				};
+			}
+		}
+
+		const currentStreaming = streamingMessageRef.current;
+		if (currentStreaming) {
+			const streamSnapshot: DisplayMessage = {
+				...currentStreaming,
+				parts: currentStreaming.parts.map((p) => ({ ...p })),
+			};
+			const idx = snapshot.findIndex((m) => m.id === streamSnapshot.id);
+			if (idx >= 0) {
+				snapshot[idx] = streamSnapshot;
+			} else {
+				snapshot.push(streamSnapshot);
+			}
+		}
+
+		return snapshot;
+	}, []);
+
 	const ensureAssistantMessage = useCallback((preferStreaming: boolean) => {
 		if (streamingMessageRef.current) return streamingMessageRef.current;
 		const lastId = lastAssistantMessageIdRef.current;
@@ -2433,6 +2467,17 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 		// same) prevents clobbering in-flight streaming and the optimistic user
 		// message.
 		if (sessionActuallyChanged) {
+			if (previousId) {
+				const previousSnapshot = snapshotMessagesForSessionSwitch();
+				if (previousSnapshot.length > 0) {
+					writeCachedSessionMessages(
+						previousId,
+						previousSnapshot,
+						resolvedStorageKeyPrefix,
+						true,
+					);
+				}
+			}
 			// Load cached messages for this session.
 			const cached = readCachedSessionMessages(
 				activeSessionId,
@@ -2456,6 +2501,17 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 			// Clearing state prevents stale sessionName from the previous
 			// session being applied to the new one as a title.
 			streamingMessageRef.current = null;
+			streamingThrottleRef.current.reset();
+			if (throttleFlushTimerRef.current) {
+				clearInterval(throttleFlushTimerRef.current);
+				throttleFlushTimerRef.current = null;
+			}
+			const batch = batchedUpdateRef.current;
+			if (batch.rafId !== null) {
+				clearTimeout(batch.rafId);
+				batch.rafId = null;
+			}
+			batch.pendingUpdate = false;
 			setState(null);
 			applyTurnState({ kind: "idle" });
 			resetSessionIdentity(activeSessionId);
@@ -2467,6 +2523,13 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 		// WebSocket session readiness / reattach logic.
 		if (sessionActuallyChanged) {
 			void fetchHistoryMessages(activeSessionId);
+			// Also request the runner's live window immediately so in-flight
+			// assistant output reappears when returning to a still-streaming session.
+			// oqto-log only contains persisted turns (agent_end), so relying on
+			// history alone can look like "lost" messages mid-turn.
+			const manager = getWsManager();
+			manager.agentGetState(activeSessionId);
+			manager.agentGetMessages(activeSessionId);
 		}
 
 		// Use a stable wrapper that delegates to the latest handleAgentEvent
@@ -2685,7 +2748,12 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 			unsubscribeResync();
 		};
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [activeSessionId, resolvedStorageKeyPrefix, getSessionConfig]);
+	}, [
+		activeSessionId,
+		resolvedStorageKeyPrefix,
+		getSessionConfig,
+		snapshotMessagesForSessionSwitch,
+	]);
 
 	// Auto-connect on mount
 	useEffect(() => {

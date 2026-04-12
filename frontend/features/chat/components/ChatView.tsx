@@ -3463,6 +3463,8 @@ const MessageGroupCard = memo(function MessageGroupCard({
 		.filter((s): s is Extract<Segment, { type: "text" }> => s.type === "text")
 		.map((s) => s.text)
 		.join("\n\n");
+	const isGroupStreaming =
+		!isUser && group.messages.some((message) => message.isStreaming === true);
 
 	// Use workspace name instead of "Assistant" when assistantName is not provided
 	const workspaceName = workspacePath?.split("/").pop() || "Assistant";
@@ -3473,7 +3475,10 @@ const MessageGroupCard = memo(function MessageGroupCard({
 			data-message-id={messageId}
 			className={cn(
 				"group transition-colors duration-200 overflow-hidden min-w-0 max-w-full",
-				!isUser && verbosity === 1 && "overflow-visible",
+				!isUser &&
+					verbosity === 1 &&
+					!showWorkingIndicator &&
+					"overflow-visible",
 				isUser
 					? "sm:ml-8 bg-primary/20 dark:bg-primary/10 border border-primary/40 dark:border-primary/30"
 					: "sm:mr-8 bg-muted/50 border border-border",
@@ -3631,7 +3636,9 @@ const MessageGroupCard = memo(function MessageGroupCard({
 								workspacePath={workspacePath}
 								locale={locale}
 								onFileReferenceOpen={onFileReferenceOpen}
-								deferMermaidUntilFinal={showWorkingIndicator && !isUser}
+								deferMermaidUntilFinal={
+									!isUser && (showWorkingIndicator || isGroupStreaming)
+								}
 							/>
 						);
 						return wrapWithGutter(segment.key, inner);
@@ -4383,16 +4390,18 @@ function TextWithFileReferences({
 	const isCoarsePointerDevice = useCoarsePointerDevice();
 
 	const contentBlock = (
-		<div className="space-y-2 select-none sm:select-auto">
-			<MarkdownRenderer
-				content={markdownContent}
-				className={cn(
-					"text-sm text-foreground leading-relaxed overflow-hidden min-w-0 max-w-full",
-					deferMermaidUntilFinal &&
-						"[text-wrap:wrap] [&_p]:[overflow-wrap:anywhere] [&_li>span]:[overflow-wrap:anywhere]",
-				)}
-				enableMermaid={!deferMermaidUntilFinal}
-			/>
+		<div className="space-y-2 select-none sm:select-auto min-w-0 max-w-full">
+			{deferMermaidUntilFinal ? (
+				<div className="text-sm text-foreground leading-relaxed whitespace-pre-wrap break-words [overflow-wrap:anywhere] [word-break:break-word] min-w-0 max-w-full overflow-x-hidden">
+					{cleanContent}
+				</div>
+			) : (
+				<MarkdownRenderer
+					content={markdownContent}
+					className="text-sm text-foreground leading-relaxed overflow-hidden min-w-0 max-w-full"
+					enableMermaid
+				/>
+			)}
 			{/* Render file reference cards */}
 			{fileRefs.length > 0 && workspacePath && (
 				<div className="flex flex-wrap gap-2 mt-2">
