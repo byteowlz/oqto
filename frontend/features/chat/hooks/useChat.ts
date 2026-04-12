@@ -258,8 +258,24 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 			config.cwd = normalizedWorkspacePath;
 		}
 		try {
-			const storageKey = getWorkspaceModelStorageKey(normalizedWorkspacePath);
-			const storedModelRef = localStorage.getItem(storageKey);
+			const workspaceStorageKey = getWorkspaceModelStorageKey(
+				normalizedWorkspacePath,
+			);
+			const sessionStorageKey = selectedSessionId
+				? `oqto:chatModel:${selectedSessionId}`
+				: null;
+			const aliasSessionId = selectedSessionId
+				? getRunnerHistoryAlias(selectedSessionId)
+				: undefined;
+			const aliasSessionStorageKey = aliasSessionId
+				? `oqto:chatModel:${aliasSessionId}`
+				: null;
+			const storedModelRef = sessionStorageKey
+				? (localStorage.getItem(sessionStorageKey) ??
+					(aliasSessionStorageKey
+						? localStorage.getItem(aliasSessionStorageKey)
+						: null))
+				: localStorage.getItem(workspaceStorageKey);
 			if (storedModelRef) {
 				const separatorIndex = storedModelRef.indexOf("/");
 				if (separatorIndex > 0 && separatorIndex < storedModelRef.length - 1) {
@@ -271,7 +287,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 			// ignore localStorage errors
 		}
 		return config;
-	}, [normalizedWorkspacePath]);
+	}, [normalizedWorkspacePath, selectedSessionId]);
 
 	const applyServerMessages = useCallback(
 		(

@@ -10,6 +10,7 @@ import {
 	useCallback,
 	useContext,
 	useEffect,
+	useRef,
 	useState,
 } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
@@ -93,6 +94,7 @@ const MermaidCodeBlock = memo(function MermaidCodeBlock({
 	const isDarkMode = resolvedTheme === "dark";
 	const [viewMode, setViewMode] = useState<"diagram" | "code">("diagram");
 	const [svg, setSvg] = useState<string | null>(null);
+	const svgContainerRef = useRef<HTMLDivElement | null>(null);
 	const mermaidSource = codeString.trim();
 	const [error, setError] = useState<string | null>(null);
 	const [isRendering, setIsRendering] = useState(true);
@@ -120,6 +122,9 @@ const MermaidCodeBlock = memo(function MermaidCodeBlock({
 					startOnLoad: false,
 					securityLevel: "strict",
 					theme: isDarkMode ? "dark" : "default",
+					flowchart: {
+						htmlLabels: false,
+					},
 				});
 				const renderId = `mermaid-${Math.random().toString(36).slice(2, 10)}`;
 				if (!mermaidSource) {
@@ -159,6 +164,70 @@ const MermaidCodeBlock = memo(function MermaidCodeBlock({
 			cancelled = true;
 		};
 	}, [isDarkMode, mermaidSource]);
+
+	// useeffect-guardrail: allow - inject rendered Mermaid SVG inline to avoid mobile img/blob/data URL failures
+	useEffect(() => {
+		const container = svgContainerRef.current;
+		if (!container) {
+			return;
+		}
+
+		container.replaceChildren();
+		if (!svg) {
+			return;
+		}
+
+		const parsedSvgDocument = new DOMParser().parseFromString(
+			svg,
+			"image/svg+xml",
+		);
+		if (parsedSvgDocument.querySelector("parsererror")) {
+			setError("Browser failed to parse Mermaid SVG output");
+			setIsDiagramValid(false);
+			setViewMode("code");
+			return;
+		}
+
+		const svgElement = parsedSvgDocument.documentElement;
+		const rootNodeName = svgElement.nodeName.toLowerCase();
+		if (rootNodeName !== "svg" && !rootNodeName.endsWith(":svg")) {
+			setError(`Unexpected Mermaid SVG root node: ${rootNodeName}`);
+			setIsDiagramValid(false);
+			setViewMode("code");
+			return;
+		}
+
+		const viewBox = svgElement.getAttribute("viewBox");
+		if (viewBox) {
+			const values = viewBox
+				.trim()
+				.split(/\s+/)
+				.map((part) => Number.parseFloat(part));
+			if (
+				values.length === 4 &&
+				Number.isFinite(values[2]) &&
+				Number.isFinite(values[3]) &&
+				values[2] > 0 &&
+				values[3] > 0
+			) {
+				svgElement.style.aspectRatio = `${values[2]} / ${values[3]}`;
+			}
+		}
+
+		svgElement.removeAttribute("width");
+		svgElement.removeAttribute("height");
+		svgElement.style.width = "100%";
+		svgElement.style.maxWidth = "100%";
+		svgElement.style.height = "auto";
+		svgElement.style.display = "block";
+
+		const adoptedSvgElement = document.importNode(svgElement, true);
+		container.appendChild(adoptedSvgElement);
+
+		return () => {
+			container.replaceChildren();
+		};
+	}, [svg]);
 
 	return (
 		<div
@@ -267,11 +336,7 @@ const MermaidCodeBlock = memo(function MermaidCodeBlock({
 							className="origin-top-left"
 							style={{ width: `${zoomLevel * 100}%` }}
 						>
-							<img
-								src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`}
-								alt="Mermaid diagram"
-								className="w-full h-auto max-w-none"
-							/>
+							<div ref={svgContainerRef} aria-label="Mermaid diagram" />
 						</div>
 					)}
 				</div>
