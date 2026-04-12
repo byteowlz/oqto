@@ -2,6 +2,9 @@
 
 ## Open
 
+### [oqto-bhaj.17] Per-session model persistence across alias IDs on reload (P0, bug)
+Session model keys can drift when selected session ID differs between platform/runner alias forms across reload, causing fallback to wrong model. Persist/load model under both alias keys.
+
 ### [oqto-bhaj] oqto-log hardening pass: typed store/projector interfaces and deterministic resolver (P0, task)
 Refactor oqto-log integration to use explicit LogStore/Projector interfaces, central path resolver usage, remove ad-hoc projector scanning from read paths, and add golden regression tests for parts + dedupe.
 
@@ -53,6 +56,8 @@ setup.sh must correctly provision everything for a new platform user on a fresh 
 3. Per-user provisioning on login/creation:
 ...
 
+
+### [oqto-q0f8] Mobile: Mermaid diagrams render broken in chat markdown (P1, bug)
 
 ### [oqto-ctvc] Deploy ergonomics: make just deploy-host resilient to /tmp quota by setting TMPDIR automatically (P1, bug)
 Ensure deploy script exports TMPDIR to a user-home tmp path for all local/remote command execution so just deploy-host works without manual env exports when /tmp is quota-limited.
@@ -1723,6 +1728,7 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [oqto-bhaj.16] Frontend model selection isolation: per-session state + synced controls (closed 2026-04-12)
 - [oqto-bhaj.15] Live stream loss on session switch: preserve per-session in-flight state (closed 2026-04-12)
 - [oqto-rxsq] Remove redundant chevron icon from tool call dropdown headers (closed 2026-04-12)
 - [oqto-bhaj.14] Frontend dedupe: drop optimistic user temps on authoritative sync (closed 2026-04-12)
@@ -2494,13 +2500,13 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
-- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
-- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
 - [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
 - [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
+- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
 - [oqto-4ryr] Session rename reverts: update_chat_session returns external_id while list returns platform_id (closed )
