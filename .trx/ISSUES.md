@@ -2,6 +2,18 @@
 
 ## Open
 
+### [oqto-bhaj.19] P0 Epic: Deterministic live chat timeline integrity (streaming, session-switch, markdown) (P0, epic)
+Structural hardening epic for remaining frontend timeline instability after oqto-log cutover.
+
+Scope:
+- Replace ad-hoc message mutations with a single reducer/state-machine for live + authoritative lanes.
+- Enforce strict identity reconciliation (id/client_id only) and session alias equivalence across all event gates.
+...
+
+
+### [oqto-bhaj.18] P0 frontend streaming timeline instability: disappearing messages + markdown render regressions (P0, bug)
+In active sessions (e.g. Context Window Issues / beat-myth-sock), streaming messages disappear mid-response, order shifts, and raw markdown occasionally appears. Need deterministic event/state pipeline and rendering stabilization.
+
 ### [oqto-bhaj.17] Per-session model persistence across alias IDs on reload (P0, bug)
 Session model keys can drift when selected session ID differs between platform/runner alias forms across reload, causing fallback to wrong model. Persist/load model under both alias keys.
 
@@ -56,6 +68,8 @@ setup.sh must correctly provision everything for a new platform user on a fresh 
 3. Per-user provisioning on login/creation:
 ...
 
+
+### [oqto-xjnv] Authoritative merge can drop optimistic user message before persistence (P1, bug)
 
 ### [oqto-q0f8] Mobile: Mermaid diagrams render broken in chat markdown (P1, bug)
 
@@ -1728,6 +1742,8 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [oqto-9c0h] Use Pi context window length output for context gauge (closed 2026-04-12)
+- [oqto-rhg6] Fix context window gauge jumping/full-on-empty behavior (closed 2026-04-12)
 - [oqto-bhaj.16] Frontend model selection isolation: per-session state + synced controls (closed 2026-04-12)
 - [oqto-bhaj.15] Live stream loss on session switch: preserve per-session in-flight state (closed 2026-04-12)
 - [oqto-rxsq] Remove redundant chevron icon from tool call dropdown headers (closed 2026-04-12)
@@ -2501,12 +2517,12 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
 - [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
-- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
-- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
-- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
-- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
-- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
 - [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
+- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
+- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
 - [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
 - [oqto-4ryr] Session rename reverts: update_chat_session returns external_id while list returns platform_id (closed )
+- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
+- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
