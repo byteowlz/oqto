@@ -964,7 +964,7 @@ export function mergeServerMessages(
 	if (serverMessages.length === 0) return previous;
 	if (previous.length === 0) return serverMessages;
 
-	const effectiveMode: MergeMode = mode === "partial" ? "authoritative" : mode;
+	const effectiveMode: MergeMode = mode;
 
 	if (effectiveMode === "partial") {
 		return upsertFromServer(previous, serverMessages);
@@ -989,9 +989,7 @@ export function mergeServerMessages(
 		return mergeMessageKeepingLocalToolDetails(prior, serverMsg);
 	});
 
-	const inFlightLocals = previous.filter(
-		(msg) => Boolean(msg.isStreaming) || shouldPreserveLocalMessage(msg),
-	);
+	const inFlightLocals = previous.filter((msg) => Boolean(msg.isStreaming));
 	if (inFlightLocals.length === 0) {
 		return mergedInServerOrder;
 	}

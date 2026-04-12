@@ -2,9 +2,6 @@
 
 ## Open
 
-### [oqto-bhaj.13] Chat scroll: prevent viewport tug-of-war during live streaming (P0, bug)
-Current scroll anchor compensation runs on every message update and can fight user scrolling during active agent streaming. Restrict compensation to post-stream authoritative sync windows.
-
 ### [oqto-bhaj] oqto-log hardening pass: typed store/projector interfaces and deterministic resolver (P0, task)
 Refactor oqto-log integration to use explicit LogStore/Projector interfaces, central path resolver usage, remove ad-hoc projector scanning from read paths, and add golden regression tests for parts + dedupe.
 
@@ -1726,6 +1723,10 @@ Desired behavior: Tool calls hidden by default, toggle to show
 
 ## Closed
 
+- [oqto-bhaj.14] Frontend dedupe: drop optimistic user temps on authoritative sync (closed 2026-04-12)
+- [oqto-bhaj.13] Chat scroll: prevent viewport tug-of-war during live streaming (closed 2026-04-12)
+- [oqto-5vbm] Mobile lightbox needs top safe-area inset to avoid notch overlap (closed 2026-04-11)
+- [oqto-w02n] Mobile gallery view lacks close affordance and shows desktop keyboard hints (closed 2026-04-11)
 - [oqto-bhaj.12] Chat UX: preserve scroll position on agent_end authoritative message replacement (closed 2026-04-11)
 - [oqto-bhaj.11] Hide prompt queue debug UI + strip oqto_meta from user-visible/persisted text (closed 2026-04-11)
 - [oqto-bhaj.10] oqto-log repair: non-destructive bootstrap replacement + validator placeholder filtering (closed 2026-04-11)
@@ -2491,13 +2492,13 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
-- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
-- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
-- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
-- [oqto-4ryr] Session rename reverts: update_chat_session returns external_id while list returns platform_id (closed )
 - [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
 - [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
+- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
+- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
+- [oqto-4ryr] Session rename reverts: update_chat_session returns external_id while list returns platform_id (closed )
+- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
