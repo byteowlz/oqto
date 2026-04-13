@@ -447,6 +447,14 @@ export function extractFileReferenceDetails(
 		match !== null;
 		match = fileRefPattern.exec(withoutInlineCode)
 	) {
+		const matchIndex = match.index;
+		const previousChar =
+			matchIndex > 0 ? withoutInlineCode.charAt(matchIndex - 1) : "";
+		// Ignore @ inside emails/user handles (e.g. ironport@fraunhofer.de)
+		if (/[A-Za-z0-9._%+-]/.test(previousChar)) {
+			continue;
+		}
+
 		const raw = match[1];
 		const { filePath, suffix } = splitReferenceSuffix(raw);
 		if (!/\.[a-zA-Z0-9]+$/.test(filePath)) {
