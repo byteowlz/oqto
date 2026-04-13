@@ -967,7 +967,21 @@ export function mergeServerMessages(
 	const effectiveMode: MergeMode = mode;
 
 	if (effectiveMode === "partial") {
-		return upsertFromServer(previous, serverMessages);
+		const merged = upsertFromServer(previous, serverMessages);
+		const serverClientIds = new Set(
+			serverMessages
+				.map((m) => m.clientId)
+				.filter((c): c is string => typeof c === "string" && c.length > 0),
+		);
+		// Partial snapshots must not drop optimistic user turns. Keep preserved
+		// locals when they're still streaming OR have an unmatched clientId.
+		// Drop only stale tmp/legacy placeholders (no clientId, not streaming).
+		return merged.filter((msg) => {
+			if (!shouldPreserveLocalMessage(msg)) return true;
+			if (msg.isStreaming) return true;
+			if (msg.clientId && !serverClientIds.has(msg.clientId)) return true;
+			return false;
+		});
 	}
 
 	// Authoritative mode should preserve server ordering while minimizing DOM
@@ -989,9 +1003,26 @@ export function mergeServerMessages(
 		return mergeMessageKeepingLocalToolDetails(prior, serverMsg);
 	});
 
-	const inFlightLocals = previous.filter((msg) => Boolean(msg.isStreaming));
-	if (inFlightLocals.length === 0) {
+	// Preserve optimistic local messages that haven't been persisted yet.
+	// This includes:
+	// 1. Messages with clientIds that don't exist in server (matched by clientId reconciliation)
+	// 2. Tmp/* legacy messages that are still streaming (no clientId, but actively being built)
+	const serverClientIds = new Set(
+		serverMessages
+			.map((m) => m.clientId)
+			.filter((c): c is string => typeof c === "string" && c.length > 0),
+	);
+	const preservedLocals = previous.filter((msg) => {
+		// Case 1: Has clientId that doesn't exist in server -> unmatched optimistic
+		if (msg.clientId && !serverClientIds.has(msg.clientId)) return true;
+		// Case 2: Tmp/legacy message with no clientId but still streaming
+		if (shouldPreserveLocalMessage(msg) && !msg.clientId) {
+			return Boolean(msg.isStreaming);
+		}
+		return false;
+	});
+	if (preservedLocals.length === 0) {
 		return mergedInServerOrder;
 	}
-	return upsertFromServer(mergedInServerOrder, inFlightLocals);
+	return upsertFromServer(mergedInServerOrder, preservedLocals);
 }

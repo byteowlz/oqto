@@ -16,6 +16,7 @@ const managerMock = {
 	agentCloseSession: vi.fn(),
 	agentCreateSession: vi.fn(),
 	agentGetState: vi.fn(),
+	agentGetMessages: vi.fn(),
 	connect: vi.fn(),
 	disconnect: vi.fn(),
 	send: vi.fn(),
@@ -327,7 +328,8 @@ describe("useChat send reliability", () => {
 		const assistant = assistantMessages[assistantMessages.length - 1];
 		expect(assistant).toBeDefined();
 		expect(assistant?.isStreaming).toBe(true);
-		const errorParts = assistant?.parts.filter((part) => part.type === "error") ?? [];
+		const errorParts =
+			assistant?.parts.filter((part) => part.type === "error") ?? [];
 		expect(errorParts).toHaveLength(0);
 	});
 
@@ -367,7 +369,8 @@ describe("useChat send reliability", () => {
 		);
 		const assistant = assistantMessages[assistantMessages.length - 1];
 		expect(assistant).toBeDefined();
-		const errorParts = assistant?.parts.filter((part) => part.type === "error") ?? [];
+		const errorParts =
+			assistant?.parts.filter((part) => part.type === "error") ?? [];
 		expect(errorParts.length).toBeGreaterThan(0);
 		expect(errorParts[0]).toMatchObject({
 			type: "error",

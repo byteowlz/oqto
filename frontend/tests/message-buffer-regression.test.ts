@@ -10,17 +10,17 @@
  */
 
 import {
+	beginMessageSync,
+	bindIdentity,
+	completeMessageSync,
+	createInitialChatStateMachine,
+	transitionTurn,
+} from "@/features/chat/hooks/chat-state-machine";
+import {
 	mergeServerMessages,
 	normalizeMessages,
 } from "@/features/chat/hooks/message-utils";
 import type { DisplayMessage, RawMessage } from "@/features/chat/hooks/types";
-import {
-	beginMessageSync,
-	completeMessageSync,
-	createInitialChatStateMachine,
-	bindIdentity,
-	transitionTurn,
-} from "@/features/chat/hooks/chat-state-machine";
 import { describe, expect, it } from "vitest";
 
 function textMsg(

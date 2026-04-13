@@ -49,6 +49,10 @@ import {
 	buildLegacyDraftStorageKey,
 	buildSessionDraftStorageKey,
 } from "@/features/chat/hooks/draft-storage";
+import {
+	normalizeTokenCount,
+	parsePiSessionStats,
+} from "@/features/chat/utils/session-stats";
 import { type A2UISurfaceState, useA2UI } from "@/hooks/use-a2ui";
 import { useDictation } from "@/hooks/use-dictation";
 import {
@@ -62,7 +66,7 @@ import { workspaceFileUrl } from "@/lib/api/files";
 import type { Part, ToolStatus } from "@/lib/canonical-types";
 import { useChatVerbosity } from "@/lib/chat-verbosity";
 import { extractFileReferenceDetails, getFileTypeInfo } from "@/lib/file-types";
-import { downloadFileMux, statPathMux, uploadFileMux } from "@/lib/mux-files";
+import { downloadFileMux, uploadFileMux } from "@/lib/mux-files";
 import {
 	formatSessionDate,
 	formatTempId,
@@ -78,6 +82,7 @@ import {
 } from "@/lib/slash-commands";
 import { getToolSummary } from "@/lib/tool-summaries";
 import { cn } from "@/lib/utils";
+
 import { getWsManager } from "@/lib/ws-manager";
 import {
 	ArrowDown,
@@ -878,11 +883,15 @@ export function ChatView({
 		input: number;
 		output: number;
 	} | null>(null);
+	const [piContextWindowLength, setPiContextWindowLength] = useState<
+		number | null
+	>(null);
 
 	// Fetch Pi session stats when the active session changes
 	useEffect(() => {
+		setPiSessionTokens(null);
+		setPiContextWindowLength(null);
 		if (!selectedSessionId) {
-			setPiSessionTokens(null);
 			return;
 		}
 		let cancelled = false;
@@ -891,19 +900,21 @@ export function ChatView({
 				const stats =
 					await getWsManager().agentGetSessionStats(selectedSessionId);
 				if (cancelled) return;
-				if (stats && typeof stats === "object" && "tokens" in stats) {
-					const tokens = (
-						stats as { tokens?: { input?: number; output?: number } }
-					).tokens;
-					if (tokens) {
-						setPiSessionTokens({
-							input: tokens.input ?? 0,
-							output: tokens.output ?? 0,
-						});
-					}
-				}
+				const parsed = parsePiSessionStats(stats);
+				setPiContextWindowLength(
+					parsed.contextWindowLength > 0 ? parsed.contextWindowLength : null,
+				);
+				setPiSessionTokens(
+					parsed.input > 0 || parsed.output > 0
+						? { input: parsed.input, output: parsed.output }
+						: null,
+				);
 			} catch {
-				// Stats unavailable (session not running in Pi) - that's fine
+				if (!cancelled) {
+					// Stats unavailable (session not running in Pi) - that's fine
+					setPiSessionTokens(null);
+					setPiContextWindowLength(null);
+				}
 			}
 		};
 		void fetchStats();
@@ -936,16 +947,12 @@ export function ChatView({
 				const stats =
 					await getWsManager().agentGetSessionStats(selectedSessionId);
 				if (cancelled) return;
-				if (stats && typeof stats === "object" && "tokens" in stats) {
-					const tokens = (
-						stats as { tokens?: { input?: number; output?: number } }
-					).tokens;
-					if (tokens) {
-						setPiSessionTokens({
-							input: tokens.input ?? 0,
-							output: tokens.output ?? 0,
-						});
-					}
+				const parsed = parsePiSessionStats(stats);
+				setPiContextWindowLength(
+					parsed.contextWindowLength > 0 ? parsed.contextWindowLength : null,
+				);
+				if (parsed.input > 0 || parsed.output > 0) {
+					setPiSessionTokens({ input: parsed.input, output: parsed.output });
 				}
 			} catch {
 				// Stats unavailable
@@ -958,20 +965,29 @@ export function ChatView({
 	}, [lastCompactionText, selectedSessionId]);
 
 	const contextTokenCount = useMemo(() => {
-		// Priority 1: Real usage from the last assistant message (set during streaming)
+		if (messages.length === 0) {
+			return { inputTokens: 0, outputTokens: 0 };
+		}
+
+		// Priority 1: Pi-reported context window length (authoritative current window)
+		if (piContextWindowLength && piContextWindowLength > 0) {
+			return { inputTokens: piContextWindowLength, outputTokens: 0 };
+		}
+
+		// Priority 2: Real usage from the last assistant message (set during streaming)
 		for (let i = messages.length - 1; i >= 0; i--) {
 			const msg = messages[i];
 			if (msg.role === "assistant" && msg.usage) {
 				const u = msg.usage;
-				const input = u.input_tokens ?? 0;
-				const output = u.output_tokens ?? 0;
+				const input = normalizeTokenCount(u.input_tokens);
+				const output = normalizeTokenCount(u.output_tokens);
 				if (input > 0 || output > 0) {
 					return { inputTokens: input, outputTokens: output };
 				}
 			}
 		}
 
-		// Priority 2: Pi session stats (fetched on session load)
+		// Priority 3: Pi session token totals (fallback)
 		if (
 			piSessionTokens &&
 			(piSessionTokens.input > 0 || piSessionTokens.output > 0)
@@ -982,7 +998,7 @@ export function ChatView({
 			};
 		}
 
-		// Priority 3: Fallback estimate from text content (4 chars ~ 1 token)
+		// Priority 4: Fallback estimate from text content (4 chars ~ 1 token)
 		let lastCompactionIndex = -1;
 		for (let i = messages.length - 1; i >= 0; i--) {
 			if (messages[i].parts.some((p) => p.type === "compaction")) {
@@ -1016,7 +1032,7 @@ export function ChatView({
 			}
 		}
 		return { inputTokens, outputTokens };
-	}, [messages, piSessionTokens]);
+	}, [messages, piContextWindowLength, piSessionTokens]);
 
 	const gaugeTokens = contextTokenCount;
 
@@ -4207,14 +4223,41 @@ function PiPartRenderer({
 
 		case "file_ref": {
 			const fileRef = part as Extract<DisplayPart, { type: "file_ref" }>;
-			const uri = fileRef.uri ?? "";
-			const filePath = uri.startsWith("file://")
-				? decodeURIComponent(uri.replace("file://", ""))
-				: uri;
-			if (workspacePath && filePath) {
+			const rawUri = (fileRef.uri ?? "").trim();
+			const isWebUrl = /^https?:\/\//i.test(rawUri);
+			const isDataUrl = /^data:/i.test(rawUri);
+			if (isWebUrl || isDataUrl) {
 				return (
 					<FileReferenceCard
-						filePath={filePath}
+						filePath={fileRef.label ?? rawUri}
+						workspacePath={workspacePath}
+						directUrl={rawUri}
+						label={fileRef.label}
+					/>
+				);
+			}
+
+			let candidatePath = rawUri;
+			if (candidatePath.startsWith("@")) {
+				candidatePath = candidatePath.slice(1);
+			}
+			if (candidatePath.startsWith("file://")) {
+				candidatePath = decodeURIComponent(
+					candidatePath.replace("file://", ""),
+				);
+			}
+
+			if (workspacePath) {
+				const root = workspacePath.replace(/\/+$/, "");
+				if (candidatePath.startsWith(`${root}/`)) {
+					candidatePath = candidatePath.slice(root.length + 1);
+				}
+			}
+
+			if (candidatePath && !candidatePath.startsWith("/")) {
+				return (
+					<FileReferenceCard
+						filePath={candidatePath}
 						workspacePath={workspacePath}
 						label={fileRef.label}
 					/>
@@ -4223,7 +4266,7 @@ function PiPartRenderer({
 			return (
 				<div className="rounded-md border border-border/60 px-3 py-2 text-sm text-foreground/80">
 					<ExternalLink className="mr-2 inline-block h-4 w-4" />
-					{fileRef.label ?? uri}
+					{fileRef.label ?? rawUri}
 				</div>
 			);
 		}
@@ -4453,7 +4496,7 @@ export const FileReferenceCard = memo(function FileReferenceCard({
 	onOpenFileReference,
 }: {
 	filePath: string;
-	workspacePath: string;
+	workspacePath?: string | null;
 	directUrl?: string;
 	label?: string;
 	onOpenFileReference?: (filePath: string) => void;
@@ -4463,20 +4506,63 @@ export const FileReferenceCard = memo(function FileReferenceCard({
 	const [imageLoaded, setImageLoaded] = useState(false);
 	const [fileExists, setFileExists] = useState<boolean | null>(null);
 	const [fileUrl, setFileUrl] = useState<string | null>(null);
+	const [resolvedWorkspacePath, setResolvedWorkspacePath] =
+		useState<string>("");
 
-	const fileInfo = useMemo(() => getFileTypeInfo(filePath), [filePath]);
+	const workspaceScopedPath = useMemo(() => {
+		const workspaceRoot = (workspacePath ?? "").replace(/\/+$/, "");
+		if (!workspaceRoot) return filePath;
+		if (filePath === workspaceRoot) return ".";
+		if (filePath.startsWith(`${workspaceRoot}/`)) {
+			return filePath.slice(workspaceRoot.length + 1);
+		}
+		return filePath;
+	}, [filePath, workspacePath]);
+
+	const candidateWorkspacePaths = useMemo(() => {
+		const candidates = new Set<string>([workspaceScopedPath]);
+		if (workspaceScopedPath.includes("%")) {
+			try {
+				candidates.add(decodeURIComponent(workspaceScopedPath));
+			} catch {
+				// ignore malformed encoding
+			}
+		}
+		return [...candidates].filter((v) => v.length > 0);
+	}, [workspaceScopedPath]);
+
+	const fileInfo = useMemo(
+		() => getFileTypeInfo(workspaceScopedPath),
+		[workspaceScopedPath],
+	);
 	const isImage = fileInfo.category === "image";
 	const isVideo = fileInfo.category === "video";
-	const fileName = label || filePath.split("/").pop() || filePath;
+	const fileName =
+		label || workspaceScopedPath.split("/").pop() || workspaceScopedPath;
 
 	// Download file
 	const handleDownload = useCallback(async () => {
 		try {
-			await downloadFileMux(workspacePath, filePath, fileName);
+			if (directUrl) {
+				window.open(directUrl, "_blank", "noopener");
+				return;
+			}
+			if (!workspacePath) return;
+			await downloadFileMux(
+				workspacePath,
+				resolvedWorkspacePath || workspaceScopedPath,
+				fileName,
+			);
 		} catch (err) {
 			console.error("Failed to download file:", err);
 		}
-	}, [workspacePath, filePath, fileName]);
+	}, [
+		directUrl,
+		workspacePath,
+		resolvedWorkspacePath,
+		workspaceScopedPath,
+		fileName,
+	]);
 
 	// Open in canvas (only for images)
 	const handleOpenInCanvas = useCallback(() => {
@@ -4484,10 +4570,12 @@ export const FileReferenceCard = memo(function FileReferenceCard({
 		// Dispatch custom event that SessionScreen can listen to
 		window.dispatchEvent(
 			new CustomEvent("oqto:open-in-canvas", {
-				detail: { imagePath: filePath },
+				detail: {
+					imagePath: resolvedWorkspacePath || workspaceScopedPath,
+				},
 			}),
 		);
-	}, [isImage, filePath]);
+	}, [isImage, resolvedWorkspacePath, workspaceScopedPath]);
 
 	useEffect(() => {
 		let cancelled = false;
@@ -4496,6 +4584,7 @@ export const FileReferenceCard = memo(function FileReferenceCard({
 		setFileExists(null);
 		setImageLoaded(false);
 		setFileUrl(directUrl ?? null);
+		setResolvedWorkspacePath("");
 
 		if (!workspacePath && !directUrl) {
 			setFileExists(false);
@@ -4504,27 +4593,19 @@ export const FileReferenceCard = memo(function FileReferenceCard({
 		}
 
 		const run = async () => {
-			try {
-				if (!directUrl && workspacePath) {
-					await statPathMux(workspacePath, filePath);
-				}
+			const resolvedPath =
+				candidateWorkspacePaths.find((candidate) => !candidate.includes("%")) ??
+				candidateWorkspacePaths[0] ??
+				workspaceScopedPath;
+			if (cancelled) return;
+			setResolvedWorkspacePath(resolvedPath);
+			setFileExists(true);
 
-				if (cancelled) return;
-				setFileExists(true);
-
-				if ((isImage || isVideo) && !directUrl && workspacePath) {
-					if (cancelled) return;
-					setFileUrl(workspaceFileUrl(workspacePath, filePath));
-				}
-			} catch {
-				if (cancelled) return;
-				setFileExists(false);
-				setError("File not found");
+			if ((isImage || isVideo) && !directUrl && workspacePath) {
+				setFileUrl(workspaceFileUrl(workspacePath, resolvedPath));
+			}
+			if (!isImage && !isVideo) {
 				setIsLoading(false);
-			} finally {
-				if (!cancelled && !isImage && !isVideo) {
-					setIsLoading(false);
-				}
 			}
 		};
 
@@ -4532,20 +4613,52 @@ export const FileReferenceCard = memo(function FileReferenceCard({
 		return () => {
 			cancelled = true;
 		};
-	}, [directUrl, filePath, isImage, isVideo, workspacePath]);
+	}, [
+		candidateWorkspacePaths,
+		directUrl,
+		isImage,
+		isVideo,
+		workspacePath,
+		workspaceScopedPath,
+	]);
 
 	// Don't render anything if file doesn't exist
-	if (fileExists === false) {
-		return null;
-	}
-
-	// Show loading state while checking existence
 	if (fileExists === null) {
-		return null;
+		return (
+			<div className="inline-flex items-center gap-2 px-3 py-1.5 border border-border bg-muted/20 rounded text-xs text-muted-foreground">
+				<Loader2 className="w-3.5 h-3.5 animate-spin" />
+				Loading preview…
+			</div>
+		);
 	}
 
-	if ((isImage || isVideo) && !fileUrl) {
-		return null;
+	if (fileExists === false || ((isImage || isVideo) && !fileUrl)) {
+		const FileIcon = fileInfo.category === "code" ? FileCode : FileText;
+		return (
+			<button
+				type="button"
+				onClick={() => {
+					if (directUrl) {
+						window.open(directUrl, "_blank", "noopener");
+						return;
+					}
+					if (!workspacePath) return;
+					void downloadFileMux(
+						workspacePath,
+						resolvedWorkspacePath || workspaceScopedPath,
+						fileName,
+					);
+				}}
+				className="inline-flex items-center gap-2 px-3 py-1.5 border border-border bg-muted/20 rounded hover:bg-muted/40 transition-colors text-sm"
+			>
+				<FileIcon className="w-4 h-4 text-muted-foreground" />
+				<span className="font-medium">{fileName}</span>
+				<span className="text-xs text-muted-foreground">
+					Preview unavailable
+				</span>
+				<ExternalLink className="w-3 h-3 text-muted-foreground" />
+			</button>
+		);
 	}
 
 	// For images, render inline preview
@@ -4652,7 +4765,7 @@ export const FileReferenceCard = memo(function FileReferenceCard({
 			type="button"
 			onClick={() => {
 				if (onOpenFileReference) {
-					onOpenFileReference(filePath);
+					onOpenFileReference(workspaceScopedPath);
 					return;
 				}
 				if (directUrl) {
@@ -4660,13 +4773,15 @@ export const FileReferenceCard = memo(function FileReferenceCard({
 					return;
 				}
 				if (!workspacePath) return;
-				void downloadFileMux(workspacePath, filePath, fileName);
+				void downloadFileMux(workspacePath, workspaceScopedPath, fileName);
 			}}
 			className="inline-flex items-center gap-2 px-3 py-1.5 border border-border bg-muted/20 rounded hover:bg-muted/40 transition-colors text-sm"
 		>
 			<FileIcon className="w-4 h-4 text-muted-foreground" />
 			<span className="font-medium">{fileName}</span>
-			<span className="text-xs text-muted-foreground">{filePath}</span>
+			<span className="text-xs text-muted-foreground">
+				{workspaceScopedPath}
+			</span>
 			<ExternalLink className="w-3 h-3 text-muted-foreground" />
 		</button>
 	);
