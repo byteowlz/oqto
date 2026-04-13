@@ -642,13 +642,24 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 					}
 					return;
 				}
+				const hasAuthoritativeVersion = Number.isFinite(
+					expectedVersion ?? Number.NaN,
+				);
+				// Authority contract: only run destructive authoritative reconciliation
+				// when we have a concrete version bound for this fetch. Reload/resync
+				// fetches without version are treated as partial snapshots so cached
+				// complete timelines cannot be clobbered by shorter windows.
+				const mergeMode: "partial" | "authoritative" =
+					isStreamingRef.current ||
+					sendInFlightRef.current ||
+					!hasAuthoritativeVersion
+						? "partial"
+						: "authoritative";
 				applyServerMessages(
 					history as RawMessage[],
 					sessionId,
 					expectedVersion,
-					isStreamingRef.current || sendInFlightRef.current
-						? "partial"
-						: "authoritative",
+					mergeMode,
 				);
 				if (!isStreamingRef.current && !sendInFlightRef.current) {
 					applyTurnState({ kind: "idle" });
