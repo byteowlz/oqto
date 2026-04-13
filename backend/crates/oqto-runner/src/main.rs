@@ -115,7 +115,10 @@ async fn main() -> Result<()> {
             info!("hstry endpoint: Unix socket {:?}", socket_path);
             HstryEndpoint::UnixSocket(socket_path)
         } else {
-            info!("hstry Unix socket not found at {:?}; using auto-discover", socket_path);
+            info!(
+                "hstry Unix socket not found at {:?}; using auto-discover",
+                socket_path
+            );
             HstryEndpoint::Discover
         }
     };

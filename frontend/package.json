@@ -8,7 +8,7 @@
 		"dev": "bun run sync:visual-runtime-assets && vite",
 		"build": "bun run sync:visual-runtime-assets && vite build",
 		"preview": "vite preview",
-		"lint": "biome check . && bunx oxlint --import-plugin --tsconfig ./tsconfig.json --ignore-path .eslintignore . && bun run lint:useeffect-guardrail",
+		"lint": "bun run format:generated-types && biome check . && bunx oxlint --import-plugin --tsconfig ./tsconfig.json --ignore-path .eslintignore . && bun run lint:useeffect-guardrail",
 		"lint:useeffect-guardrail": "bun scripts/check-useeffect-guardrail.mjs",
 		"lint:useeffect-guardrail:update": "bun scripts/check-useeffect-guardrail.mjs --update-baseline",
 		"tauri:dev": "bunx tauri dev",

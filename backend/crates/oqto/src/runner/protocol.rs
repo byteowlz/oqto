@@ -1738,11 +1738,13 @@ pub fn hstry_proto_to_chat_proto(
 
     // Split model string "provider/model" if present
     let (provider_id, model_id) = match &msg.model {
-        Some(m) if m.contains('/') => {
-            let (p, model) = m.split_once('/').expect("checked contains");
-            (Some(p.to_string()), Some(model.to_string()))
+        Some(m) => {
+            if let Some((provider, model)) = m.split_once('/') {
+                (Some(provider.to_string()), Some(model.to_string()))
+            } else {
+                (msg.provider.clone(), Some(m.clone()))
+            }
         }
-        Some(m) => (msg.provider.clone(), Some(m.clone())),
         None => (msg.provider.clone(), None),
     };
 
