@@ -4,7 +4,7 @@ default:
     @just --list
 
 # Build all components
-build: build-backend build-frontend
+build: agent-check-on-change build-backend build-frontend
 
 # Build backend (all workspace crates)
 build-backend:
@@ -18,6 +18,11 @@ build-frontend:
 
 # Run all linters
 lint: lint-backend lint-frontend lint-rust-ai-guardrails lint-no-legacy-history-authority
+
+# Automatic non-daemon quality gate for agent workflows.
+# Runs only when git working tree changed since the last successful check.
+agent-check-on-change profile="quick":
+	./scripts/agent-check-on-change.sh {{profile}}
 
 # Lint backend
 lint-backend:
@@ -52,7 +57,7 @@ lint-no-legacy-history-authority:
     ./scripts/lint/no-legacy-history-authority.sh
 
 # Run all tests
-test: test-backend test-frontend
+test: agent-check-on-change test-backend test-frontend
 
 # Test backend
 test-backend:
@@ -73,7 +78,7 @@ gen-types:
     cd frontend && bun run format:generated-types
 
 # Check all Rust code compiles
-check:
+check: agent-check-on-change
     cd backend && remote-build check
 
 # Start backend server
@@ -81,7 +86,7 @@ serve:
     /usr/local/bin/oqto serve
 
 # Start frontend dev server
-dev:
+dev: agent-check-on-change
     cd frontend && bun dev
 
 # Start frontend dev server with verbose WS logs and control plane URL

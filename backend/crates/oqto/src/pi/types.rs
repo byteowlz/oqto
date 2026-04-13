@@ -632,6 +632,14 @@ pub struct SessionStats {
     pub tool_results: u64,
     #[serde(rename = "totalMessages")]
     pub total_messages: u64,
+    #[serde(
+        rename = "contextWindowLength",
+        alias = "context_window_length",
+        alias = "contextLength",
+        alias = "context_length",
+        default
+    )]
+    pub context_window_length: Option<u64>,
     pub tokens: SessionTokens,
     pub cost: f64,
 }
