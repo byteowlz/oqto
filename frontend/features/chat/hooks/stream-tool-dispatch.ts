@@ -35,6 +35,40 @@ export type StreamToolDispatchContext = {
 	isStreamingRef: MutableRefObject<boolean>;
 };
 
+function upsertRetryErrorPart(
+	message: DisplayMessage,
+	nextPartId: () => string,
+	text: string,
+	retryAttempt?: number,
+	retryMax?: number,
+): void {
+	const existing = message.parts.find(
+		(part): part is Extract<DisplayPart, { type: "error" }> =>
+			part.type === "error" && part.retrying === true,
+	);
+	if (existing) {
+		existing.text = text;
+		existing.retrying = true;
+		existing.retryAttempt = retryAttempt;
+		existing.retryMax = retryMax;
+		return;
+	}
+	message.parts.push({
+		type: "error",
+		id: nextPartId(),
+		text,
+		retrying: true,
+		retryAttempt,
+		retryMax,
+	});
+}
+
+function removeRetryErrorPart(message: DisplayMessage): void {
+	message.parts = message.parts.filter(
+		(part) => !(part.type === "error" && part.retrying === true),
+	);
+}
+
 export const dispatchStreamToolEvent = ({
 	event,
 	activeSessionId,
@@ -182,6 +216,28 @@ export const dispatchStreamToolEvent = ({
 					isStreaming: true,
 				};
 			}
+
+			const retryAttempt =
+				typeof event.attempt === "number" ? event.attempt : undefined;
+			const retryMax =
+				typeof event.max_attempts === "number" ? event.max_attempts : undefined;
+			const retryError =
+				typeof event.error === "string" && event.error.trim().length > 0
+					? event.error.trim()
+					: "The model request failed";
+			const retryText =
+				retryAttempt && retryMax
+					? `${retryError} — retrying (${retryAttempt}/${retryMax})…`
+					: `${retryError} — retrying…`;
+			upsertRetryErrorPart(
+				currentMsg,
+				nextPartId,
+				retryText,
+				retryAttempt,
+				retryMax,
+			);
+			scheduleStreamingUpdate();
+
 			setBusyForEvent(event.session_id ?? activeSessionId, true);
 			isStreamingRef.current = true;
 			applyTurnState({ kind: "streaming" });
@@ -190,6 +246,9 @@ export const dispatchStreamToolEvent = ({
 
 		case "retry.end": {
 			const retrySuccess = event.success as boolean;
+			const currentMsg = ensureAssistantMessage(true);
+			removeRetryErrorPart(currentMsg);
+			scheduleStreamingUpdate();
 			if (retrySuccess) {
 				setBusyForEvent(event.session_id ?? activeSessionId, true);
 				isStreamingRef.current = true;

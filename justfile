@@ -991,6 +991,12 @@ reliability-all-local:
 smoke-runner-user-plane:
     ./scripts/e2e/smoke-runner-user-plane.sh
 
+# Sandbox profile compatibility matrix:
+# - CLI path for minimal/development/strict
+# - Runner + Pi + EAVS mock streaming for minimal/development
+sandbox-profile-matrix *ARGS:
+    ./scripts/e2e/sandbox-profile-matrix.sh {{ARGS}}
+
 # Convert oqto.setup.toml to vm.tests.toml format
 vm-convert-config setup_file:
     cd scripts && ./convert-setup-toml.sh {{setup_file}}

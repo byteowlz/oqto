@@ -564,7 +564,11 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 	);
 
 	const fetchHistoryMessages = useCallback(
-		async (sessionId: string, expectedVersion?: number) => {
+		async (
+			sessionId: string,
+			expectedVersion?: number,
+			opts?: { forceAuthoritative?: boolean },
+		) => {
 			try {
 				const swId = sharedWorkspaceSessionMap.get(sessionId);
 				let history = await getChatMessages(sessionId, swId).catch(
@@ -649,12 +653,14 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 				// when we have a concrete version bound for this fetch. Reload/resync
 				// fetches without version are treated as partial snapshots so cached
 				// complete timelines cannot be clobbered by shorter windows.
+				// Exception: agent.idle callers pass forceAuthoritative to guarantee
+				// tmp: streaming leftovers are reconciled even without a version.
 				const mergeMode: "partial" | "authoritative" =
-					isStreamingRef.current ||
-					sendInFlightRef.current ||
-					!hasAuthoritativeVersion
+					isStreamingRef.current || sendInFlightRef.current
 						? "partial"
-						: "authoritative";
+						: hasAuthoritativeVersion || opts?.forceAuthoritative
+							? "authoritative"
+							: "partial";
 				applyServerMessages(
 					history as RawMessage[],
 					sessionId,
@@ -921,11 +927,12 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 						}
 						streamingMessageRef.current = null;
 					}
-					// Clear streaming state. The Messages event from agent.end
-					// now only contains assistant messages, so no deduplication
-					// issues with the optimistic user message.
+					// Clear streaming state but keep turn in "syncing" until
+					// agent.idle arrives with the authoritative history fetch.
+					// Setting idle here would let stale get_messages responses
+					// slip through the liveTurnActive guard and insert duplicates.
 					isStreamingRef.current = false;
-					applyTurnState({ kind: "idle" });
+					applyTurnState({ kind: "syncing" });
 					break;
 				}
 
@@ -1080,6 +1087,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 										Number.isFinite(messageVersion)
 											? messageVersion
 											: undefined,
+										{ forceAuthoritative: true },
 									);
 								} else {
 									applyTurnState({ kind: "idle" });
@@ -1323,10 +1331,14 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 					// snapshots). Merge by id/client_id instead of replacing history.
 					const msgs = event.messages;
 					if (Array.isArray(msgs)) {
+						const turnState = machineRef.current.turn.kind;
 						const liveTurnActive =
 							isStreamingRef.current ||
 							Boolean(streamingMessageRef.current) ||
-							sendInFlightRef.current;
+							sendInFlightRef.current ||
+							turnState === "streaming" ||
+							turnState === "syncing" ||
+							turnState === "sending";
 						if (!liveTurnActive) {
 							applyServerMessages(
 								msgs,
@@ -1376,6 +1388,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 						eventSessionId: event.session_id,
 						activeSessionId: activeSessionIdRef.current,
 						isDebug: isPiDebugEnabled(),
+						turnKind: machineRef.current.turn.kind,
 						setState,
 						bindSessionIdentity,
 						applyTurnState,

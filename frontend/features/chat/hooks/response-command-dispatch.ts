@@ -20,6 +20,8 @@ export type ResponseDispatchContext = {
 	eventSessionId?: string;
 	activeSessionId: string | null;
 	isDebug: boolean;
+	/** Current turn kind from the chat state machine (idle, streaming, syncing, etc.). */
+	turnKind: string;
 	setState: Dispatch<SetStateAction<AgentState | null>>;
 	bindSessionIdentity: (ids: { runnerId: string; piId?: string }) => void;
 	applyTurnState: (state: TurnState) => void;
@@ -32,6 +34,7 @@ export type ResponseDispatchContext = {
 	fetchHistoryMessages: (
 		sessionId: string,
 		expectedVersion?: number,
+		opts?: { forceAuthoritative?: boolean },
 	) => Promise<void>;
 	applyServerMessages: (
 		rawMessages: RawMessage[] | unknown[],
@@ -57,6 +60,7 @@ export const dispatchResponseCommand = (ctx: ResponseDispatchContext): void => {
 		eventSessionId,
 		activeSessionId,
 		isDebug,
+		turnKind,
 		setState,
 		bindSessionIdentity,
 		applyTurnState,
@@ -79,8 +83,17 @@ export const dispatchResponseCommand = (ctx: ResponseDispatchContext): void => {
 		case "steer":
 		case "follow_up": {
 			if (!resp.success) {
-				applyTurnState({ kind: "idle" });
+				const errMsg = resp.error || `Failed to execute ${resp.cmd}`;
+				applyTurnState({
+					kind: "error",
+					recoverable: true,
+					message: errMsg,
+				});
 				setBusyForEvent(eventSessionId ?? activeSessionId, false);
+				const err = new Error(errMsg);
+				setError(err);
+				onError?.(err);
+				recoverSessionOnError(errMsg);
 			}
 			return;
 		}
@@ -152,10 +165,16 @@ export const dispatchResponseCommand = (ctx: ResponseDispatchContext): void => {
 		case "get_messages": {
 			if (resp.success && resp.data) {
 				const { messages, serverVersion } = parseGetMessagesPayload(resp.data);
+				// Include the turn state: "syncing" means we're between
+				// stream.message_end and agent.idle — refs are cleared but the
+				// turn is not truly idle. Stale snapshots must not be applied.
 				const liveTurnActive =
 					isStreamingRef.current ||
 					Boolean(streamingMessageRef.current) ||
-					sendInFlightRef.current;
+					sendInFlightRef.current ||
+					turnKind === "streaming" ||
+					turnKind === "syncing" ||
+					turnKind === "sending";
 				if (Array.isArray(messages)) {
 					// Structural authority rule: during an active live turn, streaming
 					// events own the timeline. Snapshot get_messages payloads are
