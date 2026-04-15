@@ -9,7 +9,10 @@
  */
 
 import { useSelectedChat } from "@/components/contexts";
-import { getRunnerHistoryAlias } from "@/components/contexts/chat-context";
+import {
+	getRunnerHistoryAlias,
+	useChatContext,
+} from "@/components/contexts/chat-context";
 import type { PiModelInfo } from "@/features/chat/api";
 import { updateSettingsValues } from "@/lib/api/settings";
 import {
@@ -84,6 +87,19 @@ export function useModelSelection(
 	locale: "en" | "de" = "en",
 ): ModelSelectionState & ModelSelectionActions {
 	const { selectedChatFromHistory } = useSelectedChat();
+	const { runnerSessions } = useChatContext();
+
+	// Derive model from the active runner session for this sessionId.
+	// This is available before chat history merges and localStorage is populated.
+	const runnerSessionModelRef = useMemo(() => {
+		if (!sessionId) return null;
+		const rs = runnerSessions.find((s) => s.session_id === sessionId);
+		if (rs?.provider && rs?.model) {
+			return `${rs.provider}/${rs.model}`;
+		}
+		return null;
+	}, [sessionId, runnerSessions]);
+
 	const _normalizedWorkspacePath = useMemo(
 		() => normalizeWorkspacePath(workspacePath),
 		[workspacePath],
@@ -210,7 +226,7 @@ export function useModelSelection(
 		};
 	}, [effectiveSessionId]);
 
-	// Load selected model: session storage > hstry session > workspace default > null
+	// Load selected model: session storage > hstry session > workspace default > keep current
 	useEffect(() => {
 		const readStoredRef = (key: string | null) => {
 			if (!key) return null;
@@ -257,22 +273,45 @@ export function useModelSelection(
 			return;
 		}
 
-		// Only use workspace-wide default when there is no active session yet.
-		if (!effectiveSessionId) {
-			const workspaceStored = readStoredRef(workspaceModelStorageKey);
-			if (workspaceStored) {
-				setSelectedModelSynced(workspaceStored);
-				return;
+		// Fall back to model reported by the active runner session.
+		// This is available before chat history merges and before
+		// config.model_changed events arrive.
+		if (runnerSessionModelRef) {
+			setSelectedModelSynced(runnerSessionModelRef);
+			try {
+				if (modelStorageKey) {
+					localStorage.setItem(modelStorageKey, runnerSessionModelRef);
+				}
+				if (aliasModelStorageKey) {
+					localStorage.setItem(aliasModelStorageKey, runnerSessionModelRef);
+				}
+			} catch {
+				// ignore localStorage errors
 			}
+			return;
 		}
 
-		setSelectedModelSynced(null);
+		// Use workspace-wide default as fallback.
+		const workspaceStored = readStoredRef(workspaceModelStorageKey);
+		if (workspaceStored) {
+			setSelectedModelSynced(workspaceStored);
+			return;
+		}
+
+		// When we have an active session, the model info may still be loading
+		// (runner session merge or config.model_changed event pending).
+		// Preserve the current selection instead of resetting to null which
+		// would flash "Select model" in the UI.
+		if (!effectiveSessionId) {
+			setSelectedModelSynced(null);
+		}
 	}, [
 		modelStorageKey,
 		workspaceModelStorageKey,
 		effectiveSessionId,
 		selectedChatFromHistory?.provider,
 		selectedChatFromHistory?.model,
+		runnerSessionModelRef,
 		setSelectedModelSynced,
 		aliasModelStorageKey,
 	]);
