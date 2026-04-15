@@ -45,4 +45,3 @@ scripts/e2e/.secrets/
 
 # Claude Code local config (permissions cache)
 .claude/
-CLAUDE.md

@@ -2,24 +2,6 @@
 
 ## Open
 
-### [oqto-bhaj.19] P0 Epic: Deterministic live chat timeline integrity (streaming, session-switch, markdown) (P0, epic)
-Structural hardening epic for remaining frontend timeline instability after oqto-log cutover.
-
-Scope:
-- Replace ad-hoc message mutations with a single reducer/state-machine for live + authoritative lanes.
-- Enforce strict identity reconciliation (id/client_id only) and session alias equivalence across all event gates.
-...
-
-
-### [oqto-bhaj.18] P0 frontend streaming timeline instability: disappearing messages + markdown render regressions (P0, bug)
-In active sessions (e.g. Context Window Issues / beat-myth-sock), streaming messages disappear mid-response, order shifts, and raw markdown occasionally appears. Need deterministic event/state pipeline and rendering stabilization.
-
-### [oqto-bhaj.17] Per-session model persistence across alias IDs on reload (P0, bug)
-Session model keys can drift when selected session ID differs between platform/runner alias forms across reload, causing fallback to wrong model. Persist/load model under both alias keys.
-
-### [oqto-bhaj] oqto-log hardening pass: typed store/projector interfaces and deterministic resolver (P0, task)
-Refactor oqto-log integration to use explicit LogStore/Projector interfaces, central path resolver usage, remove ad-hoc projector scanning from read paths, and add golden regression tests for parts + dedupe.
-
 ### [oqto-c4x3] Pi-authoritative history pipeline: zero-loss external-session compatibility with canonical+hstry projection (P0, epic)
 Goal
 - Preserve instant history load/search while guaranteeing zero message loss and full fork/tree compatibility for Pi sessions, including sessions started/continued outside Oqto.
@@ -49,6 +31,10 @@ Architecture Decision
 
 ## Closed
 
+- [oqto-bhaj] oqto-log hardening pass: typed store/projector interfaces and deterministic resolver (closed 2026-04-15)
+- [oqto-bhaj.19] P0 Epic: Deterministic live chat timeline integrity (streaming, session-switch, markdown) (closed 2026-04-15)
+- [oqto-bhaj.17] Per-session model persistence across alias IDs on reload (closed 2026-04-15)
+- [oqto-bhaj.18] P0 frontend streaming timeline instability: disappearing messages + markdown render regressions (closed 2026-04-15)
 - [oqto-7wwd] Refresh installed oqto-sandbox binaries on host (closed 2026-04-14)
 - [oqto-9sp0] Unify sandbox execution path and add profile compatibility tests with EAVS mock (closed 2026-04-14)
 - [oqto-m9px] oqto-sandbox CLI: Landlock pre_exec blocks bwrap uid_map write when --unshare-user is used (closed 2026-04-14)
@@ -1183,13 +1169,13 @@ Architecture Decision
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
-- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
-- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
-- [oqto-4ryr] Session rename reverts: update_chat_session returns external_id while list returns platform_id (closed )
-- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
 - [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
-- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
 - [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [oqto-4ryr] Session rename reverts: update_chat_session returns external_id while list returns platform_id (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
+- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
+- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
+- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
+- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
 - [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
