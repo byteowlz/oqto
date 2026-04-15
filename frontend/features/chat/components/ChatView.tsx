@@ -969,12 +969,7 @@ export function ChatView({
 			return { inputTokens: 0, outputTokens: 0 };
 		}
 
-		// Priority 1: Pi-reported context window length (authoritative current window)
-		if (piContextWindowLength && piContextWindowLength > 0) {
-			return { inputTokens: piContextWindowLength, outputTokens: 0 };
-		}
-
-		// Priority 2: Real usage from the last assistant message (set during streaming)
+		// Priority 1: Real usage from the last assistant message (set during streaming)
 		for (let i = messages.length - 1; i >= 0; i--) {
 			const msg = messages[i];
 			if (msg.role === "assistant" && msg.usage) {
@@ -987,7 +982,7 @@ export function ChatView({
 			}
 		}
 
-		// Priority 3: Pi session token totals (fallback)
+		// Priority 2: Pi session token totals (cumulative session stats)
 		if (
 			piSessionTokens &&
 			(piSessionTokens.input > 0 || piSessionTokens.output > 0)
@@ -996,6 +991,12 @@ export function ChatView({
 				inputTokens: piSessionTokens.input,
 				outputTokens: piSessionTokens.output,
 			};
+		}
+
+		// Priority 3: Pi-reported context window length (fallback estimate)
+		// Note: contextWindowLength is the current window size, not cumulative
+		if (piContextWindowLength && piContextWindowLength > 0) {
+			return { inputTokens: piContextWindowLength, outputTokens: 0 };
 		}
 
 		// Priority 4: Fallback estimate from text content (4 chars ~ 1 token)
@@ -4434,17 +4435,11 @@ function TextWithFileReferences({
 
 	const contentBlock = (
 		<div className="space-y-2 select-none sm:select-auto min-w-0 max-w-full">
-			{deferMermaidUntilFinal ? (
-				<div className="text-sm text-foreground leading-relaxed whitespace-pre-wrap break-words [overflow-wrap:anywhere] [word-break:break-word] min-w-0 max-w-full overflow-x-hidden">
-					{cleanContent}
-				</div>
-			) : (
-				<MarkdownRenderer
-					content={markdownContent}
-					className="text-sm text-foreground leading-relaxed overflow-hidden min-w-0 max-w-full"
-					enableMermaid
-				/>
-			)}
+			<MarkdownRenderer
+				content={markdownContent}
+				className="text-sm text-foreground leading-relaxed overflow-hidden min-w-0 max-w-full"
+				enableMermaid={!deferMermaidUntilFinal}
+			/>
 			{/* Render file reference cards */}
 			{fileRefs.length > 0 && workspacePath && (
 				<div className="flex flex-wrap gap-2 mt-2">

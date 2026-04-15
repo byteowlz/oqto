@@ -967,6 +967,95 @@ quiesce_oqto_log_writers() {
     sleep 1
 }
 
+# Extract workspace paths from oqto-log bootstrap error messages.
+# Returns unique workspace paths with corruption indicators.
+extract_corrupted_workspaces_from_error() {
+    local error_output="$1"
+    echo "$error_output" | grep -oE 'workspace=[^[:space:]]+' | cut -d'=' -f2 | sort -u
+}
+
+# Compute the oqto-log database directory hash for a workspace path.
+workspace_to_db_hash() {
+    local workspace="$1"
+    echo -n "$workspace" | sha256sum | cut -c1-24
+}
+
+# Global marker file to track active auto-heal backup location (for rollback recovery)
+OQTO_LOG_AUTOHEAL_MARKER="~/.local/share/oqto/oqto-log/.auto-heal-in-progress"
+
+# Auto-heal corrupted oqto-log databases by backing up, deleting, and rebuilding them.
+# Outputs the backup directory path on success (for later cleanup), empty on failure.
+# On failure, the backup is NOT cleaned up - caller must restore or clean up.
+auto_heal_oqto_log_corruption() {
+    local is_local="$1" ssh_target="$2" error_output="$3"
+    local corrupted_workspaces
+    corrupted_workspaces=$(extract_corrupted_workspaces_from_error "$error_output")
+
+    if [[ -z "$corrupted_workspaces" ]]; then
+        return 1
+    fi
+
+    # Create a backup location for this deploy session
+    local backup_dir=~/.local/share/oqto/oqto-log/.auto-heal-backup-$(date +%s)
+    host_exec "$is_local" "$ssh_target" "mkdir -p '$backup_dir' && echo '$backup_dir' > '$OQTO_LOG_AUTOHEAL_MARKER'" || return 1
+
+    warn "Auto-healing corrupted oqto-log databases..."
+
+    local healed_any=false
+    while IFS= read -r workspace; do
+        [[ -z "$workspace" ]] && continue
+        local db_hash
+        db_hash=$(workspace_to_db_hash "$workspace")
+        warn "  Backing up corrupted oqto-log: $workspace (hash=$db_hash)"
+        host_exec "$is_local" "$ssh_target" "if [[ -d ~/.local/share/oqto/oqto-log/${db_hash} ]]; then mv ~/.local/share/oqto/oqto-log/${db_hash} '$backup_dir/'; fi" || true
+        healed_any=true
+    done <<< "$corrupted_workspaces"
+
+    if [[ "$healed_any" != "true" ]]; then
+        return 1
+    fi
+
+    # Re-run bootstrap after healing
+    log "Re-running oqto-log bootstrap after auto-heal..."
+    if host_exec "$is_local" "$ssh_target" "oqto runner migrate-oqto-log --mode bootstrap"; then
+        ok "Auto-heal successful"
+        # Clean up backups on success and remove marker
+        host_exec "$is_local" "$ssh_target" "rm -rf '$backup_dir' '$OQTO_LOG_AUTOHEAL_MARKER'" || true
+        echo "$backup_dir"
+        return 0
+    else
+        warn "Auto-heal failed: bootstrap still failing after purge"
+        # Do NOT clean up backup here - caller must restore from it
+        return 1
+    fi
+}
+
+# Restore oqto-log databases from auto-heal backups.
+# Used during rollback to recover the pre-corruption state.
+restore_oqto_log_from_backup() {
+    local is_local="$1" ssh_target="$2" backup_dir="$3"
+    
+    # If no backup_dir provided, check for marker file
+    if [[ -z "$backup_dir" ]]; then
+        backup_dir=$(host_exec "$is_local" "$ssh_target" "cat '$OQTO_LOG_AUTOHEAL_MARKER' 2>/dev/null || true")
+    fi
+    [[ -z "$backup_dir" ]] && return 0
+
+    log "Restoring oqto-log databases from backup..."
+    host_exec "$is_local" "$ssh_target" "
+        if [[ -d '$backup_dir' ]]; then
+            for db in '$backup_dir'/*; do
+                [[ -d \"\$db\" ]] || continue
+                hash=\$(basename "\$db")
+                rm -rf ~/.local/share/oqto/oqto-log/\$hash
+                mv "\$db" ~/.local/share/oqto/oqto-log/
+            done
+            rm -rf '$backup_dir'
+        fi
+        rm -f '$OQTO_LOG_AUTOHEAL_MARKER'
+    " || warn "Failed to restore some oqto-log backups"
+}
+
 health_check_host() {
     local is_local="$1" ssh_target="$2" mode="$3"
     local start
@@ -1042,6 +1131,9 @@ rollback_host() {
 
     emit_event "$is_local" "$ssh_target" "$name" "rollback" "start" "rollback.start"
 
+    # If there was an incomplete auto-heal, restore databases from backup
+    restore_oqto_log_from_backup "$is_local" "$ssh_target" ""
+
     if [[ -z "$previous_release" ]]; then
         emit_event "$is_local" "$ssh_target" "$name" "rollback" "fail" "rollback.no_previous_release"
         err "Rollback failed on $name: no previous release"
@@ -1110,11 +1202,30 @@ activate_host() {
     while [[ "$oqto_log_pass" -le "$OQTO_LOG_MAX_PASSES" ]]; do
         log "[$name] oqto-log migrate/validate pass ${oqto_log_pass}/${OQTO_LOG_MAX_PASSES}"
 
-        if ! host_exec "$is_local" "$ssh_target" "oqto runner migrate-oqto-log --mode bootstrap"; then
-            emit_event "$is_local" "$ssh_target" "$name" "deploy.activate" "fail" "oqto_log.bootstrap_migration_failed"
-            warn "oqto-log bootstrap migration failed on $name, attempting rollback..."
-            rollback_host "$name" "$ssh_target" "$is_local" "$binaries" "$mode" "$services" "$previous_release"
-            return 1
+        local bootstrap_output
+        if ! bootstrap_output=$(host_exec "$is_local" "$ssh_target" "oqto runner migrate-oqto-log --mode bootstrap" 2>&1); then
+            # Check if this is a corruption error we can auto-heal
+            if echo "$bootstrap_output" | grep -q "replace_failed"; then
+                warn "Detected oqto-log corruption (replace_failed), attempting auto-heal..."
+                local heal_backup_dir
+                heal_backup_dir=$(auto_heal_oqto_log_corruption "$is_local" "$ssh_target" "$bootstrap_output")
+                if [[ $? -eq 0 ]]; then
+                    # Auto-heal succeeded, continue with validation
+                    : # Fall through to validation below
+                else
+                    # Auto-heal failed - restore from backup before rollback
+                    emit_event "$is_local" "$ssh_target" "$name" "deploy.activate" "fail" "oqto_log.auto_heal_failed"
+                    warn "Auto-heal failed on $name, restoring from backup and rolling back..."
+                    restore_oqto_log_from_backup "$is_local" "$ssh_target" "$heal_backup_dir"
+                    rollback_host "$name" "$ssh_target" "$is_local" "$binaries" "$mode" "$services" "$previous_release"
+                    return 1
+                fi
+            else
+                emit_event "$is_local" "$ssh_target" "$name" "deploy.activate" "fail" "oqto_log.bootstrap_migration_failed"
+                warn "oqto-log bootstrap migration failed on $name, attempting rollback..."
+                rollback_host "$name" "$ssh_target" "$is_local" "$binaries" "$mode" "$services" "$previous_release"
+                return 1
+            fi
         fi
 
         # Validation must pass once after a bootstrap pass.

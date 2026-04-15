@@ -330,7 +330,67 @@ describe("useChat send reliability", () => {
 		expect(assistant?.isStreaming).toBe(true);
 		const errorParts =
 			assistant?.parts.filter((part) => part.type === "error") ?? [];
-		expect(errorParts).toHaveLength(0);
+		expect(errorParts).toHaveLength(1);
+		expect(errorParts[0]).toMatchObject({
+			type: "error",
+			retrying: true,
+			retryAttempt: 1,
+			retryMax: 3,
+		});
+		if (errorParts[0]?.type === "error") {
+			expect(errorParts[0].text).toContain("429 Rate limit exceeded");
+			expect(errorParts[0].text).toContain("retrying");
+		}
+	});
+
+	it("clears transient retry indicator on retry.end success", async () => {
+		const { result } = renderHook(() =>
+			useChat({
+				autoConnect: false,
+				selectedSessionId: "sess-1",
+				workspacePath: "/tmp/ws",
+			}),
+		);
+
+		await waitFor(() => expect(sessionHandler).not.toBeNull());
+		const emit = (event: Record<string, unknown>) => {
+			act(() => {
+				sessionHandler?.(event);
+			});
+		};
+
+		emit({
+			channel: "agent",
+			session_id: "sess-1",
+			event: "stream.message_start",
+			role: "assistant",
+		});
+		emit({
+			channel: "agent",
+			session_id: "sess-1",
+			event: "retry.start",
+			attempt: 1,
+			max_attempts: 3,
+			error: "429 Rate limit exceeded",
+		});
+		emit({
+			channel: "agent",
+			session_id: "sess-1",
+			event: "retry.end",
+			success: true,
+			attempt: 1,
+		});
+
+		const assistantMessages = result.current.messages.filter(
+			(m) => m.role === "assistant",
+		);
+		const assistant = assistantMessages[assistantMessages.length - 1];
+		expect(assistant).toBeDefined();
+		const retryErrorParts =
+			assistant?.parts.filter(
+				(part) => part.type === "error" && part.retrying === true,
+			) ?? [];
+		expect(retryErrorParts).toHaveLength(0);
 	});
 
 	it("replaces working bubble with inline terminal error part on non-recoverable agent.error", async () => {

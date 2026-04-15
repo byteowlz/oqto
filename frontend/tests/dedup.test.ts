@@ -174,14 +174,47 @@ describe("mergeServerMessages", () => {
 		]);
 	});
 
-	it("partial mode is treated as authoritative after oqto-log cutover", () => {
+	it("partial mode preserves finalized streaming assistant messages", () => {
+		// Finalized assistant messages (tmp: prefix, isStreaming=false, no clientId)
+		// must be preserved in partial mode. They can only be superseded by an
+		// authoritative merge on agent.idle. Dropping them here causes message
+		// loss when stale get_messages responses arrive between stream.done and
+		// agent.idle.
 		const prev = [
 			textMsg("history-old", "user", "old"),
 			textMsg("tmp:assistant", "assistant", "stream", { isStreaming: false }),
 		];
 		const server = [textMsg("history-old", "user", "old")];
 		const result = mergeServerMessages(prev, server, "partial");
-		expect(result.map((m) => m.id)).toEqual(["history-old"]);
+		expect(result.map((m) => m.id)).toEqual(["history-old", "tmp:assistant"]);
+	});
+
+	it("authoritative mode after agent.idle cleans up tmp assistant even without version match", () => {
+		// Scenario: stream.done finalizes a tmp: assistant message. A stale
+		// partial get_messages response arrives and adds the persisted copy.
+		// Then agent.idle triggers an authoritative fetch that must collapse
+		// the duplicate pair down to the single persisted message.
+		const afterPartialRace = [
+			textMsg("history-1", "user", "question", { clientId: "c-1" }),
+			textMsg("tmp:assistant-1", "assistant", "response", {
+				isStreaming: false,
+			}),
+			textMsg("history-assistant-1", "assistant", "response"),
+		];
+		const authoritativeServer = [
+			textMsg("history-1", "user", "question", { clientId: "c-1" }),
+			textMsg("history-assistant-1", "assistant", "response"),
+		];
+		const result = mergeServerMessages(
+			afterPartialRace,
+			authoritativeServer,
+			"authoritative",
+		);
+		expect(result).toHaveLength(2);
+		expect(result.map((m) => m.id)).toEqual([
+			"history-1",
+			"history-assistant-1",
+		]);
 	});
 
 	it("interleavings converge to the same timeline", () => {

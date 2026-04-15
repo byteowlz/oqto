@@ -973,13 +973,16 @@ export function mergeServerMessages(
 				.map((m) => m.clientId)
 				.filter((c): c is string => typeof c === "string" && c.length > 0),
 		);
-		// Partial snapshots must not drop optimistic user turns. Keep preserved
-		// locals when they're still streaming OR have an unmatched clientId.
-		// Drop only stale tmp/legacy placeholders (no clientId, not streaming).
+		// Partial snapshots must not drop optimistic user turns or finalized
+		// streaming messages. Only drop local tmp/legacy messages whose clientId
+		// has been superseded by a server message (i.e. optimistic user messages
+		// that are now persisted). Finalized assistant messages (no clientId)
+		// are always preserved — they can only be properly superseded by an
+		// authoritative merge on agent.idle.
 		return merged.filter((msg) => {
 			if (!shouldPreserveLocalMessage(msg)) return true;
 			if (msg.isStreaming) return true;
-			if (msg.clientId && !serverClientIds.has(msg.clientId)) return true;
+			if (!msg.clientId || !serverClientIds.has(msg.clientId)) return true;
 			return false;
 		});
 	}

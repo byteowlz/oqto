@@ -42,3 +42,6 @@ pasted-image-*.png
 # Local reliability test secrets (never commit)
 scripts/e2e/.secrets/
 *.local.secrets.toml
+
+# Claude Code local config (permissions cache)
+.claude/

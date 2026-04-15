@@ -38,7 +38,7 @@ use crate::runner::protocol::{
     ChatMessageProto, PiSessionInfo, PiSessionState, agent_msg_to_chat_proto,
 };
 use oqto_protocol::events::{AgentPhase, Event as CanonicalEvent, EventPayload, MessageVersion};
-use oqto_sandbox::SandboxConfig;
+use oqto_sandbox::{SandboxConfig, configure_bwrap_pre_exec};
 
 // ============================================================================
 // Configuration
@@ -704,6 +704,7 @@ impl PiSessionManager {
             pi_args.push(session_file.to_string_lossy().to_string());
         }
         // Build command - either direct or via bwrap sandbox
+        let mut bwrap_pre_exec_config: Option<SandboxConfig> = None;
         let mut cmd = if let Some(ref sandbox_config) = self.config.sandbox_config {
             if sandbox_config.enabled {
                 // Merge with workspace-specific config (can only add restrictions)
@@ -733,6 +734,8 @@ impl PiSessionManager {
                         for arg in &pi_args {
                             cmd.arg(arg);
                         }
+
+                        bwrap_pre_exec_config = Some(effective_config.clone());
 
                         info!(
                             "Sandboxing Pi session '{}' with profile '{}' ({} bwrap args)",
@@ -798,6 +801,11 @@ impl PiSessionManager {
         cmd.stdin(std::process::Stdio::piped());
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
+
+        if let Some(pre_exec_cfg) = bwrap_pre_exec_config.as_ref() {
+            configure_bwrap_pre_exec(cmd.as_std_mut(), pre_exec_cfg, &config.cwd)
+                .context("Failed to configure bwrap pre-exec hooks")?;
+        }
 
         // Spawn the process
         let mut child = cmd.spawn().context("Failed to spawn Pi process")?;
