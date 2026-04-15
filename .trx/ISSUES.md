@@ -2,15 +2,6 @@
 
 ## Open
 
-### [oqto-c4x3] Pi-authoritative history pipeline: zero-loss external-session compatibility with canonical+hstry projection (P0, epic)
-Goal
-- Preserve instant history load/search while guaranteeing zero message loss and full fork/tree compatibility for Pi sessions, including sessions started/continued outside Oqto.
-
-Architecture Decision
-- For Pi sessions, Pi JSONL/native metadata is authoritative.
-...
-
-
 ### [oqto-8xga] Add TTL eviction to RECENT_CLIENT_IDS cache to prevent memory leak (P2, task)
 
 
@@ -31,6 +22,13 @@ Architecture Decision
 
 ## Closed
 
+- [oqto-c4x3] Pi-authoritative history pipeline: zero-loss external-session compatibility with canonical+hstry projection (closed 2026-04-15)
+- [oqto-c4x3.6] E2E regression suite: external start/continue, compaction, tool streams, forks (closed 2026-04-15)
+- [oqto-c4x3.5] Fork/tree lineage import for external Pi sessions (closed 2026-04-15)
+- [oqto-c4x3.4] Eliminate lossy active-session message paths from WS API (closed 2026-04-15)
+- [oqto-c4x3.3] Add reindex/repair command: rebuild Pi session projection from JSONL (closed 2026-04-15)
+- [oqto-c4x3.2] Implement deterministic JSONL->canonical projection engine (idempotent) (closed 2026-04-15)
+- [oqto-c4x3.1] Define Pi/Oqto/hstry identity + authority contract (closed 2026-04-15)
 - [oqto-bhaj] oqto-log hardening pass: typed store/projector interfaces and deterministic resolver (closed 2026-04-15)
 - [oqto-bhaj.19] P0 Epic: Deterministic live chat timeline integrity (streaming, session-switch, markdown) (closed 2026-04-15)
 - [oqto-bhaj.17] Per-session model persistence across alias IDs on reload (closed 2026-04-15)
@@ -51,12 +49,6 @@ Architecture Decision
 - [oqto-xjnv] Authoritative merge can drop optimistic user message before persistence (closed 2026-04-13)
 - [oqto-ctvc] Deploy ergonomics: make just deploy-host resilient to /tmp quota by setting TMPDIR automatically (closed 2026-04-13)
 - [oqto-bcqj.1] Retry/error UX regression: spinner drops, empty assistant bubble, error lost on reload (closed 2026-04-13)
-- [oqto-c4x3.6] E2E regression suite: external start/continue, compaction, tool streams, forks (closed 2026-04-13)
-- [oqto-c4x3.5] Fork/tree lineage import for external Pi sessions (closed 2026-04-13)
-- [oqto-c4x3.4] Eliminate lossy active-session message paths from WS API (closed 2026-04-13)
-- [oqto-c4x3.3] Add reindex/repair command: rebuild Pi session projection from JSONL (closed 2026-04-13)
-- [oqto-c4x3.2] Implement deterministic JSONL->canonical projection engine (idempotent) (closed 2026-04-13)
-- [oqto-c4x3.1] Define Pi/Oqto/hstry identity + authority contract (closed 2026-04-13)
 - [oqto-bcqj] Fix active get_messages path causing partial/disappearing assistant parts (closed 2026-04-13)
 - [oqto-57nd] Runner: transactional fork state machine (single in-flight fork per session) (closed 2026-04-13)
 - [oqto-ep9v] Deploy preflight: fix hstry schema check shell quoting (line 489) (closed 2026-04-13)
@@ -1169,13 +1161,13 @@ Architecture Decision
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
-- [oqto-4ryr] Session rename reverts: update_chat_session returns external_id while list returns platform_id (closed )
 - [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
 - [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
 - [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
 - [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
-- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
 - [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
 - [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
+- [oqto-4ryr] Session rename reverts: update_chat_session returns external_id while list returns platform_id (closed )
+- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
+- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
