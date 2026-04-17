@@ -980,8 +980,9 @@ workspace_to_db_hash() {
     echo -n "$workspace" | sha256sum | cut -c1-24
 }
 
-# Global marker file to track active auto-heal backup location (for rollback recovery)
-OQTO_LOG_AUTOHEAL_MARKER="~/.local/share/oqto/oqto-log/.auto-heal-in-progress"
+# Global marker file to track active auto-heal backup location (for rollback recovery).
+# Uses $HOME (not ~) so the path expands correctly on the remote shell where it's used.
+OQTO_LOG_AUTOHEAL_MARKER='$HOME/.local/share/oqto/oqto-log/.auto-heal-in-progress'
 
 # Auto-heal corrupted oqto-log databases by backing up, deleting, and rebuilding them.
 # Outputs the backup directory path on success (for later cleanup), empty on failure.
@@ -995,9 +996,10 @@ auto_heal_oqto_log_corruption() {
         return 1
     fi
 
-    # Create a backup location for this deploy session
-    local backup_dir=~/.local/share/oqto/oqto-log/.auto-heal-backup-$(date +%s)
-    host_exec "$is_local" "$ssh_target" "mkdir -p '$backup_dir' && echo '$backup_dir' > '$OQTO_LOG_AUTOHEAL_MARKER'" || return 1
+    # Create a backup location for this deploy session.
+    # Use $HOME so the path expands correctly on the remote shell.
+    local backup_dir="\$HOME/.local/share/oqto/oqto-log/.auto-heal-backup-$(date +%s)"
+    host_exec "$is_local" "$ssh_target" "mkdir -p \"$backup_dir\" && echo \"$backup_dir\" > \"$OQTO_LOG_AUTOHEAL_MARKER\"" || return 1
 
     warn "Auto-healing corrupted oqto-log databases..."
 
@@ -1007,7 +1009,7 @@ auto_heal_oqto_log_corruption() {
         local db_hash
         db_hash=$(workspace_to_db_hash "$workspace")
         warn "  Backing up corrupted oqto-log: $workspace (hash=$db_hash)"
-        host_exec "$is_local" "$ssh_target" "if [[ -d ~/.local/share/oqto/oqto-log/${db_hash} ]]; then mv ~/.local/share/oqto/oqto-log/${db_hash} '$backup_dir/'; fi" || true
+        host_exec "$is_local" "$ssh_target" "if [[ -d \"\$HOME/.local/share/oqto/oqto-log/${db_hash}\" ]]; then mv \"\$HOME/.local/share/oqto/oqto-log/${db_hash}\" \"$backup_dir/\"; fi" || true
         healed_any=true
     done <<< "$corrupted_workspaces"
 
@@ -1020,7 +1022,7 @@ auto_heal_oqto_log_corruption() {
     if host_exec "$is_local" "$ssh_target" "oqto runner migrate-oqto-log --mode bootstrap"; then
         ok "Auto-heal successful"
         # Clean up backups on success and remove marker
-        host_exec "$is_local" "$ssh_target" "rm -rf '$backup_dir' '$OQTO_LOG_AUTOHEAL_MARKER'" || true
+        host_exec "$is_local" "$ssh_target" "rm -rf \"$backup_dir\" \"$OQTO_LOG_AUTOHEAL_MARKER\"" || true
         echo "$backup_dir"
         return 0
     else
@@ -1034,25 +1036,25 @@ auto_heal_oqto_log_corruption() {
 # Used during rollback to recover the pre-corruption state.
 restore_oqto_log_from_backup() {
     local is_local="$1" ssh_target="$2" backup_dir="$3"
-    
+
     # If no backup_dir provided, check for marker file
     if [[ -z "$backup_dir" ]]; then
-        backup_dir=$(host_exec "$is_local" "$ssh_target" "cat '$OQTO_LOG_AUTOHEAL_MARKER' 2>/dev/null || true")
+        backup_dir=$(host_exec "$is_local" "$ssh_target" "cat \"$OQTO_LOG_AUTOHEAL_MARKER\" 2>/dev/null || true")
     fi
     [[ -z "$backup_dir" ]] && return 0
 
     log "Restoring oqto-log databases from backup..."
     host_exec "$is_local" "$ssh_target" "
-        if [[ -d '$backup_dir' ]]; then
-            for db in '$backup_dir'/*; do
+        if [[ -d \"$backup_dir\" ]]; then
+            for db in \"$backup_dir\"/*; do
                 [[ -d \"\$db\" ]] || continue
-                hash=\$(basename "\$db")
-                rm -rf ~/.local/share/oqto/oqto-log/\$hash
-                mv "\$db" ~/.local/share/oqto/oqto-log/
+                hash=\$(basename \"\$db\")
+                rm -rf \"\$HOME/.local/share/oqto/oqto-log/\$hash\"
+                mv \"\$db\" \"\$HOME/.local/share/oqto/oqto-log/\"
             done
-            rm -rf '$backup_dir'
+            rm -rf \"$backup_dir\"
         fi
-        rm -f '$OQTO_LOG_AUTOHEAL_MARKER'
+        rm -f \"$OQTO_LOG_AUTOHEAL_MARKER\"
     " || warn "Failed to restore some oqto-log backups"
 }
 

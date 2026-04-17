@@ -47,6 +47,7 @@ use crate::ws::types::{WsCommand as LegacyWsCommand, WsEvent as LegacyHubEvent};
 use super::error::ApiError;
 
 const RECENT_CLIENT_IDS_MAX_PER_SESSION: usize = 512;
+const RECENT_CLIENT_IDS_TTL: Duration = Duration::from_secs(3600);
 
 // File tree traversal budgets (reliability + latency guardrails)
 const TREE_MAX_DEPTH: usize = 8;
@@ -56,7 +57,12 @@ const TREE_MAX_CONCURRENCY: usize = 16;
 const TREE_PAGE_DEFAULT_LIMIT: usize = 1_000;
 const TREE_PAGE_MAX_LIMIT: usize = 5_000;
 
-static RECENT_CLIENT_IDS: Lazy<tokio::sync::RwLock<HashMap<String, Vec<String>>>> =
+struct ClientIdEntry {
+    ids: Vec<String>,
+    last_access: Instant,
+}
+
+static RECENT_CLIENT_IDS: Lazy<tokio::sync::RwLock<HashMap<String, ClientIdEntry>>> =
     Lazy::new(|| tokio::sync::RwLock::new(HashMap::new()));
 
 mod agent;
@@ -79,8 +85,10 @@ async fn has_accepted_client_id(session_id: &str, client_id: Option<&str>) -> bo
     };
 
     let map = RECENT_CLIENT_IDS.read().await;
-    map.get(session_id)
-        .is_some_and(|ids| ids.iter().any(|id| id == client_id))
+    map.get(session_id).is_some_and(|entry| {
+        entry.last_access.elapsed() < RECENT_CLIENT_IDS_TTL
+            && entry.ids.iter().any(|id| id == client_id)
+    })
 }
 
 async fn mark_client_id_accepted(session_id: &str, client_id: Option<&str>) {
@@ -89,14 +97,24 @@ async fn mark_client_id_accepted(session_id: &str, client_id: Option<&str>) {
     };
 
     let mut map = RECENT_CLIENT_IDS.write().await;
-    let ids = map.entry(session_id.to_string()).or_default();
-    if ids.iter().any(|id| id == client_id) {
+
+    // Lazy TTL eviction: sweep stale entries while we hold the write lock
+    map.retain(|_, entry| entry.last_access.elapsed() < RECENT_CLIENT_IDS_TTL);
+
+    let entry = map
+        .entry(session_id.to_string())
+        .or_insert_with(|| ClientIdEntry {
+            ids: Vec::new(),
+            last_access: Instant::now(),
+        });
+    entry.last_access = Instant::now();
+    if entry.ids.iter().any(|id| id == client_id) {
         return;
     }
-    ids.push(client_id.to_string());
-    if ids.len() > RECENT_CLIENT_IDS_MAX_PER_SESSION {
-        let overflow = ids.len() - RECENT_CLIENT_IDS_MAX_PER_SESSION;
-        ids.drain(0..overflow);
+    entry.ids.push(client_id.to_string());
+    if entry.ids.len() > RECENT_CLIENT_IDS_MAX_PER_SESSION {
+        let overflow = entry.ids.len() - RECENT_CLIENT_IDS_MAX_PER_SESSION;
+        entry.ids.drain(0..overflow);
     }
 }
 
@@ -2021,7 +2039,7 @@ async fn broadcast_user_message(
 async fn handle_get_messages(
     id: Option<String>,
     session_id: &str,
-    state: &AppState,
+    _state: &AppState,
     runner: &RunnerClient,
     conn_state: Arc<tokio::sync::Mutex<WsConnectionState>>,
     runner_id: &str,
@@ -2031,246 +2049,74 @@ async fn handle_get_messages(
             agent_response_with_runner(runner_id, session_id, id, cmd, result)
         };
 
-    let (session_meta, is_active) = {
+    let is_active = {
         let state_guard = conn_state.lock().await;
-        (
-            state_guard.pi_session_meta.get(session_id).cloned(),
-            state_guard.pi_subscriptions.contains(session_id),
-        )
+        state_guard.pi_subscriptions.contains(session_id)
     };
 
-    let is_multi_user = state.linux_users.is_some();
-    let workspace_for_hstry = session_meta.as_ref().and_then(|meta| {
-        (meta.scope.as_deref() == Some("workspace") || meta.scope.as_deref() == Some("pi"))
-            .then(|| {
-                meta.cwd
-                    .as_ref()
-                    .map(|cwd| cwd.to_string_lossy().to_string())
-            })
-            .flatten()
-    });
-    let persisted_message_version =
-        read_hstry_message_version_snapshot(session_id, workspace_for_hstry, is_multi_user).await;
+    let response_data = |messages: Value| {
+        let mut data = serde_json::Map::new();
+        data.insert("messages".to_string(), messages);
+        Value::Object(data)
+    };
 
-    let response_data =
-        |messages: Value, message_version: Option<oqto_protocol::events::MessageVersion>| {
-            let mut data = serde_json::Map::new();
-            data.insert("messages".to_string(), messages);
-            if let Some(version) = message_version
-                && let Ok(version_json) = serde_json::to_value(version)
-            {
-                data.insert("message_version".to_string(), version_json);
-            }
-            Value::Object(data)
-        };
-
-    // Two-branch authority model:
-    // 1) Active session -> runner message buffer snapshot
-    // 2) Inactive session -> durable hstry projection
-    if is_active {
-        match tokio::time::timeout(
-            std::time::Duration::from_secs(3),
-            runner.get_workspace_chat_session_messages(session_id, false, None),
-        )
-        .await
-        {
-            Ok(Ok(resp)) if !resp.messages.is_empty() => {
-                debug!(
-                    "ws get_messages session={} active=true source=runner_buffer count={}",
-                    session_id,
-                    resp.messages.len()
-                );
-                let messages_value = workspace_chat_messages_to_json(resp.messages);
-                return Some(agent_response(
-                    session_id,
-                    id,
-                    "get_messages",
-                    Ok(Some(response_data(
-                        messages_value,
-                        persisted_message_version.clone(),
-                    ))),
-                ));
-            }
-            Ok(Ok(_)) => {
-                debug!(
-                    "get_messages: active buffer empty for {}, falling back to hstry",
-                    session_id
-                );
-            }
-            Ok(Err(e)) => {
-                debug!(
-                    "get_messages: active buffer read failed for {}: {}, falling back to hstry",
-                    session_id, e
-                );
-            }
-            Err(_) => {
-                debug!(
-                    "get_messages: active buffer timed out for {}, falling back to hstry",
-                    session_id
-                );
-            }
-        }
-    }
-
-    // Inactive sessions read from hstry (runner-mediated in multi-user mode).
-    if let Some(meta) = session_meta.as_ref()
-        && (meta.scope.as_deref() == Some("workspace") || meta.scope.as_deref() == Some("pi"))
-        && let Some(work_dir) = meta.cwd.as_ref()
+    // Authority path: oqto-log is the sole durable source for chat history.
+    // Both this WS handler and the REST `/api/chat-history/{id}/messages`
+    // endpoint route through the runner's oqto-log projector, so their
+    // responses carry byte-identical message IDs. That alignment is what
+    // lets the frontend's merge logic reconcile snapshots arriving via two
+    // paths without producing duplicate assistant bubbles.
+    //
+    // No hstry fallback: we migrated away from hstry-as-authority. Legacy
+    // sessions that never wrote to oqto-log come back empty here; the
+    // frontend's backfill-on-empty path hydrates them via the runner's
+    // bootstrap importer rather than reading hstry directly.
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        runner.get_workspace_chat_session_messages(session_id, false, None),
+    )
+    .await
     {
-        if is_multi_user {
-            match runner
-                .get_workspace_chat_messages(
-                    work_dir.to_string_lossy().to_string(),
-                    session_id.to_string(),
-                    None,
-                )
-                .await
-            {
-                Ok(resp) => {
-                    debug!(
-                        "ws get_messages session={} active=false source=runner_main_chat count={}",
-                        session_id,
-                        resp.messages.len()
-                    );
-                    let messages: Vec<serde_json::Value> = resp
-                        .messages
-                        .into_iter()
-                        .map(|m| serde_json::json!({
-                            "id": m.id, "role": m.role, "content": m.content, "timestamp": m.timestamp,
-                        }))
-                        .collect();
-                    let messages_value = serde_json::Value::Array(messages);
-                    return Some(agent_response(
-                        session_id,
-                        id,
-                        "get_messages",
-                        Ok(Some(response_data(
-                            messages_value,
-                            persisted_message_version.clone(),
-                        ))),
-                    ));
-                }
-                Err(e) => {
-                    return Some(agent_response(
-                        session_id,
-                        id,
-                        "get_messages",
-                        Err(e.to_string()),
-                    ));
-                }
-            }
+        Ok(Ok(resp)) => {
+            debug!(
+                "ws get_messages session={} active={} source=oqto_log count={}",
+                session_id,
+                is_active,
+                resp.messages.len()
+            );
+            let messages_value = workspace_chat_messages_to_json(resp.messages);
+            Some(agent_response(
+                session_id,
+                id,
+                "get_messages",
+                Ok(Some(response_data(messages_value))),
+            ))
         }
-
-        if let Some(hstry_client) = state.hstry.as_ref() {
-            match hstry_client.get_messages(session_id, None, None).await {
-                Ok(hstry_messages) => {
-                    debug!(
-                        "ws get_messages session={} active=false source=hstry_direct count={}",
-                        session_id,
-                        hstry_messages.len()
-                    );
-                    let serializable =
-                        crate::history::proto_messages_to_serializable(hstry_messages);
-                    let messages_value = serde_json::to_value(&serializable).unwrap_or_default();
-                    return Some(agent_response(
-                        session_id,
-                        id,
-                        "get_messages",
-                        Ok(Some(response_data(
-                            messages_value,
-                            persisted_message_version.clone(),
-                        ))),
-                    ));
-                }
-                Err(e) => {
-                    return Some(agent_response(
-                        session_id,
-                        id,
-                        "get_messages",
-                        Err(e.to_string()),
-                    ));
-                }
-            }
-        }
-    }
-
-    if is_multi_user {
-        return match runner.get_main_chat_messages(session_id, None).await {
-            Ok(resp) => {
-                debug!(
-                    "ws get_messages session={} active=false source=runner_main_chat_fallback count={}",
-                    session_id,
-                    resp.messages.len()
-                );
-                let messages: Vec<serde_json::Value> = resp
-                    .messages
-                    .into_iter()
-                    .map(|m| serde_json::json!({
-                        "id": m.id, "role": m.role, "content": m.content, "timestamp": m.timestamp,
-                    }))
-                    .collect();
-                let messages_value = serde_json::Value::Array(messages);
-                Some(agent_response(
-                    session_id,
-                    id,
-                    "get_messages",
-                    Ok(Some(response_data(
-                        messages_value,
-                        persisted_message_version.clone(),
-                    ))),
-                ))
-            }
-            Err(e) => Some(agent_response(
+        Ok(Err(e)) => {
+            debug!(
+                "get_messages: oqto-log read failed for {} (active={}): {}",
+                session_id, is_active, e
+            );
+            Some(agent_response(
                 session_id,
                 id,
                 "get_messages",
                 Err(e.to_string()),
-            )),
-        };
-    }
-
-    if let Some(hstry_client) = state.hstry.as_ref() {
-        return match hstry_client.get_messages(session_id, None, None).await {
-            Ok(hstry_messages) => {
-                debug!(
-                    "ws get_messages session={} active=false source=hstry_direct_fallback count={}",
-                    session_id,
-                    hstry_messages.len()
-                );
-                let serializable = crate::history::proto_messages_to_serializable(hstry_messages);
-                let messages_value = serde_json::to_value(&serializable).unwrap_or_default();
-                Some(agent_response(
-                    session_id,
-                    id,
-                    "get_messages",
-                    Ok(Some(response_data(
-                        messages_value,
-                        persisted_message_version.clone(),
-                    ))),
-                ))
-            }
-            Err(e) => Some(agent_response(
+            ))
+        }
+        Err(_) => {
+            debug!(
+                "get_messages: oqto-log timed out for {} (active={})",
+                session_id, is_active
+            );
+            Some(agent_response(
                 session_id,
                 id,
                 "get_messages",
-                Err(e.to_string()),
-            )),
-        };
+                Err("oqto-log read timed out".to_string()),
+            ))
+        }
     }
-
-    debug!(
-        "ws get_messages session={} active={} source=empty count=0",
-        session_id, is_active
-    );
-    Some(agent_response(
-        session_id,
-        id,
-        "get_messages",
-        Ok(Some(response_data(
-            serde_json::Value::Array(Vec::new()),
-            persisted_message_version,
-        ))),
-    ))
 }
 
 /// Forward canonical events from runner subscription to WebSocket.

@@ -313,6 +313,8 @@ const AppShell = memo(function AppShell() {
 				});
 				await refreshChatHistory({ force: true });
 				await refreshWorkspaceSessions();
+				// Signal ChatView to reload messages for the current session
+				window.dispatchEvent(new Event("oqto:backfill-complete"));
 				return result;
 			} catch (error) {
 				console.error("Failed to backfill project sessions", error);

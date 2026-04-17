@@ -10,10 +10,9 @@ mod users_md;
 
 pub use models::{
     AddMemberRequest, AdminSharedWorkspaceInfo, ConvertToSharedRequest,
-    CreateSharedWorkspaceRequest, CreateSharedWorkspaceWorkdirRequest, MemberRole, SharedWorkspace,
-    SharedWorkspaceInfo, SharedWorkspaceMember, SharedWorkspaceMemberInfo,
-    TransferOwnershipRequest, UpdateMemberRequest, UpdateSharedWorkspaceRequest,
+    CreateSharedWorkspaceRequest, CreateSharedWorkspaceWorkdirRequest, SharedWorkspaceInfo,
+    SharedWorkspaceMemberInfo, TransferOwnershipRequest, UpdateMemberRequest,
+    UpdateSharedWorkspaceRequest,
 };
 pub use repository::SharedWorkspaceRepository;
 pub use service::SharedWorkspaceService;
-pub use users_md::generate_users_md;

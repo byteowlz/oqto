@@ -2,6 +2,51 @@
 
 ## Open
 
+### [oqto-zpvs.6] E2E chaos: automated browser scenarios for reconnect/switch/retry/fork persistence (P1, task)
+Problem
+Most painful regressions only appear under end-to-end timing and UI orchestration.
+
+Deliverables
+- Build an automated chaos suite (agent-browser) covering:
+...
+
+
+### [oqto-zpvs.5] Backend: integration tests for session identity mapping and cross-session isolation (P1, task)
+Problem
+Session identity drift and cross-talk are recurring root causes for history corruption symptoms.
+
+Deliverables
+- Add tests for platform_id/external_id lifecycle:
+...
+
+
+### [oqto-zpvs.4] Backend: integration tests for persist-before-idle and live-vs-authoritative fetch contracts (P1, task)
+Problem
+Critical ordering and source-of-truth contracts are not guarded by integration tests.
+
+Deliverables
+- Add integration tests covering:
+...
+
+
+### [oqto-zpvs] Persistence hardening: deterministic message timeline tests across frontend, runner, and e2e (P1, epic)
+Goal
+Eliminate recurring frontend message persistence regressions (disappearing/duplicated/out-of-order messages) by building a full regression net that validates live streaming, reconciliation, persistence, and reload/reconnect convergence.
+
+Context
+Recent fixes addressed many individual defects, but regressions still recur due to event interleavings across:
+...
+
+
+### [oqto-zpvs.7] CI + observability: persistence invariant gate and triage tooling (P2, task)
+Problem
+Regression detection is late and manual. We need reliable CI signals and debugging breadcrumbs.
+
+Deliverables
+- Add CI jobs for new frontend/backend persistence suites.
+...
+
+
 ### [oqto-21yw] Fix fragile string-based error classification in runner client (P2, task)
 
 
@@ -16,6 +61,14 @@
 
 ## Closed
 
+- [oqto-zpvs.3] Frontend: trace replay harness using real canonical event logs (closed 2026-04-17)
+- [oqto-z6hv] Persistence hardening: remove dead code/cruft while implementing zpvs frontend/backend tests (closed 2026-04-17)
+- [oqto-zpvs.2] Frontend: property-style invariant tests for mergeServerMessages + normalizeMessages (closed 2026-04-17)
+- [oqto-zpvs.1] Frontend: add deterministic event-interleaving reducer tests for message convergence (closed 2026-04-17)
+- [oqto-ad4q] Sync pre-session selected model with authoritative get_state model on session attach (closed 2026-04-17)
+- [oqto-v8yh] Investigate frontend message persistence failures and define test strategy (closed 2026-04-17)
+- [oqto-2xe1] Fix model selector showing value different from active Pi model (closed 2026-04-17)
+- [oqto-x9fg] Assistant messages duplicated on reload - merge logic appends instead of replacing (closed 2026-04-16)
 - [oqto-977r] Remove workspace-level dead_code/unused_imports lint suppression (closed 2026-04-15)
 - [oqto-8xga] Add TTL eviction to RECENT_CLIENT_IDS cache to prevent memory leak (closed 2026-04-15)
 - [oqto-c4x3] Pi-authoritative history pipeline: zero-loss external-session compatibility with canonical+hstry projection (closed 2026-04-15)
@@ -1157,13 +1210,13 @@
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
-- [oqto-4ryr] Session rename reverts: update_chat_session returns external_id while list returns platform_id (closed )
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
-- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
-- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
 - [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
 - [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
 - [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
+- [oqto-4ryr] Session rename reverts: update_chat_session returns external_id while list returns platform_id (closed )
+- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
+- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )

@@ -420,6 +420,8 @@ function WorkspaceContent({
 			setFetchedSessions(
 				safeSessions.map((s) => ({ ...s, shared_workspace_id: workspace.id })),
 			);
+			// Signal ChatView to reload messages for the current session
+			window.dispatchEvent(new Event("oqto:backfill-complete"));
 			toast.success(
 				`Backfill complete: repaired ${result.repaired_conversations}, scanned ${result.scanned_files}`,
 			);

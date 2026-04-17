@@ -121,18 +121,6 @@ pub fn hstry_timestamp_ms(value: Option<i64>) -> Option<i64> {
     value.map(|ts| ts * 1000)
 }
 
-/// Resolve a hstry internal conversation UUID to its external_id (Pi session ID).
-async fn resolve_parent_external_id(
-    pool: &sqlx::SqlitePool,
-    parent_conversation_id: &str,
-) -> Result<Option<String>> {
-    let row = sqlx::query("SELECT external_id FROM conversations WHERE id = ? LIMIT 1")
-        .bind(parent_conversation_id)
-        .fetch_optional(pool)
-        .await?;
-    Ok(row.and_then(|r| r.try_get::<Option<String>, _>("external_id").ok().flatten()))
-}
-
 /// Resolve a conversation deterministically from a session identifier.
 ///
 /// Priority order:

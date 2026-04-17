@@ -1,0 +1,753 @@
+[
+	{
+		"id": "2026-04-14-finalized-tmp-assistant-drop",
+		"description": "Historical regression: stale get_messages replay between stream.done and agent.idle dropped finalized assistant turn.",
+		"initialSessionId": "sess-a",
+		"steps": [
+			{
+				"type": "event",
+				"event": {
+					"channel": "agent",
+					"session_id": "sess-a",
+					"event": "stream.message_start",
+					"role": "assistant"
+				}
+			},
+			{
+				"type": "event",
+				"event": {
+					"channel": "agent",
+					"session_id": "sess-a",
+					"event": "stream.text_delta",
+					"message_id": "tmp:a1",
+					"delta": "Draft answer"
+				}
+			},
+			{
+				"type": "event",
+				"event": {
+					"channel": "agent",
+					"session_id": "sess-a",
+					"event": "stream.done",
+					"message_id": "tmp:a1"
+				}
+			},
+			{
+				"type": "event",
+				"event": {
+					"channel": "agent",
+					"session_id": "sess-a",
+					"event": "response",
+					"id": "r-old-1",
+					"cmd": "get_messages",
+					"success": true,
+					"data": {
+						"messages": [
+							{
+								"id": "h-u1",
+								"role": "user",
+								"content": "question",
+								"timestamp": 1000
+							}
+						],
+						"message_version": { "version": 1 }
+					}
+				}
+			},
+			{
+				"type": "event",
+				"event": {
+					"channel": "agent",
+					"session_id": "sess-a",
+					"event": "agent.idle",
+					"message_version": { "version": 2 }
+				}
+			},
+			{ "type": "advance", "ms": 250 }
+		],
+		"historyFetches": [
+			[
+				{
+					"id": "h-u1",
+					"role": "user",
+					"content": "question",
+					"timestamp": 1000,
+					"client_id": "c-1"
+				},
+				{
+					"id": "h-a1",
+					"role": "assistant",
+					"content": "final answer",
+					"timestamp": 2000
+				}
+			]
+		],
+		"expected": [
+			{ "id": "h-u1", "role": "user", "text": "question" },
+			{ "id": "h-a1", "role": "assistant", "text": "final answer" }
+		]
+	},
+	{
+		"id": "2026-03-13-streaming-partial-window-ignore",
+		"description": "Partial snapshot replay during active streaming must not clobber local in-flight assistant content.",
+		"initialSessionId": "sess-a",
+		"steps": [
+			{
+				"type": "event",
+				"event": {
+					"channel": "agent",
+					"session_id": "sess-a",
+					"event": "stream.message_start",
+					"role": "assistant"
+				}
+			},
+			{
+				"type": "event",
+				"event": {
+					"channel": "agent",
+					"session_id": "sess-a",
+					"event": "stream.text_delta",
+					"message_id": "tmp:a1",
+					"delta": "line 1"
+				}
+			},
+			{
+				"type": "event",
+				"event": {
+					"channel": "agent",
+					"session_id": "sess-a",
+					"event": "response",
+					"id": "r-stream-1",
+					"cmd": "get_messages",
+					"success": true,
+					"data": {
+						"messages": [
+							{
+								"id": "h-u1",
+								"role": "user",
+								"content": "q1",
+								"timestamp": 1000
+							}
+						],
+						"message_version": { "version": 1 }
+					}
+				}
+			},
+			{
+				"type": "event",
+				"event": {
+					"channel": "agent",
+					"session_id": "sess-a",
+					"event": "stream.text_delta",
+					"message_id": "tmp:a1",
+					"delta": " line 2"
+				}
+			},
+			{
+				"type": "event",
+				"event": {
+					"channel": "agent",
+					"session_id": "sess-a",
+					"event": "stream.done",
+					"message_id": "tmp:a1"
+				}
+			},
+			{
+				"type": "event",
+				"event": {
+					"channel": "agent",
+					"session_id": "sess-a",
+					"event": "agent.idle",
+					"message_version": { "version": 2 }
+				}
+			},
+			{ "type": "advance", "ms": 250 }
+		],
+		"historyFetches": [
+			[
+				{ "id": "h-u1", "role": "user", "content": "q1", "timestamp": 1000 },
+				{
+					"id": "h-a1",
+					"role": "assistant",
+					"content": "line 1 line 2",
+					"timestamp": 2000
+				}
+			]
+		],
+		"expected": [
+			{ "id": "h-u1", "role": "user", "text": "q1" },
+			{ "id": "h-a1", "role": "assistant", "text": "line 1 line 2" }
+		]
+	},
+	{
+		"id": "2026-03-20-reconnect-stale-window-discard",
+		"description": "Reconnect stale history response must be superseded by latest persisted timeline.",
+		"initialSessionId": "sess-a",
+		"steps": [
+			{
+				"type": "event",
+				"event": {
+					"channel": "agent",
+					"session_id": "sess-a",
+					"event": "response",
+					"id": "r-initial",
+					"cmd": "get_messages",
+					"success": true,
+					"data": {
+						"messages": [
+							{
+								"id": "h-u1",
+								"role": "user",
+								"content": "q1",
+								"timestamp": 1000
+							},
+							{
+								"id": "h-a1",
+								"role": "assistant",
+								"content": "a1",
+								"timestamp": 2000
+							}
+						],
+						"message_version": { "version": 2 }
+					}
+				}
+			},
+			{
+				"type": "event",
+				"event": {
+					"channel": "agent",
+					"session_id": "sess-a",
+					"event": "agent.idle",
+					"message_version": { "version": 3 }
+				}
+			},
+			{ "type": "advance", "ms": 250 }
+		],
+		"historyFetches": [
+			[
+				{ "id": "h-u1", "role": "user", "content": "q1", "timestamp": 1000 },
+				{
+					"id": "h-a1",
+					"role": "assistant",
+					"content": "a1",
+					"timestamp": 2000
+				},
+				{ "id": "h-u2", "role": "user", "content": "q2", "timestamp": 3000 },
+				{
+					"id": "h-a2",
+					"role": "assistant",
+					"content": "a2",
+					"timestamp": 4000
+				}
+			]
+		],
+		"expected": [
+			{ "id": "h-u1", "role": "user", "text": "q1" },
+			{ "id": "h-a1", "role": "assistant", "text": "a1" },
+			{ "id": "h-u2", "role": "user", "text": "q2" },
+			{ "id": "h-a2", "role": "assistant", "text": "a2" }
+		]
+	},
+	{
+		"id": "2026-03-06-session-switch-stale-response-ignore",
+		"description": "After switching to another session, stale get_messages for old session must not contaminate active timeline.",
+		"initialSessionId": "sess-a",
+		"steps": [
+			{
+				"type": "event",
+				"event": {
+					"channel": "agent",
+					"session_id": "sess-a",
+					"event": "response",
+					"id": "r-a-1",
+					"cmd": "get_messages",
+					"success": true,
+					"data": {
+						"messages": [
+							{
+								"id": "a-u1",
+								"role": "user",
+								"content": "A one",
+								"timestamp": 1000
+							}
+						],
+						"message_version": { "version": 1 }
+					}
+				}
+			},
+			{ "type": "switch_session", "sessionId": "sess-b" },
+			{
+				"type": "event",
+				"event": {
+					"channel": "agent",
+					"session_id": "sess-a",
+					"event": "response",
+					"id": "r-a-stale",
+					"cmd": "get_messages",
+					"success": true,
+					"data": {
+						"messages": [
+							{
+								"id": "a-u1",
+								"role": "user",
+								"content": "A one",
+								"timestamp": 1000
+							},
+							{
+								"id": "a-a1",
+								"role": "assistant",
+								"content": "A stale",
+								"timestamp": 2000
+							}
+						],
+						"message_version": { "version": 2 }
+					}
+				}
+			},
+			{
+				"type": "event",
+				"event": {
+					"channel": "agent",
+					"session_id": "sess-b",
+					"event": "response",
+					"id": "r-b-1",
+					"cmd": "get_messages",
+					"success": true,
+					"data": {
+						"messages": [
+							{
+								"id": "b-u1",
+								"role": "user",
+								"content": "B one",
+								"timestamp": 1000
+							},
+							{
+								"id": "b-a1",
+								"role": "assistant",
+								"content": "B one answer",
+								"timestamp": 2000
+							}
+						],
+						"message_version": { "version": 2 }
+					}
+				}
+			}
+		],
+		"expected": [{ "id": "b-a1", "role": "assistant", "text": "B one answer" }]
+	},
+	{
+		"id": "2026-03-04-client-id-reconcile-tmp-to-persisted",
+		"description": "Tmp/local user row should reconcile to persisted id via client_id without duplicate logical turns.",
+		"initialSessionId": "sess-a",
+		"steps": [
+			{
+				"type": "event",
+				"event": {
+					"channel": "agent",
+					"session_id": "sess-a",
+					"event": "response",
+					"id": "r-local",
+					"cmd": "get_messages",
+					"success": true,
+					"data": {
+						"messages": [
+							{
+								"id": "tmp:u1",
+								"role": "user",
+								"content": "hello",
+								"timestamp": 1000,
+								"client_id": "c-1"
+							}
+						],
+						"message_version": { "version": 0 }
+					}
+				}
+			},
+			{
+				"type": "event",
+				"event": {
+					"channel": "agent",
+					"session_id": "sess-a",
+					"event": "agent.idle",
+					"message_version": { "version": 2 }
+				}
+			},
+			{ "type": "advance", "ms": 250 }
+		],
+		"historyFetches": [
+			[
+				{
+					"id": "h-u1",
+					"role": "user",
+					"content": "hello",
+					"timestamp": 1000,
+					"client_id": "c-1"
+				},
+				{
+					"id": "h-a1",
+					"role": "assistant",
+					"content": "world",
+					"timestamp": 2000
+				}
+			]
+		],
+		"expected": [
+			{ "id": "h-u1", "role": "user", "text": "hello" },
+			{ "id": "h-a1", "role": "assistant", "text": "world" }
+		]
+	},
+	{
+		"id": "2026-03-12-duplicate-idle-idempotent",
+		"description": "Repeated agent.idle + same authoritative fetch must be idempotent (no duplicate rows).",
+		"initialSessionId": "sess-a",
+		"steps": [
+			{
+				"type": "event",
+				"event": {
+					"channel": "agent",
+					"session_id": "sess-a",
+					"event": "agent.idle",
+					"message_version": { "version": 2 }
+				}
+			},
+			{ "type": "advance", "ms": 250 },
+			{
+				"type": "event",
+				"event": {
+					"channel": "agent",
+					"session_id": "sess-a",
+					"event": "agent.idle",
+					"message_version": { "version": 2 }
+				}
+			},
+			{ "type": "advance", "ms": 250 }
+		],
+		"historyFetches": [
+			[
+				{ "id": "h-u1", "role": "user", "content": "same", "timestamp": 1000 },
+				{
+					"id": "h-a1",
+					"role": "assistant",
+					"content": "same answer",
+					"timestamp": 2000
+				}
+			],
+			[
+				{ "id": "h-u1", "role": "user", "content": "same", "timestamp": 1000 },
+				{
+					"id": "h-a1",
+					"role": "assistant",
+					"content": "same answer",
+					"timestamp": 2000
+				}
+			]
+		],
+		"expected": [
+			{ "id": "h-u1", "role": "user", "text": "same" },
+			{ "id": "h-a1", "role": "assistant", "text": "same answer" }
+		]
+	},
+	{
+		"id": "2026-03-11-out-of-order-stable-ordering",
+		"description": "Out-of-order snapshot rows should converge to stable append order after authoritative sync.",
+		"initialSessionId": "sess-a",
+		"steps": [
+			{
+				"type": "event",
+				"event": {
+					"channel": "agent",
+					"session_id": "sess-a",
+					"event": "response",
+					"id": "r-out-order",
+					"cmd": "get_messages",
+					"success": true,
+					"data": {
+						"messages": [
+							{
+								"id": "h-a1",
+								"role": "assistant",
+								"content": "a1",
+								"timestamp": 2000
+							},
+							{
+								"id": "h-u1",
+								"role": "user",
+								"content": "q1",
+								"timestamp": 1000
+							}
+						],
+						"message_version": { "version": 1 }
+					}
+				}
+			},
+			{
+				"type": "event",
+				"event": {
+					"channel": "agent",
+					"session_id": "sess-a",
+					"event": "agent.idle",
+					"message_version": { "version": 2 }
+				}
+			},
+			{ "type": "advance", "ms": 250 }
+		],
+		"historyFetches": [
+			[
+				{ "id": "h-u1", "role": "user", "content": "q1", "timestamp": 1000 },
+				{
+					"id": "h-a1",
+					"role": "assistant",
+					"content": "a1",
+					"timestamp": 2000
+				},
+				{ "id": "h-u2", "role": "user", "content": "q2", "timestamp": 3000 },
+				{
+					"id": "h-a2",
+					"role": "assistant",
+					"content": "a2",
+					"timestamp": 4000
+				}
+			]
+		],
+		"expected": [
+			{ "id": "h-u1", "role": "user", "text": "q1" },
+			{ "id": "h-a1", "role": "assistant", "text": "a1" },
+			{ "id": "h-u2", "role": "user", "text": "q2" },
+			{ "id": "h-a2", "role": "assistant", "text": "a2" }
+		]
+	},
+	{
+		"id": "2026-03-29-retry-error-no-durable-dup",
+		"description": "Recoverable retry error followed by success should not leave duplicate terminal rows after persistence fetch.",
+		"initialSessionId": "sess-a",
+		"steps": [
+			{
+				"type": "event",
+				"event": {
+					"channel": "agent",
+					"session_id": "sess-a",
+					"event": "stream.message_start",
+					"role": "assistant"
+				}
+			},
+			{
+				"type": "event",
+				"event": {
+					"channel": "agent",
+					"session_id": "sess-a",
+					"event": "retry.start",
+					"attempt": 1,
+					"max_attempts": 3,
+					"error": "429"
+				}
+			},
+			{
+				"type": "event",
+				"event": {
+					"channel": "agent",
+					"session_id": "sess-a",
+					"event": "agent.error",
+					"error": "429",
+					"recoverable": true
+				}
+			},
+			{
+				"type": "event",
+				"event": {
+					"channel": "agent",
+					"session_id": "sess-a",
+					"event": "retry.end",
+					"success": true,
+					"attempt": 1
+				}
+			},
+			{
+				"type": "event",
+				"event": {
+					"channel": "agent",
+					"session_id": "sess-a",
+					"event": "stream.text_delta",
+					"message_id": "tmp:a1",
+					"delta": "final"
+				}
+			},
+			{
+				"type": "event",
+				"event": {
+					"channel": "agent",
+					"session_id": "sess-a",
+					"event": "stream.done",
+					"message_id": "tmp:a1"
+				}
+			},
+			{
+				"type": "event",
+				"event": {
+					"channel": "agent",
+					"session_id": "sess-a",
+					"event": "agent.idle",
+					"message_version": { "version": 2 }
+				}
+			},
+			{ "type": "advance", "ms": 250 }
+		],
+		"historyFetches": [
+			[
+				{ "id": "h-u1", "role": "user", "content": "start", "timestamp": 1000 },
+				{
+					"id": "h-a1",
+					"role": "assistant",
+					"content": "final",
+					"timestamp": 2000
+				}
+			]
+		],
+		"expected": [
+			{ "id": "h-u1", "role": "user", "text": "start" },
+			{ "id": "h-a1", "role": "assistant", "text": "final" }
+		]
+	},
+	{
+		"id": "2026-04-01-tool-replay-preserve-durable-timeline",
+		"description": "Tool lifecycle replay during stream should converge to single persisted assistant row after idle fetch.",
+		"initialSessionId": "sess-a",
+		"steps": [
+			{
+				"type": "event",
+				"event": {
+					"channel": "agent",
+					"session_id": "sess-a",
+					"event": "stream.message_start",
+					"role": "assistant"
+				}
+			},
+			{
+				"type": "event",
+				"event": {
+					"channel": "agent",
+					"session_id": "sess-a",
+					"event": "tool.start",
+					"tool_call_id": "call-1",
+					"name": "bash",
+					"input": { "command": "ls" }
+				}
+			},
+			{
+				"type": "event",
+				"event": {
+					"channel": "agent",
+					"session_id": "sess-a",
+					"event": "tool.start",
+					"tool_call_id": "call-1",
+					"name": "bash"
+				}
+			},
+			{
+				"type": "event",
+				"event": {
+					"channel": "agent",
+					"session_id": "sess-a",
+					"event": "tool.end",
+					"tool_call_id": "call-1",
+					"name": "bash",
+					"output": "ok",
+					"is_error": false
+				}
+			},
+			{
+				"type": "event",
+				"event": {
+					"channel": "agent",
+					"session_id": "sess-a",
+					"event": "stream.text_delta",
+					"message_id": "tmp:a1",
+					"delta": "done"
+				}
+			},
+			{
+				"type": "event",
+				"event": {
+					"channel": "agent",
+					"session_id": "sess-a",
+					"event": "stream.done",
+					"message_id": "tmp:a1"
+				}
+			},
+			{
+				"type": "event",
+				"event": {
+					"channel": "agent",
+					"session_id": "sess-a",
+					"event": "agent.idle",
+					"message_version": { "version": 2 }
+				}
+			},
+			{ "type": "advance", "ms": 250 }
+		],
+		"historyFetches": [
+			[
+				{
+					"id": "h-u1",
+					"role": "user",
+					"content": "run ls",
+					"timestamp": 1000
+				},
+				{
+					"id": "h-a1",
+					"role": "assistant",
+					"content": "done",
+					"timestamp": 2000
+				}
+			]
+		],
+		"expected": [
+			{ "id": "h-u1", "role": "user", "text": "run ls" },
+			{ "id": "h-a1", "role": "assistant", "text": "done" }
+		]
+	},
+	{
+		"id": "2026-04-08-reload-mid-stream-converges",
+		"description": "Reload-like reset with immediate idle sync converges to authoritative persisted timeline.",
+		"initialSessionId": "sess-a",
+		"initialHistory": [
+			{ "id": "h-u1", "role": "user", "content": "q1", "timestamp": 1000 },
+			{ "id": "h-a1", "role": "assistant", "content": "a1", "timestamp": 2000 }
+		],
+		"steps": [
+			{
+				"type": "event",
+				"event": {
+					"channel": "agent",
+					"session_id": "sess-a",
+					"event": "agent.idle",
+					"message_version": { "version": 4 }
+				}
+			},
+			{ "type": "advance", "ms": 250 }
+		],
+		"historyFetches": [
+			[
+				{ "id": "h-u1", "role": "user", "content": "q1", "timestamp": 1000 },
+				{
+					"id": "h-a1",
+					"role": "assistant",
+					"content": "a1",
+					"timestamp": 2000
+				},
+				{ "id": "h-u2", "role": "user", "content": "q2", "timestamp": 3000 },
+				{
+					"id": "h-a2",
+					"role": "assistant",
+					"content": "a2",
+					"timestamp": 4000
+				}
+			]
+		],
+		"expected": [
+			{ "id": "h-u1", "role": "user", "text": "q1" },
+			{ "id": "h-a1", "role": "assistant", "text": "a1" },
+			{ "id": "h-u2", "role": "user", "text": "q2" },
+			{ "id": "h-a2", "role": "assistant", "text": "a2" }
+		]
+	}
+]

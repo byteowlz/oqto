@@ -9,4 +9,4 @@ pub mod history;
 pub mod system;
 pub mod terminal;
 
-pub use crate::api::ws_multiplexed::{WsMultiplexedQuery, ws_multiplexed_handler};
+pub use crate::api::ws_multiplexed::ws_multiplexed_handler;

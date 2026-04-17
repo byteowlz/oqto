@@ -117,11 +117,12 @@ strip = true
 # Workspace-wide clippy linting configuration
 # These rules are enforced across all crates to maintain code quality
 [workspace.lints.rust]
-# Library crate exposes pub items consumed by multiple binaries (oqto, oqto-runner,
-# oqtoctl). The compiler cannot see cross-binary usage, so dead_code and
-# unused_imports produce false positives. Keep these at allow.
+# The oqto crate has multiple binaries (oqto, oqtoctl, pi-bridge, oqto-sandbox)
+# sharing a single lib. The compiler flags lib items as dead_code when checking
+# each binary independently, even if the item is used by another binary.
+# The lib itself compiles warning-free; these are cross-binary false positives.
+# Proper fix: decompose into separate crates (tracked in oqto-gxf5).
 dead_code = "allow"
-unused_imports = "allow"
 
 [workspace.lints.clippy]
 # Style and correctness

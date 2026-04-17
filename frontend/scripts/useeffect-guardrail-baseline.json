@@ -1,5 +1,5 @@
 {
-	"generatedAt": "2026-04-03T16:34:25.342Z",
+	"generatedAt": "2026-04-15T19:36:32.187Z",
 	"allowMarker": "useeffect-guardrail: allow",
 	"files": {
 		"apps/admin/EventBusPanel.tsx": 4,
@@ -46,7 +46,7 @@
 		"features/chat/components/ChatTimeline.tsx": 2,
 		"features/chat/components/ChatView.tsx": 28,
 		"features/chat/components/PiSettingsView.tsx": 2,
-		"features/chat/hooks/useChat.ts": 7,
+		"features/chat/hooks/useChat.ts": 6,
 		"features/prompts/hooks/usePrompts.ts": 1,
 		"features/sessions/components/AgentSettingsView.tsx": 2,
 		"features/sessions/components/AppView.tsx": 4,
@@ -57,7 +57,7 @@
 		"features/sessions/components/LightboxGallery.tsx": 1,
 		"features/sessions/components/MemoriesView.tsx": 3,
 		"features/sessions/components/PreviewView.tsx": 4,
-		"features/sessions/components/TrxView.tsx": 3,
+		"features/sessions/components/TrxView.tsx": 2,
 		"features/sessions/components/WorkspaceOverviewPanel.tsx": 1,
 		"features/sessions/hooks/useSessionEvents.ts": 1,
 		"features/sessions/hooks/useWsSession.ts": 4,

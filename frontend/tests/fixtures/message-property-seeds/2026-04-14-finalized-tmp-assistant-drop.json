@@ -1,0 +1,54 @@
+{
+	"name": "2026-04-14-finalized-tmp-assistant-drop",
+	"description": "Historical regression: partial snapshots between stream.done and agent.idle dropped finalized tmp assistant messages.",
+	"previous": [
+		{
+			"id": "history-u1",
+			"role": "user",
+			"timestamp": 1000,
+			"parts": [{ "type": "text", "id": "p-history-u1", "text": "question" }],
+			"clientId": "c-1"
+		},
+		{
+			"id": "tmp:assistant-1",
+			"role": "assistant",
+			"timestamp": 2000,
+			"parts": [
+				{ "type": "text", "id": "p-tmp-assistant-1", "text": "response" }
+			],
+			"isStreaming": false
+		}
+	],
+	"partialServer": [
+		{
+			"id": "history-u1",
+			"role": "user",
+			"timestamp": 1000,
+			"parts": [
+				{ "type": "text", "id": "p-history-u1-server", "text": "question" }
+			],
+			"clientId": "c-1"
+		}
+	],
+	"authoritativeServer": [
+		{
+			"id": "history-u1",
+			"role": "user",
+			"timestamp": 1000,
+			"parts": [
+				{ "type": "text", "id": "p-history-u1-auth", "text": "question" }
+			],
+			"clientId": "c-1"
+		},
+		{
+			"id": "history-a1",
+			"role": "assistant",
+			"timestamp": 3000,
+			"parts": [
+				{ "type": "text", "id": "p-history-a1-auth", "text": "response" }
+			]
+		}
+	],
+	"expectedPartialIds": ["history-u1", "tmp:assistant-1"],
+	"expectedAuthoritativeIds": ["history-u1", "history-a1"]
+}

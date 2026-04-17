@@ -333,6 +333,14 @@ export function ChatView({
 		onMessageComplete: handleMessageComplete,
 		onTitleChanged: updateChatSessionTitleLocal,
 	});
+	// Refresh messages when backfill completes (signalled via DOM event).
+	// useeffect-guardrail: allow — listening for custom DOM event from backfill, no hook covers this
+	useEffect(() => {
+		const handler = () => void refresh();
+		window.addEventListener("oqto:backfill-complete", handler);
+		return () => window.removeEventListener("oqto:backfill-complete", handler);
+	}, [refresh]);
+
 	// Draft persistence - restore from localStorage on mount.
 	// Input value lives in a ref (never in React state) so that
 	// keystrokes never trigger a React render of this large component.
@@ -2804,12 +2812,6 @@ function fingerprintPartForRender(part: DisplayPart): string {
 	}
 }
 
-function hasToolParts(message: DisplayMessage): boolean {
-	return message.parts.some(
-		(part) => part.type === "tool_call" || part.type === "tool_result",
-	);
-}
-
 function messageRenderFingerprint(message: DisplayMessage): string {
 	const parts = message.parts.map(fingerprintPartForRender);
 	return `${message.role}|${parts.join("|")}`;
@@ -2847,15 +2849,17 @@ function groupMessages(messages: DisplayMessage[]): MessageGroup[] {
 			continue;
 		}
 
-		// Guard against duplicated assistant messages containing identical
-		// tool lifecycle parts (can happen when the same completed turn arrives
-		// through two sync paths during reconnect races).
+		// Guard against duplicated assistant messages (same completed turn
+		// arriving through two sync paths during reconnect races, or stale
+		// cached entries that don't reconcile with the authoritative server
+		// snapshot because their IDs differ). We widen the dedup beyond
+		// tool-part payloads to any consecutive same-role messages whose
+		// render fingerprints are identical -- distinct real turns do not
+		// produce byte-identical thinking/text, so this is a safe tie-breaker.
 		const prev = current.messages[current.messages.length - 1];
 		if (
 			message.role === "assistant" &&
 			prev &&
-			hasToolParts(prev) &&
-			hasToolParts(message) &&
 			messageRenderFingerprint(prev) === messageRenderFingerprint(message)
 		) {
 			continue;

@@ -5,8 +5,6 @@ use sqlx::Row;
 use std::collections::HashMap;
 #[cfg(target_os = "linux")]
 use std::os::fd::AsRawFd;
-#[cfg(unix)]
-use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
@@ -19,7 +17,7 @@ use crate::runner::daemon::config::RunnerUserConfig;
 use crate::runner::daemon::state::{
     ManagedProcess, RunnerState, SessionState, StdoutBuffer, StdoutEvent,
 };
-use crate::runner::pi_manager::{PiManagerConfig, PiSessionManager};
+use crate::runner::pi_manager::PiSessionManager;
 use crate::runner::protocol::*;
 use oqto_sandbox::SandboxConfig;
 
@@ -2164,15 +2162,12 @@ impl Runner {
         }
     }
 
-    /// Repair missing workspace chat history metadata by scanning Pi JSONL session files.
+    /// Repair missing workspace chat history by scanning Pi JSONL session files
+    /// and syncing them to oqto-log (the authoritative store).
     async fn repair_workspace_chat_history(
         &self,
         req: RepairWorkspaceChatHistoryRequest,
     ) -> RunnerResponse {
-        let Some(client) = self.pi_manager.hstry_client() else {
-            return error_response(ErrorCode::Internal, "hstry client not available");
-        };
-
         let scan =
             match tokio::task::spawn_blocking(move || scan_pi_jsonl_session_metadata(req.limit))
                 .await
@@ -2185,6 +2180,15 @@ impl Runner {
                     );
                 }
             };
+
+        let home = match std::env::var("HOME") {
+            Ok(h) => h,
+            Err(_) => {
+                return error_response(ErrorCode::Internal, "HOME not set");
+            }
+        };
+        let user_id = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
+        let home_path = std::path::Path::new(&home);
 
         let mut repaired = 0usize;
         let mut skipped = scan.skipped_files;
@@ -2202,92 +2206,98 @@ impl Runner {
             }
 
             let recovered_messages = read_jsonl_agent_messages(&session.session_file);
-            let proto_messages: Vec<_> = recovered_messages
-                .iter()
-                .enumerate()
-                .map(|(idx, msg)| {
-                    crate::history::agent_message_to_proto_with_client_id(msg, idx as i32, None)
-                })
-                .collect();
-
-            match client.get_conversation(&session.external_id, None).await {
-                Ok(Some(_)) => {
-                    if proto_messages.is_empty() {
-                        skipped += 1;
-                        continue;
-                    }
-
-                    match client.get_messages(&session.external_id, None, None).await {
-                        Ok(existing) if existing.is_empty() => {
-                            if let Err(err) = client
-                                .append_messages(
-                                    &session.external_id,
-                                    proto_messages,
-                                    Some(session.updated_at_ms),
-                                )
-                                .await
-                            {
-                                failed += 1;
-                                warn!(
-                                    "Failed to append recovered messages for {}: {}",
-                                    session.external_id, err
-                                );
-                                continue;
-                            }
-                            repaired += 1;
-                            continue;
-                        }
-                        Ok(_) => {
-                            skipped += 1;
-                            continue;
-                        }
-                        Err(err) => {
-                            failed += 1;
-                            warn!(
-                                "Failed to read existing messages during repair for {}: {}",
-                                session.external_id, err
-                            );
-                            continue;
-                        }
-                    }
-                }
-                Ok(None) => {}
-                Err(err) => {
-                    failed += 1;
-                    warn!(
-                        "Failed to check conversation existence during repair for {}: {}",
-                        session.external_id, err
-                    );
-                    continue;
-                }
-            }
-
-            if let Err(err) = client
-                .write_conversation(
-                    &session.external_id,
-                    session.title.clone(),
-                    session.workspace_path.clone(),
-                    None,
-                    None,
-                    Some("{\"recovered_from\":\"pi_jsonl\"}".to_string()),
-                    proto_messages,
-                    session.created_at_ms,
-                    Some(session.updated_at_ms),
-                    Some("pi".to_string()),
-                    session.readable_id.clone(),
-                    None,
-                )
-                .await
-            {
-                failed += 1;
-                warn!(
-                    "Failed to upsert recovered conversation {}: {}",
-                    session.external_id, err
-                );
+            if recovered_messages.is_empty() {
+                skipped += 1;
                 continue;
             }
 
-            repaired += 1;
+            let workspace_id = session.workspace_path.as_deref().unwrap_or("global");
+
+            // Look up existing oqto-log session by external_id to find the
+            // correct session_id and workspace (oqto IDs differ from Pi IDs).
+            let (oqto_session_id, workspace_id) =
+                match crate::oqto_log::ops::find_session_by_external(
+                    home_path,
+                    &session.external_id,
+                )
+                .await
+                {
+                    Some((id, ws)) if !ws.is_empty() => (id, ws.as_str().to_owned()),
+                    Some((id, _)) => (id, workspace_id.to_owned()),
+                    None => (session.external_id.clone(), workspace_id.to_owned()),
+                };
+            let workspace_id = workspace_id.as_str();
+
+            // Append new messages (dedup handles already-persisted ones).
+            match crate::oqto_log::store::append_agent_end_snapshot(
+                home_path,
+                &user_id,
+                workspace_id,
+                &oqto_session_id,
+                &oqto_session_id,
+                Some(&session.external_id),
+                &session.external_id,
+                &recovered_messages,
+            )
+            .await
+            {
+                Ok(stats) => {
+                    // Self-heal: if oqto-log still has fewer messages than the
+                    // JSONL, replace the whole session deterministically.
+                    if let Ok(sess_stats) = crate::oqto_log::store::read_session_stats(
+                        home_path,
+                        workspace_id,
+                        &oqto_session_id,
+                    )
+                    .await
+                        && sess_stats.messages < recovered_messages.len()
+                    {
+                        match crate::oqto_log::store::replace_session_with_snapshot(
+                            home_path,
+                            &user_id,
+                            workspace_id,
+                            &oqto_session_id,
+                            &oqto_session_id,
+                            Some(&session.external_id),
+                            &session.external_id,
+                            &recovered_messages,
+                        )
+                        .await
+                        {
+                            Ok(_) => {
+                                info!(
+                                    "oqto-log self-healed session {} ({} -> {} messages)",
+                                    oqto_session_id,
+                                    sess_stats.messages,
+                                    recovered_messages.len()
+                                );
+                                repaired += 1;
+                                continue;
+                            }
+                            Err(e) => {
+                                warn!(
+                                    "oqto-log replace failed for session {}: {:?}",
+                                    oqto_session_id, e
+                                );
+                                failed += 1;
+                                continue;
+                            }
+                        }
+                    }
+                    if stats.turns_written > 0 {
+                        repaired += 1;
+                    } else {
+                        skipped += 1;
+                    }
+                }
+                Err(e) => {
+                    warn!(
+                        "oqto-log append failed for session {}: {:?}",
+                        oqto_session_id, e
+                    );
+                    failed += 1;
+                }
+            }
         }
 
         info!(
@@ -2730,39 +2740,92 @@ impl Runner {
         }
     }
 
-    /// Set the model for a Pi session.
     /// Parse model info from a Pi command response.
     ///
-    /// Pi's set_model/cycle_model responses contain `{ model: "<id>", provider: "<provider>", ... }`.
-    /// Falls back to the provided defaults if parsing fails.
-    fn parse_model_from_response(
-        response: &crate::pi::PiResponse,
-        fallback_provider: &str,
-        fallback_model_id: &str,
-    ) -> crate::pi::PiModel {
-        let data = response.data.as_ref();
+    /// Pi responses vary by command/version. We support:
+    /// - { model: "<id>", provider: "<provider>" }
+    /// - { model_id: "<id>", provider: "<provider>" }
+    /// - { model: { id: "<id>", provider: "<provider>", ... } }
+    fn parse_model_from_response(response: &crate::pi::PiResponse) -> Option<crate::pi::PiModel> {
+        let data = response.data.as_ref()?;
+
+        // Nested model object variant: { model: { id, provider, ... } }
+        if let Some(model_obj) = data.get("model").and_then(|v| v.as_object()) {
+            let model_id = model_obj.get("id").and_then(|v| v.as_str())?;
+            let provider = model_obj
+                .get("provider")
+                .and_then(|v| v.as_str())
+                .or_else(|| model_obj.get("api").and_then(|v| v.as_str()))?;
+            return Some(crate::pi::PiModel {
+                id: model_id.to_string(),
+                name: model_obj
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(model_id)
+                    .to_string(),
+                api: provider.to_string(),
+                provider: provider.to_string(),
+                base_url: None,
+                reasoning: false,
+                input: vec!["text".to_string()],
+                context_window: 0,
+                max_tokens: 0,
+                cost: None,
+            });
+        }
+
+        // Flat variants
         let model_id = data
-            .and_then(|d| d.get("model"))
+            .get("model")
             .and_then(|v| v.as_str())
-            .unwrap_or(fallback_model_id)
-            .to_string();
+            .or_else(|| data.get("model_id").and_then(|v| v.as_str()))?;
         let provider = data
-            .and_then(|d| d.get("provider"))
+            .get("provider")
             .and_then(|v| v.as_str())
-            .unwrap_or(fallback_provider)
-            .to_string();
-        crate::pi::PiModel {
-            id: model_id.clone(),
-            name: model_id,
-            api: provider.clone(),
-            provider,
+            .or_else(|| data.get("provider_id").and_then(|v| v.as_str()))?;
+
+        Some(crate::pi::PiModel {
+            id: model_id.to_string(),
+            name: model_id.to_string(),
+            api: provider.to_string(),
+            provider: provider.to_string(),
             base_url: None,
             reasoning: false,
             input: vec!["text".to_string()],
             context_window: 0,
             max_tokens: 0,
             cost: None,
+        })
+    }
+
+    /// Resolve the post-command active model from Pi.
+    ///
+    /// The source of truth is `get_state.model`; response payload parsing is a
+    /// best-effort fallback for older Pi variants.
+    async fn resolve_authoritative_model(
+        &self,
+        session_id: &str,
+        response: &crate::pi::PiResponse,
+    ) -> Option<crate::pi::PiModel> {
+        match self.pi_manager.get_state(session_id).await {
+            Ok(state) => {
+                if let Some(model) = state.model {
+                    return Some(model);
+                }
+                warn!(
+                    "pi model change verification: get_state returned no model for session {}",
+                    session_id
+                );
+            }
+            Err(err) => {
+                warn!(
+                    "pi model change verification: get_state failed for session {}: {}",
+                    session_id, err
+                );
+            }
         }
+
+        Self::parse_model_from_response(response)
     }
 
     async fn pi_set_model(&self, req: PiSetModelRequest) -> RunnerResponse {
@@ -2777,10 +2840,27 @@ impl Runner {
             .await
         {
             Ok(response) => {
-                // Parse model info from Pi's response data.
-                // Pi returns { model: "<id>", provider: "<provider>", ... }
-                let model =
-                    Self::parse_model_from_response(&response, &req.provider, &req.model_id);
+                let Some(model) = self
+                    .resolve_authoritative_model(&req.session_id, &response)
+                    .await
+                else {
+                    return error_response(
+                        ErrorCode::Internal,
+                        "set_model succeeded but active model could not be verified".to_string(),
+                    );
+                };
+
+                if let Err(err) = self
+                    .pi_manager
+                    .set_session_model_cache(&req.session_id, &model.provider, &model.id)
+                    .await
+                {
+                    warn!(
+                        "Failed to update model cache after set_model for session {}: {}",
+                        req.session_id, err
+                    );
+                }
+
                 RunnerResponse::PiModelChanged(PiModelChangedResponse {
                     session_id: req.session_id,
                     model,
@@ -2801,7 +2881,27 @@ impl Runner {
 
         match self.pi_manager.cycle_model(&req.session_id).await {
             Ok(response) => {
-                let model = Self::parse_model_from_response(&response, "", "");
+                let Some(model) = self
+                    .resolve_authoritative_model(&req.session_id, &response)
+                    .await
+                else {
+                    return error_response(
+                        ErrorCode::Internal,
+                        "cycle_model succeeded but active model could not be verified".to_string(),
+                    );
+                };
+
+                if let Err(err) = self
+                    .pi_manager
+                    .set_session_model_cache(&req.session_id, &model.provider, &model.id)
+                    .await
+                {
+                    warn!(
+                        "Failed to update model cache after cycle_model for session {}: {}",
+                        req.session_id, err
+                    );
+                }
+
                 RunnerResponse::PiModelChanged(PiModelChangedResponse {
                     session_id: req.session_id,
                     model,

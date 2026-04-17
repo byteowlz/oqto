@@ -4,6 +4,7 @@ use sqlx::{FromRow, SqlitePool};
 
 use super::{ApiKeyAuthUser, ApiKeyListItem, parse_timestamp};
 
+#[allow(dead_code)] // Fields populated by sqlx FromRow derive
 #[derive(Debug, Clone, FromRow)]
 struct ApiKeyRow {
     id: String,
@@ -18,6 +19,7 @@ struct ApiKeyRow {
     revoked_at: Option<String>,
 }
 
+#[allow(dead_code)] // Fields populated by sqlx FromRow derive
 #[derive(Debug, Clone, FromRow)]
 struct ApiKeyAuthRow {
     id: String,
@@ -41,9 +43,6 @@ pub struct ApiKeyRepository {
 }
 
 pub type ApiKeyStoreResult<T> = Result<T>;
-
-#[derive(Debug)]
-pub struct ApiKeyStoreError;
 
 impl ApiKeyRepository {
     pub fn new(pool: SqlitePool) -> Self {

@@ -12,8 +12,8 @@ use axum::{
     http::{StatusCode, header},
     response::{IntoResponse, Response},
 };
+use image::GenericImageView;
 use image::codecs::jpeg::JpegEncoder;
-use image::{DynamicImage, GenericImageView, ImageEncoder};
 use notify::{
     EventKind, RecursiveMode, Watcher,
     event::{CreateKind, RemoveKind},
