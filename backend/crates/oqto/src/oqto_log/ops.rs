@@ -97,3 +97,36 @@ pub async fn reindex_fts(user_home: &Path) -> Result<usize> {
 
     Ok(rebuilt)
 }
+
+/// Look up an oqto-log session by its external_id (Pi session ID).
+/// Scans all workspace databases. Returns (session_id, workspace_id) or `None`.
+pub async fn find_session_by_external(
+    user_home: &Path,
+    external_id: &str,
+) -> Option<(String, String)> {
+    let dbs = list_db_paths(user_home);
+
+    for db in dbs {
+        let options = SqliteConnectOptions::new().filename(&db).read_only(true);
+        let pool = match SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await
+        {
+            Ok(pool) => pool,
+            Err(_) => continue,
+        };
+
+        if let Ok(Some(row)) = sqlx::query_as::<_, (String, String)>(
+            "SELECT session_id, COALESCE(workspace_id, '') FROM oqto_log_sessions WHERE external_id = ? LIMIT 1",
+        )
+        .bind(external_id)
+        .fetch_optional(&pool)
+        .await
+        {
+            return Some(row);
+        }
+    }
+
+    None
+}

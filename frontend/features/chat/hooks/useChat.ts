@@ -1855,7 +1855,9 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 
 		const manager = getWsManager();
 		manager.agentGetState(sessionId);
-		void fetchHistoryMessages(sessionId);
+		void fetchHistoryMessages(sessionId, undefined, {
+			forceAuthoritative: true,
+		});
 
 		if (isPiDebugEnabled()) {
 			console.debug("[useChat] refresh requested for:", sessionId);
@@ -2092,7 +2094,9 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 		// This avoids showing "No messages yet" while waiting for
 		// WebSocket session readiness / reattach logic.
 		if (sessionActuallyChanged) {
-			void fetchHistoryMessages(activeSessionId);
+			void fetchHistoryMessages(activeSessionId, undefined, {
+				forceAuthoritative: true,
+			});
 			// Also request the runner's live window immediately so in-flight
 			// assistant output reappears when returning to a still-streaming session.
 			// oqto-log only contains persisted turns (agent_end), so relying on
@@ -2177,7 +2181,9 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 
 				// Also fetch full history from hstry to fill in messages
 				// that Pi's context window may have compacted away.
-				void fetchHistoryMessages(_sessionId);
+				void fetchHistoryMessages(_sessionId, undefined, {
+					forceAuthoritative: true,
+				});
 			},
 		);
 
@@ -2240,7 +2246,9 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 							// blocks the session.create handler from fetching
 							// (it checks !isStreamingRef) and agent.idle never
 							// fires (dead Pi), leaving the chat permanently empty.
-							void fetchHistoryMessages(sid);
+							void fetchHistoryMessages(sid, undefined, {
+								forceAuthoritative: true,
+							});
 
 							// Re-subscribe with create: true to trigger
 							// session.create on the backend, which sets up
@@ -2284,7 +2292,9 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 
 								// Session exists -- reattach to enable event forwarding.
 								// Fetch history immediately (same reasoning as above).
-								void fetchHistoryMessages(sid);
+								void fetchHistoryMessages(sid, undefined, {
+									forceAuthoritative: true,
+								});
 								unsubscribeRef.current?.();
 								unsubscribeRef.current = manager.subscribeAgentSession(
 									sid,
@@ -2297,14 +2307,18 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 								// Session is not on the runner -- just fetch
 								// historical state and messages.
 								manager.agentGetState(sid);
-								void fetchHistoryMessages(sid);
+								void fetchHistoryMessages(sid, undefined, {
+									forceAuthoritative: true,
+								});
 							}
 						}
 					} catch {
 						if (aborted) return;
 						// list_sessions failed -- fall back to direct fetch
 						manager.agentGetState(sid);
-						void fetchHistoryMessages(sid);
+						void fetchHistoryMessages(sid, undefined, {
+							forceAuthoritative: true,
+						});
 					}
 				})
 				.catch(() => {

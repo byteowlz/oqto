@@ -32,6 +32,7 @@ struct Subscription {
     scope: BusScope,
     scope_id: String,
     /// Owning user (server-resolved, never client-provided).
+    #[allow(dead_code)] // Used via DashMap get_mut; compiler misses indirect reads
     user_id: String,
     /// Optional payload filter.
     filter: Option<Value>,

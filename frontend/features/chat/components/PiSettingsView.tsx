@@ -223,6 +223,7 @@ export function PiSettingsView({
 				workspace: workspacePath,
 				shared_workspace_id: sharedWorkspaceId ?? undefined,
 			});
+			window.dispatchEvent(new Event("oqto:backfill-complete"));
 			toast.success(
 				`Pi import complete: repaired ${result.repaired_conversations}, scanned ${result.scanned_files}`,
 			);

@@ -174,25 +174,6 @@ pub(crate) fn get_runner_for_user(
     }
 }
 
-/// Create a runner client for a specific Linux username (e.g. shared workspace user).
-fn get_runner_for_linux_user(
-    state: &AppState,
-    linux_username: &str,
-) -> Option<crate::runner::client::RunnerClient> {
-    let pattern = state.runner_socket_pattern.as_ref()?;
-    match crate::runner::client::RunnerClient::for_user_with_pattern(linux_username, pattern) {
-        Ok(client) => Some(client),
-        Err(e) => {
-            tracing::warn!(
-                linux_user = %linux_username,
-                error = %e,
-                "Failed to create runner client for linux user"
-            );
-            None
-        }
-    }
-}
-
 fn has_non_empty_title(title: &Option<String>) -> bool {
     title.as_ref().is_some_and(|value| !value.trim().is_empty())
 }

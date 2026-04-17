@@ -85,9 +85,7 @@ pub use invites::{
 };
 
 // TRX handlers and types
-pub use trx::{
-    close_trx_issue, create_trx_issue, get_trx_issue, list_trx_issues, sync_trx, update_trx_issue,
-};
+pub use trx::{close_trx_issue, create_trx_issue, list_trx_issues, sync_trx, update_trx_issue};
 
 // Misc handlers and types
 pub use misc::{

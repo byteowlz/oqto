@@ -17,8 +17,6 @@ use std::time::{Duration, Instant};
 use std::os::unix::fs::PermissionsExt;
 
 use anyhow::{Context, Result};
-use chrono::DateTime;
-use futures::FutureExt;
 use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
@@ -429,6 +427,10 @@ struct PiSession {
     /// Session configuration.
     #[allow(dead_code)]
     config: PiSessionConfig,
+    /// Last known active provider from Pi `get_state`.
+    active_provider: Arc<RwLock<Option<String>>>,
+    /// Last known active model from Pi `get_state`.
+    active_model: Arc<RwLock<Option<String>>>,
     /// Child process.
     process: Child,
     /// Current state.
@@ -832,6 +834,8 @@ impl PiSessionManager {
         let state = Arc::new(RwLock::new(PiSessionState::Starting));
         let last_activity = Arc::new(RwLock::new(Instant::now()));
         let pending_responses: PendingResponses = Arc::new(RwLock::new(HashMap::new()));
+        let active_provider = Arc::new(RwLock::new(config.provider.clone()));
+        let active_model = Arc::new(RwLock::new(config.model.clone()));
         // Fork transaction semaphore: allow exactly one in-flight fork per session
         let fork_txn = Arc::new(Semaphore::new(1));
         // Pending client_id queue for optimistic message matching
@@ -897,6 +901,8 @@ impl PiSessionManager {
             let hstry_eid = Arc::clone(&hstry_external_id);
             let session_aliases = Arc::clone(&self.session_aliases);
             let msg_buf = Arc::clone(&message_buffer);
+            let active_provider_for_reader = Arc::clone(&active_provider);
+            let active_model_for_reader = Arc::clone(&active_model);
 
             let runner_id = self.config.runner_id.clone();
             tokio::spawn(async move {
@@ -916,6 +922,8 @@ impl PiSessionManager {
                     session_aliases,
                     runner_id,
                     msg_buf,
+                    active_provider_for_reader,
+                    active_model_for_reader,
                 )
                 .await;
             })
@@ -948,6 +956,8 @@ impl PiSessionManager {
             process: child,
             state: Arc::clone(&state),
             hstry_external_id,
+            active_provider,
+            active_model,
             last_activity: Arc::clone(&last_activity),
             subscribers,
             cmd_tx,
@@ -1155,8 +1165,8 @@ impl PiSessionManager {
             Arc<RwLock<Instant>>,
             usize,
             PathBuf,
-            Option<String>,
-            Option<String>,
+            Arc<RwLock<Option<String>>>,
+            Arc<RwLock<Option<String>>>,
         )> = {
             let sessions = self.sessions.read().await;
             let mut snaps = Vec::with_capacity(sessions.len());
@@ -1168,17 +1178,27 @@ impl PiSessionManager {
                     Arc::clone(&s.last_activity),
                     s.subscriber_count().await,
                     s.config.cwd.clone(),
-                    s.config.provider.clone(),
-                    s.config.model.clone(),
+                    Arc::clone(&s.active_provider),
+                    Arc::clone(&s.active_model),
                 ));
             }
             snaps
         };
 
         let mut infos = Vec::with_capacity(snapshots.len());
-        for (id, external_id, state, last_activity_arc, subscriber_count, cwd, provider, model) in
-            snapshots
+        for (
+            id,
+            external_id,
+            state,
+            last_activity_arc,
+            subscriber_count,
+            cwd,
+            active_provider,
+            active_model,
+        ) in snapshots
         {
+            let provider = active_provider.read().await.clone();
+            let model = active_model.read().await.clone();
             let current_state = *state.read().await;
             let eid = external_id.read().await.clone();
             let hstry_id = if eid.is_empty() || eid == id {
@@ -1327,6 +1347,31 @@ impl PiSessionManager {
             .unwrap_or_else(|| session_id.to_string());
         let sessions = self.sessions.read().await;
         sessions.get(&resolved_id).map(|s| s.config.clone())
+    }
+
+    /// Update the cached provider/model for a live session.
+    ///
+    /// This cache is used by `list_sessions()` so frontend model indicators
+    /// reflect the same model Pi reports via `get_state`.
+    pub async fn set_session_model_cache(
+        &self,
+        session_id: &str,
+        provider: &str,
+        model_id: &str,
+    ) -> Result<()> {
+        let resolved_id = self
+            .resolve_session_key(session_id)
+            .await
+            .unwrap_or_else(|| session_id.to_string());
+        let mut sessions = self.sessions.write().await;
+        let session = sessions
+            .get_mut(&resolved_id)
+            .ok_or_else(|| anyhow::anyhow!("Session '{}' not found", session_id))?;
+        session.config.provider = Some(provider.to_string());
+        session.config.model = Some(model_id.to_string());
+        *session.active_provider.write().await = Some(provider.to_string());
+        *session.active_model.write().await = Some(model_id.to_string());
+        Ok(())
     }
 
     /// Try to begin a fork transaction for a session.
@@ -3146,6 +3191,8 @@ impl PiSessionManager {
         session_aliases: Arc<RwLock<HashMap<String, String>>>,
         runner_id: String,
         message_buffer: MessageBuffer,
+        active_provider: Arc<RwLock<Option<String>>>,
+        active_model: Arc<RwLock<Option<String>>>,
     ) {
         // Read stderr in a separate task, keeping last N lines in a ring buffer
         // so we can include them in the crash error event.
@@ -3411,6 +3458,35 @@ impl PiSessionManager {
                                         }
                                     });
                                 }
+                            }
+
+                            // Update active model cache from get_state so list_sessions()
+                            // reflects what Pi is actually using (source of truth).
+                            let state_provider = data
+                                .get("model")
+                                .and_then(|m| m.get("provider"))
+                                .and_then(|v| v.as_str())
+                                .map(ToString::to_string)
+                                .or_else(|| {
+                                    data.get("provider")
+                                        .and_then(|v| v.as_str())
+                                        .map(ToString::to_string)
+                                });
+                            let state_model = data
+                                .get("model")
+                                .and_then(|m| m.get("id"))
+                                .and_then(|v| v.as_str())
+                                .map(ToString::to_string)
+                                .or_else(|| {
+                                    data.get("model")
+                                        .and_then(|v| v.as_str())
+                                        .map(ToString::to_string)
+                                });
+                            if let Some(provider) = state_provider {
+                                *active_provider.write().await = Some(provider);
+                            }
+                            if let Some(model_id) = state_model {
+                                *active_model.write().await = Some(model_id);
                             }
 
                             // Pi's auto-rename extension sets sessionName to:
@@ -4900,123 +4976,12 @@ impl PiSessionManager {
     }
 }
 
-#[derive(Debug, Clone, Hash, PartialEq, Eq)]
-struct JsonlMessageKey {
-    role: String,
-    timestamp: Option<u64>,
-    content: String,
-    tool_call_id: Option<String>,
-    tool_name: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct JsonlEntry {
-    #[serde(rename = "type")]
-    entry_type: String,
-    #[serde(default)]
-    message: Option<AgentMessage>,
-    #[serde(default)]
-    timestamp: Option<String>,
-}
-
 #[derive(Debug, Deserialize)]
 struct JsonlSessionInfoEntry {
     #[serde(rename = "type")]
     entry_type: String,
     #[serde(default)]
     name: Option<String>,
-}
-
-#[derive(Debug, Clone)]
-struct JsonlMessageEntry {
-    idx: i32,
-    key: JsonlMessageKey,
-}
-
-fn message_signature(content: &serde_json::Value) -> String {
-    match content {
-        serde_json::Value::String(text) => text.trim().to_string(),
-        serde_json::Value::Array(blocks) => blocks
-            .iter()
-            .filter_map(|block| block.as_object())
-            .filter_map(|obj| {
-                let block_type = obj.get("type").and_then(|t| t.as_str())?;
-                match block_type {
-                    "text" => obj.get("text").and_then(|t| t.as_str()),
-                    "thinking" => obj.get("thinking").and_then(|t| t.as_str()),
-                    _ => None,
-                }
-            })
-            .map(|text| text.trim())
-            .filter(|text| !text.is_empty())
-            .collect::<Vec<_>>()
-            .join("\n"),
-        _ => String::new(),
-    }
-}
-
-fn build_jsonl_key(message: &AgentMessage, timestamp: Option<u64>) -> JsonlMessageKey {
-    JsonlMessageKey {
-        role: message.role.to_lowercase(),
-        timestamp,
-        content: message_signature(&message.content),
-        tool_call_id: message.tool_call_id.clone(),
-        tool_name: message.tool_name.clone(),
-    }
-}
-
-fn parse_entry_timestamp(timestamp: Option<&str>) -> Option<u64> {
-    let parsed = timestamp.and_then(|value| DateTime::parse_from_rfc3339(value).ok());
-    parsed.and_then(|dt| {
-        let millis = dt.timestamp_millis();
-        if millis >= 0 {
-            Some(millis as u64)
-        } else {
-            None
-        }
-    })
-}
-
-fn read_jsonl_message_entries(path: PathBuf) -> Result<Vec<JsonlMessageEntry>> {
-    use std::io::BufRead;
-
-    let file = std::fs::File::open(&path)
-        .with_context(|| format!("Failed to open Pi session file {}", path.display()))?;
-    let reader = std::io::BufReader::new(file);
-    let mut entries = Vec::new();
-    let mut idx: i32 = 0;
-
-    for line in reader.lines() {
-        let line = line?;
-        if line.trim().is_empty() {
-            continue;
-        }
-
-        let entry: JsonlEntry = match serde_json::from_str(&line) {
-            Ok(parsed) => parsed,
-            Err(err) => {
-                warn!("Failed to parse Pi JSONL entry: {}", err);
-                continue;
-            }
-        };
-
-        if entry.entry_type != "message" {
-            continue;
-        }
-
-        let Some(message) = entry.message else {
-            continue;
-        };
-
-        let entry_ts = parse_entry_timestamp(entry.timestamp.as_deref());
-        let timestamp = message.timestamp.or(entry_ts);
-        let key = build_jsonl_key(&message, timestamp);
-
-        entries.push(JsonlMessageEntry { idx, key });
-        idx += 1;
-    }
-
-    Ok(entries)
 }
 
 fn read_jsonl_session_name(path: PathBuf) -> Result<Option<String>> {
@@ -5048,55 +5013,6 @@ fn read_jsonl_session_name(path: PathBuf) -> Result<Option<String>> {
     }
 
     Ok(last_name)
-}
-
-async fn resolve_jsonl_message_indices(
-    session_id: &str,
-    work_dir: &Path,
-    messages: &[AgentMessage],
-) -> Option<Vec<Option<i32>>> {
-    let session_file = crate::pi::session_files::find_session_file_async(
-        session_id.to_string(),
-        Some(work_dir.to_path_buf()),
-    )
-    .await?;
-
-    let entries = tokio::task::spawn_blocking(move || read_jsonl_message_entries(session_file))
-        .await
-        .ok()
-        .and_then(|result| result.ok())?;
-
-    let mut keyed: HashMap<JsonlMessageKey, VecDeque<i32>> = HashMap::new();
-    let mut keyed_no_ts: HashMap<JsonlMessageKey, VecDeque<i32>> = HashMap::new();
-
-    for entry in entries {
-        keyed
-            .entry(entry.key.clone())
-            .or_default()
-            .push_back(entry.idx);
-        let mut no_ts_key = entry.key.clone();
-        no_ts_key.timestamp = None;
-        keyed_no_ts
-            .entry(no_ts_key)
-            .or_default()
-            .push_back(entry.idx);
-    }
-
-    let mut result = Vec::with_capacity(messages.len());
-    for message in messages {
-        let key = build_jsonl_key(message, message.timestamp);
-        let mut idx = keyed.get_mut(&key).and_then(|values| values.pop_front());
-        if idx.is_none() {
-            let mut no_ts_key = key.clone();
-            no_ts_key.timestamp = None;
-            idx = keyed_no_ts
-                .get_mut(&no_ts_key)
-                .and_then(|values| values.pop_front());
-        }
-        result.push(idx);
-    }
-
-    Some(result)
 }
 
 async fn read_hstry_message_version_snapshot(
@@ -5216,8 +5132,15 @@ fn attach_client_ids_to_user_messages(
         })
         .collect();
 
-    for (i, msg_idx) in user_indices.iter().enumerate() {
-        let Some(client_id) = ordered_client_ids.get(i) else {
+    // Bind client_ids to the LAST N user messages (the most recent turn's
+    // prompts), not the first N. The `ordered_client_ids` represents the
+    // current turn's bindings; earlier user messages in the buffer are
+    // historical and already persisted. Attaching to the tail ensures the
+    // new user message gets its client_id, enabling frontend dedup on reload.
+    let start = user_indices.len().saturating_sub(ordered_client_ids.len());
+    for (i, msg_idx) in user_indices.iter().enumerate().skip(start) {
+        let cid_idx = i - start;
+        let Some(client_id) = ordered_client_ids.get(cid_idx) else {
             break;
         };
         if let Some(msg) = messages.get_mut(*msg_idx) {

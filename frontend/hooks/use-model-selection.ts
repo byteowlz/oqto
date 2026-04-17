@@ -134,6 +134,8 @@ export function useModelSelection(
 	// Refs to avoid stale closures in event handlers
 	const pendingModelRefRef = useRef(pendingModelRef);
 	pendingModelRefRef.current = pendingModelRef;
+	const selectedModelRefRef = useRef(selectedModelRef);
+	selectedModelRefRef.current = selectedModelRef;
 	const lastReasoningDefaultKeyRef = useRef<string | null>(null);
 
 	const effectiveSessionId = sessionId;
@@ -402,15 +404,52 @@ export function useModelSelection(
 			return undefined;
 		}
 
+		const syncModelFromState = (
+			state: {
+				model?: {
+					provider?: string;
+					id?: string;
+				};
+			} | null,
+		) => {
+			const provider = state?.model?.provider;
+			const modelId = state?.model?.id;
+			if (!provider || !modelId) return;
+			const modelRef = `${provider}/${modelId}`;
+			if (selectedModelRefRef.current !== modelRef) {
+				setSelectedModelSynced(modelRef);
+			}
+			if (pendingModelRefRef.current === modelRef) {
+				setPendingModelSynced(null);
+			}
+			try {
+				if (modelStorageKey) {
+					localStorage.setItem(modelStorageKey, modelRef);
+					if (aliasModelStorageKey) {
+						localStorage.setItem(aliasModelStorageKey, modelRef);
+					}
+				} else {
+					localStorage.setItem(workspaceModelStorageKey, modelRef);
+				}
+			} catch {
+				// ignore localStorage errors
+			}
+		};
+
 		void getWsManager()
 			.agentGetStateWait(effectiveSessionId)
 			.then((state) => {
 				const s = state as {
 					isStreaming: boolean;
 					isCompacting: boolean;
+					model?: {
+						provider?: string;
+						id?: string;
+					};
 				} | null;
 				if (s) {
 					setIsIdle(!s.isStreaming && !s.isCompacting);
+					syncModelFromState(s);
 				}
 			})
 			.catch(() => {
@@ -468,6 +507,9 @@ export function useModelSelection(
 		workspacePath,
 		setSelectedModelSynced,
 		setPendingModelSynced,
+		modelStorageKey,
+		aliasModelStorageKey,
+		workspaceModelStorageKey,
 	]);
 
 	const persistModelSelection = useCallback(

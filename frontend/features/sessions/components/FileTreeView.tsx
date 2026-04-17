@@ -1078,9 +1078,20 @@ export function FileTreeView({
 	// Open lightbox for a specific file
 	const handleOpenLightbox = useCallback(
 		(filePath: string) => {
+			// Exact match for files
 			const idx = lightboxItems.findIndex((item) => item.path === filePath);
 			if (idx >= 0) {
 				setLightboxIndex(idx);
+				setLightboxOpen(true);
+				return;
+			}
+			// Directory: open gallery at first media file within this directory
+			const dirPrefix = filePath.endsWith("/") ? filePath : `${filePath}/`;
+			const dirIdx = lightboxItems.findIndex((item) =>
+				item.path.startsWith(dirPrefix),
+			);
+			if (dirIdx >= 0) {
+				setLightboxIndex(dirIdx);
 				setLightboxOpen(true);
 			}
 		},
@@ -1857,13 +1868,13 @@ function FileContextMenu({
 	onOpenInCanvas?: (path: string) => void;
 	onOpenAsApp?: (path: string) => void;
 	onOpenInGallery?: (path: string) => void;
-	onOpenInGallery?: (path: string) => void;
 	onCopyToWorkspace?: (
 		path: string,
 		name: string,
 		isDirectory: boolean,
 	) => void;
 }) {
+	const isDirectory = node.type === "directory";
 	const isImage = node.type === "file" && isImageFile(node.name);
 	const isVideo = node.type === "file" && isVideoFile(node.name);
 	const isMedia = isImage || isVideo;
@@ -1873,7 +1884,7 @@ function FileContextMenu({
 		<ContextMenu>
 			<ContextMenuTrigger className="contents">{children}</ContextMenuTrigger>
 			<ContextMenuContent>
-				{isMedia && onOpenInGallery && (
+				{(isMedia || isDirectory) && onOpenInGallery && (
 					<>
 						<ContextMenuItem onClick={() => onOpenInGallery(node.path)}>
 							<Maximize2 className="w-4 h-4 mr-2" />
@@ -2204,6 +2215,7 @@ function TreeRow({
 								onRenameCancel={onRenameCancel}
 								onOpenInCanvas={onOpenInCanvas}
 								onOpenAsApp={onOpenAsApp}
+								onOpenInGallery={onOpenInGallery}
 								loadingDirs={loadingDirs}
 							/>
 						))}
@@ -2294,6 +2306,7 @@ function ListView({
 							onDownload={onDownload}
 							onOpenInCanvas={onOpenInCanvas}
 							onOpenAsApp={onOpenAsApp}
+							onOpenInGallery={onOpenInGallery}
 							onDelete={onDelete}
 							onRename={onRename}
 							onCopy={onCopy}

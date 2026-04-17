@@ -29,7 +29,7 @@ use super::models::{
     AddMemberRequest, AdminSharedWorkspaceInfo, ConvertToSharedRequest,
     CreateSharedWorkspaceRequest, CreateSharedWorkspaceWorkdirRequest, MemberRole, SharedWorkspace,
     SharedWorkspaceInfo, SharedWorkspaceMemberInfo, TransferOwnershipRequest,
-    UpdateSharedWorkspaceRequest, WORKSPACE_COLORS, WORKSPACE_ICONS,
+    UpdateSharedWorkspaceRequest, WORKSPACE_ICONS,
 };
 use super::repository::SharedWorkspaceRepository;
 use super::users_md::{generate_context_json, generate_users_md};

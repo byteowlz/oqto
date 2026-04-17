@@ -415,25 +415,35 @@ pub async fn replace_session_with_snapshot(
     };
     let snapshot_marker = format!("snapshot:{}", snapshot_hash);
 
-    // Avoid destructive DELETE-based replacement during deploy-time repair.
-    // Instead, append deterministic bootstrap turns idempotently.
-    let mut turn_version = sqlx::query_scalar::<_, Option<i64>>(
-        "SELECT MAX(turn_version) FROM oqto_log_turns WHERE session_id = ?",
-    )
-    .bind(session_id)
-    .fetch_one(&mut *tx)
-    .await
-    .unwrap_or(None)
-    .unwrap_or(0);
+    // Clear existing turns and messages for this session, then re-insert
+    // from scratch. Temporarily drop FTS triggers to avoid cascading errors
+    // from stale FTS state; the index is rebuilt at the end.
+    sqlx::query("DROP TRIGGER IF EXISTS oqto_log_messages_ad")
+        .execute(&mut *tx)
+        .await
+        .context("drop delete trigger (replace)")?;
+    sqlx::query("DROP TRIGGER IF EXISTS oqto_log_messages_ai")
+        .execute(&mut *tx)
+        .await
+        .context("drop insert trigger (replace)")?;
+    sqlx::query("DROP TRIGGER IF EXISTS oqto_log_messages_au")
+        .execute(&mut *tx)
+        .await
+        .context("drop update trigger (replace)")?;
 
-    let mut parent_turn_id = sqlx::query_scalar::<_, Option<String>>(
-        "SELECT head_turn_id FROM oqto_log_branches WHERE branch_id = ?",
-    )
-    .bind(&branch_id)
-    .fetch_one(&mut *tx)
-    .await
-    .unwrap_or(None);
+    sqlx::query("DELETE FROM oqto_log_messages WHERE turn_id IN (SELECT turn_id FROM oqto_log_turns WHERE session_id = ?)")
+        .bind(session_id)
+        .execute(&mut *tx)
+        .await
+        .context("delete existing messages (replace)")?;
+    sqlx::query("DELETE FROM oqto_log_turns WHERE session_id = ?")
+        .bind(session_id)
+        .execute(&mut *tx)
+        .await
+        .context("delete existing turns (replace)")?;
 
+    let mut turn_version: i64 = 0;
+    let mut parent_turn_id: Option<String> = None;
     let mut turns_written = 0usize;
     let mut messages_written = 0usize;
 
@@ -479,6 +489,16 @@ pub async fn replace_session_with_snapshot(
         .context("insert oqto_log_turn (replace)")?
         .rows_affected()
             > 0;
+
+        // If the turn INSERT was ignored (e.g. unique constraint on
+        // source_entry_id from another session), skip the message INSERT
+        // to avoid a FOREIGN KEY violation. We already deleted this
+        // session's turns above, so any IGNORE here is from a cross-session
+        // collision -- safe to skip.
+        if !turn_inserted {
+            turn_version -= 1;
+            continue;
+        }
 
         let text = extract_text(&msg.content);
         let json_payload = serde_json::to_string(msg).unwrap_or_default();
@@ -532,6 +552,17 @@ pub async fn replace_session_with_snapshot(
     .await
     .context("update oqto_log_branches head (replace)")?;
 
+    // Recreate FTS triggers that were dropped earlier.
+    recreate_fts_triggers(&mut tx)
+        .await
+        .context("recreate FTS triggers (replace)")?;
+
+    // Rebuild the FTS index for correctness after bulk replace.
+    sqlx::query("INSERT INTO oqto_log_message_fts(oqto_log_message_fts) VALUES('rebuild')")
+        .execute(&mut *tx)
+        .await
+        .context("rebuild FTS index (replace)")?;
+
     tx.commit().await.context("commit oqto-log replace tx")?;
 
     Ok(AppendStats {
@@ -540,6 +571,66 @@ pub async fn replace_session_with_snapshot(
         deduped: false,
         snapshot_hash,
     })
+}
+
+async fn recreate_fts_triggers(tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>) -> Result<()> {
+    sqlx::query(
+        r#"
+        CREATE TRIGGER IF NOT EXISTS oqto_log_messages_ai
+        AFTER INSERT ON oqto_log_messages
+        WHEN NEW.content IS NOT NULL
+        BEGIN
+            INSERT INTO oqto_log_message_fts (rowid, message_id, turn_id, session_id, role, content)
+            VALUES (
+                NEW.rowid,
+                NEW.message_id,
+                NEW.turn_id,
+                (SELECT session_id FROM oqto_log_turns WHERE turn_id = NEW.turn_id),
+                COALESCE(NEW.role, ''),
+                NEW.content
+            );
+        END
+    "#,
+    )
+    .execute(&mut **tx)
+    .await
+    .context("recreate insert trigger")?;
+
+    sqlx::query(r#"
+        CREATE TRIGGER IF NOT EXISTS oqto_log_messages_ad
+        AFTER DELETE ON oqto_log_messages
+        BEGIN
+            INSERT INTO oqto_log_message_fts (oqto_log_message_fts, rowid, message_id, turn_id, session_id, role, content)
+            VALUES ('delete', OLD.rowid, OLD.message_id, OLD.turn_id, '', COALESCE(OLD.role, ''), COALESCE(OLD.content, ''));
+        END
+    "#)
+    .execute(&mut **tx)
+    .await
+    .context("recreate delete trigger")?;
+
+    sqlx::query(r#"
+        CREATE TRIGGER IF NOT EXISTS oqto_log_messages_au
+        AFTER UPDATE ON oqto_log_messages
+        BEGIN
+            INSERT INTO oqto_log_message_fts (oqto_log_message_fts, rowid, message_id, turn_id, session_id, role, content)
+            VALUES ('delete', OLD.rowid, OLD.message_id, OLD.turn_id, '', COALESCE(OLD.role, ''), COALESCE(OLD.content, ''));
+
+            INSERT INTO oqto_log_message_fts (rowid, message_id, turn_id, session_id, role, content)
+            VALUES (
+                NEW.rowid,
+                NEW.message_id,
+                NEW.turn_id,
+                (SELECT session_id FROM oqto_log_turns WHERE turn_id = NEW.turn_id),
+                COALESCE(NEW.role, ''),
+                COALESCE(NEW.content, '')
+            );
+        END
+    "#)
+    .execute(&mut **tx)
+    .await
+    .context("recreate update trigger")?;
+
+    Ok(())
 }
 
 pub async fn upsert_import_checkpoint(

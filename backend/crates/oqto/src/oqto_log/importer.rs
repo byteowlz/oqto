@@ -243,7 +243,7 @@ pub async fn bootstrap_import_from_pi_jsonl(
 
     for (path, workspace_id) in files {
         stats.scanned_files += 1;
-        let Some(session_id) = parse_pi_session_id_from_path(&path) else {
+        let Some(pi_session_id) = parse_pi_session_id_from_path(&path) else {
             stats.skipped_files += 1;
             continue;
         };
@@ -253,6 +253,20 @@ pub async fn bootstrap_import_from_pi_jsonl(
             stats.skipped_files += 1;
             continue;
         }
+
+        // If an oqto-log session already exists with this Pi ID as its
+        // external_id (created at runtime under an oqto-* session_id),
+        // merge into that session instead of creating a duplicate.
+        // Also use the workspace_id from the existing session to ensure we
+        // write to the correct database file.
+        let (session_id, workspace_id) =
+            match crate::oqto_log::ops::find_session_by_external(user_home, &pi_session_id).await {
+                Some((existing_id, existing_ws)) if !existing_ws.is_empty() => {
+                    (existing_id, existing_ws)
+                }
+                Some((existing_id, _)) => (existing_id, workspace_id),
+                None => (pi_session_id.clone(), workspace_id),
+            };
 
         let last_offset = (messages.len() as i64).saturating_sub(1);
         let mut last_err: Option<anyhow::Error> = None;
@@ -264,8 +278,8 @@ pub async fn bootstrap_import_from_pi_jsonl(
                 &workspace_id,
                 &session_id,
                 &session_id,
-                Some(&session_id),
-                &session_id,
+                Some(&pi_session_id),
+                &pi_session_id,
                 &messages,
             )
             .await
@@ -298,8 +312,8 @@ pub async fn bootstrap_import_from_pi_jsonl(
                         &workspace_id,
                         &session_id,
                         &session_id,
-                        Some(&session_id),
-                        &session_id,
+                        Some(&pi_session_id),
+                        &pi_session_id,
                         &messages,
                     )
                     .await
@@ -335,7 +349,7 @@ pub async fn bootstrap_import_from_pi_jsonl(
                 user_home,
                 &workspace_id,
                 "pi_jsonl",
-                &session_id,
+                &pi_session_id,
                 &session_id,
                 Some(last_offset),
                 Some(&format!("entry:{}", last_offset)),

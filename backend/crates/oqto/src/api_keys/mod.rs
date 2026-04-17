@@ -3,10 +3,8 @@
 mod models;
 mod repository;
 
-pub use models::{
-    ApiKey, ApiKeyAuthUser, ApiKeyCreateRequest, ApiKeyCreateResponse, ApiKeyListItem,
-};
-pub use repository::{ApiKeyRepository, ApiKeyStoreError, ApiKeyStoreResult};
+pub use models::{ApiKeyAuthUser, ApiKeyCreateRequest, ApiKeyCreateResponse, ApiKeyListItem};
+pub use repository::ApiKeyRepository;
 
 use anyhow::{Context, Result};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
