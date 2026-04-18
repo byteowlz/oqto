@@ -374,6 +374,30 @@
 	word-break: break-all;
 }
 
+.stream-commit-slide-in-a,
+.stream-commit-slide-in-b {
+	animation: stream-commit-slide-in 160ms ease-out;
+	will-change: transform, opacity;
+}
+
+@keyframes stream-commit-slide-in {
+	from {
+		transform: translateY(6px);
+		opacity: 0.86;
+	}
+	to {
+		transform: translateY(0);
+		opacity: 1;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.stream-commit-slide-in-a,
+	.stream-commit-slide-in-b {
+		animation: none;
+	}
+}
+
 /* Ensure message containers don't overflow */
 .message-container {
 	max-width: 100%;
