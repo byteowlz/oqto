@@ -1006,28 +1006,7 @@ export function mergeServerMessages(
 		return mergeMessageKeepingLocalToolDetails(prior, serverMsg);
 	});
 
-	// Preserve optimistic local messages that haven't been persisted yet.
-	// This includes:
-	// 1. Messages with clientIds that don't exist in server (matched by clientId reconciliation)
-	// 2. Tmp/* legacy messages that are still streaming (no clientId, but actively being built)
-	const serverClientIds = new Set(
-		serverMessages
-			.map((m) => m.clientId)
-			.filter((c): c is string => typeof c === "string" && c.length > 0),
-	);
-	const preservedLocals = previous.filter((msg) => {
-		// Case 1: Has clientId that doesn't exist in server -> unmatched optimistic
-		if (msg.clientId && !serverClientIds.has(msg.clientId)) {
-			return true;
-		}
-		// Case 2: Tmp/legacy message with no clientId but still streaming
-		if (shouldPreserveLocalMessage(msg) && !msg.clientId) {
-			return Boolean(msg.isStreaming);
-		}
-		return false;
-	});
-	if (preservedLocals.length === 0) {
-		return mergedInServerOrder;
-	}
-	return upsertFromServer(mergedInServerOrder, preservedLocals);
+	// Authoritative mode is strict convergence: return server timeline only.
+	// This prevents stale optimistic user turns from lingering at the tail.
+	return mergedInServerOrder;
 }

@@ -116,7 +116,7 @@ describe("mergeServerMessages", () => {
 		expect(result.map((m) => m.id)).toEqual(["local-1", "history-1"]);
 	});
 
-	it("authoritative mode keeps only in-flight tmp/legacy messages", () => {
+	it("authoritative mode converges strictly to server timeline", () => {
 		const prev = [
 			textMsg("history-old", "user", "old"),
 			textMsg("tmp:user", "user", "new", { clientId: "c-new" }),
@@ -124,11 +124,7 @@ describe("mergeServerMessages", () => {
 		];
 		const server = [textMsg("history-old", "user", "old")];
 		const result = mergeServerMessages(prev, server, "authoritative");
-		expect(result.map((m) => m.id)).toEqual([
-			"history-old",
-			"tmp:user",
-			"tmp:assistant",
-		]);
+		expect(result.map((m) => m.id)).toEqual(["history-old"]);
 	});
 
 	it("authoritative mode drops optimistic local once persisted clientId arrives", () => {
@@ -141,14 +137,14 @@ describe("mergeServerMessages", () => {
 		expect(result[0].id).toBe("history-user");
 	});
 
-	it("authoritative mode does not drop unmatched optimistic user with identical text", () => {
+	it("authoritative mode drops unmatched optimistic user tail", () => {
 		const prev = [
 			textMsg("history-1", "user", "ok", { clientId: "c-old" }),
 			textMsg("tmp:user-2", "user", "ok", { clientId: "c-new" }),
 		];
 		const server = [textMsg("history-1", "user", "ok", { clientId: "c-old" })];
 		const result = mergeServerMessages(prev, server, "authoritative");
-		expect(result.map((m) => m.id)).toEqual(["history-1", "tmp:user-2"]);
+		expect(result.map((m) => m.id)).toEqual(["history-1"]);
 	});
 
 	it("authoritative mode removes stale tmp assistant once persisted assistant exists", () => {
@@ -163,7 +159,7 @@ describe("mergeServerMessages", () => {
 		expect(result[0].id).toBe("history-assistant-1");
 	});
 
-	it("authoritative mode preserves unmatched local tail messages append-only", () => {
+	it("authoritative mode removes unmatched local tail messages", () => {
 		const prev = [
 			textMsg("history-1", "user", "first", { timestamp: 1000 }),
 			textMsg("history-2", "assistant", "reply", { timestamp: 2000 }),
@@ -177,11 +173,7 @@ describe("mergeServerMessages", () => {
 			textMsg("history-2", "assistant", "reply", { timestamp: 2000 }),
 		];
 		const result = mergeServerMessages(prev, server, "authoritative");
-		expect(result.map((m) => m.id)).toEqual([
-			"history-1",
-			"history-2",
-			"local-3",
-		]);
+		expect(result.map((m) => m.id)).toEqual(["history-1", "history-2"]);
 	});
 
 	it("partial mode preserves finalized streaming assistant messages", () => {
