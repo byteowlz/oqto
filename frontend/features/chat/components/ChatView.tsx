@@ -2907,13 +2907,17 @@ function groupMessages(messages: DisplayMessage[]): MessageGroup[] {
 		// These are empty steer echoes persisted to hstry — the real
 		// content lives in the optimistic message that was already shown.
 		if (message.role === "user") {
-			const hasText = message.parts.some(
-				(p) =>
-					p.type === "text" &&
-					typeof (p as { text?: string }).text === "string" &&
-					(p as { text: string }).text.trim().length > 0,
-			);
-			if (!hasText) continue;
+			const hasRenderableContent = message.parts.some((p) => {
+				if (p.type === "text") {
+					const text =
+						(p as { text?: string; content?: string }).text ??
+						(p as { content?: string }).content ??
+						"";
+					return text.trim().length > 0;
+				}
+				return p.type === "image" || p.type === "file_ref";
+			});
+			if (!hasRenderableContent) continue;
 		}
 
 		// Tool messages are always grouped with the preceding assistant message.
@@ -2930,19 +2934,23 @@ function groupMessages(messages: DisplayMessage[]): MessageGroup[] {
 			continue;
 		}
 
-		// Guard against duplicated assistant messages (same completed turn
-		// arriving through two sync paths during reconnect races, or stale
-		// cached entries that don't reconcile with the authoritative server
-		// snapshot because their IDs differ). We widen the dedup beyond
-		// tool-part payloads to any consecutive same-role messages whose
-		// render fingerprints are identical -- distinct real turns do not
-		// produce byte-identical thinking/text, so this is a safe tie-breaker.
 		const prev = current.messages[current.messages.length - 1];
-		if (
-			message.role === "assistant" &&
-			prev &&
-			messageRenderFingerprint(prev) === messageRenderFingerprint(message)
-		) {
+		if (message.role === "assistant") {
+			// Guard against duplicated assistant messages (same completed turn
+			// arriving through two sync paths during reconnect races, or stale
+			// cached entries that don't reconcile with the authoritative server
+			// snapshot because their IDs differ).
+			if (
+				prev &&
+				messageRenderFingerprint(prev) === messageRenderFingerprint(message)
+			) {
+				continue;
+			}
+			// Preserve assistant message boundaries so each assistant turn is visible
+			// as its own card (prevents perceived message loss when two assistant
+			// turns happen back-to-back).
+			current = { role: message.role, messages: [message] };
+			groups.push(current);
 			continue;
 		}
 
