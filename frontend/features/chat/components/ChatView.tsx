@@ -3367,12 +3367,25 @@ const MessageGroupCard = memo(function MessageGroupCard({
 		const segment = segments[i];
 		if (segment.type === "tool_call") {
 			let toolResult = segment.toolResult;
-			if (!toolResult) {
-				const next = segments[i + 1];
-				if (next?.type === "tool_result_only") {
+			let consumeNextStandaloneResult = false;
+			const next = segments[i + 1];
+			if (next?.type === "tool_result_only") {
+				if (!toolResult) {
 					toolResult = next.part;
-					i += 1;
+					consumeNextStandaloneResult = true;
+				} else {
+					const sameToolCallId = next.part.toolCallId === toolResult.toolCallId;
+					const sameToolName =
+						typeof next.part.name === "string" &&
+						typeof toolResult.name === "string" &&
+						next.part.name === toolResult.name;
+					if (sameToolCallId || sameToolName) {
+						consumeNextStandaloneResult = true;
+					}
 				}
+			}
+			if (consumeNextStandaloneResult) {
+				i += 1;
 			}
 			normalizedSegments.push(
 				toolResult && !segment.toolResult
