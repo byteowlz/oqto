@@ -92,6 +92,32 @@ fn decode_workspace_path_from_safe_dirname(dirname: &str) -> Option<String> {
     Some(format!("/{}", core.replace('-', "/")))
 }
 
+fn select_workspace_chat_messages(
+    session_is_active: bool,
+    live_messages: Option<Vec<ChatMessageProto>>,
+    authoritative_messages: Option<Vec<ChatMessageProto>>,
+) -> (Vec<ChatMessageProto>, &'static str) {
+    if session_is_active {
+        if let Some(live) = live_messages.as_ref()
+            && !live.is_empty()
+        {
+            return (live.clone(), "live_buffer");
+        }
+
+        if let Some(authoritative) = authoritative_messages {
+            return (authoritative, "oqto-log");
+        }
+
+        return (live_messages.unwrap_or_default(), "live_buffer");
+    }
+
+    if let Some(authoritative) = authoritative_messages {
+        return (authoritative, "oqto-log");
+    }
+
+    (Vec::new(), "empty")
+}
+
 fn read_last_session_info_name(path: &std::path::Path) -> Option<String> {
     use std::io::BufRead;
 
@@ -1951,34 +1977,54 @@ impl Runner {
         &self,
         req: GetWorkspaceChatSessionMessagesRequest,
     ) -> RunnerResponse {
-        // Durable authority path: prefer oqto-log projection; fallback to hstry during migration.
+        // Persistence contract:
+        // - Active sessions should prefer the live in-memory buffer to avoid
+        //   clobbering newer local state with older persisted snapshots.
+        // - Inactive sessions should return authoritative persisted history.
         let session_is_active = self.pi_manager.has_session(&req.session_id).await;
+        let live_messages = if session_is_active {
+            self.pi_manager.get_message_buffer(&req.session_id).await
+        } else {
+            None
+        };
 
-        if let Ok(home) = std::env::var("HOME")
-            && let Ok(Some(messages)) = crate::oqto_log::projector::project_session_messages_auto(
+        let authoritative_messages = if let Ok(home) = std::env::var("HOME") {
+            match crate::oqto_log::projector::project_session_messages_auto(
                 std::path::Path::new(&home),
                 &req.session_id,
                 req.limit,
             )
             .await
-        {
-            debug!(
-                "get_workspace_chat_session_messages session={} active={} source=oqto-log count={}",
-                req.session_id,
-                session_is_active,
-                messages.len()
-            );
-            return RunnerResponse::WorkspaceChatSessionMessages(
-                WorkspaceChatSessionMessagesResponse {
-                    session_id: req.session_id,
-                    messages,
-                },
-            );
-        }
+            {
+                Ok(messages) => messages,
+                Err(err) => {
+                    debug!(
+                        "get_workspace_chat_session_messages session={} source=oqto-log error={}",
+                        req.session_id, err
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        let (messages, source) = select_workspace_chat_messages(
+            session_is_active,
+            live_messages,
+            authoritative_messages,
+        );
+        debug!(
+            "get_workspace_chat_session_messages session={} active={} source={} count={}",
+            req.session_id,
+            session_is_active,
+            source,
+            messages.len()
+        );
 
         RunnerResponse::WorkspaceChatSessionMessages(WorkspaceChatSessionMessagesResponse {
             session_id: req.session_id,
-            messages: Vec::new(),
+            messages,
         })
     }
 
@@ -3911,6 +3957,38 @@ fn sd_notify_ready() {
 mod tests {
     use super::*;
 
+    fn proto(id: &str, role: &str, created_at: i64) -> ChatMessageProto {
+        ChatMessageProto {
+            id: id.to_string(),
+            session_id: "sess-1".to_string(),
+            role: role.to_string(),
+            created_at,
+            completed_at: Some(created_at),
+            parent_id: None,
+            model_id: None,
+            provider_id: None,
+            agent: None,
+            summary_title: None,
+            tokens_input: None,
+            tokens_output: None,
+            tokens_reasoning: None,
+            cost: None,
+            client_id: None,
+            parts: vec![ChatMessagePartProto {
+                id: format!("p-{id}"),
+                part_type: "text".to_string(),
+                text: Some(id.to_string()),
+                text_html: None,
+                tool_name: None,
+                tool_call_id: None,
+                tool_input: None,
+                tool_output: None,
+                tool_status: None,
+                tool_title: None,
+            }],
+        }
+    }
+
     #[test]
     fn repair_workspace_chat_history_has_extended_timeout_budget() {
         let repair = RunnerRequest::RepairWorkspaceChatHistory(RepairWorkspaceChatHistoryRequest {
@@ -3920,5 +3998,59 @@ mod tests {
 
         assert_eq!(Runner::request_timeout(&repair).as_secs(), 120);
         assert_eq!(Runner::request_timeout(&RunnerRequest::Ping).as_secs(), 10);
+    }
+
+    #[test]
+    fn persistence_contracts_active_session_prefers_live_buffer_over_authoritative_snapshot() {
+        let live = vec![
+            proto("live-u1", "user", 1_000),
+            proto("live-a1", "assistant", 2_000),
+        ];
+        let authoritative = vec![
+            proto("hist-u1", "user", 1_000),
+            proto("hist-a1", "assistant", 1_500),
+        ];
+
+        let (selected, source) =
+            select_workspace_chat_messages(true, Some(live.clone()), Some(authoritative));
+
+        assert_eq!(source, "live_buffer");
+        assert_eq!(selected.len(), live.len());
+        assert_eq!(selected[0].id, "live-u1");
+        assert_eq!(selected[1].id, "live-a1");
+    }
+
+    #[test]
+    fn persistence_contracts_inactive_session_uses_authoritative_history() {
+        let authoritative = vec![
+            proto("hist-u1", "user", 1_000),
+            proto("hist-a1", "assistant", 2_000),
+        ];
+        let (selected, source) = select_workspace_chat_messages(
+            false,
+            Some(vec![proto("live-u1", "user", 1_000)]),
+            Some(authoritative.clone()),
+        );
+
+        assert_eq!(source, "oqto-log");
+        assert_eq!(selected.len(), authoritative.len());
+        assert_eq!(selected[0].id, "hist-u1");
+        assert_eq!(selected[1].id, "hist-a1");
+    }
+
+    #[test]
+    fn persistence_contracts_active_session_falls_back_to_authoritative_when_live_empty() {
+        let authoritative = vec![
+            proto("hist-u1", "user", 1_000),
+            proto("hist-a1", "assistant", 2_000),
+        ];
+
+        let (selected, source) =
+            select_workspace_chat_messages(true, Some(Vec::new()), Some(authoritative.clone()));
+
+        assert_eq!(source, "oqto-log");
+        assert_eq!(selected.len(), authoritative.len());
+        assert_eq!(selected[0].id, "hist-u1");
+        assert_eq!(selected[1].id, "hist-a1");
     }
 }

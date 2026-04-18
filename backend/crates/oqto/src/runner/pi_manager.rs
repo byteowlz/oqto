@@ -2847,10 +2847,7 @@ impl PiSessionManager {
         }
 
         let mut aliases = self.session_aliases.write().await;
-        aliases.retain(|_, value| value != resolved_id);
-        if resolved_id != session_id {
-            aliases.remove(session_id);
-        }
+        Self::drop_session_aliases_for_platform(&mut aliases, resolved_id, session_id);
 
         Ok(())
     }
@@ -2932,6 +2929,31 @@ impl PiSessionManager {
         }
         let aliases = self.session_aliases.read().await;
         aliases.get(session_id).cloned()
+    }
+
+    fn record_session_alias(
+        aliases: &mut HashMap<String, String>,
+        platform_id: &str,
+        external_id: &str,
+    ) {
+        if external_id.trim().is_empty() || external_id == platform_id {
+            return;
+        }
+
+        // Keep exactly one external_id alias per platform session key.
+        aliases.retain(|key, value| value != platform_id || key == external_id);
+        aliases.insert(external_id.to_string(), platform_id.to_string());
+    }
+
+    fn drop_session_aliases_for_platform(
+        aliases: &mut HashMap<String, String>,
+        platform_id: &str,
+        requested_session_id: &str,
+    ) {
+        aliases.retain(|_, value| value != platform_id);
+        if platform_id != requested_session_id {
+            aliases.remove(requested_session_id);
+        }
     }
 
     async fn validate_command(
@@ -3396,10 +3418,8 @@ impl PiSessionManager {
                                 );
 
                                 if pi_sid != session_id {
-                                    session_aliases
-                                        .write()
-                                        .await
-                                        .insert(pi_sid.to_string(), session_id.clone());
+                                    let mut aliases = session_aliases.write().await;
+                                    Self::record_session_alias(&mut aliases, &session_id, pi_sid);
                                 }
 
                                 if let Some(ref client) = hstry_client {
@@ -5411,6 +5431,24 @@ async fn build_metadata_json(
 mod tests {
     use super::*;
 
+    #[derive(Debug, Clone, Copy)]
+    enum PersistenceContractStep {
+        PersistCommit,
+        AgentIdleBroadcast,
+    }
+
+    fn idle_emitted_before_persist(steps: &[PersistenceContractStep]) -> bool {
+        let mut persist_seen = false;
+        for step in steps {
+            match step {
+                PersistenceContractStep::PersistCommit => persist_seen = true,
+                PersistenceContractStep::AgentIdleBroadcast if !persist_seen => return true,
+                PersistenceContractStep::AgentIdleBroadcast => return false,
+            }
+        }
+        false
+    }
+
     #[test]
     fn test_session_state_display() {
         assert_eq!(PiSessionState::Starting.to_string(), "starting");
@@ -5446,5 +5484,55 @@ mod tests {
 
         let parsed: PiSessionState = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, PiSessionState::Streaming);
+    }
+
+    #[test]
+    fn persistence_contracts_flags_idle_before_persist_commit() {
+        let steps = [
+            PersistenceContractStep::AgentIdleBroadcast,
+            PersistenceContractStep::PersistCommit,
+        ];
+        assert!(idle_emitted_before_persist(&steps));
+    }
+
+    #[test]
+    fn persistence_contracts_accepts_idle_after_persist_commit() {
+        let steps = [
+            PersistenceContractStep::PersistCommit,
+            PersistenceContractStep::AgentIdleBroadcast,
+        ];
+        assert!(!idle_emitted_before_persist(&steps));
+    }
+
+    #[test]
+    fn session_identity_isolation_alias_remap_replaces_stale_external_id() {
+        let mut aliases = HashMap::new();
+        PiSessionManager::record_session_alias(&mut aliases, "oqto-parent", "pi-old");
+        PiSessionManager::record_session_alias(&mut aliases, "oqto-parent", "pi-new");
+
+        assert_eq!(aliases.get("pi-new"), Some(&"oqto-parent".to_string()));
+        assert!(!aliases.contains_key("pi-old"));
+    }
+
+    #[test]
+    fn session_identity_isolation_child_alias_does_not_clobber_parent_alias() {
+        let mut aliases = HashMap::new();
+        PiSessionManager::record_session_alias(&mut aliases, "oqto-parent", "pi-parent");
+        PiSessionManager::record_session_alias(&mut aliases, "oqto-child", "pi-child");
+
+        assert_eq!(aliases.get("pi-parent"), Some(&"oqto-parent".to_string()));
+        assert_eq!(aliases.get("pi-child"), Some(&"oqto-child".to_string()));
+    }
+
+    #[test]
+    fn session_identity_isolation_drop_aliases_prunes_only_target_platform() {
+        let mut aliases = HashMap::new();
+        PiSessionManager::record_session_alias(&mut aliases, "oqto-a", "pi-a");
+        PiSessionManager::record_session_alias(&mut aliases, "oqto-b", "pi-b");
+
+        PiSessionManager::drop_session_aliases_for_platform(&mut aliases, "oqto-a", "pi-a");
+
+        assert!(!aliases.contains_key("pi-a"));
+        assert_eq!(aliases.get("pi-b"), Some(&"oqto-b".to_string()));
     }
 }
