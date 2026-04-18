@@ -80,6 +80,10 @@ import {
 	fuzzyMatch,
 	parseSlashInput,
 } from "@/lib/slash-commands";
+import {
+	type StreamingPresentationMode,
+	useStreamingPresentation,
+} from "@/lib/streaming-presentation";
 import { getToolSummary } from "@/lib/tool-summaries";
 import { cn } from "@/lib/utils";
 
@@ -571,6 +575,7 @@ export function ChatView({
 			return false;
 		}
 	}, []);
+	const { mode: streamingPresentationMode } = useStreamingPresentation();
 	const [voiceMode, setVoiceMode] = useState<VoiceMode>(null);
 	const [isUploading, setIsUploading] = useState(false);
 	const [availableModels, setAvailableModels] = useState<PiModelInfo[]>([]);
@@ -2293,6 +2298,9 @@ export function ChatView({
 														}
 														onFileReferenceOpen={onFileReferenceOpen}
 														freezeStreamingUpdates={isUserScrolled}
+														streamingPresentationMode={
+															streamingPresentationMode
+														}
 														showWorkingIndicator={
 															isWorking && isLastAssistantGroup
 														}
@@ -3178,6 +3186,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 	onForkHere,
 	onFileReferenceOpen,
 	freezeStreamingUpdates = false,
+	streamingPresentationMode = "chunked",
 }: {
 	group: MessageGroup;
 	assistantName?: string | null;
@@ -3191,6 +3200,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 	onForkHere?: () => void;
 	onFileReferenceOpen?: (filePath: string) => void;
 	freezeStreamingUpdates?: boolean;
+	streamingPresentationMode?: StreamingPresentationMode;
 }) {
 	const isUser = group.role === "user";
 	const { t } = useTranslation();
@@ -3366,9 +3376,17 @@ const MessageGroupCard = memo(function MessageGroupCard({
 	segments.sort((a, b) => a.timestamp - b.timestamp);
 
 	const normalizedSegments: Segment[] = [];
+	const seenToolCalls = new Set<string>();
+	const seenStandaloneToolResults = new Set<string>();
 	for (let i = 0; i < segments.length; i++) {
 		const segment = segments[i];
 		if (segment.type === "tool_call") {
+			const toolCallId = segment.part.toolCallId;
+			if (seenToolCalls.has(toolCallId)) {
+				continue;
+			}
+			seenToolCalls.add(toolCallId);
+
 			let toolResult = segment.toolResult;
 			let consumeNextStandaloneResult = false;
 			const next = segments[i + 1];
@@ -3388,6 +3406,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 				}
 			}
 			if (consumeNextStandaloneResult) {
+				seenStandaloneToolResults.add(next.part.toolCallId);
 				i += 1;
 			}
 			normalizedSegments.push(
@@ -3396,6 +3415,16 @@ const MessageGroupCard = memo(function MessageGroupCard({
 					: segment,
 			);
 			continue;
+		}
+		if (segment.type === "tool_result_only") {
+			const resultId = segment.part.toolCallId;
+			if (
+				seenStandaloneToolResults.has(resultId) ||
+				seenToolCalls.has(resultId)
+			) {
+				continue;
+			}
+			seenStandaloneToolResults.add(resultId);
 		}
 		normalizedSegments.push(segment);
 	}
@@ -3748,6 +3777,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 									!isUser && (showWorkingIndicator || isGroupStreaming)
 								}
 								freezeStreamingUpdates={freezeStreamingUpdates}
+								streamingPresentationMode={streamingPresentationMode}
 							/>
 						);
 						return wrapWithGutter(segment.key, inner);
@@ -3763,6 +3793,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 									toolResult={segment.toolResult}
 									locale={locale}
 									workspacePath={workspacePath}
+									streamingPresentationMode={streamingPresentationMode}
 								/>
 							</div>
 						);
@@ -3778,6 +3809,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 									part={segment.part}
 									locale={locale}
 									workspacePath={workspacePath}
+									streamingPresentationMode={streamingPresentationMode}
 								/>
 							</div>
 						);
@@ -3801,6 +3833,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 									workspacePath={workspacePath}
 									isStreaming={!isUser && isGroupStreaming}
 									freezeStreamingUpdates={freezeStreamingUpdates}
+									streamingPresentationMode={streamingPresentationMode}
 								/>
 							</div>
 						);
@@ -4030,6 +4063,7 @@ function PiPartRenderer({
 	hideHeader = false,
 	isStreaming = false,
 	freezeStreamingUpdates = false,
+	streamingPresentationMode = "chunked",
 }: {
 	part: DisplayPart;
 	toolResult?: Extract<DisplayPart, { type: "tool_result" }>;
@@ -4039,6 +4073,7 @@ function PiPartRenderer({
 	hideHeader?: boolean;
 	isStreaming?: boolean;
 	freezeStreamingUpdates?: boolean;
+	streamingPresentationMode?: StreamingPresentationMode;
 }) {
 	const { t } = useTranslation();
 	const stripAnsi = (value: string): string => stripAnsiSequences(value);
@@ -4050,6 +4085,7 @@ function PiPartRenderer({
 		rawThinkingText,
 		freezeStreamingUpdates && isStreaming && isThinkingPart,
 	);
+	const thinkingCrawlRef = useRef<HTMLDivElement>(null);
 	const {
 		visibleContent: visibleThinkingContent,
 		isCommitAnimating: isThinkingCommitAnimating,
@@ -4057,13 +4093,35 @@ function PiPartRenderer({
 	} = useStreamingCommittedContent(
 		frozenThinkingText,
 		isStreaming && isThinkingPart,
+		streamingPresentationMode,
+	);
+	useSmoothContainerHeight(
+		thinkingCrawlRef,
+		visibleThinkingContent,
+		isStreaming &&
+			isThinkingPart &&
+			streamingPresentationMode === "smooth" &&
+			!freezeStreamingUpdates,
+	);
+	useSmoothCrawlTransform(
+		thinkingCrawlRef,
+		visibleThinkingContent,
+		isStreaming &&
+			isThinkingPart &&
+			streamingPresentationMode === "smooth" &&
+			!freezeStreamingUpdates,
 	);
 	const thinkingReservedLines = useMemo(
 		() =>
-			isStreaming && isThinkingPart
+			isStreaming && isThinkingPart && streamingPresentationMode === "chunked"
 				? estimateStreamingReservedLines(frozenThinkingText)
 				: 0,
-		[isStreaming, isThinkingPart, frozenThinkingText],
+		[
+			isStreaming,
+			isThinkingPart,
+			frozenThinkingText,
+			streamingPresentationMode,
+		],
 	);
 
 	const formatToolResultOutput = (content: unknown): string | undefined => {
@@ -4195,6 +4253,7 @@ function PiPartRenderer({
 					locale={locale}
 					isStreaming={isStreaming}
 					freezeStreamingUpdates={freezeStreamingUpdates}
+					streamingPresentationMode={streamingPresentationMode}
 				/>
 			);
 		}
@@ -4246,15 +4305,18 @@ function PiPartRenderer({
 						)}
 					</summary>
 					<div
+						ref={thinkingCrawlRef}
 						className={cn(
 							"px-3 pb-3 pt-1 text-xs leading-relaxed",
 							isThinkingCommitAnimating &&
-								(thinkingAnimationPhase === "a"
-									? "stream-commit-slide-in-a"
-									: "stream-commit-slide-in-b"),
+								(streamingPresentationMode === "chunked"
+									? thinkingAnimationPhase === "a"
+										? "stream-commit-slide-in-a"
+										: "stream-commit-slide-in-b"
+									: undefined),
 						)}
 						style={
-							isStreaming
+							isStreaming && streamingPresentationMode === "chunked"
 								? {
 										minHeight: `calc(${thinkingReservedLines} * 1.35em)`,
 										contain: "layout paint",
@@ -4533,35 +4595,34 @@ function estimateStreamingReservedLines(text: string): number {
 	return Math.max(2, logicalLines + 1, wrappedLineEstimate + 1);
 }
 
-function splitCommittedStreamingTail(text: string): {
+function splitCommittedStreamingTail(
+	text: string,
+	minPendingChars = 24,
+): {
 	committed: string;
 	tail: string;
 } {
 	if (text.length === 0) return { committed: "", tail: "" };
 
-	const lastNewlineIndex = Math.max(
-		text.lastIndexOf("\n"),
-		text.lastIndexOf("\r"),
-	);
-	if (lastNewlineIndex >= 0) {
-		const splitAt = lastNewlineIndex + 1;
-		return {
-			committed: text.slice(0, splitAt),
-			tail: text.slice(splitAt),
-		};
-	}
+	const latestEligibleIdx = Math.max(0, text.length - minPendingChars);
+	let splitAt = -1;
 
-	for (let i = text.length - 1; i >= 0; i--) {
+	for (let i = latestEligibleIdx; i >= 0; i--) {
 		const ch = text.charAt(i);
-		if (/\s|[.,!?;:)}\]]/.test(ch)) {
-			return {
-				committed: text.slice(0, i + 1),
-				tail: text.slice(i + 1),
-			};
+		if (ch === "\n" || ch === "\r" || /\s|[.,!?;:)}\]]/.test(ch)) {
+			splitAt = i + 1;
+			break;
 		}
 	}
 
-	return { committed: "", tail: text };
+	if (splitAt <= 0) {
+		return { committed: "", tail: text };
+	}
+
+	return {
+		committed: text.slice(0, splitAt),
+		tail: text.slice(splitAt),
+	};
 }
 
 function useFrozenStreamingText(content: string, freeze: boolean): string {
@@ -4575,9 +4636,162 @@ function useFrozenStreamingText(content: string, freeze: boolean): string {
 	return freeze ? frozen : content;
 }
 
+function useSmoothContainerHeight(
+	ref: { current: HTMLElement | null },
+	contentKey: string,
+	enabled: boolean,
+) {
+	const rafRef = useRef<number | null>(null);
+	const currentHeightRef = useRef<number | null>(null);
+	const targetHeightRef = useRef<number | null>(null);
+
+	// useeffect-guardrail: allow - RAF-driven continuous container height smoothing for smooth streaming mode
+	useLayoutEffect(() => {
+		void contentKey;
+		const el = ref.current;
+		if (!el) return;
+		const measuredHeight = el.scrollHeight;
+
+		if (!enabled) {
+			if (rafRef.current !== null) {
+				cancelAnimationFrame(rafRef.current);
+				rafRef.current = null;
+			}
+			currentHeightRef.current = null;
+			targetHeightRef.current = null;
+			el.style.height = "";
+			return;
+		}
+
+		targetHeightRef.current = measuredHeight;
+		if (currentHeightRef.current === null) {
+			currentHeightRef.current = measuredHeight;
+			el.style.height = `${measuredHeight}px`;
+		}
+
+		if (rafRef.current !== null) return;
+		const tick = () => {
+			const node = ref.current;
+			if (!node) {
+				rafRef.current = null;
+				return;
+			}
+			const target = targetHeightRef.current ?? node.scrollHeight;
+			const current = currentHeightRef.current ?? target;
+			const next = current + (target - current) * 0.22;
+			if (Math.abs(target - next) <= 0.25) {
+				node.style.height = `${target}px`;
+				currentHeightRef.current = target;
+				rafRef.current = null;
+				return;
+			}
+			node.style.height = `${next}px`;
+			currentHeightRef.current = next;
+			rafRef.current = requestAnimationFrame(tick);
+		};
+		rafRef.current = requestAnimationFrame(tick);
+	}, [contentKey, enabled, ref]);
+
+	// useeffect-guardrail: allow - cleanup height smoothing RAF and inline styles on unmount/ref changes
+	useEffect(() => {
+		const el = ref.current;
+		return () => {
+			if (rafRef.current !== null) {
+				cancelAnimationFrame(rafRef.current);
+				rafRef.current = null;
+			}
+			currentHeightRef.current = null;
+			targetHeightRef.current = null;
+			if (!el) return;
+			el.style.height = "";
+		};
+	}, [ref]);
+}
+
+function useSmoothCrawlTransform(
+	ref: { current: HTMLElement | null },
+	contentKey: string,
+	enabled: boolean,
+) {
+	const previousHeightRef = useRef<number | null>(null);
+	const offsetRef = useRef(0);
+	const animRafRef = useRef<number | null>(null);
+
+	// useeffect-guardrail: allow - RAF-driven continuous crawl transform for streaming content
+	useLayoutEffect(() => {
+		void contentKey;
+		const el = ref.current;
+		if (!el) return;
+
+		const nextHeight = el.scrollHeight;
+		const prevHeight = previousHeightRef.current ?? nextHeight;
+		previousHeightRef.current = nextHeight;
+
+		if (!enabled) {
+			if (animRafRef.current !== null) {
+				cancelAnimationFrame(animRafRef.current);
+				animRafRef.current = null;
+			}
+			offsetRef.current = 0;
+			el.style.willChange = "";
+			el.style.transform = "";
+			return;
+		}
+
+		const delta = nextHeight - prevHeight;
+		if (delta > 1.25) {
+			offsetRef.current = Math.min(42, offsetRef.current + delta);
+		}
+
+		if (animRafRef.current !== null) {
+			return;
+		}
+
+		const tick = () => {
+			const node = ref.current;
+			if (!node) {
+				animRafRef.current = null;
+				return;
+			}
+			const current = offsetRef.current;
+			if (current <= 0.08) {
+				offsetRef.current = 0;
+				node.style.transform = "translateY(0px)";
+				node.style.willChange = "";
+				animRafRef.current = null;
+				return;
+			}
+
+			node.style.willChange = "transform";
+			node.style.transform = `translateY(${current.toFixed(3)}px)`;
+			const decayed = current * 0.82;
+			offsetRef.current = decayed < 0.08 ? 0 : decayed;
+			animRafRef.current = requestAnimationFrame(tick);
+		};
+
+		animRafRef.current = requestAnimationFrame(tick);
+	}, [contentKey, enabled, ref]);
+
+	// useeffect-guardrail: allow - cleanup RAF and inline transform styles on unmount/ref changes
+	useEffect(() => {
+		const el = ref.current;
+		return () => {
+			if (animRafRef.current !== null) {
+				cancelAnimationFrame(animRafRef.current);
+				animRafRef.current = null;
+			}
+			offsetRef.current = 0;
+			if (!el) return;
+			el.style.willChange = "";
+			el.style.transform = "";
+		};
+	}, [ref]);
+}
+
 function useStreamingCommittedContent(
 	content: string,
 	isStreaming: boolean,
+	mode: StreamingPresentationMode,
 ): {
 	visibleContent: string;
 	isCommitAnimating: boolean;
@@ -4592,8 +4806,9 @@ function useStreamingCommittedContent(
 
 	const split = useMemo(() => {
 		if (!isStreaming) return { committed: content, tail: "" };
-		return splitCommittedStreamingTail(content);
-	}, [content, isStreaming]);
+		if (mode !== "chunked") return { committed: content, tail: "" };
+		return splitCommittedStreamingTail(content, 24);
+	}, [content, isStreaming, mode]);
 
 	const visibleContent = isStreaming ? split.committed : content;
 
@@ -4640,7 +4855,7 @@ function useStreamingCommittedContent(
 		const hasNewCommittedContent = next.length > previous.length;
 		previousCommittedRef.current = next;
 
-		if (!hasNewCommittedContent || isResizeSettling) {
+		if (!hasNewCommittedContent || isResizeSettling || mode === "raw") {
 			return;
 		}
 
@@ -4659,7 +4874,7 @@ function useStreamingCommittedContent(
 				animateTimeoutRef.current = null;
 			}
 		};
-	}, [isResizeSettling, isStreaming, visibleContent]);
+	}, [isResizeSettling, isStreaming, mode, visibleContent]);
 
 	return {
 		visibleContent,
@@ -4676,6 +4891,7 @@ function TextWithFileReferences({
 	deferMermaidUntilFinal = false,
 	isStreaming = false,
 	freezeStreamingUpdates = false,
+	streamingPresentationMode = "chunked",
 }: {
 	content: string;
 	workspacePath?: string | null;
@@ -4684,14 +4900,34 @@ function TextWithFileReferences({
 	deferMermaidUntilFinal?: boolean;
 	isStreaming?: boolean;
 	freezeStreamingUpdates?: boolean;
+	streamingPresentationMode?: StreamingPresentationMode;
 }) {
 	const { t } = useTranslation();
+	const smoothCrawlRef = useRef<HTMLDivElement>(null);
 	const frozenContent = useFrozenStreamingText(
 		content,
 		freezeStreamingUpdates && isStreaming,
 	);
 	const { visibleContent, isCommitAnimating, animationPhase } =
-		useStreamingCommittedContent(frozenContent, isStreaming);
+		useStreamingCommittedContent(
+			frozenContent,
+			isStreaming,
+			streamingPresentationMode,
+		);
+	useSmoothContainerHeight(
+		smoothCrawlRef,
+		visibleContent,
+		isStreaming &&
+			streamingPresentationMode === "smooth" &&
+			!freezeStreamingUpdates,
+	);
+	useSmoothCrawlTransform(
+		smoothCrawlRef,
+		visibleContent,
+		isStreaming &&
+			streamingPresentationMode === "smooth" &&
+			!freezeStreamingUpdates,
+	);
 	// Strip ANSI escape codes and fix indentation before rendering.
 	// Some models (e.g. Kimi-K2.5) prefix text with 4+ spaces which CommonMark
 	// interprets as indented code blocks, causing plain text to render as <pre><code>.
@@ -4731,22 +4967,28 @@ function TextWithFileReferences({
 		[cleanContent],
 	);
 	const streamingReservedLines = useMemo(
-		() => (isStreaming ? estimateStreamingReservedLines(reservationBasis) : 0),
-		[isStreaming, reservationBasis],
+		() =>
+			isStreaming && streamingPresentationMode === "chunked"
+				? estimateStreamingReservedLines(reservationBasis)
+				: 0,
+		[isStreaming, reservationBasis, streamingPresentationMode],
 	);
 	const isCoarsePointerDevice = useCoarsePointerDevice();
 
 	const contentBlock = (
 		<div
+			ref={smoothCrawlRef}
 			className={cn(
 				"space-y-2 select-none sm:select-auto min-w-0 max-w-full",
 				isCommitAnimating &&
-					(animationPhase === "a"
-						? "stream-commit-slide-in-a"
-						: "stream-commit-slide-in-b"),
+					(streamingPresentationMode === "chunked"
+						? animationPhase === "a"
+							? "stream-commit-slide-in-a"
+							: "stream-commit-slide-in-b"
+						: undefined),
 			)}
 			style={
-				isStreaming
+				isStreaming && streamingPresentationMode === "chunked"
 					? {
 							minHeight: `calc(${streamingReservedLines} * 1.55em)`,
 							contain: "layout paint",
