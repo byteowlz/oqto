@@ -333,14 +333,32 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 			}
 			if (!Array.isArray(rawMessages) || rawMessages.length === 0) return;
 			let incoming = rawMessages as RawMessage[];
-			// Partial/live snapshots can include transient user echoes while local
-			// optimistic user messages are already rendered. Exclude user-role
-			// rows here to avoid random live duplicates/reordering; authoritative
-			// sync on agent.idle remains the source of truth.
+			// Partial/live snapshots are non-authoritative. Keep assistant/tool
+			// rows, and allow user rows only when they correlate to a locally
+			// tracked optimistic user turn via client_id. This prevents stale
+			// cross-session user contamination while still preserving legitimate
+			// repeated user messages (including verbatim repeats).
 			if (mode === "partial") {
+				const localUserClientIds = new Set(
+					messagesRef.current
+						.filter((m) => m.role === "user")
+						.map((m) => m.clientId)
+						.filter(
+							(clientId): clientId is string =>
+								typeof clientId === "string" && clientId.length > 0,
+						),
+				);
 				incoming = incoming.filter((m) => {
 					const role = (m.role || "").toLowerCase();
-					return role !== "user" && role !== "human";
+					if (role !== "user" && role !== "human") return true;
+					const clientId =
+						typeof m.client_id === "string" && m.client_id.length > 0
+							? m.client_id
+							: typeof m.clientId === "string" && m.clientId.length > 0
+								? m.clientId
+								: null;
+					if (!clientId) return false;
+					return localUserClientIds.has(clientId);
 				});
 			}
 			if (incoming.length === 0) return;
