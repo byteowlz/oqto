@@ -600,13 +600,16 @@ export function ChatView({
 			scrollToBottomRafRef.current = null;
 			const container = messagesContainerRef.current;
 			if (!container) return;
-			const distanceToBottom =
-				container.scrollHeight - container.scrollTop - container.clientHeight;
+			const targetTop = Math.max(
+				0,
+				container.scrollHeight - container.clientHeight,
+			);
+			const distanceToBottom = targetTop - container.scrollTop;
 			// Avoid redundant writes at/near bottom; they can trigger scroll-event
 			// churn and visible flicker while streaming updates arrive quickly.
-			if (distanceToBottom < 2) return;
+			if (Math.abs(distanceToBottom) < 2) return;
 			programmaticScrollRef.current = true;
-			container.scrollTop = container.scrollHeight;
+			container.scrollTop = targetTop;
 			lastScrollTopRef.current = container.scrollTop;
 			lastScrollHeightRef.current = container.scrollHeight;
 		});
@@ -1364,6 +1367,26 @@ export function ChatView({
 			scrollToBottom();
 		}
 	}, [messages, scrollToBottom]);
+
+	// Strict bottom lock during active streaming while user is not scrolling.
+	// This runs in layout phase so the bottom edge remains visually fixed.
+	useLayoutEffect(() => {
+		void messages.length;
+		if (!initialScrollDoneRef.current) return;
+		if (isUserScrolledRef.current) return;
+		if (!(isStreaming || isAwaitingResponse || sendPending)) return;
+		const container = messagesContainerRef.current;
+		if (!container) return;
+		const targetTop = Math.max(
+			0,
+			container.scrollHeight - container.clientHeight,
+		);
+		if (Math.abs(container.scrollTop - targetTop) < 1) return;
+		programmaticScrollRef.current = true;
+		container.scrollTop = targetTop;
+		lastScrollTopRef.current = container.scrollTop;
+		lastScrollHeightRef.current = container.scrollHeight;
+	}, [messages.length, isStreaming, isAwaitingResponse, sendPending]);
 
 	// Update isUserScrolled from real user scroll events only.
 	// wheel/touch/pointer events on the container set userInitiatedScrollRef
@@ -2272,7 +2295,6 @@ export function ChatView({
 														showWorkingIndicator={
 															isWorking && isLastAssistantGroup
 														}
-														liveInnerPadding={isWorking && isLastAssistantGroup}
 													/>
 												</div>
 											);
@@ -3154,7 +3176,6 @@ const MessageGroupCard = memo(function MessageGroupCard({
 	showWorkingIndicator = false,
 	onForkHere,
 	onFileReferenceOpen,
-	liveInnerPadding = false,
 }: {
 	group: MessageGroup;
 	assistantName?: string | null;
@@ -3167,7 +3188,6 @@ const MessageGroupCard = memo(function MessageGroupCard({
 	showWorkingIndicator?: boolean;
 	onForkHere?: () => void;
 	onFileReferenceOpen?: (filePath: string) => void;
-	liveInnerPadding?: boolean;
 }) {
 	const isUser = group.role === "user";
 	const { t } = useTranslation();
@@ -3548,10 +3568,6 @@ const MessageGroupCard = memo(function MessageGroupCard({
 			data-message-id={messageId}
 			className={cn(
 				"group transition-colors duration-200 overflow-hidden min-w-0 max-w-full",
-				!isUser &&
-					verbosity === 1 &&
-					!showWorkingIndicator &&
-					"overflow-visible",
 				isUser
 					? "sm:ml-8 bg-primary/20 dark:bg-primary/10 border border-primary/40 dark:border-primary/30"
 					: "sm:mr-8 bg-muted/50 border border-border",
@@ -3633,9 +3649,6 @@ const MessageGroupCard = memo(function MessageGroupCard({
 					"relative px-2 sm:px-4 py-2 sm:py-3 group space-y-2 overflow-hidden min-w-0 max-w-full transition-[padding] duration-150 ease-out",
 					!isUser && verbosity === 1 && "pr-12 sm:pr-16",
 				)}
-				style={{
-					paddingBottom: !isUser && liveInnerPadding ? "56px" : undefined,
-				}}
 			>
 				{!isUser && verbosity === 1 && (
 					<div className="absolute top-2 bottom-2 right-[2.25rem] sm:right-[2.75rem] w-px bg-border/40" />
@@ -3753,10 +3766,6 @@ const MessageGroupCard = memo(function MessageGroupCard({
 						);
 					}
 					if (segment.type === "thinking") {
-						const bufferedThinking = commitAtWordBoundary(
-							segment.text,
-							!isUser && isGroupStreaming,
-						);
 						const inner = (
 							<div
 								key={segment.key}
@@ -3767,7 +3776,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 										{
 											type: "thinking",
 											id: segment.key,
-											text: bufferedThinking,
+											text: segment.text,
 											__verbosity: verbosity,
 										} as DisplayPart
 									}
@@ -4013,6 +4022,17 @@ function PiPartRenderer({
 }) {
 	const { t } = useTranslation();
 	const stripAnsi = (value: string): string => stripAnsiSequences(value);
+	const isThinkingPart = part.type === "thinking";
+	const rawThinkingText = isThinkingPart
+		? stripAnsi(((part as { text?: string }).text ?? "").trim())
+		: "";
+	const thinkingReservedLines = useMemo(
+		() =>
+			isStreaming && isThinkingPart
+				? estimateStreamingReservedLines(rawThinkingText)
+				: 0,
+		[isStreaming, isThinkingPart, rawThinkingText],
+	);
 
 	const formatToolResultOutput = (content: unknown): string | undefined => {
 		const decodeBytes = (bytes: Uint8Array): string | undefined => {
@@ -4146,9 +4166,7 @@ function PiPartRenderer({
 		}
 
 		case "thinking": {
-			const thinkingText = stripAnsi(
-				((part as { text?: string }).text ?? "").trim(),
-			);
+			const thinkingText = rawThinkingText;
 			if (!thinkingText) return null;
 
 			const verbosityLevel =
@@ -4171,7 +4189,7 @@ function PiPartRenderer({
 			return (
 				<details
 					open={isOpen}
-					className="group my-2 border-l-2 border-primary/40 bg-muted/40 pl-0"
+					className="group my-2 border-l-2 border-primary/40 bg-muted/40 pl-0 overflow-hidden"
 				>
 					<summary className="flex items-center gap-2 cursor-pointer select-none px-3 py-2 text-xs text-foreground/70 hover:text-foreground list-none [&::-webkit-details-marker]:hidden [&::marker]:content-['']">
 						<svg
@@ -4193,10 +4211,20 @@ function PiPartRenderer({
 							</span>
 						)}
 					</summary>
-					<div className="px-3 pb-3 pt-1 text-xs leading-relaxed">
+					<div
+						className="px-3 pb-3 pt-1 text-xs leading-relaxed"
+						style={
+							isStreaming
+								? {
+										minHeight: `calc(${thinkingReservedLines} * 1.35em)`,
+										contain: "layout paint",
+									}
+								: undefined
+						}
+					>
 						<MarkdownRenderer
 							content={thinkingText}
-							className="text-xs text-foreground/70 leading-relaxed [&_p]:text-foreground/70 [&_li]:text-foreground/70 [&_code]:text-foreground/60"
+							className="text-xs text-foreground/70 leading-relaxed overflow-hidden min-w-0 max-w-full [&_p]:text-foreground/70 [&_li]:text-foreground/70 [&_code]:text-foreground/60"
 							isStreaming={isStreaming}
 						/>
 					</div>
@@ -4450,26 +4478,19 @@ function useCoarsePointerDevice(): boolean {
  * Renders text content with @file references as inline previews.
  * Desktop gets a context-menu copy action; touch devices keep native media interactions.
  */
-// While streaming, hold back a trailing partial word (mid-word tail with no
-// boundary yet) to keep its line-wrap stable. Any non-alphanumeric terminal
-// char (whitespace, punctuation, bracket) counts as a commit so completed
-// prose isn't held when the outer streaming signal lingers through tool-call
-// phases. If no boundary has been seen at all, pass through so early text
-// doesn't disappear.
-//
-// Intra-word chars that should NOT break a token: `/` (paths, URLs, dates),
-// `-` (hyphenated words, ids), `_` (snake_case), `'` (contractions).
-const WORD_BOUNDARY_RE = /[^\p{L}\p{N}\-/_']/u;
-function commitAtWordBoundary(text: string, isStreaming: boolean): string {
-	if (!isStreaming || text.length === 0) return text;
-	const lastCh = text.charAt(text.length - 1);
-	if (WORD_BOUNDARY_RE.test(lastCh)) return text;
-	for (let i = text.length - 2; i >= 0; i--) {
-		if (WORD_BOUNDARY_RE.test(text.charAt(i))) {
-			return text.slice(0, i + 1);
-		}
-	}
-	return text;
+// Estimate reserved lines for live streaming so container growth can lead
+// reveal without changing final markdown rendering semantics.
+
+function estimateStreamingReservedLines(text: string): number {
+	const normalized = text.trim();
+	if (normalized.length === 0) return 2;
+	const logicalLines = Math.max(1, normalized.split(/\r?\n/).length);
+	const approxCharsPerWrappedLine = 42;
+	const wrappedLineEstimate = Math.max(
+		1,
+		Math.ceil(normalized.length / approxCharsPerWrappedLine),
+	);
+	return Math.max(2, logicalLines + 1, wrappedLineEstimate + 1);
 }
 
 function TextWithFileReferences({
@@ -4488,11 +4509,11 @@ function TextWithFileReferences({
 	isStreaming?: boolean;
 }) {
 	const { t } = useTranslation();
-	const bufferedContent = commitAtWordBoundary(content, isStreaming);
 	// Strip ANSI escape codes and fix indentation before rendering.
 	// Some models (e.g. Kimi-K2.5) prefix text with 4+ spaces which CommonMark
 	// interprets as indented code blocks, causing plain text to render as <pre><code>.
-	const cleanContent = dedentMarkdown(stripAnsiSequences(bufferedContent));
+	const cleanContent = dedentMarkdown(stripAnsiSequences(content));
+	const reservationBasis = dedentMarkdown(stripAnsiSequences(content));
 
 	// Rewrite markdown image URLs that reference local workspace files
 	// (e.g. ![avatar](ginee_pixel_art_avatar.png)) so they resolve through
@@ -4526,10 +4547,24 @@ function TextWithFileReferences({
 		() => extractFileReferenceDetails(cleanContent),
 		[cleanContent],
 	);
+	const streamingReservedLines = useMemo(
+		() => (isStreaming ? estimateStreamingReservedLines(reservationBasis) : 0),
+		[isStreaming, reservationBasis],
+	);
 	const isCoarsePointerDevice = useCoarsePointerDevice();
 
 	const contentBlock = (
-		<div className="space-y-2 select-none sm:select-auto min-w-0 max-w-full">
+		<div
+			className="space-y-2 select-none sm:select-auto min-w-0 max-w-full"
+			style={
+				isStreaming
+					? {
+							minHeight: `calc(${streamingReservedLines} * 1.55em)`,
+							contain: "layout paint",
+						}
+					: undefined
+			}
+		>
 			<MarkdownRenderer
 				content={markdownContent}
 				className="text-sm text-foreground leading-relaxed overflow-hidden min-w-0 max-w-full"

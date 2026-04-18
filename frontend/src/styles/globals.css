@@ -345,17 +345,13 @@
 	overflow-wrap: break-word;
 	word-wrap: break-word;
 	word-break: normal;
-	hyphens: auto;
-	-webkit-hyphens: auto;
-	text-wrap: pretty;
+	/* Disable hyphenation-driven reflow to reduce whole-message twitch. */
+	hyphens: none;
+	-webkit-hyphens: none;
+	/* Keep wrap distribution identical during streaming and after persist. */
+	text-wrap: auto;
 }
 
-/*
- * While streaming, disable `text-wrap: pretty`. The pretty balancer re-evaluates
- * line breaks across the last few lines as content grows, so earlier wrap points
- * visibly flip each time a word is appended. Greedy wrap is stable: once a line
- * is broken, it stays broken there regardless of what's appended below.
- */
 .markdown-content--streaming {
 	text-wrap: auto;
 }
@@ -363,8 +359,8 @@
 .markdown-content p,
 .markdown-content li > span {
 	text-align: left;
-	hyphens: auto;
-	-webkit-hyphens: auto;
+	hyphens: none;
+	-webkit-hyphens: none;
 	overflow-wrap: normal;
 	word-break: normal;
 }
