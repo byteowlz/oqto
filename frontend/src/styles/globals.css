@@ -380,6 +380,12 @@
 	will-change: transform, opacity;
 }
 
+.stream-crawl-tick-a,
+.stream-crawl-tick-b {
+	animation: stream-crawl-tick 140ms ease-out;
+	will-change: transform, opacity;
+}
+
 @keyframes stream-commit-slide-in {
 	from {
 		transform: translateY(6px);
@@ -391,9 +397,22 @@
 	}
 }
 
+@keyframes stream-crawl-tick {
+	from {
+		transform: translateY(8px);
+		opacity: 0.84;
+	}
+	to {
+		transform: translateY(0);
+		opacity: 1;
+	}
+}
+
 @media (prefers-reduced-motion: reduce) {
 	.stream-commit-slide-in-a,
-	.stream-commit-slide-in-b {
+	.stream-commit-slide-in-b,
+	.stream-crawl-tick-a,
+	.stream-crawl-tick-b {
 		animation: none;
 	}
 }
