@@ -714,12 +714,14 @@ impl RunnerClient {
         session_id: impl Into<String>,
         render: bool,
         limit: Option<usize>,
+        source: WorkspaceChatMessagesSource,
     ) -> Result<WorkspaceChatSessionMessagesResponse> {
         let req = RunnerRequest::GetWorkspaceChatSessionMessages(
             GetWorkspaceChatSessionMessagesRequest {
                 session_id: session_id.into(),
                 render,
                 limit,
+                source,
             },
         );
 

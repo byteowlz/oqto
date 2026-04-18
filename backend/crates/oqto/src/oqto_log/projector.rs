@@ -9,7 +9,9 @@ use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use tokio::sync::Mutex;
 
 use crate::oqto_log::paths::resolve_user_home_workspace_db_path;
-use crate::runner::protocol::{ChatMessagePartProto, ChatMessageProto};
+use crate::runner::protocol::{
+    ChatMessagePartProto, ChatMessageProto, extract_client_id_from_extra,
+};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TurnTreeNode {
@@ -49,6 +51,27 @@ async fn open_pool_for_workspace(user_home: &Path, workspace_id: &str) -> Result
     let mut pools = PROJECTOR_POOLS.lock().await;
     pools.insert(db_path, pool.clone());
     Ok(pool)
+}
+
+fn extract_client_id_from_payload_json(payload: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(payload).ok()?;
+    let obj = value.as_object()?;
+
+    if let Some(extra_obj) = obj.get("extra").and_then(|v| v.as_object()) {
+        let mut extra = std::collections::HashMap::new();
+        for (k, v) in extra_obj {
+            extra.insert(k.clone(), v.clone());
+        }
+        if let Some(client_id) = extract_client_id_from_extra(&extra) {
+            return Some(client_id);
+        }
+    }
+
+    obj.get("client_id")
+        .and_then(|v| v.as_str())
+        .or_else(|| obj.get("clientId").and_then(|v| v.as_str()))
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
 }
 
 async fn list_workspace_hash_dirs(user_home: &Path) -> Vec<PathBuf> {
@@ -143,7 +166,7 @@ pub async fn project_session_messages_auto(
                 let fallback_content: Option<String> = row.try_get("content").ok();
                 let json_payload: Option<String> = row.try_get("json_payload").ok();
 
-                if let Some(payload) = json_payload
+                if let Some(payload) = json_payload.clone()
                     && let Ok(agent_msg) = serde_json::from_str::<crate::pi::AgentMessage>(&payload)
                 {
                     let mut proto = crate::runner::protocol::agent_msg_to_chat_proto(
@@ -157,6 +180,10 @@ pub async fn project_session_messages_auto(
                     }
                     return proto;
                 }
+
+                let fallback_client_id = json_payload
+                    .as_deref()
+                    .and_then(extract_client_id_from_payload_json);
 
                 let role: String = row.get("role");
                 ChatMessageProto {
@@ -174,7 +201,7 @@ pub async fn project_session_messages_auto(
                     tokens_output: None,
                     tokens_reasoning: None,
                     cost: None,
-                    client_id: None,
+                    client_id: fallback_client_id,
                     parts: vec![ChatMessagePartProto {
                         id: format!("{}:part:0", msg_id),
                         part_type: "text".to_string(),
@@ -392,4 +419,30 @@ pub async fn project_session_messages_for_workspace(
         .collect();
 
     Ok(mapped)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::extract_client_id_from_payload_json;
+
+    #[test]
+    fn payload_client_id_extraction_handles_snake_and_camel_case() {
+        let snake = r#"{"role":"user","extra":{"client_id":"cid-snake"}}"#;
+        assert_eq!(
+            extract_client_id_from_payload_json(snake).as_deref(),
+            Some("cid-snake")
+        );
+
+        let camel = r#"{"role":"user","extra":{"clientId":"cid-camel"}}"#;
+        assert_eq!(
+            extract_client_id_from_payload_json(camel).as_deref(),
+            Some("cid-camel")
+        );
+
+        let root = r#"{"role":"user","clientId":"cid-root"}"#;
+        assert_eq!(
+            extract_client_id_from_payload_json(root).as_deref(),
+            Some("cid-root")
+        );
+    }
 }

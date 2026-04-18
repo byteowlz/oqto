@@ -1015,25 +1015,9 @@ export function mergeServerMessages(
 			.map((m) => m.clientId)
 			.filter((c): c is string => typeof c === "string" && c.length > 0),
 	);
-	// Build a set of server user-message texts for content-based dedup. This
-	// catches the case where a historical user message was persisted without
-	// a client_id (server-side attachment bug or legacy data), so clientId
-	// reconciliation alone would leak an optimistic duplicate.
-	const serverUserTexts = new Set(
-		serverMessages
-			.filter((m) => m.role === "user")
-			.map((m) => extractUserMessageText(m))
-			.filter((t): t is string => t.length > 0),
-	);
 	const preservedLocals = previous.filter((msg) => {
 		// Case 1: Has clientId that doesn't exist in server -> unmatched optimistic
 		if (msg.clientId && !serverClientIds.has(msg.clientId)) {
-			// Fallback: if the server has a user message with identical text,
-			// treat them as the same turn and drop the local duplicate.
-			if (msg.role === "user") {
-				const text = extractUserMessageText(msg);
-				if (text && serverUserTexts.has(text)) return false;
-			}
 			return true;
 		}
 		// Case 2: Tmp/legacy message with no clientId but still streaming
@@ -1046,17 +1030,4 @@ export function mergeServerMessages(
 		return mergedInServerOrder;
 	}
 	return upsertFromServer(mergedInServerOrder, preservedLocals);
-}
-
-/** Extract plain text content from a user message for dedup matching. */
-function extractUserMessageText(msg: DisplayMessage): string {
-	if (msg.role !== "user") return "";
-	const texts: string[] = [];
-	for (const part of msg.parts) {
-		if (part.type === "text") {
-			const t = (part as { text?: string }).text;
-			if (typeof t === "string") texts.push(t);
-		}
-	}
-	return texts.join("").trim();
 }

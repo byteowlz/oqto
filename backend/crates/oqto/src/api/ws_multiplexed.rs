@@ -2060,20 +2060,19 @@ async fn handle_get_messages(
         Value::Object(data)
     };
 
-    // Authority path: oqto-log is the sole durable source for chat history.
-    // Both this WS handler and the REST `/api/chat-history/{id}/messages`
-    // endpoint route through the runner's oqto-log projector, so their
-    // responses carry byte-identical message IDs. That alignment is what
-    // lets the frontend's merge logic reconcile snapshots arriving via two
-    // paths without producing duplicate assistant bubbles.
-    //
-    // No hstry fallback: we migrated away from hstry-as-authority. Legacy
-    // sessions that never wrote to oqto-log come back empty here; the
-    // frontend's backfill-on-empty path hydrates them via the runner's
-    // bootstrap importer rather than reading hstry directly.
+    // Live recovery path: fetch the per-session runner buffer snapshot.
+    // This endpoint is intentionally non-authoritative and is used to repair
+    // dropped websocket deltas during active turns without replacing durable
+    // history. Durable/authoritative reconciliation remains on REST
+    // `/api/chat-history/{id}/messages` (runner source=authoritative).
     match tokio::time::timeout(
         std::time::Duration::from_secs(3),
-        runner.get_workspace_chat_session_messages(session_id, false, None),
+        runner.get_workspace_chat_session_messages(
+            session_id,
+            false,
+            None,
+            crate::runner::protocol::WorkspaceChatMessagesSource::Live,
+        ),
     )
     .await
     {
@@ -2084,7 +2083,19 @@ async fn handle_get_messages(
                 is_active,
                 resp.messages.len()
             );
-            let messages_value = workspace_chat_messages_to_json(resp.messages);
+            let mut messages_value = workspace_chat_messages_to_json(resp.messages);
+            if let serde_json::Value::Object(ref mut map) = messages_value {
+                let source = match resp.source {
+                    crate::runner::protocol::WorkspaceChatMessagesSource::Authoritative => {
+                        "authoritative"
+                    }
+                    crate::runner::protocol::WorkspaceChatMessagesSource::Live => "live",
+                };
+                map.insert(
+                    "messages_source".to_string(),
+                    serde_json::Value::String(source.to_string()),
+                );
+            }
             Some(agent_response(
                 session_id,
                 id,

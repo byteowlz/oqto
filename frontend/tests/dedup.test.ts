@@ -141,6 +141,16 @@ describe("mergeServerMessages", () => {
 		expect(result[0].id).toBe("history-user");
 	});
 
+	it("authoritative mode does not drop unmatched optimistic user with identical text", () => {
+		const prev = [
+			textMsg("history-1", "user", "ok", { clientId: "c-old" }),
+			textMsg("tmp:user-2", "user", "ok", { clientId: "c-new" }),
+		];
+		const server = [textMsg("history-1", "user", "ok", { clientId: "c-old" })];
+		const result = mergeServerMessages(prev, server, "authoritative");
+		expect(result.map((m) => m.id)).toEqual(["history-1", "tmp:user-2"]);
+	});
+
 	it("authoritative mode removes stale tmp assistant once persisted assistant exists", () => {
 		const prev = [
 			textMsg("tmp:assistant-1", "assistant", "in-flight", {
