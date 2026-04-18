@@ -11,24 +11,6 @@ Deliverables
 ...
 
 
-### [oqto-zpvs.5] Backend: integration tests for session identity mapping and cross-session isolation (P1, task)
-Problem
-Session identity drift and cross-talk are recurring root causes for history corruption symptoms.
-
-Deliverables
-- Add tests for platform_id/external_id lifecycle:
-...
-
-
-### [oqto-zpvs.4] Backend: integration tests for persist-before-idle and live-vs-authoritative fetch contracts (P1, task)
-Problem
-Critical ordering and source-of-truth contracts are not guarded by integration tests.
-
-Deliverables
-- Add integration tests covering:
-...
-
-
 ### [oqto-zpvs] Persistence hardening: deterministic message timeline tests across frontend, runner, and e2e (P1, epic)
 Goal
 Eliminate recurring frontend message persistence regressions (disappearing/duplicated/out-of-order messages) by building a full regression net that validates live streaming, reconciliation, persistence, and reload/reconnect convergence.
@@ -61,6 +43,8 @@ Deliverables
 
 ## Closed
 
+- [oqto-zpvs.5] Backend: integration tests for session identity mapping and cross-session isolation (closed 2026-04-17)
+- [oqto-zpvs.4] Backend: integration tests for persist-before-idle and live-vs-authoritative fetch contracts (closed 2026-04-17)
 - [oqto-zpvs.3] Frontend: trace replay harness using real canonical event logs (closed 2026-04-17)
 - [oqto-z6hv] Persistence hardening: remove dead code/cruft while implementing zpvs frontend/backend tests (closed 2026-04-17)
 - [oqto-zpvs.2] Frontend: property-style invariant tests for mergeServerMessages + normalizeMessages (closed 2026-04-17)
@@ -1210,13 +1194,13 @@ Deliverables
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
+- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
 - [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
 - [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
 - [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
-- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
 - [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
 - [oqto-4ryr] Session rename reverts: update_chat_session returns external_id while list returns platform_id (closed )
-- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
+- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
 - [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
