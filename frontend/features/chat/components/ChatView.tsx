@@ -2292,6 +2292,7 @@ export function ChatView({
 																: undefined
 														}
 														onFileReferenceOpen={onFileReferenceOpen}
+														freezeStreamingUpdates={isUserScrolled}
 														showWorkingIndicator={
 															isWorking && isLastAssistantGroup
 														}
@@ -3176,6 +3177,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 	showWorkingIndicator = false,
 	onForkHere,
 	onFileReferenceOpen,
+	freezeStreamingUpdates = false,
 }: {
 	group: MessageGroup;
 	assistantName?: string | null;
@@ -3188,6 +3190,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 	showWorkingIndicator?: boolean;
 	onForkHere?: () => void;
 	onFileReferenceOpen?: (filePath: string) => void;
+	freezeStreamingUpdates?: boolean;
 }) {
 	const isUser = group.role === "user";
 	const { t } = useTranslation();
@@ -3744,6 +3747,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 								isStreaming={
 									!isUser && (showWorkingIndicator || isGroupStreaming)
 								}
+								freezeStreamingUpdates={freezeStreamingUpdates}
 							/>
 						);
 						return wrapWithGutter(segment.key, inner);
@@ -3796,6 +3800,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 									locale={locale}
 									workspacePath={workspacePath}
 									isStreaming={!isUser && isGroupStreaming}
+									freezeStreamingUpdates={freezeStreamingUpdates}
 								/>
 							</div>
 						);
@@ -4024,6 +4029,7 @@ function PiPartRenderer({
 	collapsible = true,
 	hideHeader = false,
 	isStreaming = false,
+	freezeStreamingUpdates = false,
 }: {
 	part: DisplayPart;
 	toolResult?: Extract<DisplayPart, { type: "tool_result" }>;
@@ -4032,6 +4038,7 @@ function PiPartRenderer({
 	collapsible?: boolean;
 	hideHeader?: boolean;
 	isStreaming?: boolean;
+	freezeStreamingUpdates?: boolean;
 }) {
 	const { t } = useTranslation();
 	const stripAnsi = (value: string): string => stripAnsiSequences(value);
@@ -4039,12 +4046,24 @@ function PiPartRenderer({
 	const rawThinkingText = isThinkingPart
 		? stripAnsi(((part as { text?: string }).text ?? "").trim())
 		: "";
+	const frozenThinkingText = useFrozenStreamingText(
+		rawThinkingText,
+		freezeStreamingUpdates && isStreaming && isThinkingPart,
+	);
+	const {
+		visibleContent: visibleThinkingContent,
+		isCommitAnimating: isThinkingCommitAnimating,
+		animationPhase: thinkingAnimationPhase,
+	} = useStreamingCommittedContent(
+		frozenThinkingText,
+		isStreaming && isThinkingPart,
+	);
 	const thinkingReservedLines = useMemo(
 		() =>
 			isStreaming && isThinkingPart
-				? estimateStreamingReservedLines(rawThinkingText)
+				? estimateStreamingReservedLines(frozenThinkingText)
 				: 0,
-		[isStreaming, isThinkingPart, rawThinkingText],
+		[isStreaming, isThinkingPart, frozenThinkingText],
 	);
 
 	const formatToolResultOutput = (content: unknown): string | undefined => {
@@ -4174,12 +4193,14 @@ function PiPartRenderer({
 					content={stripAnsi(textContent)}
 					workspacePath={workspacePath}
 					locale={locale}
+					isStreaming={isStreaming}
+					freezeStreamingUpdates={freezeStreamingUpdates}
 				/>
 			);
 		}
 
 		case "thinking": {
-			const thinkingText = rawThinkingText;
+			const thinkingText = visibleThinkingContent;
 			if (!thinkingText) return null;
 
 			const verbosityLevel =
@@ -4225,7 +4246,13 @@ function PiPartRenderer({
 						)}
 					</summary>
 					<div
-						className="px-3 pb-3 pt-1 text-xs leading-relaxed"
+						className={cn(
+							"px-3 pb-3 pt-1 text-xs leading-relaxed",
+							isThinkingCommitAnimating &&
+								(thinkingAnimationPhase === "a"
+									? "stream-commit-slide-in-a"
+									: "stream-commit-slide-in-b"),
+						)}
 						style={
 							isStreaming
 								? {
@@ -4506,6 +4533,141 @@ function estimateStreamingReservedLines(text: string): number {
 	return Math.max(2, logicalLines + 1, wrappedLineEstimate + 1);
 }
 
+function splitCommittedStreamingTail(text: string): {
+	committed: string;
+	tail: string;
+} {
+	if (text.length === 0) return { committed: "", tail: "" };
+
+	const lastNewlineIndex = Math.max(
+		text.lastIndexOf("\n"),
+		text.lastIndexOf("\r"),
+	);
+	if (lastNewlineIndex >= 0) {
+		const splitAt = lastNewlineIndex + 1;
+		return {
+			committed: text.slice(0, splitAt),
+			tail: text.slice(splitAt),
+		};
+	}
+
+	for (let i = text.length - 1; i >= 0; i--) {
+		const ch = text.charAt(i);
+		if (/\s|[.,!?;:)}\]]/.test(ch)) {
+			return {
+				committed: text.slice(0, i + 1),
+				tail: text.slice(i + 1),
+			};
+		}
+	}
+
+	return { committed: "", tail: text };
+}
+
+function useFrozenStreamingText(content: string, freeze: boolean): string {
+	const [frozen, setFrozen] = useState(content);
+	// useeffect-guardrail: allow - freeze live streaming text while user inspects scrolled-up history
+	useEffect(() => {
+		if (!freeze) {
+			setFrozen(content);
+		}
+	}, [content, freeze]);
+	return freeze ? frozen : content;
+}
+
+function useStreamingCommittedContent(
+	content: string,
+	isStreaming: boolean,
+): {
+	visibleContent: string;
+	isCommitAnimating: boolean;
+	animationPhase: "a" | "b";
+} {
+	const [isCommitAnimating, setIsCommitAnimating] = useState(false);
+	const [animationPhase, setAnimationPhase] = useState<"a" | "b">("a");
+	const [isResizeSettling, setIsResizeSettling] = useState(false);
+	const resizeSettleTimeoutRef = useRef<number | null>(null);
+	const animateTimeoutRef = useRef<number | null>(null);
+	const previousCommittedRef = useRef("");
+
+	const split = useMemo(() => {
+		if (!isStreaming) return { committed: content, tail: "" };
+		return splitCommittedStreamingTail(content);
+	}, [content, isStreaming]);
+
+	const visibleContent = isStreaming ? split.committed : content;
+
+	// useeffect-guardrail: allow - resize debounce gate for streaming animations
+	useEffect(() => {
+		if (!isStreaming) {
+			setIsResizeSettling(false);
+			return;
+		}
+		const onResize = () => {
+			setIsResizeSettling(true);
+			if (resizeSettleTimeoutRef.current !== null) {
+				window.clearTimeout(resizeSettleTimeoutRef.current);
+			}
+			resizeSettleTimeoutRef.current = window.setTimeout(() => {
+				setIsResizeSettling(false);
+				resizeSettleTimeoutRef.current = null;
+			}, 220);
+		};
+		window.addEventListener("resize", onResize, { passive: true });
+		return () => {
+			window.removeEventListener("resize", onResize);
+			if (resizeSettleTimeoutRef.current !== null) {
+				window.clearTimeout(resizeSettleTimeoutRef.current);
+				resizeSettleTimeoutRef.current = null;
+			}
+		};
+	}, [isStreaming]);
+
+	// useeffect-guardrail: allow - animate newly committed streaming chunks
+	useEffect(() => {
+		if (!isStreaming) {
+			previousCommittedRef.current = visibleContent;
+			setIsCommitAnimating(false);
+			if (animateTimeoutRef.current !== null) {
+				window.clearTimeout(animateTimeoutRef.current);
+				animateTimeoutRef.current = null;
+			}
+			return;
+		}
+
+		const previous = previousCommittedRef.current;
+		const next = visibleContent;
+		const hasNewCommittedContent = next.length > previous.length;
+		previousCommittedRef.current = next;
+
+		if (!hasNewCommittedContent || isResizeSettling) {
+			return;
+		}
+
+		setAnimationPhase((prev) => (prev === "a" ? "b" : "a"));
+		setIsCommitAnimating(true);
+		if (animateTimeoutRef.current !== null) {
+			window.clearTimeout(animateTimeoutRef.current);
+		}
+		animateTimeoutRef.current = window.setTimeout(() => {
+			setIsCommitAnimating(false);
+			animateTimeoutRef.current = null;
+		}, 140);
+		return () => {
+			if (animateTimeoutRef.current !== null) {
+				window.clearTimeout(animateTimeoutRef.current);
+				animateTimeoutRef.current = null;
+			}
+		};
+	}, [isResizeSettling, isStreaming, visibleContent]);
+
+	return {
+		visibleContent,
+		isCommitAnimating: isCommitAnimating && !isResizeSettling,
+		animationPhase,
+	};
+}
+
 function TextWithFileReferences({
 	content,
 	workspacePath,
@@ -4513,6 +4675,7 @@ function TextWithFileReferences({
 	onFileReferenceOpen,
 	deferMermaidUntilFinal = false,
 	isStreaming = false,
+	freezeStreamingUpdates = false,
 }: {
 	content: string;
 	workspacePath?: string | null;
@@ -4520,13 +4683,20 @@ function TextWithFileReferences({
 	onFileReferenceOpen?: (filePath: string) => void;
 	deferMermaidUntilFinal?: boolean;
 	isStreaming?: boolean;
+	freezeStreamingUpdates?: boolean;
 }) {
 	const { t } = useTranslation();
+	const frozenContent = useFrozenStreamingText(
+		content,
+		freezeStreamingUpdates && isStreaming,
+	);
+	const { visibleContent, isCommitAnimating, animationPhase } =
+		useStreamingCommittedContent(frozenContent, isStreaming);
 	// Strip ANSI escape codes and fix indentation before rendering.
 	// Some models (e.g. Kimi-K2.5) prefix text with 4+ spaces which CommonMark
 	// interprets as indented code blocks, causing plain text to render as <pre><code>.
-	const cleanContent = dedentMarkdown(stripAnsiSequences(content));
-	const reservationBasis = dedentMarkdown(stripAnsiSequences(content));
+	const cleanContent = dedentMarkdown(stripAnsiSequences(visibleContent));
+	const reservationBasis = dedentMarkdown(stripAnsiSequences(frozenContent));
 
 	// Rewrite markdown image URLs that reference local workspace files
 	// (e.g. ![avatar](ginee_pixel_art_avatar.png)) so they resolve through
@@ -4568,7 +4738,13 @@ function TextWithFileReferences({
 
 	const contentBlock = (
 		<div
-			className="space-y-2 select-none sm:select-auto min-w-0 max-w-full"
+			className={cn(
+				"space-y-2 select-none sm:select-auto min-w-0 max-w-full",
+				isCommitAnimating &&
+					(animationPhase === "a"
+						? "stream-commit-slide-in-a"
+						: "stream-commit-slide-in-b"),
+			)}
 			style={
 				isStreaming
 					? {
