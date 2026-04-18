@@ -802,7 +802,12 @@ pub async fn get_chat_messages(
         .ok_or_else(|| ApiError::internal("Runner is required but not available for this user."))?;
 
     let response = runner
-        .get_workspace_chat_session_messages(&session_id, query.render, None)
+        .get_workspace_chat_session_messages(
+            &session_id,
+            query.render,
+            None,
+            crate::runner::protocol::WorkspaceChatMessagesSource::Authoritative,
+        )
         .await
         .map_err(|e| ApiError::internal(format!("runner get messages failed: {}", e)))?;
 

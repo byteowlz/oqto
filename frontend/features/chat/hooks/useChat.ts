@@ -63,6 +63,7 @@ import {
 	nextPartId,
 	normalizeContentToParts,
 	normalizeMessages,
+	shouldPreserveLocalMessage,
 } from "./message-utils";
 import { dispatchResponseCommand } from "./response-command-dispatch";
 import {
@@ -429,13 +430,21 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 
 	const ensureAssistantMessage = useCallback((preferStreaming: boolean) => {
 		if (streamingMessageRef.current) return streamingMessageRef.current;
-		const lastId = lastAssistantMessageIdRef.current;
-		if (lastId) {
-			const existing = messagesRef.current.find((m) => m.id === lastId);
-			if (existing && existing.role === "assistant") {
-				return existing;
+
+		// Streaming must always write to a dedicated tail container, never to an
+		// existing historical assistant message. This makes it impossible for live
+		// deltas to render at random positions in persisted history.
+		if (!preferStreaming) {
+			const last = messagesRef.current[messagesRef.current.length - 1];
+			if (
+				last &&
+				last.role === "assistant" &&
+				shouldPreserveLocalMessage(last)
+			) {
+				return last;
 			}
 		}
+
 		const assistantMessage: DisplayMessage = {
 			id: createTempMessageId(),
 			role: "assistant",
@@ -567,7 +576,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 		async (
 			sessionId: string,
 			expectedVersion?: number,
-			opts?: { forceAuthoritative?: boolean },
+			opts?: { forceAuthoritative?: boolean; transportEpoch?: number },
 		) => {
 			try {
 				const swId = sharedWorkspaceSessionMap.get(sessionId);
@@ -596,11 +605,14 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 					}
 				}
 
-				// Guard: after the async fetch, verify the session is still
-				// active. If the user switched sessions while the request was
-				// in flight, discard the stale result to avoid clobbering the
-				// new session's messages.
-				if (!isCurrentSession(sessionId)) {
+				// Guard: after the async fetch, verify the session and transport
+				// epoch are still current. If the user switched sessions or the
+				// websocket transport rolled over while in-flight, discard stale data.
+				if (
+					!isCurrentSession(sessionId) ||
+					(typeof opts?.transportEpoch === "number" &&
+						opts.transportEpoch !== transportEpochRef.current)
+				) {
 					if (isPiDebugEnabled()) {
 						console.debug(
 							"[useChat] Discarding stale history fetch for",
@@ -646,21 +658,12 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 					}
 					return;
 				}
-				const hasAuthoritativeVersion = Number.isFinite(
-					expectedVersion ?? Number.NaN,
-				);
-				// Authority contract: only run destructive authoritative reconciliation
-				// when we have a concrete version bound for this fetch. Reload/resync
-				// fetches without version are treated as partial snapshots so cached
-				// complete timelines cannot be clobbered by shorter windows.
-				// Exception: agent.idle callers pass forceAuthoritative to guarantee
-				// tmp: streaming leftovers are reconciled even without a version.
+				// Source contract: REST history fetches are durable/authoritative.
+				// Only downgrade to partial while a live turn is active.
 				const mergeMode: "partial" | "authoritative" =
 					isStreamingRef.current || sendInFlightRef.current
 						? "partial"
-						: hasAuthoritativeVersion || opts?.forceAuthoritative
-							? "authoritative"
-							: "partial";
+						: "authoritative";
 				applyServerMessages(
 					history as RawMessage[],
 					sessionId,
@@ -754,7 +757,9 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 				if (preferPartial) {
 					manager.agentGetMessages(sessionId);
 				} else {
-					await fetchHistoryMessages(sessionId);
+					await fetchHistoryMessages(sessionId, undefined, {
+						transportEpoch: expectedEpoch,
+					});
 				}
 			} finally {
 				reconnectTxnRef.current.delete(sessionId);

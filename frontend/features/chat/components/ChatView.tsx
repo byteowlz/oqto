@@ -592,18 +592,23 @@ export function ChatView({
 	// the scroll event handler update isUserScrolled state.
 	const userInitiatedScrollRef = useRef(false);
 	const programmaticScrollRef = useRef(false);
+	const scrollToBottomRafRef = useRef<number | null>(null);
 
 	const scrollToBottom = useCallback(() => {
-		const c = messagesContainerRef.current;
-		if (!c) return;
-		programmaticScrollRef.current = true;
-		c.scrollTop = c.scrollHeight;
-		// Re-apply on next frame to handle late layout growth (streaming/tool rows)
-		requestAnimationFrame(() => {
-			const next = messagesContainerRef.current;
-			if (!next) return;
+		if (scrollToBottomRafRef.current !== null) return;
+		scrollToBottomRafRef.current = window.requestAnimationFrame(() => {
+			scrollToBottomRafRef.current = null;
+			const container = messagesContainerRef.current;
+			if (!container) return;
+			const distanceToBottom =
+				container.scrollHeight - container.scrollTop - container.clientHeight;
+			// Avoid redundant writes at/near bottom; they can trigger scroll-event
+			// churn and visible flicker while streaming updates arrive quickly.
+			if (distanceToBottom < 2) return;
 			programmaticScrollRef.current = true;
-			next.scrollTop = next.scrollHeight;
+			container.scrollTop = container.scrollHeight;
+			lastScrollTopRef.current = container.scrollTop;
+			lastScrollHeightRef.current = container.scrollHeight;
 		});
 	}, []);
 
@@ -656,6 +661,100 @@ export function ChatView({
 		}
 		return { surfacesByMessageId: map, orphanedSurfaces: orphaned };
 	}, [a2uiSurfaces, messages]);
+
+	const pendingAssistantGroupRef = useRef<MessageGroup>({
+		role: "assistant",
+		messages: [
+			{
+				id: "pending-assistant",
+				role: "assistant",
+				parts: [],
+				timestamp: 0,
+				isStreaming: true,
+			},
+		],
+	});
+	const stableGroupedMessagesRef = useRef<MessageGroup[]>([]);
+
+	const renderedGroups = useMemo(() => {
+		const visibleMessages = messages.slice(-visibleCount);
+		const grouped = groupMessages(visibleMessages);
+		const previous = stableGroupedMessagesRef.current;
+		const stableGrouped = grouped.map((group, idx) => {
+			const prev = previous[idx];
+			if (
+				prev &&
+				prev.role === group.role &&
+				prev.messages.length === group.messages.length &&
+				prev.messages.every((msg, mIdx) => msg === group.messages[mIdx])
+			) {
+				return prev;
+			}
+			return group;
+		});
+		stableGroupedMessagesRef.current = stableGrouped;
+
+		const lastGroup = stableGrouped[stableGrouped.length - 1];
+		const lastMsg = visibleMessages[visibleMessages.length - 1];
+		const isWorking =
+			isStreaming ||
+			isAwaitingResponse ||
+			lastMsg?.isStreaming === true ||
+			sendPending;
+		const needsPendingAssistant =
+			isWorking && (!lastGroup || lastGroup.role === "user");
+		const groupsToRender = needsPendingAssistant
+			? [...stableGrouped, pendingAssistantGroupRef.current]
+			: stableGrouped;
+
+		let lastAssistantIndex = -1;
+		for (let i = groupsToRender.length - 1; i >= 0; i--) {
+			if (groupsToRender[i]?.role === "assistant") {
+				lastAssistantIndex = i;
+				break;
+			}
+		}
+
+		return groupsToRender.map((group, groupIndex) => {
+			const groupMessageId = group.messages[0]?.id;
+			const groupSurfaces = group.messages.flatMap(
+				(message) => surfacesByMessageId.get(message.id) ?? [],
+			);
+			let modelChangeRef: string | null = null;
+			if (group.role === "assistant") {
+				const thisModel = getGroupModelRef(group);
+				if (thisModel) {
+					for (let i = groupIndex - 1; i >= 0; i--) {
+						if (groupsToRender[i]?.role === "assistant") {
+							const prevModel = getGroupModelRef(groupsToRender[i]);
+							if (prevModel && prevModel !== thisModel) {
+								modelChangeRef = thisModel;
+							}
+							break;
+						}
+					}
+				}
+			}
+
+			return {
+				group,
+				groupIndex,
+				groupMessageId,
+				groupSurfaces,
+				isWorking,
+				isLastAssistantGroup:
+					group.role === "assistant" && groupIndex === lastAssistantIndex,
+				modelChangeRef,
+			};
+		});
+	}, [
+		isAwaitingResponse,
+		isStreaming,
+		messages,
+		sendPending,
+		surfacesByMessageId,
+		visibleCount,
+	]);
 
 	// Extract todos from messages and notify parent.
 	// Scans all messages in reverse to find the most recent todo tool call
@@ -2105,7 +2204,7 @@ export function ChatView({
 					<div
 						ref={messagesContainerRef}
 						onScroll={handleScroll}
-						className="h-full bg-muted/30 border border-border p-2 sm:p-4 overflow-y-auto scrollbar-hide"
+						className="h-full bg-muted/30 border border-border p-2 sm:p-4 overflow-y-auto scrollbar-hide [overflow-anchor:none]"
 						data-spotlight="chat-timeline"
 					>
 						<div>
@@ -2132,102 +2231,53 @@ export function ChatView({
 							{/* Only render the last visibleCount messages for performance */}
 							{!showSkeleton &&
 								(() => {
-									const visibleMessages = messages.slice(-visibleCount);
-									const grouped = groupMessages(visibleMessages);
-									const lastGroup = grouped[grouped.length - 1];
-									// Also treat the last message's isStreaming flag as working
-									// (covers the render between setMessages and turn-state update).
-									const lastMsg = visibleMessages[visibleMessages.length - 1];
-									const isWorking =
-										isStreaming ||
-										isAwaitingResponse ||
-										lastMsg?.isStreaming === true;
-									const needsPendingAssistant =
-										isWorking && (!lastGroup || lastGroup.role === "user");
-									const groupsToRender = needsPendingAssistant
-										? [
-												...grouped,
-												{
-													role: "assistant" as const,
-													messages: [
-														{
-															id: "pending-assistant",
-															role: "assistant" as const,
-															parts: [],
-															timestamp: Date.now(),
-															isStreaming: true,
-														},
-													],
-												},
-											]
-										: grouped;
+									return renderedGroups.map(
+										({
+											group,
+											groupIndex,
+											groupMessageId,
+											groupSurfaces,
+											isWorking,
+											isLastAssistantGroup,
+											modelChangeRef,
+										}) => {
+											const modelChangeDivider = modelChangeRef ? (
+												<ModelChangeDivider modelRef={modelChangeRef} />
+											) : null;
 
-									return groupsToRender.map((group, groupIndex) => {
-										const groupSurfaces = group.messages.flatMap(
-											(m) => surfacesByMessageId.get(m.id) ?? [],
-										);
-										const groupMessageId = group.messages[0]?.id;
-										// Check if this is the last assistant group
-										const isLastAssistantGroup =
-											group.role === "assistant" &&
-											!groupsToRender
-												.slice(groupIndex + 1)
-												.some((g) => g.role === "assistant");
-
-										// Detect model change: compare this assistant group's model
-										// to the previous assistant group's model
-										let modelChangeDivider: React.ReactNode = null;
-										if (group.role === "assistant") {
-											const thisModel = getGroupModelRef(group);
-											if (thisModel) {
-												// Find previous assistant group
-												for (let i = groupIndex - 1; i >= 0; i--) {
-													if (groupsToRender[i].role === "assistant") {
-														const prevModel = getGroupModelRef(
-															groupsToRender[i],
-														);
-														if (prevModel && prevModel !== thisModel) {
-															modelChangeDivider = (
-																<ModelChangeDivider modelRef={thisModel} />
-															);
+											return (
+												<div
+													key={`${groupMessageId ?? `${group.role}-${groupIndex}`}-${groupIndex}`}
+													className={groupIndex > 0 ? "mt-4 sm:mt-6" : ""}
+												>
+													{modelChangeDivider}
+													<MessageGroupCard
+														group={group}
+														assistantName={assistantName}
+														tempIdLabel={tempIdLabel}
+														workspacePath={workspacePath}
+														locale={locale}
+														a2uiSurfaces={groupSurfaces}
+														onA2UIAction={handleA2UIAction}
+														messageId={groupMessageId}
+														onForkHere={
+															group.role === "user"
+																? () => {
+																		setForkListOpen(true);
+																		void loadForkPoints();
+																	}
+																: undefined
 														}
-														break;
-													}
-												}
-											}
-										}
-
-										return (
-											<div
-												key={`${groupMessageId ?? `${group.role}-${groupIndex}`}-${groupIndex}`}
-												className={groupIndex > 0 ? "mt-4 sm:mt-6" : ""}
-											>
-												{modelChangeDivider}
-												<MessageGroupCard
-													group={group}
-													assistantName={assistantName}
-													tempIdLabel={tempIdLabel}
-													workspacePath={workspacePath}
-													locale={locale}
-													a2uiSurfaces={groupSurfaces}
-													onA2UIAction={handleA2UIAction}
-													messageId={groupMessageId}
-													onForkHere={
-														group.role === "user"
-															? () => {
-																	setForkListOpen(true);
-																	void loadForkPoints();
-																}
-															: undefined
-													}
-													onFileReferenceOpen={onFileReferenceOpen}
-													showWorkingIndicator={
-														isWorking && isLastAssistantGroup
-													}
-												/>
-											</div>
-										);
-									});
+														onFileReferenceOpen={onFileReferenceOpen}
+														showWorkingIndicator={
+															isWorking && isLastAssistantGroup
+														}
+														liveInnerPadding={isWorking && isLastAssistantGroup}
+													/>
+												</div>
+											);
+										},
+									);
 								})()}
 
 							{/* Orphaned A2UI surfaces (no valid anchor) */}
@@ -3104,6 +3154,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 	showWorkingIndicator = false,
 	onForkHere,
 	onFileReferenceOpen,
+	liveInnerPadding = false,
 }: {
 	group: MessageGroup;
 	assistantName?: string | null;
@@ -3116,6 +3167,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 	showWorkingIndicator?: boolean;
 	onForkHere?: () => void;
 	onFileReferenceOpen?: (filePath: string) => void;
+	liveInnerPadding?: boolean;
 }) {
 	const isUser = group.role === "user";
 	const { t } = useTranslation();
@@ -3578,9 +3630,12 @@ const MessageGroupCard = memo(function MessageGroupCard({
 
 			<div
 				className={cn(
-					"relative px-2 sm:px-4 py-2 sm:py-3 group space-y-2 overflow-hidden min-w-0 max-w-full",
+					"relative px-2 sm:px-4 py-2 sm:py-3 group space-y-2 overflow-hidden min-w-0 max-w-full transition-[padding] duration-150 ease-out",
 					!isUser && verbosity === 1 && "pr-12 sm:pr-16",
 				)}
+				style={{
+					paddingBottom: !isUser && liveInnerPadding ? "56px" : undefined,
+				}}
 			>
 				{!isUser && verbosity === 1 && (
 					<div className="absolute top-2 bottom-2 right-[2.25rem] sm:right-[2.75rem] w-px bg-border/40" />
@@ -3660,6 +3715,9 @@ const MessageGroupCard = memo(function MessageGroupCard({
 								deferMermaidUntilFinal={
 									!isUser && (showWorkingIndicator || isGroupStreaming)
 								}
+								isStreaming={
+									!isUser && (showWorkingIndicator || isGroupStreaming)
+								}
 							/>
 						);
 						return wrapWithGutter(segment.key, inner);
@@ -3695,6 +3753,10 @@ const MessageGroupCard = memo(function MessageGroupCard({
 						);
 					}
 					if (segment.type === "thinking") {
+						const bufferedThinking = commitAtWordBoundary(
+							segment.text,
+							!isUser && isGroupStreaming,
+						);
 						const inner = (
 							<div
 								key={segment.key}
@@ -3705,12 +3767,13 @@ const MessageGroupCard = memo(function MessageGroupCard({
 										{
 											type: "thinking",
 											id: segment.key,
-											text: segment.text,
+											text: bufferedThinking,
 											__verbosity: verbosity,
 										} as DisplayPart
 									}
 									locale={locale}
 									workspacePath={workspacePath}
+									isStreaming={!isUser && isGroupStreaming}
 								/>
 							</div>
 						);
@@ -3938,6 +4001,7 @@ function PiPartRenderer({
 	workspacePath,
 	collapsible = true,
 	hideHeader = false,
+	isStreaming = false,
 }: {
 	part: DisplayPart;
 	toolResult?: Extract<DisplayPart, { type: "tool_result" }>;
@@ -3945,6 +4009,7 @@ function PiPartRenderer({
 	workspacePath?: string | null;
 	collapsible?: boolean;
 	hideHeader?: boolean;
+	isStreaming?: boolean;
 }) {
 	const { t } = useTranslation();
 	const stripAnsi = (value: string): string => stripAnsiSequences(value);
@@ -4132,6 +4197,7 @@ function PiPartRenderer({
 						<MarkdownRenderer
 							content={thinkingText}
 							className="text-xs text-foreground/70 leading-relaxed [&_p]:text-foreground/70 [&_li]:text-foreground/70 [&_code]:text-foreground/60"
+							isStreaming={isStreaming}
 						/>
 					</div>
 				</details>
@@ -4384,24 +4450,49 @@ function useCoarsePointerDevice(): boolean {
  * Renders text content with @file references as inline previews.
  * Desktop gets a context-menu copy action; touch devices keep native media interactions.
  */
+// While streaming, hold back a trailing partial word (mid-word tail with no
+// boundary yet) to keep its line-wrap stable. Any non-alphanumeric terminal
+// char (whitespace, punctuation, bracket) counts as a commit so completed
+// prose isn't held when the outer streaming signal lingers through tool-call
+// phases. If no boundary has been seen at all, pass through so early text
+// doesn't disappear.
+//
+// Intra-word chars that should NOT break a token: `/` (paths, URLs, dates),
+// `-` (hyphenated words, ids), `_` (snake_case), `'` (contractions).
+const WORD_BOUNDARY_RE = /[^\p{L}\p{N}\-/_']/u;
+function commitAtWordBoundary(text: string, isStreaming: boolean): string {
+	if (!isStreaming || text.length === 0) return text;
+	const lastCh = text.charAt(text.length - 1);
+	if (WORD_BOUNDARY_RE.test(lastCh)) return text;
+	for (let i = text.length - 2; i >= 0; i--) {
+		if (WORD_BOUNDARY_RE.test(text.charAt(i))) {
+			return text.slice(0, i + 1);
+		}
+	}
+	return text;
+}
+
 function TextWithFileReferences({
 	content,
 	workspacePath,
 	locale = "en",
 	onFileReferenceOpen,
 	deferMermaidUntilFinal = false,
+	isStreaming = false,
 }: {
 	content: string;
 	workspacePath?: string | null;
 	locale?: "en" | "de";
 	onFileReferenceOpen?: (filePath: string) => void;
 	deferMermaidUntilFinal?: boolean;
+	isStreaming?: boolean;
 }) {
 	const { t } = useTranslation();
+	const bufferedContent = commitAtWordBoundary(content, isStreaming);
 	// Strip ANSI escape codes and fix indentation before rendering.
 	// Some models (e.g. Kimi-K2.5) prefix text with 4+ spaces which CommonMark
 	// interprets as indented code blocks, causing plain text to render as <pre><code>.
-	const cleanContent = dedentMarkdown(stripAnsiSequences(content));
+	const cleanContent = dedentMarkdown(stripAnsiSequences(bufferedContent));
 
 	// Rewrite markdown image URLs that reference local workspace files
 	// (e.g. ![avatar](ginee_pixel_art_avatar.png)) so they resolve through
@@ -4443,6 +4534,7 @@ function TextWithFileReferences({
 				content={markdownContent}
 				className="text-sm text-foreground leading-relaxed overflow-hidden min-w-0 max-w-full"
 				enableMermaid={!deferMermaidUntilFinal}
+				isStreaming={isStreaming}
 			/>
 			{/* Render file reference cards */}
 			{fileRefs.length > 0 && workspacePath && (

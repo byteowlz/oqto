@@ -4876,11 +4876,8 @@ impl PiSessionManager {
                 .iter()
                 .enumerate()
                 .map(|(i, msg)| {
-                    let client_id_for_msg = msg
-                        .extra
-                        .get("client_id")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
+                    let client_id_for_msg =
+                        crate::runner::protocol::extract_client_id_from_extra(&msg.extra);
                     let idx = (existing_count + i) as i32;
                     agent_message_to_proto_with_client_id(msg, idx, client_id_for_msg)
                 })
@@ -4914,11 +4911,8 @@ impl PiSessionManager {
                 .iter()
                 .enumerate()
                 .map(|(i, msg)| {
-                    let client_id_for_msg = msg
-                        .extra
-                        .get("client_id")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
+                    let client_id_for_msg =
+                        crate::runner::protocol::extract_client_id_from_extra(&msg.extra);
                     agent_message_to_proto_with_client_id(msg, i as i32, client_id_for_msg)
                 })
                 .collect()

@@ -25,7 +25,11 @@ export const shouldFetchHistoryAfterSessionCreate = ({
 
 export const parseGetMessagesPayload = (
 	data: unknown,
-): { messages: RawMessage[] | null; serverVersion?: number } => {
+): {
+	messages: RawMessage[] | null;
+	serverVersion?: number;
+	messagesSource?: "authoritative" | "live";
+} => {
 	if (!data) {
 		return { messages: null };
 	}
@@ -34,6 +38,7 @@ export const parseGetMessagesPayload = (
 		| {
 				messages?: RawMessage[];
 				message_version?: { version?: number };
+				messages_source?: "authoritative" | "live";
 		  };
 	const messages = Array.isArray(payload)
 		? payload
@@ -43,5 +48,11 @@ export const parseGetMessagesPayload = (
 		typeof payload.message_version?.version === "number"
 			? payload.message_version.version
 			: undefined;
-	return { messages, serverVersion };
+	const messagesSource =
+		!Array.isArray(payload) &&
+		(payload.messages_source === "authoritative" ||
+			payload.messages_source === "live")
+			? payload.messages_source
+			: undefined;
+	return { messages, serverVersion, messagesSource };
 };

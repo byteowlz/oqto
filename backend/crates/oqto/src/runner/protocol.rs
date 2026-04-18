@@ -734,6 +734,17 @@ pub struct GetWorkspaceChatSessionRequest {
     pub session_id: String,
 }
 
+/// Message retrieval source selection for workspace chat sessions.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceChatMessagesSource {
+    /// Durable authoritative timeline from oqto-log projection.
+    #[default]
+    Authoritative,
+    /// Volatile per-session runner live buffer snapshot.
+    Live,
+}
+
 /// Request to get messages from a workspace Pi chat session (hstry-backed).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GetWorkspaceChatSessionMessagesRequest {
@@ -745,6 +756,9 @@ pub struct GetWorkspaceChatSessionMessagesRequest {
     /// Optional limit on number of messages.
     #[serde(default)]
     pub limit: Option<usize>,
+    /// Source selector. Authoritative is the default for backwards compatibility.
+    #[serde(default)]
+    pub source: WorkspaceChatMessagesSource,
 }
 
 /// Request to update a workspace Pi chat session (e.g., rename title).
@@ -1533,6 +1547,8 @@ pub struct WorkspaceChatSessionResponse {
 pub struct WorkspaceChatSessionMessagesResponse {
     /// Session ID.
     pub session_id: String,
+    /// Source used for this payload.
+    pub source: WorkspaceChatMessagesSource,
     /// Messages in chronological order.
     pub messages: Vec<ChatMessageProto>,
 }
@@ -1783,6 +1799,15 @@ pub fn hstry_protos_to_chat_protos(
 ///
 /// Used by both the runner daemon (get_workspace_chat_session_messages) and
 /// the pi_manager's message buffer. Centralised here to prevent divergence.
+pub fn extract_client_id_from_extra(extra: &HashMap<String, Value>) -> Option<String> {
+    extra
+        .get("client_id")
+        .and_then(|v| v.as_str())
+        .or_else(|| extra.get("clientId").and_then(|v| v.as_str()))
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
 pub fn agent_msg_to_chat_proto(
     msg: &crate::pi::AgentMessage,
     idx: usize,
@@ -1823,11 +1848,7 @@ pub fn agent_msg_to_chat_proto(
             .usage
             .as_ref()
             .and_then(|u| u.cost.as_ref().map(|c| c.total)),
-        client_id: msg
-            .extra
-            .get("client_id")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string()),
+        client_id: extract_client_id_from_extra(&msg.extra),
         parts,
     }
 }
@@ -2609,5 +2630,54 @@ mod tests {
         let json = serde_json::to_string(&info).unwrap();
         assert!(json.contains("streaming"));
         assert!(json.contains("subscriber_count"));
+    }
+
+    #[test]
+    fn client_id_extraction_accepts_snake_and_camel_case_keys() {
+        let mut extra = HashMap::new();
+        extra.insert(
+            "client_id".to_string(),
+            serde_json::Value::String("cid-snake".to_string()),
+        );
+        assert_eq!(
+            extract_client_id_from_extra(&extra).as_deref(),
+            Some("cid-snake")
+        );
+
+        extra.remove("client_id");
+        extra.insert(
+            "clientId".to_string(),
+            serde_json::Value::String("cid-camel".to_string()),
+        );
+        assert_eq!(
+            extract_client_id_from_extra(&extra).as_deref(),
+            Some("cid-camel")
+        );
+    }
+
+    #[test]
+    fn agent_msg_to_chat_proto_carries_camel_case_client_id() {
+        let mut extra = HashMap::new();
+        extra.insert(
+            "clientId".to_string(),
+            serde_json::Value::String("cid-123".to_string()),
+        );
+        let msg = crate::pi::AgentMessage {
+            role: "user".to_string(),
+            content: serde_json::Value::String("hello".to_string()),
+            timestamp: Some(1_700_000_000),
+            tool_call_id: None,
+            tool_name: None,
+            is_error: None,
+            api: None,
+            provider: None,
+            model: None,
+            usage: None,
+            stop_reason: None,
+            extra,
+        };
+
+        let proto = agent_msg_to_chat_proto(&msg, 0, "sess-1");
+        assert_eq!(proto.client_id.as_deref(), Some("cid-123"));
     }
 }

@@ -92,30 +92,24 @@ fn decode_workspace_path_from_safe_dirname(dirname: &str) -> Option<String> {
     Some(format!("/{}", core.replace('-', "/")))
 }
 
-fn select_workspace_chat_messages(
-    session_is_active: bool,
-    live_messages: Option<Vec<ChatMessageProto>>,
+fn select_authoritative_workspace_chat_messages(
     authoritative_messages: Option<Vec<ChatMessageProto>>,
 ) -> (Vec<ChatMessageProto>, &'static str) {
-    if session_is_active {
-        if let Some(live) = live_messages.as_ref()
-            && !live.is_empty()
-        {
-            return (live.clone(), "live_buffer");
-        }
-
-        if let Some(authoritative) = authoritative_messages {
-            return (authoritative, "oqto-log");
-        }
-
-        return (live_messages.unwrap_or_default(), "live_buffer");
-    }
-
     if let Some(authoritative) = authoritative_messages {
         return (authoritative, "oqto-log");
     }
 
     (Vec::new(), "empty")
+}
+
+fn select_live_workspace_chat_messages(
+    live_messages: Option<Vec<ChatMessageProto>>,
+) -> (Vec<ChatMessageProto>, &'static str) {
+    if let Some(live) = live_messages {
+        return (live, "live_buffer");
+    }
+
+    (Vec::new(), "live_buffer")
 }
 
 fn read_last_session_info_name(path: &std::path::Path) -> Option<String> {
@@ -1977,53 +1971,58 @@ impl Runner {
         &self,
         req: GetWorkspaceChatSessionMessagesRequest,
     ) -> RunnerResponse {
-        // Persistence contract:
-        // - Active sessions should prefer the live in-memory buffer to avoid
-        //   clobbering newer local state with older persisted snapshots.
-        // - Inactive sessions should return authoritative persisted history.
         let session_is_active = self.pi_manager.has_session(&req.session_id).await;
-        let live_messages = if session_is_active {
-            self.pi_manager.get_message_buffer(&req.session_id).await
-        } else {
-            None
-        };
 
-        let authoritative_messages = if let Ok(home) = std::env::var("HOME") {
-            match crate::oqto_log::projector::project_session_messages_auto(
-                std::path::Path::new(&home),
-                &req.session_id,
-                req.limit,
-            )
-            .await
-            {
-                Ok(messages) => messages,
-                Err(err) => {
-                    debug!(
-                        "get_workspace_chat_session_messages session={} source=oqto-log error={}",
-                        req.session_id, err
-                    );
+        let (messages, source_label, source_mode) = match req.source {
+            WorkspaceChatMessagesSource::Authoritative => {
+                let authoritative_messages = if let Ok(home) = std::env::var("HOME") {
+                    match crate::oqto_log::projector::project_session_messages_auto(
+                        std::path::Path::new(&home),
+                        &req.session_id,
+                        req.limit,
+                    )
+                    .await
+                    {
+                        Ok(messages) => messages,
+                        Err(err) => {
+                            debug!(
+                                "get_workspace_chat_session_messages session={} source=oqto-log error={}",
+                                req.session_id, err
+                            );
+                            None
+                        }
+                    }
+                } else {
                     None
-                }
+                };
+
+                let (messages, source) =
+                    select_authoritative_workspace_chat_messages(authoritative_messages);
+                (messages, source, WorkspaceChatMessagesSource::Authoritative)
             }
-        } else {
-            None
+            WorkspaceChatMessagesSource::Live => {
+                let live_messages = if session_is_active {
+                    self.pi_manager.get_message_buffer(&req.session_id).await
+                } else {
+                    None
+                };
+                let (messages, source) = select_live_workspace_chat_messages(live_messages);
+                (messages, source, WorkspaceChatMessagesSource::Live)
+            }
         };
 
-        let (messages, source) = select_workspace_chat_messages(
-            session_is_active,
-            live_messages,
-            authoritative_messages,
-        );
         debug!(
-            "get_workspace_chat_session_messages session={} active={} source={} count={}",
+            "get_workspace_chat_session_messages session={} active={} requested_source={:?} selected_source={} count={}",
             req.session_id,
             session_is_active,
-            source,
+            req.source,
+            source_label,
             messages.len()
         );
 
         RunnerResponse::WorkspaceChatSessionMessages(WorkspaceChatSessionMessagesResponse {
             session_id: req.session_id,
+            source: source_mode,
             messages,
         })
     }
@@ -4001,18 +4000,29 @@ mod tests {
     }
 
     #[test]
-    fn persistence_contracts_active_session_prefers_live_buffer_over_authoritative_snapshot() {
+    fn persistence_contracts_authoritative_path_uses_only_persisted_history() {
+        let authoritative = vec![
+            proto("hist-u1", "user", 1_000),
+            proto("hist-a1", "assistant", 2_000),
+        ];
+
+        let (selected, source) =
+            select_authoritative_workspace_chat_messages(Some(authoritative.clone()));
+
+        assert_eq!(source, "oqto-log");
+        assert_eq!(selected.len(), authoritative.len());
+        assert_eq!(selected[0].id, "hist-u1");
+        assert_eq!(selected[1].id, "hist-a1");
+    }
+
+    #[test]
+    fn persistence_contracts_live_path_uses_only_live_buffer() {
         let live = vec![
             proto("live-u1", "user", 1_000),
             proto("live-a1", "assistant", 2_000),
         ];
-        let authoritative = vec![
-            proto("hist-u1", "user", 1_000),
-            proto("hist-a1", "assistant", 1_500),
-        ];
 
-        let (selected, source) =
-            select_workspace_chat_messages(true, Some(live.clone()), Some(authoritative));
+        let (selected, source) = select_live_workspace_chat_messages(Some(live.clone()));
 
         assert_eq!(source, "live_buffer");
         assert_eq!(selected.len(), live.len());
@@ -4021,36 +4031,10 @@ mod tests {
     }
 
     #[test]
-    fn persistence_contracts_inactive_session_uses_authoritative_history() {
-        let authoritative = vec![
-            proto("hist-u1", "user", 1_000),
-            proto("hist-a1", "assistant", 2_000),
-        ];
-        let (selected, source) = select_workspace_chat_messages(
-            false,
-            Some(vec![proto("live-u1", "user", 1_000)]),
-            Some(authoritative.clone()),
-        );
+    fn persistence_contracts_live_path_empty_when_buffer_missing() {
+        let (selected, source) = select_live_workspace_chat_messages(None);
 
-        assert_eq!(source, "oqto-log");
-        assert_eq!(selected.len(), authoritative.len());
-        assert_eq!(selected[0].id, "hist-u1");
-        assert_eq!(selected[1].id, "hist-a1");
-    }
-
-    #[test]
-    fn persistence_contracts_active_session_falls_back_to_authoritative_when_live_empty() {
-        let authoritative = vec![
-            proto("hist-u1", "user", 1_000),
-            proto("hist-a1", "assistant", 2_000),
-        ];
-
-        let (selected, source) =
-            select_workspace_chat_messages(true, Some(Vec::new()), Some(authoritative.clone()));
-
-        assert_eq!(source, "oqto-log");
-        assert_eq!(selected.len(), authoritative.len());
-        assert_eq!(selected[0].id, "hist-u1");
-        assert_eq!(selected[1].id, "hist-a1");
+        assert_eq!(source, "live_buffer");
+        assert!(selected.is_empty());
     }
 }

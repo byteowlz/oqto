@@ -25,6 +25,7 @@ interface MarkdownRendererProps {
 	content: string;
 	className?: string;
 	enableMermaid?: boolean;
+	isStreaming?: boolean;
 }
 
 const MermaidEnabledContext = createContext(true);
@@ -618,11 +619,19 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({
 	content,
 	className,
 	enableMermaid = true,
+	isStreaming = false,
 }: MarkdownRendererProps) {
 	const sanitizedContent = stripPiCitations(content);
 	const hyphenationLang = resolveHyphenationLang();
 	return (
-		<div className={cn("markdown-content", className)} lang={hyphenationLang}>
+		<div
+			className={cn(
+				"markdown-content",
+				isStreaming && "markdown-content--streaming",
+				className,
+			)}
+			lang={hyphenationLang}
+		>
 			<MermaidEnabledContext.Provider value={enableMermaid}>
 				<ReactMarkdown
 					remarkPlugins={remarkPlugins}

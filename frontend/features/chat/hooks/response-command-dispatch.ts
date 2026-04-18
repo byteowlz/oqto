@@ -34,7 +34,7 @@ export type ResponseDispatchContext = {
 	fetchHistoryMessages: (
 		sessionId: string,
 		expectedVersion?: number,
-		opts?: { forceAuthoritative?: boolean },
+		opts?: { forceAuthoritative?: boolean; transportEpoch?: number },
 	) => Promise<void>;
 	applyServerMessages: (
 		rawMessages: RawMessage[] | unknown[],
@@ -164,7 +164,8 @@ export const dispatchResponseCommand = (ctx: ResponseDispatchContext): void => {
 
 		case "get_messages": {
 			if (resp.success && resp.data) {
-				const { messages, serverVersion } = parseGetMessagesPayload(resp.data);
+				const { messages, serverVersion, messagesSource } =
+					parseGetMessagesPayload(resp.data);
 				// Include the turn state: "syncing" means we're between
 				// stream.message_end and agent.idle — refs are cleared but the
 				// turn is not truly idle. Stale snapshots must not be applied.
@@ -176,15 +177,20 @@ export const dispatchResponseCommand = (ctx: ResponseDispatchContext): void => {
 					turnKind === "syncing" ||
 					turnKind === "sending";
 				if (Array.isArray(messages)) {
-					// Structural authority rule: during an active live turn, streaming
-					// events own the timeline. Snapshot get_messages payloads are
-					// non-authoritative and can race/reorder; ignore them until idle.
+					// Source contract:
+					// - live snapshots are always partial
+					// - authoritative snapshots may reconcile only when the live turn is idle
+					const mode: "partial" | "authoritative" =
+						messagesSource === "authoritative" ? "authoritative" : "partial";
+					// Never apply snapshot payloads while a live turn is active.
+					// Streaming events own the tail container; applying snapshots here
+					// can replay earlier partial windows and duplicate/misplace parts.
 					if (!liveTurnActive) {
 						applyServerMessages(
 							messages,
 							eventSessionId ?? activeSessionId ?? "unknown",
 							serverVersion,
-							"partial",
+							mode,
 						);
 					}
 					if (isDebug) {
@@ -193,6 +199,8 @@ export const dispatchResponseCommand = (ctx: ResponseDispatchContext): void => {
 							eventSessionId,
 							messages.length,
 							serverVersion,
+							"source=",
+							messagesSource ?? "unknown",
 							"liveTurnActive=",
 							liveTurnActive,
 						);
