@@ -2,6 +2,9 @@
 
 ## Open
 
+### [oqto-zpvs.39] Fix streaming tool duplication and message loss in near-ngos-spin session (P1, bug)
+User reports in session 'Solving Ssh Forwarding Permissions for Oqto Agents' (readable_id near-ngos-spin, 2026/04/19) that tool calls still duplicate during streaming and messages are still lost. Reproduce exact session, compare API vs UI timeline, and fix deterministic merge/render contracts.
+
 ### [oqto-zpvs.6] E2E chaos: automated browser scenarios for reconnect/switch/retry/fork persistence (P1, task)
 Problem
 Most painful regressions only appear under end-to-end timing and UI orchestration.
@@ -43,6 +46,7 @@ Deliverables
 
 ## Closed
 
+- [oqto-zpvs.40] Fix streaming message loss when switching sessions and returning (closed 2026-04-19)
 - [oqto-zpvs.38] Remove partial-snapshot blanket user-role drop causing hidden user turns (closed 2026-04-18)
 - [oqto-zpvs.37] Fix missing intermediate user message in grouped chat rendering (closed 2026-04-18)
 - [oqto-zpvs.36] Investigate Welcome Chat rich-view-crop message loss on frontend (closed 2026-04-18)
@@ -1225,13 +1229,13 @@ Deliverables
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
-- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
-- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
-- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
 - [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
+- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
+- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
+- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
 - [oqto-4ryr] Session rename reverts: update_chat_session returns external_id while list returns platform_id (closed )
-- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
 - [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )

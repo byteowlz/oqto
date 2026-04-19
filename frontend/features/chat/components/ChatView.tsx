@@ -3244,19 +3244,10 @@ const MessageGroupCard = memo(function MessageGroupCard({
 		string,
 		Extract<DisplayPart, { type: "tool_result" }>
 	>();
-	// Also index by name for fallback matching when IDs don't align
-	const toolResultsByName = new Map<
-		string,
-		Extract<DisplayPart, { type: "tool_result" }>
-	>();
 	const toolCallIds = new Set<string>();
 	for (const { part } of timedParts) {
 		if (part.type === "tool_result") {
 			toolResults.set(part.toolCallId, part);
-			// Index by name for fallback matching
-			if (part.name) {
-				toolResultsByName.set(part.name, part);
-			}
 		}
 		if (part.type === "tool_call") {
 			toolCallIds.add(part.toolCallId);
@@ -3315,9 +3306,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 		flushText();
 
 		if (part.type === "tool_call") {
-			// Try to find matching tool_result by toolCallId first, then fallback to name
-			const matchedResult =
-				toolResults.get(part.toolCallId) || toolResultsByName.get(part.name);
+			const matchedResult = toolResults.get(part.toolCallId);
 			segments.push({
 				key,
 				type: "tool_call",
@@ -3404,11 +3393,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 					consumeNextStandaloneResult = true;
 				} else {
 					const sameToolCallId = next.part.toolCallId === toolResult.toolCallId;
-					const sameToolName =
-						typeof next.part.name === "string" &&
-						typeof toolResult.name === "string" &&
-						next.part.name === toolResult.name;
-					if (sameToolCallId || sameToolName) {
+					if (sameToolCallId) {
 						consumeNextStandaloneResult = true;
 					}
 				}
