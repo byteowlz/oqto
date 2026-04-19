@@ -594,7 +594,11 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 		async (
 			sessionId: string,
 			expectedVersion?: number,
-			opts?: { forceAuthoritative?: boolean; transportEpoch?: number },
+			opts?: {
+				forceAuthoritative?: boolean;
+				transportEpoch?: number;
+				preserveInFlightCache?: boolean;
+			},
 		) => {
 			try {
 				const swId = sharedWorkspaceSessionMap.get(sessionId);
@@ -676,19 +680,45 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 					}
 					return;
 				}
-				// Source contract: REST history fetches are durable/authoritative.
-				// Only downgrade to partial while a live turn is active.
+				const preserveInFlightCache = opts?.preserveInFlightCache === true;
+				const hasLocalStreamingSnapshot = preserveInFlightCache
+					? messagesRef.current.some(
+							(msg) =>
+								msg.role === "assistant" && shouldPreserveLocalMessage(msg),
+						)
+					: false;
+				const hasCachedStreamingSnapshot =
+					preserveInFlightCache && !hasLocalStreamingSnapshot
+						? readCachedSessionMessages(
+								sessionId,
+								resolvedStorageKeyPrefix,
+							).some(
+								(msg) =>
+									msg.role === "assistant" && shouldPreserveLocalMessage(msg),
+							)
+						: false;
+				const liveTurnLikely =
+					isStreamingRef.current ||
+					sendInFlightRef.current ||
+					hasLocalStreamingSnapshot ||
+					hasCachedStreamingSnapshot;
+
+				// REST history is authoritative once the turn is settled. While a live
+				// turn may still be in flight (e.g. switch-away/switch-back), merge as
+				// partial so cached streaming content is not clobbered.
 				const mergeMode: "partial" | "authoritative" =
-					isStreamingRef.current || sendInFlightRef.current
-						? "partial"
-						: "authoritative";
+					opts?.forceAuthoritative && !liveTurnLikely
+						? "authoritative"
+						: liveTurnLikely
+							? "partial"
+							: "authoritative";
 				applyServerMessages(
 					history as RawMessage[],
 					sessionId,
 					expectedVersion,
 					mergeMode,
 				);
-				if (!isStreamingRef.current && !sendInFlightRef.current) {
+				if (!liveTurnLikely) {
 					applyTurnState({ kind: "idle" });
 				}
 				if (isPiDebugEnabled()) {
@@ -714,6 +744,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 			applyTurnState,
 			isCurrentSession,
 			normalizedWorkspacePath,
+			resolvedStorageKeyPrefix,
 		],
 	);
 
@@ -2119,6 +2150,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 		if (sessionActuallyChanged) {
 			void fetchHistoryMessages(activeSessionId, undefined, {
 				forceAuthoritative: true,
+				preserveInFlightCache: true,
 			});
 			// Also request the runner's live window immediately so in-flight
 			// assistant output reappears when returning to a still-streaming session.
