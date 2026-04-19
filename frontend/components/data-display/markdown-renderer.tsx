@@ -333,7 +333,10 @@ const MermaidCodeBlock = memo(function MermaidCodeBlock({
 					)}
 				</div>
 			) : (
-				<div className="overflow-x-auto">
+				<div
+					className="overflow-x-auto"
+					style={{ backgroundColor: "var(--code-bg)" }}
+				>
 					{!isDiagramValid && error && (
 						<div className="px-3 py-2 text-xs text-destructive border-b border-destructive/20 bg-destructive/5">
 							Malformed Mermaid: {error}
@@ -352,7 +355,7 @@ const MermaidCodeBlock = memo(function MermaidCodeBlock({
 						customStyle={{
 							margin: 0,
 							padding: "1rem",
-							backgroundColor: "var(--code-bg)",
+							backgroundColor: "transparent",
 							fontSize: "0.75rem",
 							minWidth: "fit-content",
 						}}
@@ -442,7 +445,10 @@ const CodeBlockWithTheme = memo(function CodeBlockWithTheme({
 				<CopyButton text={codeString} />
 			</div>
 			{isExpanded && (
-				<div className="overflow-x-auto">
+				<div
+					className="overflow-x-auto"
+					style={{ backgroundColor: "var(--code-bg)" }}
+				>
 					<SyntaxHighlighter
 						style={
 							(isDarkMode ? oneDark : oneLight) as Record<
@@ -456,7 +462,7 @@ const CodeBlockWithTheme = memo(function CodeBlockWithTheme({
 						customStyle={{
 							margin: 0,
 							padding: "1rem",
-							backgroundColor: "var(--code-bg)",
+							backgroundColor: "transparent",
 							fontSize: "0.75rem",
 							minWidth: "fit-content",
 						}}
