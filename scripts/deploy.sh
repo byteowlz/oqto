@@ -374,7 +374,7 @@ REMEDIATE_EOF
 }
 
 check_dependency_compatibility() {
-    local name="$1" ssh_target="$2" is_local="$3"
+    local name="$1" ssh_target="$2" is_local="$3" mode="$4"
 
     if [[ "${#REQUIRED_DEP_BINARIES[@]}" -eq 0 ]]; then
         return 0
@@ -464,59 +464,112 @@ check_dependency_compatibility() {
         fi
     fi
 
-    # Schema compatibility guard: if hstry DB exists, require session-tree columns
+    # Schema compatibility guard/fixup: ensure session-tree columns exist in hstry DB(s)
     # used by oqto session APIs.
-    local hstry_db_check
-    hstry_db_check="$(host_exec "$is_local" "$ssh_target" '
-        DB="${XDG_DATA_HOME:-$HOME/.local/share}/hstry/hstry.db"
-        if [[ ! -f "$DB" ]]; then
-            echo "missing"
-            exit 0
-        fi
-        if ! command -v sqlite3 >/dev/null 2>&1; then
-            echo "no-sqlite3"
-            exit 0
-        fi
-        cols=$(sqlite3 "$DB" "PRAGMA table_info(conversations);" 2>/dev/null || true)
-        p=$(printf "%s\n" "$cols" | grep -c "|parent_conversation_id|" || true)
-        f=$(printf "%s\n" "$cols" | grep -c "|fork_type|" || true)
-        if [[ "$p" -ge 1 && "$f" -ge 1 ]]; then
-            echo "ok"
-        else
-            echo "incompatible"
-        fi
-    ' 2>/dev/null || echo "unknown")"
+    if [[ "$mode" == "multi-user" ]]; then
+        local hstry_multi_check
+        hstry_multi_check="$(host_exec_sudo "$is_local" "$ssh_target" 'python3 - <<"PY"
+import pwd, os, sqlite3
 
-    case "$hstry_db_check" in
-        ok)
-            log "  hstry schema: session-tree columns present (ok)"
-            ;;
-        missing)
-            log "  hstry schema: DB not found yet (skipping check)"
-            ;;
-        no-sqlite3)
-            warn "  sqlite3 not available; cannot verify hstry schema compatibility"
-            ;;
-        incompatible)
-            emit_event "$is_local" "$ssh_target" "$name" "preflight" "fail" "deps.hstry.schema_incompatible"
-            err "hstry DB schema on $name is incompatible (missing parent_conversation_id/fork_type in conversations). Upgrade/migrate hstry before deploy."
-            host_exec "$is_local" "$ssh_target" '
-                DB="${XDG_DATA_HOME:-$HOME/.local/share}/hstry/hstry.db"
-                echo "debug: USER=$USER HOME=$HOME DB=$DB"
-                if command -v sqlite3 >/dev/null 2>&1 && [[ -f "$DB" ]]; then
-                    cols=$(sqlite3 "$DB" "PRAGMA table_info(conversations);" 2>/dev/null || true)
-                    p=$(printf "%s\n" "$cols" | grep -c "|parent_conversation_id|" || true)
-                    f=$(printf "%s\n" "$cols" | grep -c "|fork_type|" || true)
-                    echo "debug: p=$p f=$f"
-                    echo "debug: first_cols=$(printf "%s" "$cols" | head -c 120 | tr "\n" ";")"
-                fi
-            ' || true
-            return 1
-            ;;
-        *)
-            warn "  hstry schema check returned '$hstry_db_check' (continuing)"
-            ;;
-    esac
+checked = 0
+fixed = 0
+missing = 0
+errors = []
+
+for entry in pwd.getpwall():
+    username = entry.pw_name
+    if not username.startswith("oqto_"):
+        continue
+    db = os.path.join(entry.pw_dir, ".local", "share", "hstry", "hstry.db")
+    if not os.path.exists(db):
+        missing += 1
+        continue
+
+    checked += 1
+    try:
+        conn = sqlite3.connect(db)
+        cur = conn.cursor()
+        cur.execute("PRAGMA table_info(conversations)")
+        cols = {row[1] for row in cur.fetchall()}
+
+        changed = False
+        if "parent_conversation_id" not in cols:
+            cur.execute("ALTER TABLE conversations ADD COLUMN parent_conversation_id TEXT")
+            changed = True
+        if "fork_type" not in cols:
+            cur.execute("ALTER TABLE conversations ADD COLUMN fork_type TEXT")
+            changed = True
+
+        if changed:
+            conn.commit()
+            fixed += 1
+        conn.close()
+    except Exception as e:
+        errors.append(f"{username}:{e}")
+
+if errors:
+    print("error")
+    for e in errors[:10]:
+        print(e)
+else:
+    print(f"ok checked={checked} fixed={fixed} missing={missing}")
+PY' 2>/dev/null || echo "unknown")"
+
+        case "$hstry_multi_check" in
+            ok*)
+                log "  hstry schema (multi-user): $hstry_multi_check"
+                ;;
+            error*)
+                emit_event "$is_local" "$ssh_target" "$name" "preflight" "fail" "deps.hstry.schema_fix_failed"
+                err "hstry schema fix failed on $name"
+                return 1
+                ;;
+            *)
+                warn "  hstry schema (multi-user) check returned '$hstry_multi_check'"
+                ;;
+        esac
+    else
+        local hstry_db_check
+        hstry_db_check="$(host_exec "$is_local" "$ssh_target" '
+            DB="${XDG_DATA_HOME:-$HOME/.local/share}/hstry/hstry.db"
+            if [[ ! -f "$DB" ]]; then
+                echo "missing"
+                exit 0
+            fi
+            if ! command -v sqlite3 >/dev/null 2>&1; then
+                echo "no-sqlite3"
+                exit 0
+            fi
+            cols=$(sqlite3 "$DB" "PRAGMA table_info(conversations);" 2>/dev/null || true)
+            p=$(printf "%s\n" "$cols" | grep -c "|parent_conversation_id|" || true)
+            f=$(printf "%s\n" "$cols" | grep -c "|fork_type|" || true)
+            if [[ "$p" -ge 1 && "$f" -ge 1 ]]; then
+                echo "ok"
+            else
+                echo "incompatible"
+            fi
+        ' 2>/dev/null || echo "unknown")"
+
+        case "$hstry_db_check" in
+            ok)
+                log "  hstry schema: session-tree columns present (ok)"
+                ;;
+            missing)
+                log "  hstry schema: DB not found yet (skipping check)"
+                ;;
+            no-sqlite3)
+                warn "  sqlite3 not available; cannot verify hstry schema compatibility"
+                ;;
+            incompatible)
+                emit_event "$is_local" "$ssh_target" "$name" "preflight" "fail" "deps.hstry.schema_incompatible"
+                err "hstry DB schema on $name is incompatible (missing parent_conversation_id/fork_type in conversations). Upgrade/migrate hstry before deploy."
+                return 1
+                ;;
+            *)
+                warn "  hstry schema check returned '$hstry_db_check' (continuing)"
+                ;;
+        esac
+    fi
 
     return 0
 }
@@ -661,7 +714,7 @@ preflight_host() {
         fi
     fi
 
-    if ! check_dependency_compatibility "$name" "$ssh_target" "$is_local"; then
+    if ! check_dependency_compatibility "$name" "$ssh_target" "$is_local" "$mode"; then
         return 1
     fi
 
@@ -869,11 +922,27 @@ restart_single_user_service() {
 restart_all_multi_user_runners() {
     local is_local="$1" ssh_target="$2"
 
-    # Reconcile per-user runner service files first.
-    host_exec "$is_local" "$ssh_target" "oqtoctl user sync-configs" || true
+    # Wait for oqtoctl control plane readiness after systemctl restart oqto.
+    # Retry quietly first to avoid transient "Connection refused" noise.
+    host_exec_sudo "$is_local" "$ssh_target" '
+        ready=0
+        for i in $(seq 1 30); do
+            if oqtoctl user list --json >/dev/null 2>&1; then
+                ready=1
+                break
+            fi
+            sleep 1
+        done
 
-    # Restart/provision each user runner via usermgr API path.
-    host_exec "$is_local" "$ssh_target" '
+        if [[ "$ready" != "1" ]]; then
+            echo "warn: oqtoctl not ready after 30s; skipping multi-user runner reconciliation" >&2
+            exit 0
+        fi
+
+        # Reconcile per-user runner service files first.
+        oqtoctl user sync-configs >/dev/null 2>&1 || true
+
+        # Restart/provision each user runner via usermgr API path.
         users_json="$(oqtoctl user list --json 2>/dev/null || echo "[]")"
         python3 - "$users_json" <<"PY"
 import json, subprocess, sys
@@ -886,7 +955,13 @@ for u in users:
     username = u.get("username")
     if not username:
         continue
-    subprocess.run(["oqtoctl", "user", "setup-runner", username], check=False)
+    # setup-runner is idempotent; suppress the noisy "already installed" lines.
+    subprocess.run(
+        ["oqtoctl", "user", "setup-runner", username],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
 PY
     ' || true
 }
@@ -1086,7 +1161,7 @@ health_check_host() {
             fi
         else
             # Multi-user: ensure at least one installed user's runner socket exists.
-            if host_exec "$is_local" "$ssh_target" '
+            if host_exec_sudo "$is_local" "$ssh_target" '
                 users_json="$(oqtoctl user list --json 2>/dev/null || echo "[]")"
                 python3 - "$users_json" <<"PY"
 import json, os, sys
@@ -1229,6 +1304,9 @@ activate_host() {
                 return 1
             fi
         fi
+
+        # Ensure session identity mappings are converged from hstry before validation.
+        host_exec "$is_local" "$ssh_target" "oqto runner migrate-oqto-log --mode sync-identities" >/dev/null 2>&1 || true
 
         # Validation must pass once after a bootstrap pass.
         if host_exec "$is_local" "$ssh_target" "oqto runner migrate-oqto-log --mode validate"; then

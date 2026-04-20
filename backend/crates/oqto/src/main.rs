@@ -279,7 +279,7 @@ enum RunnerCommand {
 
 #[derive(Debug, Clone, Args)]
 struct RunnerMigrateOqtoLogCommand {
-    /// Migration mode: bootstrap | validate | diagnostics | reindex
+    /// Migration mode: bootstrap | validate | diagnostics | reindex | sync-identities
     #[arg(long, default_value = "bootstrap")]
     mode: String,
 }
@@ -1597,8 +1597,21 @@ WantedBy=default.target
                     );
                     Ok(())
                 }
+                "sync-identities" => {
+                    let summary = rt.block_on(async {
+                        crate::oqto_log::ops::sync_identities_from_hstry(Path::new(&home), &user)
+                            .await
+                    })?;
+                    println!(
+                        "oqto-log identity sync complete: conversations_scanned={}, sessions_upserted={}, dbs_touched={}",
+                        summary.conversations_scanned,
+                        summary.sessions_upserted,
+                        summary.dbs_touched
+                    );
+                    Ok(())
+                }
                 other => Err(anyhow!(
-                    "unsupported oqto-log migration mode '{}'; supported: bootstrap|validate|diagnostics|reindex",
+                    "unsupported oqto-log migration mode '{}'; supported: bootstrap|validate|diagnostics|reindex|sync-identities",
                     other
                 )),
             }

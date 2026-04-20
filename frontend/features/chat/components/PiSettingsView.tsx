@@ -20,10 +20,6 @@ import { useModelSelection } from "@/hooks/use-model-selection";
 import { triggerChatHistoryBackfill } from "@/lib/api/chat";
 import { type ChatVerbosity, useChatVerbosity } from "@/lib/chat-verbosity";
 import { fuzzyMatch } from "@/lib/slash-commands";
-import {
-	type StreamingPresentationMode,
-	useStreamingPresentation,
-} from "@/lib/streaming-presentation";
 import { cn } from "@/lib/utils";
 import { type WsMuxConnectionState, getWsManager } from "@/lib/ws-manager";
 import { Loader2 } from "lucide-react";
@@ -48,10 +44,6 @@ export function PiSettingsView({
 }: PiSettingsViewProps) {
 	const { t } = useTranslation();
 	const { verbosity, setVerbosity } = useChatVerbosity();
-	const {
-		mode: streamingPresentationMode,
-		setMode: setStreamingPresentationMode,
-	} = useStreamingPresentation();
 	const [modelQuery, setModelQuery] = useState("");
 	const [ttsSettings, setTtsSettings] = useState<TTSSettings>(loadTTSSettings);
 	const [thinkingLevel, setThinkingLevel] = useState<string>("off");
@@ -422,39 +414,6 @@ export function PiSettingsView({
 					</Select>
 					<p className="text-[10px] text-muted-foreground">
 						{verbosityDescription}
-					</p>
-				</div>
-
-				<div className="space-y-2">
-					<Label className="text-xs font-medium text-muted-foreground">
-						{t("pi.streamingPresentationMode", "Streaming presentation")}
-					</Label>
-					<Select
-						value={streamingPresentationMode}
-						onValueChange={(value) =>
-							setStreamingPresentationMode(value as StreamingPresentationMode)
-						}
-					>
-						<SelectTrigger className="w-full">
-							<SelectValue />
-						</SelectTrigger>
-						<SelectContent>
-							<SelectItem value="chunked">
-								{t("pi.streamingChunked", "Chunked (stable)")}
-							</SelectItem>
-							<SelectItem value="smooth">
-								{t("pi.streamingSmooth", "Smooth crawl")}
-							</SelectItem>
-							<SelectItem value="raw">
-								{t("pi.streamingRaw", "Raw token-level")}
-							</SelectItem>
-						</SelectContent>
-					</Select>
-					<p className="text-[10px] text-muted-foreground">
-						{t(
-							"pi.streamingPresentationDescription",
-							"Chunked commits line-safe chunks, Smooth animates continuous crawl, Raw shows direct token-level streaming updates.",
-						)}
 					</p>
 				</div>
 

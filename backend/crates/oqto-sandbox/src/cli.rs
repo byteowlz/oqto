@@ -7,6 +7,7 @@ use std::process::Command;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 
+use crate::shim::maybe_run_shim;
 use crate::{SandboxConfig, SandboxConfigFile, configure_bwrap_pre_exec};
 
 #[derive(Parser, Debug)]
@@ -255,6 +256,11 @@ fn exec_sandboxed(
 }
 
 pub fn run_cli() -> Result<()> {
+    // Inner-shim fast path: when invoked by bwrap as its inner command with
+    // OQTO_SANDBOX_SHIM_MODE=1, apply Landlock and exec the real target.
+    // maybe_run_shim returns without side effects when the sentinel is absent.
+    maybe_run_shim()?;
+
     let args = Args::parse();
 
     let log_level = if args.verbose { "debug" } else { "info" };

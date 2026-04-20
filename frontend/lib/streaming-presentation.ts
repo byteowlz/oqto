@@ -6,19 +6,12 @@ export type StreamingPresentationMode = "chunked" | "smooth" | "raw";
 
 const STORAGE_KEY = "oqto:streamingPresentationMode";
 
-let currentMode: StreamingPresentationMode = "chunked";
+// Raw-only presentation is now the sole supported mode.
+let currentMode: StreamingPresentationMode = "raw";
 const listeners = new Set<() => void>();
 
 function readStoredMode(): StreamingPresentationMode {
-	if (typeof window === "undefined") return "chunked";
-	try {
-		const stored = window.localStorage.getItem(STORAGE_KEY);
-		if (stored === "smooth") return "smooth";
-		if (stored === "raw") return "raw";
-		return "chunked";
-	} catch {
-		return "chunked";
-	}
+	return "raw";
 }
 
 function ensureHydrated() {
@@ -40,14 +33,14 @@ function getSnapshot() {
 }
 
 function getServerSnapshot(): StreamingPresentationMode {
-	return "chunked";
+	return "raw";
 }
 
-export function setStreamingPresentationMode(mode: StreamingPresentationMode) {
-	currentMode = mode;
+export function setStreamingPresentationMode(_mode: StreamingPresentationMode) {
+	currentMode = "raw";
 	if (typeof window !== "undefined") {
 		try {
-			window.localStorage.setItem(STORAGE_KEY, mode);
+			window.localStorage.setItem(STORAGE_KEY, "raw");
 		} catch {
 			// ignore storage failures
 		}
@@ -61,7 +54,7 @@ export function useStreamingPresentation() {
 	return {
 		mode,
 		setMode: setStreamingPresentationMode,
-		isSmooth: mode === "smooth",
-		isRaw: mode === "raw",
+		isSmooth: false,
+		isRaw: true,
 	};
 }

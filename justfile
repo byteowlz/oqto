@@ -67,6 +67,11 @@ test-backend:
 test-frontend:
     cd frontend && bun run test
 
+# Run oqto-sandbox hardening scenarios against the installed binary
+# (uses `oqto-sandbox` on PATH, or the deploy tree; set OQTO_SANDBOX_BIN to override)
+test-sandbox *ARGS:
+    ./scripts/sandbox/tests/run-all.sh {{ARGS}}
+
 # Format all Rust code
 fmt:
     cd backend && cargo fmt

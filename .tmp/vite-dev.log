@@ -50,3 +50,288 @@ Error: read ECONNRESET
 8:27:41 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/chunk-ZW26E7AF.mjs
 8:27:41 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/render-M6WAID4X.mjs
 8:27:41 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/render-DDKIELPE.mjs
+8:30:10 AM [vite] ws proxy socket error:
+Error: read ECONNRESET
+    at TCP.onStreamRead (node:internal/stream_base_commons:216:20)
+10:27:14 AM [vite] ws proxy socket error:
+Error: read ECONNRESET
+    at TCP.onStreamRead (node:internal/stream_base_commons:216:20)
+10:35:55 AM [vite] hmr update /features/chat/components/ChatView.tsx, /src/styles/globals.css
+10:53:08 AM [vite] page reload public/visual-runtime/vendor/mermaid.min.js
+10:53:08 AM [vite] page reload public/visual-runtime/vendor/chart.umd.min.js
+10:53:08 AM [vite] page reload public/visual-runtime/vendor/morphdom-umd.min.js
+10:53:08 AM [vite] page reload public/visual-runtime/vendor/mermaid-layout-elk.esm.min.mjs
+10:53:08 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/chunk-SP2CHFBE.mjs.map
+10:53:08 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/render-DDKIELPE.mjs.map
+10:53:08 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/chunk-SP2CHFBE.mjs
+10:53:08 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/render-DDKIELPE.mjs
+10:53:08 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/chunk-TWI3KLJS.mjs.map
+10:53:08 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/render-P27B6YR6.mjs.map
+10:53:08 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/chunk-TWI3KLJS.mjs
+10:53:08 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/render-P27B6YR6.mjs
+10:53:08 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/chunk-ZW26E7AF.mjs.map
+10:53:08 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/chunk-ZW26E7AF.mjs
+10:53:08 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/render-M6WAID4X.mjs.map
+10:53:08 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/render-M6WAID4X.mjs
+10:53:08 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/chunk-SP2CHFBE.mjs
+10:53:08 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/render-DDKIELPE.mjs
+10:53:08 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/render-P27B6YR6.mjs.map
+10:53:08 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/chunk-TWI3KLJS.mjs
+10:53:08 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/render-P27B6YR6.mjs
+11:06:46 AM [vite] ws proxy error:
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
+11:06:48 AM [vite] ws proxy error:
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
+11:06:50 AM [vite] ws proxy error:
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
+11:06:53 AM [vite] ws proxy error:
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
+11:06:58 AM [vite] ws proxy error:
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
+11:07:05 AM [vite] ws proxy error:
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
+12:26:33 PM [vite] ws proxy socket error:
+Error: read ECONNRESET
+    at TCP.onStreamRead (node:internal/stream_base_commons:216:20)
+2:30:39 PM [vite] ws proxy socket error:
+Error: read ECONNRESET
+    at TCP.onStreamRead (node:internal/stream_base_commons:216:20)
+2:33:49 PM [vite] ws proxy socket error:
+Error: read ECONNRESET
+    at TCP.onStreamRead (node:internal/stream_base_commons:216:20)
+2:36:15 PM [vite] hmr update /features/chat/components/ChatView.tsx, /src/styles/globals.css
+2:36:34 PM [vite] hmr update /src/styles/globals.css, /features/chat/components/ChatView.tsx
+2:36:48 PM [vite] hmr update /features/chat/components/ChatView.tsx, /src/styles/globals.css
+2:38:35 PM [vite] hmr update /features/chat/components/ChatView.tsx, /src/styles/globals.css
+2:38:40 PM [vite] hmr update /features/chat/components/ChatView.tsx, /src/styles/globals.css
+2:39:50 PM [vite] hmr update /features/chat/components/ChatView.tsx, /src/styles/globals.css
+2:40:36 PM [vite] hmr update /src/styles/globals.css, /features/sessions/SessionScreen.tsx
+10:45:38 PM [vite] ws proxy socket error:
+Error: read ECONNRESET
+    at TCP.onStreamRead (node:internal/stream_base_commons:216:20)
+7:07:34 AM [vite] ws proxy socket error:
+Error: read ECONNRESET
+    at TCP.onStreamRead (node:internal/stream_base_commons:216:20)
+7:25:53 AM [vite] ws proxy socket error:
+Error: read ECONNRESET
+    at TCP.onStreamRead (node:internal/stream_base_commons:216:20)
+10:44:27 AM [vite] page reload public/visual-runtime/vendor/mermaid.min.js
+10:44:27 AM [vite] page reload public/visual-runtime/vendor/chart.umd.min.js
+10:44:27 AM [vite] page reload public/visual-runtime/vendor/morphdom-umd.min.js
+10:44:27 AM [vite] page reload public/visual-runtime/vendor/mermaid-layout-elk.esm.min.mjs
+10:44:27 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/chunk-SP2CHFBE.mjs.map
+10:44:27 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/render-DDKIELPE.mjs.map
+10:44:27 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/chunk-SP2CHFBE.mjs
+10:44:27 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/render-DDKIELPE.mjs
+10:44:27 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/chunk-TWI3KLJS.mjs.map
+10:44:27 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/render-P27B6YR6.mjs.map
+10:44:27 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/chunk-TWI3KLJS.mjs
+10:44:27 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/render-P27B6YR6.mjs
+10:44:27 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/render-M6WAID4X.mjs.map
+10:44:27 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/chunk-ZW26E7AF.mjs
+10:44:27 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/chunk-ZW26E7AF.mjs.map
+10:44:27 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/render-M6WAID4X.mjs
+10:44:27 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/render-DDKIELPE.mjs
+11:05:19 AM [vite] page reload public/visual-runtime/vendor/mermaid.min.js
+11:05:19 AM [vite] page reload public/visual-runtime/vendor/chart.umd.min.js
+11:05:19 AM [vite] page reload public/visual-runtime/vendor/morphdom-umd.min.js
+11:05:19 AM [vite] page reload public/visual-runtime/vendor/mermaid-layout-elk.esm.min.mjs
+11:05:19 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/chunk-SP2CHFBE.mjs.map
+11:05:19 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/render-DDKIELPE.mjs.map
+11:05:19 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/chunk-SP2CHFBE.mjs
+11:05:19 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/render-DDKIELPE.mjs
+11:05:19 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/chunk-TWI3KLJS.mjs.map
+11:05:19 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/render-P27B6YR6.mjs.map
+11:05:19 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/chunk-TWI3KLJS.mjs
+11:05:19 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/render-P27B6YR6.mjs
+11:05:19 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/chunk-ZW26E7AF.mjs.map
+11:05:19 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/render-M6WAID4X.mjs.map
+11:05:19 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/chunk-ZW26E7AF.mjs
+11:05:19 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/render-M6WAID4X.mjs
+11:05:19 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/render-M6WAID4X.mjs
+11:10:38 AM [vite] page reload public/visual-runtime/vendor/mermaid.min.js
+11:10:38 AM [vite] page reload public/visual-runtime/vendor/chart.umd.min.js
+11:10:38 AM [vite] page reload public/visual-runtime/vendor/morphdom-umd.min.js
+11:10:38 AM [vite] page reload public/visual-runtime/vendor/mermaid-layout-elk.esm.min.mjs
+11:10:38 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/chunk-SP2CHFBE.mjs.map
+11:10:38 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/chunk-SP2CHFBE.mjs
+11:10:38 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/render-DDKIELPE.mjs.map
+11:10:38 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/render-DDKIELPE.mjs
+11:10:38 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/chunk-TWI3KLJS.mjs.map
+11:10:38 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/render-P27B6YR6.mjs.map
+11:10:38 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/chunk-TWI3KLJS.mjs
+11:10:38 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/render-P27B6YR6.mjs
+11:10:38 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/chunk-ZW26E7AF.mjs.map
+11:10:38 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/chunk-ZW26E7AF.mjs
+11:10:38 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/render-M6WAID4X.mjs.map
+11:10:38 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/render-M6WAID4X.mjs
+11:10:38 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/render-DDKIELPE.mjs
+11:10:38 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/chunk-ZW26E7AF.mjs
+11:20:47 AM [vite] hmr update /src/styles/globals.css, /features/chat/components/PiSettingsView.tsx, /features/chat/components/ChatView.tsx
+11:21:14 AM [vite] hmr update /features/chat/components/PiSettingsView.tsx, /src/styles/globals.css
+11:21:30 AM [vite] hmr update /features/chat/components/ChatView.tsx, /src/styles/globals.css
+11:22:05 AM [vite] page reload public/visual-runtime/vendor/mermaid.min.js
+11:22:05 AM [vite] page reload public/visual-runtime/vendor/chart.umd.min.js
+11:22:05 AM [vite] page reload public/visual-runtime/vendor/morphdom-umd.min.js
+11:22:05 AM [vite] page reload public/visual-runtime/vendor/mermaid-layout-elk.esm.min.mjs
+11:22:05 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/render-DDKIELPE.mjs.map
+11:22:05 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/chunk-SP2CHFBE.mjs.map
+11:22:05 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/chunk-SP2CHFBE.mjs
+11:22:05 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/render-DDKIELPE.mjs
+11:22:05 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/chunk-TWI3KLJS.mjs.map
+11:22:05 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/render-P27B6YR6.mjs.map
+11:22:05 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/chunk-TWI3KLJS.mjs
+11:22:05 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/render-P27B6YR6.mjs
+11:22:05 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/chunk-ZW26E7AF.mjs.map
+11:22:05 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/render-M6WAID4X.mjs.map
+11:22:05 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/chunk-ZW26E7AF.mjs
+11:22:05 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/render-M6WAID4X.mjs
+11:33:30 AM [vite] hmr update /features/chat/components/PiSettingsView.tsx, /src/styles/globals.css
+11:33:50 AM [vite] hmr update /features/chat/components/PiSettingsView.tsx, /src/styles/globals.css
+11:49:31 AM [vite] page reload public/visual-runtime/vendor/mermaid.min.js
+11:49:31 AM [vite] page reload public/visual-runtime/vendor/chart.umd.min.js
+11:49:31 AM [vite] page reload public/visual-runtime/vendor/morphdom-umd.min.js
+11:49:31 AM [vite] page reload public/visual-runtime/vendor/mermaid-layout-elk.esm.min.mjs
+11:49:31 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/chunk-SP2CHFBE.mjs.map
+11:49:31 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/render-DDKIELPE.mjs.map
+11:49:31 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/chunk-SP2CHFBE.mjs
+11:49:31 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/render-DDKIELPE.mjs
+11:49:31 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/chunk-TWI3KLJS.mjs.map
+11:49:31 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/render-P27B6YR6.mjs.map
+11:49:31 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/chunk-TWI3KLJS.mjs
+11:49:31 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/render-P27B6YR6.mjs
+11:49:31 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/chunk-ZW26E7AF.mjs.map
+11:49:31 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/render-M6WAID4X.mjs.map
+11:49:31 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/chunk-ZW26E7AF.mjs
+11:49:31 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/render-M6WAID4X.mjs
+11:49:32 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/chunk-SP2CHFBE.mjs
+12:01:35 PM [vite] hmr update /src/styles/globals.css, /features/chat/components/ChatView.tsx, /components/chat/tool-call-card.tsx
+12:01:36 PM [vite] hmr invalidate /components/chat/tool-call-card.tsx Could not Fast Refresh ("getToolIcon" export is incompatible). Learn more at https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-react#consistent-components-exports
+12:01:36 PM [vite] hmr update /src/styles/globals.css, /features/chat/components/ChatView.tsx
+12:01:44 PM [vite] page reload tests/tool-summaries.test.ts
+12:08:05 PM [vite] page reload tests/tool-summaries.test.ts
+12:23:44 PM [vite] page reload public/visual-runtime/vendor/mermaid.min.js
+12:23:44 PM [vite] page reload public/visual-runtime/vendor/chart.umd.min.js
+12:23:44 PM [vite] page reload public/visual-runtime/vendor/morphdom-umd.min.js
+12:23:44 PM [vite] page reload public/visual-runtime/vendor/mermaid-layout-elk.esm.min.mjs
+12:23:44 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/chunk-SP2CHFBE.mjs.map
+12:23:44 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/render-DDKIELPE.mjs.map
+12:23:44 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/chunk-SP2CHFBE.mjs
+12:23:44 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/render-DDKIELPE.mjs
+12:23:44 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/chunk-TWI3KLJS.mjs.map
+12:23:44 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/render-P27B6YR6.mjs.map
+12:23:44 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/chunk-TWI3KLJS.mjs
+12:23:44 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/render-P27B6YR6.mjs
+12:23:44 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/chunk-ZW26E7AF.mjs.map
+12:23:44 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/render-M6WAID4X.mjs.map
+12:23:44 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/chunk-ZW26E7AF.mjs
+12:23:44 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/render-M6WAID4X.mjs
+12:30:25 PM [vite] hmr update /features/sessions/components/FileTreeView.tsx, /src/styles/globals.css
+12:30:26 PM [vite] hmr invalidate /features/sessions/components/FileTreeView.tsx Could not Fast Refresh ("initialFileTreeState" export is incompatible). Learn more at https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-react#consistent-components-exports
+12:30:26 PM [vite] hmr update /src/styles/globals.css, /features/sessions/SessionScreen.tsx
+12:30:33 PM [vite] hmr update /features/sessions/components/FileTreeView.tsx, /src/styles/globals.css
+12:30:34 PM [vite] hmr invalidate /features/sessions/components/FileTreeView.tsx Could not Fast Refresh ("initialFileTreeState" export is incompatible). Learn more at https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-react#consistent-components-exports
+12:30:34 PM [vite] hmr update /src/styles/globals.css, /features/sessions/SessionScreen.tsx
+12:30:59 PM [vite] hmr update /features/sessions/components/FileTreeView.tsx, /src/styles/globals.css
+12:31:00 PM [vite] hmr invalidate /features/sessions/components/FileTreeView.tsx Could not Fast Refresh ("initialFileTreeState" export is incompatible). Learn more at https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-react#consistent-components-exports
+12:31:00 PM [vite] hmr update /src/styles/globals.css, /features/sessions/SessionScreen.tsx
+12:31:21 PM [vite] hmr update /features/sessions/components/FileTreeView.tsx, /src/styles/globals.css
+12:31:23 PM [vite] hmr invalidate /features/sessions/components/FileTreeView.tsx Could not Fast Refresh ("initialFileTreeState" export is incompatible). Learn more at https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-react#consistent-components-exports
+12:31:23 PM [vite] hmr update /src/styles/globals.css, /features/sessions/SessionScreen.tsx
+12:31:37 PM [vite] hmr update /features/sessions/components/FileTreeView.tsx, /src/styles/globals.css
+12:31:38 PM [vite] hmr invalidate /features/sessions/components/FileTreeView.tsx Could not Fast Refresh ("initialFileTreeState" export is incompatible). Learn more at https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-react#consistent-components-exports
+12:31:38 PM [vite] hmr update /src/styles/globals.css, /features/sessions/SessionScreen.tsx
+12:31:54 PM [vite] hmr update /features/sessions/components/FileTreeView.tsx, /src/styles/globals.css
+12:31:55 PM [vite] hmr invalidate /features/sessions/components/FileTreeView.tsx Could not Fast Refresh ("initialFileTreeState" export is incompatible). Learn more at https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-react#consistent-components-exports
+12:31:55 PM [vite] hmr update /src/styles/globals.css, /features/sessions/SessionScreen.tsx
+12:32:02 PM [vite] hmr update /features/sessions/components/FileTreeView.tsx, /src/styles/globals.css
+12:32:03 PM [vite] hmr invalidate /features/sessions/components/FileTreeView.tsx Could not Fast Refresh ("initialFileTreeState" export is incompatible). Learn more at https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-react#consistent-components-exports
+12:32:03 PM [vite] hmr update /src/styles/globals.css, /features/sessions/SessionScreen.tsx
+12:32:15 PM [vite] hmr update /features/sessions/components/FileTreeView.tsx, /src/styles/globals.css
+12:32:16 PM [vite] hmr invalidate /features/sessions/components/FileTreeView.tsx Could not Fast Refresh ("initialFileTreeState" export is incompatible). Learn more at https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-react#consistent-components-exports
+12:32:16 PM [vite] hmr update /src/styles/globals.css, /features/sessions/SessionScreen.tsx
+12:32:25 PM [vite] hmr update /features/sessions/components/FileTreeView.tsx, /src/styles/globals.css
+12:32:26 PM [vite] hmr invalidate /features/sessions/components/FileTreeView.tsx Could not Fast Refresh ("initialFileTreeState" export is incompatible). Learn more at https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-react#consistent-components-exports
+12:32:26 PM [vite] hmr update /src/styles/globals.css, /features/sessions/SessionScreen.tsx
+12:32:37 PM [vite] hmr update /features/sessions/components/FileTreeView.tsx, /src/styles/globals.css
+12:32:38 PM [vite] hmr invalidate /features/sessions/components/FileTreeView.tsx Could not Fast Refresh ("initialFileTreeState" export is incompatible). Learn more at https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-react#consistent-components-exports
+12:32:38 PM [vite] hmr update /src/styles/globals.css, /features/sessions/SessionScreen.tsx
+12:32:47 PM [vite] hmr update /features/sessions/components/FileTreeView.tsx, /src/styles/globals.css
+12:32:48 PM [vite] hmr invalidate /features/sessions/components/FileTreeView.tsx Could not Fast Refresh ("initialFileTreeState" export is incompatible). Learn more at https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-react#consistent-components-exports
+12:32:48 PM [vite] hmr update /src/styles/globals.css, /features/sessions/SessionScreen.tsx
+12:33:00 PM [vite] hmr update /features/sessions/components/FileTreeView.tsx, /src/styles/globals.css
+12:33:01 PM [vite] hmr invalidate /features/sessions/components/FileTreeView.tsx Could not Fast Refresh ("initialFileTreeState" export is incompatible). Learn more at https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-react#consistent-components-exports
+12:33:01 PM [vite] hmr update /src/styles/globals.css, /features/sessions/SessionScreen.tsx
+12:33:13 PM [vite] hmr update /src/styles/globals.css, /features/chat/components/ChatView.tsx, /components/chat/tool-call-card.tsx
+12:33:13 PM [vite] hmr update /features/sessions/components/FileTreeView.tsx, /src/styles/globals.css
+12:33:15 PM [vite] hmr invalidate /features/sessions/components/FileTreeView.tsx Could not Fast Refresh ("initialFileTreeState" export is incompatible). Learn more at https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-react#consistent-components-exports
+12:33:15 PM [vite] hmr update /src/styles/globals.css, /features/sessions/SessionScreen.tsx
+12:33:15 PM [vite] hmr invalidate /components/chat/tool-call-card.tsx Could not Fast Refresh ("getToolIcon" export is incompatible). Learn more at https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-react#consistent-components-exports
+12:33:15 PM [vite] hmr update /src/styles/globals.css, /features/chat/components/ChatView.tsx
+12:33:25 PM [vite] page reload public/visual-runtime/vendor/mermaid.min.js
+12:33:25 PM [vite] page reload public/visual-runtime/vendor/chart.umd.min.js
+12:33:25 PM [vite] page reload public/visual-runtime/vendor/morphdom-umd.min.js
+12:33:25 PM [vite] page reload public/visual-runtime/vendor/mermaid-layout-elk.esm.min.mjs
+12:33:25 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/chunk-SP2CHFBE.mjs.map
+12:33:25 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/render-DDKIELPE.mjs.map
+12:33:25 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/chunk-SP2CHFBE.mjs
+12:33:25 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/render-DDKIELPE.mjs
+12:33:25 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/chunk-TWI3KLJS.mjs.map
+12:33:25 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/render-P27B6YR6.mjs.map
+12:33:25 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/chunk-TWI3KLJS.mjs
+12:33:25 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/render-P27B6YR6.mjs
+12:33:25 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/chunk-ZW26E7AF.mjs.map
+12:33:25 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/render-M6WAID4X.mjs.map
+12:33:25 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/chunk-ZW26E7AF.mjs
+12:33:25 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/render-M6WAID4X.mjs
+12:34:00 PM [vite] ws proxy error:
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
+12:34:02 PM [vite] ws proxy error:
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
+12:34:03 PM [vite] ws proxy error:
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
+12:34:07 PM [vite] ws proxy error:
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
+12:46:37 PM [vite] hmr update /features/sessions/components/FileTreeView.tsx, /src/styles/globals.css
+12:46:38 PM [vite] hmr invalidate /features/sessions/components/FileTreeView.tsx Could not Fast Refresh ("initialFileTreeState" export is incompatible). Learn more at https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-react#consistent-components-exports
+12:46:38 PM [vite] hmr update /src/styles/globals.css, /features/sessions/SessionScreen.tsx
+12:51:33 PM [vite] page reload public/visual-runtime/vendor/mermaid.min.js
+12:51:33 PM [vite] page reload public/visual-runtime/vendor/chart.umd.min.js
+12:51:33 PM [vite] page reload public/visual-runtime/vendor/morphdom-umd.min.js
+12:51:33 PM [vite] page reload public/visual-runtime/vendor/mermaid-layout-elk.esm.min.mjs
+12:51:33 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/chunk-SP2CHFBE.mjs.map
+12:51:33 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/chunk-SP2CHFBE.mjs
+12:51:33 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/render-DDKIELPE.mjs.map
+12:51:33 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/render-DDKIELPE.mjs
+12:51:33 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/chunk-TWI3KLJS.mjs.map
+12:51:33 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/render-P27B6YR6.mjs.map
+12:51:33 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/chunk-TWI3KLJS.mjs
+12:51:33 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/render-P27B6YR6.mjs
+12:51:33 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/chunk-ZW26E7AF.mjs.map
+12:51:33 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/chunk-ZW26E7AF.mjs
+12:51:33 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/render-M6WAID4X.mjs.map
+12:51:33 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/render-M6WAID4X.mjs
+1:39:01 PM [vite] hmr update /features/sessions/components/FileTreeView.tsx, /src/styles/globals.css
+1:39:14 PM [vite] hmr update /features/sessions/components/FileTreeView.tsx, /src/styles/globals.css
+1:39:19 PM [vite] hmr update /features/sessions/components/FileTreeView.tsx, /src/styles/globals.css
+1:39:23 PM [vite] hmr update /features/sessions/components/FileTreeView.tsx, /src/styles/globals.css
