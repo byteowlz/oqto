@@ -2,6 +2,17 @@
 
 ## Open
 
+### [oqto-0xvr] Investigate and fix sx failures on octo-azure (P1, bug)
+
+### [oqto-5stn] Deploy-time history cutover: fully converge chat history into oqto-log and remove runtime fallback gaps (P1, task)
+
+### [oqto-md12] Fix multi-user chat-history 400 by self-healing unresolved personal session targets (P1, bug)
+
+### [oqto-m94p] Fix multi-user deploy runner restart to use privileged oqtoctl access (P1, bug)
+
+### [oqto-zpvs.41] Fix missing early timeline and assistant/tool split in none-aqua-cant session (P1, bug)
+Repro: session 'Fix Horizontal Codeblock Background Stability | none-aqua-cant | 2026/04/19 - 08:28'. Frontend misses beginning of chat vs oqto-log and Pi JSONL, assistant response appears split into multiple containers, and tool calls still duplicate/split during streaming. Need deterministic reconciliation/render contract fix without heuristics.
+
 ### [oqto-zpvs.39] Fix streaming tool duplication and message loss in near-ngos-spin session (P1, bug)
 User reports in session 'Solving Ssh Forwarding Permissions for Oqto Agents' (readable_id near-ngos-spin, 2026/04/19) that tool calls still duplicate during streaming and messages are still lost. Reproduce exact session, compare API vs UI timeline, and fix deterministic merge/render contracts.
 
@@ -22,6 +33,8 @@ Context
 Recent fixes addressed many individual defects, but regressions still recur due to event interleavings across:
 ...
 
+
+### [oqto-6qgt] Fix tool summary mislabeling sx commands as file reads when piped to head (P2, bug)
 
 ### [oqto-zpvs.7] CI + observability: persistence invariant gate and triage tooling (P2, task)
 Problem
@@ -46,6 +59,8 @@ Deliverables
 
 ## Closed
 
+- [oqto-b4za] Landlock silently skipped when disable_userns=true (affects all built-in profiles) (closed 2026-04-20)
+- [oqto-zpvs.42] Remove chunked/smooth streaming presentation and run raw-only (closed 2026-04-20)
 - [oqto-kjhs] Fix chat code block background shifting on horizontal scroll (closed 2026-04-19)
 - [oqto-zpvs.40] Fix streaming message loss when switching sessions and returning (closed 2026-04-19)
 - [oqto-zpvs.38] Remove partial-snapshot blanket user-role drop causing hidden user turns (closed 2026-04-18)
@@ -1230,13 +1245,14 @@ Deliverables
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [oqto-4ryr] Session rename reverts: update_chat_session returns external_id while list returns platform_id (closed )
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
 - [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
-- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
 - [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
-- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
-- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
 - [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
+- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
+- [oqto-xq1e] Add drag-and-drop support to FileTreeView (internal move + OS upload) (closed )
 - [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
+- [oqto-4ryr] Session rename reverts: update_chat_session returns external_id while list returns platform_id (closed )
+- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )

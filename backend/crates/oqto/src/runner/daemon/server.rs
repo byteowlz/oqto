@@ -112,6 +112,63 @@ fn select_live_workspace_chat_messages(
     (Vec::new(), "live_buffer")
 }
 
+async fn load_pi_jsonl_messages_for_session(
+    user_home: &std::path::Path,
+    requested_session_id: &str,
+) -> Option<Vec<ChatMessageProto>> {
+    let external_id = if requested_session_id.starts_with("oqto-") {
+        if let Some(id) =
+            crate::oqto_log::ops::find_external_by_session(user_home, requested_session_id).await
+        {
+            Some(id)
+        } else {
+            // Fallback for legacy/shared sessions where oqto-log identity mapping
+            // is not populated yet but hstry still has external_id/platform_id.
+            let db_path = crate::history::hstry_db_path()?;
+            let pool = crate::history::repository::open_hstry_pool(&db_path)
+                .await
+                .ok()?;
+            let (_conversation_id, resolved_external) =
+                crate::history::repository::resolve_conversation_identity(
+                    &pool,
+                    requested_session_id,
+                    None,
+                )
+                .await
+                .ok()??;
+            resolved_external
+        }
+    } else {
+        Some(requested_session_id.to_string())
+    }?;
+
+    let session_file = crate::pi::session_files::find_session_file_async(external_id, None).await?;
+    let recovered_messages =
+        tokio::task::spawn_blocking(move || read_jsonl_agent_messages(&session_file))
+            .await
+            .ok()?;
+
+    if recovered_messages.is_empty() {
+        return None;
+    }
+
+    Some(
+        recovered_messages
+            .iter()
+            .enumerate()
+            .map(|(idx, msg)| {
+                let mut proto = crate::runner::protocol::agent_msg_to_chat_proto(
+                    msg,
+                    idx,
+                    requested_session_id,
+                );
+                proto.id = format!("pi_jsonl_{}", idx);
+                proto
+            })
+            .collect(),
+    )
+}
+
 fn read_last_session_info_name(path: &std::path::Path) -> Option<String> {
     use std::io::BufRead;
 
@@ -1976,8 +2033,9 @@ impl Runner {
         let (messages, source_label, source_mode) = match req.source {
             WorkspaceChatMessagesSource::Authoritative => {
                 let authoritative_messages = if let Ok(home) = std::env::var("HOME") {
-                    match crate::oqto_log::projector::project_session_messages_auto(
-                        std::path::Path::new(&home),
+                    let home_path = std::path::Path::new(&home);
+                    let projected = match crate::oqto_log::projector::project_session_messages_auto(
+                        home_path,
                         &req.session_id,
                         req.limit,
                     )
@@ -1991,6 +2049,29 @@ impl Runner {
                             );
                             None
                         }
+                    };
+
+                    if req.limit.is_none() {
+                        let projected_count = projected.as_ref().map_or(0, Vec::len);
+                        if let Some(pi_jsonl_messages) =
+                            load_pi_jsonl_messages_for_session(home_path, &req.session_id).await
+                        {
+                            if pi_jsonl_messages.len() > projected_count {
+                                info!(
+                                    "get_workspace_chat_session_messages session={} source=pi-jsonl-fallback projected_count={} jsonl_count={}",
+                                    req.session_id,
+                                    projected_count,
+                                    pi_jsonl_messages.len()
+                                );
+                                Some(pi_jsonl_messages)
+                            } else {
+                                projected
+                            }
+                        } else {
+                            projected
+                        }
+                    } else {
+                        projected
                     }
                 } else {
                     None

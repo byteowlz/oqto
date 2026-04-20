@@ -57,4 +57,48 @@ describe("tool summary labels", () => {
 		expect(summary).toBeTruthy();
 		expect(summary?.toLowerCase()).toContain("lint");
 	});
+
+	it("does not label sx commands piped to head as reading file", () => {
+		const summary = getToolSummary("bash", {
+			command: 'sx "rust async" --json | head -n 20',
+		});
+		expect(summary).toBeTruthy();
+		expect(summary?.toLowerCase()).not.toContain("reading");
+	});
+
+	it("labels primary head command as reading file", () => {
+		const summary = getToolSummary("bash", {
+			command: "head -n 20 README.md",
+		});
+		expect(summary).toBeTruthy();
+		expect(summary?.toLowerCase()).toContain("read");
+	});
+
+	it("summarizes TodoWrite as task list update", () => {
+		const summary = getToolSummary("TodoWrite", {
+			todos: [{ content: "x", status: "pending" }],
+		});
+		expect(summary).toBeTruthy();
+		expect(summary?.toLowerCase()).toContain("task");
+	});
+
+	it("summarizes Todo actions", () => {
+		expect(
+			getToolSummary("Todo", {
+				action: "add",
+				content: "x",
+			}),
+		)?.toBeTruthy();
+		expect(
+			getToolSummary("Todo", {
+				action: "update",
+				id: "1",
+			}),
+		)?.toBeTruthy();
+		expect(
+			getToolSummary("TodoRead", {
+				filter: { status: "pending" },
+			}),
+		)?.toBeTruthy();
+	});
 });

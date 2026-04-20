@@ -30,6 +30,12 @@ function stripLeadingEnvAssignments(command: string): string {
 	return rest;
 }
 
+function primaryCommandSegment(command: string): string {
+	const noEnv = stripLeadingEnvAssignments(command);
+	const noLeadingCd = noEnv.replace(/^(cd\s+[^\s;]+\s*[;&|]+\s*)+/, "").trim();
+	return noLeadingCd.split(/[|;]/)[0]?.trim() ?? noLeadingCd;
+}
+
 function summarizeAgentBrowser(command: string): string | null {
 	const normalized = stripLeadingEnvAssignments(command);
 	const m = normalized.match(/^(agent-browser|oqto-browser)\s+([a-z-]+)/i);
@@ -181,10 +187,12 @@ const bashPatterns: BashPattern[] = [
 	},
 	// File operations
 	{
-		match: (cmd) => /\b(cat|head|tail|less|more)\s/.test(cmd),
+		match: (cmd) =>
+			/^(cat|head|tail|less|more)\b/.test(primaryCommandSegment(cmd)),
 		summary: (cmd) => {
+			const primary = primaryCommandSegment(cmd);
 			// Extract file path, stripping flags like -n 20, -20, -c 100, etc.
-			const m = cmd.match(/(?:cat|head|tail|less|more)\s+(.+?)(?:\s*[|;]|$)/);
+			const m = primary.match(/(?:cat|head|tail|less|more)\s+(.+?)$/);
 			if (m) {
 				// Remove flags and their numeric arguments to isolate the file path
 				const cleaned = m[1]

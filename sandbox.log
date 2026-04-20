@@ -1,0 +1,134 @@
+oqto-sandbox hardening test suite
+run dir: /home/wismut/oqto-sandbox-tests
+binary:  /home/wismut/.local/bin/oqto-sandbox
+
+--- running 01-preflight ---
+
+== 01-preflight ==
+  PASS run dir has >= 20MB free: /home/wismut/oqto-sandbox-tests
+  PASS oqto-sandbox binary: /home/wismut/.local/bin/oqto-sandbox
+  PASS bwrap present: bubblewrap 0.11.0
+  PASS user namespaces enabled (max_user_namespaces=47746)
+  PASS Landlock kernel support detected
+  SKIP Seccomp BPF missing; run scripts/sandbox/generate-seccomp-artifacts.sh && sudo scripts/sandbox/install-seccomp-policy.sh
+  PASS kernel seccomp knobs readable
+[OK] 01-preflight: 6 passed, 0 failed, 1 skipped
+
+--- running 02-profile-presets ---
+
+== 02-profile-presets ==
+[info] development preset
+  PASS development has --unshare-pid (isolate_pid=true)
+  PASS development has --disable-userns
+  PASS development does not set --unshare-net (isolate_network=false)
+[info] strict preset
+  PASS strict has --unshare-net (isolate_network=true)
+  PASS strict drops all capabilities
+  PASS strict asserts userns disabled
+[info] minimal preset
+  PASS minimal does not isolate network
+  PASS minimal does not isolate pid
+  PASS minimal protects ~/.ssh
+  PASS development protects ~/.ssh
+  PASS strict protects ~/.ssh
+[OK] 02-profile-presets: 11 passed, 0 failed, 0 skipped
+
+--- running 03-filesystem-boundary ---
+
+== 03-filesystem-boundary ==
+  PASS workspace writable
+  PASS allow_write path writable
+  PASS /tmp writable
+  PASS deny_read path unreadable
+  PASS readable-but-not-writable path is readable
+  PASS readable-but-not-writable path rejects writes
+  PASS ~/.ssh unreadable under development profile
+[OK] 03-filesystem-boundary: 7 passed, 0 failed, 0 skipped
+
+--- running 04-network-isolation ---
+
+== 04-network-isolation ==
+  PASS isolate_network=true kills default route
+  PASS isolate_network=true keeps loopback interface
+  PASS isolate_network=true blocks outbound TCP to 1.1.1.1:53
+  PASS isolate_network=false preserves default route
+[OK] 04-network-isolation: 4 passed, 0 failed, 0 skipped
+
+--- running 05-pid-isolation ---
+
+== 05-pid-isolation ==
+[2026-04-20T11:39:40Z INFO  oqto_sandbox::cli] Loading sandbox config from explicit path: "/home/wismut/oqto-sandbox-tests/pid-true.toml"
+[2026-04-20T11:39:40Z INFO  oqto_sandbox::cli] oqto-sandbox: platform=linux, profile=pid-true, workspace="/home/wismut/oqto-sandbox-tests/ws-pid", command=["sh", "-c", "ls /proc 2>/dev/null | grep -c \"^[0-9]\\+$\""]
+[2026-04-20T11:39:40Z INFO  oqto_sandbox::config] Building bwrap args: workspace=/home/wismut/oqto-sandbox-tests/ws-pid, target_user="(current)", profile=pid-true
+[2026-04-20T11:39:40Z INFO  oqto_sandbox::config] Using home directory '/home/wismut' for user "(current)"
+[2026-04-20T11:39:40Z INFO  oqto_sandbox::config] Sandbox configured: profile='pid-true', user="(current)", workspace='/home/wismut/oqto-sandbox-tests/ws-pid', 49 bwrap args
+  PASS isolate_pid=true reduces visible PIDs (host=321, sandbox=4)
+  PASS isolated sandbox has a /proc/1
+[2026-04-20T11:39:40Z INFO  oqto_sandbox::cli] Loading sandbox config from explicit path: "/home/wismut/oqto-sandbox-tests/pid-false.toml"
+[2026-04-20T11:39:40Z INFO  oqto_sandbox::cli] oqto-sandbox: platform=linux, profile=pid-false, workspace="/home/wismut/oqto-sandbox-tests/ws-pid", command=["sh", "-c", "ls /proc 2>/dev/null | grep -c \"^[0-9]\\+$\""]
+[2026-04-20T11:39:40Z INFO  oqto_sandbox::config] Building bwrap args: workspace=/home/wismut/oqto-sandbox-tests/ws-pid, target_user="(current)", profile=pid-false
+[2026-04-20T11:39:40Z INFO  oqto_sandbox::config] Using home directory '/home/wismut' for user "(current)"
+[2026-04-20T11:39:40Z INFO  oqto_sandbox::config] Sandbox configured: profile='pid-false', user="(current)", workspace='/home/wismut/oqto-sandbox-tests/ws-pid', 49 bwrap args
+  PASS isolate_pid=false preserves host PID view (count=325)
+[OK] 05-pid-isolation: 3 passed, 0 failed, 0 skipped
+
+--- running 06-seccomp ---
+
+== 06-seccomp ==
+  PASS seccomp=off: --seccomp absent
+  PASS seccomp=off: no missing-path warning
+  PASS seccomp=audit (no bpf): warns as expected
+  PASS seccomp=audit (no bpf): --seccomp absent
+  FAIL seccomp=enforce without bpf: CLI unexpectedly succeeded
+  SKIP seccomp BPF missing; run scripts/sandbox/generate-seccomp-artifacts.sh && sudo scripts/sandbox/install-seccomp-policy.sh
+[FAIL] 06-seccomp: 4 passed, 1 failed, 1 skipped
+
+--- running 07-landlock ---
+
+== 07-landlock ==
+  PASS landlock=off: workspace writable
+  PASS landlock=off: allow_write writable
+  FAIL landlock=enforce: workspace writable (command: run_sandbox --config /home/wismut/oqto-sandbox-tests/ll-enforce-dusfalse.toml --workspace /home/wismut/oqto-sandbox-tests/ws-landlock -- sh -c touch '/home/wismut/oqto-sandbox-tests/ws-landlock/ok-enf')
+  FAIL landlock=enforce: allow_write writable (command: run_sandbox --config /home/wismut/oqto-sandbox-tests/ll-enforce-dusfalse.toml --workspace /home/wismut/oqto-sandbox-tests/ws-landlock -- sh -c touch '/home/wismut/oqto-sandbox-tests/ll-allowed/ok-enf')
+  PASS landlock=enforce: writes outside allow_write blocked
+  PASS landlock=enforce: tombstone not created
+  PASS landlock=enforce + disable_userns=true: writes still blocked (oqto-b4za guard)
+  PASS landlock=enforce + disable_userns=true: no tombstone (shim applied)
+[FAIL] 07-landlock: 6 passed, 2 failed, 0 skipped
+
+--- running 08-no-new-privs ---
+
+== 08-no-new-privs ==
+[2026-04-20T11:39:40Z INFO  oqto_sandbox::cli] Loading sandbox config from explicit path: "/home/wismut/oqto-sandbox-tests/nnp-true.toml"
+[2026-04-20T11:39:40Z INFO  oqto_sandbox::cli] oqto-sandbox: platform=linux, profile=nnp-true, workspace="/home/wismut/oqto-sandbox-tests/ws-nnp", command=["sh", "-c", "grep ^NoNewPrivs /proc/self/status"]
+[2026-04-20T11:39:40Z INFO  oqto_sandbox::config] Building bwrap args: workspace=/home/wismut/oqto-sandbox-tests/ws-nnp, target_user="(current)", profile=nnp-true
+[2026-04-20T11:39:40Z INFO  oqto_sandbox::config] Using home directory '/home/wismut' for user "(current)"
+[2026-04-20T11:39:40Z INFO  oqto_sandbox::config] Sandbox configured: profile='nnp-true', user="(current)", workspace='/home/wismut/oqto-sandbox-tests/ws-nnp', 48 bwrap args
+  PASS no_new_privs=true -> NoNewPrivs:1
+[2026-04-20T11:39:40Z INFO  oqto_sandbox::cli] Loading sandbox config from explicit path: "/home/wismut/oqto-sandbox-tests/nnp-false.toml"
+[2026-04-20T11:39:40Z INFO  oqto_sandbox::cli] oqto-sandbox: platform=linux, profile=nnp-false, workspace="/home/wismut/oqto-sandbox-tests/ws-nnp", command=["sh", "-c", "grep ^NoNewPrivs /proc/self/status"]
+[2026-04-20T11:39:40Z INFO  oqto_sandbox::config] Building bwrap args: workspace=/home/wismut/oqto-sandbox-tests/ws-nnp, target_user="(current)", profile=nnp-false
+[2026-04-20T11:39:40Z INFO  oqto_sandbox::config] Using home directory '/home/wismut' for user "(current)"
+[2026-04-20T11:39:40Z INFO  oqto_sandbox::config] Sandbox configured: profile='nnp-false', user="(current)", workspace='/home/wismut/oqto-sandbox-tests/ws-nnp', 49 bwrap args
+[warn] no_new_privs=false but NoNewPrivs:1 (bwrap-driven default)
+  PASS flag consistency acceptable
+[OK] 08-no-new-privs: 2 passed, 0 failed, 0 skipped
+
+--- running 09-workspace-merge ---
+
+== 09-workspace-merge ==
+  PASS deny_read union preserves global path
+  FAIL deny_read missing workspace path
+  FAIL isolate_network not unioned (expected --unshare-net)
+  PASS allow_write intersection drops paths missing from workspace
+  PASS allow_write intersection keeps shared path /tmp
+[FAIL] 09-workspace-merge: 3 passed, 2 failed, 0 skipped
+
+==== suite summary ====
+passed:  46
+failed:  5
+skipped: 2
+failed scenarios:
+  - 06-seccomp
+  - 07-landlock
+  - 09-workspace-merge

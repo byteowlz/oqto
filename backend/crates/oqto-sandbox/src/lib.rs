@@ -1,5 +1,6 @@
 pub mod cli;
 mod config;
+pub mod shim;
 mod spawn;
 mod workspace_config;
 

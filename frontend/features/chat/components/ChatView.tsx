@@ -2898,6 +2898,22 @@ function messageRenderFingerprint(message: DisplayMessage): string {
 	return `${message.role}|${parts.join("|")}`;
 }
 
+function hasRenderableAssistantPayload(message: DisplayMessage): boolean {
+	if (message.role !== "assistant") return false;
+	return message.parts.some((part) => {
+		if (part.type === "text") {
+			return (part.text ?? "").trim().length > 0;
+		}
+		return part.type === "image" || part.type === "file_ref";
+	});
+}
+
+function isAssistantAuxiliaryMessage(message: DisplayMessage): boolean {
+	return (
+		message.role === "assistant" && !hasRenderableAssistantPayload(message)
+	);
+}
+
 function groupMessages(messages: DisplayMessage[]): MessageGroup[] {
 	const groups: MessageGroup[] = [];
 	let current: MessageGroup | null = null;
@@ -2946,9 +2962,29 @@ function groupMessages(messages: DisplayMessage[]): MessageGroup[] {
 			) {
 				continue;
 			}
-			// Preserve assistant message boundaries so each assistant turn is visible
-			// as its own card (prevents perceived message loss when two assistant
-			// turns happen back-to-back).
+			// Keep distinct text-bearing assistant turns visible as separate cards,
+			// but merge tool-only / auxiliary assistant rows with adjacent assistant
+			// rows so a single agent response (tools + final text) doesn't get
+			// fragmented into multiple containers.
+			const currentHasRenderableAssistant = current.messages.some(
+				(msg) => msg.role === "assistant" && hasRenderableAssistantPayload(msg),
+			);
+			const currentHasToolActivity = current.messages.some((msg) =>
+				msg.parts.some(
+					(part) => part.type === "tool_call" || part.type === "tool_result",
+				),
+			);
+			if (
+				(prev &&
+					(isAssistantAuxiliaryMessage(prev) ||
+						isAssistantAuxiliaryMessage(message))) ||
+				currentHasToolActivity ||
+				(!currentHasRenderableAssistant &&
+					hasRenderableAssistantPayload(message))
+			) {
+				current.messages.push(message);
+				continue;
+			}
 			current = { role: message.role, messages: [message] };
 			groups.push(current);
 			continue;
@@ -3194,7 +3230,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 	onForkHere,
 	onFileReferenceOpen,
 	freezeStreamingUpdates = false,
-	streamingPresentationMode = "chunked",
+	streamingPresentationMode = "raw",
 }: {
 	group: MessageGroup;
 	assistantName?: string | null;
@@ -4056,7 +4092,7 @@ function PiPartRenderer({
 	hideHeader = false,
 	isStreaming = false,
 	freezeStreamingUpdates = false,
-	streamingPresentationMode = "chunked",
+	streamingPresentationMode = "raw",
 }: {
 	part: DisplayPart;
 	toolResult?: Extract<DisplayPart, { type: "tool_result" }>;
@@ -4884,7 +4920,7 @@ function TextWithFileReferences({
 	deferMermaidUntilFinal = false,
 	isStreaming = false,
 	freezeStreamingUpdates = false,
-	streamingPresentationMode = "chunked",
+	streamingPresentationMode = "raw",
 }: {
 	content: string;
 	workspacePath?: string | null;
