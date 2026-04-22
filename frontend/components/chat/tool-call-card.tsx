@@ -35,6 +35,7 @@ interface ToolCallCardProps {
 	hideTodoTools?: boolean;
 	collapsible?: boolean;
 	hideHeader?: boolean;
+	isRecoveredError?: boolean;
 }
 
 // Todo item structure from todowrite tool
@@ -775,6 +776,7 @@ function getStatusIcon(
 	toolName?: string,
 	input?: Record<string, unknown>,
 	output?: string,
+	isRecoveredError?: boolean,
 ) {
 	// For running/pending, show spinner or clock
 	if (status === "pending") {
@@ -800,7 +802,14 @@ function getStatusIcon(
 	}
 
 	if (status === "error") {
-		return <XCircle className="w-3.5 h-3.5 text-red-500 dark:text-red-400" />;
+		if (isRecoveredError) {
+			return (
+				<CheckCircle2 className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
+			);
+		}
+		return (
+			<XCircle className="w-3.5 h-3.5 text-destructive/70 dark:text-destructive/70" />
+		);
 	}
 
 	// For unknown status, show tool-specific icon if available
@@ -811,7 +820,11 @@ function getStatusIcon(
 	return <Wrench className="w-3.5 h-3.5 text-muted-foreground" />;
 }
 
-function getStatusClasses(status: string | undefined, output?: string) {
+function getStatusClasses(
+	status: string | undefined,
+	output?: string,
+	isRecoveredError?: boolean,
+) {
 	// Check if output indicates success even if status is error
 	const hasSuccessOutput =
 		output?.toLowerCase().includes("applied successfully") ||
@@ -823,6 +836,10 @@ function getStatusClasses(status: string | undefined, output?: string) {
 		return "border-border bg-card";
 	}
 
+	if (status === "error" && isRecoveredError) {
+		return "border-amber-500/20 dark:border-amber-900/40 bg-amber-500/5 dark:bg-amber-950/15";
+	}
+
 	switch (status) {
 		case "pending":
 			return "border-border bg-card";
@@ -831,7 +848,7 @@ function getStatusClasses(status: string | undefined, output?: string) {
 		case "completed":
 			return "border-border bg-card";
 		case "error":
-			return "border-red-500/30 dark:border-red-900/50 bg-red-500/5 dark:bg-red-950/20";
+			return "border-destructive/20 bg-destructive/5";
 		default:
 			return "border-border bg-card";
 	}
@@ -855,6 +872,7 @@ export function ToolCallCard({
 	hideTodoTools = false,
 	collapsible = true,
 	hideHeader = false,
+	isRecoveredError = false,
 }: ToolCallCardProps) {
 	const [isOpen, setIsOpen] = useState(!defaultCollapsed);
 	const { tool, state } = part;
@@ -897,7 +915,7 @@ export function ToolCallCard({
 		<div
 			className={cn(
 				"rounded-lg border transition-all duration-200",
-				getStatusClasses(status, output),
+				getStatusClasses(status, output, isRecoveredError),
 			)}
 		>
 			{!hideHeader && (
@@ -911,11 +929,16 @@ export function ToolCallCard({
 						!hasContent && "cursor-default",
 					)}
 				>
-					{getStatusIcon(status, toolName, input, output)}
+					{getStatusIcon(status, toolName, input, output, isRecoveredError)}
 
 					<span className="flex-1 text-sm font-medium text-foreground truncate">
 						{title}
 					</span>
+					{isRecoveredError && status === "error" && (
+						<span className="text-[10px] uppercase tracking-wide text-amber-700 dark:text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded-sm">
+							recovered
+						</span>
+					)}
 
 					{duration && (
 						<span className="text-xs text-foreground/60 dark:text-muted-foreground flex-shrink-0">

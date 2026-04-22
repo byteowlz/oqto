@@ -126,12 +126,22 @@ fn exec_sandboxed(
     let bwrap_args = match config.build_bwrap_args_for_user(workspace, None) {
         Some(args) => args,
         None => {
-            error!("bubblewrap (bwrap) not available, cannot sandbox");
+            // build_bwrap_args_for_user returns None for several reasons:
+            // - bwrap binary missing
+            // - seccomp_mode=enforce with missing/unreadable bpf
+            // - landlock_mode=enforce without kernel support or shim binary
+            // Check each cause so the user sees the right error and dry-run
+            // returns a non-zero exit code instead of a silent success.
+            let msg = if !SandboxConfig::is_bwrap_available() {
+                "bubblewrap (bwrap) not found in PATH"
+            } else {
+                "sandbox config rejected (seccomp/landlock enforce without backing support — see log above)"
+            };
+            error!("{}", msg);
             if dry_run {
-                println!("ERROR: bwrap not available");
-                return Ok(());
+                println!("ERROR: {}", msg);
             }
-            anyhow::bail!("bubblewrap (bwrap) not found in PATH");
+            anyhow::bail!("{}", msg);
         }
     };
 

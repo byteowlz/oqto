@@ -464,6 +464,15 @@ impl SandboxProfile {
                 "~/.cache/uv".to_string(),
                 // Pi (Main Chat) - session files
                 "~/.pi".to_string(),
+                // Claude Code - store.db (SQLite WAL), todos, statsig cache,
+                // session files, managed-install versions tree.
+                "~/.claude".to_string(),
+                "~/.local/share/claude".to_string(),
+                "~/.cache/claude".to_string(),
+                // Codex - auth.json, history, sessions, SQLite state/logs.
+                "~/.codex".to_string(),
+                "~/.local/share/codex".to_string(),
+                "~/.cache/codex".to_string(),
                 // Agent tools - data directories
                 "~/.local/share/skdlr".to_string(),
                 "~/.local/share/mmry".to_string(),
@@ -1810,10 +1819,34 @@ impl SandboxConfig {
                 return Ok(());
             }
 
+            // The kernel has no observe-only Landlock mode: once
+            // landlock_restrict_self runs, rules are enforced at every file
+            // operation. Audit mode here means "log the intended ruleset but
+            // do not restrict," so applications that write outside allow_write
+            // (e.g. ~/.claude, ~/.codex) continue to work while the operator
+            // evaluates what would be denied under enforce.
+            if self.landlock_mode == LandlockMode::Audit {
+                let mut paths: Vec<String> = Vec::with_capacity(1 + self.allow_write.len());
+                paths.push(workspace.to_string_lossy().to_string());
+                for p in &self.allow_write {
+                    paths.push(
+                        Self::expand_home_for_user(p, username)
+                            .to_string_lossy()
+                            .to_string(),
+                    );
+                }
+                info!(
+                    "Landlock audit mode: would restrict writes outside: {}",
+                    paths.join(", ")
+                );
+                return Ok(());
+            }
+
             let ruleset_attr = LandlockRulesetAttr {
                 handled_access_fs: LANDLOCK_WRITE_ACCESS_MASK,
             };
 
+            // Enforce mode: build ruleset and apply restrict_self.
             // SAFETY: Syscall with valid pointer/size to create ruleset.
             let ruleset_fd = unsafe {
                 libc::syscall(
@@ -1825,10 +1858,7 @@ impl SandboxConfig {
             };
 
             if ruleset_fd < 0 {
-                if self.landlock_mode == LandlockMode::Enforce {
-                    return Err(std::io::Error::last_os_error());
-                }
-                return Ok(());
+                return Err(std::io::Error::last_os_error());
             }
 
             let mut writable_paths: HashSet<PathBuf> = HashSet::new();
@@ -1850,14 +1880,11 @@ impl SandboxConfig {
                 let parent_fd =
                     unsafe { libc::open(c_path.as_ptr(), libc::O_PATH | libc::O_CLOEXEC) };
                 if parent_fd < 0 {
-                    if self.landlock_mode == LandlockMode::Enforce {
-                        // SAFETY: close best-effort on previously created fd.
-                        unsafe {
-                            libc::close(ruleset_fd);
-                        }
-                        return Err(std::io::Error::last_os_error());
+                    // SAFETY: close best-effort on previously created fd.
+                    unsafe {
+                        libc::close(ruleset_fd);
                     }
-                    continue;
+                    return Err(std::io::Error::last_os_error());
                 }
 
                 let path_beneath = LandlockPathBeneathAttr {
@@ -1882,7 +1909,7 @@ impl SandboxConfig {
                     libc::close(parent_fd);
                 }
 
-                if rc != 0 && self.landlock_mode == LandlockMode::Enforce {
+                if rc != 0 {
                     // SAFETY: close ruleset fd before returning.
                     unsafe {
                         libc::close(ruleset_fd);
@@ -1899,7 +1926,7 @@ impl SandboxConfig {
                 libc::close(ruleset_fd);
             }
 
-            if restrict_rc != 0 && self.landlock_mode == LandlockMode::Enforce {
+            if restrict_rc != 0 {
                 return Err(std::io::Error::last_os_error());
             }
 
@@ -2321,5 +2348,38 @@ log_requests = true
 
         let last = args.last().map(String::as_str);
         assert_eq!(last, Some("--"), "last arg should be `--` with no shim");
+    }
+
+    /// Regression for oqto-2eev: Landlock audit mode must NOT call
+    /// restrict_self. Previously, audit applied enforcement and silently
+    /// blocked writes to ~/.claude/~/.codex, hanging those harnesses.
+    /// Write to an outside path after apply_landlock(Audit) must succeed.
+    #[test]
+    fn test_landlock_audit_does_not_restrict() {
+        if !SandboxConfig::is_landlock_supported() {
+            eprintln!("skipping: Landlock kernel support missing");
+            return;
+        }
+
+        let workspace = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+
+        let mut cfg = SandboxConfig::from_profile("minimal");
+        cfg.landlock_mode = LandlockMode::Audit;
+        cfg.allow_write = vec![workspace.path().to_string_lossy().to_string()];
+
+        // Must be in a child process: restrict_self is irreversible within a
+        // process lifetime, so even a false-audit (the bug) would poison the
+        // test runner. Fork via std::process::Command + a sentinel binary is
+        // overkill here; instead we rely on the audit short-circuit keeping
+        // the parent unrestricted and assert a write to `outside` succeeds.
+        cfg.apply_landlock(workspace.path(), None)
+            .expect("audit must not fail");
+
+        let outside_file = outside.path().join("audit-probe");
+        std::fs::write(&outside_file, b"ok").expect(
+            "audit mode must not restrict writes; got EACCES (regression of oqto-2eev)",
+        );
+        let _ = std::fs::remove_file(&outside_file);
     }
 }

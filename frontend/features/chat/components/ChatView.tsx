@@ -567,6 +567,41 @@ export function ChatView({
 	const [showFileMentionPopup, setShowFileMentionPopup] = useState(false);
 	const [fileMentionQuery, setFileMentionQuery] = useState("");
 	const [showSlashPopup, setShowSlashPopup] = useState(false);
+	const [hideRecoveredErrors, setHideRecoveredErrors] = useState<boolean>(
+		() => {
+			if (typeof window === "undefined") return false;
+			try {
+				return localStorage.getItem("oqto:hideRecoveredErrors") === "1";
+			} catch {
+				return false;
+			}
+		},
+	);
+	// useeffect-guardrail: allow - sync recovered-error preference from settings sidebar
+	useEffect(() => {
+		const readSetting = () => {
+			try {
+				setHideRecoveredErrors(
+					localStorage.getItem("oqto:hideRecoveredErrors") === "1",
+				);
+			} catch {
+				// ignore read failures
+			}
+		};
+
+		const onStorage = (event: StorageEvent) => {
+			if (event.key === "oqto:hideRecoveredErrors") {
+				readSetting();
+			}
+		};
+
+		window.addEventListener("storage", onStorage);
+		window.addEventListener("oqto:chat-ui-settings-updated", readSetting);
+		return () => {
+			window.removeEventListener("storage", onStorage);
+			window.removeEventListener("oqto:chat-ui-settings-updated", readSetting);
+		};
+	}, []);
 	const showPromptQueueDebug = useMemo(() => {
 		if (typeof window === "undefined") return false;
 		try {
@@ -2297,6 +2332,7 @@ export function ChatView({
 																: undefined
 														}
 														onFileReferenceOpen={onFileReferenceOpen}
+														hideRecoveredErrors={hideRecoveredErrors}
 														freezeStreamingUpdates={isUserScrolled}
 														streamingPresentationMode={
 															streamingPresentationMode
@@ -3229,6 +3265,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 	showWorkingIndicator = false,
 	onForkHere,
 	onFileReferenceOpen,
+	hideRecoveredErrors = false,
 	freezeStreamingUpdates = false,
 	streamingPresentationMode = "raw",
 }: {
@@ -3243,6 +3280,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 	showWorkingIndicator?: boolean;
 	onForkHere?: () => void;
 	onFileReferenceOpen?: (filePath: string) => void;
+	hideRecoveredErrors?: boolean;
 	freezeStreamingUpdates?: boolean;
 	streamingPresentationMode?: StreamingPresentationMode;
 }) {
@@ -3458,6 +3496,59 @@ const MessageGroupCard = memo(function MessageGroupCard({
 		normalizedSegments.push(segment);
 	}
 
+	// Keep only the latest active retry card per assistant group.
+	// Retry events can arrive across multiple message fragments; rendering all
+	// fragments creates repeated cards (1/3, 2/3, 3/3). We keep the newest one.
+	const latestRetryingErrorIndex = (() => {
+		let latest = -1;
+		for (let i = 0; i < normalizedSegments.length; i++) {
+			const segment = normalizedSegments[i];
+			if (segment.type === "error" && segment.retrying) {
+				latest = i;
+			}
+		}
+		return latest;
+	})();
+
+	const displaySegments = normalizedSegments.filter((segment, index) => {
+		if (segment.type === "error" && segment.retrying) {
+			return index === latestRetryingErrorIndex;
+		}
+		return true;
+	});
+
+	const hasNonErrorContinuationAfter = (index: number): boolean => {
+		for (let i = index + 1; i < displaySegments.length; i++) {
+			const next = displaySegments[i];
+			if (next.type === "error") continue;
+			if (next.type === "tool_call") {
+				if (next.toolResult?.isError) continue;
+				return true;
+			}
+			if (next.type === "tool_result_only") {
+				if (next.part.isError) continue;
+				return true;
+			}
+			return true;
+		}
+		return false;
+	};
+
+	const recoveredSegmentKeys = new Set<string>();
+	for (const [index, segment] of displaySegments.entries()) {
+		const continued = hasNonErrorContinuationAfter(index);
+		if (!continued) continue;
+		if (segment.type === "error" && !segment.retrying) {
+			recoveredSegmentKeys.add(segment.key);
+		}
+		if (segment.type === "tool_call" && segment.toolResult?.isError) {
+			recoveredSegmentKeys.add(segment.key);
+		}
+		if (segment.type === "tool_result_only" && segment.part.isError) {
+			recoveredSegmentKeys.add(segment.key);
+		}
+	}
+
 	type RenderSegment =
 		| Segment
 		| {
@@ -3533,7 +3624,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 				grouped.push(seg);
 			};
 
-			for (const segment of normalizedSegments) {
+			for (const segment of displaySegments) {
 				if (segment.type === "thinking") {
 					if (thinkingBuffer.length === 0) {
 						thinkingKey = segment.key;
@@ -3565,7 +3656,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 			}
 			return grouped;
 		}
-		if (verbosity !== 2) return normalizedSegments;
+		if (verbosity !== 2) return displaySegments;
 		const grouped: RenderSegment[] = [];
 		let toolBuffer: Extract<RenderSegment, { type: "tool_group" }>["segments"] =
 			[];
@@ -3606,7 +3697,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 			flushTools();
 		};
 
-		for (const segment of normalizedSegments) {
+		for (const segment of displaySegments) {
 			if (segment.type === "tool_call" || segment.type === "tool_result_only") {
 				toolBuffer.push(segment);
 				continue;
@@ -3812,6 +3903,13 @@ const MessageGroupCard = memo(function MessageGroupCard({
 						return wrapWithGutter(segment.key, inner);
 					}
 					if (segment.type === "tool_call") {
+						const isRecoveredError = recoveredSegmentKeys.has(segment.key);
+						const hasToolError =
+							segment.part.status === "error" ||
+							Boolean(segment.toolResult?.isError);
+						if (hideRecoveredErrors && (isRecoveredError || hasToolError)) {
+							return null;
+						}
 						return (
 							<div
 								key={segment.key}
@@ -3823,11 +3921,17 @@ const MessageGroupCard = memo(function MessageGroupCard({
 									locale={locale}
 									workspacePath={workspacePath}
 									streamingPresentationMode={streamingPresentationMode}
+									isRecoveredError={isRecoveredError}
 								/>
 							</div>
 						);
 					}
 					if (segment.type === "tool_result_only") {
+						const isRecoveredError = recoveredSegmentKeys.has(segment.key);
+						const hasToolError = Boolean(segment.part.isError);
+						if (hideRecoveredErrors && (isRecoveredError || hasToolError)) {
+							return null;
+						}
 						// Render standalone tool result (no matching tool_use found)
 						return (
 							<div
@@ -3839,6 +3943,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 									locale={locale}
 									workspacePath={workspacePath}
 									streamingPresentationMode={streamingPresentationMode}
+									isRecoveredError={isRecoveredError}
 								/>
 							</div>
 						);
@@ -3870,6 +3975,10 @@ const MessageGroupCard = memo(function MessageGroupCard({
 					}
 					if (segment.type === "error") {
 						const isRetrying = segment.retrying;
+						const isRecoveredError = recoveredSegmentKeys.has(segment.key);
+						if (hideRecoveredErrors && !isRetrying) {
+							return null;
+						}
 						return (
 							<div
 								key={segment.key}
@@ -3877,7 +3986,9 @@ const MessageGroupCard = memo(function MessageGroupCard({
 									"rounded-md border px-3 py-2 text-sm flex items-center gap-2",
 									isRetrying
 										? "border-amber-500/30 bg-amber-500/10 text-amber-600"
-										: "border-red-500/30 bg-red-500/10 text-red-600",
+										: isRecoveredError
+											? "border-amber-500/20 bg-amber-500/5 text-amber-700 dark:text-amber-400"
+											: "border-destructive/20 bg-destructive/5 text-foreground/75",
 									needsTopMargin && "mt-3",
 								)}
 							>
@@ -3978,7 +4089,15 @@ const MessageGroupCard = memo(function MessageGroupCard({
 								</div>
 							);
 						}
-						const toolItems = segment.segments.map((toolSegment) => {
+						const visibleToolSegments = hideRecoveredErrors
+							? segment.segments.filter(
+									(toolSegment) => !recoveredSegmentKeys.has(toolSegment.key),
+								)
+							: segment.segments;
+						if (visibleToolSegments.length === 0) {
+							return null;
+						}
+						const toolItems = visibleToolSegments.map((toolSegment) => {
 							const toolName =
 								toolSegment.type === "tool_call"
 									? toolSegment.part.name
@@ -4006,6 +4125,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 										workspacePath={workspacePath}
 										collapsible={false}
 										hideHeader={verbosity === 2}
+										isRecoveredError={recoveredSegmentKeys.has(toolSegment.key)}
 									/>
 								),
 							};
@@ -4093,6 +4213,7 @@ function PiPartRenderer({
 	isStreaming = false,
 	freezeStreamingUpdates = false,
 	streamingPresentationMode = "raw",
+	isRecoveredError = false,
 }: {
 	part: DisplayPart;
 	toolResult?: Extract<DisplayPart, { type: "tool_result" }>;
@@ -4103,6 +4224,7 @@ function PiPartRenderer({
 	isStreaming?: boolean;
 	freezeStreamingUpdates?: boolean;
 	streamingPresentationMode?: StreamingPresentationMode;
+	isRecoveredError?: boolean;
 }) {
 	const { t } = useTranslation();
 	const stripAnsi = (value: string): string => stripAnsiSequences(value);
@@ -4388,6 +4510,7 @@ function PiPartRenderer({
 					hideTodoTools={true}
 					collapsible={collapsible}
 					hideHeader={hideHeader}
+					isRecoveredError={isRecoveredError}
 				/>
 			);
 		}
@@ -4404,7 +4527,7 @@ function PiPartRenderer({
 						tool: part.name || "result",
 						callID: part.toolCallId,
 						state: {
-							status: "completed",
+							status: part.isError ? "error" : "completed",
 							output: formatToolResultOutput(part.output),
 							title: part.name || "Tool Result",
 						},
@@ -4413,6 +4536,7 @@ function PiPartRenderer({
 					hideTodoTools={true}
 					collapsible={collapsible}
 					hideHeader={hideHeader}
+					isRecoveredError={isRecoveredError}
 				/>
 			);
 

@@ -335,3 +335,342 @@ AggregateError [ECONNREFUSED]:
 1:39:14 PM [vite] hmr update /features/sessions/components/FileTreeView.tsx, /src/styles/globals.css
 1:39:19 PM [vite] hmr update /features/sessions/components/FileTreeView.tsx, /src/styles/globals.css
 1:39:23 PM [vite] hmr update /features/sessions/components/FileTreeView.tsx, /src/styles/globals.css
+3:34:28 PM [vite] page reload public/visual-runtime/vendor/mermaid.min.js
+3:34:28 PM [vite] page reload public/visual-runtime/vendor/chart.umd.min.js
+3:34:28 PM [vite] page reload public/visual-runtime/vendor/morphdom-umd.min.js
+3:34:28 PM [vite] page reload public/visual-runtime/vendor/mermaid-layout-elk.esm.min.mjs
+3:34:28 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/chunk-SP2CHFBE.mjs.map
+3:34:28 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/render-DDKIELPE.mjs.map
+3:34:28 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/chunk-SP2CHFBE.mjs
+3:34:28 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/render-DDKIELPE.mjs
+3:34:28 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/chunk-TWI3KLJS.mjs.map
+3:34:28 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/render-P27B6YR6.mjs.map
+3:34:28 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/chunk-ZW26E7AF.mjs.map
+3:34:28 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/chunk-TWI3KLJS.mjs
+3:34:28 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/render-P27B6YR6.mjs
+3:34:28 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/render-M6WAID4X.mjs.map
+3:34:28 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/chunk-ZW26E7AF.mjs
+3:34:28 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/render-M6WAID4X.mjs
+3:39:35 PM [vite] ws proxy error:
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
+3:39:38 PM [vite] http proxy error: /api/admin/stats
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
+3:39:38 PM [vite] ws proxy error:
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
+3:39:39 PM [vite] http proxy error: /api/admin/stats
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
+3:39:41 PM [vite] http proxy error: /api/admin/stats
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
+3:39:43 PM [vite] ws proxy error:
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
+3:39:45 PM [vite] http proxy error: /api/admin/stats
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
+3:39:52 PM [vite] ws proxy error:
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
+5:53:13 PM [vite] ws proxy socket error:
+Error: read ETIMEDOUT
+    at TCP.onStreamRead (node:internal/stream_base_commons:216:20)
+6:37:47 PM [vite] ws proxy socket error:
+Error: read ETIMEDOUT
+    at TCP.onStreamRead (node:internal/stream_base_commons:216:20)
+8:16:34 PM [vite] ws proxy socket error:
+Error: read ETIMEDOUT
+    at TCP.onStreamRead (node:internal/stream_base_commons:216:20)
+8:49:20 PM [vite] page reload public/visual-runtime/vendor/mermaid.min.js
+8:49:20 PM [vite] page reload public/visual-runtime/vendor/chart.umd.min.js
+8:49:20 PM [vite] page reload public/visual-runtime/vendor/morphdom-umd.min.js
+8:49:20 PM [vite] page reload public/visual-runtime/vendor/mermaid-layout-elk.esm.min.mjs
+8:49:20 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/chunk-SP2CHFBE.mjs.map
+8:49:20 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/render-DDKIELPE.mjs.map
+8:49:20 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/chunk-SP2CHFBE.mjs
+8:49:20 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/render-DDKIELPE.mjs
+8:49:20 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/chunk-TWI3KLJS.mjs.map
+8:49:20 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/render-P27B6YR6.mjs.map
+8:49:20 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/chunk-TWI3KLJS.mjs
+8:49:20 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/render-P27B6YR6.mjs
+8:49:20 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/chunk-ZW26E7AF.mjs.map
+8:49:20 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/render-M6WAID4X.mjs.map
+8:49:20 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/chunk-ZW26E7AF.mjs
+8:49:20 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/render-M6WAID4X.mjs
+9:00:13 PM [vite] page reload public/visual-runtime/vendor/mermaid.min.js
+9:00:13 PM [vite] page reload public/visual-runtime/vendor/chart.umd.min.js
+9:00:13 PM [vite] page reload public/visual-runtime/vendor/morphdom-umd.min.js
+9:00:13 PM [vite] page reload public/visual-runtime/vendor/mermaid-layout-elk.esm.min.mjs
+9:00:13 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/chunk-SP2CHFBE.mjs.map
+9:00:13 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/render-DDKIELPE.mjs.map
+9:00:13 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/chunk-SP2CHFBE.mjs
+9:00:13 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/render-DDKIELPE.mjs
+9:00:13 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/chunk-TWI3KLJS.mjs.map
+9:00:13 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/render-P27B6YR6.mjs.map
+9:00:13 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/chunk-TWI3KLJS.mjs
+9:00:13 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/render-P27B6YR6.mjs
+9:00:13 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/chunk-ZW26E7AF.mjs.map
+9:00:13 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/chunk-ZW26E7AF.mjs
+9:00:13 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/render-M6WAID4X.mjs.map
+9:00:13 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/render-M6WAID4X.mjs
+9:01:07 PM [vite] page reload public/visual-runtime/vendor/mermaid.min.js
+9:01:07 PM [vite] page reload public/visual-runtime/vendor/chart.umd.min.js
+9:01:07 PM [vite] page reload public/visual-runtime/vendor/morphdom-umd.min.js
+9:01:07 PM [vite] page reload public/visual-runtime/vendor/mermaid-layout-elk.esm.min.mjs
+9:01:07 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/render-DDKIELPE.mjs.map
+9:01:07 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/chunk-SP2CHFBE.mjs
+9:01:07 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/render-DDKIELPE.mjs
+9:01:07 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/chunk-TWI3KLJS.mjs.map
+9:01:07 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/render-P27B6YR6.mjs.map
+9:01:07 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/chunk-TWI3KLJS.mjs
+9:01:07 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/render-P27B6YR6.mjs
+9:01:07 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/chunk-ZW26E7AF.mjs.map
+9:01:07 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/chunk-ZW26E7AF.mjs
+9:01:07 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/render-M6WAID4X.mjs.map
+9:01:07 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/render-M6WAID4X.mjs
+9:05:08 PM [vite] page reload public/visual-runtime/vendor/mermaid.min.js
+9:05:08 PM [vite] page reload public/visual-runtime/vendor/chart.umd.min.js
+9:05:08 PM [vite] page reload public/visual-runtime/vendor/morphdom-umd.min.js
+9:05:08 PM [vite] page reload public/visual-runtime/vendor/mermaid-layout-elk.esm.min.mjs
+9:05:08 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/chunk-SP2CHFBE.mjs.map
+9:05:08 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/render-DDKIELPE.mjs.map
+9:05:08 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/chunk-SP2CHFBE.mjs
+9:05:08 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/render-DDKIELPE.mjs
+9:05:08 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/chunk-TWI3KLJS.mjs.map
+9:05:08 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/chunk-TWI3KLJS.mjs
+9:05:08 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/render-P27B6YR6.mjs.map
+9:05:08 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/render-P27B6YR6.mjs
+9:05:08 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/chunk-ZW26E7AF.mjs.map
+9:05:08 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/render-M6WAID4X.mjs.map
+9:05:08 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/chunk-ZW26E7AF.mjs
+9:05:08 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/render-M6WAID4X.mjs
+9:36:43 PM [vite] page reload public/visual-runtime/vendor/mermaid.min.js
+9:36:43 PM [vite] page reload public/visual-runtime/vendor/chart.umd.min.js
+9:36:43 PM [vite] page reload public/visual-runtime/vendor/morphdom-umd.min.js
+9:36:43 PM [vite] page reload public/visual-runtime/vendor/mermaid-layout-elk.esm.min.mjs
+9:36:43 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/chunk-SP2CHFBE.mjs
+9:36:43 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/render-DDKIELPE.mjs.map
+9:36:43 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/chunk-SP2CHFBE.mjs.map
+9:36:43 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/chunk-TWI3KLJS.mjs.map
+9:36:43 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/render-DDKIELPE.mjs
+9:36:43 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/render-P27B6YR6.mjs.map
+9:36:43 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/chunk-TWI3KLJS.mjs
+9:36:43 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/render-P27B6YR6.mjs
+9:36:43 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/chunk-ZW26E7AF.mjs.map
+9:36:43 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/chunk-ZW26E7AF.mjs
+9:36:43 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/render-M6WAID4X.mjs.map
+9:36:43 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/render-M6WAID4X.mjs
+9:36:43 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/render-P27B6YR6.mjs.map
+10:05:52 PM [vite] ws proxy socket error:
+Error: read ETIMEDOUT
+    at TCP.onStreamRead (node:internal/stream_base_commons:216:20)
+10:34:04 PM [vite] ws proxy socket error:
+Error: read ETIMEDOUT
+    at TCP.onStreamRead (node:internal/stream_base_commons:216:20)
+10:34:04 PM [vite] ws proxy socket error:
+Error: read ETIMEDOUT
+    at TCP.onStreamRead (node:internal/stream_base_commons:216:20)
+11:50:31 PM [vite] ws proxy socket error:
+Error: read ETIMEDOUT
+    at TCP.onStreamRead (node:internal/stream_base_commons:216:20)
+12:53:11 AM [vite] ws proxy socket error:
+Error: read ETIMEDOUT
+    at TCP.onStreamRead (node:internal/stream_base_commons:216:20)
+1:40:50 AM [vite] ws proxy socket error:
+Error: read ETIMEDOUT
+    at TCP.onStreamRead (node:internal/stream_base_commons:216:20)
+2:15:31 AM [vite] ws proxy socket error:
+Error: read ETIMEDOUT
+    at TCP.onStreamRead (node:internal/stream_base_commons:216:20)
+2:50:24 AM [vite] ws proxy socket error:
+Error: read ETIMEDOUT
+    at TCP.onStreamRead (node:internal/stream_base_commons:216:20)
+3:49:03 AM [vite] ws proxy socket error:
+Error: read ETIMEDOUT
+    at TCP.onStreamRead (node:internal/stream_base_commons:216:20)
+5:10:33 AM [vite] ws proxy socket error:
+Error: read ETIMEDOUT
+    at TCP.onStreamRead (node:internal/stream_base_commons:216:20)
+9:29:32 AM [vite] page reload public/visual-runtime/vendor/mermaid.min.js
+9:29:32 AM [vite] page reload public/visual-runtime/vendor/chart.umd.min.js
+9:29:32 AM [vite] page reload public/visual-runtime/vendor/morphdom-umd.min.js
+9:29:32 AM [vite] page reload public/visual-runtime/vendor/mermaid-layout-elk.esm.min.mjs
+9:29:32 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/chunk-SP2CHFBE.mjs.map
+9:29:32 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/render-DDKIELPE.mjs.map
+9:29:32 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/chunk-SP2CHFBE.mjs
+9:29:32 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/render-DDKIELPE.mjs
+9:29:32 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/chunk-TWI3KLJS.mjs.map
+9:29:32 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/render-P27B6YR6.mjs.map
+9:29:32 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/chunk-TWI3KLJS.mjs
+9:29:32 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/render-P27B6YR6.mjs
+9:29:32 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/chunk-ZW26E7AF.mjs.map
+9:29:32 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/render-M6WAID4X.mjs.map
+9:29:32 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/chunk-ZW26E7AF.mjs
+9:29:32 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/render-M6WAID4X.mjs
+12:38:57 PM [vite] hmr update /components/chat/tool-call-card.tsx, /src/styles/globals.css
+12:39:00 PM [vite] hmr invalidate /components/chat/tool-call-card.tsx Could not Fast Refresh ("getToolIcon" export is incompatible). Learn more at https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-react#consistent-components-exports
+12:39:00 PM [vite] hmr update /src/styles/globals.css, /features/chat/components/ChatView.tsx
+12:39:48 PM [vite] hmr update /features/chat/components/ChatView.tsx, /src/styles/globals.css
+12:39:56 PM [vite] hmr update /features/chat/components/ChatView.tsx, /src/styles/globals.css
+12:40:06 PM [vite] hmr update /features/chat/components/ChatView.tsx, /src/styles/globals.css
+12:40:34 PM [vite] hmr update /features/chat/components/ChatView.tsx, /src/styles/globals.css
+12:40:41 PM [vite] hmr update /features/chat/components/ChatView.tsx, /src/styles/globals.css
+12:41:00 PM [vite] hmr update /features/chat/components/ChatView.tsx, /src/styles/globals.css
+12:41:47 PM [vite] hmr update /features/chat/components/ChatView.tsx, /src/styles/globals.css
+12:42:00 PM [vite] hmr update /features/chat/components/ChatView.tsx, /src/styles/globals.css
+12:42:26 PM [vite] hmr update /features/chat/components/ChatView.tsx, /src/styles/globals.css
+12:42:38 PM [vite] hmr update /features/chat/components/ChatView.tsx, /src/styles/globals.css
+12:42:53 PM [vite] hmr update /features/chat/components/ChatView.tsx, /src/styles/globals.css
+12:43:19 PM [vite] hmr update /features/chat/components/ChatView.tsx, /src/styles/globals.css
+12:43:36 PM [vite] hmr update /features/chat/components/ChatView.tsx, /src/styles/globals.css
+12:44:21 PM [vite] hmr update /features/chat/components/ChatView.tsx, /src/styles/globals.css
+12:44:43 PM [vite] hmr update /features/chat/components/ChatView.tsx, /src/styles/globals.css
+12:44:57 PM [vite] hmr update /features/chat/components/ChatView.tsx, /src/styles/globals.css
+12:45:06 PM [vite] page reload public/visual-runtime/vendor/mermaid.min.js
+12:45:06 PM [vite] page reload public/visual-runtime/vendor/chart.umd.min.js
+12:45:06 PM [vite] page reload public/visual-runtime/vendor/morphdom-umd.min.js
+12:45:06 PM [vite] page reload public/visual-runtime/vendor/mermaid-layout-elk.esm.min.mjs
+12:45:06 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/chunk-SP2CHFBE.mjs.map
+12:45:06 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/render-DDKIELPE.mjs.map
+12:45:06 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/chunk-SP2CHFBE.mjs
+12:45:06 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/render-DDKIELPE.mjs
+12:45:06 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/chunk-TWI3KLJS.mjs.map
+12:45:06 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/render-P27B6YR6.mjs.map
+12:45:06 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/chunk-TWI3KLJS.mjs
+12:45:06 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/render-P27B6YR6.mjs
+12:45:06 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/chunk-ZW26E7AF.mjs.map
+12:45:06 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/render-M6WAID4X.mjs.map
+12:45:06 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/chunk-ZW26E7AF.mjs
+12:45:06 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/render-M6WAID4X.mjs
+12:45:06 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/render-DDKIELPE.mjs.map
+12:45:27 PM [vite] hmr update /components/chat/tool-call-card.tsx, /src/styles/globals.css
+12:45:27 PM [vite] hmr update /features/chat/components/ChatView.tsx, /src/styles/globals.css
+3:06:22 PM [vite] ws proxy socket error:
+Error: read ECONNRESET
+    at TCP.onStreamRead (node:internal/stream_base_commons:216:20)
+3:58:58 PM [vite] ws proxy socket error:
+Error: read ECONNRESET
+    at TCP.onStreamRead (node:internal/stream_base_commons:216:20)
+4:00:06 PM [vite] hmr update /features/chat/components/ChatView.tsx, /src/styles/globals.css
+4:00:34 PM [vite] hmr update /features/chat/components/PiSettingsView.tsx, /src/styles/globals.css
+4:00:55 PM [vite] hmr update /features/chat/components/ChatView.tsx, /src/styles/globals.css
+4:01:05 PM [vite] page reload public/visual-runtime/vendor/mermaid.min.js
+4:01:05 PM [vite] page reload public/visual-runtime/vendor/chart.umd.min.js
+4:01:05 PM [vite] page reload public/visual-runtime/vendor/morphdom-umd.min.js
+4:01:05 PM [vite] page reload public/visual-runtime/vendor/mermaid-layout-elk.esm.min.mjs
+4:01:05 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/chunk-SP2CHFBE.mjs.map
+4:01:05 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/render-DDKIELPE.mjs.map
+4:01:05 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/chunk-SP2CHFBE.mjs
+4:01:05 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/render-DDKIELPE.mjs
+4:01:05 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/chunk-TWI3KLJS.mjs.map
+4:01:05 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/render-P27B6YR6.mjs.map
+4:01:05 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/chunk-TWI3KLJS.mjs
+4:01:05 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/render-P27B6YR6.mjs
+4:01:05 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/chunk-ZW26E7AF.mjs.map
+4:01:05 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/render-M6WAID4X.mjs.map
+4:01:05 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/chunk-ZW26E7AF.mjs
+4:01:05 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/render-M6WAID4X.mjs
+4:01:05 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/chunk-SP2CHFBE.mjs
+4:05:35 PM [vite] ws proxy socket error:
+Error: read ECONNRESET
+    at TCP.onStreamRead (node:internal/stream_base_commons:216:20)
+4:05:36 PM [vite] ws proxy socket error:
+Error: read ECONNRESET
+    at TCP.onStreamRead (node:internal/stream_base_commons:216:20)
+4:11:36 PM [vite] hmr update /features/chat/components/ChatView.tsx, /src/styles/globals.css
+4:11:56 PM [vite] hmr update /features/chat/components/ChatView.tsx, /src/styles/globals.css
+4:11:57 PM [vite] ws proxy socket error:
+Error: read ECONNRESET
+    at TCP.onStreamRead (node:internal/stream_base_commons:216:20)
+4:12:28 PM [vite] hmr update /components/chat/tool-call-card.tsx, /src/styles/globals.css
+4:12:48 PM [vite] hmr update /features/chat/components/PiSettingsView.tsx, /src/styles/globals.css
+4:13:13 PM [vite] page reload public/visual-runtime/vendor/mermaid.min.js
+4:13:13 PM [vite] page reload public/visual-runtime/vendor/chart.umd.min.js
+4:13:13 PM [vite] page reload public/visual-runtime/vendor/morphdom-umd.min.js
+4:13:13 PM [vite] page reload public/visual-runtime/vendor/mermaid-layout-elk.esm.min.mjs
+4:13:13 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/chunk-SP2CHFBE.mjs.map
+4:13:13 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/render-DDKIELPE.mjs.map
+4:13:13 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/render-DDKIELPE.mjs
+4:13:13 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/chunk-TWI3KLJS.mjs.map
+4:13:13 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/chunk-SP2CHFBE.mjs
+4:13:13 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/chunk-TWI3KLJS.mjs
+4:13:13 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/render-P27B6YR6.mjs.map
+4:13:13 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/render-P27B6YR6.mjs
+4:13:13 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/chunk-ZW26E7AF.mjs.map
+4:13:13 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/render-M6WAID4X.mjs.map
+4:13:13 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/chunk-ZW26E7AF.mjs
+4:13:13 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/render-M6WAID4X.mjs
+4:16:06 PM [vite] ws proxy socket error:
+Error: read ECONNRESET
+    at TCP.onStreamRead (node:internal/stream_base_commons:216:20)
+4:23:03 PM [vite] ws proxy socket error:
+Error: read ECONNRESET
+    at TCP.onStreamRead (node:internal/stream_base_commons:216:20)
+4:24:31 PM [vite] hmr update /features/chat/components/ChatView.tsx, /src/styles/globals.css
+4:24:41 PM [vite] hmr update /features/chat/components/ChatView.tsx, /src/styles/globals.css
+4:25:01 PM [vite] hmr update /features/chat/components/ChatView.tsx, /src/styles/globals.css
+4:25:30 PM [vite] page reload public/visual-runtime/vendor/mermaid.min.js
+4:25:30 PM [vite] page reload public/visual-runtime/vendor/chart.umd.min.js
+4:25:30 PM [vite] page reload public/visual-runtime/vendor/morphdom-umd.min.js
+4:25:30 PM [vite] page reload public/visual-runtime/vendor/mermaid-layout-elk.esm.min.mjs
+4:25:30 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/chunk-SP2CHFBE.mjs.map
+4:25:30 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/render-DDKIELPE.mjs.map
+4:25:30 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/chunk-SP2CHFBE.mjs
+4:25:30 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/render-DDKIELPE.mjs
+4:25:30 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/chunk-TWI3KLJS.mjs.map
+4:25:30 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/render-P27B6YR6.mjs.map
+4:25:30 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/chunk-TWI3KLJS.mjs
+4:25:30 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/render-P27B6YR6.mjs
+4:25:30 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/chunk-ZW26E7AF.mjs.map
+4:25:30 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/render-M6WAID4X.mjs.map
+4:25:30 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/chunk-ZW26E7AF.mjs
+4:25:30 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/render-M6WAID4X.mjs
+4:31:18 PM [vite] ws proxy socket error:
+Error: read ECONNRESET
+    at TCP.onStreamRead (node:internal/stream_base_commons:216:20)
+9:59:45 PM [vite] ws proxy socket error:
+Error: read ECONNRESET
+    at TCP.onStreamRead (node:internal/stream_base_commons:216:20)
+11:14:16 PM [vite] page reload public/visual-runtime/vendor/mermaid.min.js
+11:14:16 PM [vite] page reload public/visual-runtime/vendor/chart.umd.min.js
+11:14:16 PM [vite] page reload public/visual-runtime/vendor/morphdom-umd.min.js
+11:14:16 PM [vite] page reload public/visual-runtime/vendor/mermaid-layout-elk.esm.min.mjs
+11:14:16 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/chunk-SP2CHFBE.mjs.map
+11:14:16 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/render-DDKIELPE.mjs.map
+11:14:16 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/chunk-SP2CHFBE.mjs
+11:14:16 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/render-DDKIELPE.mjs
+11:14:16 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/chunk-TWI3KLJS.mjs.map
+11:14:16 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/render-P27B6YR6.mjs.map
+11:14:16 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/chunk-TWI3KLJS.mjs
+11:14:16 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/render-P27B6YR6.mjs
+11:14:16 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/chunk-ZW26E7AF.mjs.map
+11:14:16 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/render-M6WAID4X.mjs.map
+11:14:16 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/chunk-ZW26E7AF.mjs
+11:14:16 PM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/render-M6WAID4X.mjs
+11:16:52 PM [vite] ws proxy error:
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
+11:16:53 PM [vite] ws proxy error:
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
+11:16:55 PM [vite] ws proxy error:
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
+11:16:58 PM [vite] ws proxy error:
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)

@@ -2,6 +2,9 @@
 
 ## Open
 
+### [oqto-2eev] oqto-sandbox: landlock audit mode silently enforces, breaking Claude Code and Codex harnesses (P1, bug)
+Repro: oqto-sandbox claude --permission-mode bypassPermissions hangs silently; pi works. Root cause: apply_landlock in config.rs calls landlock_restrict_self unconditionally when mode != Off. Audit mode is a misnomer — kernel has no audit-only Landlock; once restrict_self runs, rules are enforced. Because the development profile's allow_write omits ~/.claude, ~/.local/share/claude, ~/.codex, ~/.local/share/codex, and related paths, startup writes (SQLite WAL, statsig, store.db, session files) get EACCES and the JS event loop stalls. Fix: skip restrict_self in audit mode (log intended rules only); add Claude Code + Codex paths to the development profile allow_write; verify with tmux pty run.
+
 ### [oqto-0xvr] Investigate and fix sx failures on octo-azure (P1, bug)
 
 ### [oqto-5stn] Deploy-time history cutover: fully converge chat history into oqto-log and remove runtime fallback gaps (P1, task)
@@ -34,6 +37,15 @@ Recent fixes addressed many individual defects, but regressions still recur due 
 ...
 
 
+### [oqto-stez] Message rating and annotation system for DSPy/GEPA training data (P2, epic)
+## Goal
+
+Add thumbs-up/down ratings plus free-text annotations and tags to every assistant
+message in oqto. Export the corpus as DSPy-ready JSONL so we can feed it into
+GEPA optimization for our local Qwen3.6-35B models. This is a data-flywheel
+...
+
+
 ### [oqto-6qgt] Fix tool summary mislabeling sx commands as file reads when piped to head (P2, bug)
 
 ### [oqto-zpvs.7] CI + observability: persistence invariant gate and triage tooling (P2, task)
@@ -59,6 +71,10 @@ Deliverables
 
 ## Closed
 
+- [oqto-7ae5] Render only one retry card per assistant turn (closed 2026-04-21)
+- [oqto-ttbw] Fix recoverable error prominence and settings toggle not applying in chat (closed 2026-04-21)
+- [oqto-p8se] Move recovered-error visibility toggle into right sidebar settings (closed 2026-04-21)
+- [oqto-akk4] Improve recoverable error rendering in chat timeline (closed 2026-04-21)
 - [oqto-b4za] Landlock silently skipped when disable_userns=true (affects all built-in profiles) (closed 2026-04-20)
 - [oqto-zpvs.42] Remove chunked/smooth streaming presentation and run raw-only (closed 2026-04-20)
 - [oqto-kjhs] Fix chat code block background shifting on horizontal scroll (closed 2026-04-19)
@@ -1245,14 +1261,14 @@ Deliverables
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
+- [oqto-4ryr] Session rename reverts: update_chat_session returns external_id while list returns platform_id (closed )
 - [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
 - [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
 - [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
 - [oqto-xq1e] Add drag-and-drop support to FileTreeView (internal move + OS upload) (closed )
-- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
-- [oqto-4ryr] Session rename reverts: update_chat_session returns external_id while list returns platform_id (closed )
 - [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
+- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )

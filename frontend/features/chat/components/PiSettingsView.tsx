@@ -11,6 +11,7 @@ import {
 	SelectValue,
 } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
+import { Switch } from "@/components/ui/switch";
 import {
 	type TTSSettings,
 	loadTTSSettings,
@@ -56,6 +57,16 @@ export function PiSettingsView({
 	const [runtimeSessionId, setRuntimeSessionId] = useState<string | null>(null);
 	const [isBackfillingHistory, setIsBackfillingHistory] =
 		useState<boolean>(false);
+	const [hideRecoveredErrors, setHideRecoveredErrors] = useState<boolean>(
+		() => {
+			if (typeof window === "undefined") return false;
+			try {
+				return localStorage.getItem("oqto:hideRecoveredErrors") === "1";
+			} catch {
+				return false;
+			}
+		},
+	);
 
 	const handleTtsVoiceChange = useCallback(
 		(e: React.ChangeEvent<HTMLInputElement>) => {
@@ -214,6 +225,16 @@ export function PiSettingsView({
 			setRestartingAgent(false);
 		}
 	}, [sessionId]);
+
+	const handleHideRecoveredErrorsChange = useCallback((checked: boolean) => {
+		setHideRecoveredErrors(checked);
+		try {
+			localStorage.setItem("oqto:hideRecoveredErrors", checked ? "1" : "0");
+			window.dispatchEvent(new Event("oqto:chat-ui-settings-updated"));
+		} catch {
+			// ignore persistence failures
+		}
+	}, []);
 
 	const handleImportPiSessions = useCallback(async () => {
 		if (!workspacePath || isBackfillingHistory) return;
@@ -414,6 +435,21 @@ export function PiSettingsView({
 					</Select>
 					<p className="text-[10px] text-muted-foreground">
 						{verbosityDescription}
+					</p>
+				</div>
+
+				<div className="space-y-2">
+					<div className="flex items-center justify-between">
+						<Label className="text-xs font-medium text-muted-foreground">
+							Error blocks
+						</Label>
+						<Switch
+							checked={hideRecoveredErrors}
+							onCheckedChange={handleHideRecoveredErrorsChange}
+						/>
+					</div>
+					<p className="text-[10px] text-muted-foreground">
+						Hide non-retrying error blocks in the chat timeline.
 					</p>
 				</div>
 

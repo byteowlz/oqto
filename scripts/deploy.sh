@@ -21,6 +21,10 @@ CANARY_ONLY=false
 CANARY_THEN_FLEET=false
 HEALTH_TIMEOUT_SECONDS=90
 MIN_FREE_MB=1024
+# How many old release directories to keep under $RELEASES_ROOT after a
+# successful activation. `current` and `last-good` are always preserved in
+# addition to this count. Set to 0 to disable pruning.
+KEEP_RELEASES="${OQTO_KEEP_RELEASES:-3}"
 # Convergent oqto-log migration passes during activation.
 # We rerun bootstrap+validate up to this many times so deploy converges on
 # the latest JSONL snapshot even when files change during migration.
@@ -65,6 +69,9 @@ Options:
   --canary-then-fleet      Deploy canary hosts first, then remaining hosts
   --health-timeout SEC     Health check timeout after activation (default: 90)
   --min-free-mb MB         Minimum free disk required for preflight (default: 1024)
+  --keep-releases N        Keep the N newest old releases after activation
+                           (current + last-good always preserved). 0 disables.
+                           Default: 3. Also: OQTO_KEEP_RELEASES env var.
   --dry-run                Print actions without executing
   --config FILE            Use alternate hosts config
   --help                   Show this help
@@ -97,6 +104,7 @@ while [[ $# -gt 0 ]]; do
         --canary-then-fleet) CANARY_THEN_FLEET=true; shift ;;
         --health-timeout) HEALTH_TIMEOUT_SECONDS="$2"; shift 2 ;;
         --min-free-mb) MIN_FREE_MB="$2"; shift 2 ;;
+        --keep-releases) KEEP_RELEASES="$2"; shift 2 ;;
         --dry-run) DRY_RUN=true; shift ;;
         --config) CONFIG="$2"; shift 2 ;;
         --help|-h) usage ;;
@@ -1202,6 +1210,72 @@ PY
     done
 }
 
+prune_old_releases() {
+    local name="$1" ssh_target="$2" is_local="$3"
+    local keep="$KEEP_RELEASES"
+
+    if [[ "$keep" -le 0 ]]; then
+        return 0
+    fi
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+        echo -e "${YELLOW}  [dry-run]${NC} prune old releases on $name (keep newest $keep + current + last-good)"
+        return 0
+    fi
+
+    # Build a remote shell snippet that:
+    # - collects release dirs sorted newest-first by mtime
+    # - always preserves `current` and `last-good` symlink targets
+    # - keeps the N newest of the remainder
+    # - rm -rf's everything else, emitting one line per pruned release
+    local prune_cmd
+    prune_cmd=$(cat <<PRUNE_EOF
+set -euo pipefail
+cd '$RELEASES_ROOT' 2>/dev/null || exit 0
+keep=$keep
+current_target=""
+last_good_target=""
+if [[ -L current ]]; then
+    current_target="\$(basename "\$(readlink -f current 2>/dev/null || true)")"
+fi
+if [[ -L last-good ]]; then
+    last_good_target="\$(basename "\$(readlink -f last-good 2>/dev/null || true)")"
+fi
+
+# Newest mtime first; only real directories, skip symlinks.
+mapfile -t releases < <(find . -maxdepth 1 -mindepth 1 -type d -printf '%T@ %f\n' | sort -rn | awk '{print \$2}')
+
+kept=0
+for d in "\${releases[@]}"; do
+    if [[ "\$d" == "\$current_target" || "\$d" == "\$last_good_target" ]]; then
+        continue
+    fi
+    if [[ "\$kept" -lt "\$keep" ]]; then
+        kept=\$((kept + 1))
+        continue
+    fi
+    rm -rf -- "\$d" && echo "pruned: \$d"
+done
+PRUNE_EOF
+)
+
+    local output
+    output="$(host_exec_sudo "$is_local" "$ssh_target" "$prune_cmd" 2>&1)" || {
+        emit_event "$is_local" "$ssh_target" "$name" "deploy.prune" "fail" "prune.error"
+        warn "Prune on $name failed (non-fatal): $output"
+        return 0
+    }
+
+    local pruned_count
+    pruned_count="$(printf '%s' "$output" | grep -c '^pruned: ' || true)"
+    if [[ "$pruned_count" -gt 0 ]]; then
+        emit_event "$is_local" "$ssh_target" "$name" "deploy.prune" "pass" "prune.removed.$pruned_count"
+        log "Pruned $pruned_count old release(s) on $name (kept newest $keep + current + last-good)"
+    else
+        emit_event "$is_local" "$ssh_target" "$name" "deploy.prune" "pass" "prune.nothing"
+    fi
+}
+
 rollback_host() {
     local name="$1" ssh_target="$2" is_local="$3" binaries="$4" mode="$5" services="$6"
     local previous_release="$7"
@@ -1225,6 +1299,7 @@ rollback_host() {
         host_exec_sudo "$is_local" "$ssh_target" "ln -sfn '$RELEASES_ROOT/$previous_release' '$RELEASES_ROOT/last-good'"
         emit_event "$is_local" "$ssh_target" "$name" "rollback" "pass" "rollback.pass"
         ok "Rollback succeeded on $name"
+        prune_old_releases "$name" "$ssh_target" "$is_local"
         return 0
     fi
 
@@ -1334,6 +1409,7 @@ activate_host() {
         host_exec_sudo "$is_local" "$ssh_target" "ln -sfn '$release_dir' '$RELEASES_ROOT/last-good'"
         emit_event "$is_local" "$ssh_target" "$name" "deploy.activate" "pass" "deploy.activate.pass"
         ok "Activated release $RELEASE_ID on $name"
+        prune_old_releases "$name" "$ssh_target" "$is_local"
         return 0
     fi
 
