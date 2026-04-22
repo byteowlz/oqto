@@ -62,6 +62,12 @@ For each host, deploy executes these phases:
 4. `rollback.start` / `rollback.pass|fail` (only on activation failure)
    - Restore previous `current` release
    - Relink binaries + restart services
+
+5. `deploy.prune.pass|fail` (after successful activation or rollback)
+   - Remove old release directories under `/var/lib/oqto/releases/`
+   - Always preserves `current` and `last-good` symlink targets
+   - Keeps the `--keep-releases` (default 3) newest directories on top of those
+   - Failure is non-fatal (logged as warn)
    - Re-run health checks
 
 ## Audit Trail
@@ -141,6 +147,7 @@ sudo systemctl restart oqto
 --canary-then-fleet
 --health-timeout SEC
 --min-free-mb MB
+--keep-releases N     # default 3; also OQTO_KEEP_RELEASES env var
 --dry-run
 --config FILE
 ```

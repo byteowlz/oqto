@@ -14,44 +14,105 @@ errno = 1
 # these into final syscall allowlists for each architecture.
 
 [[policy.classes]]
+name = "glibc_startup"
+# Every dynamically-linked glibc program needs these during startup.
+# arch_prctl is x86_64-only; the generator skips it for non-matching arches.
+syscalls = [
+  "arch_prctl", "set_tid_address", "set_robust_list", "rseq",
+  "prctl", "sigaltstack", "uname", "getuid", "geteuid", "getgid", "getegid",
+  "getresuid", "getresgid", "getpgrp", "getppid"
+]
+
+[[policy.classes]]
 name = "io_basic"
 syscalls = [
   "read", "write", "close", "lseek",
   "readv", "writev", "pread64", "pwrite64",
-  "fstat", "newfstatat", "statx", "access", "faccessat2"
+  "fstat", "newfstatat", "statx", "access", "faccessat", "faccessat2",
+  "fcntl", "ioctl", "fsync", "fdatasync", "sync_file_range",
+  "pipe", "pipe2", "dup", "dup2", "dup3"
 ]
 
 [[policy.classes]]
 name = "memory_threads"
 syscalls = [
-  "mmap", "mprotect", "munmap", "brk", "madvise",
-  "futex", "set_robust_list", "rt_sigaction", "rt_sigprocmask",
-  "rt_sigreturn", "clone", "clone3", "getpid", "gettid", "tgkill"
+  "mmap", "mprotect", "munmap", "brk", "madvise", "mremap", "msync",
+  "mlock", "munlock", "mincore",
+  "futex", "futex_waitv", "set_robust_list", "get_robust_list",
+  "rt_sigaction", "rt_sigprocmask", "rt_sigreturn", "rt_sigsuspend",
+  "rt_sigpending", "rt_sigtimedwait", "rt_sigqueueinfo", "rt_tgsigqueueinfo",
+  "kill", "tkill", "tgkill",
+  "clone", "clone3", "fork", "vfork",
+  "getpid", "gettid",
+  "sched_yield", "sched_getaffinity", "sched_setaffinity",
+  "sched_getparam", "sched_getscheduler"
 ]
 
 [[policy.classes]]
 name = "files_dirs"
 syscalls = [
-  "openat", "openat2", "getdents64", "mkdirat", "unlinkat", "renameat2",
-  "fchmod", "fchmodat", "fchown", "fchownat", "readlinkat", "symlinkat"
+  "openat", "openat2", "open",
+  "getdents", "getdents64",
+  "mkdirat", "mkdir", "rmdir",
+  "unlinkat", "unlink",
+  "renameat", "renameat2", "rename",
+  "linkat", "link",
+  "fchmod", "fchmodat", "chmod",
+  "fchown", "fchownat", "lchown",
+  "readlinkat", "readlink",
+  "symlinkat", "symlink",
+  "utimensat", "futimesat",
+  "truncate", "ftruncate",
+  "getcwd", "chdir", "fchdir",
+  "statfs", "fstatfs",
+  "getxattr", "fgetxattr", "lgetxattr",
+  "listxattr", "flistxattr", "llistxattr",
+  "setxattr", "fsetxattr", "lsetxattr",
+  "removexattr", "fremovexattr", "lremovexattr",
+  "umask", "flock"
 ]
 
 [[policy.classes]]
 name = "process_exec"
 syscalls = [
-  "execve", "execveat", "wait4", "waitid", "exit", "exit_group",
-  "prlimit64", "getrlimit", "setrlimit"
+  "execve", "execveat",
+  "wait4", "waitid",
+  "exit", "exit_group",
+  "prlimit64", "getrlimit", "setrlimit",
+  "getpgid", "setpgid", "getsid", "setsid",
+  "capget", "capset"
 ]
 
 [[policy.classes]]
 name = "time_random"
-syscalls = ["clock_gettime", "nanosleep", "gettimeofday", "getrandom"]
+syscalls = [
+  "clock_gettime", "clock_getres", "clock_nanosleep",
+  "nanosleep", "gettimeofday", "time",
+  "getrandom"
+]
+
+[[policy.classes]]
+name = "event_poll"
+# poll/epoll is needed by bash's trap/signal handling, Python asyncio, etc.
+syscalls = [
+  "poll", "ppoll",
+  "select", "pselect6",
+  "epoll_create", "epoll_create1",
+  "epoll_ctl", "epoll_wait", "epoll_pwait", "epoll_pwait2",
+  "eventfd", "eventfd2",
+  "signalfd", "signalfd4",
+  "timerfd_create", "timerfd_settime", "timerfd_gettime",
+  "inotify_init", "inotify_init1", "inotify_add_watch", "inotify_rm_watch"
+]
 
 [[policy.classes]]
 name = "network_basic"
 syscalls = [
-  "socket", "connect", "bind", "listen", "accept", "accept4",
-  "sendto", "recvfrom", "sendmsg", "recvmsg", "shutdown", "getsockopt", "setsockopt"
+  "socket", "socketpair",
+  "connect", "bind", "listen", "accept", "accept4",
+  "sendto", "recvfrom", "sendmsg", "recvmsg", "sendmmsg", "recvmmsg",
+  "shutdown", "getsockopt", "setsockopt",
+  "getsockname", "getpeername"
 ]
 
 # Explicit high-risk deny list (documentary; default_action=errno already denies unknowns).

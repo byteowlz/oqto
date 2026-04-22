@@ -121,13 +121,22 @@ fn compile_for_arch(
         // SAFETY: valid C string pointer.
         let nr = unsafe { seccomp_syscall_resolve_name(c_name.as_ptr()) };
         if nr < 0 {
+            // libseccomp doesn't recognize the name at all — typo in the
+            // policy, fail hard so it gets fixed.
             bail!("unknown syscall in policy: {}", name);
         }
 
         // SAFETY: ctx/nr valid; arg_cnt=0 => no varargs consumed.
         let rc = unsafe { seccomp_rule_add(ctx.0, SCMP_ACT_ALLOW, nr, 0) };
         if rc != 0 {
-            bail!("seccomp_rule_add failed for syscall '{}' rc={}", name, rc);
+            // Most common non-typo failure is -EDOM: the syscall exists on
+            // some architectures (e.g. arch_prctl is x86_64-only) but not on
+            // the one we are currently compiling for. Skip it with a warning
+            // so a single policy file can cover multiple arches.
+            eprintln!(
+                "warn: skipping '{}' for arch {} (seccomp_rule_add rc={})",
+                name, arch, rc
+            );
         }
     }
 

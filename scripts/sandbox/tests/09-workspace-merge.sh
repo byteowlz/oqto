@@ -41,10 +41,26 @@ seccomp_mode = "off"
 landlock_mode = "off"
 EOF
 
+# Workspace config must be a full SandboxConfigFile with a profile block.
+# The merge logic at config.rs:~1020 reads values from the workspace profile
+# and unions / intersects with the global. A flat top-level deny_read/etc is
+# silently ignored by the SandboxConfigFile serde schema.
 write_toml "${ws}/.oqto/sandbox.toml" <<EOF
+enabled = true
+profile = "ws-overlay"
+
+[profiles.ws-overlay]
 deny_read = ["/tmp/.oqto-secret-ws"]
 allow_write = ["/tmp"]
+deny_write = []
 isolate_network = true
+isolate_pid = false
+drop_all_caps = false
+disable_userns = false
+assert_userns_disabled = false
+no_new_privs = false
+seccomp_mode = "off"
+landlock_mode = "off"
 EOF
 
 out="$(run_sandbox --config "${global_cfg}" --workspace "${ws}" --dry-run -- /bin/true 2>&1)"
