@@ -430,6 +430,9 @@ function ProviderDialog({
 	initial?: {
 		name: string;
 		type: string;
+		base_url?: string;
+		api_version?: string;
+		deployment?: string;
 		models: ModelEntry[];
 	};
 }) {
@@ -437,9 +440,9 @@ function ProviderDialog({
 	const [name, setName] = useState(initial?.name ?? "");
 	const [type_, setType] = useState(initial?.type ?? "openai");
 	const [apiKey, setApiKey] = useState("");
-	const [baseUrl, setBaseUrl] = useState("");
-	const [apiVersion, setApiVersion] = useState("");
-	const [deployment, setDeployment] = useState("");
+	const [baseUrl, setBaseUrl] = useState(initial?.base_url ?? "");
+	const [apiVersion, setApiVersion] = useState(initial?.api_version ?? "");
+	const [deployment, setDeployment] = useState(initial?.deployment ?? "");
 	const [models, setModels] = useState<ModelEntry[]>(initial?.models ?? []);
 	const [pendingDraftModel, setPendingDraftModel] = useState<ModelDraft | null>(
 		null,
@@ -1032,10 +1035,19 @@ export function ModelsPanel() {
 					initial={{
 						name: editTarget.name,
 						type: editTarget.type,
+						base_url: editTarget.base_url,
+						api_version: editTarget.api_version,
+						deployment: editTarget.deployment,
 						models: editTarget.models.map((m) => ({
 							id: m.id,
 							name: m.name,
 							reasoning: m.reasoning,
+							input: m.input,
+							context_window: m.context_window,
+							max_tokens: m.max_tokens,
+							cost_input: m.cost_input,
+							cost_output: m.cost_output,
+							cost_cache_read: m.cost_cache_read,
 						})),
 					}}
 				/>
