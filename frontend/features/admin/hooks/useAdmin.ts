@@ -613,6 +613,13 @@ export type EavsModelSummary = {
 	id: string;
 	name: string;
 	reasoning: boolean;
+	input?: string[];
+	context_window?: number;
+	max_tokens?: number;
+	cost_input?: number;
+	cost_output?: number;
+	cost_cache_read?: number;
+	compat?: Record<string, unknown>;
 };
 
 export type EavsProviderSummary = {
@@ -620,6 +627,9 @@ export type EavsProviderSummary = {
 	type: string;
 	pi_api: string | null;
 	has_api_key: boolean;
+	base_url?: string;
+	api_version?: string;
+	deployment?: string;
 	model_count: number;
 	models: EavsModelSummary[];
 };
