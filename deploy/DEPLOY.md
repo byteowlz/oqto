@@ -34,6 +34,13 @@ services = ["oqto"]
 
 ## Update Lifecycle
 
+Before build/prepare/activate, deploy pre-authenticates sudo on all selected
+hosts so password prompts happen up front instead of mid-rollout.
+
+- Local host: `sudo -v`
+- Remote host: tries `sudo -n true` first (cached/NOPASSWD), then falls back to
+  interactive `ssh -tt <host> sudo -v` for hosts that require a TTY password prompt.
+
 For each host, deploy executes these phases:
 
 1. `preflight.start` / `preflight.pass|fail`
@@ -57,6 +64,9 @@ For each host, deploy executes these phases:
    - Atomic symlink switch: `/var/lib/oqto/releases/current -> <release-id>`
    - `/usr/local/bin/*` relinked to `current/bin/*`
    - Ordered restarts: runner → control plane (`oqto`) → dependent services
+   - In single-user hosts without `systemd --user`, deploy now auto-restarts `oqto-runner`
+     as a background fallback (`~/.local/state/oqto/deploy/oqto-runner.log`) so
+     post-migration health checks can recover after runner quiesce.
    - Bounded health checks (`--health-timeout`, default 90s)
 
 4. `rollback.start` / `rollback.pass|fail` (only on activation failure)

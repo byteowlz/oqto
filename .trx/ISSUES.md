@@ -2,6 +2,8 @@
 
 ## Open
 
+### [oqto-wygp] Fix 'Failed to fetch memories: Service Unavailable' in local user setup (P1, bug)
+
 ### [oqto-2eev] oqto-sandbox: landlock audit mode silently enforces, breaking Claude Code and Codex harnesses (P1, bug)
 Repro: oqto-sandbox claude --permission-mode bypassPermissions hangs silently; pi works. Root cause: apply_landlock in config.rs calls landlock_restrict_self unconditionally when mode != Off. Audit mode is a misnomer — kernel has no audit-only Landlock; once restrict_self runs, rules are enforced. Because the development profile's allow_write omits ~/.claude, ~/.local/share/claude, ~/.codex, ~/.local/share/codex, and related paths, startup writes (SQLite WAL, statsig, store.db, session files) get EACCES and the JS event loop stalls. Fix: skip restrict_self in audit mode (log intended rules only); add Claude Code + Codex paths to the development profile allow_write; verify with tmux pty run.
 
@@ -12,6 +14,13 @@ Repro: oqto-sandbox claude --permission-mode bypassPermissions hangs silently; p
 ### [oqto-md12] Fix multi-user chat-history 400 by self-healing unresolved personal session targets (P1, bug)
 
 ### [oqto-m94p] Fix multi-user deploy runner restart to use privileged oqtoctl access (P1, bug)
+Observed on archvm deploy release 20260424110822-2dc496bb5b:
+
+- Activation reached oqto-log migrate/validate pass and then emitted:
+  - "oqto-runner: no systemd service and no running process found, skipping restart"
+  - health check failed
+...
+
 
 ### [oqto-zpvs.41] Fix missing early timeline and assistant/tool split in none-aqua-cant session (P1, bug)
 Repro: session 'Fix Horizontal Codeblock Background Stability | none-aqua-cant | 2026/04/19 - 08:28'. Frontend misses beginning of chat vs oqto-log and Pi JSONL, assistant response appears split into multiple containers, and tool calls still duplicate/split during streaming. Need deterministic reconciliation/render contract fix without heuristics.
@@ -71,6 +80,9 @@ Deliverables
 
 ## Closed
 
+- [oqto-amvk] Make just deploy enforce bin-only remote-build artifact fetch (closed 2026-04-26)
+- [oqto-nhgv] Stabilize user services to prevent restart storms on VM (closed 2026-04-26)
+- [oqto-btr2] Speed up remote-build artifact fetch to avoid deploy stalls (closed 2026-04-26)
 - [oqto-dtq6] Fix provider edit form loading configured baseUrl and context length (closed 2026-04-23)
 - [oqto-7ae5] Render only one retry card per assistant turn (closed 2026-04-21)
 - [oqto-ttbw] Fix recoverable error prominence and settings toggle not applying in chat (closed 2026-04-21)
@@ -1263,13 +1275,13 @@ Deliverables
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
 - [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
+- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
+- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
 - [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
+- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
 - [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
+- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
 - [oqto-xq1e] Add drag-and-drop support to FileTreeView (internal move + OS upload) (closed )
 - [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
-- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
-- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
-- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
-- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
-- [oqto-4ryr] Session rename reverts: update_chat_session returns external_id while list returns platform_id (closed )
 - [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [oqto-4ryr] Session rename reverts: update_chat_session returns external_id while list returns platform_id (closed )

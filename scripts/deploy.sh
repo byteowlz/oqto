@@ -896,8 +896,42 @@ sync_single_user_unit_files() {
     fi
 }
 
-# Restart a single-user service: try systemctl --user, fall back to SIGHUP.
-# Works in both systemd and non-systemd (Docker) environments.
+# Start fallback daemons in non-systemd single-user environments.
+# Currently only oqto-runner is supported because deploy quiesces it pre-migration,
+# and health checks require its socket to come back.
+start_single_user_service_fallback() {
+    local is_local="$1" ssh_target="$2" svc="$3"
+
+    if [[ "$svc" != "oqto-runner" ]]; then
+        return 1
+    fi
+
+    log "No systemd service for $svc, starting foreground daemon in background"
+    host_exec "$is_local" "$ssh_target" '
+        uid=$(id -u)
+        runtime_dir="${XDG_RUNTIME_DIR:-/run/user/${uid}}"
+        mkdir -p "$runtime_dir"
+
+        state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/oqto/deploy"
+        mkdir -p "$state_dir"
+
+        nohup /usr/local/bin/oqto-runner --socket "$runtime_dir/oqto-runner.sock" \
+            >"$state_dir/oqto-runner.log" 2>&1 < /dev/null &
+    ' || return 1
+
+    local attempts=0
+    while [[ "$attempts" -lt 10 ]]; do
+        if host_exec "$is_local" "$ssh_target" "uid=\$(id -u); test -S /run/user/\${uid}/oqto-runner.sock"; then
+            return 0
+        fi
+        attempts=$((attempts + 1))
+        sleep 1
+    done
+
+    return 1
+}
+
+# Restart a single-user service: try systemctl --user, then best-effort fallback.
 restart_single_user_service() {
     local is_local="$1" ssh_target="$2" svc="$3"
 
@@ -907,20 +941,24 @@ restart_single_user_service() {
         return
     fi
 
-    # No systemd service: find process by name and send SIGHUP for graceful restart,
-    # or SIGTERM + wait if SIGHUP is not supported.
+    # No systemd user unit: stop any existing process first.
     local pids
     pids=$(host_exec "$is_local" "$ssh_target" "pgrep -x '$svc' 2>/dev/null" 2>/dev/null || true)
     if [[ -n "$pids" ]]; then
         log "No systemd service for $svc, sending SIGTERM to PID(s): $pids"
         host_exec "$is_local" "$ssh_target" "kill -TERM $pids" || true
-        # Wait briefly for shutdown
         sleep 2
-        # Verify process stopped
         if host_exec "$is_local" "$ssh_target" "pgrep -x '$svc' &>/dev/null" 2>/dev/null; then
             warn "$svc still running after SIGTERM, sending SIGKILL"
             host_exec "$is_local" "$ssh_target" "kill -KILL $pids" || true
         fi
+    fi
+
+    if start_single_user_service_fallback "$is_local" "$ssh_target" "$svc"; then
+        return
+    fi
+
+    if [[ -n "$pids" ]]; then
         warn "$svc was stopped but must be restarted manually (no systemd service found)"
     else
         warn "$svc: no systemd service and no running process found, skipping restart"
@@ -1449,10 +1487,10 @@ build_artifacts() {
             err "Cargo.lock is stale (Cargo.toml=$toml_ver, Cargo.lock=$lock_ver). Run 'just bump patch' or 'cd backend && cargo check' to regenerate."
             return 1
         fi
-        host_exec "true" "" "cd '$ROOT_DIR/backend' && remote-build build --release -p oqto --bin oqto --bin oqto-sandbox"
-        host_exec "true" "" "cd '$ROOT_DIR/backend' && remote-build build --release -p oqto-runner --bin oqto-runner"
-        host_exec "true" "" "cd '$ROOT_DIR/backend' && remote-build build --release -p oqto-files --bin oqto-files"
-        host_exec "true" "" "cd '$ROOT_DIR/backend' && remote-build build --release -p oqto-usermgr --bin oqto-usermgr"
+        host_exec "true" "" "cd '$ROOT_DIR/backend' && REMOTE_BUILD_FETCH_MODE=bins remote-build build --release -p oqto --bin oqto --bin oqto-sandbox"
+        host_exec "true" "" "cd '$ROOT_DIR/backend' && REMOTE_BUILD_FETCH_MODE=bins remote-build build --release -p oqto-runner --bin oqto-runner"
+        host_exec "true" "" "cd '$ROOT_DIR/backend' && REMOTE_BUILD_FETCH_MODE=bins remote-build build --release -p oqto-files --bin oqto-files"
+        host_exec "true" "" "cd '$ROOT_DIR/backend' && REMOTE_BUILD_FETCH_MODE=bins remote-build build --release -p oqto-usermgr --bin oqto-usermgr"
     fi
 
     if [[ "$SKIP_FRONTEND" != "true" ]]; then
@@ -1533,6 +1571,69 @@ run_targets() {
         fi
     done
 }
+
+prime_sudo_credentials() {
+    local -n target_ref=$1
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+        return 0
+    fi
+
+    local i
+    for i in "${target_ref[@]}"; do
+        local name="${H_NAME[$i]}"
+        local ssh_target="${H_SSH[$i]}"
+        local is_local="${H_LOCAL[$i]}"
+
+        log "Requesting sudo authentication up front on $name..."
+
+        if [[ "$is_local" == "true" ]]; then
+            if ! bash -lc "sudo -v"; then
+                err "Sudo authentication failed on $name"
+                return 1
+            fi
+            continue
+        fi
+
+        # Remote hosts can differ:
+        # - some allow non-interactive sudo (cached/NOPASSWD)
+        # - some require a TTY for password entry
+        if ssh "$ssh_target" "sudo -n true" >/dev/null 2>&1; then
+            continue
+        fi
+
+        if ! ssh -tt "$ssh_target" "sudo -v" < /dev/tty; then
+            err "Sudo authentication failed on $name"
+            return 1
+        fi
+    done
+}
+
+if [[ "$CANARY_THEN_FLEET" == "true" ]]; then
+    declare -a sudo_targets
+    collect_targets "true" "true" sudo_targets
+    if [[ "${#sudo_targets[@]}" -eq 0 ]]; then
+        err "No hosts matched filters"
+        exit 1
+    fi
+    prime_sudo_credentials sudo_targets
+elif [[ "$CANARY_ONLY" == "true" ]]; then
+    declare -a sudo_targets
+    collect_targets "true" "false" sudo_targets
+    if [[ "${#sudo_targets[@]}" -eq 0 ]]; then
+        err "No canary hosts selected"
+        exit 1
+    fi
+    prime_sudo_credentials sudo_targets
+else
+    declare -a sudo_targets
+    collect_targets "true" "true" sudo_targets
+    if [[ "${#sudo_targets[@]}" -eq 0 ]]; then
+        err "No hosts matched filters"
+        exit 1
+    fi
+    prime_sudo_credentials sudo_targets
+fi
 
 build_artifacts
 

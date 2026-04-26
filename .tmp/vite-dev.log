@@ -674,3 +674,128 @@ AggregateError [ECONNREFUSED]:
 AggregateError [ECONNREFUSED]: 
     at internalConnectMultiple (node:net:1134:18)
     at afterConnectMultiple (node:net:1715:7)
+12:40:27 AM [vite] ws proxy socket error:
+Error: read ETIMEDOUT
+    at TCP.onStreamRead (node:internal/stream_base_commons:216:20)
+1:08:55 AM [vite] ws proxy socket error:
+Error: read ETIMEDOUT
+    at TCP.onStreamRead (node:internal/stream_base_commons:216:20)
+1:42:35 AM [vite] ws proxy socket error:
+Error: read ETIMEDOUT
+    at TCP.onStreamRead (node:internal/stream_base_commons:216:20)
+2:22:02 AM [vite] ws proxy socket error:
+Error: read ETIMEDOUT
+    at TCP.onStreamRead (node:internal/stream_base_commons:216:20)
+3:46:09 AM [vite] ws proxy socket error:
+Error: read ECONNRESET
+    at TCP.onStreamRead (node:internal/stream_base_commons:216:20)
+4:08:36 AM [vite] ws proxy socket error:
+Error: read ETIMEDOUT
+    at TCP.onStreamRead (node:internal/stream_base_commons:216:20)
+6:56:12 AM [vite] ws proxy socket error:
+Error: read ETIMEDOUT
+    at TCP.onStreamRead (node:internal/stream_base_commons:216:20)
+6:56:12 AM [vite] ws proxy socket error:
+Error: read ETIMEDOUT
+    at TCP.onStreamRead (node:internal/stream_base_commons:216:20)
+7:42:41 AM [vite] ws proxy socket error:
+Error: read ETIMEDOUT
+    at TCP.onStreamRead (node:internal/stream_base_commons:216:20)
+7:43:26 AM [vite] ws proxy socket error:
+Error: read ETIMEDOUT
+    at TCP.onStreamRead (node:internal/stream_base_commons:216:20)
+8:01:48 AM [vite] ws proxy socket error:
+Error: read ETIMEDOUT
+    at TCP.onStreamRead (node:internal/stream_base_commons:216:20)
+8:56:30 AM [vite] page reload public/visual-runtime/vendor/mermaid.min.js
+8:56:30 AM [vite] page reload public/visual-runtime/vendor/chart.umd.min.js
+8:56:30 AM [vite] page reload public/visual-runtime/vendor/morphdom-umd.min.js
+8:56:30 AM [vite] page reload public/visual-runtime/vendor/mermaid-layout-elk.esm.min.mjs
+8:56:30 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/chunk-SP2CHFBE.mjs.map
+8:56:30 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/render-DDKIELPE.mjs.map
+8:56:30 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/chunk-SP2CHFBE.mjs
+8:56:30 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/render-DDKIELPE.mjs
+8:56:30 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/chunk-TWI3KLJS.mjs.map
+8:56:30 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/render-P27B6YR6.mjs.map
+8:56:30 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/chunk-TWI3KLJS.mjs
+8:56:30 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/render-P27B6YR6.mjs
+8:56:30 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/chunk-ZW26E7AF.mjs.map
+8:56:30 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/render-M6WAID4X.mjs.map
+8:56:30 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/chunk-ZW26E7AF.mjs
+8:56:30 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/render-M6WAID4X.mjs
+9:14:32 AM [vite] hmr update /src/styles/globals.css, /apps/admin/ModelsPanel.tsx, /apps/admin/EventBusPanel.tsx, /apps/admin/MetricsPanel.tsx, /apps/admin/InviteCodesPanel.tsx, /apps/admin/SessionsPanel.tsx, /apps/admin/UsersPanel.tsx
+9:14:45 AM [vite] hmr update /apps/admin/ModelsPanel.tsx, /src/styles/globals.css
+9:14:55 AM [vite] page reload public/visual-runtime/vendor/mermaid.min.js
+9:14:55 AM [vite] page reload public/visual-runtime/vendor/chart.umd.min.js
+9:14:55 AM [vite] page reload public/visual-runtime/vendor/morphdom-umd.min.js
+9:14:55 AM [vite] page reload public/visual-runtime/vendor/mermaid-layout-elk.esm.min.mjs
+9:14:55 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/chunk-SP2CHFBE.mjs.map
+9:14:55 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/render-DDKIELPE.mjs.map
+9:14:55 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/chunk-SP2CHFBE.mjs
+9:14:55 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/render-DDKIELPE.mjs
+9:14:55 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/chunk-TWI3KLJS.mjs.map
+9:14:55 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/chunk-TWI3KLJS.mjs
+9:14:55 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/render-P27B6YR6.mjs.map
+9:14:55 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/render-P27B6YR6.mjs
+9:14:55 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/chunk-ZW26E7AF.mjs.map
+9:14:55 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/render-M6WAID4X.mjs.map
+9:14:55 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/chunk-ZW26E7AF.mjs
+9:14:55 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/render-M6WAID4X.mjs
+9:29:38 AM [vite] page reload src/generated/ChatMessage.ts
+9:29:38 AM [vite] page reload src/generated/ChatMessagePart.ts
+9:29:38 AM [vite] page reload src/generated/ChatSession.ts
+9:29:38 AM [vite] page reload src/generated/ChatSessionStats.ts
+9:29:39 AM [vite] page reload src/generated/CreateSessionRequest.ts
+9:29:39 AM [vite] page reload src/generated/RuntimeMode.ts
+9:29:39 AM [vite] page reload src/generated/Session.ts
+9:29:39 AM [vite] page reload src/generated/SessionStatus.ts
+9:29:39 AM [vite] page reload src/generated/SessionResponse.ts
+9:29:39 AM [vite] page reload src/generated/SessionUrls.ts
+9:29:39 AM [vite] page reload src/generated/AddMemberRequest.ts
+9:29:39 AM [vite] page reload src/generated/MemberRole.ts
+9:29:39 AM [vite] page reload src/generated/ConvertToSharedRequest.ts
+9:29:39 AM [vite] page reload src/generated/CreateSharedWorkspaceRequest.ts
+9:29:39 AM [vite] page reload src/generated/CreateSharedWorkspaceWorkdirRequest.ts
+9:29:39 AM [vite] page reload src/generated/SharedWorkspaceInfo.ts
+9:29:39 AM [vite] page reload src/generated/SharedWorkspaceMemberInfo.ts
+9:29:39 AM [vite] page reload src/generated/TransferOwnershipRequest.ts
+9:29:39 AM [vite] page reload src/generated/UpdateMemberRequest.ts
+9:29:39 AM [vite] page reload src/generated/UpdateSharedWorkspaceRequest.ts
+9:29:39 AM [vite] page reload src/generated/UserInfo.ts
+9:29:39 AM [vite] page reload src/generated/UserRole.ts
+9:30:16 AM [vite] page reload src/generated/AddMemberRequest.ts
+9:30:16 AM [vite] page reload src/generated/ChatMessage.ts
+9:30:16 AM [vite] page reload src/generated/ChatMessagePart.ts
+9:30:16 AM [vite] page reload src/generated/ChatSessionStats.ts
+9:30:16 AM [vite] page reload src/generated/ChatSession.ts
+9:30:16 AM [vite] page reload src/generated/ConvertToSharedRequest.ts
+9:30:16 AM [vite] page reload src/generated/UserInfo.ts
+9:30:16 AM [vite] page reload src/generated/CreateSharedWorkspaceRequest.ts
+9:30:16 AM [vite] page reload src/generated/UpdateSharedWorkspaceRequest.ts
+9:30:16 AM [vite] page reload src/generated/CreateSharedWorkspaceWorkdirRequest.ts
+9:30:16 AM [vite] page reload src/generated/UpdateMemberRequest.ts
+9:30:16 AM [vite] page reload src/generated/TransferOwnershipRequest.ts
+9:30:16 AM [vite] page reload src/generated/CreateSessionRequest.ts
+9:30:16 AM [vite] page reload src/generated/SharedWorkspaceMemberInfo.ts
+9:30:16 AM [vite] page reload src/generated/SharedWorkspaceInfo.ts
+9:30:16 AM [vite] page reload src/generated/SessionUrls.ts
+9:30:16 AM [vite] page reload src/generated/SessionStatus.ts
+9:30:16 AM [vite] page reload src/generated/Session.ts
+9:30:16 AM [vite] page reload src/generated/SessionResponse.ts
+10:40:45 AM [vite] page reload public/visual-runtime/vendor/mermaid.min.js
+10:40:45 AM [vite] page reload public/visual-runtime/vendor/chart.umd.min.js
+10:40:45 AM [vite] page reload public/visual-runtime/vendor/morphdom-umd.min.js
+10:40:45 AM [vite] page reload public/visual-runtime/vendor/mermaid-layout-elk.esm.min.mjs
+10:40:45 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/chunk-SP2CHFBE.mjs.map
+10:40:45 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/render-DDKIELPE.mjs.map
+10:40:45 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/chunk-SP2CHFBE.mjs
+10:40:45 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm.min/render-DDKIELPE.mjs
+10:40:45 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/chunk-TWI3KLJS.mjs.map
+10:40:45 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/render-P27B6YR6.mjs.map
+10:40:45 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/chunk-TWI3KLJS.mjs
+10:40:45 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.esm/render-P27B6YR6.mjs
+10:40:45 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/chunk-ZW26E7AF.mjs.map
+10:40:45 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/render-M6WAID4X.mjs.map
+10:40:45 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/chunk-ZW26E7AF.mjs
+10:40:45 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/render-M6WAID4X.mjs
+10:40:45 AM [vite] page reload public/visual-runtime/vendor/chunks/mermaid-layout-elk.core/chunk-ZW26E7AF.mjs
