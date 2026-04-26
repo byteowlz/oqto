@@ -1,5 +1,6 @@
 # ---- ignr (detected: macos) @ 2025-12-08 ----
 .pi/todos/
+.tmp/
 # === macos ===
 # macOS
 # General
