@@ -25,20 +25,15 @@ pub const PI_SOURCE_ID: &str = "pi";
 /// In single-user mode, `Discover` probes the local user's Unix socket and
 /// port-file. In multi-user mode, the runner must supply a per-user endpoint
 /// so connections never cross user boundaries.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum HstryEndpoint {
     /// Auto-discover from the current user's XDG paths (single-user only).
+    #[default]
     Discover,
     /// Connect via a specific Unix socket path.
     UnixSocket(std::path::PathBuf),
     /// Connect via a specific TCP port on localhost.
     Tcp(u16),
-}
-
-impl Default for HstryEndpoint {
-    fn default() -> Self {
-        Self::Discover
-    }
 }
 
 /// Client for communicating with hstry daemon's WriteService.

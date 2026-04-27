@@ -25,9 +25,6 @@ Observed on archvm deploy release 20260424110822-2dc496bb5b:
 ### [oqto-zpvs.41] Fix missing early timeline and assistant/tool split in none-aqua-cant session (P1, bug)
 Repro: session 'Fix Horizontal Codeblock Background Stability | none-aqua-cant | 2026/04/19 - 08:28'. Frontend misses beginning of chat vs oqto-log and Pi JSONL, assistant response appears split into multiple containers, and tool calls still duplicate/split during streaming. Need deterministic reconciliation/render contract fix without heuristics.
 
-### [oqto-zpvs.39] Fix streaming tool duplication and message loss in near-ngos-spin session (P1, bug)
-User reports in session 'Solving Ssh Forwarding Permissions for Oqto Agents' (readable_id near-ngos-spin, 2026/04/19) that tool calls still duplicate during streaming and messages are still lost. Reproduce exact session, compare API vs UI timeline, and fix deterministic merge/render contracts.
-
 ### [oqto-zpvs.6] E2E chaos: automated browser scenarios for reconnect/switch/retry/fork persistence (P1, task)
 Problem
 Most painful regressions only appear under end-to-end timing and UI orchestration.
@@ -80,6 +77,13 @@ Deliverables
 
 ## Closed
 
+- [oqto-3a07] Highlight recently created/modified files in file tree sidebar (closed 2026-04-27)
+- [oqto-kah7] tmp (closed 2026-04-27)
+- [oqto-dmb3] Splash screen: use black logo in light mode (closed 2026-04-27)
+- [oqto-13mz] File tree sidebar doesn't auto-update when agent creates files in expanded subdirs (closed 2026-04-27)
+- [oqto-zpvs.39] Fix streaming tool duplication and message loss in near-ngos-spin session (closed 2026-04-27)
+- [oqto-gfpv] Refine launcher mock prefixes (# workdir, ## session) (closed 2026-04-27)
+- [oqto-m3g0] Prototype unified launcher mock (session history + workdir fuzzy + ! commands) (closed 2026-04-27)
 - [oqto-amvk] Make just deploy enforce bin-only remote-build artifact fetch (closed 2026-04-26)
 - [oqto-nhgv] Stabilize user services to prevent restart storms on VM (closed 2026-04-26)
 - [oqto-btr2] Speed up remote-build artifact fetch to avoid deploy stalls (closed 2026-04-26)
@@ -1275,13 +1279,13 @@ Deliverables
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
 - [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
-- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
-- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
-- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
-- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
-- [oqto-xq1e] Add drag-and-drop support to FileTreeView (internal move + OS upload) (closed )
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
 - [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [oqto-xq1e] Add drag-and-drop support to FileTreeView (internal move + OS upload) (closed )
+- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
+- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
+- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
 - [oqto-4ryr] Session rename reverts: update_chat_session returns external_id while list returns platform_id (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
+- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
+- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )

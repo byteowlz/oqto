@@ -3802,7 +3802,20 @@ impl PiSessionManager {
                         pending_messages.clear();
                         continue;
                     }
-                    if !pi_native_id_known {
+
+                    let duplicate_agent_end_delta = {
+                        let buffer = message_buffer.read().await;
+                        is_duplicate_agent_end_tail(&buffer, &pending_messages)
+                    };
+                    if duplicate_agent_end_delta {
+                        debug!(
+                            "Pi[{}] skipping duplicate AgentEnd delta ({} message(s)) already at buffer tail",
+                            session_id,
+                            pending_messages.len()
+                        );
+                    }
+
+                    if !duplicate_agent_end_delta && !pi_native_id_known {
                         debug!(
                             "Pi[{}] skipping hstry persist on AgentEnd: native session ID not known yet",
                             session_id
@@ -3837,7 +3850,7 @@ impl PiSessionManager {
                         }
                     }
                     // Persist to oqto-log (authoritative store target) as part of migration.
-                    if let Ok(home) = std::env::var("HOME") {
+                    if !duplicate_agent_end_delta && let Ok(home) = std::env::var("HOME") {
                         let pending_messages_for_oqto = pending_messages.clone();
                         let user_id =
                             std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
@@ -3905,7 +3918,7 @@ impl PiSessionManager {
                     // Pi commonly emits only the turn delta (user+assistant). Append
                     // these to preserve full active-session history; if a larger
                     // snapshot arrives, replace with that snapshot as ground truth.
-                    {
+                    if !duplicate_agent_end_delta {
                         let mut buffer = message_buffer.write().await;
                         if pending_messages.len() <= 2 && !buffer.is_empty() {
                             let start_idx = buffer.len();
@@ -5280,6 +5293,48 @@ async fn write_stream_trace(file: Option<&mut tokio::fs::File>, value: serde_jso
     }
 }
 
+fn chat_message_dedupe_signature(message: &ChatMessageProto) -> String {
+    let mut parts = Vec::with_capacity(message.parts.len());
+    for part in &message.parts {
+        parts.push(serde_json::json!({
+            "type": part.part_type,
+            "text": part.text,
+            "tool_name": part.tool_name,
+            "tool_call_id": part.tool_call_id,
+            "tool_input": part.tool_input,
+            "tool_output": part.tool_output,
+            "tool_status": part.tool_status,
+        }));
+    }
+
+    serde_json::to_string(&serde_json::json!({
+        "role": message.role.to_ascii_lowercase(),
+        "client_id": message.client_id,
+        "model_id": message.model_id,
+        "provider_id": message.provider_id,
+        "parts": parts,
+    }))
+    .unwrap_or_default()
+}
+
+fn agent_message_dedupe_signature(message: &AgentMessage) -> String {
+    let proto = agent_msg_to_chat_proto(message, 0, "dedupe");
+    chat_message_dedupe_signature(&proto)
+}
+
+fn is_duplicate_agent_end_tail(buffer: &[ChatMessageProto], messages: &[AgentMessage]) -> bool {
+    if buffer.is_empty() || messages.is_empty() || messages.len() > buffer.len() {
+        return false;
+    }
+
+    let tail = &buffer[buffer.len() - messages.len()..];
+    tail.iter()
+        .zip(messages.iter())
+        .all(|(existing, incoming)| {
+            chat_message_dedupe_signature(existing) == agent_message_dedupe_signature(incoming)
+        })
+}
+
 async fn fetch_last_hstry_idx(client: &HstryClient, session_id: &str) -> Option<i32> {
     match client.get_messages(session_id, None, None).await {
         Ok(messages) => messages
@@ -5478,6 +5533,54 @@ mod tests {
 
         let parsed: PiSessionState = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, PiSessionState::Streaming);
+    }
+
+    fn test_agent_message(role: &str, text: &str, client_id: Option<&str>) -> AgentMessage {
+        let mut extra = std::collections::HashMap::new();
+        if let Some(client_id) = client_id {
+            extra.insert("client_id".to_string(), serde_json::json!(client_id));
+        }
+        AgentMessage {
+            role: role.to_string(),
+            content: serde_json::json!([{ "type": "text", "text": text }]),
+            timestamp: Some(1_777_287_200),
+            tool_call_id: None,
+            tool_name: None,
+            is_error: None,
+            api: None,
+            provider: Some("provider-a".to_string()),
+            model: Some("model-a".to_string()),
+            usage: None,
+            stop_reason: None,
+            extra,
+        }
+    }
+
+    #[test]
+    fn duplicate_agent_end_tail_detects_replayed_assistant_delta() {
+        let incoming = vec![test_agent_message("assistant", "same response", None)];
+        let buffer = vec![agent_msg_to_chat_proto(&incoming[0], 0, "sess")];
+
+        assert!(is_duplicate_agent_end_tail(&buffer, &incoming));
+    }
+
+    #[test]
+    fn duplicate_agent_end_tail_keeps_repeated_user_turn_with_new_client_id() {
+        let prior = vec![
+            test_agent_message("user", "repeat", Some("client-a")),
+            test_agent_message("assistant", "same response", None),
+        ];
+        let incoming = vec![
+            test_agent_message("user", "repeat", Some("client-b")),
+            test_agent_message("assistant", "same response", None),
+        ];
+        let buffer = prior
+            .iter()
+            .enumerate()
+            .map(|(idx, msg)| agent_msg_to_chat_proto(msg, idx, "sess"))
+            .collect::<Vec<_>>();
+
+        assert!(!is_duplicate_agent_end_tail(&buffer, &incoming));
     }
 
     #[test]

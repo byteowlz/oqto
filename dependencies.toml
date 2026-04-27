@@ -9,8 +9,8 @@ description = "Main platform (this repo)"
 
 [byteowlz]
 # Core backend services
-eavs = "0.6.0"
-hstry = "0.5.14"
+eavs = "0.6.2"
+hstry = "0.5.15"
 mmry = "0.10.3"
 trx = "0.4.0"
 agntz = "0.3.0"

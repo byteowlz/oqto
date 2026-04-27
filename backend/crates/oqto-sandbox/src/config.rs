@@ -2296,22 +2296,23 @@ log_requests = true
         let ws = temp.path();
 
         let mut cfg = SandboxConfig::from_profile("development");
-        assert!(cfg.disable_userns, "development preset expected disable_userns=true");
+        assert!(
+            cfg.disable_userns,
+            "development preset expected disable_userns=true"
+        );
         cfg.landlock_mode = LandlockMode::Enforce;
         cfg.allow_write = vec![ws.to_string_lossy().to_string()];
 
-        let args = cfg
-            .build_bwrap_args_for_user(ws, None)
-            .expect("bwrap args");
+        let args = cfg.build_bwrap_args_for_user(ws, None).expect("bwrap args");
 
         let has_shim_bind = args
             .windows(3)
             .any(|w| w[0] == "--ro-bind" && w[2] == crate::shim::SHIM_MOUNT_PATH);
         assert!(has_shim_bind, "shim --ro-bind missing: {args:?}");
 
-        let has_mode_env = args.windows(3).any(|w| {
-            w[0] == "--setenv" && w[1] == crate::shim::ENV_MODE && w[2] == "enforce"
-        });
+        let has_mode_env = args
+            .windows(3)
+            .any(|w| w[0] == "--setenv" && w[1] == crate::shim::ENV_MODE && w[2] == "enforce");
         assert!(has_mode_env, "OQTO_LANDLOCK_MODE setenv missing: {args:?}");
 
         let sep_idx = args.iter().rposition(|a| a == "--").expect("no --");
@@ -2337,9 +2338,7 @@ log_requests = true
         let mut cfg = SandboxConfig::from_profile("minimal");
         cfg.landlock_mode = LandlockMode::Off;
 
-        let args = cfg
-            .build_bwrap_args_for_user(ws, None)
-            .expect("bwrap args");
+        let args = cfg.build_bwrap_args_for_user(ws, None).expect("bwrap args");
 
         let has_shim_bind = args
             .windows(3)
@@ -2377,9 +2376,8 @@ log_requests = true
             .expect("audit must not fail");
 
         let outside_file = outside.path().join("audit-probe");
-        std::fs::write(&outside_file, b"ok").expect(
-            "audit mode must not restrict writes; got EACCES (regression of oqto-2eev)",
-        );
+        std::fs::write(&outside_file, b"ok")
+            .expect("audit mode must not restrict writes; got EACCES (regression of oqto-2eev)");
         let _ = std::fs::remove_file(&outside_file);
     }
 }
