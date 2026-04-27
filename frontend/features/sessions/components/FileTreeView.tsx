@@ -85,6 +85,12 @@ const treeInFlight = new Map<string, Promise<FileNode[]>>();
 const INITIAL_DEPTH = 2;
 const LAZY_LOAD_DEPTH = 2;
 
+// How long a "just changed" tint stays on a row before fading out.
+const HIGHLIGHT_DURATION_MS = 4000;
+
+type HighlightKind = "created" | "modified";
+type HighlightMap = Map<string, { kind: HighlightKind; expiresAt: number }>;
+
 function getTreeCacheKey(
 	workspaceKey: string,
 	path: string,
@@ -140,6 +146,14 @@ function setCachedTree(
 		if (firstKey) treeCache.delete(firstKey);
 	}
 	treeCache.set(key, { data, timestamp: Date.now() });
+}
+
+function removeCachedTree(
+	workspaceKey: string,
+	path: string,
+	depth = INITIAL_DEPTH,
+): void {
+	treeCache.delete(getTreeCacheKey(workspaceKey, path, depth));
 }
 
 async function fetchFileTree(
@@ -457,6 +471,14 @@ export function FileTreeView({
 		useState<MediaType>("all");
 	const [internalCurrentPath, setInternalCurrentPath] = useState<string>(".");
 
+	// Recently-changed paths (for fade-in highlight). Keyed by workspace-relative
+	// path; value carries the kind and an absolute expiry timestamp. A single
+	// sweep timer evicts expired entries after HIGHLIGHT_DURATION_MS of quiet.
+	const [highlights, setHighlights] = useState<HighlightMap>(() => new Map());
+	const highlightSweepTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+		null,
+	);
+
 	const expanded = state?.expanded ?? internalExpanded;
 	const selectedFile = state?.selectedFile ?? internalSelectedFile;
 	const selectedFiles = state?.selectedFiles ?? internalSelectedFiles;
@@ -647,16 +669,28 @@ export function FileTreeView({
 		};
 	}, [normalizedWorkspacePath, isRecovering, retryAttempt, currentPath]);
 
+	// Refs so the file_changed subscription doesn't churn on every render.
+	const lazyLoadChildrenRef = useRef(lazyLoadChildren);
+	lazyLoadChildrenRef.current = lazyLoadChildren;
+	const expandedRef = useRef(expanded);
+	expandedRef.current = expanded;
+	const currentPathRef = useRef(currentPath);
+	currentPathRef.current = currentPath;
+
 	// Watch workspace for file changes via inotify (backend-side).
 	// When files are created/modified/deleted, the backend pushes events
-	// through the WebSocket. We debounce and refresh the tree.
+	// through the WebSocket. We debounce, then refresh only the directories
+	// affected by the changes (currentPath or expanded subdirs) so that
+	// lazy-loaded children don't get wiped out by a blanket re-fetch.
 	useEffect(() => {
-		if (!normalizedWorkspacePath) return;
+		if (!normalizedWorkspacePath || !cacheKey) return;
 
 		// Start watching this workspace on the server
 		watchFilesMux(normalizedWorkspacePath).catch(() => {});
 
 		let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+		const pendingDirs = new Set<string>();
+		const pendingHighlights = new Map<string, "created" | "modified">();
 		let unsub: (() => void) | undefined;
 
 		try {
@@ -669,10 +703,93 @@ export function FileTreeView({
 				) {
 					return;
 				}
-				// Debounce: wait 500ms after last event before refreshing
+				const eventPath: string =
+					typeof event.path === "string" ? event.path : "";
+				if (!eventPath) return;
+
+				// Workspace-relative parent: "src/foo.rs" -> "src"; "foo.rs" -> "."
+				const lastSlash = eventPath.lastIndexOf("/");
+				const parentDir =
+					lastSlash === -1 ? "." : eventPath.slice(0, lastSlash);
+				pendingDirs.add(parentDir);
+
+				// Track highlight kind for the changed path. Skip deletes (the row
+				// disappears on refresh) and prefer "created" if a path got both.
+				const evType: string =
+					typeof event.event_type === "string" ? event.event_type : "";
+				if (evType === "file_created" || evType === "dir_created") {
+					pendingHighlights.set(eventPath, "created");
+				} else if (
+					evType === "file_modified" &&
+					pendingHighlights.get(eventPath) !== "created"
+				) {
+					pendingHighlights.set(eventPath, "modified");
+				}
+
 				if (debounceTimer) clearTimeout(debounceTimer);
 				debounceTimer = setTimeout(() => {
-					loadTreeRef.current(currentPath, true, true, true);
+					const dirs = Array.from(pendingDirs);
+					const flushHighlights = new Map(pendingHighlights);
+					pendingDirs.clear();
+					pendingHighlights.clear();
+					debounceTimer = null;
+
+					const cp = currentPathRef.current;
+					const exp = expandedRef.current;
+					let refreshedRoot = false;
+
+					for (const dir of dirs) {
+						// Bust both depth variants so the next fetch returns fresh data.
+						removeCachedTree(cacheKey, dir, INITIAL_DEPTH);
+						removeCachedTree(cacheKey, dir, LAZY_LOAD_DEPTH);
+
+						if (dir === cp) {
+							if (!refreshedRoot) {
+								loadTreeRef.current(cp, true, true, true);
+								refreshedRoot = true;
+							}
+						} else if (exp[dir]) {
+							// Visible expanded subtree: re-fetch and merge in place,
+							// preserving siblings' lazy-loaded children.
+							void lazyLoadChildrenRef.current(dir);
+						}
+						// Else: change is in a collapsed subtree -- nothing to update.
+						// Cache is already invalidated, so the next expand fetches fresh.
+					}
+
+					if (flushHighlights.size > 0) {
+						const expiresAt = Date.now() + HIGHLIGHT_DURATION_MS;
+						setHighlights((prev) => {
+							const next = new Map(prev);
+							for (const [path, kind] of flushHighlights) {
+								// Don't downgrade an existing "created" to "modified".
+								if (kind === "modified" && next.get(path)?.kind === "created") {
+									continue;
+								}
+								next.set(path, { kind, expiresAt });
+							}
+							return next;
+						});
+						if (highlightSweepTimerRef.current) {
+							clearTimeout(highlightSweepTimerRef.current);
+						}
+						highlightSweepTimerRef.current = setTimeout(() => {
+							highlightSweepTimerRef.current = null;
+							setHighlights((prev) => {
+								if (prev.size === 0) return prev;
+								const now = Date.now();
+								const next = new Map(prev);
+								let changed = false;
+								for (const [path, h] of next) {
+									if (h.expiresAt <= now) {
+										next.delete(path);
+										changed = true;
+									}
+								}
+								return changed ? next : prev;
+							});
+						}, HIGHLIGHT_DURATION_MS);
+					}
 				}, 500);
 			});
 		} catch {
@@ -682,9 +799,13 @@ export function FileTreeView({
 		return () => {
 			unsub?.();
 			if (debounceTimer) clearTimeout(debounceTimer);
+			if (highlightSweepTimerRef.current) {
+				clearTimeout(highlightSweepTimerRef.current);
+				highlightSweepTimerRef.current = null;
+			}
 			unwatchFilesMux(normalizedWorkspacePath).catch(() => {});
 		};
-	}, [normalizedWorkspacePath, currentPath]);
+	}, [normalizedWorkspacePath, cacheKey]);
 
 	/** Find a node in the tree by path. */
 	const findNode = useCallback(
@@ -1656,6 +1777,7 @@ export function FileTreeView({
 							onOpenInGallery={handleOpenLightbox}
 							loadingDirs={loadingDirs}
 							dropTargetPath={dropTargetPath}
+							highlights={highlights}
 						/>
 					) : viewMode === "list" ? (
 						<ListView
@@ -2205,6 +2327,7 @@ function TreeView({
 	onOpenInGallery,
 	loadingDirs,
 	dropTargetPath,
+	highlights,
 }: {
 	nodes: FileNode[];
 	expanded: Record<string, boolean>;
@@ -2235,6 +2358,7 @@ function TreeView({
 	onOpenInGallery?: (path: string) => void;
 	loadingDirs?: Set<string>;
 	dropTargetPath?: string | null;
+	highlights?: HighlightMap;
 }) {
 	// Sort: directories first, then files, both alphabetically
 	const sortedNodes = [...nodes].sort((a, b) => {
@@ -2269,6 +2393,7 @@ function TreeView({
 					onOpenInGallery={onOpenInGallery}
 					loadingDirs={loadingDirs}
 					dropTargetPath={dropTargetPath}
+					highlights={highlights}
 				/>
 			))}
 		</ul>
@@ -2298,6 +2423,7 @@ function TreeRow({
 	onOpenInGallery,
 	loadingDirs,
 	dropTargetPath,
+	highlights,
 }: {
 	node: FileNode;
 	level: number;
@@ -2329,6 +2455,7 @@ function TreeRow({
 	onOpenInGallery?: (path: string) => void;
 	loadingDirs?: Set<string>;
 	dropTargetPath?: string | null;
+	highlights?: HighlightMap;
 }) {
 	const isDir = node.type === "directory";
 	const isExpanded = expanded[node.path];
@@ -2336,6 +2463,7 @@ function TreeRow({
 	const isRenaming = renamingPath === node.path;
 	const isLoading = loadingDirs?.has(node.path) ?? false;
 	const isDropTarget = isDir && dropTargetPath === node.path;
+	const highlight = highlights?.get(node.path);
 
 	// Sort children: directories first, then files
 	const sortedChildren = node.children
@@ -2390,10 +2518,14 @@ function TreeRow({
 						e.dataTransfer.effectAllowed = "move";
 					}}
 					className={cn(
-						"flex items-center gap-1.5 py-1.5 px-2 cursor-pointer transition-colors w-full",
+						"flex items-center gap-1.5 py-1.5 px-2 cursor-pointer transition-colors duration-700 w-full",
 						isSelected
 							? "bg-primary/10 text-primary"
-							: "hover:bg-muted text-muted-foreground hover:text-foreground",
+							: highlight?.kind === "created"
+								? "bg-emerald-500/15 text-foreground hover:bg-emerald-500/20"
+								: highlight?.kind === "modified"
+									? "bg-amber-500/15 text-foreground hover:bg-amber-500/20"
+									: "hover:bg-muted text-muted-foreground hover:text-foreground",
 						isDropTarget && "ring-2 ring-inset ring-primary bg-primary/10",
 					)}
 					style={{ paddingLeft: `${level * 16 + 8}px` }}
@@ -2463,6 +2595,7 @@ function TreeRow({
 								onOpenInGallery={onOpenInGallery}
 								loadingDirs={loadingDirs}
 								dropTargetPath={dropTargetPath}
+								highlights={highlights}
 							/>
 						))}
 					</ul>

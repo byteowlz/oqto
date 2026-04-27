@@ -881,17 +881,13 @@ async fn sync_eavs_models_json_inner(
     linux_users.write_file_as_user(linux_username, &pi_dir, "models.json", &models_content)?;
 
     // Write auto-rename.json from config (configurable via [pi.auto_rename] in config.toml).
-    if let Some(auto_rename) = auto_rename_config {
-        if !auto_rename.is_null() && auto_rename.is_object() {
-            if let Ok(content) = serde_json::to_string_pretty(auto_rename) {
-                let _ = linux_users.write_file_as_user(
-                    linux_username,
-                    &pi_dir,
-                    "auto-rename.json",
-                    &content,
-                );
-            }
-        }
+    if let Some(auto_rename) = auto_rename_config
+        && !auto_rename.is_null()
+        && auto_rename.is_object()
+        && let Ok(content) = serde_json::to_string_pretty(auto_rename)
+    {
+        let _ =
+            linux_users.write_file_as_user(linux_username, &pi_dir, "auto-rename.json", &content);
     }
 
     Ok(())

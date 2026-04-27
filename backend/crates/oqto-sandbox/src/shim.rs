@@ -106,8 +106,7 @@ fn run_shim_linux() -> Result<()> {
         // SAFETY: prctl with fixed flag constants.
         let rc = unsafe { libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1u64, 0u64, 0u64, 0u64) };
         if rc != 0 {
-            return Err(std::io::Error::last_os_error())
-                .context("PR_SET_NO_NEW_PRIVS in shim");
+            return Err(std::io::Error::last_os_error()).context("PR_SET_NO_NEW_PRIVS in shim");
         }
 
         let workspace: PathBuf = env::var(ENV_WORKSPACE)
@@ -148,8 +147,8 @@ fn run_shim_linux() -> Result<()> {
     let cmd = CString::new(argv[0].as_str()).context("command contains NUL byte")?;
     let c_argv: Vec<CString> = argv
         .iter()
-        .map(|s| CString::new(s.as_str()).expect("argv element contains NUL byte"))
-        .collect();
+        .map(|s| CString::new(s.as_str()).context("argv element contains NUL byte"))
+        .collect::<Result<Vec<_>>>()?;
     let mut c_argv_ptrs: Vec<*const libc::c_char> = c_argv.iter().map(|s| s.as_ptr()).collect();
     c_argv_ptrs.push(std::ptr::null());
 

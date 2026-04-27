@@ -1,0 +1,567 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Oqto Launcher Mock</title>
+  <style>
+    :root {
+      --bg: #0b1020;
+      --panel: #111831;
+      --muted: #8f9ac1;
+      --text: #e9eeff;
+      --line: #273154;
+      --accent: #66c2ff;
+      --accent-2: #8a7dff;
+      --ok: #4de6a6;
+      --warn: #ffce6b;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      background: radial-gradient(1200px 700px at 20% -20%, #1d2b63 0%, #0b1020 45%) fixed;
+      color: var(--text);
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+    }
+
+    .app {
+      width: min(980px, 100%);
+      display: grid;
+      gap: 14px;
+    }
+
+    .hint {
+      color: var(--muted);
+      font-size: 13px;
+      text-align: center;
+    }
+
+    .palette {
+      border: 1px solid var(--line);
+      background: linear-gradient(180deg, #141d3a 0%, #101730 100%);
+      border-radius: 16px;
+      box-shadow: 0 14px 40px rgba(0, 0, 0, 0.35);
+      overflow: hidden;
+    }
+
+    .topbar {
+      display: grid;
+      gap: 10px;
+      padding: 16px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .input-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: #0c1230;
+      border: 1px solid #2a3562;
+      border-radius: 10px;
+      padding: 10px 12px;
+    }
+
+    .prompt {
+      color: var(--accent);
+      font-weight: 700;
+      letter-spacing: .3px;
+    }
+
+    input {
+      background: transparent;
+      border: 0;
+      outline: none;
+      color: var(--text);
+      width: 100%;
+      font-size: 16px;
+    }
+
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .chip {
+      border: 1px solid #2a3562;
+      border-radius: 999px;
+      padding: 4px 8px;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .results {
+      max-height: 560px;
+      overflow: auto;
+    }
+
+    .section {
+      padding: 10px 12px 6px;
+      font-size: 11px;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .item {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      padding: 11px 14px;
+      border-top: 1px solid rgba(42,53,98,.5);
+      cursor: pointer;
+      align-items: center;
+    }
+
+    .item:hover, .item.active {
+      background: linear-gradient(90deg, rgba(102,194,255,.14), rgba(138,125,255,.11));
+    }
+
+    .title-line {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      font-size: 14px;
+    }
+
+    .meta {
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .badge {
+      border: 1px solid #34539e;
+      border-radius: 999px;
+      padding: 1px 6px;
+      font-size: 11px;
+      color: #bdd6ff;
+    }
+
+    .kbd {
+      border: 1px solid #3a456f;
+      border-bottom-width: 2px;
+      border-radius: 6px;
+      padding: 2px 6px;
+      color: #c8d8ff;
+      font-size: 11px;
+      background: #151d3a;
+    }
+
+    .right {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .empty {
+      padding: 28px;
+      text-align: center;
+      color: var(--muted);
+      font-size: 14px;
+      border-top: 1px solid var(--line);
+    }
+
+    .toast {
+      position: fixed;
+      right: 18px;
+      bottom: 16px;
+      background: #0d1431;
+      border: 1px solid #39528f;
+      border-radius: 10px;
+      padding: 10px 12px;
+      color: #dce8ff;
+      font-size: 13px;
+      opacity: 0;
+      transform: translateY(10px);
+      transition: .2s ease;
+      pointer-events: none;
+    }
+    .toast.show { opacity: 1; transform: translateY(0); }
+
+    .legend {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: center;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .dot { width: 7px; height: 7px; border-radius: 999px; display: inline-block; }
+    .d1 { background: var(--ok); }
+    .d2 { background: var(--accent); }
+    .d3 { background: var(--warn); }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="hint">Standalone Oqto launcher mock · Tuna-inspired command shape (subject → action → target)</div>
+
+    <div class="palette">
+      <div class="topbar">
+        <div class="input-row">
+          <span class="prompt" id="prompt">#</span>
+          <input id="query" placeholder="#mmry filters workdirs · ##retry filters sessions · ! runs commands" autofocus />
+        </div>
+        <div class="chips">
+          <div class="chip" data-insert="#"># workdirs</div>
+          <div class="chip" data-insert="##">## sessions</div>
+          <div class="chip" data-insert="! ">! commands</div>
+          <div class="chip" data-insert="#mmry">#mmry</div>
+          <div class="chip" data-insert="##retry">##retry</div>
+          <div class="chip" data-insert="! session.new --workdir ~/byteowlz/mmry">typed command</div>
+        </div>
+      </div>
+      <div id="results" class="results"></div>
+      <div id="empty" class="empty" hidden>No results. Try #workdir, ##session, or !command</div>
+    </div>
+
+    <div class="legend">
+      <span><span class="dot d1"></span> Enter: run/switch</span>
+      <span><span class="dot d2"></span> Ctrl/Cmd+K: focus · Ctrl/Cmd+Shift+K: # workdirs · Ctrl/Cmd+Shift+P: ! commands</span>
+      <span><span class="dot d3"></span> Tab: # → ## → ! · Alt+Enter: new session in workdir</span>
+    </div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <script>
+    const sessions = [
+      { id: 's1', title: 'Fix canonical event retry bug', workdir: '~/byteowlz/oqto_refactor', harness: 'pi', model: 'claude-sonnet-4.5', lastActiveMin: 4, launches: 22 },
+      { id: 's2', title: 'Runner persistence invariants e2e', workdir: '~/byteowlz/oqto_refactor', harness: 'pi', model: 'gpt-5-codex', lastActiveMin: 31, launches: 17 },
+      { id: 's3', title: 'mmry semantic ranking tuning', workdir: '~/byteowlz/mmry', harness: 'pi', model: 'claude-sonnet-4.5', lastActiveMin: 70, launches: 12 },
+      { id: 's4', title: 'trx CLI UX polish', workdir: '~/byteowlz/trx', harness: 'pi', model: 'gpt-5-mini', lastActiveMin: 182, launches: 9 },
+      { id: 's5', title: 'EAVS oauth account labels', workdir: '~/byteowlz/eavs', harness: 'pi', model: 'claude-sonnet-4.5', lastActiveMin: 250, launches: 11 },
+      { id: 's6', title: 'Frontend cmd palette scaffold', workdir: '~/byteowlz/oqto_refactor/frontend', harness: 'pi', model: 'gpt-5-codex', lastActiveMin: 430, launches: 15 },
+    ];
+
+    const commands = [
+      { id: 'session.switch', desc: 'Switch to session by id/title/workdir', sample: '! session.switch --query oqto' },
+      { id: 'session.new', desc: 'Start new session', sample: '! session.new --workdir ~/byteowlz/oqto_refactor' },
+      { id: 'session.resume_last', desc: 'Resume last active session', sample: '! session.resume_last' },
+      { id: 'workdir.open', desc: 'Open workdir in file panel', sample: '! workdir.open --path ~/byteowlz/mmry' },
+      { id: 'agent.set_model', desc: 'Set model for active session', sample: '! agent.set_model --model claude-sonnet-4.5' },
+      { id: 'session.fork', desc: 'Fork active session', sample: '! session.fork --from active' },
+    ];
+
+    const queryEl = document.getElementById('query');
+    const promptEl = document.getElementById('prompt');
+    const resultsEl = document.getElementById('results');
+    const emptyEl = document.getElementById('empty');
+    const toastEl = document.getElementById('toast');
+
+    let selectedIndex = 0;
+    let rendered = [];
+
+    function nowAgo(min) {
+      if (min < 60) return `${min}m ago`;
+      const h = Math.floor(min / 60);
+      if (h < 24) return `${h}h ago`;
+      return `${Math.floor(h / 24)}d ago`;
+    }
+
+    function fuzzyScore(query, text) {
+      if (!query) return 0;
+      const q = query.toLowerCase();
+      const t = text.toLowerCase();
+      if (t.includes(q)) return 120 - (t.indexOf(q) * 0.2);
+      let qi = 0, score = 0, streak = 0;
+      for (let i = 0; i < t.length && qi < q.length; i++) {
+        if (t[i] === q[qi]) {
+          streak += 1;
+          score += 5 + streak * 1.5;
+          qi++;
+        } else {
+          streak = 0;
+        }
+      }
+      return qi === q.length ? score : -1;
+    }
+
+    function modeFor(input) {
+      const raw = input.trimStart();
+      if (raw.startsWith('!')) return 'commands';
+      if (raw.startsWith('##')) return 'sessions';
+      return 'workdirs';
+    }
+
+    function stripped(input) {
+      const raw = input.trimStart();
+      if (raw.startsWith('##')) return raw.slice(2).trim();
+      if (raw.startsWith('#') || raw.startsWith('!')) return raw.slice(1).trim();
+      return raw.trim();
+    }
+
+    function render() {
+      const raw = queryEl.value;
+      const mode = modeFor(raw);
+      promptEl.textContent = mode === 'commands' ? '!' : mode === 'sessions' ? '##' : '#';
+      const q = stripped(raw);
+
+      rendered = [];
+      resultsEl.innerHTML = '';
+
+      if (mode === 'workdirs') {
+        const workdirs = [...new Set(sessions.map(s => s.workdir))]
+          .map(workdir => {
+            const fuzzy = q ? fuzzyScore(q, workdir) : 10;
+            if (q && fuzzy < 0) return null;
+            const inWorkdir = sessions.filter(s => s.workdir === workdir);
+            const latest = inWorkdir.sort((a,b) => a.lastActiveMin - b.lastActiveMin)[0];
+            const recency = Math.max(0, 90 - Math.min(90, latest.lastActiveMin));
+            const frequency = Math.min(30, inWorkdir.reduce((sum, s) => sum + s.launches, 0));
+            return { workdir, sessions: inWorkdir, latest, score: fuzzy + recency + frequency };
+          })
+          .filter(Boolean)
+          .sort((a,b) => b.score - a.score);
+
+        if (workdirs.length) {
+          addSection('Workdirs');
+          workdirs.forEach(entry => addWorkdir(entry));
+
+          const top = workdirs[0];
+          addSection(`Sessions in ${top.workdir}`);
+          top.sessions
+            .sort((a,b) => a.lastActiveMin - b.lastActiveMin)
+            .forEach(addSession);
+        }
+
+        if (!workdirs.length && q && q.includes('/')) {
+          addSection('Custom Workdir');
+          addNewWorkdir(q);
+        }
+      } else if (mode === 'sessions') {
+        const ranked = sessions
+          .map(s => {
+            const text = `${s.title} ${s.workdir} ${s.harness} ${s.model}`;
+            const fuzzy = q ? fuzzyScore(q, text) : 10;
+            if (q && fuzzy < 0) return null;
+            const recency = Math.max(0, 60 - Math.min(60, s.lastActiveMin));
+            const frequency = Math.min(25, s.launches * 1.1);
+            const score = fuzzy + recency + frequency;
+            return { type: 'session', s, score };
+          })
+          .filter(Boolean)
+          .sort((a,b) => b.score - a.score);
+
+        if (ranked.length) {
+          addSection('Recent & Matching Sessions');
+          ranked.forEach(entry => addSession(entry.s));
+        }
+      } else {
+        const ranked = commands
+          .map(c => {
+            const text = `${c.id} ${c.desc} ${c.sample}`;
+            const score = q ? fuzzyScore(q, text) : 10;
+            if (q && score < 0) return null;
+            return { c, score };
+          })
+          .filter(Boolean)
+          .sort((a,b) => b.score - a.score);
+
+        addSection('Command API');
+        ranked.forEach(({c}) => addCommand(c));
+
+        if (q && q.includes(' ')) {
+          addSection('Raw Command');
+          addRaw(q);
+        }
+      }
+
+      if (!rendered.length) {
+        emptyEl.hidden = false;
+      } else {
+        emptyEl.hidden = true;
+        selectedIndex = Math.min(selectedIndex, rendered.length - 1);
+      }
+
+      paintActive();
+    }
+
+    function addSection(label) {
+      const sec = document.createElement('div');
+      sec.className = 'section';
+      sec.textContent = label;
+      resultsEl.appendChild(sec);
+    }
+
+    function makeItem(titleHTML, metaText, rightText, payload) {
+      const i = document.createElement('div');
+      i.className = 'item';
+      const left = document.createElement('div');
+      left.innerHTML = `<div class="title-line">${titleHTML}</div><div class="meta">${metaText}</div>`;
+      const right = document.createElement('div');
+      right.className = 'right';
+      right.innerHTML = rightText;
+      i.appendChild(left);
+      i.appendChild(right);
+      i.addEventListener('click', () => {
+        selectedIndex = rendered.findIndex(x => x.payload === payload);
+        paintActive();
+        executeSelected();
+      });
+      resultsEl.appendChild(i);
+      rendered.push({ el: i, payload });
+    }
+
+    function addSession(s) {
+      makeItem(
+        `<strong>${escapeHtml(s.title)}</strong><span class="badge">${escapeHtml(s.harness)}</span><span class="badge">${escapeHtml(s.model)}</span>`,
+        `${escapeHtml(s.workdir)} · last active ${nowAgo(s.lastActiveMin)}`,
+        `<span class="kbd">Enter</span> switch <span class="kbd">⌥+Enter</span> new`,
+        { kind: 'session', s }
+      );
+    }
+
+    function addWorkdir(entry) {
+      makeItem(
+        `<strong>${escapeHtml(entry.workdir)}</strong><span class="badge">${entry.sessions.length} session${entry.sessions.length === 1 ? '' : 's'}</span>`,
+        `latest: ${escapeHtml(entry.latest.title)} · ${nowAgo(entry.latest.lastActiveMin)}`,
+        `<span class="kbd">Enter</span> latest <span class="kbd">⌥+Enter</span> new`,
+        { kind: 'workdir', workdir: entry.workdir, latest: entry.latest }
+      );
+    }
+
+    function addNewWorkdir(w) {
+      makeItem(
+        `<strong>Start new session</strong> <span class="badge">workdir</span>`,
+        w,
+        `<span class="kbd">Enter</span> new`,
+        { kind: 'new_workdir', workdir: w }
+      );
+    }
+
+    function addCommand(c) {
+      makeItem(
+        `<strong>${escapeHtml(c.id)}</strong> <span class="badge">API</span>`,
+        `${escapeHtml(c.desc)} · ${escapeHtml(c.sample)}`,
+        `<span class="kbd">Enter</span> run`,
+        { kind: 'command', c }
+      );
+    }
+
+    function addRaw(raw) {
+      makeItem(
+        `<strong>${escapeHtml(raw)}</strong> <span class="badge">raw</span>`,
+        'Execute literal command payload',
+        `<span class="kbd">Enter</span> run`,
+        { kind: 'raw', raw }
+      );
+    }
+
+    function paintActive() {
+      rendered.forEach((r, i) => r.el.classList.toggle('active', i === selectedIndex));
+    }
+
+    function executeSelected(alt = false) {
+      const row = rendered[selectedIndex];
+      if (!row) return;
+      const p = row.payload;
+      if (p.kind === 'session') {
+        if (alt) {
+          notify(`session.new --workdir ${p.s.workdir} (from ${p.s.title})`);
+        } else {
+          notify(`session.switch -> ${p.s.title}`);
+        }
+        return;
+      }
+      if (p.kind === 'workdir') {
+        if (alt) {
+          notify(`session.new --workdir ${p.workdir}`);
+        } else {
+          notify(`session.switch -> latest in ${p.workdir}: ${p.latest.title}`);
+        }
+        return;
+      }
+      if (p.kind === 'new_workdir') return notify(`session.new --workdir ${p.workdir}`);
+      if (p.kind === 'command') return notify(`${p.c.sample}`);
+      if (p.kind === 'raw') return notify(`! ${p.raw}`);
+    }
+
+    function notify(text) {
+      toastEl.textContent = `Mock execute: ${text}`;
+      toastEl.classList.add('show');
+      clearTimeout(notify.t);
+      notify.t = setTimeout(() => toastEl.classList.remove('show'), 1800);
+    }
+
+    function escapeHtml(str) {
+      return str.replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
+    }
+
+    queryEl.addEventListener('input', () => {
+      selectedIndex = 0;
+      render();
+    });
+
+    queryEl.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        selectedIndex = Math.min(rendered.length - 1, selectedIndex + 1);
+        paintActive();
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        selectedIndex = Math.max(0, selectedIndex - 1);
+        paintActive();
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        executeSelected(e.altKey);
+      } else if (e.key === 'Tab') {
+        e.preventDefault();
+        const m = modeFor(queryEl.value);
+        const q = stripped(queryEl.value);
+        queryEl.value = (m === 'workdirs' ? '##' : m === 'sessions' ? '! ' : '#') + q;
+        queryEl.focus();
+        queryEl.setSelectionRange(queryEl.value.length, queryEl.value.length);
+        selectedIndex = 0;
+        render();
+      }
+    });
+
+    document.querySelectorAll('.chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        queryEl.value = chip.dataset.insert;
+        queryEl.focus();
+        queryEl.setSelectionRange(queryEl.value.length, queryEl.value.length);
+        selectedIndex = 0;
+        render();
+      });
+    });
+
+    window.addEventListener('keydown', (e) => {
+      const mod = e.ctrlKey || e.metaKey;
+      if (mod && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        if (e.shiftKey) {
+          queryEl.value = '#';
+          render();
+        }
+        queryEl.focus();
+        queryEl.setSelectionRange(queryEl.value.length, queryEl.value.length);
+      }
+      if (mod && e.shiftKey && e.key.toLowerCase() === 'p') {
+        e.preventDefault();
+        queryEl.value = '! ';
+        render();
+        queryEl.focus();
+        queryEl.setSelectionRange(queryEl.value.length, queryEl.value.length);
+      }
+    });
+
+    render();
+  </script>
+</body>
+</html>

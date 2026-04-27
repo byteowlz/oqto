@@ -78,6 +78,18 @@ describe("normalizeMessages", () => {
 		const out = normalizeMessages(raw, "legacy");
 		expect(out[0].id).toMatch(/^legacy-fallback-/);
 	});
+
+	it("drops adjacent duplicate assistant rows from replayed persistence", () => {
+		const raw: RawMessage[] = [
+			{ id: "u1", role: "user", content: "split it" },
+			{ id: "a1", role: "assistant", content: "same response" },
+			{ id: "a2", role: "assistant", content: "same response" },
+			{ id: "u2", role: "user", content: "again" },
+			{ id: "a3", role: "assistant", content: "same response" },
+		];
+		const out = normalizeMessages(raw, "history");
+		expect(out.map((m) => m.id)).toEqual(["u1", "a1", "u2", "a3"]);
+	});
 });
 
 describe("mergeServerMessages", () => {

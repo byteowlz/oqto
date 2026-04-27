@@ -623,10 +623,10 @@ impl Runner {
                             cfg.apply_landlock(workspace, None)?;
                         }
 
-                        if let Some(fd) = seccomp_fd {
-                            if libc::dup2(fd, 3) == -1 {
-                                return Err(std::io::Error::last_os_error());
-                            }
+                        if let Some(fd) = seccomp_fd
+                            && libc::dup2(fd, 3) == -1
+                        {
+                            return Err(std::io::Error::last_os_error());
                         }
                         Ok(())
                     });
@@ -3379,7 +3379,7 @@ impl Runner {
         );
 
         // Write child conversation to hstry with parent linkage and platform_id.
-        if let Some(ref client) = self.pi_manager.hstry_client() {
+        if let Some(client) = self.pi_manager.hstry_client() {
             let pi_id = fork_result
                 .new_session_id
                 .as_deref()

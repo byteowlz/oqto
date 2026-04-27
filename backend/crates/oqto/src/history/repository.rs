@@ -183,49 +183,49 @@ pub(crate) async fn resolve_conversation_identity(
         // Guard against stale/empty external-id aliases: if the exact match has
         // no messages but shares a platform_id with a populated conversation,
         // prefer the populated sibling to avoid transient "vanished history".
-        if msg_count == 0 {
-            if let Some(pid) = platform_id.as_deref().filter(|p| !p.is_empty()) {
-                let sibling = if let Some(workspace) = workspace {
-                    sqlx::query(
-                        r#"
-                        SELECT c.id,
-                               c.external_id,
-                               (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) AS msg_count
-                        FROM conversations c
-                        WHERE c.platform_id = ?
-                          AND c.workspace = ?
-                        ORDER BY msg_count DESC, COALESCE(c.updated_at, c.created_at) DESC
-                        LIMIT 1
-                        "#,
-                    )
-                    .bind(pid)
-                    .bind(workspace)
-                    .fetch_optional(pool)
-                    .await?
-                } else {
-                    sqlx::query(
-                        r#"
-                        SELECT c.id,
-                               c.external_id,
-                               (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) AS msg_count
-                        FROM conversations c
-                        WHERE c.platform_id = ?
-                        ORDER BY msg_count DESC, COALESCE(c.updated_at, c.created_at) DESC
-                        LIMIT 1
-                        "#,
-                    )
-                    .bind(pid)
-                    .fetch_optional(pool)
-                    .await?
-                };
+        if msg_count == 0
+            && let Some(pid) = platform_id.as_deref().filter(|p| !p.is_empty())
+        {
+            let sibling = if let Some(workspace) = workspace {
+                sqlx::query(
+                    r#"
+                    SELECT c.id,
+                           c.external_id,
+                           (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) AS msg_count
+                    FROM conversations c
+                    WHERE c.platform_id = ?
+                      AND c.workspace = ?
+                    ORDER BY msg_count DESC, COALESCE(c.updated_at, c.created_at) DESC
+                    LIMIT 1
+                    "#,
+                )
+                .bind(pid)
+                .bind(workspace)
+                .fetch_optional(pool)
+                .await?
+            } else {
+                sqlx::query(
+                    r#"
+                    SELECT c.id,
+                           c.external_id,
+                           (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) AS msg_count
+                    FROM conversations c
+                    WHERE c.platform_id = ?
+                    ORDER BY msg_count DESC, COALESCE(c.updated_at, c.created_at) DESC
+                    LIMIT 1
+                    "#,
+                )
+                .bind(pid)
+                .fetch_optional(pool)
+                .await?
+            };
 
-                if let Some(sibling_row) = sibling {
-                    let sibling_count: i64 = sibling_row.try_get("msg_count").unwrap_or(0);
-                    if sibling_count > 0 {
-                        let sid: String = sibling_row.get("id");
-                        let sexternal: Option<String> = sibling_row.get("external_id");
-                        return Ok(Some((sid, sexternal)));
-                    }
+            if let Some(sibling_row) = sibling {
+                let sibling_count: i64 = sibling_row.try_get("msg_count").unwrap_or(0);
+                if sibling_count > 0 {
+                    let sid: String = sibling_row.get("id");
+                    let sexternal: Option<String> = sibling_row.get("external_id");
+                    return Ok(Some((sid, sexternal)));
                 }
             }
         }

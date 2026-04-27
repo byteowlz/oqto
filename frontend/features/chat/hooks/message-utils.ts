@@ -696,7 +696,25 @@ export function normalizeMessages(
 		}
 	}
 
-	return display;
+	return dropAdjacentDuplicateAssistantMessages(display);
+}
+
+function dropAdjacentDuplicateAssistantMessages(
+	messages: DisplayMessage[],
+): DisplayMessage[] {
+	if (messages.length < 2) return messages;
+	const deduped: DisplayMessage[] = [];
+	let previousAssistantFingerprint: string | null = null;
+	for (const message of messages) {
+		const fingerprint =
+			message.role === "assistant" ? messageFingerprint(message) : null;
+		if (fingerprint && fingerprint === previousAssistantFingerprint) {
+			continue;
+		}
+		deduped.push(message);
+		previousAssistantFingerprint = fingerprint;
+	}
+	return deduped.length === messages.length ? messages : deduped;
 }
 
 // ============================================================================
