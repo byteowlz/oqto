@@ -10,8 +10,8 @@ mkdir -p "${STATE_DIR}"
 
 current_sig="$(
   cd "${ROOT_DIR}" &&
-    git status --porcelain=v1 --untracked-files=normal |
-    grep -Ev '^\?\? \.tmp/agent-check\.last$' |
+    { git status --porcelain=v1 --untracked-files=normal |
+      grep -Ev '^\?\? \.tmp/agent-check\.last$' || true; } |
     sha1sum | awk '{print $1}'
 )"
 last_sig=""
