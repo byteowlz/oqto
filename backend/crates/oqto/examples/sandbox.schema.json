@@ -56,6 +56,42 @@
       "description": "Isolate PID namespace (--unshare-pid on Linux). Hides other processes from sandboxed processes.",
       "default": true
     },
+    "drop_all_caps": {
+      "type": "boolean",
+      "description": "Drop Linux capabilities for sandboxed process (--cap-drop ALL).",
+      "default": false
+    },
+    "disable_userns": {
+      "type": "boolean",
+      "description": "Disable nested user namespace creation inside sandbox (--disable-userns).",
+      "default": false
+    },
+    "assert_userns_disabled": {
+      "type": "boolean",
+      "description": "Require nested user namespaces to be disabled (--assert-userns-disabled).",
+      "default": false
+    },
+    "no_new_privs": {
+      "type": "boolean",
+      "description": "Set PR_SET_NO_NEW_PRIVS before exec.",
+      "default": true
+    },
+    "landlock_mode": {
+      "type": "string",
+      "description": "Landlock behavior: off=disabled, audit=warn if unavailable, enforce=fail closed if unavailable.",
+      "enum": ["off", "audit", "enforce"],
+      "default": "off"
+    },
+    "seccomp_mode": {
+      "type": "string",
+      "description": "Seccomp behavior: off=disabled, audit=log missing policy and continue, enforce=fail closed if policy missing.",
+      "enum": ["off", "audit", "enforce"],
+      "default": "off"
+    },
+    "seccomp_bpf_path": {
+      "type": "string",
+      "description": "Path to precompiled seccomp-bpf filter consumed by bubblewrap (--seccomp FD)."
+    },
     "extra_ro_bind": {
       "type": "array",
       "description": "Additional paths to bind read-only into the sandbox.",
@@ -71,6 +107,24 @@
         "type": "string"
       },
       "default": []
+    },
+    "overlay_enabled": {
+      "type": "boolean",
+      "description": "Enable overlayfs redirection for overlay_paths using bwrap --overlay.",
+      "default": false
+    },
+    "overlay_root": {
+      "type": "string",
+      "description": "Root directory for per-workspace overlay upper/work dirs.",
+      "default": "~/.oqto/overlays"
+    },
+    "overlay_paths": {
+      "type": "array",
+      "description": "Paths to mount via overlayfs (reads from original path, writes redirected).",
+      "items": {
+        "type": "string"
+      },
+      "default": []
     }
   },
   "additionalProperties": false,
@@ -81,6 +135,16 @@
     "deny_write": "Union - workspace can add paths, not remove",
     "allow_write": "Intersection - must be allowed by BOTH global and workspace",
     "isolate_network": "OR - if either enables, it's enabled",
-    "isolate_pid": "OR - if either enables, it's enabled"
+    "isolate_pid": "OR - if either enables, it's enabled",
+    "drop_all_caps": "OR - if either enables, it's enabled",
+    "disable_userns": "OR - if either enables, it's enabled",
+    "assert_userns_disabled": "OR - if either enables, it's enabled",
+    "no_new_privs": "OR - if either enables, it's enabled",
+    "landlock_mode": "Stricter mode wins (off < audit < enforce)",
+    "seccomp_mode": "Stricter mode wins (off < audit < enforce)",
+    "seccomp_bpf_path": "Workspace path preferred when set; otherwise global value",
+    "overlay_enabled": "OR - if either enables, it's enabled",
+    "overlay_paths": "Union - workspace can add overlay targets",
+    "overlay_root": "Workspace value preferred when set to non-default"
   }
 }

@@ -9,6 +9,10 @@
  */
 
 import { useSelectedChat } from "@/components/contexts";
+import {
+	getRunnerHistoryAlias,
+	useChatContext,
+} from "@/components/contexts/chat-context";
 import type { PiModelInfo } from "@/features/chat/api";
 import { updateSettingsValues } from "@/lib/api/settings";
 import {
@@ -41,6 +45,24 @@ export interface ModelSelectionActions {
 }
 
 const DEFAULT_REASONING_THINKING_LEVEL = "minimal";
+const MODEL_SELECTION_SYNC_EVENT = "oqto:model-selection-sync";
+
+type ModelSelectionSyncDetail = {
+	sessionId: string | null;
+	selectedModelRef?: string | null;
+	pendingModelRef?: string | null;
+	isSwitching?: boolean;
+	source?: string;
+};
+
+function emitModelSelectionSync(detail: ModelSelectionSyncDetail): void {
+	if (typeof window === "undefined") return;
+	window.dispatchEvent(
+		new CustomEvent<ModelSelectionSyncDetail>(MODEL_SELECTION_SYNC_EVENT, {
+			detail,
+		}),
+	);
+}
 
 function isReasoningModel(modelRef: string, models: PiModelInfo[]): boolean {
 	const [provider, ...modelParts] = modelRef.split("/");
@@ -65,6 +87,19 @@ export function useModelSelection(
 	locale: "en" | "de" = "en",
 ): ModelSelectionState & ModelSelectionActions {
 	const { selectedChatFromHistory } = useSelectedChat();
+	const { runnerSessions } = useChatContext();
+
+	// Derive model from the active runner session for this sessionId.
+	// This is available before chat history merges and localStorage is populated.
+	const runnerSessionModelRef = useMemo(() => {
+		if (!sessionId) return null;
+		const rs = runnerSessions.find((s) => s.session_id === sessionId);
+		if (rs?.provider && rs?.model) {
+			return `${rs.provider}/${rs.model}`;
+		}
+		return null;
+	}, [sessionId, runnerSessions]);
+
 	const _normalizedWorkspacePath = useMemo(
 		() => normalizeWorkspacePath(workspacePath),
 		[workspacePath],
@@ -99,14 +134,62 @@ export function useModelSelection(
 	// Refs to avoid stale closures in event handlers
 	const pendingModelRefRef = useRef(pendingModelRef);
 	pendingModelRefRef.current = pendingModelRef;
+	const selectedModelRefRef = useRef(selectedModelRef);
+	selectedModelRefRef.current = selectedModelRef;
 	const lastReasoningDefaultKeyRef = useRef<string | null>(null);
 
 	const effectiveSessionId = sessionId;
+	const hookInstanceIdRef = useRef(
+		`modelsel-${Math.random().toString(36).slice(2)}`,
+	);
+
+	const syncModelSelection = useCallback(
+		(next: {
+			selectedModelRef?: string | null;
+			pendingModelRef?: string | null;
+			isSwitching?: boolean;
+		}) => {
+			emitModelSelectionSync({
+				sessionId: effectiveSessionId,
+				source: hookInstanceIdRef.current,
+				...next,
+			});
+		},
+		[effectiveSessionId],
+	);
+
+	const setSelectedModelSynced = useCallback(
+		(value: string | null) => {
+			setSelectedModelRef(value);
+			syncModelSelection({ selectedModelRef: value });
+		},
+		[syncModelSelection],
+	);
+	const setPendingModelSynced = useCallback(
+		(value: string | null) => {
+			setPendingModelRef(value);
+			syncModelSelection({ pendingModelRef: value });
+		},
+		[syncModelSelection],
+	);
+	const setSwitchingSynced = useCallback(
+		(value: boolean) => {
+			setIsSwitching(value);
+			syncModelSelection({ isSwitching: value });
+		},
+		[syncModelSelection],
+	);
 
 	// Storage key for persisting selected model
 	const modelStorageKey = useMemo(() => {
 		if (!effectiveSessionId) return null;
 		return `oqto:chatModel:${effectiveSessionId}`;
+	}, [effectiveSessionId]);
+	const aliasModelStorageKey = useMemo(() => {
+		if (!effectiveSessionId) return null;
+		const alias = getRunnerHistoryAlias(effectiveSessionId);
+		if (!alias || alias === effectiveSessionId) return null;
+		return `oqto:chatModel:${alias}`;
 	}, [effectiveSessionId]);
 
 	const workspaceModelStorageKey = useMemo(
@@ -114,7 +197,38 @@ export function useModelSelection(
 		[_normalizedWorkspacePath],
 	);
 
-	// Load selected model: session storage > workspace storage > hstry session > null
+	// Keep multiple model selectors (status bar + settings sidebar) in lockstep.
+	// useeffect-guardrail: allow - window custom event subscription
+	useEffect(() => {
+		if (typeof window === "undefined") return undefined;
+		const handler = (event: Event) => {
+			const detail = (event as CustomEvent<ModelSelectionSyncDetail>).detail;
+			if (!detail) return;
+			if (detail.source === hookInstanceIdRef.current) return;
+			if (detail.sessionId !== effectiveSessionId) return;
+			if (detail.selectedModelRef !== undefined) {
+				setSelectedModelRef(detail.selectedModelRef);
+			}
+			if (detail.pendingModelRef !== undefined) {
+				setPendingModelRef(detail.pendingModelRef);
+			}
+			if (detail.isSwitching !== undefined) {
+				setIsSwitching(detail.isSwitching);
+			}
+		};
+		window.addEventListener(
+			MODEL_SELECTION_SYNC_EVENT,
+			handler as EventListener,
+		);
+		return () => {
+			window.removeEventListener(
+				MODEL_SELECTION_SYNC_EVENT,
+				handler as EventListener,
+			);
+		};
+	}, [effectiveSessionId]);
+
+	// Load selected model: session storage > hstry session > workspace default > keep current
 	useEffect(() => {
 		const readStoredRef = (key: string | null) => {
 			if (!key) return null;
@@ -126,31 +240,82 @@ export function useModelSelection(
 			}
 		};
 
-		const sessionStored = readStoredRef(modelStorageKey);
+		const sessionStored =
+			readStoredRef(modelStorageKey) ?? readStoredRef(aliasModelStorageKey);
 		if (sessionStored) {
-			setSelectedModelRef(sessionStored);
+			setSelectedModelSynced(sessionStored);
+			try {
+				if (modelStorageKey) {
+					localStorage.setItem(modelStorageKey, sessionStored);
+				}
+				if (aliasModelStorageKey) {
+					localStorage.setItem(aliasModelStorageKey, sessionStored);
+				}
+			} catch {
+				// ignore localStorage errors
+			}
 			return;
 		}
 
-		const workspaceStored = readStoredRef(workspaceModelStorageKey);
-		if (workspaceStored) {
-			setSelectedModelRef(workspaceStored);
-			return;
-		}
-
-		// Fall back to model/provider from hstry ChatSession
+		// Fall back to model/provider from hstry ChatSession and immediately
+		// persist under this concrete session key so reloads stay stable.
 		if (selectedChatFromHistory?.provider && selectedChatFromHistory?.model) {
 			const ref = `${selectedChatFromHistory.provider}/${selectedChatFromHistory.model}`;
-			setSelectedModelRef(ref);
+			setSelectedModelSynced(ref);
+			try {
+				if (modelStorageKey) {
+					localStorage.setItem(modelStorageKey, ref);
+				}
+				if (aliasModelStorageKey) {
+					localStorage.setItem(aliasModelStorageKey, ref);
+				}
+			} catch {
+				// ignore localStorage errors
+			}
 			return;
 		}
 
-		setSelectedModelRef(null);
+		// Fall back to model reported by the active runner session.
+		// This is available before chat history merges and before
+		// config.model_changed events arrive.
+		if (runnerSessionModelRef) {
+			setSelectedModelSynced(runnerSessionModelRef);
+			try {
+				if (modelStorageKey) {
+					localStorage.setItem(modelStorageKey, runnerSessionModelRef);
+				}
+				if (aliasModelStorageKey) {
+					localStorage.setItem(aliasModelStorageKey, runnerSessionModelRef);
+				}
+			} catch {
+				// ignore localStorage errors
+			}
+			return;
+		}
+
+		// Use workspace-wide default as fallback.
+		const workspaceStored = readStoredRef(workspaceModelStorageKey);
+		if (workspaceStored) {
+			setSelectedModelSynced(workspaceStored);
+			return;
+		}
+
+		// When we have an active session, the model info may still be loading
+		// (runner session merge or config.model_changed event pending).
+		// Preserve the current selection instead of resetting to null which
+		// would flash "Select model" in the UI.
+		if (!effectiveSessionId) {
+			setSelectedModelSynced(null);
+		}
 	}, [
 		modelStorageKey,
 		workspaceModelStorageKey,
+		effectiveSessionId,
 		selectedChatFromHistory?.provider,
 		selectedChatFromHistory?.model,
+		runnerSessionModelRef,
+		setSelectedModelSynced,
+		aliasModelStorageKey,
 	]);
 
 	// Load available models - fetches once per session, retries if Pi not ready yet
@@ -198,11 +363,13 @@ export function useModelSelection(
 							// ignore quota errors
 						}
 					}
-					if (models.length > 0) {
+					if (models.length > 0 && !effectiveSessionId) {
 						setSelectedModelRef((prev) => {
 							if (prev) return prev;
 							const first = models[0];
-							return `${first.provider}/${first.id}`;
+							const next = `${first.provider}/${first.id}`;
+							syncModelSelection({ selectedModelRef: next });
+							return next;
 						});
 					}
 				})
@@ -237,15 +404,52 @@ export function useModelSelection(
 			return undefined;
 		}
 
+		const syncModelFromState = (
+			state: {
+				model?: {
+					provider?: string;
+					id?: string;
+				};
+			} | null,
+		) => {
+			const provider = state?.model?.provider;
+			const modelId = state?.model?.id;
+			if (!provider || !modelId) return;
+			const modelRef = `${provider}/${modelId}`;
+			if (selectedModelRefRef.current !== modelRef) {
+				setSelectedModelSynced(modelRef);
+			}
+			if (pendingModelRefRef.current === modelRef) {
+				setPendingModelSynced(null);
+			}
+			try {
+				if (modelStorageKey) {
+					localStorage.setItem(modelStorageKey, modelRef);
+					if (aliasModelStorageKey) {
+						localStorage.setItem(aliasModelStorageKey, modelRef);
+					}
+				} else {
+					localStorage.setItem(workspaceModelStorageKey, modelRef);
+				}
+			} catch {
+				// ignore localStorage errors
+			}
+		};
+
 		void getWsManager()
 			.agentGetStateWait(effectiveSessionId)
 			.then((state) => {
 				const s = state as {
 					isStreaming: boolean;
 					isCompacting: boolean;
+					model?: {
+						provider?: string;
+						id?: string;
+					};
 				} | null;
 				if (s) {
 					setIsIdle(!s.isStreaming && !s.isCompacting);
+					syncModelFromState(s);
 				}
 			})
 			.catch(() => {
@@ -289,35 +493,50 @@ export function useModelSelection(
 				const modelId = event.model_id as string | undefined;
 				if (provider && modelId) {
 					const newRef = `${provider}/${modelId}`;
-					setSelectedModelRef(newRef);
+					setSelectedModelSynced(newRef);
+					persistModelSelection(newRef);
 					if (pendingModelRefRef.current === newRef) {
-						setPendingModelRef(null);
+						setPendingModelSynced(null);
 					}
 				}
 			}
 		});
 		return unsubscribe;
-	}, [effectiveSessionId, workspacePath]);
+	}, [
+		effectiveSessionId,
+		workspacePath,
+		setSelectedModelSynced,
+		setPendingModelSynced,
+		modelStorageKey,
+		aliasModelStorageKey,
+		workspaceModelStorageKey,
+	]);
 
 	const persistModelSelection = useCallback(
 		(modelRef: string | null) => {
 			try {
 				if (modelRef) {
 					if (modelStorageKey) {
+						// Session-scoped selection (strict isolation between chats)
 						localStorage.setItem(modelStorageKey, modelRef);
+						if (aliasModelStorageKey) {
+							localStorage.setItem(aliasModelStorageKey, modelRef);
+						}
+					} else {
+						// Workspace default used when no concrete session is selected yet
+						localStorage.setItem(workspaceModelStorageKey, modelRef);
 					}
-					localStorage.setItem(workspaceModelStorageKey, modelRef);
-				} else {
-					if (modelStorageKey) {
-						localStorage.removeItem(modelStorageKey);
+				} else if (modelStorageKey) {
+					localStorage.removeItem(modelStorageKey);
+					if (aliasModelStorageKey) {
+						localStorage.removeItem(aliasModelStorageKey);
 					}
-					localStorage.removeItem(workspaceModelStorageKey);
 				}
 			} catch {
 				// ignore localStorage errors
 			}
 		},
-		[modelStorageKey, workspaceModelStorageKey],
+		[modelStorageKey, aliasModelStorageKey, workspaceModelStorageKey],
 	);
 
 	const ensureReasoningThinkingDefault = useCallback(
@@ -357,7 +576,7 @@ export function useModelSelection(
 		sid: string,
 		wp: string | null,
 	) => {
-		setPendingModelRef(null);
+		setPendingModelSynced(null);
 		const separatorIndex = modelRef.indexOf("/");
 		if (separatorIndex <= 0 || separatorIndex >= modelRef.length - 1) return;
 
@@ -366,7 +585,7 @@ export function useModelSelection(
 		try {
 			await getWsManager().agentSetModel(sid, provider, modelId);
 			// Switch confirmed -- update state and persist
-			setSelectedModelRef(modelRef);
+			setSelectedModelSynced(modelRef);
 			await ensureReasoningThinkingDefault(sid, modelRef);
 			const settingsWorkspacePath = wp ?? undefined;
 			await updateSettingsValues(
@@ -424,7 +643,7 @@ export function useModelSelection(
 			const modelId = modelRef.slice(separatorIndex + 1);
 
 			if (!effectiveSessionId) {
-				setSelectedModelRef(modelRef);
+				setSelectedModelSynced(modelRef);
 				await persistSelection(provider, modelId, modelRef);
 				return;
 			}
@@ -433,7 +652,7 @@ export function useModelSelection(
 			if (!manager.isSessionReady(effectiveSessionId)) {
 				// Session not ready yet -- queue the switch and persist
 				// so the pending model survives page reloads.
-				setPendingModelRef(modelRef);
+				setPendingModelSynced(modelRef);
 				await persistSelection(provider, modelId, modelRef);
 				return;
 			}
@@ -441,8 +660,8 @@ export function useModelSelection(
 			if (isIdle) {
 				// Show optimistic switch indicator
 				const previousModelRef = selectedModelRef;
-				setSelectedModelRef(modelRef);
-				setIsSwitching(true);
+				setSelectedModelSynced(modelRef);
+				setSwitchingSynced(true);
 				try {
 					await manager.agentSetModel(effectiveSessionId, provider, modelId);
 					await ensureReasoningThinkingDefault(effectiveSessionId, modelRef);
@@ -458,19 +677,19 @@ export function useModelSelection(
 					) {
 						// Session gone -- queue for when it comes back and
 						// persist so the pending model survives reloads.
-						setPendingModelRef(modelRef);
+						setPendingModelSynced(modelRef);
 						await persistSelection(provider, modelId, modelRef);
 					} else {
 						// Model switch failed (e.g. model not found) -- revert
-						setSelectedModelRef(previousModelRef);
+						setSelectedModelSynced(previousModelRef);
 					}
 				} finally {
-					setIsSwitching(false);
+					setSwitchingSynced(false);
 				}
 			} else {
 				// Queue for after streaming completes and persist so the
 				// pending model survives page reloads.
-				setPendingModelRef(modelRef);
+				setPendingModelSynced(modelRef);
 				await persistSelection(provider, modelId, modelRef);
 			}
 		},
@@ -480,6 +699,9 @@ export function useModelSelection(
 			persistSelection,
 			selectedModelRef,
 			ensureReasoningThinkingDefault,
+			setSelectedModelSynced,
+			setPendingModelSynced,
+			setSwitchingSynced,
 		],
 	);
 

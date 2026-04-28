@@ -17,6 +17,7 @@
 			".next",
 			"dist",
 			"node_modules",
+			"public/visual-runtime/vendor",
 			"src-tauri/gen",
 			"src-tauri/target"
 		]

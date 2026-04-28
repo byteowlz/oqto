@@ -120,6 +120,90 @@ type ViewKey =
 	| "settings"
 	| "app";
 
+const CHAT_PREVIEWABLE_EXTENSIONS = new Set([
+	".txt",
+	".md",
+	".mdx",
+	".markdown",
+	".json",
+	".jsonc",
+	".xml",
+	".yaml",
+	".yml",
+	".toml",
+	".js",
+	".ts",
+	".jsx",
+	".tsx",
+	".css",
+	".scss",
+	".html",
+	".py",
+	".rb",
+	".go",
+	".rs",
+	".java",
+	".c",
+	".cpp",
+	".h",
+	".sh",
+	".bash",
+	".zsh",
+	".fish",
+	".sql",
+	".graphql",
+	".env",
+	".gitignore",
+	".dockerignore",
+	".config",
+	".conf",
+	".ini",
+	".cfg",
+	".log",
+	".png",
+	".jpg",
+	".jpeg",
+	".gif",
+	".webp",
+	".svg",
+	".bmp",
+	".ico",
+	".mp4",
+	".webm",
+	".ogg",
+	".ogv",
+	".mov",
+	".avi",
+	".mkv",
+	".m4v",
+	".mp3",
+	".wav",
+	".flac",
+	".aac",
+	".m4a",
+	".opus",
+	".pdf",
+	".typ",
+]);
+
+function isChatPreviewableFile(filePath: string): boolean {
+	const normalized = filePath.trim().replace(/^[./]+/, "");
+	const slash = normalized.lastIndexOf("/");
+	const fileName = slash >= 0 ? normalized.slice(slash + 1) : normalized;
+	if (!fileName) return false;
+	if (!fileName.includes(".")) return true;
+	const dot = fileName.lastIndexOf(".");
+	const ext = fileName.slice(dot).toLowerCase();
+	return CHAT_PREVIEWABLE_EXTENSIONS.has(ext);
+}
+
+function getParentPath(filePath: string): string {
+	const normalized = filePath.trim().replace(/^[./]+/, "");
+	const slash = normalized.lastIndexOf("/");
+	if (slash <= 0) return ".";
+	return normalized.slice(0, slash);
+}
+
 const viewLoadingFallback = (
 	<div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">
 		Loading...
@@ -132,6 +216,14 @@ type TodoItem = {
 	status: "pending" | "in_progress" | "completed" | "cancelled";
 	priority: "high" | "medium" | "low";
 };
+
+interface IssueAttachment {
+	id: string;
+	issueId: string;
+	title: string;
+	description?: string;
+	type: "issue";
+}
 
 const TodoListView = memo(function TodoListView({
 	todos,
@@ -579,6 +671,38 @@ export const SessionScreen = memo(function SessionScreen() {
 		selectedChatSessionId,
 	]);
 
+	const handleOpenChatFileReference = useCallback(
+		(filePath: string) => {
+			const trimmed = filePath.trim();
+			if (!trimmed) return;
+			const withoutAt = trimmed.replace(/^@+/, "");
+			const workspaceRelative = normalizedWorkspacePath
+				? withoutAt.replace(
+						new RegExp(
+							`^${normalizedWorkspacePath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/?`,
+						),
+						"",
+					)
+				: withoutAt;
+			const normalizedPath = workspaceRelative.replace(/^\.\//, "");
+
+			setActiveView("files");
+			if (isChatPreviewableFile(normalizedPath)) {
+				setPreviewFilePath(normalizedPath);
+				return;
+			}
+
+			setPreviewFilePath(null);
+			setFileTreeState((prev) => ({
+				...prev,
+				currentPath: getParentPath(normalizedPath),
+				selectedFile: normalizedPath,
+				selectedFiles: new Set([normalizedPath]),
+			}));
+		},
+		[normalizedWorkspacePath, setActiveView],
+	);
+
 	const normalizedOverviewPath = useMemo(
 		() =>
 			selectedWorkspaceOverviewPath
@@ -782,20 +906,20 @@ export const SessionScreen = memo(function SessionScreen() {
 	// Check both the session map (populated from runner sessions / optimistic create)
 	// and the session's workspace_path against known shared workspace paths.
 	const { sharedWorkspaces } = useSharedWorkspaces();
-	const isSharedSession = useMemo(() => {
-		if (!selectedChatSessionId) return false;
-		// Fast path: check the module-level map
-		if (sharedWorkspaceSessionMap.has(selectedChatSessionId)) return true;
-		// Fallback: check if the selected session's workspace_path is inside
-		// any shared workspace path.
+	const selectedSharedWorkspaceId = useMemo(() => {
+		if (!selectedChatSessionId) return null;
+		const mapped = sharedWorkspaceSessionMap.get(selectedChatSessionId);
+		if (mapped) return mapped;
 		const session = chatHistory?.find((s) => s.id === selectedChatSessionId);
 		const wp = session?.workspace_path?.replace(/\/$/, "");
-		if (!wp || sharedWorkspaces.length === 0) return false;
-		return sharedWorkspaces.some((sw) => {
+		if (!wp || sharedWorkspaces.length === 0) return null;
+		const owner = sharedWorkspaces.find((sw) => {
 			const swp = sw.path.replace(/\/$/, "");
 			return wp === swp || wp.startsWith(`${swp}/`);
 		});
+		return owner?.id ?? null;
 	}, [selectedChatSessionId, sharedWorkspaces, chatHistory]);
+	const isSharedSession = selectedSharedWorkspaceId !== null;
 	const senderName = isSharedSession
 		? getUserDisplayName(currentUser)
 		: undefined;
@@ -820,6 +944,7 @@ export const SessionScreen = memo(function SessionScreen() {
 			onPendingFileAttachmentConsumed={handlePendingFileAttachmentConsumed}
 			pendingChatInput={pendingChatInput}
 			onPendingChatInputConsumed={() => setPendingChatInput(null)}
+			onFileReferenceOpen={handleOpenChatFileReference}
 		/>
 	) : (
 		<EmptyWorkspacePanel label={t("chat.loadingChat")} />
@@ -834,6 +959,62 @@ export const SessionScreen = memo(function SessionScreen() {
 			/>
 		</Suspense>
 	) : null;
+
+	// Callbacks for TRX issue handling
+	const handleStartIssue = useCallback(
+		async (issueId: string, title: string, description?: string) => {
+			// Switch to chat view
+			setActiveView("chat");
+
+			// Ensure we have a selected chat session
+			if (!selectedChatSessionId) {
+				const newSessionId = await createNewChat(normalizedWorkspacePath);
+				if (!newSessionId) return;
+				setSelectedChatSessionId(newSessionId);
+			}
+
+			// Prefill the chat input with issue text
+			const issueText = `Working on issue #${issueId}: ${title}${description ? `\n\n${description}` : ""}`;
+			setPendingChatInput(issueText);
+		},
+		[
+			selectedChatSessionId,
+			normalizedWorkspacePath,
+			setActiveView,
+			createNewChat,
+			setSelectedChatSessionId,
+		],
+	);
+
+	const handleStartIssueNewSession = useCallback(
+		async (issueIds: string, title: string, attachments: IssueAttachment[]) => {
+			// Create a new chat session
+			const newSessionId = await createNewChat(normalizedWorkspacePath);
+			if (!newSessionId) return;
+
+			// Select the new session
+			setSelectedChatSessionId(newSessionId);
+
+			// Switch to chat view
+			setActiveView("chat");
+
+			// Prefill the chat input with issue text
+			const issueText = attachments
+				.map(
+					(a: IssueAttachment) =>
+						`Issue #${a.issueId}: ${a.title}${a.description ? `\n\n${a.description}` : ""}`,
+				)
+				.join("\n\n---\n\n");
+			const fullText = `Working on the following issues:\n\n${issueText}`;
+			setPendingChatInput(fullText);
+		},
+		[
+			normalizedWorkspacePath,
+			setActiveView,
+			createNewChat,
+			setSelectedChatSessionId,
+		],
+	);
 
 	const tasksPanel = (
 		<div className="flex flex-col h-full overflow-hidden">
@@ -891,6 +1072,8 @@ export const SessionScreen = memo(function SessionScreen() {
 								key={normalizedWorkspacePath}
 								workspacePath={normalizedWorkspacePath}
 								className="flex-1 min-h-0"
+								onStartIssue={handleStartIssue}
+								onStartIssueNewSession={handleStartIssueNewSession}
 							/>
 						</Suspense>
 					) : (
@@ -1171,7 +1354,7 @@ export const SessionScreen = memo(function SessionScreen() {
 									locale={locale}
 									sessionId={selectedChatSessionId}
 									workspacePath={normalizedWorkspacePath}
-									onHistorySynced={() => refreshChatHistory({ force: true })}
+									sharedWorkspaceId={selectedSharedWorkspaceId}
 								/>
 							</Suspense>
 						)}
@@ -1418,19 +1601,6 @@ export const SessionScreen = memo(function SessionScreen() {
 									label="Settings"
 								/>
 							</div>
-						) : expandedView === "canvas" ? (
-							<div className="flex-1 min-h-0 flex flex-col">
-								{sessionHeader}
-								{showEmptyChat ? (
-									<div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">
-										{t("chat.noSessions")}
-									</div>
-								) : isOverviewActive ? (
-									overviewPanel
-								) : (
-									chatPanel
-								)}
-							</div>
 						) : (
 							<>
 								<div className="flex gap-1 p-2 border-b border-border overflow-x-auto scrollbar-none [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
@@ -1636,9 +1806,7 @@ export const SessionScreen = memo(function SessionScreen() {
 												locale={locale}
 												sessionId={selectedChatSessionId}
 												workspacePath={normalizedWorkspacePath}
-												onHistorySynced={() =>
-													refreshChatHistory({ force: true })
-												}
+												sharedWorkspaceId={selectedSharedWorkspaceId}
 											/>
 										</Suspense>
 									)}

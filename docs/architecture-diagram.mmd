@@ -1,0 +1,79 @@
+flowchart TB
+    subgraph Browser["🌐 Browser"]
+        FE["Frontend<br/>React/TypeScript"]
+    end
+
+    subgraph Server["🖥️ Server"]
+        Backend["Backend (oqto)<br/>Stateless Relay"]
+        Files["oqto-files<br/>File Access Server"]
+        Eavs["eavs<br/>LLM Proxy<br/>localhost:3033"]
+    end
+
+    subgraph UserNamespace["👤 Per-User Namespace"]
+        Runner["oqto-runner<br/>Per-User Daemon"]
+        
+        subgraph Agents["Agent Processes"]
+            PiAgent["Pi<br/>Harness"]
+            OpenCode["opencode<br/>Harness"]
+            FutureAgent["Future Agents..."]
+        end
+        
+        subgraph Sandboxing["Process Sandboxing"]
+            Sandbox["sandbox-exec / bwrap"]
+        end
+    end
+
+    subgraph Storage["💾 Storage Layer"]
+        OqtoLog[("oqto-log<br/>Authoritative<br/>SQLite per workspace")]
+        Hstry[("hstry<br/>Legacy gRPC<br/>SQLite")]
+    end
+
+    subgraph External["🔌 External Providers"]
+        OpenAI["OpenAI"]
+        Anthropic["Anthropic"]
+        Google["Google"]
+        Other["..."]
+    end
+
+    %% Frontend connections
+    FE <-->|"WebSocket<br/>Canonical Protocol"| Backend
+    FE -->|"File API"| Files
+
+    %% Backend connections
+    Backend <-->|"Unix/TCP Socket<br/>Runner Protocol"| Runner
+    Backend -->|"API Calls"| Eavs
+
+    %% Runner connections
+    Runner -->|"Spawns & Manages"| Agents
+    Agents -->|"Native Events"| Runner
+    Runner -->|"Translates to<br/>Canonical Events"| Backend
+
+    %% Sandboxing
+    Agents -.->|"Wrapped by"| Sandbox
+
+    %% Storage connections
+    Runner -->|"Read/Write"| OqtoLog
+    Agents -->|"History gRPC"| Hstry
+    OqtoLog -.->|"Migration Path"| Hstry
+
+    %% EAVS connections
+    Eavs -->|"Routes with<br/>Virtual Keys"| OpenAI
+    Eavs -->|"Routes with<br/>Virtual Keys"| Anthropic
+    Eavs -->|"Routes with<br/>Virtual Keys"| Google
+    Eavs -->|"Routes with<br/>Virtual Keys"| Other
+
+    %% Config
+    Config[("~/.config/oqto/<br/>config.toml")]
+    SandboxConfig[("~/.config/oqto/<br/>sandbox.toml")]
+    
+    Backend -.->|"Reads"| Config
+    Sandbox -.->|"Reads"| SandboxConfig
+
+    style FE fill:#4a90d9,stroke:#2c5aa0,color:#fff
+    style Backend fill:#f5a623,stroke:#d48f20,color:#000
+    style Runner fill:#bd10e0,stroke:#9010b0,color:#fff
+    style PiAgent fill:#7ed321,stroke:#5ba91a,color:#000
+    style OpenCode fill:#7ed321,stroke:#5ba91a,color:#000
+    style OqtoLog fill:#50e3c2,stroke:#3bb89c,color:#000
+    style Hstry fill:#b8e986,stroke:#8fc75e,color:#000
+    style Eavs fill:#d0021b,stroke:#a00115,color:#fff

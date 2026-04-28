@@ -144,7 +144,7 @@ Following critical architecture review:
 
 ### 2026-02-15: Canonical Protocol Stabilization
 
-Canonical protocol defined as DRAFT in docs/design/canonical-protocol.md.
+Canonical protocol defined as DRAFT in docs/active/design/20260205-canonical-protocol.md.
 Migration plan established for pi-specific → canonical translation.
 
 ---
@@ -157,6 +157,6 @@ Migration plan established for pi-specific → canonical translation.
 
 ## Links
 
-- [Architecture Overview](./docs/design/canonical-protocol.md)
+- [Architecture Overview](./docs/active/design/20260205-canonical-protocol.md)
 - [Issue Tracker](../../.trx/issues/)
 - [Setup Guide](./SETUP.md)

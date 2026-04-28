@@ -409,11 +409,7 @@ mod tests {
 
         let templates = service.resolve(None).await.unwrap();
         assert!(templates.onboard.contains("Welcome to Oqto"));
-        assert!(
-            templates
-                .personality
-                .contains("helpful, professional AI coding assistant")
-        );
+        assert!(templates.personality.contains("Personality"));
         assert!(templates.user.contains("User Context"));
         assert!(templates.agents.contains("Global agent instructions"));
     }

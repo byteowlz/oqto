@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+	extractFileReferenceDetails,
 	getFileExtension,
 	getFileTypeInfo,
 	getSyntaxLanguage,
@@ -167,6 +168,40 @@ describe("file-types", () => {
 
 		it("returns text for unknown extensions", () => {
 			expect(getSyntaxLanguage("file.unknown")).toBe("text");
+		});
+	});
+
+	describe("extractFileReferenceDetails", () => {
+		it("extracts regular @file references", () => {
+			expect(
+				extractFileReferenceDetails("Please check @README.md and @src/main.ts"),
+			).toEqual([
+				{ filePath: "README.md", label: "README.md", raw: "README.md" },
+				{ filePath: "src/main.ts", label: "main.ts", raw: "src/main.ts" },
+			]);
+		});
+
+		it("ignores @ inside email addresses", () => {
+			expect(
+				extractFileReferenceDetails(
+					"Email quarantine notification (ironport@fraunhofer.de)",
+				),
+			).toEqual([]);
+		});
+
+		it("still allows @file references after whitespace or punctuation", () => {
+			expect(
+				extractFileReferenceDetails(
+					"See (@docs/guide.md), then @CHANGELOG.md.",
+				),
+			).toEqual([
+				{ filePath: "docs/guide.md", label: "guide.md", raw: "docs/guide.md" },
+				{
+					filePath: "CHANGELOG.md",
+					label: "CHANGELOG.md",
+					raw: "CHANGELOG.md.",
+				},
+			]);
 		});
 	});
 });

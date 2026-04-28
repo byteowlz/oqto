@@ -42,24 +42,8 @@ fn emit_session_bus_event(
     });
 }
 
-fn reconcile_session_subscription_for_create(
-    state: &mut WsConnectionState,
-    session_id: &str,
-) -> bool {
-    let already_subscribed = state.pi_subscriptions.contains(session_id);
-    let forwarder_alive = state
-        .pi_forwarders
-        .get(session_id)
-        .map(|h| !h.is_finished())
-        .unwrap_or(false);
-
-    if already_subscribed && !forwarder_alive {
-        state.pi_subscriptions.remove(session_id);
-        state.pi_forwarders.remove(session_id);
-        return false;
-    }
-
-    already_subscribed && forwarder_alive
+fn should_filter_personal_runner_sessions(user_isolation_enabled: bool) -> bool {
+    user_isolation_enabled
 }
 
 pub(super) async fn handle_agent_command(
@@ -426,8 +410,8 @@ pub(super) async fn handle_agent_command(
             // common case of React StrictMode double-invoke or reconnection
             // re-sending session.create for a session that's already alive.
             {
-                let mut state_guard = conn_state.lock().await;
-                if reconcile_session_subscription_for_create(&mut state_guard, &session_id) {
+                let state_guard = conn_state.lock().await;
+                if state_guard.pi_subscriptions.contains(&session_id) {
                     debug!(
                         "agent session.create: session {} already subscribed, returning success",
                         session_id
@@ -450,7 +434,7 @@ pub(super) async fn handle_agent_command(
             // Avoid sandboxing sessions at filesystem root; this causes agents to
             // attempt writing state under `/.oqto` and fail with permission errors.
             // Prefer persisted session target workspace path, then user home fallback.
-            if cwd == *"/" {
+            if cwd == std::path::Path::new("/") {
                 if let Ok(Some(target)) = state.session_targets.get(&session_id).await
                     && let Some(workspace_path) = target.workspace_path
                     && !workspace_path.trim().is_empty()
@@ -538,7 +522,6 @@ pub(super) async fn handle_agent_command(
                         let event_tx = state_guard.event_tx.clone();
                         let runner = runner.clone();
                         let sid = session_id.clone();
-                        let uid = user_id.to_string();
 
                         // Use a oneshot channel to wait for subscription confirmation
                         let (sub_ready_tx, sub_ready_rx) = oneshot::channel::<()>();
@@ -548,7 +531,6 @@ pub(super) async fn handle_agent_command(
                             if let Err(e) = forward_pi_events(
                                 &runner,
                                 &sid,
-                                &uid,
                                 event_tx,
                                 conn_state_for_fwd,
                                 Some(sub_ready_tx),
@@ -911,7 +893,6 @@ pub(super) async fn handle_agent_command(
                     let event_tx = state_guard.event_tx.clone();
                     let runner = runner.clone();
                     let sid = session_id.clone();
-                    let uid = user_id.to_string();
                     let (sub_ready_tx, sub_ready_rx) = oneshot::channel::<()>();
                     let runner_id = runner_id.clone();
                     let conn_state_for_fwd = Arc::clone(&conn_state);
@@ -919,7 +900,6 @@ pub(super) async fn handle_agent_command(
                         if let Err(e) = forward_pi_events(
                             &runner,
                             &sid,
-                            &uid,
                             event_tx,
                             conn_state_for_fwd,
                             Some(sub_ready_tx),
@@ -1272,16 +1252,7 @@ pub(super) async fn handle_agent_command(
                 "agent get_messages: user={}, session_id={}",
                 user_id, session_id
             );
-            handle_get_messages(
-                id,
-                &session_id,
-                user_id,
-                state,
-                runner,
-                conn_state,
-                &runner_id,
-            )
-            .await
+            handle_get_messages(id, &session_id, state, runner, conn_state, &runner_id).await
         }
 
         CommandPayload::GetStats => {
@@ -1663,6 +1634,7 @@ pub(super) async fn handle_agent_command(
                     Ok(Some(serde_json::json!({
                         "text": resp.text,
                         "cancelled": resp.cancelled,
+                        "new_session_id": resp.new_session_id,
                     }))),
                 )),
                 Err(e) => Some(agent_response(&session_id, id, "fork", Err(e.to_string()))),
@@ -1698,29 +1670,32 @@ pub(super) async fn handle_agent_command(
                 }
             };
 
-            // The runner is shared across all Oqto users (especially in local
-            // mode). Filter out sessions that were created by a different user
-            // by checking session_targets ownership. Sessions without a target
-            // record are assumed to belong to the requesting user (freshly
-            // created sessions whose target hasn't been persisted yet).
-            let mut filtered = Vec::with_capacity(all_sessions.len());
-            for s in all_sessions {
-                let sid = s.get("session_id").and_then(|v| v.as_str()).unwrap_or("");
-                match state.session_targets.get(sid).await {
-                    Ok(Some(record)) => {
-                        if record.owner_user_id.as_deref() == Some(user_id)
-                            || record.owner_user_id.is_none()
-                        {
+            // In isolated multi-user mode the personal runner can be shared by
+            // multiple Oqto auth identities over time. Filter by persisted
+            // session ownership to prevent cross-user leakage.
+            //
+            // In non-isolated mode (single Linux user), keep all sessions so we
+            // don't accidentally hide valid history due to auth-id drift.
+            if should_filter_personal_runner_sessions(state.user_isolation_enabled()) {
+                let mut filtered = Vec::with_capacity(all_sessions.len());
+                for s in all_sessions {
+                    let sid = s.get("session_id").and_then(|v| v.as_str()).unwrap_or("");
+                    match state.session_targets.get(sid).await {
+                        Ok(Some(record)) => {
+                            if record.owner_user_id.as_deref() == Some(user_id)
+                                || record.owner_user_id.is_none()
+                            {
+                                filtered.push(s);
+                            }
+                        }
+                        _ => {
+                            // No target record or lookup error — include it
                             filtered.push(s);
                         }
                     }
-                    _ => {
-                        // No target record or lookup error — include it
-                        filtered.push(s);
-                    }
                 }
+                all_sessions = filtered;
             }
-            all_sessions = filtered;
 
             // Also query shared workspace runners the user has access to.
             // Pre-store runner overrides so subsequent commands (get_messages,
@@ -1809,62 +1784,11 @@ pub(super) async fn handle_agent_command(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::collections::{HashMap, HashSet};
-    use std::time::Duration;
+    use super::should_filter_personal_runner_sessions;
 
-    #[tokio::test]
-    async fn test_reconcile_session_subscription_for_create_keeps_healthy_forwarder() {
-        let (event_tx, _event_rx) = mpsc::unbounded_channel::<WsEvent>();
-        let healthy = tokio::spawn(async {
-            tokio::time::sleep(Duration::from_secs(60)).await;
-        });
-
-        let mut state = WsConnectionState {
-            subscribed_sessions: HashSet::new(),
-            event_tx,
-            pi_subscriptions: HashSet::from(["ses-1".to_string()]),
-            pi_forwarders: HashMap::from([("ses-1".to_string(), healthy)]),
-            response_watchdogs: HashMap::new(),
-            pi_session_meta: HashMap::new(),
-            terminal_sessions: HashMap::new(),
-            file_watchers: HashMap::new(),
-            session_runner_overrides: HashMap::new(),
-            bus_subscriber_id: 0,
-        };
-
-        let already_healthy = reconcile_session_subscription_for_create(&mut state, "ses-1");
-        assert!(already_healthy);
-        assert!(state.pi_subscriptions.contains("ses-1"));
-        assert!(state.pi_forwarders.contains_key("ses-1"));
-
-        if let Some(handle) = state.pi_forwarders.remove("ses-1") {
-            handle.abort();
-        }
-    }
-
-    #[tokio::test]
-    async fn test_reconcile_session_subscription_for_create_cleans_stale_forwarder() {
-        let (event_tx, _event_rx) = mpsc::unbounded_channel::<WsEvent>();
-        let stale = tokio::spawn(async {});
-        tokio::task::yield_now().await;
-
-        let mut state = WsConnectionState {
-            subscribed_sessions: HashSet::new(),
-            event_tx,
-            pi_subscriptions: HashSet::from(["ses-2".to_string()]),
-            pi_forwarders: HashMap::from([("ses-2".to_string(), stale)]),
-            response_watchdogs: HashMap::new(),
-            pi_session_meta: HashMap::new(),
-            terminal_sessions: HashMap::new(),
-            file_watchers: HashMap::new(),
-            session_runner_overrides: HashMap::new(),
-            bus_subscriber_id: 0,
-        };
-
-        let already_healthy = reconcile_session_subscription_for_create(&mut state, "ses-2");
-        assert!(!already_healthy);
-        assert!(!state.pi_subscriptions.contains("ses-2"));
-        assert!(!state.pi_forwarders.contains_key("ses-2"));
+    #[test]
+    fn personal_runner_session_filter_enabled_only_in_isolated_mode() {
+        assert!(should_filter_personal_runner_sessions(true));
+        assert!(!should_filter_personal_runner_sessions(false));
     }
 }

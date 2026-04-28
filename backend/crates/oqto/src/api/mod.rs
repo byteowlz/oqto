@@ -8,11 +8,13 @@ mod delegate;
 mod error;
 pub mod handlers;
 mod onboarding_handlers;
+pub(crate) mod provisioning;
 pub mod proxy;
 mod routes;
 mod state;
 mod test_harness;
 pub mod ui_control;
+pub mod ws;
 pub mod ws_multiplexed;
 
 // Re-export error types for external use

@@ -11,6 +11,7 @@ import {
 	SelectValue,
 } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
+import { Switch } from "@/components/ui/switch";
 import {
 	type TTSSettings,
 	loadTTSSettings,
@@ -32,7 +33,7 @@ export interface PiSettingsViewProps {
 	locale?: "en" | "de";
 	sessionId?: string | null;
 	workspacePath?: string | null;
-	onHistorySynced?: () => Promise<void> | void;
+	sharedWorkspaceId?: string | null;
 }
 
 export function PiSettingsView({
@@ -40,7 +41,7 @@ export function PiSettingsView({
 	locale = "en",
 	sessionId,
 	workspacePath,
-	onHistorySynced,
+	sharedWorkspaceId,
 }: PiSettingsViewProps) {
 	const { t } = useTranslation();
 	const { verbosity, setVerbosity } = useChatVerbosity();
@@ -50,11 +51,22 @@ export function PiSettingsView({
 	const [thinkingLoading, setThinkingLoading] = useState<boolean>(false);
 	const [sessionReady, setSessionReady] = useState<boolean>(false);
 	const [restartingAgent, setRestartingAgent] = useState<boolean>(false);
-	const [syncingHistory, setSyncingHistory] = useState<boolean>(false);
 	const [connectionState, setConnectionState] =
 		useState<WsMuxConnectionState>("connecting");
 	const [isWorking, setIsWorking] = useState<boolean>(false);
 	const [runtimeSessionId, setRuntimeSessionId] = useState<string | null>(null);
+	const [isBackfillingHistory, setIsBackfillingHistory] =
+		useState<boolean>(false);
+	const [hideRecoveredErrors, setHideRecoveredErrors] = useState<boolean>(
+		() => {
+			if (typeof window === "undefined") return false;
+			try {
+				return localStorage.getItem("oqto:hideRecoveredErrors") === "1";
+			} catch {
+				return false;
+			}
+		},
+	);
 
 	const handleTtsVoiceChange = useCallback(
 		(e: React.ChangeEvent<HTMLInputElement>) => {
@@ -214,28 +226,36 @@ export function PiSettingsView({
 		}
 	}, [sessionId]);
 
-	const handleSyncChatHistory = useCallback(async () => {
-		setSyncingHistory(true);
+	const handleHideRecoveredErrorsChange = useCallback((checked: boolean) => {
+		setHideRecoveredErrors(checked);
 		try {
-			const result = await triggerChatHistoryBackfill(
-				workspacePath ? { workspace: workspacePath } : {},
-			);
-			if (onHistorySynced) {
-				await onHistorySynced();
-			}
-			if (sessionId) {
-				const manager = getWsManager();
-				manager.agentGetMessages(sessionId);
-			}
-			toast.success(
-				`Sync complete: repaired ${result.repaired_conversations}, scanned ${result.scanned_files}`,
-			);
-		} catch (err) {
-			toast.error(err instanceof Error ? err.message : "History sync failed");
-		} finally {
-			setSyncingHistory(false);
+			localStorage.setItem("oqto:hideRecoveredErrors", checked ? "1" : "0");
+			window.dispatchEvent(new Event("oqto:chat-ui-settings-updated"));
+		} catch {
+			// ignore persistence failures
 		}
-	}, [workspacePath, onHistorySynced, sessionId]);
+	}, []);
+
+	const handleImportPiSessions = useCallback(async () => {
+		if (!workspacePath || isBackfillingHistory) return;
+		setIsBackfillingHistory(true);
+		try {
+			const result = await triggerChatHistoryBackfill({
+				workspace: workspacePath,
+				shared_workspace_id: sharedWorkspaceId ?? undefined,
+			});
+			window.dispatchEvent(new Event("oqto:backfill-complete"));
+			toast.success(
+				`Pi import complete: repaired ${result.repaired_conversations}, scanned ${result.scanned_files}`,
+			);
+		} catch (error) {
+			const message =
+				error instanceof Error ? error.message : "Pi import failed";
+			toast.error(message);
+		} finally {
+			setIsBackfillingHistory(false);
+		}
+	}, [workspacePath, sharedWorkspaceId, isBackfillingHistory]);
 
 	const {
 		availableModels,
@@ -419,6 +439,21 @@ export function PiSettingsView({
 				</div>
 
 				<div className="space-y-2">
+					<div className="flex items-center justify-between">
+						<Label className="text-xs font-medium text-muted-foreground">
+							Error blocks
+						</Label>
+						<Switch
+							checked={hideRecoveredErrors}
+							onCheckedChange={handleHideRecoveredErrorsChange}
+						/>
+					</div>
+					<p className="text-[10px] text-muted-foreground">
+						Hide non-retrying error blocks in the chat timeline.
+					</p>
+				</div>
+
+				<div className="space-y-2">
 					<Label className="text-xs font-medium text-muted-foreground">
 						{t("pi.reasoningLevel")}
 					</Label>
@@ -473,28 +508,42 @@ export function PiSettingsView({
 							t("pi.restartAgent")
 						)}
 					</Button>
+					<p className="text-[10px] text-muted-foreground">
+						{t("pi.restartAgentDescription")}
+					</p>
+				</div>
+
+				<div className="space-y-2">
+					<Label className="text-xs font-medium text-muted-foreground">
+						{t("pi.importSessions", "Import Pi Sessions")}
+					</Label>
 					<Button
 						type="button"
 						variant="outline"
 						size="sm"
 						className="w-full"
-						onClick={handleSyncChatHistory}
-						disabled={syncingHistory}
+						onClick={handleImportPiSessions}
+						disabled={!workspacePath || isBackfillingHistory}
 					>
-						{syncingHistory ? (
+						{isBackfillingHistory ? (
 							<span className="inline-flex items-center gap-2">
 								<Loader2 className="h-3 w-3 animate-spin" />
-								Syncing history...
+								{t("pi.importingSessions", "Importing sessions...")}
 							</span>
 						) : (
-							"Sync chat history"
+							t("pi.importFromWorkspace", "Import from this workspace")
 						)}
 					</Button>
 					<p className="text-[10px] text-muted-foreground">
-						{t("pi.restartAgentDescription")}
-					</p>
-					<p className="text-[10px] text-muted-foreground">
-						Scan Pi JSONL and reconcile missing messages into hstry.
+						{workspacePath
+							? t(
+									"pi.importSessionsDescription",
+									"Triggers JSONL -> hstry import for the current workspace path.",
+								)
+							: t(
+									"pi.importSessionsNeedsWorkspace",
+									"Select a workspace chat to enable import.",
+								)}
 					</p>
 				</div>
 

@@ -695,9 +695,10 @@ pub struct SearchResponse {
 }
 
 /// Search across coding agent sessions using hstry.
-#[instrument(skip(_state))]
+#[instrument(skip(state))]
 pub async fn search_sessions(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
+    user: CurrentUser,
     Query(query): Query<SearchQuery>,
 ) -> ApiResult<Json<SearchResponse>> {
     // Don't search empty queries
@@ -710,9 +711,20 @@ pub async fn search_sessions(
         }));
     }
 
-    let hits = crate::history::search_hstry(&query.q, query.limit)
+    let pattern = state
+        .runner_socket_pattern
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("runner socket pattern is not configured".to_string()))?;
+    let effective_user = state.effective_linux_username(user.id());
+    let runner =
+        crate::runner::client::RunnerClient::for_user_with_pattern(&effective_user, pattern)
+            .map_err(|e| ApiError::internal(format!("runner client unavailable for user: {e}")))?;
+
+    let hits = runner
+        .search_hstry(query.q.clone(), query.limit.max(1))
         .await
-        .map_err(|e| ApiError::internal(format!("hstry search failed: {e}")))?;
+        .map_err(|e| ApiError::internal(format!("hstry search failed: {e}")))?
+        .hits;
 
     let allowed_sources = parse_agent_filters(&query.agents);
     let mut results = Vec::new();

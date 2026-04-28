@@ -7,4 +7,4 @@ pub mod hub;
 pub mod types;
 
 pub use hub::WsHub;
-pub use types::{UiSpotlightStep, WsCommand, WsEvent};
+pub use types::{UiSpotlightStep, WsEvent};

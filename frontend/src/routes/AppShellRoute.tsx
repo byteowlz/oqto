@@ -10,7 +10,13 @@ import { useCommandPalette } from "@/hooks/use-command-palette";
 import { getUserDisplayName } from "@/lib/api/types";
 import type { HstrySearchHit } from "@/lib/control-plane-client";
 import { cn } from "@/lib/utils";
-import { Clock, PanelLeftClose, PanelRightClose } from "lucide-react";
+import {
+	ChevronDown,
+	ChevronRight,
+	Clock,
+	PanelLeftClose,
+	PanelRightClose,
+} from "lucide-react";
 import { useTheme } from "next-themes";
 import { memo, useCallback, useDeferredValue, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -107,6 +113,9 @@ const AppShell = memo(function AppShell() {
 	const [searchMode, setSearchMode] = useState<"sessions" | "messages">(
 		"sessions",
 	);
+	const [sharedWorkspacesSectionExpanded, setSharedWorkspacesSectionExpanded] =
+		useState(true);
+	const [sessionsSectionExpanded, setSessionsSectionExpanded] = useState(true);
 	const [branchGraphOpen, setBranchGraphOpen] = useState(false);
 
 	const { mutate: handleLogout } = useLogout();
@@ -304,6 +313,8 @@ const AppShell = memo(function AppShell() {
 				});
 				await refreshChatHistory({ force: true });
 				await refreshWorkspaceSessions();
+				// Signal ChatView to reload messages for the current session
+				window.dispatchEvent(new Event("oqto:backfill-complete"));
 				return result;
 			} catch (error) {
 				console.error("Failed to backfill project sessions", error);
@@ -802,7 +813,7 @@ const AppShell = memo(function AppShell() {
 									<div className="h-px w-full bg-primary/50" />
 								</div>
 								<div
-									className="w-full px-1.5 mt-2 flex-1 min-h-0 flex flex-col overflow-x-hidden"
+									className="w-full px-1.5 mt-2 flex-1 min-h-0 flex flex-col overflow-y-auto overflow-x-hidden"
 									data-spotlight="session-list"
 								>
 									<SidebarSessions
@@ -856,66 +867,105 @@ const AppShell = memo(function AppShell() {
 										onSessionSearchChange={setSessionSearch}
 										searchMode={searchMode}
 										onSearchModeChange={setSearchMode}
+										externalScroll
+										sessionsExpanded={sessionsSectionExpanded}
+										onToggleSessionsExpanded={() =>
+											setSessionsSectionExpanded((prev) => !prev)
+										}
 										belowSearchSlot={
 											sharedWs.sharedWorkspaces.length > 0 ? (
 												<>
-													<SidebarSharedWorkspaces
-														sharedWorkspaces={sharedWs.sharedWorkspaces}
-														expandedWorkspaces={sharedWs.expandedWorkspaces}
-														toggleWorkspaceExpanded={
-															sharedWs.toggleWorkspaceExpanded
-														}
-														onNewSharedWorkspace={() => {
-															setSwEditTarget(null);
-															setSwError(null);
-															setSwDialogOpen(true);
-														}}
-														onManageWorkspace={(ws) => {
-															setSwEditTarget(ws);
-															setSwError(null);
-															setSwDialogOpen(true);
-														}}
-														onManageMembers={(ws) => setSwMembersTarget(ws)}
-														onNewChatInWorkspace={(ws) => {
-															void createNewChat(ws.path, ws.id);
-														}}
-														onNewProjectInWorkspace={(ws) => {
-															projectActions.openNewProjectForWorkspace(
-																ws.path,
-																ws.id,
-															);
-														}}
-														onDeleteWorkspace={handleDeleteSharedWorkspace}
-														onSelectWorkdir={(ws, wd) => {
-															void createNewChat(wd.path, ws.id);
-														}}
-														chatHistory={chatHistory}
-														runnerSessions={runnerSessions}
-														busySessions={busySessions}
-														selectedChatSessionId={selectedChatSessionId}
-														onSessionClick={(session, sharedWorkspaceId) => {
-															createOptimisticChatSession(
-																session.id,
-																session.workspace_path ?? undefined,
-																sharedWorkspaceId,
-																session,
-															);
-															setSelectedChatSessionId(session.id);
-														}}
-														onRenameSession={(id) =>
-															sessionDialogs.handleRenameSession(
-																id,
-																chatHistory,
-															)
-														}
-														onDeleteSession={handleDeleteSession}
-														onPinSession={sidebarState.togglePinSession}
-														pinnedSessions={sidebarState.pinnedSessions}
-														onPinProject={sidebarState.togglePinProject}
-														onRenameProject={sessionDialogs.handleRenameProject}
-														onDeleteProject={sessionDialogs.handleDeleteProject}
-														pinnedProjects={sidebarState.pinnedProjects}
-													/>
+													<div className="flex items-center justify-between gap-2 py-1.5 px-1">
+														<button
+															type="button"
+															onClick={() =>
+																setSharedWorkspacesSectionExpanded(
+																	(prev) => !prev,
+																)
+															}
+															className="flex items-center gap-2 text-muted-foreground hover:text-foreground"
+														>
+															{sharedWorkspacesSectionExpanded ? (
+																<ChevronDown className="w-3 h-3" />
+															) : (
+																<ChevronRight className="w-3 h-3" />
+															)}
+															<span className="text-xs uppercase tracking-wide">
+																{t(
+																	"sharedWorkspaces.title",
+																	"Shared workspaces",
+																)}
+															</span>
+															<span className="text-xs text-muted-foreground/50">
+																({sharedWs.sharedWorkspaces.length})
+															</span>
+														</button>
+													</div>
+													{sharedWorkspacesSectionExpanded && (
+														<SidebarSharedWorkspaces
+															sharedWorkspaces={sharedWs.sharedWorkspaces}
+															expandedWorkspaces={sharedWs.expandedWorkspaces}
+															toggleWorkspaceExpanded={
+																sharedWs.toggleWorkspaceExpanded
+															}
+															onNewSharedWorkspace={() => {
+																setSwEditTarget(null);
+																setSwError(null);
+																setSwDialogOpen(true);
+															}}
+															onManageWorkspace={(ws) => {
+																setSwEditTarget(ws);
+																setSwError(null);
+																setSwDialogOpen(true);
+															}}
+															onManageMembers={(ws) => setSwMembersTarget(ws)}
+															onNewChatInWorkspace={(ws) => {
+																void createNewChat(ws.path, ws.id);
+															}}
+															onNewProjectInWorkspace={(ws) => {
+																projectActions.openNewProjectForWorkspace(
+																	ws.path,
+																	ws.id,
+																);
+															}}
+															onDeleteWorkspace={handleDeleteSharedWorkspace}
+															onSelectWorkdir={(ws, wd) => {
+																void createNewChat(wd.path, ws.id);
+															}}
+															chatHistory={chatHistory}
+															runnerSessions={runnerSessions}
+															busySessions={busySessions}
+															selectedChatSessionId={selectedChatSessionId}
+															onSessionClick={(session, sharedWorkspaceId) => {
+																createOptimisticChatSession(
+																	session.id,
+																	session.workspace_path ?? undefined,
+																	sharedWorkspaceId,
+																	session,
+																);
+																setSelectedChatSessionId(session.id);
+															}}
+															onRenameSession={(id) =>
+																sessionDialogs.handleRenameSession(
+																	id,
+																	chatHistory,
+																)
+															}
+															onDeleteSession={handleDeleteSession}
+															onPinSession={sidebarState.togglePinSession}
+															pinnedSessions={sidebarState.pinnedSessions}
+															onPinProject={sidebarState.togglePinProject}
+															onRenameProject={
+																sessionDialogs.handleRenameProject
+															}
+															onDeleteProject={
+																sessionDialogs.handleDeleteProject
+															}
+															pinnedProjects={sidebarState.pinnedProjects}
+															searchQuery={sessionSearch}
+															searchMode={searchMode}
+														/>
+													)}
 													<div className="w-full px-2 my-1">
 														<div className="h-px w-full bg-sidebar-border/50" />
 													</div>

@@ -12,7 +12,7 @@ serde_json = { workspace = true }
 hstry-core = { workspace = true }
 chrono = { workspace = true }
 uuid = { workspace = true }
-ts-rs = { version = "10", features = ["serde-compat", "chrono-impl", "serde-json-impl"] }
+ts-rs = { version = "10", features = ["serde-compat", "no-serde-warnings", "chrono-impl", "serde-json-impl"] }
 
 [lints]
 workspace = true

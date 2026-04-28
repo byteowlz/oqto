@@ -1,141 +1,163 @@
 # Oqto Deployment
 
-Deploy Oqto to all configured hosts with a single command.
+Transactional release deployment with strict preflight gates, canary support, and automatic rollback.
 
 ## Quick Start
 
 ```bash
-just deploy              # Build + deploy to all hosts
-just deploy-dry-run      # See what would happen
-just deploy-host archvm  # Deploy to one host only
-just deploy-quick        # Skip build, deploy existing artifacts
+just deploy                                 # Build + prepare + activate on all hosts
+just deploy --canary                        # Deploy only hosts with canary=true
+just deploy --canary-then-fleet             # Canary first, then remaining hosts
+just deploy --prepare-only                  # Stage release, no activation
+just deploy --activate-only --release-id X  # Activate a prepared release
+just deploy --resume --release-id X         # Resume interrupted deployment
+just deploy --status --release-id X         # Show per-host state
+just deploy-dry-run                         # Preview commands
 ```
 
-## Configuration
+## Host Configuration
 
-Hosts are defined in `deploy/hosts.toml`. Each `[[host]]` block describes a
-deployment target:
+`deploy/hosts.toml` controls rollout targets.
 
 ```toml
 [[host]]
-name = "archvm"          # Label for filtering and logs
-ssh = "localhost"        # SSH alias or user@host
-local = true             # true = local machine, skip SSH
-mode = "local"           # "local" or "multi-user"
-user = "wismut"          # OS user that owns the deployment
-frontend = true          # Deploy frontend assets
-web_root = "/var/www/oqto"  # Where frontend dist is served
-binaries = ["oqto", "oqto-runner", "oqto-files"]  # Binaries to install
-services = ["oqto", "oqto-runner"]  # Systemd user services to restart
+name = "octo-azure"
+ssh = "octo-azure"
+mode = "multi-user"         # "single-user" (or legacy "local") | "multi-user"
+canary = true                # optional; used by canary rollout
+user = "tommy"
+frontend = true
+web_root = "/var/www/oqto"
+binaries = ["oqto", "oqto-runner", "oqto-files", "oqto-sandbox", "oqto-usermgr"]
+services = ["oqto"]
 ```
 
-### Host Fields
+## Update Lifecycle
 
-| Field | Required | Description |
-|-------|----------|-------------|
-| `name` | yes | Human-readable label, used with `--host` filter |
-| `ssh` | yes | SSH alias from `~/.ssh/config` or `user@hostname` |
-| `local` | no | Set `true` for the local machine (default: `false`) |
-| `mode` | yes | `"local"` (single-user) or `"multi-user"` |
-| `user` | yes | OS user that owns deployed files |
-| `frontend` | no | Whether to deploy frontend (default: `false`) |
-| `web_root` | if frontend | Absolute path for frontend files |
-| `binaries` | no | List of backend binaries to install to `/usr/local/bin` |
-| `services` | no | Systemd user services to restart after deploy |
+Before build/prepare/activate, deploy pre-authenticates sudo on all selected
+hosts so password prompts happen up front instead of mid-rollout.
 
-### Adding a New Host
+- Local host: `sudo -v`
+- Remote host: tries `sudo -n true` first (cached/NOPASSWD), then falls back to
+  interactive `ssh -tt <host> sudo -v` for hosts that require a TTY password prompt.
 
-1. Ensure SSH access works: `ssh <alias> "echo ok"`
-2. Add a `[[host]]` block to `deploy/hosts.toml`
-3. Test with `just deploy-dry-run --host <name>`
-4. Deploy with `just deploy --host <name>`
+For each host, deploy executes these phases:
 
-## What It Does
+1. `preflight.start` / `preflight.pass|fail`
+   - Mode validation (`single-user` or `multi-user`)
+   - Disk space gate (`--min-free-mb`, default 1024 MB)
+   - Required tooling gate (`systemctl`, `install`)
+   - Dependency compatibility gates (from `dependencies.toml`):
+     - `eavs`, `hstry`, `mmry`, `trx`, `agntz`, `sx`, `skdlr`
+     - Host versions must satisfy `installed >= required`.
+     - `hstry adapters --help` must succeed (adapter CLI compatibility guard).
+     - If hstry DB exists, `conversations.parent_conversation_id` and `conversations.fork_type` must exist (session-tree schema guard).
+   - Multi-user security gates:
+     - `/etc/oqto/sandbox.toml` must exist, be readable, owner `root:root`, perms `<= 0644`
+     - If seccomp enforce is configured in sandbox config, `/etc/oqto/seccomp/default.bpf` must exist
 
-### Build Phase
+2. `deploy.prepare.start` / `deploy.prepare.pass|fail`
+   - Stage binaries and frontend under: `/var/lib/oqto/releases/<release-id>/`
+   - Write `.prepared` marker (idempotent)
 
-1. Builds backend binaries via `remote-build` (offloaded to build server)
-2. Builds frontend via `bun run build`
+3. `deploy.activate.start` / `deploy.activate.pass|fail`
+   - Atomic symlink switch: `/var/lib/oqto/releases/current -> <release-id>`
+   - `/usr/local/bin/*` relinked to `current/bin/*`
+   - Ordered restarts: runner → control plane (`oqto`) → dependent services
+   - In single-user hosts without `systemd --user`, deploy now auto-restarts `oqto-runner`
+     as a background fallback (`~/.local/state/oqto/deploy/oqto-runner.log`) so
+     post-migration health checks can recover after runner quiesce.
+   - Bounded health checks (`--health-timeout`, default 90s)
 
-### Per-Host Deploy Phase
+4. `rollback.start` / `rollback.pass|fail` (only on activation failure)
+   - Restore previous `current` release
+   - Relink binaries + restart services
 
-For each host (in order):
+5. `deploy.prune.pass|fail` (after successful activation or rollback)
+   - Remove old release directories under `/var/lib/oqto/releases/`
+   - Always preserves `current` and `last-good` symlink targets
+   - Keeps the `--keep-releases` (default 3) newest directories on top of those
+   - Failure is non-fatal (logged as warn)
+   - Re-run health checks
 
-1. **Connectivity check** - SSH test (skipped for local)
-2. **Backend binaries** - Copied to `/usr/local/bin/` via `sudo install`
-3. **Frontend assets** - Synced to `web_root` (old assets removed first)
-4. **Service restart** - `systemctl --user restart` for listed services
-5. **Multi-user extras** - Kills per-user runners so they respawn with new binary
+## Audit Trail
 
-### Deploy Modes
+Structured events are appended to:
 
-**Local mode** (`mode = "local"`):
-- Single-user setup (dev machine)
-- Binaries installed to `/usr/local/bin` and symlinked into `~/.local/bin`
-- Frontend copied locally
-- Services restarted via `systemctl --user`
+- `/var/log/oqto/update-events.jsonl`
 
-**Multi-user mode** (`mode = "multi-user"`):
-- Production multi-user setup
-- Binaries uploaded via scp, installed via `sudo install`
-- Frontend synced via rsync
-- Admin's oqto service restarted
-- All per-user oqto-runner processes killed (they auto-respawn)
+Each event contains:
+- `timestamp`
+- `release_id`
+- `host`
+- `actor`
+- `phase`
+- `result`
+- `reason_code`
+
+## Idempotency and Resume
+
+- Re-running with same `--release-id` converges safely:
+  - Prepared releases are skipped when `.prepared` exists
+  - Already-active releases are skipped in `--resume` mode if health passes
+- Use `--resume --release-id <id>` after interruption
+- Use `--status --release-id <id>` to inspect `prepared/current/last-good`
+
+## Canary + Fleet Rollout
+
+### Canary only
+```bash
+just deploy --canary
+```
+
+### Canary then full rollout
+```bash
+just deploy --canary-then-fleet
+```
+
+Set `canary = true` on one or more hosts in `deploy/hosts.toml`.
+
+## Operator Runbook
+
+### Safe release flow
+
+```bash
+# 1) Build + stage + activate canary
+just deploy --canary-then-fleet
+
+# 2) Verify audit events and health
+ssh <host> 'tail -n 50 /var/log/oqto/update-events.jsonl'
+ssh <host> 'curl -sf http://127.0.0.1:8080/api/health && echo ok'
+
+# 3) If interrupted, resume exactly same release
+just deploy --resume --release-id <release-id>
+```
+
+### Manual rollback to last-good (emergency)
+
+```bash
+sudo ln -sfn "$(readlink -f /var/lib/oqto/releases/last-good)" /var/lib/oqto/releases/current
+sudo systemctl restart oqto
+```
 
 ## Options
 
+```text
+--host NAME
+--release-id ID
+--skip-build
+--skip-frontend
+--skip-backend
+--skip-services
+--prepare-only
+--activate-only
+--resume
+--status
+--canary
+--canary-then-fleet
+--health-timeout SEC
+--min-free-mb MB
+--keep-releases N     # default 3; also OQTO_KEEP_RELEASES env var
+--dry-run
+--config FILE
 ```
---host NAME       Deploy only to this host (repeatable)
---skip-build      Don't build, deploy existing artifacts
---skip-frontend   Skip frontend deployment
---skip-backend    Skip binary deployment
---skip-services   Skip service restarts
---dry-run         Show what would happen
---config FILE     Alternate hosts.toml path
-```
-
-## Just Recipes
-
-| Recipe | Description |
-|--------|-------------|
-| `just deploy` | Full build + deploy to all hosts |
-| `just deploy-host <name>` | Deploy to one host only |
-| `just deploy-quick` | Deploy without rebuilding |
-| `just deploy-backend` | Backend binaries only |
-| `just deploy-frontend` | Frontend only |
-| `just deploy-dry-run` | Preview without executing |
-
-All recipes pass extra arguments through, e.g.:
-```bash
-just deploy --skip-services
-just deploy-host octo-azure --skip-frontend
-```
-
-## Prerequisites
-
-- SSH keys configured for all remote hosts
-- `sudo` access on remote hosts (for `/usr/local/bin` installs)
-- `remote-build` available for compilation (build server)
-- `bun` installed for frontend builds
-- `rsync` available for frontend deployment to remote hosts
-
-## Post-Deploy Watchdog Verification
-
-After deploy/restart, verify the health watchdog is active so hung-but-running
-`oqto` processes are auto-recovered.
-
-### Multi-user (system service)
-
-```bash
-ssh <host> 'systemctl is-active oqto oqto-healthcheck.timer'
-ssh <host> 'systemctl status oqto-healthcheck.timer --no-pager -l | sed -n "1,40p"'
-```
-
-### Single-user (user service)
-
-```bash
-systemctl --user is-active oqto oqto-healthcheck.timer
-systemctl --user status oqto-healthcheck.timer --no-pager -l | sed -n '1,40p'
-```
-
-Expected: both `oqto` and `oqto-healthcheck.timer` report `active`.

@@ -3,6 +3,7 @@
 //! Uses `hstry service start` which properly daemonizes (double-fork, PID file).
 //! The daemon persists across Oqto restarts. If already running, start is a no-op.
 
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -44,17 +45,25 @@ impl HstryServiceManager {
 
     /// Check if the hstry daemon is already running.
     pub fn is_running(&self) -> bool {
-        let socket_path = hstry_core::paths::service_socket_path();
-        if socket_path.exists() {
-            return true;
+        #[cfg(unix)]
+        {
+            let socket_path = hstry_core::paths::service_socket_path();
+            if socket_path.exists() && std::os::unix::net::UnixStream::connect(&socket_path).is_ok()
+            {
+                return true;
+            }
         }
 
         let port_path = hstry_core::paths::service_port_path();
         if port_path.exists()
             && let Ok(content) = std::fs::read_to_string(&port_path)
-            && content.trim().parse::<u16>().is_ok()
+            && let Ok(port) = content.trim().parse::<u16>()
         {
-            return true;
+            let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
+            if TcpStream::connect_timeout(&addr, Duration::from_millis(200)).is_ok() {
+                return true;
+            }
+            debug!("hstry port file points to unreachable endpoint: {}", addr);
         }
 
         false
@@ -101,8 +110,8 @@ impl HstryServiceManager {
             // "already running" is fine
             let combined = format!("{}{}", stdout, stderr);
             if combined.contains("already running") {
-                debug!("hstry daemon was already running");
-                return Ok(());
+                debug!("hstry daemon reported already running but endpoint not ready; restarting");
+                return self.restart().await;
             }
             anyhow::bail!(
                 "hstry service start failed (exit {}): {}{}",
@@ -114,11 +123,69 @@ impl HstryServiceManager {
 
         info!("hstry service start succeeded: {}", stdout.trim());
 
-        // Wait for the daemon to become ready
+        // Wait for the daemon to become ready. If startup races with stale
+        // state, try adapter refresh + restart once before giving up.
+        if let Err(first_err) = self.wait_for_ready().await {
+            debug!(
+                "hstry not ready after start ({}); attempting adapter refresh + restart",
+                first_err
+            );
+            if let Err(e) = self.update_adapters().await {
+                debug!("hstry adapters update failed (continuing): {}", e);
+            }
+            self.restart().await?;
+            self.wait_for_ready().await?;
+        }
+
+        Ok(())
+    }
+
+    /// Restart the hstry daemon via `hstry service restart`.
+    async fn restart(&self) -> Result<()> {
+        let output = Command::new(&self.config.binary)
+            .args(["service", "restart"])
+            .output()
+            .await
+            .context("Failed to run hstry service restart")?;
+
+        if !output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!(
+                "hstry service restart failed (exit {}): {}{}",
+                output.status,
+                stdout,
+                stderr
+            );
+        }
+
         self.wait_for_ready().await
     }
 
-    /// Wait for the daemon to become ready (socket/port file exists).
+    /// Best-effort adapter refresh for binary/adapter version drift.
+    async fn update_adapters(&self) -> Result<()> {
+        let output = Command::new(&self.config.binary)
+            .args(["adapters", "update"])
+            .output()
+            .await
+            .context("Failed to run hstry adapters update")?;
+
+        if output.status.success() {
+            info!("hstry adapters updated successfully");
+            return Ok(());
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!(
+            "hstry adapters update failed (exit {}): {}{}",
+            output.status,
+            stdout,
+            stderr
+        )
+    }
+
+    /// Wait for the daemon to become ready (socket/port connectivity).
     async fn wait_for_ready(&self) -> Result<()> {
         let start = std::time::Instant::now();
         let check_interval = Duration::from_millis(100);

@@ -46,10 +46,8 @@ use crate::ws::types::{WsCommand as LegacyWsCommand, WsEvent as LegacyHubEvent};
 
 use super::error::ApiError;
 
-const PI_MESSAGES_CACHE_TTL: Duration = Duration::from_secs(15 * 60);
-const PI_MESSAGES_CACHE_MAX_BYTES_PER_USER: usize = 100 * 1024 * 1024;
-const PI_MESSAGES_CACHE_MAX_MESSAGES_PER_SESSION: usize = 200;
 const RECENT_CLIENT_IDS_MAX_PER_SESSION: usize = 512;
+const RECENT_CLIENT_IDS_TTL: Duration = Duration::from_secs(3600);
 
 // File tree traversal budgets (reliability + latency guardrails)
 const TREE_MAX_DEPTH: usize = 8;
@@ -59,22 +57,12 @@ const TREE_MAX_CONCURRENCY: usize = 16;
 const TREE_PAGE_DEFAULT_LIMIT: usize = 1_000;
 const TREE_PAGE_MAX_LIMIT: usize = 5_000;
 
-struct CachedPiMessages {
-    cached_at: Instant,
+struct ClientIdEntry {
+    ids: Vec<String>,
     last_access: Instant,
-    messages: Value,
-    size_bytes: usize,
 }
 
-struct CachedPiUserMessages {
-    total_bytes: usize,
-    entries: HashMap<String, CachedPiMessages>,
-}
-
-static PI_MESSAGES_CACHE: Lazy<tokio::sync::RwLock<HashMap<String, CachedPiUserMessages>>> =
-    Lazy::new(|| tokio::sync::RwLock::new(HashMap::new()));
-
-static RECENT_CLIENT_IDS: Lazy<tokio::sync::RwLock<HashMap<String, Vec<String>>>> =
+static RECENT_CLIENT_IDS: Lazy<tokio::sync::RwLock<HashMap<String, ClientIdEntry>>> =
     Lazy::new(|| tokio::sync::RwLock::new(HashMap::new()));
 
 mod agent;
@@ -82,26 +70,6 @@ mod files;
 mod history;
 mod system;
 mod terminal;
-
-fn trim_messages_for_cache(messages: &Value) -> Value {
-    match messages {
-        Value::Array(items) => {
-            if items.len() <= PI_MESSAGES_CACHE_MAX_MESSAGES_PER_SESSION {
-                Value::Array(items.clone())
-            } else {
-                let start = items.len() - PI_MESSAGES_CACHE_MAX_MESSAGES_PER_SESSION;
-                Value::Array(items[start..].to_vec())
-            }
-        }
-        _ => messages.clone(),
-    }
-}
-
-fn estimate_messages_size(messages: &Value) -> usize {
-    serde_json::to_string(messages)
-        .map(|s| s.len())
-        .unwrap_or(0)
-}
 
 fn normalized_client_id(client_id: Option<&str>) -> Option<&str> {
     let client_id = client_id?;
@@ -117,8 +85,10 @@ async fn has_accepted_client_id(session_id: &str, client_id: Option<&str>) -> bo
     };
 
     let map = RECENT_CLIENT_IDS.read().await;
-    map.get(session_id)
-        .is_some_and(|ids| ids.iter().any(|id| id == client_id))
+    map.get(session_id).is_some_and(|entry| {
+        entry.last_access.elapsed() < RECENT_CLIENT_IDS_TTL
+            && entry.ids.iter().any(|id| id == client_id)
+    })
 }
 
 async fn mark_client_id_accepted(session_id: &str, client_id: Option<&str>) {
@@ -127,14 +97,24 @@ async fn mark_client_id_accepted(session_id: &str, client_id: Option<&str>) {
     };
 
     let mut map = RECENT_CLIENT_IDS.write().await;
-    let ids = map.entry(session_id.to_string()).or_default();
-    if ids.iter().any(|id| id == client_id) {
+
+    // Lazy TTL eviction: sweep stale entries while we hold the write lock
+    map.retain(|_, entry| entry.last_access.elapsed() < RECENT_CLIENT_IDS_TTL);
+
+    let entry = map
+        .entry(session_id.to_string())
+        .or_insert_with(|| ClientIdEntry {
+            ids: Vec::new(),
+            last_access: Instant::now(),
+        });
+    entry.last_access = Instant::now();
+    if entry.ids.iter().any(|id| id == client_id) {
         return;
     }
-    ids.push(client_id.to_string());
-    if ids.len() > RECENT_CLIENT_IDS_MAX_PER_SESSION {
-        let overflow = ids.len() - RECENT_CLIENT_IDS_MAX_PER_SESSION;
-        ids.drain(0..overflow);
+    entry.ids.push(client_id.to_string());
+    if entry.ids.len() > RECENT_CLIENT_IDS_MAX_PER_SESSION {
+        let overflow = entry.ids.len() - RECENT_CLIENT_IDS_MAX_PER_SESSION;
+        entry.ids.drain(0..overflow);
     }
 }
 
@@ -143,73 +123,61 @@ async fn clear_client_ids_for_session(session_id: &str) {
     map.remove(session_id);
 }
 
-async fn cache_pi_messages(user_id: &str, session_id: &str, messages: &Value) {
-    let trimmed = trim_messages_for_cache(messages);
-    let size_bytes = estimate_messages_size(&trimmed);
-    let now = Instant::now();
-    let mut cache = PI_MESSAGES_CACHE.write().await;
-    let user_cache = cache
-        .entry(user_id.to_string())
-        .or_insert_with(|| CachedPiUserMessages {
-            total_bytes: 0,
-            entries: HashMap::new(),
-        });
+fn workspace_chat_messages_to_json(
+    messages: Vec<crate::runner::protocol::ChatMessageProto>,
+) -> serde_json::Value {
+    let mapped: Vec<serde_json::Value> = messages
+        .into_iter()
+        .map(|m| {
+            let parts: Vec<serde_json::Value> = m
+                .parts
+                .into_iter()
+                .map(|p| {
+                    let mut part = serde_json::Map::new();
+                    part.insert("id".to_string(), serde_json::Value::String(p.id));
+                    part.insert("type".to_string(), serde_json::Value::String(p.part_type));
+                    if let Some(text) = p.text {
+                        part.insert("text".to_string(), serde_json::Value::String(text));
+                    }
+                    if let Some(tool_name) = p.tool_name {
+                        part.insert("name".to_string(), serde_json::Value::String(tool_name));
+                    }
+                    if let Some(tool_call_id) = p.tool_call_id {
+                        part.insert(
+                            "toolCallId".to_string(),
+                            serde_json::Value::String(tool_call_id.clone()),
+                        );
+                        part.insert(
+                            "tool_use_id".to_string(),
+                            serde_json::Value::String(tool_call_id),
+                        );
+                    }
+                    if let Some(tool_input) = p.tool_input {
+                        part.insert("input".to_string(), tool_input);
+                    }
+                    if let Some(tool_output) = p.tool_output {
+                        part.insert("output".to_string(), serde_json::Value::String(tool_output));
+                    }
+                    if let Some(tool_status) = p.tool_status {
+                        part.insert("status".to_string(), serde_json::Value::String(tool_status));
+                    }
+                    serde_json::Value::Object(part)
+                })
+                .collect();
 
-    if let Some(existing) = user_cache.entries.remove(session_id) {
-        user_cache.total_bytes = user_cache.total_bytes.saturating_sub(existing.size_bytes);
-    }
+            serde_json::json!({
+                "id": m.id,
+                "role": m.role,
+                "created_at": m.created_at,
+                "parts": parts,
+                "content": parts,
+                "model": m.model_id,
+                "provider": m.provider_id,
+            })
+        })
+        .collect();
 
-    user_cache.total_bytes = user_cache.total_bytes.saturating_add(size_bytes);
-    user_cache.entries.insert(
-        session_id.to_string(),
-        CachedPiMessages {
-            cached_at: now,
-            last_access: now,
-            messages: trimmed,
-            size_bytes,
-        },
-    );
-
-    while user_cache.total_bytes > PI_MESSAGES_CACHE_MAX_BYTES_PER_USER {
-        if let Some((oldest_key, oldest_entry)) = user_cache
-            .entries
-            .iter()
-            .min_by_key(|(_, entry)| entry.last_access)
-            .map(|(k, v)| (k.clone(), v.size_bytes))
-        {
-            user_cache.entries.remove(&oldest_key);
-            user_cache.total_bytes = user_cache.total_bytes.saturating_sub(oldest_entry);
-        } else {
-            break;
-        }
-    }
-}
-
-struct CachedPiMessagesSnapshot {
-    messages: Value,
-    age: Duration,
-}
-
-async fn get_cached_pi_messages(
-    user_id: &str,
-    session_id: &str,
-) -> Option<CachedPiMessagesSnapshot> {
-    let mut cache = PI_MESSAGES_CACHE.write().await;
-    let user_cache = cache.get_mut(user_id)?;
-    if let Some(entry) = user_cache.entries.get_mut(session_id) {
-        let age = entry.cached_at.elapsed();
-        if age <= PI_MESSAGES_CACHE_TTL {
-            entry.last_access = Instant::now();
-            return Some(CachedPiMessagesSnapshot {
-                messages: entry.messages.clone(),
-                age,
-            });
-        }
-        let size = entry.size_bytes;
-        user_cache.entries.remove(session_id);
-        user_cache.total_bytes = user_cache.total_bytes.saturating_sub(size);
-    }
-    None
+    serde_json::Value::Array(mapped)
 }
 
 async fn read_hstry_message_version_snapshot(
@@ -237,19 +205,43 @@ async fn read_hstry_message_version_snapshot(
         return None;
     }
 
-    let query = r#"
+    let has_updated_at_col: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM pragma_table_info('conversations') WHERE name = 'updated_at'",
+    )
+    .fetch_one(&pool)
+    .await
+    .ok()?;
+    let has_created_at_col: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM pragma_table_info('conversations') WHERE name = 'created_at'",
+    )
+    .fetch_one(&pool)
+    .await
+    .ok()?;
+
+    let query = if has_updated_at_col > 0 && has_created_at_col > 0 {
+        r#"
         SELECT c.version as version,
                (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) as message_count
         FROM conversations c
         WHERE c.source_id = 'pi'
-          AND (c.external_id = ? OR c.platform_id = ? OR c.readable_id = ? OR c.id = ?)
+          AND (c.external_id = ? OR c.platform_id = ? OR c.id = ?)
+        ORDER BY COALESCE(c.updated_at, c.created_at) DESC
         LIMIT 1
-        "#;
+        "#
+    } else {
+        r#"
+        SELECT c.version as version,
+               (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) as message_count
+        FROM conversations c
+        WHERE c.source_id = 'pi'
+          AND (c.external_id = ? OR c.platform_id = ? OR c.id = ?)
+        LIMIT 1
+        "#
+    };
 
     let mut row = None;
     for attempt in 0..3 {
         row = sqlx::query(query)
-            .bind(session_id)
             .bind(session_id)
             .bind(session_id)
             .bind(session_id)
@@ -582,7 +574,7 @@ pub enum WsEvent {
     Hstry(HstryWsEvent),
     Trx(TrxWsEvent),
     System(SystemWsEvent),
-    Bus(Box<crate::bus::BusWsEvent>),
+    Bus(crate::bus::BusWsEvent),
 }
 
 /// Files channel events (placeholder).
@@ -936,20 +928,17 @@ fn runner_client_for_linux_user(
     user_id: &str,
     linux_username_override: Option<&str>,
 ) -> Option<RunnerClient> {
-    if state.runner_endpoint.is_some() {
+    // Check if we have a socket pattern configured
+    if let Some(pattern) = state.runner_socket_pattern.as_deref() {
         let linux_username = linux_username_override
             .map(|s| s.to_string())
-            .unwrap_or_else(|| {
-                state
-                    .linux_users
-                    .as_ref()
-                    .map(|lu| lu.linux_username(user_id))
-                    .unwrap_or_else(|| user_id.to_string())
-            });
+            .unwrap_or_else(|| state.effective_linux_username(user_id));
 
-        match state.runner_client_for_linux_user(&linux_username) {
-            Ok(Some(c)) => return Some(c),
-            Ok(None) => {}
+        // Use for_user_with_pattern which handles both {user} and {uid} placeholders.
+        // Don't pre-check socket existence -- the runner client retries on
+        // transient connection failures during service restarts.
+        match RunnerClient::for_user_with_pattern(&linux_username, pattern) {
+            Ok(c) => return Some(c),
             Err(e) => {
                 warn!("Failed to create runner client for user {}: {}", user_id, e);
             }
@@ -1179,8 +1168,7 @@ async fn handle_multiplexed_ws(
     let event_tx_for_bus = event_tx.clone();
     let bus_forwarder = tokio::spawn(async move {
         while let Some(bus_event) = bus_rx.recv().await {
-            let ws_event =
-                WsEvent::Bus(Box::new(crate::bus::BusWsEvent::Event(Box::new(bus_event))));
+            let ws_event = WsEvent::Bus(crate::bus::BusWsEvent::Event(Box::new(bus_event)));
             if event_tx_for_bus.send(ws_event).is_err() {
                 break;
             }
@@ -1568,7 +1556,9 @@ async fn handle_ws_command(
         WsCommand::Terminal(term_cmd) => {
             terminal::handle_terminal_command(term_cmd, user_id, state, conn_state).await
         }
-        WsCommand::Hstry(hstry_cmd) => history::handle_hstry_command(hstry_cmd, state).await,
+        WsCommand::Hstry(hstry_cmd) => {
+            history::handle_hstry_command(hstry_cmd, user_id, state).await
+        }
         WsCommand::Trx(trx_cmd) => history::handle_trx_command(trx_cmd, user_id, state).await,
         WsCommand::Session(session_cmd) => {
             history::handle_session_command(session_cmd, user_id, state).await
@@ -1643,7 +1633,8 @@ fn ws_command_id(cmd: &WsCommand) -> Option<String> {
         WsCommand::Bus(bus_cmd) => match bus_cmd {
             crate::bus::BusCommand::Publish { id, .. }
             | crate::bus::BusCommand::Subscribe { id, .. }
-            | crate::bus::BusCommand::Unsubscribe { id, .. } => id.clone(),
+            | crate::bus::BusCommand::Unsubscribe { id, .. }
+            | crate::bus::BusCommand::Pull { id, .. } => id.clone(),
         },
     }
 }
@@ -1785,6 +1776,7 @@ fn ws_command_summary(cmd: &WsCommand) -> (String, Option<String>, Option<String
                 crate::bus::BusCommand::Publish { topic, .. } => format!("bus.publish.{}", topic),
                 crate::bus::BusCommand::Subscribe { .. } => "bus.subscribe".to_string(),
                 crate::bus::BusCommand::Unsubscribe { .. } => "bus.unsubscribe".to_string(),
+                crate::bus::BusCommand::Pull { .. } => "bus.pull".to_string(),
             };
             (label, None, None)
         }
@@ -2042,21 +2034,12 @@ async fn broadcast_user_message(
     }
 }
 
-fn live_pi_messages_timeout(is_active_subscription: bool) -> Duration {
-    if is_active_subscription {
-        Duration::from_secs(3)
-    } else {
-        Duration::from_millis(800)
-    }
-}
-
 /// Every command gets a `CommandResponse` event back (or `None` for fire-and-forget
 /// commands like prompt/steer/abort where streaming events are the real response).
 async fn handle_get_messages(
     id: Option<String>,
     session_id: &str,
-    user_id: &str,
-    state: &AppState,
+    _state: &AppState,
     runner: &RunnerClient,
     conn_state: Arc<tokio::sync::Mutex<WsConnectionState>>,
     runner_id: &str,
@@ -2066,237 +2049,84 @@ async fn handle_get_messages(
             agent_response_with_runner(runner_id, session_id, id, cmd, result)
         };
 
-    let (session_meta, is_active) = {
+    let is_active = {
         let state_guard = conn_state.lock().await;
-        (
-            state_guard.pi_session_meta.get(session_id).cloned(),
-            state_guard.pi_subscriptions.contains(session_id),
-        )
+        state_guard.pi_subscriptions.contains(session_id)
     };
 
-    let is_multi_user = state.linux_users.is_some();
-    let workspace_for_hstry = session_meta.as_ref().and_then(|meta| {
-        (meta.scope.as_deref() == Some("workspace") || meta.scope.as_deref() == Some("pi"))
-            .then(|| {
-                meta.cwd
-                    .as_ref()
-                    .map(|cwd| cwd.to_string_lossy().to_string())
-            })
-            .flatten()
-    });
-    let persisted_message_version =
-        read_hstry_message_version_snapshot(session_id, workspace_for_hstry, is_multi_user).await;
+    let response_data = |messages: Value| {
+        let mut data = serde_json::Map::new();
+        data.insert("messages".to_string(), messages);
+        Value::Object(data)
+    };
 
-    let response_data =
-        |messages: Value, message_version: Option<oqto_protocol::events::MessageVersion>| {
-            let mut data = serde_json::Map::new();
-            data.insert("messages".to_string(), messages);
-            if let Some(version) = message_version
-                && let Ok(version_json) = serde_json::to_value(version)
-            {
-                data.insert("message_version".to_string(), version_json);
-            }
-            Value::Object(data)
-        };
-
-    // Prefer Pi's live messages over hstry whenever possible. This is
-    // especially important for shared workspaces where this WS connection may
-    // not currently hold a local subscription even though the session is still
-    // active on another connection/user.
-    //
-    // Use a tighter timeout for non-subscribed sessions to avoid regressing
-    // cold-history fetch latency.
-    let pi_timeout = live_pi_messages_timeout(is_active);
-
-    let pi_result = tokio::time::timeout(pi_timeout, runner.agent_get_messages(session_id)).await;
-    match pi_result {
-        Ok(Ok(resp)) => {
-            let messages_value = serde_json::to_value(&resp.messages).unwrap_or_default();
-            cache_pi_messages(user_id, session_id, &messages_value).await;
-            return Some(agent_response(
-                session_id,
-                id,
-                "get_messages",
-                Ok(Some(response_data(
-                    messages_value,
-                    persisted_message_version.clone(),
-                ))),
-            ));
-        }
-        Ok(Err(e)) => {
-            // Pi process may be inactive (historical session) or unavailable.
-            // Fall through to hstry/cache as fallback.
-            debug!(
-                "get_messages: Pi query failed for {}: {}, falling through to hstry",
-                session_id, e
-            );
-        }
-        Err(_) => {
-            debug!(
-                "get_messages: Pi query timed out for session {}, falling through to hstry",
-                session_id,
-            );
-        }
-    }
-
-    // Check cache (only for inactive sessions or when Pi query failed above)
-    if let Some(cached) = get_cached_pi_messages(user_id, session_id).await {
-        let use_cached = !is_active || cached.age <= Duration::from_secs(2);
-        if use_cached {
-            return Some(agent_response(
-                session_id,
-                id,
-                "get_messages",
-                Ok(Some(response_data(
-                    cached.messages,
-                    persisted_message_version.clone(),
-                ))),
-            ));
-        }
-    }
-
-    // Try hstry for historical messages
-    if let Some(meta) = session_meta.as_ref()
-        && (meta.scope.as_deref() == Some("workspace") || meta.scope.as_deref() == Some("pi"))
-        && let Some(work_dir) = meta.cwd.as_ref()
+    // Live recovery path: fetch the per-session runner buffer snapshot.
+    // This endpoint is intentionally non-authoritative and is used to repair
+    // dropped websocket deltas during active turns without replacing durable
+    // history. Durable/authoritative reconciliation remains on REST
+    // `/api/chat-history/{id}/messages` (runner source=authoritative).
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        runner.get_workspace_chat_session_messages(
+            session_id,
+            false,
+            None,
+            crate::runner::protocol::WorkspaceChatMessagesSource::Live,
+        ),
+    )
+    .await
     {
-        if is_multi_user {
-            match runner
-                .get_workspace_chat_messages(
-                    work_dir.to_string_lossy().to_string(),
-                    session_id.to_string(),
-                    None,
-                )
-                .await
-            {
-                Ok(resp) if !resp.messages.is_empty() => {
-                    let messages: Vec<serde_json::Value> = resp
-                        .messages
-                        .into_iter()
-                        .map(|m| serde_json::json!({
-                            "id": m.id, "role": m.role, "content": m.content, "timestamp": m.timestamp,
-                        }))
-                        .collect();
-                    let messages_value = serde_json::Value::Array(messages);
-                    cache_pi_messages(user_id, session_id, &messages_value).await;
-                    return Some(agent_response(
-                        session_id,
-                        id,
-                        "get_messages",
-                        Ok(Some(response_data(
-                            messages_value,
-                            persisted_message_version.clone(),
-                        ))),
-                    ));
-                }
-                Ok(_) => {}
-                Err(e) => {
-                    debug!(
-                        "get_messages: hstry (workspace via runner) error for {}: {}",
-                        session_id, e
-                    );
-                }
-            }
-        } else if let Some(hstry_client) = state.hstry.as_ref() {
-            match hstry_client.get_messages(session_id, None, None).await {
-                Ok(hstry_messages) if !hstry_messages.is_empty() => {
-                    let serializable =
-                        crate::history::proto_messages_to_serializable(hstry_messages);
-                    let messages_value = serde_json::to_value(&serializable).unwrap_or_default();
-                    cache_pi_messages(user_id, session_id, &messages_value).await;
-                    return Some(agent_response(
-                        session_id,
-                        id,
-                        "get_messages",
-                        Ok(Some(response_data(
-                            messages_value,
-                            persisted_message_version.clone(),
-                        ))),
-                    ));
-                }
-                Ok(_) => {}
-                Err(e) => {
-                    debug!(
-                        "get_messages: hstry (workspace) error for {}: {}",
-                        session_id, e
-                    );
-                }
-            }
-        }
-    } else if is_multi_user {
-        match runner.get_main_chat_messages(session_id, None).await {
-            Ok(resp) if !resp.messages.is_empty() => {
-                let messages: Vec<serde_json::Value> = resp
-                    .messages
-                    .into_iter()
-                    .map(|m| serde_json::json!({
-                        "id": m.id, "role": m.role, "content": m.content, "timestamp": m.timestamp,
-                    }))
-                    .collect();
-                let messages_value = serde_json::Value::Array(messages);
-                cache_pi_messages(user_id, session_id, &messages_value).await;
-                return Some(agent_response(
-                    session_id,
-                    id,
-                    "get_messages",
-                    Ok(Some(response_data(
-                        messages_value,
-                        persisted_message_version.clone(),
-                    ))),
-                ));
-            }
-            Ok(_) => {}
-            Err(e) => {
-                debug!(
-                    "get_messages: hstry (via runner) error for {}: {}",
-                    session_id, e
+        Ok(Ok(resp)) => {
+            debug!(
+                "ws get_messages session={} active={} source=oqto_log count={}",
+                session_id,
+                is_active,
+                resp.messages.len()
+            );
+            let mut messages_value = workspace_chat_messages_to_json(resp.messages);
+            if let serde_json::Value::Object(ref mut map) = messages_value {
+                let source = match resp.source {
+                    crate::runner::protocol::WorkspaceChatMessagesSource::Authoritative => {
+                        "authoritative"
+                    }
+                    crate::runner::protocol::WorkspaceChatMessagesSource::Live => "live",
+                };
+                map.insert(
+                    "messages_source".to_string(),
+                    serde_json::Value::String(source.to_string()),
                 );
             }
-        }
-    } else if let Some(hstry_client) = state.hstry.as_ref() {
-        match hstry_client.get_messages(session_id, None, None).await {
-            Ok(hstry_messages) if !hstry_messages.is_empty() => {
-                let serializable = crate::history::proto_messages_to_serializable(hstry_messages);
-                let messages_value = serde_json::to_value(&serializable).unwrap_or_default();
-                cache_pi_messages(user_id, session_id, &messages_value).await;
-                return Some(agent_response(
-                    session_id,
-                    id,
-                    "get_messages",
-                    Ok(Some(response_data(
-                        messages_value,
-                        persisted_message_version.clone(),
-                    ))),
-                ));
-            }
-            Ok(_) => {}
-            Err(e) => {
-                debug!("get_messages: hstry error for {}: {}", session_id, e);
-            }
-        }
-    }
-
-    // Last resort: try runner's live Pi process
-    match runner.agent_get_messages(session_id).await {
-        Ok(resp) => {
-            let messages_value = serde_json::to_value(&resp.messages).unwrap_or_default();
-            cache_pi_messages(user_id, session_id, &messages_value).await;
             Some(agent_response(
                 session_id,
                 id,
                 "get_messages",
-                Ok(Some(response_data(
-                    messages_value,
-                    persisted_message_version.clone(),
-                ))),
+                Ok(Some(response_data(messages_value))),
             ))
         }
-        Err(e) => Some(agent_response(
-            session_id,
-            id,
-            "get_messages",
-            Err(e.to_string()),
-        )),
+        Ok(Err(e)) => {
+            debug!(
+                "get_messages: oqto-log read failed for {} (active={}): {}",
+                session_id, is_active, e
+            );
+            Some(agent_response(
+                session_id,
+                id,
+                "get_messages",
+                Err(e.to_string()),
+            ))
+        }
+        Err(_) => {
+            debug!(
+                "get_messages: oqto-log timed out for {} (active={})",
+                session_id, is_active
+            );
+            Some(agent_response(
+                session_id,
+                id,
+                "get_messages",
+                Err("oqto-log read timed out".to_string()),
+            ))
+        }
     }
 }
 
@@ -2311,7 +2141,6 @@ async fn handle_get_messages(
 async fn forward_pi_events(
     runner: &RunnerClient,
     session_id: &str,
-    user_id: &str,
     event_tx: mpsc::UnboundedSender<WsEvent>,
     conn_state: Arc<tokio::sync::Mutex<WsConnectionState>>,
     sub_ready_tx: Option<oneshot::Sender<()>>,
@@ -2338,74 +2167,45 @@ async fn forward_pi_events(
                 // Any real agent event means the command made progress.
                 clear_response_watchdog(&conn_state, session_id).await;
 
-                // Invalidate the messages cache on agent.idle so subsequent
-                // get_messages requests fetch fresh data from hstry instead
-                // of serving stale cached messages.
-                if matches!(
-                    canonical_event.payload,
-                    oqto_protocol::events::EventPayload::AgentIdle { .. }
-                ) {
-                    let mut cache = PI_MESSAGES_CACHE.write().await;
-                    if let Some(user_cache) = cache.get_mut(user_id)
-                        && let Some(entry) = user_cache.entries.remove(session_id)
-                    {
-                        user_cache.total_bytes =
-                            user_cache.total_bytes.saturating_sub(entry.size_bytes);
-                    }
-                }
                 if event_tx.send(WsEvent::Agent(canonical_event)).is_err() {
                     // WebSocket closed
                     break;
                 }
             }
             Some(PiSubscriptionEvent::End { reason }) => {
+                clear_response_watchdog(&conn_state, session_id).await;
                 debug!(
                     "Pi subscription ended for session {}: {}",
                     session_id, reason
                 );
-                emit_terminal_send_failure(
-                    &conn_state,
-                    session_id,
-                    &runner_id,
-                    format!("Subscription ended: {}", reason),
-                )
-                .await;
                 break;
             }
             Some(PiSubscriptionEvent::Error { code, message }) => {
+                clear_response_watchdog(&conn_state, session_id).await;
                 error!(
                     "Pi subscription error for session {}: {:?} - {}",
                     session_id, code, message
                 );
-                emit_terminal_send_failure(
-                    &conn_state,
-                    session_id,
-                    &runner_id,
-                    format!("Subscription error ({:?}): {}", code, message),
-                )
-                .await;
+                // Emit error as canonical agent.error event
+                let error_event = oqto_protocol::events::Event {
+                    session_id: session_id.to_string(),
+                    runner_id: runner_id.clone(),
+                    ts: chrono::Utc::now().timestamp_millis(),
+                    payload: oqto_protocol::events::EventPayload::AgentError {
+                        error: format!("Subscription error ({:?}): {}", code, message),
+                        recoverable: false,
+                        phase: None,
+                    },
+                };
+                let _ = event_tx.send(WsEvent::Agent(Box::new(error_event)));
                 break;
             }
             None => {
+                clear_response_watchdog(&conn_state, session_id).await;
                 debug!("Pi subscription stream ended for session {}", session_id);
-                emit_terminal_send_failure(
-                    &conn_state,
-                    session_id,
-                    &runner_id,
-                    "Subscription stream ended unexpectedly".to_string(),
-                )
-                .await;
                 break;
             }
         }
-    }
-
-    // Prevent stale local subscription state. If the forwarder exits, this
-    // connection must no longer consider itself subscribed for the session.
-    {
-        let mut state_guard = conn_state.lock().await;
-        state_guard.pi_subscriptions.remove(session_id);
-        state_guard.pi_forwarders.remove(session_id);
     }
 
     Ok(())
@@ -2528,65 +2328,57 @@ async fn handle_copy_to_workspace(
     };
 
     // Create user plane (same user for both workspaces)
-    let linux_username = state
-        .linux_users
-        .as_ref()
-        .map(|lu| lu.linux_username(user_id))
-        .unwrap_or_else(|| user_id.to_string());
-    let is_multi_user = state.linux_users.is_some();
-    let user_plane: Arc<dyn UserPlane> = if is_multi_user {
-        match state.runner_endpoint.as_ref() {
-            Some(endpoint) => {
-                match RunnerUserPlane::for_user_with_endpoint(&linux_username, endpoint) {
-                    Ok(plane) => {
-                        let base: Arc<dyn UserPlane> = Arc::new(plane);
-                        Arc::new(MeteredUserPlane::new(
-                            base,
-                            UserPlanePath::Runner,
-                            state.user_plane_metrics.clone(),
-                        ))
-                    }
-                    Err(err) => {
-                        error!(
-                            "Failed to create RunnerUserPlane for {}: {:#}",
-                            linux_username, err
-                        );
-                        return Some(WsEvent::Files(FilesWsEvent::Error {
-                            id,
-                            error: "File access unavailable: user runner not reachable".into(),
-                        }));
-                    }
+    let linux_username = state.effective_linux_username(user_id);
+    let is_multi_user = state.user_isolation_enabled();
+    let user_plane: Arc<dyn UserPlane> =
+        if let Some(pattern) = state.runner_socket_pattern.as_deref() {
+            match RunnerUserPlane::for_user_with_pattern(&linux_username, pattern) {
+                Ok(plane) => {
+                    let base: Arc<dyn UserPlane> = Arc::new(plane);
+                    Arc::new(MeteredUserPlane::new(
+                        base,
+                        UserPlanePath::Runner,
+                        state.user_plane_metrics.clone(),
+                    ))
+                }
+                Err(err) => {
+                    error!(
+                        "Failed to create RunnerUserPlane for {}: {:#}",
+                        linux_username, err
+                    );
+                    return Some(WsEvent::Files(FilesWsEvent::Error {
+                        id,
+                        error: "File access unavailable: user runner not reachable".into(),
+                    }));
                 }
             }
-            None => {
-                error!("Multi-user mode without runner_endpoint configured");
-                return Some(WsEvent::Files(FilesWsEvent::Error {
-                    id,
-                    error: "File access not configured for multi-user mode".into(),
-                }));
+        } else if is_multi_user {
+            error!("Multi-user mode without runner_socket_pattern configured");
+            return Some(WsEvent::Files(FilesWsEvent::Error {
+                id,
+                error: "File access not configured for multi-user mode".into(),
+            }));
+        } else {
+            match RunnerUserPlane::new_default() {
+                Ok(plane) => {
+                    let base: Arc<dyn UserPlane> = Arc::new(plane);
+                    Arc::new(MeteredUserPlane::new(
+                        base,
+                        UserPlanePath::Runner,
+                        state.user_plane_metrics.clone(),
+                    ))
+                }
+                Err(runner_err) => {
+                    return Some(WsEvent::Files(FilesWsEvent::Error {
+                        id,
+                        error: format!(
+                            "File access unavailable: runner not reachable ({:#})",
+                            runner_err
+                        ),
+                    }));
+                }
             }
-        }
-    } else {
-        match RunnerUserPlane::new_default() {
-            Ok(plane) => {
-                let base: Arc<dyn UserPlane> = Arc::new(plane);
-                Arc::new(MeteredUserPlane::new(
-                    base,
-                    UserPlanePath::Runner,
-                    state.user_plane_metrics.clone(),
-                ))
-            }
-            Err(runner_err) => {
-                return Some(WsEvent::Files(FilesWsEvent::Error {
-                    id,
-                    error: format!(
-                        "File access unavailable: runner not reachable ({:#})",
-                        runner_err
-                    ),
-                }));
-            }
-        }
-    };
+        };
 
     // Perform the copy (recursive for directories, returns file count)
     fn copy_recursive_cross<'a>(
@@ -3279,9 +3071,35 @@ mod tests {
         assert!(!state_guard.response_watchdogs.contains_key("ses-test"));
     }
 
-    #[test]
-    fn test_live_pi_messages_timeout_prefers_live_pi_even_without_subscription() {
-        assert_eq!(live_pi_messages_timeout(true), Duration::from_secs(3));
-        assert_eq!(live_pi_messages_timeout(false), Duration::from_millis(800));
+    #[tokio::test]
+    async fn session_identity_isolation_client_ids_are_scoped_per_session() {
+        clear_client_ids_for_session("sess-a").await;
+        clear_client_ids_for_session("sess-b").await;
+
+        mark_client_id_accepted("sess-a", Some("cid-1")).await;
+
+        assert!(has_accepted_client_id("sess-a", Some("cid-1")).await);
+        assert!(!has_accepted_client_id("sess-b", Some("cid-1")).await);
+
+        clear_client_ids_for_session("sess-a").await;
+        clear_client_ids_for_session("sess-b").await;
+    }
+
+    #[tokio::test]
+    async fn session_identity_isolation_concurrent_client_ids_do_not_cross_contaminate() {
+        clear_client_ids_for_session("sess-a").await;
+        clear_client_ids_for_session("sess-b").await;
+
+        let mark_a = tokio::spawn(async { mark_client_id_accepted("sess-a", Some("cid-a")).await });
+        let mark_b = tokio::spawn(async { mark_client_id_accepted("sess-b", Some("cid-b")).await });
+        let _ = tokio::join!(mark_a, mark_b);
+
+        assert!(has_accepted_client_id("sess-a", Some("cid-a")).await);
+        assert!(!has_accepted_client_id("sess-a", Some("cid-b")).await);
+        assert!(has_accepted_client_id("sess-b", Some("cid-b")).await);
+        assert!(!has_accepted_client_id("sess-b", Some("cid-a")).await);
+
+        clear_client_ids_for_session("sess-a").await;
+        clear_client_ids_for_session("sess-b").await;
     }
 }

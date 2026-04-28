@@ -7,15 +7,18 @@ use std::process::Command;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 
-use crate::{SandboxConfig, SandboxConfigFile};
+use crate::shim::maybe_run_shim;
+use crate::{SandboxConfig, SandboxConfigFile, configure_bwrap_pre_exec};
 
 #[derive(Parser, Debug)]
 #[command(
     name = "oqto-sandbox",
     about = "Sandbox wrapper for agent processes",
+    trailing_var_arg = true,
     after_help = "Examples:\n  \
+        oqto-sandbox ls -la\n  \
         oqto-sandbox --profile development -- agent serve\n  \
-        oqto-sandbox --config ./sandbox.toml -- cargo build\n  \
+        oqto-sandbox --config ./sandbox.toml cargo build\n  \
         oqto-sandbox --dry-run --profile strict -- npm install"
 )]
 struct Args {
@@ -37,24 +40,70 @@ struct Args {
     #[arg(short, long)]
     verbose: bool,
 
-    #[arg(last = true, required = true)]
+    #[arg(trailing_var_arg = true, required = true)]
     command: Vec<String>,
 }
 
+/// Config lookup chain (first match wins):
+/// 1. Explicit `--config` flag
+/// 2. `/etc/oqto/sandbox.toml` (system, trusted)
+/// 3. `~/.config/oqto/sandbox.toml` (user)
+/// 4. Hardcoded profile defaults
+///
+/// Workspace config (`.oqto/sandbox.toml`) is merged on top in `run_cli`
+/// and can only add restrictions, never weaken them.
 fn load_config(args: &Args) -> Result<SandboxConfig> {
-    if let Some(config_path) = &args.config {
+    let mut config = if let Some(config_path) = &args.config {
+        info!(
+            "Loading sandbox config from explicit path: {:?}",
+            config_path
+        );
         let content = std::fs::read_to_string(config_path)
             .with_context(|| format!("reading config file: {:?}", config_path))?;
         let file: SandboxConfigFile =
             toml::from_str(&content).with_context(|| "parsing config file")?;
-        let mut config: SandboxConfig = file.into();
-        config.enabled = !args.no_sandbox;
-        Ok(config)
+        file.into()
     } else {
-        let mut config = SandboxConfig::from_profile(&args.profile);
-        config.enabled = !args.no_sandbox;
-        Ok(config)
+        load_config_from_chain(&args.profile)?
+    };
+
+    config.enabled = !args.no_sandbox;
+    Ok(config)
+}
+
+const SYSTEM_SANDBOX_CONFIG: &str = "/etc/oqto/sandbox.toml";
+
+/// Load config from the standard lookup chain:
+/// 1. `/etc/oqto/sandbox.toml` (system)
+/// 2. `~/.config/oqto/sandbox.toml` (user)
+/// 3. Hardcoded profile defaults
+fn load_config_from_chain(profile: &str) -> Result<SandboxConfig> {
+    let system_path = PathBuf::from(SYSTEM_SANDBOX_CONFIG);
+    if system_path.exists() {
+        info!("Loading sandbox config from system path: {:?}", system_path);
+        let content = std::fs::read_to_string(&system_path)
+            .with_context(|| format!("reading system config: {:?}", system_path))?;
+        let file: SandboxConfigFile = toml::from_str(&content)
+            .with_context(|| format!("parsing system config: {:?}", system_path))?;
+        return Ok(file.into());
     }
+
+    let user_path = dirs::config_dir()
+        .unwrap_or_else(|| PathBuf::from("~/.config"))
+        .join("oqto")
+        .join("sandbox.toml");
+
+    if user_path.exists() {
+        info!("Loading sandbox config from user path: {:?}", user_path);
+        return SandboxConfig::load_user_config()
+            .context("user sandbox config exists but failed to parse");
+    }
+
+    info!(
+        "No config file found, using hardcoded profile '{}'",
+        profile
+    );
+    Ok(SandboxConfig::from_profile(profile))
 }
 
 #[cfg(unix)]
@@ -77,12 +126,22 @@ fn exec_sandboxed(
     let bwrap_args = match config.build_bwrap_args_for_user(workspace, None) {
         Some(args) => args,
         None => {
-            error!("bubblewrap (bwrap) not available, cannot sandbox");
+            // build_bwrap_args_for_user returns None for several reasons:
+            // - bwrap binary missing
+            // - seccomp_mode=enforce with missing/unreadable bpf
+            // - landlock_mode=enforce without kernel support or shim binary
+            // Check each cause so the user sees the right error and dry-run
+            // returns a non-zero exit code instead of a silent success.
+            let msg = if !SandboxConfig::is_bwrap_available() {
+                "bubblewrap (bwrap) not found in PATH"
+            } else {
+                "sandbox config rejected (seccomp/landlock enforce without backing support — see log above)"
+            };
+            error!("{}", msg);
             if dry_run {
-                println!("ERROR: bwrap not available");
-                return Ok(());
+                println!("ERROR: {}", msg);
             }
-            anyhow::bail!("bubblewrap (bwrap) not found in PATH");
+            anyhow::bail!("{}", msg);
         }
     };
 
@@ -95,7 +154,12 @@ fn exec_sandboxed(
     }
 
     debug!("Executing: bwrap {:?}", full_args);
-    let err = Command::new("bwrap").args(&full_args).exec();
+    let mut cmd = Command::new("bwrap");
+    cmd.args(&full_args);
+
+    configure_bwrap_pre_exec(&mut cmd, config, workspace)?;
+
+    let err = cmd.exec();
 
     error!("Failed to exec bwrap: {:?}", err);
     Err(err.into())
@@ -202,6 +266,11 @@ fn exec_sandboxed(
 }
 
 pub fn run_cli() -> Result<()> {
+    // Inner-shim fast path: when invoked by bwrap as its inner command with
+    // OQTO_SANDBOX_SHIM_MODE=1, apply Landlock and exec the real target.
+    // maybe_run_shim returns without side effects when the sentinel is absent.
+    maybe_run_shim()?;
+
     let args = Args::parse();
 
     let log_level = if args.verbose { "debug" } else { "info" };
@@ -214,6 +283,9 @@ pub fn run_cli() -> Result<()> {
         .clone()
         .or_else(|| std::env::current_dir().ok())
         .unwrap_or_else(|| PathBuf::from("."));
+
+    // Merge workspace config on top (can only add restrictions, never weaken)
+    let config = config.with_workspace_config(&workspace);
 
     info!(
         "oqto-sandbox: platform={}, profile={}, workspace={:?}, command={:?}",

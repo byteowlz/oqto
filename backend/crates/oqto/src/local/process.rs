@@ -156,6 +156,93 @@ impl ProcessHandle {
 /// Manager for local processes.
 ///
 /// Tracks all spawned processes and provides lifecycle management.
+/// Build the base system environment for agent processes.
+///
+/// This is the starting point for building the complete env map.
+/// Session service adds auth/tooling vars on top of this.
+/// `spawn_as_user()` calls `env_clear()` so ONLY vars in the final map are passed.
+pub fn base_system_env() -> HashMap<String, String> {
+    let mut env = HashMap::new();
+
+    // Passthrough system vars from current environment (if set)
+    let passthrough = [
+        // Core POSIX
+        "HOME",
+        "USER",
+        "SHELL",
+        "LOGNAME",
+        // Locale
+        "LANG",
+        "LC_ALL",
+        "LC_CTYPE",
+        // Terminal
+        "TERM",
+        "COLORTERM",
+        "COLORFGBG",
+        "TERM_PROGRAM",
+        // Display (clipboard, browser)
+        "DISPLAY",
+        "WAYLAND_DISPLAY",
+        // Multiplexer
+        "TMUX",
+        "WT_SESSION",
+        // Editor
+        "EDITOR",
+        "VISUAL",
+        // XDG / runtime
+        "XDG_RUNTIME_DIR",
+        "XDG_CONFIG_HOME",
+        "XDG_DATA_HOME",
+        "XDG_CACHE_HOME",
+        "TMPDIR",
+        // D-Bus (needed for some desktop integrations)
+        "DBUS_SESSION_BUS_ADDRESS",
+    ];
+
+    for var in passthrough {
+        if let Ok(val) = std::env::var(var) {
+            env.insert(var.to_string(), val);
+        }
+    }
+
+    // Passthrough all PI_* vars (Pi agent configuration)
+    for (key, val) in std::env::vars() {
+        if key.starts_with("PI_") {
+            env.insert(key, val);
+        }
+    }
+
+    // Extend PATH with common user toolchain bin directories.
+    // Non-interactive shells (systemd) don't source ~/.bashrc so these are missing.
+    // For sandboxed spawns, bwrap --setenv PATH overrides this anyway.
+    if let Ok(current_path) = std::env::var("PATH") {
+        let home = std::env::var("HOME").unwrap_or_default();
+        if !home.is_empty() {
+            let extra = [
+                format!("{home}/.cargo/bin"),
+                format!("{home}/go/bin"),
+                format!("{home}/.local/bin"),
+                format!("{home}/.bun/bin"),
+                format!("{home}/.npm-global/bin"),
+            ];
+            let mut parts: Vec<&str> = current_path.split(':').collect();
+            for p in &extra {
+                if !parts.contains(&p.as_str()) && Path::new(p).exists() {
+                    parts.push(p);
+                }
+            }
+            env.insert("PATH".to_string(), parts.join(":"));
+        } else {
+            env.insert("PATH".to_string(), current_path);
+        }
+    }
+
+    env
+}
+
+/// Manager for local processes.
+///
+/// Tracks all spawned processes and provides lifecycle management.
 #[derive(Debug, Default)]
 pub struct ProcessManager {
     /// Map of session_id -> list of process handles.
@@ -333,6 +420,10 @@ impl ProcessManager {
     }
 
     /// Helper to spawn a process, optionally as a different user.
+    ///
+    /// SECURITY: Calls `env_clear()` before setting the explicit env map.
+    /// The env map must contain ALL vars the process needs (system + auth + tooling).
+    /// Use `base_system_env()` as the starting point when building the map.
     async fn spawn_as_user(
         &self,
         run_as: &RunAsUser,
@@ -368,8 +459,9 @@ impl ProcessManager {
                     cmd.current_dir(dir);
                 }
 
-                for (key, value) in env {
-                    cmd.env(&key, &value);
+                cmd.env_clear();
+                for (key, value) in &env {
+                    cmd.env(key, value);
                 }
 
                 cmd.spawn()?
@@ -407,8 +499,9 @@ impl ProcessManager {
                     .stderr(Stdio::piped())
                     .kill_on_drop(true);
 
-                for (key, value) in env {
-                    cmd.env(&key, &value);
+                cmd.env_clear();
+                for (key, value) in &env {
+                    cmd.env(key, value);
                 }
 
                 cmd.spawn()?
@@ -432,8 +525,9 @@ impl ProcessManager {
                 cmd.current_dir(dir);
             }
 
-            for (key, value) in env {
-                cmd.env(&key, &value);
+            cmd.env_clear();
+            for (key, value) in &env {
+                cmd.env(key, value);
             }
 
             cmd.spawn()?

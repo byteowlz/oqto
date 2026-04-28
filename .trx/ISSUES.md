@@ -2,1650 +2,593 @@
 
 ## Open
 
-### [oqto-heye] P0: Chat send must always terminate (response or explicit error), never infinite spinner (P0, bug)
-Repro at 23:57 (jolly-moves-kernel): backend accepted prompt commands but no user-visible terminal recovery when runner send failed/stalled, resulting in bogus working state and perceived message loss.\n\nBackend hardening added:\n- on prompt/steer/follow_up send failure, ws now emits canonical terminal events immediately (agent.error + agent.idle) and logs failure details with session id.\n- clears response watchdog on failure path before terminal emission.\n\nDeployed to archvm backend.
+### [oqto-wygp] Fix 'Failed to fetch memories: Service Unavailable' in local user setup (P1, bug)
 
-### [oqto-8zvw] Shared workspace sessions: frontend creates new session ID instead of reusing existing hstry session ID (P0, bug)
-When a user navigates to a shared workspace session (e.g. nimble-tests-ladder with session ID f3ce6d6b), the frontend:
-1. Fetches history using the correct ID (f3ce6d6b) -> gets 101 messages
-2. But creates a FRESH oqto-UUID for session.create (e.g. oqto-7d09d46b)
-3. Runner spawns a brand new Pi process for oqto-7d09d46b
-4. Prompt goes to the new Pi (empty context)
+### [oqto-2eev] oqto-sandbox: landlock audit mode silently enforces, breaking Claude Code and Codex harnesses (P1, bug)
+Repro: oqto-sandbox claude --permission-mode bypassPermissions hangs silently; pi works. Root cause: apply_landlock in config.rs calls landlock_restrict_self unconditionally when mode != Off. Audit mode is a misnomer — kernel has no audit-only Landlock; once restrict_self runs, rules are enforced. Because the development profile's allow_write omits ~/.claude, ~/.local/share/claude, ~/.codex, ~/.local/share/codex, and related paths, startup writes (SQLite WAL, statsig, store.db, session files) get EACCES and the JS event loop stalls. Fix: skip restrict_self in audit mode (log intended rules only); add Claude Code + Codex paths to the development profile allow_write; verify with tmux pty run.
+
+### [oqto-0xvr] Investigate and fix sx failures on octo-azure (P1, bug)
+
+### [oqto-5stn] Deploy-time history cutover: fully converge chat history into oqto-log and remove runtime fallback gaps (P1, task)
+
+### [oqto-md12] Fix multi-user chat-history 400 by self-healing unresolved personal session targets (P1, bug)
+
+### [oqto-m94p] Fix multi-user deploy runner restart to use privileged oqtoctl access (P1, bug)
+Observed on archvm deploy release 20260424110822-2dc496bb5b:
+
+- Activation reached oqto-log migrate/validate pass and then emitted:
+  - "oqto-runner: no systemd service and no running process found, skipping restart"
+  - health check failed
 ...
 
 
-### [oqto-vh8v] Critical: terminal routing integrity violation across users/workspaces (P0, bug)
+### [oqto-zpvs.41] Fix missing early timeline and assistant/tool split in none-aqua-cant session (P1, bug)
+Repro: session 'Fix Horizontal Codeblock Background Stability | none-aqua-cant | 2026/04/19 - 08:28'. Frontend misses beginning of chat vs oqto-log and Pi JSONL, assistant response appears split into multiple containers, and tool calls still duplicate/split during streaming. Need deterministic reconciliation/render contract fix without heuristics.
 
-### [oqto-snfs] Backend deadlock when deleting shared workspace sessions - session.delete/session.create to SW runner hangs, blocks entire WS connection, eventually all HTTP requests time out. 30s runner client timeout not firing. Needs 45s hard deadline on WS command handler + investigation of why tokio timeout doesn't trigger. (P0, bug)
+### [oqto-zpvs.6] E2E chaos: automated browser scenarios for reconnect/switch/retry/fork persistence (P1, task)
+Problem
+Most painful regressions only appear under end-to-end timing and UI orchestration.
 
-### [oqto-5ey4] Migrate from oqto-browser to agent-browser (P0, epic)
-
-### [oqto-29e1] Stability: hstry gRPC high-availability with local spool fallback (P0, epic)
-hstry is currently a single point of failure. If the hstry gRPC service becomes unavailable, all message persistence fails with no graceful degradation. This is especially critical for long-running agent sessions where losing message history is unacceptable.
-
-## Problem Statement
-
-From AGENTS.md: "All chat history access goes through hstry's gRPC API - no raw SQLite access from oqto." This creates a hard dependency on hstry availability.
+Deliverables
+- Build an automated chaos suite (agent-browser) covering:
 ...
 
 
-### [oqto-e067] Security: Implement runner mTLS authentication and attestation (P0, epic)
-Runner registration currently uses a simple runner_id with no cryptographic verification. This allows potential runner impersonation attacks where a malicious process could register as a legitimate runner and intercept or manipulate agent sessions.
+### [oqto-zpvs] Persistence hardening: deterministic message timeline tests across frontend, runner, and e2e (P1, epic)
+Goal
+Eliminate recurring frontend message persistence regressions (disappearing/duplicated/out-of-order messages) by building a full regression net that validates live streaming, reconciliation, persistence, and reload/reconnect convergence.
 
-## Requirements
-
-1. Implement mTLS between runner and backend
-...
-
-
-### [oqto-n7zc] setup.sh: fix full user provisioning pipeline (pi, eavs, models, runner) (P0, epic)
-setup.sh must correctly provision everything for a new platform user on a fresh install:
-
-1. Pi installation: install pi-coding-agent system-wide with a bun wrapper that works for all users (not hardcoded to installer's HOME)
-2. Eavs config: always generate proper config under oqto user with [keys] enabled, master key, and env file
-3. Per-user provisioning on login/creation:
-...
-
-
-### [oqto-tacn.9] Clarify local/ vs runner/ ownership boundaries (P1, task)
-Document and enforce ownership: local/ handles per-user service provisioning, runner/ handles runner RPC client integration. Remove overlapping process management responsibilities.
-
-### [oqto-tacn.8] Decompose backend god files (pi_manager, daemon/server, session/service, ws_multiplexed) (P1, task)
-Split large files into lifecycle/state/persistence/channel modules with clear ownership boundaries and tests.
-
-### [oqto-tacn.3] Extract runner config tests and backfill logic out of main.rs (P1, task)
-main.rs is 3.5k lines. Move runner_config_tests module to runner/tests.rs, backfill_session_targets_once to session/backfill.rs, and keep main.rs to CLI parsing + server wiring only.
-
-### [oqto-tacn] Architecture guardrails: cleanup dead code and enforce structural invariants (P1, epic)
-Phase 1: Clean up dead/zombie code (ws/multiplexed shim, DirectUserPlane, main.rs bloat). Phase 2: Add CI-enforced guardrails - file size ratchet, crate dependency direction, module boundary imports. All guards run in 'just lint' and use baseline files that ratchet down automatically.
-
-### [oqto-3kwc.8] Tests: transport parity + auth failure coverage for runner dispatch (P1, task)
-
-### [oqto-3kwc.7] Security: integrate kyz-backed runner token provisioning and rotation (P1, task)
-
-### [oqto-3kwc.6] Event bus: emit scheduler job lifecycle events independent of runner transport (P1, task)
-
-### [oqto-3kwc.5] Runtime config: select runner transport by mode (local=unix, container=tcp) (P1, task)
-
-### [oqto-3kwc.4] Backend: introduce RunnerClient interface with unix/tcp adapters (P1, task)
-
-### [oqto-3kwc.3] Runner: enforce TCP auth token validation for all requests (P1, task)
-
-### [oqto-3kwc.2] Runner: add --listen host:port CLI and keep --socket behavior (P1, task)
-
-### [oqto-3kwc.1] Runner: add transport abstraction (unix + tcp listeners) (P1, task)
-
-### [oqto-3kwc] Add remote runner capabilities (TCP transport) to oqto-runner with transport abstraction (P1, epic)
 Context
-- Oqto currently routes to per-user runners primarily via Unix sockets in local/systemd mode.
-- Container-native multi-user runtime needs remote runner connectivity across container boundaries.
-- We want one runner implementation with multiple transports, not separate runner products.
-
-...
-
-
-### [oqto-a0z4] Instant chat history UX: cached-first rendering with hydration gating (P1, epic)
-Hard requirement: opening any chat must render history instantly with no visible empty-state flash.\n\nStatus: Partially complete\n\nCompleted:\n- Added explicit frontend hydration state in chat hook (historyHydrated, historyLoading)\n- Render cached messages immediately, then authoritative hstry sync in background\n- Prevent 'No messages yet' from appearing before first authoritative fetch settles\n- Fixed cache contamination: clear in-memory cache on session switch\n- Fixed authoritative merge: only preserve isStreaming messages (no timestamp-based leaks)\n- Frontend lint passes\n\nRemaining:\n- Session prewarm: prefetch latest messages for visible sessions (child task oqto-a0z4.1)\n\nSuccess criteria:\n- Opening an existing chat never flashes an empty timeline before history appears.\n- If cache exists, content appears immediately (<1 frame) and later reconciles.\n- If cache missing, show loading/skeleton until first authoritative response, then either messages or true empty state.\n- Frontend lint passes.
-
-### [oqto-nb6s] Reduce oqto cold-start time and add readiness-gated deploy sync-configs (P1, task)
-Observed on octo-azure: systemd reports oqto started, but admin unix socket (/run/oqto/oqtoctl.sock) and HTTP listener come up ~10s later. deploy sync-configs currently races this window, causing repeated 'Connection refused (os error 111)' on oqtoctl unix requests.
-
-Evidence from logs:
-- service started around 12:07:49
-- admin socket + HTTP listener only at ~12:08:00
-...
-
-
-### [oqto-5fv7] Frontend comprehensive refactor (P1, epic)
-Comprehensive frontend refactor to improve performance, maintainability, and code quality.
-
-## Motivation
-- Lighthouse performance score: 52/100
-- Time to Interactive: 160.6s, Total Blocking Time: 6,250ms
-...
-
-
-### [oqto-hn80.2] Add strict lint rules banning direct useEffect (P1, task)
-Configure Biome and/or oxlint to flag any direct useEffect usage.
-
-## Rules to add
-
-### Biome (biome.json)
-...
-
-
-### [oqto-hn80.1] Create useMountEffect and useLocalStorage hooks (P1, task)
-Create foundational hooks that replace common useEffect patterns.
-
-## useMountEffect (hooks/useMountEffect.ts)
-```ts
-export function useMountEffect(effect: () => void | (() => void)) {
-...
-
-
-### [oqto-hn80] Ban useEffect: strict linting and full migration (P1, epic)
-Ban direct useEffect usage across the frontend codebase. Introduce strict lint rules, a useMountEffect escape hatch, and migrate all 46 occurrences across 12 files.
-
-Reference: Factory's 'Why we banned useEffect' (Alvin Sng, 2026-03-17), React official 'You Might Not Need an Effect' guide.
-
-## Current state
-...
-
-
-### [oqto-36zw.3.1] Implementation checklist: single-user runner bootstrap and recovery (P1, task)
-Checklist:
-- [ ] Auto-start runner if socket unavailable
-- [ ] Add readiness handshake (Ping/GetCapabilities) before dependent ops
-- [ ] Implement bounded retry/backoff
-- [ ] Handle runner crash/restart reconnect path
-...
-
-
-### [oqto-36zw.2.1] Implementation checklist: runner-default selection policy (P1, task)
-Checklist:
-- [ ] Change default path selection to RunnerUserPlane
-- [ ] Add explicit unsafe fallback gate (OQTO_UNSAFE_DIRECT)
-- [ ] Add startup warning when unsafe direct mode is active
-- [ ] Add tests for selection matrix (default, explicit override)
-...
-
-
-### [oqto-36zw.1.1] Implementation checklist: baseline hardening and telemetry (P1, task)
-Checklist:
-- [ ] Add integration tests for session lifecycle via user-plane
-- [ ] Add integration tests for chat prompt/abort/retry stream behavior
-- [ ] Add integration tests for file ops and memory ops
-- [ ] Add runner/direct path metrics and error counters
-...
-
-
-### [oqto-36zw.3] Single-user runner bootstrap and resiliency (auto-start, healthcheck, reconnect) (P1, feature)
-Ensure runner-first works reliably in single-user development environments.
-
-Context:
-- Parent epic: oqto-36zw
-
-...
-
-
-### [oqto-36zw.2] Make RunnerUserPlane default in all normal local modes (guard direct behind explicit unsafe flag) (P1, feature)
-Switch runtime selection policy to runner-first while preserving emergency fallback.
-
-Context:
-- Parent epic: oqto-36zw
-- Policy decision: direct path should not be default runtime path.
-...
-
-
-### [oqto-36zw.1] Baseline hardening for runner-first migration (coverage + telemetry + smoke checks) (P1, task)
-Establish safety net before runtime-path migration.
-
-Context:
-- Parent epic: oqto-36zw
-- Target architecture doc: docs/architecture/backend-target-tree.md
-...
-
-
-### [oqto-36zw] Backend architecture refactor: runner-first crate split and module cleanup (P1, epic)
-Refactor backend toward a runner-first architecture with clear crate boundaries and removal of duplicate/ambiguous module ownership.\n\nTarget tree and architecture map:\n- docs/architecture/backend-target-tree.md\n\nScope:\n- Make runner-mediated user-plane the default in all normal modes\n- Split oversized files (ws_multiplexed, oqto-runner daemon) into coherent submodules\n- Extract oqto-runner and oqto-sandbox into dedicated crates\n- Consolidate history/hstry responsibilities\n- Enforce single canonical protocol type source in oqto-protocol\n\nConstraints:\n- Incremental migration with compatibility at each step\n- No protocol regressions
-
-### [oqto-75rn] Use EAVS API for provider/model CRUD from Oqto (no direct models.json drift) (P1, feature)
-Problem: Oqto frontend provider/model additions currently update Pi models.json only and do not update EAVS global provider config. This causes drift: provisioned eavs-* catalog and user-edited catalogs diverge. Expected: adding provider/model should integrate with EAVS control-plane so global routing source-of-truth stays in EAVS.\n\nProposal:\n1) Add Oqto admin flow: create/update/delete providers/models via EAVS API/CLI (not by editing config files directly).\n2) After successful mutation, trigger EAVS reload/sync and regenerate per-user models.json from EAVS /providers/detail.\n3) Keep user/workspace .oqto/models.json as optional overlay/restriction layer, but base catalog comes from EAVS.\n4) Add clear UI distinction: Global Provider (EAVS) vs Workspace Catalog Override (.oqto/models.json).\n\nAcceptance:\n- New provider added in UI appears in /providers/detail immediately\n- sync-models propagates to all users\n- no manual edits to /home/oqto/.config/eavs/config.toml required\n- no key material stored in workspace catalogs
-
-### [oqto-brg9.7] Rate limiting, subscription filters, and graceful degradation (P1, task)
-Per-source rate limits (server-enforced), payload filters on subscribe, and graceful degradation guarantees (bus down must not affect agent stream or app rendering).
-
-### [oqto-brg9.5] Domain event hooks for trx/hstry/mmry + UI intent namespace (P1, task)
-Add low-effort boundary hooks to emit core domain events and implement permission-gated session/ui.* intent execution registry in frontend.
-
-### [oqto-brg9.4] Ack protocol for admin/control-plane events (P1, task)
-reply_to + timeout ack flow, runner ack statuses, backend aggregation, admin summary events for operational visibility.
-
-### [oqto-brg9.3] Unify inline and fullscreen app runtime with persistent app state (P1, task)
-One runtime for inline iframe and fullscreen app tabs; shared bridge API; state persistence and reload restoration; source/runtime path policy (oqto_apps + .oqto/apps).
-
-### [oqto-brg9.2] Runner event policy engine (queueing, coalescing, idle delivery, pull APIs) (P1, task)
-Implement runner queue priorities, strict auto-inject allowlist, truncation/summarization budgets, pull-on-demand event retrieval, and app event injection styles: steer (pre-prompt directional) and follow-up (post/secondary contextual).
-
-### [oqto-brg9.1] Bus channel in WS mux with scope authz and source stamping (P1, task)
-Add bus channel to mux protocol, backend subscription registry, publish/subscribe authz checks per scope (session/workspace/global), server-side topic rewriting/stamping, and audit logs.
-
-### [oqto-brg9] Unified Event Bus + Agent-Controlled UI runtime (P1, epic)
-Implement scoped bus channel (session/workspace/global), unified inline+fullscreen app runtime, runner event policy, ack-capable admin events, and UI intent control with strict authz. See docs/design/unified-event-bus-and-agent-ui.md.
-
-### [oqto-8vkn] Add message sync test suite: unit + integration + E2E tests for Pi->hstry->Frontend pipeline (P1, task)
-Create comprehensive test coverage for the message sync pipeline to prevent regressions.
-
-Unit tests (Rust):
-- T1: PiTranslator produces output for all PiEvent variants
-- T2: AgentMessage -> proto Message -> SerializableMessage round-trip preserves content
-...
-
-
-### [oqto-yxss] Implement version vectors for deterministic Pi->hstry->Frontend sync (P1, feature)
-Add a monotonic version counter to hstry conversations. Every append_messages or write_conversation increments it atomically. The runner includes MessageVersion { version, message_count, last_message_hash } in every agent.idle event. Frontend compares local vs server version:
-
-- local.version == server.version: in sync, no action
-- local.version < server.version: fetch from hstry (authoritative)
-- local.version > server.version: impossible, log error
-...
-
-
-### [oqto-n8bj] Bound file-tree traversal concurrency and add hard limits for huge repos (P1, task)
-
-### [oqto-a6hw] WebSocket mux command processing is head-of-line blocked by slow file tree commands (P1, bug)
-
-### [oqto-9snf] Regression suite: cross-user terminal isolation and shared workspace routing (P1, task)
-
-### [oqto-q39k] Add terminal command binding invariants (user/owner/workspace/terminal_id) fail-closed (P1, task)
-
-### [oqto-6pkb] Remove ttyd TCP fallback and enforce unix-socket-only terminal transport (P1, bug)
-
-### [oqto-yxhc] Inline HTML Apps: workspace apps rendered via srcdoc iframes (P1, epic)
-Render single-file HTML apps from workspace as live iframe tabs in the session screen. No backend changes. Apps get file read/write via apphost bridge (postMessage -> mux-files). Agents and users share data via workspace files. Phase 0 of the app story -- oqto-serve (oqto-14b1) handles multi-file apps later. Design: docs/design/inline-html-apps.md
-
-### [oqto-p994] Thinking renders as plaintext markdown block in minimal mode (P1, bug)
-When the thinking dropdown is expanded in minimal mode, the thinking content is wrapped in a markdown block labeled 'plaintext'. The thinking should display directly within the collapsed dropdown without the markdown wrapper.
-
-### [oqto-x2tk] Guarantee JSONL->hstry durability: recover missed sessions after runner/hstry restarts (P1, bug)
-
-### [oqto-dv37] Testing matrix for secret injection system (P1, task)
-
-### [oqto-f8wx] Redaction and telemetry hardening for secrets (P1, feature)
-
-### [oqto-s8pe] Approval workflow for unknown process registry (P1, feature)
-
-### [oqto-8kx4] Spawn-time auto-injection engine in runner (P1, feature)
-
-### [oqto-z94c] eavs compatibility and separation of concerns (P1, task)
-
-### [oqto-srkd] kyz resolver integration in oqto-runner (P1, feature)
-
-### [oqto-ctpz] Policy model and storage for secret injection (P1, feature)
-
-### [oqto-cv3f] Architecture + threat model for secret injection system (P1, task)
-Write design doc: data flow, trust boundaries, attack vectors. Define secret classes: llm_runtime (eavs) vs tool_credential (kyz). Define deny-by-default policy semantics. Define bypass resistance strategy (wrapper + sandbox policy).
-
-### [oqto-05c1] Runner-managed secret injection with approval-based process allowlist (P1, epic)
-
-### [oqto-ae9d] Backend runner router: target-based runner resolution with session affinity groundwork (P1, epic)
-
-### [oqto-9mtk] Shared workspace history appears partially lost in UI while data exists in hstry/API (P1, bug)
-
-### [oqto-14b1.3] Frontend: ServeView iframe panel with hot reload (P1, task)
-New view in the session screen alongside chat, files, terminal, browser.
-
-- New ViewKey: "serve" added to the type union
-- WsEvent::ServeStart -> store instance metadata, auto-switch to serve view
-- WsEvent::ServeReload -> increment iframe key (triggers full page reload)
-...
-
-
-### [oqto-14b1.2] Backend: serve API routes and port allocation (P1, task)
-Add serve management routes to the oqto backend:
-
-Routes:
-- POST /serve/start -- allocate port, register instance, broadcast WsEvent::ServeStart
-- POST /serve/reload -- broadcast WsEvent::ServeReload
-...
-
-
-### [oqto-14b1.1] oqto-serve CLI: static file server with swc TypeScript transpilation (P1, task)
-Implement the oqto-serve Rust binary with start/stop/list subcommands.
-
-start flow:
-1. Contact oqto backend to allocate port (POST /serve/start)
-2. Bind HTTP server on 127.0.0.1:{port}
-...
-
-
-### [oqto-14b1] oqto-serve: agent web application server (P1, epic)
-Implement oqto-serve, a CLI + HTTP server that lets agents serve self-contained HTML/CSS/JS apps to the user within the oqto frontend.
-
-NOTE: Single-file HTML apps are handled by oqto-yxhc (inline HTML apps via srcdoc iframes, no server needed). oqto-serve is for multi-file apps with relative imports, TypeScript transpilation, and CDN passthrough.
-
-Architecture:
-...
-
-
-### [oqto-dbbw.1] Spec: finalize --app-* CSS token list and window.apphost bridge API (P1, task)
-Write the formal spec document at docs/design/byteowlz-app-runtime.md.
-
-Contents:
-- Final list of --app-* CSS variables with semantic descriptions
-- window.apphost unified interface:
-...
-
-
-### [oqto-dbbw] Byteowlz App Runtime: shared contract for portable agent-generated web apps (P1, epic)
-Define and implement the shared contract that lets agent-generated HTML/CSS/JS apps run identically in oqto (iframe via oqto-serve) and omni (inline Tauri webview) without changes.
-
-## Shared Contract
-
-### 1. CSS Token Contract (--app-* variables)
-...
-
-
-### [oqto-zkyq] Canonical history migration (server-side) (P1, feature)
-
-### [oqto-q5yb] Credential proxy on oqto-runner: secret-aware API proxying via kyz (P1, feature)
-## Summary
-
-Add a credential proxy endpoint to oqto-runner. When an agent needs to make an authenticated API call, it hits the runner's `/v1/proxy` endpoint with a kyz secret reference. The runner resolves the credential from the user's kyz vault, injects it into the outbound HTTP request, and returns only the API response. The agent never sees plaintext credentials.
-
-## Why runner, not eavs
-...
-
-
-### [oqto-pzya] Crash recovery: Pi stderr capture, session reconnect, auto-respawn with backoff (P1, epic)
-
-### [oqto-q8cf] Implement graceful shutdown for oqto updates and restarts (P1, feature)
-Currently, oqto lacks graceful shutdown for sessions during updates. When restarting oqto or oqto-runner, all agent sessions are terminated with SIGKILL, which abruptly interrupts active agent work.
-
-**Problem:**
-- Sessions receive SIGKILL (no SIGTERM, no wait period)
-- Active LLM responses are interrupted mid-stream
-...
-
-
-### [oqto-cxxr] Security: Defense-in-depth sandboxing with seccomp-bpf fallback (P1, feature)
-Current sandboxing relies solely on bwrap (bubblewrap). This is a single point of failure—if bwrap has vulnerabilities or is not available, agents run completely unsandboxed. Additionally, bwrap requires elevated privileges (setuid) which is a security risk itself.
-
-## Current State
-
-- Primary: bwrap with configurable profiles
-...
-
-
-### [oqto-fezg] Stability: Circuit breaker and backpressure for WebSocket connections (P1, feature)
-The frontend uses a single multiplexed WebSocket for all communication. Without circuit breakers or backpressure, temporary backend slowdowns can cascade into frontend unresponsiveness or reconnection storms.
-
-## Current Behavior
-
-- No explicit backpressure on event stream
-...
-
-
-### [oqto-35fg] Scalability: PostgreSQL backend for hstry beyond SQLite limits (P1, epic)
-hstry uses SQLite which has fundamental scaling limits. Current design supports tens to low-hundreds of users. Enterprise deployments require 1000+ concurrent users with high message throughput.
-
-## SQLite Limitations
-
-- Write contention: ~1-5K writes/sec max
-...
-
-
-### [oqto-8f14] Scalability: Protocol versioning for canonical protocol evolution (P1, feature)
-The canonical protocol (docs/design/canonical-protocol.md) currently has no versioning mechanism. Adding new Part types, Event variants, or Command payloads will break older runners or frontends. This blocks safe protocol evolution.
-
-## Requirements
-
-1. Version Negotiation
-...
-
-
-### [oqto-q3qf] oqto should call usermgr to respawn dead runners before connecting (P1, bug)
-In multi-user mode, runner_for_user() just connects to the socket without checking if the runner is alive. If the runner dies (e.g. pkill, OOM, user systemd crash), oqto returns 'connecting to runner at ...' errors forever. It should call usermgr setup-user-runner to respawn first if the socket is stale or missing.
-
-### [oqto-y05n] Browser-side STT via Moonshine WASM — eliminate server-side eaRS for voice mode (P1, feature)
-
-### [oqto-c6n3] Refactor: route all mux file operations through oqto-files instead of RunnerUserPlane (P1, task)
-
-### [oqto-fr2f] Admin UI: manage eavs providers and sync models.json (P1, feature)
-Add admin interface for managing LLM providers:
-
-1. Admin settings page shows configured eavs providers with status (API key set/missing, test result)
-2. Admins can add/remove/edit providers (type, API key, base_url)
-3. Provider API keys are written to eavs env file, provider config to eavs config.toml
-...
-
-
-### [oqto-mvdv] Streaming reliability: backpressure handling, reconnect resync, and delta coalescing (P1, epic)
-Our WebSocket layer (ws-manager.ts) assumes a perfect connection. Pi-mobile (https://github.com/ayagmar/pi-mobile) demonstrates several transport reliability patterns we lack that cause real user-facing issues: silent message loss under backpressure, corrupted UI after reconnect, excessive re-renders during fast streaming, and no cross-device drift detection.
-
-This epic addresses the foundational transport reliability gap between Octo and pi-mobile's approach. The core philosophy: assume the connection will break, and design every layer around recovery.
-
-## Current Problems
-...
-
-
-### [octo-nqg8.9] Replace unsafe env::set_var in octo-runner and test code (P1, task)
-Two categories of unsafe env::set_var/remove_var:
-
-1. bin/octo-runner.rs line 3650 - set_var at startup for .env loading. Replace with a proper env file loading approach: either collect all vars into a HashMap and apply them before spawning threads, or use a crate like dotenvy which handles this safely.
-
-2. auth/config.rs tests (4 blocks) and local/sandbox.rs tests (3 blocks) - set_var/remove_var in tests. Replace with the temp_env crate (temp_env::with_var/with_vars) which provides scoped env var overrides that are automatically cleaned up, or use serial_test with proper isolation.
-
-### [octo-nqg8.8] Replace unsafe termios code in octoctl with rpassword crate (P1, task)
-ctl/main.rs uses 4 unsafe blocks (lines 2274-2291) for terminal echo suppression during password input via raw libc::tcgetattr/tcsetattr. Replace entire read_password() function with the rpassword crate which provides a safe, cross-platform rpassword::read_password() function that handles all the terminal manipulation safely.
-
-### [octo-nqg8.7] Replace unsafe libc calls with nix crate safe wrappers (P1, task)
-Replace all unsafe libc calls with safe alternatives from the nix crate (already listed in workspace Cargo.toml):
-
-1. api/handlers/projects.rs - libc::geteuid()/getegid() (4 blocks) -> nix::unistd::geteuid()/getegid()
-2. local/sandbox.rs - libc::getpwnam + pointer deref (2 blocks) -> nix::unistd::User::from_name()
-3. runner/client.rs - libc::getpwnam + pointer deref (2 blocks) -> nix::unistd::User::from_name()
-...
-
-
-### [octo-nqg8.6] Remove dead code in user_plane/, ws/, canon/, container/, api/, session/, templates/, onboarding/, workspace/, hstry/ (P1, task)
-Remove remaining dead code across smaller modules:
-- user_plane/types.rs (7): SessionInfo, StartSessionRequest, StartSessionResponse, MainChatSessionInfo, MainChatMessage, MemoryEntry, MemorySearchResults
-- user_plane/mod.rs: unused UserPlane trait methods
-- user_plane/runner.rs: RunnerUserPlane::for_user
-- ws/types.rs (11): WsEvent variants (SessionUpdated, SessionError, AgentReconnecting, ThinkingDelta, MessageUpdated, ToolStart, ToolEnd, PermissionResolved, QuestionResolved, A2uiActionResolved, OpencodeEvent), unused WsCommand fields, WsCommand::session_id method, Ping variant
-...
-
-
-### [octo-nqg8.5] Remove dead code in local/ module (process.rs, runtime.rs, sandbox.rs, linux_users.rs, user_hstry.rs) (P1, task)
-Remove ~17 dead code items:
-- local/process.rs (5): RunAsUser struct, ProcessHandle::new, ProcessManager methods (spawn_fileserver, spawn_ttyd, spawn_as_user, spawn_sandboxed, stop_session), shell_escape fn
-- local/runtime.rs (2): LocalRuntime::start_session, LocalRuntime::stop_session
-- local/sandbox.rs (9): SandboxConfig methods (minimal, strict, from_profile, from_profile_with_custom, load_from_workspace, merge_with_workspace, with_workspace_config, build_bwrap_args_for_user, is_bwrap_available)
-- local/linux_users.rs (6): PROJECT_PREFIX const, LinuxUsersConfig methods (project_username, ensure_project_user, chown_directory_to_user, effective_username, ensure_effective_user)
-...
-
-
-### [octo-nqg8.4] Remove dead code in runner/pi_translator.rs and runner/client.rs (P1, task)
-Remove dead code:
-- runner/pi_translator.rs (8+): PiTranslator struct and all methods (new, set_pending_client_id, translate, on_agent_start, on_agent_end, etc), plus standalone functions (pi_response_to_canonical, pi_agent_message_to_canonical, pi_content_to_parts, pi_image_to_part, pi_stop_reason, extract_text_content)
-- runner/client.rs (8+): write_stdin, subscribe_stdout, list_sessions, get_session, list_main_chat_sessions, search_memories, add_memory, delete_memory, pi_unsubscribe, pi_get_last_assistant_text, pi_set_steering_mode, pi_set_follow_up_mode, pi_export_html, pi_bash, pi_abort_bash, StdoutSubscription, StdoutSubscriptionEvent, PiSubscription and its methods
-
-### [octo-nqg8.3] Remove dead code in history/ module (repository.rs, service.rs, models.rs) (P1, task)
-Remove ~19 dead code items:
-- history/repository.rs (14): hstry_db_path, HSTRY_POOL_CACHE static, open_hstry_pool, hstry_timestamp_ms, list_sessions_from_hstry, get_session_from_hstry, get_session_messages_from_hstry, list_sessions, list_sessions_from_dir, list_sessions_grouped, get_session, get_session_from_dir, update_session_title, update_session_title_in_dir
-- history/service.rs (3): get_session_messages_async, get_session_messages_rendered_from_hstry, get_session_messages_rendered
-- history/models.rs (2): SessionInfo struct, SessionTime struct
-These are legacy history functions superseded by hstry gRPC.
-
-### [octo-nqg8.2] Remove dead code in pi/ module (runtime.rs, types.rs, session_parser.rs, client.rs) (P1, task)
-Remove ~31 dead code items across the pi module:
-- pi/runtime.rs (15): PiSpawnConfig, PiProcess trait, PiRuntime trait, LocalPiRuntime, LocalPiProcess, RunnerPiRuntime, RunnerPiProcess, ContainerPiRuntime, ContainerPiProcess and all their methods
-- pi/types.rs (13): PiCommand enum, ImageContent, ImageSource, PiResponse, PiEvent enum, AssistantMessageEvent, ToolResultMessage, ContentBlock, ToolCall, ToolResult, ExtensionUiRequest, PiMessage, PiMessage::parse
-- pi/session_parser.rs (3): TITLE_PATTERN static, ParsedTitle struct and all methods
-- pi/client.rs (1): PiClientConfig struct
-...
-
-
-### [octo-nqg8.1] Remove dead code in runner/pi_manager.rs (P1, task)
-Remove ~28 dead code items: PiSessionManager, PiSession, PiManagerConfig, PiSessionConfig, PiSessionCommand, PiEventWrapper, PendingResponses, PendingClientId, HstryExternalId, ModelCacheEntry, JsonlMessageKey, JsonlEntry, JsonlSessionInfoEntry, JsonlMessageEntry, StatsDelta, and all associated functions (message_signature, build_jsonl_key, build_metadata_json, compute_stats_delta, read_jsonl_message_entries, read_jsonl_session_name, resolve_jsonl_message_indices, fetch_last_hstry_idx, resolve_jsonl_session_title). This is the largest concentration of dead code - the entire old Pi session management that was superseded by the runner architecture.
-
-### [octo-nqg8] Eliminate all Rust warnings and unsafe code in backend (P1, epic)
-Fix all ~398 compiler warnings in the backend workspace without bandaid fixes (#[allow], etc). This includes removing ~201 dead code items, replacing ~15 unsafe blocks with safe alternatives, fixing 164 ts-rs serde parse warnings, removing unused imports, and addressing unused variables. All changes must preserve existing functionality - dead code should only be removed if truly unused, not just stubbed.
-
-### [octo-9cdt] Make hstry the sole history source while preserving streaming (P1, epic)
-
-### [octo-wg67] Implement @@ cross-agent routing in runner (P1, task)
-
-### [octo-1hbb] Define runner session state machine and command dispatch (P1, task)
-
-### [octo-y5r3] Octo migration: replace all direct SQLite access with hstry gRPC client calls (P1, epic)
-
-### [octo-xxe2] Per-workspace hstry/mmry stores + sync scoping (P1, task)
-Ensure each workspace has isolated hstry/mmry stores; sync and cache are workspace-scoped with location_id/actor metadata. No cross-workspace leakage.
-
-Note: hstry-core now has Sender/SenderType types in parts.rs (see hstry trx-7fh3, completed) for message attribution. This can be used for multi-user workspace scenarios.
-
-### [octo-wdkj] Remote runner bootstrap over SSH (P1, task)
-Implement SSH bootstrap: install deps, download runner binaries, configure sandbox, start service, register with hub. Provide fallback to bundle+push.
-
-### [octo-59py] Workspace locations schema + routing (P1, task)
-Add workspace_locations (workspace_id, runner_id, path, kind, repo_fingerprint, active flag) and route requests by selected location. Default to local if present; prompt on failure.
-
-### [octo-pdb4] Shared workspaces with multi-location runners (P1, epic)
-Support team shared workspaces with per-workspace hstry/mmry, local+remote locations, and explicit agent targeting. Includes runner bootstrap over SSH, workspace location routing, UI grouping/merge-split, and security model for remote execution + history sync.
-
-### [octo-1ddx] Move global sandbox config to read-only path (P1, task)
-Global sandbox config must be read-only (not user-writable). Implement loading from system path (e.g., /etc/octo/sandbox.toml) with user config for overrides or removal of user-writable global config. Ensure sandbox.toml itself is protected and update docs/install.
-
-### [octo-t2bf] Multi-Runner & Workspace Sharing (P1, epic)
-Epic for enabling users to connect to multiple runners across different machines (laptop, desktop, cloud) and share workspaces with other users.
-
-## Goals
-
-### Multi-Runner Support
-...
-
-
-### [octo-zjs8.3] Add strict clippy lints to all Cargo.toml files (P1, task)
-Add workspace-level clippy configuration to deny warnings and enforce best practices
-
-### [octo-zjs8.2] Fix clippy warnings in frontend/src-tauri (P1, task)
-Fix unnecessary_lazy_evaluations, manual_flatten, single_match, and manual_strip warnings
-
-### [octo-qq9y] Security audit sudoers configuration for multi-user mode (P1, task)
-## Background
-
-The sudoers configuration in setup.sh had critical security vulnerabilities that could allow privilege escalation. These have been fixed.
-
-### Vulnerabilities Found and Fixed
-...
-
-
-### [octo-p3n2] API Key Authentication & External Integration (P1, epic)
-Enable external apps (omni, ctx) to integrate with Octo via API keys. Support fire-and-forget and streaming responses, .ctx context files, auto-session creation.
-
-### [octo-xjs5.10] Test plan: isolation matrix (P1, task)
-Add automated tests / manual checklist for:
-- local single-user
-- local linux multi-user (2 users) verifying no cross access to sessions/files/memories/main chat
-- container multi-user
-
-...
-
-
-### [octo-xjs5.7] Local linux provisioning: non-interactive sudo + tmpfiles (P1, task)
-Make user provisioning deterministic and non-interactive:
-- ensure /run/octo/runner-sockets exists via tmpfiles
-- ensure per-user runner directories (2770, setgid) are created at user creation
-- ensure linger + octo-runner user unit enabled
-- verify runner socket reachable after provisioning
-...
-
-
-### [octo-xjs5.6] Security: runner socket authz + strict path guards (P1, task)
-Harden the runner boundary:
-- unix socket permissions via /run/octo/runner-sockets/<linux_username>/octo-runner.sock (group octo)
-- runner validates every request against its own user roots
-- deny dangerous env vars, validate binary allowlist
-- ensure backend cannot ask runner to read outside workspace/main-chat dirs
-...
-
-
-### [octo-xjs5.5] Backend: route all user operations through runner (P1, task)
-Refactor backend handlers/proxies so all user-plane operations are served via runner:
-- sessions list/create/resume/stop
-- terminal + opencode process lifecycle
-- workspace file viewer
-- memories (mmry target resolution)
-...
-
-
-### [octo-xjs5.4] Runner API: main chat storage ownership (P1, task)
-Make main chat data physically per-user:
-- move main chat DB + session files into linux user's home dir
-- runner provides APIs for main chat list/create/load/save
-- migrate existing shared main chat data into per-user location
-
-...
-
-
-### [octo-xjs5.3] Runner API: per-user mmry lifecycle (P1, task)
-Move mmry lifecycle/port ownership fully into runner:
-- allocate stable per-user mmry port (persisted in per-user db)
-- spawn/stop/pin mmry process for that linux user
-- health check + log capture
-- expose mmry external_api URL for backend proxy
-...
-
-
-### [octo-xjs5.2] Runner API: per-user file operations (P1, task)
-Define + implement runner-side filesystem API used by the backend:
-- list tree, read file, write file, mkdir, stat
-- path validation against per-user workspace roots (no traversal)
-- optional read/write quotas
-
-...
-
-
-### [octo-xjs5.1] Runner API: user-plane session registry (P1, task)
-Add runner RPC endpoints for per-user session state:
-- create/get/list/stop/resume/delete sessions (local runtime)
-- persist session metadata in per-user store (DB or JSON) owned by the linux user
-- include workspace path validation against runner-owned workspace roots
-- return ports + status + errors
-...
-
-
-### [octo-thhx] Onboarding & Agent UI Control (P1, epic)
-Progressive onboarding experience with wizard-driven UI, spotlight system, and i18n support. Onboarding uses step-by-step wizard forms, NOT agent-driven A2UI conversations.
-
-### [octo-af5j.7.6] Release manifest generator (byt release) (P1, task)
-byt release command that: 1) Reads component list from octo/release.toml, 2) Fetches current version from each repo (Cargo.toml, package.json, go.mod), 3) Generates versions.toml with all pinned versions, 4) Optionally tags all repos with octo-0.2.0 tag
-
-### [octo-af5j.7.1] Version manifest file format (P1, task)
-Define versions.toml or versions.json schema that lists all component versions for a release. Embedded in binary or fetched at runtime.
-
-### [octo-af5j.7] Dependency version pinning and compatibility matrix (P1, feature)
-Pin versions of opencode, pi, mmry, fileserver, ttyd, and other dependencies for each Octo release. Ensure all components are tested together. Include in release artifacts.
-
-### [octo-af5j.3] Self-Update Command (P1, feature)
-octoctl self-update command that downloads latest binary, verifies checksum, replaces current binary, and restarts service. Support for update channels (stable/beta).
-
-### [octo-af5j.2] Template Repository & Versioning (P1, feature)
-Separate templates into dedicated repo with version control. Enable template updates independent of binary releases. Track installed template versions per-agent.
-
-### [octo-af5j.1] Binary Release Pipeline (P1, feature)
-Build and distribute pre-compiled binaries for Linux (x86_64, arm64) and macOS (Intel, Apple Silicon). Eliminates need for Rust toolchain on user machines.
-
-### [octo-af5j] Release & Update System (P1, epic)
-Comprehensive system for distributing Octo releases, managing updates in the field, and expanding runtime options including Proxmox LXC support.
-
-### [oqto-w5kh] Pay down oqto clippy -D warnings backlog blocking strict gate (P2, task)
-
-### [oqto-e8vx] Tool calls sometimes are shown duplicated (P2, bug)
-
-### [oqto-79er] Mobile chat: inline media taps open Copy All context menu instead of interacting with image/video (P2, bug)
-On touch devices, chat bubbles and text segments are wrapped in Radix ContextMenuTrigger for copy actions. This can hijack long-press/tap events on inline @file previews. Symptoms: inline image preview intermittently fails to open/render on mobile; inline video controls trigger the copy-all modal instead of playback.
-
-Fix implemented:
-- frontend/features/chat/components/ChatView.tsx
-  - Added useCoarsePointerDevice() via matchMedia('(pointer: coarse)').
-...
-
-
-### [oqto-hn80.10] Update AGENTS.md with useEffect ban policy (P2, task)
-Add the useEffect ban to AGENTS.md so all agents (human and AI) follow it.
-
-## Add to Code Style section
-```markdown
-### React useEffect Ban
-...
-
-
-### [oqto-hn80.7] Migrate useSharedWorkspaces.ts: eliminate 2 useEffect calls (P2, task)
-useSharedWorkspaces.ts has 2 useEffect calls:
-
-## Data fetching -> TanStack Query
-- L62: Initial fetch on mount -> useQuery(['shared-workspaces'], fetchSharedWorkspaces)
-
-...
-
-
-### [oqto-hn80.6] Migrate useSidebarState.ts: eliminate 3 useEffect calls (P2, task)
-useSidebarState.ts has 3 useEffect calls, all doing the same thing: localStorage persistence.
-
-## All 3 -> useLocalStorage hook
-- L43: Persist expandedProjects to localStorage -> useLocalStorage('oqto:expandedProjects', new Set())
-- L68: Persist pinnedSessions to localStorage -> useLocalStorage('oqto:pinnedSessions', new Set())
-...
-
-
-### [oqto-hn80.5] Migrate SidebarSessions.tsx: eliminate 4 useEffect calls (P2, task)
-SidebarSessions.tsx has 4 useEffect calls:
-
-## Mount effects -> useMountEffect
-- L228: Keyboard shortcut Ctrl+Shift+F for search mode toggle -> useMountEffect
-- L250: Custom event listener 'oqto:set-session-view-mode' -> useMountEffect
-...
-
-
-### [oqto-hn80.4] Migrate useProjectActions.ts: eliminate 5 useEffect calls (P2, task)
-useProjectActions.ts has 5 useEffect calls:
-
-## Derived state (remove entirely)
-- L286: Sync newProjectSettings from selectedTemplate defaults -> derive in render or useMemo
-- L301: Set default model and skills when dialog opens -> derive in render or useMemo
-...
-
-
-### [oqto-hn80.3] Migrate AppShellRoute.tsx: eliminate 14 useEffect calls (P2, task)
-AppShellRoute.tsx has 14 useEffect calls -- the biggest offender. Migrate each:
-
-## Derived state / event handlers (remove entirely)
-- L377: Route sync (matchedAppId != activeAppId) -> handle in navigation callbacks or useMemo
-- L399: Active app route sync -> merge with above into a single route handler
-...
-
-
-### [oqto-36zw.10.1] Implementation checklist: final runner-only cleanup and docs alignment (P2, task)
-Checklist:
-- [ ] Remove direct path from production runtime wiring
-- [ ] Keep test-only utilities if still needed
-- [ ] Remove obsolete config flags/branches
-- [ ] Update AGENTS.md and architecture docs
-...
-
-
-### [oqto-36zw.9.1] Implementation checklist: canonical type source unification (P2, task)
-Checklist:
-- [ ] Inventory duplicate canonical type definitions
-- [ ] Move/alias canonical definitions into oqto-protocol
-- [ ] Replace local canon usages with protocol imports
-- [ ] Validate serialization compatibility
-...
-
-
-### [oqto-36zw.8.1] Implementation checklist: consolidate history and hstry surfaces (P2, task)
-Checklist:
-- [ ] Define single authoritative history integration namespace
-- [ ] Move read/write/convert responsibilities under that namespace
-- [ ] Remove stale re-exports and duplicate adapters
-- [ ] Update callsites/imports across backend
-...
-
-
-### [oqto-36zw.7.1] Implementation checklist: extract dedicated oqto-sandbox crate (P2, task)
-Checklist:
-- [ ] Create crates/oqto-sandbox and move config/policy/platform code
-- [ ] Keep oqto-sandbox CLI as thin wrapper
-- [ ] Update runner integration imports
-- [ ] Validate Linux bwrap behavior parity
-...
-
-
-### [oqto-36zw.6.1] Implementation checklist: extract dedicated oqto-runner crate (P2, task)
-Checklist:
-- [ ] Create crates/oqto-runner and move code incrementally
-- [ ] Update workspace Cargo manifests and dependency graph
-- [ ] Preserve client/server runner protocol interfaces
-- [ ] Verify independent runner build and startup
-...
-
-
-### [oqto-36zw.5.1] Implementation checklist: modularize runner daemon internals (P2, task)
-Checklist:
-- [ ] Introduce runner/daemon/server + state modules
-- [ ] Split handlers into process/files/sessions/memories/pi
-- [ ] Reduce src/bin/oqto-runner.rs to thin bootstrap
-- [ ] Ensure protocol dispatch parity
-...
-
-
-### [oqto-36zw.4.1] Implementation checklist: split websocket multiplex handler by channel (P2, task)
-Checklist:
-- [ ] Create ws/multiplexed module structure by channel
-- [ ] Move channel-specific logic without changing wire format
-- [ ] Keep shared context and dispatch entrypoint coherent
-- [ ] Add/refresh protocol snapshot tests
-...
-
-
-### [oqto-36zw.10] Finalize runner-first cutover: remove direct runtime path from production code and update docs (P2, task)
-Complete migration by deleting deprecated runtime branching.
-
-Context:
-- Parent epic: oqto-36zw
-- Must happen only after runner-first path is stable.
-...
-
-
-### [oqto-36zw.9] Unify canonical types under oqto-protocol and remove duplicated canon definitions (P2, feature)
-Ensure canonical protocol types have one source of truth.
-
-Context:
-- Parent epic: oqto-36zw
-- Current duplication between oqto/src/canon and oqto-protocol.
-...
-
-
-### [oqto-36zw.8] Consolidate history and hstry modules into a single history integration surface (P2, feature)
-Remove ambiguous dual-module ownership for chat history integration.
-
-Context:
-- Parent epic: oqto-36zw
-- Current overlap between history/ and hstry/ causes navigation confusion.
-...
-
-
-### [oqto-36zw.7] Extract sandbox implementation into dedicated oqto-sandbox crate (P2, feature)
-Separate sandbox policy/implementation from server crate.
-
-Context:
-- Parent epic: oqto-36zw
-
-...
-
-
-### [oqto-36zw.6] Extract oqto-runner into dedicated workspace crate (P2, feature)
-Promote runner daemon to a first-class crate with explicit boundaries.
-
-Context:
-- Parent epic: oqto-36zw
-- Target tree: docs/architecture/backend-target-tree.md
-...
-
-
-### [oqto-36zw.5] Refactor oqto-runner binary into thin entrypoint + daemon library modules (P2, feature)
-Move runner implementation details out of src/bin/oqto-runner.rs.
-
-Context:
-- Parent epic: oqto-36zw
-- Current binary contains daemon state, protocol dispatch, and all handlers inline.
-...
-
-
-### [oqto-36zw.4] Refactor api/ws_multiplexed.rs into channel-scoped modules (P2, feature)
-Decompose oversized multiplexed websocket file into maintainable channel handlers.
-
-Context:
-- Parent epic: oqto-36zw
-- Current file is oversized and mixes unrelated responsibilities.
-...
-
-
-### [oqto-dnxq] Search in in Planner in the sidebar is lagging probably due to expensive re-renders on entry (P2, bug)
-
-### [oqto-ac9x] Pinning session in share workdir does not move session to the top of the lise (P2, bug)
-
-### [oqto-brg9.8] Event schema versioning and multi-tab deduplication (P2, task)
-Payload version field, forward-compat rules, multi-tab event delivery with dedup by event_id, last-write-wins for app state.
-
-### [oqto-brg9.6] Bus observability: oqtoctl commands + admin frontend dashboard (P2, task)
-CLI: bus status/tail/subscriptions/publish/rate-limits. Admin UI: live event viewer, subscription table, queue depths, rate limit breaches, ack status.
-
-### [oqto-74g3] Capability-based harness feature negotiation (shell escape, compaction, fork, etc.) (P2, feature)
-Runner should advertise harness capabilities in handshake (e.g. shell_escape, bash_command, compaction, fork, model_switch). Frontend checks capabilities and uses native harness features when available (e.g. ! prefix routes to Pi bash RPC command). Falls back to instruction-based prompting when harness lacks the capability. First use case: shell escape (! and !!) in chat input using Pi's native bash command instead of instructing the agent. Pattern applies to all harness-specific features for harness-agnostic frontend.
-
-### [oqto-fhv7] Workspace-scoped models.json with runner-injected EAVS_API_KEY (P2, feature)
-Split model catalog from auth. Three modes in .oqto/config.toml [models] section: global (default, no-op), merge (global + workspace merged), restrict (workspace only, global hidden via bwrap). Workspace .oqto/models.json is pure catalog using apiKey: EAVS_API_KEY (safe to commit). Runner injects EAVS_API_KEY env var at spawn from existing eavs_virtual_key. Runner reads .oqto/config.toml mode, then instructs sandbox layer to bind-mount accordingly. Frontend: model picker reads global catalog, user toggles models on/off per workspace, saves to .oqto/models.json and sets mode=restrict in .oqto/config.toml.
-
-### [oqto-tr4r] Composable documentation rudiments for AGENTS/bootstrap files (P2, epic)
-Introduce a lean rudiments system for composable instruction documents (starting with AGENTS.md) to enable deterministic scaffolding and surgical policy updates across templates/users/hosts.\n\nScope:\n- Define rudiment format (Markdown + frontmatter metadata)\n- Add composition manifest(s) for AGENTS.md variants\n- Implement assembler script to build final docs deterministically\n- Integrate with admin sync workflow (sync-agent-instructions)\n- Add validation/tests for missing/conflicting rudiments\n\nGoals:\n- Centralize reusable instruction blocks\n- Reduce drift across oqto, oqto-templates, and deployed user homes\n- Support controlled add/remove of policy snippets (e.g. uv-only Python) without manual bulk edits
-
-### [oqto-yxhc.7] App templates in oqto style (P2, task)
-Create starter templates in templates/apps/: blank.html, dashboard.html, form.html, data-table.html, kanban.html, markdown-viewer.html. All single-file, self-contained, using --app-* CSS variables. Include apphost API documentation in each template as HTML comments.
-
-### [oqto-yxhc.6] Workspace pinned apps config (.oqto/apps.json) (P2, task)
-Read .oqto/apps.json from workspace on session load. Format: {apps: [{path, title, autoOpen}]}. autoOpen apps open as tabs automatically. Others available in a quick-launch dropdown. Config writable by agents.
-
-### [oqto-yxhc.5] Auto-reload apps on file change via mux file watcher (P2, task)
-When file_changed event from mux-files channel matches an open app's path, re-read the file, re-inject apphost shim, update srcdoc. Apps should use saveState/loadState for state preservation across reloads.
-
-### [oqto-jq8p.4] Frontend SSO login flow (P2, feature)
-Add SSO Login button to login page that redirects to IdP authorize endpoint. Handle callback redirect with code+state params. Store returned JWT same as dev login.
-
-### [oqto-jq8p.3] User auto-provisioning and role mapping from OIDC claims (P2, feature)
-On first SSO login, auto-create Oqto user from OIDC claims (sub, email, preferred_username). Map IdP groups to Oqto roles via config. Ensure Linux user + eavs provisioning runs for new SSO users.
-
-### [oqto-jq8p.2] Auth middleware refactor for multi-mode support (P2, feature)
-Add AuthMode enum (Dev/Local/OIDC). Middleware validates tokens with HS256 or RS256 based on config mode. Support mixed mode for migration periods.
-
-### [oqto-jq8p.1] OIDC backend: discovery, JWKS, code exchange, JWT validation (P2, feature)
-Implement OIDC protocol flow using openidconnect crate. Fetch .well-known/openid-configuration, cache JWKS keys, add /api/auth/sso/login and /api/auth/sso/callback endpoints for authorization code exchange. Validate RS256 JWTs from external IdP.
-
-### [oqto-jq8p] OAuth/SSO Support for Oqto (P2, epic)
-Implement OIDC/OAuth2 SSO login flow for Oqto. The auth config already has oidc_issuer/oidc_audience fields stubbed. This epic covers: (1) OIDC backend - discovery, JWKS fetching, code exchange, RS256 JWT validation via openidconnect crate, (2) Auth middleware refactor - support Dev/Local/OIDC modes with multi-algorithm JWT validation, (3) User auto-provisioning on first SSO login with OIDC claim mapping and IdP group-to-role mapping, (4) Frontend SSO login button + callback redirect handling, (5) Config additions - oidc_client_id, oidc_client_secret, oidc_scopes, auto_provision_users, role_mapping, (6) Linux user mapping for SSO-provisioned users, (7) Session/token management - local JWT issuance after code exchange, refresh handling. Estimated ~6-7 days total effort.
-
-### [oqto-yd5q] Docker image: all-in-one oqto container (P2, feature)
-Ship oqto as a single Docker image with all required binaries baked in.
-
-**Included binaries:**
-- oqto, oqto-runner, oqto-files, oqto-sandbox, pi-bridge (this repo)
-- hstry, eavs, mmry, agntz, trx, mailz, tmpltr, scrpr, sldr, ignr, sx (byteowlz Rust tools)
-...
-
-
-### [oqto-wz18] Make workspace scaffolding more ergonomic for agents (P2, feature)
-Currently scaffolding a new oqto workspace requires manually creating multiple files and directories (.oqto/workspace.toml, .oqto/sandbox.toml, AGENTS.md, .pi/skills/, directory structure, git init, etc.) and then hitting the API to create a session. oqto-scaffold exists as a crate but is not built/installed, and it lacks key features for agent use:
-
-- No way to scaffold from within an agent session (e.g. via API endpoint or simple CLI)
-- No session auto-creation after scaffolding (agent had to curl the API manually)
-- No skill copying/linking from the templates repo
-...
-
-
-### [oqto-xf80] Documentation for secret injection and approvals (P2, task)
-
-### [oqto-g3wq] Observability and ops for secret injection system (P2, task)
-
-### [oqto-2npy] Config and schema updates for secrets system (P2, task)
-
-### [oqto-3c42] Sandbox policy integration for secret isolation (P2, feature)
-
-### [oqto-ayyv] Wrapper and PATH interception strategy for secrets (P2, task)
-
-### [oqto-stwe] Frontend UX for secret approval prompts (P2, feature)
-
-### [oqto-bhcq] When opening a website in the oqto-browser sidebar the oqto frontend crashes when trying to load the website (P2, bug)
-
-### [oqto-cynq] When checking off or adding trx issues, the component reloads and flashes (P2, bug)
-
-### [oqto-p7mv] When text is streaming in fast into an assistant message, the latest words can appear at the outside of the message box before the horizontal size can adapt. (P2, bug)
-
-### [oqto-14b1.6] Runner: app_message command and ServeMessage event routing (P2, task)
-Add support in the runner for bidirectional app messaging.
-
-Inbound (frontend -> agent):
-- New mux command: {channel: "agent", cmd: "app_message", session_id, serve_id, data}
-- Runner receives, formats as structured input for Pi (e.g. JSON on stdin or a special tool response)
-...
-
-
-### [oqto-14b1.5] ServeView: postMessage bridge for apphost.send/onMessage (P2, task)
-Implement the bidirectional messaging channel between served apps and the agent session.
-
-Outbound (app -> agent):
-- iframe calls apphost.send(data)
-- apphost shim does window.parent.postMessage({type: "apphost:send", data}, "*")
-...
-
-
-### [oqto-h8v2.2] Theme selection UI in settings (P2, task)
-Add theme picker to the settings panel.
-
-- Dropdown or toggle for built-in themes (oqto-light, oqto-dark)
-- Preview swatch showing key colors
-- Later: section for custom themes with add/edit/delete
-...
-
-
-### [oqto-h8v2.1] Extract current palettes into named theme objects (P2, task)
-Refactor globals.css to load theme variables from a theme definition rather than hardcoding them.
-
-- Create a Theme type/interface that holds all CSS variable values (background, foreground, card, primary, muted, border, destructive, etc.)
-- Define oqto-light and oqto-dark as the two built-in themes using the current values from globals.css
-- Apply theme by setting CSS variables on :root from the theme object
-...
-
-
-### [oqto-h8v2] Custom theming support for oqto (P2, epic)
-Enable custom color themes in oqto. The current light and dark palettes become the default theme. Users can create custom themes that override the CSS variables.
-
-Architecture:
-- Themes defined as named sets of CSS variable values (same variables as current globals.css :root and .dark)
-- Default themes: "oqto-light" (current :root) and "oqto-dark" (current .dark)
-...
-
-
-### [oqto-14b1.4] oqto-serve scaffold command with embedded templates (P2, task)
-Implement the scaffold subcommand with embedded templates (include_dir! or equivalent).
-
-Templates (all using --app-* tokens from byteowlz app runtime contract):
-- blank: minimal index.html + style.css + empty main.ts
-- dashboard: grid of stat cards, data table, status indicators
-...
-
-
-### [oqto-dbbw.3] Create apphost-shim.js bridge script (P2, task)
-Tiny JS shim (~50 lines) that provides window.apphost in any context.
-
-Behavior:
-- If window.apphost already exists (set by host before app loads), does nothing
-- Otherwise sets up postMessage listener for iframe contexts (oqto-serve):
-...
-
-
-### [oqto-dbbw.2] Create app-tokens.css with fallback defaults for all --app-* vars (P2, task)
-Create the base stylesheet that provides fallback values for all 14 --app-* CSS variables. Two variants: :root (dark defaults using oqto dark palette) and .light class (oqto light palette).
-
-Also includes:
-- border-radius: 0 everywhere (shared aesthetic)
-- Monospace font stack default
+Recent fixes addressed many individual defects, but regressions still recur due to event interleavings across:
 ...
-
-
-### [oqto-fp4w] Update dependencies.toml to track agent-browser version (P2, task)
-
-### [oqto-pnz5] Test all existing oqto-browser commands work with agent-browser (P2, task)
-
-### [oqto-acy9] Add agent-browser to oqto installation script and justfile (P2, task)
-
-### [oqto-z582] Update AgentBrowserManager to use agent-browser binary (P2, task)
-
-### [oqto-qvtw] Update oqto AgentBrowserConfig to support both oqto-browser and agent-browser (P2, task)
-
-### [oqto-d2vk] mmry port collision: stale configs cause port conflicts for new users (P2, bug)
-
-### [octo-p3n2.8] Auth middleware: support api_key query param on WebSocket paths (P2, task)
-Extend is_websocket_auth_path to also accept ?api_key=oqak_xxx on /ws/mux, /voice/stt, /voice/tts. Resolve API key to user_id and create CurrentUser same as JWT path. Update auth priority: Bearer > X-Api-Key > cookie > ?token > ?api_key > X-Dev-User.
-
-### [octo-p3n2.7] oqto web UI: Connect to omni button with omni:// deep-link generation (P2, task)
-In oqto Settings -> API Keys section, add a Connect to omni button. When clicked: auto-create an API key named omni-vanilla, generate omni://link/oqto-pulse?url=<server>&key=<api_key> URL, show it as clickable link and QR code. Clicking opens omni-vanilla which auto-configures the plugin.
-
-### [oqto-3k0c] mmry port allocation doesn't prevent orphan config collisions (P2, bug)
-When users are deleted from the frontend but not from the OS, their mmry config files retain the port allocation. When the DB record is deleted, that port is freed in the DB but the orphaned mmry-service process still holds it. New users can then be allocated the same port via ensure_mmry_port (which only checks the DB), causing 'Address already in use' crash-loops.
-
-Root cause: delete_user only removed from DB, not from OS. Fixed by adding full Linux cleanup to delete-user.
-
-Additional concern: if usermgr provisioning writes the mmry config before the DB port is persisted, and provisioning fails midway, the config file retains a port that was never committed to the DB.
-...
-
-
-### [oqto-5ym1] Pi does not recover from hung LLM streams (no stream timeout) (P2, bug)
-When an upstream LLM provider (e.g. Kimi-K2.5) drops a streaming connection mid-response without sending [DONE] or an error, Pi hangs indefinitely in its event loop. The TCP connection closes but Pi never detects the stream ended. Observed on octo-azure where Kimi dropped reasoning_content mid-token. Pi should implement a stream inactivity timeout (e.g. 120s with no chunks) and surface it as an error so the user can retry.
-
-### [oqto-pdxp] User systemd session not resilient to runner kills in multi-user mode (P2, bug)
-When runners are killed via pkill from an SSH session, the SSH session exit can also terminate user@UID.service, preventing the runner's systemd Restart=always from working. The runner stays dead with a stale socket. Linger is enabled but user@UID has no way to auto-start without a login or explicit systemctl start. Consider: 1) usermgr health-checking runner sockets periodically, 2) oqto calling ensure_runner before connecting.
-
-### [oqto-mvdv.4] Session freshness fingerprinting for cross-device drift detection (P2, task)
-Add session freshness polling to detect when the session file has been modified outside Octo's knowledge (e.g., by another browser tab or direct Pi CLI usage). Poll a fingerprint (mtime + size + entry count + tail hash) every ~4 seconds and warn the user when stale state is detected.
-
-## Reference
-Pi-mobile polls bridge_get_session_freshness every 4s with a 90s grace window for local mutations. On mismatch, shows 'Sync now' warning.
-
-...
-
-
-### [octo-s547] Pi extension: multi-account model switching with reasoning trace cleanup (P2, feature)
-
-### [octo-nqg8.11] Fix unused imports and variables across backend (P2, task)
-Fix ~14 remaining minor warnings:
-- ~11 unused imports across multiple files (SenderType in octo-protocol, chat::get_runner_for_user, get_trx_issue, ContainerPiRuntime/LocalPiRuntime/PiProcess/PiRuntime/PiSpawnConfig/RunnerPiRuntime, proxy functions, UserHstryConfig/UserHstryManager, WorkspaceLocationRepository/WorkspaceLocation, WorkspaceMeta and related, warn, WsCommand)
-- ~2 unused variables (agent_port, etc)
-- ~1 unnecessary mut
-
-...
-
-
-### [octo-nqg8.10] Fix ts-rs serde attribute parse warnings in canon/types.rs (P2, task)
-164 'failed to parse serde attribute' warnings from ts-rs when processing canon/types.rs. These are generated by ts-rs v10 when it encounters serde attributes it doesnt understand (like skip_serializing_if, is_default_format custom functions etc).
-
-Options:
-1. Update ts-rs to a version that handles these attributes (check if v11+ fixes this)
-2. Add ts(skip) or ts-specific attributes alongside serde ones where needed
-...
-
-
-### [octo-af5j.6.4] octo-setup web wizard (P2, feature)
-Web-based setup wizard served by octo itself for first-run configuration. Triggered when octo starts with no config or incomplete config.
-
-Flow:
-- Deployment mode selection
-- LLM provider + API key configuration
-...
-
-
-### [octo-af5j.6.3] octo-setup CLI wizard (P2, feature)
-Expand octo-setup from config hydrator into interactive CLI wizard. Two modes:
-
-1. **octo-setup wizard** (CLI) -- Interactive terminal wizard using dialoguer/inquire:
-   - Deployment mode (development/production)
-   - User mode (single/multi)
-...
-
-
-### [octo-3d6q] Slash command popup driven by get_commands (P2, task)
-
-### [octo-mkvc] Remove legacy canon/ module (from_pi, from_hstry, from_opencode) (P2, task)
-The old canon/ module (src/canon/{mod,types,from_pi,from_hstry,from_opencode}.rs) is only used by hstry/convert.rs which imports pi_message_to_canon, CanonMessage, ModelInfo. Either inline those conversions into hstry/convert.rs or keep a minimal version. The canonical protocol now lives in octo-protocol crate.
-
-### [octo-d0a5] Agent targeting for remote locations (P2, task)
-Expose workspace+location targets to agent UI and API. Require explicit selection for remote execution; enforce per-location policies and logging.
-
-### [octo-6nhg] Shared workspace UI grouping + merge/split (P2, task)
-Group sessions by team and workspace, show locations nested. Add merge-by-repo default with split toggle; indicate local/remote and active location.
-
-### [octo-jxn7] Add verbosity setting + persistence (P2, task)
-Expose chat verbosity level (1-3) in frontend settings and persist to localStorage. Default to 3.
-
-### [octo-rpxy] Chat verbosity levels for tool calls (P2, epic)
-Add frontend verbosity levels for chat rendering. Level 3 = current verbose tool cards. Level 2 collapses consecutive tool calls into a single dropdown with tabbed icons and scroll+arrows when overflow. Level 1 TBD (minimal).
-
-### [octo-wah4] Security: Runner authentication and TLS for network endpoints (P2, task)
-Implement runner authentication and TLS for network endpoints:
-
-1. Runner authentication
-   - Token-based auth when runner connects to backend
-   - Runner identity verification
-...
-
-
-### [octo-mj2r] Frontend: Shared workspace UI with owner indicators (P2, task)
-Add shared workspace UI with owner indicators:
-
-1. Workspace list enhancements
-   - Show owner avatar/name for shared workspaces
-   - Show permission level badge (Read/Write/Execute)
-...
-
-
-### [octo-w2zp] Frontend: Runner selector in session management UI (P2, task)
-Add runner selector to session management UI:
-
-1. Runner selector component
-   - Dropdown to select runner for new sessions
-   - Show runner status indicator (online/offline)
-...
-
-
-### [octo-888b] CLI: Workspace permission commands (grant, revoke, list, audit) (P2, task)
-Add workspace permission management CLI commands:
-
-1. octoctl workspace grant-permission
-   - Grant user access to workspace
-   - Options: --workspace, --user, --permission (read/write/execute), --expires
-...
-
-
-### [octo-cddx] CLI: Runner registration commands (register, list, status, unregister) (P2, task)
-Add runner registration CLI commands:
-
-1. octoctl runner register
-   - Register a new runner
-   - Options: --name, --endpoint (socket/address/url), --default
-...
-
-
-### [octo-72xf] Backend: Audit logging for cross-user access (P2, task)
-Implement comprehensive audit logging:
-
-1. Access log model
-   - AccessLog struct (requesting_user, workspace_id, action, granted, timestamp)
-   - DB schema for access_logs table
-...
-
-
-### [octo-cab0] SessionService: Support multi-runner with permission checks (P2, task)
-Extend SessionService for multi-runner and permission checks:
-
-1. Session model updates
-   - Add runner_id to SessionInfo
-   - Add workspace_id and owner_user_id
-...
-
-
-### [octo-kc4x] Backend: Extended RunnerClient with network endpoint support (P2, task)
-Extend RunnerClient to support multiple endpoint types:
-
-1. Add endpoint enum
-   - RunnerEndpoint::UnixSocket(PathBuf) - existing local mode
-   - RunnerEndpoint::NetworkAddress(SocketAddr) - new TCP
-...
-
-
-### [octo-b67r] Backend: Workspace permission system with DB schema (P2, task)
-Implement workspace permission system:
-
-1. Database schema
-   - workspaces table (id, path, owner_user_id, runner_id)
-   - workspace_permissions table (workspace_id, granted_user_id, permission, expires_at)
-...
-
-
-### [octo-60b1] Runner registry: Multiple runners per user with registration (P2, task)
-Implement runner registry for managing multiple runners per user:
-
-1. Data model
-   - RunnerRegistration struct (id, user_id, name, endpoint, status, last_seen)
-   - RunnerEndpoint enum (UnixSocket, NetworkAddress, SecureUrl)
-...
-
-
-### [octo-fcs1] Design: Multi-runner architecture and workspace permission model (P2, task)
-Write comprehensive design document covering:
-
-1. Multi-runner architecture
-   - Runner registry data model
-   - Runner registration flow
-...
-
-
-### [octo-7mxb] MCP Apps Support - Interactive UI in Chat (P2, epic)
-Add support for MCP Apps extension to render interactive HTML interfaces (dashboards, forms, visualizations) directly in the chat UI. This enables richer user interactions beyond text/images - file browsers, build output viewers, deployment config forms, live metrics dashboards, etc.
-
-## Phases
-
-### Phase 1: Frontend Host Support
-...
-
-
-### [octo-zjs8.4] Optimize Rust compilation times (P2, task)
-Add .cargo/config.toml with linker optimizations, split-debuginfo, incremental builds, and codegen-units settings
-
-### [octo-7xx0] Note: octo-ssh-proxy socket path must be mounted or moved for sandbox access (P2, task)
-
-### [octo-p3n2.6] .ctx file parsing (P2, task)
-Parse .ctx zip files: extract images, text context, metadata. Store temporarily for agent access.
-
-### [octo-p3n2.4] External chat API endpoint (P2, task)
-POST /api/v1/chat - accepts message + optional .ctx file, auto-creates session for workspace, supports stream and fire_and_forget modes
-
-### [octo-p3n2.3] Key management endpoints (P2, task)
-POST /api/keys (create), GET /api/keys (list), DELETE /api/keys/{id} (revoke)
-
-### [octo-p3n2.2] API key generation and validation (P2, task)
-Generate prefixed keys (octo_sk_...), hash storage, validation in auth middleware alongside JWT
-
-### [octo-p3n2.1] Database migration for api_keys table (P2, task)
-Create SQLite migration with: id, user_id, name, key_prefix, key_hash, scopes, last_used_at, expires_at, created_at, revoked_at
-
-### [octo-8erz] Prevent template copy from following symlinks (P2, bug)
-copy_template_dir uses fs::copy on DirEntry paths without checking for symlinks; on most platforms this follows symlinks and can copy arbitrary files outside the template repo into the new project. This is a security risk if template repos are user-supplied. Use symlink_metadata to detect symlinks and either skip, copy as symlink, or enforce that resolved targets stay within the template repo. Affected: backend/crates/octo/src/api/handlers.rs::copy_template_dir.
-
-### [octo-015j] Move blocking filesystem work out of async request handlers (P2, task)
-Several async handlers call std::fs synchronously (read_dir/read_to_string/copy), which can block the Tokio runtime under load. Convert to tokio::fs or wrap in spawn_blocking. Examples: backend/crates/octo/src/api/main_chat_pi.rs::get_prompt_commands (read_dir/read_to_string), backend/crates/octo/src/api/handlers.rs::list_workspace_dirs (read_dir), list_project_templates (read_dir), find_project_logo (read_dir), copy_template_dir (read_dir/fs::copy).
-
-### [octo-fmxv] Invalid `boundary` for `multipart/form-data` request when trying to save a file after editing it in the sidebar. (P2, bug)
-
-### [octo-xjs5.9] Observability: runner logs + health endpoints (P2, task)
-Add runner health + diagnostics:
-- ping/status endpoint
-- per-process status + stdout/stderr tail
-- structured events for start/stop/crash
-- backend exposes aggregated diagnostics for admins
-
-### [octo-xjs5.8] Compatibility: container mode runner adapter (P2, task)
-Keep docker multi-user working:
-- define how runner API maps to container runtime
-- either run runner inside container, or implement a backend adapter that satisfies runner interface using container APIs
-- ensure streaming still works
-
-...
-
-
-### [octo-h0by] add user self-service section in settings (change password etc) (P2, task)
-
-### [octo-85f4] the stop button doesnt seem to stop a running agent response (P2, bug)
-
-### [octo-w85q] When adding an image to the canvas, we need to automatically fit the canvas to the image size. And the default canvas size should be 1280x1280 with a properly sized default font size (P2, bug)
-
-### [octo-vbzq] Add Edit button to file viewer toolbar (P2, feature)
-Add an Edit button with pencil icon to the file viewer toolbar, alongside the existing expand/collapse, search, and close panel buttons. The Edit button should open the file for editing.
-
-### [octo-k8z1.13] Browser: User interaction handoff mode (OAuth, captcha, 2FA) (P2, task)
-When agent encounters OAuth, captcha, or 2FA, it needs to hand control to user.
-
-## Flow
-1. Agent detects auth page or blocker
-2. Agent calls: browser_request_user_action({ reason: 'Please log in to GitHub' })
-...
-
-
-### [octo-thhx.16] Tutorial script using spotlight and A2UI (P2, task)
-Optional guided tutorial using spotlight overlays to introduce UI components. Sequential step-by-step walkthrough, not agent-driven. User can skip at any time.
-
-### [octo-thhx.15] Profile and personality setup conversation (P2, task)
-Web wizard step for user profile and personality setup. Simple form fields for name, timezone, communication style, assistant name/personality. Writes USER.md and PERSONALITY.md. Not agent conversation.
-
-### [octo-thhx.14] Provider setup wizard via A2UI (P2, task)
-Web wizard step for connecting LLM providers. If EAVS pre-configured by admin, skip. Otherwise: show provider options, collect API key via form input, test connection, store in EAVS or user config. Simple multi-step form, not agent conversation.
-
-### [octo-thhx.13] i18n AGENTS.md translations (P2, task)
-Prepare AGENTS.md in multiple languages: en, de, es, fr, pl, etc. Either use symlinks (AGENTS.md -> AGENTS.{lang}.md) or dynamic injection based on user language preference.
-
-### [octo-thhx.12] Progressive UI unlock system (P2, task)
-Progressive UI unlock system that gates UI components behind onboarding progress.
-
-Status (2026-03-17): UnlockGate component exists (74 lines) and OnboardingProvider tracks unlocked components, but UnlockGate is never actually used anywhere in the app. All users get godmode immediately, so unlock gating is effectively dead code.
-
-### [octo-thhx.10] Onboarding route and flow controller (P2, task)
-Dedicated /onboarding route that orchestrates: language selection -> provider setup -> profile conversation -> tutorial. Redirects new users here, remembers progress.
-
-Status (2026-03-17): No dedicated /onboarding route exists. AppShellRoute auto-activates godmode for all users, bypassing onboarding. Backend API and state management are ready (thhx.1, thhx.2 done), but the wizard UI flow has not been built.
-
-### [octo-thhx.9] Language selection word cloud with CRT shader (P2, task)
-Three.js or CSS animated word cloud showing 'Click me' in multiple languages. CRT post-processing effect (scanlines, chromatic aberration, flicker). Click detection triggers language selection.
-
-### [octo-thhx.8] Tour mode for sequential spotlights (P2, task)
-Support multi-step tours with automatic progression. Agent sends array of steps, frontend advances on user click or timeout. Include progress indicator and skip button.
 
-### [octo-smwr] Add drag an drop capabilities to the file tree, both for dragging in external files and for moving files between dirs  (P2, feature)
 
-### [octo-s4ez] Define context model and context sources (local + remote) (P2, task)
+### [oqto-stez] Message rating and annotation system for DSPy/GEPA training data (P2, epic)
 ## Goal
-Define what "context" means for agent interactions in Octo, and how it is represented, versioned, and sourced, so features like global agent invoke (`octo-skks`) and agent-driven UI control (`octo-wzvn`) can reliably inject context now and later.
 
-## Context Model (Proposed)
-A versioned envelope composed of multiple context "sources".
+Add thumbs-up/down ratings plus free-text annotations and tags to every assistant
+message in oqto. Export the corpus as DSPy-ready JSONL so we can feed it into
+GEPA optimization for our local Qwen3.6-35B models. This is a data-flywheel
 ...
 
 
-### [octo-skks] Global main agent invoke with context injection (P2, feature)
-## Problem\nUsers want to invoke the Main Agent from any page in the web app, and have the agent automatically receive UI/runtime context (current page/route, active app/view, selected agent/persona if applicable, selected workspace directory/project, current session IDs).\n\n## Proposed Feature\nAdd a globally-available Main Agent entrypoint (e.g., hotkey + floating button + command palette action) that opens the Main Chat/agent panel. When the user sends a message, inject a structured context block into the message/system prompt containing:\n- Current route/pathname\n- Active app/view (e.g. sessions/settings/admin)\n- Active agent/persona (if any)\n- Current workspace directory / project key\n- Current workspace session ID + current chat session ID (if available)\n\n## Acceptance Criteria\n- Main Agent can be opened from any page without navigation side effects.\n- Sent messages include the context injection reliably and deterministically.\n- Context injection is visible in logs/devtools (or can be toggled) for debugging.\n- Works when OpenCode is not running (falls back to disk/history context).\n- No regression to existing Main Chat / Sessions flows.\n\n## Notes\nImplementation likely touches: app shell routing, global UI overlay, and the message send pipeline (control-plane / opencode proxy headers).
+### [oqto-6qgt] Fix tool summary mislabeling sx commands as file reads when piped to head (P2, bug)
 
-### [octo-2r4f] Add slug field to session model and API responses (P2, task)
+### [oqto-zpvs.7] CI + observability: persistence invariant gate and triage tooling (P2, task)
+Problem
+Regression detection is late and manual. We need reliable CI signals and debugging breadcrumbs.
 
-### [octo-6pkd] Left sidebar: '+' next to SESSIONS should create session in current project; add separate 'new directory/project' button (P2, feature)
-UX change request:
-- The "+" button next to "SESSIONS" in the left sidebar should open/create a new session/chat within the project the user is currently in.
-- Add a separate "new dir" button for the existing create project functionality to make the distinction clearer.
-
-Confirmed behavior:
+Deliverables
+- Add CI jobs for new frontend/backend persistence suites.
 ...
 
 
-### [octo-af5j.7.5] LXC template version tags (P2, task)
-Same as container images but for LXC templates. octo-agent-0.2.0.tar.zst with pinned components.
+### [oqto-21yw] Fix fragile string-based error classification in runner client (P2, task)
 
-### [octo-af5j.7.4] Container image version tags (P2, task)
-Tag container images with Octo release version. octo-agent:0.2.0 contains exact pinned versions. Latest tag follows stable channel.
 
-### [octo-af5j.7.3] Bundled component downloads (P2, task)
-Release artifacts include or reference exact versions of opencode, pi, mmry, fileserver. Self-update fetches matching versions.
+### [oqto-gxf5] Decompose oqto crate: extract session, workspace, settings modules (P2, epic)
 
-### [octo-af5j.7.2] Component version checking at startup (P2, task)
-On startup, verify installed component versions match expected. Warn on mismatch, offer to update. Block startup on critical incompatibility.
 
-### [octo-4me3] Security/perf/idiomatic audit fixes (P2, epic)
-Bundle of findings from the comprehensive review; child issues are linked as blockers.
+### [oqto-azaa] Break up ctl/main.rs (~4,600 lines) into subcommand modules (P3, task)
 
-### [octo-af5j.4.7.5] LXC template download and preparation (P2, task)
-Download octo-agent LXC template to local storage. Or build from Dockerfile equivalent. Pre-warm template cache.
 
-### [octo-af5j.4.7.4] Octo backend installation on Proxmox host (P2, task)
-Install octo binary, configure for Proxmox runtime mode, create API token for LXC management, set up systemd service.
-
-### [octo-af5j.4.7.3] Storage configuration (P2, task)
-Set up local-lvm or ZFS pool for container storage. Configure template storage location. Optional: add NFS/Ceph for shared storage.
-
-### [octo-af5j.4.7.2] Network configuration for Proxmox (P2, task)
-Configure vmbr0 bridge, optional NAT for agent containers, firewall rules. Support single NIC and multi-NIC setups.
-
-### [octo-af5j.4.7.1] Proxmox VE installation automation (P2, task)
-Add Proxmox repo to Debian, install pve-manager, configure grub for IOMMU if needed. Handle both fresh Debian and Proxmox ISO scenarios.
-
-### [octo-af5j.4.7] Proxmox automated installer (P2, feature)
-Script that takes a fresh Debian/bare-metal system, installs Proxmox VE, configures networking, and bootstraps Octo with LXC runtime. Single command to go from bare metal to running Octo instance.
-
-### [octo-af5j.6.2] Platform detection and binary selection (P2, task)
-Detect OS (Linux/macOS), arch (x86_64/arm64), libc (glibc/musl). Download matching binary. Fallback to source build if no binary.
-
-### [octo-af5j.6.1] One-liner install command (P2, task)
-curl -fsSL https://octo.ai/install.sh | sh - Downloads binary, adds to PATH, runs initial setup wizard.
-
-### [octo-af5j.5.2] Migration scripts framework (P2, task)
-Embedded migration functions (v0->v1, v1->v2, etc). Apply in order. Track applied migrations.
-
-### [octo-af5j.5.1] Config version detection (P2, task)
-Add version field to config.toml. Detect missing version as v0. Warn on unknown version.
-
-### [octo-af5j.6] Installation Script Overhaul (P2, feature)
-Rewrite setup.sh to download pre-built binaries instead of compiling. Detect platform, fetch correct binary, install to PATH. One-liner install like rustup.
-
-### [octo-af5j.5] Config Migration System (P2, feature)
-Detect config.toml version, apply migrations for breaking changes. Backup before migrating. Support dry-run mode.
-
-### [octo-af5j.4.3] RuntimeBackend trait implementation for Proxmox (P2, task)
-Implement create/start/stop/exec/logs for LXC. Map agent sessions to VMID range. Handle networking (bridge, NAT, port forwarding).
-
-### [octo-af5j.4.2] LXC template for agent containers (P2, task)
-Minimal LXC template with opencode, fileserver, ttyd pre-installed. Based on Arch or Alpine. Published to Proxmox template storage.
-
-### [octo-af5j.4.1] Proxmox API client (P2, task)
-Rust client for Proxmox REST API. Authentication (API tokens), node discovery, LXC CRUD operations, exec/console access.
-
-### [octo-af5j.3.3] Service restart orchestration (P2, task)
-Gracefully stop running sessions, replace binary, restart systemd/launchd service. Handle in-flight requests. Rollback on failure.
-
-### [octo-af5j.3.2] Binary download and verification (P2, task)
-Download correct platform binary, verify SHA256 checksum, optionally verify GPG signature. Atomic replacement of current binary.
-
-### [octo-af5j.3.1] Update check endpoint (P2, task)
-GitHub API or dedicated endpoint to check latest version. Compare with installed version. Cache results to avoid rate limits.
-
-### [octo-af5j.2.4] Agent template version tracking (P2, task)
-Store template version used when creating agent. Enable 'octoctl agent update-templates' to upgrade individual agents.
-
-### [octo-af5j.2.3] octoctl templates command (P2, task)
-CLI for template management: list, install, update, diff. Track installed versions in ~/.config/octo/templates.lock
-
-### [octo-af5j.2.2] Template manifest format (P2, task)
-Define manifest.json schema: template metadata, version, compatibility range, variables/placeholders, dependencies between templates.
-
-### [octo-af5j.2.1] Create octo-templates repository (P2, task)
-New repo with versioned templates: AGENTS.md variants, opencode.json presets, plugins, scaffold templates. Semantic versioning independent of octo core.
-
-### [octo-af5j.1.4] Version embedding in binaries (P2, task)
-Embed git tag/commit in binaries at build time. octo --version shows semver + commit hash.
-
-### [octo-af5j.1.3] GitHub Releases integration (P2, task)
-Automate publishing to GitHub Releases on tag push. Generate changelog from commits. Upload all platform artifacts.
-
-### [octo-af5j.1.2] Release artifact packaging (P2, task)
-Package binaries as tarballs with install script, checksums (SHA256), and signatures. Include octo, octoctl, fileserver binaries.
-
-### [octo-af5j.1.1] GitHub Actions workflow for cross-compilation (P2, task)
-CI workflow using cross-rs or native runners to build for linux-x86_64, linux-arm64, darwin-x86_64, darwin-arm64
-
-### [octo-af5j.4] Proxmox LXC Runtime (P2, feature)
-New runtime backend using Proxmox API to provision LXC containers for agent sessions. Stronger isolation than Docker, native systemd support, persistent containers with snapshots.
-
-### [octo-fxhc] Stream zip downloads to avoid large in-memory buffers (P2, task)
-fileserver/src/handlers.rs: create_zip_from_paths reads entire files and builds zip data in a Vec<u8>, which can exhaust memory for large files/directories. Consider streaming zip output or enforcing a size limit with early abort.
-
-### [octo-1rb4.1] Make turn taking more robust (P2, task)
-
-### [octo-wmrf.5] MCP Tool: a2ui_surface (P2, task)
-Create MCP tool for agents to emit A2UI surfaces. Parameters: surface_id, messages (A2UI JSON), blocking (bool). Non-blocking returns immediately, blocking waits for userAction response. Works for OpenCode agents, Pi agent, and future CLI agents.
-
-### [octo-374f] Cache-aware conversation compaction for Main Chat (P2, feature)
-Implement smart compaction that preserves LLM cache benefits. Key strategies: 1) Hide tool calls in UI but keep in API payload, 2) Tiered compaction (hot/warm/cold zones), 3) Append-only summarization at checkpoints, 4) Provider-aware caching (OpenAI auto vs Anthropic explicit). UI shows collapsed/expandable tool calls. Research needed on optimal checkpoint intervals and summary strategies.
-
-### [octo-jrya] Notification system for agents and external events (P2, feature)
-Add a notification system to Octo that agents can push to via HTTP API. Includes: SQLite storage, REST API (POST /api/notify, GET /api/notifications, etc.), WebSocket broadcast to frontend, right sidebar tab with notification list, optional popup toasts, ntfy.sh integration for external push. CLI: curl-based for agents. Config in octo settings for ntfy URL/token.
-
-### [octo-7fms] Main Chat: Enhanced compaction (observation masking, 8-section summary) (P2, task)
-Enhance Main Chat compaction with two-phase approach:
-
-Phase 1: Observation Masking (cheap, zero tokens)
-- Replace old tool results with placeholder: [Previous output elided for brevity]
-- Preserves: system prompt, recent N messages, file state
-...
-
-
-### [workspace-x7gm.5] Frontend: Project management UI (P2, task)
-Add UI for:
-- Creating and managing projects
-- Inviting users to projects
-- Switching between personal workspaces and shared projects
-
-### [workspace-x7gm.4] Update AgentBackend to support project-based sessions (P2, task)
-Modify LocalBackend and ContainerBackend to:
-1. Check if workspace path belongs to a project
-2. Use project's Linux user instead of platform user's Linux user
-3. Store session data under project user's directory
-
-### [workspace-x7gm.3] Add project management API endpoints (P2, task)
-API endpoints:
-- POST /projects - Create project
-- GET /projects - List user's projects
-- GET /projects/{id} - Get project details
-- PUT /projects/{id} - Update project
-...
-
-
-### [workspace-x7gm.2] Implement Project service and repository (P2, task)
-Create ProjectRepository and ProjectService for CRUD operations on projects and memberships.
-
-### [workspace-x7gm.1] Add projects and project_members tables to database (P2, task)
-Create migrations for projects and project_members tables as defined in the epic.
-
-### [workspace-x7gm] Shared Projects: Multi-user access to same project/workspace (P2, epic)
-Enable multiple platform users to access the same project/workspace with proper isolation.
-
-## Design
-
-### Core Concept
-...
-
-
-### [oqto-hn80.9] Migrate remaining files: RegisterPage.tsx and SidebarSharedWorkspaces.tsx (P3, task)
-Two remaining files with useEffect:
-
-## RegisterPage.tsx (2 effects)
-- L67: Provisioning step timer animation -> useMountEffect. Starts timers for showing progress steps during account provisioning.
-
-...
-
-
-### [oqto-hn80.8] Migrate dialog components: eliminate useEffect in 5 dialogs (P3, task)
-Five dialog components each have useEffect calls that reset form state when the dialog opens. All follow the same pattern: `useEffect(() => { if (open) resetFields(); }, [open, ...])`.
-
-## Pattern: key-based reset
-Instead of watching 'open' in an effect, use React's key prop on the dialog content to force remount:
-```tsx
-...
-
-
-### [oqto-jq8p.6] Session token management for SSO users (P3, feature)
-Issue local Oqto JWT after successful OIDC code exchange to decouple from IdP token expiry. Handle refresh/re-auth redirect on expiry.
-
-### [oqto-jq8p.5] Auth config extensions for OIDC (P3, feature)
-Add config fields: auth.mode, oidc_client_id, oidc_client_secret (with env: syntax), oidc_scopes, auto_provision_users, default_role, auth.role_mapping table. Update config schema and example config.
-
-### [oqto-14b1.7] Serve proxy: apphost.fetch, readFile, writeFile capabilities (P3, task)
-Implement optional capabilities on the apphost bridge in oqto.
-
-apphost.fetch(url, opts):
-- App posts fetch request via postMessage to ServeView
-- ServeView proxies through backend (bypasses iframe CORS restrictions)
-...
-
-
-### [oqto-h8v2.4] Dynamic --app-* injection for oqto-serve iframes (P3, task)
-When custom theming is active, oqto-serve iframes need to receive the live theme.
-
-- ServeView sends postMessage with full --app-* variable mapping on:
-  - Initial iframe load
-  - Theme change events
-...
-
-
-### [oqto-h8v2.3] Custom theme definition format and loading (P3, task)
-Allow users to define custom themes.
-
-- Theme format: TOML or JSON file with all CSS variable overrides
-- Theme directory: ~/.config/oqto/themes/ or managed via API
-- Validation against the known variable set
-...
-
-
-### [oqto-dbbw.4] Create app-utils.css shared utility classes (P3, task)
-Optional shared utility CSS that apps can use for common patterns. Uses only --app-* variables.
-
-Classes:
-- Layout: .panel, .box, .box-header, .box-title, .box-subtitle
-- Flex: .flex, .flex-col, .flex-row, .items-center, .justify-between, .gap-1/2/3
-...
-
-
-### [oqto-amqb] Document streaming quality decision and defaults in AGENTS.md (P3, task)
-
-### [oqto-rg67] Update .pi/skills/oqto-browser SKILL.md to reference agent-browser (P3, task)
-
-### [oqto-c2r7] Update AGENTS.md and docs to reference agent-browser instead of oqto-browser (P3, task)
-
-### [oqto-gwpa] Remove oqto-browser and oqto-browserd crates from codebase (P3, task)
-
-### [oqto-mgp5] Per-user eaRS instances for voice mode (parakeet engine) (P3, feature)
-
-### [oqto-mvdv.5] WebSocket performance budget tracking and diagnostics (P3, task)
-Add performance budget tracking for key streaming metrics:
-- TTFT (prompt send to first text_delta): target 1200ms
-- Reconnect-to-resync latency: target 2000ms
-- Messages-per-second throughput during streaming
-- Inbound queue depth high-water mark per session
-...
-
-
-### [octo-34f0] Migrate generate_pi_models_json to eavs API endpoint (P3, chore)
-The octo backend has a duplicate of the Pi models.json generation logic in backend/crates/octo/src/eavs/mod.rs. Now that eavs has 'eavs models export pi' (and the export module), the octo backend should call an eavs API endpoint (e.g. GET /providers/export/pi) instead of duplicating the format logic. This would be a new API endpoint in eavs that returns the same JSON as the CLI command.
-
-### [octo-qqg2] Support octo.install.toml for non-interactive setup with provider API keys (P3, feature)
-Add support for reading an octo.install.toml file that pre-configures LLM providers and API keys for non-interactive setup. The file would be read at the start of setup.sh and converted into environment variables. This enables fully automated deployments without manual key entry. Format:
-```toml
-[providers]
-anthropic = "sk-ant-..."
-openai = "sk-..."
-...
-
-
-### [octo-wfs3] Expand fuzz testing to WebSocket commands, runner protocol, and Pi event parsing (P3, task)
-
-### [octo-xncy.7] Android: UI exploration mode (DroidBot-style UTG crawler) (P3, task)
-Build UI exploration/crawling mode for unknown apps.
-
-## Approach
-DroidBot-style UI Transition Graph (UTG) crawler:
-1. Systematically explore app screens
-...
-
-
-### [octo-xncy.6] Android: MCP tools for agent control (snapshot, tap, type, scroll) (P3, task)
-
-### [octo-xncy.5] Android: Frontend AndroidView component with touch forwarding (P3, task)
-
-### [octo-xncy.4] Android: Screencast streaming to frontend (reuse BrowserView pattern) (P3, task)
-
-### [octo-xncy] Android Emulator: Agent-controlled Android environment (P3, epic)
--
-
-### [octo-mbeh] Deduplicate and centralize path sanitization logic (P3, task)
-There are multiple path sanitization/validation implementations with overlapping intent (e.g., sanitize_relative_path in API handlers vs resolve_path/resolve_and_verify_path in the file server). This risks divergence and inconsistent security rules. Consider centralizing into a shared utility with shared tests. Affected: backend/crates/octo/src/api/handlers.rs::sanitize_relative_path, backend/crates/octo-files/src/handlers.rs::resolve_path/resolve_and_verify_path.
-
-### [octo-a256] Consolidate CopyButton implementations and handle clipboard failures consistently (P3, task)
-CopyButton logic is duplicated across multiple components with inconsistent error handling and timer cleanup (e.g., missing try/catch and no timeout cleanup on unmount). Consider a shared CopyButton component/hook with fallback copy logic and timeout cleanup. Affected: frontend/components/ui/markdown-renderer.tsx, frontend/components/ui/code-viewer.tsx, frontend/components/ui/typst-viewer.tsx, frontend/apps/admin/InviteCodesPanel.tsx, frontend/features/sessions/SessionScreen.tsx, frontend/features/main-chat/components/MainChatPiView.tsx.
-
-### [octo-3trr] Add browser extension mode (Option A) - fork Playwriter (P3, feature)
-Browser extension mode for controlling user's existing browser.
-
-## Reference Implementation
-- ../external-repos/playwriter - Fork this for Octo extension
-- ../external-repos/clawdbot/src/browser/extension-relay.ts - CDP relay pattern
-...
-
-
-### [octo-thhx.18] Multi-lingual user support (P3, task)
-Support users who speak multiple languages. Store languages array in USER.md. Agent can switch language based on context or explicit request. UI for managing language preferences.
-
-### [octo-thhx.17] Technical user detection for terminal unlock (P3, task)
-Subtle detection: profile questions about work, A2UI choice between visual vs command options, detection of shell-like input in chat. Unlocks terminal for technical users.
-
-### [octo-k8z1.12] Documentation: Browser feature usage guide (P3, chore)
-
-### [octo-k8z1.11] Container mode: Browser container per session (Docker/Podman) (P3, task)
-
-### [octo-k8z1.10] Human-in-the-loop: Credential access approval modal (P3, task)
-
-### [octo-k8z1.9] Credential vault: UI for storing encrypted credentials (P3, task)
-
-### [octo-af5j.4.7.6] First-run wizard for Proxmox+Octo (P3, task)
-Interactive or config-file based wizard: set admin password, configure EAVS API keys, set resource limits, create first user/agent.
-
-### [octo-af5j.4.6] GPU passthrough for LXC (P3, task)
-Pass NVIDIA GPU to LXC containers for local LLM inference. Share GPU across multiple containers.
-
-### [octo-af5j.4.5] Proxmox cluster support (P3, task)
-Distribute agent containers across cluster nodes. Handle migration. Resource balancing.
-
-### [octo-af5j.4.4] LXC snapshot support (P3, task)
-Create snapshots before risky operations. Rollback on failure. Scheduled snapshots for long-running agents.
-
-### [octo-af5j.3.4] Update channels (stable/beta/nightly) (P3, task)
-Support multiple release channels. Config option to set preferred channel. Beta gets release candidates, nightly gets every commit.
-
-### [octo-vne5] Move simple tree file walk off the async runtime (P3, task)
-fileserver/src/handlers.rs: get_simple_file_list uses WalkDir synchronously on the async thread. On large directories this can block the runtime and slow all requests. Run this in spawn_blocking or switch to an async walker.
-
-### [octo-wmrf.7] A2UI Custom Components Catalog (P3, task)
-Define Octo-specific A2UI component catalog extending standard catalog. Custom components: CodeBlock (syntax highlighted), DiffView, FileTree, ProgressBar, Terminal, MarkdownView. Register with renderer, document for agent use.
-
-### [octo-a9ds] Main Chat: Agent coordination via mailz (P3, task)
-Enable agent coordination for Main Chat:
-
-1. mailz integration (messaging only):
-   - Check inbox on session start
-   - Send messages to other agents (e.g., govnr)
-...
-
-
-### [octo-a9mc] Main Chat: skdlr heartbeat integration (P3, task)
-Integrate skdlr for periodic heartbeats in Main Chat:
-
-1. skdlr schedule configuration:
-   - Heartbeat schedule (e.g., every 4 hours)
-   - Command: octo main-chat heartbeat
-...
-
-
-### [octo-xncy.9] Android: Vision fallback with OmniParser/grounding model (P4, task)
-
-### [octo-gpj7] Avoid unwrap on WS event serialization (P4, chore)
-backend/src/ws/handler.rs and backend/src/ws/types.rs use serde_json::to_string(...).unwrap(). A serialization failure would panic the server. Use map_err/Result and return an error response instead, even if failure is unlikely.
-
-### [octo-92yw] Deduplicate mmry proxy session checks (P4, chore)
-backend/src/api/proxy.rs: proxy_mmry_* handlers repeat the same session lookup + active check + target/store resolution. Factor into a helper to reduce duplication and keep behavior consistent when rules change.
-
-### [octo-h975] Main Chat: Message visibility filtering (hide tools by default) (P4, task)
-Filter message visibility in Main Chat to show cleaner output:
-
-Current behavior: All messages (including tool calls) visible in chat
-Desired behavior: Tool calls hidden by default, toggle to show
-
-...
+### [oqto-pz6k] Add integration tests for WebSocket multiplexed handler (P3, task)
 
 
 ## Closed
 
-- [oqto-tacn.7] Extract runner daemon core from oqto crate into oqto-runner crate (closed 2026-03-27)
-- [oqto-tacn.2] Remove or feature-gate DirectUserPlane (zombie with 8 TODOs) (closed 2026-03-27)
-- [oqto-tacn.11] Integrate architecture guardrails into just lint + CI and update AGENTS.md (closed 2026-03-27)
-- [oqto-tacn.10] Add dead-code/orphan module guardrail (closed 2026-03-27)
-- [oqto-tacn.6] Add module boundary import guardrail (closed 2026-03-27)
-- [oqto-tacn.5] Add crate dependency direction guardrail (closed 2026-03-27)
-- [oqto-tacn.4] Add file size ratchet guardrail (god file preventer) (closed 2026-03-27)
-- [oqto-tacn.1] Delete api/ws/multiplexed/ transitional shim (dead code) (closed 2026-03-27)
+- [oqto-3a07] Highlight recently created/modified files in file tree sidebar (closed 2026-04-27)
+- [oqto-kah7] tmp (closed 2026-04-27)
+- [oqto-dmb3] Splash screen: use black logo in light mode (closed 2026-04-27)
+- [oqto-13mz] File tree sidebar doesn't auto-update when agent creates files in expanded subdirs (closed 2026-04-27)
+- [oqto-zpvs.39] Fix streaming tool duplication and message loss in near-ngos-spin session (closed 2026-04-27)
+- [oqto-gfpv] Refine launcher mock prefixes (# workdir, ## session) (closed 2026-04-27)
+- [oqto-m3g0] Prototype unified launcher mock (session history + workdir fuzzy + ! commands) (closed 2026-04-27)
+- [oqto-amvk] Make just deploy enforce bin-only remote-build artifact fetch (closed 2026-04-26)
+- [oqto-nhgv] Stabilize user services to prevent restart storms on VM (closed 2026-04-26)
+- [oqto-btr2] Speed up remote-build artifact fetch to avoid deploy stalls (closed 2026-04-26)
+- [oqto-dtq6] Fix provider edit form loading configured baseUrl and context length (closed 2026-04-23)
+- [oqto-7ae5] Render only one retry card per assistant turn (closed 2026-04-21)
+- [oqto-ttbw] Fix recoverable error prominence and settings toggle not applying in chat (closed 2026-04-21)
+- [oqto-p8se] Move recovered-error visibility toggle into right sidebar settings (closed 2026-04-21)
+- [oqto-akk4] Improve recoverable error rendering in chat timeline (closed 2026-04-21)
+- [oqto-b4za] Landlock silently skipped when disable_userns=true (affects all built-in profiles) (closed 2026-04-20)
+- [oqto-zpvs.42] Remove chunked/smooth streaming presentation and run raw-only (closed 2026-04-20)
+- [oqto-kjhs] Fix chat code block background shifting on horizontal scroll (closed 2026-04-19)
+- [oqto-zpvs.40] Fix streaming message loss when switching sessions and returning (closed 2026-04-19)
+- [oqto-zpvs.38] Remove partial-snapshot blanket user-role drop causing hidden user turns (closed 2026-04-18)
+- [oqto-zpvs.37] Fix missing intermediate user message in grouped chat rendering (closed 2026-04-18)
+- [oqto-zpvs.36] Investigate Welcome Chat rich-view-crop message loss on frontend (closed 2026-04-18)
+- [oqto-zpvs.35] Fix persistent duplicate tool-call rendering during streaming (closed 2026-04-18)
+- [oqto-zpvs.34] Smooth mode lockstep: animate container growth with crawl text (no discrete jumps) (closed 2026-04-18)
+- [oqto-zpvs.33] Smooth mode: remove container twitch by disabling per-delta reservation growth (closed 2026-04-18)
+- [oqto-zpvs.32] Smooth mode: switch to fully continuous crawl motion (no discrete stepping) (closed 2026-04-18)
+- [oqto-zpvs.31] Smooth crawl: eliminate repeated downward twitch during rapid streaming deltas (closed 2026-04-18)
+- [oqto-zpvs.30] Make streaming presentation modes behaviorally distinct (chunked/smooth/raw) (closed 2026-04-18)
+- [oqto-zpvs.29] Add raw token-level streaming mode in chat settings (closed 2026-04-18)
+- [oqto-zpvs.28] Add smooth streaming crawl toggle in right sidebar settings + finer chunk cadence (closed 2026-04-18)
+- [oqto-zpvs.27] Smooth boundary commit animation retrigger + freeze live updates while user scrolled up (closed 2026-04-18)
+- [oqto-zpvs.26] Resize-aware tail-commit streaming with smooth line slide-in (closed 2026-04-18)
+- [oqto-zpvs.25] Fix duplicated tool-call rows during streaming before persistence convergence (closed 2026-04-18)
+- [oqto-zpvs.23] Inner assistant message-container bottom lock during streaming (closed 2026-04-18)
+- [oqto-zpvs.24] Reduce full-message streaming text twitch (remove staged reveal, stabilize line breaking) (closed 2026-04-18)
+- [oqto-zpvs.22] Stabilize bottom viewport edge during live streaming auto-follow (closed 2026-04-18)
+- [oqto-zpvs.21] Fix streaming bottom bleed-through and keep wrap distribution identical after persist (closed 2026-04-18)
+- [oqto-zpvs.20] Root-cause fix for streaming overflow/twitch: remove animated preallocation and unify staged reveal (closed 2026-04-18)
+- [oqto-zpvs.19] Improve streaming block preallocation for wrapped lines (thinking + text) (closed 2026-04-18)
+- [oqto-zpvs.18] Streaming line preallocation inside live markdown block to reduce expansion lag (closed 2026-04-18)
+- [oqto-zpvs.17] Remove live padding and enforce strict authoritative convergence to eliminate tail user duplicates (closed 2026-04-18)
+- [oqto-zpvs.16] Reduce streaming twitchiness with stable timeline rows and scroll-owner hardening (closed 2026-04-18)
+- [oqto-zpvs.15] Place streaming breathing room inside assistant block (not below container) (closed 2026-04-18)
+- [oqto-zpvs.14] Adjust live padding to inner message margins (not outer spacer) (closed 2026-04-18)
+- [oqto-zpvs.13] Add optimistic bottom padding for live container during active turn (closed 2026-04-18)
+- [oqto-zpvs.12] Fix chat auto-scroll flicker at bottom during streaming (closed 2026-04-18)
+- [oqto-zpvs.11] Hotfix: enforce streaming tail anchor and ignore live snapshots during active turn (closed 2026-04-18)
+- [oqto-zpvs.10] Fix duplicate optimistic user prompt tail by preserving client_id in authoritative timeline (closed 2026-04-18)
+- [oqto-zpvs.9] Eliminate heuristic text-based dedup that drops optimistic user turns (closed 2026-04-18)
+- [oqto-zpvs.8] Session timeline contract: strict per-session live buffer recovery + authoritative durable fetch split (closed 2026-04-18)
+- [oqto-zpvs.5] Backend: integration tests for session identity mapping and cross-session isolation (closed 2026-04-17)
+- [oqto-zpvs.4] Backend: integration tests for persist-before-idle and live-vs-authoritative fetch contracts (closed 2026-04-17)
+- [oqto-zpvs.3] Frontend: trace replay harness using real canonical event logs (closed 2026-04-17)
+- [oqto-z6hv] Persistence hardening: remove dead code/cruft while implementing zpvs frontend/backend tests (closed 2026-04-17)
+- [oqto-zpvs.2] Frontend: property-style invariant tests for mergeServerMessages + normalizeMessages (closed 2026-04-17)
+- [oqto-zpvs.1] Frontend: add deterministic event-interleaving reducer tests for message convergence (closed 2026-04-17)
+- [oqto-ad4q] Sync pre-session selected model with authoritative get_state model on session attach (closed 2026-04-17)
+- [oqto-v8yh] Investigate frontend message persistence failures and define test strategy (closed 2026-04-17)
+- [oqto-2xe1] Fix model selector showing value different from active Pi model (closed 2026-04-17)
+- [oqto-x9fg] Assistant messages duplicated on reload - merge logic appends instead of replacing (closed 2026-04-16)
+- [oqto-977r] Remove workspace-level dead_code/unused_imports lint suppression (closed 2026-04-15)
+- [oqto-8xga] Add TTL eviction to RECENT_CLIENT_IDS cache to prevent memory leak (closed 2026-04-15)
+- [oqto-c4x3] Pi-authoritative history pipeline: zero-loss external-session compatibility with canonical+hstry projection (closed 2026-04-15)
+- [oqto-c4x3.6] E2E regression suite: external start/continue, compaction, tool streams, forks (closed 2026-04-15)
+- [oqto-c4x3.5] Fork/tree lineage import for external Pi sessions (closed 2026-04-15)
+- [oqto-c4x3.4] Eliminate lossy active-session message paths from WS API (closed 2026-04-15)
+- [oqto-c4x3.3] Add reindex/repair command: rebuild Pi session projection from JSONL (closed 2026-04-15)
+- [oqto-c4x3.2] Implement deterministic JSONL->canonical projection engine (idempotent) (closed 2026-04-15)
+- [oqto-c4x3.1] Define Pi/Oqto/hstry identity + authority contract (closed 2026-04-15)
+- [oqto-bhaj] oqto-log hardening pass: typed store/projector interfaces and deterministic resolver (closed 2026-04-15)
+- [oqto-bhaj.19] P0 Epic: Deterministic live chat timeline integrity (streaming, session-switch, markdown) (closed 2026-04-15)
+- [oqto-bhaj.17] Per-session model persistence across alias IDs on reload (closed 2026-04-15)
+- [oqto-bhaj.18] P0 frontend streaming timeline instability: disappearing messages + markdown render regressions (closed 2026-04-15)
+- [oqto-7wwd] Refresh installed oqto-sandbox binaries on host (closed 2026-04-14)
+- [oqto-9sp0] Unify sandbox execution path and add profile compatibility tests with EAVS mock (closed 2026-04-14)
+- [oqto-m9px] oqto-sandbox CLI: Landlock pre_exec blocks bwrap uid_map write when --unshare-user is used (closed 2026-04-14)
+- [oqto-7k8v] Surface recoverable retry errors inline in chat without durable spam (closed 2026-04-14)
+- [oqto-3yqp] P0: Assistant responses disappear from frontend despite existing in JSONL/hstry (closed 2026-04-13)
+- [oqto-hybn] Deploy preflight: enforce minimum hstry version/schema for session tree queries (closed 2026-04-13)
+- [oqto-heye] P0: Chat send must always terminate (response or explicit error), never infinite spinner (closed 2026-04-13)
+- [oqto-vh8v] Critical: terminal routing integrity violation across users/workspaces (closed 2026-04-13)
+- [oqto-snfs] Backend deadlock when deleting shared workspace sessions - session.delete/session.create to SW runner hangs, blocks entire WS connection, eventually all HTTP requests time out. 30s runner client timeout not firing. Needs 45s hard deadline on WS command handler + investigation of why tokio timeout doesn't trigger. (closed 2026-04-13)
+- [oqto-5ey4] Migrate from oqto-browser to agent-browser (closed 2026-04-13)
+- [oqto-29e1] Stability: hstry gRPC high-availability with local spool fallback (closed 2026-04-13)
+- [oqto-n7zc] setup.sh: fix full user provisioning pipeline (pi, eavs, models, runner) (closed 2026-04-13)
+- [oqto-6d6x] Mobile chat: persisted file previews disappear after message reconciliation (closed 2026-04-13)
+- [oqto-xjnv] Authoritative merge can drop optimistic user message before persistence (closed 2026-04-13)
+- [oqto-ctvc] Deploy ergonomics: make just deploy-host resilient to /tmp quota by setting TMPDIR automatically (closed 2026-04-13)
+- [oqto-bcqj.1] Retry/error UX regression: spinner drops, empty assistant bubble, error lost on reload (closed 2026-04-13)
+- [oqto-bcqj] Fix active get_messages path causing partial/disappearing assistant parts (closed 2026-04-13)
+- [oqto-57nd] Runner: transactional fork state machine (single in-flight fork per session) (closed 2026-04-13)
+- [oqto-ep9v] Deploy preflight: fix hstry schema check shell quoting (line 489) (closed 2026-04-13)
+- [oqto-5s09] Mobile: fork icon tap does nothing in chat message actions (closed 2026-04-13)
+- [oqto-kzdp] Session fork/branch: wire hstry session tree to frontend (closed 2026-04-13)
+- [oqto-pkm6] Prompt-injection defense-in-depth pipeline for untrusted content (closed 2026-04-13)
+- [oqto-pwa1] Sandbox profile hierarchy: strict/development/privileged/godmode (closed 2026-04-13)
+- [oqto-razr.2] Privileged operation policy engine with risk tiers (closed 2026-04-13)
+- [oqto-razr.1] Sudo shim: intercept sudo calls and route to runner (closed 2026-04-13)
+- [oqto-razr] Runner-mediated privileged operations (sudo proxy) (closed 2026-04-13)
+- [oqto-3c42.1] Runner egress policy hardening: add enforceable host-allowlist boundary with audit semantics (closed 2026-04-13)
+- [oqto-kmap] Force MiniMax provider API adapter to openai-completions-convert-think-tags in generated models.json (closed 2026-04-13)
+- [oqto-cxxr.3] Sandbox: harden Landlock policy beyond write-only baseline (closed 2026-04-13)
+- [oqto-cxxr.2] Sandbox: add cgroup resource enforcement to runner sandbox spawns (closed 2026-04-13)
+- [oqto-cxxr.1] Sandbox: ship multi-arch seccomp-bpf policy artifacts and installer selection (closed 2026-04-13)
+- [oqto-6er8] Sandbox v2 hardening program (runner-first, remote-ready) (closed 2026-04-13)
+- [oqto-jty7] Offline-first cross-harness visual runtime (no-CDN except LLM) (closed 2026-04-13)
+- [oqto-3kwc.8] Tests: transport parity + auth failure coverage for runner dispatch (closed 2026-04-13)
+- [oqto-3kwc.7] Security: integrate kyz-backed runner token provisioning and rotation (closed 2026-04-13)
+- [oqto-3kwc.6] Event bus: emit scheduler job lifecycle events independent of runner transport (closed 2026-04-13)
+- [oqto-3kwc.5] Runtime config: select runner transport by mode (local=unix, container=tcp) (closed 2026-04-13)
+- [oqto-3kwc.4] Backend: introduce RunnerClient interface with unix/tcp adapters (closed 2026-04-13)
+- [oqto-3kwc.3] Runner: enforce TCP auth token validation for all requests (closed 2026-04-13)
+- [oqto-3kwc.2] Runner: add --listen host:port CLI and keep --socket behavior (closed 2026-04-13)
+- [oqto-3kwc.1] Runner: add transport abstraction (unix + tcp listeners) (closed 2026-04-13)
+- [oqto-3kwc] Add remote runner capabilities (TCP transport) to oqto-runner with transport abstraction (closed 2026-04-13)
+- [oqto-nb6s] Reduce oqto cold-start time and add readiness-gated deploy sync-configs (closed 2026-04-13)
+- [oqto-5fv7] Frontend comprehensive refactor (closed 2026-04-13)
+- [oqto-hn80.2] Add strict lint rules banning direct useEffect (closed 2026-04-13)
+- [oqto-hn80.1] Create useMountEffect and useLocalStorage hooks (closed 2026-04-13)
+- [oqto-e067] Security: Implement runner mTLS authentication and attestation (closed 2026-04-13)
+- [oqto-36zw.3.1] Implementation checklist: single-user runner bootstrap and recovery (closed 2026-04-13)
+- [oqto-36zw.2.1] Implementation checklist: runner-default selection policy (closed 2026-04-13)
+- [oqto-36zw.1.1] Implementation checklist: baseline hardening and telemetry (closed 2026-04-13)
+- [oqto-36zw.3] Single-user runner bootstrap and resiliency (auto-start, healthcheck, reconnect) (closed 2026-04-13)
+- [oqto-36zw.2] Make RunnerUserPlane default in all normal local modes (guard direct behind explicit unsafe flag) (closed 2026-04-13)
+- [oqto-36zw.1] Baseline hardening for runner-first migration (coverage + telemetry + smoke checks) (closed 2026-04-13)
+- [oqto-36zw] Backend architecture refactor: runner-first crate split and module cleanup (closed 2026-04-13)
+- [oqto-75rn] Use EAVS API for provider/model CRUD from Oqto (no direct models.json drift) (closed 2026-04-13)
+- [oqto-brg9.7] Rate limiting, subscription filters, and graceful degradation (closed 2026-04-13)
+- [oqto-brg9.5] Domain event hooks for trx/hstry/mmry + UI intent namespace (closed 2026-04-13)
+- [oqto-brg9.4] Ack protocol for admin/control-plane events (closed 2026-04-13)
+- [oqto-brg9.3] Unify inline and fullscreen app runtime with persistent app state (closed 2026-04-13)
+- [oqto-brg9.2] Runner event policy engine (queueing, coalescing, idle delivery, pull APIs) (closed 2026-04-13)
+- [oqto-brg9.1] Bus channel in WS mux with scope authz and source stamping (closed 2026-04-13)
+- [oqto-brg9] Unified Event Bus + Agent-Controlled UI runtime (closed 2026-04-13)
+- [oqto-8vkn] Add message sync test suite: unit + integration + E2E tests for Pi->hstry->Frontend pipeline (closed 2026-04-13)
+- [oqto-yxss] Implement version vectors for deterministic Pi->hstry->Frontend sync (closed 2026-04-13)
+- [oqto-n8bj] Bound file-tree traversal concurrency and add hard limits for huge repos (closed 2026-04-13)
+- [oqto-a6hw] WebSocket mux command processing is head-of-line blocked by slow file tree commands (closed 2026-04-13)
+- [oqto-9snf] Regression suite: cross-user terminal isolation and shared workspace routing (closed 2026-04-13)
+- [oqto-q39k] Add terminal command binding invariants (user/owner/workspace/terminal_id) fail-closed (closed 2026-04-13)
+- [oqto-6pkb] Remove ttyd TCP fallback and enforce unix-socket-only terminal transport (closed 2026-04-13)
+- [oqto-yxhc] Inline HTML Apps: workspace apps rendered via srcdoc iframes (closed 2026-04-13)
+- [oqto-p994] Thinking renders as plaintext markdown block in minimal mode (closed 2026-04-13)
+- [oqto-x2tk] Guarantee JSONL->hstry durability: recover missed sessions after runner/hstry restarts (closed 2026-04-13)
+- [oqto-dv37] Testing matrix for secret injection system (closed 2026-04-13)
+- [oqto-f8wx] Redaction and telemetry hardening for secrets (closed 2026-04-13)
+- [oqto-s8pe] Approval workflow for unknown process registry (closed 2026-04-13)
+- [oqto-8kx4] Spawn-time auto-injection engine in runner (closed 2026-04-13)
+- [oqto-z94c] eavs compatibility and separation of concerns (closed 2026-04-13)
+- [oqto-srkd] kyz resolver integration in oqto-runner (closed 2026-04-13)
+- [oqto-ctpz] Policy model and storage for secret injection (closed 2026-04-13)
+- [oqto-05c1] Runner-managed secret injection with approval-based process allowlist (closed 2026-04-13)
+- [oqto-ae9d] Backend runner router: target-based runner resolution with session affinity groundwork (closed 2026-04-13)
+- [oqto-9mtk] Shared workspace history appears partially lost in UI while data exists in hstry/API (closed 2026-04-13)
+- [oqto-14b1.3] Frontend: ServeView iframe panel with hot reload (closed 2026-04-13)
+- [oqto-14b1.2] Backend: serve API routes and port allocation (closed 2026-04-13)
+- [oqto-14b1.1] oqto-serve CLI: static file server with swc TypeScript transpilation (closed 2026-04-13)
+- [oqto-14b1] oqto-serve: agent web application server (closed 2026-04-13)
+- [oqto-dbbw.1] Spec: finalize --app-* CSS token list and window.apphost bridge API (closed 2026-04-13)
+- [oqto-dbbw] Byteowlz App Runtime: shared contract for portable agent-generated web apps (closed 2026-04-13)
+- [oqto-zkyq] Canonical history migration (server-side) (closed 2026-04-13)
+- [oqto-q5yb] Credential proxy on oqto-runner: secret-aware API proxying via kyz (closed 2026-04-13)
+- [oqto-pzya] Crash recovery: Pi stderr capture, session reconnect, auto-respawn with backoff (closed 2026-04-13)
+- [oqto-q8cf] Implement graceful shutdown for oqto updates and restarts (closed 2026-04-13)
+- [oqto-fezg] Stability: Circuit breaker and backpressure for WebSocket connections (closed 2026-04-13)
+- [oqto-35fg] Scalability: PostgreSQL backend for hstry beyond SQLite limits (closed 2026-04-13)
+- [oqto-8f14] Scalability: Protocol versioning for canonical protocol evolution (closed 2026-04-13)
+- [oqto-q3qf] oqto should call usermgr to respawn dead runners before connecting (closed 2026-04-13)
+- [oqto-y05n] Browser-side STT via Moonshine WASM — eliminate server-side eaRS for voice mode (closed 2026-04-13)
+- [oqto-c6n3] Refactor: route all mux file operations through oqto-files instead of RunnerUserPlane (closed 2026-04-13)
+- [oqto-fr2f] Admin UI: manage eavs providers and sync models.json (closed 2026-04-13)
+- [oqto-mvdv] Streaming reliability: backpressure handling, reconnect resync, and delta coalescing (closed 2026-04-13)
+- [octo-nqg8.9] Replace unsafe env::set_var in octo-runner and test code (closed 2026-04-13)
+- [octo-nqg8.8] Replace unsafe termios code in octoctl with rpassword crate (closed 2026-04-13)
+- [octo-nqg8.7] Replace unsafe libc calls with nix crate safe wrappers (closed 2026-04-13)
+- [octo-nqg8.6] Remove dead code in user_plane/, ws/, canon/, container/, api/, session/, templates/, onboarding/, workspace/, hstry/ (closed 2026-04-13)
+- [octo-nqg8.5] Remove dead code in local/ module (process.rs, runtime.rs, sandbox.rs, linux_users.rs, user_hstry.rs) (closed 2026-04-13)
+- [octo-nqg8.4] Remove dead code in runner/pi_translator.rs and runner/client.rs (closed 2026-04-13)
+- [octo-nqg8.3] Remove dead code in history/ module (repository.rs, service.rs, models.rs) (closed 2026-04-13)
+- [octo-nqg8.2] Remove dead code in pi/ module (runtime.rs, types.rs, session_parser.rs, client.rs) (closed 2026-04-13)
+- [octo-nqg8.1] Remove dead code in runner/pi_manager.rs (closed 2026-04-13)
+- [octo-nqg8] Eliminate all Rust warnings and unsafe code in backend (closed 2026-04-13)
+- [octo-9cdt] Make hstry the sole history source while preserving streaming (closed 2026-04-13)
+- [octo-wg67] Implement @@ cross-agent routing in runner (closed 2026-04-13)
+- [octo-1hbb] Define runner session state machine and command dispatch (closed 2026-04-13)
+- [octo-y5r3] Octo migration: replace all direct SQLite access with hstry gRPC client calls (closed 2026-04-13)
+- [octo-xxe2] Per-workspace hstry/mmry stores + sync scoping (closed 2026-04-13)
+- [octo-wdkj] Remote runner bootstrap over SSH (closed 2026-04-13)
+- [octo-59py] Workspace locations schema + routing (closed 2026-04-13)
+- [octo-pdb4] Shared workspaces with multi-location runners (closed 2026-04-13)
+- [octo-t2bf] Multi-Runner & Workspace Sharing (closed 2026-04-13)
+- [octo-zjs8.3] Add strict clippy lints to all Cargo.toml files (closed 2026-04-13)
+- [octo-zjs8.2] Fix clippy warnings in frontend/src-tauri (closed 2026-04-13)
+- [octo-qq9y] Security audit sudoers configuration for multi-user mode (closed 2026-04-13)
+- [octo-p3n2] API Key Authentication & External Integration (closed 2026-04-13)
+- [octo-xjs5.10] Test plan: isolation matrix (closed 2026-04-13)
+- [octo-xjs5.7] Local linux provisioning: non-interactive sudo + tmpfiles (closed 2026-04-13)
+- [octo-xjs5.6] Security: runner socket authz + strict path guards (closed 2026-04-13)
+- [octo-xjs5.5] Backend: route all user operations through runner (closed 2026-04-13)
+- [octo-xjs5.4] Runner API: main chat storage ownership (closed 2026-04-13)
+- [octo-xjs5.3] Runner API: per-user mmry lifecycle (closed 2026-04-13)
+- [octo-xjs5.2] Runner API: per-user file operations (closed 2026-04-13)
+- [octo-xjs5.1] Runner API: user-plane session registry (closed 2026-04-13)
+- [octo-thhx] Onboarding & Agent UI Control (closed 2026-04-13)
+- [octo-af5j.7.6] Release manifest generator (byt release) (closed 2026-04-13)
+- [octo-af5j.7.1] Version manifest file format (closed 2026-04-13)
+- [octo-af5j.7] Dependency version pinning and compatibility matrix (closed 2026-04-13)
+- [octo-af5j.3] Self-Update Command (closed 2026-04-13)
+- [octo-af5j.2] Template Repository & Versioning (closed 2026-04-13)
+- [octo-af5j.1] Binary Release Pipeline (closed 2026-04-13)
+- [octo-af5j] Release & Update System (closed 2026-04-13)
+- [oqto-95n6] UI: move session accent bar between icon and title and make it span both text rows (closed 2026-04-13)
+- [oqto-q49f] Docs cleanup: archive old design docs under docs/old (closed 2026-04-13)
+- [oqto-razr.3] Runner privileged execution path (closed 2026-04-13)
+- [oqto-e8vx] Tool calls sometimes are shown duplicated (closed 2026-04-13)
+- [oqto-79er] Mobile chat: inline media taps open Copy All context menu instead of interacting with image/video (closed 2026-04-13)
+- [oqto-hn80.10] Update AGENTS.md with useEffect ban policy (closed 2026-04-13)
+- [oqto-hn80.7] Migrate useSharedWorkspaces.ts: eliminate 2 useEffect calls (closed 2026-04-13)
+- [oqto-hn80.6] Migrate useSidebarState.ts: eliminate 3 useEffect calls (closed 2026-04-13)
+- [oqto-hn80.5] Migrate SidebarSessions.tsx: eliminate 4 useEffect calls (closed 2026-04-13)
+- [oqto-hn80.4] Migrate useProjectActions.ts: eliminate 5 useEffect calls (closed 2026-04-13)
+- [oqto-hn80.3] Migrate AppShellRoute.tsx: eliminate 14 useEffect calls (closed 2026-04-13)
+- [oqto-36zw.10.1] Implementation checklist: final runner-only cleanup and docs alignment (closed 2026-04-13)
+- [oqto-36zw.9.1] Implementation checklist: canonical type source unification (closed 2026-04-13)
+- [oqto-36zw.8.1] Implementation checklist: consolidate history and hstry surfaces (closed 2026-04-13)
+- [oqto-36zw.7.1] Implementation checklist: extract dedicated oqto-sandbox crate (closed 2026-04-13)
+- [oqto-36zw.6.1] Implementation checklist: extract dedicated oqto-runner crate (closed 2026-04-13)
+- [oqto-36zw.5.1] Implementation checklist: modularize runner daemon internals (closed 2026-04-13)
+- [oqto-36zw.4.1] Implementation checklist: split websocket multiplex handler by channel (closed 2026-04-13)
+- [oqto-36zw.10] Finalize runner-first cutover: remove direct runtime path from production code and update docs (closed 2026-04-13)
+- [oqto-36zw.9] Unify canonical types under oqto-protocol and remove duplicated canon definitions (closed 2026-04-13)
+- [oqto-36zw.8] Consolidate history and hstry modules into a single history integration surface (closed 2026-04-13)
+- [oqto-36zw.7] Extract sandbox implementation into dedicated oqto-sandbox crate (closed 2026-04-13)
+- [oqto-36zw.6] Extract oqto-runner into dedicated workspace crate (closed 2026-04-13)
+- [oqto-36zw.5] Refactor oqto-runner binary into thin entrypoint + daemon library modules (closed 2026-04-13)
+- [oqto-36zw.4] Refactor api/ws_multiplexed.rs into channel-scoped modules (closed 2026-04-13)
+- [oqto-dnxq] Search in in Planner in the sidebar is lagging probably due to expensive re-renders on entry (closed 2026-04-13)
+- [oqto-ac9x] Pinning session in share workdir does not move session to the top of the lise (closed 2026-04-13)
+- [oqto-brg9.8] Event schema versioning and multi-tab deduplication (closed 2026-04-13)
+- [oqto-brg9.6] Bus observability: oqtoctl commands + admin frontend dashboard (closed 2026-04-13)
+- [oqto-74g3] Capability-based harness feature negotiation (shell escape, compaction, fork, etc.) (closed 2026-04-13)
+- [oqto-fhv7] Workspace-scoped models.json with runner-injected EAVS_API_KEY (closed 2026-04-13)
+- [oqto-tr4r] Composable documentation rudiments for AGENTS/bootstrap files (closed 2026-04-13)
+- [oqto-yxhc.7] App templates in oqto style (closed 2026-04-13)
+- [oqto-yxhc.6] Workspace pinned apps config (.oqto/apps.json) (closed 2026-04-13)
+- [oqto-yxhc.5] Auto-reload apps on file change via mux file watcher (closed 2026-04-13)
+- [oqto-jq8p.4] Frontend SSO login flow (closed 2026-04-13)
+- [oqto-jq8p.3] User auto-provisioning and role mapping from OIDC claims (closed 2026-04-13)
+- [oqto-jq8p.2] Auth middleware refactor for multi-mode support (closed 2026-04-13)
+- [oqto-jq8p.1] OIDC backend: discovery, JWKS, code exchange, JWT validation (closed 2026-04-13)
+- [oqto-jq8p] OAuth/SSO Support for Oqto (closed 2026-04-13)
+- [oqto-yd5q] Docker image: all-in-one oqto container (closed 2026-04-13)
+- [oqto-wz18] Make workspace scaffolding more ergonomic for agents (closed 2026-04-13)
+- [oqto-xf80] Documentation for secret injection and approvals (closed 2026-04-13)
+- [oqto-g3wq] Observability and ops for secret injection system (closed 2026-04-13)
+- [oqto-2npy] Config and schema updates for secrets system (closed 2026-04-13)
+- [oqto-3c42] Sandbox policy integration for secret isolation (closed 2026-04-13)
+- [oqto-ayyv] Wrapper and PATH interception strategy for secrets (closed 2026-04-13)
+- [oqto-stwe] Frontend UX for secret approval prompts (closed 2026-04-13)
+- [oqto-bhcq] When opening a website in the oqto-browser sidebar the oqto frontend crashes when trying to load the website (closed 2026-04-13)
+- [oqto-cynq] When checking off or adding trx issues, the component reloads and flashes (closed 2026-04-13)
+- [oqto-p7mv] When text is streaming in fast into an assistant message, the latest words can appear at the outside of the message box before the horizontal size can adapt. (closed 2026-04-13)
+- [oqto-14b1.6] Runner: app_message command and ServeMessage event routing (closed 2026-04-13)
+- [oqto-14b1.5] ServeView: postMessage bridge for apphost.send/onMessage (closed 2026-04-13)
+- [oqto-h8v2.2] Theme selection UI in settings (closed 2026-04-13)
+- [oqto-h8v2.1] Extract current palettes into named theme objects (closed 2026-04-13)
+- [oqto-h8v2] Custom theming support for oqto (closed 2026-04-13)
+- [oqto-14b1.4] oqto-serve scaffold command with embedded templates (closed 2026-04-13)
+- [oqto-dbbw.3] Create apphost-shim.js bridge script (closed 2026-04-13)
+- [oqto-dbbw.2] Create app-tokens.css with fallback defaults for all --app-* vars (closed 2026-04-13)
+- [oqto-fp4w] Update dependencies.toml to track agent-browser version (closed 2026-04-13)
+- [oqto-pnz5] Test all existing oqto-browser commands work with agent-browser (closed 2026-04-13)
+- [oqto-acy9] Add agent-browser to oqto installation script and justfile (closed 2026-04-13)
+- [oqto-z582] Update AgentBrowserManager to use agent-browser binary (closed 2026-04-13)
+- [oqto-qvtw] Update oqto AgentBrowserConfig to support both oqto-browser and agent-browser (closed 2026-04-13)
+- [oqto-d2vk] mmry port collision: stale configs cause port conflicts for new users (closed 2026-04-13)
+- [octo-p3n2.8] Auth middleware: support api_key query param on WebSocket paths (closed 2026-04-13)
+- [octo-p3n2.7] oqto web UI: Connect to omni button with omni:// deep-link generation (closed 2026-04-13)
+- [oqto-3k0c] mmry port allocation doesn't prevent orphan config collisions (closed 2026-04-13)
+- [oqto-5ym1] Pi does not recover from hung LLM streams (no stream timeout) (closed 2026-04-13)
+- [oqto-pdxp] User systemd session not resilient to runner kills in multi-user mode (closed 2026-04-13)
+- [oqto-mvdv.4] Session freshness fingerprinting for cross-device drift detection (closed 2026-04-13)
+- [octo-s547] Pi extension: multi-account model switching with reasoning trace cleanup (closed 2026-04-13)
+- [octo-nqg8.11] Fix unused imports and variables across backend (closed 2026-04-13)
+- [octo-nqg8.10] Fix ts-rs serde attribute parse warnings in canon/types.rs (closed 2026-04-13)
+- [octo-af5j.6.4] octo-setup web wizard (closed 2026-04-13)
+- [octo-af5j.6.3] octo-setup CLI wizard (closed 2026-04-13)
+- [octo-3d6q] Slash command popup driven by get_commands (closed 2026-04-13)
+- [octo-mkvc] Remove legacy canon/ module (from_pi, from_hstry, from_opencode) (closed 2026-04-13)
+- [octo-d0a5] Agent targeting for remote locations (closed 2026-04-13)
+- [octo-6nhg] Shared workspace UI grouping + merge/split (closed 2026-04-13)
+- [octo-jxn7] Add verbosity setting + persistence (closed 2026-04-13)
+- [octo-rpxy] Chat verbosity levels for tool calls (closed 2026-04-13)
+- [octo-wah4] Security: Runner authentication and TLS for network endpoints (closed 2026-04-13)
+- [octo-mj2r] Frontend: Shared workspace UI with owner indicators (closed 2026-04-13)
+- [octo-w2zp] Frontend: Runner selector in session management UI (closed 2026-04-13)
+- [octo-888b] CLI: Workspace permission commands (grant, revoke, list, audit) (closed 2026-04-13)
+- [octo-cddx] CLI: Runner registration commands (register, list, status, unregister) (closed 2026-04-13)
+- [octo-72xf] Backend: Audit logging for cross-user access (closed 2026-04-13)
+- [octo-cab0] SessionService: Support multi-runner with permission checks (closed 2026-04-13)
+- [octo-kc4x] Backend: Extended RunnerClient with network endpoint support (closed 2026-04-13)
+- [octo-b67r] Backend: Workspace permission system with DB schema (closed 2026-04-13)
+- [octo-60b1] Runner registry: Multiple runners per user with registration (closed 2026-04-13)
+- [octo-fcs1] Design: Multi-runner architecture and workspace permission model (closed 2026-04-13)
+- [octo-7mxb] MCP Apps Support - Interactive UI in Chat (closed 2026-04-13)
+- [octo-zjs8.4] Optimize Rust compilation times (closed 2026-04-13)
+- [octo-7xx0] Note: octo-ssh-proxy socket path must be mounted or moved for sandbox access (closed 2026-04-13)
+- [octo-p3n2.6] .ctx file parsing (closed 2026-04-13)
+- [octo-p3n2.4] External chat API endpoint (closed 2026-04-13)
+- [octo-p3n2.3] Key management endpoints (closed 2026-04-13)
+- [octo-p3n2.2] API key generation and validation (closed 2026-04-13)
+- [octo-p3n2.1] Database migration for api_keys table (closed 2026-04-13)
+- [octo-8erz] Prevent template copy from following symlinks (closed 2026-04-13)
+- [octo-015j] Move blocking filesystem work out of async request handlers (closed 2026-04-13)
+- [octo-fmxv] Invalid `boundary` for `multipart/form-data` request when trying to save a file after editing it in the sidebar. (closed 2026-04-13)
+- [octo-xjs5.9] Observability: runner logs + health endpoints (closed 2026-04-13)
+- [octo-xjs5.8] Compatibility: container mode runner adapter (closed 2026-04-13)
+- [octo-h0by] add user self-service section in settings (change password etc) (closed 2026-04-13)
+- [octo-85f4] the stop button doesnt seem to stop a running agent response (closed 2026-04-13)
+- [octo-w85q] When adding an image to the canvas, we need to automatically fit the canvas to the image size. And the default canvas size should be 1280x1280 with a properly sized default font size (closed 2026-04-13)
+- [octo-vbzq] Add Edit button to file viewer toolbar (closed 2026-04-13)
+- [octo-k8z1.13] Browser: User interaction handoff mode (OAuth, captcha, 2FA) (closed 2026-04-13)
+- [octo-thhx.16] Tutorial script using spotlight and A2UI (closed 2026-04-13)
+- [octo-thhx.15] Profile and personality setup conversation (closed 2026-04-13)
+- [octo-thhx.14] Provider setup wizard via A2UI (closed 2026-04-13)
+- [octo-thhx.13] i18n AGENTS.md translations (closed 2026-04-13)
+- [octo-thhx.12] Progressive UI unlock system (closed 2026-04-13)
+- [octo-thhx.10] Onboarding route and flow controller (closed 2026-04-13)
+- [octo-thhx.9] Language selection word cloud with CRT shader (closed 2026-04-13)
+- [octo-thhx.8] Tour mode for sequential spotlights (closed 2026-04-13)
+- [octo-smwr] Add drag an drop capabilities to the file tree, both for dragging in external files and for moving files between dirs  (closed 2026-04-13)
+- [octo-s4ez] Define context model and context sources (local + remote) (closed 2026-04-13)
+- [octo-skks] Global main agent invoke with context injection (closed 2026-04-13)
+- [octo-2r4f] Add slug field to session model and API responses (closed 2026-04-13)
+- [octo-6pkd] Left sidebar: '+' next to SESSIONS should create session in current project; add separate 'new directory/project' button (closed 2026-04-13)
+- [octo-af5j.7.5] LXC template version tags (closed 2026-04-13)
+- [octo-af5j.7.4] Container image version tags (closed 2026-04-13)
+- [octo-af5j.7.3] Bundled component downloads (closed 2026-04-13)
+- [octo-af5j.7.2] Component version checking at startup (closed 2026-04-13)
+- [octo-4me3] Security/perf/idiomatic audit fixes (closed 2026-04-13)
+- [octo-af5j.4.7.5] LXC template download and preparation (closed 2026-04-13)
+- [octo-af5j.4.7.4] Octo backend installation on Proxmox host (closed 2026-04-13)
+- [octo-af5j.4.7.3] Storage configuration (closed 2026-04-13)
+- [octo-af5j.4.7.2] Network configuration for Proxmox (closed 2026-04-13)
+- [octo-af5j.4.7.1] Proxmox VE installation automation (closed 2026-04-13)
+- [octo-af5j.4.7] Proxmox automated installer (closed 2026-04-13)
+- [octo-af5j.6.2] Platform detection and binary selection (closed 2026-04-13)
+- [octo-af5j.6.1] One-liner install command (closed 2026-04-13)
+- [octo-af5j.5.2] Migration scripts framework (closed 2026-04-13)
+- [octo-af5j.5.1] Config version detection (closed 2026-04-13)
+- [octo-af5j.6] Installation Script Overhaul (closed 2026-04-13)
+- [octo-af5j.5] Config Migration System (closed 2026-04-13)
+- [octo-af5j.4.3] RuntimeBackend trait implementation for Proxmox (closed 2026-04-13)
+- [octo-af5j.4.2] LXC template for agent containers (closed 2026-04-13)
+- [octo-af5j.4.1] Proxmox API client (closed 2026-04-13)
+- [octo-af5j.3.3] Service restart orchestration (closed 2026-04-13)
+- [octo-af5j.3.2] Binary download and verification (closed 2026-04-13)
+- [octo-af5j.3.1] Update check endpoint (closed 2026-04-13)
+- [octo-af5j.2.4] Agent template version tracking (closed 2026-04-13)
+- [octo-af5j.2.3] octoctl templates command (closed 2026-04-13)
+- [octo-af5j.2.2] Template manifest format (closed 2026-04-13)
+- [octo-af5j.2.1] Create octo-templates repository (closed 2026-04-13)
+- [octo-af5j.1.4] Version embedding in binaries (closed 2026-04-13)
+- [octo-af5j.1.3] GitHub Releases integration (closed 2026-04-13)
+- [octo-af5j.1.2] Release artifact packaging (closed 2026-04-13)
+- [octo-af5j.1.1] GitHub Actions workflow for cross-compilation (closed 2026-04-13)
+- [octo-af5j.4] Proxmox LXC Runtime (closed 2026-04-13)
+- [octo-fxhc] Stream zip downloads to avoid large in-memory buffers (closed 2026-04-13)
+- [octo-1rb4.1] Make turn taking more robust (closed 2026-04-13)
+- [octo-wmrf.5] MCP Tool: a2ui_surface (closed 2026-04-13)
+- [octo-374f] Cache-aware conversation compaction for Main Chat (closed 2026-04-13)
+- [octo-jrya] Notification system for agents and external events (closed 2026-04-13)
+- [octo-7fms] Main Chat: Enhanced compaction (observation masking, 8-section summary) (closed 2026-04-13)
+- [workspace-x7gm.5] Frontend: Project management UI (closed 2026-04-13)
+- [workspace-x7gm.4] Update AgentBackend to support project-based sessions (closed 2026-04-13)
+- [workspace-x7gm.3] Add project management API endpoints (closed 2026-04-13)
+- [workspace-x7gm.2] Implement Project service and repository (closed 2026-04-13)
+- [workspace-x7gm.1] Add projects and project_members tables to database (closed 2026-04-13)
+- [workspace-x7gm] Shared Projects: Multi-user access to same project/workspace (closed 2026-04-13)
+- [oqto-hn80.9] Migrate remaining files: RegisterPage.tsx and SidebarSharedWorkspaces.tsx (closed 2026-04-13)
+- [oqto-hn80.8] Migrate dialog components: eliminate useEffect in 5 dialogs (closed 2026-04-13)
+- [oqto-jq8p.6] Session token management for SSO users (closed 2026-04-13)
+- [oqto-jq8p.5] Auth config extensions for OIDC (closed 2026-04-13)
+- [oqto-14b1.7] Serve proxy: apphost.fetch, readFile, writeFile capabilities (closed 2026-04-13)
+- [oqto-h8v2.4] Dynamic --app-* injection for oqto-serve iframes (closed 2026-04-13)
+- [oqto-h8v2.3] Custom theme definition format and loading (closed 2026-04-13)
+- [oqto-dbbw.4] Create app-utils.css shared utility classes (closed 2026-04-13)
+- [oqto-amqb] Document streaming quality decision and defaults in AGENTS.md (closed 2026-04-13)
+- [oqto-rg67] Update .pi/skills/oqto-browser SKILL.md to reference agent-browser (closed 2026-04-13)
+- [oqto-c2r7] Update AGENTS.md and docs to reference agent-browser instead of oqto-browser (closed 2026-04-13)
+- [oqto-gwpa] Remove oqto-browser and oqto-browserd crates from codebase (closed 2026-04-13)
+- [oqto-mgp5] Per-user eaRS instances for voice mode (parakeet engine) (closed 2026-04-13)
+- [oqto-mvdv.5] WebSocket performance budget tracking and diagnostics (closed 2026-04-13)
+- [octo-34f0] Migrate generate_pi_models_json to eavs API endpoint (closed 2026-04-13)
+- [octo-qqg2] Support octo.install.toml for non-interactive setup with provider API keys (closed 2026-04-13)
+- [octo-wfs3] Expand fuzz testing to WebSocket commands, runner protocol, and Pi event parsing (closed 2026-04-13)
+- [octo-xncy.7] Android: UI exploration mode (DroidBot-style UTG crawler) (closed 2026-04-13)
+- [octo-xncy.6] Android: MCP tools for agent control (snapshot, tap, type, scroll) (closed 2026-04-13)
+- [octo-xncy.5] Android: Frontend AndroidView component with touch forwarding (closed 2026-04-13)
+- [octo-xncy.4] Android: Screencast streaming to frontend (reuse BrowserView pattern) (closed 2026-04-13)
+- [octo-xncy] Android Emulator: Agent-controlled Android environment (closed 2026-04-13)
+- [octo-mbeh] Deduplicate and centralize path sanitization logic (closed 2026-04-13)
+- [octo-a256] Consolidate CopyButton implementations and handle clipboard failures consistently (closed 2026-04-13)
+- [octo-3trr] Add browser extension mode (Option A) - fork Playwriter (closed 2026-04-13)
+- [octo-thhx.18] Multi-lingual user support (closed 2026-04-13)
+- [octo-thhx.17] Technical user detection for terminal unlock (closed 2026-04-13)
+- [octo-k8z1.12] Documentation: Browser feature usage guide (closed 2026-04-13)
+- [octo-k8z1.11] Container mode: Browser container per session (Docker/Podman) (closed 2026-04-13)
+- [octo-k8z1.10] Human-in-the-loop: Credential access approval modal (closed 2026-04-13)
+- [octo-k8z1.9] Credential vault: UI for storing encrypted credentials (closed 2026-04-13)
+- [octo-af5j.4.7.6] First-run wizard for Proxmox+Octo (closed 2026-04-13)
+- [octo-af5j.4.6] GPU passthrough for LXC (closed 2026-04-13)
+- [octo-af5j.4.5] Proxmox cluster support (closed 2026-04-13)
+- [octo-af5j.4.4] LXC snapshot support (closed 2026-04-13)
+- [octo-af5j.3.4] Update channels (stable/beta/nightly) (closed 2026-04-13)
+- [octo-vne5] Move simple tree file walk off the async runtime (closed 2026-04-13)
+- [octo-wmrf.7] A2UI Custom Components Catalog (closed 2026-04-13)
+- [octo-a9ds] Main Chat: Agent coordination via mailz (closed 2026-04-13)
+- [octo-a9mc] Main Chat: skdlr heartbeat integration (closed 2026-04-13)
+- [octo-xncy.9] Android: Vision fallback with OmniParser/grounding model (closed 2026-04-13)
+- [octo-gpj7] Avoid unwrap on WS event serialization (closed 2026-04-13)
+- [octo-92yw] Deduplicate mmry proxy session checks (closed 2026-04-13)
+- [octo-h975] Main Chat: Message visibility filtering (hide tools by default) (closed 2026-04-13)
+- [oqto-1pak] Email/domain text incorrectly triggers @file preview cards (closed 2026-04-13)
+- [oqto-q0f8] Mobile: Mermaid diagrams render broken in chat markdown (closed 2026-04-12)
+- [oqto-bhaj.19.1] Auto-run quality gates for agent sessions without git hooks (closed 2026-04-12)
+- [oqto-9c0h] Use Pi context window length output for context gauge (closed 2026-04-12)
+- [oqto-rhg6] Fix context window gauge jumping/full-on-empty behavior (closed 2026-04-12)
+- [oqto-bhaj.16] Frontend model selection isolation: per-session state + synced controls (closed 2026-04-12)
+- [oqto-bhaj.15] Live stream loss on session switch: preserve per-session in-flight state (closed 2026-04-12)
+- [oqto-rxsq] Remove redundant chevron icon from tool call dropdown headers (closed 2026-04-12)
+- [oqto-bhaj.14] Frontend dedupe: drop optimistic user temps on authoritative sync (closed 2026-04-12)
+- [oqto-bhaj.13] Chat scroll: prevent viewport tug-of-war during live streaming (closed 2026-04-12)
+- [oqto-5vbm] Mobile lightbox needs top safe-area inset to avoid notch overlap (closed 2026-04-11)
+- [oqto-w02n] Mobile gallery view lacks close affordance and shows desktop keyboard hints (closed 2026-04-11)
+- [oqto-bhaj.12] Chat UX: preserve scroll position on agent_end authoritative message replacement (closed 2026-04-11)
+- [oqto-bhaj.11] Hide prompt queue debug UI + strip oqto_meta from user-visible/persisted text (closed 2026-04-11)
+- [oqto-bhaj.10] oqto-log repair: non-destructive bootstrap replacement + validator placeholder filtering (closed 2026-04-11)
+- [oqto-bhaj.9] Deploy: quiesce oqto-runner before oqto-log migration (closed 2026-04-11)
+- [oqto-bhaj.8] Deploy ordering: run oqto-log migration before service restarts (closed 2026-04-11)
+- [oqto-bhaj.7] oqto-log importer: stop swallowing snapshot-repair failures (closed 2026-04-11)
+- [oqto-bhaj.6] Deploy: convergent oqto-log import/validate loop for latest JSONL (closed 2026-04-11)
+- [oqto-bhaj.5] Frontend: queue panel from oqto_queue_event stream (closed 2026-04-11)
+- [oqto-bhaj.4] Runner: consume oqto_queue_event and bind client_id deterministically (closed 2026-04-11)
+- [oqto-bhaj.3] oqto-bridge: RPC-only queue ledger + client_id turn binding events (closed 2026-04-11)
+- [oqto-bhaj.2] P0: Persisted errors not rendered as error cards + user duplication on start (closed 2026-04-11)
+- [oqto-bhaj.1] Frontend: render missing canonical part types (file_ref/audio/video/attachment/x-*) (closed 2026-04-10)
+- [oqto-p8zx] oqto-log projection correctness: preserve thinking/tool parts and prevent duplicated user messages (closed 2026-04-10)
+- [oqto-8bhg] oqto-log validation mismatch gate: align validator message counting with importer semantics (closed 2026-04-10)
+- [oqto-j58r] oqto-log bootstrap: diagnose and harden per-file import failures during deploy (closed 2026-04-10)
+- [oqto-rf16] Fix frontend vitest write failure (Unknown system error -122) (closed 2026-04-10)
+- [oqto-jj9k] oqto-log: authoritative turn-DAG history store and migration off fragile chain (closed 2026-04-10)
+- [oqto-jj9k.11] Regression matrix + chaos tests for message correctness (closed 2026-04-10)
+- [oqto-jj9k.9] Delete legacy paths aggressively (closed 2026-04-10)
+- [oqto-jj9k.7] Frontend state refactor: durable timeline + streaming overlay (closed 2026-04-10)
+- [oqto-jj9k.12] Operational tooling: repair/reindex/version diagnostics (closed 2026-04-10)
+- [oqto-jj9k.10] Backfill/import pipeline: Pi JSONL -> oqto-log idempotent sync (closed 2026-04-10)
+- [oqto-jj9k.8] Cutover reads: WS get_messages and REST chat-history to projector (closed 2026-04-10)
+- [oqto-jj9k.6] Dual-write phase: legacy + oqto-log with divergence telemetry (closed 2026-04-10)
+- [oqto-jj9k.5] Projector: timeline + tree projections from turn DAG (closed 2026-04-10)
+- [oqto-jj9k.3] Runner write path: transactional append_turn + stream commit (closed 2026-04-10)
+- [oqto-jj9k.14] Migration health gate: fail deployment if oqto-log bootstrap validation is incomplete (closed 2026-04-10)
+- [oqto-jj9k.13] Deploy/install/update: run oqto-log bootstrap migration as mandatory lifecycle step (closed 2026-04-10)
+- [oqto-jj9k.15] Document oqto-log access/search policy in AGENTS.md (closed 2026-04-10)
+- [oqto-jj9k.4] Deterministic ID generator: turn_id/message_id derivation (closed 2026-04-10)
+- [oqto-jj9k.2] Schema v1: sessions/branches/turns/messages/events + FTS tables (closed 2026-04-10)
+- [oqto-jj9k.1] ADR + invariants: single authority, ID contract, version semantics (closed 2026-04-10)
+- [oqto-01e0] TRX sidebar: center type icon across title+summary two-line block (closed 2026-04-10)
+- [oqto-vdr2] TRX sidebar: optical type-icon baseline tweak for mobile (closed 2026-04-10)
+- [oqto-9xse] TRX sidebar: fix issue type icon vertical alignment (closed 2026-04-10)
+- [oqto-s69x] TRX sidebar: replace status tags with slim left status bar (closed 2026-04-10)
+- [oqto-vbpv] TRX sidebar overflow correction: disable horizontal scroll only (closed 2026-04-10)
+- [oqto-etmd] TRX sidebar: disable vertical scrolling in container (closed 2026-04-10)
+- [oqto-2r9h] TRX sidebar pass 2: denser vertical spacing + better at-a-glance issue context (closed 2026-04-10)
+- [oqto-25vr] Right sidebar trx: compact layout, clean icon alignment, issue details expansion, and fix fuzzy search (closed 2026-04-10)
+- [oqto-hn80] Ban useEffect: strict linting and full migration (closed 2026-04-10)
+- [oqto-a0z4] Instant chat history UX: cached-first rendering with hydration gating (closed 2026-04-10)
+- [oqto-w2xs] Overlay filesystem isolation for agent toolchains (closed 2026-04-10)
+- [oqto-cxxr] Security: Defense-in-depth sandboxing with seccomp-bpf fallback (closed 2026-04-10)
+- [oqto-fmbr] Duplicate messages in hstry from repeated persist_to_hstry_grpc calls (closed 2026-04-06)
+- [oqto-36ey] Canonical message identity pipeline (no-heuristic chat sync) (closed 2026-04-06)
+- [oqto-trea] Frontend: trigger Pi session import/backfill per workspace from settings panel (closed 2026-04-06)
+- [oqto-6gck] P1: Normalize malformed hstry content blobs (multi JSON arrays) to canonical parts (closed 2026-04-06)
+- [oqto-7dat] Follow-up user messages disappear from frontend timeline (closed 2026-04-05)
+- [oqto-4m7p] Runner uses stale/unreachable hstry gRPC endpoint causing message persist drops (closed 2026-04-05)
+- [oqto-8zvw] Shared workspace sessions: frontend creates new session ID instead of reusing existing hstry session ID (closed 2026-04-05)
+- [oqto-ceat] Session fork: fork creates child session with new Pi process, navigates frontend to it (closed 2026-04-05)
+- [oqto-th7v] Sessions with same updated_at timestamp flicker/swap positions in sidebar sort (closed 2026-04-04)
+- [oqto-t9bb] Clean env for agent processes: env_clear + explicit allowlist (closed 2026-04-04)
+- [oqto-phma] Guard markdown Mermaid renderer against malformed diagrams (closed 2026-04-04)
+- [oqto-8xzj] Use icon-only Mermaid view toggle in markdown renderer (closed 2026-04-04)
+- [oqto-jacj] Add viewport-fit and zoom controls for Mermaid markdown diagrams (closed 2026-04-04)
+- [oqto-3e1m] Defer Mermaid diagram rendering until assistant streaming completes (closed 2026-04-04)
+- [oqto-1450] Fix Mermaid markdown renderer syntax errors for valid code fences (closed 2026-04-04)
+- [oqto-0t2t] Render mermaid code fences in chat + file preview with diagram/code toggle (closed 2026-04-04)
+- [oqto-w2xs.1] Implement bwrap filesystem overlay option in oqto-sandbox (closed 2026-04-03)
+- [oqto-p0h5] Sidebar search overhaul: fuzzy workspace search, Tab mode toggle, Pi-only message search, click-to-navigate, clean preview rendering, hover context modal (closed 2026-04-03)
+- [oqto-jhjr] Fix: bwrap --disable-userns requires --unshare-user (closed 2026-04-03)
+- [oqto-m5js] Evaluate iron-proxy for potential Oqto integration (closed 2026-04-03)
+- [oqto-cxxr.1.1] Sandbox seccomp: add policy compiler to produce default-<arch>.bpf artifacts (closed 2026-04-02)
+- [octo-1ddx] Move global sandbox config to read-only path (closed 2026-04-02)
+- [oqto-cv3f] Architecture + threat model for secret injection system (closed 2026-04-01)
+- [oqto-ege0] Fix inline markdown code clipping for long paths (closed 2026-04-01)
+- [oqto-0zd0] Fix missing working indicator on runner-initiated assistant turns (closed 2026-04-01)
+- [oqto-hqhh] Markdown chat typography: keep left alignment after justify comparison (closed 2026-04-01)
+- [oqto-r5kw] Eliminate ts-rs serde parse warnings in canonical type exports (closed 2026-04-01)
+- [oqto-gb6w] Local title generation via llama.cpp + Gemma 3 1B on octo-azure (closed 2026-04-01)
+- [oqto-0s59] Harden sync-pi-config models sync path to prevent EAVS_API_KEY placeholder regressions (closed 2026-04-01)
+- [oqto-r2gw] Mobile sidebar: collapsible shared/private sections + unified scroll (closed 2026-04-01)
+- [oqto-y6rq] Chat history sidebar empty: backend wrongly reports no runner in single-user mode (closed 2026-03-29)
+- [oqto-nerf] WebSocket HOL: files commands blocked by list_directory(hidden=true) in copy operations (closed 2026-03-28)
 - [oqto-6k4b] Media Browsing & Discovery Improvements (closed 2026-03-24)
 - [oqto-wkcf] Video Gallery Mode (closed 2026-03-24)
 - [oqto-wx4h] Recent Media Sidebar (closed 2026-03-24)
@@ -2335,12 +1278,14 @@ Desired behavior: Tool calls hidden by default, toggle to show
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
-- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
-- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
-- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
-- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
-- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
 - [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [oqto-xq1e] Add drag-and-drop support to FileTreeView (internal move + OS upload) (closed )
+- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
+- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
+- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [oqto-4ryr] Session rename reverts: update_chat_session returns external_id while list returns platform_id (closed )
 - [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
+- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
+- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )

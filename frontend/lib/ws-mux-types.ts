@@ -351,6 +351,15 @@ export type BusWsCommand =
 			topics: string[];
 			scope: BusScope;
 			scope_id: string;
+	  } & WsCommandBase)
+	| ({
+			channel: "bus";
+			type: "pull";
+			topics: string[];
+			scope: BusScope;
+			scope_id: string;
+			since_ts?: number;
+			limit?: number;
 	  } & WsCommandBase);
 
 /** Bus channel events */
@@ -361,6 +370,7 @@ export type BusWsEvent =
 			type: "response";
 			success: boolean;
 			error?: string;
+			data?: unknown;
 	  } & WsEventBase);
 
 /** All possible WebSocket commands */

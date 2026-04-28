@@ -48,16 +48,18 @@ pub(super) async fn handle_bus_command(
             event.ack = ack;
 
             match state.bus.publish(Some(bus_sub_id), event).await {
-                Ok(()) => Some(WsEvent::Bus(Box::new(BusWsEvent::Response {
+                Ok(()) => Some(WsEvent::Bus(BusWsEvent::Response {
                     id,
                     success: true,
                     error: None,
-                }))),
-                Err(e) => Some(WsEvent::Bus(Box::new(BusWsEvent::Response {
+                    data: None,
+                })),
+                Err(e) => Some(WsEvent::Bus(BusWsEvent::Response {
                     id,
                     success: false,
                     error: Some(e),
-                }))),
+                    data: None,
+                })),
             }
         }
         BusCommand::Subscribe {
@@ -74,16 +76,18 @@ pub(super) async fn handle_bus_command(
                 )
                 .await
             {
-                Ok(()) => Some(WsEvent::Bus(Box::new(BusWsEvent::Response {
+                Ok(()) => Some(WsEvent::Bus(BusWsEvent::Response {
                     id,
                     success: true,
                     error: None,
-                }))),
-                Err(e) => Some(WsEvent::Bus(Box::new(BusWsEvent::Response {
+                    data: None,
+                })),
+                Err(e) => Some(WsEvent::Bus(BusWsEvent::Response {
                     id,
                     success: false,
                     error: Some(e),
-                }))),
+                    data: None,
+                })),
             }
         }
         BusCommand::Unsubscribe {
@@ -95,11 +99,37 @@ pub(super) async fn handle_bus_command(
             state
                 .bus
                 .unsubscribe(bus_sub_id, &scope, &scope_id, &topics);
-            Some(WsEvent::Bus(Box::new(BusWsEvent::Response {
+            Some(WsEvent::Bus(BusWsEvent::Response {
                 id,
                 success: true,
                 error: None,
-            })))
+                data: None,
+            }))
         }
+        BusCommand::Pull {
+            id,
+            topics,
+            scope,
+            scope_id,
+            since_ts,
+            limit,
+        } => match state
+            .bus
+            .pull_for_user(user_id, is_admin, scope, scope_id, topics, since_ts, limit)
+            .await
+        {
+            Ok(events) => Some(WsEvent::Bus(BusWsEvent::Response {
+                id,
+                success: true,
+                error: None,
+                data: Some(serde_json::json!({ "events": events })),
+            })),
+            Err(e) => Some(WsEvent::Bus(BusWsEvent::Response {
+                id,
+                success: false,
+                error: Some(e),
+                data: None,
+            })),
+        },
     }
 }

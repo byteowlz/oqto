@@ -74,9 +74,12 @@ just admin-sync-pi --settings --reference-settings ./my-settings.json --all
 ```
 
 **Behavior:**
-- `models.json` is always regenerated from the live EAVS catalog
+- `models.json` is synced via `oqtoctl user sync-configs` (admin API path, embeds real per-user `eavs-*` keys)
+- If admin API sync fails, script falls back to direct regeneration from live EAVS catalog
 - `settings.json` is only written if missing (unless `--force`)
 - `AGENTS.md` is only written if missing (unless `--force`)
+
+**Important:** the admin API path avoids stale literal `EAVS_API_KEY` placeholders that can cause 401 errors.
 
 ### manage-skills
 

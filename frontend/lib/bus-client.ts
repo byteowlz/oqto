@@ -44,6 +44,14 @@ export interface SubscribeOptions {
 	filter?: Record<string, unknown>;
 }
 
+export interface PullOptions {
+	scope: BusScope;
+	scopeId: string;
+	topics: string[];
+	sinceTs?: number;
+	limit?: number;
+}
+
 // ============================================================================
 // Bus Client
 // ============================================================================
@@ -78,6 +86,20 @@ export function busPublish(opts: PublishOptions): void {
  * Subscribe to bus events matching topics in a scope.
  * Returns an unsubscribe handle.
  */
+export function busPull(opts: PullOptions): void {
+	const ws = getWsManager();
+	ws.send({
+		channel: "bus",
+		type: "pull",
+		id: `bus-pull-${nextCmdId++}`,
+		topics: opts.topics,
+		scope: opts.scope,
+		scope_id: opts.scopeId,
+		since_ts: opts.sinceTs,
+		limit: opts.limit,
+	});
+}
+
 export function busSubscribe(
 	opts: SubscribeOptions,
 	handler: BusEventHandler,

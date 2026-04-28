@@ -1,0 +1,11 @@
+HTTP/1.1 200 OK
+Vary: Origin
+Content-Type: text/javascript
+Cache-Control: no-cache
+Etag: W/"d6b-uiLDEdJw1Xt2Vy1unljThJRZCtU"
+Permissions-Policy: geolocation=(), microphone=(self), camera=()
+Date: Sun, 19 Apr 2026 04:26:57 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+Content-Length: 11570
+

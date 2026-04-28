@@ -4,7 +4,7 @@
 //! It supports three scopes (session, workspace, global) with server-enforced
 //! authorization on every publish and subscribe operation.
 //!
-//! Design: docs/design/unified-event-bus-and-agent-ui.md
+//! Design: docs/active/design/20260314-unified-event-bus-and-agent-ui.md
 
 pub mod engine;
 pub mod types;

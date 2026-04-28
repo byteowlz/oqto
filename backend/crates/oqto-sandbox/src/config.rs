@@ -46,6 +46,8 @@ use log::{debug, info, warn};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+#[cfg(target_os = "linux")]
+use std::{ffi::CString, os::unix::ffi::OsStrExt};
 
 #[allow(unused_imports)]
 use std::io::Write;
@@ -130,6 +132,10 @@ fn default_true() -> bool {
     true
 }
 
+fn default_overlay_root() -> String {
+    "~/.oqto/overlays".to_string()
+}
+
 // ============================================================================
 // Network Configuration (integrates with eavs)
 // ============================================================================
@@ -185,6 +191,105 @@ fn default_prompt_timeout() -> u64 {
     30
 }
 
+/// Seccomp enforcement mode.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum SeccompMode {
+    /// Disable seccomp integration.
+    #[default]
+    Off,
+    /// Log missing/misconfigured seccomp policy but continue.
+    Audit,
+    /// Enforce seccomp policy; fail if policy is unavailable.
+    Enforce,
+}
+
+fn stricter_seccomp_mode(a: SeccompMode, b: SeccompMode) -> SeccompMode {
+    use SeccompMode::{Audit, Enforce, Off};
+    match (a, b) {
+        (Enforce, _) | (_, Enforce) => Enforce,
+        (Audit, _) | (_, Audit) => Audit,
+        _ => Off,
+    }
+}
+
+/// Landlock enforcement mode.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum LandlockMode {
+    #[default]
+    Off,
+    Audit,
+    Enforce,
+}
+
+fn stricter_landlock_mode(a: LandlockMode, b: LandlockMode) -> LandlockMode {
+    use LandlockMode::{Audit, Enforce, Off};
+    match (a, b) {
+        (Enforce, _) | (_, Enforce) => Enforce,
+        (Audit, _) | (_, Audit) => Audit,
+        _ => Off,
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[repr(C)]
+struct LandlockRulesetAttr {
+    handled_access_fs: u64,
+}
+
+#[cfg(target_os = "linux")]
+#[repr(C)]
+struct LandlockPathBeneathAttr {
+    allowed_access: u64,
+    parent_fd: i32,
+    reserved1: u32,
+}
+
+#[cfg(target_os = "linux")]
+const LANDLOCK_RULE_PATH_BENEATH: u32 = 1;
+#[cfg(target_os = "linux")]
+const LANDLOCK_CREATE_RULESET_VERSION: u32 = 1;
+
+#[cfg(target_os = "linux")]
+const LANDLOCK_ACCESS_FS_WRITE_FILE: u64 = 1u64 << 1;
+#[cfg(target_os = "linux")]
+const LANDLOCK_ACCESS_FS_REMOVE_DIR: u64 = 1u64 << 4;
+#[cfg(target_os = "linux")]
+const LANDLOCK_ACCESS_FS_REMOVE_FILE: u64 = 1u64 << 5;
+#[cfg(target_os = "linux")]
+const LANDLOCK_ACCESS_FS_MAKE_CHAR: u64 = 1u64 << 6;
+#[cfg(target_os = "linux")]
+const LANDLOCK_ACCESS_FS_MAKE_DIR: u64 = 1u64 << 7;
+#[cfg(target_os = "linux")]
+const LANDLOCK_ACCESS_FS_MAKE_REG: u64 = 1u64 << 8;
+#[cfg(target_os = "linux")]
+const LANDLOCK_ACCESS_FS_MAKE_SOCK: u64 = 1u64 << 9;
+#[cfg(target_os = "linux")]
+const LANDLOCK_ACCESS_FS_MAKE_FIFO: u64 = 1u64 << 10;
+#[cfg(target_os = "linux")]
+const LANDLOCK_ACCESS_FS_MAKE_BLOCK: u64 = 1u64 << 11;
+#[cfg(target_os = "linux")]
+const LANDLOCK_ACCESS_FS_MAKE_SYM: u64 = 1u64 << 12;
+#[cfg(target_os = "linux")]
+const LANDLOCK_ACCESS_FS_REFER: u64 = 1u64 << 13;
+#[cfg(target_os = "linux")]
+const LANDLOCK_ACCESS_FS_TRUNCATE: u64 = 1u64 << 14;
+
+#[cfg(target_os = "linux")]
+const LANDLOCK_WRITE_ACCESS_MASK: u64 = LANDLOCK_ACCESS_FS_WRITE_FILE
+    | LANDLOCK_ACCESS_FS_REMOVE_DIR
+    | LANDLOCK_ACCESS_FS_REMOVE_FILE
+    | LANDLOCK_ACCESS_FS_MAKE_CHAR
+    | LANDLOCK_ACCESS_FS_MAKE_DIR
+    | LANDLOCK_ACCESS_FS_MAKE_REG
+    | LANDLOCK_ACCESS_FS_MAKE_SOCK
+    | LANDLOCK_ACCESS_FS_MAKE_FIFO
+    | LANDLOCK_ACCESS_FS_MAKE_BLOCK
+    | LANDLOCK_ACCESS_FS_MAKE_SYM
+    | LANDLOCK_ACCESS_FS_REFER
+    | LANDLOCK_ACCESS_FS_TRUNCATE;
+
 // ============================================================================
 // Sandbox Profile
 // ============================================================================
@@ -221,11 +326,57 @@ pub struct SandboxProfile {
     /// Whether to isolate PID namespace (--unshare-pid).
     pub isolate_pid: bool,
 
+    /// Drop all Linux capabilities inside the sandbox.
+    #[serde(default)]
+    pub drop_all_caps: bool,
+
+    /// Disable nested user namespace creation inside sandbox.
+    #[serde(default)]
+    pub disable_userns: bool,
+
+    /// Assert that nested user namespaces are disabled (fail if not).
+    #[serde(default)]
+    pub assert_userns_disabled: bool,
+
+    /// Set PR_SET_NO_NEW_PRIVS before exec.
+    #[serde(default = "default_true")]
+    pub no_new_privs: bool,
+
+    /// Seccomp mode (off/audit/enforce).
+    #[serde(default)]
+    pub seccomp_mode: SeccompMode,
+
+    /// Landlock mode (off/audit/enforce).
+    #[serde(default)]
+    pub landlock_mode: LandlockMode,
+
+    /// Path to precompiled seccomp-bpf policy file for bwrap (--seccomp FD).
+    #[serde(default)]
+    pub seccomp_bpf_path: Option<String>,
+
     /// Additional paths to bind read-only.
     pub extra_ro_bind: Vec<String>,
 
     /// Additional paths to bind read-write.
     pub extra_rw_bind: Vec<String>,
+
+    /// Enable overlayfs redirection for selected paths.
+    ///
+    /// When enabled, each path in `overlay_paths` is mounted with bwrap overlay
+    /// so writes go to a per-workspace upperdir under `overlay_root` while reads
+    /// come from the original path.
+    #[serde(default)]
+    pub overlay_enabled: bool,
+
+    /// Root directory for per-workspace overlay upper/work dirs.
+    ///
+    /// Example: `~/.oqto/overlays`
+    #[serde(default = "default_overlay_root")]
+    pub overlay_root: String,
+
+    /// Paths to overlay (typically package/toolchain directories).
+    #[serde(default)]
+    pub overlay_paths: Vec<String>,
 
     // --- oqto-guard (FUSE) layer ---
     /// Configuration for runtime file access control.
@@ -271,8 +422,18 @@ impl SandboxProfile {
             deny_write: vec![],
             isolate_network: false,
             isolate_pid: false,
+            drop_all_caps: false,
+            disable_userns: false,
+            assert_userns_disabled: false,
+            no_new_privs: true,
+            seccomp_mode: SeccompMode::Off,
+            landlock_mode: LandlockMode::Off,
+            seccomp_bpf_path: None,
             extra_ro_bind: vec![],
             extra_rw_bind: vec![],
+            overlay_enabled: false,
+            overlay_root: default_overlay_root(),
+            overlay_paths: vec![],
             guard: None,
             ssh: None,
             network: None,
@@ -303,6 +464,15 @@ impl SandboxProfile {
                 "~/.cache/uv".to_string(),
                 // Pi (Main Chat) - session files
                 "~/.pi".to_string(),
+                // Claude Code - store.db (SQLite WAL), todos, statsig cache,
+                // session files, managed-install versions tree.
+                "~/.claude".to_string(),
+                "~/.local/share/claude".to_string(),
+                "~/.cache/claude".to_string(),
+                // Codex - auth.json, history, sessions, SQLite state/logs.
+                "~/.codex".to_string(),
+                "~/.local/share/codex".to_string(),
+                "~/.cache/codex".to_string(),
                 // Agent tools - data directories
                 "~/.local/share/skdlr".to_string(),
                 "~/.local/share/mmry".to_string(),
@@ -318,8 +488,24 @@ impl SandboxProfile {
             deny_write: vec!["~/.config/oqto/sandbox.toml".to_string()],
             isolate_network: false,
             isolate_pid: true,
+            drop_all_caps: false,
+            disable_userns: true,
+            assert_userns_disabled: false,
+            no_new_privs: true,
+            seccomp_mode: SeccompMode::Audit,
+            landlock_mode: LandlockMode::Audit,
+            seccomp_bpf_path: None,
             extra_ro_bind: vec![],
             extra_rw_bind: vec![],
+            overlay_enabled: false,
+            overlay_root: default_overlay_root(),
+            overlay_paths: vec![
+                "~/.cargo".to_string(),
+                "~/.npm".to_string(),
+                "~/.bun".to_string(),
+                "~/.local/share/uv".to_string(),
+                "~/.cache/uv".to_string(),
+            ],
             // Development profile enables SSH proxy by default
             guard: None,
             ssh: Some(SshProxyConfig {
@@ -342,6 +528,10 @@ impl SandboxProfile {
     }
 
     /// Create a strict profile (most restrictive).
+    ///
+    /// Note on ordering: extra_ro_bind is applied AFTER deny_read tmpfs mounts,
+    /// so we can selectively allow read access to paths under ~/.config (like ~/.config/oqto)
+    /// even though ~/.config itself is blocked.
     pub fn strict() -> Self {
         Self {
             deny_read: vec![
@@ -354,12 +544,25 @@ impl SandboxProfile {
                 "/usr/bin/systemd-run".to_string(),
                 "/bin/systemd-run".to_string(),
             ],
-            allow_write: vec!["/tmp".to_string()],
+            // Note: ~/.pi must be writable for Pi session files
+            allow_write: vec!["/tmp".to_string(), "~/.pi".to_string()],
             deny_write: vec![],
             isolate_network: true,
             isolate_pid: true,
-            extra_ro_bind: vec![],
+            drop_all_caps: true,
+            disable_userns: true,
+            assert_userns_disabled: true,
+            no_new_privs: true,
+            seccomp_mode: SeccompMode::Audit,
+            landlock_mode: LandlockMode::Audit,
+            seccomp_bpf_path: None,
+            // extra_ro_bind is applied AFTER deny_read, so these paths
+            // under ~/.config are accessible even though ~/.config is blocked
+            extra_ro_bind: vec!["~/.config/oqto".to_string()],
             extra_rw_bind: vec![],
+            overlay_enabled: false,
+            overlay_root: default_overlay_root(),
+            overlay_paths: vec![],
             guard: None,
             ssh: Some(SshProxyConfig {
                 enabled: false,
@@ -444,11 +647,41 @@ pub struct SandboxConfig {
     /// Whether to isolate PID namespace (--unshare-pid).
     pub isolate_pid: bool,
 
+    /// Drop all Linux capabilities inside the sandbox.
+    pub drop_all_caps: bool,
+
+    /// Disable nested user namespace creation inside sandbox.
+    pub disable_userns: bool,
+
+    /// Assert that nested user namespaces are disabled (fail if not).
+    pub assert_userns_disabled: bool,
+
+    /// Set PR_SET_NO_NEW_PRIVS before exec.
+    pub no_new_privs: bool,
+
+    /// Seccomp mode (off/audit/enforce).
+    pub seccomp_mode: SeccompMode,
+
+    /// Landlock mode (off/audit/enforce).
+    pub landlock_mode: LandlockMode,
+
+    /// Path to precompiled seccomp-bpf policy file for bwrap (--seccomp FD).
+    pub seccomp_bpf_path: Option<String>,
+
     /// Additional paths to bind read-only.
     pub extra_ro_bind: Vec<String>,
 
     /// Additional paths to bind read-write.
     pub extra_rw_bind: Vec<String>,
+
+    /// Enable overlayfs redirection for selected paths.
+    pub overlay_enabled: bool,
+
+    /// Root directory for per-workspace overlay upper/work dirs.
+    pub overlay_root: String,
+
+    /// Paths to overlay (typically package/toolchain directories).
+    pub overlay_paths: Vec<String>,
 
     /// Custom profiles loaded from config (for workspace merging).
     #[serde(skip_serializing_if = "HashMap::is_empty", default)]
@@ -471,8 +704,18 @@ impl Default for SandboxConfig {
             deny_write: profile.deny_write,
             isolate_network: profile.isolate_network,
             isolate_pid: profile.isolate_pid,
+            drop_all_caps: profile.drop_all_caps,
+            disable_userns: profile.disable_userns,
+            assert_userns_disabled: profile.assert_userns_disabled,
+            no_new_privs: profile.no_new_privs,
+            seccomp_mode: profile.seccomp_mode,
+            landlock_mode: profile.landlock_mode,
+            seccomp_bpf_path: profile.seccomp_bpf_path,
             extra_ro_bind: profile.extra_ro_bind,
             extra_rw_bind: profile.extra_rw_bind,
+            overlay_enabled: profile.overlay_enabled,
+            overlay_root: profile.overlay_root,
+            overlay_paths: profile.overlay_paths,
             profiles: HashMap::new(),
         }
     }
@@ -508,8 +751,18 @@ impl From<SandboxConfigFile> for SandboxConfig {
             deny_write: profile.deny_write,
             isolate_network: profile.isolate_network,
             isolate_pid: profile.isolate_pid,
+            drop_all_caps: profile.drop_all_caps,
+            disable_userns: profile.disable_userns,
+            assert_userns_disabled: profile.assert_userns_disabled,
+            no_new_privs: profile.no_new_privs,
+            seccomp_mode: profile.seccomp_mode,
+            landlock_mode: profile.landlock_mode,
+            seccomp_bpf_path: profile.seccomp_bpf_path,
             extra_ro_bind: profile.extra_ro_bind,
             extra_rw_bind: profile.extra_rw_bind,
+            overlay_enabled: profile.overlay_enabled,
+            overlay_root: profile.overlay_root,
+            overlay_paths: profile.overlay_paths,
             profiles: file.profiles,
         };
 
@@ -535,8 +788,18 @@ impl SandboxConfig {
             deny_write: profile.deny_write,
             isolate_network: profile.isolate_network,
             isolate_pid: profile.isolate_pid,
+            drop_all_caps: profile.drop_all_caps,
+            disable_userns: profile.disable_userns,
+            assert_userns_disabled: profile.assert_userns_disabled,
+            no_new_privs: profile.no_new_privs,
+            seccomp_mode: profile.seccomp_mode,
+            landlock_mode: profile.landlock_mode,
+            seccomp_bpf_path: profile.seccomp_bpf_path,
             extra_ro_bind: profile.extra_ro_bind,
             extra_rw_bind: profile.extra_rw_bind,
+            overlay_enabled: profile.overlay_enabled,
+            overlay_root: profile.overlay_root,
+            overlay_paths: profile.overlay_paths,
             profiles: HashMap::new(),
         }
     }
@@ -552,8 +815,18 @@ impl SandboxConfig {
             deny_write: profile.deny_write,
             isolate_network: profile.isolate_network,
             isolate_pid: profile.isolate_pid,
+            drop_all_caps: profile.drop_all_caps,
+            disable_userns: profile.disable_userns,
+            assert_userns_disabled: profile.assert_userns_disabled,
+            no_new_privs: profile.no_new_privs,
+            seccomp_mode: profile.seccomp_mode,
+            landlock_mode: profile.landlock_mode,
+            seccomp_bpf_path: profile.seccomp_bpf_path,
             extra_ro_bind: profile.extra_ro_bind,
             extra_rw_bind: profile.extra_rw_bind,
+            overlay_enabled: profile.overlay_enabled,
+            overlay_root: profile.overlay_root,
+            overlay_paths: profile.overlay_paths,
             profiles: HashMap::new(),
         }
     }
@@ -590,8 +863,18 @@ impl SandboxConfig {
             deny_write: profile.deny_write,
             isolate_network: profile.isolate_network,
             isolate_pid: profile.isolate_pid,
+            drop_all_caps: profile.drop_all_caps,
+            disable_userns: profile.disable_userns,
+            assert_userns_disabled: profile.assert_userns_disabled,
+            no_new_privs: profile.no_new_privs,
+            seccomp_mode: profile.seccomp_mode,
+            landlock_mode: profile.landlock_mode,
+            seccomp_bpf_path: profile.seccomp_bpf_path,
             extra_ro_bind: profile.extra_ro_bind,
             extra_rw_bind: profile.extra_rw_bind,
+            overlay_enabled: profile.overlay_enabled,
+            overlay_root: profile.overlay_root,
+            overlay_paths: profile.overlay_paths,
             profiles: custom_profiles.clone(),
         };
 
@@ -692,8 +975,18 @@ impl SandboxConfig {
                         deny_write: profile.deny_write,
                         isolate_network: profile.isolate_network,
                         isolate_pid: profile.isolate_pid,
+                        drop_all_caps: profile.drop_all_caps,
+                        disable_userns: profile.disable_userns,
+                        assert_userns_disabled: profile.assert_userns_disabled,
+                        no_new_privs: profile.no_new_privs,
+                        seccomp_mode: profile.seccomp_mode,
+                        landlock_mode: profile.landlock_mode,
+                        seccomp_bpf_path: profile.seccomp_bpf_path,
                         extra_ro_bind: profile.extra_ro_bind,
                         extra_rw_bind: profile.extra_rw_bind,
+                        overlay_enabled: profile.overlay_enabled,
+                        overlay_root: profile.overlay_root,
+                        overlay_paths: profile.overlay_paths,
                         profiles: merged_profiles,
                     };
 
@@ -757,6 +1050,10 @@ impl SandboxConfig {
         let mut extra_rw_bind: HashSet<String> = self.extra_rw_bind.iter().cloned().collect();
         extra_rw_bind.extend(workspace_config.extra_rw_bind.iter().cloned());
 
+        // overlay paths are additive
+        let mut overlay_paths: HashSet<String> = self.overlay_paths.iter().cloned().collect();
+        overlay_paths.extend(workspace_config.overlay_paths.iter().cloned());
+
         // Merge profiles (workspace can add, global takes precedence for same name)
         let mut profiles = workspace_config.profiles.clone();
         profiles.extend(self.profiles.clone());
@@ -778,8 +1075,32 @@ impl SandboxConfig {
             // Isolation: OR (stricter wins)
             isolate_network: self.isolate_network || workspace_config.isolate_network,
             isolate_pid: self.isolate_pid || workspace_config.isolate_pid,
+            drop_all_caps: self.drop_all_caps || workspace_config.drop_all_caps,
+            disable_userns: self.disable_userns || workspace_config.disable_userns,
+            assert_userns_disabled: self.assert_userns_disabled
+                || workspace_config.assert_userns_disabled,
+            no_new_privs: self.no_new_privs || workspace_config.no_new_privs,
+            seccomp_mode: stricter_seccomp_mode(
+                self.seccomp_mode.clone(),
+                workspace_config.seccomp_mode.clone(),
+            ),
+            landlock_mode: stricter_landlock_mode(
+                self.landlock_mode.clone(),
+                workspace_config.landlock_mode.clone(),
+            ),
+            seccomp_bpf_path: workspace_config
+                .seccomp_bpf_path
+                .clone()
+                .or_else(|| self.seccomp_bpf_path.clone()),
             extra_ro_bind: extra_ro_bind.into_iter().collect(),
             extra_rw_bind: extra_rw_bind.into_iter().collect(),
+            overlay_enabled: self.overlay_enabled || workspace_config.overlay_enabled,
+            overlay_root: if workspace_config.overlay_root != default_overlay_root() {
+                workspace_config.overlay_root.clone()
+            } else {
+                self.overlay_root.clone()
+            },
+            overlay_paths: overlay_paths.into_iter().collect(),
             profiles,
         }
     }
@@ -847,6 +1168,23 @@ impl SandboxConfig {
             }
         }
         PathBuf::from(path)
+    }
+
+    /// Build a stable workspace identifier for overlay directory layout.
+    fn workspace_overlay_id(workspace: &Path) -> String {
+        use std::hash::{Hash, Hasher};
+
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        workspace.to_string_lossy().hash(&mut hasher);
+        format!("{:016x}", hasher.finish())
+    }
+
+    /// Build a filesystem-safe key from a path.
+    fn overlay_path_key(path: &Path) -> String {
+        path.to_string_lossy()
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+            .collect()
     }
 
     /// Get home directory for a specific user by looking up passwd.
@@ -1107,7 +1445,114 @@ impl SandboxConfig {
             }
         }
 
-        // Namespace isolation
+        // Overlayfs redirection for selected paths.
+        // This keeps original paths readable while redirecting writes to
+        // per-workspace upperdirs under overlay_root.
+        if self.overlay_enabled {
+            let overlay_root = Self::expand_home_for_user(&self.overlay_root, username);
+            let workspace_id = Self::workspace_overlay_id(workspace);
+            let mut mounted_overlays = 0usize;
+
+            for path in &self.overlay_paths {
+                let expanded = Self::expand_home_for_user(path, username);
+
+                if !expanded.exists()
+                    && let Err(e) = std::fs::create_dir_all(&expanded)
+                {
+                    warn!(
+                        "overlay: failed to create missing target '{}' (from '{}'): {}",
+                        expanded.display(),
+                        path,
+                        e
+                    );
+                    continue;
+                }
+
+                let target = expanded.to_string_lossy().to_string();
+                let path_key = Self::overlay_path_key(&expanded);
+                let overlay_base = overlay_root.join(&workspace_id).join(path_key);
+                let upper = overlay_base.join("upper");
+                let work = overlay_base.join("work");
+
+                if let Err(e) = std::fs::create_dir_all(&upper) {
+                    warn!(
+                        "overlay: failed to create upperdir '{}': {}",
+                        upper.display(),
+                        e
+                    );
+                    continue;
+                }
+
+                // workdir must be empty for overlayfs.
+                if work.exists()
+                    && let Err(e) = std::fs::remove_dir_all(&work)
+                {
+                    warn!(
+                        "overlay: failed to reset workdir '{}': {}",
+                        work.display(),
+                        e
+                    );
+                    continue;
+                }
+                if let Err(e) = std::fs::create_dir_all(&work) {
+                    warn!(
+                        "overlay: failed to create workdir '{}': {}",
+                        work.display(),
+                        e
+                    );
+                    continue;
+                }
+
+                args.push("--overlay-src".to_string());
+                args.push(target.clone());
+                args.push("--overlay".to_string());
+                args.push(upper.to_string_lossy().to_string());
+                args.push(work.to_string_lossy().to_string());
+                args.push(target.clone());
+
+                mounted_overlays += 1;
+                debug!(
+                    "overlay mounted: target='{}', upper='{}', work='{}'",
+                    target,
+                    upper.display(),
+                    work.display()
+                );
+            }
+
+            info!(
+                "Overlayfs enabled: mounted {} path(s) under {}",
+                mounted_overlays,
+                overlay_root.display()
+            );
+        }
+
+        // Ensure common user toolchain bin paths are in PATH.
+        // Non-interactive shells (systemd, cron) typically don't source
+        // ~/.bashrc/.zshrc, so ~/go/bin, ~/.cargo/bin, etc. are missing.
+        if let Some(ref home) = target_home {
+            let home_str = home.to_string_lossy();
+            let extra_paths = [
+                format!("{home_str}/.cargo/bin"),
+                format!("{home_str}/go/bin"),
+                format!("{home_str}/.local/bin"),
+                format!("{home_str}/.bun/bin"),
+                format!("{home_str}/.npm-global/bin"),
+            ];
+            let current_path = std::env::var("PATH").unwrap_or_default();
+            let mut path_parts: Vec<&str> = current_path.split(':').collect();
+            for p in &extra_paths {
+                if !path_parts.contains(&p.as_str()) && Path::new(p).exists() {
+                    path_parts.push(p);
+                }
+            }
+            let new_path = path_parts.join(":");
+            args.push("--setenv".to_string());
+            args.push("PATH".to_string());
+            args.push(new_path);
+            debug!("Extended PATH with user toolchain bin directories");
+        }
+
+        // Namespace and kernel-surface hardening
         if self.isolate_pid {
             args.push("--unshare-pid".to_string());
             debug!("PID namespace isolation enabled");
@@ -1116,6 +1561,116 @@ impl SandboxConfig {
         if self.isolate_network {
             args.push("--unshare-net".to_string());
             debug!("Network namespace isolation enabled");
+        }
+
+        if self.drop_all_caps {
+            args.push("--cap-drop".to_string());
+            args.push("ALL".to_string());
+            debug!("Capability dropping enabled (--cap-drop ALL)");
+        }
+
+        if self.disable_userns {
+            // bwrap requires --unshare-user when --disable-userns is used
+            args.push("--unshare-user".to_string());
+            args.push("--disable-userns".to_string());
+            debug!("User namespace unshared + nested user namespaces disabled");
+        }
+
+        if self.assert_userns_disabled {
+            args.push("--assert-userns-disabled".to_string());
+            debug!("Asserting nested user namespaces are disabled");
+        }
+
+        // Landlock is applied by the inner shim (crate::shim) after bwrap
+        // completes user-namespace setup. Here we wire the binds/env the shim
+        // needs; the shim argv is prepended after `--` further below.
+        let mut wire_landlock_shim = false;
+        match self.landlock_mode {
+            LandlockMode::Off => {}
+            LandlockMode::Audit | LandlockMode::Enforce => {
+                if !Self::is_landlock_supported() {
+                    let msg = "landlock requested but kernel/runtime support not detected";
+                    if self.landlock_mode == LandlockMode::Enforce {
+                        warn!("{} (enforce mode)", msg);
+                        return None;
+                    }
+                    warn!("{} (audit mode)", msg);
+                } else if let Some(shim_bin) = crate::shim::resolve_shim_binary() {
+                    let shim_src = shim_bin.to_string_lossy().to_string();
+                    args.push("--ro-bind".to_string());
+                    args.push(shim_src.clone());
+                    args.push(crate::shim::SHIM_MOUNT_PATH.to_string());
+
+                    let mode_str = match self.landlock_mode {
+                        LandlockMode::Audit => "audit",
+                        LandlockMode::Enforce => "enforce",
+                        LandlockMode::Off => unreachable!(),
+                    };
+                    args.push("--setenv".to_string());
+                    args.push(crate::shim::SHIM_ENV.to_string());
+                    args.push("1".to_string());
+
+                    args.push("--setenv".to_string());
+                    args.push(crate::shim::ENV_MODE.to_string());
+                    args.push(mode_str.to_string());
+
+                    args.push("--setenv".to_string());
+                    args.push(crate::shim::ENV_WORKSPACE.to_string());
+                    args.push(workspace.to_string_lossy().to_string());
+
+                    let allow_write_joined = self
+                        .allow_write
+                        .iter()
+                        .map(|p| {
+                            Self::expand_home_for_user(p, username)
+                                .to_string_lossy()
+                                .to_string()
+                        })
+                        .collect::<Vec<_>>()
+                        .join(":");
+                    args.push("--setenv".to_string());
+                    args.push(crate::shim::ENV_ALLOW_WRITE.to_string());
+                    args.push(allow_write_joined);
+
+                    wire_landlock_shim = true;
+                    debug!(
+                        "Landlock shim wired (mode={}, src={}, mount={})",
+                        mode_str,
+                        shim_src,
+                        crate::shim::SHIM_MOUNT_PATH
+                    );
+                } else {
+                    let msg = "landlock requested but oqto-sandbox shim binary could not be resolved (set OQTO_SANDBOX_SHIM_BIN or install on PATH)";
+                    if self.landlock_mode == LandlockMode::Enforce {
+                        warn!("{} (enforce mode)", msg);
+                        return None;
+                    }
+                    warn!("{} (audit mode)", msg);
+                }
+            }
+        }
+
+        match self.seccomp_mode {
+            SeccompMode::Off => {}
+            SeccompMode::Audit | SeccompMode::Enforce => {
+                let seccomp_path = self.resolve_seccomp_bpf_path(username);
+                if seccomp_path.as_ref().is_some_and(|p| p.exists()) {
+                    args.push("--seccomp".to_string());
+                    args.push("3".to_string());
+                    debug!("Seccomp enabled via bwrap fd 3");
+                } else if self.seccomp_mode == SeccompMode::Enforce {
+                    warn!(
+                        "seccomp_mode=enforce but seccomp_bpf_path missing/unreadable: {:?}",
+                        self.seccomp_bpf_path
+                    );
+                    return None;
+                } else {
+                    warn!(
+                        "seccomp_mode=audit but seccomp_bpf_path missing/unreadable: {:?}",
+                        self.seccomp_bpf_path
+                    );
+                }
+            }
         }
 
         // Workspace model catalog override.
@@ -1190,6 +1745,13 @@ impl SandboxConfig {
         // Separator before command
         args.push("--".to_string());
 
+        // If Landlock is active, bwrap's inner command must run the shim first
+        // so Landlock rules are installed after user-namespace setup completes.
+        // Callers append the user command after these args unchanged.
+        if wire_landlock_shim {
+            args.push(crate::shim::SHIM_MOUNT_PATH.to_string());
+        }
+
         info!(
             "Sandbox configured: profile='{}', user={:?}, workspace='{}', {} bwrap args",
             self.profile,
@@ -1200,6 +1762,204 @@ impl SandboxConfig {
         debug!("Full bwrap args: {:?}", args);
 
         Some(args)
+    }
+
+    /// Resolve seccomp policy path from config.
+    pub fn resolve_seccomp_bpf_path(&self, username: Option<&str>) -> Option<PathBuf> {
+        self.seccomp_bpf_path
+            .as_ref()
+            .map(|p| Self::expand_home_for_user(p, username))
+    }
+
+    /// Best-effort runtime probe for Landlock support.
+    pub fn is_landlock_supported() -> bool {
+        #[cfg(target_os = "linux")]
+        {
+            // SAFETY: Syscall interface is used read-only for feature probing.
+            let abi = unsafe {
+                libc::syscall(
+                    libc::SYS_landlock_create_ruleset,
+                    std::ptr::null::<LandlockRulesetAttr>(),
+                    0,
+                    LANDLOCK_CREATE_RULESET_VERSION,
+                )
+            };
+            abi >= 1
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            false
+        }
+    }
+
+    /// Apply Landlock write restrictions (workspace + allow_write).
+    pub fn apply_landlock(&self, workspace: &Path, username: Option<&str>) -> std::io::Result<()> {
+        if self.landlock_mode == LandlockMode::Off {
+            return Ok(());
+        }
+
+        #[cfg(not(target_os = "linux"))]
+        {
+            if self.landlock_mode == LandlockMode::Enforce {
+                return Err(std::io::Error::other(
+                    "landlock enforce requested on non-Linux platform",
+                ));
+            }
+            return Ok(());
+        }
+
+        #[cfg(target_os = "linux")]
+        {
+            if !Self::is_landlock_supported() {
+                if self.landlock_mode == LandlockMode::Enforce {
+                    return Err(std::io::Error::other(
+                        "landlock enforce requested but kernel does not support landlock",
+                    ));
+                }
+                return Ok(());
+            }
+
+            // The kernel has no observe-only Landlock mode: once
+            // landlock_restrict_self runs, rules are enforced at every file
+            // operation. Audit mode here means "log the intended ruleset but
+            // do not restrict," so applications that write outside allow_write
+            // (e.g. ~/.claude, ~/.codex) continue to work while the operator
+            // evaluates what would be denied under enforce.
+            if self.landlock_mode == LandlockMode::Audit {
+                let mut paths: Vec<String> = Vec::with_capacity(1 + self.allow_write.len());
+                paths.push(workspace.to_string_lossy().to_string());
+                for p in &self.allow_write {
+                    paths.push(
+                        Self::expand_home_for_user(p, username)
+                            .to_string_lossy()
+                            .to_string(),
+                    );
+                }
+                info!(
+                    "Landlock audit mode: would restrict writes outside: {}",
+                    paths.join(", ")
+                );
+                return Ok(());
+            }
+
+            let ruleset_attr = LandlockRulesetAttr {
+                handled_access_fs: LANDLOCK_WRITE_ACCESS_MASK,
+            };
+
+            // Enforce mode: build ruleset and apply restrict_self.
+            // SAFETY: Syscall with valid pointer/size to create ruleset.
+            let ruleset_fd = unsafe {
+                libc::syscall(
+                    libc::SYS_landlock_create_ruleset,
+                    &ruleset_attr as *const LandlockRulesetAttr,
+                    std::mem::size_of::<LandlockRulesetAttr>(),
+                    0,
+                ) as i32
+            };
+
+            if ruleset_fd < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+
+            let mut writable_paths: HashSet<PathBuf> = HashSet::new();
+            writable_paths.insert(workspace.to_path_buf());
+            for p in &self.allow_write {
+                writable_paths.insert(Self::expand_home_for_user(p, username));
+            }
+
+            for path in writable_paths {
+                if !path.exists() {
+                    continue;
+                }
+
+                let c_path = CString::new(path.as_os_str().as_bytes()).map_err(|_| {
+                    std::io::Error::new(std::io::ErrorKind::InvalidInput, "path contains NUL byte")
+                })?;
+
+                // SAFETY: Open path for Landlock rule registration.
+                let parent_fd =
+                    unsafe { libc::open(c_path.as_ptr(), libc::O_PATH | libc::O_CLOEXEC) };
+                if parent_fd < 0 {
+                    // SAFETY: close best-effort on previously created fd.
+                    unsafe {
+                        libc::close(ruleset_fd);
+                    }
+                    return Err(std::io::Error::last_os_error());
+                }
+
+                let path_beneath = LandlockPathBeneathAttr {
+                    allowed_access: LANDLOCK_WRITE_ACCESS_MASK,
+                    parent_fd,
+                    reserved1: 0,
+                };
+
+                // SAFETY: Syscall with valid fds/pointers.
+                let rc = unsafe {
+                    libc::syscall(
+                        libc::SYS_landlock_add_rule,
+                        ruleset_fd,
+                        LANDLOCK_RULE_PATH_BENEATH,
+                        &path_beneath as *const LandlockPathBeneathAttr,
+                        0,
+                    )
+                };
+
+                // SAFETY: close temporary opened path fd.
+                unsafe {
+                    libc::close(parent_fd);
+                }
+
+                if rc != 0 {
+                    // SAFETY: close ruleset fd before returning.
+                    unsafe {
+                        libc::close(ruleset_fd);
+                    }
+                    return Err(std::io::Error::last_os_error());
+                }
+            }
+
+            // SAFETY: apply Landlock restrictions to current process.
+            let restrict_rc =
+                unsafe { libc::syscall(libc::SYS_landlock_restrict_self, ruleset_fd, 0) };
+            // SAFETY: close ruleset fd after use.
+            unsafe {
+                libc::close(ruleset_fd);
+            }
+
+            if restrict_rc != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+
+            Ok(())
+        }
+    }
+
+    /// Open seccomp bpf policy file if seccomp is active and policy exists.
+    pub fn open_seccomp_bpf_file(&self, username: Option<&str>) -> Result<Option<std::fs::File>> {
+        if self.seccomp_mode == SeccompMode::Off {
+            return Ok(None);
+        }
+
+        let Some(path) = self.resolve_seccomp_bpf_path(username) else {
+            if self.seccomp_mode == SeccompMode::Enforce {
+                anyhow::bail!("seccomp_mode=enforce requires seccomp_bpf_path to be configured");
+            }
+            return Ok(None);
+        };
+
+        if !path.exists() {
+            if self.seccomp_mode == SeccompMode::Enforce {
+                anyhow::bail!(
+                    "seccomp_mode=enforce requires existing seccomp_bpf_path: {}",
+                    path.display()
+                );
+            }
+            return Ok(None);
+        }
+
+        std::fs::File::open(&path)
+            .with_context(|| format!("opening seccomp policy file: {}", path.display()))
+            .map(Some)
     }
 
     /// Check if bubblewrap is available.
@@ -1511,5 +2271,113 @@ log_requests = true
             Some(value) => unsafe { env::set_var("HOME", value) },
             None => unsafe { env::remove_var("HOME") },
         }
+    }
+
+    /// Regression test for oqto-b4za: Landlock shim must be wired even when
+    /// disable_userns=true. The old code silently skipped Landlock in this
+    /// case; we now install a shim that applies Landlock after bwrap's
+    /// namespace setup, so the shim binds and setenv entries must be present.
+    #[test]
+    fn test_landlock_shim_wired_with_disable_userns() {
+        if !SandboxConfig::is_landlock_supported() {
+            eprintln!("skipping: Landlock kernel support missing");
+            return;
+        }
+
+        // Point the shim resolver at any existing binary so the test is
+        // hermetic. The shim path doesn't need to be a real oqto-sandbox here
+        // — we only assert the wire-up, not execution.
+        let fake_shim = std::env::current_exe().expect("current_exe");
+        // SAFETY: test is single-threaded; we restore after the assertions.
+        let prev = env::var_os(crate::shim::SHIM_BIN_OVERRIDE_ENV);
+        unsafe { env::set_var(crate::shim::SHIM_BIN_OVERRIDE_ENV, &fake_shim) };
+
+        let temp = tempdir().unwrap();
+        let ws = temp.path();
+
+        let mut cfg = SandboxConfig::from_profile("development");
+        assert!(
+            cfg.disable_userns,
+            "development preset expected disable_userns=true"
+        );
+        cfg.landlock_mode = LandlockMode::Enforce;
+        cfg.allow_write = vec![ws.to_string_lossy().to_string()];
+
+        let args = cfg.build_bwrap_args_for_user(ws, None).expect("bwrap args");
+
+        let has_shim_bind = args
+            .windows(3)
+            .any(|w| w[0] == "--ro-bind" && w[2] == crate::shim::SHIM_MOUNT_PATH);
+        assert!(has_shim_bind, "shim --ro-bind missing: {args:?}");
+
+        let has_mode_env = args
+            .windows(3)
+            .any(|w| w[0] == "--setenv" && w[1] == crate::shim::ENV_MODE && w[2] == "enforce");
+        assert!(has_mode_env, "OQTO_LANDLOCK_MODE setenv missing: {args:?}");
+
+        let sep_idx = args.iter().rposition(|a| a == "--").expect("no --");
+        assert_eq!(
+            args.get(sep_idx + 1).map(String::as_str),
+            Some(crate::shim::SHIM_MOUNT_PATH),
+            "shim command must be first after `--`"
+        );
+
+        // Restore env
+        match prev {
+            Some(v) => unsafe { env::set_var(crate::shim::SHIM_BIN_OVERRIDE_ENV, v) },
+            None => unsafe { env::remove_var(crate::shim::SHIM_BIN_OVERRIDE_ENV) },
+        }
+    }
+
+    /// Landlock=off must not wire any shim plumbing.
+    #[test]
+    fn test_landlock_off_no_shim() {
+        let temp = tempdir().unwrap();
+        let ws = temp.path();
+
+        let mut cfg = SandboxConfig::from_profile("minimal");
+        cfg.landlock_mode = LandlockMode::Off;
+
+        let args = cfg.build_bwrap_args_for_user(ws, None).expect("bwrap args");
+
+        let has_shim_bind = args
+            .windows(3)
+            .any(|w| w[0] == "--ro-bind" && w[2] == crate::shim::SHIM_MOUNT_PATH);
+        assert!(!has_shim_bind, "no shim bind expected when landlock=off");
+
+        let last = args.last().map(String::as_str);
+        assert_eq!(last, Some("--"), "last arg should be `--` with no shim");
+    }
+
+    /// Regression for oqto-2eev: Landlock audit mode must NOT call
+    /// restrict_self. Previously, audit applied enforcement and silently
+    /// blocked writes to ~/.claude/~/.codex, hanging those harnesses.
+    /// Write to an outside path after apply_landlock(Audit) must succeed.
+    #[test]
+    fn test_landlock_audit_does_not_restrict() {
+        if !SandboxConfig::is_landlock_supported() {
+            eprintln!("skipping: Landlock kernel support missing");
+            return;
+        }
+
+        let workspace = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+
+        let mut cfg = SandboxConfig::from_profile("minimal");
+        cfg.landlock_mode = LandlockMode::Audit;
+        cfg.allow_write = vec![workspace.path().to_string_lossy().to_string()];
+
+        // Must be in a child process: restrict_self is irreversible within a
+        // process lifetime, so even a false-audit (the bug) would poison the
+        // test runner. Fork via std::process::Command + a sentinel binary is
+        // overkill here; instead we rely on the audit short-circuit keeping
+        // the parent unrestricted and assert a write to `outside` succeeds.
+        cfg.apply_landlock(workspace.path(), None)
+            .expect("audit must not fail");
+
+        let outside_file = outside.path().join("audit-probe");
+        std::fs::write(&outside_file, b"ok")
+            .expect("audit mode must not restrict writes; got EACCES (regression of oqto-2eev)");
+        let _ = std::fs::remove_file(&outside_file);
     }
 }

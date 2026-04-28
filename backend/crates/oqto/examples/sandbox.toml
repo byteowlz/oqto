@@ -1,6 +1,11 @@
 # Sandbox configuration for Oqto agents.
 # Copy this file to ~/.config/oqto/sandbox.toml to enable process sandboxing.
 #
+# Also shipped templates:
+# - sandbox.template.strict-infra.toml
+# - sandbox.template.development-safe.toml
+# - sandbox.template.networked-dev.toml
+#
 # SECURITY NOTE: This file is kept separate from config.toml intentionally.
 # Agents can modify config.toml but cannot modify sandbox.toml, ensuring
 # they cannot weaken their own security restrictions.
@@ -43,7 +48,8 @@ profile = "development"
 #
 # "strict" profile:
 #   - Protects secrets and all config (~/.config)
-#   - No tool installation
+#   - Allows Pi to function: ~/.pi (sessions), ~/.config/oqto (config read-only)
+#   - No tool installation (other than Pi itself)
 #   - Full network and PID isolation
 #   - No SSH access
 
@@ -62,6 +68,17 @@ allow_write = ["~/.cargo", "~/.npm", "/tmp"]
 deny_write = []
 isolate_network = false
 isolate_pid = true
+# Additional hardening toggles
+# drop_all_caps = true            # adds: --cap-drop ALL
+# disable_userns = true           # adds: --disable-userns
+# assert_userns_disabled = true   # adds: --assert-userns-disabled
+# no_new_privs = true             # sets PR_SET_NO_NEW_PRIVS
+# landlock_mode = "audit"         # off | audit | enforce (enforce fail-closed if unsupported)
+# seccomp_mode = "audit"          # off | audit | enforce
+# seccomp_bpf_path = "/etc/oqto/seccomp/default.bpf"
+# overlay_enabled = true           # route writes for selected paths into overlayfs upperdirs
+# overlay_root = "~/.oqto/overlays"
+# overlay_paths = ["~/.npm", "~/.cargo", "~/.local/share/uv"]
 
 # --- Guarded paths (oqto-guard / FUSE) ---
 # These paths are accessible but require runtime approval
@@ -156,6 +173,10 @@ log_requests = true
 # - deny_write: Union (workspace can ADD paths, not remove)
 # - allow_write: Intersection (must be allowed by BOTH global and workspace)
 # - isolate_network/isolate_pid: OR (if either enables, it's enabled)
+# - drop_all_caps/disable_userns/assert_userns_disabled: OR (stricter wins)
+# - overlay_enabled: OR (if either enables, overlays are enabled)
+# - overlay_paths: Union (workspace can add overlay targets)
+# - overlay_root: workspace value used if explicitly set; otherwise global
 # - Workspace can reference profiles defined in global config
 #
 # This ensures workspaces can only STRENGTHEN security, never weaken it.

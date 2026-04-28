@@ -27,6 +27,8 @@ INTERVAL_SEC=5
 CHAT_HISTORY_P95_BUDGET_MS=2000
 SHARED_HISTORY_P95_BUDGET_MS=4000
 QUIET=false
+RUN_CHAT_DOM_REGRESSION=false
+CHAT_DOM_TURNS=3
 
 MEDIA_PATHS=()
 
@@ -58,6 +60,8 @@ Optional:
   --interval-sec N              Delay between loops (default: 5)
   --chat-p95-ms N               Personal chat history p95 budget (default: 2000)
   --shared-p95-ms N             Shared chat history p95 budget (default: 4000)
+  --chat-dom-regression         Run deterministic chat DOM/API regression check
+  --chat-dom-turns N            Turns for chat DOM regression (default: 3)
   --quiet                       Reduce logging
   --help                        Show this help
 EOF
@@ -75,6 +79,8 @@ while [[ $# -gt 0 ]]; do
     --interval-sec) INTERVAL_SEC="$2"; shift 2 ;;
     --chat-p95-ms) CHAT_HISTORY_P95_BUDGET_MS="$2"; shift 2 ;;
     --shared-p95-ms) SHARED_HISTORY_P95_BUDGET_MS="$2"; shift 2 ;;
+    --chat-dom-regression) RUN_CHAT_DOM_REGRESSION=true; shift ;;
+    --chat-dom-turns) CHAT_DOM_TURNS="$2"; shift 2 ;;
     --quiet) QUIET=true; shift ;;
     --help|-h) usage; exit 0 ;;
     *) die "Unknown arg: $1" ;;
@@ -307,6 +313,19 @@ main() {
     log "shared_history_p95_ms=${p95_shared} budget_ms=${SHARED_HISTORY_P95_BUDGET_MS}"
     if (( p95_shared > SHARED_HISTORY_P95_BUDGET_MS )); then
       die "shared history p95 ${p95_shared}ms exceeded budget ${SHARED_HISTORY_P95_BUDGET_MS}ms"
+    fi
+  fi
+
+  if [[ "$RUN_CHAT_DOM_REGRESSION" == "true" ]]; then
+    if command -v agent-browser >/dev/null 2>&1 && [[ -n "${DISPLAY:-}" ]]; then
+      log "running chat DOM regression (turns=${CHAT_DOM_TURNS})"
+      "${BASH_SOURCE%/*}"/chat-dom-regression.sh \
+        --base-url "${BASE_URL}" \
+        --turns "${CHAT_DOM_TURNS}" \
+        --token "${token}"
+      log "chat DOM regression passed"
+    else
+      die "--chat-dom-regression requested but agent-browser/DISPLAY unavailable"
     fi
   fi
 

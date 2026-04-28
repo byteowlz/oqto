@@ -21,6 +21,72 @@ function truncStr(s: string, max = 60): string {
 	return `${s.slice(0, max - 3)}...`;
 }
 
+function stripLeadingEnvAssignments(command: string): string {
+	let rest = command.trim();
+	const envPrefix = /^[A-Za-z_][A-Za-z0-9_]*=[^\s]+\s+/;
+	while (envPrefix.test(rest)) {
+		rest = rest.replace(envPrefix, "").trimStart();
+	}
+	return rest;
+}
+
+function primaryCommandSegment(command: string): string {
+	const noEnv = stripLeadingEnvAssignments(command);
+	const noLeadingCd = noEnv.replace(/^(cd\s+[^\s;]+\s*[;&|]+\s*)+/, "").trim();
+	return noLeadingCd.split(/[|;]/)[0]?.trim() ?? noLeadingCd;
+}
+
+function summarizeAgentBrowser(command: string): string | null {
+	const normalized = stripLeadingEnvAssignments(command);
+	const m = normalized.match(/^(agent-browser|oqto-browser)\s+([a-z-]+)/i);
+	if (!m) return null;
+	const sub = (m[2] || "").toLowerCase();
+	switch (sub) {
+		case "open":
+			return i18n.t("tools.browserOpen", { defaultValue: "Opening browser" });
+		case "snapshot":
+			return i18n.t("tools.browserSnapshot", {
+				defaultValue: "Capturing browser snapshot",
+			});
+		case "click":
+			return i18n.t("tools.browserClick", {
+				defaultValue: "Clicking in browser",
+			});
+		case "fill":
+			return i18n.t("tools.browserFill", {
+				defaultValue: "Filling browser input",
+			});
+		case "press":
+			return i18n.t("tools.browserPress", {
+				defaultValue: "Pressing key in browser",
+			});
+		case "screenshot":
+			return i18n.t("tools.browserScreenshot", {
+				defaultValue: "Taking browser screenshot",
+			});
+		case "console":
+			return i18n.t("tools.browserConsole", {
+				defaultValue: "Reading browser console",
+			});
+		case "eval":
+			return i18n.t("tools.browserEval", {
+				defaultValue: "Running browser script",
+			});
+		case "wait":
+			return i18n.t("tools.browserWait", {
+				defaultValue: "Waiting in browser",
+			});
+		case "scroll":
+			return i18n.t("tools.browserScroll", {
+				defaultValue: "Scrolling browser page",
+			});
+		case "close":
+			return i18n.t("tools.browserClose", { defaultValue: "Closing browser" });
+		default:
+			return i18n.t("tools.browserInteraction");
+	}
+}
+
 // -- Bash command patterns --
 
 type BashPattern = {
@@ -39,10 +105,37 @@ const bashPatterns: BashPattern[] = [
 		summary: () => i18n.t("tools.installingPythonPackages"),
 	},
 	{
-		match: (cmd) => /\bcargo\s+(install|add|build)\b/.test(cmd),
+		match: (cmd) =>
+			/^cargo\s+/.test(cmd.replace(/^(cd\s+[^\s;]+\s*[;&|]+\s*)+/, "").trim()),
 		summary: (cmd) => {
-			if (/\bbuild\b/.test(cmd)) return i18n.t("tools.buildingRustProject");
-			return i18n.t("tools.installingRustPackages");
+			const clean = cmd.replace(/^(cd\s+[^\s;]+\s*[;&|]+\s*)+/, "").trim();
+			if (/^cargo\s+install\b/.test(clean))
+				return i18n.t("tools.installingRustPackages");
+			if (/^cargo\s+(build|b)\b/.test(clean))
+				return i18n.t("tools.buildingRustProject");
+			if (/^cargo\s+(check|c)\b/.test(clean))
+				return i18n.t("tools.checkingRustProject", {
+					defaultValue: "Checking Rust project",
+				});
+			if (/^cargo\s+(test|t)\b/.test(clean))
+				return i18n.t("tools.runningTests");
+			if (/^cargo\s+(clippy)\b/.test(clean))
+				return i18n.t("tools.lintingRustProject", {
+					defaultValue: "Linting Rust project",
+				});
+			if (/^cargo\s+fmt\b/.test(clean))
+				return i18n.t("tools.formattingRustCode", {
+					defaultValue: "Formatting Rust code",
+				});
+			if (/^cargo\s+add\b/.test(clean))
+				return i18n.t("tools.installingRustPackages");
+			if (/^cargo\s+run\b/.test(clean))
+				return i18n.t("tools.runningRustProject", {
+					defaultValue: "Running Rust project",
+				});
+			return i18n.t("tools.runningCargoCommand", {
+				defaultValue: "Running cargo command",
+			});
 		},
 	},
 	// Git
@@ -92,30 +185,26 @@ const bashPatterns: BashPattern[] = [
 		match: (cmd) => /\b(ls|dir|tree)\s/.test(cmd) || /^ls\s*$/.test(cmd.trim()),
 		summary: () => i18n.t("tools.listingFiles"),
 	},
-	// File operations (cat/head/tail on a file directly, NOT as pipe tail)
+	// File operations
 	{
-		match: (cmd) => {
-			if (!/\b(cat|head|tail|less|more)\s/.test(cmd)) return false;
-			// Skip when cat/head/tail is only used as a pipe tail (e.g. `cmd | head -20`).
-			// Only match when it's the primary command (start of line or after &&/;).
-			return /(?:^|[;&]\s*)(cat|head|tail|less|more)\s/.test(cmd.trim());
-		},
+		match: (cmd) =>
+			/^(cat|head|tail|less|more)\b/.test(primaryCommandSegment(cmd)),
 		summary: (cmd) => {
-			// Extract the actual file argument, skipping flags like -N, -n, -f
-			const m = cmd.match(
-				/(?:^|[;&]\s*)(?:cat|head|tail|less|more)\s+((?:-\S+\s+)*)(.+?)(?:\s*[|;]|$)/,
-			);
-			const rawFile = m ? m[2]?.trim().replace(/^["']|["']$/g, "") : null;
-			// Only use as file path if it looks like a real path
-			const file =
-				rawFile &&
-				!rawFile.startsWith("-") &&
-				rawFile.length > 1 &&
-				!rawFile.startsWith("2>") &&
-				rawFile !== "|"
-					? truncPath(rawFile)
-					: null;
-			if (file) return i18n.t("tools.readingPath", { path: file });
+			const primary = primaryCommandSegment(cmd);
+			// Extract file path, stripping flags like -n 20, -20, -c 100, etc.
+			const m = primary.match(/(?:cat|head|tail|less|more)\s+(.+?)$/);
+			if (m) {
+				// Remove flags and their numeric arguments to isolate the file path
+				const cleaned = m[1]
+					.replace(/(?:^|\s)-[a-zA-Z]+\s*\d*/g, "") // -n 20, -c 100
+					.replace(/(?:^|\s)-\d+/g, "") // -20 (shorthand)
+					.trim();
+				if (cleaned && !cleaned.startsWith("-")) {
+					return i18n.t("tools.readingPath", {
+						path: truncPath(cleaned),
+					});
+				}
+			}
 			return i18n.t("tools.readingFile");
 		},
 	},
@@ -214,6 +303,8 @@ const bashPatterns: BashPattern[] = [
 
 function summarizeBash(command: string): string | null {
 	const cmd = command.trim();
+	const browserSummary = summarizeAgentBrowser(cmd);
+	if (browserSummary) return browserSummary;
 	for (const pattern of bashPatterns) {
 		if (pattern.match(cmd)) {
 			return pattern.summary(cmd);
@@ -247,21 +338,40 @@ export function getToolSummary(
 				.trim();
 			return truncStr(clean, 60);
 		}
+		// Input not yet available (streaming) — return generic label
+		return i18n.t("tools.runningCommand", {
+			defaultValue: "Running command",
+		});
 	}
 
 	if (name === "read") {
-		const path = (input?.path as string) ?? null;
+		const path =
+			(input?.path as string) ??
+			(input?.file_path as string) ??
+			(input?.filePath as string) ??
+			null;
 		if (path) return i18n.t("tools.readingPath", { path: truncPath(path) });
+		return i18n.t("tools.readingFile");
 	}
 
 	if (name === "write") {
-		const path = (input?.path as string) ?? null;
+		const path =
+			(input?.path as string) ??
+			(input?.file_path as string) ??
+			(input?.filePath as string) ??
+			null;
 		if (path) return i18n.t("tools.writingPath", { path: truncPath(path) });
+		return i18n.t("tools.writingFile", { defaultValue: "Writing file" });
 	}
 
 	if (name === "edit") {
-		const path = (input?.path as string) ?? null;
+		const path =
+			(input?.path as string) ??
+			(input?.file_path as string) ??
+			(input?.filePath as string) ??
+			null;
 		if (path) return i18n.t("tools.editingPath", { path: truncPath(path) });
+		return i18n.t("tools.editingFile", { defaultValue: "Editing file" });
 	}
 
 	if (name === "glob") {

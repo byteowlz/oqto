@@ -344,8 +344,25 @@
 .markdown-content {
 	overflow-wrap: break-word;
 	word-wrap: break-word;
-	word-break: break-word;
-	hyphens: auto;
+	word-break: normal;
+	/* Disable hyphenation-driven reflow to reduce whole-message twitch. */
+	hyphens: none;
+	-webkit-hyphens: none;
+	/* Keep wrap distribution identical during streaming and after persist. */
+	text-wrap: auto;
+}
+
+.markdown-content--streaming {
+	text-wrap: auto;
+}
+
+.markdown-content p,
+.markdown-content li > span {
+	text-align: left;
+	hyphens: none;
+	-webkit-hyphens: none;
+	overflow-wrap: normal;
+	word-break: normal;
 }
 
 .markdown-content pre {
@@ -355,6 +372,49 @@
 
 .markdown-content code {
 	word-break: break-all;
+}
+
+.stream-commit-slide-in-a,
+.stream-commit-slide-in-b {
+	animation: stream-commit-slide-in 160ms ease-out;
+	will-change: transform, opacity;
+}
+
+.stream-crawl-tick-a,
+.stream-crawl-tick-b {
+	animation: stream-crawl-tick 140ms ease-out;
+	will-change: transform, opacity;
+}
+
+@keyframes stream-commit-slide-in {
+	from {
+		transform: translateY(6px);
+		opacity: 0.86;
+	}
+	to {
+		transform: translateY(0);
+		opacity: 1;
+	}
+}
+
+@keyframes stream-crawl-tick {
+	from {
+		transform: translateY(8px);
+		opacity: 0.84;
+	}
+	to {
+		transform: translateY(0);
+		opacity: 1;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.stream-commit-slide-in-a,
+	.stream-commit-slide-in-b,
+	.stream-crawl-tick-a,
+	.stream-crawl-tick-b {
+		animation: none;
+	}
 }
 
 /* Ensure message containers don't overflow */

@@ -12,6 +12,11 @@
 #   sudo ./scripts/install-sandbox-config.sh
 #   sudo ./scripts/install-sandbox-config.sh /path/to/custom/sandbox.toml
 #
+# Template presets shipped with Oqto:
+#   backend/crates/oqto/examples/sandbox.template.strict-infra.toml
+#   backend/crates/oqto/examples/sandbox.template.development-safe.toml
+#   backend/crates/oqto/examples/sandbox.template.networked-dev.toml
+#
 # The script must be run as root or with sudo.
 
 set -euo pipefail
@@ -63,9 +68,9 @@ if [[ ! -f "$SOURCE_FILE" ]]; then
     echo ""
     echo "Create a sandbox.toml first:"
     echo ""
-    echo "  # Copy the example config"
+    echo "  # Copy one of the shipped templates"
     echo "  mkdir -p ~/.config/oqto"
-    echo "  cp backend/crates/oqto/examples/sandbox.toml ~/.config/oqto/"
+    echo "  cp backend/crates/oqto/examples/sandbox.template.development-safe.toml ~/.config/oqto/sandbox.toml"
     echo ""
     echo "  # Then run this script again"
     echo "  sudo $0"
@@ -153,13 +158,16 @@ fi
 # Show next steps
 echo ""
 info "Next steps:"
-echo "  1. Restart oqto-runner to pick up the new config:"
+echo "  1. (Optional) Install seccomp artifact for enforce mode:"
+echo "     sudo ./scripts/sandbox/install-seccomp-policy.sh"
+echo ""
+echo "  2. Restart oqto-runner to pick up the new config:"
 echo "     systemctl --user restart oqto-runner"
 echo ""
-echo "  2. Or for system-wide oqto-runner:"
+echo "  3. Or for system-wide oqto-runner:"
 echo "     sudo systemctl restart oqto-runner"
 echo ""
-echo "  3. Verify sandbox is active by checking logs for:"
+echo "  4. Verify sandbox is active by checking logs for:"
 echo "     'Sandbox enabled - processes will be wrapped with bwrap'"
 
 # Optional: Validate TOML syntax
