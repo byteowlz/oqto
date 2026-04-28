@@ -11,7 +11,8 @@ import type { PiAgentMessage, PiSessionMessage } from "@/lib/api/default-chat";
 import type { Part, Sender, ToolStatus } from "@/lib/canonical-types";
 import type { DisplayMessage, DisplayPart, RawMessage } from "./types";
 
-const MESSAGE_ID_PATTERN = /^pi-msg-(\d+)$/;
+const LEGACY_PI_TMP_ID_PATTERN = /^pi-msg-(\d+)$/;
+const TMP_MESSAGE_ID_PREFIX = "tmp:";
 
 /**
  * Pattern matching `[Name] ...` prefix prepended by the backend for shared
@@ -23,6 +24,7 @@ const MESSAGE_ID_PATTERN = /^pi-msg-(\d+)$/;
  */
 const SENDER_TAG_NEW_RE = /^@sender:\s*(.+)\n/;
 const SENDER_TAG_LEGACY_RE = /^\[([^\]]+)\]\s*/;
+const OQTO_META_SUFFIX_RE = /\s*\[\[oqto_meta:\{[\s\S]*\}\]\]\s*$/;
 
 /**
  * Extract a sender tag from user-message text parts.
@@ -31,6 +33,15 @@ const SENDER_TAG_LEGACY_RE = /^\[([^\]]+)\]\s*/;
  * tag prefix from the first text part so it doesn't render in the bubble.
  * Returns `undefined` when no tag is found.
  */
+function stripOqtoMetaSuffix(parts: DisplayPart[]): void {
+	for (const part of parts) {
+		if (part.type !== "text") continue;
+		const textPart = part as { type: "text"; text: string };
+		textPart.text = textPart.text.replace(OQTO_META_SUFFIX_RE, "").trimEnd();
+		break;
+	}
+}
+
 function extractSenderFromParts(parts: DisplayPart[]): Sender | undefined {
 	for (const part of parts) {
 		if (part.type !== "text") continue;
@@ -84,6 +95,25 @@ function safeStringify(value: unknown): string {
 	} catch {
 		return String(value);
 	}
+}
+
+function stableHash(input: string): string {
+	let hash = 5381;
+	for (let i = 0; i < input.length; i++) {
+		hash = ((hash << 5) + hash + input.charCodeAt(i)) | 0;
+	}
+	return (hash >>> 0).toString(16);
+}
+
+function fallbackMessageId(
+	idPrefix: string,
+	role: string,
+	timestamp: number,
+	content: unknown,
+	idx: number,
+): string {
+	const signature = `${role}|${timestamp}|${safeStringify(content)}|${idx}`;
+	return `${idPrefix}-fallback-${stableHash(signature)}`;
 }
 
 // ============================================================================
@@ -299,6 +329,28 @@ function coerceBlockToPart(b: Record<string, unknown>): DisplayPart | null {
 		};
 	}
 
+	// --- heuristic: Pi tool_use blocks stored without a type field ---
+	// Pi stores tool calls as {arguments, id, name, partialJson} without
+	// type: "tool_use". Detect by presence of `arguments` + `name`.
+	if (!blockType && "arguments" in b && typeof b.name === "string") {
+		return {
+			type: "tool_call",
+			id: (typeof b.id === "string" && b.id) || nextPartId(),
+			toolCallId:
+				(typeof b.id === "string" && b.id) ||
+				(typeof b.toolCallId === "string" && b.toolCallId) ||
+				"",
+			name: b.name as string,
+			input:
+				typeof b.arguments === "object" && b.arguments !== null
+					? b.arguments
+					: b.input,
+			status: (typeof b.status === "string"
+				? b.status
+				: "success") as ToolStatus,
+		};
+	}
+
 	return null;
 }
 
@@ -412,6 +464,13 @@ export function convertCanonicalMessageToDisplay(
 		usage,
 		sender,
 	};
+}
+
+function isEmptyAssistantPlaceholderParts(parts: DisplayPart[]): boolean {
+	if (parts.length === 0) return true;
+	if (parts.length !== 1) return false;
+	const [part] = parts;
+	return part.type === "text" && part.text.trim() === "[]";
 }
 
 /**
@@ -543,7 +602,16 @@ export function normalizeMessages(
 				}
 			} else {
 				display.push({
-					id: `${idPrefix}-${idx}`,
+					id:
+						typeof message.id === "string" && message.id.length > 0
+							? message.id
+							: fallbackMessageId(
+									idPrefix,
+									"assistant",
+									timestamp,
+									content,
+									idx,
+								),
 					role: "assistant",
 					parts: [toolResultPart],
 					timestamp,
@@ -558,17 +626,38 @@ export function normalizeMessages(
 				? role
 				: // "error" role displays on assistant side
 					"assistant";
-		const parts = normalizeContentToParts(content);
+		let parts = normalizeContentToParts(content);
 		const clientId = message.client_id ?? message.clientId;
+		const messageIsError = Boolean(message.is_error ?? message.isError);
+		if (
+			normalizedRole === "assistant" &&
+			messageIsError &&
+			!parts.some((p) => p.type === "error")
+		) {
+			parts = parts.map((p) =>
+				p.type === "text" ? { type: "error", id: p.id, text: p.text } : p,
+			);
+		}
 		const msgModel = message.model_id ?? message.model ?? null;
 		const msgProvider = message.provider_id ?? message.provider ?? null;
 		// Extract [Name] sender tag from user messages in shared workspaces
 		let sender: Sender | undefined;
 		if (normalizedRole === "user") {
+			stripOqtoMetaSuffix(parts);
 			sender = extractSenderFromParts(parts);
 		}
+		const canonicalId =
+			typeof message.id === "string" && message.id.length > 0
+				? message.id
+				: fallbackMessageId(idPrefix, normalizedRole, timestamp, content, idx);
+		if (
+			normalizedRole === "assistant" &&
+			isEmptyAssistantPlaceholderParts(parts)
+		) {
+			continue;
+		}
 		const displayMessage: DisplayMessage = {
-			id: `${idPrefix}-${idx}`,
+			id: canonicalId,
 			role: normalizedRole,
 			parts,
 			timestamp,
@@ -607,7 +696,25 @@ export function normalizeMessages(
 		}
 	}
 
-	return display;
+	return dropAdjacentDuplicateAssistantMessages(display);
+}
+
+function dropAdjacentDuplicateAssistantMessages(
+	messages: DisplayMessage[],
+): DisplayMessage[] {
+	if (messages.length < 2) return messages;
+	const deduped: DisplayMessage[] = [];
+	let previousAssistantFingerprint: string | null = null;
+	for (const message of messages) {
+		const fingerprint =
+			message.role === "assistant" ? messageFingerprint(message) : null;
+		if (fingerprint && fingerprint === previousAssistantFingerprint) {
+			continue;
+		}
+		deduped.push(message);
+		previousAssistantFingerprint = fingerprint;
+	}
+	return deduped.length === messages.length ? messages : deduped;
 }
 
 // ============================================================================
@@ -658,11 +765,11 @@ export function convertSessionMessagesToDisplay(
 // Message ID utilities
 // ============================================================================
 
-/** Get the maximum message ID number from a list of messages. */
+/** Get the maximum legacy pi-msg-N number from a list of messages. */
 export function getMaxMessageId(messages: DisplayMessage[]): number {
 	let maxId = 0;
 	for (const message of messages) {
-		const match = MESSAGE_ID_PATTERN.exec(message.id);
+		const match = LEGACY_PI_TMP_ID_PATTERN.exec(message.id);
 		if (!match) continue;
 		const value = Number.parseInt(match[1] ?? "0", 10);
 		if (!Number.isNaN(value) && value > maxId) {
@@ -675,9 +782,11 @@ export function getMaxMessageId(messages: DisplayMessage[]): number {
 /** @deprecated Use getMaxMessageId */
 export const getMaxPiMessageId = getMaxMessageId;
 
-/** Check if a message should be preserved during server refresh. */
+/** Check if a message is frontend-ephemeral and may need preservation. */
 export function shouldPreserveLocalMessage(message: DisplayMessage): boolean {
-	if (MESSAGE_ID_PATTERN.test(message.id)) return true;
+	if (message.id.startsWith(TMP_MESSAGE_ID_PREFIX)) return true;
+	// Narrow legacy fallback while old caches/event payloads are phased out.
+	if (LEGACY_PI_TMP_ID_PATTERN.test(message.id)) return true;
 	if (message.id.startsWith("compaction-")) return true;
 	return false;
 }
@@ -686,7 +795,10 @@ export function shouldPreserveLocalMessage(message: DisplayMessage): boolean {
 // Fingerprinting and merge
 // ============================================================================
 
-/** Create a fingerprint for a message (used for deduplication). */
+/**
+ * Legacy helper kept for tests/diagnostics. Merge logic is ID/client_id based
+ * and does not use fingerprints for reconciliation.
+ */
 export function messageFingerprint(message: DisplayMessage): string {
 	const parts = message.parts.map((part) => {
 		switch (part.type) {
@@ -709,32 +821,156 @@ export function messageFingerprint(message: DisplayMessage): string {
 	return `${message.role}|${parts.join("|")}`;
 }
 
-function messageTextSignature(message: DisplayMessage): string {
-	return message.parts
-		.flatMap((p) => (p.type === "text" ? [p.text] : []))
-		.join("")
-		.trim();
+function mergeMessageKeepingLocalToolDetails(
+	localMessage: DisplayMessage,
+	serverMessage: DisplayMessage,
+): DisplayMessage {
+	const localToolCalls = new Map<
+		string,
+		Extract<DisplayPart, { type: "tool_call" }>
+	>();
+	const localToolResults = new Map<
+		string,
+		Extract<DisplayPart, { type: "tool_result" }>
+	>();
+
+	for (const part of localMessage.parts) {
+		if (part.type === "tool_call" && part.toolCallId) {
+			localToolCalls.set(part.toolCallId, part);
+		}
+		if (part.type === "tool_result" && part.toolCallId) {
+			localToolResults.set(part.toolCallId, part);
+		}
+	}
+
+	const mergedParts: DisplayPart[] = serverMessage.parts.map((part) => {
+		if (part.type === "tool_call" && part.toolCallId) {
+			const local = localToolCalls.get(part.toolCallId);
+			if (!local) return part;
+			return {
+				...part,
+				name: part.name || local.name,
+				input: part.input !== undefined ? part.input : local.input,
+			};
+		}
+		if (part.type === "tool_result" && part.toolCallId) {
+			const local = localToolResults.get(part.toolCallId);
+			if (!local) return part;
+			return {
+				...part,
+				name: part.name || local.name,
+				output: part.output !== undefined ? part.output : local.output,
+				isError: part.isError ?? local.isError,
+			};
+		}
+		return part;
+	});
+
+	const seenToolCalls = new Set(
+		mergedParts
+			.filter(
+				(part): part is Extract<DisplayPart, { type: "tool_call" }> =>
+					part.type === "tool_call" && Boolean(part.toolCallId),
+			)
+			.map((part) => part.toolCallId),
+	);
+	const seenToolResults = new Set(
+		mergedParts
+			.filter(
+				(part): part is Extract<DisplayPart, { type: "tool_result" }> =>
+					part.type === "tool_result" && Boolean(part.toolCallId),
+			)
+			.map((part) => part.toolCallId),
+	);
+
+	for (const local of localToolCalls.values()) {
+		if (!seenToolCalls.has(local.toolCallId)) {
+			mergedParts.push(local);
+		}
+	}
+	for (const local of localToolResults.values()) {
+		if (!seenToolResults.has(local.toolCallId)) {
+			mergedParts.push(local);
+		}
+	}
+
+	return {
+		...serverMessage,
+		parts: mergedParts,
+	};
+}
+
+function buildIndex(messages: DisplayMessage[]): {
+	byId: Map<string, number>;
+	byClientId: Map<string, number>;
+} {
+	const byId = new Map<string, number>();
+	const byClientId = new Map<string, number>();
+	for (let i = 0; i < messages.length; i++) {
+		const msg = messages[i];
+		byId.set(msg.id, i);
+		if (typeof msg.clientId === "string" && msg.clientId.length > 0) {
+			byClientId.set(msg.clientId, i);
+		}
+	}
+	return { byId, byClientId };
+}
+
+function upsertFromServer(
+	base: DisplayMessage[],
+	serverMessages: DisplayMessage[],
+): DisplayMessage[] {
+	const result = [...base];
+	const index = buildIndex(result);
+
+	for (const serverMsg of serverMessages) {
+		const idMatch = index.byId.get(serverMsg.id);
+		if (idMatch !== undefined) {
+			result[idMatch] = mergeMessageKeepingLocalToolDetails(
+				result[idMatch],
+				serverMsg,
+			);
+			index.byId.set(serverMsg.id, idMatch);
+			if (serverMsg.clientId) index.byClientId.set(serverMsg.clientId, idMatch);
+			continue;
+		}
+
+		const clientId =
+			typeof serverMsg.clientId === "string" && serverMsg.clientId.length > 0
+				? serverMsg.clientId
+				: null;
+		if (clientId) {
+			const clientMatch = index.byClientId.get(clientId);
+			if (clientMatch !== undefined) {
+				const prevId = result[clientMatch].id;
+				result[clientMatch] = mergeMessageKeepingLocalToolDetails(
+					result[clientMatch],
+					serverMsg,
+				);
+				if (prevId !== serverMsg.id) {
+					index.byId.delete(prevId);
+				}
+				index.byId.set(serverMsg.id, clientMatch);
+				index.byClientId.set(clientId, clientMatch);
+				continue;
+			}
+		}
+
+		result.push(serverMsg);
+		const idx = result.length - 1;
+		index.byId.set(serverMsg.id, idx);
+		if (clientId) index.byClientId.set(clientId, idx);
+	}
+
+	return result;
 }
 
 /**
- * Merge server messages with local messages, preserving in-flight optimistic updates.
+ * Merge mode declares the caller's intent explicitly.
  *
- * Matching strategy (in order of priority):
- * 1. client_id match: If a server message has a client_id that matches a local
- *    optimistic message, they represent the same message.
- * 2. id match: Direct ID match means the same message.
- * 3. content/fingerprint match: Same text content around the same time = same message.
- */
-/**
- * Merge mode declares the caller's intent explicitly, rather than
- * guessing from message counts.
- *
- * - "authoritative": server has the complete history (e.g., hstry).
- *   Replaces local state entirely, preserving only trailing in-flight
- *   messages (streaming + optimistic sends).
- *
- * - "partial": server has a subset (e.g., Pi's context window).
- *   Keeps all local messages and updates/appends from the server set.
+ * - "authoritative": server has complete history. Apply server state, then
+ *   preserve only truly in-flight local messages (tmp IDs + explicit legacy fallback).
+ * - "partial": server is a subset. Upsert by id/client_id into current state.
  */
 export type MergeMode = "authoritative" | "partial";
 
@@ -746,98 +982,52 @@ export function mergeServerMessages(
 	if (serverMessages.length === 0) return previous;
 	if (previous.length === 0) return serverMessages;
 
-	if (mode === "partial") {
-		// Keep all previous messages. Update any that match by ID, clientId,
-		// or content fingerprint. New (unmatched) server messages are appended
-		// in order. We do NOT re-sort by timestamp — timestamps from different
-		// sources (Pi seconds, hstry ms, Date.now() ms) are incomparable and
-		// sorting them produces wrong message order.
-		const result = [...previous];
-		const resultFingerprints = new Map<string, number>();
-		for (let i = 0; i < result.length; i++) {
-			resultFingerprints.set(messageFingerprint(result[i]), i);
-		}
+	const effectiveMode: MergeMode = mode;
 
-		for (const serverMsg of serverMessages) {
-			let matched = false;
-			// 1. Match by ID
-			for (let i = 0; i < result.length; i++) {
-				if (result[i].id === serverMsg.id) {
-					result[i] = serverMsg;
-					matched = true;
-					break;
-				}
-			}
-			// 2. Match by clientId
-			if (!matched) {
-				for (let i = 0; i < result.length; i++) {
-					if (
-						result[i].clientId &&
-						serverMsg.clientId &&
-						result[i].clientId === serverMsg.clientId
-					) {
-						result[i] = serverMsg;
-						matched = true;
-						break;
-					}
-				}
-			}
-			// 3. Match by content fingerprint (same role + content = same message)
-			if (!matched) {
-				const serverFp = messageFingerprint(serverMsg);
-				const fpIdx = resultFingerprints.get(serverFp);
-				if (fpIdx !== undefined && result[fpIdx].role === serverMsg.role) {
-					result[fpIdx] = serverMsg;
-					matched = true;
-				}
-			}
-			if (!matched) {
-				result.push(serverMsg);
-			}
-		}
-		return result;
+	if (effectiveMode === "partial") {
+		const merged = upsertFromServer(previous, serverMessages);
+		const serverClientIds = new Set(
+			serverMessages
+				.map((m) => m.clientId)
+				.filter((c): c is string => typeof c === "string" && c.length > 0),
+		);
+		const serverFingerprints = new Set(
+			serverMessages.map((msg) => messageFingerprint(msg)),
+		);
+		// Partial snapshots must not drop optimistic user turns or finalized
+		// streaming messages. Drop frontend-local rows when superseded either by
+		// clientId or by identical content fingerprint (same role+parts) already
+		// present from server. This prevents duplicate tail rows from lingering
+		// across switch/reconnect races before authoritative idle convergence.
+		return merged.filter((msg) => {
+			if (!shouldPreserveLocalMessage(msg)) return true;
+			if (msg.isStreaming) return true;
+			if (msg.clientId && serverClientIds.has(msg.clientId)) return false;
+			if (serverFingerprints.has(messageFingerprint(msg))) return false;
+			return true;
+		});
 	}
 
-	// mode === "authoritative"
-	// Server is the complete source of truth. Preserve in-flight local
-	// messages the server doesn't know yet, even across reload/resync order
-	// changes, so user messages never disappear.
-	const serverClientIds = new Set(
-		serverMessages.filter((m) => m.clientId).map((m) => m.clientId),
-	);
-	const serverFingerprints = new Set(
-		serverMessages.map((m) => messageFingerprint(m)),
-	);
-
-	const latestServerTimestamp = serverMessages.reduce(
-		(maxTs, msg) => Math.max(maxTs, msg.timestamp ?? 0),
-		0,
-	);
-	const optimisticFreshnessWindowMs = 60_000;
-	const isPreservableTrailingMessage = (msg: DisplayMessage): boolean => {
-		if (msg.isStreaming) return true;
-		if (msg.role !== "user" || !msg.clientId) return false;
-		if (serverClientIds.has(msg.clientId)) return false;
-		if (serverFingerprints.has(messageFingerprint(msg))) return false;
-		// Keep only very recent optimistic messages. If a message has been
-		// missing from server snapshots for too long, treat it as stale to
-		// avoid pinning old user messages at the end forever.
-		const msgTs = msg.timestamp ?? 0;
-		const isRecentVsServer =
-			msgTs >= latestServerTimestamp - optimisticFreshnessWindowMs;
-		const isRecentVsNow = Date.now() - msgTs <= optimisticFreshnessWindowMs;
-		return isRecentVsServer && isRecentVsNow;
-	};
-
-	// Preserve only trailing in-flight messages. Scanning from the end avoids
-	// resurrecting older local messages from the middle of history.
-	const preserved: DisplayMessage[] = [];
-	for (let i = previous.length - 1; i >= 0; i--) {
-		const msg = previous[i];
-		if (!isPreservableTrailingMessage(msg)) break;
-		preserved.unshift(msg);
+	// Authoritative mode should preserve server ordering while minimizing DOM
+	// churn by reusing existing message identity when possible.
+	const prevById = new Map<string, DisplayMessage>();
+	const prevByClientId = new Map<string, DisplayMessage>();
+	for (const msg of previous) {
+		prevById.set(msg.id, msg);
+		if (msg.clientId) prevByClientId.set(msg.clientId, msg);
 	}
 
-	if (preserved.length === 0) return serverMessages;
-	return [...serverMessages, ...preserved];
+	const mergedInServerOrder = serverMessages.map((serverMsg) => {
+		const byId = prevById.get(serverMsg.id);
+		const byClient = serverMsg.clientId
+			? prevByClientId.get(serverMsg.clientId)
+			: undefined;
+		const prior = byId ?? byClient;
+		if (!prior) return serverMsg;
+		return mergeMessageKeepingLocalToolDetails(prior, serverMsg);
+	});
+
+	// Authoritative mode is strict convergence: return server timeline only.
+	// This prevents stale optimistic user turns from lingering at the tail.
+	return mergedInServerOrder;
 }

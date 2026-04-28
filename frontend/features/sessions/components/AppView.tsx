@@ -1,11 +1,14 @@
 "use client";
 
-import { Button } from "@/components/ui/button";
+import {
+	VISUAL_RUNTIME_MODE_DEFAULT,
+	prepareVisualRuntimeDocument,
+} from "@/features/sessions/visual-runtime";
 import { readFileMux, writeFileMux } from "@/lib/mux-files";
 import { cn } from "@/lib/utils";
 import { AppWindow, Maximize2, Minimize2, RefreshCw, X } from "lucide-react";
 import { useTheme } from "next-themes";
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -382,9 +385,21 @@ export const AppView = memo(function AppView({
 		return null;
 	}
 
-	const srcdoc = activeTab?.content
-		? injectApphost(activeTab.content, theme)
-		: undefined;
+	const preparedDocument = useMemo(() => {
+		if (!activeTab?.content) return null;
+		const withHostShim = injectApphost(activeTab.content, theme);
+		return prepareVisualRuntimeDocument({
+			html: withHostShim,
+			mode: VISUAL_RUNTIME_MODE_DEFAULT,
+		});
+	}, [activeTab?.content, theme]);
+
+	const srcdoc = preparedDocument?.html;
+	const runtimeDiagnostics = preparedDocument?.diagnostics ?? [];
+	const errorDiagnostics = runtimeDiagnostics.filter(
+		(d) => d.level === "error",
+	);
+	const warnDiagnostics = runtimeDiagnostics.filter((d) => d.level === "warn");
 
 	return (
 		<div className={cn("flex flex-col h-full", className)}>
@@ -454,6 +469,23 @@ export const AppView = memo(function AppView({
 					)}
 				</div>
 			</div>
+
+			{runtimeDiagnostics.length > 0 && (
+				<div className="border-b border-border/60 bg-muted/20 px-2 py-1 text-[11px] text-muted-foreground flex items-center gap-2">
+					<span>
+						Visual runtime diagnostics: {errorDiagnostics.length} error(s),{" "}
+						{warnDiagnostics.length} warning(s)
+					</span>
+					<span
+						className="truncate"
+						title={runtimeDiagnostics
+							.map((d) => `[${d.level}] ${d.message}`)
+							.join("\n")}
+					>
+						{runtimeDiagnostics[runtimeDiagnostics.length - 1]?.message}
+					</span>
+				</div>
+			)}
 
 			{/* Iframe */}
 			<div className="flex-1 min-h-0 relative">

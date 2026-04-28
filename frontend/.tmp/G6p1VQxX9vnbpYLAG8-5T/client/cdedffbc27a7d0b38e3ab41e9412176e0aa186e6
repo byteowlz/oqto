@@ -1,0 +1,23 @@
+const __vite_ssr_import_0__ = await __vite_ssr_import__("/node_modules/@testing-library/jest-dom/dist/index.mjs");
+const __vite_ssr_import_1__ = await __vite_ssr_import__("/node_modules/@testing-library/react/dist/index.js", {"importedNames":["cleanup"]});
+const __vite_ssr_import_2__ = await __vite_ssr_import__("/node_modules/vitest/dist/index.js", {"importedNames":["afterEach","vi"]});
+
+
+
+(0,__vite_ssr_import_2__.afterEach)(() => {
+  (0,__vite_ssr_import_1__.cleanup)();
+});
+global.fetch = __vite_ssr_import_2__.vi.fn();
+const localStorageMock = {
+  getItem: __vite_ssr_import_2__.vi.fn(),
+  setItem: __vite_ssr_import_2__.vi.fn(),
+  removeItem: __vite_ssr_import_2__.vi.fn(),
+  clear: __vite_ssr_import_2__.vi.fn(),
+  length: 0,
+  key: __vite_ssr_import_2__.vi.fn()
+};
+global.localStorage = localStorageMock;
+//# sourceMappingSource=vite-generated
+//# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJtYXBwaW5ncyI6IkFBQUE7QUFDQTtBQUNBOzs7O0dBR0EsaUNBQVUsTUFBTTtBQUNmLG9DQUFRO0FBQ1QsQ0FBQztBQUdELE9BQU8sUUFBUSx5QkFBRyxHQUFHO0FBR3JCLE1BQU0sbUJBQW1CO0FBQUEsRUFDeEIsU0FBUyx5QkFBRyxHQUFHO0FBQUEsRUFDZixTQUFTLHlCQUFHLEdBQUc7QUFBQSxFQUNmLFlBQVkseUJBQUcsR0FBRztBQUFBLEVBQ2xCLE9BQU8seUJBQUcsR0FBRztBQUFBLEVBQ2IsUUFBUTtBQUFBLEVBQ1IsS0FBSyx5QkFBRyxHQUFHO0FBQ1o7QUFDQSxPQUFPLGVBQWUiLCJuYW1lcyI6W10sImlnbm9yZUxpc3QiOltdLCJzb3VyY2VzIjpbInNldHVwLnRzIl0sInNvdXJjZXNDb250ZW50IjpbImltcG9ydCBcIkB0ZXN0aW5nLWxpYnJhcnkvamVzdC1kb21cIjtcbmltcG9ydCB7IGNsZWFudXAgfSBmcm9tIFwiQHRlc3RpbmctbGlicmFyeS9yZWFjdFwiO1xuaW1wb3J0IHsgYWZ0ZXJFYWNoLCB2aSB9IGZyb20gXCJ2aXRlc3RcIjtcblxuLy8gQ2xlYW51cCBhZnRlciBlYWNoIHRlc3QgY2FzZVxuYWZ0ZXJFYWNoKCgpID0+IHtcblx0Y2xlYW51cCgpO1xufSk7XG5cbi8vIE1vY2sgZmV0Y2ggZ2xvYmFsbHlcbmdsb2JhbC5mZXRjaCA9IHZpLmZuKCk7XG5cbi8vIE1vY2sgbG9jYWxTdG9yYWdlXG5jb25zdCBsb2NhbFN0b3JhZ2VNb2NrID0ge1xuXHRnZXRJdGVtOiB2aS5mbigpLFxuXHRzZXRJdGVtOiB2aS5mbigpLFxuXHRyZW1vdmVJdGVtOiB2aS5mbigpLFxuXHRjbGVhcjogdmkuZm4oKSxcblx0bGVuZ3RoOiAwLFxuXHRrZXk6IHZpLmZuKCksXG59O1xuZ2xvYmFsLmxvY2FsU3RvcmFnZSA9IGxvY2FsU3RvcmFnZU1vY2sgYXMgdW5rbm93biBhcyBTdG9yYWdlO1xuIl0sImZpbGUiOiIvdGVzdHMvc2V0dXAudHMifQ==
+
+//# vitestCache=W3siZmlsZSI6IjEiLCJpZCI6IjEiLCJ1cmwiOiIyIiwiaW1wb3J0ZXJzIjoiMyIsImltcG9ydGVkVXJscyI6IjQiLCJtYXBwaW5ncyI6ZmFsc2V9LCIvaG9tZS93aXNtdXQvYnl0ZW93bHovb3F0b19yZWZhY3Rvci9mcm9udGVuZC90ZXN0cy9zZXR1cC50cyIsIi90ZXN0cy9zZXR1cC50cyIsW10sW11d

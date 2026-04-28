@@ -9,7 +9,7 @@ use std::path::Path;
 
 use super::UserPlane;
 use super::types::*;
-use crate::runner::client::{RunnerClient, RunnerEndpointPattern};
+use crate::runner::client::RunnerClient;
 
 /// Runner-based user-plane implementation.
 ///
@@ -38,16 +38,6 @@ impl RunnerUserPlane {
     pub fn for_user_with_pattern(username: &str, pattern: &str) -> Result<Self> {
         Ok(Self::new(RunnerClient::for_user_with_pattern(
             username, pattern,
-        )?))
-    }
-
-    /// Create a runner user-plane for a specific user with a structured endpoint template.
-    pub fn for_user_with_endpoint(
-        username: &str,
-        endpoint: &RunnerEndpointPattern,
-    ) -> Result<Self> {
-        Ok(Self::new(RunnerClient::for_user_with_endpoint(
-            username, endpoint,
         )?))
     }
 

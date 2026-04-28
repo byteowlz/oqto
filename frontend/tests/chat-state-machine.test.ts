@@ -5,7 +5,6 @@ import {
 	createInitialChatStateMachine,
 	deriveUiFlags,
 	resetIdentity,
-	selectMessageMergeMode,
 	transitionTransport,
 	transitionTurn,
 } from "@/features/chat/hooks/chat-state-machine";
@@ -46,16 +45,28 @@ describe("chat state machine", () => {
 			isAwaitingResponse: false,
 		});
 
-		const reconciling = transitionTurn(streaming, {
-			kind: "reconciling",
-			reason: "idle",
-		});
-		expect(reconciling.turn.kind).toBe("reconciling");
+		const syncing = transitionTurn(streaming, { kind: "syncing" });
+		expect(syncing.turn.kind).toBe("syncing");
 
-		const idle = transitionTurn(reconciling, { kind: "idle" });
+		const idle = transitionTurn(syncing, { kind: "idle" });
 		expect(idle.turn.kind).toBe("idle");
 		expect(deriveUiFlags(idle.turn)).toEqual({
 			isStreaming: false,
+			isAwaitingResponse: false,
+		});
+	});
+
+	it("allows idle -> streaming for runner-initiated turns", () => {
+		const bound = bindIdentity(createInitialChatStateMachine("oqto-abc"), {
+			runnerId: "runner-session-1",
+		});
+		const streaming = transitionTurn(bound, {
+			kind: "streaming",
+			turnId: "remote-turn-1",
+		});
+		expect(streaming.turn.kind).toBe("streaming");
+		expect(deriveUiFlags(streaming.turn)).toEqual({
+			isStreaming: true,
 			isAwaitingResponse: false,
 		});
 	});
@@ -71,7 +82,10 @@ describe("chat state machine", () => {
 		expect(stale.transport.epoch).toBe(2);
 	});
 
-	it("uses partial merge for ws_get_messages during streaming, authoritative otherwise", () => {
+	it("all server data is authoritative (no merge mode selection)", () => {
+		// With the runner message buffer as single authority, all server
+		// responses are treated as authoritative. No source-dependent
+		// merge mode selection needed.
 		const machine = bindIdentity(createInitialChatStateMachine("oqto-abc"), {
 			runnerId: "runner-session-1",
 		});
@@ -84,25 +98,18 @@ describe("chat state machine", () => {
 			kind: "streaming",
 			turnId: "t1",
 		});
-		expect(selectMessageMergeMode(streaming, "ws_get_messages")).toBe(
-			"partial",
-		);
-		expect(selectMessageMergeMode(streaming, "history")).toBe("partial");
-		const reconciling = transitionTurn(streaming, {
-			kind: "reconciling",
-			reason: "resync",
-		});
-		expect(selectMessageMergeMode(reconciling, "ws_get_messages")).toBe(
-			"authoritative",
-		);
+		const syncing = transitionTurn(streaming, { kind: "syncing" });
+		expect(syncing.turn.kind).toBe("syncing");
+		// Syncing -> idle is always valid
+		const idle = transitionTurn(syncing, { kind: "idle" });
+		expect(idle.turn.kind).toBe("idle");
 	});
 
 	it("tracks sync revision lifecycle", () => {
 		const machine = createInitialChatStateMachine("oqto-abc");
-		const syncing = beginMessageSync(machine, "history");
+		const syncing = beginMessageSync(machine);
 		expect(syncing.sync.phase).toBe("syncing");
-		expect(syncing.sync.lastSource).toBe("history");
-		const done = completeMessageSync(syncing, "history");
+		const done = completeMessageSync(syncing);
 		expect(done.sync.phase).toBe("idle");
 		expect(done.sync.revision).toBe(1);
 	});

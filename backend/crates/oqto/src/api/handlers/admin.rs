@@ -422,7 +422,13 @@ pub async fn sync_user_configs(
 
                     if has_eavs_key {
                         // Key exists, just sync models.json (no key rotation)
-                        match sync_eavs_models_json(eavs_client, linux_users, &linux_username).await
+                        match sync_eavs_models_json(
+                            eavs_client,
+                            linux_users,
+                            &linux_username,
+                            Some(&state.auto_rename_config),
+                        )
+                        .await
                         {
                             Ok(()) => {
                                 result.eavs_configured = true;
@@ -444,6 +450,7 @@ pub async fn sync_user_configs(
                             linux_users,
                             &linux_username,
                             &user.id,
+                            Some(&state.auto_rename_config),
                         )
                         .await
                         {
@@ -631,7 +638,15 @@ pub async fn create_user(
     if let (Some(eavs_client), Some(linux_users)) = (&state.eavs_client, &state.linux_users) {
         let linux_username = user.linux_username.as_deref().unwrap_or(&user.id);
 
-        match provision_eavs_for_user(eavs_client, linux_users, linux_username, &user.id).await {
+        match provision_eavs_for_user(
+            eavs_client,
+            linux_users,
+            linux_username,
+            &user.id,
+            Some(&state.auto_rename_config),
+        )
+        .await
+        {
             Ok(key_id) => {
                 info!(
                     user_id = %user.id,
@@ -767,6 +782,7 @@ pub(crate) async fn provision_eavs_for_user(
     linux_users: &crate::local::LinuxUsersConfig,
     linux_username: &str,
     oqto_user_id: &str,
+    auto_rename_config: Option<&serde_json::Value>,
 ) -> anyhow::Result<String> {
     use crate::eavs::CreateKeyRequest;
 
@@ -781,7 +797,14 @@ pub(crate) async fn provision_eavs_for_user(
     // 2. Write models.json with the virtual key embedded directly.
     // The key is written as a literal value in the apiKey field so Pi uses it
     // as a Bearer token when calling eavs. No eavs.env indirection needed.
-    sync_eavs_models_json_with_key(eavs_client, linux_users, linux_username, &key_resp.key).await?;
+    sync_eavs_models_json_with_key(
+        eavs_client,
+        linux_users,
+        linux_username,
+        &key_resp.key,
+        auto_rename_config,
+    )
+    .await?;
 
     Ok(key_resp.key_id)
 }
@@ -796,6 +819,7 @@ pub(crate) async fn sync_eavs_models_json(
     eavs_client: &crate::eavs::EavsClient,
     linux_users: &crate::local::LinuxUsersConfig,
     linux_username: &str,
+    auto_rename_config: Option<&serde_json::Value>,
 ) -> anyhow::Result<()> {
     // Read existing eavs key from models.json (embedded in apiKey field).
     // Fall back to legacy eavs.env for migration from older installs.
@@ -806,7 +830,14 @@ pub(crate) async fn sync_eavs_models_json(
         read_eavs_key_from_env(&eavs_env_path)
     });
 
-    sync_eavs_models_json_inner(eavs_client, linux_users, linux_username, api_key.as_deref()).await
+    sync_eavs_models_json_inner(
+        eavs_client,
+        linux_users,
+        linux_username,
+        api_key.as_deref(),
+        auto_rename_config,
+    )
+    .await
 }
 
 /// Same as `sync_eavs_models_json` but with the key already in hand (avoids re-reading eavs.env).
@@ -815,8 +846,16 @@ pub(crate) async fn sync_eavs_models_json_with_key(
     linux_users: &crate::local::LinuxUsersConfig,
     linux_username: &str,
     api_key: &str,
+    auto_rename_config: Option<&serde_json::Value>,
 ) -> anyhow::Result<()> {
-    sync_eavs_models_json_inner(eavs_client, linux_users, linux_username, Some(api_key)).await
+    sync_eavs_models_json_inner(
+        eavs_client,
+        linux_users,
+        linux_username,
+        Some(api_key),
+        auto_rename_config,
+    )
+    .await
 }
 
 async fn sync_eavs_models_json_inner(
@@ -824,6 +863,7 @@ async fn sync_eavs_models_json_inner(
     linux_users: &crate::local::LinuxUsersConfig,
     linux_username: &str,
     api_key: Option<&str>,
+    auto_rename_config: Option<&serde_json::Value>,
 ) -> anyhow::Result<()> {
     use crate::eavs::generate_pi_models_json;
 
@@ -840,50 +880,17 @@ async fn sync_eavs_models_json_inner(
     let pi_dir = format!("{}/.pi/agent", home);
     linux_users.write_file_as_user(linux_username, &pi_dir, "models.json", &models_content)?;
 
-    // Generate auto-rename.json with the first available model so the
-    // auto-rename extension can generate LLM-based session titles.
-    if let Some(first_model) = extract_first_model(&models_json) {
-        let auto_rename = serde_json::json!({
-            "enabled": true,
-            "model": {
-                "provider": first_model.0,
-                "id": first_model.1,
-            },
-            "prefixCommand": "basename $(git rev-parse --show-toplevel 2>/dev/null || pwd)",
-            "readableIdSuffix": true,
-            // If model generation fails, prefer a human-readable fallback
-            // over raw adjective-noun-noun IDs as the visible title.
-            "fallbackDeterministic": "words",
-            "maxNameLength": 60
-        });
-        let auto_rename_content = serde_json::to_string_pretty(&auto_rename).unwrap_or_default();
-        if !auto_rename_content.is_empty() {
-            // Best-effort: don't fail provisioning if this doesn't work
-            let _ = linux_users.write_file_as_user(
-                linux_username,
-                &pi_dir,
-                "auto-rename.json",
-                &auto_rename_content,
-            );
-        }
+    // Write auto-rename.json from config (configurable via [pi.auto_rename] in config.toml).
+    if let Some(auto_rename) = auto_rename_config
+        && !auto_rename.is_null()
+        && auto_rename.is_object()
+        && let Ok(content) = serde_json::to_string_pretty(auto_rename)
+    {
+        let _ =
+            linux_users.write_file_as_user(linux_username, &pi_dir, "auto-rename.json", &content);
     }
 
     Ok(())
-}
-
-/// Extract the first (provider, model_id) from a Pi models.json value.
-/// Used to configure auto-rename with an available model.
-fn extract_first_model(models_json: &serde_json::Value) -> Option<(String, String)> {
-    let providers = models_json.get("providers")?.as_object()?;
-    for (provider_name, provider_val) in providers {
-        if let Some(models) = provider_val.get("models").and_then(|m| m.as_array())
-            && let Some(first) = models.first()
-            && let Some(id) = first.get("id").and_then(|v| v.as_str())
-        {
-            return Some((provider_name.clone(), id.to_string()));
-        }
-    }
-    None
 }
 
 /// Read the EAVS_API_KEY value from an eavs.env file.
@@ -947,23 +954,83 @@ pub async fn list_eavs_providers(
         .await
         .map_err(|e| ApiError::Internal(format!("Failed to query eavs providers: {e}")))?;
 
+    let configured_by_name = if let Some(eavs_paths) = state.eavs_config.as_ref() {
+        match tokio::fs::read_to_string(&eavs_paths.config_path).await {
+            Ok(content) => parse_existing_providers_config(&content),
+            Err(err) => {
+                warn!(
+                    path = %eavs_paths.config_path.display(),
+                    error = %err,
+                    "Failed to read eavs config for provider edit metadata"
+                );
+                std::collections::HashMap::new()
+            }
+        }
+    } else {
+        std::collections::HashMap::new()
+    };
+
     let provider_summaries: Vec<EavsProviderSummary> = providers
         .iter()
-        .map(|p| EavsProviderSummary {
-            name: p.name.clone(),
-            type_: p.type_.clone(),
-            pi_api: p.pi_api.clone(),
-            has_api_key: p.has_api_key,
-            model_count: p.models.len(),
-            models: p
-                .models
-                .iter()
-                .map(|m| EavsModelSummary {
-                    id: m.id.clone(),
-                    name: m.name.clone(),
-                    reasoning: m.reasoning,
-                })
-                .collect(),
+        .map(|p| {
+            let configured = configured_by_name.get(&p.name);
+            EavsProviderSummary {
+                name: p.name.clone(),
+                type_: p.type_.clone(),
+                pi_api: p.pi_api.clone(),
+                has_api_key: p.has_api_key,
+                base_url: configured.and_then(|cfg| cfg.base_url.clone()),
+                api_version: configured
+                    .and_then(|cfg| cfg.api_version.clone())
+                    .or_else(|| p.api_version.clone()),
+                deployment: configured.and_then(|cfg| cfg.deployment.clone()),
+                model_count: p.models.len(),
+                models: p
+                    .models
+                    .iter()
+                    .map(|m| {
+                        let configured_model = configured.and_then(|cfg| cfg.models.get(&m.id));
+                        EavsModelSummary {
+                            id: m.id.clone(),
+                            name: configured_model
+                                .map(|cm| cm.name.clone())
+                                .filter(|name| !name.is_empty())
+                                .unwrap_or_else(|| m.name.clone()),
+                            reasoning: configured_model
+                                .map(|cm| cm.reasoning)
+                                .unwrap_or(m.reasoning),
+                            input: configured_model
+                                .map(|cm| cm.input.clone())
+                                .filter(|input| !input.is_empty())
+                                .unwrap_or_else(|| m.input.clone()),
+                            context_window: configured_model
+                                .map(|cm| cm.context_window)
+                                .filter(|v| *v > 0)
+                                .unwrap_or(m.context_window),
+                            max_tokens: configured_model
+                                .map(|cm| cm.max_tokens)
+                                .filter(|v| *v > 0)
+                                .unwrap_or(m.max_tokens),
+                            cost_input: configured_model
+                                .map(|cm| cm.cost_input)
+                                .filter(|v| *v > 0.0)
+                                .unwrap_or(m.cost.input),
+                            cost_output: configured_model
+                                .map(|cm| cm.cost_output)
+                                .filter(|v| *v > 0.0)
+                                .unwrap_or(m.cost.output),
+                            cost_cache_read: configured_model
+                                .map(|cm| cm.cost_cache_read)
+                                .filter(|v| *v > 0.0)
+                                .unwrap_or(m.cost.cache_read),
+                            compat: configured_model
+                                .map(|cm| cm.compat.clone())
+                                .filter(|compat| !compat.is_empty())
+                                .unwrap_or_else(|| m.compat.clone()),
+                        }
+                    })
+                    .collect(),
+            }
         })
         .collect();
 
@@ -986,6 +1053,12 @@ pub struct EavsProviderSummary {
     pub type_: String,
     pub pi_api: Option<String>,
     pub has_api_key: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deployment: Option<String>,
     pub model_count: usize,
     pub models: Vec<EavsModelSummary>,
 }
@@ -995,6 +1068,20 @@ pub struct EavsModelSummary {
     pub id: String,
     pub name: String,
     pub reasoning: bool,
+    #[serde(default)]
+    pub input: Vec<String>,
+    #[serde(default)]
+    pub context_window: u64,
+    #[serde(default)]
+    pub max_tokens: u64,
+    #[serde(default)]
+    pub cost_input: f64,
+    #[serde(default)]
+    pub cost_output: f64,
+    #[serde(default)]
+    pub cost_cache_read: f64,
+    #[serde(default)]
+    pub compat: std::collections::HashMap<String, serde_json::Value>,
 }
 
 // ============================================================================
@@ -1081,6 +1168,9 @@ pub async fn upsert_eavs_provider(
         .await
         .map_err(|e| ApiError::Internal(format!("Failed to read eavs config: {e}")))?;
 
+    let existing_providers = parse_existing_providers_config(&config_content);
+    let existing_provider = existing_providers.get(&request.name);
+
     // Build the provider section
     let env_key_name = format!("{}_API_KEY", request.name.to_uppercase().replace('-', "_"));
     let mut provider_toml = format!(
@@ -1107,19 +1197,50 @@ pub async fn upsert_eavs_provider(
         tokio::fs::write(env_path, &env_content)
             .await
             .map_err(|e| ApiError::Internal(format!("Failed to write eavs env: {e}")))?;
+    } else if let Some(existing_api_key_ref) =
+        existing_provider.and_then(|provider| provider.api_key_ref.as_ref())
+    {
+        // Preserve existing api_key reference when edit UI leaves API key blank.
+        provider_toml.push_str(&format!("api_key = \"{}\"\n", existing_api_key_ref));
     }
-    if let Some(ref base_url) = request.base_url {
+
+    let base_url = request
+        .base_url
+        .as_ref()
+        .or_else(|| existing_provider.and_then(|provider| provider.base_url.as_ref()));
+    if let Some(base_url) = base_url {
         provider_toml.push_str(&format!("base_url = \"{}\"\n", base_url));
     }
-    if let Some(ref api_version) = request.api_version {
+
+    let api_version = request
+        .api_version
+        .as_ref()
+        .or_else(|| existing_provider.and_then(|provider| provider.api_version.as_ref()));
+    if let Some(api_version) = api_version {
         provider_toml.push_str(&format!("api_version = \"{}\"\n", api_version));
     }
-    if let Some(ref deployment) = request.deployment {
+
+    let deployment = request
+        .deployment
+        .as_ref()
+        .or_else(|| existing_provider.and_then(|provider| provider.deployment.as_ref()));
+    if let Some(deployment) = deployment {
         provider_toml.push_str(&format!("deployment = \"{}\"\n", deployment));
     }
 
+    let merged_models: Vec<UpsertModelEntry> = request
+        .models
+        .iter()
+        .map(|model| {
+            merge_model_with_existing(
+                model,
+                existing_provider.and_then(|provider| provider.models.get(&model.id)),
+            )
+        })
+        .collect();
+
     // Write model shortlist entries
-    for model in &request.models {
+    for model in &merged_models {
         provider_toml.push_str(&format!(
             "\n[[providers.{}.models]]\nid = \"{}\"\nname = \"{}\"\nreasoning = {}\n",
             request.name, model.id, model.name, model.reasoning,
@@ -1253,7 +1374,14 @@ pub async fn sync_all_models(
             if !linux_username.starts_with("oqto_") {
                 continue;
             }
-            match sync_eavs_models_json(eavs_client.as_ref(), linux_users, linux_username).await {
+            match sync_eavs_models_json(
+                eavs_client.as_ref(),
+                linux_users,
+                linux_username,
+                Some(&state.auto_rename_config),
+            )
+            .await
+            {
                 Ok(()) => synced += 1,
                 Err(e) => errors.push(format!("{}: {}", user.id, e)),
             }
@@ -1266,6 +1394,219 @@ pub async fn sync_all_models(
         "total": users.len(),
         "errors": errors,
     })))
+}
+
+#[derive(Debug, Clone, Default)]
+struct ExistingProviderConfig {
+    api_key_ref: Option<String>,
+    base_url: Option<String>,
+    api_version: Option<String>,
+    deployment: Option<String>,
+    models: std::collections::HashMap<String, UpsertModelEntry>,
+}
+
+fn merge_model_with_existing(
+    model: &UpsertModelEntry,
+    existing: Option<&UpsertModelEntry>,
+) -> UpsertModelEntry {
+    let mut merged = model.clone();
+
+    if let Some(existing) = existing {
+        if merged.name.is_empty() {
+            merged.name = existing.name.clone();
+        }
+        if merged.input.is_empty() {
+            merged.input = existing.input.clone();
+        }
+        if merged.context_window == 0 {
+            merged.context_window = existing.context_window;
+        }
+        if merged.max_tokens == 0 {
+            merged.max_tokens = existing.max_tokens;
+        }
+        if merged.cost_input == 0.0 {
+            merged.cost_input = existing.cost_input;
+        }
+        if merged.cost_output == 0.0 {
+            merged.cost_output = existing.cost_output;
+        }
+        if merged.cost_cache_read == 0.0 {
+            merged.cost_cache_read = existing.cost_cache_read;
+        }
+        if merged.compat.is_empty() {
+            merged.compat = existing.compat.clone();
+        }
+    }
+
+    merged
+}
+
+fn parse_existing_providers_config(
+    content: &str,
+) -> std::collections::HashMap<String, ExistingProviderConfig> {
+    let parsed: toml::Value = match content.parse() {
+        Ok(value) => value,
+        Err(err) => {
+            warn!(error = %err, "Failed to parse eavs config TOML");
+            return std::collections::HashMap::new();
+        }
+    };
+
+    let providers = match parsed.get("providers").and_then(|value| value.as_table()) {
+        Some(table) => table,
+        None => return std::collections::HashMap::new(),
+    };
+
+    providers
+        .iter()
+        .filter_map(|(provider_name, provider_value)| {
+            let provider_table = provider_value.as_table()?;
+
+            let mut provider = ExistingProviderConfig {
+                api_key_ref: provider_table
+                    .get("api_key")
+                    .and_then(|value| value.as_str())
+                    .map(str::to_string),
+                base_url: provider_table
+                    .get("base_url")
+                    .and_then(|value| value.as_str())
+                    .map(str::to_string),
+                api_version: provider_table
+                    .get("api_version")
+                    .and_then(|value| value.as_str())
+                    .map(str::to_string),
+                deployment: provider_table
+                    .get("deployment")
+                    .and_then(|value| value.as_str())
+                    .map(str::to_string),
+                ..ExistingProviderConfig::default()
+            };
+
+            if let Some(models) = provider_table
+                .get("models")
+                .and_then(|value| value.as_array())
+            {
+                for model in models {
+                    let Some(model_table) = model.as_table() else {
+                        continue;
+                    };
+
+                    let Some(id) = model_table
+                        .get("id")
+                        .and_then(|value| value.as_str())
+                        .map(str::to_string)
+                    else {
+                        continue;
+                    };
+
+                    let name = model_table
+                        .get("name")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or_default()
+                        .to_string();
+                    let reasoning = model_table
+                        .get("reasoning")
+                        .and_then(|value| value.as_bool())
+                        .unwrap_or(false);
+                    let input = model_table
+                        .get("input")
+                        .and_then(|value| value.as_array())
+                        .map(|values| {
+                            values
+                                .iter()
+                                .filter_map(|value| value.as_str().map(str::to_string))
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
+                    let context_window = model_table
+                        .get("context_window")
+                        .and_then(|value| value.as_integer())
+                        .and_then(|value| u64::try_from(value).ok())
+                        .unwrap_or(0);
+                    let max_tokens = model_table
+                        .get("max_tokens")
+                        .and_then(|value| value.as_integer())
+                        .and_then(|value| u64::try_from(value).ok())
+                        .unwrap_or(0);
+
+                    let (cost_input, cost_output, cost_cache_read) = model_table
+                        .get("cost")
+                        .and_then(|value| value.as_table())
+                        .map(|cost| {
+                            (
+                                cost.get("input")
+                                    .and_then(toml_value_to_f64)
+                                    .unwrap_or_default(),
+                                cost.get("output")
+                                    .and_then(toml_value_to_f64)
+                                    .unwrap_or_default(),
+                                cost.get("cache_read")
+                                    .and_then(toml_value_to_f64)
+                                    .unwrap_or_default(),
+                            )
+                        })
+                        .unwrap_or((0.0, 0.0, 0.0));
+
+                    let compat = model_table
+                        .get("compat")
+                        .and_then(|value| value.as_table())
+                        .map(|compat_table| {
+                            compat_table
+                                .iter()
+                                .filter_map(|(k, v)| {
+                                    toml_to_json_value(v).map(|json| (k.clone(), json))
+                                })
+                                .collect::<std::collections::HashMap<_, _>>()
+                        })
+                        .unwrap_or_default();
+
+                    provider.models.insert(
+                        id.clone(),
+                        UpsertModelEntry {
+                            id,
+                            name,
+                            reasoning,
+                            input,
+                            context_window,
+                            max_tokens,
+                            cost_input,
+                            cost_output,
+                            cost_cache_read,
+                            compat,
+                        },
+                    );
+                }
+            }
+
+            Some((provider_name.to_string(), provider))
+        })
+        .collect()
+}
+
+fn toml_value_to_f64(value: &toml::Value) -> Option<f64> {
+    if let Some(float_value) = value.as_float() {
+        return Some(float_value);
+    }
+    value.as_integer().map(|int_value| int_value as f64)
+}
+
+fn toml_to_json_value(value: &toml::Value) -> Option<serde_json::Value> {
+    match value {
+        toml::Value::String(s) => Some(serde_json::Value::String(s.clone())),
+        toml::Value::Integer(i) => Some(serde_json::Value::Number((*i).into())),
+        toml::Value::Float(f) => serde_json::Number::from_f64(*f).map(serde_json::Value::Number),
+        toml::Value::Boolean(b) => Some(serde_json::Value::Bool(*b)),
+        toml::Value::Datetime(dt) => Some(serde_json::Value::String(dt.to_string())),
+        toml::Value::Array(arr) => Some(serde_json::Value::Array(
+            arr.iter().filter_map(toml_to_json_value).collect(),
+        )),
+        toml::Value::Table(table) => Some(serde_json::Value::Object(
+            table
+                .iter()
+                .filter_map(|(k, v)| toml_to_json_value(v).map(|json| (k.clone(), json)))
+                .collect(),
+        )),
+    }
 }
 
 /// Remove a [section.name] block from a TOML string.

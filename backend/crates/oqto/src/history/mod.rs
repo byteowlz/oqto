@@ -12,10 +12,7 @@ pub mod service;
 // Re-export commonly used types and functions
 #[allow(unused_imports)]
 pub use canon::{legacy_message_to_canon, legacy_messages_to_canon};
-pub use models::{
-    ChatMessage, ChatMessagePart, ChatSession, ChatSessionStats, HstrySearchHit, MessageInfo,
-    MessageSummary, MessageTime, PartInfo, SessionInfo, SessionTime, TokenUsage, ToolState,
-};
+pub use models::{ChatMessage, ChatMessagePart, ChatSession, HstrySearchHit};
 
 #[allow(unused_imports)]
 pub use repository::{
@@ -31,6 +28,6 @@ pub use service::{
 };
 
 pub use hstry::{
-    HstryClient, HstryServiceConfig, HstryServiceManager, SerializableMessage,
-    agent_message_to_proto, agent_message_to_proto_with_client_id, proto_messages_to_serializable,
+    HstryClient, HstryEndpoint, HstryServiceConfig, HstryServiceManager,
+    agent_message_to_proto_with_client_id,
 };

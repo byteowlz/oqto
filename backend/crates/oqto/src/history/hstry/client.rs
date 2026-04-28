@@ -4,6 +4,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
+use tokio::process::Command;
 use tokio::sync::RwLock;
 use tonic::transport::Channel;
 
@@ -19,26 +20,48 @@ use hstry_core::service::{ReadServiceClient, WriteServiceClient};
 /// Source ID for Pi sessions (used for deduplication with hstry daemon).
 pub const PI_SOURCE_ID: &str = "pi";
 
+/// Explicit endpoint for connecting to a hstry daemon.
+///
+/// In single-user mode, `Discover` probes the local user's Unix socket and
+/// port-file. In multi-user mode, the runner must supply a per-user endpoint
+/// so connections never cross user boundaries.
+#[derive(Debug, Clone, Default)]
+pub enum HstryEndpoint {
+    /// Auto-discover from the current user's XDG paths (single-user only).
+    #[default]
+    Discover,
+    /// Connect via a specific Unix socket path.
+    UnixSocket(std::path::PathBuf),
+    /// Connect via a specific TCP port on localhost.
+    Tcp(u16),
+}
+
 /// Client for communicating with hstry daemon's WriteService.
 #[derive(Clone)]
 pub struct HstryClient {
     write: Arc<RwLock<Option<WriteServiceClient<Channel>>>>,
     read: Arc<RwLock<Option<ReadServiceClient<Channel>>>>,
+    endpoint: HstryEndpoint,
 }
 
 impl HstryClient {
-    /// Create a new client (not connected yet).
+    /// Create a new client with auto-discovery (single-user mode).
     pub fn new() -> Self {
+        Self::with_endpoint(HstryEndpoint::Discover)
+    }
+
+    /// Create a new client with an explicit endpoint.
+    pub fn with_endpoint(endpoint: HstryEndpoint) -> Self {
         Self {
             write: Arc::new(RwLock::new(None)),
             read: Arc::new(RwLock::new(None)),
+            endpoint,
         }
     }
 
-    /// Connect to the hstry daemon.
-    /// Tries Unix socket first, then falls back to TCP.
+    /// Connect to the hstry daemon using the configured endpoint.
     pub async fn connect(&self) -> Result<()> {
-        let channel = try_connect_channel().await?;
+        let channel = connect_for_endpoint(&self.endpoint).await?;
         *self.write.write().await = Some(WriteServiceClient::new(channel.clone()));
         *self.read.write().await = Some(ReadServiceClient::new(channel));
         Ok(())
@@ -59,7 +82,7 @@ impl HstryClient {
         }
 
         // Try to connect
-        let channel = try_connect_channel().await?;
+        let channel = connect_for_endpoint(&self.endpoint).await?;
         let write_client = WriteServiceClient::new(channel.clone());
         *self.write.write().await = Some(write_client.clone());
         if self.read.read().await.is_none() {
@@ -76,7 +99,7 @@ impl HstryClient {
             }
         }
 
-        let channel = try_connect_channel().await?;
+        let channel = connect_for_endpoint(&self.endpoint).await?;
         let read_client = ReadServiceClient::new(channel.clone());
         *self.read.write().await = Some(read_client.clone());
         if self.write.read().await.is_none() {
@@ -124,6 +147,11 @@ impl HstryClient {
                 harness,
                 readable_id,
                 platform_id,
+                version: 0,
+                message_count: 0,
+                parent_conversation_id: None,
+                parent_message_idx: None,
+                fork_type: None,
             }),
             messages,
         };
@@ -149,6 +177,39 @@ impl HstryClient {
         harness: Option<String>,
         platform_id: Option<String>,
     ) -> Result<UpdateConversationResponse> {
+        self.update_conversation_full(
+            session_id,
+            title,
+            workspace,
+            model,
+            provider,
+            metadata_json,
+            readable_id,
+            harness,
+            platform_id,
+            None,
+            None,
+            None,
+        )
+        .await
+    }
+
+    /// Full update including session tree fields.
+    pub async fn update_conversation_full(
+        &self,
+        session_id: &str,
+        title: Option<String>,
+        workspace: Option<String>,
+        model: Option<String>,
+        provider: Option<String>,
+        metadata_json: Option<String>,
+        readable_id: Option<String>,
+        harness: Option<String>,
+        platform_id: Option<String>,
+        parent_conversation_id: Option<String>,
+        parent_message_idx: Option<i32>,
+        fork_type: Option<String>,
+    ) -> Result<UpdateConversationResponse> {
         let mut client = self.ensure_write_connected().await?;
 
         let request = UpdateConversationRequest {
@@ -162,6 +223,9 @@ impl HstryClient {
             readable_id,
             harness,
             platform_id,
+            parent_conversation_id,
+            parent_message_idx,
+            fork_type,
         };
 
         let response = client
@@ -170,6 +234,30 @@ impl HstryClient {
             .context("Failed to update conversation in hstry")?;
 
         Ok(response.into_inner())
+    }
+
+    /// Set parent-child relationship for a forked conversation.
+    pub async fn set_conversation_parent(
+        &self,
+        session_id: &str,
+        parent_session_id: &str,
+        fork_type: Option<&str>,
+    ) -> Result<UpdateConversationResponse> {
+        self.update_conversation_full(
+            session_id,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(parent_session_id.to_string()),
+            None,
+            fork_type.map(String::from),
+        )
+        .await
     }
 
     /// Delete a conversation and all its messages.
@@ -349,10 +437,62 @@ impl Default for HstryClient {
     }
 }
 
-/// Try to connect to hstry daemon.
-/// Attempts Unix socket first, then falls back to TCP.
-async fn try_connect_channel() -> Result<Channel> {
-    // Try Unix socket first (more secure)
+/// Connect to hstry using an explicit endpoint strategy.
+///
+/// If connection fails for local-user endpoints (Discover/UnixSocket), we
+/// attempt a one-shot `hstry service start` self-heal and retry once.
+async fn connect_for_endpoint(endpoint: &HstryEndpoint) -> Result<Channel> {
+    match endpoint {
+        HstryEndpoint::UnixSocket(path) => {
+            #[cfg(unix)]
+            {
+                match try_connect_unix(path).await {
+                    Ok(channel) => Ok(channel),
+                    Err(first_err) => {
+                        tracing::warn!(
+                            "Failed to connect to hstry via Unix socket {:?}: {}. Attempting service start + retry.",
+                            path,
+                            first_err
+                        );
+                        let _ = attempt_start_hstry_service().await;
+                        try_connect_unix(path).await.with_context(|| {
+                            format!(
+                                "Failed to connect to hstry via Unix socket {:?} after restart attempt",
+                                path
+                            )
+                        })
+                    }
+                }
+            }
+            #[cfg(not(unix))]
+            {
+                let _ = path;
+                anyhow::bail!("Unix socket endpoint not supported on this platform")
+            }
+        }
+        HstryEndpoint::Tcp(port) => try_connect_tcp(*port).await,
+        HstryEndpoint::Discover => match discover_and_connect().await {
+            Ok(channel) => Ok(channel),
+            Err(first_err) => {
+                tracing::warn!(
+                    "Failed to auto-discover/connect hstry: {}. Attempting service start + retry.",
+                    first_err
+                );
+                let _ = attempt_start_hstry_service().await;
+                discover_and_connect().await.with_context(|| {
+                    format!(
+                        "hstry discover/connect failed after restart attempt: {}",
+                        first_err
+                    )
+                })
+            }
+        },
+    }
+}
+
+/// Auto-discover the local user's hstry daemon (single-user mode).
+/// Tries Unix socket first, then port-file TCP.
+async fn discover_and_connect() -> Result<Channel> {
     #[cfg(unix)]
     {
         let socket_path = hstry_core::paths::service_socket_path();
@@ -364,19 +504,84 @@ async fn try_connect_channel() -> Result<Channel> {
         }
     }
 
-    // Fall back to TCP
     let port = read_port().ok_or_else(|| {
         anyhow::anyhow!(
-            "hstry daemon not running. Start it with `hstry service start` or ensure it's running."
+            "hstry daemon not running (no port file or socket). \
+             Start it with `hstry service start` or ensure it's running."
         )
     })?;
 
+    try_connect_tcp(port).await
+}
+
+/// Best-effort local self-heal for hstry availability.
+async fn attempt_start_hstry_service() -> Result<()> {
+    let output = Command::new("hstry")
+        .args(["service", "start"])
+        .output()
+        .await
+        .context("failed to execute `hstry service start`")?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let combined = format!("{}{}", stdout, stderr).to_lowercase();
+
+    if output.status.success() || combined.contains("already running") {
+        return Ok(());
+    }
+
+    if combined.contains("adapter version mismatch") {
+        tracing::warn!("hstry adapter version mismatch detected; running `hstry adapters update`");
+        let upd = Command::new("hstry")
+            .args(["adapters", "update"])
+            .output()
+            .await
+            .context("failed to execute `hstry adapters update`")?;
+        if !upd.status.success() {
+            let uout = String::from_utf8_lossy(&upd.stdout);
+            let uerr = String::from_utf8_lossy(&upd.stderr);
+            anyhow::bail!(
+                "`hstry adapters update` failed (exit={}): {}{}",
+                upd.status,
+                uout,
+                uerr
+            );
+        }
+
+        let retry = Command::new("hstry")
+            .args(["service", "start"])
+            .output()
+            .await
+            .context("failed to execute retry `hstry service start`")?;
+        let rout = String::from_utf8_lossy(&retry.stdout);
+        let rerr = String::from_utf8_lossy(&retry.stderr);
+        let rcombined = format!("{}{}", rout, rerr).to_lowercase();
+        if retry.status.success() || rcombined.contains("already running") {
+            return Ok(());
+        }
+
+        anyhow::bail!(
+            "`hstry service start` failed after adapters update (exit={}): {}{}",
+            retry.status,
+            rout,
+            rerr
+        );
+    }
+
+    anyhow::bail!(
+        "`hstry service start` failed (exit={}): {}{}",
+        output.status,
+        stdout,
+        stderr
+    )
+}
+
+async fn try_connect_tcp(port: u16) -> Result<Channel> {
     let endpoint = format!("http://127.0.0.1:{port}");
     let channel = Channel::from_shared(endpoint)?
         .connect()
         .await
         .context("Failed to connect to hstry daemon via TCP")?;
-
     tracing::debug!("Connected to hstry via TCP on port {port}");
     Ok(channel)
 }

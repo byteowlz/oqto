@@ -627,8 +627,8 @@ mod tests {
     #[tokio::test]
     async fn test_local_runtime_health_check_with_invalid_binaries() {
         let config = LocalRuntimeConfig {
-            fileserver_binary: "definitely-not-a-real-fileserver-binary".to_string(),
-            ttyd_binary: "definitely-not-a-real-ttyd-binary".to_string(),
+            fileserver_binary: "definitely-not-a-real-binary".to_string(),
+            ttyd_binary: "also-not-a-real-binary".to_string(),
             ..Default::default()
         };
 

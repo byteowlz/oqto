@@ -1,0 +1,32 @@
+# Oqto sandbox template: strict-infra
+# Use for security-critical repos (runner/auth/secrets/control-plane).
+# Recommended targets: oqto/oqto_refactor, kyz, eavs, hstry, mmry, agntz, trx.
+
+"$schema" = "https://raw.githubusercontent.com/byteowlz/schemas/refs/heads/main/oqto/oqto.sandbox.schema.json"
+
+enabled = true
+profile = "strict"
+
+# Linux hardening
+no_new_privs = true
+drop_all_caps = true
+disable_userns = true
+assert_userns_disabled = true
+
+# Rollout-safe defaults: audit first, then switch to enforce after validation.
+landlock_mode = "audit"
+seccomp_mode = "audit"
+# seccomp_bpf_path = "/etc/oqto/seccomp/default.bpf"
+
+# The built-in "strict" profile already:
+# - deny_read = ["~/.ssh", "~/.gnupg", "~/.aws", "~/.config", ...]
+# - allow_write = ["/tmp", "~/.pi"]  (NOTE: ~/.pi is required for Pi session files)
+# - extra_ro_bind = ["~/.config/oqto"]  (selective read access under blocked ~/.config)
+#
+# You can add MORE restrictions here, but cannot remove the base restrictions.
+# These paths are ADDED to the base deny_read:
+deny_read = ["~/.kube"]
+
+# If you override allow_write, you MUST include ~/.pi for Pi to function.
+# This intersects with the profile's allow_write, so both must allow a path.
+# allow_write = ["/tmp", "~/.pi"]

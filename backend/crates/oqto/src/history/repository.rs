@@ -39,10 +39,10 @@ pub fn hstry_db_path() -> Option<PathBuf> {
     }
 
     // Try reading the database path from hstry config
-    if let Some(path) = hstry_db_path_from_config() {
-        if path.exists() {
-            return Some(path);
-        }
+    if let Some(path) = hstry_db_path_from_config()
+        && path.exists()
+    {
+        return Some(path);
     }
 
     let default = dirs::data_local_dir()
@@ -121,6 +121,167 @@ pub fn hstry_timestamp_ms(value: Option<i64>) -> Option<i64> {
     value.map(|ts| ts * 1000)
 }
 
+/// Resolve a conversation deterministically from a session identifier.
+///
+/// Priority order:
+/// 1) Exact identity match (external_id/platform_id/internal id)
+/// 2) Readable slug match only if it resolves to exactly one conversation
+///
+/// We intentionally fail closed on ambiguous readable_id matches to avoid
+/// cross-session message bleed/disappearing timelines.
+pub(crate) async fn resolve_conversation_identity(
+    pool: &sqlx::SqlitePool,
+    session_id: &str,
+    workspace: Option<&str>,
+) -> Result<Option<(String, Option<String>)>> {
+    let exact = if let Some(workspace) = workspace {
+        sqlx::query(
+            r#"
+            SELECT c.id,
+                   c.external_id,
+                   c.platform_id,
+                   (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) AS msg_count
+            FROM conversations c
+            WHERE (c.external_id = ? OR c.platform_id = ? OR c.id = ?)
+              AND c.workspace = ?
+            ORDER BY COALESCE(c.updated_at, c.created_at) DESC
+            LIMIT 1
+            "#,
+        )
+        .bind(session_id)
+        .bind(session_id)
+        .bind(session_id)
+        .bind(workspace)
+        .fetch_optional(pool)
+        .await?
+    } else {
+        sqlx::query(
+            r#"
+            SELECT c.id,
+                   c.external_id,
+                   c.platform_id,
+                   (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) AS msg_count
+            FROM conversations c
+            WHERE c.external_id = ? OR c.platform_id = ? OR c.id = ?
+            ORDER BY COALESCE(c.updated_at, c.created_at) DESC
+            LIMIT 1
+            "#,
+        )
+        .bind(session_id)
+        .bind(session_id)
+        .bind(session_id)
+        .fetch_optional(pool)
+        .await?
+    };
+
+    if let Some(row) = exact {
+        let id: String = row.get("id");
+        let external_id: Option<String> = row.get("external_id");
+        let platform_id: Option<String> = row.try_get("platform_id").ok();
+        let msg_count: i64 = row.try_get("msg_count").unwrap_or(0);
+
+        // Guard against stale/empty external-id aliases: if the exact match has
+        // no messages but shares a platform_id with a populated conversation,
+        // prefer the populated sibling to avoid transient "vanished history".
+        if msg_count == 0
+            && let Some(pid) = platform_id.as_deref().filter(|p| !p.is_empty())
+        {
+            let sibling = if let Some(workspace) = workspace {
+                sqlx::query(
+                    r#"
+                    SELECT c.id,
+                           c.external_id,
+                           (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) AS msg_count
+                    FROM conversations c
+                    WHERE c.platform_id = ?
+                      AND c.workspace = ?
+                    ORDER BY msg_count DESC, COALESCE(c.updated_at, c.created_at) DESC
+                    LIMIT 1
+                    "#,
+                )
+                .bind(pid)
+                .bind(workspace)
+                .fetch_optional(pool)
+                .await?
+            } else {
+                sqlx::query(
+                    r#"
+                    SELECT c.id,
+                           c.external_id,
+                           (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) AS msg_count
+                    FROM conversations c
+                    WHERE c.platform_id = ?
+                    ORDER BY msg_count DESC, COALESCE(c.updated_at, c.created_at) DESC
+                    LIMIT 1
+                    "#,
+                )
+                .bind(pid)
+                .fetch_optional(pool)
+                .await?
+            };
+
+            if let Some(sibling_row) = sibling {
+                let sibling_count: i64 = sibling_row.try_get("msg_count").unwrap_or(0);
+                if sibling_count > 0 {
+                    let sid: String = sibling_row.get("id");
+                    let sexternal: Option<String> = sibling_row.get("external_id");
+                    return Ok(Some((sid, sexternal)));
+                }
+            }
+        }
+
+        return Ok(Some((id, external_id)));
+    }
+
+    let readable_rows = if let Some(workspace) = workspace {
+        sqlx::query(
+            r#"
+            SELECT id, external_id
+            FROM conversations
+            WHERE readable_id = ?
+              AND workspace = ?
+            ORDER BY COALESCE(updated_at, created_at) DESC
+            LIMIT 2
+            "#,
+        )
+        .bind(session_id)
+        .bind(workspace)
+        .fetch_all(pool)
+        .await?
+    } else {
+        sqlx::query(
+            r#"
+            SELECT id, external_id
+            FROM conversations
+            WHERE readable_id = ?
+            ORDER BY COALESCE(updated_at, created_at) DESC
+            LIMIT 2
+            "#,
+        )
+        .bind(session_id)
+        .fetch_all(pool)
+        .await?
+    };
+
+    match readable_rows.len() {
+        0 => Ok(None),
+        1 => {
+            let row = &readable_rows[0];
+            let id: String = row.get("id");
+            let external_id: Option<String> = row.get("external_id");
+            Ok(Some((id, external_id)))
+        }
+        _ => {
+            tracing::warn!(
+                session_id,
+                workspace = workspace.unwrap_or("<any>"),
+                "Ambiguous readable_id during conversation resolution; refusing fallback"
+            );
+            Ok(None)
+        }
+    }
+}
+
 pub async fn list_sessions_from_hstry(db_path: &Path) -> Result<Vec<ChatSession>> {
     let pool = open_hstry_pool(db_path).await?;
     let rows = sqlx::query(
@@ -150,17 +311,20 @@ pub async fn list_sessions_from_hstry(db_path: &Path) -> Result<Vec<ChatSession>
         let project_name = project_name_from_path(&workspace_path);
         let readable_id = readable_id.unwrap_or_default();
 
+        let parent_id = None;
+        let is_child = false;
+
         sessions.push(ChatSession {
             id: session_id,
             readable_id,
             title,
-            parent_id: None,
+            parent_id,
             workspace_path,
             project_name,
             created_at: created_at * 1000,
             updated_at: updated_at.map(|ts| ts * 1000).unwrap_or(created_at * 1000),
             version: None,
-            is_child: false,
+            is_child,
             source_path: None,
             stats: None,
             model,
@@ -176,6 +340,12 @@ pub async fn get_session_from_hstry(
     db_path: &Path,
 ) -> Result<Option<ChatSession>> {
     let pool = open_hstry_pool(db_path).await?;
+    let Some((conversation_id, _resolved_external_id)) =
+        resolve_conversation_identity(&pool, session_id, None).await?
+    else {
+        return Ok(None);
+    };
+
     let row = sqlx::query(
         r#"
         SELECT
@@ -190,23 +360,13 @@ pub async fn get_session_from_hstry(
             c.model,
             c.provider
         FROM conversations c
-        LEFT JOIN messages m ON m.conversation_id = c.id
-        WHERE c.external_id = ? OR c.platform_id = ? OR c.readable_id = ? OR c.id = ?
-        GROUP BY c.id
-        ORDER BY COUNT(m.id) DESC, COALESCE(c.updated_at, c.created_at) DESC
+        WHERE c.id = ?
         LIMIT 1
         "#,
     )
-    .bind(session_id)
-    .bind(session_id)
-    .bind(session_id)
-    .bind(session_id)
-    .fetch_optional(&pool)
+    .bind(&conversation_id)
+    .fetch_one(&pool)
     .await?;
-
-    let Some(row) = row else {
-        return Ok(None);
-    };
 
     let id: String = row.get("id");
     let external_id: Option<String> = row.get("external_id");
@@ -227,17 +387,20 @@ pub async fn get_session_from_hstry(
     let project_name = project_name_from_path(&workspace_path);
     let readable_id = readable_id.unwrap_or_default();
 
+    let parent_id = None;
+    let is_child = false;
+
     Ok(Some(ChatSession {
         id: session_id,
         readable_id,
         title,
-        parent_id: None,
+        parent_id,
         workspace_path,
         project_name,
         created_at: created_at * 1000,
         updated_at: updated_at.map(|ts| ts * 1000).unwrap_or(created_at * 1000),
         version: None,
-        is_child: false,
+        is_child,
         source_path: None,
         stats: None,
         model,
@@ -250,28 +413,11 @@ pub async fn get_session_messages_from_hstry(
     db_path: &Path,
 ) -> Result<Vec<ChatMessage>> {
     let pool = open_hstry_pool(db_path).await?;
-    let conversation_row = sqlx::query(
-        r#"
-        SELECT c.id
-        FROM conversations c
-        LEFT JOIN messages m ON m.conversation_id = c.id
-        WHERE c.external_id = ? OR c.platform_id = ? OR c.readable_id = ? OR c.id = ?
-        GROUP BY c.id
-        ORDER BY COUNT(m.id) DESC, COALESCE(c.updated_at, c.created_at) DESC
-        LIMIT 1
-        "#,
-    )
-    .bind(session_id)
-    .bind(session_id)
-    .bind(session_id)
-    .bind(session_id)
-    .fetch_optional(&pool)
-    .await?;
-
-    let Some(conversation_row) = conversation_row else {
+    let Some((conversation_id, _resolved_external_id)) =
+        resolve_conversation_identity(&pool, session_id, None).await?
+    else {
         return Ok(Vec::new());
     };
-    let conversation_id: String = conversation_row.get("id");
 
     let rows = sqlx::query(
         r#"
@@ -338,180 +484,94 @@ fn hstry_parts_to_chat_parts(
 ) -> Vec<ChatMessagePart> {
     let mut parts = Vec::new();
 
+    if let Some(parts_json) = parts_json
+        && let Ok(canon_parts) = serde_json::from_str::<Vec<crate::canon::CanonPart>>(parts_json)
+    {
+        for (idx, part) in canon_parts.into_iter().enumerate() {
+            let id = format!("{message_id}-part-{idx}");
+            match part {
+                crate::canon::CanonPart::Text { text, .. } => parts.push(ChatMessagePart {
+                    id,
+                    part_type: "text".to_string(),
+                    text: Some(text),
+                    text_html: None,
+                    tool_name: None,
+                    tool_call_id: None,
+                    tool_input: None,
+                    tool_output: None,
+                    tool_status: None,
+                    tool_title: None,
+                }),
+                crate::canon::CanonPart::Thinking { text, .. } => parts.push(ChatMessagePart {
+                    id,
+                    part_type: "thinking".to_string(),
+                    text: Some(text),
+                    text_html: None,
+                    tool_name: None,
+                    tool_call_id: None,
+                    tool_input: None,
+                    tool_output: None,
+                    tool_status: None,
+                    tool_title: None,
+                }),
+                crate::canon::CanonPart::ToolCall {
+                    name,
+                    input,
+                    status,
+                    tool_call_id,
+                    ..
+                } => parts.push(ChatMessagePart {
+                    id,
+                    part_type: "tool_call".to_string(),
+                    text: None,
+                    text_html: None,
+                    tool_name: Some(name),
+                    tool_call_id: Some(tool_call_id),
+                    tool_input: input,
+                    tool_output: None,
+                    tool_status: Some(match status {
+                        crate::canon::ToolStatus::Pending => "pending".to_string(),
+                        crate::canon::ToolStatus::Running => "running".to_string(),
+                        crate::canon::ToolStatus::Success => "success".to_string(),
+                        crate::canon::ToolStatus::Error => "error".to_string(),
+                    }),
+                    tool_title: None,
+                }),
+                crate::canon::CanonPart::ToolResult {
+                    name,
+                    output,
+                    is_error,
+                    title,
+                    tool_call_id,
+                    ..
+                } => parts.push(ChatMessagePart {
+                    id,
+                    part_type: "tool_result".to_string(),
+                    text: None,
+                    text_html: None,
+                    tool_name: name,
+                    tool_call_id: Some(tool_call_id),
+                    tool_input: None,
+                    tool_output: output.as_ref().map(|v| v.to_string()),
+                    tool_status: Some(if is_error { "error" } else { "success" }.to_string()),
+                    tool_title: title,
+                }),
+                _ => {}
+            }
+        }
+        if !parts.is_empty() {
+            return parts;
+        }
+    }
+
     if let Some(parts_json) = parts_json {
-        if let Ok(canon_parts) = serde_json::from_str::<Vec<crate::canon::CanonPart>>(parts_json) {
-            for (idx, part) in canon_parts.into_iter().enumerate() {
-                let id = format!("{message_id}-part-{idx}");
-                match part {
-                    crate::canon::CanonPart::Text { text, .. } => parts.push(ChatMessagePart {
-                        id,
-                        part_type: "text".to_string(),
-                        text: Some(text),
-                        text_html: None,
-                        tool_name: None,
-                        tool_call_id: None,
-                        tool_input: None,
-                        tool_output: None,
-                        tool_status: None,
-                        tool_title: None,
-                    }),
-                    crate::canon::CanonPart::Thinking { text, .. } => parts.push(ChatMessagePart {
-                        id,
-                        part_type: "thinking".to_string(),
-                        text: Some(text),
-                        text_html: None,
-                        tool_name: None,
-                        tool_call_id: None,
-                        tool_input: None,
-                        tool_output: None,
-                        tool_status: None,
-                        tool_title: None,
-                    }),
-                    crate::canon::CanonPart::ToolCall {
-                        name,
-                        input,
-                        status,
-                        tool_call_id,
-                        ..
-                    } => parts.push(ChatMessagePart {
-                        id,
-                        part_type: "tool_call".to_string(),
-                        text: None,
-                        text_html: None,
-                        tool_name: Some(name),
-                        tool_call_id: Some(tool_call_id),
-                        tool_input: input,
-                        tool_output: None,
-                        tool_status: Some(match status {
-                            crate::canon::ToolStatus::Pending => "pending".to_string(),
-                            crate::canon::ToolStatus::Running => "running".to_string(),
-                            crate::canon::ToolStatus::Success => "success".to_string(),
-                            crate::canon::ToolStatus::Error => "error".to_string(),
-                        }),
-                        tool_title: None,
-                    }),
-                    crate::canon::CanonPart::ToolResult {
-                        name,
-                        output,
-                        is_error,
-                        title,
-                        tool_call_id,
-                        ..
-                    } => parts.push(ChatMessagePart {
-                        id,
-                        part_type: "tool_result".to_string(),
-                        text: None,
-                        text_html: None,
-                        tool_name: name,
-                        tool_call_id: Some(tool_call_id),
-                        tool_input: None,
-                        tool_output: output.as_ref().map(|v| v.to_string()),
-                        tool_status: Some(if is_error { "error" } else { "success" }.to_string()),
-                        tool_title: title,
-                    }),
-                    _ => {}
-                }
-            }
-            return parts;
-        }
+        append_parts_from_json_array_stream(&mut parts, parts_json, message_id);
+    }
 
-        if let Ok(serde_json::Value::Array(values)) = serde_json::from_str(parts_json) {
-            for (idx, value) in values.iter().enumerate() {
-                let serde_json::Value::Object(obj) = value else {
-                    continue;
-                };
-                let part_type_raw = obj.get("type").and_then(|v| v.as_str()).unwrap_or("text");
-                let part_type = part_type_raw.to_string();
-                let normalized_type = part_type_raw.to_lowercase();
-                let tool_call_id = obj
-                    .get("toolCallId")
-                    .or_else(|| obj.get("tool_call_id"))
-                    .and_then(|v| v.as_str())
-                    .map(|v| v.to_string());
-                let tool_name = obj
-                    .get("name")
-                    .and_then(|v| v.as_str())
-                    .map(|v| v.to_string());
-                let text = match part_type.as_str() {
-                    "text" | "thinking" => obj.get("text").and_then(|v| v.as_str()),
-                    "status" | "error" => obj
-                        .get("message")
-                        .or_else(|| obj.get("text"))
-                        .and_then(|v| v.as_str()),
-                    _ => None,
-                };
-
-                let is_tool_call = matches!(
-                    normalized_type.as_str(),
-                    "tool_call" | "tool_use" | "toolcall"
-                );
-                let is_tool_result =
-                    matches!(normalized_type.as_str(), "tool_result" | "toolresult");
-
-                if is_tool_call {
-                    let input = obj.get("input").or_else(|| obj.get("arguments")).cloned();
-                    let call_id = tool_call_id.or_else(|| {
-                        obj.get("id")
-                            .and_then(|v| v.as_str())
-                            .map(|v| v.to_string())
-                    });
-                    parts.push(ChatMessagePart {
-                        id: format!("{message_id}-part-{idx}"),
-                        part_type: "tool_call".to_string(),
-                        text: None,
-                        text_html: None,
-                        tool_name: tool_name.clone(),
-                        tool_call_id: call_id,
-                        tool_input: input,
-                        tool_output: None,
-                        tool_status: None,
-                        tool_title: None,
-                    });
-                    continue;
-                }
-
-                if is_tool_result {
-                    let output = obj.get("output").cloned();
-                    let call_id = tool_call_id.or_else(|| {
-                        obj.get("id")
-                            .and_then(|v| v.as_str())
-                            .map(|v| v.to_string())
-                    });
-                    parts.push(ChatMessagePart {
-                        id: format!("{message_id}-part-{idx}"),
-                        part_type: "tool_result".to_string(),
-                        text: None,
-                        text_html: None,
-                        tool_name,
-                        tool_call_id: call_id,
-                        tool_input: None,
-                        tool_output: output.map(|v| v.to_string()),
-                        tool_status: obj
-                            .get("is_error")
-                            .and_then(|v| v.as_bool())
-                            .map(|is_error| if is_error { "error" } else { "success" }.to_string()),
-                        tool_title: None,
-                    });
-                    continue;
-                }
-
-                if let Some(text) = text {
-                    parts.push(ChatMessagePart {
-                        id: format!("{message_id}-part-{idx}"),
-                        part_type,
-                        text: Some(text.to_string()),
-                        text_html: None,
-                        tool_name: None,
-                        tool_call_id: None,
-                        tool_input: None,
-                        tool_output: None,
-                        tool_status: None,
-                        tool_title: None,
-                    });
-                }
-            }
-            return parts;
-        }
+    // Repair malformed legacy payloads where multiple JSON arrays were
+    // concatenated into `content` (e.g. "[... ]\n\n[ ... ]").
+    if parts.is_empty() {
+        append_parts_from_json_array_stream(&mut parts, content, message_id);
     }
 
     if parts.is_empty() && !content.trim().is_empty() {
@@ -530,6 +590,130 @@ fn hstry_parts_to_chat_parts(
     }
 
     parts
+}
+
+fn parse_json_array_stream(raw: &str) -> Vec<Vec<serde_json::Value>> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Vec::new();
+    }
+
+    let mut arrays = Vec::new();
+    let deserializer = serde_json::Deserializer::from_str(trimmed);
+    for value in deserializer.into_iter::<serde_json::Value>() {
+        match value {
+            Ok(serde_json::Value::Array(values)) => arrays.push(values),
+            Ok(_) => {}
+            Err(_) => return Vec::new(),
+        }
+    }
+    arrays
+}
+
+fn append_parts_from_json_array_stream(
+    parts: &mut Vec<ChatMessagePart>,
+    raw: &str,
+    message_id: &str,
+) {
+    let mut idx = parts.len();
+    for values in parse_json_array_stream(raw) {
+        for value in values {
+            let serde_json::Value::Object(obj) = value else {
+                continue;
+            };
+            let part_type_raw = obj.get("type").and_then(|v| v.as_str()).unwrap_or("text");
+            let part_type = part_type_raw.to_string();
+            let normalized_type = part_type_raw.to_lowercase();
+            let tool_call_id = obj
+                .get("toolCallId")
+                .or_else(|| obj.get("tool_call_id"))
+                .and_then(|v| v.as_str())
+                .map(|v| v.to_string());
+            let tool_name = obj
+                .get("name")
+                .and_then(|v| v.as_str())
+                .map(|v| v.to_string());
+            let text = match part_type.as_str() {
+                "text" | "thinking" => obj.get("text").and_then(|v| v.as_str()),
+                "status" | "error" => obj
+                    .get("message")
+                    .or_else(|| obj.get("text"))
+                    .and_then(|v| v.as_str()),
+                _ => None,
+            };
+
+            let is_tool_call = matches!(
+                normalized_type.as_str(),
+                "tool_call" | "tool_use" | "toolcall"
+            );
+            let is_tool_result = matches!(normalized_type.as_str(), "tool_result" | "toolresult");
+
+            if is_tool_call {
+                let input = obj.get("input").or_else(|| obj.get("arguments")).cloned();
+                let call_id = tool_call_id.or_else(|| {
+                    obj.get("id")
+                        .and_then(|v| v.as_str())
+                        .map(|v| v.to_string())
+                });
+                parts.push(ChatMessagePart {
+                    id: format!("{message_id}-part-{idx}"),
+                    part_type: "tool_call".to_string(),
+                    text: None,
+                    text_html: None,
+                    tool_name: tool_name.clone(),
+                    tool_call_id: call_id,
+                    tool_input: input,
+                    tool_output: None,
+                    tool_status: None,
+                    tool_title: None,
+                });
+                idx += 1;
+                continue;
+            }
+
+            if is_tool_result {
+                let output = obj.get("output").cloned();
+                let call_id = tool_call_id.or_else(|| {
+                    obj.get("id")
+                        .and_then(|v| v.as_str())
+                        .map(|v| v.to_string())
+                });
+                parts.push(ChatMessagePart {
+                    id: format!("{message_id}-part-{idx}"),
+                    part_type: "tool_result".to_string(),
+                    text: None,
+                    text_html: None,
+                    tool_name,
+                    tool_call_id: call_id,
+                    tool_input: None,
+                    tool_output: output.map(|v| v.to_string()),
+                    tool_status: obj
+                        .get("is_error")
+                        .and_then(|v| v.as_bool())
+                        .map(|is_error| if is_error { "error" } else { "success" }.to_string()),
+                    tool_title: None,
+                });
+                idx += 1;
+                continue;
+            }
+
+            if let Some(text) = text {
+                parts.push(ChatMessagePart {
+                    id: format!("{message_id}-part-{idx}"),
+                    part_type,
+                    text: Some(text.to_string()),
+                    text_html: None,
+                    tool_name: None,
+                    tool_call_id: None,
+                    tool_input: None,
+                    tool_output: None,
+                    tool_status: None,
+                    tool_title: None,
+                });
+                idx += 1;
+            }
+        }
+    }
 }
 
 // ============================================================================
@@ -1208,6 +1392,47 @@ fn load_message_parts(message_id: &str, session_id: &str, part_dir: &Path) -> Ve
 mod tests {
     use super::*;
 
+    async fn setup_test_pool() -> sqlx::SqlitePool {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("in-memory sqlite should open");
+
+        sqlx::query(
+            r#"
+            CREATE TABLE conversations (
+                id TEXT PRIMARY KEY,
+                source_id TEXT NOT NULL,
+                external_id TEXT,
+                platform_id TEXT,
+                readable_id TEXT,
+                workspace TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER
+            )
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .expect("schema should create");
+
+        sqlx::query(
+            r#"
+            CREATE TABLE messages (
+                id TEXT PRIMARY KEY,
+                conversation_id TEXT NOT NULL,
+                idx INTEGER NOT NULL
+            )
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .expect("messages schema should create");
+
+        pool
+    }
+
     #[test]
     fn test_project_name_from_path() {
         assert_eq!(project_name_from_path("global"), "Global");
@@ -1221,5 +1446,148 @@ mod tests {
             project_name_from_path("/home/wismut/byteowlz/govnr"),
             "govnr"
         );
+    }
+
+    #[tokio::test]
+    async fn resolve_conversation_identity_prefers_exact_external_id() {
+        let pool = setup_test_pool().await;
+
+        sqlx::query(
+            "INSERT INTO conversations (id, source_id, external_id, platform_id, readable_id, workspace, created_at, updated_at) VALUES (?, 'pi', ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("conv_new")
+        .bind("oqto-1")
+        .bind("oqto-1")
+        .bind("same-readable")
+        .bind("/ws")
+        .bind(10_i64)
+        .bind(20_i64)
+        .execute(&pool)
+        .await
+        .expect("insert conv_new");
+
+        sqlx::query(
+            "INSERT INTO conversations (id, source_id, external_id, platform_id, readable_id, workspace, created_at, updated_at) VALUES (?, 'pi', ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("conv_old")
+        .bind("oqto-2")
+        .bind("oqto-2")
+        .bind("same-readable")
+        .bind("/ws")
+        .bind(1_i64)
+        .bind(2_i64)
+        .execute(&pool)
+        .await
+        .expect("insert conv_old");
+
+        let resolved = resolve_conversation_identity(&pool, "oqto-1", None)
+            .await
+            .expect("resolve should succeed");
+        assert_eq!(
+            resolved,
+            Some(("conv_new".to_string(), Some("oqto-1".to_string())))
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_conversation_identity_rejects_ambiguous_readable_id() {
+        let pool = setup_test_pool().await;
+
+        sqlx::query(
+            "INSERT INTO conversations (id, source_id, external_id, platform_id, readable_id, workspace, created_at, updated_at) VALUES (?, 'pi', ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("conv_a")
+        .bind("oqto-a")
+        .bind("oqto-a")
+        .bind("dupe-readable")
+        .bind("/ws")
+        .bind(1_i64)
+        .bind(3_i64)
+        .execute(&pool)
+        .await
+        .expect("insert conv_a");
+
+        sqlx::query(
+            "INSERT INTO conversations (id, source_id, external_id, platform_id, readable_id, workspace, created_at, updated_at) VALUES (?, 'pi', ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("conv_b")
+        .bind("oqto-b")
+        .bind("oqto-b")
+        .bind("dupe-readable")
+        .bind("/ws")
+        .bind(2_i64)
+        .bind(4_i64)
+        .execute(&pool)
+        .await
+        .expect("insert conv_b");
+
+        let resolved = resolve_conversation_identity(&pool, "dupe-readable", None)
+            .await
+            .expect("resolve should succeed");
+        assert!(resolved.is_none(), "ambiguous readable_id must fail closed");
+    }
+
+    #[tokio::test]
+    async fn resolve_conversation_identity_prefers_populated_platform_sibling_for_empty_exact() {
+        let pool = setup_test_pool().await;
+
+        sqlx::query(
+            "INSERT INTO conversations (id, source_id, external_id, platform_id, readable_id, workspace, created_at, updated_at) VALUES (?, 'pi', ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("conv_empty")
+        .bind("pi-empty")
+        .bind("oqto-shared")
+        .bind("readable")
+        .bind("/ws")
+        .bind(10_i64)
+        .bind(20_i64)
+        .execute(&pool)
+        .await
+        .expect("insert empty conversation");
+
+        sqlx::query(
+            "INSERT INTO conversations (id, source_id, external_id, platform_id, readable_id, workspace, created_at, updated_at) VALUES (?, 'pi', ?, ?, ?, ?, ?, ?)",
+        )
+        .bind("conv_full")
+        .bind("pi-full")
+        .bind("oqto-shared")
+        .bind("readable")
+        .bind("/ws")
+        .bind(9_i64)
+        .bind(19_i64)
+        .execute(&pool)
+        .await
+        .expect("insert full conversation");
+
+        sqlx::query("INSERT INTO messages (id, conversation_id, idx) VALUES (?, ?, ?)")
+            .bind("m1")
+            .bind("conv_full")
+            .bind(0_i64)
+            .execute(&pool)
+            .await
+            .expect("insert message");
+
+        let resolved = resolve_conversation_identity(&pool, "pi-empty", Some("/ws"))
+            .await
+            .expect("resolve should succeed");
+
+        assert_eq!(
+            resolved,
+            Some(("conv_full".to_string(), Some("pi-full".to_string())))
+        );
+    }
+
+    #[test]
+    fn hstry_parts_to_chat_parts_repairs_multi_array_content_blob() {
+        let content = r#"[{"type":"thinking","thinking":"hidden"},{"type":"text","text":"hello"}]
+
+[{"type":"text","text":"world"}]"#;
+
+        let parts = hstry_parts_to_chat_parts(None, content, "msg_1");
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0].part_type, "text");
+        assert_eq!(parts[0].text.as_deref(), Some("hello"));
+        assert_eq!(parts[1].part_type, "text");
+        assert_eq!(parts[1].text.as_deref(), Some("world"));
     }
 }

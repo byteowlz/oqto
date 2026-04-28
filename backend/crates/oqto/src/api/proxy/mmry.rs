@@ -2,6 +2,8 @@
 //!
 //! Handles proxying requests to per-session or shared mmry instances.
 
+use std::path::{Path as FsPath, PathBuf};
+
 use axum::{
     body::Body,
     extract::{Path, Query, State},
@@ -145,15 +147,111 @@ fn get_mmry_store_name(session: &Session) -> Option<String> {
 }
 
 /// Derive mmry store name directly from a workspace path.
+///
+/// Resolution order:
+/// 1. Git remote repository name (origin URL basename without `.git`), if available.
+/// 2. Workspace directory basename as fallback.
 fn get_mmry_store_name_from_path(workspace_path: &str) -> Option<String> {
     let trimmed = workspace_path.trim_end_matches('/');
     if trimmed.is_empty() {
         return None;
     }
-    std::path::Path::new(trimmed)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .map(|s| s.to_string())
+
+    let workspace = FsPath::new(trimmed);
+    infer_git_remote_store_name(workspace).or_else(|| {
+        workspace
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(str::to_string)
+    })
+}
+
+fn infer_git_remote_store_name(workspace: &FsPath) -> Option<String> {
+    let git_dir = find_git_dir(workspace)?;
+    let config_path = git_dir.join("config");
+    let config = std::fs::read_to_string(config_path).ok()?;
+    parse_origin_remote_repo_name(&config)
+}
+
+fn find_git_dir(workspace: &FsPath) -> Option<PathBuf> {
+    let mut current = Some(workspace);
+
+    while let Some(path) = current {
+        let dot_git = path.join(".git");
+
+        if dot_git.is_dir() {
+            return Some(dot_git);
+        }
+
+        if dot_git.is_file() {
+            return resolve_git_file_indirection(path, &dot_git);
+        }
+
+        current = path.parent();
+    }
+
+    None
+}
+
+fn resolve_git_file_indirection(worktree_path: &FsPath, dot_git_file: &FsPath) -> Option<PathBuf> {
+    let content = std::fs::read_to_string(dot_git_file).ok()?;
+    let gitdir_value = content
+        .lines()
+        .find_map(|line| line.strip_prefix("gitdir:"))?
+        .trim();
+
+    if gitdir_value.is_empty() {
+        return None;
+    }
+
+    let gitdir = PathBuf::from(gitdir_value);
+    if gitdir.is_absolute() {
+        Some(gitdir)
+    } else {
+        Some(worktree_path.join(gitdir))
+    }
+}
+
+fn parse_origin_remote_repo_name(config: &str) -> Option<String> {
+    let mut in_origin_section = false;
+
+    for line in config.lines() {
+        let trimmed = line.trim();
+
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            in_origin_section = trimmed == "[remote \"origin\"]";
+            continue;
+        }
+
+        if !in_origin_section {
+            continue;
+        }
+
+        if let Some(url) = trimmed.strip_prefix("url") {
+            let url = url.trim_start_matches([' ', '=']).trim();
+            if let Some(repo) = repo_name_from_remote_url(url) {
+                return Some(repo);
+            }
+        }
+    }
+
+    None
+}
+
+fn repo_name_from_remote_url(url: &str) -> Option<String> {
+    let trimmed = url.trim().trim_end_matches('/');
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let last_segment = trimmed.rsplit(['/', ':']).next()?.trim();
+    let repo = last_segment.strip_suffix(".git").unwrap_or(last_segment);
+
+    if repo.is_empty() {
+        None
+    } else {
+        Some(repo.to_string())
+    }
 }
 
 fn resolve_mmry_store_for_workspace(query: &WorkspaceProxyQuery) -> Option<String> {
@@ -521,4 +619,62 @@ pub async fn proxy_mmry_memory_for_workspace(
         store.as_deref(),
     )
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use tempfile::tempdir;
+
+    use super::{get_mmry_store_name_from_path, parse_origin_remote_repo_name};
+
+    #[test]
+    fn parse_origin_remote_repo_name_supports_https_and_ssh() {
+        let https_config = r#"
+[core]
+    repositoryformatversion = 0
+[remote "origin"]
+    url = https://github.com/byteowlz/oqto.git
+    fetch = +refs/heads/*:refs/remotes/origin/*
+"#;
+        assert_eq!(
+            parse_origin_remote_repo_name(https_config),
+            Some("oqto".to_string())
+        );
+
+        let ssh_config = r#"
+[remote "origin"]
+    url = git@github.com:byteowlz/oqto.git
+"#;
+        assert_eq!(
+            parse_origin_remote_repo_name(ssh_config),
+            Some("oqto".to_string())
+        );
+    }
+
+    #[test]
+    fn store_name_prefers_git_remote_repo_name_over_directory_name() {
+        let dir = tempdir().expect("create tempdir");
+        let workspace = dir.path().join("oqto_refactor");
+        fs::create_dir_all(workspace.join(".git")).expect("create .git");
+        fs::write(
+            workspace.join(".git").join("config"),
+            "[remote \"origin\"]\n\turl = https://github.com/byteowlz/oqto.git\n",
+        )
+        .expect("write git config");
+
+        let store = get_mmry_store_name_from_path(&workspace.to_string_lossy());
+        assert_eq!(store, Some("oqto".to_string()));
+    }
+
+    #[test]
+    fn store_name_falls_back_to_directory_basename_when_no_git_remote() {
+        let dir = tempdir().expect("create tempdir");
+        let workspace = dir.path().join("oqto_refactor");
+        fs::create_dir_all(&workspace).expect("create workspace");
+
+        let store = get_mmry_store_name_from_path(&workspace.to_string_lossy());
+        assert_eq!(store, Some("oqto_refactor".to_string()));
+    }
 }

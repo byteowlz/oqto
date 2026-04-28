@@ -13,7 +13,7 @@
 //! - `trx`: TRX issue tracking
 //! - `misc`: Health checks, features, and utilities
 
-mod admin;
+pub(crate) mod admin;
 mod api_keys;
 mod auth;
 mod chat;
@@ -85,9 +85,7 @@ pub use invites::{
 };
 
 // TRX handlers and types
-pub use trx::{
-    close_trx_issue, create_trx_issue, get_trx_issue, list_trx_issues, sync_trx, update_trx_issue,
-};
+pub use trx::{close_trx_issue, create_trx_issue, list_trx_issues, sync_trx, update_trx_issue};
 
 // Misc handlers and types
 pub use misc::{

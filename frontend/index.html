@@ -27,8 +27,6 @@
           document.body.style.background = isDark ? "#000" : "#fff";
           const appRoot = document.getElementById("root");
           if (appRoot) appRoot.style.background = isDark ? "#000" : "#fff";
-          const logo = document.getElementById("preload-logo");
-          if (logo) logo.src = isDark ? "/oqto_logo_white.svg" : "/oqto_logo_black.svg";
         });
       })();
     </script>
@@ -91,7 +89,21 @@
   <body class="font-mono antialiased bg-background text-foreground">
     <div id="root">
       <div id="preload" aria-live="polite">
-        <img id="preload-logo" src="/oqto_logo_white.svg" alt="Oqto" />
+        <img
+          id="preload-logo"
+          alt="Oqto"
+          src="/oqto_logo_black.svg"
+          data-dark-src="/oqto_logo_white.svg"
+          data-light-src="/oqto_logo_black.svg"
+        />
+        <script>
+          (function () {
+            const logo = document.getElementById("preload-logo");
+            if (!logo) return;
+            const isDark = document.documentElement.classList.contains("dark");
+            logo.src = isDark ? logo.dataset.darkSrc : logo.dataset.lightSrc;
+          })();
+        </script>
       </div>
     </div>
     <script type="module" src="/src/main.tsx"></script>

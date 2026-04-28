@@ -85,8 +85,47 @@ async fn resolve_session_target(
     }
 
     if multi_user {
-        // Self-heal path: discover shared workspace target if canonical metadata
-        // is missing for this session (e.g. legacy rows or transient gaps).
+        // Self-heal path #1: probe the personal runner first for legacy sessions
+        // that predate canonical session_target records.
+        let personal_target = ExecutionTarget::Personal;
+        if let Some(runner) = resolve_runner_for_target(state, user_id, &personal_target)
+            .await
+            .map_err(|e| ApiError::internal(format!("runner target resolution: {}", e)))?
+        {
+            match runner.get_workspace_chat_session(session_id).await {
+                Ok(response) if response.session.is_some() => {
+                    let workspace_path = response.session.map(|s| s.workspace_path);
+                    let record = SessionTargetRecord {
+                        session_id: session_id.to_string(),
+                        owner_user_id: Some(user_id.to_string()),
+                        scope: SessionTargetScope::Personal,
+                        workspace_id: None,
+                        workspace_path,
+                    };
+                    if let Err(err) = state.session_targets.upsert(&record).await {
+                        tracing::warn!(
+                            session_id = %session_id,
+                            user_id = %user_id,
+                            error = %err,
+                            "failed to persist discovered personal session target"
+                        );
+                    }
+                    return Ok(ExecutionTarget::Personal);
+                }
+                Ok(_) => {}
+                Err(err) => {
+                    tracing::debug!(
+                        session_id = %session_id,
+                        user_id = %user_id,
+                        error = %err,
+                        "personal session probe failed"
+                    );
+                }
+            }
+        }
+
+        // Self-heal path #2: discover shared workspace target if canonical metadata
+        // is missing for this session.
         if let Some(sw) = state.shared_workspaces.as_ref() {
             let workspaces = sw
                 .list_for_user(user_id)
@@ -148,50 +187,26 @@ async fn resolve_session_target(
     Ok(ExecutionTarget::Personal)
 }
 
-/// Create a runner client for a user based on configured runner endpoint.
+/// Create a runner client for a user based on socket pattern.
 /// Returns the runner client if available, None for direct access.
 pub(crate) fn get_runner_for_user(
     state: &AppState,
     user_id: &str,
 ) -> Option<crate::runner::client::RunnerClient> {
-    // Need runner endpoint for multi-user mode
-    let _endpoint = state.runner_endpoint.as_ref()?;
+    // Need runner socket pattern for multi-user mode
+    let pattern = state.runner_socket_pattern.as_ref()?;
 
     // The socket path uses the linux_username (e.g., oqto_hansgerd-vyon),
     // not the platform user_id (e.g., hansgerd-vYoN).
-    let effective_user = if let Some(ref lu) = state.linux_users {
-        lu.linux_username(user_id)
-    } else {
-        user_id.to_string()
-    };
+    let effective_user = state.effective_linux_username(user_id);
 
-    match state.runner_client_for_linux_user(&effective_user) {
-        Ok(Some(client)) => Some(client),
-        Ok(None) => None,
+    match crate::runner::client::RunnerClient::for_user_with_pattern(&effective_user, pattern) {
+        Ok(client) => Some(client),
         Err(e) => {
             tracing::warn!(
                 user_id = %user_id,
                 error = %e,
                 "Failed to create runner client"
-            );
-            None
-        }
-    }
-}
-
-/// Create a runner client for a specific Linux username (e.g. shared workspace user).
-fn get_runner_for_linux_user(
-    state: &AppState,
-    linux_username: &str,
-) -> Option<crate::runner::client::RunnerClient> {
-    match state.runner_client_for_linux_user(linux_username) {
-        Ok(Some(client)) => Some(client),
-        Ok(None) => None,
-        Err(e) => {
-            tracing::warn!(
-                linux_user = %linux_username,
-                error = %e,
-                "Failed to create runner client for linux user"
             );
             None
         }
@@ -380,29 +395,14 @@ pub async fn list_chat_history(
         .map_err(|e| ApiError::internal(format!("runner target resolution: {}", e)))?
         .ok_or_else(|| ApiError::internal("Runner is required but not available for this user."))?;
 
-    let mut response = runner
+    let response = runner
         .list_workspace_chat_sessions(query.workspace.clone(), query.include_children, query.limit)
         .await
         .map_err(|e| ApiError::internal(format!("runner list sessions failed: {}", e)))?;
 
-    // Auto-repair can be expensive on large workspaces. Only trigger it when
-    // the initial list is empty for unfiltered queries.
-    if query.workspace.is_none()
-        && response.sessions.is_empty()
-        && runner
-            .repair_workspace_chat_history(Some(10_000), None)
-            .await
-            .is_ok()
-        && let Ok(repaired_response) = runner
-            .list_workspace_chat_sessions(
-                query.workspace.clone(),
-                query.include_children,
-                query.limit,
-            )
-            .await
-    {
-        response = repaired_response;
-    }
+    // Important UX invariant: chat history endpoint must return immediately.
+    // Heavy JSONL->hstry repair is handled explicitly via backfill endpoint,
+    // never on this hot path.
 
     let mut sessions: Vec<ChatSession> = response
         .sessions
@@ -787,7 +787,7 @@ fn convert_runner_response(
             tokens_output: m.tokens_output,
             tokens_reasoning: m.tokens_reasoning,
             cost: m.cost,
-            client_id: None,
+            client_id: m.client_id,
             parts: m
                 .parts
                 .into_iter()
@@ -841,28 +841,16 @@ pub async fn get_chat_messages(
         .ok_or_else(|| ApiError::internal("Runner is required but not available for this user."))?;
 
     let response = runner
-        .get_workspace_chat_session_messages(&session_id, query.render, None)
+        .get_workspace_chat_session_messages(
+            &session_id,
+            query.render,
+            None,
+            crate::runner::protocol::WorkspaceChatMessagesSource::Authoritative,
+        )
         .await
         .map_err(|e| ApiError::internal(format!("runner get messages failed: {}", e)))?;
 
-    let mut canonical = convert_runner_response(response);
-    if canonical.is_empty() {
-        // Keep fallback bounded to avoid long blocking requests on large
-        // workspaces when a single session is missing from hstry.
-        if let Err(err) = runner.repair_workspace_chat_history(Some(500), None).await {
-            tracing::debug!(
-                user_id = %user.id(),
-                session_id = %session_id,
-                error = %err,
-                "workspace chat history repair before get_chat_messages failed"
-            );
-        } else if let Ok(repaired_response) = runner
-            .get_workspace_chat_session_messages(&session_id, query.render, None)
-            .await
-        {
-            canonical = convert_runner_response(repaired_response);
-        }
-    }
+    let canonical = convert_runner_response(response);
 
     info!(
         user_id = %user.id(),

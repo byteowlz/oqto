@@ -1,23 +1,16 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::Parser;
 use log::{info, warn};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-mod agent_browser;
-mod daemon;
-mod history;
-mod pi;
-mod pi_manager;
-mod pi_translator;
-mod protocol;
-
-use crate::daemon::bootstrap::{
+use oqto::history::HstryEndpoint;
+use oqto::runner::daemon::bootstrap::{
     get_default_socket_path, load_env_file, load_sandbox_config, log_sandbox_state,
 };
-use crate::daemon::config::RunnerUserConfig;
-use crate::daemon::server::{Runner, SessionBinaries};
-use crate::pi_manager::{PiManagerConfig, PiSessionManager};
+use oqto::runner::daemon::config::RunnerUserConfig;
+use oqto::runner::daemon::server::{Runner, SessionBinaries};
+use oqto::runner::pi_manager::{PiManagerConfig, PiSessionManager};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -27,12 +20,8 @@ use crate::pi_manager::{PiManagerConfig, PiSessionManager};
 struct Args {
     #[arg(short, long)]
     config: Option<PathBuf>,
-    #[arg(short, long, conflicts_with = "listen")]
+    #[arg(short, long)]
     socket: Option<PathBuf>,
-    #[arg(long, value_name = "HOST:PORT", conflicts_with = "socket")]
-    listen: Option<String>,
-    #[arg(long, env = "RUNNER_AUTH_TOKEN")]
-    auth_token: Option<String>,
     #[arg(long)]
     sandbox_config: Option<PathBuf>,
     #[arg(long)]
@@ -52,8 +41,13 @@ async fn main() -> Result<()> {
     let log_level = if args.verbose { "debug" } else { "info" };
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(log_level)).init();
 
-    let sandbox_config = load_sandbox_config(args.no_sandbox, args.sandbox_config.as_ref())?;
-    log_sandbox_state(&sandbox_config);
+    let socket_path = args.socket.unwrap_or_else(get_default_socket_path);
+
+    info!(
+        "Starting oqto-runner (user={}, socket={:?})",
+        std::env::var("USER").unwrap_or_else(|_| "unknown".to_string()),
+        socket_path
+    );
 
     load_env_file();
 
@@ -62,9 +56,38 @@ async fn main() -> Result<()> {
         .map(RunnerUserConfig::load_from_path)
         .unwrap_or_else(RunnerUserConfig::load);
 
+    let allow_user_sandbox_fallback = user_config.single_user && !user_config.linux_users_enabled;
+
+    #[cfg(not(target_os = "linux"))]
+    if !args.no_sandbox && !allow_user_sandbox_fallback {
+        bail!(
+            "Sandbox v2 hardened runner mode requires Linux. \
+             Non-Linux platforms are supported only for single-user/dev fallback mode."
+        );
+    }
+
+    let sandbox_config = load_sandbox_config(
+        args.no_sandbox,
+        args.sandbox_config.as_ref(),
+        allow_user_sandbox_fallback,
+    )?;
+    log_sandbox_state(&sandbox_config);
+
+    #[cfg(not(target_os = "linux"))]
+    if sandbox_config.is_some() {
+        warn!(
+            "Sandbox enabled on non-Linux platform: running reduced-security mode \
+             (no bwrap/seccomp/landlock/cgroups parity)."
+        );
+    }
+
     info!(
-        "User config: workspace_dir={:?}, pi_sessions={:?}, memories={:?}",
-        user_config.workspace_dir, user_config.pi_sessions_dir, user_config.memories_dir
+        "User config: workspace_dir={:?}, pi_sessions={:?}, memories={:?}, single_user={}, linux_users_enabled={}",
+        user_config.workspace_dir,
+        user_config.pi_sessions_dir,
+        user_config.memories_dir,
+        user_config.single_user,
+        user_config.linux_users_enabled
     );
 
     let binaries = SessionBinaries {
@@ -80,19 +103,40 @@ async fn main() -> Result<()> {
             let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
             PathBuf::from(home).join(".local").join("state")
         });
+    // Resolve hstry endpoint.
+    // Multi-user: each runner runs as the target Linux user. hstry always uses
+    //   a per-user Unix socket, so we resolve service_socket_path() which is
+    //   scoped to that user's XDG_RUNTIME_DIR.
+    // Single-user: same logic -- prefer socket, fall back to Discover which
+    //   probes socket then port-file.
+    let hstry_endpoint = {
+        let socket_path = hstry_core::paths::service_socket_path();
+        if socket_path.exists() {
+            info!("hstry endpoint: Unix socket {:?}", socket_path);
+            HstryEndpoint::UnixSocket(socket_path)
+        } else {
+            info!(
+                "hstry Unix socket not found at {:?}; using auto-discover",
+                socket_path
+            );
+            HstryEndpoint::Discover
+        }
+    };
+
     let pi_config = PiManagerConfig {
         pi_binary: PathBuf::from(&user_config.pi_binary),
         default_cwd: user_config.workspace_dir.clone(),
         idle_timeout_secs: 300,
         cleanup_interval_secs: 60,
         hstry_db_path: {
-            let db_path = history::hstry_db_path();
+            let db_path = oqto::history::hstry_db_path();
             match &db_path {
                 Some(p) => info!("hstry DB found: {}", p.display()),
                 None => warn!("hstry DB not found -- chat history persistence disabled"),
             }
             db_path
         },
+        hstry_endpoint,
         sandbox_config: sandbox_config.clone(),
         runner_id: user_config.runner_id.clone(),
         model_cache_dir: Some(state_dir.join("oqto").join("model-cache")),
@@ -105,24 +149,5 @@ async fn main() -> Result<()> {
     });
 
     let runner = Runner::new(sandbox_config, binaries, user_config, pi_manager);
-
-    if let Some(listen_addr) = args.listen {
-        let auth_token = args.auth_token.with_context(
-            || "RUNNER_AUTH_TOKEN (or --auth-token) is required when --listen is used",
-        )?;
-        info!(
-            "Starting oqto-runner (user={}, listen={})",
-            std::env::var("USER").unwrap_or_else(|_| "unknown".to_string()),
-            listen_addr
-        );
-        runner.run_tcp(&listen_addr, auth_token).await
-    } else {
-        let socket_path = args.socket.unwrap_or_else(get_default_socket_path);
-        info!(
-            "Starting oqto-runner (user={}, socket={:?})",
-            std::env::var("USER").unwrap_or_else(|_| "unknown".to_string()),
-            socket_path
-        );
-        runner.run(&socket_path).await
-    }
+    runner.run(&socket_path).await
 }

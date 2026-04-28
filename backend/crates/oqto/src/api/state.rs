@@ -14,7 +14,6 @@ use tracing::{debug, warn};
 
 use crate::history::HstryClient;
 use crate::local::UserSldrManager;
-use crate::runner::client::{RunnerClient, RunnerEndpointPattern};
 
 use super::a2ui::PendingA2uiRequests;
 
@@ -319,8 +318,8 @@ pub struct AppState {
     pub max_proxy_body_bytes: usize,
     /// Linux user isolation configuration (for multi-user mode).
     pub linux_users: Option<LinuxUsersConfig>,
-    /// Runner endpoint pattern for multi-user mode.
-    pub runner_endpoint: Option<RunnerEndpointPattern>,
+    /// Runner socket pattern for multi-user mode (e.g., "/run/oqto/runner-sockets/{user}/oqto-runner.sock").
+    pub runner_socket_pattern: Option<String>,
     /// Persistent mapping from chat session ID to canonical execution target.
     pub session_targets: Arc<SessionTargetRepository>,
     /// hstry client for unified chat history persistence.
@@ -335,6 +334,9 @@ pub struct AppState {
     pub eavs_config: Option<EavsConfigPaths>,
     /// Whether per-user EAVS OAuth logins are enabled.
     pub eavs_oauth_enabled: bool,
+    /// Auto-rename extension config (from [pi] section of config.toml).
+    /// Written to ~/.pi/agent/auto-rename.json during user provisioning.
+    pub auto_rename_config: serde_json::Value,
     /// Allowed OAuth providers (e.g., "anthropic", "openai-codex").
     pub eavs_oauth_providers: Vec<String>,
     /// Optional redirect URI used for OAuth flows (passed to EAVS).
@@ -405,7 +407,7 @@ impl AppState {
             pending_a2ui_requests: super::a2ui::new_pending_requests(),
             max_proxy_body_bytes,
             linux_users: None,
-            runner_endpoint: None,
+            runner_socket_pattern: None,
             session_targets: Arc::new(session_targets),
             hstry: None,
             audit_logger: None,
@@ -413,13 +415,18 @@ impl AppState {
             eavs_client: None,
             eavs_config: None,
             eavs_oauth_enabled: false,
+            auto_rename_config: serde_json::json!({}),
             eavs_oauth_providers: Vec::new(),
             eavs_oauth_redirect_uri: None,
             pi_default_provider: None,
             pi_default_model: None,
             pi_models_template_path: None,
             shared_workspaces: None,
-            bus: Arc::new(crate::bus::BusEngine::new(None)),
+            bus: {
+                let bus = Arc::new(crate::bus::BusEngine::new(None));
+                bus.start_background_flusher();
+                bus
+            },
             user_plane_metrics: Arc::new(crate::user_plane::UserPlaneMetrics::default()),
         }
     }
@@ -478,24 +485,10 @@ impl AppState {
         self
     }
 
-    /// Set the runner endpoint pattern for multi-user mode.
-    pub fn with_runner_endpoint(mut self, endpoint: Option<RunnerEndpointPattern>) -> Self {
-        self.runner_endpoint = endpoint;
+    /// Set the runner socket pattern for multi-user mode.
+    pub fn with_runner_socket_pattern(mut self, pattern: Option<String>) -> Self {
+        self.runner_socket_pattern = pattern;
         self
-    }
-
-    /// Build a runner client for a concrete Linux username.
-    pub fn runner_client_for_linux_user(
-        &self,
-        linux_username: &str,
-    ) -> anyhow::Result<Option<RunnerClient>> {
-        match self.runner_endpoint.as_ref() {
-            Some(endpoint) => Ok(Some(RunnerClient::for_user_with_endpoint(
-                linux_username,
-                endpoint,
-            )?)),
-            None => Ok(None),
-        }
     }
 
     /// Set the onboarding service.
@@ -534,12 +527,20 @@ impl AppState {
         self
     }
 
+    /// Set the auto-rename extension config (from [pi] config section).
+    pub fn with_auto_rename_config(mut self, config: serde_json::Value) -> Self {
+        self.auto_rename_config = config;
+        self
+    }
+
     /// Set the shared workspace service.
     pub fn with_shared_workspaces(mut self, service: SharedWorkspaceService) -> Self {
         let sw = Arc::new(service);
         self.shared_workspaces = Some(sw.clone());
         // Rebuild bus engine with shared workspace access for membership checks
-        self.bus = Arc::new(crate::bus::BusEngine::new(Some(sw)));
+        let bus = Arc::new(crate::bus::BusEngine::new(Some(sw)));
+        bus.start_background_flusher();
+        self.bus = bus;
         self
     }
 
@@ -554,5 +555,15 @@ impl AppState {
         self.pi_default_model = model;
         self.pi_models_template_path = models_template;
         self
+    }
+
+    /// Returns true when Linux user isolation is enabled (multi-user mode).
+    pub fn user_isolation_enabled(&self) -> bool {
+        crate::identity::runtime::user_isolation_enabled(self.linux_users.as_ref())
+    }
+
+    /// Resolve the effective Linux username used for runner/user-plane routing.
+    pub fn effective_linux_username(&self, user_id: &str) -> String {
+        crate::identity::runtime::effective_linux_username(self.linux_users.as_ref(), user_id)
     }
 }

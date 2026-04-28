@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# pi-askpass — SUDO_ASKPASS helper for agent sessions without a controlling TTY.
+#
+# Usage:
+#   1. Install:   install -m 755 pi-askpass ~/.local/bin/pi-askpass
+#   2. Export in your shell rc (bashrc/zshrc):
+#        export SUDO_ASKPASS="$HOME/.local/bin/pi-askpass"
+#   3. Agents invoke:   sudo -A <command>
+#
+# Prompt delivery, in order of preference:
+#   1. systemd-ask-password    — broadcasts to any running password agent
+#                                (GNOME/Plasma on a desktop session already
+#                                run one; on a headless box, start one in a
+#                                tmux pane:  systemd-tty-ask-password-agent --watch)
+#   2. zenity / kdialog        — GUI popup when DISPLAY/WAYLAND_DISPLAY is set
+#   3. ksshaskpass / x11-ssh-askpass — legacy GUI helpers
+#
+# If none are available the script fails loudly so sudo reports a clear error
+# instead of silently hanging.
+
+set -euo pipefail
+
+PROMPT="${1:-[sudo] password for $USER:}"
+
+# 1. systemd-ask-password — works with or without a GUI, as long as a
+#    password agent is running somewhere in the user's sessions.
+if command -v systemd-ask-password >/dev/null 2>&1; then
+    if pgrep -u "$USER" -f 'systemd-(tty-)?ask-password-agent' >/dev/null 2>&1 \
+       || [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
+        exec systemd-ask-password --timeout=120 --no-tty "$PROMPT"
+    fi
+fi
+
+# 2. GUI dialogs
+if [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
+    if command -v zenity >/dev/null 2>&1; then
+        exec zenity --password --title="sudo: $USER" 2>/dev/null
+    fi
+    if command -v kdialog >/dev/null 2>&1; then
+        exec kdialog --password "$PROMPT"
+    fi
+fi
+
+# 3. Legacy askpass helpers
+for helper in \
+    /usr/bin/ksshaskpass \
+    /usr/lib/ssh/x11-ssh-askpass \
+    /usr/lib/openssh/x11-ssh-askpass \
+    /usr/bin/x11-ssh-askpass; do
+    if [[ -x "$helper" ]]; then
+        exec "$helper" "$PROMPT"
+    fi
+done
+
+echo "pi-askpass: no usable password prompt method found." >&2
+echo "  - install zenity (pacman -S zenity) for a GUI prompt, or" >&2
+echo "  - run 'systemd-tty-ask-password-agent --watch' in a tmux pane" >&2
+exit 1

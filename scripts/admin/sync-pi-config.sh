@@ -6,7 +6,7 @@
 # needs to be reset/updated to match the platform defaults.
 #
 # Operations:
-#   - models.json:  Regenerated from EAVS provider catalog
+#   - models.json:  Synced via oqtoctl admin API (fallback: regenerate from EAVS catalog)
 #   - settings.json: Synced from a reference template (preserves user overrides unless --force)
 #   - AGENTS.md:    Synced from onboarding templates
 #
@@ -45,7 +45,7 @@ ${BOLD}USAGE${RESET}
 ${BOLD}OPTIONS${RESET}
     --user, -u <name>       Target a specific user
     --all, -a               Target all active users
-    --models                Only sync models.json (from EAVS catalog)
+    --models                Only sync models.json (via oqtoctl admin API)
     --settings              Only sync settings.json
     --agents                Only sync AGENTS.md
     --force                 Overwrite user customizations (default: skip if exists)
@@ -57,7 +57,8 @@ ${BOLD}OPTIONS${RESET}
 ${BOLD}NOTES${RESET}
     When no --models/--settings/--agents flag is given, all are synced.
     
-    models.json is always regenerated from the live EAVS catalog.
+    models.json is synced via oqtoctl admin API when available.
+    Fallback path regenerates from live EAVS catalog if admin API is unavailable.
     settings.json is only written if missing (unless --force).
     AGENTS.md is only written if missing (unless --force).
 
@@ -158,10 +159,61 @@ AGENTS
 
 # --- Sync functions -----------------------------------------------------------
 
+extract_user_eavs_key() {
+    local home="$1"
+    local env_candidates=(
+        "$home/.config/oqto/eavs.env"
+        "$home/.pi/agent/eavs.env"
+    )
+
+    local env_file
+    for env_file in "${env_candidates[@]}"; do
+        [[ -f "$env_file" ]] || continue
+        local key
+        key="$(grep '^EAVS_API_KEY=' "$env_file" 2>/dev/null | head -1 | cut -d= -f2-)"
+        if [[ -n "$key" ]]; then
+            echo "$key"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+sync_models_via_admin_api() {
+    local user_ref="$1"
+
+    if $DRY_RUN; then
+        log_step "[dry-run] Would run: oqtoctl user sync-configs --user $user_ref"
+        return 0
+    fi
+
+    # Prefer oqtoctl direct call. If admin socket requires root, retry with sudo.
+    if oqtoctl_cmd user sync-configs --user "$user_ref" >/dev/null 2>&1; then
+        return 0
+    fi
+
+    if sudo oqtoctl user sync-configs --user "$user_ref" >/dev/null 2>&1; then
+        return 0
+    fi
+
+    return 1
+}
+
 sync_models_for_user() {
     local user_id="$1"
     local linux_username="$2"
     local home="$3"
+
+    # Robust path: use oqto backend/admin API to sync per-user config.
+    # This embeds a real virtual key in models.json and avoids stale
+    # placeholder values like literal "EAVS_API_KEY".
+    if sync_models_via_admin_api "$user_id"; then
+        log_step "Updated models.json via oqtoctl user sync-configs"
+        return 0
+    fi
+
+    log_warn "oqtoctl user sync-configs failed for $linux_username; falling back to direct models.json generation"
 
     local eavs_base
     eavs_base="$(get_eavs_url)"
@@ -172,9 +224,17 @@ sync_models_for_user() {
         return 1
     }
 
-    # Generate models.json (same logic as eavs-provision)
+    local api_key
+    api_key="$(extract_user_eavs_key "$home" 2>/dev/null || true)"
+    if [[ -z "$api_key" ]]; then
+        api_key="EAVS_API_KEY"
+        log_warn "No per-user EAVS key found for $linux_username; models.json will contain placeholder key"
+        log_warn "Run: sudo oqtoctl user sync-configs --user $user_id"
+    fi
+
+    # Fallback generation mirrors eavs-provision shape but embeds concrete key when available.
     local models_json
-    models_json="$(echo "$providers" | jq --arg base "$eavs_base" '
+    models_json="$(echo "$providers" | jq --arg base "$eavs_base" --arg api_key "$api_key" '
     {
         providers: (
             [.[] | select(.name != "default" and .pi_api != null)] |
@@ -183,7 +243,7 @@ sync_models_for_user() {
                 value: {
                     baseUrl: ($base + "/" + .name + "/v1"),
                     api: .pi_api,
-                    apiKey: "EAVS_API_KEY",
+                    apiKey: $api_key,
                     models: [.models[] | {
                         id: .id,
                         name: (if .name == "" then .id else .name end),
@@ -210,7 +270,7 @@ sync_models_for_user() {
     fi
 
     write_file_as_user "$linux_username" "$home/.pi/agent" "models.json" "$models_json" "600"
-    log_step "Updated models.json"
+    log_step "Updated models.json (fallback path)"
 }
 
 sync_settings_for_user() {

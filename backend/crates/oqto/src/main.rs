@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::env;
 use std::fmt;
 use std::fs;
@@ -44,11 +45,13 @@ mod eavs;
 mod feedback;
 mod history;
 mod hstry;
+mod identity;
 mod invite;
 mod local;
 mod markdown;
 mod observability;
 mod onboarding;
+mod oqto_log;
 mod pi;
 // pi_workspace removed -- JSONL scanning replaced by hstry-only session listing
 mod projects;
@@ -67,7 +70,10 @@ mod ws;
 
 const APP_NAME: &str = "oqto";
 
+use crate::runner::router::{ExecutionTarget, resolve_runner_for_target};
+use crate::session_target::{SessionTargetRecord, SessionTargetScope};
 use crate::session_ui::SessionAutoAttachMode;
+use crate::user::UserListQuery;
 
 fn main() {
     if let Err(err) = try_main() {
@@ -267,6 +273,15 @@ enum RunnerCommand {
     Enable,
     /// Disable the runner systemd service
     Disable,
+    /// Run oqto-log migration/import tasks
+    MigrateOqtoLog(RunnerMigrateOqtoLogCommand),
+}
+
+#[derive(Debug, Clone, Args)]
+struct RunnerMigrateOqtoLogCommand {
+    /// Migration mode: bootstrap | validate | diagnostics | reindex | sync-identities
+    #[arg(long, default_value = "bootstrap")]
+    mode: String,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -557,14 +572,6 @@ impl Default for BackendConfig {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-enum RunnerTransportMode {
-    #[default]
-    Unix,
-    Tcp,
-}
-
 /// Runner configuration for user-plane isolation.
 ///
 /// When `user_plane_enabled` is true in local multi-user mode, all user data
@@ -585,121 +592,8 @@ struct RunnerConfig {
     /// - Only sandbox provides isolation (if enabled)
     user_plane_enabled: bool,
     /// Socket directory pattern for per-user runner sockets.
-    /// Used for Unix transport (and as fallback compatibility input).
     /// Default: /run/user/{uid}/oqto-runner.sock
     socket_pattern: Option<String>,
-    /// Runner transport used for user-plane routing.
-    transport: RunnerTransportMode,
-    /// TCP address pattern for per-user runner endpoints.
-    /// Supports `{user}` and `{uid}` placeholders, e.g. "runner-{user}:7001".
-    tcp_addr_pattern: Option<String>,
-    /// Optional static TCP auth token.
-    tcp_auth_token: Option<String>,
-    /// Environment variable name containing the TCP auth token.
-    /// Takes precedence over `tcp_auth_token`.
-    tcp_auth_token_env: Option<String>,
-}
-
-impl RunnerConfig {
-    fn resolve_endpoint_pattern(
-        &self,
-        local_fallback: Option<&str>,
-    ) -> Result<Option<runner::client::RunnerEndpointPattern>> {
-        match self.transport {
-            RunnerTransportMode::Unix => Ok(self
-                .socket_pattern
-                .as_deref()
-                .or(local_fallback)
-                .map(|p| runner::client::RunnerEndpointPattern::unix(p.to_string()))),
-            RunnerTransportMode::Tcp => {
-                let addr = self
-                    .tcp_addr_pattern
-                    .as_ref()
-                    .map(|s| s.trim())
-                    .filter(|s| !s.is_empty())
-                    .ok_or_else(|| {
-                        anyhow!(
-                            "backend.runner.transport=tcp requires backend.runner.tcp_addr_pattern"
-                        )
-                    })?;
-
-                let token = if let Some(env_name) = self
-                    .tcp_auth_token_env
-                    .as_ref()
-                    .map(|s| s.trim())
-                    .filter(|s| !s.is_empty())
-                {
-                    std::env::var(env_name).with_context(|| {
-                        format!(
-                            "backend.runner.tcp_auth_token_env '{}' is set but environment variable is missing",
-                            env_name
-                        )
-                    })?
-                } else {
-                    self.tcp_auth_token
-                        .as_ref()
-                        .map(|s| s.trim().to_string())
-                        .filter(|s| !s.is_empty())
-                        .ok_or_else(|| {
-                            anyhow!(
-                                "backend.runner.transport=tcp requires tcp_auth_token or tcp_auth_token_env"
-                            )
-                        })?
-                };
-
-                Ok(Some(runner::client::RunnerEndpointPattern::tcp(
-                    addr.to_string(),
-                    token,
-                )))
-            }
-        }
-    }
-}
-
-#[cfg(test)]
-mod runner_config_tests {
-    use super::{RunnerConfig, RunnerTransportMode};
-    use crate::runner::client::RunnerEndpointPattern;
-
-    #[test]
-    fn unix_transport_uses_local_fallback() {
-        let cfg = RunnerConfig::default();
-        let resolved = cfg
-            .resolve_endpoint_pattern(Some("/run/oqto/runner-sockets/{user}/oqto-runner.sock"))
-            .expect("resolve should succeed");
-        match resolved {
-            Some(RunnerEndpointPattern::Unix { socket_pattern }) => {
-                assert_eq!(
-                    socket_pattern,
-                    "/run/oqto/runner-sockets/{user}/oqto-runner.sock"
-                );
-            }
-            other => panic!("unexpected endpoint: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn tcp_transport_builds_endpoint_pattern() {
-        let cfg = RunnerConfig {
-            transport: RunnerTransportMode::Tcp,
-            tcp_addr_pattern: Some("runner-{user}.internal:7001".to_string()),
-            tcp_auth_token: Some("secret-token".to_string()),
-            ..RunnerConfig::default()
-        };
-        let resolved = cfg
-            .resolve_endpoint_pattern(None)
-            .expect("resolve should succeed");
-        match resolved {
-            Some(RunnerEndpointPattern::Tcp {
-                addr_pattern,
-                auth_token,
-            }) => {
-                assert_eq!(addr_pattern, "runner-{user}.internal:7001");
-                assert_eq!(auth_token, "secret-token");
-            }
-            other => panic!("unexpected endpoint: {other:?}"),
-        }
-    }
 }
 
 impl AppConfig {
@@ -769,9 +663,8 @@ struct EavsConfig {
 }
 
 /// EAVS OAuth login configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
-#[derive(Default)]
 struct EavsOAuthConfig {
     /// Enable per-user OAuth logins (Anthropic, OpenAI Codex, etc.).
     enabled: bool,
@@ -1290,6 +1183,12 @@ pub struct PiConfig {
     /// Idle timeout in seconds before stopping inactive Pi processes.
     /// Default: 300 (5 minutes).
     pub idle_timeout_secs: Option<u64>,
+
+    /// Auto-rename extension configuration.
+    /// Written to ~/.pi/agent/auto-rename.json during user provisioning.
+    /// See pi-auto-rename extension schema for available fields.
+    #[serde(default = "default_auto_rename_config")]
+    pub auto_rename: serde_json::Value,
 }
 
 impl Default for PiConfig {
@@ -1308,8 +1207,25 @@ impl Default for PiConfig {
             sandboxed: None,
 
             idle_timeout_secs: None,
+            auto_rename: default_auto_rename_config(),
         }
     }
+}
+
+fn default_auto_rename_config() -> serde_json::Value {
+    serde_json::json!({
+        "enabled": true,
+        // Explicit model avoids reasoning models leaking <think> traces.
+        // Override in config.toml [pi.auto_rename] to change.
+        // Set model to null + modelSelection to "cheapest" or "current"
+        // for automatic selection.
+        "model": null,
+        "modelSelection": "cheapest",
+        "prefixCommand": "basename $(git rev-parse --show-toplevel 2>/dev/null || pwd)",
+        "readableIdSuffix": true,
+        "fallbackDeterministic": "words",
+        "maxNameLength": 60
+    })
 }
 
 impl Default for LocalModeConfig {
@@ -1329,6 +1245,36 @@ impl Default for LocalModeConfig {
             ),
         }
     }
+}
+
+fn resolve_runner_socket_pattern(config: &AppConfig) -> Option<String> {
+    config
+        .backend
+        .runner
+        .socket_pattern
+        .clone()
+        .or_else(|| config.local.runner_socket_pattern.clone())
+}
+
+fn resolve_local_runtime_wiring(
+    local_cfg: &LocalModeConfig,
+    runner_socket_pattern: Option<String>,
+) -> (Option<local::LinuxUsersConfig>, Option<String>) {
+    let linux_users = if local_cfg.linux_users.enabled {
+        Some(local::LinuxUsersConfig {
+            enabled: local_cfg.linux_users.enabled,
+            prefix: local_cfg.linux_users.prefix.clone(),
+            uid_start: local_cfg.linux_users.uid_start,
+            group: local_cfg.linux_users.group.clone(),
+            shell: local_cfg.linux_users.shell.clone(),
+            use_sudo: local_cfg.linux_users.use_sudo,
+            create_home: local_cfg.linux_users.create_home,
+        })
+    } else {
+        None
+    };
+
+    (linux_users, runner_socket_pattern)
 }
 
 fn handle_init(ctx: &RuntimeContext, cmd: InitCommand) -> Result<()> {
@@ -1564,6 +1510,111 @@ WantedBy=default.target
                 .status()?;
             println!("Disabled oqto-runner.service");
             Ok(())
+        }
+        RunnerCommand::MigrateOqtoLog(cmd) => {
+            let home = env::var("HOME").context("HOME not set")?;
+            let user = env::var("USER").unwrap_or_else(|_| "unknown".to_string());
+            let rt = tokio::runtime::Runtime::new()?;
+
+            match cmd.mode.as_str() {
+                "bootstrap" => {
+                    let stats = rt.block_on(async {
+                        crate::oqto_log::importer::bootstrap_import_from_pi_jsonl(
+                            Path::new(&home),
+                            &user,
+                        )
+                        .await
+                    })?;
+
+                    println!(
+                        "oqto-log bootstrap migration complete: scanned_files={}, imported_sessions={}, imported_messages={}, skipped_files={}, failed_files={}",
+                        stats.scanned_files,
+                        stats.imported_sessions,
+                        stats.imported_messages,
+                        stats.skipped_files,
+                        stats.failed_files
+                    );
+                    if !stats.failure_samples.is_empty() {
+                        for sample in stats.failure_samples.iter().take(25) {
+                            println!("bootstrap-failure: {}", sample);
+                        }
+                    }
+                    if stats.failed_files > 0 {
+                        return Err(anyhow!(
+                            "oqto-log bootstrap migration had failures (see bootstrap-failure lines)"
+                        ));
+                    }
+                    Ok(())
+                }
+                "validate" => {
+                    let report = rt.block_on(async {
+                        crate::oqto_log::validator::validate_bootstrap_import(Path::new(&home))
+                            .await
+                    })?;
+
+                    println!(
+                        "oqto-log validation: sessions_checked={}, sessions_ok={}, sessions_mismatch={}, jsonl_messages_total={}, oqto_log_messages_total={}",
+                        report.sessions_checked,
+                        report.sessions_ok,
+                        report.sessions_mismatch,
+                        report.jsonl_messages_total,
+                        report.oqto_log_messages_total
+                    );
+                    if !report.mismatches.is_empty() {
+                        for mismatch in report.mismatches.iter().take(20) {
+                            println!("mismatch: {}", mismatch);
+                        }
+                    }
+                    if report.sessions_mismatch > 0 {
+                        return Err(anyhow!(
+                            "oqto-log validation failed: {} session mismatch(es)",
+                            report.sessions_mismatch
+                        ));
+                    }
+                    Ok(())
+                }
+                "diagnostics" => {
+                    let summary = rt.block_on(async {
+                        crate::oqto_log::ops::diagnostics(Path::new(&home)).await
+                    })?;
+                    println!(
+                        "oqto-log diagnostics: databases={}, sessions={}, turns={}, messages={}, checkpoints={}",
+                        summary.databases,
+                        summary.sessions,
+                        summary.turns,
+                        summary.messages,
+                        summary.checkpoints
+                    );
+                    Ok(())
+                }
+                "reindex" => {
+                    let rebuilt = rt.block_on(async {
+                        crate::oqto_log::ops::reindex_fts(Path::new(&home)).await
+                    })?;
+                    println!(
+                        "oqto-log fts reindex complete: rebuilt_databases={}",
+                        rebuilt
+                    );
+                    Ok(())
+                }
+                "sync-identities" => {
+                    let summary = rt.block_on(async {
+                        crate::oqto_log::ops::sync_identities_from_hstry(Path::new(&home), &user)
+                            .await
+                    })?;
+                    println!(
+                        "oqto-log identity sync complete: conversations_scanned={}, sessions_upserted={}, dbs_touched={}",
+                        summary.conversations_scanned,
+                        summary.sessions_upserted,
+                        summary.dbs_touched
+                    );
+                    Ok(())
+                }
+                other => Err(anyhow!(
+                    "unsupported oqto-log migration mode '{}'; supported: bootstrap|validate|diagnostics|reindex|sync-identities",
+                    other
+                )),
+            }
         }
     }
 }
@@ -2002,18 +2053,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             .and_then(|e| e.container_url.clone())
     };
 
-    let local_runner_fallback = if ctx.config.local.single_user {
-        Some(crate::runner::client::USER_SOCKET_PATTERN)
-    } else {
-        ctx.config.local.runner_socket_pattern.as_deref()
-    };
-
-    let resolved_runner_endpoint = ctx
-        .config
-        .backend
-        .runner
-        .resolve_endpoint_pattern(local_runner_fallback)
-        .context("resolving runner endpoint configuration")?;
+    let resolved_runner_socket_pattern = resolve_runner_socket_pattern(&ctx.config);
 
     let session_config = session::SessionServiceConfig {
         default_image,
@@ -2041,7 +2081,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         pi_provider: ctx.config.pi.default_provider.clone(),
         pi_model: ctx.config.pi.default_model.clone(),
         agent_browser: ctx.config.agent_browser.clone(),
-        runner_endpoint: resolved_runner_endpoint.clone(),
+        runner_socket_pattern: resolved_runner_socket_pattern.clone(),
         linux_user_prefix: if ctx.config.local.linux_users.enabled {
             Some(ctx.config.local.linux_users.prefix.clone())
         } else {
@@ -2170,7 +2210,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
                     mmry_binary: ctx.config.mmry.binary.clone(),
                     base_port: ctx.config.mmry.user_base_port,
                     port_range: ctx.config.mmry.user_port_range,
-                    runner_endpoint: resolved_runner_endpoint.clone(),
+                    runner_socket_pattern: resolved_runner_socket_pattern.clone(),
                 },
                 move |user_id| linux_users.linux_username(user_id),
                 user_repo_for_services.clone(),
@@ -2194,7 +2234,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
                     sldr_binary: ctx.config.sldr.binary.clone(),
                     base_port: ctx.config.sldr.user_base_port,
                     port_range: ctx.config.sldr.user_port_range,
-                    runner_endpoint: resolved_runner_endpoint.clone(),
+                    runner_socket_pattern: resolved_runner_socket_pattern.clone(),
                 },
                 move |user_id| linux_users.linux_username(user_id),
                 user_repo_for_services.clone(),
@@ -2400,23 +2440,14 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     state = state.with_onboarding(onboarding_service);
     info!("Onboarding service initialized");
 
-    // Set runner endpoint for all modes (single-user and multi-user).
-    state = state.with_runner_endpoint(resolved_runner_endpoint.clone());
+    // Wire local runtime settings.
+    // Runner socket pattern is required in both single-user and multi-user modes.
+    let (linux_users_config, runner_socket_pattern) =
+        resolve_local_runtime_wiring(&ctx.config.local, resolved_runner_socket_pattern.clone());
 
-    // Add Linux users config for multi-user isolation
-    let mut linux_users_config: Option<local::LinuxUsersConfig> = None;
-    if ctx.config.local.linux_users.enabled {
-        let config = local::LinuxUsersConfig {
-            enabled: ctx.config.local.linux_users.enabled,
-            prefix: ctx.config.local.linux_users.prefix.clone(),
-            uid_start: ctx.config.local.linux_users.uid_start,
-            group: ctx.config.local.linux_users.group.clone(),
-            shell: ctx.config.local.linux_users.shell.clone(),
-            use_sudo: ctx.config.local.linux_users.use_sudo,
-            create_home: ctx.config.local.linux_users.create_home,
-        };
-        state = state.with_linux_users(config.clone());
-        linux_users_config = Some(config);
+    state = state.with_runner_socket_pattern(runner_socket_pattern);
+    if let Some(config) = linux_users_config.clone() {
+        state = state.with_linux_users(config);
     }
 
     // Initialize shared workspaces service
@@ -2426,8 +2457,8 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     if let Some(config) = linux_users_config {
         sw_service = sw_service.with_linux_users(config);
     }
-    if let Some(ref endpoint) = state.runner_endpoint {
-        sw_service = sw_service.with_runner_endpoint(endpoint.clone());
+    if let Some(ref pattern) = state.runner_socket_pattern {
+        sw_service = sw_service.with_runner_socket_pattern(pattern.clone());
     }
     // Wire up templates repo path for AGENTS.md provisioning.
     // Resolve from local_path > cache_path > data_dir default (same logic as templates service).
@@ -2520,29 +2551,29 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         };
         let hstry_manager = history::HstryServiceManager::new(hstry_config);
 
-        // Ensure daemon is running (auto-starts if needed)
-        match hstry_manager.ensure_running().await {
-            Ok(()) => {
-                info!("hstry daemon is running");
-                // Create client and connect
-                let hstry_client = history::HstryClient::new();
-                if let Err(e) = hstry_client.connect().await {
-                    warn!(
-                        "Failed to connect to hstry daemon: {}. Will retry on first use.",
-                        e
-                    );
-                } else {
-                    info!("hstry client connected");
-                }
-                state = state.with_hstry(hstry_client);
-            }
-            Err(e) => {
-                warn!(
-                    "Failed to start hstry daemon: {}. Chat history persistence disabled.",
-                    e
-                );
-            }
+        // Ensure daemon is running (auto-starts if needed). Even if this
+        // readiness check fails, keep hstry client enabled so runtime calls can
+        // self-heal and reconnect (important during restarts/redeploy races).
+        if let Err(e) = hstry_manager.ensure_running().await {
+            warn!(
+                "Failed to start/verify hstry daemon: {}. Keeping client enabled and retrying lazily.",
+                e
+            );
+        } else {
+            info!("hstry daemon is running");
         }
+
+        // Create client and connect (best effort).
+        let hstry_client = history::HstryClient::new();
+        if let Err(e) = hstry_client.connect().await {
+            warn!(
+                "Failed to connect to hstry daemon: {}. Will retry on first use.",
+                e
+            );
+        } else {
+            info!("hstry client connected");
+        }
+        state = state.with_hstry(hstry_client);
     } else {
         debug!("hstry integration disabled");
     }
@@ -2621,6 +2652,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             models_template,
         );
     }
+    state = state.with_auto_rename_config(ctx.config.pi.auto_rename.clone());
 
     // models.json is managed manually:
     //   - Initial generation: setup script (scripts/setup/)
@@ -2630,7 +2662,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     // One-time deterministic backfill for canonical chat session target metadata.
     // This runs from authoritative runner session listings and keeps routing
     // independent of runtime fallback heuristics.
-    if let Err(err) = session::backfill_session_targets_once(&state).await {
+    if let Err(err) = backfill_session_targets_once(&state).await {
         warn!("Session target backfill failed: {}", err);
     }
 
@@ -2752,6 +2784,111 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     .with_graceful_shutdown(shutdown_signal)
     .await
     .context("running server")?;
+
+    Ok(())
+}
+
+async fn backfill_sessions_for_target(
+    state: &api::AppState,
+    user_id: &str,
+    target: &ExecutionTarget,
+    owner_user_id: Option<&str>,
+) -> Result<usize> {
+    let Some(runner) = resolve_runner_for_target(state, user_id, target).await? else {
+        return Ok(0);
+    };
+
+    let response = runner
+        .list_workspace_chat_sessions(None, true, None)
+        .await
+        .with_context(|| {
+            format!(
+                "list_workspace_chat_sessions failed for target {:?}",
+                target
+            )
+        })?;
+
+    let mut upserted = 0usize;
+    for session in response.sessions {
+        let record = match target {
+            ExecutionTarget::Personal => SessionTargetRecord {
+                session_id: session.id,
+                owner_user_id: owner_user_id.map(ToOwned::to_owned),
+                scope: SessionTargetScope::Personal,
+                workspace_id: None,
+                workspace_path: Some(session.workspace_path),
+            },
+            ExecutionTarget::SharedWorkspace { workspace_id } => SessionTargetRecord {
+                session_id: session.id,
+                owner_user_id: None,
+                scope: SessionTargetScope::SharedWorkspace,
+                workspace_id: Some(workspace_id.clone()),
+                workspace_path: Some(session.workspace_path),
+            },
+        };
+
+        state.session_targets.upsert(&record).await?;
+        upserted += 1;
+    }
+
+    Ok(upserted)
+}
+
+async fn backfill_session_targets_once(state: &api::AppState) -> Result<()> {
+    let users = state
+        .users
+        .list_users(UserListQuery {
+            limit: Some(10_000),
+            ..Default::default()
+        })
+        .await
+        .context("listing users for session target backfill")?;
+
+    let mut upserted_total = 0usize;
+    let mut processed_shared_workspaces: HashSet<String> = HashSet::new();
+
+    for user in &users {
+        upserted_total += backfill_sessions_for_target(
+            state,
+            &user.id,
+            &ExecutionTarget::Personal,
+            Some(&user.id),
+        )
+        .await
+        .with_context(|| format!("personal target backfill for user {}", user.id))?;
+
+        let Some(sw_service) = state.shared_workspaces.as_ref() else {
+            continue;
+        };
+
+        let workspaces = sw_service
+            .list_for_user(&user.id)
+            .await
+            .with_context(|| format!("listing shared workspaces for user {}", user.id))?;
+
+        for workspace in workspaces {
+            if !processed_shared_workspaces.insert(workspace.id.clone()) {
+                continue;
+            }
+
+            let target = ExecutionTarget::SharedWorkspace {
+                workspace_id: workspace.id.clone(),
+            };
+
+            upserted_total += backfill_sessions_for_target(state, &user.id, &target, None)
+                .await
+                .with_context(|| {
+                    format!("shared target backfill for workspace {}", workspace.id)
+                })?;
+        }
+    }
+
+    info!(
+        "session target backfill completed: users={}, shared_workspaces={}, upserted={}",
+        users.len(),
+        processed_shared_workspaces.len(),
+        upserted_total
+    );
 
     Ok(())
 }
@@ -3371,5 +3508,54 @@ fn ensure_pi_settings_json(pi_dir: &std::path::Path, models_json: &serde_json::V
             Err(e) => warn!("Failed to write settings.json: {}", e),
         },
         Err(e) => warn!("Failed to serialize settings.json: {}", e),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn local_runtime_wiring_sets_runner_pattern_in_single_user_mode() {
+        let mut local = LocalModeConfig::default();
+        local.single_user = true;
+        local.linux_users.enabled = false;
+        local.runner_socket_pattern = Some("/run/user/{uid}/oqto-runner.sock".to_string());
+
+        let (linux_users, pattern) =
+            resolve_local_runtime_wiring(&local, local.runner_socket_pattern.clone());
+        assert!(linux_users.is_none());
+        assert_eq!(
+            pattern,
+            Some("/run/user/{uid}/oqto-runner.sock".to_string())
+        );
+    }
+
+    #[test]
+    fn local_runtime_wiring_preserves_linux_user_config_when_enabled() {
+        let mut local = LocalModeConfig::default();
+        local.linux_users.enabled = true;
+        local.linux_users.prefix = "oqto_".to_string();
+        local.runner_socket_pattern = Some("/run/oqto/runner-{user}.sock".to_string());
+
+        let (linux_users, pattern) =
+            resolve_local_runtime_wiring(&local, local.runner_socket_pattern.clone());
+        let linux = linux_users.expect("linux users config should be set");
+        assert!(linux.enabled);
+        assert_eq!(linux.prefix, "oqto_");
+        assert_eq!(pattern, Some("/run/oqto/runner-{user}.sock".to_string()));
+    }
+
+    #[test]
+    fn resolve_runner_socket_pattern_prefers_backend_runner_config() {
+        let mut config = AppConfig::default();
+        config.local.runner_socket_pattern = Some("/run/oqto/local-{user}.sock".to_string());
+        config.backend.runner.socket_pattern = Some("/run/user/{uid}/oqto-runner.sock".to_string());
+
+        let pattern = resolve_runner_socket_pattern(&config);
+        assert_eq!(
+            pattern,
+            Some("/run/user/{uid}/oqto-runner.sock".to_string())
+        );
     }
 }

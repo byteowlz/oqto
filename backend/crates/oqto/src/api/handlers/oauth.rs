@@ -94,9 +94,15 @@ async fn sync_models_with_key(state: &AppState, key: &str, user_id: &str) -> Api
         .as_ref()
         .ok_or_else(|| ApiError::service_unavailable("Linux user isolation is not configured."))?;
     let linux_username = linux_users.linux_username(user_id);
-    sync_eavs_models_json_with_key(eavs_client(state)?, linux_users, &linux_username, key)
-        .await
-        .map_err(ApiError::from_anyhow)
+    sync_eavs_models_json_with_key(
+        eavs_client(state)?,
+        linux_users,
+        &linux_username,
+        key,
+        Some(&state.auto_rename_config),
+    )
+    .await
+    .map_err(ApiError::from_anyhow)
 }
 
 async fn create_oauth_key(state: &AppState, user_id: &str) -> ApiResult<()> {

@@ -45,6 +45,14 @@ import {
 	type VoiceMode,
 } from "@/components/voice/VoiceMenuButton";
 import type { Features, PiModelInfo } from "@/features/chat/api";
+import {
+	buildLegacyDraftStorageKey,
+	buildSessionDraftStorageKey,
+} from "@/features/chat/hooks/draft-storage";
+import {
+	normalizeTokenCount,
+	parsePiSessionStats,
+} from "@/features/chat/utils/session-stats";
 import { type A2UISurfaceState, useA2UI } from "@/hooks/use-a2ui";
 import { useDictation } from "@/hooks/use-dictation";
 import {
@@ -58,7 +66,7 @@ import { workspaceFileUrl } from "@/lib/api/files";
 import type { Part, ToolStatus } from "@/lib/canonical-types";
 import { useChatVerbosity } from "@/lib/chat-verbosity";
 import { extractFileReferenceDetails, getFileTypeInfo } from "@/lib/file-types";
-import { downloadFileMux, statPathMux, uploadFileMux } from "@/lib/mux-files";
+import { downloadFileMux, uploadFileMux } from "@/lib/mux-files";
 import {
 	formatSessionDate,
 	formatTempId,
@@ -72,8 +80,13 @@ import {
 	fuzzyMatch,
 	parseSlashInput,
 } from "@/lib/slash-commands";
+import {
+	type StreamingPresentationMode,
+	useStreamingPresentation,
+} from "@/lib/streaming-presentation";
 import { getToolSummary } from "@/lib/tool-summaries";
 import { cn } from "@/lib/utils";
+
 import { getWsManager } from "@/lib/ws-manager";
 import {
 	ArrowDown,
@@ -236,6 +249,8 @@ export interface ChatViewProps {
 	pendingChatInput?: string | null;
 	/** Called after the pending chat input has been consumed */
 	onPendingChatInputConsumed?: () => void;
+	/** Called when a chat file reference is activated. */
+	onFileReferenceOpen?: (filePath: string) => void;
 }
 
 /**
@@ -262,6 +277,7 @@ export function ChatView({
 	onPendingFileAttachmentConsumed,
 	pendingChatInput,
 	onPendingChatInputConsumed,
+	onFileReferenceOpen,
 }: ChatViewProps) {
 	const [sendPending, setSendPending] = useState(false);
 	const [sendPendingSessionId, setSendPendingSessionId] = useState<
@@ -281,7 +297,13 @@ export function ChatView({
 			/[^a-zA-Z0-9._-]+/g,
 			"_",
 		)}`;
-	const draftStorageKey = `${resolvedStorageKeyPrefix}:draft`;
+	const legacyDraftStorageKey = buildLegacyDraftStorageKey(
+		resolvedStorageKeyPrefix,
+	);
+	const draftStorageKey = buildSessionDraftStorageKey(
+		resolvedStorageKeyPrefix,
+		selectedSessionId,
+	);
 	const scrollStorageKey = `${resolvedStorageKeyPrefix}:scrollPosition`;
 	const { updateChatSessionTitleLocal, selectedChatFromHistory } =
 		useChatContext();
@@ -295,6 +317,7 @@ export function ChatView({
 		isStreaming,
 		isAwaitingResponse,
 		error,
+		promptQueue,
 		historyHydrated,
 		historyLoading,
 		send,
@@ -314,6 +337,14 @@ export function ChatView({
 		onMessageComplete: handleMessageComplete,
 		onTitleChanged: updateChatSessionTitleLocal,
 	});
+	// Refresh messages when backfill completes (signalled via DOM event).
+	// useeffect-guardrail: allow — listening for custom DOM event from backfill, no hook covers this
+	useEffect(() => {
+		const handler = () => void refresh();
+		window.addEventListener("oqto:backfill-complete", handler);
+		return () => window.removeEventListener("oqto:backfill-complete", handler);
+	}, [refresh]);
+
 	// Draft persistence - restore from localStorage on mount.
 	// Input value lives in a ref (never in React state) so that
 	// keystrokes never trigger a React render of this large component.
@@ -359,6 +390,8 @@ export function ChatView({
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const queueSendInFlightRef = useRef(false);
 	const queueCooldownRef = useRef<number | null>(null);
+	const lastScrollTopRef = useRef<number | null>(null);
+	const lastScrollHeightRef = useRef<number | null>(null);
 	const draftSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
 		null,
 	);
@@ -375,7 +408,12 @@ export function ChatView({
 		}
 		setForkPointsLoading(true);
 		try {
-			const points = await getWsManager().agentGetForkPoints(selectedSessionId);
+			// Ensure a live Pi session exists (history-only sessions need resume first).
+			const ws = getWsManager();
+			ws.agentCreateSession(selectedSessionId);
+			await ws.waitForSessionReady(selectedSessionId, 6000);
+
+			const points = await ws.agentGetForkPoints(selectedSessionId);
 			setForkPoints(points);
 			return points;
 		} catch (err) {
@@ -396,10 +434,23 @@ export function ChatView({
 			}
 			setForkingEntryId(entryId);
 			try {
-				await getWsManager().agentFork(selectedSessionId, entryId);
-				await refresh();
-				toast.success("Fork created.");
+				const result = await getWsManager().agentFork(
+					selectedSessionId,
+					entryId,
+				);
+				if (result.cancelled) {
+					toast.info("Fork cancelled.");
+					return;
+				}
 				setForkListOpen(false);
+				if (result.new_session_id && onSelectedSessionIdChange) {
+					// Navigate to the newly created child session
+					onSelectedSessionIdChange(result.new_session_id);
+					toast.success("Forked to new session.");
+				} else {
+					await refresh();
+					toast.success("Fork created.");
+				}
 			} catch (err) {
 				toast.error(
 					err instanceof Error ? err.message : "Failed to fork session.",
@@ -408,37 +459,7 @@ export function ChatView({
 				setForkingEntryId(null);
 			}
 		},
-		[selectedSessionId, refresh],
-	);
-
-	const handleForkFromMessage = useCallback(
-		async (messagePreview: string) => {
-			const points =
-				forkPoints.length > 0 ? forkPoints : await loadForkPoints();
-			if (points.length === 0) return;
-			const normalizedTarget = messagePreview
-				.replace(/\s+/g, " ")
-				.trim()
-				.toLowerCase();
-			const directMatch = points.find((point) => {
-				const normalizedPreview = point.preview
-					.replace(/\s+/g, " ")
-					.trim()
-					.toLowerCase();
-				return (
-					normalizedPreview === normalizedTarget ||
-					normalizedTarget.startsWith(normalizedPreview) ||
-					normalizedPreview.startsWith(normalizedTarget)
-				);
-			});
-			if (!directMatch) {
-				setForkListOpen(true);
-				toast.info("Select a message from the fork list.");
-				return;
-			}
-			await handleForkAtEntry(directMatch.entry_id);
-		},
-		[forkPoints, handleForkAtEntry, loadForkPoints],
+		[selectedSessionId, refresh, onSelectedSessionIdChange],
 	);
 
 	// Consume pending chat input from external source (e.g. browser "Send to chat")
@@ -458,11 +479,26 @@ export function ChatView({
 	useEffect(() => {
 		if (typeof window === "undefined") return;
 		try {
-			setInput(localStorage.getItem(draftStorageKey) || "");
+			const sessionDraft = localStorage.getItem(draftStorageKey);
+			if (sessionDraft !== null) {
+				setInput(sessionDraft);
+				return;
+			}
+
+			// One-time migration from legacy workspace-scoped draft key.
+			const legacyDraft = localStorage.getItem(legacyDraftStorageKey);
+			if (legacyDraft !== null) {
+				localStorage.setItem(draftStorageKey, legacyDraft);
+				localStorage.removeItem(legacyDraftStorageKey);
+				setInput(legacyDraft);
+				return;
+			}
+
+			setInput("");
 		} catch {
 			setInput("");
 		}
-	}, [draftStorageKey]);
+	}, [draftStorageKey, legacyDraftStorageKey]);
 	const sendPendingRef = useRef(sendPending);
 	sendPendingRef.current = sendPending;
 	useEffect(() => {
@@ -531,6 +567,50 @@ export function ChatView({
 	const [showFileMentionPopup, setShowFileMentionPopup] = useState(false);
 	const [fileMentionQuery, setFileMentionQuery] = useState("");
 	const [showSlashPopup, setShowSlashPopup] = useState(false);
+	const [hideRecoveredErrors, setHideRecoveredErrors] = useState<boolean>(
+		() => {
+			if (typeof window === "undefined") return false;
+			try {
+				return localStorage.getItem("oqto:hideRecoveredErrors") === "1";
+			} catch {
+				return false;
+			}
+		},
+	);
+	// useeffect-guardrail: allow - sync recovered-error preference from settings sidebar
+	useEffect(() => {
+		const readSetting = () => {
+			try {
+				setHideRecoveredErrors(
+					localStorage.getItem("oqto:hideRecoveredErrors") === "1",
+				);
+			} catch {
+				// ignore read failures
+			}
+		};
+
+		const onStorage = (event: StorageEvent) => {
+			if (event.key === "oqto:hideRecoveredErrors") {
+				readSetting();
+			}
+		};
+
+		window.addEventListener("storage", onStorage);
+		window.addEventListener("oqto:chat-ui-settings-updated", readSetting);
+		return () => {
+			window.removeEventListener("storage", onStorage);
+			window.removeEventListener("oqto:chat-ui-settings-updated", readSetting);
+		};
+	}, []);
+	const showPromptQueueDebug = useMemo(() => {
+		if (typeof window === "undefined") return false;
+		try {
+			return localStorage.getItem("debug:oqto-queue") === "1";
+		} catch {
+			return false;
+		}
+	}, []);
+	const { mode: streamingPresentationMode } = useStreamingPresentation();
 	const [voiceMode, setVoiceMode] = useState<VoiceMode>(null);
 	const [isUploading, setIsUploading] = useState(false);
 	const [availableModels, setAvailableModels] = useState<PiModelInfo[]>([]);
@@ -552,12 +632,27 @@ export function ChatView({
 	// the scroll event handler update isUserScrolled state.
 	const userInitiatedScrollRef = useRef(false);
 	const programmaticScrollRef = useRef(false);
+	const scrollToBottomRafRef = useRef<number | null>(null);
 
 	const scrollToBottom = useCallback(() => {
-		const c = messagesContainerRef.current;
-		if (!c) return;
-		programmaticScrollRef.current = true;
-		c.scrollTop = c.scrollHeight;
+		if (scrollToBottomRafRef.current !== null) return;
+		scrollToBottomRafRef.current = window.requestAnimationFrame(() => {
+			scrollToBottomRafRef.current = null;
+			const container = messagesContainerRef.current;
+			if (!container) return;
+			const targetTop = Math.max(
+				0,
+				container.scrollHeight - container.clientHeight,
+			);
+			const distanceToBottom = targetTop - container.scrollTop;
+			// Avoid redundant writes at/near bottom; they can trigger scroll-event
+			// churn and visible flicker while streaming updates arrive quickly.
+			if (Math.abs(distanceToBottom) < 2) return;
+			programmaticScrollRef.current = true;
+			container.scrollTop = targetTop;
+			lastScrollTopRef.current = container.scrollTop;
+			lastScrollHeightRef.current = container.scrollHeight;
+		});
 	}, []);
 
 	const LOAD_MORE_COUNT = 30;
@@ -609,6 +704,100 @@ export function ChatView({
 		}
 		return { surfacesByMessageId: map, orphanedSurfaces: orphaned };
 	}, [a2uiSurfaces, messages]);
+
+	const pendingAssistantGroupRef = useRef<MessageGroup>({
+		role: "assistant",
+		messages: [
+			{
+				id: "pending-assistant",
+				role: "assistant",
+				parts: [],
+				timestamp: 0,
+				isStreaming: true,
+			},
+		],
+	});
+	const stableGroupedMessagesRef = useRef<MessageGroup[]>([]);
+
+	const renderedGroups = useMemo(() => {
+		const visibleMessages = messages.slice(-visibleCount);
+		const grouped = groupMessages(visibleMessages);
+		const previous = stableGroupedMessagesRef.current;
+		const stableGrouped = grouped.map((group, idx) => {
+			const prev = previous[idx];
+			if (
+				prev &&
+				prev.role === group.role &&
+				prev.messages.length === group.messages.length &&
+				prev.messages.every((msg, mIdx) => msg === group.messages[mIdx])
+			) {
+				return prev;
+			}
+			return group;
+		});
+		stableGroupedMessagesRef.current = stableGrouped;
+
+		const lastGroup = stableGrouped[stableGrouped.length - 1];
+		const lastMsg = visibleMessages[visibleMessages.length - 1];
+		const isWorking =
+			isStreaming ||
+			isAwaitingResponse ||
+			lastMsg?.isStreaming === true ||
+			sendPending;
+		const needsPendingAssistant =
+			isWorking && (!lastGroup || lastGroup.role === "user");
+		const groupsToRender = needsPendingAssistant
+			? [...stableGrouped, pendingAssistantGroupRef.current]
+			: stableGrouped;
+
+		let lastAssistantIndex = -1;
+		for (let i = groupsToRender.length - 1; i >= 0; i--) {
+			if (groupsToRender[i]?.role === "assistant") {
+				lastAssistantIndex = i;
+				break;
+			}
+		}
+
+		return groupsToRender.map((group, groupIndex) => {
+			const groupMessageId = group.messages[0]?.id;
+			const groupSurfaces = group.messages.flatMap(
+				(message) => surfacesByMessageId.get(message.id) ?? [],
+			);
+			let modelChangeRef: string | null = null;
+			if (group.role === "assistant") {
+				const thisModel = getGroupModelRef(group);
+				if (thisModel) {
+					for (let i = groupIndex - 1; i >= 0; i--) {
+						if (groupsToRender[i]?.role === "assistant") {
+							const prevModel = getGroupModelRef(groupsToRender[i]);
+							if (prevModel && prevModel !== thisModel) {
+								modelChangeRef = thisModel;
+							}
+							break;
+						}
+					}
+				}
+			}
+
+			return {
+				group,
+				groupIndex,
+				groupMessageId,
+				groupSurfaces,
+				isWorking,
+				isLastAssistantGroup:
+					group.role === "assistant" && groupIndex === lastAssistantIndex,
+				modelChangeRef,
+			};
+		});
+	}, [
+		isAwaitingResponse,
+		isStreaming,
+		messages,
+		sendPending,
+		surfacesByMessageId,
+		visibleCount,
+	]);
 
 	// Extract todos from messages and notify parent.
 	// Scans all messages in reverse to find the most recent todo tool call
@@ -844,11 +1033,15 @@ export function ChatView({
 		input: number;
 		output: number;
 	} | null>(null);
+	const [piContextWindowLength, setPiContextWindowLength] = useState<
+		number | null
+	>(null);
 
 	// Fetch Pi session stats when the active session changes
 	useEffect(() => {
+		setPiSessionTokens(null);
+		setPiContextWindowLength(null);
 		if (!selectedSessionId) {
-			setPiSessionTokens(null);
 			return;
 		}
 		let cancelled = false;
@@ -857,19 +1050,21 @@ export function ChatView({
 				const stats =
 					await getWsManager().agentGetSessionStats(selectedSessionId);
 				if (cancelled) return;
-				if (stats && typeof stats === "object" && "tokens" in stats) {
-					const tokens = (
-						stats as { tokens?: { input?: number; output?: number } }
-					).tokens;
-					if (tokens) {
-						setPiSessionTokens({
-							input: tokens.input ?? 0,
-							output: tokens.output ?? 0,
-						});
-					}
-				}
+				const parsed = parsePiSessionStats(stats);
+				setPiContextWindowLength(
+					parsed.contextWindowLength > 0 ? parsed.contextWindowLength : null,
+				);
+				setPiSessionTokens(
+					parsed.input > 0 || parsed.output > 0
+						? { input: parsed.input, output: parsed.output }
+						: null,
+				);
 			} catch {
-				// Stats unavailable (session not running in Pi) - that's fine
+				if (!cancelled) {
+					// Stats unavailable (session not running in Pi) - that's fine
+					setPiSessionTokens(null);
+					setPiContextWindowLength(null);
+				}
 			}
 		};
 		void fetchStats();
@@ -902,16 +1097,12 @@ export function ChatView({
 				const stats =
 					await getWsManager().agentGetSessionStats(selectedSessionId);
 				if (cancelled) return;
-				if (stats && typeof stats === "object" && "tokens" in stats) {
-					const tokens = (
-						stats as { tokens?: { input?: number; output?: number } }
-					).tokens;
-					if (tokens) {
-						setPiSessionTokens({
-							input: tokens.input ?? 0,
-							output: tokens.output ?? 0,
-						});
-					}
+				const parsed = parsePiSessionStats(stats);
+				setPiContextWindowLength(
+					parsed.contextWindowLength > 0 ? parsed.contextWindowLength : null,
+				);
+				if (parsed.input > 0 || parsed.output > 0) {
+					setPiSessionTokens({ input: parsed.input, output: parsed.output });
 				}
 			} catch {
 				// Stats unavailable
@@ -924,20 +1115,24 @@ export function ChatView({
 	}, [lastCompactionText, selectedSessionId]);
 
 	const contextTokenCount = useMemo(() => {
+		if (messages.length === 0) {
+			return { inputTokens: 0, outputTokens: 0 };
+		}
+
 		// Priority 1: Real usage from the last assistant message (set during streaming)
 		for (let i = messages.length - 1; i >= 0; i--) {
 			const msg = messages[i];
 			if (msg.role === "assistant" && msg.usage) {
 				const u = msg.usage;
-				const input = u.input_tokens ?? 0;
-				const output = u.output_tokens ?? 0;
+				const input = normalizeTokenCount(u.input_tokens);
+				const output = normalizeTokenCount(u.output_tokens);
 				if (input > 0 || output > 0) {
 					return { inputTokens: input, outputTokens: output };
 				}
 			}
 		}
 
-		// Priority 2: Pi session stats (fetched on session load)
+		// Priority 2: Pi session token totals (cumulative session stats)
 		if (
 			piSessionTokens &&
 			(piSessionTokens.input > 0 || piSessionTokens.output > 0)
@@ -948,7 +1143,13 @@ export function ChatView({
 			};
 		}
 
-		// Priority 3: Fallback estimate from text content (4 chars ~ 1 token)
+		// Priority 3: Pi-reported context window length (fallback estimate)
+		// Note: contextWindowLength is the current window size, not cumulative
+		if (piContextWindowLength && piContextWindowLength > 0) {
+			return { inputTokens: piContextWindowLength, outputTokens: 0 };
+		}
+
+		// Priority 4: Fallback estimate from text content (4 chars ~ 1 token)
 		let lastCompactionIndex = -1;
 		for (let i = messages.length - 1; i >= 0; i--) {
 			if (messages[i].parts.some((p) => p.type === "compaction")) {
@@ -982,7 +1183,7 @@ export function ChatView({
 			}
 		}
 		return { inputTokens, outputTokens };
-	}, [messages, piSessionTokens]);
+	}, [messages, piContextWindowLength, piSessionTokens]);
 
 	const gaugeTokens = contextTokenCount;
 
@@ -1167,6 +1368,36 @@ export function ChatView({
 		isUserScrolledRef.current = isUserScrolled;
 	}, [isUserScrolled]);
 
+	// Preserve viewport position across authoritative message replacement.
+	// This keeps agent_end sync visually stable when the message list is
+	// reconciled to durable history.
+	useLayoutEffect(() => {
+		void messages;
+		const container = messagesContainerRef.current;
+		if (!container || !initialScrollDoneRef.current) return;
+
+		// Never compensate during active streaming. That can fight with user
+		// wheel/touch scrolling and produce visible twitching.
+		if (!isStreaming && !isAwaitingResponse) {
+			const prevTop = lastScrollTopRef.current;
+			const prevHeight = lastScrollHeightRef.current;
+			if (prevTop !== null && prevHeight !== null) {
+				const wasNearBottom =
+					prevHeight - prevTop - container.clientHeight < 80;
+				if (isUserScrolledRef.current || !wasNearBottom) {
+					const delta = container.scrollHeight - prevHeight;
+					if (delta !== 0) {
+						programmaticScrollRef.current = true;
+						container.scrollTop = prevTop + delta;
+					}
+				}
+			}
+		}
+
+		lastScrollTopRef.current = container.scrollTop;
+		lastScrollHeightRef.current = container.scrollHeight;
+	}, [isAwaitingResponse, isStreaming, messages]);
+
 	// Auto-scroll when messages change (new message, streaming token update,
 	// tool call result). Only scrolls if user hasn't manually scrolled up.
 	// biome-ignore lint/correctness/useExhaustiveDependencies: setBusyForEvent is stable callback
@@ -1176,6 +1407,26 @@ export function ChatView({
 			scrollToBottom();
 		}
 	}, [messages, scrollToBottom]);
+
+	// Strict bottom lock during active streaming while user is not scrolling.
+	// This runs in layout phase so the bottom edge remains visually fixed.
+	useLayoutEffect(() => {
+		void messages.length;
+		if (!initialScrollDoneRef.current) return;
+		if (isUserScrolledRef.current) return;
+		if (!(isStreaming || isAwaitingResponse || sendPending)) return;
+		const container = messagesContainerRef.current;
+		if (!container) return;
+		const targetTop = Math.max(
+			0,
+			container.scrollHeight - container.clientHeight,
+		);
+		if (Math.abs(container.scrollTop - targetTop) < 1) return;
+		programmaticScrollRef.current = true;
+		container.scrollTop = targetTop;
+		lastScrollTopRef.current = container.scrollTop;
+		lastScrollHeightRef.current = container.scrollHeight;
+	}, [messages.length, isStreaming, isAwaitingResponse, sendPending]);
 
 	// Update isUserScrolled from real user scroll events only.
 	// wheel/touch/pointer events on the container set userInitiatedScrollRef
@@ -1230,6 +1481,8 @@ export function ChatView({
 			programmaticScrollRef.current = true;
 			messagesEndRef.current?.scrollIntoView();
 		}
+		lastScrollTopRef.current = container.scrollTop;
+		lastScrollHeightRef.current = container.scrollHeight;
 	}, [messages.length, scrollStorageKey]);
 
 	const handleScroll = useCallback(() => {
@@ -1278,6 +1531,8 @@ export function ChatView({
 		} else {
 			setCachedScrollPosition(container.scrollTop, scrollStorageKey);
 		}
+		lastScrollTopRef.current = container.scrollTop;
+		lastScrollHeightRef.current = container.scrollHeight;
 	}, [scrollStorageKey, visibleCount, messages.length]);
 
 	// Focus input on mount - only on desktop to avoid opening keyboard on mobile
@@ -2012,7 +2267,7 @@ export function ChatView({
 					<div
 						ref={messagesContainerRef}
 						onScroll={handleScroll}
-						className="h-full bg-muted/30 border border-border p-2 sm:p-4 overflow-y-auto scrollbar-hide"
+						className="h-full bg-muted/30 border border-border p-2 sm:p-4 overflow-y-auto scrollbar-hide [overflow-anchor:none]"
 						data-spotlight="chat-timeline"
 					>
 						<div>
@@ -2039,94 +2294,57 @@ export function ChatView({
 							{/* Only render the last visibleCount messages for performance */}
 							{!showSkeleton &&
 								(() => {
-									const visibleMessages = messages.slice(-visibleCount);
-									const grouped = groupMessages(visibleMessages);
-									const lastGroup = grouped[grouped.length - 1];
-									const isWorking = isStreaming || isAwaitingResponse;
-									const needsPendingAssistant =
-										isWorking && (!lastGroup || lastGroup.role === "user");
-									const groupsToRender = needsPendingAssistant
-										? [
-												...grouped,
-												{
-													role: "assistant" as const,
-													messages: [
-														{
-															id: "pending-assistant",
-															role: "assistant" as const,
-															parts: [],
-															timestamp: Date.now(),
-															isStreaming: true,
-														},
-													],
-												},
-											]
-										: grouped;
+									return renderedGroups.map(
+										({
+											group,
+											groupIndex,
+											groupMessageId,
+											groupSurfaces,
+											isWorking,
+											isLastAssistantGroup,
+											modelChangeRef,
+										}) => {
+											const modelChangeDivider = modelChangeRef ? (
+												<ModelChangeDivider modelRef={modelChangeRef} />
+											) : null;
 
-									return groupsToRender.map((group, groupIndex) => {
-										const groupSurfaces = group.messages.flatMap(
-											(m) => surfacesByMessageId.get(m.id) ?? [],
-										);
-										const groupMessageId = group.messages[0]?.id;
-										// Check if this is the last assistant group
-										const isLastAssistantGroup =
-											group.role === "assistant" &&
-											!groupsToRender
-												.slice(groupIndex + 1)
-												.some((g) => g.role === "assistant");
-
-										// Detect model change: compare this assistant group's model
-										// to the previous assistant group's model
-										let modelChangeDivider: React.ReactNode = null;
-										if (group.role === "assistant") {
-											const thisModel = getGroupModelRef(group);
-											if (thisModel) {
-												// Find previous assistant group
-												for (let i = groupIndex - 1; i >= 0; i--) {
-													if (groupsToRender[i].role === "assistant") {
-														const prevModel = getGroupModelRef(
-															groupsToRender[i],
-														);
-														if (prevModel && prevModel !== thisModel) {
-															modelChangeDivider = (
-																<ModelChangeDivider modelRef={thisModel} />
-															);
+											return (
+												<div
+													key={`${groupMessageId ?? `${group.role}-${groupIndex}`}-${groupIndex}`}
+													className={groupIndex > 0 ? "mt-4 sm:mt-6" : ""}
+												>
+													{modelChangeDivider}
+													<MessageGroupCard
+														group={group}
+														assistantName={assistantName}
+														tempIdLabel={tempIdLabel}
+														workspacePath={workspacePath}
+														locale={locale}
+														a2uiSurfaces={groupSurfaces}
+														onA2UIAction={handleA2UIAction}
+														messageId={groupMessageId}
+														onForkHere={
+															group.role === "user"
+																? () => {
+																		setForkListOpen(true);
+																		void loadForkPoints();
+																	}
+																: undefined
 														}
-														break;
-													}
-												}
-											}
-										}
-
-										return (
-											<div
-												key={`${groupMessageId ?? `${group.role}-${groupIndex}`}-${groupIndex}`}
-												className={groupIndex > 0 ? "mt-4 sm:mt-6" : ""}
-											>
-												{modelChangeDivider}
-												<MessageGroupCard
-													group={group}
-													assistantName={assistantName}
-													tempIdLabel={tempIdLabel}
-													workspacePath={workspacePath}
-													locale={locale}
-													a2uiSurfaces={groupSurfaces}
-													onA2UIAction={handleA2UIAction}
-													messageId={groupMessageId}
-													onForkHere={
-														group.role === "user"
-															? (preview) => {
-																	void handleForkFromMessage(preview);
-																}
-															: undefined
-													}
-													showWorkingIndicator={
-														isWorking && isLastAssistantGroup
-													}
-												/>
-											</div>
-										);
-									});
+														onFileReferenceOpen={onFileReferenceOpen}
+														hideRecoveredErrors={hideRecoveredErrors}
+														freezeStreamingUpdates={isUserScrolled}
+														streamingPresentationMode={
+															streamingPresentationMode
+														}
+														showWorkingIndicator={
+															isWorking && isLastAssistantGroup
+														}
+													/>
+												</div>
+											);
+										},
+									);
 								})()}
 
 							{/* Orphaned A2UI surfaces (no valid anchor) */}
@@ -2288,6 +2506,33 @@ export function ChatView({
 									setFileMentionQuery("");
 								}}
 							/>
+
+							{showPromptQueueDebug && promptQueue.length > 0 && (
+								<div className="mb-2 rounded-md border border-primary/20 bg-primary/5 p-2">
+									<div className="flex items-center justify-between text-xs text-muted-foreground mb-2">
+										<span>Runner prompt queue</span>
+										<span>{promptQueue.length}</span>
+									</div>
+									<div className="space-y-1 max-h-28 overflow-y-auto pr-1">
+										{promptQueue.map((item, index) => (
+											<div
+												key={`${item.bridgeSeq ?? item.clientId}-${index}`}
+												className="flex items-center justify-between rounded-md bg-background/70 px-2 py-1 text-xs"
+											>
+												<span className="text-muted-foreground">
+													#{index + 1}
+												</span>
+												<span className="truncate mx-2 flex-1">
+													{item.clientId}
+												</span>
+												<span className="uppercase text-[10px] text-muted-foreground">
+													{item.intent}
+												</span>
+											</div>
+										))}
+									</div>
+								</div>
+							)}
 
 							{queuedMessages.length > 0 && (
 								<div className="mb-2 rounded-md border border-border/60 bg-muted/20 p-2">
@@ -2661,8 +2906,48 @@ type MessageGroup = {
 	messages: DisplayMessage[];
 };
 
-function hasErrorPart(message: DisplayMessage): boolean {
-	return message.parts.some((part) => part.type === "error");
+function fingerprintPartForRender(part: DisplayPart): string {
+	switch (part.type) {
+		case "text":
+			return `text:${part.text}`;
+		case "thinking":
+			return `thinking:${part.text}`;
+		case "tool_call":
+			return `tool_call:${part.toolCallId}:${part.name}:${JSON.stringify(part.input ?? null)}`;
+		case "tool_result":
+			return `tool_result:${part.toolCallId}:${part.name ?? ""}:${JSON.stringify(part.output ?? null)}:${part.isError ? "1" : "0"}`;
+		case "compaction":
+			return `compaction:${part.text}`;
+		case "error":
+			return `error:${part.text}`;
+		case "image":
+			return "image";
+		case "file_ref":
+			return `file_ref:${part.uri}`;
+		default:
+			return part.type;
+	}
+}
+
+function messageRenderFingerprint(message: DisplayMessage): string {
+	const parts = message.parts.map(fingerprintPartForRender);
+	return `${message.role}|${parts.join("|")}`;
+}
+
+function hasRenderableAssistantPayload(message: DisplayMessage): boolean {
+	if (message.role !== "assistant") return false;
+	return message.parts.some((part) => {
+		if (part.type === "text") {
+			return (part.text ?? "").trim().length > 0;
+		}
+		return part.type === "image" || part.type === "file_ref";
+	});
+}
+
+function isAssistantAuxiliaryMessage(message: DisplayMessage): boolean {
+	return (
+		message.role === "assistant" && !hasRenderableAssistantPayload(message)
+	);
 }
 
 function groupMessages(messages: DisplayMessage[]): MessageGroup[] {
@@ -2674,13 +2959,17 @@ function groupMessages(messages: DisplayMessage[]): MessageGroup[] {
 		// These are empty steer echoes persisted to hstry — the real
 		// content lives in the optimistic message that was already shown.
 		if (message.role === "user") {
-			const hasText = message.parts.some(
-				(p) =>
-					p.type === "text" &&
-					typeof (p as { text?: string }).text === "string" &&
-					(p as { text: string }).text.trim().length > 0,
-			);
-			if (!hasText) continue;
+			const hasRenderableContent = message.parts.some((p) => {
+				if (p.type === "text") {
+					const text =
+						(p as { text?: string; content?: string }).text ??
+						(p as { content?: string }).content ??
+						"";
+					return text.trim().length > 0;
+				}
+				return p.type === "image" || p.type === "file_ref";
+			});
+			if (!hasRenderableContent) continue;
 		}
 
 		// Tool messages are always grouped with the preceding assistant message.
@@ -2697,15 +2986,41 @@ function groupMessages(messages: DisplayMessage[]): MessageGroup[] {
 			continue;
 		}
 
-		// Keep assistant error messages in their own card.
-		// Retry/error flows can emit alternating assistant chunks + errors;
-		// collapsing them into one grouped card makes the rendering look broken
-		// (duplicate red rows mixed with regular text).
-		if (
-			message.role === "assistant" &&
-			(hasErrorPart(message) ||
-				hasErrorPart(current.messages[current.messages.length - 1]))
-		) {
+		const prev = current.messages[current.messages.length - 1];
+		if (message.role === "assistant") {
+			// Guard against duplicated assistant messages (same completed turn
+			// arriving through two sync paths during reconnect races, or stale
+			// cached entries that don't reconcile with the authoritative server
+			// snapshot because their IDs differ).
+			if (
+				prev &&
+				messageRenderFingerprint(prev) === messageRenderFingerprint(message)
+			) {
+				continue;
+			}
+			// Keep distinct text-bearing assistant turns visible as separate cards,
+			// but merge tool-only / auxiliary assistant rows with adjacent assistant
+			// rows so a single agent response (tools + final text) doesn't get
+			// fragmented into multiple containers.
+			const currentHasRenderableAssistant = current.messages.some(
+				(msg) => msg.role === "assistant" && hasRenderableAssistantPayload(msg),
+			);
+			const currentHasToolActivity = current.messages.some((msg) =>
+				msg.parts.some(
+					(part) => part.type === "tool_call" || part.type === "tool_result",
+				),
+			);
+			if (
+				(prev &&
+					(isAssistantAuxiliaryMessage(prev) ||
+						isAssistantAuxiliaryMessage(message))) ||
+				currentHasToolActivity ||
+				(!currentHasRenderableAssistant &&
+					hasRenderableAssistantPayload(message))
+			) {
+				current.messages.push(message);
+				continue;
+			}
 			current = { role: message.role, messages: [message] };
 			groups.push(current);
 			continue;
@@ -2793,6 +3108,61 @@ type Segment =
 
 /** Gutter icon for collapsed tool calls in minimal mode (verbosity=1).
  *  Shows a single collapsed icon; click opens a popover listing each tool + summary. */
+function splitToolGroupIntoRuns(toolGroup: {
+	key: string;
+	type: "tool_group";
+	segments: Array<
+		| Extract<Segment, { type: "tool_call" }>
+		| Extract<Segment, { type: "tool_result_only" }>
+	>;
+	timestamp: number;
+}) {
+	const runs: Array<{
+		key: string;
+		type: "tool_group";
+		segments: Array<
+			| Extract<Segment, { type: "tool_call" }>
+			| Extract<Segment, { type: "tool_result_only" }>
+		>;
+		timestamp: number;
+	}> = [];
+
+	let currentRun: Array<
+		| Extract<Segment, { type: "tool_call" }>
+		| Extract<Segment, { type: "tool_result_only" }>
+	> = [];
+	let currentName: string | null = null;
+
+	for (const seg of toolGroup.segments) {
+		const name =
+			seg.type === "tool_call" ? seg.part.name : seg.part.name || "result";
+		if (currentRun.length === 0 || name === currentName) {
+			currentRun.push(seg);
+			currentName = name;
+			continue;
+		}
+		runs.push({
+			key: `${toolGroup.key}-run-${runs.length}`,
+			type: "tool_group",
+			segments: currentRun,
+			timestamp: currentRun[0]?.timestamp ?? toolGroup.timestamp,
+		});
+		currentRun = [seg];
+		currentName = name;
+	}
+
+	if (currentRun.length > 0) {
+		runs.push({
+			key: `${toolGroup.key}-run-${runs.length}`,
+			type: "tool_group",
+			segments: currentRun,
+			timestamp: currentRun[0]?.timestamp ?? toolGroup.timestamp,
+		});
+	}
+
+	return runs;
+}
+
 function ToolGutterIcon({
 	toolGroup,
 	locale,
@@ -2841,18 +3211,22 @@ function ToolGutterIcon({
 			<PopoverTrigger asChild>
 				<button
 					type="button"
-					className="relative flex items-center justify-center w-6 h-6 rounded hover:bg-muted transition-colors text-muted-foreground/60 hover:text-muted-foreground"
+					className="relative flex h-6 w-6 items-center justify-center rounded hover:bg-muted transition-colors text-muted-foreground/60 hover:text-muted-foreground"
 					title={`${totalCount} tool call${totalCount !== 1 ? "s" : ""}`}
 				>
 					{primaryIcon}
 					{totalCount > 1 && (
-						<span className="absolute top-0 right-0 min-w-[12px] h-[12px] bg-muted-foreground/20 text-muted-foreground text-[8px] rounded-full flex items-center justify-center leading-none">
+						<span className="absolute top-0 right-0 min-w-[12px] h-[12px] bg-muted-foreground/20 text-muted-foreground text-[8px] rounded-full inline-flex items-center justify-center leading-none">
 							{totalCount}
 						</span>
 					)}
 				</button>
 			</PopoverTrigger>
-			<PopoverContent side="left" align="start" className="w-64 p-2">
+			<PopoverContent
+				side="left"
+				align="start"
+				className="w-64 max-w-[calc(100vw-2rem)] p-2"
+			>
 				<div className="space-y-1">
 					{collapsed.map((entry, i) => {
 						const icon = getToolIcon(entry.toolName, entry.input);
@@ -2861,10 +3235,10 @@ function ToolGutterIcon({
 						return (
 							<div
 								key={`${entry.toolName}-${i}`}
-								className="flex items-start gap-2 px-1.5 py-1 rounded text-xs text-muted-foreground"
+								className="flex min-w-0 items-start gap-2 rounded px-1.5 py-1 text-xs text-muted-foreground"
 							>
-								<span className="shrink-0 mt-0.5">{icon}</span>
-								<span className="leading-snug">
+								<span className="mt-0.5 shrink-0">{icon}</span>
+								<span className="min-w-0 flex-1 leading-snug break-words [overflow-wrap:anywhere]">
 									{label}
 									{entry.count > 1 && (
 										<span className="ml-1 opacity-60">x{entry.count}</span>
@@ -2890,6 +3264,10 @@ const MessageGroupCard = memo(function MessageGroupCard({
 	messageId,
 	showWorkingIndicator = false,
 	onForkHere,
+	onFileReferenceOpen,
+	hideRecoveredErrors = false,
+	freezeStreamingUpdates = false,
+	streamingPresentationMode = "raw",
 }: {
 	group: MessageGroup;
 	assistantName?: string | null;
@@ -2900,7 +3278,11 @@ const MessageGroupCard = memo(function MessageGroupCard({
 	onA2UIAction?: (action: import("@/lib/a2ui/types").A2UIUserAction) => void;
 	messageId?: string;
 	showWorkingIndicator?: boolean;
-	onForkHere?: (messagePreview: string) => void;
+	onForkHere?: () => void;
+	onFileReferenceOpen?: (filePath: string) => void;
+	hideRecoveredErrors?: boolean;
+	freezeStreamingUpdates?: boolean;
+	streamingPresentationMode?: StreamingPresentationMode;
 }) {
 	const isUser = group.role === "user";
 	const { t } = useTranslation();
@@ -2936,19 +3318,10 @@ const MessageGroupCard = memo(function MessageGroupCard({
 		string,
 		Extract<DisplayPart, { type: "tool_result" }>
 	>();
-	// Also index by name for fallback matching when IDs don't align
-	const toolResultsByName = new Map<
-		string,
-		Extract<DisplayPart, { type: "tool_result" }>
-	>();
 	const toolCallIds = new Set<string>();
 	for (const { part } of timedParts) {
 		if (part.type === "tool_result") {
 			toolResults.set(part.toolCallId, part);
-			// Index by name for fallback matching
-			if (part.name) {
-				toolResultsByName.set(part.name, part);
-			}
 		}
 		if (part.type === "tool_call") {
 			toolCallIds.add(part.toolCallId);
@@ -3007,9 +3380,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 		flushText();
 
 		if (part.type === "tool_call") {
-			// Try to find matching tool_result by toolCallId first, then fallback to name
-			const matchedResult =
-				toolResults.get(part.toolCallId) || toolResultsByName.get(part.name);
+			const matchedResult = toolResults.get(part.toolCallId);
 			segments.push({
 				key,
 				type: "tool_call",
@@ -3076,16 +3447,34 @@ const MessageGroupCard = memo(function MessageGroupCard({
 	segments.sort((a, b) => a.timestamp - b.timestamp);
 
 	const normalizedSegments: Segment[] = [];
+	const seenToolCalls = new Set<string>();
+	const seenStandaloneToolResults = new Set<string>();
 	for (let i = 0; i < segments.length; i++) {
 		const segment = segments[i];
 		if (segment.type === "tool_call") {
+			const toolCallId = segment.part.toolCallId;
+			if (seenToolCalls.has(toolCallId)) {
+				continue;
+			}
+			seenToolCalls.add(toolCallId);
+
 			let toolResult = segment.toolResult;
-			if (!toolResult) {
-				const next = segments[i + 1];
-				if (next?.type === "tool_result_only") {
+			let consumeNextStandaloneResult = false;
+			const next = segments[i + 1];
+			if (next?.type === "tool_result_only") {
+				if (!toolResult) {
 					toolResult = next.part;
-					i += 1;
+					consumeNextStandaloneResult = true;
+				} else {
+					const sameToolCallId = next.part.toolCallId === toolResult.toolCallId;
+					if (sameToolCallId) {
+						consumeNextStandaloneResult = true;
+					}
 				}
+			}
+			if (consumeNextStandaloneResult) {
+				seenStandaloneToolResults.add(next.part.toolCallId);
+				i += 1;
 			}
 			normalizedSegments.push(
 				toolResult && !segment.toolResult
@@ -3094,7 +3483,70 @@ const MessageGroupCard = memo(function MessageGroupCard({
 			);
 			continue;
 		}
+		if (segment.type === "tool_result_only") {
+			const resultId = segment.part.toolCallId;
+			if (
+				seenStandaloneToolResults.has(resultId) ||
+				seenToolCalls.has(resultId)
+			) {
+				continue;
+			}
+			seenStandaloneToolResults.add(resultId);
+		}
 		normalizedSegments.push(segment);
+	}
+
+	// Keep only the latest active retry card per assistant group.
+	// Retry events can arrive across multiple message fragments; rendering all
+	// fragments creates repeated cards (1/3, 2/3, 3/3). We keep the newest one.
+	const latestRetryingErrorIndex = (() => {
+		let latest = -1;
+		for (let i = 0; i < normalizedSegments.length; i++) {
+			const segment = normalizedSegments[i];
+			if (segment.type === "error" && segment.retrying) {
+				latest = i;
+			}
+		}
+		return latest;
+	})();
+
+	const displaySegments = normalizedSegments.filter((segment, index) => {
+		if (segment.type === "error" && segment.retrying) {
+			return index === latestRetryingErrorIndex;
+		}
+		return true;
+	});
+
+	const hasNonErrorContinuationAfter = (index: number): boolean => {
+		for (let i = index + 1; i < displaySegments.length; i++) {
+			const next = displaySegments[i];
+			if (next.type === "error") continue;
+			if (next.type === "tool_call") {
+				if (next.toolResult?.isError) continue;
+				return true;
+			}
+			if (next.type === "tool_result_only") {
+				if (next.part.isError) continue;
+				return true;
+			}
+			return true;
+		}
+		return false;
+	};
+
+	const recoveredSegmentKeys = new Set<string>();
+	for (const [index, segment] of displaySegments.entries()) {
+		const continued = hasNonErrorContinuationAfter(index);
+		if (!continued) continue;
+		if (segment.type === "error" && !segment.retrying) {
+			recoveredSegmentKeys.add(segment.key);
+		}
+		if (segment.type === "tool_call" && segment.toolResult?.isError) {
+			recoveredSegmentKeys.add(segment.key);
+		}
+		if (segment.type === "tool_result_only" && segment.part.isError) {
+			recoveredSegmentKeys.add(segment.key);
+		}
 	}
 
 	type RenderSegment =
@@ -3172,7 +3624,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 				grouped.push(seg);
 			};
 
-			for (const segment of normalizedSegments) {
+			for (const segment of displaySegments) {
 				if (segment.type === "thinking") {
 					if (thinkingBuffer.length === 0) {
 						thinkingKey = segment.key;
@@ -3204,7 +3656,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 			}
 			return grouped;
 		}
-		if (verbosity !== 2) return normalizedSegments;
+		if (verbosity !== 2) return displaySegments;
 		const grouped: RenderSegment[] = [];
 		let toolBuffer: Extract<RenderSegment, { type: "tool_group" }>["segments"] =
 			[];
@@ -3245,7 +3697,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 			flushTools();
 		};
 
-		for (const segment of normalizedSegments) {
+		for (const segment of displaySegments) {
 			if (segment.type === "tool_call" || segment.type === "tool_result_only") {
 				toolBuffer.push(segment);
 				continue;
@@ -3269,6 +3721,8 @@ const MessageGroupCard = memo(function MessageGroupCard({
 		.filter((s): s is Extract<Segment, { type: "text" }> => s.type === "text")
 		.map((s) => s.text)
 		.join("\n\n");
+	const isGroupStreaming =
+		!isUser && group.messages.some((message) => message.isStreaming === true);
 
 	// Use workspace name instead of "Assistant" when assistantName is not provided
 	const workspaceName = workspacePath?.split("/").pop() || "Assistant";
@@ -3278,7 +3732,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 		<div
 			data-message-id={messageId}
 			className={cn(
-				"group transition-all duration-200 overflow-hidden",
+				"group transition-colors duration-200 overflow-hidden min-w-0 max-w-full",
 				isUser
 					? "sm:ml-8 bg-primary/20 dark:bg-primary/10 border border-primary/40 dark:border-primary/30"
 					: "sm:mr-8 bg-muted/50 border border-border",
@@ -3307,7 +3761,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 				{group.messages.length > 1 && (
 					<span
 						className={cn(
-							"text-[9px] sm:text-[10px] px-1 border leading-none flex-shrink-0",
+							"inline-flex min-h-4 items-center justify-center rounded-sm border px-1 text-[9px] sm:text-[10px] leading-tight flex-shrink-0",
 							isUser
 								? "border-primary/30 text-primary"
 								: "border-border text-muted-foreground",
@@ -3323,12 +3777,12 @@ const MessageGroupCard = memo(function MessageGroupCard({
 						className="ml-1 flex-shrink-0"
 					/>
 				)}
-				{isUser && allTextContent && onForkHere && (
+				{isUser && onForkHere && (
 					<button
 						type="button"
 						onClick={(e) => {
 							e.stopPropagation();
-							onForkHere(allTextContent);
+							onForkHere();
 						}}
 						className="text-muted-foreground hover:text-foreground transition-colors"
 						title={t("chat.forkHere", "Fork here")}
@@ -3357,7 +3811,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 
 			<div
 				className={cn(
-					"relative px-2 sm:px-4 py-2 sm:py-3 group space-y-2 overflow-hidden",
+					"relative px-2 sm:px-4 py-2 sm:py-3 group space-y-2 overflow-hidden min-w-0 max-w-full transition-[padding] duration-150 ease-out",
 					!isUser && verbosity === 1 && "pr-12 sm:pr-16",
 				)}
 			>
@@ -3389,18 +3843,40 @@ const MessageGroupCard = memo(function MessageGroupCard({
 						}
 					)._toolGroup;
 
-					const wrapWithGutter = (key: string, content: React.ReactNode) => {
+					const wrapWithGutter = (
+						key: string,
+						content: React.ReactNode,
+						isThinking = false,
+					) => {
 						if (!attachedToolGroup || verbosity !== 1) {
 							return content;
 						}
+						const runs = splitToolGroupIntoRuns(attachedToolGroup);
 						return (
-							<div key={key} className="relative">
+							<div
+								key={key}
+								className={cn(
+									"relative",
+									isThinking &&
+										"[&>.tool-gutter]:hidden [&:has(details[open])>.tool-gutter]:flex",
+								)}
+							>
 								{content}
-								<div className="absolute right-[-2.625rem] sm:right-[-3.375rem] top-0 bottom-0 flex items-center">
-									<ToolGutterIcon
-										toolGroup={attachedToolGroup}
-										locale={locale}
-									/>
+								<div
+									className={cn(
+										"absolute right-[-2.625rem] sm:right-[-3.375rem] top-0 bottom-0 items-center",
+										isThinking ? "tool-gutter" : "flex",
+									)}
+								>
+									<div className="flex flex-col items-center gap-1 py-0.5">
+										{runs.map((run) => (
+											<ToolGutterIcon
+												key={run.key}
+												toolGroup={run}
+												locale={locale}
+											/>
+										))}
+									</div>
 								</div>
 							</div>
 						);
@@ -3413,11 +3889,27 @@ const MessageGroupCard = memo(function MessageGroupCard({
 								content={segment.text}
 								workspacePath={workspacePath}
 								locale={locale}
+								onFileReferenceOpen={onFileReferenceOpen}
+								deferMermaidUntilFinal={
+									!isUser && (showWorkingIndicator || isGroupStreaming)
+								}
+								isStreaming={
+									!isUser && (showWorkingIndicator || isGroupStreaming)
+								}
+								freezeStreamingUpdates={freezeStreamingUpdates}
+								streamingPresentationMode={streamingPresentationMode}
 							/>
 						);
 						return wrapWithGutter(segment.key, inner);
 					}
 					if (segment.type === "tool_call") {
+						const isRecoveredError = recoveredSegmentKeys.has(segment.key);
+						const hasToolError =
+							segment.part.status === "error" ||
+							Boolean(segment.toolResult?.isError);
+						if (hideRecoveredErrors && (isRecoveredError || hasToolError)) {
+							return null;
+						}
 						return (
 							<div
 								key={segment.key}
@@ -3428,11 +3920,18 @@ const MessageGroupCard = memo(function MessageGroupCard({
 									toolResult={segment.toolResult}
 									locale={locale}
 									workspacePath={workspacePath}
+									streamingPresentationMode={streamingPresentationMode}
+									isRecoveredError={isRecoveredError}
 								/>
 							</div>
 						);
 					}
 					if (segment.type === "tool_result_only") {
+						const isRecoveredError = recoveredSegmentKeys.has(segment.key);
+						const hasToolError = Boolean(segment.part.isError);
+						if (hideRecoveredErrors && (isRecoveredError || hasToolError)) {
+							return null;
+						}
 						// Render standalone tool result (no matching tool_use found)
 						return (
 							<div
@@ -3443,6 +3942,8 @@ const MessageGroupCard = memo(function MessageGroupCard({
 									part={segment.part}
 									locale={locale}
 									workspacePath={workspacePath}
+									streamingPresentationMode={streamingPresentationMode}
+									isRecoveredError={isRecoveredError}
 								/>
 							</div>
 						);
@@ -3464,13 +3965,20 @@ const MessageGroupCard = memo(function MessageGroupCard({
 									}
 									locale={locale}
 									workspacePath={workspacePath}
+									isStreaming={!isUser && isGroupStreaming}
+									freezeStreamingUpdates={freezeStreamingUpdates}
+									streamingPresentationMode={streamingPresentationMode}
 								/>
 							</div>
 						);
-						return wrapWithGutter(segment.key, inner);
+						return wrapWithGutter(segment.key, inner, true);
 					}
 					if (segment.type === "error") {
 						const isRetrying = segment.retrying;
+						const isRecoveredError = recoveredSegmentKeys.has(segment.key);
+						if (hideRecoveredErrors && !isRetrying) {
+							return null;
+						}
 						return (
 							<div
 								key={segment.key}
@@ -3478,7 +3986,9 @@ const MessageGroupCard = memo(function MessageGroupCard({
 									"rounded-md border px-3 py-2 text-sm flex items-center gap-2",
 									isRetrying
 										? "border-amber-500/30 bg-amber-500/10 text-amber-600"
-										: "border-red-500/30 bg-red-500/10 text-red-600",
+										: isRecoveredError
+											? "border-amber-500/20 bg-amber-500/5 text-amber-700 dark:text-amber-400"
+											: "border-destructive/20 bg-destructive/5 text-foreground/75",
 									needsTopMargin && "mt-3",
 								)}
 							>
@@ -3568,7 +4078,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 								<div
 									key={segment.key}
 									className={cn(
-										"relative min-h-5 text-xs text-muted-foreground",
+										"relative h-6 leading-none text-xs text-muted-foreground",
 										needsTopMargin && "mt-2",
 									)}
 								>
@@ -3579,7 +4089,15 @@ const MessageGroupCard = memo(function MessageGroupCard({
 								</div>
 							);
 						}
-						const toolItems = segment.segments.map((toolSegment) => {
+						const visibleToolSegments = hideRecoveredErrors
+							? segment.segments.filter(
+									(toolSegment) => !recoveredSegmentKeys.has(toolSegment.key),
+								)
+							: segment.segments;
+						if (visibleToolSegments.length === 0) {
+							return null;
+						}
+						const toolItems = visibleToolSegments.map((toolSegment) => {
 							const toolName =
 								toolSegment.type === "tool_call"
 									? toolSegment.part.name
@@ -3607,6 +4125,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 										workspacePath={workspacePath}
 										collapsible={false}
 										hideHeader={verbosity === 2}
+										isRecoveredError={recoveredSegmentKeys.has(toolSegment.key)}
 									/>
 								),
 							};
@@ -3661,11 +4180,8 @@ const MessageGroupCard = memo(function MessageGroupCard({
 				{messageCard}
 			</ContextMenuTrigger>
 			<ContextMenuContent>
-				{isUser && allTextContent && onForkHere && (
-					<ContextMenuItem
-						onClick={() => onForkHere(allTextContent)}
-						className="gap-2"
-					>
+				{isUser && onForkHere && (
+					<ContextMenuItem onClick={() => onForkHere()} className="gap-2">
 						<GitBranch className="w-4 h-4" />
 						{t("chat.forkHere", "Fork here")}
 					</ContextMenuItem>
@@ -3694,6 +4210,10 @@ function PiPartRenderer({
 	workspacePath,
 	collapsible = true,
 	hideHeader = false,
+	isStreaming = false,
+	freezeStreamingUpdates = false,
+	streamingPresentationMode = "raw",
+	isRecoveredError = false,
 }: {
 	part: DisplayPart;
 	toolResult?: Extract<DisplayPart, { type: "tool_result" }>;
@@ -3701,9 +4221,59 @@ function PiPartRenderer({
 	workspacePath?: string | null;
 	collapsible?: boolean;
 	hideHeader?: boolean;
+	isStreaming?: boolean;
+	freezeStreamingUpdates?: boolean;
+	streamingPresentationMode?: StreamingPresentationMode;
+	isRecoveredError?: boolean;
 }) {
 	const { t } = useTranslation();
 	const stripAnsi = (value: string): string => stripAnsiSequences(value);
+	const isThinkingPart = part.type === "thinking";
+	const rawThinkingText = isThinkingPart
+		? stripAnsi(((part as { text?: string }).text ?? "").trim())
+		: "";
+	const frozenThinkingText = useFrozenStreamingText(
+		rawThinkingText,
+		freezeStreamingUpdates && isStreaming && isThinkingPart,
+	);
+	const thinkingCrawlRef = useRef<HTMLDivElement>(null);
+	const {
+		visibleContent: visibleThinkingContent,
+		isCommitAnimating: isThinkingCommitAnimating,
+		animationPhase: thinkingAnimationPhase,
+	} = useStreamingCommittedContent(
+		frozenThinkingText,
+		isStreaming && isThinkingPart,
+		streamingPresentationMode,
+	);
+	useSmoothContainerHeight(
+		thinkingCrawlRef,
+		visibleThinkingContent,
+		isStreaming &&
+			isThinkingPart &&
+			streamingPresentationMode === "smooth" &&
+			!freezeStreamingUpdates,
+	);
+	useSmoothCrawlTransform(
+		thinkingCrawlRef,
+		visibleThinkingContent,
+		isStreaming &&
+			isThinkingPart &&
+			streamingPresentationMode === "smooth" &&
+			!freezeStreamingUpdates,
+	);
+	const thinkingReservedLines = useMemo(
+		() =>
+			isStreaming && isThinkingPart && streamingPresentationMode === "chunked"
+				? estimateStreamingReservedLines(frozenThinkingText)
+				: 0,
+		[
+			isStreaming,
+			isThinkingPart,
+			frozenThinkingText,
+			streamingPresentationMode,
+		],
+	);
 
 	const formatToolResultOutput = (content: unknown): string | undefined => {
 		const decodeBytes = (bytes: Uint8Array): string | undefined => {
@@ -3832,14 +4402,15 @@ function PiPartRenderer({
 					content={stripAnsi(textContent)}
 					workspacePath={workspacePath}
 					locale={locale}
+					isStreaming={isStreaming}
+					freezeStreamingUpdates={freezeStreamingUpdates}
+					streamingPresentationMode={streamingPresentationMode}
 				/>
 			);
 		}
 
 		case "thinking": {
-			const thinkingText = stripAnsi(
-				((part as { text?: string }).text ?? "").trim(),
-			);
+			const thinkingText = visibleThinkingContent;
 			if (!thinkingText) return null;
 
 			const verbosityLevel =
@@ -3862,7 +4433,7 @@ function PiPartRenderer({
 			return (
 				<details
 					open={isOpen}
-					className="group my-2 border-l-2 border-primary/40 bg-muted/40 pl-0"
+					className="group my-2 border-l-2 border-primary/40 bg-muted/40 pl-0 overflow-hidden"
 				>
 					<summary className="flex items-center gap-2 cursor-pointer select-none px-3 py-2 text-xs text-foreground/70 hover:text-foreground list-none [&::-webkit-details-marker]:hidden [&::marker]:content-['']">
 						<svg
@@ -3884,10 +4455,30 @@ function PiPartRenderer({
 							</span>
 						)}
 					</summary>
-					<div className="px-3 pb-3 pt-1 text-xs leading-relaxed">
+					<div
+						ref={thinkingCrawlRef}
+						className={cn(
+							"px-3 pb-3 pt-1 text-xs leading-relaxed",
+							isThinkingCommitAnimating &&
+								(streamingPresentationMode === "chunked"
+									? thinkingAnimationPhase === "a"
+										? "stream-commit-slide-in-a"
+										: "stream-commit-slide-in-b"
+									: undefined),
+						)}
+						style={
+							isStreaming && streamingPresentationMode === "chunked"
+								? {
+										minHeight: `calc(${thinkingReservedLines} * 1.35em)`,
+										contain: "layout paint",
+									}
+								: undefined
+						}
+					>
 						<MarkdownRenderer
 							content={thinkingText}
-							className="text-xs text-foreground/70 leading-relaxed [&_p]:text-foreground/70 [&_li]:text-foreground/70 [&_code]:text-foreground/60"
+							className="text-xs text-foreground/70 leading-relaxed overflow-hidden min-w-0 max-w-full [&_p]:text-foreground/70 [&_li]:text-foreground/70 [&_code]:text-foreground/60"
+							isStreaming={isStreaming}
 						/>
 					</div>
 				</details>
@@ -3919,6 +4510,7 @@ function PiPartRenderer({
 					hideTodoTools={true}
 					collapsible={collapsible}
 					hideHeader={hideHeader}
+					isRecoveredError={isRecoveredError}
 				/>
 			);
 		}
@@ -3935,7 +4527,7 @@ function PiPartRenderer({
 						tool: part.name || "result",
 						callID: part.toolCallId,
 						state: {
-							status: "completed",
+							status: part.isError ? "error" : "completed",
 							output: formatToolResultOutput(part.output),
 							title: part.name || "Tool Result",
 						},
@@ -3944,6 +4536,7 @@ function PiPartRenderer({
 					hideTodoTools={true}
 					collapsible={collapsible}
 					hideHeader={hideHeader}
+					isRecoveredError={isRecoveredError}
 				/>
 			);
 
@@ -3966,7 +4559,156 @@ function PiPartRenderer({
 			);
 		}
 
+		case "compaction": {
+			return (
+				<div className="rounded-md border border-border/60 bg-muted/40 px-3 py-2 text-xs text-foreground/70">
+					{part.text}
+				</div>
+			);
+		}
+
+		case "error": {
+			return (
+				<div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+					{part.text}
+				</div>
+			);
+		}
+
+		case "file_ref": {
+			const fileRef = part as Extract<DisplayPart, { type: "file_ref" }>;
+			const rawUri = (fileRef.uri ?? "").trim();
+			const isWebUrl = /^https?:\/\//i.test(rawUri);
+			const isDataUrl = /^data:/i.test(rawUri);
+			if (isWebUrl || isDataUrl) {
+				return (
+					<FileReferenceCard
+						filePath={fileRef.label ?? rawUri}
+						workspacePath={workspacePath}
+						directUrl={rawUri}
+						label={fileRef.label}
+					/>
+				);
+			}
+
+			let candidatePath = rawUri;
+			if (candidatePath.startsWith("@")) {
+				candidatePath = candidatePath.slice(1);
+			}
+			if (candidatePath.startsWith("file://")) {
+				candidatePath = decodeURIComponent(
+					candidatePath.replace("file://", ""),
+				);
+			}
+
+			if (workspacePath) {
+				const root = workspacePath.replace(/\/+$/, "");
+				if (candidatePath.startsWith(`${root}/`)) {
+					candidatePath = candidatePath.slice(root.length + 1);
+				}
+			}
+
+			if (candidatePath && !candidatePath.startsWith("/")) {
+				return (
+					<FileReferenceCard
+						filePath={candidatePath}
+						workspacePath={workspacePath}
+						label={fileRef.label}
+					/>
+				);
+			}
+			return (
+				<div className="rounded-md border border-border/60 px-3 py-2 text-sm text-foreground/80">
+					<ExternalLink className="mr-2 inline-block h-4 w-4" />
+					{fileRef.label ?? rawUri}
+				</div>
+			);
+		}
+
+		case "audio": {
+			const media = part as Extract<Part, { type: "audio" }>;
+			let href = "";
+			if (media.source === "base64") {
+				href = `data:${media.mimeType ?? "audio/mpeg"};base64,${media.data}`;
+			} else if (media.source === "url") {
+				href = media.url;
+			}
+			if (!href) return null;
+			return (
+				<a
+					href={href}
+					target="_blank"
+					rel="noreferrer"
+					className="inline-flex items-center gap-2 rounded-md border border-border/60 px-3 py-2 text-sm hover:bg-muted/40"
+				>
+					<ExternalLink className="h-4 w-4" />
+					Audio attachment
+				</a>
+			);
+		}
+
+		case "video": {
+			const media = part as Extract<Part, { type: "video" }>;
+			let href = "";
+			if (media.source === "base64") {
+				href = `data:${media.mimeType ?? "video/mp4"};base64,${media.data}`;
+			} else if (media.source === "url") {
+				href = media.url;
+			}
+			if (!href) return null;
+			return (
+				<a
+					href={href}
+					target="_blank"
+					rel="noreferrer"
+					className="inline-flex items-center gap-2 rounded-md border border-border/60 px-3 py-2 text-sm hover:bg-muted/40"
+				>
+					<ExternalLink className="h-4 w-4" />
+					Video attachment
+				</a>
+			);
+		}
+
+		case "attachment": {
+			const media = part as Extract<Part, { type: "attachment" }>;
+			let href = "";
+			if (media.source === "base64") {
+				href = `data:${media.mimeType ?? "application/octet-stream"};base64,${media.data}`;
+			} else if (media.source === "url") {
+				href = media.url;
+			}
+			if (!href) return null;
+			return (
+				<a
+					href={href}
+					target="_blank"
+					rel="noreferrer"
+					className="inline-flex items-center gap-2 rounded-md border border-border/60 px-3 py-2 text-sm hover:bg-muted/40"
+				>
+					<Paperclip className="h-4 w-4" />
+					{media.filename || "Attachment"}
+				</a>
+			);
+		}
+
 		default: {
+			if (typeof part.type === "string" && part.type.startsWith("x-")) {
+				const extensionPart = part as Extract<Part, { type: `x-${string}` }>;
+				return (
+					<div className="rounded-md border border-dashed border-border/60 bg-muted/30 p-3 text-xs">
+						<div className="mb-1 font-medium text-foreground/80">
+							Extension part: {extensionPart.type}
+						</div>
+						<pre className="whitespace-pre-wrap break-words text-foreground/70">
+							{JSON.stringify(
+								extensionPart.payload ?? extensionPart.meta ?? null,
+								null,
+								2,
+							)}
+						</pre>
+					</div>
+				);
+			}
 			console.warn("Unknown Pi message part type:", part);
 			return null;
 		}
@@ -3991,20 +4733,359 @@ function useCoarsePointerDevice(): boolean {
  * Renders text content with @file references as inline previews.
  * Desktop gets a context-menu copy action; touch devices keep native media interactions.
  */
+// Estimate reserved lines for live streaming so container growth can lead
+// reveal without changing final markdown rendering semantics.
+
+function estimateStreamingReservedLines(text: string): number {
+	const normalized = text.trim();
+	if (normalized.length === 0) return 2;
+	const logicalLines = Math.max(1, normalized.split(/\r?\n/).length);
+	const approxCharsPerWrappedLine = 42;
+	const wrappedLineEstimate = Math.max(
+		1,
+		Math.ceil(normalized.length / approxCharsPerWrappedLine),
+	);
+	return Math.max(2, logicalLines + 1, wrappedLineEstimate + 1);
+}
+
+function splitCommittedStreamingTail(
+	text: string,
+	minPendingChars = 24,
+): {
+	committed: string;
+	tail: string;
+} {
+	if (text.length === 0) return { committed: "", tail: "" };
+
+	const latestEligibleIdx = Math.max(0, text.length - minPendingChars);
+	let splitAt = -1;
+
+	for (let i = latestEligibleIdx; i >= 0; i--) {
+		const ch = text.charAt(i);
+		if (ch === "\n" || ch === "\r" || /\s|[.,!?;:)}\]]/.test(ch)) {
+			splitAt = i + 1;
+			break;
+		}
+	}
+
+	if (splitAt <= 0) {
+		return { committed: "", tail: text };
+	}
+
+	return {
+		committed: text.slice(0, splitAt),
+		tail: text.slice(splitAt),
+	};
+}
+
+function useFrozenStreamingText(content: string, freeze: boolean): string {
+	const [frozen, setFrozen] = useState(content);
+	// useeffect-guardrail: allow - freeze live streaming text while user inspects scrolled-up history
+	useEffect(() => {
+		if (!freeze) {
+			setFrozen(content);
+		}
+	}, [content, freeze]);
+	return freeze ? frozen : content;
+}
+
+function useSmoothContainerHeight(
+	ref: { current: HTMLElement | null },
+	contentKey: string,
+	enabled: boolean,
+) {
+	const rafRef = useRef<number | null>(null);
+	const currentHeightRef = useRef<number | null>(null);
+	const targetHeightRef = useRef<number | null>(null);
+
+	// useeffect-guardrail: allow - RAF-driven continuous container height smoothing for smooth streaming mode
+	useLayoutEffect(() => {
+		void contentKey;
+		const el = ref.current;
+		if (!el) return;
+		const measuredHeight = el.scrollHeight;
+
+		if (!enabled) {
+			if (rafRef.current !== null) {
+				cancelAnimationFrame(rafRef.current);
+				rafRef.current = null;
+			}
+			currentHeightRef.current = null;
+			targetHeightRef.current = null;
+			el.style.height = "";
+			return;
+		}
+
+		targetHeightRef.current = measuredHeight;
+		if (currentHeightRef.current === null) {
+			currentHeightRef.current = measuredHeight;
+			el.style.height = `${measuredHeight}px`;
+		}
+
+		if (rafRef.current !== null) return;
+		const tick = () => {
+			const node = ref.current;
+			if (!node) {
+				rafRef.current = null;
+				return;
+			}
+			const target = targetHeightRef.current ?? node.scrollHeight;
+			const current = currentHeightRef.current ?? target;
+			const next = current + (target - current) * 0.22;
+			if (Math.abs(target - next) <= 0.25) {
+				node.style.height = `${target}px`;
+				currentHeightRef.current = target;
+				rafRef.current = null;
+				return;
+			}
+			node.style.height = `${next}px`;
+			currentHeightRef.current = next;
+			rafRef.current = requestAnimationFrame(tick);
+		};
+		rafRef.current = requestAnimationFrame(tick);
+	}, [contentKey, enabled, ref]);
+
+	// useeffect-guardrail: allow - cleanup height smoothing RAF and inline styles on unmount/ref changes
+	useEffect(() => {
+		const el = ref.current;
+		return () => {
+			if (rafRef.current !== null) {
+				cancelAnimationFrame(rafRef.current);
+				rafRef.current = null;
+			}
+			currentHeightRef.current = null;
+			targetHeightRef.current = null;
+			if (!el) return;
+			el.style.height = "";
+		};
+	}, [ref]);
+}
+
+function useSmoothCrawlTransform(
+	ref: { current: HTMLElement | null },
+	contentKey: string,
+	enabled: boolean,
+) {
+	const previousHeightRef = useRef<number | null>(null);
+	const offsetRef = useRef(0);
+	const animRafRef = useRef<number | null>(null);
+
+	// useeffect-guardrail: allow - RAF-driven continuous crawl transform for streaming content
+	useLayoutEffect(() => {
+		void contentKey;
+		const el = ref.current;
+		if (!el) return;
+
+		const nextHeight = el.scrollHeight;
+		const prevHeight = previousHeightRef.current ?? nextHeight;
+		previousHeightRef.current = nextHeight;
+
+		if (!enabled) {
+			if (animRafRef.current !== null) {
+				cancelAnimationFrame(animRafRef.current);
+				animRafRef.current = null;
+			}
+			offsetRef.current = 0;
+			el.style.willChange = "";
+			el.style.transform = "";
+			return;
+		}
+
+		const delta = nextHeight - prevHeight;
+		if (delta > 1.25) {
+			offsetRef.current = Math.min(42, offsetRef.current + delta);
+		}
+
+		if (animRafRef.current !== null) {
+			return;
+		}
+
+		const tick = () => {
+			const node = ref.current;
+			if (!node) {
+				animRafRef.current = null;
+				return;
+			}
+			const current = offsetRef.current;
+			if (current <= 0.08) {
+				offsetRef.current = 0;
+				node.style.transform = "translateY(0px)";
+				node.style.willChange = "";
+				animRafRef.current = null;
+				return;
+			}
+
+			node.style.willChange = "transform";
+			node.style.transform = `translateY(${current.toFixed(3)}px)`;
+			const decayed = current * 0.82;
+			offsetRef.current = decayed < 0.08 ? 0 : decayed;
+			animRafRef.current = requestAnimationFrame(tick);
+		};
+
+		animRafRef.current = requestAnimationFrame(tick);
+	}, [contentKey, enabled, ref]);
+
+	// useeffect-guardrail: allow - cleanup RAF and inline transform styles on unmount/ref changes
+	useEffect(() => {
+		const el = ref.current;
+		return () => {
+			if (animRafRef.current !== null) {
+				cancelAnimationFrame(animRafRef.current);
+				animRafRef.current = null;
+			}
+			offsetRef.current = 0;
+			if (!el) return;
+			el.style.willChange = "";
+			el.style.transform = "";
+		};
+	}, [ref]);
+}
+
+function useStreamingCommittedContent(
+	content: string,
+	isStreaming: boolean,
+	mode: StreamingPresentationMode,
+): {
+	visibleContent: string;
+	isCommitAnimating: boolean;
+	animationPhase: "a" | "b";
+} {
+	const [isCommitAnimating, setIsCommitAnimating] = useState(false);
+	const [animationPhase, setAnimationPhase] = useState<"a" | "b">("a");
+	const [isResizeSettling, setIsResizeSettling] = useState(false);
+	const resizeSettleTimeoutRef = useRef<number | null>(null);
+	const animateTimeoutRef = useRef<number | null>(null);
+	const previousCommittedRef = useRef("");
+
+	const split = useMemo(() => {
+		if (!isStreaming) return { committed: content, tail: "" };
+		if (mode !== "chunked") return { committed: content, tail: "" };
+		return splitCommittedStreamingTail(content, 24);
+	}, [content, isStreaming, mode]);
+
+	const visibleContent = isStreaming ? split.committed : content;
+
+	// useeffect-guardrail: allow - resize debounce gate for streaming animations
+	useEffect(() => {
+		if (!isStreaming) {
+			setIsResizeSettling(false);
+			return;
+		}
+		const onResize = () => {
+			setIsResizeSettling(true);
+			if (resizeSettleTimeoutRef.current !== null) {
+				window.clearTimeout(resizeSettleTimeoutRef.current);
+			}
+			resizeSettleTimeoutRef.current = window.setTimeout(() => {
+				setIsResizeSettling(false);
+				resizeSettleTimeoutRef.current = null;
+			}, 220);
+		};
+		window.addEventListener("resize", onResize, { passive: true });
+		return () => {
+			window.removeEventListener("resize", onResize);
+			if (resizeSettleTimeoutRef.current !== null) {
+				window.clearTimeout(resizeSettleTimeoutRef.current);
+				resizeSettleTimeoutRef.current = null;
+			}
+		};
+	}, [isStreaming]);
+
+	// useeffect-guardrail: allow - animate newly committed streaming chunks
+	useEffect(() => {
+		if (!isStreaming) {
+			previousCommittedRef.current = visibleContent;
+			setIsCommitAnimating(false);
+			if (animateTimeoutRef.current !== null) {
+				window.clearTimeout(animateTimeoutRef.current);
+				animateTimeoutRef.current = null;
+			}
+			return;
+		}
+
+		const previous = previousCommittedRef.current;
+		const next = visibleContent;
+		const hasNewCommittedContent = next.length > previous.length;
+		previousCommittedRef.current = next;
+
+		if (!hasNewCommittedContent || isResizeSettling || mode === "raw") {
+			return;
+		}
+
+		setAnimationPhase((prev) => (prev === "a" ? "b" : "a"));
+		setIsCommitAnimating(true);
+		if (animateTimeoutRef.current !== null) {
+			window.clearTimeout(animateTimeoutRef.current);
+		}
+		animateTimeoutRef.current = window.setTimeout(() => {
+			setIsCommitAnimating(false);
+			animateTimeoutRef.current = null;
+		}, 140);
+		return () => {
+			if (animateTimeoutRef.current !== null) {
+				window.clearTimeout(animateTimeoutRef.current);
+				animateTimeoutRef.current = null;
+			}
+		};
+	}, [isResizeSettling, isStreaming, mode, visibleContent]);
+
+	return {
+		visibleContent,
+		isCommitAnimating: isCommitAnimating && !isResizeSettling,
+		animationPhase,
+	};
+}
+
 function TextWithFileReferences({
 	content,
 	workspacePath,
 	locale = "en",
+	onFileReferenceOpen,
+	deferMermaidUntilFinal = false,
+	isStreaming = false,
+	freezeStreamingUpdates = false,
+	streamingPresentationMode = "raw",
 }: {
 	content: string;
 	workspacePath?: string | null;
 	locale?: "en" | "de";
+	onFileReferenceOpen?: (filePath: string) => void;
+	deferMermaidUntilFinal?: boolean;
+	isStreaming?: boolean;
+	freezeStreamingUpdates?: boolean;
+	streamingPresentationMode?: StreamingPresentationMode;
 }) {
 	const { t } = useTranslation();
+	const smoothCrawlRef = useRef<HTMLDivElement>(null);
+	const frozenContent = useFrozenStreamingText(
+		content,
+		freezeStreamingUpdates && isStreaming,
+	);
+	const { visibleContent, isCommitAnimating, animationPhase } =
+		useStreamingCommittedContent(
+			frozenContent,
+			isStreaming,
+			streamingPresentationMode,
+		);
+	useSmoothContainerHeight(
+		smoothCrawlRef,
+		visibleContent,
+		isStreaming &&
+			streamingPresentationMode === "smooth" &&
+			!freezeStreamingUpdates,
+	);
+	useSmoothCrawlTransform(
+		smoothCrawlRef,
+		visibleContent,
+		isStreaming &&
+			streamingPresentationMode === "smooth" &&
+			!freezeStreamingUpdates,
+	);
 	// Strip ANSI escape codes and fix indentation before rendering.
 	// Some models (e.g. Kimi-K2.5) prefix text with 4+ spaces which CommonMark
 	// interprets as indented code blocks, causing plain text to render as <pre><code>.
-	const cleanContent = dedentMarkdown(stripAnsiSequences(content));
+	const cleanContent = dedentMarkdown(stripAnsiSequences(visibleContent));
+	const reservationBasis = dedentMarkdown(stripAnsiSequences(frozenContent));
 
 	// Rewrite markdown image URLs that reference local workspace files
 	// (e.g. ![avatar](ginee_pixel_art_avatar.png)) so they resolve through
@@ -4038,13 +5119,41 @@ function TextWithFileReferences({
 		() => extractFileReferenceDetails(cleanContent),
 		[cleanContent],
 	);
+	const streamingReservedLines = useMemo(
+		() =>
+			isStreaming && streamingPresentationMode === "chunked"
+				? estimateStreamingReservedLines(reservationBasis)
+				: 0,
+		[isStreaming, reservationBasis, streamingPresentationMode],
+	);
 	const isCoarsePointerDevice = useCoarsePointerDevice();
 
 	const contentBlock = (
-		<div className="space-y-2 select-none sm:select-auto">
+		<div
+			ref={smoothCrawlRef}
+			className={cn(
+				"space-y-2 select-none sm:select-auto min-w-0 max-w-full",
+				isCommitAnimating &&
+					(streamingPresentationMode === "chunked"
+						? animationPhase === "a"
+							? "stream-commit-slide-in-a"
+							: "stream-commit-slide-in-b"
+						: undefined),
+			)}
+			style={
+				isStreaming && streamingPresentationMode === "chunked"
+					? {
+							minHeight: `calc(${streamingReservedLines} * 1.55em)`,
+							contain: "layout paint",
+						}
+					: undefined
+			}
+		>
 			<MarkdownRenderer
 				content={markdownContent}
-				className="text-sm text-foreground leading-relaxed overflow-hidden"
+				className="text-sm text-foreground leading-relaxed overflow-hidden min-w-0 max-w-full"
+				enableMermaid={!deferMermaidUntilFinal}
+				isStreaming={isStreaming}
 			/>
 			{/* Render file reference cards */}
 			{fileRefs.length > 0 && workspacePath && (
@@ -4055,6 +5164,7 @@ function TextWithFileReferences({
 							filePath={ref.filePath}
 							workspacePath={workspacePath}
 							label={ref.label}
+							onOpenFileReference={onFileReferenceOpen}
 						/>
 					))}
 				</div>
@@ -4093,31 +5203,76 @@ export const FileReferenceCard = memo(function FileReferenceCard({
 	workspacePath,
 	directUrl,
 	label,
+	onOpenFileReference,
 }: {
 	filePath: string;
-	workspacePath: string;
+	workspacePath?: string | null;
 	directUrl?: string;
 	label?: string;
+	onOpenFileReference?: (filePath: string) => void;
 }) {
 	const [isLoading, setIsLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
 	const [imageLoaded, setImageLoaded] = useState(false);
 	const [fileExists, setFileExists] = useState<boolean | null>(null);
 	const [fileUrl, setFileUrl] = useState<string | null>(null);
+	const [resolvedWorkspacePath, setResolvedWorkspacePath] =
+		useState<string>("");
 
-	const fileInfo = useMemo(() => getFileTypeInfo(filePath), [filePath]);
+	const workspaceScopedPath = useMemo(() => {
+		const workspaceRoot = (workspacePath ?? "").replace(/\/+$/, "");
+		if (!workspaceRoot) return filePath;
+		if (filePath === workspaceRoot) return ".";
+		if (filePath.startsWith(`${workspaceRoot}/`)) {
+			return filePath.slice(workspaceRoot.length + 1);
+		}
+		return filePath;
+	}, [filePath, workspacePath]);
+
+	const candidateWorkspacePaths = useMemo(() => {
+		const candidates = new Set<string>([workspaceScopedPath]);
+		if (workspaceScopedPath.includes("%")) {
+			try {
+				candidates.add(decodeURIComponent(workspaceScopedPath));
+			} catch {
+				// ignore malformed encoding
+			}
+		}
+		return [...candidates].filter((v) => v.length > 0);
+	}, [workspaceScopedPath]);
+
+	const fileInfo = useMemo(
+		() => getFileTypeInfo(workspaceScopedPath),
+		[workspaceScopedPath],
+	);
 	const isImage = fileInfo.category === "image";
 	const isVideo = fileInfo.category === "video";
-	const fileName = label || filePath.split("/").pop() || filePath;
+	const fileName =
+		label || workspaceScopedPath.split("/").pop() || workspaceScopedPath;
 
 	// Download file
 	const handleDownload = useCallback(async () => {
 		try {
-			await downloadFileMux(workspacePath, filePath, fileName);
+			if (directUrl) {
+				window.open(directUrl, "_blank", "noopener");
+				return;
+			}
+			if (!workspacePath) return;
+			await downloadFileMux(
+				workspacePath,
+				resolvedWorkspacePath || workspaceScopedPath,
+				fileName,
+			);
 		} catch (err) {
 			console.error("Failed to download file:", err);
 		}
-	}, [workspacePath, filePath, fileName]);
+	}, [
+		directUrl,
+		workspacePath,
+		resolvedWorkspacePath,
+		workspaceScopedPath,
+		fileName,
+	]);
 
 	// Open in canvas (only for images)
 	const handleOpenInCanvas = useCallback(() => {
@@ -4125,10 +5280,12 @@ export const FileReferenceCard = memo(function FileReferenceCard({
 		// Dispatch custom event that SessionScreen can listen to
 		window.dispatchEvent(
 			new CustomEvent("oqto:open-in-canvas", {
-				detail: { imagePath: filePath },
+				detail: {
+					imagePath: resolvedWorkspacePath || workspaceScopedPath,
+				},
 			}),
 		);
-	}, [isImage, filePath]);
+	}, [isImage, resolvedWorkspacePath, workspaceScopedPath]);
 
 	useEffect(() => {
 		let cancelled = false;
@@ -4137,6 +5294,7 @@ export const FileReferenceCard = memo(function FileReferenceCard({
 		setFileExists(null);
 		setImageLoaded(false);
 		setFileUrl(directUrl ?? null);
+		setResolvedWorkspacePath("");
 
 		if (!workspacePath && !directUrl) {
 			setFileExists(false);
@@ -4145,27 +5303,19 @@ export const FileReferenceCard = memo(function FileReferenceCard({
 		}
 
 		const run = async () => {
-			try {
-				if (!directUrl && workspacePath) {
-					await statPathMux(workspacePath, filePath);
-				}
+			const resolvedPath =
+				candidateWorkspacePaths.find((candidate) => !candidate.includes("%")) ??
+				candidateWorkspacePaths[0] ??
+				workspaceScopedPath;
+			if (cancelled) return;
+			setResolvedWorkspacePath(resolvedPath);
+			setFileExists(true);
 
-				if (cancelled) return;
-				setFileExists(true);
-
-				if ((isImage || isVideo) && !directUrl && workspacePath) {
-					if (cancelled) return;
-					setFileUrl(workspaceFileUrl(workspacePath, filePath));
-				}
-			} catch {
-				if (cancelled) return;
-				setFileExists(false);
-				setError("File not found");
+			if ((isImage || isVideo) && !directUrl && workspacePath) {
+				setFileUrl(workspaceFileUrl(workspacePath, resolvedPath));
+			}
+			if (!isImage && !isVideo) {
 				setIsLoading(false);
-			} finally {
-				if (!cancelled && !isImage && !isVideo) {
-					setIsLoading(false);
-				}
 			}
 		};
 
@@ -4173,20 +5323,52 @@ export const FileReferenceCard = memo(function FileReferenceCard({
 		return () => {
 			cancelled = true;
 		};
-	}, [directUrl, filePath, isImage, isVideo, workspacePath]);
+	}, [
+		candidateWorkspacePaths,
+		directUrl,
+		isImage,
+		isVideo,
+		workspacePath,
+		workspaceScopedPath,
+	]);
 
 	// Don't render anything if file doesn't exist
-	if (fileExists === false) {
-		return null;
-	}
-
-	// Show loading state while checking existence
 	if (fileExists === null) {
-		return null;
+		return (
+			<div className="inline-flex items-center gap-2 px-3 py-1.5 border border-border bg-muted/20 rounded text-xs text-muted-foreground">
+				<Loader2 className="w-3.5 h-3.5 animate-spin" />
+				Loading preview…
+			</div>
+		);
 	}
 
-	if ((isImage || isVideo) && !fileUrl) {
-		return null;
+	if (fileExists === false || ((isImage || isVideo) && !fileUrl)) {
+		const FileIcon = fileInfo.category === "code" ? FileCode : FileText;
+		return (
+			<button
+				type="button"
+				onClick={() => {
+					if (directUrl) {
+						window.open(directUrl, "_blank", "noopener");
+						return;
+					}
+					if (!workspacePath) return;
+					void downloadFileMux(
+						workspacePath,
+						resolvedWorkspacePath || workspaceScopedPath,
+						fileName,
+					);
+				}}
+				className="inline-flex items-center gap-2 px-3 py-1.5 border border-border bg-muted/20 rounded hover:bg-muted/40 transition-colors text-sm"
+			>
+				<FileIcon className="w-4 h-4 text-muted-foreground" />
+				<span className="font-medium">{fileName}</span>
+				<span className="text-xs text-muted-foreground">
+					Preview unavailable
+				</span>
+				<ExternalLink className="w-3 h-3 text-muted-foreground" />
+			</button>
+		);
 	}
 
 	// For images, render inline preview
@@ -4292,18 +5474,24 @@ export const FileReferenceCard = memo(function FileReferenceCard({
 		<button
 			type="button"
 			onClick={() => {
+				if (onOpenFileReference) {
+					onOpenFileReference(workspaceScopedPath);
+					return;
+				}
 				if (directUrl) {
 					window.open(directUrl, "_blank", "noopener");
 					return;
 				}
 				if (!workspacePath) return;
-				void downloadFileMux(workspacePath, filePath, fileName);
+				void downloadFileMux(workspacePath, workspaceScopedPath, fileName);
 			}}
 			className="inline-flex items-center gap-2 px-3 py-1.5 border border-border bg-muted/20 rounded hover:bg-muted/40 transition-colors text-sm"
 		>
 			<FileIcon className="w-4 h-4 text-muted-foreground" />
 			<span className="font-medium">{fileName}</span>
-			<span className="text-xs text-muted-foreground">{filePath}</span>
+			<span className="text-xs text-muted-foreground">
+				{workspaceScopedPath}
+			</span>
 			<ExternalLink className="w-3 h-3 text-muted-foreground" />
 		</button>
 	);

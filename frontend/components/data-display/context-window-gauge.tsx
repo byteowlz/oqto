@@ -18,8 +18,15 @@ export function ContextWindowGauge({
 	compact?: boolean;
 }) {
 	const { t } = useTranslation();
-	const totalTokens = inputTokens + outputTokens;
-	const effectiveMaxTokens = maxTokens > 0 ? maxTokens : 200000;
+	const safeInputTokens = Number.isFinite(inputTokens)
+		? Math.max(0, inputTokens)
+		: 0;
+	const safeOutputTokens = Number.isFinite(outputTokens)
+		? Math.max(0, outputTokens)
+		: 0;
+	const totalTokens = safeInputTokens + safeOutputTokens;
+	const effectiveMaxTokens =
+		Number.isFinite(maxTokens) && maxTokens > 0 ? maxTokens : 200000;
 	const percentage = Math.min((totalTokens / effectiveMaxTokens) * 100, 100);
 
 	const getColor = () => {

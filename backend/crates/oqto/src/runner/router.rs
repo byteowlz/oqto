@@ -70,12 +70,12 @@ async fn ensure_runner_healthy(
     )
     .with_context(|| format!("healing runner for linux user {}", linux_user))?;
 
-    let endpoint = state
-        .runner_endpoint
+    let pattern = state
+        .runner_socket_pattern
         .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("runner endpoint not configured"))?;
+        .ok_or_else(|| anyhow::anyhow!("runner socket pattern not configured"))?;
 
-    let healed = RunnerClient::for_user_with_endpoint(linux_user, endpoint).with_context(|| {
+    let healed = RunnerClient::for_user_with_pattern(linux_user, pattern).with_context(|| {
         format!(
             "creating healed runner client for linux user {}",
             linux_user
@@ -111,18 +111,14 @@ fn resolve_linux_uid(linux_user: &str) -> Result<u32> {
 }
 
 async fn resolve_personal_runner(state: &AppState, user_id: &str) -> Result<Option<RunnerClient>> {
-    let endpoint = match state.runner_endpoint.as_ref() {
+    let pattern = match state.runner_socket_pattern.as_ref() {
         Some(p) => p,
         None => return Ok(None),
     };
 
-    let effective_user = if let Some(ref lu) = state.linux_users {
-        lu.linux_username(user_id)
-    } else {
-        user_id.to_string()
-    };
+    let effective_user = state.effective_linux_username(user_id);
 
-    let client = RunnerClient::for_user_with_endpoint(&effective_user, endpoint)
+    let client = RunnerClient::for_user_with_pattern(&effective_user, pattern)
         .with_context(|| format!("creating runner client for linux user {}", effective_user))?;
 
     Ok(Some(
@@ -180,12 +176,12 @@ async fn resolve_shared_workspace_runner(
         .with_context(|| format!("shared workspace linux user for {}", workspace_id))?
         .ok_or_else(|| anyhow::anyhow!("shared workspace linux user not found"))?;
 
-    let endpoint = state
-        .runner_endpoint
+    let pattern = state
+        .runner_socket_pattern
         .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("runner endpoint not configured"))?;
+        .ok_or_else(|| anyhow::anyhow!("runner socket pattern not configured"))?;
 
-    let client = RunnerClient::for_user_with_endpoint(&linux_user, endpoint)
+    let client = RunnerClient::for_user_with_pattern(&linux_user, pattern)
         .with_context(|| format!("creating runner client for linux user {}", linux_user))?;
 
     Ok(Some(

@@ -244,7 +244,7 @@ The setup uses **regex-based sudoers rules** (requires sudo 1.9.10+) to prevent 
 - **Group restriction**: Only `oqto` group allowed
 - **Path restriction**: chown/mkdir restricted to specific paths with no traversal
 
-For details, see `docs/security/SUDOERS_AUDIT.md` in the main repository.
+For details, see `docs/active/security/20260129-SUDOERS_AUDIT.md` in the main repository.
 
 ### Verify Sudoers Security
 

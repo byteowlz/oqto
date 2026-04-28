@@ -15,10 +15,9 @@ use crate::session::SessionStatus;
 
 use super::super::state::AppState;
 use super::builder::{
-    build_fileserver_query, ensure_session_for_io_proxy, get_io_session_for_workspace,
-    get_session_for_user, proxy_http_request, proxy_http_request_with_query,
+    build_fileserver_query, get_io_session_for_workspace, proxy_http_request,
+    proxy_http_request_with_query,
 };
-use super::terminal::handle_terminal_proxy;
 use super::websocket::{handle_browser_stream_proxy, handle_voice_ws_proxy};
 
 // ============================================================================
@@ -74,31 +73,6 @@ pub async fn proxy_voice_tts_ws(
 // ============================================================================
 // Fileserver Proxy
 // ============================================================================
-
-/// Proxy HTTP requests to a session's file server.
-///
-/// In single-user mode, the fileserver runs independently and remains accessible
-/// even when the agent session is inactive.
-pub async fn proxy_fileserver(
-    State(state): State<AppState>,
-    user: CurrentUser,
-    Path((session_id, path)): Path<(String, String)>,
-    req: Request<Body>,
-) -> Result<Response, StatusCode> {
-    let session = get_session_for_user(&state, &user, &session_id).await?;
-    let session = ensure_session_for_io_proxy(&state, user.id(), &session_id, session).await?;
-
-    let starting = matches!(session.status, SessionStatus::Starting);
-    proxy_http_request(
-        state.http_client.clone(),
-        req,
-        session.fileserver_port as u16,
-        &path,
-        starting,
-        state.max_proxy_body_bytes,
-    )
-    .await
-}
 
 /// Proxy HTTP requests to a workspace file server by workspace path.
 pub async fn proxy_fileserver_for_workspace(
@@ -192,51 +166,6 @@ async fn proxy_sldr_internal(
         state.max_proxy_body_bytes,
     )
     .await
-}
-
-// ============================================================================
-// Terminal WebSocket Proxy
-// ============================================================================
-
-/// WebSocket upgrade handler for terminal proxy.
-pub async fn proxy_terminal_ws(
-    State(state): State<AppState>,
-    user: CurrentUser,
-    Path(session_id): Path<String>,
-    ws: WebSocketUpgrade,
-) -> Result<impl IntoResponse, StatusCode> {
-    let session = get_session_for_user(&state, &user, &session_id).await?;
-    let session = ensure_session_for_io_proxy(&state, user.id(), &session_id, session).await?;
-
-    let session_id_clone = session.id.clone();
-    let ttyd_port = session.ttyd_port;
-
-    Ok(ws.on_upgrade(move |socket| async move {
-        if let Err(e) =
-            handle_terminal_proxy(socket, &session_id_clone, ttyd_port as u16, None).await
-        {
-            error!("Terminal proxy error: {:?}", e);
-        }
-    }))
-}
-
-/// WebSocket upgrade handler for terminal proxy by workspace path.
-pub async fn proxy_terminal_ws_for_workspace(
-    State(state): State<AppState>,
-    user: CurrentUser,
-    Query(query): Query<WorkspaceProxyQuery>,
-    ws: WebSocketUpgrade,
-) -> Result<impl IntoResponse, StatusCode> {
-    let session = get_io_session_for_workspace(&state, &user, &query.workspace_path).await?;
-
-    let session_id = session.id.clone();
-    let ttyd_port = session.ttyd_port;
-
-    Ok(ws.on_upgrade(move |socket| async move {
-        if let Err(e) = handle_terminal_proxy(socket, &session_id, ttyd_port as u16, None).await {
-            error!("Terminal proxy error: {:?}", e);
-        }
-    }))
 }
 
 // ============================================================================

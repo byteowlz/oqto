@@ -24,6 +24,7 @@ Status keys:
 |---|---|---|
 | Delivery | prompt/steer requests produce assistant responses | wip |
 | Durability | message counts stable across reload/reconnect | wip |
+| DOM+API integrity | unique user prompts persist exactly once after reload (HTML dump + API assert) | active |
 | Ordering | no out-of-order message indices in hstry | planned |
 | Dedup | no duplicate messages after reconnect/compaction | planned |
 | Shared chat | multi-user same-session consistency | planned |
@@ -61,6 +62,7 @@ Current active local gate implementation:
 - `scripts/e2e/reliability-browser-journey.sh`
 - `scripts/e2e/reliability-shared-workspaces.sh`
 - `scripts/e2e/reliability-files-local.sh` + `scripts/e2e/reliability-files-mux.ts`
+- `scripts/e2e/chat-dom-regression.sh`
 
 Planned gate additions:
 - expand browser E2E journeys to full shared-workspace and file mutation flows

@@ -1,6 +1,7 @@
 "use client";
 
 import { useDocumentEvent } from "@/hooks/use-document-event";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { useResetOnOpen } from "@/hooks/use-reset-on-open";
 import { cn } from "@/lib/utils";
 import { Download, Maximize2, Volume2, VolumeX, X } from "lucide-react";
@@ -35,6 +36,7 @@ export const VideoPreviewModal = memo(function VideoPreviewModal({
 	const [volume, setVolume] = useState(1);
 	const [isMuted, setIsMuted] = useState(false);
 	const [isFullscreen, setIsFullscreen] = useState(false);
+	const isMobile = useIsMobile(768);
 
 	const videoRef = useRef<HTMLVideoElement>(null);
 	const containerRef = useRef<HTMLDivElement>(null);
@@ -306,16 +308,23 @@ export const VideoPreviewModal = memo(function VideoPreviewModal({
 					)}
 				</div>
 
-				{/* Keyboard shortcuts hint */}
+				{/* Footer hint */}
 				<div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-black/80 backdrop-blur-sm px-3 py-1.5 rounded-md text-xs text-white">
-					<div className="text-muted-foreground flex items-center gap-3">
-						<span>Space: Play/Pause</span>
-						<span>←/→: Seek ±5s</span>
-						<span>M: Mute</span>
-						<span>↑/↓: Volume</span>
-						<span>F: Fullscreen</span>
-						<span>Esc: Close</span>
-					</div>
+					{isMobile ? (
+						<div className="text-muted-foreground flex items-center gap-3">
+							<span>Tap to play/pause</span>
+							<span>Use × to close</span>
+						</div>
+					) : (
+						<div className="text-muted-foreground flex items-center gap-3">
+							<span>Space: Play/Pause</span>
+							<span>←/→: Seek ±5s</span>
+							<span>M: Mute</span>
+							<span>↑/↓: Volume</span>
+							<span>F: Fullscreen</span>
+							<span>Esc: Close</span>
+						</div>
+					)}
 				</div>
 			</div>
 		</div>

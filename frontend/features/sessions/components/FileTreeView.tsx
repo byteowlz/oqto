@@ -85,6 +85,12 @@ const treeInFlight = new Map<string, Promise<FileNode[]>>();
 const INITIAL_DEPTH = 2;
 const LAZY_LOAD_DEPTH = 2;
 
+// How long a "just changed" tint stays on a row before fading out.
+const HIGHLIGHT_DURATION_MS = 4000;
+
+type HighlightKind = "created" | "modified";
+type HighlightMap = Map<string, { kind: HighlightKind; expiresAt: number }>;
+
 function getTreeCacheKey(
 	workspaceKey: string,
 	path: string,
@@ -140,6 +146,14 @@ function setCachedTree(
 		if (firstKey) treeCache.delete(firstKey);
 	}
 	treeCache.set(key, { data, timestamp: Date.now() });
+}
+
+function removeCachedTree(
+	workspaceKey: string,
+	path: string,
+	depth = INITIAL_DEPTH,
+): void {
+	treeCache.delete(getTreeCacheKey(workspaceKey, path, depth));
 }
 
 async function fetchFileTree(
@@ -198,6 +212,47 @@ function mergeChildrenIntoTree(
 		}
 		return node;
 	});
+}
+
+/** MIME type used to carry an internal file-tree path during a drag. */
+const INTERNAL_DRAG_MIME = "application/x-oqto-path";
+
+/** Recursively walk a FileSystemEntry yielded by DataTransferItem.webkitGetAsEntry().
+ *  Calls `onFile(file, relPath)` for every file under the entry. `relPath` is
+ *  relative to the initial entry, so a dropped folder preserves its structure. */
+async function walkFsEntry(
+	entry: FileSystemEntry,
+	relPath: string,
+	onFile: (file: File, relPath: string) => Promise<void>,
+): Promise<void> {
+	if (entry.isFile) {
+		const fileEntry = entry as FileSystemFileEntry;
+		const file = await new Promise<File>((resolve, reject) => {
+			fileEntry.file(resolve, reject);
+		});
+		await onFile(file, relPath);
+		return;
+	}
+	if (!entry.isDirectory) return;
+	const dirEntry = entry as FileSystemDirectoryEntry;
+	const reader = dirEntry.createReader();
+	const children: FileSystemEntry[] = await new Promise((resolve, reject) => {
+		const all: FileSystemEntry[] = [];
+		const readBatch = () => {
+			reader.readEntries((batch) => {
+				if (batch.length === 0) {
+					resolve(all);
+				} else {
+					all.push(...batch);
+					readBatch();
+				}
+			}, reject);
+		};
+		readBatch();
+	});
+	for (const child of children) {
+		await walkFsEntry(child, `${relPath}/${child.name}`, onFile);
+	}
 }
 
 /** Check if a directory node needs lazy-loading.
@@ -387,6 +442,15 @@ export function FileTreeView({
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const lastLoadRef = useRef<{ key: string; ts: number } | null>(null);
 
+	// Drag-and-drop state. `dropTargetPath` is the directory path currently
+	// under the cursor (used to highlight that row). `isDraggingOsFiles` is
+	// true while an external file drag is anywhere over the scroll area
+	// (used to show the full-panel overlay). The counter ref avoids flicker
+	// from dragenter/dragleave firing on every child element.
+	const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
+	const [isDraggingOsFiles, setIsDraggingOsFiles] = useState(false);
+	const dragEnterCountRef = useRef(0);
+
 	// Media gallery state
 	const [lightboxOpen, setLightboxOpen] = useState(false);
 	const [lightboxIndex, setLightboxIndex] = useState(0);
@@ -406,6 +470,14 @@ export function FileTreeView({
 	const [internalMediaFilter, setInternalMediaFilter] =
 		useState<MediaType>("all");
 	const [internalCurrentPath, setInternalCurrentPath] = useState<string>(".");
+
+	// Recently-changed paths (for fade-in highlight). Keyed by workspace-relative
+	// path; value carries the kind and an absolute expiry timestamp. A single
+	// sweep timer evicts expired entries after HIGHLIGHT_DURATION_MS of quiet.
+	const [highlights, setHighlights] = useState<HighlightMap>(() => new Map());
+	const highlightSweepTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+		null,
+	);
 
 	const expanded = state?.expanded ?? internalExpanded;
 	const selectedFile = state?.selectedFile ?? internalSelectedFile;
@@ -597,16 +669,28 @@ export function FileTreeView({
 		};
 	}, [normalizedWorkspacePath, isRecovering, retryAttempt, currentPath]);
 
+	// Refs so the file_changed subscription doesn't churn on every render.
+	const lazyLoadChildrenRef = useRef(lazyLoadChildren);
+	lazyLoadChildrenRef.current = lazyLoadChildren;
+	const expandedRef = useRef(expanded);
+	expandedRef.current = expanded;
+	const currentPathRef = useRef(currentPath);
+	currentPathRef.current = currentPath;
+
 	// Watch workspace for file changes via inotify (backend-side).
 	// When files are created/modified/deleted, the backend pushes events
-	// through the WebSocket. We debounce and refresh the tree.
+	// through the WebSocket. We debounce, then refresh only the directories
+	// affected by the changes (currentPath or expanded subdirs) so that
+	// lazy-loaded children don't get wiped out by a blanket re-fetch.
 	useEffect(() => {
-		if (!normalizedWorkspacePath) return;
+		if (!normalizedWorkspacePath || !cacheKey) return;
 
 		// Start watching this workspace on the server
 		watchFilesMux(normalizedWorkspacePath).catch(() => {});
 
 		let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+		const pendingDirs = new Set<string>();
+		const pendingHighlights = new Map<string, "created" | "modified">();
 		let unsub: (() => void) | undefined;
 
 		try {
@@ -619,10 +703,93 @@ export function FileTreeView({
 				) {
 					return;
 				}
-				// Debounce: wait 500ms after last event before refreshing
+				const eventPath: string =
+					typeof event.path === "string" ? event.path : "";
+				if (!eventPath) return;
+
+				// Workspace-relative parent: "src/foo.rs" -> "src"; "foo.rs" -> "."
+				const lastSlash = eventPath.lastIndexOf("/");
+				const parentDir =
+					lastSlash === -1 ? "." : eventPath.slice(0, lastSlash);
+				pendingDirs.add(parentDir);
+
+				// Track highlight kind for the changed path. Skip deletes (the row
+				// disappears on refresh) and prefer "created" if a path got both.
+				const evType: string =
+					typeof event.event_type === "string" ? event.event_type : "";
+				if (evType === "file_created" || evType === "dir_created") {
+					pendingHighlights.set(eventPath, "created");
+				} else if (
+					evType === "file_modified" &&
+					pendingHighlights.get(eventPath) !== "created"
+				) {
+					pendingHighlights.set(eventPath, "modified");
+				}
+
 				if (debounceTimer) clearTimeout(debounceTimer);
 				debounceTimer = setTimeout(() => {
-					loadTreeRef.current(currentPath, true, true, true);
+					const dirs = Array.from(pendingDirs);
+					const flushHighlights = new Map(pendingHighlights);
+					pendingDirs.clear();
+					pendingHighlights.clear();
+					debounceTimer = null;
+
+					const cp = currentPathRef.current;
+					const exp = expandedRef.current;
+					let refreshedRoot = false;
+
+					for (const dir of dirs) {
+						// Bust both depth variants so the next fetch returns fresh data.
+						removeCachedTree(cacheKey, dir, INITIAL_DEPTH);
+						removeCachedTree(cacheKey, dir, LAZY_LOAD_DEPTH);
+
+						if (dir === cp) {
+							if (!refreshedRoot) {
+								loadTreeRef.current(cp, true, true, true);
+								refreshedRoot = true;
+							}
+						} else if (exp[dir]) {
+							// Visible expanded subtree: re-fetch and merge in place,
+							// preserving siblings' lazy-loaded children.
+							void lazyLoadChildrenRef.current(dir);
+						}
+						// Else: change is in a collapsed subtree -- nothing to update.
+						// Cache is already invalidated, so the next expand fetches fresh.
+					}
+
+					if (flushHighlights.size > 0) {
+						const expiresAt = Date.now() + HIGHLIGHT_DURATION_MS;
+						setHighlights((prev) => {
+							const next = new Map(prev);
+							for (const [path, kind] of flushHighlights) {
+								// Don't downgrade an existing "created" to "modified".
+								if (kind === "modified" && next.get(path)?.kind === "created") {
+									continue;
+								}
+								next.set(path, { kind, expiresAt });
+							}
+							return next;
+						});
+						if (highlightSweepTimerRef.current) {
+							clearTimeout(highlightSweepTimerRef.current);
+						}
+						highlightSweepTimerRef.current = setTimeout(() => {
+							highlightSweepTimerRef.current = null;
+							setHighlights((prev) => {
+								if (prev.size === 0) return prev;
+								const now = Date.now();
+								const next = new Map(prev);
+								let changed = false;
+								for (const [path, h] of next) {
+									if (h.expiresAt <= now) {
+										next.delete(path);
+										changed = true;
+									}
+								}
+								return changed ? next : prev;
+							});
+						}, HIGHLIGHT_DURATION_MS);
+					}
 				}, 500);
 			});
 		} catch {
@@ -632,9 +799,13 @@ export function FileTreeView({
 		return () => {
 			unsub?.();
 			if (debounceTimer) clearTimeout(debounceTimer);
+			if (highlightSweepTimerRef.current) {
+				clearTimeout(highlightSweepTimerRef.current);
+				highlightSweepTimerRef.current = null;
+			}
 			unwatchFilesMux(normalizedWorkspacePath).catch(() => {});
 		};
-	}, [normalizedWorkspacePath, currentPath]);
+	}, [normalizedWorkspacePath, cacheKey]);
 
 	/** Find a node in the tree by path. */
 	const findNode = useCallback(
@@ -751,6 +922,167 @@ export function FileTreeView({
 			}
 		}
 	};
+
+	// Resolve which directory a drop onto `nodePath` should land in.
+	// Folder rows accept drops directly; file rows resolve to their parent;
+	// empty space resolves to the current view root.
+	const resolveDropDir = useCallback(
+		(nodePath: string | null, nodeType: string | null): string => {
+			if (!nodePath) return currentPath;
+			if (nodeType === "directory") return nodePath;
+			return nodePath.includes("/")
+				? nodePath.substring(0, nodePath.lastIndexOf("/"))
+				: ".";
+		},
+		[currentPath],
+	);
+
+	const handleOsFilesDrop = useCallback(
+		async (items: DataTransferItemList, targetDir: string) => {
+			if (!normalizedWorkspacePath || !cacheKey) return;
+			// Capture entries synchronously: DataTransferItemList becomes
+			// invalid once the drop handler yields.
+			const entries: FileSystemEntry[] = [];
+			for (let i = 0; i < items.length; i += 1) {
+				const entry = items[i].webkitGetAsEntry?.();
+				if (entry) entries.push(entry);
+			}
+			if (entries.length === 0) return;
+			setUploading(true);
+			setError("");
+			try {
+				for (const entry of entries) {
+					await walkFsEntry(entry, entry.name, async (file, relPath) => {
+						const destPath =
+							targetDir === "." ? relPath : `${targetDir}/${relPath}`;
+						await uploadFileMux(normalizedWorkspacePath, destPath, file);
+					});
+				}
+				clearTreeCache(cacheKey);
+				await refreshTree();
+			} catch (err) {
+				setError(err instanceof Error ? err.message : "Upload failed");
+			} finally {
+				setUploading(false);
+			}
+		},
+		[normalizedWorkspacePath, cacheKey, refreshTree],
+	);
+
+	const handleOsFilesDropFallback = useCallback(
+		async (files: FileList, targetDir: string) => {
+			if (!normalizedWorkspacePath || !cacheKey || files.length === 0) return;
+			setUploading(true);
+			setError("");
+			try {
+				for (const file of Array.from(files)) {
+					const destPath =
+						targetDir === "." ? file.name : `${targetDir}/${file.name}`;
+					await uploadFileMux(normalizedWorkspacePath, destPath, file);
+				}
+				clearTreeCache(cacheKey);
+				await refreshTree();
+			} catch (err) {
+				setError(err instanceof Error ? err.message : "Upload failed");
+			} finally {
+				setUploading(false);
+			}
+		},
+		[normalizedWorkspacePath, cacheKey, refreshTree],
+	);
+
+	const handleInternalMove = useCallback(
+		async (sourcePath: string, targetDir: string) => {
+			if (!normalizedWorkspacePath || !cacheKey) return;
+			if (targetDir === sourcePath || targetDir.startsWith(`${sourcePath}/`)) {
+				setError("Cannot move a folder into itself");
+				setTimeout(() => setError(""), 3000);
+				return;
+			}
+			const name = sourcePath.split("/").pop() ?? sourcePath;
+			const newPath = targetDir === "." ? name : `${targetDir}/${name}`;
+			if (newPath === sourcePath) return;
+			try {
+				await movePathMux(normalizedWorkspacePath, sourcePath, newPath, false);
+				clearTreeCache(cacheKey);
+				await refreshTree();
+			} catch (err) {
+				setError(err instanceof Error ? err.message : "Move failed");
+			}
+		},
+		[normalizedWorkspacePath, cacheKey, refreshTree],
+	);
+
+	const handleDragEnterContainer = useCallback((e: React.DragEvent) => {
+		if (!e.dataTransfer.types.includes("Files")) return;
+		dragEnterCountRef.current += 1;
+		if (dragEnterCountRef.current === 1) setIsDraggingOsFiles(true);
+	}, []);
+
+	const handleDragLeaveContainer = useCallback((e: React.DragEvent) => {
+		if (!e.dataTransfer.types.includes("Files")) return;
+		dragEnterCountRef.current -= 1;
+		if (dragEnterCountRef.current <= 0) {
+			dragEnterCountRef.current = 0;
+			setIsDraggingOsFiles(false);
+			setDropTargetPath(null);
+		}
+	}, []);
+
+	const handleDragOverContainer = useCallback((e: React.DragEvent) => {
+		const types = e.dataTransfer.types;
+		const isOs = types.includes("Files");
+		const isInternal = types.includes(INTERNAL_DRAG_MIME);
+		if (!isOs && !isInternal) return;
+		e.preventDefault();
+		e.dataTransfer.dropEffect = isOs ? "copy" : "move";
+		const row = (e.target as HTMLElement | null)?.closest?.("[data-node-path]");
+		const nodePath = row?.getAttribute("data-node-path") ?? null;
+		const nodeType = row?.getAttribute("data-node-type") ?? null;
+		// Highlight only folder rows; files and empty space resolve silently
+		// to a parent dir on drop but do not light up.
+		setDropTargetPath(nodeType === "directory" ? nodePath : null);
+	}, []);
+
+	const handleDropContainer = useCallback(
+		(e: React.DragEvent) => {
+			const types = e.dataTransfer.types;
+			const isOs = types.includes("Files");
+			const isInternal = types.includes(INTERNAL_DRAG_MIME);
+			if (!isOs && !isInternal) return;
+			e.preventDefault();
+			dragEnterCountRef.current = 0;
+			setIsDraggingOsFiles(false);
+			setDropTargetPath(null);
+			const row = (e.target as HTMLElement | null)?.closest?.(
+				"[data-node-path]",
+			);
+			const nodePath = row?.getAttribute("data-node-path") ?? null;
+			const nodeType = row?.getAttribute("data-node-type") ?? null;
+			const targetDir = resolveDropDir(nodePath, nodeType);
+			if (isOs) {
+				const items = e.dataTransfer.items;
+				const hasEntryApi =
+					items &&
+					items.length > 0 &&
+					typeof items[0].webkitGetAsEntry === "function";
+				if (hasEntryApi) {
+					void handleOsFilesDrop(items, targetDir);
+				} else {
+					void handleOsFilesDropFallback(e.dataTransfer.files, targetDir);
+				}
+				return;
+			}
+			const sourcePath = e.dataTransfer.getData(INTERNAL_DRAG_MIME);
+			if (sourcePath) void handleInternalMove(sourcePath, targetDir);
+		},
+		[
+			resolveDropDir,
+			handleOsFilesDrop,
+			handleOsFilesDropFallback,
+			handleInternalMove,
+		],
+	);
 
 	const handleDownload = (path: string, _isDirectory: boolean) => {
 		if (!normalizedWorkspacePath || !cacheKey) return;
@@ -1078,9 +1410,20 @@ export function FileTreeView({
 	// Open lightbox for a specific file
 	const handleOpenLightbox = useCallback(
 		(filePath: string) => {
+			// Exact match for files
 			const idx = lightboxItems.findIndex((item) => item.path === filePath);
 			if (idx >= 0) {
 				setLightboxIndex(idx);
+				setLightboxOpen(true);
+				return;
+			}
+			// Directory: open gallery at first media file within this directory
+			const dirPrefix = filePath.endsWith("/") ? filePath : `${filePath}/`;
+			const dirIdx = lightboxItems.findIndex((item) =>
+				item.path.startsWith(dirPrefix),
+			);
+			if (dirIdx >= 0) {
+				setLightboxIndex(dirIdx);
 				setLightboxOpen(true);
 			}
 		},
@@ -1395,79 +1738,100 @@ export function FileTreeView({
 
 			{/* File content */}
 			<div
-				className="flex-1 overflow-auto"
+				className="relative flex-1 overflow-auto"
 				onMouseDown={(e) => {
 					// Clear selection when clicking empty space
 					if (e.target === e.currentTarget) {
 						clearSelection();
 					}
 				}}
+				onDragEnter={handleDragEnterContainer}
+				onDragLeave={handleDragLeaveContainer}
+				onDragOver={handleDragOverContainer}
+				onDrop={handleDropContainer}
 			>
-				{filteredTree.length === 0 ? (
-					<div className="text-sm text-muted-foreground p-4">
-						No files found.
+				<div className="mx-1">
+					{filteredTree.length === 0 ? (
+						<div className="text-sm text-muted-foreground p-4">
+							No files found.
+						</div>
+					) : viewMode === "tree" ? (
+						<TreeView
+							nodes={filteredTree}
+							expanded={expanded}
+							onToggle={toggle}
+							selectedFiles={selectedFiles}
+							onSelectFile={handleSelectFile}
+							onNavigateToFolder={handleNavigateToFolder}
+							onDownload={handleDownload}
+							onDelete={handleDelete}
+							onRename={handleStartRename}
+							onCopy={handleCopy}
+							onMove={handleMove}
+							onCopyToWorkspace={handleCopyToWorkspace}
+							renamingPath={renamingPath}
+							onRenameConfirm={handleConfirmRename}
+							onRenameCancel={handleCancelRename}
+							onOpenInCanvas={onOpenInCanvas}
+							onOpenAsApp={onOpenAsApp}
+							onOpenInGallery={handleOpenLightbox}
+							loadingDirs={loadingDirs}
+							dropTargetPath={dropTargetPath}
+							highlights={highlights}
+						/>
+					) : viewMode === "list" ? (
+						<ListView
+							files={filteredTree}
+							selectedFiles={selectedFiles}
+							onSelectFile={handleSelectFile}
+							onNavigateToFolder={handleNavigateToFolder}
+							onDownload={handleDownload}
+							onDelete={handleDelete}
+							onRename={handleStartRename}
+							onCopy={handleCopy}
+							onMove={handleMove}
+							onCopyToWorkspace={handleCopyToWorkspace}
+							renamingPath={renamingPath}
+							onRenameConfirm={handleConfirmRename}
+							onRenameCancel={handleCancelRename}
+							onOpenInCanvas={onOpenInCanvas}
+							onOpenAsApp={onOpenAsApp}
+							onOpenInGallery={handleOpenLightbox}
+							dropTargetPath={dropTargetPath}
+						/>
+					) : (
+						<GridView
+							files={filteredTree}
+							workspacePath={normalizedWorkspacePath}
+							selectedFiles={selectedFiles}
+							onSelectFile={handleSelectFile}
+							onNavigateToFolder={handleNavigateToFolder}
+							onDownload={handleDownload}
+							onDelete={handleDelete}
+							onRename={handleStartRename}
+							onCopy={handleCopy}
+							onMove={handleMove}
+							onCopyToWorkspace={handleCopyToWorkspace}
+							renamingPath={renamingPath}
+							onRenameConfirm={handleConfirmRename}
+							onRenameCancel={handleCancelRename}
+							onOpenInCanvas={onOpenInCanvas}
+							onOpenAsApp={onOpenAsApp}
+							onOpenInGallery={handleOpenLightbox}
+							dropTargetPath={dropTargetPath}
+						/>
+					)}
+				</div>
+				{isDraggingOsFiles && (
+					<div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center border-2 border-dashed border-primary bg-primary/10">
+						<div className="flex items-center gap-2 rounded-md border border-border bg-card/95 px-3 py-2 text-sm font-medium shadow">
+							<Upload className="w-4 h-4" />
+							Drop to upload to{" "}
+							<span className="font-mono text-xs">
+								{dropTargetPath ?? (currentPath === "." ? "/" : currentPath)}
+							</span>
+						</div>
 					</div>
-				) : viewMode === "tree" ? (
-					<TreeView
-						nodes={filteredTree}
-						expanded={expanded}
-						onToggle={toggle}
-						selectedFiles={selectedFiles}
-						onSelectFile={handleSelectFile}
-						onNavigateToFolder={handleNavigateToFolder}
-						onDownload={handleDownload}
-						onDelete={handleDelete}
-						onRename={handleStartRename}
-						onCopy={handleCopy}
-						onMove={handleMove}
-						onCopyToWorkspace={handleCopyToWorkspace}
-						renamingPath={renamingPath}
-						onRenameConfirm={handleConfirmRename}
-						onRenameCancel={handleCancelRename}
-						onOpenInCanvas={onOpenInCanvas}
-						onOpenAsApp={onOpenAsApp}
-						onOpenInGallery={handleOpenLightbox}
-						loadingDirs={loadingDirs}
-					/>
-				) : viewMode === "list" ? (
-					<ListView
-						files={filteredTree}
-						selectedFiles={selectedFiles}
-						onSelectFile={handleSelectFile}
-						onNavigateToFolder={handleNavigateToFolder}
-						onDownload={handleDownload}
-						onDelete={handleDelete}
-						onRename={handleStartRename}
-						onCopy={handleCopy}
-						onMove={handleMove}
-						onCopyToWorkspace={handleCopyToWorkspace}
-						renamingPath={renamingPath}
-						onRenameConfirm={handleConfirmRename}
-						onRenameCancel={handleCancelRename}
-						onOpenInCanvas={onOpenInCanvas}
-						onOpenAsApp={onOpenAsApp}
-						onOpenInGallery={handleOpenLightbox}
-					/>
-				) : (
-					<GridView
-						files={filteredTree}
-						workspacePath={normalizedWorkspacePath}
-						selectedFiles={selectedFiles}
-						onSelectFile={handleSelectFile}
-						onNavigateToFolder={handleNavigateToFolder}
-						onDownload={handleDownload}
-						onDelete={handleDelete}
-						onRename={handleStartRename}
-						onCopy={handleCopy}
-						onMove={handleMove}
-						onCopyToWorkspace={handleCopyToWorkspace}
-						renamingPath={renamingPath}
-						onRenameConfirm={handleConfirmRename}
-						onRenameCancel={handleCancelRename}
-						onOpenInCanvas={onOpenInCanvas}
-						onOpenAsApp={onOpenAsApp}
-						onOpenInGallery={handleOpenLightbox}
-					/>
 				)}
 			</div>
 
@@ -1857,13 +2221,13 @@ function FileContextMenu({
 	onOpenInCanvas?: (path: string) => void;
 	onOpenAsApp?: (path: string) => void;
 	onOpenInGallery?: (path: string) => void;
-	onOpenInGallery?: (path: string) => void;
 	onCopyToWorkspace?: (
 		path: string,
 		name: string,
 		isDirectory: boolean,
 	) => void;
 }) {
+	const isDirectory = node.type === "directory";
 	const isImage = node.type === "file" && isImageFile(node.name);
 	const isVideo = node.type === "file" && isVideoFile(node.name);
 	const isMedia = isImage || isVideo;
@@ -1873,7 +2237,7 @@ function FileContextMenu({
 		<ContextMenu>
 			<ContextMenuTrigger className="contents">{children}</ContextMenuTrigger>
 			<ContextMenuContent>
-				{isMedia && onOpenInGallery && (
+				{(isMedia || isDirectory) && onOpenInGallery && (
 					<>
 						<ContextMenuItem onClick={() => onOpenInGallery(node.path)}>
 							<Maximize2 className="w-4 h-4 mr-2" />
@@ -1962,6 +2326,8 @@ function TreeView({
 	onOpenAsApp,
 	onOpenInGallery,
 	loadingDirs,
+	dropTargetPath,
+	highlights,
 }: {
 	nodes: FileNode[];
 	expanded: Record<string, boolean>;
@@ -1991,6 +2357,8 @@ function TreeView({
 	onOpenAsApp?: (path: string) => void;
 	onOpenInGallery?: (path: string) => void;
 	loadingDirs?: Set<string>;
+	dropTargetPath?: string | null;
+	highlights?: HighlightMap;
 }) {
 	// Sort: directories first, then files, both alphabetically
 	const sortedNodes = [...nodes].sort((a, b) => {
@@ -2024,6 +2392,8 @@ function TreeView({
 					onOpenAsApp={onOpenAsApp}
 					onOpenInGallery={onOpenInGallery}
 					loadingDirs={loadingDirs}
+					dropTargetPath={dropTargetPath}
+					highlights={highlights}
 				/>
 			))}
 		</ul>
@@ -2052,6 +2422,8 @@ function TreeRow({
 	onOpenAsApp,
 	onOpenInGallery,
 	loadingDirs,
+	dropTargetPath,
+	highlights,
 }: {
 	node: FileNode;
 	level: number;
@@ -2082,12 +2454,16 @@ function TreeRow({
 	onOpenAsApp?: (path: string) => void;
 	onOpenInGallery?: (path: string) => void;
 	loadingDirs?: Set<string>;
+	dropTargetPath?: string | null;
+	highlights?: HighlightMap;
 }) {
 	const isDir = node.type === "directory";
 	const isExpanded = expanded[node.path];
 	const isSelected = selectedFiles.has(node.path);
 	const isRenaming = renamingPath === node.path;
 	const isLoading = loadingDirs?.has(node.path) ?? false;
+	const isDropTarget = isDir && dropTargetPath === node.path;
+	const highlight = highlights?.get(node.path);
 
 	// Sort children: directories first, then files
 	const sortedChildren = node.children
@@ -2134,11 +2510,23 @@ function TreeRow({
 			>
 				<button
 					type="button"
+					draggable={!isRenaming}
+					data-node-path={node.path}
+					data-node-type={node.type}
+					onDragStart={(e) => {
+						e.dataTransfer.setData(INTERNAL_DRAG_MIME, node.path);
+						e.dataTransfer.effectAllowed = "move";
+					}}
 					className={cn(
-						"flex items-center gap-1.5 py-1.5 px-2 cursor-pointer transition-colors w-full",
+						"flex items-center gap-1.5 py-1.5 px-2 cursor-pointer transition-colors duration-700 w-full",
 						isSelected
 							? "bg-primary/10 text-primary"
-							: "hover:bg-muted text-muted-foreground hover:text-foreground",
+							: highlight?.kind === "created"
+								? "bg-emerald-500/15 text-foreground hover:bg-emerald-500/20"
+								: highlight?.kind === "modified"
+									? "bg-amber-500/15 text-foreground hover:bg-amber-500/20"
+									: "hover:bg-muted text-muted-foreground hover:text-foreground",
+						isDropTarget && "ring-2 ring-inset ring-primary bg-primary/10",
 					)}
 					style={{ paddingLeft: `${level * 16 + 8}px` }}
 					onClick={isRenaming ? undefined : handleClick}
@@ -2204,7 +2592,10 @@ function TreeRow({
 								onRenameCancel={onRenameCancel}
 								onOpenInCanvas={onOpenInCanvas}
 								onOpenAsApp={onOpenAsApp}
+								onOpenInGallery={onOpenInGallery}
 								loadingDirs={loadingDirs}
+								dropTargetPath={dropTargetPath}
+								highlights={highlights}
 							/>
 						))}
 					</ul>
@@ -2239,6 +2630,7 @@ function ListView({
 	onOpenInCanvas,
 	onOpenAsApp,
 	onOpenInGallery,
+	dropTargetPath,
 }: {
 	files: FileNode[];
 	selectedFiles: Set<string>;
@@ -2265,6 +2657,7 @@ function ListView({
 	onOpenInCanvas?: (path: string) => void;
 	onOpenAsApp?: (path: string) => void;
 	onOpenInGallery?: (path: string) => void;
+	dropTargetPath?: string | null;
 }) {
 	// Sort: directories first, then files
 	const sortedFiles = [...files].sort((a, b) => {
@@ -2287,6 +2680,8 @@ function ListView({
 				{sortedFiles.map((file) => {
 					const isSelected = selectedFiles.has(file.path);
 					const isRenaming = renamingPath === file.path;
+					const isDropTarget =
+						file.type === "directory" && dropTargetPath === file.path;
 					return (
 						<FileContextMenu
 							key={file.path}
@@ -2294,6 +2689,7 @@ function ListView({
 							onDownload={onDownload}
 							onOpenInCanvas={onOpenInCanvas}
 							onOpenAsApp={onOpenAsApp}
+							onOpenInGallery={onOpenInGallery}
 							onDelete={onDelete}
 							onRename={onRename}
 							onCopy={onCopy}
@@ -2302,6 +2698,13 @@ function ListView({
 						>
 							<button
 								type="button"
+								draggable={!isRenaming}
+								data-node-path={file.path}
+								data-node-type={file.type}
+								onDragStart={(e) => {
+									e.dataTransfer.setData(INTERNAL_DRAG_MIME, file.path);
+									e.dataTransfer.effectAllowed = "move";
+								}}
 								onClick={(e) => {
 									if (isRenaming) return;
 									const isDir = file.type === "directory";
@@ -2322,6 +2725,8 @@ function ListView({
 								className={cn(
 									"flex items-center gap-2 px-3 py-2 transition-colors cursor-pointer w-full",
 									isSelected ? "bg-primary/10" : "hover:bg-muted/50",
+									isDropTarget &&
+										"ring-2 ring-inset ring-primary bg-primary/10",
 								)}
 							>
 								<div className="flex-1 min-w-0 flex items-center gap-2">
@@ -2384,6 +2789,7 @@ function GridView({
 	onOpenInCanvas,
 	onOpenAsApp,
 	onOpenInGallery,
+	dropTargetPath,
 }: {
 	files: FileNode[];
 	workspacePath?: string | null;
@@ -2411,6 +2817,7 @@ function GridView({
 	onOpenInCanvas?: (path: string) => void;
 	onOpenAsApp?: (path: string) => void;
 	onOpenInGallery?: (path: string) => void;
+	dropTargetPath?: string | null;
 }) {
 	// Sort: directories first, then files
 	const sortedFiles = [...files].sort((a, b) => {
@@ -2424,6 +2831,8 @@ function GridView({
 			{sortedFiles.map((file) => {
 				const isSelected = selectedFiles.has(file.path);
 				const isRenaming = renamingPath === file.path;
+				const isDropTarget =
+					file.type === "directory" && dropTargetPath === file.path;
 				return (
 					<FileContextMenu
 						key={file.path}
@@ -2440,6 +2849,13 @@ function GridView({
 					>
 						<button
 							type="button"
+							draggable={!isRenaming}
+							data-node-path={file.path}
+							data-node-type={file.type}
+							onDragStart={(e) => {
+								e.dataTransfer.setData(INTERNAL_DRAG_MIME, file.path);
+								e.dataTransfer.effectAllowed = "move";
+							}}
 							onClick={(e) => {
 								if (isRenaming) return;
 								const isDir = file.type === "directory";
@@ -2460,6 +2876,7 @@ function GridView({
 							className={cn(
 								"flex flex-col items-center gap-2 p-3 rounded-lg cursor-pointer transition-colors hover:bg-muted/50",
 								isSelected && "bg-primary/10 ring-1 ring-primary/30",
+								isDropTarget && "ring-2 ring-primary bg-primary/10",
 							)}
 						>
 							{file.type === "file" &&

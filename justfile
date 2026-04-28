@@ -4,7 +4,7 @@ default:
     @just --list
 
 # Build all components
-build: build-backend build-frontend
+build: agent-check-on-change build-backend build-frontend
 
 # Build backend (all workspace crates)
 build-backend:
@@ -17,10 +17,12 @@ build-frontend:
     cd frontend && bun run build
 
 # Run all linters
-lint: lint-backend lint-frontend guardrails
+lint: lint-backend lint-frontend lint-rust-ai-guardrails lint-no-legacy-history-authority
 
-# Run all backend guardrails (includes ast-grep)
-guardrails: lint-rust-ai-guardrails lint-rust-file-size lint-crate-deps lint-module-boundaries lint-orphan-modules
+# Automatic non-daemon quality gate for agent workflows.
+# Runs only when git working tree changed since the last successful check.
+agent-check-on-change profile="quick":
+	./scripts/agent-check-on-change.sh {{profile}}
 
 # Lint backend
 lint-backend:
@@ -40,38 +42,22 @@ lint-rust-ai-guardrails:
 
 # Guardrail metrics (all backend crates)
 lint-rust-ai-report:
-    uv run python scripts/lint/rust-ai-guardrails-report.py --paths backend/crates
+    ./scripts/lint/rust-ai-guardrails-report.py --paths backend/crates
 
 # Guardrail metrics, excluding findings under #[cfg(test)]
 lint-rust-ai-report-prod:
-    uv run python scripts/lint/rust-ai-guardrails-report.py --paths backend/crates --exclude-cfg-test
+    ./scripts/lint/rust-ai-guardrails-report.py --paths backend/crates --exclude-cfg-test
 
 # Guardrail metrics (changed rust files only)
 lint-rust-ai-report-changed:
-    uv run python scripts/lint/rust-ai-guardrails-report.py --changed
+    ./scripts/lint/rust-ai-guardrails-report.py --changed
 
-# Rust architecture guardrails (ratcheting)
-lint-rust-file-size:
-    uv run python scripts/lint/rust-file-size-guardrail.py
-
-# Update rust file-size baseline after intentional refactors
-lint-rust-file-size-update:
-    uv run python scripts/lint/rust-file-size-guardrail.py --update
-
-# Enforce crate dependency direction rules
-lint-crate-deps:
-    uv run python scripts/lint/crate-dependency-guardrail.py
-
-# Enforce internal module import boundaries
-lint-module-boundaries:
-    uv run python scripts/lint/module-boundary-guardrail.py
-
-# Detect orphan/unreachable Rust modules in the oqto crate
-lint-orphan-modules:
-    uv run python scripts/lint/orphan-module-guardrail.py
+# Guardrail: prevent reintroduction of hstry-as-authority read paths
+lint-no-legacy-history-authority:
+    ./scripts/lint/no-legacy-history-authority.sh
 
 # Run all tests
-test: test-backend test-frontend
+test: agent-check-on-change test-backend test-frontend
 
 # Test backend
 test-backend:
@@ -81,16 +67,23 @@ test-backend:
 test-frontend:
     cd frontend && bun run test
 
+# Run oqto-sandbox hardening scenarios against the installed binary
+# (uses `oqto-sandbox` on PATH, or the deploy tree; set OQTO_SANDBOX_BIN to override)
+test-sandbox *ARGS:
+    ./scripts/sandbox/tests/run-all.sh {{ARGS}}
+
 # Format all Rust code
 fmt:
     cd backend && cargo fmt
 
 # Generate TypeScript types from Rust structs
+# Ensures generated files are Biome-formatted immediately to keep tree clean.
 gen-types:
     cd backend && remote-build test -p oqto export_typescript_bindings -- --nocapture
+    cd frontend && bun run format:generated-types
 
 # Check all Rust code compiles
-check:
+check: agent-check-on-change
     cd backend && remote-build check
 
 # Start backend server
@@ -98,7 +91,7 @@ serve:
     /usr/local/bin/oqto serve
 
 # Start frontend dev server
-dev:
+dev: agent-check-on-change
     cd frontend && bun dev
 
 # Start frontend dev server with verbose WS logs and control plane URL
@@ -300,6 +293,14 @@ restart-runner:
     sudo pkill -f "/usr/local/bin/oqto-runner --socket /run/oqto/runner-sockets/$(id -un)/oqto-runner.sock" || true
     nohup /usr/local/bin/oqto-runner --socket "/run/oqto/runner-sockets/$(id -un)/oqto-runner.sock" >/tmp/oqto-runner.log 2>&1 &
 
+# Restart services with runner stream tracing enabled (systemd --user)
+restart-debug trace_dir="/tmp/oqto-stream-traces":
+    ./scripts/restart-debug.sh --trace-dir {{trace_dir}}
+
+# Disable runner stream tracing and restart runner
+restart-debug-off:
+    ./scripts/restart-debug.sh --disable
+
 # Build, install, and restart runner + backend
 update-runner:
     cd backend && remote-build build --release -p oqto --bin oqto
@@ -367,6 +368,10 @@ bump version:
     # Update frontend/src-tauri/Cargo.toml
     sed -i '0,/^version = /s/^version = ".*"/version = "'"$new_version"'"/' "$ROOT/frontend/src-tauri/Cargo.toml"
     
+    # Regenerate Cargo.lock to match new version
+    cd "$ROOT/backend" && cargo check --quiet 2>/dev/null || cargo generate-lockfile
+    echo "Cargo.lock regenerated"
+
     # Update package.json files
     cd "$ROOT/frontend" && bun pm pkg set version="$new_version"
     
@@ -515,6 +520,7 @@ install-deps *ARGS:
     PIDS=()
     NAMES=()
     LOGS=()
+    BINS=()
 
     for key in "${!TOOLS[@]}"; do
       manifest_ver="${TOOLS[$key]}"
@@ -542,8 +548,14 @@ install-deps *ARGS:
         kokorox) bin="koko" ;;
         mailz) bin="mailz-cli" ;;
       esac
-      installed_ver=$($bin --version 2>/dev/null | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
-      [[ -z "$installed_ver" ]] && installed_ver=$($bin version 2>/dev/null | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
+      # Check /usr/local/bin first (where we install), then fall back to PATH.
+      if [[ -x "/usr/local/bin/$bin" ]]; then
+        installed_ver=$(/usr/local/bin/$bin --version 2>/dev/null | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
+        [[ -z "$installed_ver" ]] && installed_ver=$(/usr/local/bin/$bin version 2>/dev/null | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
+      else
+        installed_ver=$($bin --version 2>/dev/null | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
+        [[ -z "$installed_ver" ]] && installed_ver=$($bin version 2>/dev/null | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
+      fi
 
       if [[ "$installed_ver" == "$manifest_ver" && -z "$FILTER" ]]; then
         echo "OK   $key ($manifest_ver already installed)"
@@ -584,6 +596,7 @@ install-deps *ARGS:
       PIDS+=($!)
       NAMES+=("$key")
       LOGS+=("$logfile")
+      BINS+=("$bin")
     done
 
     # Wait for all builds
@@ -603,6 +616,45 @@ install-deps *ARGS:
       echo ""
       echo "$FAILED tool(s) failed to install"
       exit 1
+    fi
+
+    # Copy cargo-installed binaries to /usr/local/bin so they are on the
+    # global PATH and don't get shadowed by stale copies.
+    if [[ ${#NAMES[@]} -gt 0 ]]; then
+      echo ""
+      echo "Installing to /usr/local/bin..."
+      for i in "${!NAMES[@]}"; do
+        b="${BINS[$i]}"
+        cargo_bin="$HOME/.cargo/bin/$b"
+        if [[ -x "$cargo_bin" ]]; then
+          sudo install -m 755 "$cargo_bin" "/usr/local/bin/$b"
+          echo "  $b -> /usr/local/bin/$b"
+        fi
+      done
+    fi
+
+    # Post-install verification: confirm installed versions match manifest.
+    VERIFY_FAIL=0
+    if [[ ${#NAMES[@]} -gt 0 ]]; then
+      echo ""
+      echo "Verifying installed versions..."
+      for i in "${!NAMES[@]}"; do
+        b="${BINS[$i]}"
+        k="${NAMES[$i]}"
+        want="${TOOLS[$k]}"
+        got=$(/usr/local/bin/$b --version 2>/dev/null | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
+        if [[ "$got" == "$want" ]]; then
+          echo "  $b: $got (ok)"
+        else
+          echo "  $b: expected $want, got ${got:-unknown} (MISMATCH)"
+          VERIFY_FAIL=$((VERIFY_FAIL + 1))
+        fi
+      done
+      if [[ $VERIFY_FAIL -gt 0 ]]; then
+        echo ""
+        echo "WARNING: $VERIFY_FAIL tool(s) did not match expected version."
+        echo "Try: cd ../<tool> && cargo install --path <crate> --force"
+      fi
     fi
 
     echo ""
@@ -858,6 +910,11 @@ deploy *ARGS:
 deploy-host name *ARGS:
     ./scripts/deploy.sh --host {{name}} {{ARGS}}
 
+# Deploy to a specific host with runner stream tracing enabled
+# Example: just deploy-host-debug octo-azure /tmp/oqto-stream-traces --skip-build
+deploy-host-debug name trace_dir="/tmp/oqto-stream-traces" *ARGS:
+    ./scripts/deploy.sh --host {{name}} --trace-streams --trace-dir {{trace_dir}} {{ARGS}}
+
 # Deploy without rebuilding (use existing artifacts)
 deploy-quick *ARGS:
     ./scripts/deploy.sh --skip-build {{ARGS}}
@@ -873,6 +930,10 @@ deploy-frontend *ARGS:
 # Show what deploy would do without doing it
 deploy-dry-run *ARGS:
     ./scripts/deploy.sh --dry-run {{ARGS}}
+
+# End-to-end retry/error trace capture via agent-browser + frontend console + runner traces
+trace-retry-e2e *ARGS:
+    ./scripts/debug-e2e-retry-trace.sh {{ARGS}}
 
 # =============================================================================
 # VM Deployment Testing (Proxmox)
@@ -934,6 +995,12 @@ reliability-all-local:
 # Runner-path smoke checks for backend refactor baseline hardening
 smoke-runner-user-plane:
     ./scripts/e2e/smoke-runner-user-plane.sh
+
+# Sandbox profile compatibility matrix:
+# - CLI path for minimal/development/strict
+# - Runner + Pi + EAVS mock streaming for minimal/development
+sandbox-profile-matrix *ARGS:
+    ./scripts/e2e/sandbox-profile-matrix.sh {{ARGS}}
 
 # Convert oqto.setup.toml to vm.tests.toml format
 vm-convert-config setup_file:

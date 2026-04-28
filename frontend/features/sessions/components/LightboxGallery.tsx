@@ -1,6 +1,7 @@
 "use client";
 
 import { useDocumentEvent } from "@/hooks/use-document-event";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { useResetOnOpen } from "@/hooks/use-reset-on-open";
 import { readFileMux } from "@/lib/mux-files";
 import { cn } from "@/lib/utils";
@@ -63,6 +64,7 @@ export const LightboxGallery = memo(function LightboxGallery({
 		null,
 	);
 	const [swipeOffset, setSwipeOffset] = useState(0);
+	const isMobile = useIsMobile(768);
 
 	// Reset state when lightbox opens, cleanup blobs when it closes
 	useResetOnOpen(
@@ -322,15 +324,29 @@ export const LightboxGallery = memo(function LightboxGallery({
 		// biome-ignore lint/a11y/useKeyWithClickEvents: keyboard handled via document listener
 		<div
 			className="fixed inset-0 z-[100] bg-black flex flex-col"
+			style={
+				isMobile ? { paddingTop: "env(safe-area-inset-top, 0px)" } : undefined
+			}
 			onClick={(e) => {
-				if (e.target === e.currentTarget) {
-					onClose();
-				}
+				if (e.target === e.currentTarget) onClose();
 			}}
 		>
+			{isMobile && (
+				<button
+					type="button"
+					onClick={onClose}
+					className="absolute right-2 z-20 p-2 rounded-full bg-black/70 text-white backdrop-blur-sm"
+					style={{ top: "calc(env(safe-area-inset-top, 0px) + 0.5rem)" }}
+					aria-label="Close gallery"
+					title="Close"
+				>
+					<X className="w-5 h-5" />
+				</button>
+			)}
+
 			{/* Header */}
-			<div className="flex-shrink-0 flex items-center justify-between p-4 bg-black/50 backdrop-blur-sm">
-				<div className="flex items-center gap-4 text-white">
+			<div className="flex-shrink-0 flex items-center justify-between p-3 sm:p-4 bg-black/50 backdrop-blur-sm">
+				<div className="flex min-w-0 items-center gap-3 sm:gap-4 text-white">
 					{/* Counter */}
 					<span className="text-sm font-medium">
 						{currentIndex + 1} / {items.length}
@@ -356,60 +372,74 @@ export const LightboxGallery = memo(function LightboxGallery({
 				</div>
 
 				<div className="flex items-center gap-2">
-					{/* Zoom controls */}
-					<div className="flex items-center gap-1">
-						<button
-							type="button"
-							onClick={handleZoomOut}
-							className="p-2 rounded hover:bg-white/10 transition-colors text-white"
-							title="Zoom Out (-)"
-						>
-							<ZoomOut className="w-5 h-5" />
-						</button>
-						<span className="text-sm text-white font-mono w-12 text-center">
-							{Math.round(zoom * 100)}%
-						</span>
-						<button
-							type="button"
-							onClick={handleZoomIn}
-							className="p-2 rounded hover:bg-white/10 transition-colors text-white"
-							title="Zoom In (+)"
-						>
-							<ZoomIn className="w-5 h-5" />
-						</button>
-					</div>
+					{!isMobile && (
+						<>
+							{/* Zoom controls */}
+							<div className="flex items-center gap-1">
+								<button
+									type="button"
+									onClick={handleZoomOut}
+									className="p-2 rounded hover:bg-white/10 transition-colors text-white"
+									title="Zoom Out (-)"
+								>
+									<ZoomOut className="w-5 h-5" />
+								</button>
+								<span className="text-sm text-white font-mono w-12 text-center">
+									{Math.round(zoom * 100)}%
+								</span>
+								<button
+									type="button"
+									onClick={handleZoomIn}
+									className="p-2 rounded hover:bg-white/10 transition-colors text-white"
+									title="Zoom In (+)"
+								>
+									<ZoomIn className="w-5 h-5" />
+								</button>
+							</div>
 
-					{/* Rotate (images only) */}
-					{isImage && (
-						<button
-							type="button"
-							onClick={handleRotate}
-							className="p-2 rounded hover:bg-white/10 transition-colors text-white"
-							title="Rotate (R)"
-						>
-							<RotateCw className="w-5 h-5" />
-						</button>
+							{/* Rotate (images only) */}
+							{isImage && (
+								<button
+									type="button"
+									onClick={handleRotate}
+									className="p-2 rounded hover:bg-white/10 transition-colors text-white"
+									title="Rotate (R)"
+								>
+									<RotateCw className="w-5 h-5" />
+								</button>
+							)}
+
+							{/* Fullscreen */}
+							<button
+								type="button"
+								onClick={() => {
+									if (document.fullscreenElement) {
+										document.exitFullscreen();
+									} else if (containerRef.current) {
+										containerRef.current.requestFullscreen();
+									}
+								}}
+								className="p-2 rounded hover:bg-white/10 transition-colors text-white"
+								title="Fullscreen (F)"
+							>
+								{isFullscreen ? (
+									<Maximize2 className="w-5 h-5" />
+								) : (
+									<Maximize2 className="w-5 h-5" />
+								)}
+							</button>
+
+							{/* Reset */}
+							<button
+								type="button"
+								onClick={handleReset}
+								className="p-2 rounded hover:bg-white/10 transition-colors text-white"
+								title="Reset (0)"
+							>
+								0
+							</button>
+						</>
 					)}
-
-					{/* Fullscreen */}
-					<button
-						type="button"
-						onClick={() => {
-							if (document.fullscreenElement) {
-								document.exitFullscreen();
-							} else if (containerRef.current) {
-								containerRef.current.requestFullscreen();
-							}
-						}}
-						className="p-2 rounded hover:bg-white/10 transition-colors text-white"
-						title="Fullscreen (F)"
-					>
-						{isFullscreen ? (
-							<Maximize2 className="w-5 h-5" />
-						) : (
-							<Maximize2 className="w-5 h-5" />
-						)}
-					</button>
 
 					{/* Download */}
 					<button
@@ -421,25 +451,16 @@ export const LightboxGallery = memo(function LightboxGallery({
 						<Download className="w-5 h-5" />
 					</button>
 
-					{/* Reset */}
-					<button
-						type="button"
-						onClick={handleReset}
-						className="p-2 rounded hover:bg-white/10 transition-colors text-white"
-						title="Reset (0)"
-					>
-						0
-					</button>
-
-					{/* Close */}
-					<button
-						type="button"
-						onClick={onClose}
-						className="p-2 rounded hover:bg-white/10 transition-colors text-white"
-						title="Close (Esc)"
-					>
-						<X className="w-5 h-5" />
-					</button>
+					{!isMobile && (
+						<button
+							type="button"
+							onClick={onClose}
+							className="p-2 rounded hover:bg-white/10 transition-colors text-white"
+							title="Close (Esc)"
+						>
+							<X className="w-5 h-5" />
+						</button>
+					)}
 				</div>
 			</div>
 
@@ -559,17 +580,23 @@ export const LightboxGallery = memo(function LightboxGallery({
 				</div>
 			)}
 
-			{/* Keyboard shortcuts footer */}
-			<div className="flex-shrink-0 bg-black/80 backdrop-blur-sm px-6 py-1.5">
-				<div className="flex items-center justify-center gap-4 text-[10px] text-white/40">
-					<span>←/→ Navigate</span>
-					<span>Space Play/Pause</span>
-					<span>+/- Zoom</span>
-					<span>R Rotate</span>
-					<span>0 Reset</span>
-					<span>F Fullscreen</span>
-					<span>Esc Close</span>
-				</div>
+			{/* Footer hints */}
+			<div className="flex-shrink-0 bg-black/80 backdrop-blur-sm px-4 sm:px-6 py-1.5">
+				{isMobile ? (
+					<div className="flex items-center justify-center text-[10px] text-white/50">
+						<span>Swipe to navigate · Tap × to close</span>
+					</div>
+				) : (
+					<div className="flex items-center justify-center gap-4 text-[10px] text-white/40">
+						<span>←/→ Navigate</span>
+						<span>Space Play/Pause</span>
+						<span>+/- Zoom</span>
+						<span>R Rotate</span>
+						<span>0 Reset</span>
+						<span>F Fullscreen</span>
+						<span>Esc Close</span>
+					</div>
+				)}
 			</div>
 		</div>
 	);

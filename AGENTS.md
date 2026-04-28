@@ -9,13 +9,18 @@ Oqto is a self-hosted platform for managing AI coding agents.
 ## IMPORTANT
 
 - Keep this document up to date. Whenever we change functionality or the architecture, we need to also update it in here so that subsequent sessions are always aware of the current status.
-- Keep crate-level guidance up to date too: if behavior/boundaries change in `backend/crates/*`, update that crate's `AGENTS.md` in the same PR. Every crate under `backend/crates` must have a concise `AGENTS.md`.
 - Don't keep legacy alive. This project is still in it's infancy and there is 0 need for any backward compatibility. Remove any dead or legacy code you encounter without breaking the current system. If you stumble upon parts of the system that can be deprecated, suggest how we could best do this
 - Document your work: Use trx cli for epics, features, bugs etc. Use agntz memory for documenting learnings along the way. Future sessions have access to both.
+- **TRX-first workflow (MANDATORY)**: Before making any code/config/docs change, you must first check/create/update trx.
+  - Required start-of-task flow: `trx ready` (or `trx list`) -> find existing issue or `trx create` -> `trx update <id> --status in_progress` -> then implement.
+  - This is not optional and does not depend on task size. "Whenever possible" does not apply.
+  - Exception: urgent break/fix hotfixes may start implementation immediately, but the trx item must be created/updated as the very next step after stabilization in the same session.
 - **No hacky fixes.** We want proper John Carmack solutions -- clean, minimal, and correct. Understand the root cause before writing a single line. If a fix feels like duct tape, stop and rethink. Every change should make the codebase better, not just silence the symptom.
-- **Respect the architecture.** Actions go through Runners. History goes through hstry. Memory goes through mmry. Do not bypass established data flows. If you think you need a shortcut, you are missing something -- re-read the architecture section above and the canonical protocol docs.
+- **Respect the architecture.** Actions go through Runners. History goes through the authoritative store for the runtime mode (`oqto-log` for oqto-runner sessions; hstry for legacy/interop paths during migration). Memory goes through mmry. Do not bypass established data flows. If you think you need a shortcut, you are missing something -- re-read the architecture section above and the canonical protocol docs.
 - **"Let me just..." is ALWAYS wrong.** That phrase is the preamble to a hack. We do not "just" add a quick workaround, "just" hardcode a value, or "just" skip the proper path. Every solution must be designed to scale. If it would not survive 10x users or 10x sessions, it is the wrong approach.
 - **Todo list discipline**: Your todo list is a real-time status bar the user watches. At the start of a task, create todos with `TodoWrite`. As you work, **always** update the list: set tasks to `in_progress` when you start them and `completed` when you finish them. Do not leave completed tasks as `pending`. Rewrite the full list after each significant step.
+- **Fix all failures before done.** We always leave the tree green: if lint/tests/checks fail, fix them regardless of who introduced the failure. No "not my change" exceptions.
+- **No warning debt handoff.** Clippy/lint warnings count as unfinished work unless they are explicitly documented as accepted in-code with a reason (`#[allow(...)]` + rationale). Default is zero warnings.
 - Oqto is made up of many separate tools that we are building in parallel. If you encounter bugs or potential improvements, file trx in the respective repos (e.g. ../mmry etc)
 - During development, use the agent-browser for end to end debugging. You can use wismut:dev to log in. The frontend is accessible under localhost:3000
 
@@ -42,6 +47,11 @@ DISPLAY=:0 agent-browser close                           # Close browser
 ```
 
 Enable frontend debug logging: `DISPLAY=:0 agent-browser eval "localStorage.setItem('debug:pi-v2', '1')"`
+
+Retry/error stream tracing helpers:
+- `just restart-debug` -- restart with runner stream tracing enabled (`OQTO_TRACE_STREAMS=1`)
+- `just restart-debug-off` -- disable runner stream tracing and restart runner
+- `just trace-retry-e2e` -- automated frontend + runner trace capture across mock retry/error models
 
 ---
 
@@ -77,7 +87,7 @@ The frontend speaks a **harness-agnostic canonical protocol**. Users can select 
 - **Events** are ephemeral UI signals: stream.text_delta, agent.working, tool.start, agent.idle, etc.
 - **Commands** flow from frontend to runner: prompt, abort, set_model, compact, fork, etc.
 
-See `docs/design/canonical-protocol.md` for the full specification.
+See `docs/active/design/20260205-canonical-protocol.md` for the full specification.
 
 ### Harnesses
 
@@ -165,14 +175,25 @@ The runner maintains a state machine per session (idle, working, error) and emit
 
 ## Storage
 
-### hstry (Chat History)
+### oqto-log (authoritative chat history for oqto-runner sessions)
 
-All chat history access goes through hstry's gRPC API - no raw SQLite access from `oqto`.
+`oqto-log` is the durable authority for timeline/tree reads in the new history architecture.
 
-- **WriteService**: Persist messages after agent turns complete (via `HstryClient` gRPC)
-- **ReadService**: Query messages, sessions, search (via `HstryClient` gRPC)
-- Stores canonical `Message` format directly (no translation at read time)
-- **Runner exception**: `oqto-runner` reads hstry SQLite directly for speed (runs as target user, same machine). This is intentional and secure.
+- **Scope/placement**: one SQLite DB per workspace, stored in the owning Linux user's home:
+  - `~/.local/share/oqto/oqto-log/<workspace_hash>/oqto-log.sqlite`
+- **Shared workspace rule**: DB lives under the shared workspace Linux user and is shared by collaborators.
+- **Search access model**:
+  - Agents must search via runner-mediated APIs/tools (no raw DB access from agent process).
+  - Effective search scope is derived from oqto-sandbox read permissions (workdir/workspace allowlist), then optionally narrowed further.
+  - Bare Pi sessions are not an implicit oqto-log search client; access requires explicit oqto runner/oqtoctl mediation.
+
+### hstry (legacy/interop during migration)
+
+`hstry` remains available for compatibility and transition paths while oqto-log cutover completes.
+
+- Existing gRPC services remain valid for legacy reads/writes.
+- Do not introduce new primary timeline authority paths in hstry.
+- New history features should target oqto-log first.
 
 ### Session Files (Pi-Owned)
 
@@ -180,8 +201,29 @@ Pi writes its own JSONL session files -- **Oqto must NEVER create or write JSONL
 
 - **Pi**: `~/.pi/agent/sessions/--{safe_cwd}--/{timestamp}_{session_id}.jsonl`
 - These are authoritative for harness-specific metadata (titles, fork points)
-- hstry is authoritative for structured message content
-- `pending-` prefixed IDs are internal runner/frontend placeholders for optimistic session matching; they must never leak into files or hstry
+- oqto-log is authoritative for structured message content in oqto-runner mode (hstry remains legacy/interop during migration)
+- `pending-` prefixed IDs are internal runner/frontend placeholders for optimistic session matching; they must never leak into files or durable history stores
+
+### Session ID Contract (MUST FOLLOW)
+
+To avoid history loss/duplication, Oqto uses dual IDs with strict roles:
+
+- **`platform_id` (Oqto session ID)**
+  - Used by frontend/WS/backend for session control (`prompt`, `abort`, `get_messages`, etc.)
+  - Stable within Oqto UX and routing
+- **`external_id` (Pi session ID)**
+  - Used as source identity for import/interop (and legacy hstry conversation identity during migration)
+  - Comes from Pi `get_state` (`sessionId`) and must be treated as authoritative once known
+- **Optimistic temp IDs (`tmp:*`, `pending-*`)**
+  - Frontend-local only during pre-ack/new-session flows
+  - Must never be persisted to oqto-log/hstry or JSONL
+
+Persistence rules:
+
+1. Keep both IDs; never "replace" platform_id with external_id in Oqto control paths.
+2. Store both in authoritative history (`external_id = Pi session id`, `platform_id = Oqto session id`).
+3. For active sessions, message durability is append-only delta writes on `AgentEnd` (no full-window overwrite).
+4. If Pi session id is not known yet, keep data in runner buffer and defer durable write until identity is resolved.
 
 ## Agent Tools
 
@@ -228,7 +270,7 @@ Create a memory when you discover:
 
 - **Reusable patterns** - "Voice mode uses eaRS for STT and kokorox for TTS via WebSocket"
 - **Existing interfaces** - "Pi PATCH /api/chat-history/{id} renames sessions via session_info JSONL entry"
-- **Architecture decisions** - "hstry is mandatory, writes go through gRPC WriteService not raw SQLite"
+- **Architecture decisions** - "oqto-log is authoritative for runner sessions; writes go through the runner/store abstraction, not ad-hoc raw SQLite from agent flows"
 - **Debugging insights** - "Port cleanup requires waiting for process exit to prevent zombies"
 - **Integration points** - "PiTranslator converts PiEvent to Vec<EventPayload> for canonical broadcast"
 
@@ -308,30 +350,6 @@ just lint-rust-ai-report-prod    # Production-only report (excludes #[cfg(test)]
 - Use `just lint-rust-ai-report-prod` to inspect enforceable backlog and `just lint-rust-ai-report` for full visibility (including tests/fixtures debt).
 - Policy intent: keep runtime code strict (`unwrap/expect` disallowed) while allowing pragmatic test ergonomics.
 
-### Backend Architecture Guardrail Policy
-
-`just lint` now enforces architecture-level guardrails in addition to clippy/fmt:
-
-- `just lint-rust-file-size` — ratcheting Rust file size budget from `scripts/lint/rust-file-size-baseline.json`
-- `just lint-crate-deps` — forbidden dependency edges between workspace crates
-- `just lint-module-boundaries` — import boundary checks inside `backend/crates/oqto/src`
-- `just lint-orphan-modules` — detect unreachable/orphan `.rs` files in the oqto crate
-
-When intentionally reshaping module boundaries:
-
-```bash
-just lint-rust-file-size-update   # refresh baseline after planned refactors
-just lint                         # verify full guardrail suite
-```
-
-Rules of thumb:
-
-- Do not grow monolithic files without splitting responsibilities.
-- Do not add cross-layer imports that bypass established boundaries.
-- Do not add transitional shim modules without a tracked removal task.
-- Keep `main.rs` and crate roots focused on wiring, not business logic.
-- Runner RPC schema is centralized in `backend/crates/oqto-runner-protocol`; `oqto` and `oqto-runner` must only re-export it from their local `runner/protocol.rs` files.
-
 ### Frontend useEffect Guardrail Policy
 
 **`bun run lint` includes a useEffect guardrail** (`scripts/check-useeffect-guardrail.mjs`) that prevents new unaudited `useEffect` calls. The baseline tracks every file with useEffect across `src/`, `hooks/`, `features/`, `apps/`, `components/`, and `lib/`. Adding a new useEffect to any file increases its count and fails the lint gate.
@@ -360,24 +378,24 @@ bun run lint                             # Verify everything passes
 - **Backend is at** `archlinux:8080` (tmux pane `0:1.1`).
 - **Frontend dev server** runs in tmux pane `%5` (check with `tmux list-panes -a`).
 - **Rebuild backend**: `cd backend && cargo build --release` then restart the process in its tmux pane.
+- **Version bumps**: Always use `just bump patch` (or `minor`/`major`). Never edit `backend/Cargo.toml` version manually -- `just bump` updates Cargo.toml, regenerates Cargo.lock, and updates frontend package versions atomically. Deploy will fail if Cargo.lock is stale.
+
+## Deployment (Transactional)
+
+`just deploy` now uses `scripts/deploy.sh` with transactional releases.
+
+- Releases are staged under `/var/lib/oqto/releases/<release-id>/`.
+- Activation is an atomic symlink switch (`current -> <release-id>`).
+- Preflight gates hard-stop before activation (mode checks, disk checks, multi-user sandbox/seccomp prerequisites).
+- Failed post-activate health checks trigger automatic rollback to previous release.
+- Structured update lifecycle events are written to `/var/log/oqto/update-events.jsonl`.
+- Canary rollout is supported via `canary = true` in `deploy/hosts.toml` and `--canary` / `--canary-then-fleet`.
+
+Runbook details: `deploy/DEPLOY.md`.
 
 ## Pre-Commit Lint Checklist
 
 **Run ALL of these before every commit.** No exceptions.
-
-### Git Hook Enforcement (required)
-
-Enable repo-managed hooks once per clone:
-
-```bash
-git config core.hooksPath .githooks
-chmod +x .githooks/pre-commit
-```
-
-The pre-commit hook runs:
-
-- `scripts/update-deps-precommit.sh`
-- `just lint` (includes ast-grep + architecture guardrails + frontend/backend lint)
 
 ```bash
 # Backend (if Rust files changed)
@@ -387,10 +405,6 @@ cargo clippy -p <crate>                    # Lint (must be 0 warnings)
 cargo test -p <crate>                      # Tests pass
 cd ..
 just lint-rust-ai-guardrails               # ast-grep guardrails
-just lint-rust-file-size                   # ratcheting Rust file size budgets
-just lint-crate-deps                       # workspace crate dependency direction
-just lint-module-boundaries                # oqto module import boundaries
-just lint-orphan-modules                   # orphan/unreachable module detection
 
 # Frontend (if TS/TSX files changed)
 cd frontend
@@ -405,6 +419,8 @@ If you added or removed `useEffect` calls, also run `bun run lint:useeffect-guar
 **Rust**: Use `anyhow::Result` with `.context()` for errors. Group imports: std, external crates, internal modules. Run `cargo fmt` and `cargo check` after changes.
 
 **TypeScript**: Use `@/` import alias for internal modules. Functional components with named exports. Vitest for tests. Never use raw `useEffect` -- use the approved hooks (`useDocumentEvent`, `useIntersectionOnce`, `useResetOnOpen`, `useMountEffect`). See "Frontend useEffect Guardrail Policy" above.
+
+**Markdown rendering**: Chat messages and markdown file preview both use the shared `frontend/components/data-display/markdown-renderer.tsx`. Mermaid fenced blocks (```mermaid) render as diagrams with a built-in Diagram/Code toggle; keep behavior centralized in this renderer so both surfaces stay consistent.
 
 **General**: No emojis in code/docs/commits. Use `bun` for JS/TS, `uv` for Python. Never use `pip` directly; use `uv add`, `uv tool install`, or `uv pip` only when explicitly required for compatibility.
 
@@ -466,8 +482,18 @@ For a complete list, see `dependencies.toml`.
 
 ## Issue Tracking (trx)
 
+### Mandatory workflow gate (apply at task start)
+
+1. Run `trx ready` (or `trx list`) before implementation.
+2. Reuse an existing issue when possible; otherwise create one.
+3. Set it to in progress before editing code: `trx update <id> --status in_progress`.
+4. Close/update it with resolution before final commit.
+
+If this order is violated, treat the task as out-of-process and correct it immediately.
+
 ```bash
 trx ready              # Show unblocked issues
+trx list               # List all issues
 trx create "Title" -t task -p 2   # Create issue (types: bug/feature/task/epic/chore, priority: 0-4)
 trx update <id> --status in_progress
 trx close <id> -r "Done"

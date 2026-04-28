@@ -17,7 +17,7 @@ use std::process::Command;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use crate::runner::client::{RunnerClient, RunnerEndpointPattern};
+use crate::runner::client::RunnerClient;
 use crate::user::UserRepository;
 
 #[derive(Debug, Clone)]
@@ -25,8 +25,9 @@ pub struct UserMmryConfig {
     pub mmry_binary: String,
     pub base_port: u16,
     pub port_range: u16,
-    /// Runner endpoint pattern.
-    pub runner_endpoint: Option<RunnerEndpointPattern>,
+    /// Runner socket path pattern.
+    /// Supports `{user}` (Linux username) and `{uid}`.
+    pub runner_socket_pattern: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -72,9 +73,34 @@ impl UserMmryManager {
         }
     }
 
+    fn linux_user_uid(linux_username: &str) -> Result<u32> {
+        let output = Command::new("id")
+            .args(["-u", linux_username])
+            .output()
+            .with_context(|| format!("getting uid for linux user '{}'", linux_username))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!(
+                "failed to get uid for linux user '{}': {}",
+                linux_username,
+                stderr.trim()
+            );
+        }
+
+        let uid_str = String::from_utf8_lossy(&output.stdout);
+        let uid = uid_str.trim().parse::<u32>().context("parsing uid")?;
+        Ok(uid)
+    }
+
     fn runner_client_for_linux_user(&self, linux_username: &str) -> Result<RunnerClient> {
-        if let Some(endpoint) = self.config.runner_endpoint.as_ref() {
-            RunnerClient::for_user_with_endpoint(linux_username, endpoint)
+        if let Some(pattern) = self.config.runner_socket_pattern.as_deref() {
+            let mut socket = pattern.replace("{user}", linux_username);
+            if socket.contains("{uid}") {
+                let uid = Self::linux_user_uid(linux_username)?;
+                socket = socket.replace("{uid}", &uid.to_string());
+            }
+            Ok(RunnerClient::new(socket))
         } else {
             // Fallback: same-user runner socket.
             // This only works if the backend can access the runner socket.

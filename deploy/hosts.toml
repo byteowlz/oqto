@@ -6,19 +6,21 @@
 # Fields:
 #   name       - Human-readable label (used in logs and --host filtering)
 #   ssh        - SSH alias or user@host (must be reachable via `ssh <value>`)
-#   mode       - "local" (single-user, no multi-user runners) or "multi-user"
+#   mode       - "single-user" (or legacy "local") or "multi-user"
 #   user       - SSH user that owns the deployment (runs sudo for installs)
 #   frontend   - Whether to deploy frontend assets (requires web_root)
 #   web_root   - Absolute path where frontend dist is served from
-#   binaries   - List of binaries to deploy (installed to /usr/local/bin)
-#   services   - Systemd user services to restart after deploy
+#   binaries   - List of binaries to deploy (activated via release symlink)
+#   services   - Additional services to restart after activation
 #   local      - If true, this is the local machine (no SSH, no binary upload)
+#   canary     - Optional rollout flag used by --canary/--canary-then-fleet
 
 [[host]]
 name = "archvm"
 ssh = "localhost"
 local = true
-mode = "local"
+mode = "single-user"
+canary = true
 user = "wismut"
 frontend = true
 web_root = "/var/www/oqto"
@@ -29,6 +31,7 @@ services = ["oqto", "oqto-runner"]
 name = "octo-azure"
 ssh = "octo-azure"
 mode = "multi-user"
+canary = true
 user = "tommy"
 frontend = true
 web_root = "/var/www/oqto"

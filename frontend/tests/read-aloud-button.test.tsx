@@ -31,8 +31,8 @@ describe("ReadAloudButton", () => {
 		expect(
 			screen.getAllByRole("button", { name: /stop/i }).length,
 		).toBeGreaterThan(0);
-		expect(
-			screen.queryAllByRole("button", { name: /^read aloud$/i }),
-		).toHaveLength(0);
+		expect(screen.queryAllByRole("button", { name: /^read$/i })).toHaveLength(
+			0,
+		);
 	});
 });
