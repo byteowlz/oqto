@@ -2729,7 +2729,9 @@ dependencies = [
  "notify",
  "notify-rust",
  "once_cell",
+ "oqto-eavs",
  "oqto-files",
+ "oqto-host",
  "oqto-protocol",
  "oqto-sandbox",
  "prost",
@@ -2776,6 +2778,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "oqto-eavs"
+version = "0.3.25"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "oqto-files"
 version = "0.3.25"
 dependencies = [
@@ -2802,6 +2816,23 @@ dependencies = [
  "tracing-subscriber",
  "walkdir",
  "zip",
+]
+
+[[package]]
+name = "oqto-host"
+version = "0.3.25"
+dependencies = [
+ "anyhow",
+ "log",
+ "nanoid",
+ "oqto-sandbox",
+ "rustix",
+ "serde",
+ "serde_json",
+ "shellexpand",
+ "tokio",
+ "toml 0.8.23",
+ "tracing",
 ]
 
 [[package]]
@@ -2885,6 +2916,35 @@ dependencies = [
  "libc",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "oqtoctl"
+version = "0.3.25"
+dependencies = [
+ "anyhow",
+ "base64",
+ "bcrypt",
+ "chrono",
+ "clap",
+ "dirs 5.0.1",
+ "futures",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "hyperlocal",
+ "libc",
+ "nanoid",
+ "oqto-eavs",
+ "reqwest",
+ "reqwest-eventsource",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tokio",
+ "tokio-tungstenite 0.26.2",
+ "toml 0.8.23",
+ "urlencoding",
 ]
 
 [[package]]

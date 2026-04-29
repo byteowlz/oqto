@@ -434,6 +434,9 @@ install_shell_tools_cargo() {
 setup_onboarding_templates_repo() {
   local repo_url="${ONBOARDING_TEMPLATES_REPO:-$ONBOARDING_TEMPLATES_REPO_DEFAULT}"
   local target_path="${ONBOARDING_TEMPLATES_PATH:-$ONBOARDING_TEMPLATES_PATH_DEFAULT}"
+  if [[ "${SELECTED_USER_MODE:-single}" == "single" ]]; then
+    target_path="${ONBOARDING_TEMPLATES_PATH:-${XDG_DATA_HOME:-$HOME/.local/share}/oqto/oqto-templates}"
+  fi
 
   log_step "Setting up onboarding templates repo"
 
@@ -467,15 +470,23 @@ setup_onboarding_templates_repo() {
 
   # Install the repo clone to the target path
   log_info "Installing templates to $target_path..."
-  sudo mkdir -p "$(dirname "$target_path")"
-  sudo rm -rf "$target_path"
-  sudo cp -r "$temp_clone_dir" "$target_path"
-  sudo chmod -R a+rX "$target_path" >/dev/null 2>&1 || true
+  if [[ "${SELECTED_USER_MODE:-single}" == "single" ]]; then
+    mkdir -p "$(dirname "$target_path")"
+    rm -rf "$target_path"
+    cp -r "$temp_clone_dir" "$target_path"
+    chmod -R u+rwX,go+rX "$target_path" >/dev/null 2>&1 || true
+    git config --global --add safe.directory "$target_path" 2>/dev/null || true
+  else
+    sudo mkdir -p "$(dirname "$target_path")"
+    sudo rm -rf "$target_path"
+    sudo cp -r "$temp_clone_dir" "$target_path"
+    sudo chmod -R a+rX "$target_path" >/dev/null 2>&1 || true
 
-  # The oqto service runs as user 'oqto' and needs to git pull updates.
-  if id oqto &>/dev/null; then
-    sudo chown -R oqto:oqto "$target_path"
-    sudo -u oqto git config --global --add safe.directory "$target_path" 2>/dev/null || true
+    # The oqto service runs as user 'oqto' and needs to git pull updates.
+    if id oqto &>/dev/null; then
+      sudo chown -R oqto:oqto "$target_path"
+      sudo -u oqto git config --global --add safe.directory "$target_path" 2>/dev/null || true
+    fi
   fi
 
   log_success "Onboarding templates installed"

@@ -11,10 +11,6 @@ name = "oqto"
 path = "src/main.rs"
 
 [[bin]]
-name = "oqtoctl"
-path = "src/ctl/main.rs"
-
-[[bin]]
 name = "oqto-sandbox"
 path = "src/bin/oqto-sandbox.rs"
 
@@ -128,6 +124,8 @@ hstry-core.workspace = true
 
 # Canonical protocol types
 oqto-protocol = { path = "../oqto-protocol" }
+oqto-eavs = { path = "../oqto-eavs" }
+oqto-host = { path = "../oqto-host" }
 
 [dev-dependencies]
 tower = { workspace = true, features = ["util"] }

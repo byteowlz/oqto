@@ -2752,7 +2752,7 @@ async fn bootstrap_admin_user(
         .context("Failed to connect to database")?;
 
     // Run migrations to ensure schema exists
-    sqlx::migrate!("./migrations")
+    sqlx::migrate!("../oqto/migrations")
         .run(&pool)
         .await
         .context("Failed to run migrations")?;
@@ -3399,7 +3399,7 @@ async fn provision_eavs_for_user(
     budget: Option<f64>,
     json_output: bool,
 ) -> Result<String> {
-    use oqto::eavs::{CreateKeyRequest, EavsClient, KeyPermissions, generate_pi_models_json};
+    use oqto_eavs::{CreateKeyRequest, EavsClient, KeyPermissions, generate_pi_models_json};
 
     let eavs_base = eavs_url.trim_end_matches('/');
     let eavs = EavsClient::new(eavs_base, master_key.unwrap_or(""))
@@ -3563,7 +3563,7 @@ fn setup_runner_for_user(username: &str, json: bool) -> Result<()> {
         std::fs::read_to_string(service_src).context("Failed to read service file")?
     } else {
         // Fallback to embedded service file
-        include_str!("../../resources/systemd/oqto-runner.service").to_string()
+        include_str!("../../oqto/resources/systemd/oqto-runner.service").to_string()
     };
 
     if !json {

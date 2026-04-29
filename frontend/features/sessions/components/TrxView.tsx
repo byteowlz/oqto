@@ -19,11 +19,6 @@ import {
 	DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
-import {
-	Tooltip,
-	TooltipContent,
-	TooltipTrigger,
-} from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { getWsManager } from "@/lib/ws-manager";
 import type { TrxWsEvent } from "@/lib/ws-mux-types";
@@ -394,26 +389,14 @@ const IssueCard = memo(function IssueCard({
 													statusBarColors[issue.status] || statusBarColors.open,
 												)}
 											/>
-											<Tooltip>
-												<TooltipTrigger asChild>
-													<span
-														className={cn(
-															"text-xs font-medium truncate",
-															isClosed && "line-through text-muted-foreground",
-														)}
-													>
-														{issue.title}
-													</span>
-												</TooltipTrigger>
-												<TooltipContent side="top" className="max-w-xs p-2">
-													<p className="font-medium text-xs">{issue.title}</p>
-													{issue.description && (
-														<p className="text-[11px] text-muted-foreground mt-1 line-clamp-3">
-															{issue.description}
-														</p>
-													)}
-												</TooltipContent>
-											</Tooltip>
+											<span
+												className={cn(
+													"text-xs font-medium truncate",
+													isClosed && "line-through text-muted-foreground",
+												)}
+											>
+												{issue.title}
+											</span>
 											<span className="text-[10px] font-mono text-muted-foreground shrink-0">
 												{issue.id}
 											</span>
