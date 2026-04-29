@@ -11,6 +11,9 @@ SKIP_BUILD=false
 SKIP_FRONTEND=false
 SKIP_BACKEND=false
 SKIP_SERVICES=false
+USE_REMOTE_BUILD=false
+REMOTE_BUILD_SERVER="${REMOTE_BUILD_SERVER:-}"
+USE_MOLD_LINKER="${OQTO_USE_MOLD_LINKER:-false}"
 PREPARE_ONLY=false
 ACTIVATE_ONLY=false
 TRACE_STREAMS=false
@@ -59,6 +62,9 @@ Options:
   --skip-frontend          Skip frontend staging and deploy
   --skip-backend           Skip backend binary staging and deploy
   --skip-services          Skip service restarts
+  --remote-build           Use remote-build for backend binaries (default: local cargo build)
+  --remote-build-server S  Remote-build server endpoint (host:port or URL). Optional if configured via REMOTE_BUILD_SERVER or ~/.config/remote-build/config.toml
+  --use-mold-linker        Opt into mold for local Rust builds. Also: OQTO_USE_MOLD_LINKER=true
   --trace-streams          Enable runner stream tracing (OQTO_TRACE_STREAMS=1)
   --trace-dir DIR          Runner stream trace directory (default: /tmp/oqto-stream-traces)
   --prepare-only           Run preflight + prepare, do not activate
@@ -94,6 +100,9 @@ while [[ $# -gt 0 ]]; do
         --skip-frontend) SKIP_FRONTEND=true; shift ;;
         --skip-backend) SKIP_BACKEND=true; shift ;;
         --skip-services) SKIP_SERVICES=true; shift ;;
+        --remote-build) USE_REMOTE_BUILD=true; shift ;;
+        --remote-build-server) REMOTE_BUILD_SERVER="$2"; shift 2 ;;
+        --use-mold-linker) USE_MOLD_LINKER=true; shift ;;
         --trace-streams) TRACE_STREAMS=true; shift ;;
         --trace-dir) TRACE_DIR="$2"; shift 2 ;;
         --prepare-only) PREPARE_ONLY=true; shift ;;
@@ -215,6 +224,87 @@ version_ge() {
     local current="$1"
     local required="$2"
     [[ "$(printf '%s\n%s\n' "$required" "$current" | sort -V | head -n1)" == "$required" ]]
+}
+
+resolve_remote_build_server() {
+    if [[ -n "$REMOTE_BUILD_SERVER" ]]; then
+        echo "$REMOTE_BUILD_SERVER"
+        return 0
+    fi
+
+    local cfg="$HOME/.config/remote-build/config.toml"
+    if [[ -f "$cfg" ]]; then
+        python3 - "$cfg" <<'PY' 2>/dev/null || true
+import sys, tomllib
+cfg_path = sys.argv[1]
+with open(cfg_path, 'rb') as f:
+    data = tomllib.load(f)
+for key in ('server', 'url', 'endpoint'):
+    value = data.get(key)
+    if isinstance(value, str) and value.strip():
+        print(value.strip())
+        break
+PY
+    fi
+}
+
+backend_artifact_dir() {
+    if [[ "$USE_REMOTE_BUILD" == "true" ]]; then
+        echo "$ROOT_DIR/backend/target/release"
+    else
+        echo "$ROOT_DIR/backend/target/deploy-fast"
+    fi
+}
+
+check_remote_build_reachability() {
+    if [[ "$USE_REMOTE_BUILD" != "true" ]]; then
+        return 0
+    fi
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+        log "[dry-run] Skipping remote-build server reachability check"
+        return 0
+    fi
+
+    if ! command -v remote-build >/dev/null 2>&1; then
+        err "--remote-build requested but 'remote-build' is not installed or not in PATH"
+        return 1
+    fi
+
+    local endpoint
+    endpoint="$(resolve_remote_build_server)"
+    if [[ -z "$endpoint" ]]; then
+        err "--remote-build requested but remote-build server endpoint is unknown. Set --remote-build-server or REMOTE_BUILD_SERVER."
+        return 1
+    fi
+
+    if ! python3 - "$endpoint" <<'PY'; then
+import socket, sys
+from urllib.parse import urlparse
+raw = sys.argv[1].strip()
+if '://' in raw:
+    parsed = urlparse(raw)
+    host = parsed.hostname
+    port = parsed.port or (443 if parsed.scheme == 'https' else 80)
+else:
+    if ':' in raw:
+        host, port_s = raw.rsplit(':', 1)
+        port = int(port_s)
+    else:
+        host = raw
+        port = 443
+if not host:
+    raise SystemExit(2)
+conn = socket.create_connection((host, port), timeout=3)
+conn.close()
+print(f"{host}:{port}")
+PY
+        err "Remote-build server '$endpoint' is not reachable"
+        return 1
+    fi
+
+    ok "Remote-build server reachable: $endpoint"
+    return 0
 }
 
 load_dependency_requirements() {
@@ -689,11 +779,12 @@ preflight_host() {
     fi
 
     if [[ "$SKIP_BACKEND" != "true" ]]; then
-        local bin
+        local bin artifact_dir
+        artifact_dir="$(backend_artifact_dir)"
         for bin in $binaries; do
-            if [[ ! -f "$ROOT_DIR/backend/target/release/$bin" ]]; then
+            if [[ ! -f "$artifact_dir/$bin" ]]; then
                 emit_event "$is_local" "$ssh_target" "$name" "preflight" "fail" "binary.missing.$bin"
-                err "Missing local build artifact: backend/target/release/$bin"
+                err "Missing local build artifact: ${artifact_dir#$ROOT_DIR/}/$bin"
                 return 1
             fi
         done
@@ -796,9 +887,10 @@ prepare_host() {
     host_exec_sudo "$is_local" "$ssh_target" "mkdir -p '$release_dir/bin' '$release_dir/meta'"
 
     if [[ "$SKIP_BACKEND" != "true" ]]; then
-        local bin
+        local bin artifact_dir
+        artifact_dir="$(backend_artifact_dir)"
         for bin in $binaries; do
-            local src="$ROOT_DIR/backend/target/release/$bin"
+            local src="$artifact_dir/$bin"
             if [[ "$is_local" == "true" ]]; then
                 host_exec_sudo "$is_local" "$ssh_target" "install -m 0755 '$src' '$release_dir/bin/$bin'"
             else
@@ -935,9 +1027,10 @@ start_single_user_service_fallback() {
 restart_single_user_service() {
     local is_local="$1" ssh_target="$2" svc="$3"
 
-    # Try systemd --user first
-    if host_exec "$is_local" "$ssh_target" "systemctl --user is-active '$svc' &>/dev/null" 2>/dev/null; then
-        host_exec "$is_local" "$ssh_target" "systemctl --user restart '$svc'" || true
+    # Prefer systemd user units when they exist, even if currently inactive.
+    # Using only `is-active` misclassifies installed-but-inactive units as missing.
+    if host_exec "$is_local" "$ssh_target" "state=\$(systemctl --user show '$svc' -p LoadState --value 2>/dev/null || echo not-found); [[ \"\$state\" != \"not-found\" ]]" 2>/dev/null; then
+        host_exec "$is_local" "$ssh_target" "systemctl --user restart '$svc' || systemctl --user start '$svc'" || true
         return
     fi
 
@@ -1201,8 +1294,13 @@ health_check_host() {
             if host_exec "$is_local" "$ssh_target" "uid=\$(id -u); test -S /run/user/\${uid}/oqto-runner.sock"; then
                 ok_runner="true"
             fi
-            # Single-user hstry must be connectable (not just binary present).
-            if host_exec "$is_local" "$ssh_target" "hstry service status 2>/dev/null | grep -qi running"; then
+            # Single-user hstry must be available. Accept any of:
+            # - hstry self-reported running state
+            # - active user systemd unit
+            # - running hstry process
+            if host_exec "$is_local" "$ssh_target" "hstry service status 2>/dev/null | grep -qi running" \
+               || host_exec "$is_local" "$ssh_target" "systemctl --user is-active --quiet hstry" \
+               || host_exec "$is_local" "$ssh_target" "pgrep -x hstry >/dev/null"; then
                 ok_hstry="true"
             fi
         else
@@ -1479,6 +1577,12 @@ build_artifacts() {
 
     log "Building artifacts..."
     if [[ "$SKIP_BACKEND" != "true" ]]; then
+        if [[ "$USE_REMOTE_BUILD" == "true" ]]; then
+            log "Backend build mode: remote-build"
+            check_remote_build_reachability || return 1
+        else
+            log "Backend build mode: local cargo build (profile=deploy-fast)"
+        fi
         # Verify Cargo.lock is in sync with Cargo.toml
         local toml_ver lock_ver
         toml_ver=$(grep -m1 '^version = ' "$ROOT_DIR/backend/Cargo.toml" | sed 's/version = "\(.*\)"/\1/')
@@ -1487,10 +1591,30 @@ build_artifacts() {
             err "Cargo.lock is stale (Cargo.toml=$toml_ver, Cargo.lock=$lock_ver). Run 'just bump patch' or 'cd backend && cargo check' to regenerate."
             return 1
         fi
-        host_exec "true" "" "cd '$ROOT_DIR/backend' && REMOTE_BUILD_FETCH_MODE=bins remote-build build --release -p oqto --bin oqto --bin oqto-sandbox"
-        host_exec "true" "" "cd '$ROOT_DIR/backend' && REMOTE_BUILD_FETCH_MODE=bins remote-build build --release -p oqto-runner --bin oqto-runner"
-        host_exec "true" "" "cd '$ROOT_DIR/backend' && REMOTE_BUILD_FETCH_MODE=bins remote-build build --release -p oqto-files --bin oqto-files"
-        host_exec "true" "" "cd '$ROOT_DIR/backend' && REMOTE_BUILD_FETCH_MODE=bins remote-build build --release -p oqto-usermgr --bin oqto-usermgr"
+        if [[ "$USE_REMOTE_BUILD" == "true" ]]; then
+            host_exec "true" "" "cd '$ROOT_DIR/backend' && REMOTE_BUILD_FETCH_MODE=bins remote-build build --release -p oqto --bin oqto --bin oqto-sandbox"
+            host_exec "true" "" "cd '$ROOT_DIR/backend' && REMOTE_BUILD_FETCH_MODE=bins remote-build build --release -p oqtoctl --bin oqtoctl"
+            host_exec "true" "" "cd '$ROOT_DIR/backend' && REMOTE_BUILD_FETCH_MODE=bins remote-build build --release -p oqto-runner --bin oqto-runner"
+            host_exec "true" "" "cd '$ROOT_DIR/backend' && REMOTE_BUILD_FETCH_MODE=bins remote-build build --release -p oqto-files --bin oqto-files"
+            host_exec "true" "" "cd '$ROOT_DIR/backend' && REMOTE_BUILD_FETCH_MODE=bins remote-build build --release -p oqto-usermgr --bin oqto-usermgr"
+        else
+            # Local deploy builds prioritize iteration speed over max runtime perf.
+            # Keep strict --release for formal release workflows.
+            local cargo_env=""
+            if [[ "$USE_MOLD_LINKER" == "true" ]]; then
+                if ! command -v mold >/dev/null 2>&1; then
+                    err "--use-mold-linker requested but 'mold' is not installed or not in PATH"
+                    return 1
+                fi
+                log "Using mold linker for local Rust builds (explicit opt-in)"
+                cargo_env='RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }-C link-arg=-fuse-ld=mold"'
+            fi
+            host_exec "true" "" "cd '$ROOT_DIR/backend' && $cargo_env cargo build --profile deploy-fast -p oqto --bin oqto --bin oqto-sandbox"
+            host_exec "true" "" "cd '$ROOT_DIR/backend' && $cargo_env cargo build --profile deploy-fast -p oqtoctl --bin oqtoctl"
+            host_exec "true" "" "cd '$ROOT_DIR/backend' && $cargo_env cargo build --profile deploy-fast -p oqto-runner --bin oqto-runner"
+            host_exec "true" "" "cd '$ROOT_DIR/backend' && $cargo_env cargo build --profile deploy-fast -p oqto-files --bin oqto-files"
+            host_exec "true" "" "cd '$ROOT_DIR/backend' && $cargo_env cargo build --profile deploy-fast -p oqto-usermgr --bin oqto-usermgr"
+        fi
     fi
 
     if [[ "$SKIP_FRONTEND" != "true" ]]; then

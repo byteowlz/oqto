@@ -12,32 +12,32 @@ echo ""
 
 demo_simple_button() {
     echo "=== Simple Button ==="
-    cargo run --bin oqtoctl -q -- a2ui button "Deploy to production?" --options "Deploy,Cancel"
+    cargo run -p oqtoctl --bin oqtoctl -q -- a2ui button "Deploy to production?" --options "Deploy,Cancel"
 }
 
 demo_text_input() {
     echo "=== Text Input ==="
-    cargo run --bin oqtoctl -q -- a2ui input "Enter your commit message" --type text --placeholder "feat: ..."
+    cargo run -p oqtoctl --bin oqtoctl -q -- a2ui input "Enter your commit message" --type text --placeholder "feat: ..."
 }
 
 demo_choice() {
     echo "=== Multiple Choice ==="
-    cargo run --bin oqtoctl -q -- a2ui choice "Select environment" --options "Development,Staging,Production"
+    cargo run -p oqtoctl --bin oqtoctl -q -- a2ui choice "Select environment" --options "Development,Staging,Production"
 }
 
 demo_checkbox() {
     echo "=== Checkbox Toggle ==="
-    cargo run --bin oqtoctl -q -- a2ui checkbox "Enable verbose logging"
+    cargo run -p oqtoctl --bin oqtoctl -q -- a2ui checkbox "Enable verbose logging"
 }
 
 demo_slider() {
     echo "=== Slider ==="
-    cargo run --bin oqtoctl -q -- a2ui slider "Concurrency level" --min 1 --max 16 --default 4
+    cargo run -p oqtoctl --bin oqtoctl -q -- a2ui slider "Concurrency level" --min 1 --max 16 --default 4
 }
 
 demo_code_review() {
     echo "=== Code Review Form ==="
-    cargo run --bin oqtoctl -q -- a2ui raw '[
+    cargo run -p oqtoctl --bin oqtoctl -q -- a2ui raw '[
         {"type":"text","content":"## Code Review: PR #127\n\n**Title:** Add user authentication\n**Author:** @alice\n**Files changed:** 12"},
         {"type":"divider"},
         {"type":"text","content":"### Your Review"},
@@ -49,7 +49,7 @@ demo_code_review() {
 
 demo_deploy_config() {
     echo "=== Deployment Configuration ==="
-    cargo run --bin oqtoctl -q -- a2ui raw '[
+    cargo run -p oqtoctl --bin oqtoctl -q -- a2ui raw '[
         {"type":"text","content":"## Deploy Configuration"},
         {"type":"multipleChoice","id":"env","options":[{"value":"dev","label":"Development"},{"value":"staging","label":"Staging"},{"value":"prod","label":"Production"}],"maxAllowedSelections":1,"selections":{"path":"/env"}},
         {"type":"checkBox","id":"migrate","label":"Run database migrations","value":{"path":"/migrate"}},
@@ -61,7 +61,7 @@ demo_deploy_config() {
 
 demo_task_selection() {
     echo "=== Task Prioritization ==="
-    cargo run --bin oqtoctl -q -- a2ui raw '[
+    cargo run -p oqtoctl --bin oqtoctl -q -- a2ui raw '[
         {"type":"text","content":"## Sprint Planning\n\nSelect tasks for this sprint (max 3):"},
         {"type":"multipleChoice","id":"tasks","options":[{"value":"auth","label":"Implement OAuth login"},{"value":"api","label":"Add REST API endpoints"},{"value":"tests","label":"Write unit tests"},{"value":"docs","label":"Update documentation"},{"value":"bugs","label":"Fix reported bugs"}],"maxAllowedSelections":3,"selections":{"path":"/tasks"}},
         {"type":"button","id":"create","label":"Create Sprint","action":"create_sprint","variant":"primary"}

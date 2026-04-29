@@ -39,6 +39,10 @@ check_prerequisites() {
     log_info "Created cc -> gcc symlink"
   fi
 
+  # mold is intentionally not installed automatically. It can improve some
+  # incremental link-heavy rebuilds, but measured slower on cold Oqto builds.
+  # Developers can opt in with deploy --use-mold-linker after local benchmarking.
+
   # unzip is required by the Bun installer — install before Bun check
   if ! command_exists unzip; then
     log_info "Installing unzip (required by Bun installer)..."

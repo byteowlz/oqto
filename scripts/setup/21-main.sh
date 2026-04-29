@@ -389,6 +389,12 @@ BANNER
   SELECTED_USER_MODE="${SELECTED_USER_MODE:-$OQTO_USER_MODE}"
   SELECTED_BACKEND_MODE="${SELECTED_BACKEND_MODE:-$OQTO_BACKEND_MODE}"
 
+  # Guardrail: container backend is currently disabled in setup flow.
+  if [[ "${SELECTED_BACKEND_MODE}" == "container" ]]; then
+    log_warn "Container backend is currently disabled; forcing local backend mode"
+    SELECTED_BACKEND_MODE="local"
+  fi
+
   if [[ "$use_saved_state" != "true" ]]; then
     if [[ "$NONINTERACTIVE" != "true" ]]; then
       select_user_mode

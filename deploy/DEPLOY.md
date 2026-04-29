@@ -5,7 +5,8 @@ Transactional release deployment with strict preflight gates, canary support, an
 ## Quick Start
 
 ```bash
-just deploy                                 # Build + prepare + activate on all hosts
+just deploy                                 # Build (local cargo) + prepare + activate on all hosts
+just deploy --remote-build                  # Use remote-build for backend binaries
 just deploy --canary                        # Deploy only hosts with canary=true
 just deploy --canary-then-fleet             # Canary first, then remaining hosts
 just deploy --prepare-only                  # Stage release, no activation

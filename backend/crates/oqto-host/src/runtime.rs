@@ -421,7 +421,7 @@ impl std::fmt::Debug for LocalRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::local::linux_users::LinuxUsersConfig;
+    use crate::linux_users::LinuxUsersConfig;
     use tempfile::tempdir;
 
     #[test]

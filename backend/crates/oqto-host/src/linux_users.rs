@@ -57,7 +57,7 @@ impl Default for LinuxUsersConfig {
 const PROJECT_PREFIX: &str = "proj_";
 
 /// Check if a Linux user exists.
-pub(crate) fn user_exists(username: &str) -> bool {
+pub fn user_exists(username: &str) -> bool {
     Command::new("id")
         .arg("-u")
         .arg(username)
@@ -327,7 +327,7 @@ impl LinuxUsersConfig {
         const MAX_ATTEMPTS: u32 = 10;
 
         for attempt in 0..MAX_ATTEMPTS {
-            let user_id = crate::user::UserRepository::generate_user_id(username);
+            let user_id = generate_user_id(username);
             let linux_username = self.linux_username(&user_id);
 
             // Check if this Linux username is available
@@ -740,7 +740,7 @@ impl LinuxUsersConfig {
     }
 
     /// Get the next available UID for a new managed user.
-    pub(crate) fn next_available_uid(&self) -> Result<u32> {
+    pub fn next_available_uid(&self) -> Result<u32> {
         self.find_next_uid()
     }
 
@@ -919,12 +919,41 @@ fn ensure_toml_subtable<'a>(
     }
 }
 
+fn normalize_user_id_base(input: &str) -> String {
+    let mut s = input.trim().to_lowercase();
+    s = s
+        .chars()
+        .map(|c| match c {
+            'a'..='z' | '0'..='9' | '_' | '-' => c,
+            ' ' | '.' => '-',
+            _ => '-',
+        })
+        .collect();
+    s = s.trim_matches('-').to_string();
+    if s.is_empty() {
+        s = "user".to_string();
+    }
+    if !s.chars().next().unwrap_or('u').is_ascii_alphabetic() && !s.starts_with('_') {
+        s = format!("u-{s}");
+    }
+    if s.len() > 31 {
+        s.truncate(31);
+    }
+    s
+}
+
+/// Generate an Oqto user id from a username without depending on the database layer.
+pub fn generate_user_id(username: &str) -> String {
+    let base = normalize_user_id_base(username);
+    format!("{}-{}", base, nanoid::nanoid!(4))
+}
+
 /// Sanitize a user ID to be a valid Linux username.
 /// Linux usernames must:
 /// - Start with a lowercase letter or underscore
 /// - Contain only lowercase letters, digits, underscores, or hyphens
 /// - Be at most 32 characters
-pub(crate) fn sanitize_username(user_id: &str) -> String {
+pub fn sanitize_username(user_id: &str) -> String {
     let mut result = String::with_capacity(32);
 
     for (i, c) in user_id.chars().enumerate() {
