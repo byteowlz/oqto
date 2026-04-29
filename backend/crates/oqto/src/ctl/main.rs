@@ -390,6 +390,15 @@ enum UserCommand {
         #[arg(long)]
         user: Option<String>,
     },
+    /// Audit and remediate identity contract consistency for multi-user rollout.
+    DoctorIdentity {
+        /// Optional username or user ID to scope the check.
+        #[arg(long)]
+        user: Option<String>,
+        /// Apply remediation in-place (default is dry-run report).
+        #[arg(long, default_value_t = false)]
+        apply: bool,
+    },
     /// Bootstrap the first admin user (for fresh installs)
     ///
     /// This creates an admin user directly in the database without requiring
@@ -2558,6 +2567,10 @@ async fn handle_user(client: &OqtoClient, command: UserCommand, json: bool) -> R
             }
         }
 
+        UserCommand::DoctorIdentity { user, apply } => {
+            doctor_identity(user.as_deref(), apply, json).await?;
+        }
+
         UserCommand::Delete { user, force } => {
             // Resolve user to get details (try API first, fall back to system lookup)
             let user_id = user.clone();
@@ -3133,6 +3146,243 @@ fn get_runner_status(username: &str) -> String {
             Err(_) => "inactive (no socket)".to_string(),
         }
     }
+}
+
+#[derive(Debug, serde::Serialize)]
+struct IdentityDoctorIssue {
+    user_id: String,
+    username: String,
+    severity: String,
+    message: String,
+    remediation: Option<String>,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct IdentityDoctorSummary {
+    scanned_users: usize,
+    issues: Vec<IdentityDoctorIssue>,
+    applied_fixes: Vec<String>,
+    apply_mode: bool,
+}
+
+async fn doctor_identity(target_user: Option<&str>, apply: bool, json: bool) -> Result<()> {
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    let db_path = get_database_path()?;
+    let db_url = format!("sqlite:{}?mode=rwc", db_path.display());
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(&db_url)
+        .await
+        .with_context(|| format!("Failed to open database at {}", db_path.display()))?;
+
+    let rows: Vec<(String, String, Option<String>, Option<i64>, i64)> = if let Some(u) = target_user
+    {
+        sqlx::query_as(
+            r#"SELECT id, username, linux_username, linux_uid, is_active
+               FROM users
+               WHERE id = ?1 OR username = ?1
+               ORDER BY username"#,
+        )
+        .bind(u)
+        .fetch_all(&pool)
+        .await?
+    } else {
+        sqlx::query_as(
+            r#"SELECT id, username, linux_username, linux_uid, is_active
+               FROM users
+               ORDER BY username"#,
+        )
+        .fetch_all(&pool)
+        .await?
+    };
+
+    let mut issues = Vec::new();
+    let mut applied_fixes = Vec::new();
+
+    for (user_id, username, linux_username, linux_uid, is_active) in rows.iter().cloned() {
+        if is_active == 0 {
+            continue;
+        }
+
+        let mut effective_linux_user = linux_username.clone();
+        if effective_linux_user.is_none() {
+            issues.push(IdentityDoctorIssue {
+                user_id: user_id.clone(),
+                username: username.clone(),
+                severity: "warning".to_string(),
+                message: "missing linux_username".to_string(),
+                remediation: Some(
+                    "set linux_username/linux_uid from existing OS account".to_string(),
+                ),
+            });
+
+            let candidates = [
+                sanitize_for_linux(&user_id),
+                format!("oqto_{}", sanitize_for_linux(&user_id)),
+                sanitize_for_linux(&username),
+                format!("oqto_{}", sanitize_for_linux(&username)),
+            ];
+            let resolved = candidates
+                .iter()
+                .find(|candidate| {
+                    std::process::Command::new("id")
+                        .args(["-u", candidate])
+                        .output()
+                        .map(|o| o.status.success())
+                        .unwrap_or(false)
+                })
+                .map(|s| s.to_string());
+
+            if apply && let Some(found_user) = resolved {
+                let uid_str = std::process::Command::new("id")
+                    .args(["-u", &found_user])
+                    .output()
+                    .ok()
+                    .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                    .unwrap_or_default();
+                if let Ok(uid) = uid_str.parse::<i64>() {
+                    sqlx::query("UPDATE users SET linux_username = ?1, linux_uid = ?2, updated_at = datetime('now') WHERE id = ?3")
+                        .bind(&found_user)
+                        .bind(uid)
+                        .bind(&user_id)
+                        .execute(&pool)
+                        .await?;
+                    effective_linux_user = Some(found_user.clone());
+                    applied_fixes.push(format!(
+                        "{}: set linux_username={}, linux_uid={}",
+                        username, found_user, uid
+                    ));
+                }
+            }
+        }
+
+        if let Some(ref lu) = effective_linux_user {
+            let uid_output = std::process::Command::new("id").args(["-u", lu]).output();
+            match uid_output {
+                Ok(out) if out.status.success() => {
+                    let actual_uid = String::from_utf8_lossy(&out.stdout)
+                        .trim()
+                        .parse::<i64>()
+                        .ok();
+                    if actual_uid.is_none() {
+                        issues.push(IdentityDoctorIssue {
+                            user_id: user_id.clone(),
+                            username: username.clone(),
+                            severity: "error".to_string(),
+                            message: format!("could not parse uid for linux user '{}'", lu),
+                            remediation: None,
+                        });
+                    } else if linux_uid != actual_uid {
+                        issues.push(IdentityDoctorIssue {
+                            user_id: user_id.clone(),
+                            username: username.clone(),
+                            severity: "warning".to_string(),
+                            message: format!(
+                                "linux_uid mismatch (db={:?}, actual={:?}) for '{}'",
+                                linux_uid, actual_uid, lu
+                            ),
+                            remediation: Some(
+                                "update users.linux_uid to actual OS uid".to_string(),
+                            ),
+                        });
+                        if apply {
+                            sqlx::query("UPDATE users SET linux_uid = ?1, updated_at = datetime('now') WHERE id = ?2")
+                                .bind(actual_uid)
+                                .bind(&user_id)
+                                .execute(&pool)
+                                .await?;
+                            applied_fixes.push(format!(
+                                "{}: updated linux_uid to {:?}",
+                                username, actual_uid
+                            ));
+                        }
+                    }
+
+                    if let Some(uid) = actual_uid {
+                        let user_sock =
+                            std::path::PathBuf::from(format!("/run/user/{uid}/oqto-runner.sock"));
+                        let legacy_sock = std::path::PathBuf::from(format!(
+                            "/run/oqto/runner-sockets/{}/oqto-runner.sock",
+                            lu
+                        ));
+                        if !user_sock.exists() && legacy_sock.exists() {
+                            issues.push(IdentityDoctorIssue {
+                                user_id: user_id.clone(),
+                                username: username.clone(),
+                                severity: "warning".to_string(),
+                                message: format!(
+                                    "runner socket present only at legacy path {}",
+                                    legacy_sock.display()
+                                ),
+                                remediation: Some(
+                                    "verify backend.runner.socket_pattern and runner unit wiring"
+                                        .to_string(),
+                                ),
+                            });
+                        }
+                        if user_sock.exists() && legacy_sock.exists() {
+                            issues.push(IdentityDoctorIssue {
+                                user_id: user_id.clone(),
+                                username: username.clone(),
+                                severity: "warning".to_string(),
+                                message: "both legacy and user-runtime runner sockets are present".to_string(),
+                                remediation: Some("disable conflicting runner service/socket pattern to avoid split routing".to_string()),
+                            });
+                        }
+                    }
+                }
+                _ => issues.push(IdentityDoctorIssue {
+                    user_id: user_id.clone(),
+                    username: username.clone(),
+                    severity: "error".to_string(),
+                    message: format!("linux user '{}' does not exist", lu),
+                    remediation: Some("create linux user and re-run doctor".to_string()),
+                }),
+            }
+        }
+    }
+
+    let summary = IdentityDoctorSummary {
+        scanned_users: rows.len(),
+        issues,
+        applied_fixes,
+        apply_mode: apply,
+    };
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&summary)?);
+    } else {
+        println!(
+            "Identity doctor: scanned {} users (mode: {})",
+            summary.scanned_users,
+            if apply { "apply" } else { "dry-run" }
+        );
+        if summary.issues.is_empty() {
+            println!("No identity issues detected.");
+        } else {
+            println!("Detected {} issue(s):", summary.issues.len());
+            for issue in &summary.issues {
+                println!(
+                    "- [{}] {} ({}) {}",
+                    issue.severity, issue.username, issue.user_id, issue.message
+                );
+                if let Some(remediation) = issue.remediation.as_deref() {
+                    println!("    remediation: {remediation}");
+                }
+            }
+        }
+        if apply {
+            println!("Applied {} remediation(s).", summary.applied_fixes.len());
+            for fix in &summary.applied_fixes {
+                println!("  - {fix}");
+            }
+        } else {
+            println!("Dry-run only. Re-run with --apply to persist safe remediations.");
+        }
+    }
+
+    Ok(())
 }
 
 /// Provision eavs virtual key and generate Pi models.json for a user.

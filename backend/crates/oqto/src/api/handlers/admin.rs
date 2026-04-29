@@ -337,7 +337,18 @@ pub async fn sync_user_configs(
                 Some(linux_username),
                 Some(linux_uid as u32),
             )
+        } else if state.strict_identity_enabled() {
+            result.error = Some(
+                "strict identity mode enabled and user is missing linux_username/linux_uid"
+                    .to_string(),
+            );
+            results.push(result);
+            continue;
         } else {
+            warn!(
+                user_id = %user.id,
+                "using legacy identity fallback during sync-configs (ensure_user by user_id)"
+            );
             linux_users.ensure_user(&user.id)
         };
 

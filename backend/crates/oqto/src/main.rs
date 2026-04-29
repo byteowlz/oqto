@@ -1054,6 +1054,11 @@ struct LinuxUsersConfig {
     use_sudo: bool,
     /// Create home directories for new users
     create_home: bool,
+    /// Enable strict identity contract checks.
+    ///
+    /// When true, multi-user runtime paths must use persisted linux_username/linux_uid
+    /// and may not fall back to legacy user_id-derived identities.
+    strict_identity: bool,
 }
 
 impl Default for LinuxUsersConfig {
@@ -1066,6 +1071,7 @@ impl Default for LinuxUsersConfig {
             shell: "/bin/bash".to_string(),
             use_sudo: true,
             create_home: true,
+            strict_identity: false,
         }
     }
 }
@@ -1269,6 +1275,7 @@ fn resolve_local_runtime_wiring(
             shell: local_cfg.linux_users.shell.clone(),
             use_sudo: local_cfg.linux_users.use_sudo,
             create_home: local_cfg.linux_users.create_home,
+            strict_identity: local_cfg.linux_users.strict_identity,
         })
     } else {
         None
@@ -1902,6 +1909,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
             shell: ctx.config.local.linux_users.shell.clone(),
             use_sudo: ctx.config.local.linux_users.use_sudo,
             create_home: ctx.config.local.linux_users.create_home,
+            strict_identity: ctx.config.local.linux_users.strict_identity,
         };
 
         // Load sandbox config from separate file (~/.config/oqto/sandbox.toml)
