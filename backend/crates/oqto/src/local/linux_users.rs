@@ -31,6 +31,11 @@ pub struct LinuxUsersConfig {
     pub use_sudo: bool,
     /// Create home directories for new users.
     pub create_home: bool,
+    /// Strict identity contract mode.
+    ///
+    /// When enabled, runtime code must use persisted `linux_username`/`linux_uid`
+    /// from the users table and reject legacy fallbacks.
+    pub strict_identity: bool,
 }
 
 impl Default for LinuxUsersConfig {
@@ -43,6 +48,7 @@ impl Default for LinuxUsersConfig {
             shell: "/bin/zsh".to_string(),
             use_sudo: true,
             create_home: true,
+            strict_identity: false,
         }
     }
 }

@@ -434,7 +434,16 @@ pub async fn login(
                         Some(linux_username),
                         Some(linux_uid as u32),
                     )
+                } else if state.strict_identity_enabled() {
+                    return Err(ApiError::conflict(format!(
+                        "strict identity mode is enabled, but user '{}' is missing linux_username/linux_uid; run 'oqtoctl user doctor-identity --apply'",
+                        db_user.username
+                    )));
                 } else {
+                    warn!(
+                        user_id = %db_user.id,
+                        "using legacy identity fallback (ensure_user by user_id); run identity migration and enable strict mode"
+                    );
                     linux_users.ensure_user(&db_user.id)
                 };
 
