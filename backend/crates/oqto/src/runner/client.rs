@@ -832,6 +832,95 @@ impl RunnerClient {
         }
     }
 
+    // ========================================================================
+    // TRX (Issue Tracking) Operations
+    // ========================================================================
+
+    /// List all TRX issues in a workspace (excluding tombstones).
+    pub async fn trx_list(&self, workspace_path: impl Into<PathBuf>) -> Result<TrxListResponse> {
+        let req = RunnerRequest::TrxList(TrxListRequest {
+            workspace_path: workspace_path.into(),
+        });
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::TrxList(r) => Ok(r),
+            _ => anyhow::bail!("unexpected response to trx_list"),
+        }
+    }
+
+    /// Create a new TRX issue.
+    pub async fn trx_create(
+        &self,
+        workspace_path: impl Into<PathBuf>,
+        title: impl Into<String>,
+        description: Option<String>,
+        issue_type: impl Into<String>,
+        priority: i32,
+        parent_id: Option<String>,
+    ) -> Result<TrxIssueResponse> {
+        let req = RunnerRequest::TrxCreate(TrxCreateRequest {
+            workspace_path: workspace_path.into(),
+            title: title.into(),
+            description,
+            issue_type: issue_type.into(),
+            priority,
+            parent_id,
+        });
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::TrxIssue(r) => Ok(r),
+            _ => anyhow::bail!("unexpected response to trx_create"),
+        }
+    }
+
+    /// Update an existing TRX issue.
+    pub async fn trx_update(
+        &self,
+        workspace_path: impl Into<PathBuf>,
+        issue_id: impl Into<String>,
+        title: Option<String>,
+        description: Option<String>,
+        status: Option<String>,
+        priority: Option<i32>,
+    ) -> Result<TrxIssueResponse> {
+        let req = RunnerRequest::TrxUpdate(TrxUpdateRequest {
+            workspace_path: workspace_path.into(),
+            issue_id: issue_id.into(),
+            title,
+            description,
+            status,
+            priority,
+        });
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::TrxIssue(r) => Ok(r),
+            _ => anyhow::bail!("unexpected response to trx_update"),
+        }
+    }
+
+    /// Close a TRX issue.
+    pub async fn trx_close(
+        &self,
+        workspace_path: impl Into<PathBuf>,
+        issue_id: impl Into<String>,
+        reason: Option<String>,
+    ) -> Result<TrxIssueResponse> {
+        let req = RunnerRequest::TrxClose(TrxCloseRequest {
+            workspace_path: workspace_path.into(),
+            issue_id: issue_id.into(),
+            reason,
+        });
+
+        let resp = self.request(&req).await?;
+        match resp {
+            RunnerResponse::TrxIssue(r) => Ok(r),
+            _ => anyhow::bail!("unexpected response to trx_close"),
+        }
+    }
+
     /// Update a workspace chat session (e.g., rename title).
     pub async fn update_workspace_chat_session(
         &self,

@@ -45,8 +45,8 @@ Success criteria:
 ## Summary
 In local single-user mode, creating a new chat session succeeds, but the runner-managed Pi process exits almost immediately. The UI shows "working" briefly and then no assistant response arrives.
 
-## Impact
-- Mobile/tailnet usage is broken (splash/black screen recovered, but chat execution still fails)
+## Root Cause
+User-installed Pi extensions in `~/.pi/agent/git/.../*/index.ts` (e.g. `pi-autoresearch`) import `@mariozechner/pi-coding-agent`. Pi's system install at `/usr/local/lib/pi-coding-agent` had no node_modules entry for that name (the package IS the install, not a dependency), so bun's NODE_PATH-based resolution failed:
 ...
 
 
@@ -148,6 +148,7 @@ Deliverables
 
 ## Closed
 
+- [oqto-cvhb] Integrate trx-core in oqto-runner; remove trx CLI shellout (closed 2026-04-29)
 - [oqto-v0m9] Add high-signal backend crate orientation READMEs (closed 2026-04-29)
 - [oqto-smrb] Extract host OS integration into oqto-host crate (closed 2026-04-29)
 - [oqto-ga13] Extract oqtoctl CLI from oqto god crate into dedicated crate (closed 2026-04-29)
@@ -1359,14 +1360,14 @@ Deliverables
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [oqto-xq1e] Add drag-and-drop support to FileTreeView (internal move + OS upload) (closed )
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
-- [oqto-4ryr] Session rename reverts: update_chat_session returns external_id while list returns platform_id (closed )
+- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
 - [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
-- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
-- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
 - [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
 - [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
-- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
+- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [oqto-xq1e] Add drag-and-drop support to FileTreeView (internal move + OS upload) (closed )
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
+- [oqto-4ryr] Session rename reverts: update_chat_session returns external_id while list returns platform_id (closed )
+- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )

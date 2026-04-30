@@ -5511,7 +5511,11 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = PiManagerConfig::default();
-        assert!(config.pi_binary.to_string_lossy().contains(".bun/bin/pi"));
+        let pi = config.pi_binary.to_string_lossy().to_string();
+        assert!(
+            pi.ends_with("/pi"),
+            "pi_binary should resolve to a pi executable, got: {pi}"
+        );
         assert_eq!(config.idle_timeout_secs, 300);
         assert_eq!(config.cleanup_interval_secs, 60);
     }

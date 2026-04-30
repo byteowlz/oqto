@@ -122,6 +122,9 @@ prost.workspace = true
 # Chat history (unified with hstry)
 hstry-core.workspace = true
 
+# Issue tracking (in-process, replaces trx CLI shell-out)
+trx-core.workspace = true
+
 # Canonical protocol types
 oqto-protocol = { path = "../oqto-protocol" }
 oqto-eavs = { path = "../oqto-eavs" }
