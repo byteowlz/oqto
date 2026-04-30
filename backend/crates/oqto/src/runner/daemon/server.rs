@@ -2134,6 +2134,121 @@ impl Runner {
         error_response(ErrorCode::Internal, "Memory operations not yet implemented")
     }
 
+    // ========================================================================
+    // TRX (Issue Tracking) Operations (in-process via trx-core)
+    // ========================================================================
+
+    async fn trx_list(&self, req: TrxListRequest) -> RunnerResponse {
+        match tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<TrxIssueData>> {
+            let store = open_or_init_trx_store(&req.workspace_path)?;
+            Ok(store
+                .list(false)
+                .into_iter()
+                .map(trx_issue_to_data)
+                .collect())
+        })
+        .await
+        {
+            Ok(Ok(issues)) => RunnerResponse::TrxList(TrxListResponse { issues }),
+            Ok(Err(e)) => error_response(ErrorCode::Internal, format!("trx list failed: {e}")),
+            Err(e) => error_response(ErrorCode::Internal, format!("trx list join error: {e}")),
+        }
+    }
+
+    async fn trx_create(&self, req: TrxCreateRequest) -> RunnerResponse {
+        match tokio::task::spawn_blocking(move || -> anyhow::Result<TrxIssueData> {
+            use std::str::FromStr;
+            let mut store = open_or_init_trx_store(&req.workspace_path)?;
+
+            let id = match req.parent_id.as_deref() {
+                Some(parent_id) => {
+                    let n = store.next_child_num(parent_id);
+                    trx_core::id::generate_child_id(parent_id, n)
+                }
+                None => {
+                    let prefix = store.prefix()?;
+                    trx_core::generate_id(&prefix)
+                }
+            };
+
+            let mut issue = trx_core::Issue::new(id, req.title);
+            issue.description = req.description;
+            issue.priority = u8::try_from(req.priority).unwrap_or(2);
+            issue.issue_type =
+                trx_core::IssueType::from_str(&req.issue_type).unwrap_or(trx_core::IssueType::Task);
+
+            if let Some(parent_id) = req.parent_id {
+                issue.add_dependency(parent_id, trx_core::DependencyType::ParentChild);
+            }
+
+            store.create(issue.clone())?;
+            Ok(trx_issue_to_data(&issue))
+        })
+        .await
+        {
+            Ok(Ok(issue)) => RunnerResponse::TrxIssue(TrxIssueResponse { issue }),
+            Ok(Err(e)) => error_response(ErrorCode::Internal, format!("trx create failed: {e}")),
+            Err(e) => error_response(ErrorCode::Internal, format!("trx create join error: {e}")),
+        }
+    }
+
+    async fn trx_update(&self, req: TrxUpdateRequest) -> RunnerResponse {
+        match tokio::task::spawn_blocking(move || -> anyhow::Result<TrxIssueData> {
+            use std::str::FromStr;
+            let mut store = open_or_init_trx_store(&req.workspace_path)?;
+
+            let mut issue = store
+                .get(&req.issue_id)
+                .ok_or_else(|| anyhow::anyhow!("issue not found: {}", req.issue_id))?
+                .clone();
+
+            if let Some(title) = req.title {
+                issue.title = title;
+            }
+            if let Some(description) = req.description {
+                issue.description = Some(description);
+            }
+            if let Some(status) = req.status {
+                issue.status = trx_core::Status::from_str(&status)
+                    .map_err(|e| anyhow::anyhow!("invalid status: {e}"))?;
+            }
+            if let Some(priority) = req.priority {
+                issue.priority = u8::try_from(priority).unwrap_or(issue.priority);
+            }
+            issue.updated_at = chrono::Utc::now();
+
+            store.update(issue.clone())?;
+            Ok(trx_issue_to_data(&issue))
+        })
+        .await
+        {
+            Ok(Ok(issue)) => RunnerResponse::TrxIssue(TrxIssueResponse { issue }),
+            Ok(Err(e)) => error_response(ErrorCode::Internal, format!("trx update failed: {e}")),
+            Err(e) => error_response(ErrorCode::Internal, format!("trx update join error: {e}")),
+        }
+    }
+
+    async fn trx_close(&self, req: TrxCloseRequest) -> RunnerResponse {
+        match tokio::task::spawn_blocking(move || -> anyhow::Result<TrxIssueData> {
+            let mut store = open_or_init_trx_store(&req.workspace_path)?;
+
+            let mut issue = store
+                .get(&req.issue_id)
+                .ok_or_else(|| anyhow::anyhow!("issue not found: {}", req.issue_id))?
+                .clone();
+
+            issue.close(req.reason);
+            store.update(issue.clone())?;
+            Ok(trx_issue_to_data(&issue))
+        })
+        .await
+        {
+            Ok(Ok(issue)) => RunnerResponse::TrxIssue(TrxIssueResponse { issue }),
+            Ok(Err(e)) => error_response(ErrorCode::Internal, format!("trx close failed: {e}")),
+            Err(e) => error_response(ErrorCode::Internal, format!("trx close join error: {e}")),
+        }
+    }
+
     /// Update a workspace chat session (e.g., rename title) via hstry gRPC.
     async fn update_workspace_chat_session(
         &self,
@@ -4030,6 +4145,92 @@ fn sd_notify_ready() {
     };
     if let Ok(sock) = std::os::unix::net::UnixDatagram::unbound() {
         let _ = sock.send_to(b"READY=1", &addr);
+    }
+}
+
+// ============================================================================
+// TRX helpers
+// ============================================================================
+
+/// Default issue ID prefix when auto-initializing a new trx store.
+/// Matches the trx CLI default; users can pre-init with a custom prefix
+/// via `trx init --prefix X` before any oqto-side trx call.
+const TRX_DEFAULT_PREFIX: &str = "trx";
+
+/// Open the trx store at `root`, auto-initializing a fresh V2 (CRDT) store
+/// if `.trx` does not yet exist. Mirrors the auto-init UX that the legacy
+/// `trx list` shell-out provided.
+fn open_or_init_trx_store(root: &std::path::Path) -> anyhow::Result<trx_core::UnifiedStore> {
+    let root_buf = root.to_path_buf();
+    match trx_core::UnifiedStore::open_at(root_buf.clone()) {
+        Ok(store) => Ok(store),
+        Err(trx_core::Error::NotInitialized) => {
+            init_trx_store_v2(root)?;
+            trx_core::UnifiedStore::open_at(root_buf)
+                .map_err(|e| anyhow::anyhow!("trx open after init failed: {e}"))
+        }
+        Err(e) => Err(anyhow::anyhow!("trx open failed: {e}")),
+    }
+}
+
+/// Create a fresh V2 (CRDT) trx store layout at `root` (`.trx/crdt/`,
+/// `.trx/config.toml`, `.trx/ISSUES.md`). Hardcodes the on-disk layout
+/// since trx-core does not expose its layout constants publicly.
+fn init_trx_store_v2(root: &std::path::Path) -> anyhow::Result<()> {
+    let trx_dir = root.join(".trx");
+    let crdt_dir = trx_dir.join("crdt");
+    std::fs::create_dir_all(&crdt_dir)
+        .with_context(|| format!("creating {}", crdt_dir.display()))?;
+
+    let config = trx_core::Config {
+        storage_version: trx_core::StorageVersion::V2,
+        prefix: TRX_DEFAULT_PREFIX.to_string(),
+        ..trx_core::Config::default()
+    };
+    config
+        .save(&trx_dir.join("config.toml"))
+        .map_err(|e| anyhow::anyhow!("writing trx config: {e}"))?;
+
+    let issues_md = trx_dir.join("ISSUES.md");
+    if !issues_md.exists() {
+        std::fs::write(&issues_md, "# Issues\n\nNo issues yet.\n")
+            .with_context(|| format!("writing {}", issues_md.display()))?;
+    }
+    Ok(())
+}
+
+/// Convert a trx-core `Issue` into the wire-format `TrxIssueData` that
+/// crosses the runner socket back to oqto.
+fn trx_issue_to_data(issue: &trx_core::Issue) -> TrxIssueData {
+    let parent_id = issue
+        .dependencies
+        .iter()
+        .find(|d| {
+            matches!(d.dep_type, trx_core::DependencyType::ParentChild)
+                || (matches!(d.dep_type, trx_core::DependencyType::Blocks)
+                    && issue.id.starts_with(&format!("{}.", d.depends_on_id)))
+        })
+        .map(|d| d.depends_on_id.clone());
+
+    let blocked_by: Vec<String> = issue
+        .dependencies
+        .iter()
+        .filter(|d| matches!(d.dep_type, trx_core::DependencyType::Blocks))
+        .map(|d| d.depends_on_id.clone())
+        .collect();
+
+    TrxIssueData {
+        id: issue.id.clone(),
+        title: issue.title.clone(),
+        description: issue.description.clone(),
+        status: issue.status.to_string(),
+        priority: i32::from(issue.priority),
+        issue_type: issue.issue_type.to_string(),
+        created_at: issue.created_at.to_rfc3339(),
+        updated_at: issue.updated_at.to_rfc3339(),
+        closed_at: issue.closed_at.map(|t| t.to_rfc3339()),
+        parent_id,
+        blocked_by,
     }
 }
 

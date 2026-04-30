@@ -144,6 +144,21 @@ pub enum RunnerRequest {
     DeleteMemory(DeleteMemoryRequest),
 
     // ========================================================================
+    // TRX (Issue Tracking) Operations (user-plane, in-process via trx-core)
+    // ========================================================================
+    /// List TRX issues in a workspace.
+    TrxList(TrxListRequest),
+
+    /// Create a new TRX issue.
+    TrxCreate(TrxCreateRequest),
+
+    /// Update an existing TRX issue.
+    TrxUpdate(TrxUpdateRequest),
+
+    /// Close (delete) a TRX issue.
+    TrxClose(TrxCloseRequest),
+
+    // ========================================================================
     // Pi Session Management
     // ========================================================================
     /// Create or resume a Pi session.
@@ -407,6 +422,15 @@ pub enum RunnerResponse {
 
     /// Memory deleted.
     MemoryDeleted(MemoryDeletedResponse),
+
+    // ========================================================================
+    // TRX Responses
+    // ========================================================================
+    /// TRX issue list.
+    TrxList(TrxListResponse),
+
+    /// TRX issue (create/update/close result).
+    TrxIssue(TrxIssueResponse),
 
     // ========================================================================
     // Pi Session Responses
@@ -836,6 +860,75 @@ pub struct AddMemoryRequest {
 pub struct DeleteMemoryRequest {
     /// Memory ID.
     pub memory_id: String,
+}
+
+// ============================================================================
+// TRX (Issue Tracking) Request Types
+// ============================================================================
+
+/// Wire-format issue used in runner responses. Mirrors the API-facing shape
+/// used in `api/handlers/trx.rs::TrxIssue` so the oqto handler can `From`-map
+/// it back to the public type without a parsing step.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrxIssueData {
+    pub id: String,
+    pub title: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    pub status: String,
+    pub priority: i32,
+    pub issue_type: String,
+    pub created_at: String,
+    pub updated_at: String,
+    #[serde(default)]
+    pub closed_at: Option<String>,
+    #[serde(default)]
+    pub parent_id: Option<String>,
+    #[serde(default)]
+    pub blocked_by: Vec<String>,
+}
+
+/// Request to list all issues in a workspace.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrxListRequest {
+    pub workspace_path: PathBuf,
+}
+
+/// Request to create a new issue.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrxCreateRequest {
+    pub workspace_path: PathBuf,
+    pub title: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    pub issue_type: String,
+    pub priority: i32,
+    #[serde(default)]
+    pub parent_id: Option<String>,
+}
+
+/// Request to update an existing issue.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrxUpdateRequest {
+    pub workspace_path: PathBuf,
+    pub issue_id: String,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub priority: Option<i32>,
+}
+
+/// Request to close (delete/tombstone) an issue.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrxCloseRequest {
+    pub workspace_path: PathBuf,
+    pub issue_id: String,
+    #[serde(default)]
+    pub reason: Option<String>,
 }
 
 // ============================================================================
@@ -2155,6 +2248,22 @@ pub struct MemoryAddedResponse {
 pub struct MemoryDeletedResponse {
     /// Deleted memory ID.
     pub memory_id: String,
+}
+
+// ============================================================================
+// TRX Response Types
+// ============================================================================
+
+/// Response listing TRX issues for a workspace.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrxListResponse {
+    pub issues: Vec<TrxIssueData>,
+}
+
+/// Response carrying a single TRX issue (create/update/close result).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrxIssueResponse {
+    pub issue: TrxIssueData,
 }
 
 // ============================================================================

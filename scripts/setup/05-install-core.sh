@@ -52,6 +52,18 @@ ensure_bun_and_pi_global() {
     # Install all dependencies into the system-wide copy so bun can resolve them
     (cd "$pi_system_dir" && sudo /usr/local/bin/bun install --frozen-lockfile 2>/dev/null || sudo /usr/local/bin/bun install 2>/dev/null) || true
 
+    # Self-link the package into its own node_modules so that user-installed
+    # Pi extensions (e.g. ~/.pi/agent/git/.../*/index.ts) which import
+    # `@mariozechner/pi-coding-agent` can resolve the host package via
+    # NODE_PATH. Without this, bun's module resolution looks for
+    # node_modules/@mariozechner/pi-coding-agent and finds nothing -- the
+    # package directory IS the install, not a dependency of itself --
+    # so extension load fails with "Cannot find module" and Pi exits 0
+    # immediately, taking the runner's session down with it (trx oqto-ceb7).
+    sudo mkdir -p "$pi_system_dir/node_modules/@mariozechner"
+    sudo ln -sfn "$pi_system_dir" \
+      "$pi_system_dir/node_modules/@mariozechner/pi-coding-agent"
+
     # Create wrapper that uses the system-wide copy.
     # PI_PACKAGE_DIR tells Pi where to find themes, examples, package.json.
     # Prefer user's bun (installed per-user by provisioning) over system bun.

@@ -44,6 +44,11 @@ pub(crate) async fn handle_request(runner: &Runner, req: RunnerRequest) -> Runne
         | RunnerRequest::AddMemory(_)
         | RunnerRequest::DeleteMemory(_)) => super::memories::handle_request(runner, req).await,
 
+        req @ (RunnerRequest::TrxList(_)
+        | RunnerRequest::TrxCreate(_)
+        | RunnerRequest::TrxUpdate(_)
+        | RunnerRequest::TrxClose(_)) => super::trx::handle_request(runner, req).await,
+
         req @ (RunnerRequest::PiCreateSession(_)
         | RunnerRequest::PiCloseSession(_)
         | RunnerRequest::PiDeleteSession(_)

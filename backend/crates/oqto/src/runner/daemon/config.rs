@@ -116,45 +116,7 @@ impl RunnerUserConfig {
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from(&home).join(".local").join("share"));
 
-        let pi_binary = {
-            let configured = &config_file.pi.executable;
-            if configured.contains('/') {
-                configured.clone()
-            } else {
-                let system_paths = ["/usr/local/bin/pi", "/usr/bin/pi"];
-                let system_pi = system_paths
-                    .iter()
-                    .find(|p| PathBuf::from(p).exists())
-                    .map(|p| p.to_string());
-
-                if let Some(path) = system_pi {
-                    path
-                } else {
-                    match std::process::Command::new("which").arg(configured).output() {
-                        Ok(output) if output.status.success() => {
-                            String::from_utf8_lossy(&output.stdout).trim().to_string()
-                        }
-                        _ => {
-                            warn!(
-                                "Pi not found at system paths or in PATH. Run setup.sh to install."
-                            );
-                            configured.clone()
-                        }
-                    }
-                }
-            }
-        };
-
-        let pi_version = std::process::Command::new(&pi_binary)
-            .arg("--version")
-            .output()
-            .ok()
-            .and_then(|o| {
-                o.status
-                    .success()
-                    .then(|| String::from_utf8_lossy(&o.stdout).trim().to_string())
-            })
-            .unwrap_or_else(|| "unknown".to_string());
+        let (pi_binary, pi_version) = resolve_pi_binary(&config_file.pi.executable, &home);
         info!("Pi binary: {} (v{})", pi_binary, pi_version);
 
         let runner_id = config_file
@@ -201,6 +163,68 @@ impl RunnerUserConfig {
             PathBuf::from(path)
         }
     }
+}
+
+/// Resolve the Pi binary the runner should spawn.
+///
+/// If `configured` is a path (contains `/`), it is honored verbatim. A bare
+/// name is resolved via `which`, falling back to common system locations.
+///
+/// Setup (`scripts/setup/05-install-core.sh`) installs Pi at
+/// `/usr/local/lib/pi-coding-agent` with a self-link in its own
+/// `node_modules/@mariozechner/pi-coding-agent` so user extensions can resolve
+/// the host package. As long as setup ran, the system wrapper at
+/// `/usr/local/bin/pi` is the correct binary regardless of any per-user
+/// `~/.bun/bin/pi` that may also exist.
+fn resolve_pi_binary(configured: &str, _home: &str) -> (String, String) {
+    let chosen = if configured.contains('/') {
+        configured.to_string()
+    } else if let Ok(output) = std::process::Command::new("which").arg(configured).output()
+        && output.status.success()
+    {
+        let resolved = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if resolved.is_empty() {
+            fallback_system_pi(configured)
+        } else {
+            resolved
+        }
+    } else {
+        fallback_system_pi(configured)
+    };
+
+    let version =
+        pi_binary_version(std::path::Path::new(&chosen)).unwrap_or_else(|| "unknown".to_string());
+    (chosen, version)
+}
+
+fn fallback_system_pi(configured: &str) -> String {
+    for candidate in ["/usr/local/bin/pi", "/usr/bin/pi"] {
+        if PathBuf::from(candidate).exists() {
+            return candidate.to_string();
+        }
+    }
+    warn!("Pi not found in PATH or at /usr/local/bin/pi -- run setup.sh to install");
+    configured.to_string()
+}
+
+fn pi_binary_version(path: &std::path::Path) -> Option<String> {
+    let output = std::process::Command::new(path)
+        .arg("--version")
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    // Pi installs differ in where they write `--version`: the bun-global
+    // shim writes to stderr (node shebang), while the system bash wrapper
+    // forwards bun's stdout. Accept either stream, preferring stdout.
+    for stream in [&output.stdout, &output.stderr] {
+        let v = String::from_utf8_lossy(stream).trim().to_string();
+        if !v.is_empty() {
+            return Some(v);
+        }
+    }
+    None
 }
 
 #[cfg(test)]
