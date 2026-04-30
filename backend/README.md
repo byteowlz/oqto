@@ -29,6 +29,10 @@ Binaries should stay thin. Business logic should live in domain crates. External
 
 See `crates/README.md` for the authoritative crate responsibilities, dependency direction, and extraction plan.
 
+## Build metrics
+
+Use `BUILD-METRICS.md` to record repeatable compile-time baselines for backend refactors.
+
 ## Development commands
 
 From repo root, prefer `just` recipes. From `backend/`:

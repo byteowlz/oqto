@@ -102,9 +102,6 @@ Recent fixes addressed many individual defects, but regressions still recur due 
 ### [oqto-3ct7.12] Final hardening: remove legacy shims and verify architecture docs (P2, task)
 Final hardening pass for the refactor program. Remove remaining compatibility shims, verify crate READMEs match actual ownership, run full lint/test/check gates, and resolve residual warnings. Deliverables: clean dependency graph, accurate docs, and green CI-equivalent local checks. Exit criteria: epic closure with no known structural TODOs in backend/crates.
 
-### [oqto-3ct7.2] Add baseline compile-time and rebuild-scope metrics for refactor tracking (P2, task)
-Create repeatable baseline metrics before major extractions. Track: cargo check -p oqto, cargo clippy -p oqto, just deploy --dry-run local build stage timing, and one representative incremental rebuild after editing host/session files. Deliverables: command list, machine assumptions, and baseline table committed to repo docs. Exit criteria: baseline available for before/after comparison in later tasks.
-
 ### [oqto-k0xs] Split heavy optional subsystems from oqto default build features (P2, task)
 
 ### [oqto-r9e9] Extract API handlers by domain from oqto crate behind service interfaces (P2, task)
@@ -145,6 +142,7 @@ Deliverables
 
 ## Closed
 
+- [oqto-3ct7.2] Add baseline compile-time and rebuild-scope metrics for refactor tracking (closed 2026-04-30)
 - [oqto-3ct7.1] Define and enforce backend crate dependency policy (closed 2026-04-30)
 - [oqto-cvhb] Integrate trx-core in oqto-runner; remove trx CLI shellout (closed 2026-04-29)
 - [oqto-v0m9] Add high-signal backend crate orientation READMEs (closed 2026-04-29)
@@ -1358,14 +1356,14 @@ Deliverables
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
-- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
-- [oqto-4ryr] Session rename reverts: update_chat_session returns external_id while list returns platform_id (closed )
 - [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
-- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
 - [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
 - [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
+- [oqto-4ryr] Session rename reverts: update_chat_session returns external_id while list returns platform_id (closed )
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
+- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
 - [oqto-xq1e] Add drag-and-drop support to FileTreeView (internal move + OS upload) (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
 - [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
