@@ -29,9 +29,6 @@ Create oqto-provisioning crate to own user/runtime setup flows. Move code for ru
 ### [oqto-3ct7.3] Extract backend runner socket client paths into oqto-runner-client crate (P1, feature)
 Extract backend-side runner socket access and related client glue from oqto into new oqto-runner-client crate. Scope: connection setup, user/path based client resolution helpers, request facade used by api/session services. Keep runtime semantics unchanged. Deliverables: new crate, updated imports, compatibility bridge if needed. Exit criteria: cargo check/clippy pass and no behavior regressions in runner communication smoke paths.
 
-### [oqto-3ct7.1] Define and enforce backend crate dependency policy (P1, task)
-Document enforceable crate dependency direction for backend. Define allowed layers (binaries -> api/wiring -> domain -> adapters -> protocol/core), forbidden edges (library crates depending on oqto server crate), and review checklist. Deliverables: updated backend/crates/README.md policy section and a short PR checklist snippet. Exit criteria: policy merged and referenced by at least one active extraction task.
-
 ### [oqto-3ct7] Backend crate architecture refactor program (P1, epic)
 Goal: Refactor backend/crates into clear, enforceable architectural boundaries so new contributors can locate ownership quickly and edits compile faster with less cross-crate invalidation.
 
@@ -148,6 +145,7 @@ Deliverables
 
 ## Closed
 
+- [oqto-3ct7.1] Define and enforce backend crate dependency policy (closed 2026-04-30)
 - [oqto-cvhb] Integrate trx-core in oqto-runner; remove trx CLI shellout (closed 2026-04-29)
 - [oqto-v0m9] Add high-signal backend crate orientation READMEs (closed 2026-04-29)
 - [oqto-smrb] Extract host OS integration into oqto-host crate (closed 2026-04-29)
@@ -1360,14 +1358,14 @@ Deliverables
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
-- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
-- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
-- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
-- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
-- [oqto-xq1e] Add drag-and-drop support to FileTreeView (internal move + OS upload) (closed )
 - [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
+- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
 - [oqto-4ryr] Session rename reverts: update_chat_session returns external_id while list returns platform_id (closed )
+- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
+- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
+- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
+- [oqto-xq1e] Add drag-and-drop support to FileTreeView (internal move + OS upload) (closed )
+- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )

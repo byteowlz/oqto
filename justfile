@@ -25,7 +25,7 @@ build-frontend:
 # =============================================================================
 
 # Run all linters
-lint: lint-backend lint-frontend lint-rust-ai-guardrails lint-no-legacy-history-authority
+lint: lint-backend lint-frontend lint-rust-ai-guardrails lint-backend-crate-boundaries lint-no-legacy-history-authority
 
 # Lint backend (clippy + fmt check)
 lint-backend:
@@ -55,6 +55,10 @@ lint-rust-ai-report-prod:
 # Guardrail metrics (changed rust files only)
 lint-rust-ai-report-changed:
     ./scripts/lint/rust-ai-guardrails-report.py --changed
+
+# Guardrail: enforce backend crate dependency direction
+lint-backend-crate-boundaries:
+    ./scripts/lint/backend-crate-boundaries.py
 
 # Guardrail: prevent reintroduction of hstry-as-authority read paths
 lint-no-legacy-history-authority:

@@ -52,6 +52,12 @@ Rules:
 4. HTTP/WebSocket handlers should call services, not own business logic.
 5. New code should not enter `crates/oqto/src` unless it is composition, config, route mounting, or a temporary compatibility shim.
 
+Enforcement:
+
+- `just lint` runs `scripts/lint/backend-crate-boundaries.py`.
+- The check fails if any crate adds a new dependency on the `oqto` server crate.
+- `oqto-runner -> oqto` is the only temporary allowlisted legacy edge and is tracked by `oqto-3ct7.3`.
+
 ## Extraction standard
 
 When extracting code:
