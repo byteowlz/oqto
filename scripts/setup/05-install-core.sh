@@ -20,6 +20,39 @@ install_bun() {
   ensure_bun_and_pi_global
 }
 
+validate_pi_rpc_smoke() {
+  local pi_bin="$1"
+  local tmp_dir fifo out err pid
+  tmp_dir="$(mktemp -d)"
+  fifo="$tmp_dir/stdin"
+  out="$tmp_dir/stdout"
+  err="$tmp_dir/stderr"
+  mkfifo "$fifo"
+
+  "$pi_bin" --mode rpc <"$fifo" >"$out" 2>"$err" &
+  pid=$!
+
+  exec 9>"$fifo"
+  sleep 2
+
+  if kill -0 "$pid" 2>/dev/null; then
+    kill "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    exec 9>&-
+    rm -rf "$tmp_dir"
+    return 0
+  fi
+
+  wait "$pid" 2>/dev/null || true
+  exec 9>&-
+  log_error "Pi RPC smoke test failed for $pi_bin"
+  if [[ -s "$err" ]]; then
+    sed 's/^/  stderr: /' "$err" >&2 || true
+  fi
+  rm -rf "$tmp_dir"
+  return 1
+}
+
 # Ensure bun and pi are globally accessible to all platform users.
 # Called both after fresh install and on every setup run.
 ensure_bun_and_pi_global() {
@@ -83,6 +116,7 @@ export NODE_PATH="$PI_PKG/node_modules${NODE_PATH:+:$NODE_PATH}"
 exec "$BUN" "$PI_PKG/dist/cli.js" "$@"
 PIEOF
     sudo chmod 755 /usr/local/bin/pi
+    validate_pi_rpc_smoke /usr/local/bin/pi
     log_success "pi installed system-wide: $(/usr/local/bin/pi --version 2>/dev/null || echo 'installed')"
   else
     log_warn "Could not find pi module at $pi_src_dir. Pi may not be globally accessible."
