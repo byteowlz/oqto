@@ -2817,6 +2817,7 @@ dependencies = [
  "oqto-eavs",
  "oqto-files",
  "oqto-host",
+ "oqto-pi",
  "oqto-protocol",
  "oqto-sandbox",
  "prost",
@@ -2919,6 +2920,18 @@ dependencies = [
  "tokio",
  "toml 0.8.23",
  "tracing",
+]
+
+[[package]]
+name = "oqto-pi"
+version = "0.3.25"
+dependencies = [
+ "log",
+ "once_cell",
+ "regex",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
