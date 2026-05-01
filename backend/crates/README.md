@@ -11,6 +11,7 @@ This directory is the backend architecture map. Each crate should have a narrow 
 | `oqto-runner` | Per-user daemon that owns agent harness processes and native-to-canonical event translation. |
 | `oqto-files` | Workspace file access service. |
 | `oqto-host` | Host OS integration: Linux users, process management, local runtime, sandbox type re-exports. |
+| `oqto-history` | History and oqto-log storage boundaries shared by server/runner code. |
 | `oqto-eavs` | EAVS API client and Pi `models.json` generation. |
 | `oqto-protocol` | Shared canonical protocol/types. No business logic. |
 | `oqto-pi` | Pi wire protocol types and session-file helpers shared by server/runner code. |

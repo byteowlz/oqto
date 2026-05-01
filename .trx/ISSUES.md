@@ -5,6 +5,9 @@
 ### [oqto-3ct7.8] Extract session orchestration into oqto-sessions crate (P0, feature)
 Extract session orchestration into oqto-sessions crate (high risk). Move session lifecycle and orchestration services while preserving protocol behavior and persistence semantics. Execute as incremental slices if needed: models first, services next, adapters last. Deliverables: oqto-sessions crate + migrated usage in api and runner-facing paths. Exit criteria: session logic mostly removed from oqto and checks stay green.
 
+### [oqto-3ct7.9.1] Extract runner-facing history boundary into oqto-history (P1, task)
+In progress. First safe extraction moved pure oqto_log ids and paths helpers into new oqto-history crate, with oqto compatibility re-exports. This establishes the crate boundary without pulling server dependencies into oqto-history. Remaining work: move store/projector/ops and hstry repository APIs after replacing crate::pi/canon/markdown/wordlist/workspace dependencies with neutral crates or narrow helpers. just lint passes for first slice.
+
 ### [oqto-3ct7.14] Create oqto-acp crate for generic ACP runtime bridge (P1, feature)
 Implement a generic ACP bridge crate after the architecture is defined. It should own ACP JSON-RPC stdio transport, initialize/session-new/session-prompt/session-cancel, session/update streaming, permission callbacks, adapter process launch, and clear startup errors. This crate is used by oqto-runner both for top-level ACP-compatible agents and Pi-created sub-agents. ACPX is reference material, not necessarily a dependency.
 
@@ -1369,14 +1372,14 @@ Deliverables
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
 - [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
-- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
 - [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
 - [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
 - [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
-- [oqto-xq1e] Add drag-and-drop support to FileTreeView (internal move + OS upload) (closed )
 - [oqto-4ryr] Session rename reverts: update_chat_session returns external_id while list returns platform_id (closed )
+- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [oqto-xq1e] Add drag-and-drop support to FileTreeView (internal move + OS upload) (closed )
+- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
