@@ -13,6 +13,7 @@ This directory is the backend architecture map. Each crate should have a narrow 
 | `oqto-host` | Host OS integration: Linux users, process management, local runtime, sandbox type re-exports. |
 | `oqto-eavs` | EAVS API client and Pi `models.json` generation. |
 | `oqto-protocol` | Shared canonical protocol/types. No business logic. |
+| `oqto-pi` | Pi wire protocol types and session-file helpers shared by server/runner code. |
 | `oqto-sandbox` | Sandbox policy types and wrapper binary. |
 | `oqto-usermgr` | Privileged user-management helper binary. |
 | `oqto-setup` | Setup utility. |

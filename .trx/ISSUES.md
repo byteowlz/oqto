@@ -5,6 +5,12 @@
 ### [oqto-3ct7.8] Extract session orchestration into oqto-sessions crate (P0, feature)
 Extract session orchestration into oqto-sessions crate (high risk). Move session lifecycle and orchestration services while preserving protocol behavior and persistence semantics. Execute as incremental slices if needed: models first, services next, adapters last. Deliverables: oqto-sessions crate + migrated usage in api and runner-facing paths. Exit criteria: session logic mostly removed from oqto and checks stay green.
 
+### [oqto-3ct7.3.3] Remove oqto-runner dependency on oqto and boundary allowlist (P1, task)
+After runner-owned modules no longer import oqto, remove oqto = { path = ../oqto } from oqto-runner/Cargo.toml and delete the temporary allowlist entry from backend-crate-boundaries.py. Exit criteria: just lint passes with no oqto-runner -> oqto edge.
+
+### [oqto-3ct7.3.2] Move runner daemon modules into oqto-runner library (P1, task)
+Move runner daemon bootstrap/config/server/state/handlers and pi_manager/pi_translator into oqto-runner. Requires Pi helper boundary and history/oqto-log interfaces to be available without depending on oqto. Exit criteria: oqto-runner main imports its own crate, not oqto::runner.
+
 ### [oqto-3ct7.11] Slim oqto crate to composition root only (P1, task)
 Slim oqto crate to composition root only. Scope: startup, config loading, dependency graph wiring, route mounting, and binary entrypoints. Remove temporary compatibility re-exports once direct crate interfaces are adopted. Deliverables: reduced oqto src structure and updated crate docs. Exit criteria: oqto is thin and architectural ownership is obvious from crate tree.
 
@@ -27,7 +33,7 @@ Extract user domain into oqto-users crate. Move user repository/service/domain t
 Create oqto-provisioning crate to own user/runtime setup flows. Move code for runner setup, per-user configuration sync, and bootstrap orchestration currently scattered in oqto. Include migration plan for local user_mmry and user_sldr managers where boundaries permit. Deliverables: provisioning service interfaces + moved implementations. Exit criteria: oqto invokes provisioning crate, and local module footprint in oqto is reduced.
 
 ### [oqto-3ct7.3] Extract backend runner socket client paths into oqto-runner-client crate (P1, feature)
-Extract backend-side runner socket access and related client glue from oqto into new oqto-runner-client crate. Scope: connection setup, user/path based client resolution helpers, request facade used by api/session services. Keep runtime semantics unchanged. Deliverables: new crate, updated imports, compatibility bridge if needed. Exit criteria: cargo check/clippy pass and no behavior regressions in runner communication smoke paths.
+Re-scoped per decision: first move runner daemon-owned code out of oqto into the oqto-runner package, rather than only moving client/protocol. Goal is to remove oqto-runner -> oqto by making oqto-runner own daemon internals and enough runner/Pi/history boundary types to avoid a cycle. Slice must stay clean: no feature-gated dependency cycle hacks.
 
 ### [oqto-3ct7] Backend crate architecture refactor program (P1, epic)
 Goal: Refactor backend/crates into clear, enforceable architectural boundaries so new contributors can locate ownership quickly and edits compile faster with less cross-crate invalidation.
@@ -142,6 +148,7 @@ Deliverables
 
 ## Closed
 
+- [oqto-3ct7.3.1] Move Pi wire/types helpers into oqto-runner library (closed 2026-05-01)
 - [oqto-3ct7.2] Add baseline compile-time and rebuild-scope metrics for refactor tracking (closed 2026-04-30)
 - [oqto-3ct7.1] Define and enforce backend crate dependency policy (closed 2026-04-30)
 - [oqto-cvhb] Integrate trx-core in oqto-runner; remove trx CLI shellout (closed 2026-04-29)
@@ -1356,14 +1363,14 @@ Deliverables
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
 - [oqto-4ryr] Session rename reverts: update_chat_session returns external_id while list returns platform_id (closed )
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
-- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
-- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
-- [oqto-xq1e] Add drag-and-drop support to FileTreeView (internal move + OS upload) (closed )
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
 - [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
+- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
+- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
+- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
 - [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
+- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [oqto-xq1e] Add drag-and-drop support to FileTreeView (internal move + OS upload) (closed )

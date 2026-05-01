@@ -20,8 +20,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
 
-use super::PiClientConfig;
-use super::types::*;
+use oqto_pi::*;
 
 /// Configuration for spawning a Pi process.
 #[derive(Debug, Clone)]
