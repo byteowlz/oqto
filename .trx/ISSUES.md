@@ -5,6 +5,12 @@
 ### [oqto-3ct7.8] Extract session orchestration into oqto-sessions crate (P0, feature)
 Extract session orchestration into oqto-sessions crate (high risk). Move session lifecycle and orchestration services while preserving protocol behavior and persistence semantics. Execute as incremental slices if needed: models first, services next, adapters last. Deliverables: oqto-sessions crate + migrated usage in api and runner-facing paths. Exit criteria: session logic mostly removed from oqto and checks stay green.
 
+### [oqto-3ct7.14] Create oqto-acp crate for generic ACP runtime bridge (P1, feature)
+Implement a generic ACP bridge crate after the architecture is defined. It should own ACP JSON-RPC stdio transport, initialize/session-new/session-prompt/session-cancel, session/update streaming, permission callbacks, adapter process launch, and clear startup errors. This crate is used by oqto-runner both for top-level ACP-compatible agents and Pi-created sub-agents. ACPX is reference material, not necessarily a dependency.
+
+### [oqto-3ct7.13] Define Oqto ACP integration architecture (P1, feature)
+Define Oqto's agent integration strategy: Pi is the native first-class integration, while non-Pi harnesses go through an ACP bridge unless there is a documented exception. Use ../external-repos/acpx as inspiration for JSON-RPC stdio transport, session lifecycle, queueing/cancel semantics, permission policy, built-in adapter launch ownership, and conformance profile thinking. Include sub-agent use case: Pi sessions can create/control ACP sub-agents through runner-owned lifecycle APIs rather than shelling out directly.
+
 ### [oqto-3ct7.3.3] Remove oqto-runner dependency on oqto and boundary allowlist (P1, task)
 After runner-owned modules no longer import oqto, remove oqto = { path = ../oqto } from oqto-runner/Cargo.toml and delete the temporary allowlist entry from backend-crate-boundaries.py. Exit criteria: just lint passes with no oqto-runner -> oqto edge.
 
@@ -33,14 +39,14 @@ Extract user domain into oqto-users crate. Move user repository/service/domain t
 Create oqto-provisioning crate to own user/runtime setup flows. Move code for runner setup, per-user configuration sync, and bootstrap orchestration currently scattered in oqto. Include migration plan for local user_mmry and user_sldr managers where boundaries permit. Deliverables: provisioning service interfaces + moved implementations. Exit criteria: oqto invokes provisioning crate, and local module footprint in oqto is reduced.
 
 ### [oqto-3ct7.3] Extract backend runner socket client paths into oqto-runner-client crate (P1, feature)
-Re-scoped per decision: first move runner daemon-owned code out of oqto into the oqto-runner package, rather than only moving client/protocol. Goal is to remove oqto-runner -> oqto by making oqto-runner own daemon internals and enough runner/Pi/history boundary types to avoid a cycle. Slice must stay clean: no feature-gated dependency cycle hacks.
+Runner ownership refactor. Updated strategy: Oqto should have Pi as native first-class integration and ACP as the generic external-agent/sub-agent bridge. Do not create native per-harness crates by default. Near-term sequence: extract Pi wire/types helpers (done via oqto-pi), move Pi runtime/translator/daemon ownership toward oqto-runner, then add oqto-acp as a runner capability for non-Pi agents and Pi-created sub-agents. Avoid dependency cycles and keep harness-specific runtime out of oqto server crate.
 
 ### [oqto-3ct7] Backend crate architecture refactor program (P1, epic)
 Goal: Refactor backend/crates into clear, enforceable architectural boundaries so new contributors can locate ownership quickly and edits compile faster with less cross-crate invalidation.
 
-Success criteria:
-- `backend/crates/README.md` is authoritative and matches real crate boundaries.
-- `crates/oqto` becomes thin composition/wiring; domain logic is extracted into focused crates.
+Strategic agent-runtime decision:
+- Pi is Oqto's native first-class harness integration.
+- Other harnesses should integrate through a generic ACP bridge by default, not native per-harness crates.
 ...
 
 
@@ -1363,14 +1369,14 @@ Deliverables
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [oqto-4ryr] Session rename reverts: update_chat_session returns external_id while list returns platform_id (closed )
-- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
-- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
-- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
-- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
-- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
 - [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
 - [oqto-xq1e] Add drag-and-drop support to FileTreeView (internal move + OS upload) (closed )
+- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
+- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
+- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
+- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
+- [oqto-4ryr] Session rename reverts: update_chat_session returns external_id while list returns platform_id (closed )
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
