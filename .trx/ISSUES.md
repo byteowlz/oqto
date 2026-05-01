@@ -2,9 +2,6 @@
 
 ## Open
 
-### [oqto-q9rk] Fix deployed runner using broken system Pi wrapper (P0, bug)
-Root cause confirmed: oqto-runner resolved /usr/local/bin/pi (v0.70.5). That system wrapper exits immediately because /usr/local/lib/pi-coding-agent/node_modules/@mariozechner/pi-coding-agent self-link is missing, causing extension load failure. Runner then logs stdout reader finished and failed to write command: Broken pipe, so UI prompts appear accepted by oqto but never reach a live Pi process. Immediate mitigation applied on arch-dev-01: set ~/.config/oqto/config.toml [pi].executable to /home/wismut/.bun/bin/pi (v0.70.6) and restarted oqto-runner. Long-term fix: setup/deploy must validate/repair system Pi wrapper install or resolver must prefer a working user Pi when system Pi fails health check.
-
 ### [oqto-3ct7.8] Extract session orchestration into oqto-sessions crate (P0, feature)
 Extract session orchestration into oqto-sessions crate (high risk). Move session lifecycle and orchestration services while preserving protocol behavior and persistence semantics. Execute as incremental slices if needed: models first, services next, adapters last. Deliverables: oqto-sessions crate + migrated usage in api and runner-facing paths. Exit criteria: session logic mostly removed from oqto and checks stay green.
 
@@ -160,6 +157,7 @@ Deliverables
 
 ## Closed
 
+- [oqto-q9rk] Fix deployed runner using broken system Pi wrapper (closed 2026-05-01)
 - [oqto-zmkp] Fix message duplication regression after runner/history refactor deploy (closed 2026-05-01)
 - [oqto-3ct7.3.1] Move Pi wire/types helpers into oqto-runner library (closed 2026-05-01)
 - [oqto-3ct7.2] Add baseline compile-time and rebuild-scope metrics for refactor tracking (closed 2026-04-30)
@@ -1376,14 +1374,14 @@ Deliverables
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
 - [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
+- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
 - [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
+- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
+- [oqto-xq1e] Add drag-and-drop support to FileTreeView (internal move + OS upload) (closed )
 - [oqto-4ryr] Session rename reverts: update_chat_session returns external_id while list returns platform_id (closed )
+- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
 - [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
-- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
-- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
-- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
-- [oqto-xq1e] Add drag-and-drop support to FileTreeView (internal move + OS upload) (closed )
