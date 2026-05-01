@@ -2052,23 +2052,21 @@ impl Runner {
                     };
 
                     if req.limit.is_none() {
-                        let projected_count = projected.as_ref().map_or(0, Vec::len);
-                        if let Some(pi_jsonl_messages) =
-                            load_pi_jsonl_messages_for_session(home_path, &req.session_id).await
-                        {
-                            if pi_jsonl_messages.len() > projected_count {
-                                info!(
-                                    "get_workspace_chat_session_messages session={} source=pi-jsonl-fallback projected_count={} jsonl_count={}",
-                                    req.session_id,
-                                    projected_count,
-                                    pi_jsonl_messages.len()
-                                );
-                                Some(pi_jsonl_messages)
-                            } else {
-                                projected
+                        match projected {
+                            Some(messages) if !messages.is_empty() => Some(messages),
+                            _ => {
+                                let pi_jsonl_messages =
+                                    load_pi_jsonl_messages_for_session(home_path, &req.session_id)
+                                        .await;
+                                if let Some(messages) = &pi_jsonl_messages {
+                                    info!(
+                                        "get_workspace_chat_session_messages session={} source=pi-jsonl-fallback projected_count=0 jsonl_count={}",
+                                        req.session_id,
+                                        messages.len()
+                                    );
+                                }
+                                pi_jsonl_messages
                             }
-                        } else {
-                            projected
                         }
                     } else {
                         projected
