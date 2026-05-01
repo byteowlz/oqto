@@ -2816,6 +2816,7 @@ dependencies = [
  "once_cell",
  "oqto-eavs",
  "oqto-files",
+ "oqto-history",
  "oqto-host",
  "oqto-pi",
  "oqto-protocol",
@@ -2903,6 +2904,15 @@ dependencies = [
  "tracing-subscriber",
  "walkdir",
  "zip",
+]
+
+[[package]]
+name = "oqto-history"
+version = "0.3.25"
+dependencies = [
+ "anyhow",
+ "hex",
+ "sha2",
 ]
 
 [[package]]

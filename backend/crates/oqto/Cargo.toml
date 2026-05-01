@@ -129,6 +129,7 @@ trx-core.workspace = true
 oqto-protocol = { path = "../oqto-protocol" }
 oqto-eavs = { path = "../oqto-eavs" }
 oqto-host = { path = "../oqto-host" }
+oqto-history = { path = "../oqto-history" }
 oqto-pi = { path = "../oqto-pi" }
 
 [dev-dependencies]
