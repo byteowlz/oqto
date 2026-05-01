@@ -18,4 +18,4 @@ The `oqto` backend via runner socket client paths and by deployed per-user syste
 
 ## Migration notes
 
-The runner daemon core has already been separated from `oqto`. Backend-side runner client/protocol facade code should become `oqto-runner-client` in a future extraction.
+The runner daemon is being moved out of `oqto` incrementally. `bootstrap`, `config`, and `state` are now owned here. Larger daemon modules still live under `oqto/src/runner` until their history/Pi dependencies are untangled. Backend-side runner client/protocol code should ultimately be owned here as the public runner API.

@@ -15,7 +15,7 @@ Define Oqto's agent integration strategy: Pi is the native first-class integrati
 After runner-owned modules no longer import oqto, remove oqto = { path = ../oqto } from oqto-runner/Cargo.toml and delete the temporary allowlist entry from backend-crate-boundaries.py. Exit criteria: just lint passes with no oqto-runner -> oqto edge.
 
 ### [oqto-3ct7.3.2] Move runner daemon modules into oqto-runner library (P1, task)
-Move runner daemon bootstrap/config/server/state/handlers and pi_manager/pi_translator into oqto-runner. Requires Pi helper boundary and history/oqto-log interfaces to be available without depending on oqto. Exit criteria: oqto-runner main imports its own crate, not oqto::runner.
+In progress. First slice moved pure runner-owned bootstrap/config/state modules into oqto-runner library and updated the oqto-runner binary to use its own bootstrap/config. Larger daemon server/pi_manager modules still live in oqto because they depend on oqto history/oqto_log paths; next slice must extract or abstract those dependencies before moving the server. Temporary config adapter remains only to call legacy Runner::new while server is still in oqto.
 
 ### [oqto-3ct7.11] Slim oqto crate to composition root only (P1, task)
 Slim oqto crate to composition root only. Scope: startup, config loading, dependency graph wiring, route mounting, and binary entrypoints. Remove temporary compatibility re-exports once direct crate interfaces are adopted. Deliverables: reduced oqto src structure and updated crate docs. Exit criteria: oqto is thin and architectural ownership is obvious from crate tree.
@@ -1369,14 +1369,14 @@ Deliverables
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
-- [oqto-xq1e] Add drag-and-drop support to FileTreeView (internal move + OS upload) (closed )
-- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
 - [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
-- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
 - [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
-- [oqto-4ryr] Session rename reverts: update_chat_session returns external_id while list returns platform_id (closed )
+- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
+- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
+- [oqto-xq1e] Add drag-and-drop support to FileTreeView (internal move + OS upload) (closed )
+- [oqto-4ryr] Session rename reverts: update_chat_session returns external_id while list returns platform_id (closed )
+- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )

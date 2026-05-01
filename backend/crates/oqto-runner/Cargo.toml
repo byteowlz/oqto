@@ -15,7 +15,9 @@ anyhow.workspace = true
 clap.workspace = true
 env_logger.workspace = true
 log.workspace = true
+serde.workspace = true
 tokio.workspace = true
+toml.workspace = true
 
 oqto = { path = "../oqto" }
 oqto-sandbox = { path = "../oqto-sandbox" }

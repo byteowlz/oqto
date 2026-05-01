@@ -1,0 +1,7 @@
+//! Oqto runner daemon library.
+//!
+//! This crate is becoming the owner of runner-daemon internals. During the
+//! migration, the binary still depends on the server crate for large legacy
+//! modules that have not moved yet.
+
+pub mod daemon;
