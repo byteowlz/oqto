@@ -2957,7 +2957,9 @@ dependencies = [
  "log",
  "oqto",
  "oqto-sandbox",
+ "serde",
  "tokio",
+ "toml 0.8.23",
 ]
 
 [[package]]
