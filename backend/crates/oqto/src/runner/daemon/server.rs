@@ -118,7 +118,8 @@ async fn load_pi_jsonl_messages_for_session(
 ) -> Option<Vec<ChatMessageProto>> {
     let external_id = if requested_session_id.starts_with("oqto-") {
         if let Some(id) =
-            crate::oqto_log::ops::find_external_by_session(user_home, requested_session_id).await
+            oqto_history::oqto_log::ops::find_external_by_session(user_home, requested_session_id)
+                .await
         {
             Some(id)
         } else {
@@ -2455,7 +2456,7 @@ impl Runner {
             // Look up existing oqto-log session by external_id to find the
             // correct session_id and workspace (oqto IDs differ from Pi IDs).
             let (oqto_session_id, workspace_id) =
-                match crate::oqto_log::ops::find_session_by_external(
+                match oqto_history::oqto_log::ops::find_session_by_external(
                     home_path,
                     &session.external_id,
                 )
@@ -2468,7 +2469,7 @@ impl Runner {
             let workspace_id = workspace_id.as_str();
 
             // Append new messages (dedup handles already-persisted ones).
-            match crate::oqto_log::store::append_agent_end_snapshot(
+            match oqto_history::oqto_log::store::append_agent_end_snapshot(
                 home_path,
                 &user_id,
                 workspace_id,
@@ -2483,7 +2484,7 @@ impl Runner {
                 Ok(stats) => {
                     // Self-heal: if oqto-log still has fewer messages than the
                     // JSONL, replace the whole session deterministically.
-                    if let Ok(sess_stats) = crate::oqto_log::store::read_session_stats(
+                    if let Ok(sess_stats) = oqto_history::oqto_log::store::read_session_stats(
                         home_path,
                         workspace_id,
                         &oqto_session_id,
@@ -2491,7 +2492,7 @@ impl Runner {
                     .await
                         && sess_stats.messages < recovered_messages.len()
                     {
-                        match crate::oqto_log::store::replace_session_with_snapshot(
+                        match oqto_history::oqto_log::store::replace_session_with_snapshot(
                             home_path,
                             &user_id,
                             workspace_id,

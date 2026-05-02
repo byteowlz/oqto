@@ -260,7 +260,9 @@ pub async fn bootstrap_import_from_pi_jsonl(
         // Also use the workspace_id from the existing session to ensure we
         // write to the correct database file.
         let (session_id, workspace_id) =
-            match crate::oqto_log::ops::find_session_by_external(user_home, &pi_session_id).await {
+            match oqto_history::oqto_log::ops::find_session_by_external(user_home, &pi_session_id)
+                .await
+            {
                 Some((existing_id, existing_ws)) if !existing_ws.is_empty() => {
                     (existing_id, existing_ws)
                 }
