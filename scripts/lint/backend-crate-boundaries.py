@@ -16,11 +16,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[2]
 CRATES_DIR = ROOT / "backend" / "crates"
 
-# Existing transitional edge. Remove this allowlist entry as part of
-# oqto-3ct7.3 / oqto-3ct7.11 once runner-client boundaries are extracted.
-ALLOWED_OQTO_DEPENDENCIES = {
-    "oqto-runner": "legacy runner daemon coupling; tracked by oqto-3ct7.3",
-}
+ALLOWED_OQTO_DEPENDENCIES: dict[str, str] = {}
 
 PACKAGE_RE = re.compile(r'^name\s*=\s*"([^"]+)"\s*$')
 SECTION_RE = re.compile(r"^\s*\[([^]]+)]\s*$")

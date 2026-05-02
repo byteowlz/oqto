@@ -4,13 +4,13 @@ use log::{info, warn};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use oqto::runner::daemon::server::{Runner, SessionBinaries};
-use oqto::runner::pi_manager::{PiManagerConfig, PiSessionManager};
 use oqto_history::hstry::HstryEndpoint;
 use oqto_runner::daemon::bootstrap::{
     get_default_socket_path, load_env_file, load_sandbox_config, log_sandbox_state,
 };
 use oqto_runner::daemon::config::RunnerUserConfig;
+use oqto_runner::daemon::server::{Runner, SessionBinaries};
+use oqto_runner::pi_manager::{PiManagerConfig, PiSessionManager};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -148,7 +148,7 @@ async fn main() -> Result<()> {
         pi_manager_cleanup.cleanup_loop().await;
     });
 
-    let legacy_user_config = oqto::runner::daemon::config::RunnerUserConfig {
+    let legacy_user_config = oqto_runner::daemon::config::RunnerUserConfig {
         fileserver_binary: user_config.fileserver_binary.clone(),
         ttyd_binary: user_config.ttyd_binary.clone(),
         pi_binary: user_config.pi_binary.clone(),
