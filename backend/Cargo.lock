@@ -2922,6 +2922,7 @@ dependencies = [
  "sha2",
  "sqlx",
  "tokio",
+ "toml 0.8.23",
  "tonic",
  "tower",
  "tracing",

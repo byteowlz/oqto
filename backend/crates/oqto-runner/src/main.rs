@@ -129,7 +129,7 @@ async fn main() -> Result<()> {
         idle_timeout_secs: 300,
         cleanup_interval_secs: 60,
         hstry_db_path: {
-            let db_path = oqto::history::hstry_db_path();
+            let db_path = oqto_history::legacy_hstry::hstry_db_path();
             match &db_path {
                 Some(p) => info!("hstry DB found: {}", p.display()),
                 None => warn!("hstry DB not found -- chat history persistence disabled"),

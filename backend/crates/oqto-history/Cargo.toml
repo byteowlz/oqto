@@ -19,6 +19,7 @@ hstry-core.workspace = true
 hyper-util.workspace = true
 sqlx.workspace = true
 tokio.workspace = true
+toml.workspace = true
 tonic.workspace = true
 tower.workspace = true
 tracing.workspace = true

@@ -627,9 +627,9 @@ impl PiSessionManager {
             // Direct SQLite read is intentional here -- the runner runs as the
             // target user on the same machine, so this is fast and secure.
             if found.is_none()
-                && let Some(db_path) = crate::history::hstry_db_path()
-                && let Ok(pool) = crate::history::repository::open_hstry_pool(&db_path).await
-                && let Ok(identity_opt) = crate::history::repository::resolve_conversation_identity(
+                && let Some(db_path) = oqto_history::legacy_hstry::hstry_db_path()
+                && let Ok(pool) = oqto_history::legacy_hstry::open_hstry_pool(&db_path).await
+                && let Ok(identity_opt) = oqto_history::legacy_hstry::resolve_conversation_identity(
                     &pool,
                     &session_id,
                     None,
@@ -5048,8 +5048,8 @@ async fn read_hstry_message_version_snapshot(
     hstry_external_id: &str,
     fallback_session_id: &str,
 ) -> Option<MessageVersion> {
-    let db_path = crate::history::hstry_db_path()?;
-    let pool = crate::history::repository::open_hstry_pool(&db_path)
+    let db_path = oqto_history::legacy_hstry::hstry_db_path()?;
+    let pool = oqto_history::legacy_hstry::open_hstry_pool(&db_path)
         .await
         .ok()?;
 
