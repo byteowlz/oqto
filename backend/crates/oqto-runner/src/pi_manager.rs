@@ -947,6 +947,10 @@ impl PiSessionManager {
             })
         };
 
+        let requested_provider = config.provider.clone();
+        let requested_model = config.model.clone();
+        let requested_workdir = config.cwd.to_string_lossy().to_string();
+
         // Store the session (stdin is owned by the command processor task)
         let session = PiSession {
             id: session_id.clone(),
@@ -974,6 +978,22 @@ impl PiSessionManager {
         {
             let mut sessions = self.sessions.write().await;
             sessions.insert(session_id.clone(), session);
+        }
+
+        if let (Some(provider), Some(model_id)) = (requested_provider, requested_model)
+            && let Err(err) = self
+                .apply_initial_model_selection(
+                    &session_id,
+                    &provider,
+                    &model_id,
+                    Some(&requested_workdir),
+                )
+                .await
+        {
+            warn!(
+                "Session '{}' initial model sync failed (provider='{}', model='{}'): {}. Continuing with Pi default.",
+                session_id, provider, model_id, err
+            );
         }
 
         info!("Session '{}' created successfully", session_id);
@@ -1041,6 +1061,47 @@ impl PiSessionManager {
         }
 
         result
+    }
+
+    async fn apply_initial_model_selection(
+        &self,
+        session_id: &str,
+        provider: &str,
+        model_id: &str,
+        workdir: Option<&str>,
+    ) -> Result<()> {
+        match self.set_model(session_id, provider, model_id).await {
+            Ok(_) => {
+                if let Err(err) = self
+                    .set_session_model_cache(session_id, provider, model_id)
+                    .await
+                {
+                    warn!(
+                        "Session '{}' updated model but failed to update cache: {}",
+                        session_id, err
+                    );
+                }
+                info!(
+                    "Session '{}' applied startup model selection: {}/{}",
+                    session_id, provider, model_id
+                );
+                Ok(())
+            }
+            Err(err) => {
+                let available = self
+                    .get_available_models(session_id, workdir)
+                    .await
+                    .unwrap_or_else(|_| serde_json::Value::Array(Vec::new()));
+                if !model_available_for_provider(&available, provider, model_id) {
+                    warn!(
+                        "Session '{}' requested startup model '{}/{}' is unavailable; continuing with Pi default",
+                        session_id, provider, model_id
+                    );
+                    return Ok(());
+                }
+                Err(err)
+            }
+        }
     }
 
     /// Send a prompt to a session.
@@ -5471,6 +5532,26 @@ async fn build_metadata_json(
     Ok(serde_json::Value::Object(metadata).to_string())
 }
 
+fn model_available_for_provider(
+    models: &serde_json::Value,
+    provider: &str,
+    model_id: &str,
+) -> bool {
+    let Some(arr) = models.as_array() else {
+        return false;
+    };
+
+    arr.iter().any(|model| {
+        let id = model.get("id").and_then(|v| v.as_str()).unwrap_or_default();
+        let p = model
+            .get("provider")
+            .or_else(|| model.get("providerId"))
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        id == model_id && p == provider
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -5491,6 +5572,32 @@ mod tests {
             }
         }
         false
+    }
+
+    #[test]
+    fn model_available_for_provider_matches_provider_and_model_id() {
+        let models = serde_json::json!([
+            {"id": "Kimi-K2.6", "provider": "Foundry_Kimi"},
+            {"id": "gpt-5", "providerId": "openai"}
+        ]);
+
+        assert!(model_available_for_provider(
+            &models,
+            "Foundry_Kimi",
+            "Kimi-K2.6"
+        ));
+        assert!(model_available_for_provider(&models, "openai", "gpt-5"));
+        assert!(!model_available_for_provider(
+            &models,
+            "openai",
+            "Kimi-K2.6"
+        ));
+    }
+
+    #[test]
+    fn model_available_for_provider_rejects_non_array() {
+        let models = serde_json::json!({"models": []});
+        assert!(!model_available_for_provider(&models, "openai", "gpt-5"));
     }
 
     #[test]
