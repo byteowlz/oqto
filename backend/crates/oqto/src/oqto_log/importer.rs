@@ -298,9 +298,12 @@ pub async fn bootstrap_import_from_pi_jsonl(
         }
 
         if let Some(mut append_stats) = appended {
-            if let Ok(sess_stats) =
-                crate::oqto_log::store::read_session_stats(user_home, &workspace_id, &session_id)
-                    .await
+            if let Ok(sess_stats) = oqto_history::oqto_log::store::read_session_stats(
+                user_home,
+                &workspace_id,
+                &session_id,
+            )
+            .await
                 && sess_stats.messages < messages.len()
             {
                 // Self-heal partial historical sessions by replacing with the
@@ -308,7 +311,7 @@ pub async fn bootstrap_import_from_pi_jsonl(
                 let mut replaced_ok = None;
                 let mut replace_err: Option<anyhow::Error> = None;
                 for _attempt in 0..3 {
-                    match crate::oqto_log::store::replace_session_with_snapshot(
+                    match oqto_history::oqto_log::store::replace_session_with_snapshot(
                         user_home,
                         user_id,
                         &workspace_id,
@@ -347,7 +350,7 @@ pub async fn bootstrap_import_from_pi_jsonl(
                 }
             }
 
-            let _ = crate::oqto_log::store::upsert_import_checkpoint(
+            let _ = oqto_history::oqto_log::store::upsert_import_checkpoint(
                 user_home,
                 &workspace_id,
                 "pi_jsonl",
@@ -396,7 +399,7 @@ pub async fn bootstrap_import_from_pi_jsonl(
             let mut replaced_ok = None;
             let mut replace_err: Option<anyhow::Error> = None;
             for _attempt in 0..3 {
-                match crate::oqto_log::store::replace_session_with_snapshot(
+                match oqto_history::oqto_log::store::replace_session_with_snapshot(
                     user_home,
                     user_id,
                     &workspace_id,
