@@ -2820,6 +2820,7 @@ dependencies = [
  "oqto-host",
  "oqto-pi",
  "oqto-protocol",
+ "oqto-runner",
  "oqto-sandbox",
  "prost",
  "rand 0.9.2",

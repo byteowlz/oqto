@@ -34,7 +34,6 @@ use crate::auth::{Claims, CurrentUser};
 use crate::local::ProcessManager;
 
 use crate::runner::client::{PiSubscriptionEvent, RunnerClient};
-use crate::runner::protocol::{PiCreateSessionRequest, PiSessionConfig as RunnerPiSessionConfig};
 use crate::runner::router::{
     ExecutionTarget, resolve_runner_for_target, resolve_target_for_workspace_path,
 };
@@ -43,6 +42,7 @@ use crate::session_target::{SessionTargetRecord, SessionTargetScope};
 use crate::user_plane::{MeteredUserPlane, RunnerUserPlane, UserPlane, UserPlanePath};
 use crate::ws::hub::WsHub;
 use crate::ws::types::{WsCommand as LegacyWsCommand, WsEvent as LegacyHubEvent};
+use oqto_runner::protocol::{PiCreateSessionRequest, PiSessionConfig as RunnerPiSessionConfig};
 
 use super::error::ApiError;
 
@@ -124,7 +124,7 @@ async fn clear_client_ids_for_session(session_id: &str) {
 }
 
 fn workspace_chat_messages_to_json(
-    messages: Vec<crate::runner::protocol::ChatMessageProto>,
+    messages: Vec<oqto_runner::protocol::ChatMessageProto>,
 ) -> serde_json::Value {
     let mapped: Vec<serde_json::Value> = messages
         .into_iter()
@@ -2076,7 +2076,7 @@ async fn handle_get_messages(
             session_id,
             false,
             None,
-            crate::runner::protocol::WorkspaceChatMessagesSource::Live,
+            oqto_runner::protocol::WorkspaceChatMessagesSource::Live,
         ),
     )
     .await
@@ -2091,10 +2091,10 @@ async fn handle_get_messages(
             let mut messages_value = workspace_chat_messages_to_json(resp.messages);
             if let serde_json::Value::Object(ref mut map) = messages_value {
                 let source = match resp.source {
-                    crate::runner::protocol::WorkspaceChatMessagesSource::Authoritative => {
+                    oqto_runner::protocol::WorkspaceChatMessagesSource::Authoritative => {
                         "authoritative"
                     }
-                    crate::runner::protocol::WorkspaceChatMessagesSource::Live => "live",
+                    oqto_runner::protocol::WorkspaceChatMessagesSource::Live => "live",
                 };
                 map.insert(
                     "messages_source".to_string(),

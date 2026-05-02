@@ -771,7 +771,7 @@ pub struct ChatMessagesQuery {
 
 /// Convert a runner chat messages response to canonical format.
 fn convert_runner_response(
-    response: crate::runner::protocol::WorkspaceChatSessionMessagesResponse,
+    response: oqto_runner::protocol::WorkspaceChatSessionMessagesResponse,
 ) -> Vec<oqto_protocol::messages::Message> {
     let messages: Vec<ChatMessage> = response
         .messages
@@ -849,7 +849,7 @@ pub async fn get_chat_messages(
             &session_id,
             query.render,
             None,
-            crate::runner::protocol::WorkspaceChatMessagesSource::Authoritative,
+            oqto_runner::protocol::WorkspaceChatMessagesSource::Authoritative,
         )
         .await
         .map_err(|e| ApiError::internal(format!("runner get messages failed: {}", e)))?;

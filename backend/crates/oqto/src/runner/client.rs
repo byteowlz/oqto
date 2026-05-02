@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 
-use super::protocol::*;
+use oqto_runner::protocol::*;
 
 /// Timeout for a single runner request (connect + write + read response).
 /// If the runner doesn't respond within this time, the request fails with a
