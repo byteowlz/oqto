@@ -1701,13 +1701,10 @@ impl PiSessionManager {
     async fn resolve_workdir_from_hstry(&self, session_id: &str) -> Option<String> {
         let hstry = self.hstry_client.as_ref()?;
         let eid = self.hstry_external_id(session_id).await;
-        if let Ok(Some(session)) =
-            crate::history::repository::get_session_via_grpc(hstry, &eid).await
+        if let Ok(Some(workspace)) =
+            oqto_history::session::get_session_workspace_via_grpc(hstry, &eid).await
         {
-            let wd = session.workspace_path;
-            if !wd.is_empty() {
-                return Some(wd);
-            }
+            return Some(workspace);
         }
         None
     }

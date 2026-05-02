@@ -2912,6 +2912,7 @@ version = "0.3.25"
 dependencies = [
  "anyhow",
  "chrono",
+ "futures",
  "hex",
  "hstry-core",
  "hyper-util",
@@ -2921,6 +2922,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "sqlx",
+ "tempfile",
  "tokio",
  "toml 0.8.23",
  "tonic",

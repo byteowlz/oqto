@@ -2565,7 +2565,7 @@ impl Runner {
             });
         }
 
-        match crate::history::search_hstry(query, req.limit).await {
+        match oqto_history::search::search_hstry(query, req.limit).await {
             Ok(hits) => RunnerResponse::HstrySearchResults(HstrySearchResultsResponse {
                 query: query.to_string(),
                 total: hits.len(),
