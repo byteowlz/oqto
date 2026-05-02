@@ -2976,20 +2976,26 @@ name = "oqto-runner"
 version = "0.3.25"
 dependencies = [
  "anyhow",
+ "base64",
  "chrono",
  "clap",
+ "dirs 5.0.1",
  "env_logger",
  "hstry-core",
+ "libc",
  "log",
- "oqto",
+ "once_cell",
  "oqto-history",
  "oqto-pi",
  "oqto-protocol",
  "oqto-sandbox",
  "serde",
  "serde_json",
+ "sqlx",
  "tokio",
  "toml 0.8.23",
+ "tracing",
+ "trx-core",
  "uuid",
 ]
 
