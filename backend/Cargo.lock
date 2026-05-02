@@ -2911,9 +2911,11 @@ name = "oqto-history"
 version = "0.3.25"
 dependencies = [
  "anyhow",
+ "chrono",
  "hex",
  "once_cell",
  "oqto-pi",
+ "serde",
  "serde_json",
  "sha2",
  "sqlx",
