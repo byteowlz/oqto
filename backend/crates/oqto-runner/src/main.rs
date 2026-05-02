@@ -4,9 +4,9 @@ use log::{info, warn};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use oqto::history::HstryEndpoint;
 use oqto::runner::daemon::server::{Runner, SessionBinaries};
 use oqto::runner::pi_manager::{PiManagerConfig, PiSessionManager};
+use oqto_history::hstry::HstryEndpoint;
 use oqto_runner::daemon::bootstrap::{
     get_default_socket_path, load_env_file, load_sandbox_config, log_sandbox_state,
 };

@@ -2913,6 +2913,8 @@ dependencies = [
  "anyhow",
  "chrono",
  "hex",
+ "hstry-core",
+ "hyper-util",
  "once_cell",
  "oqto-pi",
  "serde",
@@ -2920,6 +2922,9 @@ dependencies = [
  "sha2",
  "sqlx",
  "tokio",
+ "tonic",
+ "tower",
+ "tracing",
 ]
 
 [[package]]
@@ -2973,6 +2978,7 @@ dependencies = [
  "hstry-core",
  "log",
  "oqto",
+ "oqto-history",
  "oqto-sandbox",
  "serde",
  "tokio",

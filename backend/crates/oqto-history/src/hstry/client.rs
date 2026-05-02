@@ -1,0 +1,627 @@
+//! hstry gRPC client for writing chat history.
+
+use std::path::Path;
+use std::sync::Arc;
+
+use anyhow::{Context, Result};
+use tokio::process::Command;
+use tokio::sync::RwLock;
+use tonic::transport::Channel;
+
+use hstry_core::service::proto::{
+    AppendMessagesRequest, AppendMessagesResponse, Conversation, DeleteConversationRequest,
+    DeleteConversationResponse, GetConversationRequest, GetMessagesRequest,
+    ListConversationsRequest, Message, UpdateConversationRequest, UpdateConversationResponse,
+    UploadAttachmentRequest, UploadAttachmentResponse, WriteConversationRequest,
+    WriteConversationResponse,
+};
+use hstry_core::service::{ReadServiceClient, WriteServiceClient};
+
+/// Source ID for Pi sessions (used for deduplication with hstry daemon).
+pub const PI_SOURCE_ID: &str = "pi";
+
+/// Explicit endpoint for connecting to a hstry daemon.
+///
+/// In single-user mode, `Discover` probes the local user's Unix socket and
+/// port-file. In multi-user mode, the runner must supply a per-user endpoint
+/// so connections never cross user boundaries.
+#[derive(Debug, Clone, Default)]
+pub enum HstryEndpoint {
+    /// Auto-discover from the current user's XDG paths (single-user only).
+    #[default]
+    Discover,
+    /// Connect via a specific Unix socket path.
+    UnixSocket(std::path::PathBuf),
+    /// Connect via a specific TCP port on localhost.
+    Tcp(u16),
+}
+
+/// Client for communicating with hstry daemon's WriteService.
+#[derive(Clone)]
+pub struct HstryClient {
+    write: Arc<RwLock<Option<WriteServiceClient<Channel>>>>,
+    read: Arc<RwLock<Option<ReadServiceClient<Channel>>>>,
+    endpoint: HstryEndpoint,
+}
+
+impl HstryClient {
+    /// Create a new client with auto-discovery (single-user mode).
+    pub fn new() -> Self {
+        Self::with_endpoint(HstryEndpoint::Discover)
+    }
+
+    /// Create a new client with an explicit endpoint.
+    pub fn with_endpoint(endpoint: HstryEndpoint) -> Self {
+        Self {
+            write: Arc::new(RwLock::new(None)),
+            read: Arc::new(RwLock::new(None)),
+            endpoint,
+        }
+    }
+
+    /// Connect to the hstry daemon using the configured endpoint.
+    pub async fn connect(&self) -> Result<()> {
+        let channel = connect_for_endpoint(&self.endpoint).await?;
+        *self.write.write().await = Some(WriteServiceClient::new(channel.clone()));
+        *self.read.write().await = Some(ReadServiceClient::new(channel));
+        Ok(())
+    }
+
+    /// Check if connected.
+    pub async fn is_connected(&self) -> bool {
+        self.write.read().await.is_some()
+    }
+
+    /// Ensure connection is established, reconnecting if needed.
+    async fn ensure_write_connected(&self) -> Result<WriteServiceClient<Channel>> {
+        {
+            let guard = self.write.read().await;
+            if let Some(client) = guard.as_ref() {
+                return Ok(client.clone());
+            }
+        }
+
+        // Try to connect
+        let channel = connect_for_endpoint(&self.endpoint).await?;
+        let write_client = WriteServiceClient::new(channel.clone());
+        *self.write.write().await = Some(write_client.clone());
+        if self.read.read().await.is_none() {
+            *self.read.write().await = Some(ReadServiceClient::new(channel));
+        }
+        Ok(write_client)
+    }
+
+    async fn ensure_read_connected(&self) -> Result<ReadServiceClient<Channel>> {
+        {
+            let guard = self.read.read().await;
+            if let Some(client) = guard.as_ref() {
+                return Ok(client.clone());
+            }
+        }
+
+        let channel = connect_for_endpoint(&self.endpoint).await?;
+        let read_client = ReadServiceClient::new(channel.clone());
+        *self.read.write().await = Some(read_client.clone());
+        if self.write.read().await.is_none() {
+            *self.write.write().await = Some(WriteServiceClient::new(channel));
+        }
+        Ok(read_client)
+    }
+
+    /// Write a conversation and its messages to hstry.
+    ///
+    /// Uses source_id + external_id for deduplication:
+    /// - If the conversation exists, it's updated
+    /// - If not, it's created
+    pub async fn write_conversation(
+        &self,
+        session_id: &str,
+        title: Option<String>,
+        workspace: Option<String>,
+        model: Option<String>,
+        provider: Option<String>,
+        metadata_json: Option<String>,
+        messages: Vec<Message>,
+        created_at_ms: i64,
+        updated_at_ms: Option<i64>,
+        harness: Option<String>,
+        readable_id: Option<String>,
+        platform_id: Option<String>,
+    ) -> Result<WriteConversationResponse> {
+        let mut client = self.ensure_write_connected().await?;
+
+        let request = WriteConversationRequest {
+            conversation: Some(Conversation {
+                source_id: PI_SOURCE_ID.to_string(),
+                external_id: session_id.to_string(),
+                title,
+                created_at_ms,
+                updated_at_ms,
+                model,
+                provider,
+                workspace,
+                tokens_in: None,
+                tokens_out: None,
+                cost_usd: None,
+                metadata_json: metadata_json.unwrap_or_default(),
+                harness,
+                readable_id,
+                platform_id,
+                version: 0,
+                message_count: 0,
+                parent_conversation_id: None,
+                parent_message_idx: None,
+                fork_type: None,
+            }),
+            messages,
+        };
+
+        let response = client
+            .write_conversation(request)
+            .await
+            .context("Failed to write conversation to hstry")?;
+
+        Ok(response.into_inner())
+    }
+
+    /// Partial metadata update -- only set fields are applied, others preserved.
+    pub async fn update_conversation(
+        &self,
+        session_id: &str,
+        title: Option<String>,
+        workspace: Option<String>,
+        model: Option<String>,
+        provider: Option<String>,
+        metadata_json: Option<String>,
+        readable_id: Option<String>,
+        harness: Option<String>,
+        platform_id: Option<String>,
+    ) -> Result<UpdateConversationResponse> {
+        self.update_conversation_full(
+            session_id,
+            title,
+            workspace,
+            model,
+            provider,
+            metadata_json,
+            readable_id,
+            harness,
+            platform_id,
+            None,
+            None,
+            None,
+        )
+        .await
+    }
+
+    /// Full update including session tree fields.
+    pub async fn update_conversation_full(
+        &self,
+        session_id: &str,
+        title: Option<String>,
+        workspace: Option<String>,
+        model: Option<String>,
+        provider: Option<String>,
+        metadata_json: Option<String>,
+        readable_id: Option<String>,
+        harness: Option<String>,
+        platform_id: Option<String>,
+        parent_conversation_id: Option<String>,
+        parent_message_idx: Option<i32>,
+        fork_type: Option<String>,
+    ) -> Result<UpdateConversationResponse> {
+        let mut client = self.ensure_write_connected().await?;
+
+        let request = UpdateConversationRequest {
+            source_id: PI_SOURCE_ID.to_string(),
+            external_id: session_id.to_string(),
+            title,
+            workspace,
+            model,
+            provider,
+            metadata_json,
+            readable_id,
+            harness,
+            platform_id,
+            parent_conversation_id,
+            parent_message_idx,
+            fork_type,
+        };
+
+        let response = client
+            .update_conversation(request)
+            .await
+            .context("Failed to update conversation in hstry")?;
+
+        Ok(response.into_inner())
+    }
+
+    /// Set parent-child relationship for a forked conversation.
+    pub async fn set_conversation_parent(
+        &self,
+        session_id: &str,
+        parent_session_id: &str,
+        fork_type: Option<&str>,
+    ) -> Result<UpdateConversationResponse> {
+        self.update_conversation_full(
+            session_id,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(parent_session_id.to_string()),
+            None,
+            fork_type.map(String::from),
+        )
+        .await
+    }
+
+    /// Delete a conversation and all its messages.
+    pub async fn delete_conversation(
+        &self,
+        session_id: &str,
+    ) -> Result<DeleteConversationResponse> {
+        let mut client = self.ensure_write_connected().await?;
+
+        let request = DeleteConversationRequest {
+            source_id: PI_SOURCE_ID.to_string(),
+            external_id: session_id.to_string(),
+        };
+
+        let response = client
+            .delete_conversation(request)
+            .await
+            .context("Failed to delete conversation from hstry")?;
+
+        Ok(response.into_inner())
+    }
+
+    /// Append messages to an existing conversation.
+    pub async fn append_messages(
+        &self,
+        session_id: &str,
+        messages: Vec<Message>,
+        updated_at_ms: Option<i64>,
+    ) -> Result<AppendMessagesResponse> {
+        let mut client = self.ensure_write_connected().await?;
+
+        let request = AppendMessagesRequest {
+            source_id: PI_SOURCE_ID.to_string(),
+            external_id: session_id.to_string(),
+            messages,
+            updated_at_ms,
+        };
+
+        let response = client
+            .append_messages(request)
+            .await
+            .context("Failed to append messages to hstry")?;
+
+        Ok(response.into_inner())
+    }
+
+    /// Upload binary attachment data.
+    pub async fn upload_attachment(
+        &self,
+        message_id: &str,
+        mime_type: &str,
+        filename: Option<String>,
+        data: Vec<u8>,
+    ) -> Result<UploadAttachmentResponse> {
+        let mut client = self.ensure_write_connected().await?;
+
+        let request = UploadAttachmentRequest {
+            message_id: message_id.to_string(),
+            mime_type: mime_type.to_string(),
+            filename,
+            data,
+        };
+
+        let response = client
+            .upload_attachment(request)
+            .await
+            .context("Failed to upload attachment to hstry")?;
+
+        Ok(response.into_inner())
+    }
+
+    pub async fn get_conversation(
+        &self,
+        session_id: &str,
+        workspace: Option<String>,
+    ) -> Result<Option<Conversation>> {
+        let mut client = self.ensure_read_connected().await?;
+        let request = GetConversationRequest {
+            source_id: PI_SOURCE_ID.to_string(),
+            external_id: session_id.to_string(),
+            readable_id: session_id.to_string(),
+            conversation_id: session_id.to_string(),
+            workspace: workspace.unwrap_or_default(),
+        };
+        let response = client
+            .get_conversation(request)
+            .await
+            .context("Failed to get conversation from hstry")?;
+        Ok(response.into_inner().conversation)
+    }
+
+    pub async fn get_messages(
+        &self,
+        session_id: &str,
+        workspace: Option<String>,
+        limit: Option<i64>,
+    ) -> Result<Vec<Message>> {
+        let mut client = self.ensure_read_connected().await?;
+        let request = GetMessagesRequest {
+            source_id: PI_SOURCE_ID.to_string(),
+            external_id: session_id.to_string(),
+            readable_id: session_id.to_string(),
+            conversation_id: session_id.to_string(),
+            workspace: workspace.unwrap_or_default(),
+            limit: limit.unwrap_or(0),
+        };
+        let response = client
+            .get_messages(request)
+            .await
+            .context("Failed to get messages from hstry")?;
+        Ok(response.into_inner().messages)
+    }
+
+    pub async fn list_conversations(
+        &self,
+        workspace: Option<String>,
+        limit: Option<i64>,
+        offset: Option<i64>,
+    ) -> Result<Vec<hstry_core::service::proto::ConversationSummary>> {
+        let mut client = self.ensure_read_connected().await?;
+        let request = ListConversationsRequest {
+            source_id: PI_SOURCE_ID.to_string(),
+            workspace: workspace.unwrap_or_default(),
+            limit: limit.unwrap_or(0),
+            offset: offset.unwrap_or(0),
+        };
+        let response = client
+            .list_conversations(request)
+            .await
+            .context("Failed to list conversations from hstry")?;
+        Ok(response.into_inner().conversations)
+    }
+
+    /// Set `client_id` on the last user message in a conversation.
+    ///
+    /// Used when context compaction prevents normal message persist but
+    /// client_id still needs to be written for optimistic message matching.
+    /// Fetches all messages, finds the last user message by role, then
+    /// upserts it with the client_id set.
+    pub async fn set_last_user_message_client_id(
+        &self,
+        session_id: &str,
+        client_id: &str,
+    ) -> Result<()> {
+        let messages = self.get_messages(session_id, None, None).await?;
+
+        // Find the last user message
+        let last_user_msg = messages
+            .iter()
+            .rev()
+            .find(|m| m.role == "user" || m.role == "human");
+
+        let msg = last_user_msg
+            .ok_or_else(|| anyhow::anyhow!("No user message found for '{}'", session_id))?;
+
+        // Create an updated copy with client_id set
+        let updated_msg = Message {
+            client_id: Some(client_id.to_string()),
+            ..msg.clone()
+        };
+
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+
+        self.append_messages(session_id, vec![updated_msg], Some(now_ms))
+            .await?;
+
+        Ok(())
+    }
+}
+
+impl Default for HstryClient {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Connect to hstry using an explicit endpoint strategy.
+///
+/// If connection fails for local-user endpoints (Discover/UnixSocket), we
+/// attempt a one-shot `hstry service start` self-heal and retry once.
+async fn connect_for_endpoint(endpoint: &HstryEndpoint) -> Result<Channel> {
+    match endpoint {
+        HstryEndpoint::UnixSocket(path) => {
+            #[cfg(unix)]
+            {
+                match try_connect_unix(path).await {
+                    Ok(channel) => Ok(channel),
+                    Err(first_err) => {
+                        tracing::warn!(
+                            "Failed to connect to hstry via Unix socket {:?}: {}. Attempting service start + retry.",
+                            path,
+                            first_err
+                        );
+                        let _ = attempt_start_hstry_service().await;
+                        try_connect_unix(path).await.with_context(|| {
+                            format!(
+                                "Failed to connect to hstry via Unix socket {:?} after restart attempt",
+                                path
+                            )
+                        })
+                    }
+                }
+            }
+            #[cfg(not(unix))]
+            {
+                let _ = path;
+                anyhow::bail!("Unix socket endpoint not supported on this platform")
+            }
+        }
+        HstryEndpoint::Tcp(port) => try_connect_tcp(*port).await,
+        HstryEndpoint::Discover => match discover_and_connect().await {
+            Ok(channel) => Ok(channel),
+            Err(first_err) => {
+                tracing::warn!(
+                    "Failed to auto-discover/connect hstry: {}. Attempting service start + retry.",
+                    first_err
+                );
+                let _ = attempt_start_hstry_service().await;
+                discover_and_connect().await.with_context(|| {
+                    format!(
+                        "hstry discover/connect failed after restart attempt: {}",
+                        first_err
+                    )
+                })
+            }
+        },
+    }
+}
+
+/// Auto-discover the local user's hstry daemon (single-user mode).
+/// Tries Unix socket first, then port-file TCP.
+async fn discover_and_connect() -> Result<Channel> {
+    #[cfg(unix)]
+    {
+        let socket_path = hstry_core::paths::service_socket_path();
+        if socket_path.exists()
+            && let Ok(client) = try_connect_unix(&socket_path).await
+        {
+            tracing::debug!("Connected to hstry via Unix socket");
+            return Ok(client);
+        }
+    }
+
+    let port = read_port().ok_or_else(|| {
+        anyhow::anyhow!(
+            "hstry daemon not running (no port file or socket). \
+             Start it with `hstry service start` or ensure it's running."
+        )
+    })?;
+
+    try_connect_tcp(port).await
+}
+
+/// Best-effort local self-heal for hstry availability.
+async fn attempt_start_hstry_service() -> Result<()> {
+    let output = Command::new("hstry")
+        .args(["service", "start"])
+        .output()
+        .await
+        .context("failed to execute `hstry service start`")?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let combined = format!("{}{}", stdout, stderr).to_lowercase();
+
+    if output.status.success() || combined.contains("already running") {
+        return Ok(());
+    }
+
+    if combined.contains("adapter version mismatch") {
+        tracing::warn!("hstry adapter version mismatch detected; running `hstry adapters update`");
+        let upd = Command::new("hstry")
+            .args(["adapters", "update"])
+            .output()
+            .await
+            .context("failed to execute `hstry adapters update`")?;
+        if !upd.status.success() {
+            let uout = String::from_utf8_lossy(&upd.stdout);
+            let uerr = String::from_utf8_lossy(&upd.stderr);
+            anyhow::bail!(
+                "`hstry adapters update` failed (exit={}): {}{}",
+                upd.status,
+                uout,
+                uerr
+            );
+        }
+
+        let retry = Command::new("hstry")
+            .args(["service", "start"])
+            .output()
+            .await
+            .context("failed to execute retry `hstry service start`")?;
+        let rout = String::from_utf8_lossy(&retry.stdout);
+        let rerr = String::from_utf8_lossy(&retry.stderr);
+        let rcombined = format!("{}{}", rout, rerr).to_lowercase();
+        if retry.status.success() || rcombined.contains("already running") {
+            return Ok(());
+        }
+
+        anyhow::bail!(
+            "`hstry service start` failed after adapters update (exit={}): {}{}",
+            retry.status,
+            rout,
+            rerr
+        );
+    }
+
+    anyhow::bail!(
+        "`hstry service start` failed (exit={}): {}{}",
+        output.status,
+        stdout,
+        stderr
+    )
+}
+
+async fn try_connect_tcp(port: u16) -> Result<Channel> {
+    let endpoint = format!("http://127.0.0.1:{port}");
+    let channel = Channel::from_shared(endpoint)?
+        .connect()
+        .await
+        .context("Failed to connect to hstry daemon via TCP")?;
+    tracing::debug!("Connected to hstry via TCP on port {port}");
+    Ok(channel)
+}
+
+#[cfg(unix)]
+async fn try_connect_unix(socket_path: &Path) -> Result<Channel> {
+    use hyper_util::rt::TokioIo;
+    use tokio::net::UnixStream;
+    use tonic::transport::Endpoint;
+
+    let socket_path = socket_path.to_path_buf();
+
+    let channel = Endpoint::from_static("http://[::]:0")
+        .connect_with_connector(tower::service_fn(move |_: tonic::transport::Uri| {
+            let path = socket_path.clone();
+            async move {
+                let stream = UnixStream::connect(path).await?;
+                Ok::<_, std::io::Error>(TokioIo::new(stream))
+            }
+        }))
+        .await?;
+
+    Ok(channel)
+}
+
+fn read_port() -> Option<u16> {
+    let port_path = hstry_core::paths::service_port_path();
+    std::fs::read_to_string(port_path)
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_client_creation() {
+        let client = HstryClient::new();
+        // Just verify it can be created
+        assert!(!futures::executor::block_on(client.is_connected()));
+    }
+}

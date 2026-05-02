@@ -26,11 +26,11 @@ use tokio::process::{Child, ChildStdin, Command};
 use tokio::sync::{Mutex, OwnedSemaphorePermit, RwLock, Semaphore, broadcast, mpsc, oneshot};
 
 use crate::agent_browser::{agent_browser_session_dir, browser_session_name};
-use crate::history::{HstryClient, HstryEndpoint};
 use crate::runner::pi_translator::PiTranslator;
 use crate::runner::protocol::{
     ChatMessageProto, PiSessionInfo, PiSessionState, agent_msg_to_chat_proto,
 };
+use oqto_history::hstry::{HstryClient, HstryEndpoint};
 use oqto_pi::{
     AgentMessage, PiCommand, PiEvent, PiMessage, PiResponse, PiState, SessionStats,
     session_parser::ParsedTitle,
@@ -4802,7 +4802,7 @@ impl PiSessionManager {
         work_dir: &Path,
         prefer_append_delta: bool,
     ) -> Result<()> {
-        use crate::history::agent_message_to_proto_with_client_id;
+        use oqto_history::hstry::agent_message_to_proto_with_client_id;
 
         if hstry_external_id.trim().is_empty() {
             debug!(
