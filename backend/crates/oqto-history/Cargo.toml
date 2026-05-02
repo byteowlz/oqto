@@ -15,8 +15,13 @@ serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 chrono.workspace = true
+hstry-core.workspace = true
+hyper-util.workspace = true
 sqlx.workspace = true
 tokio.workspace = true
+tonic.workspace = true
+tower.workspace = true
+tracing.workspace = true
 
 [lints]
 workspace = true
