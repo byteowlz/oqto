@@ -1672,7 +1672,7 @@ pub struct HstrySearchResultsResponse {
     /// Search query.
     pub query: String,
     /// Matching search hits.
-    pub hits: Vec<crate::history::HstrySearchHit>,
+    pub hits: Vec<oqto_history::search::HstrySearchHit>,
     /// Total matches available.
     pub total: usize,
 }

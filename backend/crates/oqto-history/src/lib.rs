@@ -5,3 +5,4 @@
 //! crate.
 
 pub mod oqto_log;
+pub mod search;

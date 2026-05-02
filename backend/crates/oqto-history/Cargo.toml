@@ -11,8 +11,10 @@ anyhow.workspace = true
 hex.workspace = true
 once_cell.workspace = true
 oqto-pi = { path = "../oqto-pi" }
+serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+chrono.workspace = true
 sqlx.workspace = true
 tokio.workspace = true
 
