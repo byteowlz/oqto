@@ -125,12 +125,12 @@ async fn load_pi_jsonl_messages_for_session(
         } else {
             // Fallback for legacy/shared sessions where oqto-log identity mapping
             // is not populated yet but hstry still has external_id/platform_id.
-            let db_path = crate::history::hstry_db_path()?;
-            let pool = crate::history::repository::open_hstry_pool(&db_path)
+            let db_path = oqto_history::legacy_hstry::hstry_db_path()?;
+            let pool = oqto_history::legacy_hstry::open_hstry_pool(&db_path)
                 .await
                 .ok()?;
             let (_conversation_id, resolved_external) =
-                crate::history::repository::resolve_conversation_identity(
+                oqto_history::legacy_hstry::resolve_conversation_identity(
                     &pool,
                     requested_session_id,
                     None,
@@ -1408,13 +1408,13 @@ impl Runner {
     // ========================================================================
 
     async fn list_main_chat_sessions(&self) -> RunnerResponse {
-        let Some(db_path) = crate::history::hstry_db_path() else {
+        let Some(db_path) = oqto_history::legacy_hstry::hstry_db_path() else {
             return RunnerResponse::MainChatSessionList(MainChatSessionListResponse {
                 sessions: Vec::new(),
             });
         };
 
-        let pool = match crate::history::repository::open_hstry_pool(&db_path).await {
+        let pool = match oqto_history::legacy_hstry::open_hstry_pool(&db_path).await {
             Ok(pool) => pool,
             Err(e) => {
                 return error_response(ErrorCode::IoError, format!("Failed to open hstry DB: {e}"));
@@ -1484,14 +1484,14 @@ impl Runner {
     }
 
     async fn get_main_chat_messages(&self, req: GetMainChatMessagesRequest) -> RunnerResponse {
-        let Some(db_path) = crate::history::hstry_db_path() else {
+        let Some(db_path) = oqto_history::legacy_hstry::hstry_db_path() else {
             return RunnerResponse::MainChatMessages(MainChatMessagesResponse {
                 session_id: req.session_id,
                 messages: Vec::new(),
             });
         };
 
-        let pool = match crate::history::repository::open_hstry_pool(&db_path).await {
+        let pool = match oqto_history::legacy_hstry::open_hstry_pool(&db_path).await {
             Ok(pool) => pool,
             Err(e) => {
                 return error_response(ErrorCode::IoError, format!("Failed to open hstry DB: {e}"));
@@ -1499,7 +1499,7 @@ impl Runner {
         };
 
         let (conversation_id, resolved_external_id) =
-            match crate::history::repository::resolve_conversation_identity(
+            match oqto_history::legacy_hstry::resolve_conversation_identity(
                 &pool,
                 &req.session_id,
                 None,
@@ -1619,21 +1619,21 @@ impl Runner {
         &self,
         req: GetWorkspaceChatMessagesRequest,
     ) -> RunnerResponse {
-        let Some(db_path) = crate::history::hstry_db_path() else {
+        let Some(db_path) = oqto_history::legacy_hstry::hstry_db_path() else {
             return RunnerResponse::WorkspaceChatMessages(MainChatMessagesResponse {
                 session_id: req.session_id,
                 messages: Vec::new(),
             });
         };
 
-        let pool = match crate::history::repository::open_hstry_pool(&db_path).await {
+        let pool = match oqto_history::legacy_hstry::open_hstry_pool(&db_path).await {
             Ok(pool) => pool,
             Err(e) => {
                 return error_response(ErrorCode::IoError, format!("Failed to open hstry DB: {e}"));
             }
         };
 
-        let identity_in_workspace = crate::history::repository::resolve_conversation_identity(
+        let identity_in_workspace = oqto_history::legacy_hstry::resolve_conversation_identity(
             &pool,
             &req.session_id,
             Some(&req.workspace_path),
@@ -1642,7 +1642,7 @@ impl Runner {
 
         let (conversation_id, resolved_external_id) = match identity_in_workspace {
             Ok(Some(identity)) => identity,
-            Ok(None) => match crate::history::repository::resolve_conversation_identity(
+            Ok(None) => match oqto_history::legacy_hstry::resolve_conversation_identity(
                 &pool,
                 &req.session_id,
                 None,
@@ -1767,13 +1767,13 @@ impl Runner {
         &self,
         req: ListWorkspaceChatSessionsRequest,
     ) -> RunnerResponse {
-        let Some(db_path) = crate::history::hstry_db_path() else {
+        let Some(db_path) = oqto_history::legacy_hstry::hstry_db_path() else {
             return RunnerResponse::WorkspaceChatSessionList(WorkspaceChatSessionListResponse {
                 sessions: Vec::new(),
             });
         };
 
-        let pool = match crate::history::repository::open_hstry_pool(&db_path).await {
+        let pool = match oqto_history::legacy_hstry::open_hstry_pool(&db_path).await {
             Ok(pool) => pool,
             Err(e) => {
                 return error_response(ErrorCode::IoError, format!("Failed to open hstry DB: {e}"));
@@ -1855,7 +1855,7 @@ impl Runner {
                 .or(external_id.clone())
                 .unwrap_or_else(|| id.clone());
             let workspace_path = workspace.unwrap_or_else(|| "global".to_string());
-            let project_name = crate::history::project_name_from_path(&workspace_path);
+            let project_name = oqto_history::legacy_hstry::project_name_from_path(&workspace_path);
             let readable_id = readable_id.unwrap_or_default();
             let updated_at_ms = updated_at.unwrap_or(created_at) * 1000;
             let parent_id = parent_platform_id
@@ -1907,13 +1907,13 @@ impl Runner {
         &self,
         req: GetWorkspaceChatSessionRequest,
     ) -> RunnerResponse {
-        let Some(db_path) = crate::history::hstry_db_path() else {
+        let Some(db_path) = oqto_history::legacy_hstry::hstry_db_path() else {
             return RunnerResponse::WorkspaceChatSession(WorkspaceChatSessionResponse {
                 session: None,
             });
         };
 
-        let pool = match crate::history::repository::open_hstry_pool(&db_path).await {
+        let pool = match oqto_history::legacy_hstry::open_hstry_pool(&db_path).await {
             Ok(pool) => pool,
             Err(e) => {
                 return error_response(ErrorCode::IoError, format!("Failed to open hstry DB: {e}"));
@@ -1921,7 +1921,7 @@ impl Runner {
         };
 
         let (conversation_id, _resolved_external_id) =
-            match crate::history::repository::resolve_conversation_identity(
+            match oqto_history::legacy_hstry::resolve_conversation_identity(
                 &pool,
                 &req.session_id,
                 None,
@@ -1997,7 +1997,7 @@ impl Runner {
             .or(external_id.clone())
             .unwrap_or_else(|| id.clone());
         let workspace_path = workspace.unwrap_or_else(|| "global".to_string());
-        let project_name = crate::history::project_name_from_path(&workspace_path);
+        let project_name = oqto_history::legacy_hstry::project_name_from_path(&workspace_path);
         let readable_id = readable_id.unwrap_or_default();
         let updated_at_ms = updated_at.unwrap_or(created_at) * 1000;
         let parent_id = parent_platform_id
@@ -2302,7 +2302,8 @@ impl Runner {
                     .workspace
                     .clone()
                     .unwrap_or_else(|| "global".to_string());
-                let project_name = crate::history::project_name_from_path(&workspace_path);
+                let project_name =
+                    oqto_history::legacy_hstry::project_name_from_path(&workspace_path);
 
                 // Prefer platform_id (Oqto session ID) over external_id (Pi native ID)
                 // to stay consistent with list_workspace_chat_sessions. The frontend
@@ -2789,8 +2790,8 @@ impl Runner {
 
         // Delete from hstry via direct SQLite as well, trying both the oqto ID and the
         // Pi native ID (covers cases where platform_id was not set).
-        if let Some(db_path) = crate::history::hstry_db_path()
-            && let Ok(pool) = crate::history::repository::open_hstry_pool(&db_path).await
+        if let Some(db_path) = oqto_history::legacy_hstry::hstry_db_path()
+            && let Ok(pool) = oqto_history::legacy_hstry::open_hstry_pool(&db_path).await
         {
             // Delete by oqto session ID (platform_id) or Pi native ID (external_id)
             let _ = sqlx::query(
