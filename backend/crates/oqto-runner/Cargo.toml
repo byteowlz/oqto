@@ -12,15 +12,20 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
+chrono.workspace = true
 clap.workspace = true
 env_logger.workspace = true
 log.workspace = true
 serde.workspace = true
 tokio.workspace = true
 toml.workspace = true
+uuid.workspace = true
 
 oqto = { path = "../oqto" }
 oqto-history = { path = "../oqto-history" }
+serde_json.workspace = true
+oqto-protocol = { path = "../oqto-protocol" }
+oqto-pi = { path = "../oqto-pi" }
 oqto-sandbox = { path = "../oqto-sandbox" }
 hstry-core.workspace = true
 

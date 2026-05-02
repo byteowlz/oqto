@@ -2976,16 +2976,21 @@ name = "oqto-runner"
 version = "0.3.25"
 dependencies = [
  "anyhow",
+ "chrono",
  "clap",
  "env_logger",
  "hstry-core",
  "log",
  "oqto",
  "oqto-history",
+ "oqto-pi",
+ "oqto-protocol",
  "oqto-sandbox",
  "serde",
+ "serde_json",
  "tokio",
  "toml 0.8.23",
+ "uuid",
 ]
 
 [[package]]

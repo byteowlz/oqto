@@ -5,3 +5,5 @@
 //! modules that have not moved yet.
 
 pub mod daemon;
+pub mod pi_translator;
+pub mod protocol;
