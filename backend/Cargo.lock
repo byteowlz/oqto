@@ -2912,7 +2912,12 @@ version = "0.3.25"
 dependencies = [
  "anyhow",
  "hex",
+ "once_cell",
+ "oqto-pi",
+ "serde_json",
  "sha2",
+ "sqlx",
+ "tokio",
 ]
 
 [[package]]

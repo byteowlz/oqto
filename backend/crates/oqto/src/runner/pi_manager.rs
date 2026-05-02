@@ -3871,7 +3871,7 @@ impl PiSessionManager {
                             session_id.clone()
                         };
 
-                        match crate::oqto_log::store::append_agent_end_snapshot(
+                        match oqto_history::oqto_log::store::append_agent_end_snapshot(
                             std::path::Path::new(&home),
                             &user_id,
                             workspace_id,
@@ -3892,12 +3892,13 @@ impl PiSessionManager {
                                     stats.deduped,
                                     stats.snapshot_hash
                                 );
-                                if let Ok(sess_stats) = crate::oqto_log::store::read_session_stats(
-                                    std::path::Path::new(&home),
-                                    workspace_id,
-                                    &session_id,
-                                )
-                                .await
+                                if let Ok(sess_stats) =
+                                    oqto_history::oqto_log::store::read_session_stats(
+                                        std::path::Path::new(&home),
+                                        workspace_id,
+                                        &session_id,
+                                    )
+                                    .await
                                 {
                                     debug!(
                                         "Pi[{}] dual-write telemetry: hstry_candidate_messages={} oqto_log_total_messages={} oqto_log_total_turns={}",
@@ -4101,17 +4102,18 @@ impl PiSessionManager {
                                 stop_reason: Some("error".to_string()),
                                 extra: std::collections::HashMap::new(),
                             };
-                            if let Err(e) = crate::oqto_log::store::append_agent_end_snapshot(
-                                std::path::Path::new(&home),
-                                &user_id,
-                                workspace_id,
-                                &session_id,
-                                &session_id,
-                                Some(&source_session_id),
-                                &source_session_id,
-                                &[error_msg],
-                            )
-                            .await
+                            if let Err(e) =
+                                oqto_history::oqto_log::store::append_agent_end_snapshot(
+                                    std::path::Path::new(&home),
+                                    &user_id,
+                                    workspace_id,
+                                    &session_id,
+                                    &session_id,
+                                    Some(&source_session_id),
+                                    &source_session_id,
+                                    &[error_msg],
+                                )
+                                .await
                             {
                                 warn!(
                                     "Pi[{}] failed to persist terminal error to oqto-log on agent.error: {:?}",
@@ -4211,17 +4213,18 @@ impl PiSessionManager {
                                 stop_reason: Some("error".to_string()),
                                 extra: std::collections::HashMap::new(),
                             };
-                            if let Err(e) = crate::oqto_log::store::append_agent_end_snapshot(
-                                std::path::Path::new(&home),
-                                &user_id,
-                                workspace_id,
-                                &session_id,
-                                &session_id,
-                                Some(&source_session_id),
-                                &source_session_id,
-                                &[error_msg],
-                            )
-                            .await
+                            if let Err(e) =
+                                oqto_history::oqto_log::store::append_agent_end_snapshot(
+                                    std::path::Path::new(&home),
+                                    &user_id,
+                                    workspace_id,
+                                    &session_id,
+                                    &session_id,
+                                    Some(&source_session_id),
+                                    &source_session_id,
+                                    &[error_msg],
+                                )
+                                .await
                             {
                                 warn!(
                                     "Pi[{}] failed to persist buffered error to oqto-log on agent.idle: {:?}",

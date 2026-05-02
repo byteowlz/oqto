@@ -1,4 +1,4 @@
-pub use oqto_history::oqto_log::{ids, paths};
+pub use oqto_history::oqto_log::paths;
 
 pub mod importer;
 pub mod ops;
