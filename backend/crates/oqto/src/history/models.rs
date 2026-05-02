@@ -74,14 +74,7 @@ pub struct ChatSession {
     pub provider: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct HstryJsonResponse<T> {
-    pub ok: bool,
-    pub result: Option<T>,
-    pub error: Option<String>,
-}
-
-pub use oqto_history::search::HstrySearchHit;
+pub use oqto_history::search::{HstryJsonResponse, HstrySearchHit};
 
 /// Legacy message metadata.
 #[derive(Debug, Clone, Deserialize)]

@@ -45,10 +45,10 @@ mod tests {
 
     #[test]
     fn workspace_path_is_in_user_home_oqto_log_dir() {
-        let home = Path::new("/home/tester");
-        let path = resolve_user_home_workspace_db_path(home, "workspace-123").expect("path");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = resolve_user_home_workspace_db_path(temp.path(), "workspace-123").expect("path");
         let s = path.display().to_string();
-        assert!(s.contains("/home/tester/.local/share/oqto/oqto-log/"));
+        assert!(s.contains("/.local/share/oqto/oqto-log/"));
         assert!(s.ends_with("/oqto-log.sqlite"));
     }
 }
