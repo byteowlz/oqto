@@ -36,7 +36,7 @@ Extract user domain into oqto-users crate. Move user repository/service/domain t
 Create oqto-provisioning crate to own user/runtime setup flows. Move code for runner setup, per-user configuration sync, and bootstrap orchestration currently scattered in oqto. Include migration plan for local user_mmry and user_sldr managers where boundaries permit. Deliverables: provisioning service interfaces + moved implementations. Exit criteria: oqto invokes provisioning crate, and local module footprint in oqto is reduced.
 
 ### [oqto-3ct7.3] Extract backend runner socket client paths into oqto-runner-client crate (P1, feature)
-Runner ownership refactor. Updated strategy: Oqto should have Pi as native first-class integration and ACP as the generic external-agent/sub-agent bridge. Do not create native per-harness crates by default. Near-term sequence: extract Pi wire/types helpers (done via oqto-pi), move Pi runtime/translator/daemon ownership toward oqto-runner, then add oqto-acp as a runner capability for non-Pi agents and Pi-created sub-agents. Avoid dependency cycles and keep harness-specific runtime out of oqto server crate.
+Deleted legacy runner daemon/runtime copies from oqto. oqto now depends on oqto-runner for runner protocol types; oqto/src/runner only contains client/router. Removed oqto/src/runner/{daemon,pi_manager.rs,pi_translator.rs,protocol.rs}. Validation passed: cargo test -p oqto-runner, cargo check -p oqto, just lint.
 
 ### [oqto-3ct7] Backend crate architecture refactor program (P1, epic)
 Goal: Refactor backend/crates into clear, enforceable architectural boundaries so new contributors can locate ownership quickly and edits compile faster with less cross-crate invalidation.
@@ -1370,14 +1370,14 @@ Deliverables
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [oqto-xq1e] Add drag-and-drop support to FileTreeView (internal move + OS upload) (closed )
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
-- [oqto-4ryr] Session rename reverts: update_chat_session returns external_id while list returns platform_id (closed )
-- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
-- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
 - [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
-- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
-- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
-- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
+- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
 - [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
+- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
+- [oqto-4ryr] Session rename reverts: update_chat_session returns external_id while list returns platform_id (closed )
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
+- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
+- [oqto-xq1e] Add drag-and-drop support to FileTreeView (internal move + OS upload) (closed )

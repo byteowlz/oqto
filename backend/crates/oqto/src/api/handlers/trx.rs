@@ -20,10 +20,10 @@ use crate::auth::CurrentUser;
 use crate::api::error::{ApiError, ApiResult};
 use crate::api::state::AppState;
 use crate::runner::client::RunnerClient;
-use crate::runner::protocol::TrxIssueData;
 use crate::runner::router::{
     ExecutionTarget, resolve_runner_for_workspace_path, resolve_target_for_workspace_path,
 };
+use oqto_runner::protocol::TrxIssueData;
 
 /// TRX issue as returned by the API. Mirrors `TrxIssueData` from the
 /// runner protocol; we keep a separate public type so the API surface

@@ -9,9 +9,7 @@ use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use tokio::sync::Mutex;
 
 use crate::oqto_log::paths::resolve_user_home_workspace_db_path;
-use crate::runner::protocol::{
-    ChatMessagePartProto, ChatMessageProto, extract_client_id_from_extra,
-};
+use oqto_runner::protocol::{ChatMessagePartProto, ChatMessageProto, extract_client_id_from_extra};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TurnTreeNode {
@@ -169,9 +167,8 @@ pub async fn project_session_messages_auto(
                 if let Some(payload) = json_payload.clone()
                     && let Ok(agent_msg) = serde_json::from_str::<crate::pi::AgentMessage>(&payload)
                 {
-                    let mut proto = crate::runner::protocol::agent_msg_to_chat_proto(
-                        &agent_msg, idx, session_id,
-                    );
+                    let mut proto =
+                        oqto_runner::protocol::agent_msg_to_chat_proto(&agent_msg, idx, session_id);
                     proto.id = msg_id;
                     proto.parent_id = parent_id;
                     if created_at > 0 {

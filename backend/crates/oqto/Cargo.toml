@@ -127,6 +127,7 @@ trx-core.workspace = true
 
 # Canonical protocol types
 oqto-protocol = { path = "../oqto-protocol" }
+oqto-runner = { path = "../oqto-runner" }
 oqto-eavs = { path = "../oqto-eavs" }
 oqto-host = { path = "../oqto-host" }
 oqto-history = { path = "../oqto-history" }
