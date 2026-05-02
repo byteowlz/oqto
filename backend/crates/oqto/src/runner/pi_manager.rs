@@ -27,13 +27,13 @@ use tokio::sync::{Mutex, OwnedSemaphorePermit, RwLock, Semaphore, broadcast, mps
 
 use crate::agent_browser::{agent_browser_session_dir, browser_session_name};
 use crate::history::{HstryClient, HstryEndpoint};
-use crate::pi::{
-    AgentMessage, PiCommand, PiEvent, PiMessage, PiResponse, PiState, SessionStats,
-    session_parser::ParsedTitle,
-};
 use crate::runner::pi_translator::PiTranslator;
 use crate::runner::protocol::{
     ChatMessageProto, PiSessionInfo, PiSessionState, agent_msg_to_chat_proto,
+};
+use oqto_pi::{
+    AgentMessage, PiCommand, PiEvent, PiMessage, PiResponse, PiState, SessionStats,
+    session_parser::ParsedTitle,
 };
 use oqto_protocol::events::{AgentPhase, Event as CanonicalEvent, EventPayload, MessageVersion};
 use oqto_sandbox::{SandboxConfig, configure_bwrap_pre_exec};
@@ -581,7 +581,7 @@ impl PiSessionManager {
         } else {
             // Try direct match first (works for Pi-native IDs)
             let mut found =
-                crate::pi::session_files::find_session_file(&session_id, Some(&config.cwd));
+                oqto_pi::session_files::find_session_file(&session_id, Some(&config.cwd));
             // No match -- resolve Pi native ID via hstry and retry.
             // Use a timeout to prevent hanging if hstry is slow/unresponsive.
             if found.is_none()
@@ -600,7 +600,7 @@ impl PiSessionManager {
                                 "Resolved Pi native ID for '{}' -> '{}' via hstry",
                                 session_id, pi_id
                             );
-                            found = crate::pi::session_files::find_session_file(
+                            found = oqto_pi::session_files::find_session_file(
                                 &pi_id,
                                 Some(&config.cwd),
                             );
@@ -642,7 +642,7 @@ impl PiSessionManager {
                     "Resolved Pi native ID for '{}' via local hstry DB -> '{}'",
                     session_id, pi_id
                 );
-                found = crate::pi::session_files::find_session_file(&pi_id, Some(&config.cwd));
+                found = oqto_pi::session_files::find_session_file(&pi_id, Some(&config.cwd));
             }
 
             found
@@ -3517,8 +3517,7 @@ impl PiSessionManager {
                                     data.get("sessionName").and_then(|v| v.as_str())
                                 && !raw_name.is_empty()
                             {
-                                let parsed =
-                                    crate::pi::session_parser::ParsedTitle::parse(raw_name);
+                                let parsed = oqto_pi::session_parser::ParsedTitle::parse(raw_name);
                                 let clean_title = parsed.display_title().to_string();
                                 if !clean_title.is_empty() && last_synced_title != clean_title {
                                     last_synced_title = clean_title.clone();
@@ -4083,7 +4082,7 @@ impl PiSessionManager {
                             } else {
                                 session_id.clone()
                             };
-                            let error_msg = crate::pi::AgentMessage {
+                            let error_msg = oqto_pi::AgentMessage {
                                 role: "assistant".to_string(),
                                 content: serde_json::json!([{
                                     "type": "text",
@@ -4194,7 +4193,7 @@ impl PiSessionManager {
                                     eid
                                 }
                             };
-                            let error_msg = crate::pi::AgentMessage {
+                            let error_msg = oqto_pi::AgentMessage {
                                 role: "assistant".to_string(),
                                 content: serde_json::json!([{
                                     "type": "text",
@@ -5353,7 +5352,7 @@ async fn fetch_last_hstry_idx(client: &HstryClient, session_id: &str) -> Option<
 }
 
 async fn resolve_jsonl_session_title(session_id: &str, work_dir: &Path) -> Option<String> {
-    let session_file = crate::pi::session_files::find_session_file_async(
+    let session_file = oqto_pi::session_files::find_session_file_async(
         session_id.to_string(),
         Some(work_dir.to_path_buf()),
     )

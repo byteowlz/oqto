@@ -143,7 +143,7 @@ async fn load_pi_jsonl_messages_for_session(
         Some(requested_session_id.to_string())
     }?;
 
-    let session_file = crate::pi::session_files::find_session_file_async(external_id, None).await?;
+    let session_file = oqto_pi::session_files::find_session_file_async(external_id, None).await?;
     let recovered_messages =
         tokio::task::spawn_blocking(move || read_jsonl_agent_messages(&session_file))
             .await
@@ -258,10 +258,10 @@ fn append_session_info_name(path: &std::path::Path, name: &str) -> Result<()> {
 struct JsonlMessageEntry {
     #[serde(rename = "type")]
     entry_type: String,
-    message: Option<crate::pi::AgentMessage>,
+    message: Option<oqto_pi::AgentMessage>,
 }
 
-fn read_jsonl_agent_messages(path: &std::path::Path) -> Vec<crate::pi::AgentMessage> {
+fn read_jsonl_agent_messages(path: &std::path::Path) -> Vec<oqto_pi::AgentMessage> {
     use std::io::BufRead;
 
     let file = match std::fs::File::open(path) {
@@ -365,7 +365,7 @@ fn scan_pi_jsonl_session_metadata(limit: Option<usize>) -> JsonlScanOutcome {
 
         let session_name = read_last_session_info_name(&path);
         let (title, readable_id) = if let Some(name) = session_name {
-            let parsed = crate::pi::session_parser::ParsedTitle::parse(&name);
+            let parsed = oqto_pi::session_parser::ParsedTitle::parse(&name);
             let readable_id = parsed.get_readable_id().map(ToOwned::to_owned);
             let parsed_title = parsed.display_title().trim();
             let fallback_title = name
@@ -2326,7 +2326,7 @@ impl Runner {
                     let external_id = conv.external_id.clone();
                     let jsonl_title = conv.title.clone().unwrap_or_else(|| title.clone());
                     tokio::spawn(async move {
-                        let Some(path) = crate::pi::session_files::find_session_file_async(
+                        let Some(path) = oqto_pi::session_files::find_session_file_async(
                             external_id.clone(),
                             None,
                         )
@@ -2908,7 +2908,7 @@ impl Runner {
             // Convert ChatMessageProto back to AgentMessage for protocol compat.
             // This is temporary until we migrate ws_multiplexed to use
             // ChatMessageProto directly (scope 5 completion).
-            let agent_msgs: Vec<crate::pi::AgentMessage> = buffer
+            let agent_msgs: Vec<oqto_pi::AgentMessage> = buffer
                 .into_iter()
                 .map(crate::runner::protocol::chat_proto_to_agent_msg)
                 .collect();
@@ -2921,7 +2921,7 @@ impl Runner {
         // Buffer empty -- fall back to Pi RPC
         match self.pi_manager.get_messages(&req.session_id).await {
             Ok(messages) => {
-                let messages_vec: Vec<crate::pi::AgentMessage> = messages
+                let messages_vec: Vec<oqto_pi::AgentMessage> = messages
                     .as_array()
                     .map(|arr| {
                         arr.iter()
@@ -2986,7 +2986,7 @@ impl Runner {
     /// - { model: "<id>", provider: "<provider>" }
     /// - { model_id: "<id>", provider: "<provider>" }
     /// - { model: { id: "<id>", provider: "<provider>", ... } }
-    fn parse_model_from_response(response: &crate::pi::PiResponse) -> Option<crate::pi::PiModel> {
+    fn parse_model_from_response(response: &oqto_pi::PiResponse) -> Option<oqto_pi::PiModel> {
         let data = response.data.as_ref()?;
 
         // Nested model object variant: { model: { id, provider, ... } }
@@ -2996,7 +2996,7 @@ impl Runner {
                 .get("provider")
                 .and_then(|v| v.as_str())
                 .or_else(|| model_obj.get("api").and_then(|v| v.as_str()))?;
-            return Some(crate::pi::PiModel {
+            return Some(oqto_pi::PiModel {
                 id: model_id.to_string(),
                 name: model_obj
                     .get("name")
@@ -3024,7 +3024,7 @@ impl Runner {
             .and_then(|v| v.as_str())
             .or_else(|| data.get("provider_id").and_then(|v| v.as_str()))?;
 
-        Some(crate::pi::PiModel {
+        Some(oqto_pi::PiModel {
             id: model_id.to_string(),
             name: model_id.to_string(),
             api: provider.to_string(),
@@ -3045,8 +3045,8 @@ impl Runner {
     async fn resolve_authoritative_model(
         &self,
         session_id: &str,
-        response: &crate::pi::PiResponse,
-    ) -> Option<crate::pi::PiModel> {
+        response: &oqto_pi::PiResponse,
+    ) -> Option<oqto_pi::PiModel> {
         match self.pi_manager.get_state(session_id).await {
             Ok(state) => {
                 if let Some(model) = state.model {
@@ -3177,12 +3177,12 @@ impl Runner {
                 } else {
                     &models
                 };
-                let models_vec: Vec<crate::pi::PiModel> = models_arr
+                let models_vec: Vec<oqto_pi::PiModel> = models_arr
                     .as_array()
                     .map(|arr| {
                         arr.iter()
                             .filter_map(|v| {
-                                match serde_json::from_value::<crate::pi::PiModel>(v.clone()) {
+                                match serde_json::from_value::<oqto_pi::PiModel>(v.clone()) {
                                     Ok(m) => Some(m),
                                     Err(e) => {
                                         let provider = v
@@ -3452,7 +3452,7 @@ impl Runner {
         let fork_session_file = if let Some(ref file) = fork_result.new_session_file {
             Some(std::path::PathBuf::from(file))
         } else if let Some(ref pi_id) = fork_result.new_session_id {
-            crate::pi::session_files::find_session_file(pi_id, Some(&old_config.cwd))
+            oqto_pi::session_files::find_session_file(pi_id, Some(&old_config.cwd))
         } else {
             None
         };
