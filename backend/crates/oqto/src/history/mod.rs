@@ -29,6 +29,7 @@ pub use service::{
     get_session_messages_via_grpc_cached, search_hstry,
 };
 
+#[allow(unused_imports)]
 pub use hstry::{
     HstryClient, HstryEndpoint, HstryServiceConfig, HstryServiceManager,
     agent_message_to_proto_with_client_id,
