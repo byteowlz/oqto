@@ -22,7 +22,7 @@ use oqto_protocol::events::{
 };
 use oqto_protocol::messages::{Message, Role, StopReason, Usage};
 
-use crate::pi::{
+use oqto_pi::{
     AgentMessage, AssistantMessageEvent, CompactionResult, ContentBlock, ExtensionUiRequest,
     ImageSource, PiEvent,
 };
@@ -483,7 +483,7 @@ impl PiTranslator {
         &mut self,
         tool_call_id: &str,
         tool_name: &str,
-        partial_result: &crate::pi::ToolResult,
+        partial_result: &oqto_pi::ToolResult,
     ) -> Vec<EventPayload> {
         vec![EventPayload::ToolProgress {
             tool_call_id: tool_call_id.to_string(),
@@ -496,7 +496,7 @@ impl PiTranslator {
         &mut self,
         tool_call_id: &str,
         tool_name: &str,
-        result: &crate::pi::ToolResult,
+        result: &oqto_pi::ToolResult,
         is_error: bool,
     ) -> Vec<EventPayload> {
         let mut events = Vec::new();
@@ -610,7 +610,7 @@ impl PiTranslator {
         let Some(raw_name) = status_text.filter(|s| !s.is_empty()) else {
             return vec![];
         };
-        let parsed = crate::pi::session_parser::ParsedTitle::parse(raw_name);
+        let parsed = oqto_pi::session_parser::ParsedTitle::parse(raw_name);
         let title = parsed.display_title().to_string();
         if title.is_empty() {
             return vec![];
@@ -752,10 +752,7 @@ impl PiTranslator {
 /// Special handling for commands that emit config events:
 /// - `set_model` -> `ConfigModelChanged` event
 /// - `set_thinking_level` -> `ConfigThinkingLevelChanged` event
-pub fn pi_response_to_canonical(
-    pi_response: &crate::pi::PiResponse,
-    cmd_name: &str,
-) -> EventPayload {
+pub fn pi_response_to_canonical(pi_response: &oqto_pi::PiResponse, cmd_name: &str) -> EventPayload {
     // Special case: set_thinking_level emits ConfigThinkingLevelChanged event
     if cmd_name == "set_thinking_level"
         && let Some(data) = &pi_response.data
@@ -1015,7 +1012,7 @@ fn extract_text_content(content: &Value) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pi::{TokenCost, TokenUsage};
+    use oqto_pi::{TokenCost, TokenUsage};
 
     #[test]
     fn test_agent_lifecycle() {
@@ -1113,7 +1110,7 @@ mod tests {
         let events = t.translate(&PiEvent::ToolExecutionEnd {
             tool_call_id: "tc_1".to_string(),
             tool_name: "bash".to_string(),
-            result: crate::pi::ToolResult {
+            result: oqto_pi::ToolResult {
                 content: vec![],
                 details: None,
             },
@@ -1214,7 +1211,7 @@ mod tests {
 
         // End (success, no retry)
         let events = t.translate(&PiEvent::AutoCompactionEnd {
-            result: Some(crate::pi::CompactionResult {
+            result: Some(oqto_pi::CompactionResult {
                 summary: "Compacted".to_string(),
                 first_kept_entry_id: "entry_1".to_string(),
                 tokens_before: 10000,
@@ -1494,7 +1491,7 @@ mod tests {
 
     #[test]
     fn test_pi_response_translation() {
-        let response = crate::pi::PiResponse {
+        let response = oqto_pi::PiResponse {
             success: true,
             id: Some("cmd_1".to_string()),
             data: Some(serde_json::json!({"model": "claude-3-opus"})),
@@ -1699,7 +1696,7 @@ mod tests {
         let events = t.translate(&PiEvent::ToolExecutionEnd {
             tool_call_id: "tc_1".to_string(),
             tool_name: "read".to_string(),
-            result: crate::pi::ToolResult {
+            result: oqto_pi::ToolResult {
                 content: vec![],
                 details: None,
             },

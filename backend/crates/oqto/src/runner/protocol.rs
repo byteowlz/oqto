@@ -24,7 +24,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use crate::pi::PiState;
+use oqto_pi::PiState;
 
 /// Request sent from oqto to the runner.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1902,7 +1902,7 @@ pub fn extract_client_id_from_extra(extra: &HashMap<String, Value>) -> Option<St
 }
 
 pub fn agent_msg_to_chat_proto(
-    msg: &crate::pi::AgentMessage,
+    msg: &oqto_pi::AgentMessage,
     idx: usize,
     session_id: &str,
 ) -> ChatMessageProto {
@@ -1959,7 +1959,7 @@ pub fn agent_msg_to_chat_proto(
 /// part carrying the raw content) to preserve compatibility with the
 /// existing rendering path.
 fn decode_agent_message_parts(
-    msg: &crate::pi::AgentMessage,
+    msg: &oqto_pi::AgentMessage,
     message_idx: usize,
 ) -> Vec<ChatMessagePartProto> {
     let is_assistant_error = (msg.role == "assistant" || msg.role == "agent")
@@ -2159,7 +2159,7 @@ fn decode_agent_message_parts(
 ///
 /// Lossy reverse of `agent_msg_to_chat_proto` -- used as a temporary bridge
 /// while `ws_multiplexed` still expects `AgentMessage` from `pi_get_messages`.
-pub fn chat_proto_to_agent_msg(proto: ChatMessageProto) -> crate::pi::AgentMessage {
+pub fn chat_proto_to_agent_msg(proto: ChatMessageProto) -> oqto_pi::AgentMessage {
     // Extract text content from parts
     let (content, tool_call_id, tool_name, is_error) =
         if proto.parts.len() == 1 && (proto.parts[0].part_type == "tool_result") {
@@ -2188,7 +2188,7 @@ pub fn chat_proto_to_agent_msg(proto: ChatMessageProto) -> crate::pi::AgentMessa
         None
     };
 
-    crate::pi::AgentMessage {
+    oqto_pi::AgentMessage {
         role: proto.role,
         content,
         timestamp,
@@ -2375,7 +2375,7 @@ pub struct PiMessagesResponse {
     /// Session ID.
     pub session_id: String,
     /// Messages in the session.
-    pub messages: Vec<crate::pi::AgentMessage>,
+    pub messages: Vec<oqto_pi::AgentMessage>,
 }
 
 /// Response with Pi session statistics.
@@ -2384,7 +2384,7 @@ pub struct PiSessionStatsResponse {
     /// Session ID.
     pub session_id: String,
     /// Session statistics.
-    pub stats: crate::pi::SessionStats,
+    pub stats: oqto_pi::SessionStats,
 }
 
 /// Response with last assistant text.
@@ -2402,7 +2402,7 @@ pub struct PiModelChangedResponse {
     /// Session ID.
     pub session_id: String,
     /// The new model.
-    pub model: crate::pi::PiModel,
+    pub model: oqto_pi::PiModel,
     /// Current thinking level.
     pub thinking_level: String,
     /// Whether this is a scoped model.
@@ -2415,7 +2415,7 @@ pub struct PiAvailableModelsResponse {
     /// Session ID.
     pub session_id: String,
     /// Available models.
-    pub models: Vec<crate::pi::PiModel>,
+    pub models: Vec<oqto_pi::PiModel>,
 }
 
 /// Response when thinking level is changed.
@@ -2433,7 +2433,7 @@ pub struct PiCompactionResultResponse {
     /// Session ID.
     pub session_id: String,
     /// Compaction result.
-    pub result: crate::pi::CompactionResult,
+    pub result: oqto_pi::CompactionResult,
 }
 
 /// Message available for forking.
@@ -2771,7 +2771,7 @@ mod tests {
             "clientId".to_string(),
             serde_json::Value::String("cid-123".to_string()),
         );
-        let msg = crate::pi::AgentMessage {
+        let msg = oqto_pi::AgentMessage {
             role: "user".to_string(),
             content: serde_json::Value::String("hello".to_string()),
             timestamp: Some(1_700_000_000),
