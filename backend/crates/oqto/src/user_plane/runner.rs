@@ -9,7 +9,7 @@ use std::path::Path;
 
 use super::UserPlane;
 use super::types::*;
-use crate::runner::client::RunnerClient;
+use oqto_runner::client::RunnerClient;
 
 /// Runner-based user-plane implementation.
 ///

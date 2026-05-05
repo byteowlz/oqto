@@ -5,6 +5,7 @@
 //! modules that have not moved yet.
 
 pub mod agent_browser;
+pub mod client;
 pub mod daemon;
 pub mod oqto_log_projector;
 pub mod pi_manager;

@@ -33,7 +33,6 @@ use base64::Engine;
 use crate::auth::{Claims, CurrentUser};
 use crate::local::ProcessManager;
 
-use crate::runner::client::{PiSubscriptionEvent, RunnerClient};
 use crate::runner::router::{
     ExecutionTarget, resolve_runner_for_target, resolve_target_for_workspace_path,
 };
@@ -42,6 +41,7 @@ use crate::session_target::{SessionTargetRecord, SessionTargetScope};
 use crate::user_plane::{MeteredUserPlane, RunnerUserPlane, UserPlane, UserPlanePath};
 use crate::ws::hub::WsHub;
 use crate::ws::types::{WsCommand as LegacyWsCommand, WsEvent as LegacyHubEvent};
+use oqto_runner::client::{PiSubscriptionEvent, RunnerClient};
 use oqto_runner::protocol::{PiCreateSessionRequest, PiSessionConfig as RunnerPiSessionConfig};
 
 use super::error::ApiError;

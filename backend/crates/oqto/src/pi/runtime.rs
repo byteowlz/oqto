@@ -358,7 +358,7 @@ impl PiProcess for LocalPiProcess {
 // Runner Runtime - Via oqto-runner for multi-user isolation
 // ============================================================================
 
-use crate::runner::client::RunnerClient;
+use oqto_runner::client::RunnerClient;
 
 /// Runtime that spawns Pi via the oqto-runner daemon.
 ///
@@ -511,13 +511,13 @@ impl RunnerPiProcess {
                     // Read lines as they arrive (push-based, no polling)
                     while let Some(event) = subscription.next().await {
                         match event {
-                            crate::runner::client::StdoutSubscriptionEvent::Line(line) => {
+                            oqto_runner::client::StdoutSubscriptionEvent::Line(line) => {
                                 if line.trim().is_empty() {
                                     continue;
                                 }
                                 Self::process_line(&line, &event_tx_clone, &pending_clone).await;
                             }
-                            crate::runner::client::StdoutSubscriptionEvent::End => {
+                            oqto_runner::client::StdoutSubscriptionEvent::End => {
                                 info!("Pi process exited via runner subscription");
                                 *running_clone2.write().await = false;
                                 break;
