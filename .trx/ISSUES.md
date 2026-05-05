@@ -8,7 +8,7 @@ Extract session orchestration into oqto-sessions crate (high risk). Move session
 ### [oqto-dnj4] Diagnose Pi RPC startup model mismatch with frontend-selected model (P1, bug)
 
 ### [oqto-3ct7.9.1] Extract runner-facing history boundary into oqto-history (P1, task)
-Completed next runner-facing history extraction slice: moved hstry search CLI API and session workspace lookup into oqto-history; runner modules no longer call crate::history or oqto::history. Also fixed oqto-history paths unit test to use a temp home rather than /home/tester. Validation passed: cargo test -p oqto-history, cargo test -p oqto-runner, just lint.
+Runner-facing projector remains in oqto-runner for now because its return type is oqto_runner::protocol::ChatMessageProto. oqto duplicate was deleted/replaced by shim. Next proper cleanup is move ChatMessageProto/part conversion to neutral oqto-history or oqto-protocol, then projector can live in oqto-history without cycles.
 
 ### [oqto-3ct7.14] Create oqto-acp crate for generic ACP runtime bridge (P1, feature)
 Implement a generic ACP bridge crate after the architecture is defined. It should own ACP JSON-RPC stdio transport, initialize/session-new/session-prompt/session-cancel, session/update streaming, permission callbacks, adapter process launch, and clear startup errors. This crate is used by oqto-runner both for top-level ACP-compatible agents and Pi-created sub-agents. ACPX is reference material, not necessarily a dependency.
@@ -23,7 +23,7 @@ Slim oqto crate to composition root only. Scope: startup, config loading, depend
 Extract HTTP/WebSocket transport layer into oqto-api crate. Move route definitions and handlers from oqto while removing embedded business logic from handlers. Handlers should delegate to services from users/workspaces/sessions/history/auth/provisioning crates. Deliverables: oqto-api crate + route mounting from oqto binary. Exit criteria: oqto crate handles startup/wiring; handler logic lives outside.
 
 ### [oqto-3ct7.9] Extract history and oqto-log access into oqto-history crate (P1, feature)
-Extract history and oqto-log integration into oqto-history crate. Consolidate read/write/search/import interfaces and hstry interop helpers behind a stable API. Preserve authoritative store rules (oqto-log primary for runner mode). Deliverables: oqto-history crate + migrated integrations. Exit criteria: history authority logic centralized and transport layers consume service interfaces only.
+Removed duplicate oqto/src/oqto_log/projector.rs implementation by replacing it with a re-export of the extracted runner-owned projector. This reduced oqto from 54,840 to 54,396 Rust LOC. Attempted moving projector into oqto-history first, but that would require oqto-history -> oqto-runner for ChatMessageProto and create a dependency cycle because oqto-runner depends on oqto-history; defer until ChatMessageProto is moved to a neutral protocol/history type. Validation passed: cargo test -p oqto-runner, just lint.
 
 ### [oqto-3ct7.7] Extract authentication and invite flows into oqto-auth crate (P1, feature)
 Extract authentication domain into oqto-auth crate. Move JWT/session auth, password verification, invite/registration logic, and role checks into focused services. Deliverables: oqto-auth crate with clear API for handlers/services. Exit criteria: oqto crate no longer contains core auth business logic except wiring and configuration.
@@ -1364,15 +1364,15 @@ Deliverables
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
 - [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
-- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
+- [oqto-ctmg] Setup: make local backend the only supported option (disable container mode) (closed )
 - [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
 - [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
+- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [oqto-4ryr] Session rename reverts: update_chat_session returns external_id while list returns platform_id (closed )
 - [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [oqto-ctmg] Setup: make local backend the only supported option (disable container mode) (closed )
-- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
 - [oqto-xq1e] Add drag-and-drop support to FileTreeView (internal move + OS upload) (closed )
-- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
+- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
+- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
