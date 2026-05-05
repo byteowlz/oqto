@@ -5,6 +5,8 @@
 ### [oqto-3ct7.8] Extract session orchestration into oqto-sessions crate (P0, feature)
 Extract session orchestration into oqto-sessions crate (high risk). Move session lifecycle and orchestration services while preserving protocol behavior and persistence semantics. Execute as incremental slices if needed: models first, services next, adapters last. Deliverables: oqto-sessions crate + migrated usage in api and runner-facing paths. Exit criteria: session logic mostly removed from oqto and checks stay green.
 
+### [oqto-dnj4] Diagnose Pi RPC startup model mismatch with frontend-selected model (P1, bug)
+
 ### [oqto-3ct7.9.1] Extract runner-facing history boundary into oqto-history (P1, task)
 Completed next runner-facing history extraction slice: moved hstry search CLI API and session workspace lookup into oqto-history; runner modules no longer call crate::history or oqto::history. Also fixed oqto-history paths unit test to use a temp home rather than /home/tester. Validation passed: cargo test -p oqto-history, cargo test -p oqto-runner, just lint.
 
@@ -58,12 +60,6 @@ User-installed Pi extensions in `~/.pi/agent/git/.../*/index.ts` (e.g. `pi-autor
 
 ### [oqto-1h7c] Deploy: make local build default and require explicit flag for remote build (P1, bug)
 Fixed single-user runner routing bug causing /run/oqto/runner-sockets/wismut permission denied. Personal runner resolution now uses RunnerClient::for_user (default /run/user/{uid}/oqto-runner.sock) whenever linux user isolation is disabled. File/history/ws helper paths now only use runner_socket_pattern in isolated multi-user mode; single-user uses default user runtime socket. Deployed locally with just deploy --host archvm --skip-frontend; health ok and no fresh runner target resolution errors in logs.
-
-### [oqto-ctmg] Setup: make local backend the only supported option (disable container mode) (P1, bug)
-Container backend is currently unfinished/untested and should not be selectable in setup. Changes made:
-- default backend switched to local
-- backend selection no longer offers container
-- guardrail in main setup flow rewrites saved/env container mode to local with warning
 
 ### [oqto-djqe] Release: bump main to 0.3.30 (P1, chore)
 
@@ -1371,14 +1367,15 @@ Deliverables
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
-- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
-- [oqto-xq1e] Add drag-and-drop support to FileTreeView (internal move + OS upload) (closed )
-- [oqto-4ryr] Session rename reverts: update_chat_session returns external_id while list returns platform_id (closed )
-- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
-- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
-- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
-- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
 - [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
+- [oqto-xq1e] Add drag-and-drop support to FileTreeView (internal move + OS upload) (closed )
+- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
+- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
+- [oqto-4ryr] Session rename reverts: update_chat_session returns external_id while list returns platform_id (closed )
+- [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
+- [oqto-ctmg] Setup: make local backend the only supported option (disable container mode) (closed )
+- [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
+- [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )
