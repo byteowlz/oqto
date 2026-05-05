@@ -192,16 +192,16 @@ async fn resolve_session_target(
 pub(crate) fn get_runner_for_user(
     state: &AppState,
     user_id: &str,
-) -> Option<crate::runner::client::RunnerClient> {
+) -> Option<oqto_runner::client::RunnerClient> {
     // The socket path uses the linux_username (e.g., oqto_hansgerd-vyon),
     // not the platform user_id (e.g., hansgerd-vYoN).
     let effective_user = state.effective_linux_username(user_id);
 
     let client_result = if state.user_isolation_enabled() {
         let pattern = state.runner_socket_pattern.as_ref()?;
-        crate::runner::client::RunnerClient::for_user_with_pattern(&effective_user, pattern)
+        oqto_runner::client::RunnerClient::for_user_with_pattern(&effective_user, pattern)
     } else {
-        crate::runner::client::RunnerClient::for_user(&effective_user)
+        oqto_runner::client::RunnerClient::for_user(&effective_user)
     };
 
     match client_result {

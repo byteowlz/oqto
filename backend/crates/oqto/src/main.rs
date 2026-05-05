@@ -2038,7 +2038,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
     let single_user = ctx.config.local.single_user;
 
     if local_mode && single_user {
-        let runner = runner::client::RunnerClient::default();
+        let runner = oqto_runner::client::RunnerClient::default();
         match runner.ensure_ready_with_recovery().await {
             Ok(()) => info!(
                 "Single-user runner readiness verified (socket={})",
@@ -2168,7 +2168,7 @@ async fn handle_serve(ctx: &RuntimeContext, cmd: ServeCommand) -> Result<()> {
         let Some(local_rt) = local_runtime else {
             anyhow::bail!("local runtime should be set in local mode");
         };
-        let runner = runner::client::RunnerClient::default();
+        let runner = oqto_runner::client::RunnerClient::default();
         if let Some(eavs) = eavs_client.clone() {
             session::SessionService::with_runner_and_eavs(
                 session_repo,

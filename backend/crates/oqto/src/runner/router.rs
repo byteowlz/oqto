@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 
 use crate::api::AppState;
 
-use super::client::RunnerClient;
+use oqto_runner::client::RunnerClient;
 
 /// Canonical backend-resolved execution target.
 ///

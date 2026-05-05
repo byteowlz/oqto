@@ -37,9 +37,6 @@ Extract user domain into oqto-users crate. Move user repository/service/domain t
 ### [oqto-3ct7.4] Create oqto-provisioning crate and move user setup/sync workflows (P1, feature)
 Create oqto-provisioning crate to own user/runtime setup flows. Move code for runner setup, per-user configuration sync, and bootstrap orchestration currently scattered in oqto. Include migration plan for local user_mmry and user_sldr managers where boundaries permit. Deliverables: provisioning service interfaces + moved implementations. Exit criteria: oqto invokes provisioning crate, and local module footprint in oqto is reduced.
 
-### [oqto-3ct7.3] Extract backend runner socket client paths into oqto-runner-client crate (P1, feature)
-Deleted legacy runner daemon/runtime copies from oqto. oqto now depends on oqto-runner for runner protocol types; oqto/src/runner only contains client/router. Removed oqto/src/runner/{daemon,pi_manager.rs,pi_translator.rs,protocol.rs}. Validation passed: cargo test -p oqto-runner, cargo check -p oqto, just lint.
-
 ### [oqto-3ct7] Backend crate architecture refactor program (P1, epic)
 Goal: Refactor backend/crates into clear, enforceable architectural boundaries so new contributors can locate ownership quickly and edits compile faster with less cross-crate invalidation.
 
@@ -111,8 +108,6 @@ Final hardening pass for the refactor program. Remove remaining compatibility sh
 
 ### [oqto-r9e9] Extract API handlers by domain from oqto crate behind service interfaces (P2, task)
 
-### [oqto-w8x7] Extract runner client/protocol facade from oqto crate into dedicated crate (P2, task)
-
 ### [oqto-stez] Message rating and annotation system for DSPy/GEPA training data (P2, epic)
 ## Goal
 
@@ -147,6 +142,8 @@ Deliverables
 
 ## Closed
 
+- [oqto-3ct7.3] Extract backend runner socket client paths into oqto-runner-client crate (closed 2026-05-05)
+- [oqto-w8x7] Extract runner client/protocol facade from oqto crate into dedicated crate (closed 2026-05-05)
 - [oqto-emd5] Runner must apply selected frontend model before first Pi prompt (closed 2026-05-02)
 - [oqto-3ct7.3.3] Remove oqto-runner dependency on oqto and boundary allowlist (closed 2026-05-02)
 - [oqto-3ct7.3.2] Move runner daemon modules into oqto-runner library (closed 2026-05-02)
@@ -1367,15 +1364,15 @@ Deliverables
 - [workspace-11] Flatten project cards: remove shadows and set white 10% opacity (closed 2025-12-12)
 - [workspace-lfu] Frontend UI Architecture - Professional & Extensible App System (closed 2025-12-09)
 - [workspace-lfu.1] Design System - Professional Color Palette & Typography (closed 2025-12-09)
-- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
-- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
-- [oqto-xq1e] Add drag-and-drop support to FileTreeView (internal move + OS upload) (closed )
-- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
-- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
-- [oqto-4ryr] Session rename reverts: update_chat_session returns external_id while list returns platform_id (closed )
 - [oqto-e3zw] Critical: stdout_reader uses PiMessage::parse() instead of parse_all() -- silently drops concatenated JSON events (closed )
-- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [oqto-dg1e] Frontend discards deferred get_messages on agent.idle -- creates double-failure with broadcast drops (closed )
 - [octo-k8z1.3] Backend: Forward input events (mouse/keyboard) to agent-browser (closed )
-- [oqto-ctmg] Setup: make local backend the only supported option (disable container mode) (closed )
 - [oqto-y27x] Shared workspace sessions: get_messages returns 0 because oqto session ID doesn't match any hstry column (closed )
+- [octo-k8z1.4] Frontend: Add BrowserView component with canvas rendering (closed )
+- [oqto-4ryr] Session rename reverts: update_chat_session returns external_id while list returns platform_id (closed )
+- [oqto-22yn] Critical: tokio::broadcast channel overflow silently drops streaming events (closed )
+- [octo-k8z1.6] Frontend: Browser toolbar (URL bar, navigation buttons) (closed )
+- [oqto-ctmg] Setup: make local backend the only supported option (disable container mode) (closed )
+- [oqto-pgxx] Invalidate PI_MESSAGES_CACHE on agent.idle to prevent stale reads (closed )
+- [oqto-xq1e] Add drag-and-drop support to FileTreeView (internal move + OS upload) (closed )
 - [octo-k8z1.7] MCP: Add browser tools for agent control (open, snapshot, click, fill) (closed )

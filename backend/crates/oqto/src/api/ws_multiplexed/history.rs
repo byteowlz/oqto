@@ -83,9 +83,9 @@ pub(super) async fn handle_hstry_command(
                     error: "runner socket pattern is not configured".into(),
                 }));
             };
-            crate::runner::client::RunnerClient::for_user_with_pattern(&effective_user, pattern)
+            oqto_runner::client::RunnerClient::for_user_with_pattern(&effective_user, pattern)
         } else {
-            crate::runner::client::RunnerClient::for_user(&effective_user)
+            oqto_runner::client::RunnerClient::for_user(&effective_user)
         };
         let runner = match runner_result {
             Ok(client) => client,
