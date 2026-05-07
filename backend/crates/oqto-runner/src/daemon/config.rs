@@ -177,7 +177,7 @@ impl RunnerUserConfig {
 ///
 /// Setup (`scripts/setup/05-install-core.sh`) installs Pi at
 /// `/usr/local/lib/pi-coding-agent` with a self-link in its own
-/// `node_modules/@mariozechner/pi-coding-agent` so user extensions can resolve
+/// `node_modules/@earendil-works/pi-coding-agent` so user extensions can resolve
 /// the host package. As long as setup ran, the system wrapper at
 /// `/usr/local/bin/pi` is the correct binary regardless of any per-user
 /// `~/.bun/bin/pi` that may also exist.

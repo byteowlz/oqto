@@ -1,7 +1,7 @@
 //! Pi RPC protocol types.
 //!
 //! Based on the pi-mono RPC documentation.
-//! See: https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/rpc.md
+//! See: https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/rpc.md
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -12,7 +12,7 @@ use std::collections::HashMap;
 // ============================================================================
 
 /// Base command structure sent to pi.
-/// See: https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/rpc.md
+/// See: https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/rpc.md
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum PiCommand {

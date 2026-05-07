@@ -1,4 +1,4 @@
 {
-  "defaultModel": "qwen3.6-35b",
-  "defaultProvider": "zgx"
+  "defaultModel": "Kimi-K2.6-Foundry",
+  "defaultProvider": "Foundry_Kimi"
 }

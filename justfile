@@ -645,7 +645,7 @@ check-updates:
         echo ""
     done
 
-    echo "Note: pi is installed from npm as @mariozechner/pi-coding-agent, sx has no tags yet"
+    echo "Note: pi is installed from npm as @earendil-works/pi-coding-agent, sx has no tags yet"
 
 # =============================================================================
 # Version
@@ -815,7 +815,7 @@ update-pi:
     #!/usr/bin/env bash
     set -euo pipefail
     echo "Updating Pi coding agent..."
-    bun install -g @mariozechner/pi-coding-agent@latest
+    bun install -g @earendil-works/pi-coding-agent@latest
     source scripts/setup/05-install-core.sh
     ensure_bun_and_pi_global
     echo "Restarting oqto-runner..."

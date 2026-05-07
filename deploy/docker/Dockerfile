@@ -208,13 +208,15 @@ RUN curl -fsSL https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install
 
 # Install Pi (AI agent runtime) + agent-browser CLI
 # The self-link below makes the package resolvable as
-# `@mariozechner/pi-coding-agent` from within itself; user-installed Pi
+# `@earendil-works/pi-coding-agent` from within itself; user-installed Pi
 # extensions import that name and fail without it (trx oqto-ceb7).
-RUN bun install -g @mariozechner/pi-coding-agent agent-browser \
-    && PI_PKG="/root/.bun/install/global/node_modules/@mariozechner/pi-coding-agent" \
+RUN bun install -g @earendil-works/pi-coding-agent agent-browser \
+    && PI_PKG="/root/.bun/install/global/node_modules/@earendil-works/pi-coding-agent" \
     && mkdir -p /usr/local/lib/pi-coding-agent \
     && cp -a "$PI_PKG/." /usr/local/lib/pi-coding-agent/ \
     && cd /usr/local/lib/pi-coding-agent && bun install 2>/dev/null || true \
+    && mkdir -p /usr/local/lib/pi-coding-agent/node_modules/@earendil-works \
+    && ln -sfn /usr/local/lib/pi-coding-agent /usr/local/lib/pi-coding-agent/node_modules/@earendil-works/pi-coding-agent \
     && mkdir -p /usr/local/lib/pi-coding-agent/node_modules/@mariozechner \
     && ln -sfn /usr/local/lib/pi-coding-agent /usr/local/lib/pi-coding-agent/node_modules/@mariozechner/pi-coding-agent \
     && printf '#!/bin/sh\nPI_PKG="/usr/local/lib/pi-coding-agent"\nexport PI_PACKAGE_DIR="$PI_PKG"\nexport NODE_PATH="$PI_PKG/node_modules${NODE_PATH:+:$NODE_PATH}"\nexec /usr/local/bin/bun "$PI_PKG/dist/cli.js" "$@"\n' > /usr/local/bin/pi \

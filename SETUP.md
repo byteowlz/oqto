@@ -194,7 +194,7 @@ Pi CLI - the primary AI agent harness that runs within sessions. Required for al
 
 **Installation**:
 ```bash
-bun install -g @mariozechner/pi-coding-agent
+bun install -g @earendil-works/pi-coding-agent
 ```
 
 **Configuration**: Configured via the `[pi]` section in `~/.config/oqto/config.toml`. Pi is managed by oqto-runner and runs in RPC mode with JSON over stdin/stdout.
@@ -303,7 +303,7 @@ The main chat/LLM interface used by Oqto for AI conversations.
 
 **Installation**:
 ```bash
-bun install -g @mariozechner/pi-coding-agent
+bun install -g @earendil-works/pi-coding-agent
 ```
 
 **Configuration**:
@@ -330,7 +330,7 @@ pi_sessions_dir = "~/.local/share/pi/sessions"
 Runs all components as native processes on the host.
 
 **Prerequisites**:
-- pi binary (install: `bun install -g @mariozechner/pi-coding-agent`)
+- pi binary (install: `bun install -g @earendil-works/pi-coding-agent`)
 - fileserver binary (build from this repo)
 - ttyd binary (install via package manager)
 
@@ -862,7 +862,7 @@ Error: `pi: command not found` or Pi sessions fail to start
 
 Solution: Install Pi:
 ```bash
-bun install -g @mariozechner/pi-coding-agent
+bun install -g @earendil-works/pi-coding-agent
 ```
 
 Verify installation:
