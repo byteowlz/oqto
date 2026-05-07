@@ -19,7 +19,7 @@ sx = "2.4.0"
 scrpr = "1.1.0"
 tmpltr = "0.3.0"
 sldr = "0.3.0"
-skdlr = "0.2.1"
+skdlr = "0.2.3"
 ignr = "0.1.1"
 
 # Optional: Voice mode
@@ -28,7 +28,7 @@ kokorox = "0.2.3"
 
 [external]
 # Not byteowlz, but required for Oqto
-pi = "latest"  # From npm: `bun install -g @mariozechner/pi-coding-agent`
+pi = "latest"  # From npm: `bun install -g @earendil-works/pi-coding-agent`
 typst = "latest"  # Required by tmpltr: https://github.com/typst/typst
 slidev = "latest"  # Required by sldr: https://sli.dev
 uv = "latest"  # Python package manager: https://github.com/astral-sh/uv

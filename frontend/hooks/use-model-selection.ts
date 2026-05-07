@@ -516,15 +516,15 @@ export function useModelSelection(
 		(modelRef: string | null) => {
 			try {
 				if (modelRef) {
+					// Always keep workspace default in sync so brand-new sessions
+					// inherit the latest user selection.
+					localStorage.setItem(workspaceModelStorageKey, modelRef);
 					if (modelStorageKey) {
 						// Session-scoped selection (strict isolation between chats)
 						localStorage.setItem(modelStorageKey, modelRef);
 						if (aliasModelStorageKey) {
 							localStorage.setItem(aliasModelStorageKey, modelRef);
 						}
-					} else {
-						// Workspace default used when no concrete session is selected yet
-						localStorage.setItem(workspaceModelStorageKey, modelRef);
 					}
 				} else if (modelStorageKey) {
 					localStorage.removeItem(modelStorageKey);

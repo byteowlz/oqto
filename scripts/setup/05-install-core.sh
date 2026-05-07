@@ -68,13 +68,13 @@ ensure_bun_and_pi_global() {
   # Install pi (AI coding agent) if not already present
   if ! command_exists pi || ! pi --version >/dev/null 2>&1; then
     log_info "Installing pi coding agent..."
-    bun install -g @mariozechner/pi-coding-agent
+    bun install -g @earendil-works/pi-coding-agent
   fi
 
   # Install pi system-wide so all platform users can run it.
   # bun global installs go to ~/.bun/install/global/ which is per-user,
   # so we copy the package to a shared location and create a wrapper.
-  local pi_src_dir="$HOME/.bun/install/global/node_modules/@mariozechner/pi-coding-agent"
+  local pi_src_dir="$HOME/.bun/install/global/node_modules/@earendil-works/pi-coding-agent"
   local pi_system_dir="/usr/local/lib/pi-coding-agent"
   if [[ -d "$pi_src_dir" ]]; then
     # Copy the full package (with node_modules) to a system-wide location
@@ -87,12 +87,18 @@ ensure_bun_and_pi_global() {
 
     # Self-link the package into its own node_modules so that user-installed
     # Pi extensions (e.g. ~/.pi/agent/git/.../*/index.ts) which import
-    # `@mariozechner/pi-coding-agent` can resolve the host package via
+    # `@earendil-works/pi-coding-agent` can resolve the host package via
     # NODE_PATH. Without this, bun's module resolution looks for
-    # node_modules/@mariozechner/pi-coding-agent and finds nothing -- the
+    # node_modules/@earendil-works/pi-coding-agent and finds nothing -- the
     # package directory IS the install, not a dependency of itself --
     # so extension load fails with "Cannot find module" and Pi exits 0
     # immediately, taking the runner's session down with it (trx oqto-ceb7).
+    sudo mkdir -p "$pi_system_dir/node_modules/@earendil-works"
+    sudo ln -sfn "$pi_system_dir" \
+      "$pi_system_dir/node_modules/@earendil-works/pi-coding-agent"
+
+    # Transitional self-link for older extensions that still import
+    # `@mariozechner/pi-coding-agent`.
     sudo mkdir -p "$pi_system_dir/node_modules/@mariozechner"
     sudo ln -sfn "$pi_system_dir" \
       "$pi_system_dir/node_modules/@mariozechner/pi-coding-agent"
