@@ -45,6 +45,7 @@ import {
 	type VoiceMode,
 } from "@/components/voice/VoiceMenuButton";
 import type { Features, PiModelInfo } from "@/features/chat/api";
+import { TimelineTreeView } from "@/features/chat/components/TimelineTreeView";
 import {
 	buildLegacyDraftStorageKey,
 	buildSessionDraftStorageKey,
@@ -932,6 +933,9 @@ export function ChatView({
 
 	const displayError = commandError ?? error;
 	const showSkeleton = messages.length === 0 && !displayError && historyLoading;
+	const showTimelineTreePreview =
+		typeof window !== "undefined" &&
+		window.localStorage.getItem("oqto:timeline-tree-preview") === "1";
 
 	const ChatSkeleton = (
 		<div className="flex-1 flex flex-col gap-4 min-h-0 animate-pulse">
@@ -2382,6 +2386,23 @@ export function ChatView({
 
 				{/* Messages area */}
 				<div className="relative flex-1 min-h-0">
+					{showTimelineTreePreview && messages.length > 0 && (
+						<div className="absolute inset-0 z-10 bg-background">
+							<TimelineTreeView
+								messages={messages}
+								currentHeadId={messages.at(-1)?.id ?? null}
+								onSelectMessage={(messageId) => {
+									const target = messagesContainerRef.current?.querySelector(
+										`[data-message-id="${CSS.escape(messageId)}"]`,
+									);
+									target?.scrollIntoView({
+										behavior: "smooth",
+										block: "center",
+									});
+								}}
+							/>
+						</div>
+					)}
 					<div
 						ref={messagesContainerRef}
 						onScroll={handleScroll}
