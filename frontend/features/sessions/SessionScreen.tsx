@@ -1,7 +1,6 @@
 "use client";
 
 import { ContextWindowGauge } from "@/components/data-display";
-import { Button } from "@/components/ui/button";
 import { ChatSearchBar, ChatView, PiSettingsView } from "@/features/chat";
 import { type Features, getFeatures } from "@/features/chat/api";
 import {
@@ -1241,20 +1240,6 @@ export const SessionScreen = memo(function SessionScreen() {
 								label={t("nav.settings")}
 							/>
 						</div>
-						{activeView === "chat" && (
-							<div className="px-2 pb-2 flex justify-end">
-								<Button
-									type="button"
-									variant="outline"
-									size="sm"
-									onClick={triggerSessionMarkdownDownload}
-									className="h-7 px-2"
-									title="Download this session as markdown"
-								>
-									<Download className="h-3.5 w-3.5" />
-								</Button>
-							</div>
-						)}
 						<ContextWindowGauge
 							inputTokens={tokenUsage.inputTokens}
 							outputTokens={tokenUsage.outputTokens}
@@ -1369,14 +1354,27 @@ export const SessionScreen = memo(function SessionScreen() {
 							</Suspense>
 						)}
 						{activeView === "settings" && (
-							<Suspense fallback={viewLoadingFallback}>
-								<PiSettingsView
-									locale={locale}
-									sessionId={selectedChatSessionId}
-									workspacePath={normalizedWorkspacePath}
-									sharedWorkspaceId={selectedSharedWorkspaceId}
-								/>
-							</Suspense>
+							<div className="h-full flex flex-col">
+								<div className="flex justify-end pb-2">
+									<button
+										type="button"
+										onClick={triggerSessionMarkdownDownload}
+										className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted/50 rounded transition-colors"
+										title="Download this session as markdown"
+										disabled={!selectedChatSessionId}
+									>
+										<Download className="w-4 h-4" />
+									</button>
+								</div>
+								<Suspense fallback={viewLoadingFallback}>
+									<PiSettingsView
+										locale={locale}
+										sessionId={selectedChatSessionId}
+										workspacePath={normalizedWorkspacePath}
+										sharedWorkspaceId={selectedSharedWorkspaceId}
+									/>
+								</Suspense>
+							</div>
 						)}
 					</div>
 				</div>
