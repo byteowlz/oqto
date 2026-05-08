@@ -1,6 +1,7 @@
 "use client";
 
 import { ContextWindowGauge } from "@/components/data-display";
+import { Button } from "@/components/ui/button";
 import { ChatSearchBar, ChatView, PiSettingsView } from "@/features/chat";
 import { type Features, getFeatures } from "@/features/chat/api";
 import {
@@ -28,6 +29,7 @@ import {
 	ChevronDown,
 	ChevronUp,
 	CircleDot,
+	Download,
 	FileText,
 	FolderKanban,
 	Globe,
@@ -1084,6 +1086,10 @@ export const SessionScreen = memo(function SessionScreen() {
 		</div>
 	);
 
+	const triggerSessionMarkdownDownload = useCallback(() => {
+		window.dispatchEvent(new CustomEvent("oqto:download-session-markdown"));
+	}, []);
+
 	const chatHeader = (
 		<div className="pb-3 mb-3 border-b border-border pr-20">
 			<div className="min-w-0">
@@ -1235,6 +1241,20 @@ export const SessionScreen = memo(function SessionScreen() {
 								label={t("nav.settings")}
 							/>
 						</div>
+						{activeView === "chat" && (
+							<div className="px-2 pb-2 flex justify-end">
+								<Button
+									type="button"
+									variant="outline"
+									size="sm"
+									onClick={triggerSessionMarkdownDownload}
+									className="h-7 px-2"
+									title="Download this session as markdown"
+								>
+									<Download className="h-3.5 w-3.5" />
+								</Button>
+							</div>
+						)}
 						<ContextWindowGauge
 							inputTokens={tokenUsage.inputTokens}
 							outputTokens={tokenUsage.outputTokens}
@@ -1442,6 +1462,15 @@ export const SessionScreen = memo(function SessionScreen() {
 										title={t("sessions.newSession")}
 									>
 										<Plus className="w-4 h-4" />
+									</button>
+									<button
+										type="button"
+										onClick={triggerSessionMarkdownDownload}
+										className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted/50 rounded transition-colors"
+										title="Download this session as markdown"
+										disabled={isOverviewActive || !selectedChatSessionId}
+									>
+										<Download className="w-4 h-4" />
 									</button>
 									<button
 										type="button"

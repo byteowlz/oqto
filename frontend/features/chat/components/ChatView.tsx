@@ -185,6 +185,25 @@ function dedentMarkdown(text: string): string {
 		.join("\n");
 }
 
+function stringifyForMarkdown(value: unknown): string {
+	if (typeof value === "string") return stripAnsiSequences(value);
+	if (value === null || value === undefined) return "";
+	try {
+		return stripAnsiSequences(JSON.stringify(value, null, 2));
+	} catch {
+		return stripAnsiSequences(String(value));
+	}
+}
+
+function safeFileStem(value: string): string {
+	const stem = value
+		.toLowerCase()
+		.trim()
+		.replace(/[^a-z0-9._-]+/g, "-")
+		.replace(/^-+|-+$/g, "");
+	return stem || "session";
+}
+
 /** Todo item structure (matching todowrite tool) */
 export interface TodoItem {
 	id: string;
@@ -2195,9 +2214,98 @@ export function ChatView({
 		? t("chat.working_label")
 		: t("chat.idle_label");
 
+	const handleDownloadSessionMarkdown = useCallback(() => {
+		if (messages.length === 0) {
+			toast.info("No messages to download yet.");
+			return;
+		}
+
+		const markdown = [
+			`# ${sessionTitle}`,
+			"",
+			`- Exported: ${new Date().toISOString()}`,
+			workspacePath ? `- Workspace: ${workspacePath}` : null,
+			selectedSessionId ? `- Session ID: ${selectedSessionId}` : null,
+			"",
+			...messages.flatMap((message) => {
+				const heading = `## ${message.role.toUpperCase()} · ${new Date(message.timestamp).toISOString()}`;
+				const partLines = message.parts.flatMap((part) => {
+					switch (part.type) {
+						case "text":
+							return [stripAnsiSequences(part.text ?? "")];
+						case "thinking":
+							return ["### Thinking", "", stripAnsiSequences(part.text ?? "")];
+						case "tool_call":
+							return [
+								`### Tool call: ${part.name}`,
+								"",
+								"```json",
+								stringifyForMarkdown(part.input),
+								"```",
+							];
+						case "tool_result":
+							return [
+								`### Tool result${part.name ? `: ${part.name}` : ""}${part.isError ? " (error)" : ""}`,
+								"",
+								"```",
+								stringifyForMarkdown(part.output),
+								"```",
+							];
+						case "file_ref":
+							return [`- File: ${part.label ?? part.uri}`];
+						case "image":
+							return [`- Image: ${part.alt ?? "(no alt text)"}`];
+						case "compaction":
+							return [
+								"### Compaction",
+								"",
+								stripAnsiSequences(part.text ?? ""),
+							];
+						case "error":
+							return ["### Error", "", stripAnsiSequences(part.text ?? "")];
+						default:
+							return [
+								`- [${part.type}] ${stringifyForMarkdown((part as Record<string, unknown>).payload ?? part)}`,
+							];
+					}
+				});
+				return [heading, "", ...partLines, ""];
+			}),
+		]
+			.filter((line): line is string => line !== null)
+			.join("\n");
+
+		const fileName = `${safeFileStem(sessionTitle)}-${new Date().toISOString().replace(/[:.]/g, "-")}.md`;
+		const blob = new Blob([markdown], { type: "text/markdown;charset=utf-8" });
+		const url = URL.createObjectURL(blob);
+		const link = document.createElement("a");
+		link.href = url;
+		link.download = fileName;
+		document.body.append(link);
+		link.click();
+		link.remove();
+		URL.revokeObjectURL(url);
+	}, [messages, selectedSessionId, sessionTitle, workspacePath]);
+
+	// useeffect-guardrail: allow - listens for SessionScreen header action to trigger export inside ChatView
+	useEffect(() => {
+		const onDownloadSessionMarkdown = () => {
+			handleDownloadSessionMarkdown();
+		};
+		window.addEventListener(
+			"oqto:download-session-markdown",
+			onDownloadSessionMarkdown,
+		);
+		return () =>
+			window.removeEventListener(
+				"oqto:download-session-markdown",
+				onDownloadSessionMarkdown,
+			);
+	}, [handleDownloadSessionMarkdown]);
+
 	const SessionHeader = (
 		<div className="pb-3 mb-3 border-b border-border pr-10">
-			<div className="flex items-center justify-between">
+			<div className="flex items-center justify-between gap-3">
 				<div className="flex items-center gap-3 min-w-0 flex-1">
 					<div className="min-w-0 flex-1">
 						<div className="flex items-center gap-2">
@@ -2237,6 +2345,16 @@ export function ChatView({
 						</div>
 					</div>
 				</div>
+				<Button
+					type="button"
+					variant="outline"
+					size="sm"
+					onClick={handleDownloadSessionMarkdown}
+					className="shrink-0"
+					title="Download this session as markdown"
+				>
+					<Download className="h-4 w-4" />
+				</Button>
 			</div>
 			<div className="mt-2">
 				<ContextWindowGauge
