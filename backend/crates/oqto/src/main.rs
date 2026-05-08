@@ -92,6 +92,11 @@ async fn async_invite_codes(ctx: RuntimeContext, cmd: InviteCodesCommand) -> Res
     handle_invite_codes(&ctx, cmd).await
 }
 
+#[tokio::main]
+async fn async_search(cmd: SearchCommand) -> Result<()> {
+    handle_search(cmd).await
+}
+
 fn try_main() -> Result<()> {
     let cli = Cli::parse();
 
@@ -105,6 +110,7 @@ fn try_main() -> Result<()> {
         Command::Config { command } => handle_config(&ctx, command),
         Command::InviteCodes { command } => async_invite_codes(ctx, command),
         Command::Runner { command } => handle_runner(command),
+        Command::Search { command } => async_search(command),
         Command::Completions { shell } => handle_completions(shell),
     }
 }
@@ -200,6 +206,11 @@ enum Command {
         #[command(subcommand)]
         command: RunnerCommand,
     },
+    /// Search Oqto data stores
+    Search {
+        #[command(subcommand)]
+        command: SearchCommand,
+    },
     /// Generate shell completions
     Completions {
         #[arg(value_enum)]
@@ -257,6 +268,27 @@ enum InviteCodesCommand {
     List(InviteCodesListCommand),
     /// Revoke an invite code
     Revoke(InviteCodesRevokeCommand),
+}
+
+#[derive(Debug, Subcommand)]
+enum SearchCommand {
+    /// Search canonical oqto-log timeline messages
+    Timeline(SearchTimelineCommand),
+}
+
+#[derive(Debug, Clone, Args)]
+struct SearchTimelineCommand {
+    /// Query string to search for
+    query: String,
+    /// Search scope: workdir | workspace | all
+    #[arg(long, default_value = "workdir")]
+    scope: String,
+    /// Workspace id/path to search. Defaults to current directory for workdir scope.
+    #[arg(long = "workspace-id")]
+    workspace_id: Option<String>,
+    /// Maximum number of results
+    #[arg(long, default_value_t = 20)]
+    limit: usize,
 }
 
 #[derive(Debug, Subcommand)]
@@ -1342,6 +1374,47 @@ fn handle_config(ctx: &RuntimeContext, command: ConfigCommand) -> Result<()> {
 fn handle_completions(shell: Shell) -> Result<()> {
     let mut cmd = Cli::command();
     clap_complete::generate(shell, &mut cmd, APP_NAME, &mut io::stdout());
+    Ok(())
+}
+
+async fn handle_search(command: SearchCommand) -> Result<()> {
+    match command {
+        SearchCommand::Timeline(cmd) => {
+            let user_home =
+                dirs::home_dir().context("could not resolve HOME for oqto-log search")?;
+            let cwd = std::env::current_dir().context("resolve current directory")?;
+            let scope = match cmd.scope.as_str() {
+                "workdir" => oqto_history::oqto_log::search::TimelineSearchScope::Workdir,
+                "workspace" => oqto_history::oqto_log::search::TimelineSearchScope::Workspace,
+                "all" => oqto_history::oqto_log::search::TimelineSearchScope::All,
+                other => anyhow::bail!(
+                    "unsupported timeline search scope '{other}'; expected workdir|workspace|all"
+                ),
+            };
+            let workspace_id_owned = match (scope, cmd.workspace_id) {
+                (oqto_history::oqto_log::search::TimelineSearchScope::Workdir, Some(id))
+                | (oqto_history::oqto_log::search::TimelineSearchScope::Workspace, Some(id)) => {
+                    Some(id)
+                }
+                (oqto_history::oqto_log::search::TimelineSearchScope::Workspace, None) => {
+                    Some(cwd.to_string_lossy().to_string())
+                }
+                _ => None,
+            };
+            let response = oqto_history::oqto_log::search::search_timeline(
+                &oqto_history::oqto_log::search::TimelineSearchRequest {
+                    user_home: &user_home,
+                    query: &cmd.query,
+                    scope,
+                    workspace_id: workspace_id_owned.as_deref(),
+                    cwd: Some(&cwd),
+                    limit: cmd.limit,
+                },
+            )
+            .await?;
+            println!("{}", serde_json::to_string_pretty(&response)?);
+        }
+    }
     Ok(())
 }
 
