@@ -2919,6 +2919,7 @@ dependencies = [
  "hyper-util",
  "once_cell",
  "oqto-pi",
+ "oqto-protocol",
  "serde",
  "serde_json",
  "sha2",
