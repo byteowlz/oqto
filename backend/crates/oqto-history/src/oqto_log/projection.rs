@@ -117,8 +117,8 @@ pub fn validate_timeline(document: &TimelineDocument) -> Result<()> {
                 );
             }
         }
-        validate_tool_links(turn)?;
     }
+    validate_tool_links(document)?;
     Ok(())
 }
 
@@ -172,25 +172,29 @@ pub fn project_active_branch_to_hstry(
     Ok(records)
 }
 
-fn validate_tool_links(turn: &TimelineTurn) -> Result<()> {
+fn validate_tool_links(document: &TimelineDocument) -> Result<()> {
     let mut calls = HashSet::new();
-    for message in &turn.messages {
-        for part in &message.parts {
-            if let TimelinePart::ToolCall { tool_call_id, .. } = part {
-                calls.insert(tool_call_id.as_str());
+    for turn in &document.turns {
+        for message in &turn.messages {
+            for part in &message.parts {
+                if let TimelinePart::ToolCall { tool_call_id, .. } = part {
+                    calls.insert(tool_call_id.as_str());
+                }
             }
         }
     }
-    for message in &turn.messages {
-        for part in &message.parts {
-            if let TimelinePart::ToolResult { tool_call_id, .. } = part
-                && !calls.contains(tool_call_id.as_str())
-            {
-                bail!(
-                    "tool_result {} in turn {} has no matching tool_call",
-                    tool_call_id,
-                    turn.turn_id
-                );
+    for turn in &document.turns {
+        for message in &turn.messages {
+            for part in &message.parts {
+                if let TimelinePart::ToolResult { tool_call_id, .. } = part
+                    && !calls.contains(tool_call_id.as_str())
+                {
+                    bail!(
+                        "tool_result {} in turn {} has no matching tool_call",
+                        tool_call_id,
+                        turn.turn_id
+                    );
+                }
             }
         }
     }

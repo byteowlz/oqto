@@ -1,4 +1,5 @@
 pub mod ids;
+pub mod native_projector;
 pub mod ops;
 pub mod paths;
 pub mod projection;
