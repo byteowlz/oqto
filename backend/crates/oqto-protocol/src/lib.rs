@@ -29,6 +29,7 @@ pub mod commands;
 pub mod delegation;
 pub mod events;
 pub mod messages;
+pub mod projection;
 pub mod runner;
 pub mod timeline;
 
