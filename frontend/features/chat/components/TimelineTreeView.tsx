@@ -154,8 +154,13 @@ function buildLinearTimelineModel(
 ) {
 	const nodes: Record<string, TimelineTreeNode> = {};
 	const orderedIds: string[] = [];
-	let parentId: string | null = null;
+	const messageIds = new Set(messages.map((message) => message.id));
+	let previousId: string | null = null;
 	for (const message of messages) {
+		const parentId =
+			message.parentId && messageIds.has(message.parentId)
+				? message.parentId
+				: previousId;
 		nodes[message.id] = {
 			id: message.id,
 			role: message.role,
@@ -166,11 +171,13 @@ function buildLinearTimelineModel(
 			children: [],
 			toolLabels: toolLabels(message.parts),
 		};
-		if (parentId && nodes[parentId]) {
-			nodes[parentId].children.push(message.id);
-		}
 		orderedIds.push(message.id);
-		parentId = message.id;
+		previousId = message.id;
+	}
+	for (const node of Object.values(nodes)) {
+		if (node.parentId && nodes[node.parentId]) {
+			nodes[node.parentId].children.push(node.id);
+		}
 	}
 	const fallbackHead = orderedIds.at(-1) ?? null;
 	const headId =

@@ -49,6 +49,10 @@ export type DisplayMessage = {
 	role: "user" | "assistant" | "system";
 	parts: DisplayPart[];
 	timestamp: number;
+	/** Parent message/turn ID for tree rendering when provided by oqto-log. */
+	parentId?: string | null;
+	/** Branch ID for tree rendering when provided by oqto-log. */
+	branchId?: string | null;
 	/** True while the assistant is still streaming tokens for this message. */
 	isStreaming?: boolean;
 	/** Token usage / cost metadata. */
@@ -190,6 +194,10 @@ export type RawMessage = {
 	tokens_output?: number | null;
 	tokens_reasoning?: number | null;
 	cost?: number | null;
+	parent_id?: string | null;
+	parentId?: string | null;
+	branch_id?: string | null;
+	branchId?: string | null;
 };
 
 /** Batched update state for token streaming - reduces per-token React updates */
