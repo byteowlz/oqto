@@ -5,4 +5,5 @@ pub mod ops;
 pub mod paths;
 pub mod projection;
 pub mod projector;
+pub mod search;
 pub mod store;
