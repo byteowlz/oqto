@@ -12,7 +12,9 @@ pub mod service;
 // Re-export commonly used types and functions
 #[allow(unused_imports)]
 pub use canon::{legacy_message_to_canon, legacy_messages_to_canon};
-pub use models::{ChatMessage, ChatMessagePart, ChatSession, HstrySearchHit};
+pub use models::{ChatMessage, ChatMessagePart, ChatSession};
+#[allow(unused_imports)]
+pub use oqto_history::search::HstrySearchHit;
 
 #[allow(unused_imports)]
 pub use repository::{
@@ -27,6 +29,7 @@ pub use service::{
     get_session_messages_via_grpc_cached, search_hstry,
 };
 
+#[allow(unused_imports)]
 pub use hstry::{
     HstryClient, HstryEndpoint, HstryServiceConfig, HstryServiceManager,
     agent_message_to_proto_with_client_id,

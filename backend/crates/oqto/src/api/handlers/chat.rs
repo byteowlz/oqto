@@ -192,15 +192,19 @@ async fn resolve_session_target(
 pub(crate) fn get_runner_for_user(
     state: &AppState,
     user_id: &str,
-) -> Option<crate::runner::client::RunnerClient> {
-    // Need runner socket pattern for multi-user mode
-    let pattern = state.runner_socket_pattern.as_ref()?;
-
+) -> Option<oqto_runner::client::RunnerClient> {
     // The socket path uses the linux_username (e.g., oqto_hansgerd-vyon),
     // not the platform user_id (e.g., hansgerd-vYoN).
     let effective_user = state.effective_linux_username(user_id);
 
-    match crate::runner::client::RunnerClient::for_user_with_pattern(&effective_user, pattern) {
+    let client_result = if state.user_isolation_enabled() {
+        let pattern = state.runner_socket_pattern.as_ref()?;
+        oqto_runner::client::RunnerClient::for_user_with_pattern(&effective_user, pattern)
+    } else {
+        oqto_runner::client::RunnerClient::for_user(&effective_user)
+    };
+
+    match client_result {
         Ok(client) => Some(client),
         Err(e) => {
             tracing::warn!(
@@ -767,7 +771,7 @@ pub struct ChatMessagesQuery {
 
 /// Convert a runner chat messages response to canonical format.
 fn convert_runner_response(
-    response: crate::runner::protocol::WorkspaceChatSessionMessagesResponse,
+    response: oqto_runner::protocol::WorkspaceChatSessionMessagesResponse,
 ) -> Vec<oqto_protocol::messages::Message> {
     let messages: Vec<ChatMessage> = response
         .messages
@@ -845,7 +849,7 @@ pub async fn get_chat_messages(
             &session_id,
             query.render,
             None,
-            crate::runner::protocol::WorkspaceChatMessagesSource::Authoritative,
+            oqto_runner::protocol::WorkspaceChatMessagesSource::Authoritative,
         )
         .await
         .map_err(|e| ApiError::internal(format!("runner get messages failed: {}", e)))?;

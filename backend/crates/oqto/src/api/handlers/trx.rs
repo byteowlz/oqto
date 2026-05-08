@@ -1,4 +1,9 @@
 //! TRX (Issue Tracking) handlers.
+//!
+//! list/create/update/close go through the per-user oqto-runner, which
+//! holds a `trx_core::UnifiedStore` open in process. `sync` still shells
+//! out to the `trx` CLI because it is a git operation, runs out-of-band,
+//! and is not on the chat-loading hot path.
 
 use std::path::PathBuf;
 
@@ -14,39 +19,15 @@ use crate::auth::CurrentUser;
 
 use crate::api::error::{ApiError, ApiResult};
 use crate::api::state::AppState;
-use crate::runner::router::{ExecutionTarget, resolve_target_for_workspace_path};
+use crate::runner::router::{
+    ExecutionTarget, resolve_runner_for_workspace_path, resolve_target_for_workspace_path,
+};
+use oqto_runner::client::RunnerClient;
+use oqto_runner::protocol::TrxIssueData;
 
-/// Dependency as returned by trx CLI.
-#[derive(Debug, Deserialize)]
-struct TrxDependency {
-    #[allow(dead_code)]
-    issue_id: String,
-    depends_on_id: String,
-    #[serde(rename = "type")]
-    dep_type: String,
-    #[allow(dead_code)]
-    created_at: String,
-}
-
-/// Raw TRX issue as returned by `trx list --json`.
-#[derive(Debug, Deserialize)]
-struct TrxIssueRaw {
-    id: String,
-    title: String,
-    #[serde(default)]
-    description: Option<String>,
-    status: String,
-    priority: i32,
-    issue_type: String,
-    created_at: String,
-    updated_at: String,
-    #[serde(default)]
-    closed_at: Option<String>,
-    #[serde(default)]
-    dependencies: Vec<TrxDependency>,
-}
-
-/// TRX issue as returned by API (transformed from raw).
+/// TRX issue as returned by the API. Mirrors `TrxIssueData` from the
+/// runner protocol; we keep a separate public type so the API surface
+/// stays under our control independent of the runner wire format.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TrxIssue {
     pub id: String,
@@ -68,41 +49,21 @@ pub struct TrxIssue {
     pub blocked_by: Vec<String>,
 }
 
-impl From<TrxIssueRaw> for TrxIssue {
-    fn from(raw: TrxIssueRaw) -> Self {
-        // Extract parent_id from dependencies with type "parent_child"
-        // Also check "blocks" type where depends_on_id is a prefix of issue_id (hierarchical IDs like oqto-k8z1.1 -> oqto-k8z1)
-        let parent_id = raw
-            .dependencies
-            .iter()
-            .find(|d| {
-                d.dep_type == "parent_child"
-                    || (d.dep_type == "blocks"
-                        && raw.id.starts_with(&format!("{}.", d.depends_on_id)))
-            })
-            .map(|d| d.depends_on_id.clone());
-
-        // Extract blocked_by from dependencies with type "blocks"
-        let blocked_by: Vec<String> = raw
-            .dependencies
-            .iter()
-            .filter(|d| d.dep_type == "blocks")
-            .map(|d| d.depends_on_id.clone())
-            .collect();
-
+impl From<TrxIssueData> for TrxIssue {
+    fn from(d: TrxIssueData) -> Self {
         TrxIssue {
-            id: raw.id,
-            title: raw.title,
-            description: raw.description,
-            status: raw.status,
-            priority: raw.priority,
-            issue_type: raw.issue_type,
-            created_at: raw.created_at,
-            updated_at: raw.updated_at,
-            closed_at: raw.closed_at,
-            parent_id,
+            id: d.id,
+            title: d.title,
+            description: d.description,
+            status: d.status,
+            priority: d.priority,
+            issue_type: d.issue_type,
+            created_at: d.created_at,
+            updated_at: d.updated_at,
+            closed_at: d.closed_at,
+            parent_id: d.parent_id,
             labels: Vec::new(),
-            blocked_by,
+            blocked_by: d.blocked_by,
         }
     }
 }
@@ -195,130 +156,18 @@ pub async fn validate_workspace_path(
     Ok(canonical)
 }
 
-/// Execute trx command in a validated workspace directory.
-async fn exec_trx_command(
+/// Validate the workspace path and resolve the runner that owns it.
+async fn validated_runner(
     state: &AppState,
     user_id: &str,
     workspace_path: &str,
-    args: &[&str],
-) -> Result<String, ApiError> {
-    // Validate workspace path before executing command
-    let validated_path = validate_workspace_path(state, user_id, workspace_path).await?;
-
-    let mut full_args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-    full_args.push("--json".to_string());
-
-    if let Some(linux_users) = state.linux_users.as_ref().filter(|cfg| cfg.enabled) {
-        // Multi-user mode: delegate to usermgr (oqto runs with NoNewPrivileges)
-        let linux_username = linux_users.linux_username(user_id);
-        let home_dir = linux_users
-            .get_home_dir(user_id)
-            .map_err(|e| ApiError::internal(format!("Failed to resolve linux user home: {e}")))?
-            .unwrap_or_else(|| PathBuf::from(format!("/home/{}", linux_username)));
-        let xdg_config = home_dir.join(".config");
-        let xdg_data = home_dir.join(".local/share");
-
-        let cwd = validated_path.to_string_lossy().to_string();
-
-        let env = serde_json::json!({
-            "XDG_CONFIG_HOME": xdg_config.to_string_lossy(),
-            "XDG_DATA_HOME": xdg_data.to_string_lossy(),
-        });
-
-        let run_trx = |args: Vec<String>| {
-            let linux_username = linux_username.clone();
-            let env = env.clone();
-            let cwd = cwd.clone();
-            tokio::task::spawn_blocking(move || {
-                crate::local::linux_users::usermgr_request_with_data(
-                    "run-as-user",
-                    serde_json::json!({
-                        "username": linux_username,
-                        "binary": "trx",
-                        "args": args,
-                        "env": env,
-                        "cwd": cwd,
-                    }),
-                )
-            })
-        };
-
-        let mut result = run_trx(full_args.clone())
-            .await
-            .map_err(|e| ApiError::internal(format!("Task join error: {e}")))?;
-
-        if let Err(err) = &result {
-            let err_msg = err.to_string();
-            if err_msg.contains("Store not initialized") {
-                let _ = run_trx(vec!["init".to_string(), "--json".to_string()])
-                    .await
-                    .map_err(|e| ApiError::internal(format!("Task join error: {e}")))?
-                    .map_err(|e| ApiError::internal(format!("trx init failed: {e}")))?;
-
-                result = run_trx(full_args)
-                    .await
-                    .map_err(|e| ApiError::internal(format!("Task join error: {e}")))?;
-            }
-        }
-
-        let result = result.map_err(|e| ApiError::internal(format!("trx command failed: {e}")))?;
-
-        let stdout = result
-            .as_ref()
-            .and_then(|d| d.get("stdout"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-
-        Ok(stdout)
-    } else {
-        // Single-user mode: run directly
-        let mut output = Command::new("trx")
-            .args(full_args.iter().map(String::as_str))
-            .current_dir(&validated_path)
-            .output()
-            .await
-            .map_err(|e| ApiError::internal(format!("Failed to execute trx: {}", e)))?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-            if stderr.contains("Store not initialized") {
-                let init_output = Command::new("trx")
-                    .args(["init", "--json"])
-                    .current_dir(&validated_path)
-                    .output()
-                    .await
-                    .map_err(|e| {
-                        ApiError::internal(format!("Failed to execute trx init: {}", e))
-                    })?;
-
-                if !init_output.status.success() {
-                    let init_stderr = String::from_utf8_lossy(&init_output.stderr);
-                    return Err(ApiError::internal(format!(
-                        "trx init failed: {}",
-                        init_stderr
-                    )));
-                }
-
-                output = Command::new("trx")
-                    .args(full_args.iter().map(String::as_str))
-                    .current_dir(&validated_path)
-                    .output()
-                    .await
-                    .map_err(|e| ApiError::internal(format!("Failed to execute trx: {}", e)))?;
-            }
-        }
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(ApiError::internal(format!(
-                "trx command failed: {}",
-                stderr
-            )));
-        }
-
-        Ok(String::from_utf8_lossy(&output.stdout).to_string())
-    }
+) -> Result<(PathBuf, RunnerClient), ApiError> {
+    let canonical = validate_workspace_path(state, user_id, workspace_path).await?;
+    let runner = resolve_runner_for_workspace_path(state, user_id, workspace_path)
+        .await
+        .map_err(|e| ApiError::internal(format!("Failed to resolve runner: {e}")))?
+        .ok_or_else(|| ApiError::internal("No runner available for workspace"))?;
+    Ok((canonical, runner))
 }
 
 /// List TRX issues for a workspace.
@@ -328,38 +177,14 @@ pub async fn list_trx_issues(
     user: CurrentUser,
     Query(query): Query<TrxWorkspaceQuery>,
 ) -> ApiResult<Json<Vec<TrxIssue>>> {
-    let output =
-        exec_trx_command(&state, user.id(), &query.workspace_path, &["list", "--all"]).await?;
+    let (canonical, runner) = validated_runner(&state, user.id(), &query.workspace_path).await?;
 
-    // Parse the raw JSON output and transform to API format
-    let raw_issues: Vec<TrxIssueRaw> = serde_json::from_str(&output)
-        .map_err(|e| ApiError::internal(format!("Failed to parse trx output: {}", e)))?;
+    let resp = runner
+        .trx_list(canonical)
+        .await
+        .map_err(|e| ApiError::internal(format!("trx list failed: {e}")))?;
 
-    let issues: Vec<TrxIssue> = raw_issues.into_iter().map(TrxIssue::from).collect();
-
-    Ok(Json(issues))
-}
-
-/// Get a specific TRX issue.
-#[instrument(skip(state, user))]
-pub async fn get_trx_issue(
-    State(state): State<AppState>,
-    user: CurrentUser,
-    Path(issue_id): Path<String>,
-    Query(query): Query<TrxWorkspaceQuery>,
-) -> ApiResult<Json<TrxIssue>> {
-    let output = exec_trx_command(
-        &state,
-        user.id(),
-        &query.workspace_path,
-        &["show", &issue_id],
-    )
-    .await?;
-
-    let raw_issue: TrxIssueRaw = serde_json::from_str(&output)
-        .map_err(|e| ApiError::internal(format!("Failed to parse trx output: {}", e)))?;
-
-    Ok(Json(TrxIssue::from(raw_issue)))
+    Ok(Json(resp.issues.into_iter().map(TrxIssue::from).collect()))
 }
 
 /// Create a new TRX issue.
@@ -370,27 +195,21 @@ pub async fn create_trx_issue(
     Query(query): Query<TrxWorkspaceQuery>,
     Json(request): Json<CreateTrxIssueRequest>,
 ) -> ApiResult<Json<TrxIssue>> {
-    let mut args = vec!["create", &request.title, "-t", &request.issue_type, "-p"];
-    let priority_str = request.priority.to_string();
-    args.push(&priority_str);
+    let (canonical, runner) = validated_runner(&state, user.id(), &query.workspace_path).await?;
 
-    if let Some(ref desc) = request.description {
-        args.push("-d");
-        args.push(desc);
-    }
+    let resp = runner
+        .trx_create(
+            canonical,
+            request.title,
+            request.description,
+            request.issue_type,
+            request.priority,
+            request.parent_id,
+        )
+        .await
+        .map_err(|e| ApiError::internal(format!("trx create failed: {e}")))?;
 
-    if let Some(ref parent) = request.parent_id {
-        args.push("--parent");
-        args.push(parent);
-    }
-
-    let output = exec_trx_command(&state, user.id(), &query.workspace_path, &args).await?;
-
-    // trx create --json returns the created issue
-    let raw_issue: TrxIssueRaw = serde_json::from_str(&output)
-        .map_err(|e| ApiError::internal(format!("Failed to parse trx output: {}", e)))?;
-
-    let issue = TrxIssue::from(raw_issue);
+    let issue = TrxIssue::from(resp.issue);
     info!(issue_id = %issue.id, "Created TRX issue");
     Ok(Json(issue))
 }
@@ -404,45 +223,21 @@ pub async fn update_trx_issue(
     Query(query): Query<TrxWorkspaceQuery>,
     Json(request): Json<UpdateTrxIssueRequest>,
 ) -> ApiResult<Json<TrxIssue>> {
-    let mut args = vec!["update", &issue_id];
+    let (canonical, runner) = validated_runner(&state, user.id(), &query.workspace_path).await?;
 
-    // Build args based on what's being updated
-    let title_arg;
-    if let Some(ref title) = request.title {
-        args.push("--title");
-        title_arg = title.clone();
-        args.push(&title_arg);
-    }
+    let resp = runner
+        .trx_update(
+            canonical,
+            issue_id,
+            request.title,
+            request.description,
+            request.status,
+            request.priority,
+        )
+        .await
+        .map_err(|e| ApiError::internal(format!("trx update failed: {e}")))?;
 
-    let desc_arg;
-    if let Some(ref desc) = request.description {
-        args.push("--description");
-        desc_arg = desc.clone();
-        args.push(&desc_arg);
-    }
-
-    let status_arg;
-    if let Some(ref status) = request.status {
-        args.push("--status");
-        status_arg = status.clone();
-        args.push(&status_arg);
-    }
-
-    let priority_arg;
-    if let Some(priority) = request.priority {
-        args.push("-p");
-        priority_arg = priority.to_string();
-        args.push(&priority_arg);
-    }
-
-    let output = exec_trx_command(&state, user.id(), &query.workspace_path, &args).await?;
-
-    // Parse the updated issue (trx update --json returns a single issue object)
-    let raw_issue: TrxIssueRaw = serde_json::from_str(&output)
-        .map_err(|e| ApiError::internal(format!("Failed to parse trx output: {}", e)))?;
-
-    let issue = TrxIssue::from(raw_issue);
-
+    let issue = TrxIssue::from(resp.issue);
     info!(issue_id = %issue.id, "Updated TRX issue");
     Ok(Json(issue))
 }
@@ -456,37 +251,29 @@ pub async fn close_trx_issue(
     Query(query): Query<TrxWorkspaceQuery>,
     Json(request): Json<CloseTrxIssueRequest>,
 ) -> ApiResult<Json<TrxIssue>> {
-    let mut args = vec!["close", &issue_id];
+    let (canonical, runner) = validated_runner(&state, user.id(), &query.workspace_path).await?;
 
-    let reason_arg;
-    if let Some(ref reason) = request.reason {
-        args.push("-r");
-        reason_arg = reason.clone();
-        args.push(&reason_arg);
-    }
+    let resp = runner
+        .trx_close(canonical, issue_id, request.reason)
+        .await
+        .map_err(|e| ApiError::internal(format!("trx close failed: {e}")))?;
 
-    let output = exec_trx_command(&state, user.id(), &query.workspace_path, &args).await?;
-
-    // Parse the closed issue (trx close --json returns a single issue object)
-    let raw_issue: TrxIssueRaw = serde_json::from_str(&output)
-        .map_err(|e| ApiError::internal(format!("Failed to parse trx output: {}", e)))?;
-
-    let issue = TrxIssue::from(raw_issue);
-
+    let issue = TrxIssue::from(resp.issue);
     info!(issue_id = %issue.id, "Closed TRX issue");
     Ok(Json(issue))
 }
 
-/// Sync TRX changes (git add and commit .trx/).
+/// Sync TRX changes (git add and commit `.trx/`).
+///
+/// Still shells out to the `trx` CLI: this is a git operation, runs
+/// out-of-band on user demand, and is not on the chat-loading hot path.
+/// Moving sync into the runner is a follow-up.
 #[instrument(skip(state))]
 pub async fn sync_trx(
     State(state): State<AppState>,
     user: CurrentUser,
     Query(query): Query<TrxWorkspaceQuery>,
 ) -> ApiResult<Json<serde_json::Value>> {
-    // Note: trx sync doesn't have JSON output -- use exec_trx_command without --json
-    // We pass "sync" and the handler appends --json, but trx sync ignores unknown flags
-    // so this is safe. Alternatively, call it directly for single-user.
     let validated_path = validate_workspace_path(&state, user.id(), &query.workspace_path).await?;
 
     if let Some(linux_users) = state.linux_users.as_ref().filter(|cfg| cfg.enabled) {

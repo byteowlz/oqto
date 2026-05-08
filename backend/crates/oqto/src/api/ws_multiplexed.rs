@@ -33,8 +33,6 @@ use base64::Engine;
 use crate::auth::{Claims, CurrentUser};
 use crate::local::ProcessManager;
 
-use crate::runner::client::{PiSubscriptionEvent, RunnerClient};
-use crate::runner::protocol::{PiCreateSessionRequest, PiSessionConfig as RunnerPiSessionConfig};
 use crate::runner::router::{
     ExecutionTarget, resolve_runner_for_target, resolve_target_for_workspace_path,
 };
@@ -43,6 +41,8 @@ use crate::session_target::{SessionTargetRecord, SessionTargetScope};
 use crate::user_plane::{MeteredUserPlane, RunnerUserPlane, UserPlane, UserPlanePath};
 use crate::ws::hub::WsHub;
 use crate::ws::types::{WsCommand as LegacyWsCommand, WsEvent as LegacyHubEvent};
+use oqto_runner::client::{PiSubscriptionEvent, RunnerClient};
+use oqto_runner::protocol::{PiCreateSessionRequest, PiSessionConfig as RunnerPiSessionConfig};
 
 use super::error::ApiError;
 
@@ -124,7 +124,7 @@ async fn clear_client_ids_for_session(session_id: &str) {
 }
 
 fn workspace_chat_messages_to_json(
-    messages: Vec<crate::runner::protocol::ChatMessageProto>,
+    messages: Vec<oqto_runner::protocol::ChatMessageProto>,
 ) -> serde_json::Value {
     let mapped: Vec<serde_json::Value> = messages
         .into_iter()
@@ -928,30 +928,35 @@ fn runner_client_for_linux_user(
     user_id: &str,
     linux_username_override: Option<&str>,
 ) -> Option<RunnerClient> {
-    // Check if we have a socket pattern configured
-    if let Some(pattern) = state.runner_socket_pattern.as_deref() {
-        let linux_username = linux_username_override
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| state.effective_linux_username(user_id));
+    let linux_username = linux_username_override
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| state.effective_linux_username(user_id));
 
-        // Use for_user_with_pattern which handles both {user} and {uid} placeholders.
-        // Don't pre-check socket existence -- the runner client retries on
-        // transient connection failures during service restarts.
-        match RunnerClient::for_user_with_pattern(&linux_username, pattern) {
-            Ok(c) => return Some(c),
+    if !state.user_isolation_enabled() {
+        return match RunnerClient::for_user(&linux_username) {
+            Ok(client) => Some(client),
             Err(e) => {
-                warn!("Failed to create runner client for user {}: {}", user_id, e);
+                warn!(
+                    "Failed to create local runner client for user {}: {}",
+                    user_id, e
+                );
+                None
             }
+        };
+    }
+
+    let pattern = state.runner_socket_pattern.as_deref()?;
+
+    // Use for_user_with_pattern which handles both {user} and {uid} placeholders.
+    // Don't pre-check socket existence -- the runner client retries on
+    // transient connection failures during service restarts.
+    match RunnerClient::for_user_with_pattern(&linux_username, pattern) {
+        Ok(c) => Some(c),
+        Err(e) => {
+            warn!("Failed to create runner client for user {}: {}", user_id, e);
+            None
         }
     }
-
-    // Fallback: try default socket path for single-user mode
-    let default_client = RunnerClient::default();
-    if default_client.socket_path().exists() {
-        return Some(default_client);
-    }
-
-    None
 }
 
 /// Resolve the runner client for a given workspace path.
@@ -2071,7 +2076,7 @@ async fn handle_get_messages(
             session_id,
             false,
             None,
-            crate::runner::protocol::WorkspaceChatMessagesSource::Live,
+            oqto_runner::protocol::WorkspaceChatMessagesSource::Live,
         ),
     )
     .await
@@ -2086,10 +2091,10 @@ async fn handle_get_messages(
             let mut messages_value = workspace_chat_messages_to_json(resp.messages);
             if let serde_json::Value::Object(ref mut map) = messages_value {
                 let source = match resp.source {
-                    crate::runner::protocol::WorkspaceChatMessagesSource::Authoritative => {
+                    oqto_runner::protocol::WorkspaceChatMessagesSource::Authoritative => {
                         "authoritative"
                     }
-                    crate::runner::protocol::WorkspaceChatMessagesSource::Live => "live",
+                    oqto_runner::protocol::WorkspaceChatMessagesSource::Live => "live",
                 };
                 map.insert(
                     "messages_source".to_string(),
@@ -2330,55 +2335,55 @@ async fn handle_copy_to_workspace(
     // Create user plane (same user for both workspaces)
     let linux_username = state.effective_linux_username(user_id);
     let is_multi_user = state.user_isolation_enabled();
-    let user_plane: Arc<dyn UserPlane> =
-        if let Some(pattern) = state.runner_socket_pattern.as_deref() {
-            match RunnerUserPlane::for_user_with_pattern(&linux_username, pattern) {
-                Ok(plane) => {
-                    let base: Arc<dyn UserPlane> = Arc::new(plane);
-                    Arc::new(MeteredUserPlane::new(
-                        base,
-                        UserPlanePath::Runner,
-                        state.user_plane_metrics.clone(),
-                    ))
-                }
-                Err(err) => {
-                    error!(
-                        "Failed to create RunnerUserPlane for {}: {:#}",
-                        linux_username, err
-                    );
-                    return Some(WsEvent::Files(FilesWsEvent::Error {
-                        id,
-                        error: "File access unavailable: user runner not reachable".into(),
-                    }));
-                }
-            }
-        } else if is_multi_user {
+    let user_plane: Arc<dyn UserPlane> = if is_multi_user {
+        let Some(pattern) = state.runner_socket_pattern.as_deref() else {
             error!("Multi-user mode without runner_socket_pattern configured");
             return Some(WsEvent::Files(FilesWsEvent::Error {
                 id,
                 error: "File access not configured for multi-user mode".into(),
             }));
-        } else {
-            match RunnerUserPlane::new_default() {
-                Ok(plane) => {
-                    let base: Arc<dyn UserPlane> = Arc::new(plane);
-                    Arc::new(MeteredUserPlane::new(
-                        base,
-                        UserPlanePath::Runner,
-                        state.user_plane_metrics.clone(),
-                    ))
-                }
-                Err(runner_err) => {
-                    return Some(WsEvent::Files(FilesWsEvent::Error {
-                        id,
-                        error: format!(
-                            "File access unavailable: runner not reachable ({:#})",
-                            runner_err
-                        ),
-                    }));
-                }
-            }
         };
+        match RunnerUserPlane::for_user_with_pattern(&linux_username, pattern) {
+            Ok(plane) => {
+                let base: Arc<dyn UserPlane> = Arc::new(plane);
+                Arc::new(MeteredUserPlane::new(
+                    base,
+                    UserPlanePath::Runner,
+                    state.user_plane_metrics.clone(),
+                ))
+            }
+            Err(err) => {
+                error!(
+                    "Failed to create RunnerUserPlane for {}: {:#}",
+                    linux_username, err
+                );
+                return Some(WsEvent::Files(FilesWsEvent::Error {
+                    id,
+                    error: "File access unavailable: user runner not reachable".into(),
+                }));
+            }
+        }
+    } else {
+        match RunnerUserPlane::new_default() {
+            Ok(plane) => {
+                let base: Arc<dyn UserPlane> = Arc::new(plane);
+                Arc::new(MeteredUserPlane::new(
+                    base,
+                    UserPlanePath::Runner,
+                    state.user_plane_metrics.clone(),
+                ))
+            }
+            Err(runner_err) => {
+                return Some(WsEvent::Files(FilesWsEvent::Error {
+                    id,
+                    error: format!(
+                        "File access unavailable: runner not reachable ({:#})",
+                        runner_err
+                    ),
+                }));
+            }
+        }
+    };
 
     // Perform the copy (recursive for directories, returns file count)
     fn copy_recursive_cross<'a>(

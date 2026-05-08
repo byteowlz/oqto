@@ -17,8 +17,8 @@ use std::process::Command;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use crate::runner::client::RunnerClient;
 use crate::user::UserRepository;
+use oqto_runner::client::RunnerClient;
 
 #[derive(Debug, Clone)]
 pub struct UserMmryConfig {

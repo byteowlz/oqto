@@ -28,21 +28,8 @@
 //!    └───────────────┘         └───────────────┘
 //! ```
 //!
-//! ## Components
-//!
-//! - **protocol**: JSON-RPC protocol types for runner communication
-//! - **client**: Client library for oqto to communicate with runners
-//! - **daemon**: The runner daemon binary (see `bin/oqto-runner.rs`)
-//!
-//! ## Usage
-//!
-//! The runner is started as a systemd user service for each Linux user.
-//! Oqto communicates with the appropriate runner via Unix socket to
-//! spawn processes that run with that user's privileges.
+//! The runner daemon/runtime and socket client live in the `oqto-runner` crate.
+//! This server-side module only keeps backend-specific target routing because it
+//! depends on `AppState` and shared-workspace services.
 
-pub mod client;
-pub mod daemon;
-pub mod pi_manager;
-pub mod pi_translator;
-pub mod protocol;
 pub mod router;

@@ -176,6 +176,15 @@ generate_config() {
     pi_runtime_mode="runner"
   fi
 
+  local onboarding_cache_path="${ONBOARDING_TEMPLATES_PATH:-$ONBOARDING_TEMPLATES_PATH_DEFAULT}"
+  local project_templates_path="${PROJECT_TEMPLATES_PATH:-$PROJECT_TEMPLATES_PATH_DEFAULT}"
+  local admin_socket_path="/run/oqto/oqtoctl.sock"
+  if [[ "$SELECTED_USER_MODE" == "single" ]]; then
+    onboarding_cache_path="${ONBOARDING_TEMPLATES_PATH:-$XDG_DATA_HOME/oqto/oqto-templates}"
+    project_templates_path="${PROJECT_TEMPLATES_PATH:-$onboarding_cache_path/agents}"
+    admin_socket_path="\$XDG_RUNTIME_DIR/oqtoctl.sock"
+  fi
+
   # Write config file
   log_info "Writing config to $config_file"
 
@@ -189,6 +198,10 @@ profile = "default"
 
 [logging]
 level = "$OQTO_LOG_LEVEL"
+
+[server]
+max_upload_size_mb = 100
+admin_socket_path = "$admin_socket_path"
 
 [runtime]
 timeout = 60
@@ -248,6 +261,33 @@ EOF
   local allowed_origins=""
   if [[ "$PRODUCTION_MODE" == "true" && -n "$DOMAIN" && "$DOMAIN" != "localhost" ]]; then
     allowed_origins="allowed_origins = [\"https://${DOMAIN}\"]"
+  elif [[ "$PRODUCTION_MODE" == "true" && "$SELECTED_USER_MODE" == "single" ]]; then
+    local -a auto_origins=(
+      "http://localhost:3000"
+      "http://127.0.0.1:3000"
+      "http://localhost:8080"
+      "http://127.0.0.1:8080"
+    )
+
+    if command -v hostname >/dev/null 2>&1; then
+      while IFS= read -r ip; do
+        [[ -z "$ip" ]] && continue
+        auto_origins+=("http://${ip}:3000" "http://${ip}:8080")
+      done < <(hostname -I 2>/dev/null | tr ' ' '\n' | awk 'NF' | sort -u)
+    fi
+
+    if command -v tailscale >/dev/null 2>&1; then
+      while IFS= read -r ip; do
+        [[ -z "$ip" ]] && continue
+        auto_origins+=("http://${ip}:3000" "http://${ip}:8080")
+      done < <(tailscale ip -4 2>/dev/null | awk 'NF' | sort -u)
+    fi
+
+    local joined_origins
+    joined_origins=$(printf '\"%s\", ' "${auto_origins[@]}" | sed 's/, $//')
+    if [[ -n "$joined_origins" ]]; then
+      allowed_origins="allowed_origins = [${joined_origins}]"
+    fi
   fi
 
   cat >>"$config_file" <<EOF
@@ -297,7 +337,7 @@ EOF
 
 [onboarding_templates]
 repo_url = "${ONBOARDING_TEMPLATES_REPO:-$ONBOARDING_TEMPLATES_REPO_DEFAULT}"
-cache_path = "${ONBOARDING_TEMPLATES_PATH:-$ONBOARDING_TEMPLATES_PATH_DEFAULT}"
+cache_path = "${onboarding_cache_path}"
 sync_enabled = true
 sync_interval_seconds = 300
 use_embedded_fallback = true
@@ -308,7 +348,7 @@ EOF
   cat >>"$config_file" <<EOF
 
 [templates]
-repo_path = "${PROJECT_TEMPLATES_PATH:-$PROJECT_TEMPLATES_PATH_DEFAULT}"
+repo_path = "${project_templates_path}"
 type = "remote"
 sync_on_list = true
 sync_interval_seconds = 120

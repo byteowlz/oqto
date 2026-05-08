@@ -108,18 +108,27 @@ prost = "0.14"
 
 # External crates
 hstry-core = { git = "https://github.com/byteowlz/hstry", branch = "main" }
+trx-core = { git = "https://github.com/byteowlz/trx", branch = "master" }
 
 [profile.release]
 lto = true
 codegen-units = 1
 strip = true
 
+# Faster local deploy profile: significantly reduces compile/link time
+# while keeping most release optimizations.
+[profile.deploy-fast]
+inherits = "release"
+lto = "thin"
+codegen-units = 16
+incremental = true
+
 # Workspace-wide clippy linting configuration
 # These rules are enforced across all crates to maintain code quality
 [workspace.lints.rust]
-# The oqto crate has multiple binaries (oqto, oqtoctl, pi-bridge, oqto-sandbox)
-# sharing a single lib. The compiler flags lib items as dead_code when checking
-# each binary independently, even if the item is used by another binary.
+# Some crates still expose multiple binaries sharing a single lib. The compiler
+# flags lib items as dead_code when checking each binary independently, even if
+# the item is used by another binary.
 # The lib itself compiles warning-free; these are cross-binary false positives.
 # Proper fix: decompose into separate crates (tracked in oqto-gxf5).
 dead_code = "allow"

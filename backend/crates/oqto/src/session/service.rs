@@ -42,8 +42,8 @@ impl BrowserAction {
 use crate::container::{ContainerConfig, ContainerRuntimeApi, ContainerStats};
 use crate::eavs::{CreateKeyRequest, EavsApi, KeyPermissions};
 use crate::local::{LocalRuntime, LocalRuntimeConfig, UserMmryManager};
-use crate::runner::client::RunnerClient;
 use crate::wordlist;
+use oqto_runner::client::RunnerClient;
 
 use super::models::{CreateSessionRequest, RuntimeMode, Session, SessionStatus};
 use super::repository::SessionRepository;

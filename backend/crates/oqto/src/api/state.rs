@@ -566,4 +566,11 @@ impl AppState {
     pub fn effective_linux_username(&self, user_id: &str) -> String {
         crate::identity::runtime::effective_linux_username(self.linux_users.as_ref(), user_id)
     }
+
+    /// Returns true when strict identity contract mode is enabled.
+    pub fn strict_identity_enabled(&self) -> bool {
+        self.linux_users
+            .as_ref()
+            .is_some_and(|cfg| cfg.enabled && cfg.strict_identity)
+    }
 }
