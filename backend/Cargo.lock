@@ -2780,7 +2780,7 @@ checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
 
 [[package]]
 name = "oqto"
-version = "0.3.25"
+version = "0.3.30"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2855,7 +2855,7 @@ dependencies = [
 
 [[package]]
 name = "oqto-browser"
-version = "0.3.25"
+version = "0.3.30"
 dependencies = [
  "anyhow",
  "clap",
@@ -2868,7 +2868,7 @@ dependencies = [
 
 [[package]]
 name = "oqto-eavs"
-version = "0.3.25"
+version = "0.3.30"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2880,7 +2880,7 @@ dependencies = [
 
 [[package]]
 name = "oqto-files"
-version = "0.3.25"
+version = "0.3.30"
 dependencies = [
  "axum",
  "bytes",
@@ -2909,7 +2909,7 @@ dependencies = [
 
 [[package]]
 name = "oqto-history"
-version = "0.3.25"
+version = "0.3.30"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2933,7 +2933,7 @@ dependencies = [
 
 [[package]]
 name = "oqto-host"
-version = "0.3.25"
+version = "0.3.30"
 dependencies = [
  "anyhow",
  "log",
@@ -2950,7 +2950,7 @@ dependencies = [
 
 [[package]]
 name = "oqto-pi"
-version = "0.3.25"
+version = "0.3.30"
 dependencies = [
  "log",
  "once_cell",
@@ -2962,7 +2962,7 @@ dependencies = [
 
 [[package]]
 name = "oqto-protocol"
-version = "0.3.25"
+version = "0.3.30"
 dependencies = [
  "chrono",
  "hstry-core",
@@ -2974,7 +2974,7 @@ dependencies = [
 
 [[package]]
 name = "oqto-runner"
-version = "0.3.25"
+version = "0.3.30"
 dependencies = [
  "anyhow",
  "base64",
@@ -3003,7 +3003,7 @@ dependencies = [
 
 [[package]]
 name = "oqto-sandbox"
-version = "0.3.25"
+version = "0.3.30"
 dependencies = [
  "anyhow",
  "clap",
@@ -3021,7 +3021,7 @@ dependencies = [
 
 [[package]]
 name = "oqto-scaffold"
-version = "0.3.25"
+version = "0.3.30"
 dependencies = [
  "anyhow",
  "clap",
@@ -3039,7 +3039,7 @@ dependencies = [
 
 [[package]]
 name = "oqto-setup"
-version = "0.3.25"
+version = "0.3.30"
 dependencies = [
  "anyhow",
  "clap",
@@ -3060,7 +3060,7 @@ dependencies = [
 
 [[package]]
 name = "oqtoctl"
-version = "0.3.25"
+version = "0.3.30"
 dependencies = [
  "anyhow",
  "base64",
