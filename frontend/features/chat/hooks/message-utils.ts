@@ -640,6 +640,8 @@ export function normalizeMessages(
 		}
 		const msgModel = message.model_id ?? message.model ?? null;
 		const msgProvider = message.provider_id ?? message.provider ?? null;
+		const parentId = message.parent_id ?? message.parentId ?? null;
+		const branchId = message.branch_id ?? message.branchId ?? null;
 		// Extract [Name] sender tag from user messages in shared workspaces
 		let sender: Sender | undefined;
 		if (normalizedRole === "user") {
@@ -663,6 +665,8 @@ export function normalizeMessages(
 			timestamp,
 			usage: message.usage,
 			clientId,
+			parentId,
+			branchId,
 			model: msgModel,
 			provider: msgProvider,
 			sender,
