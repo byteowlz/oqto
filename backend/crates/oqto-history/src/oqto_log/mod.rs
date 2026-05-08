@@ -1,3 +1,4 @@
+pub mod event_assembler;
 pub mod ids;
 pub mod native_projector;
 pub mod ops;
