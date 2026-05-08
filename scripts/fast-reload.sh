@@ -6,11 +6,11 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # Prompt for sudo once up-front
 sudo -v
 
-# Build on remote and fetch release binaries
+# Build locally
 cd "$ROOT_DIR/backend"
-remote-build build --release -p oqto --bin oqto
-remote-build build --release -p oqto-runner --bin oqto-runner
-remote-build build --release -p oqto-files --bin oqto-files
+cargo build --release -p oqto --bin oqto
+cargo build --release -p oqto-runner --bin oqto-runner
+cargo build --release -p oqto-files --bin oqto-files
 
 # Install binaries system-wide
 sudo install -m 0755 "$ROOT_DIR/backend/target/release/oqto" /usr/local/bin/oqto

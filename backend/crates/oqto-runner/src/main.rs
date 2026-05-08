@@ -4,13 +4,13 @@ use log::{info, warn};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use oqto::history::HstryEndpoint;
-use oqto::runner::daemon::bootstrap::{
+use oqto_history::hstry::HstryEndpoint;
+use oqto_runner::daemon::bootstrap::{
     get_default_socket_path, load_env_file, load_sandbox_config, log_sandbox_state,
 };
-use oqto::runner::daemon::config::RunnerUserConfig;
-use oqto::runner::daemon::server::{Runner, SessionBinaries};
-use oqto::runner::pi_manager::{PiManagerConfig, PiSessionManager};
+use oqto_runner::daemon::config::RunnerUserConfig;
+use oqto_runner::daemon::server::{Runner, SessionBinaries};
+use oqto_runner::pi_manager::{PiManagerConfig, PiSessionManager};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -129,7 +129,7 @@ async fn main() -> Result<()> {
         idle_timeout_secs: 300,
         cleanup_interval_secs: 60,
         hstry_db_path: {
-            let db_path = oqto::history::hstry_db_path();
+            let db_path = oqto_history::legacy_hstry::hstry_db_path();
             match &db_path {
                 Some(p) => info!("hstry DB found: {}", p.display()),
                 None => warn!("hstry DB not found -- chat history persistence disabled"),
@@ -148,6 +148,17 @@ async fn main() -> Result<()> {
         pi_manager_cleanup.cleanup_loop().await;
     });
 
-    let runner = Runner::new(sandbox_config, binaries, user_config, pi_manager);
+    let legacy_user_config = oqto_runner::daemon::config::RunnerUserConfig {
+        fileserver_binary: user_config.fileserver_binary.clone(),
+        ttyd_binary: user_config.ttyd_binary.clone(),
+        pi_binary: user_config.pi_binary.clone(),
+        runner_id: user_config.runner_id.clone(),
+        workspace_dir: user_config.workspace_dir.clone(),
+        pi_sessions_dir: user_config.pi_sessions_dir.clone(),
+        memories_dir: user_config.memories_dir.clone(),
+        single_user: user_config.single_user,
+        linux_users_enabled: user_config.linux_users_enabled,
+    };
+    let runner = Runner::new(sandbox_config, binaries, legacy_user_config, pi_manager);
     runner.run(&socket_path).await
 }

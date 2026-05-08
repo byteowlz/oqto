@@ -46,37 +46,21 @@ select_user_mode() {
 select_backend_mode() {
   log_step "Backend Mode Selection"
 
-  # If already set (e.g., macOS multi-user), skip
-  if [[ -n "${SELECTED_BACKEND_MODE:-}" ]]; then
-    log_info "Backend mode pre-selected: $SELECTED_BACKEND_MODE"
-    return
+  if [[ "${SELECTED_BACKEND_MODE:-}" == "container" ]]; then
+    log_warn "Container backend is temporarily disabled; forcing local backend mode"
   fi
 
   echo
-  echo "Oqto can run agents in two modes:"
-  echo
-  echo -e "  ${BOLD}Container${NC} - Docker/Podman containers (default)"
-  echo "    - Full isolation per session"
-  echo "    - Reproducible environment"
-  echo "    - Best for: multi-user, production, untrusted code"
+  echo "Oqto currently supports backend mode:"
   echo
   echo -e "  ${BOLD}Local${NC} - Native processes"
   echo "    - Runs Pi, oqto-files, ttyd directly on host"
   echo "    - Lower overhead, faster startup"
-  echo "    - Best for: development, single-user, trusted environments"
+  echo "    - Best for: development and current production path"
+  echo
+  echo -e "  ${YELLOW}Container mode is temporarily disabled until fully finished and tested.${NC}"
 
-  local choice
-  choice=$(prompt_choice "Select backend mode:" "Container" "Local")
-
-  case "$choice" in
-  "Local")
-    SELECTED_BACKEND_MODE="local"
-    ;;
-  "Container")
-    SELECTED_BACKEND_MODE="container"
-    ;;
-  esac
-
+  SELECTED_BACKEND_MODE="local"
   log_info "Selected backend mode: $SELECTED_BACKEND_MODE"
 }
 

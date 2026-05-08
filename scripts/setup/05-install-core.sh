@@ -20,6 +20,39 @@ install_bun() {
   ensure_bun_and_pi_global
 }
 
+validate_pi_rpc_smoke() {
+  local pi_bin="$1"
+  local tmp_dir fifo out err pid
+  tmp_dir="$(mktemp -d)"
+  fifo="$tmp_dir/stdin"
+  out="$tmp_dir/stdout"
+  err="$tmp_dir/stderr"
+  mkfifo "$fifo"
+
+  "$pi_bin" --mode rpc <"$fifo" >"$out" 2>"$err" &
+  pid=$!
+
+  exec 9>"$fifo"
+  sleep 2
+
+  if kill -0 "$pid" 2>/dev/null; then
+    kill "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    exec 9>&-
+    rm -rf "$tmp_dir"
+    return 0
+  fi
+
+  wait "$pid" 2>/dev/null || true
+  exec 9>&-
+  log_error "Pi RPC smoke test failed for $pi_bin"
+  if [[ -s "$err" ]]; then
+    sed 's/^/  stderr: /' "$err" >&2 || true
+  fi
+  rm -rf "$tmp_dir"
+  return 1
+}
+
 # Ensure bun and pi are globally accessible to all platform users.
 # Called both after fresh install and on every setup run.
 ensure_bun_and_pi_global() {
@@ -35,13 +68,13 @@ ensure_bun_and_pi_global() {
   # Install pi (AI coding agent) if not already present
   if ! command_exists pi || ! pi --version >/dev/null 2>&1; then
     log_info "Installing pi coding agent..."
-    bun install -g @mariozechner/pi-coding-agent
+    bun install -g @earendil-works/pi-coding-agent
   fi
 
   # Install pi system-wide so all platform users can run it.
   # bun global installs go to ~/.bun/install/global/ which is per-user,
   # so we copy the package to a shared location and create a wrapper.
-  local pi_src_dir="$HOME/.bun/install/global/node_modules/@mariozechner/pi-coding-agent"
+  local pi_src_dir="$HOME/.bun/install/global/node_modules/@earendil-works/pi-coding-agent"
   local pi_system_dir="/usr/local/lib/pi-coding-agent"
   if [[ -d "$pi_src_dir" ]]; then
     # Copy the full package (with node_modules) to a system-wide location
@@ -51,6 +84,24 @@ ensure_bun_and_pi_global() {
 
     # Install all dependencies into the system-wide copy so bun can resolve them
     (cd "$pi_system_dir" && sudo /usr/local/bin/bun install --frozen-lockfile 2>/dev/null || sudo /usr/local/bin/bun install 2>/dev/null) || true
+
+    # Self-link the package into its own node_modules so that user-installed
+    # Pi extensions (e.g. ~/.pi/agent/git/.../*/index.ts) which import
+    # `@earendil-works/pi-coding-agent` can resolve the host package via
+    # NODE_PATH. Without this, bun's module resolution looks for
+    # node_modules/@earendil-works/pi-coding-agent and finds nothing -- the
+    # package directory IS the install, not a dependency of itself --
+    # so extension load fails with "Cannot find module" and Pi exits 0
+    # immediately, taking the runner's session down with it (trx oqto-ceb7).
+    sudo mkdir -p "$pi_system_dir/node_modules/@earendil-works"
+    sudo ln -sfn "$pi_system_dir" \
+      "$pi_system_dir/node_modules/@earendil-works/pi-coding-agent"
+
+    # Transitional self-link for older extensions that still import
+    # `@mariozechner/pi-coding-agent`.
+    sudo mkdir -p "$pi_system_dir/node_modules/@mariozechner"
+    sudo ln -sfn "$pi_system_dir" \
+      "$pi_system_dir/node_modules/@mariozechner/pi-coding-agent"
 
     # Create wrapper that uses the system-wide copy.
     # PI_PACKAGE_DIR tells Pi where to find themes, examples, package.json.
@@ -71,6 +122,7 @@ export NODE_PATH="$PI_PKG/node_modules${NODE_PATH:+:$NODE_PATH}"
 exec "$BUN" "$PI_PKG/dist/cli.js" "$@"
 PIEOF
     sudo chmod 755 /usr/local/bin/pi
+    validate_pi_rpc_smoke /usr/local/bin/pi
     log_success "pi installed system-wide: $(/usr/local/bin/pi --version 2>/dev/null || echo 'installed')"
   else
     log_warn "Could not find pi module at $pi_src_dir. Pi may not be globally accessible."

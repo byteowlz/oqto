@@ -1,0 +1,23 @@
+[package]
+name = "oqto-host"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Host OS integration for Oqto"
+
+[dependencies]
+anyhow.workspace = true
+log.workspace = true
+nanoid.workspace = true
+oqto-sandbox = { path = "../oqto-sandbox" }
+rustix.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+shellexpand.workspace = true
+tokio.workspace = true
+toml.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

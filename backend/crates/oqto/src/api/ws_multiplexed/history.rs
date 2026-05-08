@@ -75,17 +75,19 @@ pub(super) async fn handle_hstry_command(
             data: serde_json::json!([]),
         }))
     } else {
-        let Some(pattern) = state.runner_socket_pattern.as_ref() else {
-            return Some(WsEvent::Hstry(HstryWsEvent::Error {
-                id,
-                error: "runner socket pattern is not configured".into(),
-            }));
-        };
         let effective_user = state.effective_linux_username(user_id);
-        let runner = match crate::runner::client::RunnerClient::for_user_with_pattern(
-            &effective_user,
-            pattern,
-        ) {
+        let runner_result = if state.user_isolation_enabled() {
+            let Some(pattern) = state.runner_socket_pattern.as_ref() else {
+                return Some(WsEvent::Hstry(HstryWsEvent::Error {
+                    id,
+                    error: "runner socket pattern is not configured".into(),
+                }));
+            };
+            oqto_runner::client::RunnerClient::for_user_with_pattern(&effective_user, pattern)
+        } else {
+            oqto_runner::client::RunnerClient::for_user(&effective_user)
+        };
+        let runner = match runner_result {
             Ok(client) => client,
             Err(err) => {
                 return Some(WsEvent::Hstry(HstryWsEvent::Error {

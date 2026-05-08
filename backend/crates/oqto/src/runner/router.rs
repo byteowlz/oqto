@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 
 use crate::api::AppState;
 
-use super::client::RunnerClient;
+use oqto_runner::client::RunnerClient;
 
 /// Canonical backend-resolved execution target.
 ///
@@ -55,6 +55,10 @@ async fn ensure_runner_healthy(
         .await
         .is_ok()
     {
+        return Ok(client);
+    }
+
+    if state.linux_users.is_none() {
         return Ok(client);
     }
 
@@ -111,15 +115,23 @@ fn resolve_linux_uid(linux_user: &str) -> Result<u32> {
 }
 
 async fn resolve_personal_runner(state: &AppState, user_id: &str) -> Result<Option<RunnerClient>> {
-    let pattern = match state.runner_socket_pattern.as_ref() {
-        Some(p) => p,
-        None => return Ok(None),
-    };
-
     let effective_user = state.effective_linux_username(user_id);
 
-    let client = RunnerClient::for_user_with_pattern(&effective_user, pattern)
-        .with_context(|| format!("creating runner client for linux user {}", effective_user))?;
+    let client = if state.linux_users.is_none() {
+        RunnerClient::for_user(&effective_user).with_context(|| {
+            format!(
+                "creating local runner client for linux user {}",
+                effective_user
+            )
+        })?
+    } else {
+        let pattern = state
+            .runner_socket_pattern
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("runner socket pattern not configured"))?;
+        RunnerClient::for_user_with_pattern(&effective_user, pattern)
+            .with_context(|| format!("creating runner client for linux user {}", effective_user))?
+    };
 
     Ok(Some(
         ensure_runner_healthy(state, &effective_user, client).await?,

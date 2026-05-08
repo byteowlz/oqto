@@ -1,52 +1,55 @@
 # Oqto Backend
 
-Backend server for the AI Agent Workspace Platform. Orchestrates agent sessions with Pi, hstry (chat history), and eavs (LLM proxy).
+The backend is the Oqto control plane. It exposes HTTP/WebSocket APIs, talks to per-user runners, coordinates workspace/session state, and integrates host services such as EAVS, hstry/oqto-log, and system users.
 
-## Binaries
+## Mental model
 
-- **oqto** - Main server binary (API + WebSocket)
-- **oqtoctl** - Control CLI for managing users, sessions, and configuration
-- **oqto-runner** - Per-user agent process manager
-- **oqto-files** - File server for workspace access
-- **pi-bridge** - HTTP/WebSocket bridge for Pi in containers
-- **oqto-sandbox** - Sandbox wrapper (bwrap/sandbox-exec)
-
-## Quick Start
-
-```bash
-# 1. Install Rust
-rustup default stable
-
-# 2. Build and run
-cargo run --bin oqto -- serve
-
-# Or with custom options
-cargo run --bin oqto -- serve --port 8080
+```text
+Frontend
+  -> oqto                thin server binary: config, state wiring, routes
+      -> API layer       HTTP/WebSocket transport
+      -> domain crates   users, workspaces, sessions, history, provisioning
+      -> adapter crates  host OS, EAVS, runner sockets, files, sandbox
+  -> oqto-runner         per-user agent process daemon
 ```
 
-## Docker
+Binaries should stay thin. Business logic should live in domain crates. External systems should live behind adapter crates.
 
-For the all-in-one Docker deployment, see `deploy/docker/`:
+## Current key binaries
+
+| Binary | Package | Responsibility |
+| --- | --- | --- |
+| `oqto` | `crates/oqto` | Main backend server and current composition root |
+| `oqtoctl` | `crates/oqtoctl` | Operator CLI for users, sessions, admin APIs, setup helpers |
+| `oqto-runner` | `crates/oqto-runner` | Per-user agent daemon and harness process supervisor |
+| `oqto-files` | `crates/oqto-files` | Workspace file access server |
+| `oqto-sandbox` | `crates/oqto-sandbox` | Sandbox policy and wrapper binary |
+
+## Crate map
+
+See `crates/README.md` for the authoritative crate responsibilities, dependency direction, and extraction plan.
+
+## Build metrics
+
+Use `BUILD-METRICS.md` to record repeatable compile-time baselines for backend refactors.
+
+## Development commands
+
+From repo root, prefer `just` recipes. From `backend/`:
 
 ```bash
-cd deploy/docker
-cp .env.example .env  # Add your API keys
-docker compose up -d
+cargo fmt -p <crate>
+cargo check -p <crate>
+cargo test -p <crate>
+cargo clippy -p <crate>
 ```
 
-Or build the image directly:
+Deploy builds use the `deploy-fast` Cargo profile for local iteration. Strict release builds still use the normal `release` profile.
 
-```bash
-# From repo root
-docker build -f deploy/docker/Dockerfile -t oqto:latest .
-```
+## Backend standard
 
-## Features
-
-- Session orchestration in local mode (direct processes) or container mode (Docker/Podman)
-- Per-user runner daemon managing agent harnesses
-- JWT-based authentication with invite code registration
-- Multiplexed WebSocket (agent, files, terminal channels)
-- RESTful API for session and user management
-- Eavs integration for LLM proxy and model metadata
-- hstry integration for persistent chat history
+1. New code should go into the crate that owns the domain, not into `crates/oqto` by default.
+2. `crates/oqto` should trend toward only server startup, config loading, dependency wiring, and route mounting.
+3. Do not introduce upward dependencies into the `oqto` binary crate.
+4. Keep adapters explicit: host OS in `oqto-host`, EAVS in `oqto-eavs`, runner socket access in a runner-client crate once extracted.
+5. If a folder needs explanation, add a short README there instead of adding another loose doc elsewhere.

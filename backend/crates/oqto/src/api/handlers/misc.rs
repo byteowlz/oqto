@@ -716,9 +716,8 @@ pub async fn search_sessions(
         .as_ref()
         .ok_or_else(|| ApiError::internal("runner socket pattern is not configured".to_string()))?;
     let effective_user = state.effective_linux_username(user.id());
-    let runner =
-        crate::runner::client::RunnerClient::for_user_with_pattern(&effective_user, pattern)
-            .map_err(|e| ApiError::internal(format!("runner client unavailable for user: {e}")))?;
+    let runner = oqto_runner::client::RunnerClient::for_user_with_pattern(&effective_user, pattern)
+        .map_err(|e| ApiError::internal(format!("runner client unavailable for user: {e}")))?;
 
     let hits = runner
         .search_hstry(query.q.clone(), query.limit.max(1))

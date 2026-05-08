@@ -11,10 +11,6 @@ name = "oqto"
 path = "src/main.rs"
 
 [[bin]]
-name = "oqtoctl"
-path = "src/ctl/main.rs"
-
-[[bin]]
 name = "oqto-sandbox"
 path = "src/bin/oqto-sandbox.rs"
 
@@ -126,8 +122,16 @@ prost.workspace = true
 # Chat history (unified with hstry)
 hstry-core.workspace = true
 
+# Issue tracking (in-process, replaces trx CLI shell-out)
+trx-core.workspace = true
+
 # Canonical protocol types
 oqto-protocol = { path = "../oqto-protocol" }
+oqto-runner = { path = "../oqto-runner" }
+oqto-eavs = { path = "../oqto-eavs" }
+oqto-host = { path = "../oqto-host" }
+oqto-history = { path = "../oqto-history" }
+oqto-pi = { path = "../oqto-pi" }
 
 [dev-dependencies]
 tower = { workspace = true, features = ["util"] }

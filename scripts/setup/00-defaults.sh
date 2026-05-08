@@ -13,7 +13,7 @@ PROJECT_TEMPLATES_PATH_DEFAULT="/usr/share/oqto/oqto-templates/agents/"
 
 # Default values (can be overridden by environment variables)
 : "${OQTO_USER_MODE:=multi}"         # single or multi
-: "${OQTO_BACKEND_MODE:=container}"  # local or container
+: "${OQTO_BACKEND_MODE:=local}"      # local only (container setup currently disabled)
 : "${OQTO_CONTAINER_RUNTIME:=auto}"  # docker, podman, or auto
 : "${OQTO_INSTALL_DEPS:=yes}"        # yes or no
 : "${OQTO_INSTALL_SERVICE:=yes}"     # yes or no

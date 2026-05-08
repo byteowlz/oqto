@@ -698,7 +698,7 @@ impl SharedWorkspaceService {
             .as_deref()
             .ok_or_else(|| anyhow::anyhow!("runner socket pattern not configured"))?;
         let runner =
-            crate::runner::client::RunnerClient::for_user_with_pattern(&ws.linux_user, pattern)
+            oqto_runner::client::RunnerClient::for_user_with_pattern(&ws.linux_user, pattern)
                 .with_context(|| format!("creating runner client for {}", ws.linux_user))?;
 
         let stat = runner
@@ -860,7 +860,7 @@ impl SharedWorkspaceService {
             .as_deref()
             .ok_or_else(|| anyhow::anyhow!("runner socket pattern not configured"))?;
 
-        let runner = crate::runner::client::RunnerClient::for_user_with_pattern(
+        let runner = oqto_runner::client::RunnerClient::for_user_with_pattern(
             &workspace.linux_user,
             pattern,
         )

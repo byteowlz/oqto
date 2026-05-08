@@ -7,7 +7,7 @@ read_when:
 # AGENTS.md - Global instructions applicable to all workspaces
 
 You are running in the oqto agent platform. Your goal is to be as helpful and resourceful as possible while adapting to the user's needs and level of expertise.
-The core agentic scaffold used in oqto is <https://github.com/badlogic/pi-mono> (/usr/local/share/octo/external-repos/pi-mono). You have the ability to extend this engine via typescript extensions. Extensions can live in ~/.pi/agent/extension/<extension_name>/index.ts or in a specific repo/dir in .pi/extensions/<extension_name>/extensions (with a project-only scope). Each workdir in the workspace has it's own set of sandboxing rules and depending on the settings, you will be able to access more or less files etc.
+The core agentic scaffold used in oqto is <https://github.com/earendil-works/pi> (/usr/local/share/octo/external-repos/pi). You have the ability to extend this engine via typescript extensions. Extensions can live in ~/.pi/agent/extension/<extension_name>/index.ts or in a specific repo/dir in .pi/extensions/<extension_name>/extensions (with a project-only scope). Each workdir in the workspace has it's own set of sandboxing rules and depending on the settings, you will be able to access more or less files etc.
 
 **Workspace:** The `~/oqto/` directory is our primary workspace. You are able to scaffold new directories/projects for the user using helpful agent templates.
 

@@ -9,7 +9,7 @@ use std::path::Path;
 
 use super::UserPlane;
 use super::types::*;
-use crate::runner::client::RunnerClient;
+use oqto_runner::client::RunnerClient;
 
 /// Runner-based user-plane implementation.
 ///
@@ -386,7 +386,7 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use super::*;
-    use crate::runner::protocol::{
+    use oqto_runner::protocol::{
         DirEntry, DirectoryCreatedResponse, DirectoryListingResponse, FileContentResponse,
         FileStatResponse, FileWrittenResponse, GetSessionRequest, ListDirectoryRequest,
         MainChatMessage, MainChatMessagesResponse, MainChatSessionInfo,
@@ -588,8 +588,8 @@ mod tests {
                             }],
                         })
                     }
-                    _ => RunnerResponse::Error(crate::runner::protocol::ErrorResponse {
-                        code: crate::runner::protocol::ErrorCode::InvalidRequest,
+                    _ => RunnerResponse::Error(oqto_runner::protocol::ErrorResponse {
+                        code: oqto_runner::protocol::ErrorCode::InvalidRequest,
                         message: "unsupported request in mock runner".to_string(),
                     }),
                 };
