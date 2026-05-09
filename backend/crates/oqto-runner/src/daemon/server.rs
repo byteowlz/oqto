@@ -100,6 +100,20 @@ fn select_authoritative_workspace_chat_messages(
     (Vec::new(), "empty")
 }
 
+fn select_richest_authoritative_messages(
+    projected: Option<Vec<ChatMessageProto>>,
+    pi_jsonl: Option<Vec<ChatMessageProto>>,
+) -> (Option<Vec<ChatMessageProto>>, &'static str) {
+    match (projected, pi_jsonl) {
+        (Some(projected), Some(pi_jsonl)) if pi_jsonl.len() > projected.len() => {
+            (Some(pi_jsonl), "pi-jsonl-richer")
+        }
+        (Some(projected), _) => (Some(projected), "oqto-log"),
+        (None, Some(pi_jsonl)) => (Some(pi_jsonl), "pi-jsonl-fallback"),
+        (None, None) => (None, "empty"),
+    }
+}
+
 fn select_live_workspace_chat_messages(
     live_messages: Option<Vec<ChatMessageProto>>,
 ) -> (Vec<ChatMessageProto>, &'static str) {
@@ -2048,22 +2062,19 @@ impl Runner {
                     };
 
                     if req.limit.is_none() {
-                        match projected {
-                            Some(messages) if !messages.is_empty() => Some(messages),
-                            _ => {
-                                let pi_jsonl_messages =
-                                    load_pi_jsonl_messages_for_session(home_path, &req.session_id)
-                                        .await;
-                                if let Some(messages) = &pi_jsonl_messages {
-                                    info!(
-                                        "get_workspace_chat_session_messages session={} source=pi-jsonl-fallback projected_count=0 jsonl_count={}",
-                                        req.session_id,
-                                        messages.len()
-                                    );
-                                }
-                                pi_jsonl_messages
-                            }
+                        let pi_jsonl_messages =
+                            load_pi_jsonl_messages_for_session(home_path, &req.session_id).await;
+                        let projected_count = projected.as_ref().map_or(0, Vec::len);
+                        let jsonl_count = pi_jsonl_messages.as_ref().map_or(0, Vec::len);
+                        let (selected, selected_source) =
+                            select_richest_authoritative_messages(projected, pi_jsonl_messages);
+                        if selected_source != "oqto-log" && jsonl_count > 0 {
+                            info!(
+                                "get_workspace_chat_session_messages session={} source={} projected_count={} jsonl_count={}",
+                                req.session_id, selected_source, projected_count, jsonl_count
+                            );
                         }
+                        selected
                     } else {
                         projected
                     }
@@ -4290,6 +4301,42 @@ mod tests {
         assert_eq!(selected.len(), authoritative.len());
         assert_eq!(selected[0].id, "hist-u1");
         assert_eq!(selected[1].id, "hist-a1");
+    }
+
+    #[test]
+    fn persistence_contracts_authoritative_path_uses_pi_jsonl_when_strictly_richer() {
+        let projected = vec![proto("hist-a1", "assistant", 2_000)];
+        let jsonl = vec![
+            proto("jsonl-u1", "user", 1_000),
+            proto("jsonl-a1", "assistant", 2_000),
+        ];
+
+        let (selected, source) =
+            select_richest_authoritative_messages(Some(projected), Some(jsonl));
+
+        assert_eq!(source, "pi-jsonl-richer");
+        let selected = selected.expect("selected messages");
+        assert_eq!(selected.len(), 2);
+        assert_eq!(selected[0].role, "user");
+        assert_eq!(selected[0].id, "jsonl-u1");
+    }
+
+    #[test]
+    fn persistence_contracts_authoritative_path_keeps_oqto_log_when_counts_match() {
+        let projected = vec![
+            proto("hist-u1", "user", 1_000),
+            proto("hist-a1", "assistant", 2_000),
+        ];
+        let jsonl = vec![
+            proto("jsonl-u1", "user", 1_000),
+            proto("jsonl-a1", "assistant", 2_000),
+        ];
+
+        let (selected, source) =
+            select_richest_authoritative_messages(Some(projected), Some(jsonl));
+
+        assert_eq!(source, "oqto-log");
+        assert_eq!(selected.expect("selected messages")[0].id, "hist-u1");
     }
 
     #[test]
