@@ -114,6 +114,76 @@ fn select_richest_authoritative_messages(
     }
 }
 
+async fn repair_oqto_log_from_jsonl_if_richer(
+    user_home: &std::path::Path,
+    user_id: &str,
+    requested_session_id: &str,
+    projected_count: usize,
+    external_id: &str,
+    recovered_messages: &[oqto_pi::AgentMessage],
+) -> Option<Vec<ChatMessageProto>> {
+    if recovered_messages.len() <= projected_count {
+        return None;
+    }
+
+    let (session_id, workspace_id, stored_external_id) = if requested_session_id
+        .starts_with("oqto-")
+    {
+        oqto_history::oqto_log::ops::find_session_by_id(user_home, requested_session_id).await?
+    } else {
+        let (session_id, workspace_id) =
+            oqto_history::oqto_log::ops::find_session_by_external(user_home, requested_session_id)
+                .await?;
+        (
+            session_id,
+            workspace_id,
+            Some(requested_session_id.to_string()),
+        )
+    };
+
+    let external_for_store = stored_external_id.as_deref().or(Some(external_id));
+    if let Err(err) = oqto_history::oqto_log::store::replace_session_with_snapshot(
+        user_home,
+        user_id,
+        &workspace_id,
+        &session_id,
+        &session_id,
+        external_for_store,
+        external_id,
+        recovered_messages,
+    )
+    .await
+    {
+        warn!(
+            "oqto-log validation repair failed session={} external_id={} projected_count={} jsonl_count={}: {:?}",
+            requested_session_id,
+            external_id,
+            projected_count,
+            recovered_messages.len(),
+            err
+        );
+        return None;
+    }
+
+    match crate::oqto_log_projector::project_session_messages_auto(
+        user_home,
+        requested_session_id,
+        None,
+    )
+    .await
+    {
+        Ok(Some(messages)) => Some(messages),
+        Ok(None) => None,
+        Err(err) => {
+            warn!(
+                "oqto-log validation repair re-read failed session={} external_id={}: {:?}",
+                requested_session_id, external_id, err
+            );
+            None
+        }
+    }
+}
+
 fn select_live_workspace_chat_messages(
     live_messages: Option<Vec<ChatMessageProto>>,
 ) -> (Vec<ChatMessageProto>, &'static str) {
@@ -124,38 +194,44 @@ fn select_live_workspace_chat_messages(
     (Vec::new(), "live_buffer")
 }
 
-async fn load_pi_jsonl_messages_for_session(
+async fn resolve_external_session_id(
     user_home: &std::path::Path,
     requested_session_id: &str,
-) -> Option<Vec<ChatMessageProto>> {
-    let external_id = if requested_session_id.starts_with("oqto-") {
-        if let Some(id) =
-            oqto_history::oqto_log::ops::find_external_by_session(user_home, requested_session_id)
-                .await
-        {
-            Some(id)
-        } else {
-            // Fallback for legacy/shared sessions where oqto-log identity mapping
-            // is not populated yet but hstry still has external_id/platform_id.
-            let db_path = oqto_history::legacy_hstry::hstry_db_path()?;
-            let pool = oqto_history::legacy_hstry::open_hstry_pool(&db_path)
-                .await
-                .ok()?;
-            let (_conversation_id, resolved_external) =
-                oqto_history::legacy_hstry::resolve_conversation_identity(
-                    &pool,
-                    requested_session_id,
-                    None,
-                )
-                .await
-                .ok()??;
-            resolved_external
-        }
-    } else {
-        Some(requested_session_id.to_string())
-    }?;
+) -> Option<String> {
+    if !requested_session_id.starts_with("oqto-") {
+        return Some(requested_session_id.to_string());
+    }
 
-    let session_file = oqto_pi::session_files::find_session_file_async(external_id, None).await?;
+    if let Some(id) =
+        oqto_history::oqto_log::ops::find_external_by_session(user_home, requested_session_id).await
+    {
+        return Some(id);
+    }
+
+    // Fallback for legacy/shared sessions where oqto-log identity mapping
+    // is not populated yet but hstry still has external_id/platform_id.
+    let db_path = oqto_history::legacy_hstry::hstry_db_path()?;
+    let pool = oqto_history::legacy_hstry::open_hstry_pool(&db_path)
+        .await
+        .ok()?;
+    let (_conversation_id, resolved_external) =
+        oqto_history::legacy_hstry::resolve_conversation_identity(
+            &pool,
+            requested_session_id,
+            None,
+        )
+        .await
+        .ok()??;
+    resolved_external
+}
+
+async fn load_pi_jsonl_agent_messages_for_session(
+    user_home: &std::path::Path,
+    requested_session_id: &str,
+) -> Option<(String, Vec<oqto_pi::AgentMessage>)> {
+    let external_id = resolve_external_session_id(user_home, requested_session_id).await?;
+    let session_file =
+        oqto_pi::session_files::find_session_file_async(external_id.clone(), None).await?;
     let recovered_messages =
         tokio::task::spawn_blocking(move || read_jsonl_agent_messages(&session_file))
             .await
@@ -165,18 +241,35 @@ async fn load_pi_jsonl_messages_for_session(
         return None;
     }
 
-    Some(
-        recovered_messages
-            .iter()
-            .enumerate()
-            .map(|(idx, msg)| {
-                let mut proto =
-                    crate::protocol::agent_msg_to_chat_proto(msg, idx, requested_session_id);
-                proto.id = format!("pi_jsonl_{}", idx);
-                proto
-            })
-            .collect(),
-    )
+    Some((external_id, recovered_messages))
+}
+
+fn pi_jsonl_agent_messages_to_proto(
+    requested_session_id: &str,
+    recovered_messages: &[oqto_pi::AgentMessage],
+) -> Vec<ChatMessageProto> {
+    recovered_messages
+        .iter()
+        .enumerate()
+        .map(|(idx, msg)| {
+            let mut proto =
+                crate::protocol::agent_msg_to_chat_proto(msg, idx, requested_session_id);
+            proto.id = format!("pi_jsonl_{}", idx);
+            proto
+        })
+        .collect()
+}
+
+async fn load_pi_jsonl_messages_for_session(
+    user_home: &std::path::Path,
+    requested_session_id: &str,
+) -> Option<Vec<ChatMessageProto>> {
+    let (_external_id, recovered_messages) =
+        load_pi_jsonl_agent_messages_for_session(user_home, requested_session_id).await?;
+    Some(pi_jsonl_agent_messages_to_proto(
+        requested_session_id,
+        &recovered_messages,
+    ))
 }
 
 fn read_last_session_info_name(path: &std::path::Path) -> Option<String> {
@@ -2062,19 +2155,55 @@ impl Runner {
                     };
 
                     if req.limit.is_none() {
-                        let pi_jsonl_messages =
-                            load_pi_jsonl_messages_for_session(home_path, &req.session_id).await;
+                        let pi_jsonl_agent_messages =
+                            load_pi_jsonl_agent_messages_for_session(home_path, &req.session_id)
+                                .await;
                         let projected_count = projected.as_ref().map_or(0, Vec::len);
-                        let jsonl_count = pi_jsonl_messages.as_ref().map_or(0, Vec::len);
-                        let (selected, selected_source) =
-                            select_richest_authoritative_messages(projected, pi_jsonl_messages);
-                        if selected_source != "oqto-log" && jsonl_count > 0 {
+                        let jsonl_count = pi_jsonl_agent_messages
+                            .as_ref()
+                            .map_or(0, |(_, messages)| messages.len());
+                        let user_id =
+                            std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
+                        let repaired = match &pi_jsonl_agent_messages {
+                            Some((external_id, messages)) => {
+                                repair_oqto_log_from_jsonl_if_richer(
+                                    home_path,
+                                    &user_id,
+                                    &req.session_id,
+                                    projected_count,
+                                    external_id,
+                                    messages,
+                                )
+                                .await
+                            }
+                            None => None,
+                        };
+                        if let Some(repaired) = repaired {
                             info!(
-                                "get_workspace_chat_session_messages session={} source={} projected_count={} jsonl_count={}",
-                                req.session_id, selected_source, projected_count, jsonl_count
+                                "get_workspace_chat_session_messages session={} source=oqto-log-repaired projected_count={} jsonl_count={} repaired_count={}",
+                                req.session_id,
+                                projected_count,
+                                jsonl_count,
+                                repaired.len()
                             );
+                            Some(repaired)
+                        } else {
+                            let pi_jsonl_messages =
+                                pi_jsonl_agent_messages
+                                    .as_ref()
+                                    .map(|(_external_id, messages)| {
+                                        pi_jsonl_agent_messages_to_proto(&req.session_id, messages)
+                                    });
+                            let (selected, selected_source) =
+                                select_richest_authoritative_messages(projected, pi_jsonl_messages);
+                            if selected_source != "oqto-log" && jsonl_count > 0 {
+                                info!(
+                                    "get_workspace_chat_session_messages session={} source={} projected_count={} jsonl_count={}",
+                                    req.session_id, selected_source, projected_count, jsonl_count
+                                );
+                            }
+                            selected
                         }
-                        selected
                     } else {
                         projected
                     }
