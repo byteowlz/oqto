@@ -244,6 +244,39 @@ pub async fn find_session_by_external(
 ///
 /// Accepts either `session_id` or `platform_id` and returns the non-empty
 /// `external_id` when available.
+pub async fn find_session_by_id(
+    user_home: &Path,
+    session_or_platform_id: &str,
+) -> Option<(String, String, Option<String>)> {
+    let dbs = list_db_paths(user_home);
+
+    for db in dbs {
+        let options = SqliteConnectOptions::new().filename(&db).read_only(true);
+        let pool = match SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await
+        {
+            Ok(pool) => pool,
+            Err(_) => continue,
+        };
+
+        let row = sqlx::query_as::<_, (String, String, Option<String>)>(
+            "SELECT session_id, COALESCE(workspace_id, ''), external_id FROM oqto_log_sessions WHERE (session_id = ? OR platform_id = ?) LIMIT 1",
+        )
+        .bind(session_or_platform_id)
+        .bind(session_or_platform_id)
+        .fetch_optional(&pool)
+        .await;
+
+        if let Ok(Some(row)) = row {
+            return Some(row);
+        }
+    }
+
+    None
+}
+
 pub async fn find_external_by_session(
     user_home: &Path,
     session_or_platform_id: &str,
