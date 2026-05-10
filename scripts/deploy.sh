@@ -437,6 +437,17 @@ if [[ "\$downloaded" == "true" ]]; then
 fi
 
 # --- Fallback: cargo install from source ---
+# Remediation runs via sudo so rustup may be present without a default
+# toolchain for root. Configure a default before invoking cargo; this keeps
+# deploy self-healing on fresh hosts where user-level Rust is installed but
+# root has never run rustup.
+if [[ -f "\$HOME/.cargo/env" ]]; then
+    # shellcheck disable=SC1091
+    source "\$HOME/.cargo/env"
+fi
+if command -v rustup >/dev/null 2>&1; then
+    rustup default stable >/dev/null 2>&1 || true
+fi
 if command -v cargo >/dev/null 2>&1; then
     sibling_repo="$ROOT_DIR/../$repo"
     if [[ -d "\$sibling_repo" ]]; then
