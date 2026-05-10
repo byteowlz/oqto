@@ -19,7 +19,7 @@ sx = "2.4.0"
 scrpr = "1.1.0"
 tmpltr = "0.3.0"
 sldr = "0.3.0"
-skdlr = "0.2.4"
+skdlr = "0.2.6"
 ignr = "0.1.1"
 
 # Optional: Voice mode
