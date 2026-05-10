@@ -11,6 +11,39 @@ import type { RawMessage } from "@/features/chat/hooks/types";
 import { describe, expect, it } from "vitest";
 
 describe("tool output leak from hstry imports", () => {
+	it("should expand stringified canonical parts nested inside text parts", () => {
+		const nestedParts = JSON.stringify([
+			{ type: "thinking", text: "I should inspect state" },
+			{
+				type: "tool_call",
+				id: "call_123",
+				tool_call_id: "call_123",
+				name: "bash",
+				input: { command: "pwd" },
+				status: "pending",
+			},
+		]);
+		const rawMessages: RawMessage[] = [
+			{
+				role: "assistant",
+				parts: [{ type: "text", text: nestedParts }],
+				created_at_ms: 1000,
+			},
+		];
+
+		const [message] = normalizeMessages(rawMessages, "test");
+
+		expect(message.parts.map((part) => part.type)).toEqual([
+			"thinking",
+			"tool_call",
+		]);
+		expect(
+			message.parts.some(
+				(part) => part.type === "text" && part.text.includes("tool_call"),
+			),
+		).toBe(false);
+	});
+
 	it("should NOT create text parts from tool role messages with parts_json", () => {
 		// Simulate hstry SerializableMessage format (as received via WebSocket)
 		const rawMessages: RawMessage[] = [

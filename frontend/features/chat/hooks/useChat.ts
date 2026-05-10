@@ -146,6 +146,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 	const isStreamingRef = useRef(false);
 	const lastAgentEventAtRef = useRef<number>(Date.now());
 	const sendInFlightRef = useRef(false);
+	const appliedModelRef = useRef<string | null>(null);
 	const responseWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(
 		null,
 	);
@@ -317,6 +318,25 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 		}
 		return config;
 	}, [normalizedWorkspacePath, selectedSessionId]);
+
+	const ensureSelectedModelApplied = useCallback(
+		async (sessionId: string, manager: ReturnType<typeof getWsManager>) => {
+			const config = getSessionConfig();
+			if (!config?.provider || !config.model) return;
+			const modelRef = `${sessionId}:${config.provider}/${config.model}`;
+			if (appliedModelRef.current === modelRef) return;
+			try {
+				await manager.agentSetModel(sessionId, config.provider, config.model);
+				appliedModelRef.current = modelRef;
+			} catch (err) {
+				console.warn(
+					"[useChat] Failed to apply selected model before prompt; continuing with current Pi model",
+					err,
+				);
+			}
+		},
+		[getSessionConfig],
+	);
 
 	const applyServerMessages = useCallback(
 		(
@@ -1809,6 +1829,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 				}
 			}
 
+			await ensureSelectedModelApplied(sessionId, manager);
 			armResponseWatchdog(sessionId);
 			dispatchMessageByMode({
 				dispatcher: manager,
@@ -1823,6 +1844,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 			applyTurnState,
 			armResponseWatchdog,
 			bindSessionIdentity,
+			ensureSelectedModelApplied,
 			ensureSession,
 			getSessionConfig,
 			onError,
