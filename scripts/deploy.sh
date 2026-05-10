@@ -460,9 +460,9 @@ REMEDIATE_EOF
 
         # Determine cargo install path
         if [[ -n "$pkg" ]]; then
-            echo "        cargo install --path \"\$sibling_repo/crates/$pkg\" --force 2>&1"
+            echo "        cargo install --path \"\$sibling_repo/crates/$pkg\" --root /usr/local --force 2>&1"
         else
-            echo "        cargo install --path \"\$sibling_repo\" --force 2>&1"
+            echo "        cargo install --path \"\$sibling_repo\" --root /usr/local --force 2>&1"
         fi
 
         cat <<REMEDIATE_EOF
