@@ -86,6 +86,17 @@ function parseJsonMaybe(value: string): unknown | null {
 	}
 }
 
+function parseCanonicalPartsJsonText(value: string): DisplayPart[] | null {
+	const parsed = parseJsonMaybe(value);
+	if (!Array.isArray(parsed)) return null;
+	const parts = normalizeContentToParts(parsed);
+	if (parts.length === 0) return null;
+	const hasStructuredPart = parts.some(
+		(part) => part.type !== "text" || part.text.trim() !== value.trim(),
+	);
+	return hasStructuredPart ? parts : null;
+}
+
 /** Safely stringify a value for fingerprinting. */
 function safeStringify(value: unknown): string {
 	if (value === null || value === undefined) return "";
@@ -386,12 +397,26 @@ export function normalizeContentToParts(content: unknown): DisplayPart[] {
 	if (Array.isArray(content)) {
 		for (const block of content) {
 			if (typeof block === "string") {
-				parts.push({ type: "text", id: nextPartId(), text: block });
+				const nestedParts = parseCanonicalPartsJsonText(block);
+				if (nestedParts) {
+					parts.push(...nestedParts);
+				} else {
+					parts.push({ type: "text", id: nextPartId(), text: block });
+				}
 				continue;
 			}
 			if (!block || typeof block !== "object") continue;
 			const part = coerceBlockToPart(block as Record<string, unknown>);
-			if (part) parts.push(part);
+			if (part) {
+				if (part.type === "text") {
+					const nestedParts = parseCanonicalPartsJsonText(part.text);
+					if (nestedParts) {
+						parts.push(...nestedParts);
+						continue;
+					}
+				}
+				parts.push(part);
+			}
 		}
 		return parts;
 	}
