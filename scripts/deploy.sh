@@ -432,8 +432,13 @@ REMEDIATE_EOF
 fi
 
 if [[ "\$downloaded" == "true" ]]; then
-    echo "INSTALLED_FROM=release"
-    exit 0
+    installed_version="$(/usr/local/bin/$dep --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+    required_version="$required"
+    if [[ -n "\$installed_version" ]] && [[ "$(printf '%s\n%s\n' "\$required_version" "\$installed_version" | sort -V | head -n1)" == "\$required_version" ]]; then
+        echo "INSTALLED_FROM=release"
+        exit 0
+    fi
+    echo "RELEASE_VERSION_MISMATCH=\${installed_version:-unknown}"
 fi
 
 # --- Fallback: cargo install from source ---
