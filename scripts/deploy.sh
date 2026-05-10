@@ -346,7 +346,7 @@ dep_install_meta() {
         trx)   echo "trx:trx-cli:rust" ;;
         agntz) echo "agntz::rust" ;;
         sx)    echo "sx::go" ;;
-        skdlr) echo "skdlr::rust" ;;
+        skdlr) echo "skdlr:skdlr-cli:rust" ;;
         *)     echo "$dep::rust" ;;
     esac
 }
