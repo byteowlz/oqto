@@ -27,6 +27,9 @@ import { toast } from "sonner";
 
 const OMNI_KEY_NAME = "omni-vanilla";
 
+/** Event emitted when OAuth provider connection changes; listeners should refresh model lists. */
+const OAUTH_MODELS_INVALIDATE_EVENT = "oqto:oauth-models-invalidate";
+
 function formatDate(value?: string | null): string {
 	if (!value) return "-";
 	const parsed = new Date(value);
@@ -38,6 +41,12 @@ function buildExpiryIso(dateStr: string): string {
 	if (!dateStr) return "";
 	const iso = new Date(`${dateStr}T23:59:59Z`).toISOString();
 	return iso;
+}
+
+function emitOAuthModelsInvalidate(): void {
+	if (typeof window !== "undefined") {
+		window.dispatchEvent(new CustomEvent(OAUTH_MODELS_INVALIDATE_EVENT));
+	}
 }
 
 function addDaysIso(days: number): { iso: string; date: string } {
@@ -258,6 +267,7 @@ export function ApiKeysPanel() {
 					delete next[providerId];
 					return next;
 				});
+				emitOAuthModelsInvalidate();
 				await refreshOAuth();
 			} catch (err) {
 				const message =
@@ -300,6 +310,7 @@ export function ApiKeysPanel() {
 						delete next[providerId];
 						return next;
 					});
+					emitOAuthModelsInvalidate();
 					await refreshOAuth();
 				}
 			} catch (err) {
@@ -326,6 +337,7 @@ export function ApiKeysPanel() {
 			setOauthError(null);
 			try {
 				await deleteOAuthProvider(providerId);
+				emitOAuthModelsInvalidate();
 				await refreshOAuth();
 			} catch (err) {
 				const message =

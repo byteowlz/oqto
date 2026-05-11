@@ -1730,6 +1730,11 @@ impl PiSessionManager {
         // catalogs without usable credentials). To avoid surfacing unavailable
         // providers in the UI, only merge ephemeral/session models whose
         // provider is already present in disk models.
+        //
+        // Built-in Pi providers often use bare names (e.g. "openai-codex") while
+        // EAVS-managed entries are prefixed ("eavs-openai-codex"). We allow
+        // ephemeral/session models whose provider name matches either the exact
+        // disk provider name or the disk name with "eavs-" stripped.
         let mut models = if let Some(disk_arr) = disk_models.as_array() {
             if !disk_arr.is_empty() {
                 let allowed_providers: std::collections::HashSet<String> = disk_arr
@@ -1741,6 +1746,14 @@ impl PiSessionManager {
                     })
                     .collect();
 
+                // Build a set of bare provider names (without "eavs-" prefix) so
+                // that ephemeral Pi built-in providers match their EAVS-managed
+                // counterparts.
+                let allowed_bare: std::collections::HashSet<&str> = allowed_providers
+                    .iter()
+                    .filter_map(|p| p.strip_prefix("eavs-"))
+                    .collect();
+
                 let filter_by_provider = |value: &serde_json::Value| -> serde_json::Value {
                     let filtered = value
                         .as_array()
@@ -1749,7 +1762,10 @@ impl PiSessionManager {
                                 .filter(|m| {
                                     m.get("provider")
                                         .and_then(|p| p.as_str())
-                                        .map(|p| allowed_providers.contains(p))
+                                        .map(|p| {
+                                            allowed_providers.contains(p)
+                                                || allowed_bare.contains(p)
+                                        })
                                         .unwrap_or(false)
                                 })
                                 .cloned()
@@ -1948,7 +1964,8 @@ impl PiSessionManager {
             .ok();
         let stored = *self.models_json_mtime.read().await;
         match (stored, current_mtime) {
-            (None, _) => false,      // First call — not a change, cache may be from disk
+            (None, None) => false,   // No file yet — nothing to compare
+            (None, Some(_)) => true, // First call with existing file — treat as changed so cache is rebuilt from disk
             (Some(_), None) => true, // File disappeared
             (Some(old), Some(new)) => new != old,
         }
