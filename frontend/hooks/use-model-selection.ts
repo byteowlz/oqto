@@ -46,6 +46,7 @@ export interface ModelSelectionActions {
 
 const DEFAULT_REASONING_THINKING_LEVEL = "minimal";
 const MODEL_SELECTION_SYNC_EVENT = "oqto:model-selection-sync";
+const OAUTH_MODELS_INVALIDATE_EVENT = "oqto:oauth-models-invalidate";
 
 type ModelSelectionSyncDetail = {
 	sessionId: string | null;
@@ -126,6 +127,7 @@ export function useModelSelection(
 	});
 	const [selectedModelRef, setSelectedModelRef] = useState<string | null>(null);
 	const [pendingModelRef, setPendingModelRef] = useState<string | null>(null);
+	const [modelsVersion, setModelsVersion] = useState(0);
 	const [isSwitching, setIsSwitching] = useState(false);
 	// Only show loading if we have no cached models
 	const [loading, setLoading] = useState(false);
@@ -196,6 +198,33 @@ export function useModelSelection(
 		() => getWorkspaceModelStorageKey(_normalizedWorkspacePath),
 		[_normalizedWorkspacePath],
 	);
+
+	// Listen for OAuth model invalidation events and force a re-fetch.
+	// useeffect-guardrail: allow - global window event subscription
+	useEffect(() => {
+		if (typeof window === "undefined") return undefined;
+		const handler = () => {
+			// Clear localStorage cache so the next fetch gets fresh models
+			if (modelCacheKey) {
+				try {
+					localStorage.removeItem(modelCacheKey);
+				} catch {
+					// ignore
+				}
+			}
+			setModelsVersion((v) => v + 1);
+		};
+		window.addEventListener(
+			OAUTH_MODELS_INVALIDATE_EVENT,
+			handler as EventListener,
+		);
+		return () => {
+			window.removeEventListener(
+				OAUTH_MODELS_INVALIDATE_EVENT,
+				handler as EventListener,
+			);
+		};
+	}, [modelCacheKey]);
 
 	// Keep multiple model selectors (status bar + settings sidebar) in lockstep.
 	// useeffect-guardrail: allow - window custom event subscription
@@ -393,7 +422,12 @@ export function useModelSelection(
 			active = false;
 			if (retryTimer) clearTimeout(retryTimer);
 		};
-	}, [effectiveSessionId, _normalizedWorkspacePath, modelCacheKey]);
+	}, [
+		effectiveSessionId,
+		_normalizedWorkspacePath,
+		modelCacheKey,
+		modelsVersion,
+	]);
 
 	// Derive idle/streaming state from agent events and fetch initial state.
 	// Also handles applying pending model when agent goes idle.
