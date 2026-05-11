@@ -207,9 +207,11 @@ async fn count_oqto_log_user_messages(
         SELECT COUNT(*)
         FROM oqto_log_messages m
         JOIN oqto_log_turns t ON t.turn_id = m.turn_id
-        WHERE t.session_id = ? AND t.role = 'user'
+        JOIN oqto_log_sessions s ON s.session_id = t.session_id
+        WHERE (t.session_id = ? OR s.external_id = ?) AND t.role = 'user'
         "#,
     )
+    .bind(session_id)
     .bind(session_id)
     .fetch_one(&pool)
     .await
@@ -248,9 +250,11 @@ async fn count_oqto_log_session_messages(
         SELECT COUNT(*)
         FROM oqto_log_messages m
         JOIN oqto_log_turns t ON t.turn_id = m.turn_id
-        WHERE t.session_id = ?
+        JOIN oqto_log_sessions s ON s.session_id = t.session_id
+        WHERE t.session_id = ? OR s.external_id = ?
         "#,
     )
+    .bind(session_id)
     .bind(session_id)
     .fetch_one(&pool)
     .await

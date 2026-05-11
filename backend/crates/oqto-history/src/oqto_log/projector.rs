@@ -326,6 +326,138 @@ pub async fn project_session_messages_for_workspace(
         .collect())
 }
 
+fn projected_parts_from_payload(
+    msg_id: &str,
+    fallback_content: Option<String>,
+    json_payload: Option<&str>,
+) -> Vec<ProjectedChatMessagePart> {
+    let Some(payload) = json_payload else {
+        return fallback_text_part(msg_id, fallback_content);
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(payload) else {
+        return fallback_text_part(msg_id, fallback_content);
+    };
+    let Some(content) = value.get("content") else {
+        return fallback_text_part(msg_id, fallback_content);
+    };
+    let mut parts = Vec::new();
+    match content {
+        serde_json::Value::Array(items) => {
+            for (idx, item) in items.iter().enumerate() {
+                if let Some(part) = content_item_to_projected_part(msg_id, idx, item) {
+                    parts.push(part);
+                }
+            }
+        }
+        _ => return fallback_text_part(msg_id, fallback_content),
+    }
+    if parts.is_empty() {
+        fallback_text_part(msg_id, fallback_content)
+    } else {
+        parts
+    }
+}
+
+fn fallback_text_part(msg_id: &str, text: Option<String>) -> Vec<ProjectedChatMessagePart> {
+    vec![ProjectedChatMessagePart {
+        id: format!("{}:part:0", msg_id),
+        part_type: "text".to_string(),
+        text,
+        text_html: None,
+        tool_name: None,
+        tool_call_id: None,
+        tool_input: None,
+        tool_output: None,
+        tool_status: None,
+        tool_title: None,
+    }]
+}
+
+fn content_item_to_projected_part(
+    msg_id: &str,
+    idx: usize,
+    item: &serde_json::Value,
+) -> Option<ProjectedChatMessagePart> {
+    let obj = item.as_object()?;
+    let part_type = obj.get("type").and_then(|v| v.as_str()).unwrap_or("text");
+    let id = format!("{}:part:{}", msg_id, idx);
+    let base = |part_type: &str| ProjectedChatMessagePart {
+        id: id.clone(),
+        part_type: part_type.to_string(),
+        text: None,
+        text_html: None,
+        tool_name: None,
+        tool_call_id: None,
+        tool_input: None,
+        tool_output: None,
+        tool_status: None,
+        tool_title: None,
+    };
+    match part_type {
+        "thinking" | "reasoning" => {
+            let mut part = base("thinking");
+            part.text = obj
+                .get("thinking")
+                .or_else(|| obj.get("text"))
+                .and_then(|v| v.as_str())
+                .map(ToString::to_string);
+            Some(part)
+        }
+        "tool_call" | "toolCall" | "tool_use" => {
+            let mut part = base("tool_call");
+            part.tool_name = obj
+                .get("name")
+                .and_then(|v| v.as_str())
+                .map(ToString::to_string);
+            part.tool_call_id = obj
+                .get("tool_call_id")
+                .or_else(|| obj.get("toolCallId"))
+                .or_else(|| obj.get("id"))
+                .and_then(|v| v.as_str())
+                .map(ToString::to_string);
+            part.tool_input = obj.get("input").or_else(|| obj.get("arguments")).cloned();
+            part.tool_status = Some("success".to_string());
+            Some(part)
+        }
+        "tool_result" | "toolResult" => {
+            let mut part = base("tool_result");
+            part.tool_name = obj
+                .get("name")
+                .and_then(|v| v.as_str())
+                .map(ToString::to_string);
+            part.tool_call_id = obj
+                .get("tool_call_id")
+                .or_else(|| obj.get("toolCallId"))
+                .or_else(|| obj.get("tool_use_id"))
+                .and_then(|v| v.as_str())
+                .map(ToString::to_string);
+            part.tool_output = obj.get("output").or_else(|| obj.get("content")).cloned();
+            part.tool_status = Some(
+                if obj
+                    .get("is_error")
+                    .or_else(|| obj.get("isError"))
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+                {
+                    "error"
+                } else {
+                    "success"
+                }
+                .to_string(),
+            );
+            Some(part)
+        }
+        _ => {
+            let mut part = base("text");
+            part.text = obj
+                .get("text")
+                .and_then(|v| v.as_str())
+                .map(ToString::to_string);
+            Some(part)
+        }
+    }
+}
+
 fn row_to_projected_message(
     _idx: usize,
     session_id: &str,
@@ -340,6 +472,8 @@ fn row_to_projected_message(
         .as_deref()
         .and_then(extract_client_id_from_payload_json);
     let role: String = row.get("role");
+
+    let parts = projected_parts_from_payload(&msg_id, fallback_content, json_payload.as_deref());
 
     ProjectedChatMessage {
         id: msg_id.clone(),
@@ -357,18 +491,7 @@ fn row_to_projected_message(
         tokens_reasoning: None,
         cost: None,
         client_id: fallback_client_id,
-        parts: vec![ProjectedChatMessagePart {
-            id: format!("{}:part:0", msg_id),
-            part_type: "text".to_string(),
-            text: fallback_content,
-            text_html: None,
-            tool_name: None,
-            tool_call_id: None,
-            tool_input: None,
-            tool_output: None,
-            tool_status: None,
-            tool_title: None,
-        }],
+        parts,
     }
 }
 
