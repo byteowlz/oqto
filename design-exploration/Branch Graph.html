@@ -1,0 +1,2063 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>oqto — branch graph</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+<style>
+/* oqto branch-graph styles — terminal aesthetic, sharp corners, mono */
+
+:root {
+  --background: #222624;
+  --panel: #161c1a;
+  --panel-strong: #0f1412;
+  --card: #2d312f;
+  --card-2: #1f2422;
+  --foreground: #d5e0d8;
+  --muted-fg: #8a9690;
+  --dim-fg: #556159;
+  --border: #2d312f;
+  --border-strong: #3a3f41;
+  --primary: #3ba77c;
+  --primary-2: #6ed4a5;
+  --primary-dim: #2a7a5a;
+  --user: #e8c56e;        /* warm yellow — user prompts */
+  --user-dim: #8a7531;
+  --assistant: #3ba77c;   /* oqto green — assistant turns */
+  --system: #7aa6d8;      /* cool blue — system */
+  --accent-pink: #d07a9c;
+  --warn: #d0a060;
+  --danger: #b94a48;
+
+  --mini-edge: #3a3f41;
+  --mini-node: #556159;
+  --mini-head: #3ba77c;
+  --mini-sel: #e8c56e;
+  --mini-view: #3ba77c;
+}
+
+* { box-sizing: border-box; }
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  line-height: 1.45;
+  letter-spacing: 0;
+  -webkit-font-smoothing: antialiased;
+}
+button, input { font-family: inherit; font-size: inherit; color: inherit; }
+button { background: transparent; border: 1px solid var(--border-strong); padding: 3px 8px; cursor: pointer; }
+button:hover { border-color: var(--primary); color: var(--primary); }
+button:disabled { opacity: .35; cursor: default; }
+kbd {
+  font-family: inherit;
+  font-size: 10.5px;
+  padding: 1px 5px;
+  border: 1px solid var(--border-strong);
+  background: var(--panel-strong);
+  color: var(--muted-fg);
+  margin: 0 1px;
+}
+
+/* ===== App shell ===== */
+.ob-app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: var(--background);
+}
+.ob-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel-strong);
+  height: 36px;
+}
+.ob-logo { font-size: 13px; font-weight: 700; letter-spacing: .04em; color: var(--fg); opacity: .95; }
+.ob-crumb { color: var(--muted-fg); font-size: 12px; }
+.ob-crumb-dim { color: var(--dim-fg); }
+.ob-crumb-strong { color: var(--primary); }
+.ob-crumb-sep { color: var(--dim-fg); }
+.ob-bar-filter {
+  flex: 1;
+  max-width: 480px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  height: 24px;
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+}
+.ob-bar-filter:focus-within { border-color: var(--primary); }
+.ob-bar-filter-prefix { color: var(--primary); font-weight: bold; }
+.ob-bar-filter-input { flex: 1; background: transparent; border: 0; outline: none; color: var(--foreground); height: 22px; }
+.ob-bar-filter-input::placeholder { color: var(--dim-fg); }
+.ob-bar-filter-clear { border: 0; padding: 0 4px; color: var(--muted-fg); }
+.ob-bar-right { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.ob-bar-btn { height: 24px; padding: 0 10px; font-size: 12px; }
+.ob-bar-sep { width: 1px; height: 16px; background: var(--border-strong); }
+.ob-bar-head { color: var(--muted-fg); font-size: 11.5px; }
+.ob-bar-head-val { color: var(--primary); }
+
+/* ===== Main ===== */
+.ob-main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+.ob-graph {
+  flex: 1;
+  position: relative;
+  min-width: 0;
+  background:
+    radial-gradient(circle at 1px 1px, #2a302d 1px, transparent 1px) 0 0 / 24px 24px,
+    var(--background);
+}
+.ob-surface-full .ob-graph { flex: 1; }
+
+/* ===== Graph canvas ===== */
+.ogc-root { position: absolute; inset: 0; cursor: grab; outline: none; }
+.ogc-svg { display: block; width: 100%; height: 100%; }
+
+/* edges */
+.oge path {
+  fill: none;
+  stroke: var(--border-strong);
+  stroke-width: 1.2;
+  stroke-linecap: square;
+}
+.oge.oge-active path { stroke: var(--primary); stroke-width: 1.8; }
+.oge.oge-trail path { stroke: var(--user); stroke-width: 1.6; stroke-dasharray: none; }
+.oge.oge-dim path { stroke: #262c2a; }
+.oge-label {
+  fill: var(--muted-fg);
+  font-size: 9.5px;
+  font-family: inherit;
+  paint-order: stroke;
+  stroke: var(--background);
+  stroke-width: 4;
+}
+.oge-active .oge-label { fill: var(--primary); }
+
+/* nodes */
+.ogn { cursor: pointer; }
+.ogn-shape {
+  stroke-width: 1.4;
+}
+.ogn-user .ogn-shape  { fill: var(--background); stroke: var(--user); }
+.ogn-assistant .ogn-shape { fill: var(--background); stroke: var(--assistant); }
+.ogn-system .ogn-shape { fill: var(--background); stroke: var(--system); }
+
+.ogn-active-branch.ogn-user .ogn-shape { fill: var(--user); }
+.ogn-active-branch.ogn-assistant .ogn-shape { fill: var(--assistant); }
+.ogn-active-branch.ogn-system .ogn-shape { fill: var(--system); }
+
+.ogn-head .ogn-shape { fill: var(--primary); stroke: var(--primary-2); stroke-width: 2; }
+.ogn-ring {
+  fill: none;
+  stroke: var(--user);
+  stroke-width: 1.2;
+  stroke-dasharray: 2 2;
+}
+.ogn-head .ogn-ring { stroke: var(--primary); stroke-dasharray: none; }
+
+.ogn-dim .ogn-shape { opacity: .25; }
+.ogn-match .ogn-shape {
+  fill: var(--user);
+  stroke: var(--user);
+}
+.ogn-label {
+  fill: var(--muted-fg);
+  font-size: 10.5px;
+  font-family: inherit;
+  paint-order: stroke;
+  stroke: var(--background);
+  stroke-width: 4;
+  pointer-events: none;
+}
+.ogc-svg[data-layout="horizontal"] .ogn-label { font-size: 9.5px; }
+.ogn-sub {
+  fill: var(--dim-fg);
+  font-size: 9px;
+  font-family: inherit;
+  paint-order: stroke;
+  stroke: var(--background);
+  stroke-width: 3;
+  pointer-events: none;
+}
+.ogn-selected .ogn-label { fill: var(--primary-2); }
+.ogn-ancestor .ogn-label { fill: var(--foreground); }
+.ogn-dim .ogn-label, .ogn-dim .ogn-sub { opacity: .2; }
+.ogn-star { fill: var(--user); font-size: 10px; pointer-events: none; }
+
+/* zoom ctrl */
+.ogc-zoom {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  background: var(--panel-strong);
+  border: 1px solid var(--border-strong);
+  padding: 3px;
+}
+.ogc-btn { border: 1px solid var(--border-strong); padding: 2px 8px; font-size: 11px; min-width: 22px; }
+.ogc-zoom-val { color: var(--muted-fg); font-size: 11px; padding: 0 6px; min-width: 40px; text-align: right; }
+
+/* minimap */
+.ogc-mini {
+  position: absolute;
+  bottom: 10px;
+  right: 10px;
+  background: var(--panel-strong);
+  border: 1px solid var(--border-strong);
+  padding: 4px;
+  user-select: none;
+}
+.ogc-mini-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--muted-fg);
+  padding: 0 2px 4px;
+  gap: 12px;
+}
+.ogc-mini-svg {
+  display: block;
+  background: var(--background);
+  cursor: crosshair;
+  border: 1px solid var(--border);
+}
+
+/* Legend */
+.ob-legend {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  background: var(--panel-strong);
+  border: 1px solid var(--border-strong);
+  padding: 6px 10px;
+  font-size: 10.5px;
+  color: var(--muted-fg);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.ob-legend-row { display: flex; align-items: center; gap: 8px; }
+.ob-legend-sq, .ob-legend-ci, .ob-legend-dia { width: 9px; height: 9px; display: inline-block; border: 1.2px solid; }
+.ob-legend-user { border-color: var(--user); }
+.ob-legend-assistant { border-color: var(--assistant); border-radius: 50% !important; }
+.ob-legend-system { border-color: var(--system); transform: rotate(45deg); }
+.ob-legend-head-mark { width: 14px; height: 14px; border: 1.4px solid var(--primary); background: var(--primary); display: inline-block; }
+.ob-legend-active-line { width: 14px; height: 2px; background: var(--primary); display: inline-block; }
+
+/* key hints */
+.ob-keys {
+  position: absolute;
+  bottom: 10px;
+  left: 10px;
+  background: var(--panel-strong);
+  border: 1px solid var(--border-strong);
+  padding: 5px 8px;
+  display: flex;
+  gap: 14px;
+  font-size: 10.5px;
+  color: var(--muted-fg);
+}
+.ob-keys span { display: flex; align-items: center; gap: 2px; }
+
+/* ===== Side panel ===== */
+.op-side {
+  flex: 0 0 420px;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border-left: 1px solid var(--border);
+  min-width: 0;
+}
+.ob-surface-overlay .op-side {
+  position: absolute;
+  top: 42px; /* below top bar: 36 + a bit */
+  right: 10px;
+  bottom: 10px;
+  flex-basis: 420px;
+  width: 420px;
+  border: 1px solid var(--border-strong);
+  box-shadow: 0 10px 24px rgba(0,0,0,0.4);
+}
+.op-side-preview { background: var(--card-2); }
+
+.op-side-empty { padding: 40px 20px; align-items: center; text-align: center; justify-content: center; }
+.op-empty-title { color: var(--muted-fg); margin-bottom: 8px; text-transform: uppercase; letter-spacing: .1em; font-size: 11px; }
+.op-empty-hint { color: var(--dim-fg); font-size: 11.5px; }
+
+.op-side-head {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel-strong);
+}
+.op-side-head-row { display: flex; align-items: center; gap: 8px; }
+.op-side-title { color: var(--primary); font-size: 10.5px; letter-spacing: .12em; font-weight: 700; }
+.op-side-id { color: var(--dim-fg); font-size: 11px; }
+.op-side-flex { flex: 1; }
+.op-side-btn { height: 22px; padding: 0 8px; font-size: 11px; }
+
+.op-breadcrumb { margin-top: 6px; display: flex; flex-wrap: wrap; align-items: center; gap: 2px; font-size: 11px; }
+.op-crumb { display: inline-flex; align-items: center; }
+.op-crumb-sep { color: var(--dim-fg); padding: 0 3px; }
+.op-crumb button { background: transparent; border: 0; padding: 1px 5px; color: var(--muted-fg); display: inline-flex; align-items: center; gap: 4px; }
+.op-crumb button:hover { color: var(--primary); }
+.op-crumb button.op-crumb-active { color: var(--primary); background: var(--card-2); }
+.op-crumb-text { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.op-side-body { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+
+.op-msg { border-left: 2px solid var(--border-strong); padding: 6px 10px; background: var(--card-2); }
+.op-msg-user { border-left-color: var(--user); }
+.op-msg-assistant { border-left-color: var(--assistant); }
+.op-msg-system { border-left-color: var(--system); }
+.op-msg-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; font-size: 10.5px; }
+.op-msg-ts { color: var(--dim-fg); }
+.op-msg-branch { color: var(--user); }
+.op-msg-body {
+  color: var(--foreground);
+  white-space: pre-wrap;
+  font-size: 12px;
+  line-height: 1.55;
+}
+.op-msg-tools { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 6px; }
+.op-tool { color: var(--primary); font-size: 10.5px; border: 1px solid var(--primary-dim); padding: 0 4px; }
+
+.op-role { display: inline-flex; align-items: center; gap: 5px; text-transform: uppercase; font-size: 10px; letter-spacing: .08em; }
+.op-role-dot { width: 6px; height: 6px; display: inline-block; }
+.op-role-user .op-role-dot { background: var(--user); }
+.op-role-assistant .op-role-dot { background: var(--assistant); }
+.op-role-system .op-role-dot { background: var(--system); }
+.op-role-model { color: var(--dim-fg); text-transform: none; letter-spacing: 0; font-size: 10px; }
+
+.op-continuations { margin-top: 10px; border-top: 1px dashed var(--border-strong); padding-top: 10px; }
+.op-continuations-title { color: var(--muted-fg); font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; margin-bottom: 6px; }
+.op-cont-row {
+  display: grid;
+  grid-template-columns: 8px 90px 1fr auto;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  text-align: left;
+  padding: 4px 6px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--foreground);
+  font-size: 11.5px;
+}
+.op-cont-row:hover { border-color: var(--border-strong); background: var(--card-2); }
+.op-cont-active { border-color: var(--primary-dim); }
+.op-cont-marker { width: 8px; height: 8px; display: inline-block; border: 1.2px solid; }
+.op-cont-marker.op-role-user { border-color: var(--user); background: var(--user); }
+.op-cont-marker.op-role-assistant { border-color: var(--assistant); background: var(--assistant); border-radius: 50% !important; }
+.op-cont-branch { color: var(--user); font-size: 10.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.op-cont-text { color: var(--muted-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.op-cont-ts { color: var(--dim-fg); font-size: 10.5px; }
+
+.op-side-foot {
+  border-top: 1px solid var(--border);
+  padding: 6px 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--panel-strong);
+}
+.op-side-foot-stats { color: var(--muted-fg); font-size: 11px; display: flex; gap: 6px; flex: 1; }
+.op-side-foot-actions { display: flex; gap: 6px; }
+.op-foot-btn { height: 22px; padding: 0 10px; font-size: 11px; }
+.op-foot-btn:hover:not(:disabled) { border-color: var(--primary); color: var(--primary); }
+
+/* ===== Transcript additions ===== */
+.op-side-head-meta {
+  margin-top: 4px;
+  color: var(--dim-fg);
+  font-size: 10.5px;
+  flex-wrap: wrap;
+  white-space: nowrap;
+}
+.op-side-head-meta > * { flex-shrink: 0; }
+.op-meta-node { color: var(--muted-fg); }
+.op-meta-sep { color: var(--dim-fg); opacity: .6; padding: 0 2px; }
+.op-meta-head { color: var(--primary); font-weight: 600; }
+.op-side-hint { color: var(--dim-fg); font-size: 10px; letter-spacing: .06em; }
+.op-side-hint kbd {
+  font-family: inherit; font-size: 9.5px; padding: 0 3px;
+  border: 1px solid var(--border-strong); color: var(--muted-fg);
+}
+
+.op-side-body {
+  gap: 0; /* use per-msg margin instead */
+  scroll-behavior: smooth;
+}
+.op-side-spacer-top, .op-side-spacer-bot {
+  flex: 0 0 30vh;
+  min-height: 120px;
+}
+
+.op-msg {
+  position: relative;
+  cursor: pointer;
+  padding: 8px 12px 10px 14px;
+  margin-bottom: 10px;
+  border-left: none;
+  background: transparent;
+  transition: background 120ms;
+}
+.op-msg:hover { background: var(--card-2); }
+.op-msg-rail {
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 2px;
+  background: var(--border-strong);
+}
+.op-msg-user .op-msg-rail { background: var(--user); }
+.op-msg-assistant .op-msg-rail { background: var(--assistant); }
+.op-msg-system .op-msg-rail { background: var(--system); }
+
+.op-msg-active {
+  background: var(--card-2);
+  box-shadow: inset 0 0 0 1px var(--primary-dim);
+}
+.op-msg-active .op-msg-rail {
+  width: 3px;
+  background: var(--primary);
+  box-shadow: 0 0 8px var(--primary-glow, rgba(122,215,180,0.35));
+}
+
+.op-msg-flex { flex: 1; }
+.op-msg-id { color: var(--dim-fg); font-size: 10px; letter-spacing: .04em; }
+
+.op-msg-fork {
+  margin-top: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  font: inherit;
+  font-size: 10.5px;
+  color: var(--user);
+  background: transparent;
+  border: 1px dashed var(--user);
+  cursor: pointer;
+  letter-spacing: .04em;
+}
+.op-msg-fork:hover { background: rgba(232,184,109,0.08); }
+
+
+/* ===== Status bar ===== */
+.ob-status {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 8px;
+  padding: 3px 10px;
+  background: var(--panel-strong);
+  border-top: 1px solid var(--border);
+  font-size: 10.5px;
+  color: var(--muted-fg);
+}
+.ob-status b { color: var(--primary); font-weight: 500; }
+
+/* ===== Tweaks ===== */
+.ob-tweaks {
+  position: fixed;
+  right: 14px;
+  bottom: 34px;
+  width: 260px;
+  background: var(--panel-strong);
+  border: 1px solid var(--border-strong);
+  z-index: 50;
+  box-shadow: 0 12px 30px rgba(0,0,0,.4);
+}
+.ob-tweaks-head {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  color: var(--primary);
+  font-size: 11px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+.ob-tweaks-close { border: 0; padding: 0 4px; color: var(--muted-fg); }
+.ob-tweaks-body { padding: 8px 10px; display: flex; flex-direction: column; gap: 8px; }
+.ob-tw-row { display: grid; grid-template-columns: 70px 1fr; align-items: center; gap: 8px; }
+.ob-tw-label { color: var(--muted-fg); font-size: 11px; }
+.ob-seg { display: inline-flex; border: 1px solid var(--border-strong); }
+.ob-seg-btn {
+  border: 0;
+  border-right: 1px solid var(--border-strong);
+  padding: 3px 8px;
+  font-size: 11px;
+  color: var(--muted-fg);
+}
+.ob-seg-btn:last-child { border-right: 0; }
+.ob-seg-btn.ob-seg-active { background: var(--primary); color: var(--panel-strong); }
+.ob-seg-btn:hover:not(.ob-seg-active) { color: var(--primary); }
+
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+// Mock branching chat tree.
+// Each node: {id, role: 'user'|'assistant'|'system', text, model?, ts, parent, children, toolCalls?, starred?, muted?}
+// Branches are created by explicit "Branch from here" — so a node can have multiple children.
+
+(function () {
+  const MODELS = [
+    "claude-sonnet-4.5",
+    "claude-opus-4.1",
+    "gpt-5.1",
+    "gpt-5-mini",
+    "gemini-2.5-pro",
+    "deepseek-v3.2",
+    "llama-4-maverick",
+    "qwen-3-235b",
+  ];
+
+  const USER_PROMPTS = [
+    "Refactor the ws-manager to use exponential backoff",
+    "Why does the chat state machine drop tool_use deltas?",
+    "Write a vitest for the dedup helper",
+    "Draft a PR description for the session-rekey change",
+    "Summarize the opencode-sdk-reference doc",
+    "Explain the difference between bus-client and ws-client",
+    "Find all places we throttle streaming events",
+    "How would we add branching to the chat state machine?",
+    "Port the Tauri fetch polyfill to use fetch streams",
+    "Audit useEffect usage in features/chat",
+    "Design a graph view for session history",
+    "Propose a schema for branch metadata in JSONL",
+    "Rewrite ChatEntry to avoid the 1300-line file",
+    "Add read-aloud for assistant messages",
+    "Sketch keyboard shortcuts for spotlight",
+    "Trace how a dictation result reaches send-flow",
+    "What breaks if we drop JetBrains Mono?",
+    "Mock a settings page for voice",
+    "Propose a minimap component for the chat timeline",
+    "Compare approaches to storing branch heads",
+    "Why is message-buffer regression flaky?",
+    "Inline the bus-client tests into the reducer file",
+    "Translate all strings in sessions view to de",
+    "Drop radius:0 globally — what would it look like?",
+    "Convert app-context to zustand",
+    "What's the smallest change to land branching?",
+    "Add a 'copy as terminal transcript' action",
+    "Explore a ghostty-backed preview pane",
+    "Write the onboarding copy for Default Chat",
+    "Bench JSONL parse speed on 10k lines",
+  ];
+
+  const ASSISTANT_SNIPPETS = [
+    "I'd start by isolating the reconnect logic into a small state machine with explicit retry counts.",
+    "Looking at the reducer, the drop happens when a delta arrives for a tool_use whose id hasn't been registered yet.",
+    "Here's a test that covers the merge-on-same-id path and the collision case.",
+    "Short version: bus-client is transport-agnostic and speaks canonical events; ws-client owns the socket lifecycle.",
+    "I can see three hot spots: streaming-throttle.ts, use-chat-send-reliability, and the canonical-event-reducer.",
+    "Branching needs a parent pointer on each message and a 'head' pointer per branch in the session file header.",
+    "Minimap: render all nodes at 1/8 scale, highlight viewport, click to jump.",
+    "Keyboard map: j/k for prev/next sibling, h/l for parent/child, / for filter, b to branch, Enter to open.",
+    "We could store branches as a list of (branch_id, head_message_id) in the session header and keep the graph implicit.",
+    "Reading the file, the flakiness is because we assume delta order — let me sketch a fix.",
+    "Radius-0 is load-bearing for the terminal aesthetic; softening corners would require rethinking the whole type scale.",
+    "Smallest-change answer: add parent_id to MessageFile, keep current head semantics, branch = fork at a parent.",
+    "I'd expose a `branches` view that reads heads from the header and builds the tree on mount.",
+    "ghostty-backed previews would give us real ANSI. The tradeoff is WASM bundle size.",
+    "Here's a rough copy pass. Tone: quiet, declarative, no exclamation marks.",
+    "Let me map the dictation path: mic → use-dictation → chat-state-machine → send-flow → ws-client.",
+  ];
+
+  let idCounter = 0;
+  const nid = () => `n${String(idCounter++).padStart(4, "0")}`;
+
+  // Seedable PRNG so the graph is stable across reloads
+  let seed = 42;
+  const rnd = () => {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    return seed / 0xffffffff;
+  };
+  const pick = (arr) => arr[Math.floor(rnd() * arr.length)];
+  const pickInt = (a, b) => a + Math.floor(rnd() * (b - a + 1));
+
+  const nodes = {};
+  const addNode = (n) => {
+    nodes[n.id] = n;
+    if (n.parent) nodes[n.parent].children.push(n.id);
+    return n;
+  };
+
+  const NOW = Date.parse("2026-04-17T14:20:00Z");
+  let tsCursor = NOW - 1000 * 60 * 60 * 36; // start ~36h ago
+
+  const makeUser = (parent, textOverride) => {
+    tsCursor += pickInt(20_000, 180_000);
+    return addNode({
+      id: nid(),
+      role: "user",
+      text: textOverride || pick(USER_PROMPTS),
+      ts: tsCursor,
+      parent,
+      children: [],
+    });
+  };
+
+  const makeAssistant = (parent, opts = {}) => {
+    tsCursor += pickInt(3_000, 45_000);
+    const hasTools = rnd() < 0.35;
+    return addNode({
+      id: nid(),
+      role: "assistant",
+      text: opts.text || pick(ASSISTANT_SNIPPETS),
+      model: opts.model || pick(MODELS),
+      ts: tsCursor,
+      parent,
+      children: [],
+      toolCalls: hasTools
+        ? pickInt(1, 4) === 1
+          ? ["read"]
+          : ["read", "grep", "edit"].slice(0, pickInt(1, 3))
+        : undefined,
+      starred: rnd() < 0.08,
+      muted: rnd() < 0.06,
+    });
+  };
+
+  // Root
+  const root = addNode({
+    id: nid(),
+    role: "system",
+    text: "session started",
+    ts: tsCursor,
+    parent: null,
+    children: [],
+  });
+
+  // Build a tree that's a real tree: many branches, bounded depth per branch.
+  const TARGET_NODES = 120;
+  const MAX_DEPTH = 22;
+
+  // Helper to extend a linear chain from a parent by N exchanges
+  const extendChain = (parent, n) => {
+    let cur = parent;
+    for (let i = 0; i < n && Object.keys(nodes).length < TARGET_NODES; i++) {
+      const u = makeUser(cur.id);
+      const a = makeAssistant(u.id);
+      cur = a;
+      if (DATA_DEPTH(cur.id) >= MAX_DEPTH) break;
+    }
+    return cur;
+  };
+  const DATA_DEPTH = (id) => {
+    let d = 0, cur = id;
+    while (nodes[cur] && nodes[cur].parent) { cur = nodes[cur].parent; d++; }
+    return d;
+  };
+
+  // Start with a short main trunk
+  let trunk = extendChain(root, pickInt(3, 5));
+
+  // From the trunk, spawn several branches
+  const forkable = [];
+  {
+    let cur = root.id;
+    while (cur) {
+      forkable.push(cur);
+      cur = nodes[cur].children[0];
+    }
+  }
+
+  // Now iteratively: pick a random forkable assistant node, branch off with a chain
+  let guard = 0;
+  while (Object.keys(nodes).length < TARGET_NODES && guard++ < 400) {
+    // weight toward assistant nodes not too deep
+    const candidates = Object.values(nodes).filter(
+      (n) => n.role === "assistant" && DATA_DEPTH(n.id) < MAX_DEPTH - 4,
+    );
+    if (candidates.length === 0) break;
+    const parent = candidates[Math.floor(rnd() * candidates.length)];
+    // branch chance proportional to how few children it already has
+    if (parent.children.length > 2 && rnd() < 0.7) continue;
+    const chainLen = pickInt(2, 6);
+    extendChain(parent, chainLen);
+  }
+
+
+  // Give a few nodes explicit "branch label" metadata so we can show edge labels
+  const branchLabels = [
+    "main",
+    "try/sonnet",
+    "try/opus",
+    "try/gpt-5",
+    "alt-approach",
+    "cleanup",
+    "quickfix",
+    "tangent",
+    "with-tools",
+    "refactor",
+  ];
+  let labelI = 0;
+  Object.values(nodes).forEach((n) => {
+    if (n.children.length > 1) {
+      n.children.forEach((cid, i) => {
+        const c = nodes[cid];
+        c.branchLabel =
+          i === 0
+            ? "main"
+            : branchLabels[(labelI++ % (branchLabels.length - 1)) + 1];
+      });
+    }
+  });
+
+  // "Current" branch head — the user's active position
+  const allHeads = Object.values(nodes).filter((n) => n.children.length === 0);
+  const currentHead = allHeads[Math.floor(allHeads.length * 0.4)];
+
+  // Pre-compute depth (distance from root) and a stable "x order" via DFS
+  const depth = {};
+  const dfsOrder = [];
+  (function dfs(id, d) {
+    depth[id] = d;
+    dfsOrder.push(id);
+    nodes[id].children.forEach((c) => dfs(c, d + 1));
+  })(root.id, 0);
+
+  window.OQTO_DATA = {
+    root: root.id,
+    nodes,
+    currentHead: currentHead.id,
+    depth,
+    dfsOrder,
+    models: MODELS,
+  };
+})();
+
+</script>
+<script>
+// Tree layout: Reingold–Tilford-ish, simplified.
+// Produces {x,y} per node id for vertical (top→down) and horizontal (left→right) layouts.
+// Units are abstract; consumers scale to pixels.
+
+(function () {
+  const { nodes, root } = window.OQTO_DATA;
+
+  // --- vertical layout: x = in-order index among leaves; y = depth ---
+  // Use Walker-lite: assign each subtree a horizontal extent; center parents over children.
+  function layoutVertical() {
+    const pos = {}; // id -> {x, y}
+    const COL = 1; // unit spacing
+    const ROW = 1;
+
+    function assign(id, depth) {
+      const n = nodes[id];
+      if (n.children.length === 0) {
+        pos[id] = { x: null, y: depth * ROW };
+        return { width: 1 };
+      }
+      let totalW = 0;
+      const childWidths = [];
+      n.children.forEach((cid) => {
+        const w = assign(cid, depth + 1).width;
+        childWidths.push(w);
+        totalW += w;
+      });
+      pos[id] = { x: null, y: depth * ROW, _w: totalW, _cw: childWidths };
+      return { width: Math.max(1, totalW) };
+    }
+    assign(root, 0);
+
+    // Second pass: place using offsets
+    function place(id, leftX) {
+      const n = nodes[id];
+      const p = pos[id];
+      if (n.children.length === 0) {
+        p.x = leftX * COL;
+        return 1;
+      }
+      let offset = leftX;
+      const widths = [];
+      n.children.forEach((cid) => {
+        const w = place(cid, offset);
+        widths.push(w);
+        offset += w;
+      });
+      // center parent over children
+      const first = pos[n.children[0]].x;
+      const last = pos[n.children[n.children.length - 1]].x;
+      p.x = (first + last) / 2;
+      return widths.reduce((a, b) => a + b, 0);
+    }
+    place(root, 0);
+    // cleanup
+    Object.values(pos).forEach((p) => {
+      delete p._w;
+      delete p._cw;
+    });
+    return pos;
+  }
+
+  // --- horizontal layout: swap axes ---
+  function layoutHorizontal() {
+    const v = layoutVertical();
+    const pos = {};
+    Object.keys(v).forEach((id) => {
+      pos[id] = { x: v[id].y, y: v[id].x };
+    });
+    return pos;
+  }
+
+  // Compute bbox of a pos map
+  function bbox(pos) {
+    let minX = Infinity,
+      minY = Infinity,
+      maxX = -Infinity,
+      maxY = -Infinity;
+    Object.values(pos).forEach((p) => {
+      if (p.x < minX) minX = p.x;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.y > maxY) maxY = p.y;
+    });
+    return { minX, minY, maxX, maxY, w: maxX - minX, h: maxY - minY };
+  }
+
+  window.OQTO_LAYOUT = {
+    vertical: layoutVertical,
+    horizontal: layoutHorizontal,
+    bbox,
+  };
+})();
+
+</script>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script type="text/babel">
+/* global React, ReactDOM */
+const { useState, useEffect, useRef, useMemo, useCallback, useLayoutEffect } = React;
+
+// ---------- utility ----------
+const DATA = window.OQTO_DATA;
+const { nodes: NODES, root: ROOT } = DATA;
+
+const fmtTime = (ts) => {
+  const d = new Date(ts);
+  const now = Date.now();
+  const diffMs = now - ts;
+  const min = Math.floor(diffMs / 60000);
+  if (min < 1) return "just now";
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  const day = Math.floor(hr / 24);
+  if (day < 7) return `${day}d ago`;
+  return d.toISOString().slice(0, 10);
+};
+
+const firstWords = (s, n = 8) => {
+  const words = (s || "").split(/\s+/).filter(Boolean);
+  const head = words.slice(0, n).join(" ");
+  return words.length > n ? head + "…" : head;
+};
+
+// Ancestors chain root→node (inclusive of node)
+const ancestors = (id) => {
+  const out = [];
+  let cur = id;
+  while (cur) {
+    out.unshift(cur);
+    cur = NODES[cur].parent;
+  }
+  return out;
+};
+
+// Forward path from node along first-child chain (exclusive of starting node)
+// If activeBranch is provided (Set of ids on current head path), prefer those children.
+const forwardPath = (id, activeBranch) => {
+  const out = [];
+  let cur = id;
+  while (cur && NODES[cur].children.length > 0) {
+    const kids = NODES[cur].children;
+    const next = activeBranch
+      ? kids.find((c) => activeBranch.has(c)) || kids[0]
+      : kids[0];
+    out.push(next);
+    cur = next;
+  }
+  return out;
+};
+
+// Full branch transcript: ancestors + forward continuation from this node
+const branchTranscript = (id, activeBranch) => [
+  ...ancestors(id),
+  ...forwardPath(id, activeBranch),
+];
+
+// sibling navigation among parent's children
+const siblings = (id) => {
+  const p = NODES[id].parent;
+  if (!p) return [id];
+  return NODES[p].children;
+};
+
+// vim-ish nav. h: parent, l: first child (or follow active branch), j: next sibling, k: prev sibling
+const navigate = (id, dir, activeBranch) => {
+  const n = NODES[id];
+  if (!n) return id;
+  if (dir === "h" || dir === "ArrowLeft" || dir === "parent") {
+    return n.parent || id;
+  }
+  if (dir === "l" || dir === "ArrowRight" || dir === "child") {
+    if (n.children.length === 0) return id;
+    // prefer child on the active branch path if available
+    const preferred = n.children.find((c) => activeBranch && activeBranch.has(c));
+    return preferred || n.children[0];
+  }
+  if (dir === "j" || dir === "ArrowDown" || dir === "nextSib") {
+    const sibs = siblings(id);
+    const i = sibs.indexOf(id);
+    return sibs[(i + 1) % sibs.length];
+  }
+  if (dir === "k" || dir === "ArrowUp" || dir === "prevSib") {
+    const sibs = siblings(id);
+    const i = sibs.indexOf(id);
+    return sibs[(i - 1 + sibs.length) % sibs.length];
+  }
+  return id;
+};
+
+// ---------- pan/zoom hook ----------
+function usePanZoom(ref, { min = 0.2, max = 3 } = {}) {
+  const [t, setT] = useState({ x: 0, y: 0, k: 1 });
+  const tRef = useRef(t);
+  tRef.current = t;
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+
+    let dragging = false;
+    let last = { x: 0, y: 0 };
+
+    const onMouseDown = (e) => {
+      if (e.button !== 0) return;
+      if (e.target.closest("[data-node]") || e.target.closest("[data-nopan]")) return;
+      dragging = true;
+      last = { x: e.clientX, y: e.clientY };
+      el.style.cursor = "grabbing";
+    };
+    const onMouseMove = (e) => {
+      if (!dragging) return;
+      const dx = e.clientX - last.x;
+      const dy = e.clientY - last.y;
+      last = { x: e.clientX, y: e.clientY };
+      setT((p) => ({ ...p, x: p.x + dx, y: p.y + dy }));
+    };
+    const onMouseUp = () => {
+      dragging = false;
+      el.style.cursor = "";
+    };
+
+    const onWheel = (e) => {
+      e.preventDefault();
+      const rect = el.getBoundingClientRect();
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
+      const p = tRef.current;
+      if (e.ctrlKey || e.metaKey) {
+        // pinch / ctrl-scroll zoom
+        const delta = -e.deltaY * 0.01;
+        const k2 = Math.max(min, Math.min(max, p.k * Math.exp(delta)));
+        const kRatio = k2 / p.k;
+        setT({
+          k: k2,
+          x: mx - (mx - p.x) * kRatio,
+          y: my - (my - p.y) * kRatio,
+        });
+      } else {
+        setT((p) => ({ ...p, x: p.x - e.deltaX, y: p.y - e.deltaY }));
+      }
+    };
+
+    el.addEventListener("mousedown", onMouseDown);
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => {
+      el.removeEventListener("mousedown", onMouseDown);
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+      el.removeEventListener("wheel", onWheel);
+    };
+  }, [ref, min, max]);
+
+  return [t, setT];
+}
+
+Object.assign(window, {
+  DATA,
+  NODES,
+  ROOT,
+  fmtTime,
+  firstWords,
+  ancestors,
+  siblings,
+  navigate,
+  usePanZoom,
+});
+
+</script>
+<script type="text/babel">
+/* global React, ReactDOM */
+const { useState, useEffect, useRef, useMemo, useCallback, useLayoutEffect } = React;
+
+// === Graph View ===
+// Props: layout ('vertical'|'horizontal'), edgeStyle ('ortho'|'curve'), density ('cozy'|'compact'),
+//   selectedId, setSelectedId, openedId, setOpenedId, previewId, setPreviewId,
+//   currentHeadId, filter, onKeyHandled
+
+function GraphCanvas(props) {
+  const {
+    layout,
+    edgeStyle,
+    density,
+    selectedId,
+    setSelectedId,
+    openedId,
+    setOpenedId,
+    previewId,
+    setPreviewId,
+    currentHeadId,
+    filter,
+    showMinimap,
+    onFitRef,
+  } = props;
+
+  const canvasRef = useRef(null);
+  const [vw, setVw] = useState(1200);
+  const [vh, setVh] = useState(800);
+  const [t, setT] = usePanZoom(canvasRef);
+
+  useLayoutEffect(() => {
+    const el = canvasRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => {
+      setVw(el.clientWidth);
+      setVh(el.clientHeight);
+    });
+    ro.observe(el);
+    setVw(el.clientWidth);
+    setVh(el.clientHeight);
+    return () => ro.disconnect();
+  }, []);
+
+  // unit → px spacing depends on density + orientation
+  const SX = density === "compact" ? 34 : 52;
+  const SY = density === "compact" ? 46 : 66;
+  const HSX = density === "compact" ? 140 : 210; // horizontal: depth step
+  const HSY = density === "compact" ? 30 : 42; // horizontal: sibling step
+
+  const pos = useMemo(() => {
+    const raw =
+      layout === "vertical"
+        ? window.OQTO_LAYOUT.vertical()
+        : window.OQTO_LAYOUT.horizontal();
+    const scaled = {};
+    const sx = layout === "vertical" ? SX : HSX;
+    const sy = layout === "vertical" ? SY : HSY;
+    Object.keys(raw).forEach((id) => {
+      scaled[id] = { x: raw[id].x * sx, y: raw[id].y * sy };
+    });
+    return scaled;
+  }, [layout, density, SX, SY, HSX, HSY]);
+
+  const bbox = useMemo(() => window.OQTO_LAYOUT.bbox(pos), [pos]);
+
+  // ancestors of current head (for highlighting the active branch)
+  const activeBranchSet = useMemo(() => {
+    const s = new Set(ancestors(currentHeadId));
+    return s;
+  }, [currentHeadId]);
+
+  // ancestors of selected → dim path trail
+  const selectedTrail = useMemo(() => {
+    return new Set(selectedId ? ancestors(selectedId) : []);
+  }, [selectedId]);
+
+  // Filter: mark matches and their ancestors
+  const filterMatchIds = useMemo(() => {
+    if (!filter) return null;
+    const q = filter.toLowerCase();
+    const matched = new Set();
+    Object.values(NODES).forEach((n) => {
+      const hay = (n.text || "") + " " + (n.model || "") + " " + n.role;
+      if (hay.toLowerCase().includes(q)) matched.add(n.id);
+    });
+    // include ancestors so the path to each match is visible
+    const expand = new Set(matched);
+    matched.forEach((id) => ancestors(id).forEach((a) => expand.add(a)));
+    return { matched, visible: expand };
+  }, [filter]);
+
+  // Fit the whole graph on mount / layout change
+  const fitTo = useCallback(
+    (targetIds, pad = 120) => {
+      if (!vw || !vh) return;
+      const ids = targetIds || Object.keys(pos);
+      if (ids.length === 0) return;
+      let minX = Infinity,
+        minY = Infinity,
+        maxX = -Infinity,
+        maxY = -Infinity;
+      ids.forEach((id) => {
+        const p = pos[id];
+        if (!p) return;
+        minX = Math.min(minX, p.x);
+        minY = Math.min(minY, p.y);
+        maxX = Math.max(maxX, p.x);
+        maxY = Math.max(maxY, p.y);
+      });
+      const w = maxX - minX || 1;
+      const h = maxY - minY || 1;
+      const k = Math.max(0.5, Math.min((vw - pad * 2) / w, (vh - pad * 2) / h, 1.2));
+      const cx = (minX + maxX) / 2;
+      const cy = (minY + maxY) / 2;
+      setT({ k, x: vw / 2 - cx * k, y: vh / 2 - cy * k });
+    },
+    [pos, vw, vh, setT],
+  );
+
+  useLayoutEffect(() => {
+    if (!vw || !vh) return;
+    // Center on current head at a comfortable zoom instead of fitting everything.
+    const p = pos[currentHeadId];
+    if (!p) { fitTo(); return; }
+    const k = 0.9;
+    setT({ k, x: vw / 2 - p.x * k, y: vh / 2 - p.y * k });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [layout, vw > 0 && vh > 0]);
+
+  useEffect(() => {
+    if (onFitRef) onFitRef(() => fitTo());
+  }, [onFitRef, fitTo]);
+
+  // Pan the selected node into view with margin
+  const ensureVisible = useCallback(
+    (id) => {
+      const p = pos[id];
+      if (!p) return;
+      const sx = p.x * t.k + t.x;
+      const sy = p.y * t.k + t.y;
+      const margin = 120;
+      let nx = t.x,
+        ny = t.y;
+      if (sx < margin) nx += margin - sx;
+      if (sx > vw - margin) nx -= sx - (vw - margin);
+      if (sy < margin) ny += margin - sy;
+      if (sy > vh - margin) ny -= sy - (vh - margin);
+      if (nx !== t.x || ny !== t.y) setT((p) => ({ ...p, x: nx, y: ny }));
+    },
+    [pos, t, vw, vh, setT],
+  );
+
+  useEffect(() => {
+    if (selectedId) ensureVisible(selectedId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId]);
+
+  // Build edges
+  const edges = useMemo(() => {
+    const out = [];
+    Object.values(NODES).forEach((n) => {
+      const p = pos[n.id];
+      if (!p) return;
+      n.children.forEach((cid) => {
+        const c = pos[cid];
+        if (!c) return;
+        out.push({ from: n.id, to: cid, x1: p.x, y1: p.y, x2: c.x, y2: c.y });
+      });
+    });
+    return out;
+  }, [pos]);
+
+  // Edge path
+  const edgePath = (e) => {
+    if (edgeStyle === "curve") {
+      if (layout === "vertical") {
+        const mid = (e.y1 + e.y2) / 2;
+        return `M ${e.x1} ${e.y1} C ${e.x1} ${mid}, ${e.x2} ${mid}, ${e.x2} ${e.y2}`;
+      }
+      const mid = (e.x1 + e.x2) / 2;
+      return `M ${e.x1} ${e.y1} C ${mid} ${e.y1}, ${mid} ${e.y2}, ${e.x2} ${e.y2}`;
+    }
+    // ortho ("ghostty-style right-angle")
+    if (layout === "vertical") {
+      const mid = (e.y1 + e.y2) / 2;
+      return `M ${e.x1} ${e.y1} L ${e.x1} ${mid} L ${e.x2} ${mid} L ${e.x2} ${e.y2}`;
+    }
+    const mid = (e.x1 + e.x2) / 2;
+    return `M ${e.x1} ${e.y1} L ${mid} ${e.y1} L ${mid} ${e.y2} L ${e.x2} ${e.y2}`;
+  };
+
+  // Node sizing
+  const nodeSize = density === "compact" ? 8 : 10;
+
+  const renderNode = (n) => {
+    const p = pos[n.id];
+    if (!p) return null;
+
+    const isSelected = n.id === selectedId;
+    const isOpen = n.id === openedId;
+    const isHead = n.id === currentHeadId;
+    const isRoot = n.id === ROOT;
+    const isAncestor = selectedTrail.has(n.id) && !isSelected;
+    const isOnActiveBranch = activeBranchSet.has(n.id);
+    const dimmed = filterMatchIds && !filterMatchIds.visible.has(n.id);
+    const matched = filterMatchIds && filterMatchIds.matched.has(n.id);
+
+    const cls = [
+      "ogn",
+      `ogn-${n.role}`,
+      isSelected && "ogn-selected",
+      isOpen && "ogn-open",
+      isHead && "ogn-head",
+      isAncestor && "ogn-ancestor",
+      isOnActiveBranch && "ogn-active-branch",
+      dimmed && "ogn-dim",
+      matched && "ogn-match",
+      n.starred && "ogn-starred",
+      isRoot && "ogn-root",
+    ]
+      .filter(Boolean)
+      .join(" ");
+
+    const showLabel = density !== "compact" || isSelected || isHead || matched;
+
+    return (
+      <g
+        key={n.id}
+        data-node={n.id}
+        className={cls}
+        transform={`translate(${p.x} ${p.y})`}
+        onClick={(e) => {
+          e.stopPropagation();
+          setSelectedId(n.id);
+          setPreviewId(null);
+        }}
+        onDoubleClick={(e) => {
+          e.stopPropagation();
+          setSelectedId(n.id);
+          setOpenedId(n.id);
+        }}
+      >
+        {/* hit area */}
+        <rect
+          x={-24}
+          y={-14}
+          width={48}
+          height={28}
+          fill="transparent"
+          style={{ cursor: "pointer" }}
+        />
+        {/* outer ring for selected/head */}
+        {(isSelected || isHead) && (
+          <rect
+            className="ogn-ring"
+            x={-nodeSize - 3}
+            y={-nodeSize - 3}
+            width={nodeSize * 2 + 6}
+            height={nodeSize * 2 + 6}
+          />
+        )}
+        {n.role === "user" ? (
+          <rect
+            className="ogn-shape"
+            x={-nodeSize / 2}
+            y={-nodeSize / 2}
+            width={nodeSize}
+            height={nodeSize}
+          />
+        ) : n.role === "assistant" ? (
+          <circle className="ogn-shape" r={nodeSize / 2} />
+        ) : (
+          <rect
+            className="ogn-shape"
+            x={-nodeSize / 2}
+            y={-nodeSize / 2}
+            width={nodeSize}
+            height={nodeSize}
+            transform="rotate(45)"
+          />
+        )}
+        {n.starred && (
+          <text className="ogn-star" x={nodeSize / 2 + 4} y={-nodeSize / 2 - 2}>
+            ★
+          </text>
+        )}
+        {showLabel && (
+          <text
+            className="ogn-label"
+            x={layout === "vertical" ? 0 : nodeSize + 6}
+            y={layout === "vertical" ? nodeSize + 12 : 3}
+            textAnchor={layout === "vertical" ? "middle" : "start"}
+          >
+            {n.role === "system"
+              ? "session start"
+              : firstWords(
+                  n.text,
+                  density === "compact" ? 3 : layout === "horizontal" ? 4 : 6,
+                )}
+          </text>
+        )}
+        {n.role === "assistant" && n.model && density !== "compact" && (
+          <text
+            className="ogn-sub"
+            x={layout === "vertical" ? 0 : nodeSize + 6}
+            y={layout === "vertical" ? nodeSize + 24 : 15}
+            textAnchor={layout === "vertical" ? "middle" : "start"}
+          >
+            {n.model}
+          </text>
+        )}
+      </g>
+    );
+  };
+
+  const renderEdge = (e) => {
+    const c = NODES[e.to];
+    const p = NODES[e.from];
+    const onActive = activeBranchSet.has(e.to) && activeBranchSet.has(e.from);
+    const onTrail = selectedTrail.has(e.to) && selectedTrail.has(e.from);
+    const dimmed =
+      filterMatchIds &&
+      !(filterMatchIds.visible.has(e.to) && filterMatchIds.visible.has(e.from));
+    const cls = [
+      "oge",
+      onActive && "oge-active",
+      onTrail && "oge-trail",
+      dimmed && "oge-dim",
+    ]
+      .filter(Boolean)
+      .join(" ");
+    return (
+      <g key={`${e.from}-${e.to}`} className={cls}>
+        <path d={edgePath(e)} />
+        {c.branchLabel && p.children.length > 1 && density !== "compact" && (
+          <text
+            className="oge-label"
+            x={(e.x1 + e.x2) / 2}
+            y={(e.y1 + e.y2) / 2}
+            textAnchor="middle"
+          >
+            {c.branchLabel}
+          </text>
+        )}
+      </g>
+    );
+  };
+
+  // Minimap
+  const miniW = 200;
+  const miniH = 140;
+  const miniPad = 6;
+  const miniScale = Math.min(
+    (miniW - miniPad * 2) / (bbox.w || 1),
+    (miniH - miniPad * 2) / (bbox.h || 1),
+  );
+  const miniOX = miniPad - bbox.minX * miniScale;
+  const miniOY = miniPad - bbox.minY * miniScale;
+
+  // viewport rect in mini coords
+  const viewBoxInMini = {
+    x: miniOX + (-t.x / t.k) * miniScale,
+    y: miniOY + (-t.y / t.k) * miniScale,
+    w: (vw / t.k) * miniScale,
+    h: (vh / t.k) * miniScale,
+  };
+
+  const onMiniMouseDown = (e) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const onMove = (ev) => {
+      const mx = ev.clientX - rect.left;
+      const my = ev.clientY - rect.top;
+      // convert mini coord back to world
+      const wx = (mx - miniOX) / miniScale;
+      const wy = (my - miniOY) / miniScale;
+      setT((p) => ({ ...p, x: vw / 2 - wx * p.k, y: vh / 2 - wy * p.k }));
+    };
+    onMove(e);
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
+
+  return (
+    <div className="ogc-root" ref={canvasRef} tabIndex={0}>
+      <svg width="100%" height="100%" className="ogc-svg" data-layout={layout}>
+        <g transform={`translate(${t.x} ${t.y}) scale(${t.k})`}>
+          <g className="ogc-edges">{edges.map(renderEdge)}</g>
+          <g className="ogc-nodes">{Object.values(NODES).map(renderNode)}</g>
+        </g>
+      </svg>
+
+      {/* zoom indicator + fit button */}
+      <div className="ogc-zoom" data-nopan>
+        <button
+          onClick={() => fitTo()}
+          title="fit all (f)"
+          className="ogc-btn"
+        >
+          fit
+        </button>
+        <button
+          onClick={() =>
+            setT((p) => ({ ...p, k: Math.min(3, p.k * 1.2) }))
+          }
+          className="ogc-btn"
+        >
+          +
+        </button>
+        <button
+          onClick={() =>
+            setT((p) => ({ ...p, k: Math.max(0.2, p.k / 1.2) }))
+          }
+          className="ogc-btn"
+        >
+          −
+        </button>
+        <span className="ogc-zoom-val">{Math.round(t.k * 100)}%</span>
+      </div>
+
+      {/* Minimap */}
+      {showMinimap && (
+        <div className="ogc-mini" data-nopan>
+          <div className="ogc-mini-label">
+            <span>minimap</span>
+            <span>{Object.keys(NODES).length} nodes</span>
+          </div>
+          <svg
+            width={miniW}
+            height={miniH}
+            onMouseDown={onMiniMouseDown}
+            className="ogc-mini-svg"
+          >
+            {edges.map((e, i) => (
+              <path
+                key={i}
+                d={`M ${e.x1 * miniScale + miniOX} ${e.y1 * miniScale + miniOY} L ${e.x2 * miniScale + miniOX} ${e.y2 * miniScale + miniOY}`}
+                stroke="var(--mini-edge)"
+                strokeWidth={0.6}
+                fill="none"
+              />
+            ))}
+            {Object.values(NODES).map((n) => {
+              const p = pos[n.id];
+              if (!p) return null;
+              const isHead = n.id === currentHeadId;
+              const isSel = n.id === selectedId;
+              return (
+                <circle
+                  key={n.id}
+                  cx={p.x * miniScale + miniOX}
+                  cy={p.y * miniScale + miniOY}
+                  r={isHead || isSel ? 2 : 1.1}
+                  fill={
+                    isSel
+                      ? "var(--mini-sel)"
+                      : isHead
+                        ? "var(--mini-head)"
+                        : "var(--mini-node)"
+                  }
+                />
+              );
+            })}
+            <rect
+              x={viewBoxInMini.x}
+              y={viewBoxInMini.y}
+              width={viewBoxInMini.w}
+              height={viewBoxInMini.h}
+              fill="rgba(59,167,124,0.08)"
+              stroke="var(--mini-view)"
+              strokeWidth={1}
+            />
+          </svg>
+        </div>
+      )}
+    </div>
+  );
+}
+
+window.GraphCanvas = GraphCanvas;
+
+</script>
+<script type="text/babel">
+/* global React, ReactDOM */
+const { useState, useEffect, useRef, useMemo, useCallback, useLayoutEffect } = React;
+
+// ===== Side panel: always-visible branch transcript, scroll-synced with graph =====
+
+function RolePill({ role, model }) {
+  return (
+    <span className={`op-role op-role-${role}`}>
+      <span className="op-role-dot" />
+      {role}
+      {role === "assistant" && model ? (
+        <span className="op-role-model"> · {model}</span>
+      ) : null}
+    </span>
+  );
+}
+
+function MessageBubble({ node, active, onClick, onFork, hasForks, forkCount }) {
+  return (
+    <article
+      className={`op-msg op-msg-${node.role} ${active ? "op-msg-active" : ""}`}
+      data-node-id={node.id}
+      onClick={onClick}
+    >
+      <div className="op-msg-rail" aria-hidden="true" />
+      <div className="op-msg-head">
+        <RolePill role={node.role} model={node.model} />
+        <span className="op-msg-ts">{fmtTime(node.ts)}</span>
+        {node.branchLabel && node.branchLabel !== "main" && (
+          <span className="op-msg-branch">↳ {node.branchLabel}</span>
+        )}
+        <span className="op-msg-flex" />
+        <span className="op-msg-id">{node.id}</span>
+      </div>
+      <div className="op-msg-body">{node.text}</div>
+      {node.toolCalls && (
+        <div className="op-msg-tools">
+          {node.toolCalls.map((t, i) => (
+            <span key={i} className="op-tool">
+              ◆ {t}
+            </span>
+          ))}
+        </div>
+      )}
+      {hasForks && (
+        <button
+          className="op-msg-fork"
+          onClick={(e) => {
+            e.stopPropagation();
+            onFork && onFork();
+          }}
+          title="this message has alternative continuations"
+        >
+          ⎇ {forkCount} fork{forkCount > 1 ? "s" : ""} from here
+        </button>
+      )}
+    </article>
+  );
+}
+
+function SidePanel({
+  selectedId,
+  setSelectedId,
+  currentHeadId,
+  setCurrentHeadId,
+  activeBranch, // Set of ids on current head's path (for forward-path preference)
+}) {
+  const scrollRef = useRef(null);
+  const suppressScrollSync = useRef(false); // block scroll->select during programmatic scroll
+
+  // The branch transcript shown depends on the selected node
+  const transcript = useMemo(
+    () => branchTranscript(selectedId, activeBranch),
+    [selectedId, activeBranch],
+  );
+
+  // Scroll to active message when selectedId changes from outside
+  useLayoutEffect(() => {
+    const scroller = scrollRef.current;
+    if (!scroller) return;
+    const el = scroller.querySelector(`[data-node-id="${selectedId}"]`);
+    if (!el) return;
+    suppressScrollSync.current = true;
+    // center-ish scroll
+    const r = el.getBoundingClientRect();
+    const sr = scroller.getBoundingClientRect();
+    const offset = r.top - sr.top - sr.height * 0.32;
+    scroller.scrollBy({ top: offset, behavior: "smooth" });
+    const t = setTimeout(() => {
+      suppressScrollSync.current = false;
+    }, 450);
+    return () => clearTimeout(t);
+  }, [selectedId]);
+
+  // Scroll → select: whichever article has its top crossing the focus band becomes selected
+  useEffect(() => {
+    const scroller = scrollRef.current;
+    if (!scroller) return;
+    let raf = 0;
+    const onScroll = () => {
+      if (suppressScrollSync.current) return;
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        const sr = scroller.getBoundingClientRect();
+        const focusY = sr.top + sr.height * 0.32;
+        const arts = scroller.querySelectorAll("[data-node-id]");
+        let best = null;
+        let bestDist = Infinity;
+        arts.forEach((a) => {
+          const r = a.getBoundingClientRect();
+          // use the mid-point of the article's head
+          const y = r.top + 16;
+          const d = Math.abs(y - focusY);
+          if (d < bestDist) {
+            bestDist = d;
+            best = a.getAttribute("data-node-id");
+          }
+        });
+        if (best && best !== selectedId) {
+          // mark that this selection change came from scroll — so we don't re-scroll
+          suppressScrollSync.current = true;
+          setSelectedId(best);
+          requestAnimationFrame(() => {
+            suppressScrollSync.current = false;
+          });
+        }
+      });
+    };
+    scroller.addEventListener("scroll", onScroll, { passive: true });
+    return () => scroller.removeEventListener("scroll", onScroll);
+  }, [selectedId, setSelectedId]);
+
+  const n = NODES[selectedId];
+  if (!n) return <aside className="op-side op-side-empty" />;
+
+  const selIdx = transcript.indexOf(selectedId);
+  const isHead = selectedId === currentHeadId;
+
+  return (
+    <aside className="op-side">
+      <header className="op-side-head">
+        <div className="op-side-head-row">
+          <span className="op-side-title">BRANCH</span>
+          <span className="op-side-id">
+            {selIdx + 1} / {transcript.length}
+          </span>
+          <span className="op-side-flex" />
+          {isHead ? (
+            <span className="op-meta-head">▶ head</span>
+          ) : (
+            <button
+              className="op-side-btn"
+              onClick={() => setSelectedId(currentHeadId)}
+              title="jump to current head"
+            >
+              ▸ jump to head
+            </button>
+          )}
+        </div>
+        <div className="op-side-head-row op-side-head-meta">
+          <span className="op-meta-node">{n.id}</span>
+          <span className="op-meta-sep">·</span>
+          <span className="op-meta-depth">depth {DATA.depth[n.id] ?? 0}</span>
+          <span className="op-meta-sep">·</span>
+          <span className="op-meta-kids">
+            {n.children.length} child{n.children.length === 1 ? "" : "ren"}
+          </span>
+          <span className="op-side-flex" />
+          <span className="op-side-hint">scroll ↕ walks the tree</span>
+        </div>
+      </header>
+
+      <div className="op-side-body" ref={scrollRef}>
+        <div className="op-side-spacer-top" />
+        {transcript.map((id) => {
+          const node = NODES[id];
+          const forks = node.children.length;
+          return (
+            <MessageBubble
+              key={id}
+              node={node}
+              active={id === selectedId}
+              onClick={() => setSelectedId(id)}
+              hasForks={forks > 1}
+              forkCount={forks}
+              onFork={() => setSelectedId(id)}
+            />
+          );
+        })}
+        <div className="op-side-spacer-bot" />
+      </div>
+
+      <footer className="op-side-foot">
+        <div className="op-side-foot-stats">
+          <span>{transcript.length} messages in this branch</span>
+        </div>
+        <div className="op-side-foot-actions">
+          <button
+            className="op-foot-btn"
+            disabled={isHead}
+            onClick={() => setCurrentHeadId(selectedId)}
+            title="make this the active head"
+          >
+            checkout
+          </button>
+          <button className="op-foot-btn" title="fork from here">
+            branch
+          </button>
+        </div>
+      </footer>
+    </aside>
+  );
+}
+
+window.SidePanel = SidePanel;
+
+</script>
+<script type="text/babel">
+/* global React, ReactDOM */
+const { useState, useEffect, useRef, useMemo, useCallback } = React;
+
+// ===== App shell + keyboard + tweaks =====
+
+const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+  "layout": "vertical",
+  "edgeStyle": "ortho",
+  "density": "compact",
+  "showMinimap": true,
+  "surface": "overlay"
+}/*EDITMODE-END*/;
+
+function TopBar({ filter, setFilter, filterRef, onFit, onGoHead, currentHeadId, setCurrentHeadId, sessionTitle }) {
+  return (
+    <header className="ob-bar">
+      <div className="ob-bar-left">
+        <span className="ob-logo" aria-label="oqto">◧ oqto</span>
+        <span className="ob-crumb">sessions</span>
+        <span className="ob-crumb-sep">/</span>
+        <span className="ob-crumb ob-crumb-dim">{sessionTitle}</span>
+        <span className="ob-crumb-sep">/</span>
+        <span className="ob-crumb ob-crumb-strong">graph</span>
+      </div>
+      <div className="ob-bar-filter" data-nopan>
+        <span className="ob-bar-filter-prefix">/</span>
+        <input
+          ref={filterRef}
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          placeholder="filter nodes…   ( / )"
+          className="ob-bar-filter-input"
+        />
+        {filter && (
+          <button className="ob-bar-filter-clear" onClick={() => setFilter("")}>
+            ×
+          </button>
+        )}
+      </div>
+      <div className="ob-bar-right">
+        <button className="ob-bar-btn" onClick={onGoHead} title="jump to current head (H)">
+          ▸ head
+        </button>
+        <button className="ob-bar-btn" onClick={onFit} title="fit (f)">
+          fit
+        </button>
+        <span className="ob-bar-sep" />
+        <span className="ob-bar-head">
+          head: <span className="ob-bar-head-val">{currentHeadId}</span>
+        </span>
+      </div>
+    </header>
+  );
+}
+
+function Legend() {
+  return (
+    <div className="ob-legend" data-nopan>
+      <div className="ob-legend-row"><span className="ob-legend-sq ob-legend-user" />user</div>
+      <div className="ob-legend-row"><span className="ob-legend-ci ob-legend-assistant" />assistant</div>
+      <div className="ob-legend-row"><span className="ob-legend-dia ob-legend-system" />system</div>
+      <div className="ob-legend-row"><span className="ob-legend-head-mark" />current head</div>
+      <div className="ob-legend-row"><span className="ob-legend-active-line" />active branch</div>
+    </div>
+  );
+}
+
+function KeyHints() {
+  return (
+    <div className="ob-keys" data-nopan>
+      <span><kbd>h</kbd><kbd>j</kbd><kbd>k</kbd><kbd>l</kbd> walk</span>
+      <span><kbd>↑</kbd><kbd>↓</kbd> scroll transcript</span>
+      <span><kbd>/</kbd> filter</span>
+      <span><kbd>f</kbd> fit</span>
+      <span><kbd>H</kbd> head</span>
+    </div>
+  );
+}
+
+function TweaksPanel({ open, onClose, tweaks, setTweaks }) {
+  if (!open) return null;
+  const set = (k, v) => {
+    const next = { ...tweaks, [k]: v };
+    setTweaks(next);
+    window.parent?.postMessage(
+      { type: "__edit_mode_set_keys", edits: { [k]: v } },
+      "*",
+    );
+  };
+  return (
+    <div className="ob-tweaks" data-nopan>
+      <div className="ob-tweaks-head">
+        <span>Tweaks</span>
+        <button className="ob-tweaks-close" onClick={onClose}>
+          ×
+        </button>
+      </div>
+      <div className="ob-tweaks-body">
+        <Row label="layout">
+          <Seg value={tweaks.layout} onChange={(v) => set("layout", v)} opts={[
+            { v: "vertical", l: "top→down" },
+            { v: "horizontal", l: "left→right" },
+          ]} />
+        </Row>
+        <Row label="edges">
+          <Seg value={tweaks.edgeStyle} onChange={(v) => set("edgeStyle", v)} opts={[
+            { v: "ortho", l: "ortho ┐" },
+            { v: "curve", l: "curve ⌒" },
+          ]} />
+        </Row>
+        <Row label="density">
+          <Seg value={tweaks.density} onChange={(v) => set("density", v)} opts={[
+            { v: "cozy", l: "cozy" },
+            { v: "compact", l: "compact" },
+          ]} />
+        </Row>
+        <Row label="surface">
+          <Seg value={tweaks.surface} onChange={(v) => set("surface", v)} opts={[
+            { v: "split", l: "split" },
+            { v: "overlay", l: "overlay" },
+            { v: "full", l: "full-bleed" },
+          ]} />
+        </Row>
+        <Row label="minimap">
+          <Seg value={tweaks.showMinimap ? "on" : "off"} onChange={(v) => set("showMinimap", v === "on")} opts={[
+            { v: "on", l: "on" },
+            { v: "off", l: "off" },
+          ]} />
+        </Row>
+      </div>
+    </div>
+  );
+}
+function Row({ label, children }) {
+  return (
+    <div className="ob-tw-row">
+      <span className="ob-tw-label">{label}</span>
+      <span className="ob-tw-ctl">{children}</span>
+    </div>
+  );
+}
+function Seg({ value, onChange, opts }) {
+  return (
+    <div className="ob-seg">
+      {opts.map((o) => (
+        <button
+          key={o.v}
+          className={`ob-seg-btn ${value === o.v ? "ob-seg-active" : ""}`}
+          onClick={() => onChange(o.v)}
+        >
+          {o.l}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function App() {
+  const [tweaks, setTweaks] = useState(TWEAK_DEFAULTS);
+  const [editModeOn, setEditModeOn] = useState(false);
+  const [selectedId, setSelectedId] = useState(DATA.currentHead);
+  const [openedId, setOpenedId] = useState(null);
+  const [previewId, setPreviewId] = useState(null);
+  const [currentHeadId, setCurrentHeadId] = useState(DATA.currentHead);
+  const [filter, setFilter] = useState("");
+  const filterRef = useRef(null);
+  const fitFnRef = useRef(null);
+
+  // Edit mode wiring
+  useEffect(() => {
+    const onMsg = (e) => {
+      if (!e.data || typeof e.data !== "object") return;
+      if (e.data.type === "__activate_edit_mode") setEditModeOn(true);
+      if (e.data.type === "__deactivate_edit_mode") setEditModeOn(false);
+    };
+    window.addEventListener("message", onMsg);
+    window.parent?.postMessage({ type: "__edit_mode_available" }, "*");
+    return () => window.removeEventListener("message", onMsg);
+  }, []);
+
+  // Active branch (head's ancestors) used to bias navigation
+  const activeBranch = useMemo(() => new Set(ancestors(currentHeadId)), [currentHeadId]);
+
+  // Keyboard
+  useEffect(() => {
+    const onKey = (e) => {
+      const tag = e.target.tagName;
+      const inInput = tag === "INPUT" || tag === "TEXTAREA";
+
+      // global: '/' focuses filter
+      if (e.key === "/" && !inInput) {
+        e.preventDefault();
+        filterRef.current?.focus();
+        filterRef.current?.select();
+        return;
+      }
+      if (inInput) {
+        if (e.key === "Escape") {
+          filterRef.current?.blur();
+        }
+        return;
+      }
+      if (e.key === "Escape") {
+        setPreviewId(null);
+        setOpenedId(null);
+        return;
+      }
+
+      if (e.key === "Enter") {
+        // open = jump to this node as focal (panel auto-follows). optional: also set as temp-preview
+        e.preventDefault();
+        return;
+      }
+      if (e.key === " ") {
+        // space: quick toggle — fit on selected
+        e.preventDefault();
+        return;
+      }
+      if (e.key === "f") {
+        e.preventDefault();
+        fitFnRef.current?.();
+        return;
+      }
+      if (e.key === "H") {
+        e.preventDefault();
+        setSelectedId(currentHeadId);
+        return;
+      }
+      if (e.key === "c" && (e.metaKey || e.ctrlKey)) return;
+      if (["h", "j", "k", "l", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)) {
+        e.preventDefault();
+        // In horizontal layout, arrow keys should feel spatial: left=parent, right=child, up/down=siblings
+        // In vertical layout: up=parent, down=child, left/right=siblings
+        let dir = e.key;
+        if (tweaks.layout === "vertical") {
+          if (e.key === "ArrowUp") dir = "parent";
+          else if (e.key === "ArrowDown") dir = "child";
+          else if (e.key === "ArrowLeft") dir = "prevSib";
+          else if (e.key === "ArrowRight") dir = "nextSib";
+        } else {
+          if (e.key === "ArrowLeft") dir = "parent";
+          else if (e.key === "ArrowRight") dir = "child";
+          else if (e.key === "ArrowUp") dir = "prevSib";
+          else if (e.key === "ArrowDown") dir = "nextSib";
+        }
+        setSelectedId((id) => navigate(id, dir, activeBranch));
+        setPreviewId(null);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selectedId, openedId, previewId, currentHeadId, tweaks.layout, activeBranch]);
+
+  // Expose a "fit" function up from GraphCanvas via ref dance
+  const handleFitRef = (fn) => {
+    fitFnRef.current = fn;
+  };
+
+  const surface = tweaks.surface;
+
+  return (
+    <div className={`ob-app ob-surface-${surface}`}>
+      <TopBar
+        filter={filter}
+        setFilter={setFilter}
+        filterRef={filterRef}
+        onFit={() => fitFnRef.current?.()}
+        onGoHead={() => setSelectedId(currentHeadId)}
+        currentHeadId={currentHeadId}
+        sessionTitle="omni-ghostty-web"
+      />
+      <div className="ob-main">
+        <div className="ob-graph">
+          <GraphCanvas
+            layout={tweaks.layout}
+            edgeStyle={tweaks.edgeStyle}
+            density={tweaks.density}
+            showMinimap={tweaks.showMinimap}
+            selectedId={selectedId}
+            setSelectedId={setSelectedId}
+            openedId={openedId}
+            setOpenedId={setOpenedId}
+            previewId={previewId}
+            setPreviewId={setPreviewId}
+            currentHeadId={currentHeadId}
+            filter={filter}
+            onFitRef={handleFitRef}
+          />
+          <Legend />
+          <KeyHints />
+        </div>
+
+        {(surface === "split" || surface === "overlay") && (
+          <SidePanel
+            selectedId={selectedId}
+            setSelectedId={setSelectedId}
+            currentHeadId={currentHeadId}
+            setCurrentHeadId={setCurrentHeadId}
+            activeBranch={activeBranch}
+          />
+        )}
+      </div>
+
+      <TweaksPanel
+        open={editModeOn}
+        onClose={() => setEditModeOn(false)}
+        tweaks={tweaks}
+        setTweaks={setTweaks}
+      />
+
+      <div className="ob-status">
+        <span>sel <b>{selectedId}</b></span>
+        <span>·</span>
+        <span>head <b>{currentHeadId}</b></span>
+        <span>·</span>
+        <span>{Object.keys(NODES).length} nodes</span>
+        <span>·</span>
+        <span>{Object.values(NODES).filter(n => n.children.length > 1).length} fork points</span>
+        {filter && <><span>·</span><span>filter: <b>"{filter}"</b></span></>}
+      </div>
+    </div>
+  );
+}
+
+window.OqtoApp = App;
+
+</script>
+<script type="text/babel">
+  const root = ReactDOM.createRoot(document.getElementById("root"));
+  root.render(React.createElement(window.OqtoApp));
+</script>
+</body>
+</html>
