@@ -19,7 +19,9 @@ Comprehensive setup and installation guide for self-hosting Oqto on your own inf
 
 ## Overview
 
-Oqto is a self-hosted AI agent workspace platform. This guide covers all prerequisites and installation steps for both local and container modes.
+Oqto is a self-hosted AI agent workspace platform. This guide covers prerequisites and installation for Linux deployments (local/native and container modes).
+
+> Note: macOS setup is currently not supported.
 
 ## Quick Start
 
@@ -112,6 +114,13 @@ See [deploy/ansible/README.md](./deploy/ansible/README.md) for details.
 
 ## Prerequisites
 
+### Privilege Requirements (Linux)
+
+`./setup.sh` currently requires **sudo access** on Linux, even for single-user/local installs, because it installs system packages/binaries and writes system-level config/service files.
+
+- Run setup with a user in the sudoers group, or as root.
+- If sudo is unavailable or authentication is denied, setup now exits early with a clear message.
+
 ### Core System Requirements
 
 | Tool | Purpose | Installation |
@@ -127,10 +136,10 @@ Required only if using container mode:
 
 | Tool | Purpose | Installation |
 |------|---------|--------------|
-| **docker** | Container runtime (macOS/Linux) | [Docker Desktop](https://www.docker.com/products/docker-desktop/) |
+| **docker** | Container runtime (Linux) | [Docker Desktop](https://www.docker.com/products/docker-desktop/) |
 | **podman** | Container runtime (Linux production) | `apt install podman` / `dnf install podman` |
 
-**Note**: macOS multi-user mode requires Docker Desktop.
+**Note**: macOS installation is currently unsupported.
 
 ## Core Components
 
@@ -205,9 +214,6 @@ Web terminal that provides browser-based terminal access to sessions.
 
 **Installation**:
 ```bash
-# macOS
-brew install ttyd
-
 # Debian/Ubuntu
 apt-get install -y ttyd
 
@@ -484,19 +490,9 @@ runner sockets:
 - Ensure the Oqto backend user is in the shared `oqto` group
 ```
 
-### macOS (launchd)
+### Unsupported platforms
 
-**Installation**:
-```bash
-# Install plist
-~/Library/LaunchAgents/ai.oqto.server.plist
-
-# Load service
-launchctl load ~/Library/LaunchAgents/ai.oqto.server.plist
-
-# Check status
-launchctl list | grep oqto
-```
+macOS setup is currently unsupported. Use Linux for installation and service management.
 
 ## Production Deployment
 
@@ -528,9 +524,6 @@ sudo apt update && sudo apt install -y caddy
 
 # Arch Linux
 sudo pacman -S caddy
-
-# macOS
-brew install caddy
 ```
 
 **Caddyfile Example** (`/etc/caddy/Caddyfile`):
@@ -582,9 +575,6 @@ sudo systemctl status caddy
 
 # View logs
 sudo journalctl -u caddy -f
-
-# macOS
-sudo caddy start --config /etc/caddy/Caddyfile
 ```
 
 ### Authentication Setup

@@ -39,6 +39,7 @@ const PI_DEFAULT_EXTENSIONS: &[&str] = &[
     "pi-custom-context-files",
     "pi-read-image-guard",
     "pi-read-file-guard",
+    "pi-openai-completions-convert-think-tags",
 ];
 
 /// Allowed path prefixes for mkdir/chown/chmod operations.
@@ -1362,7 +1363,13 @@ fn cmd_setup_user_shell(args: &serde_json::Value) -> Response {
 /// Optional args: group (default: "oqto")
 ///
 /// Copies each extension in PI_DEFAULT_EXTENSIONS from PI_EXTENSIONS_DIR
-/// into the user's home. Skips missing extensions with a warning.
+/// into the user's home.
+///
+/// Robustness rules:
+/// - Install to canonical destination names (`pi-*`) even when reading from
+///   legacy unprefixed source dirs.
+/// - Fail hard if any required extension cannot be sourced or copied.
+/// - Validate that all required extensions exist after install.
 fn cmd_install_pi_extensions(args: &serde_json::Value) -> Response {
     let username = match get_str(args, "username") {
         Ok(u) => u,
@@ -1394,18 +1401,31 @@ fn cmd_install_pi_extensions(args: &serde_json::Value) -> Response {
     let mut installed = 0u32;
     for ext_name in PI_DEFAULT_EXTENSIONS {
         let src_dir = src_root.join(ext_name);
-        if !src_dir.is_dir() || !src_dir.join("index.ts").exists() {
-            eprintln!("warning: extension not found in repo: {ext_name}");
-            continue;
-        }
+        let actual_src = if src_dir.is_dir() && src_dir.join("index.ts").exists() {
+            src_dir
+        } else {
+            // Legacy fallback: older server snapshots used unprefixed directory names.
+            let legacy_name = ext_name.strip_prefix("pi-").unwrap_or(ext_name);
+            let legacy_src = src_root.join(legacy_name);
+            if legacy_src.is_dir() && legacy_src.join("index.ts").exists() {
+                eprintln!(
+                    "warning: using legacy extension directory '{legacy_name}' for '{ext_name}'"
+                );
+                legacy_src
+            } else {
+                return Response::error(format!(
+                    "required extension not found in source: {ext_name}"
+                ));
+            }
+        };
 
+        // Always install using canonical destination names.
         let dest_dir = format!("{dest_root}/{ext_name}");
         // Remove old version if present
         let _ = std::fs::remove_dir_all(&dest_dir);
 
-        if let Err(e) = copy_dir_recursive(&src_dir, std::path::Path::new(&dest_dir)) {
-            eprintln!("warning: copying extension {ext_name}: {e}");
-            continue;
+        if let Err(e) = copy_dir_recursive(&actual_src, std::path::Path::new(&dest_dir)) {
+            return Response::error(format!("copying extension {ext_name}: {e}"));
         }
         // Remove install script (not needed at runtime); keep package.json
         let _ = std::fs::remove_file(format!("{dest_dir}/install.sh"));
@@ -1414,7 +1434,19 @@ fn cmd_install_pi_extensions(args: &serde_json::Value) -> Response {
 
     // chown extensions to the user
     let owner = format!("{username}:{group}");
-    let _ = run_cmd("/usr/bin/chown", &["-R", &owner, &dest_root]);
+    if let Err(e) = run_cmd("/usr/bin/chown", &["-R", &owner, &dest_root]) {
+        return Response::error(format!("chown {dest_root}: {e}"));
+    }
+
+    // Final validation to avoid silent partial installs.
+    for ext_name in PI_DEFAULT_EXTENSIONS {
+        let ext_dir = std::path::Path::new(&dest_root).join(ext_name);
+        if !ext_dir.is_dir() || !ext_dir.join("index.ts").exists() {
+            return Response::error(format!(
+                "extension install validation failed for {ext_name}"
+            ));
+        }
+    }
 
     eprintln!("info: installed {installed} Pi extensions for {username}");
     Response::success()

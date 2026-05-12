@@ -60,43 +60,91 @@ pub async fn bootstrap_new_user_environment(
                     if let Ok(content) = std::fs::read_to_string(&models_path)
                         && let Ok(config) = serde_json::from_str::<serde_json::Value>(&content)
                         && let Some(providers) = config.get("providers").and_then(|p| p.as_object())
-                        && let Some((provider_name, provider_config)) = providers.iter().next()
-                        && let Some(first_model) = provider_config
-                            .get("models")
-                            .and_then(|m| m.as_array())
-                            .and_then(|a| a.first())
-                            .and_then(|m| m.get("id"))
-                            .and_then(|id| id.as_str())
                     {
-                        let settings = serde_json::json!({
-                            "defaultProvider": provider_name,
-                            "defaultModel": first_model,
-                        });
-                        let settings_str =
-                            serde_json::to_string_pretty(&settings).unwrap_or_default();
-                        let rel_path = ".pi/agent/settings.json";
-                        if let Err(e) = crate::local::linux_users::usermgr_request(
-                            "write-file",
-                            serde_json::json!({
-                                "username": linux_username,
-                                "path": rel_path,
-                                "content": settings_str,
-                                "group": "oqto",
-                            }),
-                        ) {
-                            warn!(
-                                user_id = %user.id,
-                                error = ?e,
-                                "Failed to write Pi settings.json (non-fatal)"
-                            );
-                        } else {
-                            pi_settings_written = true;
-                            info!(
-                                user_id = %user.id,
-                                provider = %provider_name,
-                                model = %first_model,
-                                "Wrote default Pi settings.json"
-                            );
+                        // Prefer broadly compatible APIs for default selection.
+                        // Some providers may rely on optional extension APIs (e.g.
+                        // openai-completions-convert-think-tags) which can fail if
+                        // extension installation drifts. Pick a stable built-in API first.
+                        let preferred_apis = [
+                            "openai-responses",
+                            "openai-completions",
+                            "anthropic",
+                            "gemini",
+                        ];
+
+                        let mut selected: Option<(&str, &str)> = None;
+
+                        for api in preferred_apis {
+                            if let Some((provider_name, provider_config)) =
+                                providers.iter().find(|(_, cfg)| {
+                                    cfg.get("api")
+                                        .and_then(|v| v.as_str())
+                                        .is_some_and(|value| value == api)
+                                        && cfg
+                                            .get("models")
+                                            .and_then(|m| m.as_array())
+                                            .is_some_and(|arr| !arr.is_empty())
+                                })
+                                && let Some(first_model) = provider_config
+                                    .get("models")
+                                    .and_then(|m| m.as_array())
+                                    .and_then(|a| a.first())
+                                    .and_then(|m| m.get("id"))
+                                    .and_then(|id| id.as_str())
+                            {
+                                selected = Some((provider_name.as_str(), first_model));
+                                break;
+                            }
+                        }
+
+                        if selected.is_none()
+                            && let Some((provider_name, provider_config)) =
+                                providers.iter().find(|(_, cfg)| {
+                                    cfg.get("models")
+                                        .and_then(|m| m.as_array())
+                                        .is_some_and(|arr| !arr.is_empty())
+                                })
+                            && let Some(first_model) = provider_config
+                                .get("models")
+                                .and_then(|m| m.as_array())
+                                .and_then(|a| a.first())
+                                .and_then(|m| m.get("id"))
+                                .and_then(|id| id.as_str())
+                        {
+                            selected = Some((provider_name.as_str(), first_model));
+                        }
+
+                        if let Some((provider_name, first_model)) = selected {
+                            let settings = serde_json::json!({
+                                "defaultProvider": provider_name,
+                                "defaultModel": first_model,
+                            });
+                            let settings_str =
+                                serde_json::to_string_pretty(&settings).unwrap_or_default();
+                            let rel_path = ".pi/agent/settings.json";
+                            if let Err(e) = crate::local::linux_users::usermgr_request(
+                                "write-file",
+                                serde_json::json!({
+                                    "username": linux_username,
+                                    "path": rel_path,
+                                    "content": settings_str,
+                                    "group": "oqto",
+                                }),
+                            ) {
+                                warn!(
+                                    user_id = %user.id,
+                                    error = ?e,
+                                    "Failed to write Pi settings.json (non-fatal)"
+                                );
+                            } else {
+                                pi_settings_written = true;
+                                info!(
+                                    user_id = %user.id,
+                                    provider = %provider_name,
+                                    model = %first_model,
+                                    "Wrote default Pi settings.json"
+                                );
+                            }
                         }
                     }
                 }
@@ -198,6 +246,19 @@ pub async fn bootstrap_new_user_environment(
         template_files.insert(
             ".oqto/workspace.toml".into(),
             serde_json::Value::String(meta_toml),
+        );
+
+        let context_json = serde_json::json!({
+            "contextFiles": [
+                { "names": ["BOOTSTRAP.md"], "optional": false },
+                { "names": ["PERSONALITY.md"], "optional": true },
+                { "names": ["USER.md"], "optional": true }
+            ]
+        })
+        .to_string();
+        template_files.insert(
+            ".pi/context.json".into(),
+            serde_json::Value::String(context_json),
         );
 
         let template_src = state

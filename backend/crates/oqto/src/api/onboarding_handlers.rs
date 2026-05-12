@@ -256,6 +256,20 @@ pub async fn bootstrap_onboarding(
                 ".oqto/workspace.toml".into(),
                 serde_json::Value::String(meta_toml.clone()),
             );
+            // Ensure BOOTSTRAP/PERSONALITY/USER are loaded via custom-context-files.
+            let context_json = serde_json::json!({
+                "contextFiles": [
+                    { "names": ["BOOTSTRAP.md"], "optional": false },
+                    { "names": ["PERSONALITY.md"], "optional": true },
+                    { "names": ["USER.md"], "optional": true }
+                ]
+            })
+            .to_string();
+            files.insert(
+                ".pi/context.json".into(),
+                serde_json::Value::String(context_json),
+            );
+
             // Only include resolved templates if they differ from what's in the template dir
             // (i.e., language overrides or preset overrides were applied)
             files.insert(
