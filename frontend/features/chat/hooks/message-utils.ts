@@ -175,7 +175,12 @@ function coerceToolResult(
  * into a canonical DisplayPart. Returns null if unrecognized.
  */
 function coerceBlockToPart(b: Record<string, unknown>): DisplayPart | null {
-	const blockType = typeof b.type === "string" ? b.type : "";
+	const blockType =
+		typeof b.type === "string"
+			? b.type
+			: typeof b.part_type === "string"
+				? b.part_type
+				: "";
 
 	// --- text ---
 	if (blockType === "text") {
@@ -229,14 +234,21 @@ function coerceBlockToPart(b: Record<string, unknown>): DisplayPart | null {
 				(typeof b.tool_call_id === "string" && b.tool_call_id) ||
 				(typeof b.id === "string" && b.id) ||
 				"",
-			name: (typeof b.name === "string" && b.name) || "unknown",
+			name:
+				(typeof b.name === "string" && b.name) ||
+				(typeof b.tool_name === "string" && b.tool_name) ||
+				"unknown",
 			input:
 				typeof b.arguments === "object" && b.arguments !== null
 					? b.arguments
-					: b.input,
+					: "tool_input" in b
+						? b.tool_input
+						: b.input,
 			status: (typeof b.status === "string"
 				? b.status
-				: "success") as ToolStatus,
+				: typeof b.tool_status === "string"
+					? b.tool_status
+					: "success") as ToolStatus,
 		};
 	}
 
@@ -253,16 +265,21 @@ function coerceBlockToPart(b: Record<string, unknown>): DisplayPart | null {
 			name:
 				(typeof b.name === "string" && b.name) ||
 				(typeof b.toolName === "string" && b.toolName) ||
+				(typeof b.tool_name === "string" && b.tool_name) ||
 				undefined,
 			output:
 				"output" in b
 					? b.output
-					: "content" in b
-						? b.content
-						: typeof b.text === "string"
-							? b.text
-							: b,
-			isError: Boolean(b.is_error ?? b.isError),
+					: "tool_output" in b
+						? b.tool_output
+						: "content" in b
+							? b.content
+							: typeof b.text === "string"
+								? b.text
+								: b,
+			isError: Boolean(
+				b.is_error ?? b.isError ?? b.tool_status === "error",
+			),
 		};
 	}
 
