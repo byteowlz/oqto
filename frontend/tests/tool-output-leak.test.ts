@@ -11,6 +11,54 @@ import type { RawMessage } from "@/features/chat/hooks/types";
 import { describe, expect, it } from "vitest";
 
 describe("tool output leak from hstry imports", () => {
+	it("normalizes backend ChatMessagePart parts with part_type/tool_* fields", () => {
+		const rawMessages: RawMessage[] = [
+			{
+				role: "assistant",
+				created_at_ms: 1000,
+				parts: [
+					{
+						id: "m1-part-0",
+						part_type: "tool_call",
+						tool_name: "bash",
+						tool_call_id: "call_backend_1",
+						tool_input: { command: "pwd" },
+						tool_status: "success",
+					},
+					{
+						id: "m1-part-1",
+						part_type: "tool_result",
+						tool_name: "bash",
+						tool_call_id: "call_backend_1",
+						tool_output: "/tmp/project",
+						tool_status: "success",
+					},
+				],
+			},
+		];
+
+		const [message] = normalizeMessages(rawMessages, "test");
+
+		expect(message.parts.map((part) => part.type)).toEqual([
+			"tool_call",
+			"tool_result",
+		]);
+		const toolCall = message.parts.find((part) => part.type === "tool_call");
+		const toolResult = message.parts.find(
+			(part) => part.type === "tool_result",
+		);
+		expect(toolCall).toMatchObject({
+			toolCallId: "call_backend_1",
+			name: "bash",
+			input: { command: "pwd" },
+		});
+		expect(toolResult).toMatchObject({
+			toolCallId: "call_backend_1",
+			name: "bash",
+			output: "/tmp/project",
+		});
+	});
+
 	it("should expand stringified canonical parts nested inside text parts", () => {
 		const nestedParts = JSON.stringify([
 			{ type: "thinking", text: "I should inspect state" },
