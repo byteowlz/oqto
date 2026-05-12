@@ -1,0 +1,1068 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>sldr — deck composer</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+<style>
+:root {
+  --background: #222624;
+  --panel: #1a1e1c;
+  --panel-strong: #0f1412;
+  --card: #262a28;
+  --card-2: #2c312e;
+  --border: #2e3331;
+  --border-strong: #3a3f3c;
+  --fg: #e6e9e7;
+  --muted-fg: #9aa39e;
+  --dim-fg: #636b66;
+  --primary: #3ba77c;
+  --primary-glow: rgba(59,167,124,0.35);
+  --primary-dim: #2a6d52;
+  --user: #e8b86d;    /* amber for user/reference */
+  --assistant: #7ad7b4; /* mint for assistant */
+  --system: #8ca6c4;   /* slate blue */
+  --intent: #c98bdc;   /* purple for AI intent */
+  --danger: #d36a6a;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; height: 100%; background: var(--background); color: var(--fg); font-family: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace; font-size: 13px; }
+body { overflow: hidden; }
+button { font: inherit; color: inherit; background: transparent; border: 1px solid var(--border-strong); padding: 0 10px; cursor: pointer; height: 26px; border-radius: 0; letter-spacing: .02em; }
+button:hover { border-color: var(--primary-dim); color: var(--primary); }
+button:disabled { opacity: .4; cursor: not-allowed; }
+input { font: inherit; color: inherit; background: transparent; border: 1px solid var(--border-strong); padding: 0 10px; height: 28px; border-radius: 0; outline: none; }
+input:focus { border-color: var(--primary); }
+kbd { font-family: inherit; font-size: 10px; padding: 0 4px; border: 1px solid var(--border-strong); color: var(--muted-fg); background: var(--panel); border-radius: 0; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border-strong); }
+::-webkit-scrollbar-thumb:hover { background: var(--dim-fg); }
+
+/* ===== Shell ===== */
+.sl-app {
+  height: 100vh; display: grid;
+  grid-template-rows: 40px 1fr 110px;
+  grid-template-columns: 260px 1fr 340px;
+  grid-template-areas:
+    "bar    bar     bar"
+    "lib    canvas  agent"
+    "strip  strip   strip";
+  background: var(--background);
+}
+
+/* ===== Top bar ===== */
+.sl-bar { grid-area: bar; display: flex; align-items: center; gap: 10px; padding: 0 12px; border-bottom: 1px solid var(--border); background: var(--panel-strong); }
+.sl-bar-left { display: flex; align-items: center; gap: 8px; }
+.sl-logo { font-size: 13px; font-weight: 700; letter-spacing: .04em; }
+.sl-crumb { color: var(--muted-fg); font-size: 12px; }
+.sl-crumb-sep { color: var(--dim-fg); }
+.sl-crumb-strong { color: var(--fg); }
+.sl-crumb-edit { color: var(--fg); border-bottom: 1px dashed var(--border-strong); cursor: text; padding: 0 2px; }
+.sl-bar-flex { flex: 1; }
+.sl-bar-right { display: flex; align-items: center; gap: 6px; }
+
+.sl-flavor {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 26px; padding: 0 8px;
+  border: 1px solid var(--border-strong);
+  font-size: 11.5px; letter-spacing: .04em;
+  color: var(--muted-fg);
+  cursor: pointer;
+}
+.sl-flavor:hover { border-color: var(--primary-dim); color: var(--primary); }
+.sl-flavor-dot { width: 10px; height: 10px; display: inline-block; border: 1px solid var(--border-strong); }
+.sl-flavor-menu {
+  position: absolute; top: 36px; right: 120px; z-index: 100;
+  background: var(--panel-strong); border: 1px solid var(--border-strong);
+  padding: 6px; display: flex; flex-direction: column; gap: 2px;
+  min-width: 220px; box-shadow: 0 12px 24px rgba(0,0,0,0.5);
+}
+.sl-flavor-opt {
+  display: grid; grid-template-columns: 14px 1fr auto; gap: 8px; align-items: center;
+  padding: 6px 8px; cursor: pointer;
+  font-size: 12px; border: 1px solid transparent;
+}
+.sl-flavor-opt:hover { background: var(--card); border-color: var(--border); }
+.sl-flavor-opt-active { border-color: var(--primary-dim); color: var(--primary); }
+.sl-flavor-opt-swatch { width: 14px; height: 14px; border: 1px solid var(--border-strong); }
+.sl-flavor-opt-desc { font-size: 10.5px; color: var(--dim-fg); }
+
+.sl-bar-build {
+  height: 26px; padding: 0 14px;
+  border: 1px solid var(--primary);
+  color: var(--primary);
+  background: rgba(59,167,124,0.08);
+  font-weight: 700; letter-spacing: .06em;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.sl-bar-build:hover { background: rgba(59,167,124,0.18); }
+
+/* ===== Library ===== */
+.sl-lib { grid-area: lib; border-right: 1px solid var(--border); background: var(--panel); display: flex; flex-direction: column; min-height: 0; }
+.sl-lib-head { padding: 10px 12px 6px; display: flex; flex-direction: column; gap: 6px; }
+.sl-section-title {
+  color: var(--primary); font-size: 10px; letter-spacing: .14em; font-weight: 700;
+}
+.sl-lib-search { position: relative; }
+.sl-lib-search-input { width: 100%; padding-left: 22px; height: 26px; font-size: 12px; }
+.sl-lib-search-ico { position: absolute; left: 6px; top: 50%; transform: translateY(-50%); color: var(--dim-fg); font-size: 11px; }
+.sl-lib-filters { display: flex; flex-wrap: wrap; gap: 3px; padding: 4px 12px 8px; }
+.sl-chip {
+  border: 1px solid var(--border-strong);
+  padding: 1px 6px; font-size: 10px; letter-spacing: .06em;
+  color: var(--muted-fg); cursor: pointer;
+}
+.sl-chip:hover { border-color: var(--primary-dim); color: var(--primary); }
+.sl-chip-active { border-color: var(--primary); color: var(--primary); background: rgba(59,167,124,0.08); }
+.sl-lib-list { flex: 1; overflow-y: auto; padding: 4px 8px 12px; display: flex; flex-direction: column; gap: 6px; }
+
+.sl-thumb {
+  background: var(--card); border: 1px solid var(--border);
+  padding: 8px 10px; cursor: grab; position: relative;
+  user-select: none;
+  display: grid; grid-template-columns: 44px 1fr; gap: 10px; align-items: center;
+}
+.sl-thumb:hover { border-color: var(--border-strong); background: var(--card-2); }
+.sl-thumb:active { cursor: grabbing; }
+.sl-thumb-dragging { opacity: .4; border-style: dashed; }
+.sl-thumb-mini {
+  width: 44px; height: 28px;
+  background: var(--panel-strong);
+  border: 1px solid var(--border-strong);
+  display: grid; place-items: center;
+  font-size: 9px; color: var(--muted-fg);
+  position: relative; overflow: hidden;
+}
+.sl-thumb-mini-bar { position: absolute; left: 3px; right: 3px; height: 2px; background: var(--muted-fg); opacity: .4; }
+.sl-thumb-mini-bar.t { top: 6px; width: 60%; }
+.sl-thumb-mini-bar.m { top: 12px; width: 80%; opacity: .25; }
+.sl-thumb-mini-bar.b { top: 18px; width: 40%; opacity: .25; }
+.sl-thumb-body { min-width: 0; }
+.sl-thumb-title { font-size: 11.5px; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sl-thumb-meta { font-size: 10px; color: var(--dim-fg); display: flex; gap: 6px; margin-top: 3px; }
+.sl-thumb-tag { color: var(--muted-fg); }
+
+/* ===== Canvas ===== */
+.sl-canvas { grid-area: canvas; overflow: auto; padding: 16px 20px 40px; min-width: 0; position: relative; }
+.sl-canvas-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  margin-bottom: 14px;
+  color: var(--muted-fg); font-size: 11px; letter-spacing: .08em;
+}
+.sl-canvas-head-title { color: var(--primary); font-weight: 700; letter-spacing: .14em; font-size: 10px; }
+.sl-canvas-head-right { display: flex; gap: 14px; }
+.sl-canvas-head-stat b { color: var(--fg); font-weight: 500; }
+
+.sl-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 16px;
+  align-content: start;
+}
+
+/* Slide card */
+.sl-card {
+  position: relative;
+  background: var(--flavor-bg, #fff);
+  color: var(--flavor-text, #1f2937);
+  aspect-ratio: 16 / 9;
+  padding: 18px 20px 14px;
+  border: 1px solid var(--border-strong);
+  cursor: pointer;
+  overflow: hidden;
+  transition: transform 120ms, border-color 120ms;
+  font-family: var(--flavor-body, inherit);
+}
+.sl-card:hover { border-color: var(--muted-fg); transform: translateY(-1px); }
+.sl-card-active {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+  border-color: var(--primary);
+}
+.sl-card-intent { border-style: dashed; border-color: var(--intent); }
+.sl-card-intent.sl-card-active { outline-color: var(--intent); }
+
+.sl-card-badge {
+  position: absolute; top: 8px; right: 8px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9.5px; letter-spacing: .1em; font-weight: 700;
+  padding: 2px 6px;
+  color: var(--muted-fg);
+  background: rgba(15,20,18,0.7);
+  border: 1px solid var(--border-strong);
+  backdrop-filter: blur(4px);
+}
+.sl-card-badge-ref { color: var(--user); border-color: var(--user); }
+.sl-card-badge-intent { color: var(--intent); border-color: var(--intent); }
+.sl-card-badge-intent.streaming::after {
+  content: ""; display: inline-block; width: 6px; height: 6px; margin-left: 5px;
+  background: var(--intent); animation: pulse 900ms infinite;
+  vertical-align: middle;
+}
+
+.sl-card-num {
+  position: absolute; top: 8px; left: 10px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px; color: var(--muted-fg);
+  background: rgba(15,20,18,0.6); padding: 1px 5px;
+  border: 1px solid var(--border-strong);
+}
+
+.sl-card-title {
+  font-family: var(--flavor-heading, "JetBrains Mono", monospace);
+  font-weight: 700;
+  font-size: 18px;
+  line-height: 1.2;
+  margin: 16px 0 8px;
+  color: var(--flavor-primary, #3b82f6);
+  text-wrap: pretty;
+}
+.sl-card-bullets { margin: 0; padding-left: 16px; font-size: 11.5px; line-height: 1.5; opacity: .85; }
+.sl-card-bullets li { margin-bottom: 3px; }
+.sl-card-footer {
+  position: absolute; left: 20px; right: 20px; bottom: 10px;
+  display: flex; justify-content: space-between; align-items: center;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px; color: var(--dim-fg); opacity: .8;
+}
+.sl-card-footer-logo {
+  padding: 1px 5px; background: var(--flavor-primary, #3b82f6); color: var(--flavor-bg, #fff);
+  font-weight: 700; letter-spacing: .1em;
+}
+
+/* Intent card in "generating" state */
+.sl-card-generating {
+  display: flex; flex-direction: column; align-items: flex-start;
+  background: var(--panel) !important; color: var(--fg) !important;
+}
+.sl-card-generating .sl-card-title { color: var(--intent); }
+.sl-gen-prompt { font-size: 12px; color: var(--muted-fg); line-height: 1.5; margin-top: 8px; font-style: italic; }
+.sl-gen-prompt::before { content: "▸ "; color: var(--intent); font-style: normal; }
+.sl-gen-status {
+  position: absolute; bottom: 10px; left: 20px; right: 20px;
+  display: flex; align-items: center; gap: 6px;
+  color: var(--intent); font-size: 10px; letter-spacing: .08em;
+}
+.sl-gen-dots { display: inline-flex; gap: 2px; }
+.sl-gen-dots span { width: 4px; height: 4px; background: var(--intent); animation: pulse 900ms infinite; }
+.sl-gen-dots span:nth-child(2) { animation-delay: 150ms; }
+.sl-gen-dots span:nth-child(3) { animation-delay: 300ms; }
+@keyframes pulse { 0%,100% { opacity: .3 } 50% { opacity: 1 } }
+
+/* Drop target slot */
+.sl-drop {
+  border: 1px dashed var(--border-strong); aspect-ratio: 16/9;
+  display: grid; place-items: center;
+  color: var(--dim-fg); font-size: 11px; letter-spacing: .06em;
+  transition: border-color 120ms, background 120ms;
+}
+.sl-drop-active { border-color: var(--primary); color: var(--primary); background: rgba(59,167,124,0.04); }
+
+/* Context menu */
+.sl-ctx {
+  position: fixed; z-index: 200;
+  background: var(--panel-strong); border: 1px solid var(--border-strong);
+  padding: 4px; min-width: 200px; box-shadow: 0 12px 24px rgba(0,0,0,0.5);
+}
+.sl-ctx-item {
+  display: grid; grid-template-columns: 16px 1fr auto; gap: 8px; align-items: center;
+  padding: 5px 8px; cursor: pointer; font-size: 12px;
+}
+.sl-ctx-item:hover { background: var(--card); }
+.sl-ctx-item-kbd { color: var(--dim-fg); font-size: 10px; }
+.sl-ctx-sep { height: 1px; background: var(--border); margin: 3px 0; }
+
+/* ===== Agent panel ===== */
+.sl-agent { grid-area: agent; border-left: 1px solid var(--border); background: var(--panel); display: flex; flex-direction: column; min-height: 0; }
+.sl-agent-head { padding: 10px 12px 8px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+.sl-agent-status { display: flex; align-items: center; gap: 6px; font-size: 10px; color: var(--muted-fg); letter-spacing: .06em; }
+.sl-agent-status-dot { width: 6px; height: 6px; background: var(--primary); box-shadow: 0 0 8px var(--primary-glow); }
+.sl-agent-log { flex: 1; overflow-y: auto; padding: 10px 12px; display: flex; flex-direction: column; gap: 10px; }
+.sl-agent-msg { position: relative; padding: 4px 0 4px 10px; font-size: 12px; line-height: 1.55; }
+.sl-agent-msg::before { content: ""; position: absolute; left: 0; top: 4px; bottom: 4px; width: 2px; background: var(--border-strong); }
+.sl-agent-msg-user::before { background: var(--user); }
+.sl-agent-msg-assistant::before { background: var(--assistant); }
+.sl-agent-msg-system::before { background: var(--intent); }
+.sl-agent-msg-head { display: flex; align-items: center; gap: 8px; margin-bottom: 3px; font-size: 10px; color: var(--dim-fg); letter-spacing: .06em; text-transform: uppercase; }
+.sl-agent-msg-role-u { color: var(--user); }
+.sl-agent-msg-role-a { color: var(--assistant); }
+.sl-agent-msg-role-s { color: var(--intent); }
+.sl-agent-msg-body { color: var(--fg); white-space: pre-wrap; text-wrap: pretty; }
+.sl-agent-msg-ref {
+  margin-top: 6px; display: inline-flex; align-items: center; gap: 6px;
+  padding: 2px 6px; font-size: 10.5px;
+  color: var(--muted-fg); border: 1px solid var(--border-strong);
+  cursor: pointer;
+}
+.sl-agent-msg-ref:hover { border-color: var(--primary-dim); color: var(--primary); }
+
+.sl-agent-quick {
+  padding: 6px 12px 0; display: flex; flex-direction: column; gap: 4px;
+}
+.sl-agent-quick-title { font-size: 9.5px; color: var(--dim-fg); letter-spacing: .08em; }
+.sl-agent-quick-btns { display: flex; flex-wrap: wrap; gap: 4px; }
+.sl-agent-quick-btn { font-size: 11px; padding: 2px 8px; height: auto; color: var(--muted-fg); }
+.sl-agent-quick-btn:hover { color: var(--primary); }
+
+.sl-agent-input-wrap { padding: 10px 12px 12px; border-top: 1px solid var(--border); background: var(--panel-strong); }
+.sl-agent-input-head { font-size: 9.5px; color: var(--dim-fg); letter-spacing: .08em; margin-bottom: 6px; display: flex; justify-content: space-between; }
+.sl-agent-input {
+  width: 100%; resize: none;
+  background: var(--card); border: 1px solid var(--border-strong);
+  padding: 8px 10px; min-height: 62px;
+  color: var(--fg); font: inherit; font-size: 12px;
+  outline: none;
+}
+.sl-agent-input:focus { border-color: var(--primary); }
+.sl-agent-input-foot { display: flex; justify-content: space-between; align-items: center; margin-top: 6px; font-size: 10px; color: var(--dim-fg); }
+.sl-agent-input-send { color: var(--primary); border-color: var(--primary-dim); font-size: 11px; height: 24px; padding: 0 10px; }
+
+/* ===== Timeline strip ===== */
+.sl-strip { grid-area: strip; border-top: 1px solid var(--border); background: var(--panel-strong); display: flex; flex-direction: column; }
+.sl-strip-head {
+  height: 22px; display: flex; align-items: center; padding: 0 12px; gap: 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted-fg); font-size: 10px; letter-spacing: .08em;
+}
+.sl-strip-head-title { color: var(--primary); font-weight: 700; letter-spacing: .14em; font-size: 10px; }
+.sl-strip-head-legend { display: flex; gap: 12px; margin-left: auto; color: var(--muted-fg); font-size: 10.5px; }
+.sl-strip-legend-mk { width: 10px; height: 10px; border: 1px solid; display: inline-block; vertical-align: middle; margin-right: 4px; }
+.sl-strip-legend-ref { border-color: var(--user); background: rgba(232,184,109,0.15); }
+.sl-strip-legend-intent { border-color: var(--intent); border-style: dashed; background: rgba(201,139,220,0.1); }
+
+.sl-strip-track { flex: 1; overflow-x: auto; overflow-y: hidden; padding: 6px 12px; display: flex; gap: 8px; align-items: center; min-height: 0; }
+.sl-strip-slot {
+  flex: 0 0 auto;
+  position: relative;
+  width: 92px; height: 52px;
+  border: 1px solid var(--border-strong);
+  background: var(--card);
+  cursor: grab; user-select: none;
+  display: flex; flex-direction: column; padding: 4px 6px;
+  font-size: 9.5px;
+  transition: border-color 120ms;
+}
+.sl-strip-slot:hover { border-color: var(--muted-fg); }
+.sl-strip-slot-active { outline: 2px solid var(--primary); outline-offset: 0; }
+.sl-strip-slot-ref { border-color: var(--user); background: linear-gradient(180deg, rgba(232,184,109,0.08), var(--card)); }
+.sl-strip-slot-intent { border-color: var(--intent); border-style: dashed; background: linear-gradient(180deg, rgba(201,139,220,0.08), var(--card)); }
+.sl-strip-slot-num { color: var(--dim-fg); font-size: 9px; letter-spacing: .06em; }
+.sl-strip-slot-title { color: var(--fg); font-size: 10px; line-height: 1.15; margin-top: auto; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.sl-strip-slot-drag-over { border-left: 2px solid var(--primary); }
+.sl-strip-insert { flex: 0 0 auto; width: 14px; height: 52px; display: grid; place-items: center; color: var(--dim-fg); }
+.sl-strip-insert-active { color: var(--primary); font-weight: 700; }
+.sl-strip-add {
+  flex: 0 0 auto; width: 52px; height: 52px;
+  border: 1px dashed var(--border-strong); color: var(--muted-fg);
+  display: grid; place-items: center; cursor: pointer;
+  font-size: 18px; letter-spacing: 0;
+}
+.sl-strip-add:hover { border-color: var(--primary); color: var(--primary); }
+
+/* badge helpers */
+.sl-mono-label { font-family: "JetBrains Mono", monospace; font-size: 9.5px; letter-spacing: .1em; }
+
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<!-- React + Babel -->
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script type="text/babel">
+const { useState, useEffect, useMemo, useRef, useCallback } = React;
+
+// ============================================================================
+// Flavors (themes that re-tint every slide instantly)
+// ============================================================================
+const FLAVORS = [
+  {
+    id: "IEM",
+    name: "IEM",
+    desc: "Fraunhofer · institute",
+    primary: "#0a5d8a",
+    bg: "#ffffff",
+    text: "#1a1f2c",
+    heading: '"Inter", sans-serif',
+    body: '"Inter", sans-serif',
+    logo: "IEM",
+  },
+  {
+    id: "byteowlz",
+    name: "byteowlz",
+    desc: "dark · terminal",
+    primary: "#3ba77c",
+    bg: "#0e1412",
+    text: "#e6e9e7",
+    heading: '"JetBrains Mono", monospace',
+    body: '"JetBrains Mono", monospace',
+    logo: "◧",
+  },
+  {
+    id: "itsowl",
+    name: "it's_OWL",
+    desc: "industrial · blue/yellow",
+    primary: "#f5b800",
+    bg: "#0b2540",
+    text: "#f2f4f7",
+    heading: '"Inter", sans-serif',
+    body: '"Inter", sans-serif',
+    logo: "it's OWL",
+  },
+  {
+    id: "LZ",
+    name: "Leistungszentrum",
+    desc: "OWL · research",
+    primary: "#d94f2f",
+    bg: "#f7f5f1",
+    text: "#222",
+    heading: '"Inter", sans-serif',
+    body: '"Inter", sans-serif',
+    logo: "LZ",
+  },
+];
+
+// ============================================================================
+// Mock data
+// ============================================================================
+const TAGS = ["keynote", "technical", "metrics", "roadmap", "team", "research"];
+
+const LIBRARY = [
+  { id: "lib-001", title: "Title / Cover", bullets: ["Presenter name", "Date & venue"], tag: "keynote", used: 42 },
+  { id: "lib-002", title: "Agenda", bullets: ["4 sections, 25 min total"], tag: "keynote", used: 38 },
+  { id: "lib-003", title: "Q4 OKR Recap", bullets: ["3/5 objectives green", "2 stretch goals landed"], tag: "metrics", used: 12 },
+  { id: "lib-004", title: "Architecture Diagram", bullets: ["Control plane", "Data plane", "Edge workers"], tag: "technical", used: 21 },
+  { id: "lib-005", title: "Team Intros", bullets: ["Design · Eng · PM", "New hires Q1"], tag: "team", used: 9 },
+  { id: "lib-006", title: "Roadmap 2026", bullets: ["H1: ingestion", "H2: reasoning"], tag: "roadmap", used: 17 },
+  { id: "lib-007", title: "Research: bandit sampling", bullets: ["UCB1 vs Thompson", "Empirical results"], tag: "research", used: 4 },
+  { id: "lib-008", title: "Customer quotes", bullets: ["3 enterprise logos", "NPS 68"], tag: "metrics", used: 14 },
+  { id: "lib-009", title: "Pricing Tiers", bullets: ["Free / Pro / Enterprise"], tag: "metrics", used: 28 },
+  { id: "lib-010", title: "Q&A / Thank you", bullets: ["Contact, links"], tag: "keynote", used: 35 },
+  { id: "lib-011", title: "Demo Script", bullets: ["90 seconds", "Recovery path if wifi dies"], tag: "technical", used: 6 },
+  { id: "lib-012", title: "Competitor Landscape", bullets: ["2x2 positioning", "Our moat"], tag: "metrics", used: 11 },
+];
+
+// The live deck: mix of ref (library reference) and intent (AI-generated from prompt)
+const INITIAL_DECK = [
+  { id: "d1", kind: "ref",    libId: "lib-001", title: "Title / Cover", bullets: ["oqto All-Hands", "Q2 2026 · Paderborn"] },
+  { id: "d2", kind: "ref",    libId: "lib-002", title: "Agenda", bullets: ["Progress", "Roadmap", "Research", "Q&A"] },
+  { id: "d3", kind: "intent", prompt: "a slide summarizing our Q1 wins for executives, 4 numeric highlights",
+                              title: "Q1 Highlights",
+                              bullets: ["$4.2M ARR — +38% QoQ", "12 enterprise logos", "p50 latency: 180ms → 92ms", "Team: 24 → 31"] },
+  { id: "d4", kind: "ref",    libId: "lib-004", title: "Architecture Diagram", bullets: ["Control plane", "Data plane", "Edge workers"] },
+  { id: "d5", kind: "intent", prompt: "explain our embedding pipeline for a technical audience, focus on batching strategy",
+                              title: "Embedding Pipeline",
+                              bullets: ["Dynamic batch windows (10–80ms)", "Mixed precision on T4 fleet", "Warm-path cache, 94% hit rate"] },
+  { id: "d6", kind: "ref",    libId: "lib-006", title: "Roadmap 2026", bullets: ["H1: ingestion v2", "H2: reasoning traces"] },
+  { id: "d7", kind: "intent", prompt: "a slide framing our research bet on bandit sampling, aspirational tone",
+                              title: "Why Bandits, Why Now",
+                              bullets: ["Offline eval stopped predicting prod", "Sampling → online learning", "Cheap experiments = more bets"] },
+  { id: "d8", kind: "ref",    libId: "lib-010", title: "Q&A / Thank you", bullets: ["questions@oqto.dev"] },
+];
+
+// Agent transcript
+const INITIAL_TRANSCRIPT = [
+  { role: "system", text: "Flavor set to IEM. Canvas showing 8 slides." },
+  { role: "user",   text: "add a slide summarizing our Q1 wins for executives, 4 numeric highlights" },
+  { role: "assistant", text: "Inserted intent slide 3 (“Q1 Highlights”). I pulled the numeric highlights from your Q4 OKR recap and the finance snapshot — adjust the ARR figure if it's stale.",
+    refSlideId: "d3" },
+  { role: "user",   text: "explain our embedding pipeline for a technical audience, focus on batching strategy" },
+  { role: "assistant", text: "Inserted intent slide 5 (“Embedding Pipeline”). Tech depth calibrated for engineering leads. Want me to add a waterfall of cost-per-request alongside?",
+    refSlideId: "d5" },
+];
+
+// ============================================================================
+// Components
+// ============================================================================
+
+function useFlavorStyle(flavor) {
+  return {
+    "--flavor-primary": flavor.primary,
+    "--flavor-bg": flavor.bg,
+    "--flavor-text": flavor.text,
+    "--flavor-heading": flavor.heading,
+    "--flavor-body": flavor.body,
+  };
+}
+
+function TopBar({ deckTitle, setDeckTitle, flavor, setFlavor, flavorOpen, setFlavorOpen }) {
+  return (
+    <header className="sl-bar">
+      <div className="sl-bar-left">
+        <span className="sl-logo">◧ oqto</span>
+        <span className="sl-crumb-sep">/</span>
+        <span className="sl-crumb sl-crumb-strong">sldr</span>
+        <span className="sl-crumb-sep">/</span>
+        <span
+          className="sl-crumb sl-crumb-edit"
+          contentEditable suppressContentEditableWarning
+          onBlur={(e) => setDeckTitle(e.target.textContent || "untitled deck")}
+          spellCheck={false}
+        >{deckTitle}</span>
+      </div>
+      <span className="sl-bar-flex" />
+      <div className="sl-bar-right">
+        <button className="sl-flavor" onClick={() => setFlavorOpen(o => !o)} title="switch flavor (theme)">
+          <span className="sl-flavor-dot" style={{ background: flavor.primary }} />
+          <span>flavor · {flavor.name}</span>
+          <span style={{ color: "var(--dim-fg)" }}>▾</span>
+        </button>
+        <button title="preview in browser">preview ↗</button>
+        <button className="sl-bar-build" title="render to HTML (Ctrl+B)">
+          ▶ build
+        </button>
+      </div>
+      {flavorOpen && (
+        <div className="sl-flavor-menu" onMouseLeave={() => setFlavorOpen(false)}>
+          <div style={{ fontSize: 9.5, color: "var(--dim-fg)", letterSpacing: ".1em", padding: "2px 8px 4px" }}>FLAVORS · ~/.sldr/flavors</div>
+          {FLAVORS.map(f => (
+            <div
+              key={f.id}
+              className={`sl-flavor-opt ${f.id === flavor.id ? "sl-flavor-opt-active" : ""}`}
+              onClick={() => { setFlavor(f); setFlavorOpen(false); }}
+            >
+              <span className="sl-flavor-opt-swatch" style={{ background: f.primary, borderColor: f.text }} />
+              <span>
+                <div>{f.name}</div>
+                <div className="sl-flavor-opt-desc">{f.desc}</div>
+              </span>
+              {f.id === flavor.id && <span className="sl-mono-label">◆</span>}
+            </div>
+          ))}
+        </div>
+      )}
+    </header>
+  );
+}
+
+function Library({ search, setSearch, tagFilter, setTagFilter, onDragStart, onDragEnd }) {
+  const filtered = LIBRARY.filter(s => {
+    if (tagFilter && s.tag !== tagFilter) return false;
+    if (search && !(s.title + " " + (s.bullets||[]).join(" ")).toLowerCase().includes(search.toLowerCase())) return false;
+    return true;
+  });
+  return (
+    <aside className="sl-lib">
+      <div className="sl-lib-head">
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+          <span className="sl-section-title">LIBRARY</span>
+          <span style={{ fontSize: 10, color: "var(--dim-fg)" }}>{filtered.length}/{LIBRARY.length}</span>
+        </div>
+        <div className="sl-lib-search">
+          <span className="sl-lib-search-ico">/</span>
+          <input
+            className="sl-lib-search-input"
+            placeholder="search slides…"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+          />
+        </div>
+      </div>
+      <div className="sl-lib-filters">
+        {TAGS.map(t => (
+          <button
+            key={t}
+            className={`sl-chip ${tagFilter === t ? "sl-chip-active" : ""}`}
+            onClick={() => setTagFilter(tagFilter === t ? null : t)}
+          >#{t}</button>
+        ))}
+      </div>
+      <div className="sl-lib-list">
+        {filtered.map(s => (
+          <div
+            key={s.id}
+            className="sl-thumb"
+            draggable
+            onDragStart={(e) => { onDragStart(s); e.dataTransfer.setData("text/plain", s.id); e.dataTransfer.effectAllowed = "copy"; }}
+            onDragEnd={onDragEnd}
+            title="drag onto canvas or timeline"
+          >
+            <div className="sl-thumb-mini">
+              <div className="sl-thumb-mini-bar t" />
+              <div className="sl-thumb-mini-bar m" />
+              <div className="sl-thumb-mini-bar b" />
+            </div>
+            <div className="sl-thumb-body">
+              <div className="sl-thumb-title">{s.title}</div>
+              <div className="sl-thumb-meta">
+                <span className="sl-thumb-tag">#{s.tag}</span>
+                <span>·</span>
+                <span>used {s.used}×</span>
+              </div>
+            </div>
+          </div>
+        ))}
+        {filtered.length === 0 && (
+          <div style={{ color: "var(--dim-fg)", fontSize: 11, textAlign: "center", padding: "20px 8px" }}>no matches</div>
+        )}
+      </div>
+    </aside>
+  );
+}
+
+function SlideCard({ slide, index, active, onClick, onContextMenu, flavor, dropOver, onDragOver, onDrop }) {
+  const kind = slide.kind;
+  return (
+    <div
+      className={`sl-card ${kind === "intent" ? "sl-card-intent" : ""} ${active ? "sl-card-active" : ""}`}
+      style={useFlavorStyle(flavor)}
+      onClick={onClick}
+      onContextMenu={onContextMenu}
+      onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; onDragOver && onDragOver(); }}
+      onDrop={onDrop}
+    >
+      <span className="sl-card-num">{String(index + 1).padStart(2, "0")}</span>
+      <span className={`sl-card-badge ${kind === "ref" ? "sl-card-badge-ref" : "sl-card-badge-intent"} ${slide.streaming ? "streaming" : ""}`}>
+        {kind === "ref" ? "▪ REF" : "◆ INTENT"}
+      </span>
+      <div className="sl-card-title">{slide.title}</div>
+      {slide.bullets && (
+        <ul className="sl-card-bullets">
+          {slide.bullets.slice(0, 4).map((b, i) => <li key={i}>{b}</li>)}
+        </ul>
+      )}
+      <div className="sl-card-footer">
+        <span>{kind === "ref" ? `lib/${slide.libId}` : `intent · ${(slide.prompt || "").slice(0, 32)}${(slide.prompt || "").length > 32 ? "…" : ""}`}</span>
+        <span className="sl-card-footer-logo">{flavor.logo}</span>
+      </div>
+    </div>
+  );
+}
+
+function StreamingCard({ slide, flavor, active, index, onClick }) {
+  return (
+    <div
+      className={`sl-card sl-card-intent sl-card-generating ${active ? "sl-card-active" : ""}`}
+      style={useFlavorStyle(flavor)}
+      onClick={onClick}
+    >
+      <span className="sl-card-num">{String(index + 1).padStart(2, "0")}</span>
+      <span className="sl-card-badge sl-card-badge-intent streaming">◆ INTENT · STREAMING</span>
+      <div className="sl-card-title">generating…</div>
+      <div className="sl-gen-prompt">{slide.prompt}</div>
+      <div className="sl-gen-status">
+        <span className="sl-gen-dots"><span /><span /><span /></span>
+        <span>haiku-4.5 · drafting outline · 0.8s</span>
+      </div>
+    </div>
+  );
+}
+
+function Canvas({ deck, flavor, activeId, setActiveId, onContextMenu, onDropSlide, dragTarget, setDragTarget }) {
+  return (
+    <main className="sl-canvas">
+      <div className="sl-canvas-head">
+        <span className="sl-canvas-head-title">CANVAS</span>
+        <span className="sl-canvas-head-right">
+          <span className="sl-canvas-head-stat">{deck.length} <b style={{ color: "var(--muted-fg)" }}>slides</b></span>
+          <span className="sl-canvas-head-stat">{deck.filter(d => d.kind === "ref").length} <b style={{ color: "var(--user)" }}>ref</b></span>
+          <span className="sl-canvas-head-stat">{deck.filter(d => d.kind === "intent").length} <b style={{ color: "var(--intent)" }}>intent</b></span>
+          <span className="sl-canvas-head-stat">16:9</span>
+        </span>
+      </div>
+      <div
+        className="sl-grid"
+        onDragOver={(e) => e.preventDefault()}
+      >
+        {deck.map((slide, i) => (
+          slide.streaming
+            ? <StreamingCard key={slide.id} slide={slide} flavor={flavor} index={i}
+                active={activeId === slide.id}
+                onClick={() => setActiveId(slide.id)} />
+            : <SlideCard
+                key={slide.id}
+                slide={slide}
+                index={i}
+                active={activeId === slide.id}
+                flavor={flavor}
+                onClick={() => setActiveId(slide.id)}
+                onContextMenu={(e) => { e.preventDefault(); onContextMenu(e, slide); }}
+                onDragOver={() => setDragTarget(slide.id)}
+                onDrop={(e) => { e.preventDefault(); onDropSlide(slide.id); setDragTarget(null); }}
+              />
+        ))}
+        <div
+          className={`sl-drop ${dragTarget === "__end" ? "sl-drop-active" : ""}`}
+          onDragOver={(e) => { e.preventDefault(); setDragTarget("__end"); }}
+          onDragLeave={() => setDragTarget(null)}
+          onDrop={(e) => { e.preventDefault(); onDropSlide(null); setDragTarget(null); }}
+        >
+          ▢ drop slide here or press <kbd>⌘K</kbd> for agent
+        </div>
+      </div>
+    </main>
+  );
+}
+
+function Agent({ transcript, input, setInput, onSend, onSelect, busy }) {
+  const logRef = useRef(null);
+  useEffect(() => {
+    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
+  }, [transcript]);
+
+  const submit = () => {
+    if (!input.trim()) return;
+    onSend(input.trim());
+  };
+
+  return (
+    <aside className="sl-agent">
+      <div className="sl-agent-head">
+        <span className="sl-section-title">AGENT</span>
+        <span className="sl-agent-status">
+          <span className="sl-agent-status-dot" />
+          {busy ? "thinking…" : "haiku-4.5 · ready"}
+        </span>
+      </div>
+
+      <div className="sl-agent-log" ref={logRef}>
+        {transcript.map((m, i) => (
+          <div key={i} className={`sl-agent-msg sl-agent-msg-${m.role}`}>
+            <div className="sl-agent-msg-head">
+              <span className={`sl-agent-msg-role-${m.role[0]}`}>{m.role}</span>
+              <span>·</span>
+              <span>{m.ts || "now"}</span>
+            </div>
+            <div className="sl-agent-msg-body">{m.text}</div>
+            {m.refSlideId && (
+              <button
+                className="sl-agent-msg-ref"
+                onClick={() => onSelect(m.refSlideId)}
+              >◆ jump to slide {m.refSlideId}</button>
+            )}
+          </div>
+        ))}
+      </div>
+
+      <div className="sl-agent-quick">
+        <div className="sl-agent-quick-title">SUGGEST</div>
+        <div className="sl-agent-quick-btns">
+          <button className="sl-agent-quick-btn" onClick={() => setInput("rewrite this slide for a technical audience")}>rewrite technical</button>
+          <button className="sl-agent-quick-btn" onClick={() => setInput("add a chart showing quarterly growth")}>add chart</button>
+          <button className="sl-agent-quick-btn" onClick={() => setInput("condense this deck to 5 slides")}>condense → 5</button>
+        </div>
+      </div>
+
+      <div className="sl-agent-input-wrap">
+        <div className="sl-agent-input-head">
+          <span>INTENT</span>
+          <span><kbd>⏎</kbd> send · <kbd>⇧⏎</kbd> newline</span>
+        </div>
+        <textarea
+          className="sl-agent-input"
+          placeholder="describe a slide to generate, or a revision…"
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              submit();
+            }
+          }}
+        />
+        <div className="sl-agent-input-foot">
+          <span>attached: {/*activeId*/}current slide context</span>
+          <button className="sl-agent-input-send" onClick={submit} disabled={!input.trim() || busy}>
+            {busy ? "…" : "generate ↵"}
+          </button>
+        </div>
+      </div>
+    </aside>
+  );
+}
+
+function Strip({ deck, activeId, setActiveId, onReorder, onContextMenu, onDropLibrary, dragOverIdx, setDragOverIdx }) {
+  const [dragIdx, setDragIdx] = useState(null);
+
+  const handleDropAt = (idx, e) => {
+    e.preventDefault();
+    const libId = e.dataTransfer.getData("text/plain");
+    if (libId && libId.startsWith("lib-")) {
+      onDropLibrary(libId, idx);
+    } else if (dragIdx !== null) {
+      onReorder(dragIdx, idx);
+    }
+    setDragIdx(null);
+    setDragOverIdx(null);
+  };
+
+  return (
+    <section className="sl-strip">
+      <div className="sl-strip-head">
+        <span className="sl-strip-head-title">TIMELINE</span>
+        <span>{deck.length} slides · ~{Math.round(deck.length * 1.25)} min</span>
+        <span className="sl-strip-head-legend">
+          <span><span className="sl-strip-legend-mk sl-strip-legend-ref" /> reference</span>
+          <span><span className="sl-strip-legend-mk sl-strip-legend-intent" /> intent</span>
+        </span>
+      </div>
+      <div className="sl-strip-track">
+        <div
+          className={`sl-strip-insert ${dragOverIdx === 0 ? "sl-strip-insert-active" : ""}`}
+          onDragOver={(e) => { e.preventDefault(); setDragOverIdx(0); }}
+          onDrop={(e) => handleDropAt(0, e)}
+        >{dragOverIdx === 0 ? "▸" : " "}</div>
+        {deck.map((slide, i) => (
+          <React.Fragment key={slide.id}>
+            <div
+              className={`sl-strip-slot ${slide.kind === "ref" ? "sl-strip-slot-ref" : "sl-strip-slot-intent"} ${activeId === slide.id ? "sl-strip-slot-active" : ""}`}
+              draggable
+              onDragStart={(e) => { setDragIdx(i); e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", "move-" + i); }}
+              onDragEnd={() => setDragIdx(null)}
+              onClick={() => setActiveId(slide.id)}
+              onContextMenu={(e) => { e.preventDefault(); onContextMenu(e, slide); }}
+              title={slide.title}
+            >
+              <div className="sl-strip-slot-num">{String(i + 1).padStart(2, "0")} · {slide.kind}</div>
+              <div className="sl-strip-slot-title">{slide.title}</div>
+            </div>
+            <div
+              className={`sl-strip-insert ${dragOverIdx === i + 1 ? "sl-strip-insert-active" : ""}`}
+              onDragOver={(e) => { e.preventDefault(); setDragOverIdx(i + 1); }}
+              onDrop={(e) => handleDropAt(i + 1, e)}
+            >{dragOverIdx === i + 1 ? "▸" : " "}</div>
+          </React.Fragment>
+        ))}
+        <div className="sl-strip-add" title="add blank intent slot">+</div>
+      </div>
+    </section>
+  );
+}
+
+function ContextMenu({ pos, slide, onClose, onAction }) {
+  if (!pos || !slide) return null;
+  useEffect(() => {
+    const h = () => onClose();
+    document.addEventListener("click", h);
+    document.addEventListener("keydown", (e) => e.key === "Escape" && onClose());
+    return () => document.removeEventListener("click", h);
+  }, [onClose]);
+
+  const isIntent = slide.kind === "intent";
+  return (
+    <div className="sl-ctx" style={{ left: pos.x, top: pos.y }} onClick={(e) => e.stopPropagation()}>
+      <div className="sl-ctx-item" onClick={() => onAction("edit")}>
+        <span>✎</span><span>edit markdown</span><span className="sl-ctx-item-kbd">E</span>
+      </div>
+      <div className="sl-ctx-item" onClick={() => onAction("fork")}>
+        <span>⎇</span><span>fork & edit</span><span className="sl-ctx-item-kbd">F</span>
+      </div>
+      {isIntent && (
+        <div className="sl-ctx-item" onClick={() => onAction("regen")}>
+          <span>↻</span><span>regenerate</span><span className="sl-ctx-item-kbd">R</span>
+        </div>
+      )}
+      <div className="sl-ctx-item" onClick={() => onAction("replace")}>
+        <span>↹</span><span>replace from library</span><span className="sl-ctx-item-kbd">⌘R</span>
+      </div>
+      <div className="sl-ctx-sep" />
+      <div className="sl-ctx-item" onClick={() => onAction("duplicate")}>
+        <span>⧉</span><span>duplicate</span><span className="sl-ctx-item-kbd">⌘D</span>
+      </div>
+      <div className="sl-ctx-item" onClick={() => onAction("delete")} style={{ color: "var(--danger)" }}>
+        <span>✕</span><span>delete</span><span className="sl-ctx-item-kbd">⌫</span>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// App
+// ============================================================================
+function App() {
+  const [deckTitle, setDeckTitle] = useState("All-Hands Q2 2026");
+  const [flavor, setFlavor] = useState(FLAVORS[0]);
+  const [flavorOpen, setFlavorOpen] = useState(false);
+  const [deck, setDeck] = useState(INITIAL_DECK);
+  const [activeId, setActiveId] = useState(INITIAL_DECK[2].id);
+  const [search, setSearch] = useState("");
+  const [tagFilter, setTagFilter] = useState(null);
+  const [transcript, setTranscript] = useState(INITIAL_TRANSCRIPT);
+  const [agentInput, setAgentInput] = useState("");
+  const [agentBusy, setAgentBusy] = useState(false);
+  const [ctx, setCtx] = useState(null); // {pos, slide}
+  const [dragTarget, setDragTarget] = useState(null);
+  const [dragOverIdx, setDragOverIdx] = useState(null);
+  const draggingSlideRef = useRef(null);
+
+  const findLib = (id) => LIBRARY.find(l => l.id === id);
+
+  // Agent: typed intent → streaming intent slide
+  const sendIntent = (prompt) => {
+    setTranscript(t => [...t, { role: "user", text: prompt }]);
+    setAgentInput("");
+    setAgentBusy(true);
+
+    const newId = "d" + (Math.floor(Math.random() * 9e5) + 1e5);
+    const activeIdx = deck.findIndex(d => d.id === activeId);
+    const insertAt = activeIdx >= 0 ? activeIdx + 1 : deck.length;
+
+    const streaming = { id: newId, kind: "intent", prompt, streaming: true, title: "generating…", bullets: [] };
+    setDeck(d => [...d.slice(0, insertAt), streaming, ...d.slice(insertAt)]);
+    setActiveId(newId);
+
+    // simulate generation
+    setTimeout(() => {
+      const titles = ["Strategic Implications", "Key Takeaways", "What We Shipped", "Next Steps", "Where We Go"];
+      const title = titles[Math.floor(Math.random() * titles.length)];
+      const bullets = [
+        "Primary insight driving the narrative",
+        "Supporting evidence from last quarter",
+        "One decision we're asking for",
+      ];
+      setDeck(d => d.map(s => s.id === newId ? { id: newId, kind: "intent", prompt, title, bullets, streaming: false } : s));
+      setTranscript(t => [...t, {
+        role: "assistant",
+        text: `Inserted intent slide "${title}" after the active one. Flavor ${flavor.name} applied.`,
+        refSlideId: newId,
+      }]);
+      setAgentBusy(false);
+    }, 1200);
+  };
+
+  const onDropLibrary = (libId, insertIdx) => {
+    const lib = findLib(libId);
+    if (!lib) return;
+    const newSlide = {
+      id: "d" + (Math.floor(Math.random() * 9e5) + 1e5),
+      kind: "ref", libId: lib.id, title: lib.title, bullets: lib.bullets,
+    };
+    setDeck(d => [...d.slice(0, insertIdx), newSlide, ...d.slice(insertIdx)]);
+    setActiveId(newSlide.id);
+    setTranscript(t => [...t, {
+      role: "system",
+      text: `Added reference slide "${lib.title}" from library (#${lib.tag}). Position ${insertIdx + 1}.`,
+    }]);
+  };
+
+  // drop onto a specific slide in canvas = insert after that slide. drop at end = append.
+  const onDropOntoCanvasSlide = (slideId) => {
+    const libSlide = draggingSlideRef.current;
+    if (!libSlide) return;
+    const idx = slideId ? deck.findIndex(d => d.id === slideId) : deck.length - 1;
+    onDropLibrary(libSlide.id, idx + 1);
+    draggingSlideRef.current = null;
+  };
+
+  const onReorder = (from, to) => {
+    if (from === to || from === to - 1) return;
+    setDeck(d => {
+      const arr = [...d];
+      const [moved] = arr.splice(from, 1);
+      const adj = to > from ? to - 1 : to;
+      arr.splice(adj, 0, moved);
+      return arr;
+    });
+  };
+
+  const handleCtxAction = (action) => {
+    if (!ctx?.slide) return;
+    const { slide } = ctx;
+    if (action === "delete") {
+      setDeck(d => d.filter(s => s.id !== slide.id));
+      setTranscript(t => [...t, { role: "system", text: `Removed slide "${slide.title}".` }]);
+    } else if (action === "duplicate") {
+      const copy = { ...slide, id: "d" + (Math.floor(Math.random() * 9e5) + 1e5) };
+      const idx = deck.findIndex(d => d.id === slide.id);
+      setDeck(d => [...d.slice(0, idx + 1), copy, ...d.slice(idx + 1)]);
+    } else if (action === "regen" && slide.kind === "intent") {
+      const idx = deck.findIndex(d => d.id === slide.id);
+      setDeck(d => d.map(s => s.id === slide.id ? { ...s, streaming: true, title: "generating…" } : s));
+      setTranscript(t => [...t, { role: "user", text: `regenerate: ${slide.prompt}` }]);
+      setAgentBusy(true);
+      setTimeout(() => {
+        setDeck(d => d.map(s => s.id === slide.id ? { ...s, streaming: false, title: slide.title + " (v2)" } : s));
+        setTranscript(t => [...t, { role: "assistant", text: "Regenerated. New draft keeps the structure but tightens the opening line.", refSlideId: slide.id }]);
+        setAgentBusy(false);
+      }, 900);
+    } else if (action === "fork") {
+      const copy = { ...slide, id: "d" + (Math.floor(Math.random() * 9e5) + 1e5), title: slide.title + " (fork)" };
+      const idx = deck.findIndex(d => d.id === slide.id);
+      setDeck(d => [...d.slice(0, idx + 1), copy, ...d.slice(idx + 1)]);
+      setActiveId(copy.id);
+    }
+    setCtx(null);
+  };
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const onKey = (e) => {
+      const tag = e.target.tagName;
+      const inInput = tag === "INPUT" || tag === "TEXTAREA" || e.target.isContentEditable;
+      if (inInput) {
+        if (e.key === "Escape") e.target.blur();
+        return;
+      }
+      if (e.key === "/") { e.preventDefault(); document.querySelector(".sl-lib-search-input")?.focus(); return; }
+      if (e.key === "i") { e.preventDefault(); document.querySelector(".sl-agent-input")?.focus(); return; }
+      if (e.key === "ArrowRight" || e.key === "l") {
+        const i = deck.findIndex(d => d.id === activeId);
+        if (i >= 0 && i < deck.length - 1) setActiveId(deck[i + 1].id);
+      }
+      if (e.key === "ArrowLeft" || e.key === "h") {
+        const i = deck.findIndex(d => d.id === activeId);
+        if (i > 0) setActiveId(deck[i - 1].id);
+      }
+      if (e.key === "Escape") setCtx(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [deck, activeId]);
+
+  return (
+    <div className="sl-app">
+      <TopBar
+        deckTitle={deckTitle} setDeckTitle={setDeckTitle}
+        flavor={flavor} setFlavor={setFlavor}
+        flavorOpen={flavorOpen} setFlavorOpen={setFlavorOpen}
+      />
+      <Library
+        search={search} setSearch={setSearch}
+        tagFilter={tagFilter} setTagFilter={setTagFilter}
+        onDragStart={(s) => { draggingSlideRef.current = s; }}
+        onDragEnd={() => { draggingSlideRef.current = null; }}
+      />
+      <Canvas
+        deck={deck}
+        flavor={flavor}
+        activeId={activeId}
+        setActiveId={setActiveId}
+        onContextMenu={(e, slide) => setCtx({ pos: { x: e.clientX, y: e.clientY }, slide })}
+        onDropSlide={onDropOntoCanvasSlide}
+        dragTarget={dragTarget}
+        setDragTarget={setDragTarget}
+      />
+      <Agent
+        transcript={transcript}
+        input={agentInput} setInput={setAgentInput}
+        onSend={sendIntent}
+        onSelect={setActiveId}
+        busy={agentBusy}
+      />
+      <Strip
+        deck={deck}
+        activeId={activeId} setActiveId={setActiveId}
+        onReorder={onReorder}
+        onContextMenu={(e, slide) => setCtx({ pos: { x: e.clientX, y: e.clientY }, slide })}
+        onDropLibrary={onDropLibrary}
+        dragOverIdx={dragOverIdx}
+        setDragOverIdx={setDragOverIdx}
+      />
+
+      <ContextMenu pos={ctx?.pos} slide={ctx?.slide} onClose={() => setCtx(null)} onAction={handleCtxAction} />
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<App />);
+</script>
+</body>
+</html>
