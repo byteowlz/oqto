@@ -1,0 +1,65 @@
+name: Setup bug
+description: Report installation/setup failures for oqto
+title: "setup: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a setup issue.
+        Please include enough detail so we can reproduce quickly.
+
+  - type: input
+    id: distro
+    attributes:
+      label: Linux distribution and version
+      placeholder: "Ubuntu 24.04, Arch Linux, Fedora 41..."
+    validations:
+      required: true
+
+  - type: dropdown
+    id: sudo_access
+    attributes:
+      label: Does the setup user have sudo rights?
+      options:
+        - Yes
+        - No
+        - Unsure
+    validations:
+      required: true
+
+  - type: input
+    id: command
+    attributes:
+      label: Exact setup command used
+      placeholder: "./setup.sh" 
+      description: Include env vars/flags if used.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: non_interactive
+    attributes:
+      label: Was non-interactive mode used?
+      options:
+        - "Yes (--non-interactive)"
+        - "No (interactive)"
+        - Unsure
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Error output / logs
+      description: Paste the relevant error output.
+      placeholder: "Paste setup output here"
+    validations:
+      required: true
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Additional context
+      description: Anything else that might help reproduction.

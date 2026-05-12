@@ -10,7 +10,7 @@ oqto is still in early but very active development. Expect bugs and unfinished f
 
 Oqto is a self-hosted, multi-user platform for working with AI agents aimed at technical and non-technical people. Each Agent workspace can be configured individually with regards to sandboxing, skills, extensions etc. It is built around [pi](https://github.com/earendil-works/pi/tree/main/packages/coding-agent) with rpc mode as the core agentic harness, which makes it very flexible and extensible. oqto comprises a web UI for chat, file browsing, terminal access, canvas, memory and task tracking. It also includes a browser running on the server that the Agent can control which can be streamed to the frontend, enabling users to take control when necessary. Many of the tools used by oqto are built as stand-alone tools which can also be useful outside of oqto.
 
-Current development focuses on running oqto on a Linux server but it's technically possible to run all components on macOS as well. Right now, I would recommend running it on a Linux VM on macOS as well to avoid macOS-specific bugs.
+Current development and setup support focus on Linux servers. macOS setup is currently unsupported.
 
 ## Architecture
 
@@ -82,13 +82,19 @@ Auth uses JWT with invite codes. A progressive onboarding system with agent-driv
 
 ### Use automated setup (recommended)
 
-This setup script has primarily been tested on an Ubuntu 24.04 VPS but targets multiple distros. Right now, many tools are still being built from source. I will provide pre-built binaries soon to substantially speed up the installation. The script also includes optional server hardening steps (firewall, fail2ban, ssh lockdown etc.)
+This setup script has primarily been tested on an Ubuntu 24.04 VPS and currently supports Linux only. Right now, many tools are still being built from source. I will provide pre-built binaries soon to substantially speed up the installation. The script also includes optional server hardening steps (firewall, fail2ban, ssh lockdown etc.)
 
 ```bash
 ./setup.sh
 ```
 
-The interactive script handles user mode selection, backend mode, dependency installation, building, configuration, and optional systemd services. See [SETUP.md](./SETUP.md) for full details.
+The interactive script handles user mode selection, backend mode, dependency installation, building, configuration, and optional systemd services. On Linux, setup currently requires sudo-capable accounts and exits early if sudo auth is unavailable. See [SETUP.md](./SETUP.md) for full details.
+
+### Known setup limitations
+
+- Linux host required (macOS setup currently unsupported)
+- Sudo-capable user required for setup
+- Container backend currently on hold in setup flow (local mode is enforced)
 
 ---
 
@@ -246,6 +252,11 @@ I have many ideas I want to try out but even with the help of AI coding agents, 
 ## Contributions
 
 The biggest support you can currently provide is trying out to set up and use oqto yourself and reporting any issues you encounter. I would also appreciate any feedback regarding the general architecture especially concerning the security aspects.
+
+When reporting setup issues, please include:
+- Linux distribution and version
+- Whether your user has sudo rights
+- The exact setup command used (and whether `--non-interactive` was used)
 
 If you want to actively contribute to the codebase, I would appreciate you start a discussion beforehand to share what improvements you would like to make. I have strong options on certain aspects but am very open to suggestions in general.
 
