@@ -1754,6 +1754,12 @@ impl PiSessionManager {
                     .filter_map(|p| p.strip_prefix("eavs-"))
                     .collect();
 
+                // Direct Pi OAuth providers are configured in Pi auth storage,
+                // not in oqto-managed models.json. Keep them visible even when
+                // disk models are present (e.g. default/eavs-only disk config).
+                let direct_pi_oauth_providers: std::collections::HashSet<&str> =
+                    ["openai-codex"].into_iter().collect();
+
                 let filter_by_provider = |value: &serde_json::Value| -> serde_json::Value {
                     let filtered = value
                         .as_array()
@@ -1765,6 +1771,7 @@ impl PiSessionManager {
                                         .map(|p| {
                                             allowed_providers.contains(p)
                                                 || allowed_bare.contains(p)
+                                                || direct_pi_oauth_providers.contains(p)
                                         })
                                         .unwrap_or(false)
                                 })
