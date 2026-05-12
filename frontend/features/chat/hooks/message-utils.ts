@@ -277,9 +277,7 @@ function coerceBlockToPart(b: Record<string, unknown>): DisplayPart | null {
 							: typeof b.text === "string"
 								? b.text
 								: b,
-			isError: Boolean(
-				b.is_error ?? b.isError ?? b.tool_status === "error",
-			),
+			isError: Boolean(b.is_error ?? b.isError ?? b.tool_status === "error"),
 		};
 	}
 

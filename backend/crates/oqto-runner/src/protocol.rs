@@ -1740,6 +1740,65 @@ pub struct ChatMessageProto {
     pub parts: Vec<ChatMessagePartProto>,
 }
 
+/// Convert a neutral projected chat DTO into the runner's current wire type.
+pub fn projected_chat_message_to_proto(
+    message: oqto_protocol::projection::ProjectedChatMessage,
+) -> ChatMessageProto {
+    ChatMessageProto {
+        id: message.id,
+        session_id: message.session_id,
+        role: message.role,
+        created_at: message.created_at,
+        completed_at: message.completed_at,
+        parent_id: message.parent_id,
+        model_id: message.model_id,
+        provider_id: message.provider_id,
+        agent: message.agent,
+        summary_title: message.summary_title,
+        tokens_input: message.tokens_input,
+        tokens_output: message.tokens_output,
+        tokens_reasoning: message.tokens_reasoning,
+        cost: message.cost,
+        client_id: message.client_id,
+        parts: message
+            .parts
+            .into_iter()
+            .map(projected_chat_part_to_proto)
+            .collect(),
+    }
+}
+
+/// Convert a neutral projected chat part into the runner's current wire type.
+pub fn projected_chat_part_to_proto(
+    part: oqto_protocol::projection::ProjectedChatMessagePart,
+) -> ChatMessagePartProto {
+    ChatMessagePartProto {
+        id: part.id,
+        part_type: part.part_type,
+        text: part.text,
+        text_html: part.text_html,
+        tool_name: part.tool_name,
+        tool_call_id: part.tool_call_id,
+        tool_input: part.tool_input,
+        tool_output: part.tool_output.map(|value| match value {
+            serde_json::Value::String(s) => s,
+            other => other.to_string(),
+        }),
+        tool_status: part.tool_status,
+        tool_title: part.tool_title,
+    }
+}
+
+/// Convert neutral projected chat DTOs into the runner's current wire type.
+pub fn projected_chat_messages_to_proto(
+    messages: Vec<oqto_protocol::projection::ProjectedChatMessage>,
+) -> Vec<ChatMessageProto> {
+    messages
+        .into_iter()
+        .map(projected_chat_message_to_proto)
+        .collect()
+}
+
 // ============================================================================
 // AgentMessage -> ChatMessageProto conversion
 // ============================================================================

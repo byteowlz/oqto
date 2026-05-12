@@ -7,7 +7,6 @@
 pub mod agent_browser;
 pub mod client;
 pub mod daemon;
-pub mod oqto_log_projector;
 pub mod pi_manager;
 pub mod pi_translator;
 pub mod protocol;

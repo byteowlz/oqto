@@ -4366,7 +4366,7 @@ impl PiSessionManager {
                         oqto_protocol::events::EventPayload::AgentIdle { .. }
                     ) {
                         let message_version = if let Ok(home) = std::env::var("HOME") {
-                            match crate::oqto_log_projector::read_message_version_auto(
+                            match oqto_history::oqto_log::projector::read_message_version_auto(
                                 std::path::Path::new(&home),
                                 &session_id,
                             )
