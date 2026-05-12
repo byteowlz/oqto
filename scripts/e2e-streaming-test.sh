@@ -123,7 +123,13 @@ get_token() {
 
 # Generate a unique session ID
 gen_session_id() {
-    echo "e2e-test-$(date +%s)-$(head -c4 /dev/urandom | xxd -p)"
+    local suffix
+    if command -v xxd >/dev/null 2>&1; then
+        suffix=$(head -c4 /dev/urandom | xxd -p)
+    else
+        suffix=$(od -An -N4 -tx1 /dev/urandom | tr -d ' \n')
+    fi
+    echo "e2e-test-$(date +%s)-${suffix}"
 }
 
 # Start a WebSocket connection, writing events to EVENTS_FILE.
