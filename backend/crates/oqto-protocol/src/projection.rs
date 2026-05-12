@@ -68,3 +68,57 @@ pub struct ProjectedTurnTreeNode {
     pub role: String,
     pub turn_version: i64,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{ProjectedChatMessage, ProjectedChatMessagePart};
+
+    #[test]
+    fn projected_chat_part_preserves_structured_tool_output() {
+        let part = ProjectedChatMessagePart {
+            id: "part-1".to_string(),
+            part_type: "tool_result".to_string(),
+            text: None,
+            text_html: None,
+            tool_name: Some("bash".to_string()),
+            tool_call_id: Some("call-1".to_string()),
+            tool_input: None,
+            tool_output: Some(serde_json::json!({ "stdout": "ok", "code": 0 })),
+            tool_status: Some("success".to_string()),
+            tool_title: None,
+        };
+
+        let json = serde_json::to_string(&part).expect("serialize projected part");
+        let parsed: ProjectedChatMessagePart =
+            serde_json::from_str(&json).expect("deserialize projected part");
+
+        assert_eq!(
+            parsed.tool_output,
+            Some(serde_json::json!({ "stdout": "ok", "code": 0 }))
+        );
+    }
+
+    #[test]
+    fn projected_chat_message_accepts_legacy_string_tool_output() {
+        let message: ProjectedChatMessage = serde_json::from_value(serde_json::json!({
+            "id": "msg-1",
+            "session_id": "session-1",
+            "role": "assistant",
+            "created_at": 42,
+            "parts": [{
+                "id": "part-1",
+                "part_type": "tool_result",
+                "tool_name": "bash",
+                "tool_call_id": "call-1",
+                "tool_output": "plain output",
+                "tool_status": "success"
+            }]
+        }))
+        .expect("deserialize projected chat message");
+
+        assert_eq!(
+            message.parts[0].tool_output,
+            Some(serde_json::json!("plain output"))
+        );
+    }
+}

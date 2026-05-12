@@ -124,7 +124,7 @@ async fn clear_client_ids_for_session(session_id: &str) {
 }
 
 fn workspace_chat_messages_to_json(
-    messages: Vec<oqto_runner::protocol::ChatMessageProto>,
+    messages: Vec<oqto_protocol::projection::ProjectedChatMessage>,
 ) -> serde_json::Value {
     let mapped: Vec<serde_json::Value> = messages
         .into_iter()
@@ -156,7 +156,7 @@ fn workspace_chat_messages_to_json(
                         part.insert("input".to_string(), tool_input);
                     }
                     if let Some(tool_output) = p.tool_output {
-                        part.insert("output".to_string(), serde_json::Value::String(tool_output));
+                        part.insert("output".to_string(), tool_output);
                     }
                     if let Some(tool_status) = p.tool_status {
                         part.insert("status".to_string(), serde_json::Value::String(tool_status));

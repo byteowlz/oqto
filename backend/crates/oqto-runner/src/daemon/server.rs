@@ -172,7 +172,7 @@ async fn repair_oqto_log_from_jsonl_if_richer(
     )
     .await
     {
-        Ok(Some(messages)) => Some(projected_chat_messages_to_proto(messages)),
+        Ok(Some(messages)) => Some(messages),
         Ok(None) => None,
         Err(err) => {
             warn!(
@@ -2145,7 +2145,7 @@ impl Runner {
                         )
                         .await
                         {
-                            Ok(messages) => messages.map(projected_chat_messages_to_proto),
+                            Ok(messages) => messages,
                             Err(err) => {
                                 debug!(
                                     "get_workspace_chat_session_messages session={} source=oqto-log error={}",
@@ -3042,9 +3042,7 @@ impl Runner {
         if let Some(buffer) = self.pi_manager.get_message_buffer(&req.session_id).await
             && !buffer.is_empty()
         {
-            // Convert ChatMessageProto back to AgentMessage for protocol compat.
-            // This is temporary until we migrate ws_multiplexed to use
-            // ChatMessageProto directly (scope 5 completion).
+            // Convert projected chat messages back to AgentMessage for legacy protocol compat.
             let agent_msgs: Vec<oqto_pi::AgentMessage> = buffer
                 .into_iter()
                 .map(crate::protocol::chat_proto_to_agent_msg)

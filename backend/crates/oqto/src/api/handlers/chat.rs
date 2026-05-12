@@ -803,7 +803,10 @@ fn convert_runner_response(
                     tool_name: p.tool_name,
                     tool_call_id: p.tool_call_id,
                     tool_input: p.tool_input,
-                    tool_output: p.tool_output,
+                    tool_output: p.tool_output.map(|value| match value {
+                        serde_json::Value::String(s) => s,
+                        other => other.to_string(),
+                    }),
                     tool_status: p.tool_status,
                     tool_title: p.tool_title,
                 })
