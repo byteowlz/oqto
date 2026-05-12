@@ -165,14 +165,14 @@ async fn repair_oqto_log_from_jsonl_if_richer(
         return None;
     }
 
-    match crate::oqto_log_projector::project_session_messages_auto(
+    match oqto_history::oqto_log::projector::project_session_messages_auto(
         user_home,
         requested_session_id,
         None,
     )
     .await
     {
-        Ok(Some(messages)) => Some(messages),
+        Ok(Some(messages)) => Some(projected_chat_messages_to_proto(messages)),
         Ok(None) => None,
         Err(err) => {
             warn!(
@@ -2137,22 +2137,23 @@ impl Runner {
             WorkspaceChatMessagesSource::Authoritative => {
                 let authoritative_messages = if let Ok(home) = std::env::var("HOME") {
                     let home_path = std::path::Path::new(&home);
-                    let projected = match crate::oqto_log_projector::project_session_messages_auto(
-                        home_path,
-                        &req.session_id,
-                        req.limit,
-                    )
-                    .await
-                    {
-                        Ok(messages) => messages,
-                        Err(err) => {
-                            debug!(
-                                "get_workspace_chat_session_messages session={} source=oqto-log error={}",
-                                req.session_id, err
-                            );
-                            None
-                        }
-                    };
+                    let projected =
+                        match oqto_history::oqto_log::projector::project_session_messages_auto(
+                            home_path,
+                            &req.session_id,
+                            req.limit,
+                        )
+                        .await
+                        {
+                            Ok(messages) => messages.map(projected_chat_messages_to_proto),
+                            Err(err) => {
+                                debug!(
+                                    "get_workspace_chat_session_messages session={} source=oqto-log error={}",
+                                    req.session_id, err
+                                );
+                                None
+                            }
+                        };
 
                     if req.limit.is_none() {
                         let pi_jsonl_agent_messages =
