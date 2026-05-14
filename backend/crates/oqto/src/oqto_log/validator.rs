@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
@@ -263,12 +263,10 @@ async fn count_oqto_log_session_messages(
     .max(0) as usize
 }
 
-pub async fn validate_bootstrap_import(user_home: &Path) -> Result<ValidationReport> {
+fn collect_session_files(user_home: &Path) -> HashMap<(String, String), PathBuf> {
     let base = user_home.join(".pi").join("agent").join("sessions");
-    let mut report = ValidationReport::default();
-
     let Ok(workspaces) = std::fs::read_dir(base) else {
-        return Ok(report);
+        return HashMap::new();
     };
 
     let mut session_files: HashMap<(String, String), PathBuf> = HashMap::new();
@@ -299,8 +297,61 @@ pub async fn validate_bootstrap_import(user_home: &Path) -> Result<ValidationRep
             session_files.insert((workspace_id.clone(), session_id), path);
         }
     }
+    session_files
+}
+
+pub async fn validate_bootstrap_import(user_home: &Path) -> Result<ValidationReport> {
+    validate_bootstrap_import_filtered(user_home, None).await
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct ImporterStateView {
+    #[serde(default)]
+    last_imported_sessions: Vec<ImportedSessionView>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct ImportedSessionView {
+    workspace_id: String,
+    session_id: String,
+}
+
+pub async fn validate_bootstrap_import_changed(user_home: &Path) -> Result<ValidationReport> {
+    let state_path = user_home
+        .join(".local")
+        .join("share")
+        .join("oqto")
+        .join("oqto-log")
+        .join("importer-state.json");
+    let Ok(raw) = std::fs::read_to_string(state_path) else {
+        return validate_bootstrap_import(user_home).await;
+    };
+    let Ok(state) = serde_json::from_str::<ImporterStateView>(&raw) else {
+        return validate_bootstrap_import(user_home).await;
+    };
+    if state.last_imported_sessions.is_empty() {
+        return Ok(ValidationReport::default());
+    }
+    let mut filter: HashSet<(String, String)> = HashSet::new();
+    for s in state.last_imported_sessions {
+        filter.insert((s.workspace_id, s.session_id));
+    }
+    validate_bootstrap_import_filtered(user_home, Some(&filter)).await
+}
+
+pub async fn validate_bootstrap_import_filtered(
+    user_home: &Path,
+    only_sessions: Option<&HashSet<(String, String)>>,
+) -> Result<ValidationReport> {
+    let mut report = ValidationReport::default();
+    let session_files = collect_session_files(user_home);
 
     for ((workspace_id, session_id), path) in session_files {
+        if let Some(filter) = only_sessions
+            && !filter.contains(&(workspace_id.clone(), session_id.clone()))
+        {
+            continue;
+        }
         let jsonl_count = count_jsonl_message_entries(&path);
         if jsonl_count == 0 {
             continue;

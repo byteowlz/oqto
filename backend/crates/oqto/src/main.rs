@@ -1653,6 +1653,35 @@ WantedBy=default.target
                     }
                     Ok(())
                 }
+                "validate-changed" => {
+                    let report = rt.block_on(async {
+                        crate::oqto_log::validator::validate_bootstrap_import_changed(Path::new(
+                            &home,
+                        ))
+                        .await
+                    })?;
+
+                    println!(
+                        "oqto-log validation (changed): sessions_checked={}, sessions_ok={}, sessions_mismatch={}, jsonl_messages_total={}, oqto_log_messages_total={}",
+                        report.sessions_checked,
+                        report.sessions_ok,
+                        report.sessions_mismatch,
+                        report.jsonl_messages_total,
+                        report.oqto_log_messages_total
+                    );
+                    if !report.mismatches.is_empty() {
+                        for mismatch in report.mismatches.iter().take(20) {
+                            println!("mismatch: {}", mismatch);
+                        }
+                    }
+                    if report.sessions_mismatch > 0 {
+                        return Err(anyhow!(
+                            "oqto-log validation failed: {} session mismatch(es)",
+                            report.sessions_mismatch
+                        ));
+                    }
+                    Ok(())
+                }
                 "diagnostics" => {
                     let summary = rt.block_on(async {
                         crate::oqto_log::ops::diagnostics(Path::new(&home)).await
@@ -1691,7 +1720,7 @@ WantedBy=default.target
                     Ok(())
                 }
                 other => Err(anyhow!(
-                    "unsupported oqto-log migration mode '{}'; supported: bootstrap|validate|diagnostics|reindex|sync-identities",
+                    "unsupported oqto-log migration mode '{}'; supported: bootstrap|validate|validate-changed|diagnostics|reindex|sync-identities",
                     other
                 )),
             }
