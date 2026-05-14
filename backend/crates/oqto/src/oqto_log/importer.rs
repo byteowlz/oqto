@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
@@ -21,6 +22,62 @@ struct JsonlMessageEntry {
     #[serde(rename = "type")]
     entry_type: String,
     message: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
+struct ImporterState {
+    files: HashMap<String, FileFingerprint>,
+    last_imported_sessions: Vec<ImportedSession>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct ImportedSession {
+    workspace_id: String,
+    session_id: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct FileFingerprint {
+    mtime_secs: u64,
+    size: u64,
+}
+
+fn importer_state_path(user_home: &Path) -> PathBuf {
+    user_home
+        .join(".local")
+        .join("share")
+        .join("oqto")
+        .join("oqto-log")
+        .join("importer-state.json")
+}
+
+fn load_importer_state(user_home: &Path) -> ImporterState {
+    let path = importer_state_path(user_home);
+    if let Ok(raw) = std::fs::read_to_string(path) {
+        serde_json::from_str::<ImporterState>(&raw).unwrap_or_default()
+    } else {
+        ImporterState::default()
+    }
+}
+
+fn save_importer_state(user_home: &Path, state: &ImporterState) {
+    let path = importer_state_path(user_home);
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(serialized) = serde_json::to_string_pretty(state) {
+        let _ = std::fs::write(path, serialized);
+    }
+}
+
+fn file_fingerprint(path: &Path) -> Option<FileFingerprint> {
+    let meta = std::fs::metadata(path).ok()?;
+    let modified = meta.modified().ok()?;
+    let mtime_secs = modified.duration_since(std::time::UNIX_EPOCH).ok()?.as_secs();
+    Some(FileFingerprint {
+        mtime_secs,
+        size: meta.len(),
+    })
 }
 
 fn decode_workspace_path_from_safe_dirname(dirname: &str) -> Option<String> {
@@ -209,6 +266,7 @@ pub async fn bootstrap_import_from_pi_jsonl(
     user_id: &str,
 ) -> Result<ImportStats> {
     let mut stats = ImportStats::default();
+    let mut importer_state = load_importer_state(user_home);
 
     let base = user_home.join(".pi").join("agent").join("sessions");
     let Ok(workspaces) = std::fs::read_dir(base) else {
@@ -241,8 +299,21 @@ pub async fn bootstrap_import_from_pi_jsonl(
 
     files.sort_by(|a, b| a.0.cmp(&b.0));
 
+    let mut imported_sessions_this_run: Vec<ImportedSession> = Vec::new();
+
     for (path, workspace_id) in files {
         stats.scanned_files += 1;
+        let path_key = path.to_string_lossy().to_string();
+        let current_fp = file_fingerprint(&path);
+        if let (Some(current), Some(previous)) = (
+            current_fp.as_ref(),
+            importer_state.files.get(&path_key),
+        ) && current.mtime_secs == previous.mtime_secs && current.size == previous.size
+        {
+            stats.skipped_files += 1;
+            continue;
+        }
+
         let Some(pi_session_id) = parse_pi_session_id_from_path(&path) else {
             stats.skipped_files += 1;
             continue;
@@ -361,6 +432,13 @@ pub async fn bootstrap_import_from_pi_jsonl(
                 Some(&append_stats.snapshot_hash),
             )
             .await;
+            if let Some(fp) = current_fp.clone() {
+                importer_state.files.insert(path_key, fp);
+            }
+            imported_sessions_this_run.push(ImportedSession {
+                workspace_id: workspace_id.clone(),
+                session_id: session_id.clone(),
+            });
             stats.imported_sessions += 1;
             stats.imported_messages += append_stats.messages_written;
         } else {
@@ -438,6 +516,9 @@ pub async fn bootstrap_import_from_pi_jsonl(
             }
         }
     }
+
+    importer_state.last_imported_sessions = imported_sessions_this_run;
+    save_importer_state(user_home, &importer_state);
 
     if stats
         .failure_samples

@@ -32,6 +32,9 @@ KEEP_RELEASES="${OQTO_KEEP_RELEASES:-3}"
 # We rerun bootstrap+validate up to this many times so deploy converges on
 # the latest JSONL snapshot even when files change during migration.
 OQTO_LOG_MAX_PASSES="${OQTO_LOG_MAX_PASSES:-5}"
+# Fast path: when oqto-log migration fingerprint is unchanged from the last
+# successful activation, skip bootstrap and run validate-only.
+OQTO_LOG_FAST_PATH="${OQTO_LOG_FAST_PATH:-true}"
 RELEASE_ID=""
 EVENT_LOG_PATH="/var/log/oqto/update-events.jsonl"
 RELEASES_ROOT="/var/lib/oqto/releases"
@@ -1181,6 +1184,25 @@ restart_services_ordered() {
     fi
 }
 
+epoch_ms() {
+    date +%s%3N
+}
+
+oqto_log_fingerprint() {
+    local is_local="$1" ssh_target="$2"
+    host_exec "$is_local" "$ssh_target" '
+set -e
+base="$HOME/.pi/agent/sessions"
+ver="v1"
+if [[ ! -d "$base" ]]; then
+  printf "%s\n" "$ver:none"
+  exit 0
+fi
+sum=$(find "$base" -type f -name "*.jsonl" -printf "%T@ %s %p\n" 2>/dev/null | sha256sum | cut -d" " -f1)
+printf "%s\n" "$ver:$sum"
+' 2>/dev/null || echo "v1:error"
+}
+
 quiesce_oqto_log_writers() {
     local is_local="$1" ssh_target="$2" mode="$3"
 
@@ -1193,8 +1215,15 @@ quiesce_oqto_log_writers() {
         host_exec_sudo "$is_local" "$ssh_target" "pkill -x oqto-runner >/dev/null 2>&1 || true" || true
     fi
 
-    # Give processes a brief grace period to release SQLite locks.
-    sleep 1
+    # Active wait (bounded) for runner processes to fully exit and release locks.
+    local waited=0
+    while [[ "$waited" -lt 10 ]]; do
+        if host_exec "$is_local" "$ssh_target" "! pgrep -x oqto-runner >/dev/null 2>&1"; then
+            break
+        fi
+        sleep 1
+        waited=$((waited + 1))
+    done
 }
 
 # Extract workspace paths from oqto-log bootstrap error messages.
@@ -1495,58 +1524,91 @@ activate_host() {
     # Mandatory oqto-log migration/validation gate.
     # First quiesce runner writers so snapshot replacement can take exclusive
     # SQLite write locks.
+    local oqto_quiesce_start oqto_quiesce_end
+    oqto_quiesce_start="$(epoch_ms)"
     quiesce_oqto_log_writers "$is_local" "$ssh_target" "$mode"
+    oqto_quiesce_end="$(epoch_ms)"
+    log "[$name] oqto-log quiesce took $((oqto_quiesce_end - oqto_quiesce_start))ms"
 
     # Run this BEFORE service restarts so migration gets an exclusive window
     # without live writer contention from freshly restarted runners.
     # Convergent fixed-point loop: run bootstrap+validate repeatedly so deploy
     # can catch up with JSONL changes that occur during activation.
+    local oqto_log_state_dir="\$HOME/.local/share/oqto/oqto-log"
+    local oqto_log_state_file="\$HOME/.local/share/oqto/oqto-log/.deploy-migration-state"
+    local oqto_log_current_fp oqto_log_previous_fp
+    oqto_log_current_fp="$(oqto_log_fingerprint "$is_local" "$ssh_target")"
+    oqto_log_previous_fp="$(host_exec "$is_local" "$ssh_target" "test -f '$oqto_log_state_file' && cat '$oqto_log_state_file' || true" 2>/dev/null || true)"
+
     local oqto_log_pass=1
     local oqto_log_converged=false
+    local oqto_log_skip_bootstrap=false
+    if [[ "$OQTO_LOG_FAST_PATH" == "true" && -n "$oqto_log_current_fp" && "$oqto_log_current_fp" == "$oqto_log_previous_fp" ]]; then
+        oqto_log_skip_bootstrap=true
+        log "[$name] oqto-log fast-path hit (fingerprint unchanged); validate-only"
+    fi
+
     while [[ "$oqto_log_pass" -le "$OQTO_LOG_MAX_PASSES" ]]; do
         log "[$name] oqto-log migrate/validate pass ${oqto_log_pass}/${OQTO_LOG_MAX_PASSES}"
 
         local bootstrap_output
-        if ! bootstrap_output=$(host_exec "$is_local" "$ssh_target" "oqto runner migrate-oqto-log --mode bootstrap" 2>&1); then
-            # Check if this is a corruption error we can auto-heal
-            if echo "$bootstrap_output" | grep -q "replace_failed"; then
-                warn "Detected oqto-log corruption (replace_failed), attempting auto-heal..."
-                local heal_backup_dir
-                heal_backup_dir=$(auto_heal_oqto_log_corruption "$is_local" "$ssh_target" "$bootstrap_output")
-                if [[ $? -eq 0 ]]; then
-                    # Auto-heal succeeded, continue with validation
-                    : # Fall through to validation below
+        local bootstrap_start bootstrap_end validate_start validate_end
+        if [[ "$oqto_log_skip_bootstrap" != "true" ]]; then
+            bootstrap_start="$(epoch_ms)"
+            if ! bootstrap_output=$(host_exec "$is_local" "$ssh_target" "oqto runner migrate-oqto-log --mode bootstrap" 2>&1); then
+                # Check if this is a corruption error we can auto-heal
+                if echo "$bootstrap_output" | grep -q "replace_failed"; then
+                    warn "Detected oqto-log corruption (replace_failed), attempting auto-heal..."
+                    local heal_backup_dir
+                    heal_backup_dir=$(auto_heal_oqto_log_corruption "$is_local" "$ssh_target" "$bootstrap_output")
+                    if [[ $? -ne 0 ]]; then
+                        emit_event "$is_local" "$ssh_target" "$name" "deploy.activate" "fail" "oqto_log.auto_heal_failed"
+                        warn "Auto-heal failed on $name, restoring from backup and rolling back..."
+                        restore_oqto_log_from_backup "$is_local" "$ssh_target" "$heal_backup_dir"
+                        rollback_host "$name" "$ssh_target" "$is_local" "$binaries" "$mode" "$services" "$previous_release"
+                        return 1
+                    fi
                 else
-                    # Auto-heal failed - restore from backup before rollback
-                    emit_event "$is_local" "$ssh_target" "$name" "deploy.activate" "fail" "oqto_log.auto_heal_failed"
-                    warn "Auto-heal failed on $name, restoring from backup and rolling back..."
-                    restore_oqto_log_from_backup "$is_local" "$ssh_target" "$heal_backup_dir"
+                    emit_event "$is_local" "$ssh_target" "$name" "deploy.activate" "fail" "oqto_log.bootstrap_migration_failed"
+                    warn "oqto-log bootstrap migration failed on $name, attempting rollback..."
                     rollback_host "$name" "$ssh_target" "$is_local" "$binaries" "$mode" "$services" "$previous_release"
                     return 1
                 fi
-            else
-                emit_event "$is_local" "$ssh_target" "$name" "deploy.activate" "fail" "oqto_log.bootstrap_migration_failed"
-                warn "oqto-log bootstrap migration failed on $name, attempting rollback..."
-                rollback_host "$name" "$ssh_target" "$is_local" "$binaries" "$mode" "$services" "$previous_release"
-                return 1
             fi
+            bootstrap_end="$(epoch_ms)"
+            log "[$name] oqto-log bootstrap took $((bootstrap_end - bootstrap_start))ms"
         fi
 
         # Ensure session identity mappings are converged from hstry before validation.
         host_exec "$is_local" "$ssh_target" "oqto runner migrate-oqto-log --mode sync-identities" >/dev/null 2>&1 || true
 
+        validate_start="$(epoch_ms)"
         # Validation must pass once after a bootstrap pass.
-        if host_exec "$is_local" "$ssh_target" "oqto runner migrate-oqto-log --mode validate"; then
+        local validate_mode="validate"
+        if [[ "$oqto_log_skip_bootstrap" != "true" ]]; then
+            validate_mode="validate-changed"
+        fi
+        if host_exec "$is_local" "$ssh_target" "oqto runner migrate-oqto-log --mode ${validate_mode}"; then
+            validate_end="$(epoch_ms)"
+            log "[$name] oqto-log validate took $((validate_end - validate_start))ms"
             oqto_log_converged=true
             break
         fi
 
+        validate_end="$(epoch_ms)"
+        log "[$name] oqto-log validate took $((validate_end - validate_start))ms (failed)"
+        # fast-path applies only to first pass; retries should re-bootstrap.
+        oqto_log_skip_bootstrap=false
         if [[ "$oqto_log_pass" -lt "$OQTO_LOG_MAX_PASSES" ]]; then
             warn "[$name] oqto-log validation mismatch after pass ${oqto_log_pass}; retrying bootstrap+validate to converge on latest JSONL"
             sleep 1
         fi
         oqto_log_pass=$((oqto_log_pass + 1))
     done
+
+    if [[ "$oqto_log_converged" == "true" ]]; then
+        host_exec "$is_local" "$ssh_target" "mkdir -p '$oqto_log_state_dir' && printf '%s\n' '$oqto_log_current_fp' > '$oqto_log_state_file'" >/dev/null 2>&1 || true
+    fi
 
     if [[ "$oqto_log_converged" != "true" ]]; then
         emit_event "$is_local" "$ssh_target" "$name" "deploy.activate" "fail" "oqto_log.validation_failed"
