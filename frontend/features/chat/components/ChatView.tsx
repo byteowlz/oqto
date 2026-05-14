@@ -45,6 +45,7 @@ import {
 	type VoiceMode,
 } from "@/components/voice/VoiceMenuButton";
 import type { Features, PiModelInfo } from "@/features/chat/api";
+import { InstructionsPinnedMessage } from "@/features/chat/components/InstructionsPinnedMessage";
 import { TimelineTreeView } from "@/features/chat/components/TimelineTreeView";
 import {
 	buildLegacyDraftStorageKey,
@@ -56,6 +57,7 @@ import {
 } from "@/features/chat/utils/session-stats";
 import { type A2UISurfaceState, useA2UI } from "@/hooks/use-a2ui";
 import { useDictation } from "@/hooks/use-dictation";
+import { useWorkspaceInstructions } from "@/hooks/use-workspace-instructions";
 import {
 	type DisplayMessage,
 	type DisplayPart,
@@ -310,6 +312,7 @@ export function ChatView({
 		() => normalizeWorkspacePath(workspacePath),
 		[workspacePath],
 	);
+	const instructionsContent = useWorkspaceInstructions(normalizedWorkspacePath);
 
 	const resolvedStorageKeyPrefix =
 		storageKeyPrefix ??
@@ -2411,6 +2414,16 @@ export function ChatView({
 					>
 						<div>
 							{showSkeleton && ChatSkeleton}
+
+							{!showSkeleton && instructionsContent && (
+								<div className="mb-4 sm:mb-6">
+									<InstructionsPinnedMessage
+										key={normalizedWorkspacePath ?? "default"}
+										content={instructionsContent}
+										workspacePath={normalizedWorkspacePath}
+									/>
+								</div>
+							)}
 
 							{!showSkeleton &&
 								historyHydrated &&
