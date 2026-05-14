@@ -36,9 +36,9 @@ function copyGhosttyWasm(): Plugin {
 
 export default defineConfig(({ mode }) => {
 	const env = loadEnv(mode, process.cwd(), "");
-	const caddyUrl = env.VITE_CADDY_BASE_URL || "http://localhost";
-	const controlPlaneUrl = env.VITE_CONTROL_PLANE_URL || "http://localhost:8080";
-	const fileserverUrl = env.VITE_FILE_SERVER_URL || "http://localhost:41821";
+	const caddyUrl = env.VITE_CADDY_BASE_URL || "http://127.0.0.1";
+	const controlPlaneUrl = env.VITE_CONTROL_PLANE_URL || "http://127.0.0.1:8080";
+	const fileserverUrl = env.VITE_FILE_SERVER_URL || "http://127.0.0.1:41821";
 
 	return {
 		plugins: [react(), copyGhosttyWasm()],
