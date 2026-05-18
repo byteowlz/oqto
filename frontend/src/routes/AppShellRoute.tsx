@@ -731,7 +731,7 @@ const AppShell = memo(function AppShell() {
 
 				<aside
 					className={cn(
-						"fixed inset-y-0 left-0 flex-col transition-all duration-200 z-40 hidden md:flex border-r border-transparent dark:border-transparent",
+						"app-chrome fixed inset-y-0 left-0 flex-col transition-all duration-200 z-40 hidden md:flex border-r border-transparent dark:border-transparent",
 						sidebarState.sidebarCollapsed
 							? "w-[4.5rem] items-center"
 							: "w-[16.25rem] items-center",

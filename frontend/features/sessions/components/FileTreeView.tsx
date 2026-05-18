@@ -56,6 +56,7 @@ import {
 	List,
 	Loader2,
 	Maximize2,
+	MessageSquarePlus,
 	MoveRight,
 	PaintBucket,
 	Pencil,
@@ -2276,6 +2277,20 @@ function FileContextMenu({
 					<MoveRight className="w-4 h-4 mr-2" />
 					Move
 				</ContextMenuItem>
+				{node.type === "file" && (
+					<ContextMenuItem
+						onClick={() =>
+							window.dispatchEvent(
+								new CustomEvent("oqto:mention-file-in-chat", {
+									detail: { path: node.path },
+								}),
+							)
+						}
+					>
+						<MessageSquarePlus className="w-4 h-4 mr-2" />
+						Mention file in chat
+					</ContextMenuItem>
+				)}
 				{onCopyToWorkspace && (
 					<ContextMenuItem
 						onClick={() =>

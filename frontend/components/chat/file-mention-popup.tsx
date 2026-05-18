@@ -37,34 +37,48 @@ interface FileMentionPopupProps {
 	className?: string;
 }
 
-// Simple fuzzy match
 function fuzzyMatch(query: string, text: string): boolean {
 	if (!query) return true;
-	const lowerQuery = query.toLowerCase();
-	const lowerText = text.toLowerCase();
+	const q = query.toLowerCase().trim();
+	const t = text.toLowerCase();
+	if (!q) return true;
+	if (t.includes(q)) return true;
 
-	// Check if all characters appear in order
 	let qi = 0;
-	for (let i = 0; i < lowerText.length && qi < lowerQuery.length; i++) {
-		if (lowerText[i] === lowerQuery[qi]) {
-			qi++;
-		}
+	for (let i = 0; i < t.length && qi < q.length; i++) {
+		if (t[i] === q[qi]) qi++;
 	}
-	return qi === lowerQuery.length;
+	return qi === q.length;
 }
 
-// Score a match (higher = better)
-function matchScore(query: string, text: string): number {
+function matchScore(query: string, path: string): number {
 	if (!query) return 0;
-	const lowerQuery = query.toLowerCase();
-	const lowerText = text.toLowerCase();
+	const q = query.toLowerCase().trim();
+	const p = path.toLowerCase();
+	if (!q) return 0;
 
-	// Exact match at start
-	if (lowerText.startsWith(lowerQuery)) return 100;
-	// Contains
-	if (lowerText.includes(lowerQuery)) return 50;
-	// Fuzzy
-	return 10;
+	const fileName = p.split("/").pop() ?? p;
+	let score = 0;
+
+	if (fileName === q) score += 1000;
+	if (fileName.startsWith(q)) score += 650;
+	if (p.startsWith(q)) score += 450;
+	if (fileName.includes(q)) score += 300;
+	if (p.includes(q)) score += 150;
+
+	let qi = 0;
+	let gaps = 0;
+	for (let i = 0; i < p.length && qi < q.length; i++) {
+		if (p[i] === q[qi]) qi++;
+		else if (qi > 0) gaps++;
+	}
+	if (qi === q.length) score += Math.max(0, 120 - gaps * 2);
+
+	if (p.includes(`/${q}`)) score += 120;
+	if (p.includes(`-${q}`) || p.includes(`_${q}`) || p.includes(`.${q}`))
+		score += 90;
+
+	return score;
 }
 
 // Recursively collect all files from a tree

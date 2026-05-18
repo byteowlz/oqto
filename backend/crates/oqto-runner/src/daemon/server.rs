@@ -42,6 +42,48 @@ pub struct Runner {
     pi_manager: Arc<PiSessionManager>,
 }
 
+#[derive(Debug, serde::Deserialize)]
+struct PiJsonlEntryLite {
+    #[serde(rename = "type")]
+    entry_type: Option<String>,
+    id: Option<String>,
+}
+
+fn validate_fork_cutoff(session_file: &std::path::Path, requested_entry_id: &str) -> Result<()> {
+    let raw = std::fs::read_to_string(session_file)
+        .with_context(|| format!("read forked session file {}", session_file.display()))?;
+    let mut ids: Vec<String> = Vec::new();
+    for line in raw.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        if let Ok(entry) = serde_json::from_str::<PiJsonlEntryLite>(line)
+            && entry.entry_type.as_deref() == Some("assistant")
+            && let Some(id) = entry.id
+        {
+            ids.push(id);
+        }
+    }
+
+    if ids.is_empty() {
+        anyhow::bail!("fork validation failed: child session has no assistant entries");
+    }
+    if !ids.iter().any(|id| id == requested_entry_id) {
+        anyhow::bail!(
+            "fork validation failed: requested entry '{}' not present in child session",
+            requested_entry_id
+        );
+    }
+    if ids.last().map(|s| s.as_str()) != Some(requested_entry_id) {
+        anyhow::bail!(
+            "fork validation failed: child tip '{}' != requested entry '{}'",
+            ids.last().cloned().unwrap_or_default(),
+            requested_entry_id
+        );
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone)]
 struct JsonlSessionMetadata {
     external_id: String,
@@ -3598,6 +3640,13 @@ impl Runner {
                 "Fork succeeded but forked session file could not be resolved",
             );
         };
+
+        if let Err(e) = validate_fork_cutoff(&fork_session_file, &req.entry_id) {
+            return error_response(
+                ErrorCode::PiSessionInvalidState,
+                format!("Fork cutoff verification failed: {}", e),
+            );
+        }
 
         let mut child_config = old_config;
         // Point at the forked JSONL so the new process resumes from it

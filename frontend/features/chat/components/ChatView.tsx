@@ -2478,6 +2478,13 @@ export function ChatView({
 														onForkHere={
 															group.role === "user"
 																? () => {
+																		if (
+																			groupMessageId &&
+																			!groupMessageId.startsWith("history-")
+																		) {
+																			void handleForkAtEntry(groupMessageId);
+																			return;
+																		}
 																		setForkListOpen(true);
 																		void loadForkPoints();
 																	}
