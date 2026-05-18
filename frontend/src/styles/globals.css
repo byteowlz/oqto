@@ -498,6 +498,37 @@ input[type="radio"] {
 	border-radius: 9999px !important;
 }
 
+/* App chrome should not start accidental selections during taps/long-presses.
+   Re-enable selection for editable and intentionally selectable content inside it. */
+.app-chrome {
+	-webkit-user-select: none;
+	user-select: none;
+	-webkit-touch-callout: none;
+}
+
+.app-chrome
+	:is(
+		input,
+		textarea,
+		[contenteditable="true"],
+		.content-text,
+		.selectable-text,
+		.markdown-content,
+		pre,
+		code
+	) {
+	-webkit-user-select: text;
+	user-select: text;
+	-webkit-touch-callout: default;
+}
+
+.content-text,
+.selectable-text,
+.markdown-content {
+	-webkit-user-select: text;
+	user-select: text;
+}
+
 /* Search result highlight animation */
 @keyframes search-highlight-pulse {
 	0% {

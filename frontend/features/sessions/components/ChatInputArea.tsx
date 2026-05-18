@@ -418,6 +418,21 @@ export const ChatInputArea = memo(
 			[setTextareaValue],
 		);
 
+		// useeffect-guardrail: allow - subscribes to file-tree "mention in chat" custom event
+		useEffect(() => {
+			const onMentionFile = (event: Event) => {
+				const detail = (event as CustomEvent<{ path?: string }>).detail;
+				const path = detail?.path;
+				if (!path) return;
+				const prefix = messageInputRef.current.trim().length > 0 ? " " : "";
+				setTextareaValue(`${messageInputRef.current}${prefix}@${path} `);
+				chatInputRef.current?.focus();
+			};
+			window.addEventListener("oqto:mention-file-in-chat", onMentionFile);
+			return () =>
+				window.removeEventListener("oqto:mention-file-in-chat", onMentionFile);
+		}, [setTextareaValue]);
+
 		const canSend =
 			canSendState || pendingUploads.length > 0 || fileAttachments.length > 0;
 

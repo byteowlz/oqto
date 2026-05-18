@@ -195,7 +195,7 @@ export const MobileMenu = memo(function MobileMenu({
 
 	return (
 		<div
-			className="fixed inset-0 z-50 flex flex-col md:hidden"
+			className="app-chrome fixed inset-0 z-50 flex flex-col md:hidden"
 			style={{
 				backgroundColor: sidebarBg,
 				paddingTop: "env(safe-area-inset-top)",
