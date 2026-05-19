@@ -910,7 +910,10 @@ pub async fn ws_multiplexed_handler(
     let user_id = user.id().to_string();
     let is_admin = user.is_admin();
 
-    Ok(ws.on_upgrade(move |socket| handle_multiplexed_ws(socket, state, user_id, is_admin)))
+    Ok(ws
+        .max_message_size(256 * 1024 * 1024)
+        .max_frame_size(256 * 1024 * 1024)
+        .on_upgrade(move |socket| handle_multiplexed_ws(socket, state, user_id, is_admin)))
 }
 
 /// Create a runner client for a user if multi-user mode is enabled.

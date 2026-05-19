@@ -2317,12 +2317,26 @@ impl Runner {
 
     async fn trx_list(&self, req: TrxListRequest) -> RunnerResponse {
         match tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<TrxIssueData>> {
-            let store = open_or_init_trx_store(&req.workspace_path)?;
-            Ok(store
+            let requested_path = req.workspace_path.clone();
+            let resolved_root = find_trx_root(&requested_path)
+                .unwrap_or_else(|| requested_path.clone());
+            tracing::info!(
+                requested_workspace = %requested_path.display(),
+                resolved_trx_root = %resolved_root.display(),
+                "runner trx_list resolving store"
+            );
+            let store = open_or_init_trx_store(&requested_path)?;
+            let issues: Vec<TrxIssueData> = store
                 .list(false)
                 .into_iter()
                 .map(trx_issue_to_data)
-                .collect())
+                .collect();
+            tracing::info!(
+                requested_workspace = %requested_path.display(),
+                issue_count = issues.len(),
+                "runner trx_list loaded issues"
+            );
+            Ok(issues)
         })
         .await
         {
@@ -4340,46 +4354,33 @@ fn sd_notify_ready() {
 /// via `trx init --prefix X` before any oqto-side trx call.
 const TRX_DEFAULT_PREFIX: &str = "trx";
 
-/// Open the trx store at `root`, auto-initializing a fresh V2 (CRDT) store
-/// if `.trx` does not yet exist. Mirrors the auto-init UX that the legacy
-/// `trx list` shell-out provided.
-fn open_or_init_trx_store(root: &std::path::Path) -> anyhow::Result<trx_core::UnifiedStore> {
-    let root_buf = root.to_path_buf();
-    match trx_core::UnifiedStore::open_at(root_buf.clone()) {
+/// Open the trx store at `root`, auto-initializing when not yet initialized.
+fn open_or_init_trx_store(root: &std::path::Path) -> anyhow::Result<trx_core::Store> {
+    let store_root = find_trx_root(root).unwrap_or_else(|| root.to_path_buf());
+    match trx_core::Store::open_at(store_root.clone()) {
         Ok(store) => Ok(store),
         Err(trx_core::Error::NotInitialized) => {
-            init_trx_store_v2(root)?;
-            trx_core::UnifiedStore::open_at(root_buf)
-                .map_err(|e| anyhow::anyhow!("trx open after init failed: {e}"))
+            let current = std::env::current_dir().context("reading current dir")?;
+            std::env::set_current_dir(&store_root)
+                .with_context(|| format!("setting cwd to {}", store_root.display()))?;
+            let init_result = trx_core::Store::init(TRX_DEFAULT_PREFIX);
+            let _ = std::env::set_current_dir(current);
+            init_result.map_err(|e| anyhow::anyhow!("trx init failed: {e}"))
         }
         Err(e) => Err(anyhow::anyhow!("trx open failed: {e}")),
     }
 }
 
-/// Create a fresh V2 (CRDT) trx store layout at `root` (`.trx/crdt/`,
-/// `.trx/config.toml`, `.trx/ISSUES.md`). Hardcodes the on-disk layout
-/// since trx-core does not expose its layout constants publicly.
-fn init_trx_store_v2(root: &std::path::Path) -> anyhow::Result<()> {
-    let trx_dir = root.join(".trx");
-    let crdt_dir = trx_dir.join("crdt");
-    std::fs::create_dir_all(&crdt_dir)
-        .with_context(|| format!("creating {}", crdt_dir.display()))?;
-
-    let config = trx_core::Config {
-        storage_version: trx_core::StorageVersion::V2,
-        prefix: TRX_DEFAULT_PREFIX.to_string(),
-        ..trx_core::Config::default()
-    };
-    config
-        .save(&trx_dir.join("config.toml"))
-        .map_err(|e| anyhow::anyhow!("writing trx config: {e}"))?;
-
-    let issues_md = trx_dir.join("ISSUES.md");
-    if !issues_md.exists() {
-        std::fs::write(&issues_md, "# Issues\n\nNo issues yet.\n")
-            .with_context(|| format!("writing {}", issues_md.display()))?;
+fn find_trx_root(start: &std::path::Path) -> Option<std::path::PathBuf> {
+    let mut current = start.to_path_buf();
+    loop {
+        if current.join(".trx").exists() {
+            return Some(current);
+        }
+        if !current.pop() {
+            return None;
+        }
     }
-    Ok(())
 }
 
 /// Convert a trx-core `Issue` into the wire-format `TrxIssueData` that

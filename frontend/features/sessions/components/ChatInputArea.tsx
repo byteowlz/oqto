@@ -129,6 +129,7 @@ export const ChatInputArea = memo(
 		);
 		const [pendingUploads, setPendingUploads] = useState<PendingUpload[]>([]);
 		const [isUploading, setIsUploading] = useState(false);
+		const [isDragOverComposer, setIsDragOverComposer] = useState(false);
 
 		// Track whether the send button should be enabled.
 		// Updated via ref reads -- no per-keystroke state.
@@ -391,6 +392,57 @@ export const ChatInputArea = memo(
 			[handleFileUpload],
 		);
 
+		const insertFileReferenceAtCursor = useCallback(
+			(path: string) => {
+				const textarea = chatInputRef.current;
+				const currentValue = messageInputRef.current;
+				const cursor = textarea?.selectionStart ?? currentValue.length;
+				const nextValue = `${currentValue.slice(0, cursor)}@${path} ${currentValue.slice(cursor)}`;
+				setTextareaValue(nextValue);
+				requestAnimationFrame(() => {
+					const el = chatInputRef.current;
+					if (!el) return;
+					const nextCursor = cursor + path.length + 2;
+					el.focus();
+					el.setSelectionRange(nextCursor, nextCursor);
+				});
+			},
+			[setTextareaValue],
+		);
+
+		const handleComposerDragOver = useCallback(
+			(e: React.DragEvent<HTMLElement>) => {
+				const types = Array.from(e.dataTransfer.types || []);
+				const isOsFiles = types.includes("Files");
+				const isTreePath = types.includes("application/x-oqto-path");
+				if (!isOsFiles && !isTreePath) return;
+				e.preventDefault();
+				e.dataTransfer.dropEffect = isOsFiles ? "copy" : "link";
+				setIsDragOverComposer(true);
+			},
+			[],
+		);
+
+		const handleComposerDragLeave = useCallback(() => {
+			setIsDragOverComposer(false);
+		}, []);
+
+		const handleComposerDrop = useCallback(
+			(e: React.DragEvent<HTMLElement>) => {
+				e.preventDefault();
+				setIsDragOverComposer(false);
+				const sourcePath = e.dataTransfer.getData("application/x-oqto-path");
+				if (sourcePath) {
+					insertFileReferenceAtCursor(sourcePath);
+					return;
+				}
+				if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+					void handleFileUpload(e.dataTransfer.files);
+				}
+			},
+			[handleFileUpload, insertFileReferenceAtCursor],
+		);
+
 		// ---------------------------------------------------------------
 		// Handle slash command select
 		// ---------------------------------------------------------------
@@ -409,11 +461,30 @@ export const ChatInputArea = memo(
 		// ---------------------------------------------------------------
 		const handleFileMentionSelect = useCallback(
 			(file: FileAttachment) => {
-				const newInput = messageInputRef.current.replace(/@[^\s]*$/, "");
-				setTextareaValue(newInput);
+				const textarea = chatInputRef.current;
+				const currentValue = messageInputRef.current;
+				const cursor = textarea?.selectionStart ?? currentValue.length;
+				const beforeCursor = currentValue.slice(0, cursor);
+				const afterCursor = currentValue.slice(cursor);
+				const atMatch = beforeCursor.match(/(^|\s)@[^\s]*$/);
+				if (!atMatch) {
+					setShowFileMentionPopup(false);
+					return;
+				}
+
+				const tokenStart =
+					beforeCursor.length - atMatch[0].length + (atMatch[1] ? 1 : 0);
+				const nextValue = `${currentValue.slice(0, tokenStart)}@${file.path} ${afterCursor}`;
+				setTextareaValue(nextValue);
 				setFileAttachments((prev) => [...prev, file]);
 				setShowFileMentionPopup(false);
-				chatInputRef.current?.focus();
+				requestAnimationFrame(() => {
+					const el = chatInputRef.current;
+					if (!el) return;
+					const nextCursor = tokenStart + file.path.length + 2;
+					el.focus();
+					el.setSelectionRange(nextCursor, nextCursor);
+				});
 			},
 			[setTextareaValue],
 		);
@@ -444,7 +515,15 @@ export const ChatInputArea = memo(
 		);
 
 		return (
-			<div className="flex-shrink-0 p-2 sm:p-3 bg-background border-t border-border">
+			<div
+				className={cn(
+					"flex-shrink-0 p-2 sm:p-3 bg-background border-t border-border",
+					isDragOverComposer && "bg-accent/20",
+				)}
+				onDragOver={handleComposerDragOver}
+				onDragLeave={handleComposerDragLeave}
+				onDrop={handleComposerDrop}
+			>
 				{/* Pending uploads preview */}
 				{pendingUploads.length > 0 && (
 					<div className="flex flex-wrap gap-2 mb-2">
@@ -500,6 +579,7 @@ export const ChatInputArea = memo(
 							isOpen={showFileMentionPopup}
 							workspaceDirectory={workspaceDirectory}
 							onSelect={handleFileMentionSelect}
+							onClose={() => setShowFileMentionPopup(false)}
 						/>
 
 						{/* File attachments */}
