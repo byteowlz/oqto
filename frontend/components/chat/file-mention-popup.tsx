@@ -31,7 +31,7 @@ interface FileNode {
 interface FileMentionPopupProps {
 	query: string;
 	isOpen: boolean;
-	workspacePath: string | null;
+	workspaceDirectory?: string;
 	onSelect: (file: FileAttachment) => void;
 	onClose: () => void;
 	className?: string;
@@ -39,16 +39,19 @@ interface FileMentionPopupProps {
 
 function fuzzyMatch(query: string, text: string): boolean {
 	if (!query) return true;
-	const q = query.toLowerCase().trim();
-	const t = text.toLowerCase();
-	if (!q) return true;
-	if (t.includes(q)) return true;
+	const normalizedQuery = query.toLowerCase().trim();
+	const normalizedText = text.toLowerCase();
+	if (!normalizedQuery) return true;
 
-	let qi = 0;
-	for (let i = 0; i < t.length && qi < q.length; i++) {
-		if (t[i] === q[qi]) qi++;
-	}
-	return qi === q.length;
+	const parts = normalizedQuery.split(/\s+/).filter(Boolean);
+	return parts.every((part) => {
+		if (normalizedText.includes(part)) return true;
+		let qi = 0;
+		for (let i = 0; i < normalizedText.length && qi < part.length; i++) {
+			if (normalizedText[i] === part[qi]) qi++;
+		}
+		return qi === part.length;
+	});
 }
 
 function matchScore(query: string, path: string): number {
@@ -101,7 +104,7 @@ function collectAllFiles(nodes: FileNode[], prefix = ""): FileNode[] {
 export const FileMentionPopup = memo(function FileMentionPopup({
 	query,
 	isOpen,
-	workspacePath,
+	workspaceDirectory,
 	onSelect,
 	onClose,
 	className,
@@ -112,8 +115,8 @@ export const FileMentionPopup = memo(function FileMentionPopup({
 	const [selectedIndex, setSelectedIndex] = useState(0);
 	const listRef = useRef<HTMLDivElement>(null);
 	const normalizedWorkspacePath = useMemo(
-		() => normalizeWorkspacePath(workspacePath),
-		[workspacePath],
+		() => normalizeWorkspacePath(workspaceDirectory ?? null),
+		[workspaceDirectory],
 	);
 
 	// Load files when popup opens

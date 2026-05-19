@@ -178,11 +178,24 @@ pub async fn list_trx_issues(
     Query(query): Query<TrxWorkspaceQuery>,
 ) -> ApiResult<Json<Vec<TrxIssue>>> {
     let (canonical, runner) = validated_runner(&state, user.id(), &query.workspace_path).await?;
+    info!(
+        user_id = %user.id(),
+        workspace_path = %query.workspace_path,
+        canonical_workspace = %canonical.display(),
+        "trx list request resolved"
+    );
 
     let resp = runner
-        .trx_list(canonical)
+        .trx_list(canonical.clone())
         .await
         .map_err(|e| ApiError::internal(format!("trx list failed: {e}")))?;
+
+    info!(
+        user_id = %user.id(),
+        canonical_workspace = %canonical.display(),
+        issue_count = resp.issues.len(),
+        "trx list response"
+    );
 
     Ok(Json(resp.issues.into_iter().map(TrxIssue::from).collect()))
 }

@@ -99,13 +99,19 @@ interface TrxViewProps {
 async function fetchTrxIssues(workspacePath: string): Promise<TrxIssue[]> {
 	const manager = getWsManager();
 	manager.connect();
+	console.debug("[trx] list request", { workspacePath });
 	const response = (await manager.sendAndWait({
 		channel: "trx",
 		type: "list",
 		workspace_path: workspacePath,
 	})) as TrxWsEvent;
 
+	console.debug("[trx] list response", response);
 	if (response.type === "list_result") {
+		console.debug("[trx] list_result count", {
+			workspacePath,
+			count: Array.isArray(response.issues) ? response.issues.length : -1,
+		});
 		return response.issues as TrxIssue[];
 	}
 	if (response.type === "error") {
