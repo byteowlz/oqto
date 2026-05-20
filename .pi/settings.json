@@ -1,4 +1,4 @@
 {
-  "defaultModel": "gpt-5.5",
+  "defaultModel": "gpt-5.3-codex",
   "defaultProvider": "openai-codex"
 }

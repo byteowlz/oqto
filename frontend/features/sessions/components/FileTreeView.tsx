@@ -28,10 +28,10 @@ import {
 	movePathMux,
 	renamePathMux,
 	unwatchFilesMux,
-	uploadFileMux,
 	watchFilesMux,
 } from "@/lib/mux-files";
 import { normalizeWorkspacePath } from "@/lib/session-utils";
+import { uploadManager } from "@/lib/upload-manager";
 import {
 	buildWorkspaceFileUrl,
 	formatDuration,
@@ -63,7 +63,15 @@ import {
 	Trash2,
 	Upload,
 } from "lucide-react";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+	memo,
+	useCallback,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+	useSyncExternalStore,
+} from "react";
 import { LightboxGallery, type LightboxItem } from "./LightboxGallery";
 import { MediaQuickAccessBar, type MediaType } from "./MediaQuickAccessBar";
 import { ThumbnailImage } from "./ThumbnailImage";
@@ -424,7 +432,11 @@ export function FileTreeView({
 	const [tree, setTree] = useState<FileNode[]>([]);
 	const [error, setError] = useState<string>("");
 	const [loading, setLoading] = useState(false);
-	const [uploading, setUploading] = useState(false);
+	const uploadJobs = useSyncExternalStore(
+		uploadManager.subscribe.bind(uploadManager),
+		() => uploadManager.getJobs(),
+		() => [],
+	);
 	const [retryAttempt, setRetryAttempt] = useState(0);
 	const [isRecovering, setIsRecovering] = useState(false);
 	const [newFolderName, setNewFolderName] = useState<string | null>(null);
@@ -486,6 +498,26 @@ export function FileTreeView({
 	const viewMode = state?.viewMode ?? internalViewMode;
 	const currentPath = state?.currentPath ?? internalCurrentPath;
 	const mediaFilter = state?.mediaFilter ?? internalMediaFilter;
+	const workspaceUploads = useMemo(
+		() =>
+			uploadJobs.filter((j) =>
+				normalizedWorkspacePath ? j.workspacePath === normalizedWorkspacePath : false,
+			),
+		[uploadJobs, normalizedWorkspacePath],
+	);
+	const currentDirUploads = useMemo(
+		() =>
+			workspaceUploads.filter((j) => {
+				const parent = j.destPath.includes("/")
+					? j.destPath.slice(0, j.destPath.lastIndexOf("/"))
+					: ".";
+				return parent === currentPath;
+			}),
+		[workspaceUploads, currentPath],
+	);
+	const uploading = workspaceUploads.some(
+		(j) => j.status === "queued" || j.status === "uploading",
+	);
 
 	// Use a ref for external state to avoid recreating updateState on every render.
 	// This breaks the dependency chain that caused loadTree to re-run on every
@@ -901,26 +933,18 @@ export function FileTreeView({
 		if (!files || files.length === 0 || !normalizedWorkspacePath || !cacheKey)
 			return;
 
-		setUploading(true);
 		setError("");
-
-		try {
-			for (const file of Array.from(files)) {
-				const destPath =
-					currentPath === "." ? file.name : `${currentPath}/${file.name}`;
-				await uploadFileMux(normalizedWorkspacePath, destPath, file);
-			}
-			// Clear cache and refresh to show new files immediately
-			clearTreeCache(cacheKey);
-			await refreshTree();
-		} catch (err) {
-			setError(err instanceof Error ? err.message : "Upload failed");
-		} finally {
-			setUploading(false);
-			// Reset input
-			if (fileInputRef.current) {
-				fileInputRef.current.value = "";
-			}
+		uploadManager.enqueue(
+			normalizedWorkspacePath,
+			Array.from(files).map((file) => ({
+				destPath: currentPath === "." ? file.name : `${currentPath}/${file.name}`,
+				file,
+			})),
+		);
+		clearTreeCache(cacheKey);
+		void refreshTree();
+		if (fileInputRef.current) {
+			fileInputRef.current.value = "";
 		}
 	};
 
@@ -949,23 +973,17 @@ export function FileTreeView({
 				if (entry) entries.push(entry);
 			}
 			if (entries.length === 0) return;
-			setUploading(true);
 			setError("");
-			try {
-				for (const entry of entries) {
-					await walkFsEntry(entry, entry.name, async (file, relPath) => {
-						const destPath =
-							targetDir === "." ? relPath : `${targetDir}/${relPath}`;
-						await uploadFileMux(normalizedWorkspacePath, destPath, file);
-					});
-				}
-				clearTreeCache(cacheKey);
-				await refreshTree();
-			} catch (err) {
-				setError(err instanceof Error ? err.message : "Upload failed");
-			} finally {
-				setUploading(false);
+			const batch: Array<{ destPath: string; file: File }> = [];
+			for (const entry of entries) {
+				await walkFsEntry(entry, entry.name, async (file, relPath) => {
+					const destPath = targetDir === "." ? relPath : `${targetDir}/${relPath}`;
+					batch.push({ destPath, file });
+				});
 			}
+			uploadManager.enqueue(normalizedWorkspacePath, batch);
+			clearTreeCache(cacheKey);
+			void refreshTree();
 		},
 		[normalizedWorkspacePath, cacheKey, refreshTree],
 	);
@@ -973,21 +991,16 @@ export function FileTreeView({
 	const handleOsFilesDropFallback = useCallback(
 		async (files: FileList, targetDir: string) => {
 			if (!normalizedWorkspacePath || !cacheKey || files.length === 0) return;
-			setUploading(true);
 			setError("");
-			try {
-				for (const file of Array.from(files)) {
-					const destPath =
-						targetDir === "." ? file.name : `${targetDir}/${file.name}`;
-					await uploadFileMux(normalizedWorkspacePath, destPath, file);
-				}
-				clearTreeCache(cacheKey);
-				await refreshTree();
-			} catch (err) {
-				setError(err instanceof Error ? err.message : "Upload failed");
-			} finally {
-				setUploading(false);
-			}
+			uploadManager.enqueue(
+				normalizedWorkspacePath,
+				Array.from(files).map((file) => ({
+					destPath: targetDir === "." ? file.name : `${targetDir}/${file.name}`,
+					file,
+				})),
+			);
+			clearTreeCache(cacheKey);
+			void refreshTree();
 		},
 		[normalizedWorkspacePath, cacheKey, refreshTree],
 	);
@@ -1752,6 +1765,45 @@ export function FileTreeView({
 				onDrop={handleDropContainer}
 			>
 				<div className="mx-1">
+					{currentDirUploads.length > 0 && (
+						<div className="px-2 py-2 space-y-1 border-b border-border/60">
+							{currentDirUploads.map((job) => {
+								const pct = job.size > 0 ? Math.min(100, Math.round((job.loaded / job.size) * 100)) : 0;
+								return (
+									<div key={job.id} className="text-xs rounded border border-border/50 bg-muted/30 px-2 py-1">
+										<div className="flex items-center justify-between gap-2">
+											<span className="truncate">{job.fileName}</span>
+											<div className="flex items-center gap-2">
+												<span className="text-muted-foreground">{job.status === "uploading" ? `${pct}%` : job.status}</span>
+												{job.status === "uploading" && (
+													<button
+														type="button"
+														onClick={() => uploadManager.cancel(job.id)}
+														className="text-destructive hover:underline"
+													>
+														Cancel
+													</button>
+												)}
+												{(job.status === "failed" || job.status === "cancelled") && (
+													<button
+														type="button"
+														onClick={() => uploadManager.retry(job.id)}
+														className="text-primary hover:underline"
+													>
+														Retry
+													</button>
+												)}
+											</div>
+										</div>
+										<div className="mt-1 h-1.5 bg-muted rounded overflow-hidden">
+											<div className={cn("h-full transition-all", job.status === "failed" ? "bg-destructive" : "bg-primary")} style={{ width: `${job.status === "done" ? 100 : pct}%` }} />
+										</div>
+										{job.error && <div className="mt-1 text-destructive truncate">{job.error}</div>}
+									</div>
+								);
+							})}
+						</div>
+					)}
 					{filteredTree.length === 0 ? (
 						<div className="text-sm text-muted-foreground p-4">
 							No files found.
