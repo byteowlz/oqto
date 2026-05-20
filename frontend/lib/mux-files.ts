@@ -1,4 +1,5 @@
 import { getWsManager } from "@/lib/ws-manager";
+import { controlPlaneApiUrl } from "@/lib/api/client";
 import type { FileTreeNode, FilesWsEvent } from "@/lib/ws-mux-types";
 
 const TREE_CACHE_TTL_MS = 30000;
@@ -383,9 +384,62 @@ export async function uploadFileMux(
 	workspacePath: string,
 	destPath: string,
 	file: File,
+	onProgress?: (loaded: number, total: number) => void,
+	signal?: AbortSignal,
 ): Promise<void> {
-	const buffer = await file.arrayBuffer();
-	await writeFileMux(workspacePath, destPath, buffer, true);
+	await uploadFileHttp(workspacePath, destPath, file, onProgress, signal);
+}
+
+export async function uploadFileHttp(
+	workspacePath: string,
+	destPath: string,
+	file: File,
+	onProgress?: (loaded: number, total: number) => void,
+	signal?: AbortSignal,
+): Promise<void> {
+	const url = new URL(controlPlaneApiUrl("/api/workspace/files/file"), window.location.origin);
+	url.searchParams.set("workspace_path", workspacePath);
+	url.searchParams.set("path", destPath);
+	url.searchParams.set("mkdir", "true");
+
+	await new Promise<void>((resolve, reject) => {
+		const xhr = new XMLHttpRequest();
+		let onAbort: (() => void) | null = null;
+		if (signal) {
+			onAbort = () => xhr.abort();
+			if (signal.aborted) {
+				xhr.abort();
+			}
+			signal.addEventListener("abort", onAbort, { once: true });
+		}
+		xhr.open("POST", url.toString());
+		xhr.withCredentials = true;
+		xhr.upload.onprogress = (event) => {
+			if (event.lengthComputable) {
+				onProgress?.(event.loaded, event.total);
+			}
+		};
+		xhr.onload = () => {
+			if (onAbort && signal) signal.removeEventListener("abort", onAbort);
+			if (xhr.status >= 200 && xhr.status < 300) {
+				resolve();
+			} else {
+				reject(new Error(`Upload failed (${xhr.status}): ${xhr.responseText || xhr.statusText}`));
+			}
+		};
+		xhr.onerror = () => {
+			if (onAbort && signal) signal.removeEventListener("abort", onAbort);
+			reject(new Error("Upload failed: network error"));
+		};
+		xhr.onabort = () => {
+			if (onAbort && signal) signal.removeEventListener("abort", onAbort);
+			reject(new Error("Upload cancelled"));
+		};
+
+		const form = new FormData();
+		form.append("file", file, file.name);
+		xhr.send(form);
+	});
 }
 
 /**
