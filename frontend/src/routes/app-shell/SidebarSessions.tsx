@@ -22,8 +22,8 @@ import { useLocalStorage } from "@/hooks/use-local-storage";
 import { useMountEffect } from "@/hooks/use-mount-effect";
 import type {
 	ChatSession,
-	SearchHit,
 	ProjectLogo,
+	SearchHit,
 } from "@/lib/control-plane-client";
 import {
 	formatSessionDate,

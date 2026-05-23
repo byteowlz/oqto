@@ -576,7 +576,11 @@ export function FileTreeView({
 			) {
 				return;
 			}
-			lastLoadRef.current = { key: requestKey, ts: now };
+			// Only throttle cache-backed reads. Forced refreshes (skipCache=true)
+			// must always execute so uploads and file watcher updates appear live.
+			if (!skipCache) {
+				lastLoadRef.current = { key: requestKey, ts: now };
+			}
 
 			// Check cache first (unless explicitly skipping)
 			if (!skipCache) {
@@ -711,6 +715,34 @@ export function FileTreeView({
 	expandedRef.current = expanded;
 	const currentPathRef = useRef(currentPath);
 	currentPathRef.current = currentPath;
+	const handledCompletedUploadIdsRef = useRef<Set<string>>(new Set());
+
+	// When an upload reaches "done", force-refresh the affected directory so
+	// the file appears immediately even if the pre-upload refresh populated cache
+	// before the backend write finished.
+	// useeffect-guardrail: allow - reacts to upload job completion stream and maintains handled ID set
+	useEffect(() => {
+		if (!normalizedWorkspacePath || !cacheKey) return;
+
+		const handled = handledCompletedUploadIdsRef.current;
+		const activeIds = new Set(workspaceUploads.map((job) => job.id));
+		for (const id of Array.from(handled)) {
+			if (!activeIds.has(id)) handled.delete(id);
+		}
+
+		for (const job of workspaceUploads) {
+			if (job.status !== "done" || handled.has(job.id)) continue;
+			handled.add(job.id);
+			const parentDir = job.destPath.includes("/")
+				? job.destPath.slice(0, job.destPath.lastIndexOf("/"))
+				: ".";
+			removeCachedTree(cacheKey, parentDir, INITIAL_DEPTH);
+			removeCachedTree(cacheKey, parentDir, LAZY_LOAD_DEPTH);
+			if (parentDir === currentPathRef.current) {
+				void loadTreeRef.current(currentPathRef.current, true, true, true);
+			}
+		}
+	}, [workspaceUploads, normalizedWorkspacePath, cacheKey]);
 
 	// Watch workspace for file changes via inotify (backend-side).
 	// When files are created/modified/deleted, the backend pushes events
@@ -738,9 +770,18 @@ export function FileTreeView({
 				) {
 					return;
 				}
-				const eventPath: string =
+				const rawEventPath: string =
 					typeof event.path === "string" ? event.path : "";
-				if (!eventPath) return;
+				if (!rawEventPath) return;
+
+				// Backends may emit relative ("src/a.ts") or absolute
+				// ("/workspace/src/a.ts") paths. Normalize to workspace-relative.
+				let eventPath = rawEventPath.replace(/\\/g, "/").replace(/^\.\//, "");
+				const workspacePrefix = `${normalizedWorkspacePath.replace(/\\/g, "/")}/`;
+				if (eventPath.startsWith(workspacePrefix)) {
+					eventPath = eventPath.slice(workspacePrefix.length);
+				}
+				if (!eventPath || eventPath === ".") return;
 
 				// Workspace-relative parent: "src/foo.rs" -> "src"; "foo.rs" -> "."
 				const lastSlash = eventPath.lastIndexOf("/");
@@ -778,7 +819,9 @@ export function FileTreeView({
 						removeCachedTree(cacheKey, dir, INITIAL_DEPTH);
 						removeCachedTree(cacheKey, dir, LAZY_LOAD_DEPTH);
 
-						if (dir === cp) {
+						const affectsCurrentPath =
+							cp === "." || dir === cp || dir.startsWith(`${cp}/`);
+						if (affectsCurrentPath) {
 							if (!refreshedRoot) {
 								loadTreeRef.current(cp, true, true, true);
 								refreshedRoot = true;
