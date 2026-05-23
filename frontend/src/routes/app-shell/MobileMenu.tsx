@@ -226,122 +226,120 @@ export const MobileMenu = memo(function MobileMenu({
 			</div>
 
 			<nav className="flex-1 w-full px-3 pt-3 flex flex-col min-h-0 overflow-y-auto overflow-x-hidden">
-				{chatHistory.length > 0 && (
-					<SidebarSessions
-						locale={locale}
-						chatHistory={chatHistory}
-						sessionHierarchy={sessionHierarchy}
-						sessionsByProject={sessionsByProject}
-						filteredSessions={filteredSessions}
-						selectedChatSessionId={selectedChatSessionId}
-						busySessions={busySessions}
-						runnerSessionCount={runnerSessionCount}
-						expandedSessions={expandedSessions}
-						toggleSessionExpanded={toggleSessionExpanded}
-						expandedProjects={expandedProjects}
-						toggleProjectExpanded={toggleProjectExpanded}
-						pinnedSessions={pinnedSessions}
-						togglePinSession={togglePinSession}
-						pinnedProjects={pinnedProjects}
-						togglePinProject={togglePinProject}
-						projectSortBy={projectSortBy}
-						setProjectSortBy={setProjectSortBy}
-						projectSortAsc={projectSortAsc}
-						setProjectSortAsc={setProjectSortAsc}
-						selectedProjectLabel={selectedProjectLabel}
-						onNewChat={onNewChat}
-						onNewProject={onNewProject}
-						onProjectClear={onProjectClear}
-						onProjectOverview={onProjectOverview}
-						onSessionClick={onSessionClick}
-						onNewChatInProject={onNewChatInProject}
-						onPinSession={onPinSession}
-						onRenameSession={onRenameSession}
-						onDeleteSession={onDeleteSession}
-						onBulkDeleteSessions={onBulkDeleteSessions}
-						onPinProject={onPinProject}
-						onRenameProject={onRenameProject}
-						onDeleteProject={onDeleteProject}
-						onSearchResultClick={onSearchResultClick}
-						messageSearchExtraHits={messageSearchExtraHits}
-						sessionSearch={sessionSearch}
-						onSessionSearchChange={onSessionSearchChange}
-						searchMode={searchMode}
-						onSearchModeChange={onSearchModeChange}
-						isMobile
-						externalScroll
-						sessionsExpanded={sessionsSectionExpanded}
-						onToggleSessionsExpanded={() =>
-							setSessionsSectionExpanded((prev) => !prev)
-						}
-						belowSearchSlot={
-							sharedWorkspaces &&
-							sharedWorkspaces.length > 0 &&
-							expandedWorkspaces &&
-							toggleWorkspaceExpanded &&
-							onNewSharedWorkspace &&
-							onManageWorkspace &&
-							onManageMembers &&
-							onNewChatInWorkspace &&
-							onDeleteWorkspace ? (
-								<>
-									<div className="flex items-center justify-between gap-2 py-1.5 px-1">
-										<button
-											type="button"
-											onClick={() => setSharedSectionExpanded((prev) => !prev)}
-											className="flex items-center gap-2 text-muted-foreground hover:text-foreground"
-										>
-											{sharedSectionExpanded ? (
-												<ChevronDown className="w-4 h-4" />
-											) : (
-												<ChevronRight className="w-4 h-4" />
-											)}
-											<span className="text-xs uppercase tracking-wide">
-												{t("sharedWorkspaces.title", "Shared workspaces")}
-											</span>
-											<span className="text-xs text-muted-foreground/50">
-												({sharedWorkspaces.length})
-											</span>
-										</button>
-									</div>
-									{sharedSectionExpanded && (
-										<SidebarSharedWorkspaces
-											sharedWorkspaces={sharedWorkspaces}
-											expandedWorkspaces={expandedWorkspaces}
-											toggleWorkspaceExpanded={toggleWorkspaceExpanded}
-											onNewSharedWorkspace={onNewSharedWorkspace}
-											onManageWorkspace={onManageWorkspace}
-											onManageMembers={onManageMembers}
-											onNewChatInWorkspace={onNewChatInWorkspace}
-											onNewProjectInWorkspace={onNewProjectInWorkspace}
-											onDeleteWorkspace={onDeleteWorkspace}
-											onSelectWorkdir={onSelectWorkdir}
-											chatHistory={chatHistory}
-											runnerSessions={runnerSessions}
-											busySessions={busySessions}
-											selectedChatSessionId={selectedChatSessionId}
-											onSessionClick={onSharedSessionClick}
-											onRenameSession={onRenameSession}
-											onDeleteSession={onDeleteSession}
-											onPinSession={onPinSession}
-											pinnedSessions={pinnedSessions}
-											onPinProject={onPinProject}
-											onRenameProject={onRenameProject}
-											onDeleteProject={onDeleteProject}
-											pinnedProjects={pinnedProjects}
-											isMobile
-											searchQuery={sessionSearch}
-											searchMode={searchMode}
-										/>
-									)}
-									<div className="w-full px-2 my-1">
-										<div className="h-px w-full bg-sidebar-border/50" />
-									</div>
-								</>
-							) : undefined
-						}
-					/>
-				)}
+				<SidebarSessions
+					locale={locale}
+					chatHistory={chatHistory}
+					sessionHierarchy={sessionHierarchy}
+					sessionsByProject={sessionsByProject}
+					filteredSessions={filteredSessions}
+					selectedChatSessionId={selectedChatSessionId}
+					busySessions={busySessions}
+					runnerSessionCount={runnerSessionCount}
+					expandedSessions={expandedSessions}
+					toggleSessionExpanded={toggleSessionExpanded}
+					expandedProjects={expandedProjects}
+					toggleProjectExpanded={toggleProjectExpanded}
+					pinnedSessions={pinnedSessions}
+					togglePinSession={togglePinSession}
+					pinnedProjects={pinnedProjects}
+					togglePinProject={togglePinProject}
+					projectSortBy={projectSortBy}
+					setProjectSortBy={setProjectSortBy}
+					projectSortAsc={projectSortAsc}
+					setProjectSortAsc={setProjectSortAsc}
+					selectedProjectLabel={selectedProjectLabel}
+					onNewChat={onNewChat}
+					onNewProject={onNewProject}
+					onProjectClear={onProjectClear}
+					onProjectOverview={onProjectOverview}
+					onSessionClick={onSessionClick}
+					onNewChatInProject={onNewChatInProject}
+					onPinSession={onPinSession}
+					onRenameSession={onRenameSession}
+					onDeleteSession={onDeleteSession}
+					onBulkDeleteSessions={onBulkDeleteSessions}
+					onPinProject={onPinProject}
+					onRenameProject={onRenameProject}
+					onDeleteProject={onDeleteProject}
+					onSearchResultClick={onSearchResultClick}
+					messageSearchExtraHits={messageSearchExtraHits}
+					sessionSearch={sessionSearch}
+					onSessionSearchChange={onSessionSearchChange}
+					searchMode={searchMode}
+					onSearchModeChange={onSearchModeChange}
+					isMobile
+					externalScroll
+					sessionsExpanded={sessionsSectionExpanded}
+					onToggleSessionsExpanded={() =>
+						setSessionsSectionExpanded((prev) => !prev)
+					}
+					belowSearchSlot={
+						sharedWorkspaces &&
+						sharedWorkspaces.length > 0 &&
+						expandedWorkspaces &&
+						toggleWorkspaceExpanded &&
+						onNewSharedWorkspace &&
+						onManageWorkspace &&
+						onManageMembers &&
+						onNewChatInWorkspace &&
+						onDeleteWorkspace ? (
+							<>
+								<div className="flex items-center justify-between gap-2 py-1.5 px-1">
+									<button
+										type="button"
+										onClick={() => setSharedSectionExpanded((prev) => !prev)}
+										className="flex items-center gap-2 text-muted-foreground hover:text-foreground"
+									>
+										{sharedSectionExpanded ? (
+											<ChevronDown className="w-4 h-4" />
+										) : (
+											<ChevronRight className="w-4 h-4" />
+										)}
+										<span className="text-xs uppercase tracking-wide">
+											{t("sharedWorkspaces.title", "Shared workspaces")}
+										</span>
+										<span className="text-xs text-muted-foreground/50">
+											({sharedWorkspaces.length})
+										</span>
+									</button>
+								</div>
+								{sharedSectionExpanded && (
+									<SidebarSharedWorkspaces
+										sharedWorkspaces={sharedWorkspaces}
+										expandedWorkspaces={expandedWorkspaces}
+										toggleWorkspaceExpanded={toggleWorkspaceExpanded}
+										onNewSharedWorkspace={onNewSharedWorkspace}
+										onManageWorkspace={onManageWorkspace}
+										onManageMembers={onManageMembers}
+										onNewChatInWorkspace={onNewChatInWorkspace}
+										onNewProjectInWorkspace={onNewProjectInWorkspace}
+										onDeleteWorkspace={onDeleteWorkspace}
+										onSelectWorkdir={onSelectWorkdir}
+										chatHistory={chatHistory}
+										runnerSessions={runnerSessions}
+										busySessions={busySessions}
+										selectedChatSessionId={selectedChatSessionId}
+										onSessionClick={onSharedSessionClick}
+										onRenameSession={onRenameSession}
+										onDeleteSession={onDeleteSession}
+										onPinSession={onPinSession}
+										pinnedSessions={pinnedSessions}
+										onPinProject={onPinProject}
+										onRenameProject={onRenameProject}
+										onDeleteProject={onDeleteProject}
+										pinnedProjects={pinnedProjects}
+										isMobile
+										searchQuery={sessionSearch}
+										searchMode={searchMode}
+									/>
+								)}
+								<div className="w-full px-2 my-1">
+									<div className="h-px w-full bg-sidebar-border/50" />
+								</div>
+							</>
+						) : undefined
+					}
+				/>
 
 				{activeAppId === "projects" && (
 					<div className="flex-1 min-h-0 flex flex-col">
