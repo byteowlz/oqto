@@ -1,6 +1,6 @@
 import type {
 	ChatSession,
-	HstrySearchHit,
+	SearchHit,
 	ProjectLogo,
 } from "@/lib/control-plane-client";
 import { formatSessionDate, getTempIdFromSession } from "@/lib/session-utils";
@@ -47,7 +47,7 @@ export interface SessionDataOutput {
 			| ChatSession
 			| { directory?: string | null; projectID?: string | null },
 	) => string;
-	sessionTitleHits: HstrySearchHit[];
+	sessionTitleHits: SearchHit[];
 }
 
 export function useSessionData({

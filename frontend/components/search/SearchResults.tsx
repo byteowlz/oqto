@@ -1,8 +1,8 @@
 "use client";
 
 import {
-	type HstrySearchHit,
-	type HstrySearchResponse,
+	type SearchHit,
+	type SearchResponse,
 	searchSessions,
 } from "@/lib/control-plane-client";
 import { cn } from "@/lib/utils";
@@ -25,8 +25,8 @@ interface SearchResultsProps {
 	query: string;
 	agentFilter: AgentFilter;
 	locale: "en" | "de";
-	onResultClick: (hit: HstrySearchHit) => void;
-	extraHits?: HstrySearchHit[];
+	onResultClick: (hit: SearchHit) => void;
+	extraHits?: SearchHit[];
 	className?: string;
 }
 
@@ -187,7 +187,7 @@ function ContextPopover({
 	hit,
 	query,
 }: {
-	hit: HstrySearchHit;
+	hit: SearchHit;
 	query: string;
 }) {
 	const context = extractContext(hit.content, hit.snippet);
@@ -227,14 +227,14 @@ export function SearchResults({
 	className,
 }: SearchResultsProps) {
 	const { t } = useTranslation();
-	const [results, setResults] = useState<HstrySearchResponse | null>(null);
+	const [results, setResults] = useState<SearchResponse | null>(null);
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
 	const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const resultListRef = useRef<HTMLDivElement>(null);
 
-	// Debounced search (hstry-backed)
+	// Debounced search (oqto-log-backed)
 	// useeffect-guardrail: allow - async debounced fetch with cancellation
 	useEffect(() => {
 		if (!query.trim()) {

@@ -50,15 +50,15 @@ export type ChatSession = {
 	 */
 	source_path: string | null;
 	/**
-	 * Persisted stats from hstry metadata (when available)
+	 * Persisted stats from oqto-log metadata (when available)
 	 */
 	stats: ChatSessionStats | null;
 	/**
-	 * Last used model ID (from hstry conversation)
+	 * Last used model ID (from oqto-log conversation)
 	 */
 	model: string | null;
 	/**
-	 * Last used provider ID (from hstry conversation)
+	 * Last used provider ID (from oqto-log conversation)
 	 */
 	provider: string | null;
 };

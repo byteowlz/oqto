@@ -1132,7 +1132,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 						streamingMessageRef.current.isStreaming = false;
 						streamingMessageRef.current = null;
 					}
-					// Always fetch authoritative messages from hstry on
+					// Always fetch authoritative messages from oqto-log on
 					// agent.idle. The backend persists to hstry BEFORE
 					// broadcasting agent.idle, so the fetch is guaranteed
 					// to return the complete conversation. This makes the
@@ -2044,7 +2044,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 
 			manager.agentGetState(sessionId);
 
-			// After 12s of silence, recover from hstry and clear spinner.
+			// After 12s of silence, recover from oqto-log and clear spinner.
 			if (idleMs >= 12000) {
 				applyTurnState({ kind: "idle" });
 				void fetchHistoryMessages(sessionId);
@@ -2244,7 +2244,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 				// For messages, merge Pi's live window with local state rather than
 				// replacing. Pi's get_messages only returns the current context window
 				// (not the full history), so replacing would discard earlier turns.
-				// Also fetch from hstry for the complete history.
+				// Also fetch from oqto-log for the complete history.
 				if (serverMessages.length > 0) {
 					applyServerMessages(
 						serverMessages as RawMessage[],
@@ -2261,7 +2261,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 					throttleFlushTimerRef.current = null;
 				}
 
-				// Also fetch full history from hstry to fill in messages
+				// Also fetch full history from oqto-log to fill in messages
 				// that Pi's context window may have compacted away.
 				void fetchHistoryMessages(_sessionId, undefined, {
 					forceAuthoritative: true,

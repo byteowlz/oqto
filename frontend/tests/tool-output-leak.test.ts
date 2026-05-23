@@ -1,7 +1,7 @@
 /**
  * Test that tool output does NOT leak into chat text for hstry-imported messages.
  *
- * When messages are loaded from hstry, tool result messages (role="tool") have
+ * When messages are loaded from oqto-log, tool result messages (role="tool") have
  * both a "text" part (containing the raw output) and a "tool_result" part in
  * their parts_json. The text part should NOT be rendered as chat text - only
  * the tool_result should be merged into the parent assistant message.
@@ -10,7 +10,7 @@ import { normalizeMessages } from "@/features/chat/hooks/message-utils";
 import type { RawMessage } from "@/features/chat/hooks/types";
 import { describe, expect, it } from "vitest";
 
-describe("tool output leak from hstry imports", () => {
+describe("tool output leak from oqto-log imports", () => {
 	it("normalizes backend ChatMessagePart parts with part_type/tool_* fields", () => {
 		const rawMessages: RawMessage[] = [
 			{
@@ -124,7 +124,7 @@ describe("tool output leak from hstry imports", () => {
 				created_at_ms: 2000,
 			},
 			{
-				// This is the problematic tool result message from hstry
+				// This is the problematic tool result message from oqto-log
 				role: "tool",
 				content:
 					"./frontend/node_modules/typescript/lib/diagnosticMessages.json\n./deploy/docker/.env.example",

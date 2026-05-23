@@ -2,7 +2,7 @@ import type { SearchMode } from "@/components/search";
 import { Button } from "@/components/ui/button";
 import type { AgentInfo } from "@/lib/agent-client";
 import type { SharedWorkspaceInfo } from "@/lib/api/shared-workspaces";
-import type { ChatSession, HstrySearchHit } from "@/lib/control-plane-client";
+import type { ChatSession, SearchHit } from "@/lib/control-plane-client";
 import { formatSessionDate } from "@/lib/session-utils";
 import { cn } from "@/lib/utils";
 import {
@@ -80,8 +80,8 @@ export interface MobileMenuProps {
 	onPinProject: (projectKey: string) => void;
 	onRenameProject: (projectKey: string, currentName: string) => void;
 	onDeleteProject: (projectKey: string, projectName: string) => void;
-	onSearchResultClick: (hit: HstrySearchHit) => void;
-	messageSearchExtraHits: HstrySearchHit[];
+	onSearchResultClick: (hit: SearchHit) => void;
+	messageSearchExtraHits: SearchHit[];
 	isAdmin?: boolean;
 	onToggleApp: (appId: string) => void;
 	onToggleLocale: () => void;

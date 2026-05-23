@@ -22,7 +22,7 @@ import { useLocalStorage } from "@/hooks/use-local-storage";
 import { useMountEffect } from "@/hooks/use-mount-effect";
 import type {
 	ChatSession,
-	HstrySearchHit,
+	SearchHit,
 	ProjectLogo,
 } from "@/lib/control-plane-client";
 import {
@@ -119,8 +119,8 @@ export interface SidebarSessionsProps {
 	onDeleteProject: (projectKey: string, projectName: string) => void;
 	onBackfillProject?: (directory: string) => void;
 	onShareProject?: (directory: string, projectName: string) => void;
-	onSearchResultClick: (hit: HstrySearchHit) => void;
-	messageSearchExtraHits: HstrySearchHit[];
+	onSearchResultClick: (hit: SearchHit) => void;
+	messageSearchExtraHits: SearchHit[];
 	isMobile?: boolean;
 	/** If true, the outer container owns vertical scrolling. */
 	externalScroll?: boolean;

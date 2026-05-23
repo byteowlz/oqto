@@ -286,7 +286,7 @@ export function useModelSelection(
 			return;
 		}
 
-		// Fall back to model/provider from hstry ChatSession and immediately
+		// Fall back to model/provider from oqto-log ChatSession and immediately
 		// persist under this concrete session key so reloads stay stable.
 		if (selectedChatFromHistory?.provider && selectedChatFromHistory?.model) {
 			const ref = `${selectedChatFromHistory.provider}/${selectedChatFromHistory.model}`;

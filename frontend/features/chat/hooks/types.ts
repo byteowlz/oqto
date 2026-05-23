@@ -60,9 +60,9 @@ export type DisplayMessage = {
 	/** Client-generated ID for optimistic message matching.
 	 * Used to correlate frontend optimistic messages with server-confirmed versions. */
 	clientId?: string;
-	/** Model ID used for this message (from hstry or streaming). */
+	/** Model ID used for this message (from oqto-log or streaming). */
 	model?: string | null;
-	/** Provider ID used for this message (from hstry or streaming). */
+	/** Provider ID used for this message (from oqto-log or streaming). */
 	provider?: string | null;
 	/** Sender attribution for multi-user workspaces.
 	 * When set, the chat UI shows sender.name instead of "You". */
@@ -183,10 +183,10 @@ export type RawMessage = {
 	/** Client-generated ID for optimistic message matching */
 	client_id?: string;
 	clientId?: string;
-	/** Model ID from hstry ChatMessage */
+	/** Model ID from oqto-log ChatMessage */
 	model_id?: string | null;
 	model?: string | null;
-	/** Provider ID from hstry ChatMessage */
+	/** Provider ID from oqto-log ChatMessage */
 	provider_id?: string | null;
 	provider?: string | null;
 	/** Token counts from runner/hstry (separate fields, not nested usage) */

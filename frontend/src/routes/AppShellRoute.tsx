@@ -8,7 +8,7 @@ import { useApp } from "@/hooks/use-app";
 import { useCurrentUser, useLogout } from "@/hooks/use-auth";
 import { useCommandPalette } from "@/hooks/use-command-palette";
 import { getUserDisplayName } from "@/lib/api/types";
-import type { HstrySearchHit } from "@/lib/control-plane-client";
+import type { SearchHit } from "@/lib/control-plane-client";
 import { cn } from "@/lib/utils";
 import {
 	ChevronDown,
@@ -464,7 +464,7 @@ const AppShell = memo(function AppShell() {
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: setSelectedProjectKey is stable setState
 	const handleSearchResultClick = useCallback(
-		(hit: HstrySearchHit) => {
+		(hit: SearchHit) => {
 			setSessionSearch("");
 			const targetMessageId =
 				hit.message_id || (hit.line_number ? `line-${hit.line_number}` : null);

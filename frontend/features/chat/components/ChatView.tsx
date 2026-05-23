@@ -3452,7 +3452,7 @@ const MessageGroupCard = memo(function MessageGroupCard({
 
 	// Flatten parts in order, preserve message-array ordering.
 	// The primary sort key is the message index (msgIndex), NOT the wall-clock
-	// timestamp.  Timestamps from hstry (created_at) can be non-monotonic when
+	// timestamp.  Timestamps from oqto-log (created_at) can be non-monotonic when
 	// messages are persisted out of chronological order (e.g. batched writes).
 	// Using them as a sort key reorders messages incorrectly.
 	type TimedPart = {
