@@ -627,8 +627,12 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 		) => {
 			try {
 				const swId = sharedWorkspaceSessionMap.get(sessionId);
+				const isPlatformSessionId = sessionId.startsWith("oqto-");
 				let history = await getChatMessages(sessionId, swId).catch(
 					async (err) => {
+						// Avoid external-ID fallback for canonical platform session IDs.
+						// In runner mode this can cause expensive unresolved-target probes.
+						if (isPlatformSessionId) throw err;
 						const alias = getRunnerHistoryAlias(sessionId);
 						if (!alias || alias === sessionId) throw err;
 						if (isPiDebugEnabled()) {
@@ -642,7 +646,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 						return getChatMessages(alias, swId);
 					},
 				);
-				if (history.length === 0) {
+				if (history.length === 0 && !isPlatformSessionId) {
 					const alias = getRunnerHistoryAlias(sessionId);
 					if (alias && alias !== sessionId) {
 						const aliasHistory = await getChatMessages(alias, swId);
