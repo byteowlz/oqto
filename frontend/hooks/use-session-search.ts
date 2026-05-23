@@ -1,5 +1,5 @@
 /**
- * Hook for searching within a specific Pi session using hstry.
+ * Hook for searching within a specific Pi session using oqto-log.
  */
 
 import { type InSessionSearchResult, searchInPiSession } from "@/lib/api";

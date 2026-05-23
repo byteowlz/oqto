@@ -109,7 +109,7 @@ function isPiDebugEnabled(): boolean {
 }
 
 export interface ChatContextValue {
-	/** Chat sessions from disk (read from hstry) */
+	/** Chat sessions from disk (read from oqto-log) */
 	chatHistory: ChatSession[];
 	/** Error message when chat history service is unavailable */
 	chatHistoryError: string | null;
@@ -262,7 +262,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 	// Track auto-generated titles from session.title_changed events.
 	// These are kept until hstry confirms the title (returns the same
 	// non-generic title), preventing race conditions where a refresh
-	// from hstry overwrites a title that hasn't been persisted yet.
+	// from oqto-log overwrites a title that hasn't been persisted yet.
 	const autoTitlesRef = useRef<Map<string, string>>(new Map());
 
 	const [selectedChatSessionId, setSelectedChatSessionIdRaw] = useState<
@@ -301,7 +301,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 	);
 
 	const [busySessions, setBusySessions] = useState<Set<string>>(new Set());
-	// Track deleted session IDs to prevent resurrection from hstry/runner polls.
+	// Track deleted session IDs to prevent resurrection from oqto-log/runner polls.
 	const deletedSessionsRef = useRef<Set<string>>(new Set());
 	const [runnerSessions, setRunnerSessions] = useState<
 		Array<{
@@ -695,7 +695,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 			setChatHistory(merged);
 			writeCachedChatHistory(merged);
 		}
-		// Fetch real titles from hstry for new or generically-titled sessions
+		// Fetch real titles from oqto-log for new or generically-titled sessions
 		if (hasMissing || hasGenericTitle) {
 			void refreshChatHistory({ force: true });
 		}

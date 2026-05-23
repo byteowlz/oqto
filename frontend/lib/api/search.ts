@@ -1,5 +1,5 @@
 /**
- * Search API (hstry-backed)
+ * Search API (oqto-log-backed)
  * Cross-agent session search
  */
 
@@ -10,20 +10,20 @@ import { authFetch, controlPlaneApiUrl, readApiError } from "./client";
 // ============================================================================
 
 /** Agent filter for search */
-export type HstryAgentFilter = "all" | "pi_agent" | string;
+export type SearchAgentFilter = "all" | "pi_agent" | string;
 
 /** Search query parameters */
-export type HstrySearchQuery = {
+export type SearchQuery = {
 	/** Search query string */
 	q: string;
 	/** Agent filter: "all", "pi_agent", or comma-separated */
-	agents?: HstryAgentFilter;
+	agents?: SearchAgentFilter;
 	/** Maximum results to return */
 	limit?: number;
 };
 
-/** A single search hit from hstry */
-export type HstrySearchHit = {
+/** A single search hit from oqto-log */
+export type SearchHit = {
 	/** Agent type (pi_agent, etc.) */
 	agent: string;
 	/** Path to the session file */
@@ -46,15 +46,15 @@ export type HstrySearchHit = {
 	role?: string;
 	/** Session/conversation title if available */
 	title?: string;
-	/** Full content from hstry */
+	/** Full content from oqto-log */
 	content?: string;
 	/** Match type */
 	match_type?: string;
 };
 
-/** Response from hstry search */
-export type HstrySearchResponse = {
-	hits: HstrySearchHit[];
+/** Response from oqto-log search */
+export type SearchResponse = {
+	hits: SearchHit[];
 	total?: number;
 	elapsed_ms?: number;
 };
@@ -64,12 +64,12 @@ export type HstrySearchResponse = {
 // ============================================================================
 
 /**
- * Search across coding agent sessions using hstry.
+ * Search across coding agent sessions using oqto-log.
  * Searches chat sessions.
  */
 export async function searchSessions(
-	query: HstrySearchQuery,
-): Promise<HstrySearchResponse> {
+	query: SearchQuery,
+): Promise<SearchResponse> {
 	const url = new URL(
 		controlPlaneApiUrl("/api/search"),
 		window.location.origin,

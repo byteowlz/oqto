@@ -207,7 +207,7 @@ export type PiSearchResponse = {
 	total: number;
 };
 
-/** In-session search result from hstry */
+/** In-session search result from oqto-log */
 export type InSessionSearchResult = {
 	/** Line number in the source file */
 	line_number: number;
@@ -443,7 +443,7 @@ export async function resumeDefaultChatPiSession(
 	return res.json();
 }
 
-/** Search within a specific Pi session using hstry */
+/** Search within a specific Pi session using oqto-log */
 export async function searchInPiSession(
 	sessionId: string,
 	query: string,
