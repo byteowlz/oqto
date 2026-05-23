@@ -49,6 +49,19 @@ struct PiJsonlEntryLite {
     id: Option<String>,
 }
 
+async fn resolve_hstry_external_id_for_update(session_id: &str) -> Result<Option<String>> {
+    let Some(db_path) = oqto_history::legacy_hstry::hstry_db_path() else {
+        return Ok(None);
+    };
+    let pool = oqto_history::legacy_hstry::open_hstry_pool(&db_path).await?;
+    let Some((_conversation_id, external_id)) =
+        oqto_history::legacy_hstry::resolve_conversation_identity(&pool, session_id, None).await?
+    else {
+        return Ok(None);
+    };
+    Ok(external_id.filter(|id| !id.is_empty()))
+}
+
 fn validate_fork_cutoff(session_file: &std::path::Path, requested_entry_id: &str) -> Result<()> {
     let raw = std::fs::read_to_string(session_file)
         .with_context(|| format!("read forked session file {}", session_file.display()))?;
@@ -147,9 +160,10 @@ fn select_richest_authoritative_messages(
     pi_jsonl: Option<Vec<ChatMessageProto>>,
 ) -> (Option<Vec<ChatMessageProto>>, &'static str) {
     match (projected, pi_jsonl) {
-        (Some(projected), Some(pi_jsonl)) if pi_jsonl.len() > projected.len() => {
-            (Some(pi_jsonl), "pi-jsonl-richer")
-        }
+        // oqto-log is the authoritative history surface. Pi JSONL is used to
+        // repair oqto-log before selection, not as a parallel read source with
+        // synthetic IDs. Falling back to raw JSONL is only acceptable when no
+        // projection exists at all.
         (Some(projected), _) => (Some(projected), "oqto-log"),
         (None, Some(pi_jsonl)) => (Some(pi_jsonl), "pi-jsonl-fallback"),
         (None, None) => (None, "empty"),
@@ -163,6 +177,7 @@ async fn repair_oqto_log_from_jsonl_if_richer(
     projected_count: usize,
     external_id: &str,
     recovered_messages: &[oqto_pi::AgentMessage],
+    records: Option<&[oqto_history::oqto_log::store::PiJsonlMessageRecord]>,
 ) -> Option<Vec<ChatMessageProto>> {
     if recovered_messages.len() <= projected_count {
         return None;
@@ -184,18 +199,32 @@ async fn repair_oqto_log_from_jsonl_if_richer(
     };
 
     let external_for_store = stored_external_id.as_deref().or(Some(external_id));
-    if let Err(err) = oqto_history::oqto_log::store::replace_session_with_snapshot(
-        user_home,
-        user_id,
-        &workspace_id,
-        &session_id,
-        &session_id,
-        external_for_store,
-        external_id,
-        recovered_messages,
-    )
-    .await
-    {
+    let replace_result = if let Some(records) = records {
+        oqto_history::oqto_log::store::replace_session_with_pi_jsonl_records(
+            user_home,
+            user_id,
+            &workspace_id,
+            &session_id,
+            &session_id,
+            external_for_store,
+            external_id,
+            records,
+        )
+        .await
+    } else {
+        oqto_history::oqto_log::store::replace_session_with_snapshot(
+            user_home,
+            user_id,
+            &workspace_id,
+            &session_id,
+            &session_id,
+            external_for_store,
+            external_id,
+            recovered_messages,
+        )
+        .await
+    };
+    if let Err(err) = replace_result {
         warn!(
             "oqto-log validation repair failed session={} external_id={} projected_count={} jsonl_count={}: {:?}",
             requested_session_id,
@@ -267,23 +296,66 @@ async fn resolve_external_session_id(
     resolved_external
 }
 
+fn spawn_oqto_log_repair_from_jsonl(
+    user_home: std::path::PathBuf,
+    user_id: String,
+    requested_session_id: String,
+    projected_count: usize,
+) {
+    tokio::spawn(async move {
+        let Some((external_id, records)) =
+            load_pi_jsonl_records_for_session(&user_home, &requested_session_id).await
+        else {
+            return;
+        };
+        let messages = records
+            .iter()
+            .map(|record| record.message.clone())
+            .collect::<Vec<_>>();
+        let _ = repair_oqto_log_from_jsonl_if_richer(
+            &user_home,
+            &user_id,
+            &requested_session_id,
+            projected_count,
+            &external_id,
+            &messages,
+            Some(&records),
+        )
+        .await;
+    });
+}
+
+async fn load_pi_jsonl_records_for_session(
+    user_home: &std::path::Path,
+    requested_session_id: &str,
+) -> Option<(
+    String,
+    Vec<oqto_history::oqto_log::store::PiJsonlMessageRecord>,
+)> {
+    let external_id = resolve_external_session_id(user_home, requested_session_id).await?;
+    let session_file =
+        oqto_pi::session_files::find_session_file_async(external_id.clone(), None).await?;
+    let records = tokio::task::spawn_blocking(move || read_jsonl_message_records(&session_file))
+        .await
+        .ok()?;
+
+    if records.is_empty() {
+        return None;
+    }
+
+    Some((external_id, records))
+}
+
 async fn load_pi_jsonl_agent_messages_for_session(
     user_home: &std::path::Path,
     requested_session_id: &str,
 ) -> Option<(String, Vec<oqto_pi::AgentMessage>)> {
-    let external_id = resolve_external_session_id(user_home, requested_session_id).await?;
-    let session_file =
-        oqto_pi::session_files::find_session_file_async(external_id.clone(), None).await?;
-    let recovered_messages =
-        tokio::task::spawn_blocking(move || read_jsonl_agent_messages(&session_file))
-            .await
-            .ok()?;
-
-    if recovered_messages.is_empty() {
-        return None;
-    }
-
-    Some((external_id, recovered_messages))
+    let (external_id, records) =
+        load_pi_jsonl_records_for_session(user_home, requested_session_id).await?;
+    Some((
+        external_id,
+        records.into_iter().map(|record| record.message).collect(),
+    ))
 }
 
 fn pi_jsonl_agent_messages_to_proto(
@@ -347,6 +419,19 @@ fn read_last_session_info_name(path: &std::path::Path) -> Option<String> {
     last_name
 }
 
+async fn append_session_info_name_for_external_id(external_id: &str, name: &str) -> Result<bool> {
+    let Some(path) =
+        oqto_pi::session_files::find_session_file_async(external_id.to_string(), None).await
+    else {
+        return Ok(false);
+    };
+    let name = name.to_string();
+    tokio::task::spawn_blocking(move || append_session_info_name(&path, &name))
+        .await
+        .context("join JSONL session_info append task")??;
+    Ok(true)
+}
+
 fn append_session_info_name(path: &std::path::Path, name: &str) -> Result<()> {
     use std::io::{BufRead, Write};
 
@@ -402,10 +487,15 @@ fn append_session_info_name(path: &std::path::Path, name: &str) -> Result<()> {
 struct JsonlMessageEntry {
     #[serde(rename = "type")]
     entry_type: String,
+    id: Option<String>,
+    #[serde(rename = "parentId")]
+    parent_id: Option<String>,
     message: Option<oqto_pi::AgentMessage>,
 }
 
-fn read_jsonl_agent_messages(path: &std::path::Path) -> Vec<oqto_pi::AgentMessage> {
+fn read_jsonl_message_records(
+    path: &std::path::Path,
+) -> Vec<oqto_history::oqto_log::store::PiJsonlMessageRecord> {
     use std::io::BufRead;
 
     let file = match std::fs::File::open(path) {
@@ -417,9 +507,9 @@ fn read_jsonl_agent_messages(path: &std::path::Path) -> Vec<oqto_pi::AgentMessag
     };
 
     let reader = std::io::BufReader::new(file);
-    let mut messages = Vec::new();
+    let mut records = Vec::new();
 
-    for line in reader.lines().map_while(Result::ok) {
+    for (line_idx, line) in reader.lines().map_while(Result::ok).enumerate() {
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
@@ -435,11 +525,23 @@ fn read_jsonl_agent_messages(path: &std::path::Path) -> Vec<oqto_pi::AgentMessag
         }
 
         if let Some(message) = entry.message {
-            messages.push(message);
+            records.push(oqto_history::oqto_log::store::PiJsonlMessageRecord {
+                source_entry_id: entry.id.unwrap_or_else(|| format!("line:{line_idx}")),
+                parent_source_entry_id: entry.parent_id,
+                source_sequence: line_idx as i64,
+                message,
+            });
         }
     }
 
-    messages
+    records
+}
+
+fn read_jsonl_agent_messages(path: &std::path::Path) -> Vec<oqto_pi::AgentMessage> {
+    read_jsonl_message_records(path)
+        .into_iter()
+        .map(|record| record.message)
+        .collect()
 }
 
 fn scan_pi_jsonl_session_metadata(limit: Option<usize>) -> JsonlScanOutcome {
@@ -2198,54 +2300,84 @@ impl Runner {
                         };
 
                     if req.limit.is_none() {
-                        let pi_jsonl_agent_messages =
-                            load_pi_jsonl_agent_messages_for_session(home_path, &req.session_id)
-                                .await;
-                        let projected_count = projected.as_ref().map_or(0, Vec::len);
-                        let jsonl_count = pi_jsonl_agent_messages
-                            .as_ref()
-                            .map_or(0, |(_, messages)| messages.len());
-                        let user_id =
-                            std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
-                        let repaired = match &pi_jsonl_agent_messages {
-                            Some((external_id, messages)) => {
-                                repair_oqto_log_from_jsonl_if_richer(
-                                    home_path,
-                                    &user_id,
-                                    &req.session_id,
-                                    projected_count,
-                                    external_id,
-                                    messages,
-                                )
-                                .await
-                            }
-                            None => None,
-                        };
-                        if let Some(repaired) = repaired {
-                            info!(
-                                "get_workspace_chat_session_messages session={} source=oqto-log-repaired projected_count={} jsonl_count={} repaired_count={}",
-                                req.session_id,
+                        if let Some(projected_messages) =
+                            projected.filter(|messages| !messages.is_empty())
+                        {
+                            let projected_count = projected_messages.len();
+                            let user_id =
+                                std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
+                            spawn_oqto_log_repair_from_jsonl(
+                                home_path.to_path_buf(),
+                                user_id,
+                                req.session_id.clone(),
                                 projected_count,
-                                jsonl_count,
-                                repaired.len()
                             );
-                            Some(repaired)
+                            Some(projected_messages)
                         } else {
-                            let pi_jsonl_messages =
-                                pi_jsonl_agent_messages
-                                    .as_ref()
-                                    .map(|(_external_id, messages)| {
-                                        pi_jsonl_agent_messages_to_proto(&req.session_id, messages)
-                                    });
-                            let (selected, selected_source) =
-                                select_richest_authoritative_messages(projected, pi_jsonl_messages);
-                            if selected_source != "oqto-log" && jsonl_count > 0 {
+                            let pi_jsonl_records =
+                                load_pi_jsonl_records_for_session(home_path, &req.session_id).await;
+                            let pi_jsonl_agent_messages =
+                                pi_jsonl_records.as_ref().map(|(external_id, records)| {
+                                    (
+                                        external_id.clone(),
+                                        records
+                                            .iter()
+                                            .map(|record| record.message.clone())
+                                            .collect::<Vec<_>>(),
+                                    )
+                                });
+                            let projected_count = 0;
+                            let jsonl_count = pi_jsonl_records
+                                .as_ref()
+                                .map_or(0, |(_, records)| records.len());
+                            let user_id =
+                                std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
+                            let repaired = match &pi_jsonl_agent_messages {
+                                Some((external_id, messages)) => {
+                                    let records = pi_jsonl_records
+                                        .as_ref()
+                                        .map(|(_, records)| records.as_slice());
+                                    repair_oqto_log_from_jsonl_if_richer(
+                                        home_path,
+                                        &user_id,
+                                        &req.session_id,
+                                        projected_count,
+                                        external_id,
+                                        messages,
+                                        records,
+                                    )
+                                    .await
+                                }
+                                None => None,
+                            };
+                            if let Some(repaired) = repaired {
                                 info!(
-                                    "get_workspace_chat_session_messages session={} source={} projected_count={} jsonl_count={}",
-                                    req.session_id, selected_source, projected_count, jsonl_count
+                                    "get_workspace_chat_session_messages session={} source=oqto-log-repaired projected_count={} jsonl_count={} repaired_count={}",
+                                    req.session_id,
+                                    projected_count,
+                                    jsonl_count,
+                                    repaired.len()
                                 );
+                                Some(repaired)
+                            } else {
+                                let pi_jsonl_messages = pi_jsonl_agent_messages.as_ref().map(
+                                    |(_external_id, messages)| {
+                                        pi_jsonl_agent_messages_to_proto(&req.session_id, messages)
+                                    },
+                                );
+                                let (selected, selected_source) =
+                                    select_richest_authoritative_messages(None, pi_jsonl_messages);
+                                if selected_source != "oqto-log" && jsonl_count > 0 {
+                                    info!(
+                                        "get_workspace_chat_session_messages session={} source={} projected_count={} jsonl_count={}",
+                                        req.session_id,
+                                        selected_source,
+                                        projected_count,
+                                        jsonl_count
+                                    );
+                                }
+                                selected
                             }
-                            selected
                         }
                     } else {
                         projected
@@ -2318,8 +2450,8 @@ impl Runner {
     async fn trx_list(&self, req: TrxListRequest) -> RunnerResponse {
         match tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<TrxIssueData>> {
             let requested_path = req.workspace_path.clone();
-            let resolved_root = find_trx_root(&requested_path)
-                .unwrap_or_else(|| requested_path.clone());
+            let resolved_root =
+                find_trx_root(&requested_path).unwrap_or_else(|| requested_path.clone());
             tracing::info!(
                 requested_workspace = %requested_path.display(),
                 resolved_trx_root = %resolved_root.display(),
@@ -2440,7 +2572,11 @@ impl Runner {
         }
     }
 
-    /// Update a workspace chat session (e.g., rename title) via hstry gRPC.
+    /// Update a workspace chat session title.
+    ///
+    /// Pi JSONL remains the source of truth for harness session metadata, so a
+    /// manual rename must reach Pi or append a `session_info` entry before any
+    /// compatibility projection is updated.
     async fn update_workspace_chat_session(
         &self,
         req: UpdateWorkspaceChatSessionRequest,
@@ -2449,46 +2585,92 @@ impl Runner {
             return error_response(ErrorCode::InvalidRequest, "No update fields provided");
         };
 
-        let Some(client) = self.pi_manager.hstry_client() else {
-            return error_response(ErrorCode::Internal, "hstry client not available");
+        let external_session_id = match resolve_hstry_external_id_for_update(&req.session_id).await
+        {
+            Ok(Some(external_id)) => external_id,
+            Ok(None) => req.session_id.clone(),
+            Err(e) => {
+                return error_response(
+                    ErrorCode::IoError,
+                    format!("Failed to resolve session identity for update: {e}"),
+                );
+            }
         };
 
-        // Update title via hstry gRPC (partial update -- only title is set)
-        if let Err(e) = client
-            .update_conversation(
-                &req.session_id,
-                Some(title.clone()),
-                None, // workspace unchanged
-                None, // model unchanged
-                None, // provider unchanged
-                None, // metadata unchanged
-                None, // readable_id unchanged
-                None, // harness unchanged
-                None, // platform_id unchanged
-            )
-            .await
-        {
-            return error_response(
-                ErrorCode::Internal,
-                format!("Failed to update session title: {e}"),
-            );
-        }
-
-        // Keep Pi JSONL in sync with manual rename.
-        // If the session is currently live, prefer sending SetSessionName to Pi.
-        // For inactive sessions, append a session_info entry directly to JSONL.
-        let mut live_set_name_applied = false;
-        if self
+        // Live sessions are addressed by Oqto platform_id in the runner. Pi's
+        // SetSessionName command writes the rename into the active Pi session;
+        // inactive sessions get an explicit JSONL session_info append below.
+        let live_set_name_applied = self
             .pi_manager
             .set_session_name(&req.session_id, &title)
             .await
-            .is_ok()
-        {
-            live_set_name_applied = true;
+            .is_ok();
+        if !live_set_name_applied {
+            match append_session_info_name_for_external_id(&external_session_id, &title).await {
+                Ok(true) => {}
+                Ok(false) => {
+                    return error_response(
+                        ErrorCode::SessionNotFound,
+                        format!(
+                            "Session {} not found in live runner or Pi JSONL",
+                            req.session_id
+                        ),
+                    );
+                }
+                Err(e) => {
+                    return error_response(
+                        ErrorCode::IoError,
+                        format!("Failed to append session rename to Pi JSONL: {e}"),
+                    );
+                }
+            }
         }
 
-        // Fetch updated session to return
-        match client.get_conversation(&req.session_id, None).await {
+        let client = self.pi_manager.hstry_client();
+        if let Some(client) = client.as_ref()
+            && let Err(e) = client
+                .update_conversation(
+                    &external_session_id,
+                    Some(title.clone()),
+                    None, // workspace unchanged
+                    None, // model unchanged
+                    None, // provider unchanged
+                    None, // metadata unchanged
+                    None, // readable_id unchanged
+                    None, // harness unchanged
+                    None, // platform_id unchanged
+                )
+                .await
+        {
+            warn!(
+                "Failed to update hstry compatibility title for session {}: {}",
+                external_session_id, e
+            );
+        }
+
+        let Some(client) = client else {
+            return RunnerResponse::WorkspaceChatSessionUpdated(
+                WorkspaceChatSessionUpdatedResponse {
+                    session: WorkspaceChatSessionInfo {
+                        id: req.session_id,
+                        readable_id: String::new(),
+                        title: Some(title),
+                        parent_id: None,
+                        workspace_path: "global".to_string(),
+                        project_name: "global".to_string(),
+                        created_at: 0,
+                        updated_at: chrono::Utc::now().timestamp_millis(),
+                        version: None,
+                        is_child: false,
+                        model: None,
+                        provider: None,
+                    },
+                },
+            );
+        };
+
+        // Fetch updated compatibility projection to return.
+        match client.get_conversation(&external_session_id, None).await {
             Ok(Some(conv)) => {
                 let workspace_path = conv
                     .workspace
@@ -2509,58 +2691,11 @@ impl Runner {
                     .cloned()
                     .unwrap_or_else(|| {
                         if conv.external_id.is_empty() {
-                            req.session_id.clone()
+                            external_session_id.clone()
                         } else {
                             conv.external_id.clone()
                         }
                     });
-
-                if !live_set_name_applied {
-                    let external_id = conv.external_id.clone();
-                    let jsonl_title = conv.title.clone().unwrap_or_else(|| title.clone());
-                    tokio::spawn(async move {
-                        let Some(path) = oqto_pi::session_files::find_session_file_async(
-                            external_id.clone(),
-                            None,
-                        )
-                        .await
-                        else {
-                            debug!(
-                                "No JSONL session file found for external_id={} while applying rename fallback",
-                                external_id
-                            );
-                            return;
-                        };
-
-                        let path_for_log = path.clone();
-                        match tokio::task::spawn_blocking(move || {
-                            append_session_info_name(&path, &jsonl_title)
-                        })
-                        .await
-                        {
-                            Ok(Ok(())) => {
-                                debug!(
-                                    "Appended session_info rename fallback to {}",
-                                    path_for_log.display()
-                                );
-                            }
-                            Ok(Err(err)) => {
-                                warn!(
-                                    "Failed to append session_info rename fallback to {}: {}",
-                                    path_for_log.display(),
-                                    err
-                                );
-                            }
-                            Err(err) => {
-                                warn!(
-                                    "rename fallback task failed for {}: {}",
-                                    path_for_log.display(),
-                                    err
-                                );
-                            }
-                        }
-                    });
-                }
 
                 // parent_conversation_id is an internal UUID; we pass it as-is
                 // (the frontend will match by parent_id if it knows this session)
@@ -2638,7 +2773,11 @@ impl Runner {
                 }
             }
 
-            let recovered_messages = read_jsonl_agent_messages(&session.session_file);
+            let records = read_jsonl_message_records(&session.session_file);
+            let recovered_messages: Vec<_> = records
+                .iter()
+                .map(|record| record.message.clone())
+                .collect();
             if recovered_messages.is_empty() {
                 skipped += 1;
                 continue;
@@ -2685,7 +2824,7 @@ impl Runner {
                     .await
                         && sess_stats.messages < recovered_messages.len()
                     {
-                        match oqto_history::oqto_log::store::replace_session_with_snapshot(
+                        match oqto_history::oqto_log::store::replace_session_with_pi_jsonl_records(
                             home_path,
                             &user_id,
                             workspace_id,
@@ -2693,7 +2832,7 @@ impl Runner {
                             &oqto_session_id,
                             Some(&session.external_id),
                             &session.external_id,
-                            &recovered_messages,
+                            &records,
                         )
                         .await
                         {
@@ -4466,6 +4605,32 @@ mod tests {
     }
 
     #[test]
+    fn pi_jsonl_record_reader_preserves_entry_ids_and_parents() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("session.jsonl");
+        std::fs::write(
+            &path,
+            r#"{"type":"session","version":3,"id":"pi-session","timestamp":"2026-01-01T00:00:00Z","cwd":"/tmp"}
+{"type":"message","id":"aaaa1111","parentId":null,"timestamp":"2026-01-01T00:00:01Z","message":{"role":"user","content":"hello","timestamp":1770000000000}}
+{"type":"message","id":"bbbb2222","parentId":"aaaa1111","timestamp":"2026-01-01T00:00:02Z","message":{"role":"assistant","content":[{"type":"text","text":"hi"}],"timestamp":1770000001000}}
+"#,
+        )
+        .expect("write jsonl");
+
+        let records = read_jsonl_message_records(&path);
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].source_entry_id, "aaaa1111");
+        assert_eq!(records[0].parent_source_entry_id, None);
+        assert_eq!(records[0].source_sequence, 1);
+        assert_eq!(records[1].source_entry_id, "bbbb2222");
+        assert_eq!(
+            records[1].parent_source_entry_id.as_deref(),
+            Some("aaaa1111")
+        );
+        assert_eq!(records[1].source_sequence, 2);
+    }
+
+    #[test]
     fn persistence_contracts_authoritative_path_uses_only_persisted_history() {
         let authoritative = vec![
             proto("hist-u1", "user", 1_000),
@@ -4482,7 +4647,7 @@ mod tests {
     }
 
     #[test]
-    fn persistence_contracts_authoritative_path_uses_pi_jsonl_when_strictly_richer() {
+    fn persistence_contracts_authoritative_path_keeps_oqto_log_even_when_jsonl_is_richer() {
         let projected = vec![proto("hist-a1", "assistant", 2_000)];
         let jsonl = vec![
             proto("jsonl-u1", "user", 1_000),
@@ -4492,11 +4657,10 @@ mod tests {
         let (selected, source) =
             select_richest_authoritative_messages(Some(projected), Some(jsonl));
 
-        assert_eq!(source, "pi-jsonl-richer");
+        assert_eq!(source, "oqto-log");
         let selected = selected.expect("selected messages");
-        assert_eq!(selected.len(), 2);
-        assert_eq!(selected[0].role, "user");
-        assert_eq!(selected[0].id, "jsonl-u1");
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].id, "hist-a1");
     }
 
     #[test]

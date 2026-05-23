@@ -6,6 +6,7 @@ use anyhow::Result;
 use crate::pi::AgentMessage;
 
 use super::store::append_agent_end_snapshot;
+use oqto_history::oqto_log::store::PiJsonlMessageRecord;
 
 #[derive(Debug, Default, Clone)]
 pub struct ImportStats {
@@ -21,6 +22,9 @@ pub struct ImportStats {
 struct JsonlMessageEntry {
     #[serde(rename = "type")]
     entry_type: String,
+    id: Option<String>,
+    #[serde(rename = "parentId")]
+    parent_id: Option<String>,
     message: Option<serde_json::Value>,
 }
 
@@ -73,7 +77,10 @@ fn save_importer_state(user_home: &Path, state: &ImporterState) {
 fn file_fingerprint(path: &Path) -> Option<FileFingerprint> {
     let meta = std::fs::metadata(path).ok()?;
     let modified = meta.modified().ok()?;
-    let mtime_secs = modified.duration_since(std::time::UNIX_EPOCH).ok()?.as_secs();
+    let mtime_secs = modified
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs();
     Some(FileFingerprint {
         mtime_secs,
         size: meta.len(),
@@ -167,6 +174,44 @@ fn parse_agent_message(value: serde_json::Value) -> Option<AgentMessage> {
             .map(|s| s.to_string()),
         extra: std::collections::HashMap::new(),
     })
+}
+
+fn read_jsonl_message_records(path: &Path) -> Vec<PiJsonlMessageRecord> {
+    use std::io::BufRead;
+
+    let file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(_) => return Vec::new(),
+    };
+
+    let reader = std::io::BufReader::new(file);
+    let mut records = Vec::new();
+
+    for (line_idx, line) in reader.lines().map_while(Result::ok).enumerate() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let Ok(entry) = serde_json::from_str::<JsonlMessageEntry>(trimmed) else {
+            continue;
+        };
+        if entry.entry_type != "message" {
+            continue;
+        }
+        if let Some(message_value) = entry.message
+            && let Some(message) = parse_agent_message(message_value)
+        {
+            records.push(PiJsonlMessageRecord {
+                source_entry_id: entry.id.unwrap_or_else(|| format!("line:{line_idx}")),
+                parent_source_entry_id: entry.parent_id,
+                source_sequence: line_idx as i64,
+                message,
+            });
+        }
+    }
+
+    records
 }
 
 fn read_jsonl_agent_messages(path: &Path) -> Vec<AgentMessage> {
@@ -305,10 +350,10 @@ pub async fn bootstrap_import_from_pi_jsonl(
         stats.scanned_files += 1;
         let path_key = path.to_string_lossy().to_string();
         let current_fp = file_fingerprint(&path);
-        if let (Some(current), Some(previous)) = (
-            current_fp.as_ref(),
-            importer_state.files.get(&path_key),
-        ) && current.mtime_secs == previous.mtime_secs && current.size == previous.size
+        if let (Some(current), Some(previous)) =
+            (current_fp.as_ref(), importer_state.files.get(&path_key))
+            && current.mtime_secs == previous.mtime_secs
+            && current.size == previous.size
         {
             stats.skipped_files += 1;
             continue;
@@ -319,7 +364,8 @@ pub async fn bootstrap_import_from_pi_jsonl(
             continue;
         };
 
-        let messages = read_jsonl_agent_messages(&path);
+        let records = read_jsonl_message_records(&path);
+        let messages: Vec<AgentMessage> = records.iter().map(|r| r.message.clone()).collect();
         if messages.is_empty() {
             stats.skipped_files += 1;
             continue;
@@ -382,7 +428,7 @@ pub async fn bootstrap_import_from_pi_jsonl(
                 let mut replaced_ok = None;
                 let mut replace_err: Option<anyhow::Error> = None;
                 for _attempt in 0..3 {
-                    match oqto_history::oqto_log::store::replace_session_with_snapshot(
+                    match oqto_history::oqto_log::store::replace_session_with_pi_jsonl_records(
                         user_home,
                         user_id,
                         &workspace_id,
@@ -390,7 +436,7 @@ pub async fn bootstrap_import_from_pi_jsonl(
                         &session_id,
                         Some(&pi_session_id),
                         &pi_session_id,
-                        &messages,
+                        &records,
                     )
                     .await
                     {
@@ -470,14 +516,14 @@ pub async fn bootstrap_import_from_pi_jsonl(
             let Some(path) = find_session_jsonl_path(user_home, &workspace_id, &session_id) else {
                 continue;
             };
-            let messages = read_jsonl_agent_messages(&path);
-            if messages.is_empty() {
+            let records = read_jsonl_message_records(&path);
+            if records.is_empty() {
                 continue;
             }
             let mut replaced_ok = None;
             let mut replace_err: Option<anyhow::Error> = None;
             for _attempt in 0..3 {
-                match oqto_history::oqto_log::store::replace_session_with_snapshot(
+                match oqto_history::oqto_log::store::replace_session_with_pi_jsonl_records(
                     user_home,
                     user_id,
                     &workspace_id,
@@ -485,7 +531,7 @@ pub async fn bootstrap_import_from_pi_jsonl(
                     &session_id,
                     Some(&session_id),
                     &session_id,
-                    &messages,
+                    &records,
                 )
                 .await
                 {

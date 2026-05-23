@@ -73,6 +73,26 @@ describe("normalizeMessages", () => {
 		expect(out[0].id).toBe("history-1");
 	});
 
+	it("normalizes numeric and ISO string timestamps", () => {
+		const raw: RawMessage[] = [
+			{
+				id: "m-ms",
+				role: "user",
+				content: "ms",
+				created_at: "1779363330601",
+			},
+			{
+				id: "m-iso",
+				role: "assistant",
+				content: "iso",
+				created_at: "2026-05-21T11:35:46.000Z",
+			},
+		];
+		const out = normalizeMessages(raw, "history");
+		expect(out[0].timestamp).toBe(1779363330601);
+		expect(out[1].timestamp).toBe(Date.parse("2026-05-21T11:35:46.000Z"));
+	});
+
 	it("uses fallback only for malformed/legacy payloads with no ID", () => {
 		const raw: RawMessage[] = [{ role: "assistant", content: "hello" }];
 		const out = normalizeMessages(raw, "legacy");
@@ -128,15 +148,21 @@ describe("mergeServerMessages", () => {
 		expect(result.map((m) => m.id)).toEqual(["local-1", "history-1"]);
 	});
 
-	it("authoritative mode converges strictly to server timeline", () => {
+	it("authoritative mode preserves user prompts missing from stale snapshots", () => {
 		const prev = [
-			textMsg("history-old", "user", "old"),
-			textMsg("tmp:user", "user", "new", { clientId: "c-new" }),
-			textMsg("tmp:assistant", "assistant", "stream", { isStreaming: true }),
+			textMsg("history-old", "user", "old", { timestamp: 1000 }),
+			textMsg("tmp:user", "user", "new", {
+				clientId: "c-new",
+				timestamp: 2000,
+			}),
+			textMsg("tmp:assistant", "assistant", "stream", {
+				isStreaming: true,
+				timestamp: 3000,
+			}),
 		];
-		const server = [textMsg("history-old", "user", "old")];
+		const server = [textMsg("history-old", "user", "old", { timestamp: 1000 })];
 		const result = mergeServerMessages(prev, server, "authoritative");
-		expect(result.map((m) => m.id)).toEqual(["history-old"]);
+		expect(result.map((m) => m.id)).toEqual(["history-old", "tmp:user"]);
 	});
 
 	it("authoritative mode drops optimistic local once persisted clientId arrives", () => {
@@ -149,14 +175,51 @@ describe("mergeServerMessages", () => {
 		expect(result[0].id).toBe("history-user");
 	});
 
-	it("authoritative mode drops unmatched optimistic user tail", () => {
+	it("authoritative mode collapses nearby optimistic user echo by fingerprint", () => {
 		const prev = [
-			textMsg("history-1", "user", "ok", { clientId: "c-old" }),
-			textMsg("tmp:user-2", "user", "ok", { clientId: "c-new" }),
+			textMsg("tmp:user-1", "user", "same prompt", {
+				clientId: "c-new",
+				timestamp: 1000,
+			}),
 		];
-		const server = [textMsg("history-1", "user", "ok", { clientId: "c-old" })];
+		const server = [
+			textMsg("history-1", "user", "same prompt", { timestamp: 1100 }),
+		];
 		const result = mergeServerMessages(prev, server, "authoritative");
 		expect(result.map((m) => m.id)).toEqual(["history-1"]);
+	});
+
+	it("authoritative mode collapses adjacent local and persisted user echoes", () => {
+		const prev = [
+			textMsg("history-1", "user", "same prompt", { timestamp: 1000 }),
+			textMsg("tmp:user-1", "user", "same prompt", { timestamp: 1100 }),
+		];
+		const server = [
+			textMsg("history-1", "user", "same prompt", { timestamp: 1000 }),
+		];
+		const result = mergeServerMessages(prev, server, "authoritative");
+		expect(result.map((m) => m.id)).toEqual(["history-1"]);
+	});
+
+	it("authoritative mode preserves later repeated identical optimistic user prompt", () => {
+		const prev = [
+			textMsg("history-1", "user", "ok", {
+				clientId: "c-old",
+				timestamp: 1000,
+			}),
+			textMsg("tmp:user-2", "user", "ok", {
+				clientId: "c-new",
+				timestamp: 120_000,
+			}),
+		];
+		const server = [
+			textMsg("history-1", "user", "ok", {
+				clientId: "c-old",
+				timestamp: 1000,
+			}),
+		];
+		const result = mergeServerMessages(prev, server, "authoritative");
+		expect(result.map((m) => m.id)).toEqual(["history-1", "tmp:user-2"]);
 	});
 
 	it("authoritative mode removes stale tmp assistant once persisted assistant exists", () => {
@@ -171,7 +234,7 @@ describe("mergeServerMessages", () => {
 		expect(result[0].id).toBe("history-assistant-1");
 	});
 
-	it("authoritative mode removes unmatched local tail messages", () => {
+	it("authoritative mode removes unmatched local assistant tail but keeps user prompts", () => {
 		const prev = [
 			textMsg("history-1", "user", "first", { timestamp: 1000 }),
 			textMsg("history-2", "assistant", "reply", { timestamp: 2000 }),
@@ -179,13 +242,18 @@ describe("mergeServerMessages", () => {
 				timestamp: 3000,
 				clientId: "c-local-3",
 			}),
+			textMsg("local-4", "assistant", "stale assistant", { timestamp: 4000 }),
 		];
 		const server = [
 			textMsg("history-1", "user", "first", { timestamp: 1000 }),
 			textMsg("history-2", "assistant", "reply", { timestamp: 2000 }),
 		];
 		const result = mergeServerMessages(prev, server, "authoritative");
-		expect(result.map((m) => m.id)).toEqual(["history-1", "history-2"]);
+		expect(result.map((m) => m.id)).toEqual([
+			"history-1",
+			"history-2",
+			"local-3",
+		]);
 	});
 
 	it("partial mode preserves finalized streaming assistant messages", () => {

@@ -3627,10 +3627,15 @@ mod tests {
 
     #[test]
     fn local_runtime_wiring_sets_runner_pattern_in_single_user_mode() {
-        let mut local = LocalModeConfig::default();
-        local.single_user = true;
-        local.linux_users.enabled = false;
-        local.runner_socket_pattern = Some("/run/user/{uid}/oqto-runner.sock".to_string());
+        let local = LocalModeConfig {
+            single_user: true,
+            linux_users: LinuxUsersConfig {
+                enabled: false,
+                ..Default::default()
+            },
+            runner_socket_pattern: Some("/run/user/{uid}/oqto-runner.sock".to_string()),
+            ..Default::default()
+        };
 
         let (linux_users, pattern) =
             resolve_local_runtime_wiring(&local, local.runner_socket_pattern.clone());

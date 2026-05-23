@@ -1,5 +1,5 @@
-import { getWsManager } from "@/lib/ws-manager";
 import { controlPlaneApiUrl } from "@/lib/api/client";
+import { getWsManager } from "@/lib/ws-manager";
 import type { FileTreeNode, FilesWsEvent } from "@/lib/ws-mux-types";
 
 const TREE_CACHE_TTL_MS = 30000;
@@ -397,7 +397,10 @@ export async function uploadFileHttp(
 	onProgress?: (loaded: number, total: number) => void,
 	signal?: AbortSignal,
 ): Promise<void> {
-	const url = new URL(controlPlaneApiUrl("/api/workspace/files/file"), window.location.origin);
+	const url = new URL(
+		controlPlaneApiUrl("/api/workspace/files/file"),
+		window.location.origin,
+	);
 	url.searchParams.set("workspace_path", workspacePath);
 	url.searchParams.set("path", destPath);
 	url.searchParams.set("mkdir", "true");
@@ -424,7 +427,11 @@ export async function uploadFileHttp(
 			if (xhr.status >= 200 && xhr.status < 300) {
 				resolve();
 			} else {
-				reject(new Error(`Upload failed (${xhr.status}): ${xhr.responseText || xhr.statusText}`));
+				reject(
+					new Error(
+						`Upload failed (${xhr.status}): ${xhr.responseText || xhr.statusText}`,
+					),
+				);
 			}
 		};
 		xhr.onerror = () => {

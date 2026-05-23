@@ -56,7 +56,10 @@ class UploadManager {
 		return this.snapshot;
 	}
 
-	enqueue(workspacePath: string, entries: Array<{ destPath: string; file: File }>) {
+	enqueue(
+		workspacePath: string,
+		entries: Array<{ destPath: string; file: File }>,
+	) {
 		for (const entry of entries) {
 			const id = crypto.randomUUID();
 			const now = Date.now();
@@ -159,7 +162,8 @@ class UploadManager {
 				.catch((error: unknown) => {
 					const current = this.jobs.get(next.id);
 					if (!current) return;
-					const message = error instanceof Error ? error.message : "Upload failed";
+					const message =
+						error instanceof Error ? error.message : "Upload failed";
 					if (message === "Upload cancelled") {
 						current.status = "cancelled";
 						current.error = undefined;

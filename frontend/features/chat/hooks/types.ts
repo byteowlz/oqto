@@ -166,10 +166,10 @@ export type RawMessage = {
 	content?: unknown;
 	/** Canonical message parts (array of Part objects from oqto-protocol). */
 	parts?: unknown[];
-	timestamp?: number;
-	created_at?: number;
-	created_at_ms?: number;
-	createdAtMs?: number;
+	timestamp?: number | string;
+	created_at?: number | string;
+	created_at_ms?: number | string;
+	createdAtMs?: number | string;
 	parts_json?: string;
 	partsJson?: string;
 	// biome-ignore lint/suspicious/noExplicitAny: usage comes from multiple sources with different shapes

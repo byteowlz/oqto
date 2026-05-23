@@ -31,7 +31,6 @@ import {
 	watchFilesMux,
 } from "@/lib/mux-files";
 import { normalizeWorkspacePath } from "@/lib/session-utils";
-import { uploadManager } from "@/lib/upload-manager";
 import {
 	buildWorkspaceFileUrl,
 	formatDuration,
@@ -39,6 +38,7 @@ import {
 	supportsMediaThumbnail,
 	supportsThumbnail,
 } from "@/lib/thumbnail-utils";
+import { uploadManager } from "@/lib/upload-manager";
 import { cn } from "@/lib/utils";
 import { getWsManager } from "@/lib/ws-manager";
 import {
@@ -501,7 +501,9 @@ export function FileTreeView({
 	const workspaceUploads = useMemo(
 		() =>
 			uploadJobs.filter((j) =>
-				normalizedWorkspacePath ? j.workspacePath === normalizedWorkspacePath : false,
+				normalizedWorkspacePath
+					? j.workspacePath === normalizedWorkspacePath
+					: false,
 			),
 		[uploadJobs, normalizedWorkspacePath],
 	);
@@ -937,7 +939,8 @@ export function FileTreeView({
 		uploadManager.enqueue(
 			normalizedWorkspacePath,
 			Array.from(files).map((file) => ({
-				destPath: currentPath === "." ? file.name : `${currentPath}/${file.name}`,
+				destPath:
+					currentPath === "." ? file.name : `${currentPath}/${file.name}`,
 				file,
 			})),
 		);
@@ -977,7 +980,8 @@ export function FileTreeView({
 			const batch: Array<{ destPath: string; file: File }> = [];
 			for (const entry of entries) {
 				await walkFsEntry(entry, entry.name, async (file, relPath) => {
-					const destPath = targetDir === "." ? relPath : `${targetDir}/${relPath}`;
+					const destPath =
+						targetDir === "." ? relPath : `${targetDir}/${relPath}`;
 					batch.push({ destPath, file });
 				});
 			}
@@ -1768,13 +1772,21 @@ export function FileTreeView({
 					{currentDirUploads.length > 0 && (
 						<div className="px-2 py-2 space-y-1 border-b border-border/60">
 							{currentDirUploads.map((job) => {
-								const pct = job.size > 0 ? Math.min(100, Math.round((job.loaded / job.size) * 100)) : 0;
+								const pct =
+									job.size > 0
+										? Math.min(100, Math.round((job.loaded / job.size) * 100))
+										: 0;
 								return (
-									<div key={job.id} className="text-xs rounded border border-border/50 bg-muted/30 px-2 py-1">
+									<div
+										key={job.id}
+										className="text-xs rounded border border-border/50 bg-muted/30 px-2 py-1"
+									>
 										<div className="flex items-center justify-between gap-2">
 											<span className="truncate">{job.fileName}</span>
 											<div className="flex items-center gap-2">
-												<span className="text-muted-foreground">{job.status === "uploading" ? `${pct}%` : job.status}</span>
+												<span className="text-muted-foreground">
+													{job.status === "uploading" ? `${pct}%` : job.status}
+												</span>
 												{job.status === "uploading" && (
 													<button
 														type="button"
@@ -1784,7 +1796,8 @@ export function FileTreeView({
 														Cancel
 													</button>
 												)}
-												{(job.status === "failed" || job.status === "cancelled") && (
+												{(job.status === "failed" ||
+													job.status === "cancelled") && (
 													<button
 														type="button"
 														onClick={() => uploadManager.retry(job.id)}
@@ -1796,9 +1809,23 @@ export function FileTreeView({
 											</div>
 										</div>
 										<div className="mt-1 h-1.5 bg-muted rounded overflow-hidden">
-											<div className={cn("h-full transition-all", job.status === "failed" ? "bg-destructive" : "bg-primary")} style={{ width: `${job.status === "done" ? 100 : pct}%` }} />
+											<div
+												className={cn(
+													"h-full transition-all",
+													job.status === "failed"
+														? "bg-destructive"
+														: "bg-primary",
+												)}
+												style={{
+													width: `${job.status === "done" ? 100 : pct}%`,
+												}}
+											/>
 										</div>
-										{job.error && <div className="mt-1 text-destructive truncate">{job.error}</div>}
+										{job.error && (
+											<div className="mt-1 text-destructive truncate">
+												{job.error}
+											</div>
+										)}
 									</div>
 								);
 							})}
