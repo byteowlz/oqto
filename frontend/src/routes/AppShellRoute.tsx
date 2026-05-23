@@ -25,7 +25,7 @@ import "@/apps";
 import { UIControlProvider } from "@/components/contexts/ui-control-context";
 
 import type { SearchMode } from "@/components/search";
-import { triggerChatHistoryBackfill } from "@/lib/api/chat";
+import { type ChatSession, triggerChatHistoryBackfill } from "@/lib/api/chat";
 import {
 	type SharedWorkspaceInfo,
 	convertToSharedWorkspace,
@@ -473,6 +473,50 @@ const AppShell = memo(function AppShell() {
 			if (hit.agent === "pi_agent") {
 				const sessionId = hit.session_id || "";
 				if (sessionId) {
+					const existingSession = chatHistory.find((s) => s.id === sessionId);
+					const workspacePath =
+						hit.workspace ?? existingSession?.workspace_path ?? null;
+					const normalizedWorkspacePath =
+						workspacePath?.replace(/\/$/, "") ?? null;
+					const sharedWorkspace = normalizedWorkspacePath
+						? sharedWs.sharedWorkspaces.find((ws) => {
+								const sharedPath = ws.path.replace(/\/$/, "");
+								return (
+									normalizedWorkspacePath === sharedPath ||
+									normalizedWorkspacePath.startsWith(`${sharedPath}/`)
+								);
+							})
+						: undefined;
+
+					if (!existingSession || sharedWorkspace) {
+						const now = hit.timestamp ?? Date.now();
+						const optimisticSession: ChatSession = existingSession ?? {
+							id: sessionId,
+							readable_id: null,
+							title: hit.title ?? null,
+							parent_id: null,
+							workspace_path: workspacePath,
+							project_name: workspacePath
+								? (workspacePath
+										.replace(/\\/g, "/")
+										.split("/")
+										.filter(Boolean)
+										.pop() ?? null)
+								: null,
+							created_at: now,
+							updated_at: now,
+							version: null,
+							is_child: false,
+							source_path: hit.source_path ?? null,
+							shared_workspace_id: sharedWorkspace?.id ?? null,
+						};
+						createOptimisticChatSession(
+							sessionId,
+							workspacePath ?? undefined,
+							sharedWorkspace?.id,
+							optimisticSession,
+						);
+					}
 					setSelectedChatSessionId(sessionId);
 				}
 				setSelectedWorkspaceOverviewPath(null);
@@ -483,6 +527,9 @@ const AppShell = memo(function AppShell() {
 			sidebarState.setMobileMenuOpen(false);
 		},
 		[
+			chatHistory,
+			createOptimisticChatSession,
+			sharedWs.sharedWorkspaces,
 			setActiveAppId,
 			setSelectedChatSessionId,
 			setSelectedWorkspaceOverviewPath,

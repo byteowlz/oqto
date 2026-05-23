@@ -33,6 +33,7 @@ class UploadManager {
 	private inFlight = 0;
 	private abortControllers = new Map<string, AbortController>();
 	private fileBlobs = new Map<string, File>();
+	private doneCleanupTimers = new Map<string, ReturnType<typeof setTimeout>>();
 	private hydrated = false;
 	private snapshot: UploadJob[] = [];
 	private snapshotDirty = true;
@@ -61,7 +62,7 @@ class UploadManager {
 		entries: Array<{ destPath: string; file: File }>,
 	) {
 		for (const entry of entries) {
-			const id = crypto.randomUUID();
+			const id = generateUploadId();
 			const now = Date.now();
 			const job: UploadJob = {
 				id,
@@ -103,6 +104,7 @@ class UploadManager {
 		const job = this.jobs.get(id);
 		if (!job) return;
 		if (job.status !== "failed" && job.status !== "cancelled") return;
+		this.clearDoneCleanup(id);
 		job.status = "queued";
 		job.error = undefined;
 		job.loaded = 0;
@@ -158,6 +160,7 @@ class UploadManager {
 					current.updatedAt = Date.now();
 					this.emit();
 					void this.saveJob(current);
+					this.scheduleDoneCleanup(next.id);
 				})
 				.catch((error: unknown) => {
 					const current = this.jobs.get(next.id);
@@ -198,6 +201,10 @@ class UploadManager {
 		const req = store.getAll();
 		const jobs: UploadJob[] = await promisify(req, []);
 		for (const job of jobs) {
+			if (job.status === "done") {
+				void this.deleteJob(job.id);
+				continue;
+			}
 			if (job.status === "uploading" || job.status === "queued") {
 				job.status = "failed";
 				job.error = "Interrupted by reload; please retry";
@@ -212,6 +219,33 @@ class UploadManager {
 		if (!db) return;
 		const tx = db.transaction(STORE, "readwrite");
 		tx.objectStore(STORE).put(job);
+	}
+
+	private async deleteJob(id: string) {
+		const db = await openDb();
+		if (!db) return;
+		const tx = db.transaction(STORE, "readwrite");
+		tx.objectStore(STORE).delete(id);
+	}
+
+	private scheduleDoneCleanup(id: string) {
+		this.clearDoneCleanup(id);
+		const timer = setTimeout(() => {
+			this.doneCleanupTimers.delete(id);
+			this.jobs.delete(id);
+			this.fileBlobs.delete(id);
+			this.abortControllers.delete(id);
+			void this.deleteJob(id);
+			this.emit();
+		}, 1200);
+		this.doneCleanupTimers.set(id, timer);
+	}
+
+	private clearDoneCleanup(id: string) {
+		const timer = this.doneCleanupTimers.get(id);
+		if (!timer) return;
+		clearTimeout(timer);
+		this.doneCleanupTimers.delete(id);
 	}
 }
 
@@ -239,6 +273,16 @@ function promisify<T>(request: IDBRequest<T>, fallback: T): Promise<T> {
 		request.onsuccess = () => resolve(request.result);
 		request.onerror = () => resolve(fallback);
 	});
+}
+
+function generateUploadId(): string {
+	if (
+		typeof globalThis.crypto !== "undefined" &&
+		typeof globalThis.crypto.randomUUID === "function"
+	) {
+		return globalThis.crypto.randomUUID();
+	}
+	return `upload-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
 }
 
 export const uploadManager = new UploadManager();

@@ -1,7 +1,7 @@
 import type {
 	ChatSession,
-	SearchHit,
 	ProjectLogo,
+	SearchHit,
 } from "@/lib/control-plane-client";
 import { formatSessionDate, getTempIdFromSession } from "@/lib/session-utils";
 import Fuse from "fuse.js";
