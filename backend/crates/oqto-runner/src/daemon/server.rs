@@ -2184,6 +2184,17 @@ impl Runner {
                         if let Some(projected_messages) =
                             projected.filter(|messages| !messages.is_empty())
                         {
+                            // Keep chat opens instant, but still pull newer Pi JSONL
+                            // content into oqto-log in the background.
+                            let projected_count = projected_messages.len();
+                            let user_id =
+                                std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
+                            spawn_oqto_log_repair_from_jsonl(
+                                home_path.to_path_buf(),
+                                user_id,
+                                req.session_id.clone(),
+                                projected_count,
+                            );
                             Some(projected_messages)
                         } else {
                             // Hot path: avoid heavy oqto-log repair work while opening chats.
@@ -2212,6 +2223,14 @@ impl Runner {
                                 info!(
                                     "get_workspace_chat_session_messages session={} source={} jsonl_count={}",
                                     req.session_id, selected_source, jsonl_count
+                                );
+                                let user_id =
+                                    std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
+                                spawn_oqto_log_repair_from_jsonl(
+                                    home_path.to_path_buf(),
+                                    user_id,
+                                    req.session_id.clone(),
+                                    0,
                                 );
                             }
                             selected
