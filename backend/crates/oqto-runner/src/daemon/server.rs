@@ -2184,81 +2184,37 @@ impl Runner {
                         if let Some(projected_messages) =
                             projected.filter(|messages| !messages.is_empty())
                         {
-                            let projected_count = projected_messages.len();
-                            let user_id =
-                                std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
-                            spawn_oqto_log_repair_from_jsonl(
-                                home_path.to_path_buf(),
-                                user_id,
-                                req.session_id.clone(),
-                                projected_count,
-                            );
                             Some(projected_messages)
                         } else {
+                            // Hot path: avoid heavy oqto-log repair work while opening chats.
+                            // If oqto-log is missing this session, return Pi JSONL-derived
+                            // messages directly and let explicit maintenance paths perform
+                            // backfill/repair asynchronously.
                             let pi_jsonl_records =
                                 load_pi_jsonl_records_for_session(home_path, &req.session_id).await;
                             let pi_jsonl_agent_messages =
-                                pi_jsonl_records.as_ref().map(|(external_id, records)| {
-                                    (
-                                        external_id.clone(),
-                                        records
-                                            .iter()
-                                            .map(|record| record.message.clone())
-                                            .collect::<Vec<_>>(),
-                                    )
+                                pi_jsonl_records.as_ref().map(|(_external_id, records)| {
+                                    records
+                                        .iter()
+                                        .map(|record| record.message.clone())
+                                        .collect::<Vec<_>>()
                                 });
-                            let projected_count = 0;
                             let jsonl_count = pi_jsonl_records
                                 .as_ref()
                                 .map_or(0, |(_, records)| records.len());
-                            let user_id =
-                                std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
-                            let repaired = match &pi_jsonl_agent_messages {
-                                Some((external_id, messages)) => {
-                                    let records = pi_jsonl_records
-                                        .as_ref()
-                                        .map(|(_, records)| records.as_slice());
-                                    repair_oqto_log_from_jsonl_if_richer(
-                                        home_path,
-                                        &user_id,
-                                        &req.session_id,
-                                        projected_count,
-                                        external_id,
-                                        messages,
-                                        records,
-                                    )
-                                    .await
-                                }
-                                None => None,
-                            };
-                            if let Some(repaired) = repaired {
+                            let pi_jsonl_messages =
+                                pi_jsonl_agent_messages.as_ref().map(|messages| {
+                                    pi_jsonl_agent_messages_to_proto(&req.session_id, messages)
+                                });
+                            let (selected, selected_source) =
+                                select_richest_authoritative_messages(None, pi_jsonl_messages);
+                            if selected_source != "oqto-log" && jsonl_count > 0 {
                                 info!(
-                                    "get_workspace_chat_session_messages session={} source=oqto-log-repaired projected_count={} jsonl_count={} repaired_count={}",
-                                    req.session_id,
-                                    projected_count,
-                                    jsonl_count,
-                                    repaired.len()
+                                    "get_workspace_chat_session_messages session={} source={} jsonl_count={}",
+                                    req.session_id, selected_source, jsonl_count
                                 );
-                                Some(repaired)
-                            } else {
-                                let pi_jsonl_messages = pi_jsonl_agent_messages.as_ref().map(
-                                    |(_external_id, messages)| {
-                                        pi_jsonl_agent_messages_to_proto(&req.session_id, messages)
-                                    },
-                                );
-                                let (selected, selected_source) =
-                                    select_richest_authoritative_messages(None, pi_jsonl_messages);
-                                if selected_source != "oqto-log" && jsonl_count > 0 {
-                                    info!(
-                                        "get_workspace_chat_session_messages session={} source={} projected_count={} jsonl_count={}",
-                                        req.session_id,
-                                        selected_source,
-                                        projected_count,
-                                        jsonl_count
-                                    );
-                                }
-                                selected
                             }
+                            selected
                         }
                     } else {
                         projected
