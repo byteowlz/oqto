@@ -42,8 +42,24 @@ pub struct TimelineSearchResult {
     pub message_id: String,
     pub role: String,
     pub snippet: String,
+    pub content: String,
     pub score: f64,
     pub created_at: Option<String>,
+}
+
+fn build_fts_query(query: &str) -> String {
+    let terms = query
+        .split_whitespace()
+        .map(|term| {
+            let escaped = term.replace('"', "\"\"");
+            format!("\"{escaped}\"")
+        })
+        .collect::<Vec<_>>();
+    if terms.is_empty() {
+        String::new()
+    } else {
+        terms.join(" AND ")
+    }
 }
 
 pub async fn search_timeline(req: &TimelineSearchRequest<'_>) -> Result<TimelineSearchResponse> {
@@ -57,12 +73,11 @@ pub async fn search_timeline(req: &TimelineSearchRequest<'_>) -> Result<Timeline
         });
     }
 
+    let fts_query = build_fts_query(query);
     let db_paths = resolve_db_paths(req).await?;
     let mut results = Vec::new();
     for db_path in db_paths {
-        let options = SqliteConnectOptions::new()
-            .filename(&db_path)
-            .read_only(true);
+        let options = SqliteConnectOptions::new().filename(&db_path);
         let pool = match SqlitePoolOptions::new()
             .max_connections(1)
             .connect_with(options)
@@ -83,6 +98,7 @@ pub async fn search_timeline(req: &TimelineSearchRequest<'_>) -> Result<Timeline
               f.message_id AS message_id,
               f.role AS role,
               snippet(oqto_log_message_fts, 4, '[', ']', '…', 12) AS snippet,
+              COALESCE(m.content, f.content, '') AS content,
               bm25(oqto_log_message_fts) AS score,
               m.created_at AS created_at
             FROM oqto_log_message_fts f
@@ -94,7 +110,7 @@ pub async fn search_timeline(req: &TimelineSearchRequest<'_>) -> Result<Timeline
             LIMIT ?
             "#,
         )
-        .bind(query)
+        .bind(&fts_query)
         .bind(req.limit.max(1) as i64)
         .fetch_all(&pool)
         .await
@@ -110,6 +126,7 @@ pub async fn search_timeline(req: &TimelineSearchRequest<'_>) -> Result<Timeline
             message_id: row.try_get("message_id").unwrap_or_default(),
             role: row.try_get("role").unwrap_or_default(),
             snippet: row.try_get("snippet").unwrap_or_default(),
+            content: row.try_get("content").unwrap_or_default(),
             score: row.try_get("score").unwrap_or(0.0),
             created_at: row.try_get("created_at").ok(),
         }));
@@ -180,7 +197,46 @@ async fn list_existing_db_paths(user_home: &Path) -> Vec<PathBuf> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
+    use oqto_pi::AgentMessage;
+    use serde_json::Value;
+
     use super::*;
+    use crate::oqto_log::store::append_agent_end_snapshot;
+
+    fn test_message(role: &str, content: &str) -> AgentMessage {
+        AgentMessage {
+            role: role.to_string(),
+            content: Value::String(content.to_string()),
+            timestamp: Some(1_779_363_330_601),
+            tool_call_id: None,
+            tool_name: None,
+            is_error: None,
+            api: None,
+            provider: None,
+            model: None,
+            usage: None,
+            stop_reason: None,
+            extra: HashMap::new(),
+        }
+    }
+
+    async fn seed_session(user_home: &Path, workspace_id: &str, session_id: &str, content: &str) {
+        let messages = vec![test_message("user", content)];
+        append_agent_end_snapshot(
+            user_home,
+            "user-1",
+            workspace_id,
+            session_id,
+            &format!("platform-{session_id}"),
+            Some(&format!("external-{session_id}")),
+            &format!("external-{session_id}"),
+            &messages,
+        )
+        .await
+        .expect("seed oqto-log session");
+    }
 
     #[tokio::test]
     async fn empty_query_returns_empty_response() {
@@ -196,5 +252,81 @@ mod tests {
         .expect("empty search");
         assert_eq!(response.schema_version, 1);
         assert!(response.results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn searches_all_oqto_log_workspaces_without_hstry() {
+        let temp = tempfile::tempdir().expect("temp home");
+        seed_session(
+            temp.path(),
+            "/tmp/workspace-alpha",
+            "alpha",
+            "needle appears in alpha workspace",
+        )
+        .await;
+        seed_session(
+            temp.path(),
+            "/tmp/workspace-beta",
+            "beta",
+            "needle appears in beta workspace",
+        )
+        .await;
+
+        let response = search_timeline(&TimelineSearchRequest {
+            user_home: temp.path(),
+            query: "needle",
+            scope: TimelineSearchScope::All,
+            workspace_id: None,
+            cwd: None,
+            limit: 10,
+        })
+        .await
+        .expect("search oqto-log");
+
+        let sessions = response
+            .results
+            .iter()
+            .map(|result| result.session_id.as_str())
+            .collect::<std::collections::HashSet<_>>();
+        assert_eq!(sessions.len(), 2);
+        assert!(sessions.contains("alpha"));
+        assert!(sessions.contains("beta"));
+        assert!(response.results.iter().all(|hit| !hit.content.is_empty()));
+    }
+
+    #[tokio::test]
+    async fn multi_term_search_requires_all_terms_and_escapes_quotes() {
+        let temp = tempfile::tempdir().expect("temp home");
+        seed_session(
+            temp.path(),
+            "/tmp/workspace-alpha",
+            "matching",
+            "flash search finds the exact regression quickly",
+        )
+        .await;
+        seed_session(
+            temp.path(),
+            "/tmp/workspace-alpha",
+            "nonmatching",
+            "flash search misses the unrelated conversation",
+        )
+        .await;
+
+        let response = search_timeline(&TimelineSearchRequest {
+            user_home: temp.path(),
+            query: "flash regression",
+            scope: TimelineSearchScope::All,
+            workspace_id: None,
+            cwd: None,
+            limit: 10,
+        })
+        .await
+        .expect("multi-term search");
+
+        assert_eq!(response.results.len(), 1);
+        assert_eq!(response.results[0].session_id, "matching");
+
+        let quoted = build_fts_query("rename \"sessions\"");
+        assert_eq!(quoted, "\"rename\" AND \"\"\"sessions\"\"\"");
     }
 }

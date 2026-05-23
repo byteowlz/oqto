@@ -20,7 +20,6 @@ pub(crate) async fn handle_request(runner: &Runner, req: RunnerRequest) -> Runne
         RunnerRequest::RepairWorkspaceChatHistory(r) => {
             runner.repair_workspace_chat_history(r).await
         }
-        RunnerRequest::SearchHstry(r) => runner.search_hstry(r).await,
         _ => error_response(ErrorCode::InvalidRequest, "Invalid sessions request"),
     }
 }

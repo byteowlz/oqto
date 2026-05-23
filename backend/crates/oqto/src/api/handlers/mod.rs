@@ -109,7 +109,5 @@ pub use shared_workspaces::{
 #[cfg(test)]
 mod tests {
     #[allow(unused_imports)]
-    pub use super::misc::hstry_search_tests;
-    #[allow(unused_imports)]
     pub use super::projects::tests as project_tests;
 }

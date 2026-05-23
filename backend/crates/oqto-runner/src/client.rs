@@ -751,28 +751,6 @@ impl RunnerClient {
     }
 
     // ========================================================================
-    // hstry Operations (user-plane)
-    // ========================================================================
-
-    /// Search chat history via hstry in the runner user's context.
-    pub async fn search_hstry(
-        &self,
-        query: impl Into<String>,
-        limit: usize,
-    ) -> Result<HstrySearchResultsResponse> {
-        let req = RunnerRequest::SearchHstry(SearchHstryRequest {
-            query: query.into(),
-            limit,
-        });
-
-        let resp = self.request(&req).await?;
-        match resp {
-            RunnerResponse::HstrySearchResults(r) => Ok(r),
-            _ => anyhow::bail!("unexpected response to search_hstry"),
-        }
-    }
-
-    // ========================================================================
     // Memory Operations (user-plane)
     // ========================================================================
 
