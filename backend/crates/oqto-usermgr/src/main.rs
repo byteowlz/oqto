@@ -468,7 +468,7 @@ fn cmd_delete_user(args: &serde_json::Value) -> Response {
     let mut warnings: Vec<String> = Vec::new();
 
     // 1. Stop user services (best-effort, they might not exist)
-    for svc in ["oqto-runner.service", "mmry.service", "hstry.service"] {
+    for svc in ["oqto-runner.service", "mmry.service"] {
         if let Err(e) = run_user_systemctl(&["stop", svc]) {
             warnings.push(format!("stop {svc}: {e}"));
         }
@@ -751,31 +751,12 @@ fn cmd_setup_user_runner(args: &serde_json::Value) -> Response {
     }
 
     // Construct a PATH that includes the user's local bin dirs and system paths.
-    // Systemd user services run with a minimal environment, so tools like bun/node
-    // (needed by hstry) won't be found without an explicit PATH.
+    // Systemd user services run with a minimal environment.
     let user_path =
         format!("{home}/.bun/bin:{home}/.cargo/bin:{home}/.local/bin:/usr/local/bin:/usr/bin:/bin");
 
     // Service file contents -- all constructed server-side, never from client input.
-    // hstry and mmry run as simple foreground services.
-    // oqto-runner uses Type=notify and depends on both.
-    let hstry_service = format!(
-        r#"[Unit]
-Description=Oqto Chat History Service
-
-[Service]
-Type=simple
-ExecStart=/usr/local/bin/hstry service run
-Restart=always
-RestartSec=3
-Environment=PATH={user_path}
-Environment=HOME={home}
-
-[Install]
-WantedBy=default.target
-"#
-    );
-
+    // mmry runs as a simple foreground service. oqto-runner uses Type=notify.
     let mmry_service = format!(
         r#"[Unit]
 Description=Oqto Memory Service
@@ -796,8 +777,8 @@ WantedBy=default.target
     let runner_service = format!(
         r#"[Unit]
 Description=Oqto Runner - Process isolation daemon
-Wants=hstry.service mmry.service
-After=hstry.service mmry.service
+Wants=mmry.service
+After=mmry.service
 
 [Service]
 Type=notify
@@ -827,7 +808,6 @@ WantedBy=default.target
 
     // 2. Write all service files
     let services = [
-        ("hstry.service", hstry_service),
         ("mmry.service", mmry_service),
         ("oqto-runner.service", runner_service),
     ];
@@ -838,87 +818,7 @@ WantedBy=default.target
         }
     }
 
-    // 2b. Ensure hstry config has service enabled.
-    //     hstry defaults to `enabled = false` on first run, but we manage
-    //     it via systemd so the gRPC service must be listening.
-    let hstry_config_dir = format!("{home}/.config/hstry");
-    let _ = std::fs::create_dir_all(&hstry_config_dir);
-    let hstry_config_path = format!("{hstry_config_dir}/config.toml");
-    let hstry_db_path = format!("{home}/.local/share/hstry/hstry.db");
-    let _ = std::fs::create_dir_all(format!("{home}/.local/share/hstry"));
-    if std::path::Path::new(&hstry_config_path).exists() {
-        // Patch existing: flip enabled = false -> true
-        if let Ok(content) = std::fs::read_to_string(&hstry_config_path)
-            && content.contains("enabled = false")
-        {
-            let patched = content.replace("enabled = false", "enabled = true");
-            let _ = std::fs::write(&hstry_config_path, patched);
-        }
-    } else {
-        // Write config with service enabled, system-wide adapters, and pi source
-        let pi_sessions_path = format!("{home}/.pi/agent/sessions");
-        let hstry_config = format!(
-            "database = \"{hstry_db_path}\"\n\
-             adapter_paths = [\"/usr/local/share/hstry/adapters\"]\n\
-             \n\
-             [service]\n\
-             enabled = true\n\
-             transport = \"tcp\"\n\
-             \n\
-             [[sources]]\n\
-             id = \"pi\"\n\
-             adapter = \"pi\"\n\
-             path = \"{pi_sessions_path}\"\n\
-             auto_sync = true\n"
-        );
-        let _ = std::fs::write(&hstry_config_path, hstry_config);
-    }
-
-    // Ensure existing hstry configs have the system-wide adapter path and pi source.
-    // This patches configs from older setups that are missing them.
-    if let Ok(content) = std::fs::read_to_string(&hstry_config_path) {
-        let mut patched = content.clone();
-
-        // Add adapter_paths if missing
-        if !patched.contains("adapter_paths") {
-            // Insert after the database line
-            patched = patched.replace(
-                &format!("database = \"{hstry_db_path}\""),
-                &format!(
-                    "database = \"{hstry_db_path}\"\n\
-                     adapter_paths = [\"/usr/local/share/hstry/adapters\"]"
-                ),
-            );
-        }
-
-        // Add pi source if missing
-        if !patched.contains("adapter = \"pi\"") {
-            let pi_sessions_path = format!("{home}/.pi/agent/sessions");
-            // Remove bare `sources = []` (and similar empty arrays) to prevent
-            // TOML duplicate key errors when appending `[[sources]]`.
-            // hstry's own config generator may produce `sources = []` as an empty
-            // default, which conflicts with the `[[sources]]` array-of-tables
-            // syntax appended below.
-            for bare_array in &["sources = []", "sources= []", "sources =[]"] {
-                patched = patched.replace(bare_array, "");
-            }
-            patched.push_str(&format!(
-                "\n\
-                 [[sources]]\n\
-                 id = \"pi\"\n\
-                 adapter = \"pi\"\n\
-                 path = \"{pi_sessions_path}\"\n\
-                 auto_sync = true\n"
-            ));
-        }
-
-        let needs_write = patched != content;
-        if needs_write {
-            let _ = std::fs::write(&hstry_config_path, patched);
-        }
-    }
-
-    // 2c. Ensure mmry config exists with remote embeddings.
+    // 2b. Ensure mmry config exists with remote embeddings.
     //     Per-user mmry connects to the central embeddings server (port 8091)
     //     instead of loading the model locally. service.enabled = true so the
     //     gRPC service stays running for the runner.
@@ -1071,8 +971,7 @@ WantedBy=default.target
         }
     }
 
-    // Daemon-reload + enable all services + start oqto-runner.
-    //    Starting oqto-runner pulls in hstry and mmry via Requires= dependency.
+    // Daemon-reload + enable services + start oqto-runner.
     //    Type=notify on runner means `systemctl start` blocks until READY=1.
 
     // Helper: run systemctl as the target user. Try --machine first, fall back to runuser.
@@ -1126,8 +1025,8 @@ WantedBy=default.target
         return Response::error("daemon-reload failed after 5 attempts".to_string());
     }
 
-    // Enable all three services
-    for svc in ["hstry.service", "mmry.service", "oqto-runner.service"] {
+    // Enable managed user services.
+    for svc in ["mmry.service", "oqto-runner.service"] {
         if let Err(e) = run_user_systemctl(&["enable", svc]) {
             eprintln!("oqto-usermgr: enable {svc} failed: {e}");
         }
@@ -1138,14 +1037,14 @@ WantedBy=default.target
     let runner_active = run_user_systemctl(&["is-active", "oqto-runner.service"]).is_ok();
     let action = if runner_active { "restart" } else { "start" };
 
-    // Start/restart oqto-runner (pulls in hstry + mmry via Requires=).
+    // Start/restart oqto-runner (pulls in mmry via Wants=).
     // With Type=notify, this blocks until the runner signals READY=1.
     if let Err(e) = run_user_systemctl(&[action, "oqto-runner.service"]) {
         return Response::error(format!("{action} oqto-runner failed: {e}"));
     }
 
     // Wait for the runner socket to appear and ensure correct permissions.
-    // The runner needs time to start, bind the socket, and initialize hstry/mmry.
+    // The runner needs time to start, bind the socket, and initialize mmry.
     let socket = std::path::Path::new(&socket_path);
     for i in 0..20 {
         if socket.exists() {
@@ -1164,7 +1063,7 @@ WantedBy=default.target
             // Services like mmry may fail on first start (port conflicts,
             // TIME_WAIT from previous instances) and need systemd's Restart=
             // to recover. We retry with backoff to accommodate RestartSec=3.
-            for svc in ["hstry", "mmry"] {
+            for svc in ["mmry"] {
                 let svc_unit = format!("{svc}.service");
                 let max_attempts = 5;
                 let mut healthy = false;
